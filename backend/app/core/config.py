@@ -1,0 +1,43 @@
+"""应用配置：pydantic-settings，环境变量前缀 ``POLARIS_``（见仓库根 .env.example）。"""
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="POLARIS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # ---- App ----
+    env: Literal["dev", "prod"] = "dev"
+    secret_key: str = "dev-only-secret-key-change-me"  # JWT 签名
+    encryption_key: str = ""  # Fernet key；为空时 security.py 会从 secret_key 派生（仅限 dev）
+    invite_code: str = "polaris-lab"  # 注册邀请码（实验室内部制）
+
+    # ---- Database / Cache ----
+    # 默认回退 sqlite+aiosqlite，便于无 docker 的本地开发与测试；生产用 postgresql+asyncpg
+    database_url: str = "sqlite+aiosqlite:///./polaris_dev.db"
+    redis_url: str = "redis://localhost:6379/0"
+
+    # ---- LLM providers（初始值；后续可在 DB 模型路由表中配置）----
+    openai_compat_base_url: str = "https://api.deepseek.com/v1"
+    openai_compat_api_key: str = ""
+    anthropic_api_key: str = ""
+
+    # ---- 文献 API ----
+    s2_api_key: str = ""  # Semantic Scholar（可空，限流更严）
+
+    @property
+    def is_sqlite(self) -> bool:
+        return self.database_url.startswith("sqlite")
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

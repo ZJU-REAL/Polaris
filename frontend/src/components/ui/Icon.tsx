@@ -1,0 +1,65 @@
+import type { CSSProperties, ReactElement } from 'react';
+
+export type IconName =
+  | 'dashboard' | 'book' | 'bulb' | 'scale' | 'flask' | 'pen' | 'shield' | 'gate'
+  | 'bell' | 'search' | 'settings' | 'plus' | 'chevron' | 'chevDown' | 'arrow'
+  | 'link' | 'check' | 'x' | 'play' | 'pause' | 'clock' | 'cpu' | 'server'
+  | 'file' | 'git' | 'chart' | 'grid' | 'layers' | 'sparkle' | 'refresh'
+  | 'logout' | 'dot';
+
+export interface IconProps {
+  name: IconName;
+  size?: number;
+  sw?: number;
+  style?: CSSProperties;
+}
+
+/** Minimal inline stroke icon set (currentColor). */
+export function Icon({ name, size = 17, sw = 1.6, style }: IconProps) {
+  const p = {
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: sw,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+  } as const;
+  const paths: Record<IconName, ReactElement> = {
+    dashboard: <><rect x="3" y="3" width="7" height="9" rx="1.5" {...p} /><rect x="14" y="3" width="7" height="5" rx="1.5" {...p} /><rect x="14" y="12" width="7" height="9" rx="1.5" {...p} /><rect x="3" y="16" width="7" height="5" rx="1.5" {...p} /></>,
+    book: <><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H19a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 0 4 21.5z" {...p} /><path d="M4 17.5A1.5 1.5 0 0 1 5.5 16H20" {...p} /></>,
+    bulb: <><path d="M9 18h6M10 21h4" {...p} /><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.3 1 2.1h5c0-.8.4-1.6 1-2.1A6 6 0 0 0 12 3z" {...p} /></>,
+    scale: <><path d="M12 3v18M7 21h10" {...p} /><path d="M5 7h14M5 7l-2.5 5a2.5 2.5 0 0 0 5 0zM19 7l-2.5 5a2.5 2.5 0 0 0 5 0z" {...p} /><path d="M5 7l7-2 7 2" {...p} /></>,
+    flask: <><path d="M9 3h6M10 3v6l-4.5 8A2 2 0 0 0 7.3 20h9.4a2 2 0 0 0 1.8-3L14 9V3" {...p} /><path d="M7.5 15h9" {...p} /></>,
+    pen: <><path d="M12 20h9" {...p} /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" {...p} /></>,
+    shield: <><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" {...p} /><path d="M9 12l2 2 4-4" {...p} /></>,
+    gate: <><path d="M6 21V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v15" {...p} /><path d="M3 21h18M9 21V11h6v10M9 8h6" {...p} /></>,
+    bell: <><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" {...p} /><path d="M13.7 21a2 2 0 0 1-3.4 0" {...p} /></>,
+    search: <><circle cx="11" cy="11" r="7" {...p} /><path d="M21 21l-4-4" {...p} /></>,
+    settings: <><circle cx="12" cy="12" r="3" {...p} /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 2.6 14H2a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9 2.6V2a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 17 4a1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.6 1.6 0 0 0 21.4 9H21a2 2 0 1 1 0 4z" {...p} /></>,
+    plus: <><path d="M12 5v14M5 12h14" {...p} /></>,
+    chevron: <><path d="M9 6l6 6-6 6" {...p} /></>,
+    chevDown: <><path d="M6 9l6 6 6-6" {...p} /></>,
+    arrow: <><path d="M5 12h14M13 6l6 6-6 6" {...p} /></>,
+    link: <><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1" {...p} /><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" {...p} /></>,
+    check: <><path d="M4 12l5 5L20 6" {...p} /></>,
+    x: <><path d="M6 6l12 12M18 6L6 18" {...p} /></>,
+    play: <><path d="M7 5l11 7-11 7z" {...p} /></>,
+    pause: <><path d="M8 5v14M16 5v14" {...p} /></>,
+    clock: <><circle cx="12" cy="12" r="9" {...p} /><path d="M12 7v5l3 2" {...p} /></>,
+    cpu: <><rect x="6" y="6" width="12" height="12" rx="2" {...p} /><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" {...p} /><rect x="10" y="10" width="4" height="4" rx="1" {...p} /></>,
+    server: <><rect x="3" y="4" width="18" height="7" rx="2" {...p} /><rect x="3" y="13" width="18" height="7" rx="2" {...p} /><path d="M7 7.5h.01M7 16.5h.01" {...p} /></>,
+    file: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" {...p} /><path d="M14 3v5h5" {...p} /></>,
+    git: <><circle cx="6" cy="6" r="2.5" {...p} /><circle cx="6" cy="18" r="2.5" {...p} /><circle cx="18" cy="9" r="2.5" {...p} /><path d="M6 8.5v7M18 11.5c0 3-3 3.5-6 3.5" {...p} /></>,
+    chart: <><path d="M4 20V4M4 20h16" {...p} /><path d="M7 16l4-5 3 3 4-7" {...p} /></>,
+    grid: <><rect x="3" y="3" width="7" height="7" rx="1.5" {...p} /><rect x="14" y="3" width="7" height="7" rx="1.5" {...p} /><rect x="3" y="14" width="7" height="7" rx="1.5" {...p} /><rect x="14" y="14" width="7" height="7" rx="1.5" {...p} /></>,
+    layers: <><path d="M12 3l9 5-9 5-9-5z" {...p} /><path d="M3 13l9 5 9-5M3 17l9 5 9-5" {...p} opacity="0.5" /></>,
+    sparkle: <><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" {...p} /></>,
+    refresh: <><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5" {...p} /></>,
+    logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" {...p} /><path d="M16 17l5-5-5-5M21 12H9" {...p} /></>,
+    dot: <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />,
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" style={{ display: 'block', ...style }}>
+      {paths[name]}
+    </svg>
+  );
+}

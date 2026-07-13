@@ -1,0 +1,26 @@
+# 开发覆盖：热重载、源码挂载、前端用 vite dev server
+# 用法: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up --build
+services:
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ../backend:/srv/backend
+      - appdata:/srv/data
+
+  worker:
+    command: arq worker.settings.WorkerSettings --watch .
+    volumes:
+      - ../backend:/srv/backend
+      - appdata:/srv/data
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+      target: build                 # 只用 node 阶段
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ../frontend:/srv/frontend
+      - /srv/frontend/node_modules  # 容器内自己的 node_modules
+    ports:
+      - "5173:5173"

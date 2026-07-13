@@ -1,0 +1,37 @@
+export interface StatusMeta {
+  cls: string;
+  zh: string;
+  en: string;
+}
+
+export const STATUS: Record<string, StatusMeta> = {
+  candidate: { cls: 'st-candidate', zh: '候选', en: 'candidate' },
+  accepted: { cls: 'st-accepted', zh: '已采纳', en: 'accepted' },
+  implemented: { cls: 'st-implemented', zh: '已实验', en: 'implemented' },
+  drafted: { cls: 'st-drafted', zh: '初稿', en: 'drafted' },
+  reviewed: { cls: 'st-reviewed', zh: '已评审', en: 'reviewed' },
+  rejected: { cls: 'st-rejected', zh: '已淘汰', en: 'rejected' },
+  running: { cls: 'st-running', zh: '运行中', en: 'running' },
+  done: { cls: 'st-implemented', zh: '完成', en: 'done' },
+  summarized: { cls: 'st-implemented', zh: '已综合', en: 'summarized' },
+  ingested: { cls: 'st-drafted', zh: '已收录', en: 'ingested' },
+  planned: { cls: 'st-candidate', zh: '已规划', en: 'planned' },
+  pending: { cls: 'st-candidate', zh: '待审批', en: 'pending' },
+  approved: { cls: 'st-implemented', zh: '已批准', en: 'approved' },
+};
+
+export interface StatusPillProps {
+  status: string;
+  sm?: boolean;
+}
+
+export function StatusPill({ status, sm }: StatusPillProps) {
+  const s = STATUS[status] ?? { cls: '', zh: status, en: status };
+  return (
+    <span className={`pill ${s.cls}${sm ? ' sm' : ''}`}>
+      <span className="dot" />
+      {s.zh}
+      <span style={{ opacity: 0.55, fontWeight: 500, fontSize: '0.9em' }}>{s.en}</span>
+    </span>
+  );
+}
