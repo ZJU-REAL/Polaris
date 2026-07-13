@@ -234,6 +234,7 @@ export const LLM_STAGES = [
   'interview',
   'relevance',
   'librarian',
+  'embedding',
   'forge',
   'debate',
   'experiment',
@@ -275,6 +276,168 @@ export interface LlmUsageRow {
   prompt_tokens: number;
   completion_tokens: number;
   calls: number;
+}
+
+// ============================================================
+// M2 · Papers（论文库）— docs/api-m2.md
+// ============================================================
+
+export type PaperStatus = 'candidate' | 'scored' | 'excluded' | 'fetched' | 'compiled' | 'included';
+
+export type PaperSort = 'relevance' | '-published_at';
+
+export interface PaperAuthor {
+  name: string;
+}
+
+export interface PaperRead {
+  id: string;
+  project_id: string;
+  title: string;
+  authors: PaperAuthor[];
+  year: number | null;
+  venue: string | null;
+  arxiv_id: string | null;
+  doi: string | null;
+  url: string | null;
+  published_at: string | null;
+  /** 0-1，未打分为 null */
+  relevance_score: number | null;
+  status: PaperStatus;
+  tldr: string | null;
+  has_wiki: boolean;
+  created_at: string;
+}
+
+export interface PaperConceptRef {
+  id: string;
+  name: string;
+  category: ConceptCategory;
+}
+
+export interface PaperDetail extends PaperRead {
+  abstract: string | null;
+  /** markdown，双链为 [[概念名]] */
+  wiki_content: string | null;
+  pdf_available: boolean;
+  concepts: PaperConceptRef[];
+}
+
+export interface PageOf<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+// ============================================================
+// M2 · Concepts（概念库）
+// ============================================================
+
+export type ConceptCategory =
+  | 'method'
+  | 'architecture'
+  | 'methodology'
+  | 'problem'
+  | 'metric'
+  | 'dataset'
+  | 'other';
+
+export interface ConceptRead {
+  id: string;
+  project_id: string;
+  name: string;
+  category: ConceptCategory;
+  /** 一句话定义 */
+  definition: string | null;
+  paper_count: number;
+}
+
+export interface ConceptPaperRef {
+  id: string;
+  title: string;
+  year: number | null;
+}
+
+export interface ConceptDetail extends ConceptRead {
+  wiki_content: string | null;
+  papers: ConceptPaperRef[];
+  related: { id: string; name: string }[];
+}
+
+// ============================================================
+// M2 · Search（关键词 / 语义检索）
+// ============================================================
+
+export type SearchMode = 'keyword' | 'semantic';
+
+export interface SearchResult {
+  papers: (PaperRead & { score?: number | null })[];
+  concepts: (ConceptRead & { score?: number | null })[];
+  /** semantic 不可用时后端回退 keyword，并在此说明实际使用的模式 */
+  mode_used?: SearchMode;
+}
+
+// ============================================================
+// M2 · Ingest（冷启动 / 增量同步，复用 Voyage）
+// ============================================================
+
+export type IngestMode = 'bootstrap' | 'incremental';
+
+export interface IngestKnobs {
+  /** bootstrap 回填月数（3-24） */
+  months_back?: number;
+  /** 本次最多精读编译篇数（成本上限） */
+  max_papers?: number;
+  /** 相关度阈值 0-1 */
+  relevance_threshold?: number;
+  /** 引文雪球层数 0-2 */
+  snowball_depth?: number;
+  /** 打分后精读编译前 N 篇 */
+  compile_top_n?: number;
+}
+
+export interface IngestLastRun {
+  voyage_id: string;
+  status: string;
+  finished_at: string | null;
+}
+
+export interface PaperCounts {
+  candidate?: number;
+  scored?: number;
+  fetched?: number;
+  compiled?: number;
+  excluded?: number;
+  included?: number;
+  total?: number;
+}
+
+export interface IngestState {
+  /** 水位线日期（ISO）；从未 ingest 过为 null */
+  watermark: string | null;
+  last_run: IngestLastRun | null;
+  paper_counts: PaperCounts;
+  running_voyage_id: string | null;
+}
+
+// ============================================================
+// M2 · Dashboard 统计
+// ============================================================
+
+export interface ActivityRead {
+  id: string;
+  kind: string;
+  message: string;
+  created_at: string;
+}
+
+export interface StatsRead {
+  papers_total: number;
+  papers_today: number;
+  ideas_candidate: number;
+  gates_pending: number;
+  recent_activities: ActivityRead[];
 }
 
 // ============================================================
@@ -353,6 +516,77 @@ export const api = {
   },
   decideGate(id: string, decision: GateDecision, comment?: string): Promise<GateRead> {
     return requestJson<GateRead>(`/gates/${id}/${decision}`, 'POST', comment ? { comment } : {});
+  },
+
+  // —— M2 · Papers ——
+  listPapers(
+    projectId: string,
+    opts: { status?: PaperStatus; q?: string; sort?: PaperSort; page?: number; size?: number } = {},
+  ): Promise<PageOf<PaperRead>> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.q) params.set('q', opts.q);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    const qs = params.toString();
+    return request<PageOf<PaperRead>>(`/projects/${projectId}/papers${qs ? `?${qs}` : ''}`);
+  },
+  getPaper(id: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/papers/${id}`);
+  },
+  /** 人工纳入/排除。 */
+  patchPaper(id: string, input: { status: 'included' | 'excluded' }): Promise<PaperRead> {
+    return requestJson<PaperRead>(`/papers/${id}`, 'PATCH', input);
+  },
+
+  // —— M2 · Concepts ——
+  listConcepts(
+    projectId: string,
+    opts: { category?: ConceptCategory; q?: string } = {},
+  ): Promise<ConceptRead[]> {
+    const params = new URLSearchParams();
+    if (opts.category) params.set('category', opts.category);
+    if (opts.q) params.set('q', opts.q);
+    const qs = params.toString();
+    return request<ConceptRead[]>(`/projects/${projectId}/concepts${qs ? `?${qs}` : ''}`);
+  },
+  getConcept(id: string): Promise<ConceptDetail> {
+    return request<ConceptDetail>(`/concepts/${id}`);
+  },
+
+  // —— M2 · Search ——
+  searchProject(
+    projectId: string,
+    opts: { q: string; mode?: SearchMode; limit?: number },
+  ): Promise<SearchResult> {
+    const params = new URLSearchParams({ q: opts.q });
+    if (opts.mode) params.set('mode', opts.mode);
+    if (opts.limit) params.set('limit', String(opts.limit));
+    return request<SearchResult>(`/projects/${projectId}/search?${params.toString()}`);
+  },
+
+  // —— M2 · Ingest ——
+  startIngest(projectId: string, input: { mode: IngestMode; knobs?: IngestKnobs }): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/projects/${projectId}/ingest`, 'POST', input);
+  },
+  getIngestState(projectId: string): Promise<IngestState> {
+    return request<IngestState>(`/projects/${projectId}/ingest/state`);
+  },
+
+  // —— M2 · Obsidian 导出（zip blob） ——
+  async downloadObsidianExport(projectId: string): Promise<Blob> {
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const res = await fetch(`${BASE}/projects/${projectId}/export/obsidian`, { headers });
+    if (!res.ok) throw new ApiError(res.status, res.statusText || `HTTP ${res.status}`);
+    return res.blob();
+  },
+
+  // —— M2 · Dashboard 统计 ——
+  getStats(projectId: string): Promise<StatsRead> {
+    return request<StatsRead>(`/projects/${projectId}/stats`);
   },
 
   // —— Admin · LLM ——

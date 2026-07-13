@@ -15,6 +15,7 @@ os.environ["POLARIS_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMPDIR}/test.db"
 os.environ["POLARIS_SECRET_KEY"] = "test-secret-key-0123456789abcdef0123456789abcdef"
 os.environ["POLARIS_INVITE_CODE"] = "test-invite"
 os.environ["POLARIS_ENCRYPTION_KEY"] = ""
+os.environ["POLARIS_DATA_DIR"] = f"{_TMPDIR}/data"  # PDF/全文落盘目录（M2）
 
 from app.core.db import Base, dispose_engine, get_engine  # noqa: E402
 from app.core.events import get_event_bus  # noqa: E402

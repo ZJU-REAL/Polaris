@@ -22,6 +22,8 @@ dependencies = [
     "asyncssh>=2.18",
     "cryptography>=43",
     "python-multipart>=0.0.12",
+    "pgvector>=0.5",
+    "pymupdf>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +33,7 @@ dev = [
     "httpx>=0.27",
     "aiosqlite>=0.20",
     "fakeredis>=2.26",
+    "respx>=0.22",
     "ruff>=0.8",
 ]
 

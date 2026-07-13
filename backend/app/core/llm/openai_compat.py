@@ -98,5 +98,17 @@ class OpenAICompatProvider(LLMProvider):
                 if content := delta.get("content"):
                     yield content
 
+    async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+        resp = await self._client.post(
+            f"{self._base_url}/embeddings",
+            headers=self._headers(),
+            json={"model": model, "input": texts},
+        )
+        resp.raise_for_status()
+        data = resp.json()["data"]
+        # 按 index 还原顺序（OpenAI 兼容端点保证有 index 字段）
+        data.sort(key=lambda item: item.get("index", 0))
+        return [item["embedding"] for item in data]
+
     async def aclose(self) -> None:
         await self._client.aclose()

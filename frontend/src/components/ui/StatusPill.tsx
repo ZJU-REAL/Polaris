@@ -18,6 +18,12 @@ export const STATUS: Record<string, StatusMeta> = {
   planned: { cls: 'st-candidate', zh: '已规划', en: 'planned' },
   pending: { cls: 'st-candidate', zh: '待审批', en: 'pending' },
   approved: { cls: 'st-implemented', zh: '已批准', en: 'approved' },
+  // —— Paper 状态（M2 论文库） ——
+  scored: { cls: 'st-accepted', zh: '已打分', en: 'scored' },
+  fetched: { cls: 'st-drafted', zh: '已抓取', en: 'fetched' },
+  compiled: { cls: 'st-reviewed', zh: '已编译', en: 'compiled' },
+  included: { cls: 'st-implemented', zh: '已纳入', en: 'included' },
+  excluded: { cls: 'st-rejected', zh: '已排除', en: 'excluded' },
   // —— Voyage 状态机 ——
   planning: { cls: 'st-drafted', zh: '规划中', en: 'planning' },
   executing: { cls: 'st-running', zh: '执行中', en: 'executing' },

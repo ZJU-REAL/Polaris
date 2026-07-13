@@ -20,7 +20,7 @@ from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.security import decrypt_secret
 
-# 科研环节枚举（docs/api-m1.md §2）
+# 科研环节枚举（docs/api-m1.md §2；M2 新增 embedding，见 docs/api-m2.md §7）
 STAGES = (
     "default",
     "navigator",
@@ -28,6 +28,7 @@ STAGES = (
     "interview",
     "relevance",
     "librarian",
+    "embedding",
     "forge",
     "debate",
     "experiment",
@@ -185,6 +186,28 @@ class LLMRouter:
             voyage_id=voyage_id,
         )
         return result
+
+    async def embed(
+        self,
+        texts: list[str],
+        *,
+        stage: str = "embedding",
+        user_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+        voyage_id: uuid.UUID | None = None,
+    ) -> list[list[float]]:
+        """文本嵌入（stage 默认 embedding）。provider 不支持时抛 NotImplementedError。"""
+        provider, route = await self.resolve(stage)
+        vectors = await provider.embed(texts, model=route.model)
+        await self._record_usage(
+            stage=stage,
+            model=route.model,
+            usage={"prompt_tokens": sum(estimate_tokens(t) for t in texts)},
+            user_id=user_id,
+            project_id=project_id,
+            voyage_id=voyage_id,
+        )
+        return vectors
 
     async def stream(
         self,

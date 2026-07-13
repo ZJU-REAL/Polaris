@@ -8,6 +8,8 @@ services:
       - appdata:/srv/data
 
   worker:
+    # 注意：arq --watch 只重载 settings 模块，app/ 下已导入模块不会刷新；
+    # 改了 worker 侧代码后需 `docker compose restart worker` 才真正生效
     command: arq worker.settings.WorkerSettings --watch .
     volumes:
       - ../backend:/srv/backend

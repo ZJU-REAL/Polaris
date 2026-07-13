@@ -331,6 +331,59 @@ select.input { padding-right: 8px; cursor: pointer; }
 .table tr:last-child td { border-bottom: none; }
 
 /* ============================================================
+   Research Wiki (M2) — split view + markdown
+   ============================================================ */
+.split { display: flex; flex: 1; min-height: 0; }
+.split-list {
+  width: 360px; flex-shrink: 0; min-height: 0;
+  border-right: 0.5px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.split-detail { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+input[type="range"] { accent-color: var(--accent); cursor: pointer; }
+
+/* [[概念]] 双链 chip */
+.wikilink {
+  display: inline-flex; align-items: center; padding: 0 7px; margin: 0 1px;
+  border-radius: 6px; background: var(--accent-soft); color: var(--accent-text);
+  font-size: 0.92em; font-weight: 600; cursor: pointer; line-height: 1.55;
+  transition: background 0.12s;
+}
+.wikilink:hover { background: var(--accent-soft-2); }
+
+/* markdown（安全渲染，见 lib/markdown.tsx） */
+.md { font-size: 13.5px; line-height: 1.75; color: var(--text); overflow-wrap: break-word; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+  font-weight: 680; letter-spacing: -0.01em; line-height: 1.3; margin: 22px 0 8px;
+}
+.md h1 { font-size: 19px; }
+.md h2 { font-size: 16.5px; padding-bottom: 6px; border-bottom: 0.5px solid var(--border); }
+.md h3 { font-size: 14.5px; }
+.md h4, .md h5, .md h6 { font-size: 13.5px; }
+.md p { margin: 8px 0; }
+.md ul, .md ol { margin: 8px 0; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md a { color: var(--accent-text); text-decoration: none; border-bottom: 1px solid var(--accent-soft-2); }
+.md a:hover { border-bottom-color: var(--accent); }
+.md code {
+  font-family: var(--mono); font-size: 0.88em; background: var(--surface-3);
+  border-radius: 5px; padding: 1.5px 5px; color: var(--accent-text);
+}
+.md pre.codeblock { margin: 10px 0; }
+.md blockquote {
+  margin: 10px 0; padding: 4px 14px; border-left: 3px solid var(--accent-soft-2);
+  color: var(--text-2); background: var(--surface-2); border-radius: 0 8px 8px 0;
+}
+.md hr { height: 0.5px; background: var(--border-2); border: 0; margin: 18px 0; }
+.md-table-wrap { overflow-x: auto; margin: 10px 0; }
+.md table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.md th, .md td { border: 0.5px solid var(--border-2); padding: 6px 10px; text-align: left; vertical-align: top; }
+.md th { background: var(--surface-2); font-weight: 650; white-space: nowrap; }
+
+/* ============================================================
    Toast
    ============================================================ */
 .toast-host {

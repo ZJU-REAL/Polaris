@@ -30,6 +30,8 @@ services:
       dockerfile: deploy/Dockerfile.api
     restart: unless-stopped
     env_file: ../.env
+    environment:
+      POLARIS_DATA_DIR: /srv/data   # PDF/产物写挂载卷，勿写进代码树（会触发 --watch 重载）
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,6 +48,8 @@ services:
       dockerfile: deploy/Dockerfile.worker
     restart: unless-stopped
     env_file: ../.env
+    environment:
+      POLARIS_DATA_DIR: /srv/data
     depends_on:
       postgres:
         condition: service_healthy

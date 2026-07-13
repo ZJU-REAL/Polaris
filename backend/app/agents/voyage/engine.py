@@ -18,7 +18,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.voyage.actions import ActionContext
@@ -30,6 +30,7 @@ from app.core.events import EventBus
 from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.base import utcnow
 from app.models.gate import Gate
+from app.models.llm_config import LLMUsage
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep
 
 MAX_REPLANS = 2
@@ -310,6 +311,9 @@ class VoyageEngine:
         step_row.status = "passed" if verdict.get("passed") else "failed"
         step_row.tokens = self._sum_usage(action_usage or {}, verify_usage)
         self._accumulate_usage(run, step_row.tokens)
+        # observation 未携带 usage 的动作（如 wiki 批处理）绕过了上面的累计，
+        # 以 LLMUsage 明细（router 记账，含 voyage_id）为准刷新 run.usage
+        await self._refresh_usage_from_ledger(session, run)
         await session.commit()
         await self._emit_step(run, step_row)
 
@@ -320,6 +324,27 @@ class VoyageEngine:
             total["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
             total["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
         return total
+
+    @staticmethod
+    async def _refresh_usage_from_ledger(session: AsyncSession, run: VoyageRun) -> None:
+        row = (
+            await session.execute(
+                select(
+                    func.coalesce(func.sum(LLMUsage.prompt_tokens), 0),
+                    func.coalesce(func.sum(LLMUsage.completion_tokens), 0),
+                ).where(LLMUsage.voyage_id == run.id)
+            )
+        ).one()
+        prompt, completion = int(row[0]), int(row[1])
+        current = run.usage or {}
+        # 取两者较大值：明细表可能缺少未走 router 的估算，累计值可能缺少批处理动作
+        prompt = max(prompt, int(current.get("prompt_tokens", 0)))
+        completion = max(completion, int(current.get("completion_tokens", 0)))
+        run.usage = {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+        }
 
     @staticmethod
     def _accumulate_usage(run: VoyageRun, tokens: dict[str, int]) -> None:

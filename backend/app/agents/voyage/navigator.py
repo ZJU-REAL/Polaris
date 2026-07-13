@@ -42,6 +42,33 @@ class NavigatorError(Exception):
     """规划失败（LLM 连续产出非法 JSON 等）。"""
 
 
+# 固定计划模板的 kind（不靠 LLM 自由规划）
+WIKI_KINDS = ("wiki_bootstrap", "wiki_ingest")
+
+
+def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """文献 ingest 固定七步计划（docs/api-m2.md §7）；knobs 从 checkpoint.params 读。"""
+    steps = [
+        ("检索候选（arXiv）", "wiki.search_candidates", "候选论文已入库"),
+        ("引文雪球（Semantic Scholar）", "wiki.snowball", "雪球扩展完成"),
+        ("相关性打分（LLM）", "wiki.score_relevance", "候选论文已全部打分或排除"),
+        ("下载 PDF + 抽全文", "wiki.fetch_extract", "top-N 论文全文就绪（失败降级摘要）"),
+        ("Librarian 编译 wiki 页", "wiki.compile", "top-N 论文已生成中文 wiki markdown"),
+        ("概念上链 + embedding", "wiki.link_concepts", "双链概念已 upsert 并关联论文"),
+        ("更新水位线", "wiki.update_watermark", "项目 ingest_state 已更新"),
+    ]
+    return [
+        {
+            "title": title,
+            "action": action,
+            "params": {},
+            "acceptance": acceptance,
+            "requires_gate": None,
+        }
+        for title, action, acceptance in steps
+    ]
+
+
 def demo_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """demo 航程固定三步：分析目标 → 生成产物（过闸门）→ 总结。"""
     return [
@@ -151,9 +178,11 @@ class Navigator:
         raise NavigatorError(f"navigator produced invalid plan: {last_error}")
 
     async def plan(self, run: VoyageRun, context: dict[str, Any] | None = None) -> list[dict]:
-        """目标 → 步骤列表。demo kind 走固定计划，其余 kind 用 LLM 规划。"""
+        """目标 → 步骤列表。demo / wiki_* kind 走固定计划模板，其余 kind 用 LLM 规划。"""
         if run.kind == "demo":
             return demo_plan(run)
+        if run.kind in WIKI_KINDS:
+            return wiki_plan(run)
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         user_prompt = f"目标：{run.goal}"
         if context:

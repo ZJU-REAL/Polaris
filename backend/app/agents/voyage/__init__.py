@@ -4,6 +4,7 @@
 由 engine.py 的持久化状态机驱动，支持断点恢复、人在环闸门、协作式取消。
 """
 
+from app.agents.voyage import actions_wiki  # noqa: F401  注册 wiki.* 动作
 from app.agents.voyage.engine import VoyageEngine
 
 __all__ = ["VoyageEngine"]

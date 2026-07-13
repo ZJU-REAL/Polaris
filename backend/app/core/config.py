@@ -32,6 +32,10 @@ class Settings(BaseSettings):
 
     # ---- 文献 API ----
     s2_api_key: str = ""  # Semantic Scholar（可空，限流更严）
+    openalex_mailto: str = "polaris@example.org"  # OpenAlex polite pool
+
+    # ---- 文件卷（PDF/全文等产物；容器内挂 /srv/data）----
+    data_dir: str = "./data"
 
     @property
     def is_sqlite(self) -> bool:

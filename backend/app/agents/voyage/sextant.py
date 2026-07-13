@@ -49,7 +49,9 @@ class Sextant:
         action = str(step_def.get("action", ""))
         acceptance = step_def.get("acceptance")
 
-        if action in DETERMINISTIC_ACTIONS:
+        if action in DETERMINISTIC_ACTIONS or action.startswith("wiki."):
+            # wiki.* 为确定性批处理步骤：单篇失败已汇总进 observation.failed，
+            # 步骤级失败（helm 捕获的异常）走上面的 observation.error 分支
             return {"passed": True, "reason": f"确定性步骤 {action} 执行成功"}, {}
 
         content = observation.get("content")

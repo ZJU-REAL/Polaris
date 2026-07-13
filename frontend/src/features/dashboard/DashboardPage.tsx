@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router-dom';
-import { Icon } from '../../components/ui/Icon';
+import { useQuery } from '@tanstack/react-query';
+import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { PipelineFlow } from '../../components/ui/PipelineFlow';
-import { StatCard } from '../../components/ui/StatCard';
+import { StatCard, type StatCardProps } from '../../components/ui/StatCard';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { Delta } from '../../components/ui/Delta';
@@ -10,8 +11,8 @@ import { gateTitle, gateDesc, GATE_KIND_ZH } from '../../components/ui/GateCard'
 import { useShell } from '../../app/AppShell';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
-import type { GateRead } from '../../lib/api';
-import { activities, featuredIdea, pipelineStages, stats } from '../../lib/mock';
+import { api, type ActivityRead, type GateRead, type StatsRead } from '../../lib/api';
+import { featuredIdea, pipelineStages } from '../../lib/mock';
 
 function FeaturedIdeaCard() {
   const navigate = useNavigate();
@@ -50,8 +51,29 @@ function FeaturedIdeaCard() {
   );
 }
 
-// TODO(M2): activities 接后端事件流；当前仍为 mock 数据。
-function ActivityFeed() {
+/** activity kind → icon（后端 kind 为自由字符串，按关键字归类）。 */
+function activityIcon(kind: string): IconName {
+  const k = kind.toLowerCase();
+  if (k.includes('gate')) return 'gate';
+  if (k.includes('ingest') || k.includes('wiki') || k.includes('paper')) return 'book';
+  if (k.includes('idea') || k.includes('forge')) return 'bulb';
+  if (k.includes('experiment') || k.includes('run')) return 'flask';
+  if (k.includes('voyage')) return 'compass';
+  return 'bell';
+}
+
+/** 今天 → HH:mm，否则 MM-DD（活动流左栏窄）。 */
+function fmtClock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const p = (n: number) => String(n).padStart(2, '0');
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  return sameDay ? `${p(d.getHours())}:${p(d.getMinutes())}` : `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function ActivityFeed({ activities, error }: { activities: ActivityRead[]; error: boolean }) {
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <div className="card-pad row" style={{ paddingBottom: 12, justifyContent: 'space-between' }}>
@@ -59,40 +81,45 @@ function ActivityFeed() {
           <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
           近期活动 <span className="en-label" style={{ fontSize: 11 }}>Activity</span>
         </span>
-        <span className="pill sm" style={{ color: 'var(--text-4)' }}>mock · M2 接入</span>
       </div>
       <div style={{ padding: '0 6px 8px' }}>
-        {activities.map((a, i) => (
-          <div key={i} className="row gap12" style={{ padding: '9px 16px', alignItems: 'flex-start' }}>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)', width: 34, flexShrink: 0, paddingTop: 1 }}>
-              {a.t}
-            </div>
-            <div
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 7,
-                flexShrink: 0,
-                background: a.gate ? 'var(--accent-soft)' : 'var(--surface-2)',
-                color: a.gate ? 'var(--accent)' : 'var(--text-3)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Icon name={a.icon} size={13} />
-            </div>
-            <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text)', lineHeight: 1.45, paddingTop: 2 }}>
-              {a.text}
-              {a.live && (
-                <span className="pill sm" style={{ marginLeft: 8, background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-                  <span className="dot pulse" />
-                  LIVE
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
+        {error ? (
+          <div className="empty" style={{ padding: 18 }}>无法加载活动（后端不可用）</div>
+        ) : activities.length === 0 ? (
+          <div className="empty" style={{ padding: 18 }}>暂无活动 — 运行一次文献冷启动试试</div>
+        ) : (
+          activities.map((a) => {
+            const gate = a.kind.toLowerCase().includes('gate');
+            return (
+              <div key={a.id} className="row gap12" style={{ padding: '9px 16px', alignItems: 'flex-start' }}>
+                <div
+                  style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)', width: 36, flexShrink: 0, paddingTop: 1 }}
+                  title={fmtTime(a.created_at)}
+                >
+                  {fmtClock(a.created_at)}
+                </div>
+                <div
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 7,
+                    flexShrink: 0,
+                    background: gate ? 'var(--accent-soft)' : 'var(--surface-2)',
+                    color: gate ? 'var(--accent)' : 'var(--text-3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Icon name={activityIcon(a.kind)} size={13} />
+                </div>
+                <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text)', lineHeight: 1.45, paddingTop: 2 }}>
+                  {a.message}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -201,10 +228,53 @@ function OnboardingEmpty() {
   );
 }
 
+/** GET /projects/{pid}/stats → 4 张指标卡（后端不可用时显示 —）。 */
+function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number): StatCardProps[] {
+  return [
+    {
+      icon: 'book',
+      label: '知识库论文',
+      en: 'Papers in vault',
+      value: stats ? stats.papers_total : '—',
+      sub: stats ? `+${stats.papers_today} 今日` : undefined,
+    },
+    {
+      icon: 'refresh',
+      label: '今日新增',
+      en: 'New today',
+      value: stats ? stats.papers_today : '—',
+      sub: '篇论文',
+    },
+    {
+      icon: 'bulb',
+      label: '候选 Idea',
+      en: 'Idea candidates',
+      value: stats ? stats.ideas_candidate : '—',
+      sub: 'candidate',
+    },
+    {
+      icon: 'gate',
+      label: '待审批闸门',
+      en: 'Pending gates',
+      value: stats ? stats.gates_pending : pendingGatesCount,
+      sub: '人在环',
+      accent: true,
+    },
+  ];
+}
+
 export function DashboardPage() {
   const navigate = useNavigate();
   const { pendingGates, gatesError, openGates } = useShell();
-  const { projects, isLoading: projectsLoading, currentProject } = useProject();
+  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+
+  const statsQuery = useQuery({
+    queryKey: ['stats', currentProjectId],
+    queryFn: () => api.getStats(currentProjectId!),
+    enabled: !!currentProjectId,
+    retry: false,
+    refetchInterval: 60_000,
+  });
 
   // 无项目：引导创建方向
   if (!projectsLoading && projects.length === 0) {
@@ -220,9 +290,9 @@ export function DashboardPage() {
     );
   }
 
-  // TODO(M2): stats 中除待审批闸门外仍为 mock。
-  const statCards = stats.map((s) =>
-    s.icon === 'gate' ? { ...s, value: String(pendingGates.length) } : s,
+  const statCards = buildStatCards(statsQuery.data, pendingGates.length);
+  const stages = pipelineStages.map((s) =>
+    s.key === 'wiki' && statsQuery.data ? { ...s, count: statsQuery.data.papers_total } : s,
   );
 
   return (
@@ -246,7 +316,7 @@ export function DashboardPage() {
       />
 
       <PipelineFlow
-        stages={pipelineStages}
+        stages={stages}
         directionLabel={currentProject?.name ?? 'Polaris'}
         onNavigate={navigate}
       />
@@ -260,7 +330,10 @@ export function DashboardPage() {
       <div className="row gap20" style={{ alignItems: 'flex-start' }}>
         <div className="col gap20" style={{ flex: 1.5, minWidth: 0 }}>
           <FeaturedIdeaCard />
-          <ActivityFeed />
+          <ActivityFeed
+            activities={statsQuery.data?.recent_activities ?? []}
+            error={statsQuery.isError}
+          />
         </div>
         <div style={{ flex: 1, minWidth: 0, position: 'sticky', top: 0 }}>
           <GatePreview gates={pendingGates} gatesError={gatesError} openGates={openGates} />

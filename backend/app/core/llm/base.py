@@ -51,3 +51,7 @@ class LLMProvider(ABC):
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         """流式补全，逐段 yield 文本增量（用于 SSE 转发）。"""
+
+    async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+        """文本嵌入（语义检索用）。不支持的 provider（如 anthropic）抛 NotImplementedError。"""
+        raise NotImplementedError(f"provider {self.name!r} does not support embeddings")
