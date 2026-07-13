@@ -7,8 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api.router import api_router
+from app.api.ws import router as ws_router
 from app.core.config import get_settings
 from app.core.db import create_all, dispose_engine
+from app.core.redis import close_redis
 
 
 @asynccontextmanager
@@ -19,6 +21,7 @@ async def lifespan(app: FastAPI):
         await create_all()
     yield
     await dispose_engine()
+    await close_redis()
 
 
 def create_app() -> FastAPI:
@@ -38,6 +41,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(api_router, prefix="/api")
+    # WS 不挂 /api 前缀：nginx 按 /ws 反代（Upgrade），见 docs/architecture.md §7
+    app.include_router(ws_router)
     return app
 
 

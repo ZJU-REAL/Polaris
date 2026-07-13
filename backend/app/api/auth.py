@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -23,6 +24,13 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         secret = get_settings().secret_key
         self.reset_password_token_secret = secret
         self.verification_token_secret = secret
+
+    async def on_after_register(self, user: User, request: Request | None = None) -> None:
+        """首个注册用户自动提升为平台 admin（实验室自举）。"""
+        session: AsyncSession = self.user_db.session  # type: ignore[attr-defined]
+        total = (await session.execute(select(func.count(User.id)))).scalar_one()
+        if total == 1 and user.role != "admin":
+            await self.user_db.update(user, {"role": "admin"})
 
 
 async def get_user_db(
@@ -54,6 +62,14 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
 
 # 其他路由用这个依赖拿当前登录用户
 current_active_user = fastapi_users.current_user(active=True)
+
+
+async def require_admin(user: User = Depends(current_active_user)) -> User:
+    """管理端依赖：role=admin 才放行。"""
+    if user.role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="ADMIN_REQUIRED")
+    return user
+
 
 router = APIRouter()
 router.include_router(

@@ -1,73 +1,234 @@
-"""按环节（stage）选择 provider/model 的路由器骨架。
+"""按环节（stage）选择 provider/model 的路由器。
 
-TODO(M2): 路由表落 DB（管理端可配置），此处的 DEFAULT_ROUTES 仅作初始回退。
+- 路由表存 DB（ModelRoute + LLMProviderConfig，管理端可改），60s 进程内缓存；
+- 查不到路由时回退 settings 默认（FakeProvider，无 key 也能跑通）；
+- 每次 complete/stream 后写一条 LLMUsage 记账（拿不到 usage 时按 len/4 估算），
+  归属到 user + project + voyage。
 """
 
-from collections.abc import Sequence
+import time
+import uuid
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 
-from app.core.config import Settings, get_settings
+from sqlalchemy import select
+
+from app.core.db import get_sessionmaker
 from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.base import CompletionResult, LLMProvider, Message
+from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
+from app.core.security import decrypt_secret
+
+# 科研环节枚举（docs/api-m1.md §2）
+STAGES = (
+    "default",
+    "navigator",
+    "sextant",
+    "interview",
+    "relevance",
+    "librarian",
+    "forge",
+    "debate",
+    "experiment",
+    "writing",
+    "review",
+)
+
+_ROUTE_CACHE_TTL = 60.0
 
 
 @dataclass(slots=True, frozen=True)
-class RouteTarget:
-    provider: str  # "openai_compat" | "anthropic"
+class ResolvedRoute:
+    provider_kind: str  # openai_compat | anthropic | fake
+    base_url: str | None
+    api_key: str
     model: str
+    temperature: float
 
 
-# 环节 → 模型的初始映射（占位值，待管理端/DB 配置覆盖）
-DEFAULT_ROUTES: dict[str, RouteTarget] = {
-    "interview": RouteTarget("anthropic", "claude-sonnet-4-5"),
-    "survey": RouteTarget("openai_compat", "deepseek-chat"),
-    "scoring": RouteTarget("openai_compat", "deepseek-chat"),
-    "ideation": RouteTarget("anthropic", "claude-sonnet-4-5"),
-    "review": RouteTarget("anthropic", "claude-sonnet-4-5"),
-    "coding": RouteTarget("anthropic", "claude-sonnet-4-5"),
-    "writing": RouteTarget("anthropic", "claude-sonnet-4-5"),
-    "default": RouteTarget("openai_compat", "deepseek-chat"),
-}
+# 无 DB 路由时的兜底：确定性 fake provider
+_FALLBACK_ROUTE = ResolvedRoute(
+    provider_kind="fake", base_url=None, api_key="", model="fake-default", temperature=0.0
+)
 
 
 class LLMRouter:
-    """按 stage 解析出 (provider, model)，并提供 complete 便捷入口。"""
+    """stage → (provider 实例, model)；complete/stream 自动记账。"""
 
-    def __init__(self, settings: Settings | None = None) -> None:
-        self._settings = settings or get_settings()
-        self._providers: dict[str, LLMProvider] = {}
-        self._routes = dict(DEFAULT_ROUTES)
+    def __init__(self) -> None:
+        self._routes: dict[str, ResolvedRoute] = {}
+        self._routes_loaded_at: float = 0.0
+        self._providers: dict[tuple[str, str | None, str], LLMProvider] = {}
 
-    def _get_provider(self, name: str) -> LLMProvider:
-        if name not in self._providers:
-            if name == "openai_compat":
-                self._providers[name] = OpenAICompatProvider(
-                    base_url=self._settings.openai_compat_base_url,
-                    api_key=self._settings.openai_compat_api_key,
+    def invalidate_cache(self) -> None:
+        """管理端改动 providers/routes 后调用。"""
+        self._routes_loaded_at = 0.0
+
+    async def _load_routes(self) -> dict[str, ResolvedRoute]:
+        from app.models.llm_config import LLMProviderConfig, ModelRoute
+
+        routes: dict[str, ResolvedRoute] = {}
+        async with get_sessionmaker()() as session:
+            stmt = (
+                select(ModelRoute, LLMProviderConfig)
+                .join(LLMProviderConfig, ModelRoute.provider_id == LLMProviderConfig.id)
+                .where(LLMProviderConfig.enabled.is_(True))
+            )
+            for route, provider in (await session.execute(stmt)).all():
+                api_key = (
+                    decrypt_secret(provider.api_key_encrypted) if provider.api_key_encrypted else ""
                 )
-            elif name == "anthropic":
-                self._providers[name] = AnthropicProvider(
-                    api_key=self._settings.anthropic_api_key,
+                routes[route.stage] = ResolvedRoute(
+                    provider_kind=provider.kind,
+                    base_url=provider.base_url,
+                    api_key=api_key,
+                    model=route.model,
+                    temperature=route.temperature,
                 )
+        return routes
+
+    async def _get_routes(self) -> dict[str, ResolvedRoute]:
+        now = time.monotonic()
+        if now - self._routes_loaded_at > _ROUTE_CACHE_TTL:
+            self._routes = await self._load_routes()
+            self._routes_loaded_at = now
+        return self._routes
+
+    def _provider_for(self, route: ResolvedRoute) -> LLMProvider:
+        key = (route.provider_kind, route.base_url, route.api_key)
+        if key not in self._providers:
+            if route.provider_kind == "openai_compat":
+                from app.core.config import get_settings
+
+                base_url = route.base_url or get_settings().openai_compat_base_url
+                self._providers[key] = OpenAICompatProvider(
+                    base_url=base_url, api_key=route.api_key
+                )
+            elif route.provider_kind == "anthropic":
+                self._providers[key] = AnthropicProvider(api_key=route.api_key)
+            elif route.provider_kind == "fake":
+                self._providers[key] = FakeProvider()
             else:
-                raise ValueError(f"unknown LLM provider: {name}")
-        return self._providers[name]
+                raise ValueError(f"unknown LLM provider kind: {route.provider_kind}")
+        return self._providers[key]
 
-    def resolve(self, stage: str) -> tuple[LLMProvider, str]:
-        """按环节返回 (provider 实例, model 名)。TODO(M2): 先查 DB 路由表。"""
-        target = self._routes.get(stage) or self._routes["default"]
-        return self._get_provider(target.provider), target.model
+    async def resolve(self, stage: str) -> tuple[LLMProvider, ResolvedRoute]:
+        """先查 DB 路由表（缓存 60s），无则回退 default 路由，再回退 fake。"""
+        routes = await self._get_routes()
+        route = routes.get(stage) or routes.get("default") or _FALLBACK_ROUTE
+        return self._provider_for(route), route
+
+    async def _record_usage(
+        self,
+        *,
+        stage: str,
+        model: str,
+        usage: dict[str, int],
+        user_id: uuid.UUID | None,
+        project_id: uuid.UUID | None,
+        voyage_id: uuid.UUID | None,
+    ) -> None:
+        from app.models.llm_config import LLMUsage
+
+        async with get_sessionmaker()() as session:
+            session.add(
+                LLMUsage(
+                    user_id=user_id,
+                    project_id=project_id,
+                    voyage_id=voyage_id,
+                    stage=stage,
+                    model=model,
+                    prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                    completion_tokens=int(usage.get("completion_tokens", 0)),
+                )
+            )
+            await session.commit()
+
+    @staticmethod
+    def _ensure_usage(
+        messages: Sequence[Message], content: str, usage: dict[str, int] | None
+    ) -> dict[str, int]:
+        """provider 未返回 usage 时按 len/4 估算。"""
+        usage = dict(usage or {})
+        if not usage.get("prompt_tokens"):
+            usage["prompt_tokens"] = sum(estimate_tokens(m.content) for m in messages)
+        if not usage.get("completion_tokens"):
+            usage["completion_tokens"] = estimate_tokens(content)
+        return usage
 
     async def complete(
         self,
         stage: str,
         messages: Sequence[Message],
         *,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_tokens: int | None = None,
+        user_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+        voyage_id: uuid.UUID | None = None,
     ) -> CompletionResult:
-        provider, model = self.resolve(stage)
-        return await provider.complete(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens
+        provider, route = await self.resolve(stage)
+        result = await provider.complete(
+            messages,
+            model=route.model,
+            temperature=route.temperature if temperature is None else temperature,
+            max_tokens=max_tokens,
         )
+        result.usage = self._ensure_usage(messages, result.content, result.usage)
+        await self._record_usage(
+            stage=stage,
+            model=result.model,
+            usage=result.usage,
+            user_id=user_id,
+            project_id=project_id,
+            voyage_id=voyage_id,
+        )
+        return result
+
+    async def stream(
+        self,
+        stage: str,
+        messages: Sequence[Message],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        user_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+        voyage_id: uuid.UUID | None = None,
+    ) -> AsyncIterator[str]:
+        provider, route = await self.resolve(stage)
+        collected: list[str] = []
+        async for chunk in provider.stream(
+            messages,
+            model=route.model,
+            temperature=route.temperature if temperature is None else temperature,
+            max_tokens=max_tokens,
+        ):
+            collected.append(chunk)
+            yield chunk
+        content = "".join(collected)
+        await self._record_usage(
+            stage=stage,
+            model=route.model,
+            usage=self._ensure_usage(messages, content, None),
+            user_id=user_id,
+            project_id=project_id,
+            voyage_id=voyage_id,
+        )
+
+
+_router: LLMRouter | None = None
+
+
+def get_llm_router() -> LLMRouter:
+    global _router
+    if _router is None:
+        _router = LLMRouter()
+    return _router
+
+
+def reset_llm_router() -> None:
+    """测试用：丢弃单例（清空缓存与 provider 实例）。"""
+    global _router
+    _router = None

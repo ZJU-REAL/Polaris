@@ -18,6 +18,19 @@ export const STATUS: Record<string, StatusMeta> = {
   planned: { cls: 'st-candidate', zh: '已规划', en: 'planned' },
   pending: { cls: 'st-candidate', zh: '待审批', en: 'pending' },
   approved: { cls: 'st-implemented', zh: '已批准', en: 'approved' },
+  // —— Voyage 状态机 ——
+  planning: { cls: 'st-drafted', zh: '规划中', en: 'planning' },
+  executing: { cls: 'st-running', zh: '执行中', en: 'executing' },
+  verifying: { cls: 'st-reviewed', zh: '自检中', en: 'verifying' },
+  replanning: { cls: 'st-drafted', zh: '重规划', en: 'replanning' },
+  paused_gate: { cls: 'st-candidate', zh: '等待审批', en: 'paused' },
+  paused_error: { cls: 'st-failed', zh: '出错暂停', en: 'error' },
+  failed: { cls: 'st-failed', zh: '失败', en: 'failed' },
+  cancelled: { cls: 'st-rejected', zh: '已取消', en: 'cancelled' },
+  // —— Project 状态 ——
+  active: { cls: 'st-implemented', zh: '进行中', en: 'active' },
+  draft: { cls: 'st-candidate', zh: '草稿', en: 'draft' },
+  archived: { cls: 'st-rejected', zh: '已归档', en: 'archived' },
 };
 
 export interface StatusPillProps {

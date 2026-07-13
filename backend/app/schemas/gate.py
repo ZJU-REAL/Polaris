@@ -14,6 +14,10 @@ class GateCreate(BaseModel):
     requested_by: str
 
 
+class GateDecision(BaseModel):
+    comment: str | None = None
+
+
 class GateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -24,6 +28,7 @@ class GateRead(BaseModel):
     payload: dict[str, Any] | None
     requested_by: str
     decided_by: uuid.UUID | None
+    comment: str | None
     decided_at: datetime | None
     created_at: datetime
     updated_at: datetime

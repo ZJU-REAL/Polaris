@@ -5,7 +5,7 @@ export type IconName =
   | 'bell' | 'search' | 'settings' | 'plus' | 'chevron' | 'chevDown' | 'arrow'
   | 'link' | 'check' | 'x' | 'play' | 'pause' | 'clock' | 'cpu' | 'server'
   | 'file' | 'git' | 'chart' | 'grid' | 'layers' | 'sparkle' | 'refresh'
-  | 'logout' | 'dot';
+  | 'logout' | 'dot' | 'compass' | 'users' | 'trash';
 
 export interface IconProps {
   name: IconName;
@@ -56,6 +56,9 @@ export function Icon({ name, size = 17, sw = 1.6, style }: IconProps) {
     refresh: <><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5" {...p} /></>,
     logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" {...p} /><path d="M16 17l5-5-5-5M21 12H9" {...p} /></>,
     dot: <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />,
+    compass: <><circle cx="12" cy="12" r="9" {...p} /><path d="M15.5 8.5l-2.2 5-4.8 2 2.2-5z" {...p} /></>,
+    users: <><circle cx="9" cy="8" r="3.5" {...p} /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" {...p} /><circle cx="17" cy="9" r="2.5" {...p} /><path d="M16.5 14.6c2.6.6 4.5 2.8 4.5 5.4" {...p} /></>,
+    trash: <><path d="M4 7h16M10 7V4h4v3M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" {...p} /><path d="M10 11v7M14 11v7" {...p} /></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" style={{ display: 'block', ...style }}>

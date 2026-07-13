@@ -6,6 +6,7 @@
      POST /api/auth/jwt/login    form-encoded username/password
      POST /api/auth/register     JSON
      GET  /api/users/me
+   M1 契约见 docs/api-m1.md（Projects / Voyages / Gates / Admin LLM）。
    ============================================================ */
 
 const BASE = '/api';
@@ -67,12 +68,19 @@ function requestJson<T>(path: string, method: string, body: unknown): Promise<T>
   });
 }
 
+// ============================================================
+// Users
+// ============================================================
+
 export interface UserRead {
   id: string;
   email: string;
   is_active: boolean;
   is_superuser: boolean;
   is_verified: boolean;
+  /** Polaris 扩展字段（后端可能暂未返回，均可选） */
+  display_name?: string | null;
+  role?: string;
 }
 
 export interface RegisterInput {
@@ -80,6 +88,198 @@ export interface RegisterInput {
   password: string;
   invite_code: string;
 }
+
+/** admin 判定：role=admin 或 fastapi-users superuser。 */
+export function isAdmin(u: UserRead | undefined | null): boolean {
+  return !!u && (u.role === 'admin' || u.is_superuser === true);
+}
+
+// ============================================================
+// Projects（研究方向）— definition 为结构化访谈结果，允许部分草稿
+// ============================================================
+
+export interface RubricDimension {
+  name: string;
+  description: string;
+  weight: number;
+}
+
+export interface AnchorPaper {
+  title: string;
+  arxiv_id?: string;
+  url?: string;
+  reason?: string;
+}
+
+export interface KeywordSpec {
+  arxiv_categories?: string[];
+  include?: string[];
+  synonyms?: Record<string, string[]>;
+}
+
+export interface ProjectDefinition {
+  statement?: string;
+  goals?: string[];
+  in_scope?: string[];
+  out_of_scope?: string[];
+  questions?: string[];
+  rubric?: RubricDimension[];
+  anchor_papers?: AnchorPaper[];
+  keywords?: KeywordSpec;
+  cadence?: string;
+}
+
+export interface ProjectMemberRead {
+  user_id?: string;
+  email?: string;
+  display_name?: string | null;
+  role?: string;
+}
+
+export interface ProjectRead {
+  id: string;
+  name: string;
+  definition: ProjectDefinition | null;
+  status?: string;
+  members?: ProjectMemberRead[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ============================================================
+// Voyages（长时程 agent 任务）
+// ============================================================
+
+export type VoyageStatus =
+  | 'planning'
+  | 'executing'
+  | 'verifying'
+  | 'replanning'
+  | 'paused_gate'
+  | 'paused_error'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
+
+/** 终态集合（不再产生 SSE 事件）。 */
+export const VOYAGE_TERMINAL: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled']);
+
+export interface VoyageVerdict {
+  passed: boolean;
+  reason: string;
+}
+
+export interface VoyageStepRead {
+  id: string;
+  seq: number;
+  title: string;
+  action: string;
+  params: unknown;
+  observation: unknown;
+  verdict: VoyageVerdict | null;
+  status: string;
+  tokens: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface VoyageRead {
+  id: string;
+  kind: string;
+  goal: string;
+  status: VoyageStatus;
+  plan: unknown;
+  cursor: number | null;
+  budget: Record<string, unknown> | null;
+  usage: Record<string, unknown> | null;
+  project_id: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VoyageDetail extends VoyageRead {
+  steps: VoyageStepRead[];
+}
+
+// ============================================================
+// Gates（人在环闸门）
+// ============================================================
+
+export type GateDecision = 'approve' | 'reject';
+
+export interface GateRead {
+  id: string;
+  kind: string;
+  status: 'pending' | 'approved' | 'rejected';
+  payload: Record<string, unknown> | null;
+  project_id: string;
+  requested_by: string | null;
+  decided_by: string | null;
+  comment: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+// ============================================================
+// Admin · LLM
+// ============================================================
+
+export type LlmProviderKind = 'openai_compat' | 'anthropic' | 'fake';
+
+export const LLM_STAGES = [
+  'default',
+  'navigator',
+  'sextant',
+  'interview',
+  'relevance',
+  'librarian',
+  'forge',
+  'debate',
+  'experiment',
+  'writing',
+  'review',
+] as const;
+
+export type LlmStage = (typeof LLM_STAGES)[number];
+
+export interface LlmProviderRead {
+  id: string;
+  name: string;
+  kind: LlmProviderKind;
+  base_url: string | null;
+  api_key_masked: string | null;
+  enabled: boolean;
+}
+
+export interface LlmProviderInput {
+  name: string;
+  kind: LlmProviderKind;
+  base_url?: string;
+  /** 空字符串 = 不变（PATCH 时） */
+  api_key?: string;
+  enabled: boolean;
+}
+
+export interface LlmRoute {
+  stage: string;
+  provider_id: string;
+  model: string;
+  temperature?: number | null;
+}
+
+export interface LlmUsageRow {
+  date: string;
+  stage: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  calls: number;
+}
+
+// ============================================================
+// api object
+// ============================================================
 
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
@@ -101,5 +301,85 @@ export const api = {
   /** Current user. */
   me(): Promise<UserRead> {
     return request<UserRead>('/users/me');
+  },
+
+  // —— Projects ——
+  listProjects(): Promise<ProjectRead[]> {
+    return request<ProjectRead[]>('/projects');
+  },
+  createProject(input: { name: string; definition: ProjectDefinition }): Promise<ProjectRead> {
+    return requestJson<ProjectRead>('/projects', 'POST', input);
+  },
+  getProject(id: string): Promise<ProjectRead> {
+    return request<ProjectRead>(`/projects/${id}`);
+  },
+  patchProject(
+    id: string,
+    input: { name?: string; definition?: ProjectDefinition; status?: string },
+  ): Promise<ProjectRead> {
+    return requestJson<ProjectRead>(`/projects/${id}`, 'PATCH', input);
+  },
+  addProjectMember(id: string, input: { email: string; role: 'member' | 'owner' }): Promise<void> {
+    return requestJson<void>(`/projects/${id}/members`, 'POST', input);
+  },
+
+  // —— Voyages ——
+  createVoyage(input: {
+    kind: string;
+    project_id: string;
+    goal: string;
+    params?: Record<string, unknown>;
+  }): Promise<VoyageRead> {
+    return requestJson<VoyageRead>('/voyages', 'POST', input);
+  },
+  listVoyages(projectId?: string): Promise<VoyageRead[]> {
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+    return request<VoyageRead[]>(`/voyages${qs}`);
+  },
+  getVoyage(id: string): Promise<VoyageDetail> {
+    return request<VoyageDetail>(`/voyages/${id}`);
+  },
+  cancelVoyage(id: string): Promise<VoyageRead> {
+    return request<VoyageRead>(`/voyages/${id}/cancel`, { method: 'POST' });
+  },
+
+  // —— Gates ——
+  listGates(status?: 'pending' | 'decided', projectId?: string): Promise<GateRead[]> {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (projectId) params.set('project_id', projectId);
+    const qs = params.toString();
+    return request<GateRead[]>(`/gates${qs ? `?${qs}` : ''}`);
+  },
+  decideGate(id: string, decision: GateDecision, comment?: string): Promise<GateRead> {
+    return requestJson<GateRead>(`/gates/${id}/${decision}`, 'POST', comment ? { comment } : {});
+  },
+
+  // —— Admin · LLM ——
+  listLlmProviders(): Promise<LlmProviderRead[]> {
+    return request<LlmProviderRead[]>('/admin/llm/providers');
+  },
+  createLlmProvider(input: LlmProviderInput): Promise<LlmProviderRead> {
+    return requestJson<LlmProviderRead>('/admin/llm/providers', 'POST', input);
+  },
+  patchLlmProvider(id: string, input: Partial<LlmProviderInput>): Promise<LlmProviderRead> {
+    return requestJson<LlmProviderRead>(`/admin/llm/providers/${id}`, 'PATCH', input);
+  },
+  deleteLlmProvider(id: string): Promise<void> {
+    return request<void>(`/admin/llm/providers/${id}`, { method: 'DELETE' });
+  },
+  getLlmRoutes(): Promise<LlmRoute[]> {
+    return request<LlmRoute[]>('/admin/llm/routes');
+  },
+  putLlmRoutes(routes: LlmRoute[]): Promise<LlmRoute[]> {
+    return requestJson<LlmRoute[]>('/admin/llm/routes', 'PUT', routes);
+  },
+  getLlmUsage(opts: { projectId?: string; userId?: string; days?: number } = {}): Promise<LlmUsageRow[]> {
+    const params = new URLSearchParams();
+    if (opts.projectId) params.set('project_id', opts.projectId);
+    if (opts.userId) params.set('user_id', opts.userId);
+    if (opts.days) params.set('days', String(opts.days));
+    const qs = params.toString();
+    return request<LlmUsageRow[]>(`/admin/llm/usage${qs ? `?${qs}` : ''}`);
   },
 };

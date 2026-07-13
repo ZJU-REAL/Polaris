@@ -163,6 +163,7 @@ input {
 .st-reviewed { background: var(--violet-bg); color: var(--violet-tx); }
 .st-rejected { background: var(--surface-3); color: var(--text-3); }
 .st-running { background: var(--ok-bg); color: var(--ok-tx); }
+.st-failed { background: var(--danger-bg); color: var(--danger-tx); }
 
 .tag {
   display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 5px;
@@ -231,6 +232,137 @@ input {
   animation: slideIn 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 @keyframes slideIn { from { transform: translateX(100%); } to { transform: none; } }
+
+/* ============================================================
+   Forms (M1)
+   ============================================================ */
+.input, .textarea {
+  padding: 0 12px; border-radius: 8px;
+  border: 1px solid var(--border-2); background: var(--surface-2);
+  font-size: 13px; outline: none; font-family: var(--sans); color: var(--text);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.input { height: 38px; }
+select.input { padding-right: 8px; cursor: pointer; }
+.textarea { padding: 10px 12px; resize: vertical; line-height: 1.55; min-height: 72px; }
+.input:focus, .textarea:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--surface);
+}
+.input:disabled, .textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+.input.mono, .textarea.mono { font-family: var(--mono); font-size: 12.5px; }
+
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field-label { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.field-label .en { color: var(--text-4); font-weight: 400; margin-left: 6px; font-size: 11.5px; }
+.field-hint { font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
+.field-error { font-size: 12px; color: var(--danger-tx); line-height: 1.5; }
+
+.list-row {
+  padding: 7px 10px; background: var(--surface-2); border-radius: 8px;
+  border: 0.5px solid var(--border);
+}
+
+/* clickable chip (multi-select) */
+.chip {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 7px;
+  font-size: 11.5px; font-weight: 500; cursor: pointer;
+  background: var(--surface-2); color: var(--text-2); border: 0.5px solid var(--border-2);
+  transition: background 0.12s, color 0.12s;
+}
+.chip:hover { background: var(--surface-3); }
+.chip.on { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent-soft-2); }
+
+/* ============================================================
+   Wizard step indicator
+   ============================================================ */
+.wiz-steps { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+.wiz-step {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 12px 6px 8px; border-radius: 9px;
+  border: 0.5px solid var(--border); background: var(--surface);
+  opacity: 0.65; user-select: none;
+}
+.wiz-step.on { opacity: 1; border-color: var(--accent-soft-2); background: var(--accent-soft); }
+.wiz-step.done { opacity: 0.9; }
+.wiz-no {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-3); font-size: 10.5px; font-weight: 700;
+}
+.wiz-step.on .wiz-no { background: var(--accent); color: #fff; }
+.wiz-step.done .wiz-no { background: var(--ok-bg); color: var(--ok-tx); }
+.wiz-label { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.wiz-step.on .wiz-label { color: var(--accent-text); }
+.wiz-label .en { display: block; font-size: 10px; font-weight: 400; color: var(--text-4); }
+
+/* ============================================================
+   Timeline (voyage steps)
+   ============================================================ */
+.tl { display: flex; flex-direction: column; }
+.tl-item { display: flex; gap: 14px; }
+.tl-rail { width: 28px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; }
+.tl-dot {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 700; border: 0.5px solid var(--border);
+}
+.tl-line { flex: 1; width: 2px; background: var(--border-2); margin-top: 4px; border-radius: 2px; }
+
+/* ============================================================
+   Voyage state machine bar
+   ============================================================ */
+.sm-bar { display: flex; align-items: center; width: 100%; }
+.sm-node {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 12px;
+  border-radius: 13px; font-size: 12px; font-weight: 650; white-space: nowrap; flex-shrink: 0;
+}
+.sm-link { display: block; flex: 1; height: 2px; margin: 0 8px; border-radius: 2px; min-width: 14px; }
+
+/* ============================================================
+   Table
+   ============================================================ */
+.table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.table th {
+  text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-4); padding: 6px 10px;
+  border-bottom: 1px solid var(--border-2);
+}
+.table td { padding: 9px 10px; border-bottom: 0.5px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: none; }
+
+/* ============================================================
+   Toast
+   ============================================================ */
+.toast-host {
+  position: fixed; bottom: 22px; right: 22px; z-index: 60;
+  display: flex; flex-direction: column; gap: 8px; max-width: 360px;
+}
+.toast {
+  display: flex; align-items: flex-start; gap: 9px;
+  background: var(--text); color: #f2f5f9;
+  border-left: 3px solid var(--accent-soft-2);
+  border-radius: 10px; padding: 11px 14px;
+  font-size: 12.5px; line-height: 1.45; box-shadow: var(--shadow-pop);
+  animation: toastIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ============================================================
+   Modal
+   ============================================================ */
+.modal-scrim {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(10, 22, 44, 0.28);
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeUp 0.18s ease;
+}
+.modal {
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-win);
+  display: flex; flex-direction: column; max-height: 86vh;
+  animation: modalIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
 
 /* ============================================================
    Auth (login / register) page

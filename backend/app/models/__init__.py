@@ -5,11 +5,13 @@ from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.experiment import Experiment, ExperimentRun
 from app.models.gate import Gate
 from app.models.idea import Idea
+from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
 from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project, ProjectMember
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.user import User
+from app.models.voyage import VoyageRun, VoyageStep
 
 __all__ = [
     "Activity",
@@ -18,8 +20,11 @@ __all__ = [
     "ExperimentRun",
     "Gate",
     "Idea",
+    "LLMProviderConfig",
+    "LLMUsage",
     "Manuscript",
     "ManuscriptFile",
+    "ModelRoute",
     "Paper",
     "Project",
     "ProjectMember",
@@ -28,5 +33,7 @@ __all__ = [
     "TimestampMixin",
     "User",
     "UUIDPrimaryKeyMixin",
+    "VoyageRun",
+    "VoyageStep",
     "paper_concepts",
 ]

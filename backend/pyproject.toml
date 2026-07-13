@@ -15,6 +15,7 @@ dependencies = [
     "alembic>=1.14",
     "fastapi-users[sqlalchemy]>=14.0",
     "arq>=0.26",
+    "redis>=5",
     "pydantic>=2.11",
     "pydantic-settings>=2.6",
     "httpx>=0.27",
@@ -29,6 +30,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
     "aiosqlite>=0.20",
+    "fakeredis>=2.26",
     "ruff>=0.8",
 ]
 
