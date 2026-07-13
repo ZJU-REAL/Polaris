@@ -19,6 +19,8 @@ services:
       dockerfile: deploy/Dockerfile.frontend
       target: build                 # 只用 node 阶段
     command: npm run dev -- --host 0.0.0.0
+    environment:
+      VITE_PROXY_TARGET: http://api:8000
     volumes:
       - ../frontend:/srv/frontend
       - /srv/frontend/node_modules  # 容器内自己的 node_modules
