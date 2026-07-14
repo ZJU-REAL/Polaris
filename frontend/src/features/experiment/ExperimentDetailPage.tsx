@@ -19,6 +19,7 @@ import {
 } from '../../lib/api';
 import { budgetText, HypChip } from './shared';
 import { RunTab } from './RunTab';
+import { ExperimentFigures } from './ExperimentFigures';
 
 /* ============================================================
    /experiment/:id — 实验详情：Plan / Setup / Run / Report 四 Tab。
@@ -31,7 +32,7 @@ type TabKey = 'plan' | 'setup' | 'run' | 'report';
 const TABS: { k: TabKey; label: string }[] = [
   { k: 'plan', label: 'Plan 计划' },
   { k: 'setup', label: 'Setup 环境' },
-  { k: 'run', label: 'Run 运行' },
+  { k: 'run', label: 'Run 运行与迭代' },
   { k: 'report', label: 'Report 报告' },
 ];
 
@@ -42,8 +43,81 @@ function planStepText(s: NonNullable<ExperimentPlan['steps']>[number]): string {
   return s.title ?? s.desc ?? s.description ?? JSON.stringify(s);
 }
 
+/** 假设判定依据：plan 回写的 evidence 优先，缺失时从各轮 reflection 的
+    hypothesis_updates 兜底取最近一轮的 evidence。 */
+function hypothesisEvidence(exp: ExperimentDetail): Map<number, string> {
+  const map = new Map<number, string>();
+  const runs = [...(exp.runs ?? [])].sort((a, b) => a.seq - b.seq);
+  for (const run of runs) {
+    for (const u of run.reflection?.hypothesis_updates ?? []) {
+      if (typeof u.index === 'number' && u.evidence && u.evidence.trim() !== '') {
+        map.set(u.index, u.evidence);
+      }
+    }
+  }
+  (exp.plan?.hypotheses ?? []).forEach((h, i) => {
+    if (h.evidence && h.evidence.trim() !== '') map.set(i, h.evidence);
+  });
+  return map;
+}
+
+/** 单条假设：文案 + 实时状态 chip（testing 灰 / verified 绿 / falsified 红），
+    有判定依据时可折叠展开（chip 上也有 tooltip）。 */
+function HypRow({
+  hyp,
+  index,
+  evidence,
+}: {
+  hyp: NonNullable<ExperimentPlan['hypotheses']>[number];
+  index: number;
+  evidence: string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card" style={{ padding: '12px 16px' }}>
+      <div className="row gap12">
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', flexShrink: 0 }}>H{index + 1}</span>
+        <span style={{ fontSize: 13, flex: 1, lineHeight: 1.5 }}>{hyp.text}</span>
+        {evidence && (
+          <button
+            className="btn btn-ghost sm"
+            title={evidence}
+            style={{ flexShrink: 0 }}
+            onClick={() => setOpen((o) => !o)}
+          >
+            依据
+            <Icon
+              name="chevDown"
+              size={11}
+              style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+            />
+          </button>
+        )}
+        <HypChip status={hyp.status} title={evidence} />
+      </div>
+      {open && evidence && (
+        <div
+          style={{
+            marginTop: 9,
+            padding: '9px 12px',
+            borderRadius: 8,
+            background: 'var(--surface-2)',
+            fontSize: 12,
+            lineHeight: 1.6,
+            color: 'var(--text-2)',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          判定依据：{evidence}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () => void }) {
   const plan = exp.plan;
+  const evidence = hypothesisEvidence(exp);
 
   return (
     <div className="fadeup" style={{ maxWidth: 860 }}>
@@ -89,13 +163,7 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           ) : (
             <div className="col gap8" style={{ marginBottom: 22 }}>
               {(plan.hypotheses ?? []).map((h, i) => (
-                <div key={i} className="card" style={{ padding: '12px 16px' }}>
-                  <div className="row gap12">
-                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', flexShrink: 0 }}>H{i + 1}</span>
-                    <span style={{ fontSize: 13, flex: 1, lineHeight: 1.5 }}>{h.text}</span>
-                    <HypChip status={h.status} />
-                  </div>
-                </div>
+                <HypRow key={i} hyp={h} index={i} evidence={evidence.get(i)} />
               ))}
             </div>
           )}
@@ -341,25 +409,40 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
 /* ---------------- Report ---------------- */
 
 function ReportTab({ exp }: { exp: ExperimentDetail }) {
-  if (!exp.report) {
-    return (
-      <div className="card">
-        <EmptyState
-          compact
-          icon="pen"
-          title="报告尚未生成"
-          desc={
-            EXPERIMENT_TERMINAL.has(exp.status)
-              ? '该实验未产出报告。'
-              : '正式运行结束后，agent 会汇总指标与日志尾部生成 markdown 报告。'
-          }
-        />
-      </div>
-    );
-  }
+  const figures = exp.figures ?? [];
   return (
-    <div className="fadeup card card-pad" style={{ maxWidth: 860 }}>
-      <Markdown source={exp.report} />
+    <div className="fadeup" style={{ maxWidth: 860 }}>
+      {/* 实验图表：figures 步骤由 AI 从各轮指标数据绘制 */}
+      {figures.length > 0 && (
+        <>
+          <span className="section-h" style={{ marginBottom: 12 }}>
+            <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
+            实验图表 <span className="en-label" style={{ fontSize: 11 }}>Figures · {figures.length}</span>
+          </span>
+          <div className="card card-pad" style={{ marginBottom: 22 }}>
+            <ExperimentFigures expId={exp.id} figures={figures} />
+          </div>
+        </>
+      )}
+
+      {!exp.report ? (
+        <div className="card">
+          <EmptyState
+            compact
+            icon="pen"
+            title="报告尚未生成"
+            desc={
+              EXPERIMENT_TERMINAL.has(exp.status)
+                ? '该实验未产出报告。'
+                : '自动迭代结束后，AI 会汇总各轮指标、图表与日志生成 markdown 报告。'
+            }
+          />
+        </div>
+      ) : (
+        <div className="card card-pad">
+          <Markdown source={exp.report} />
+        </div>
+      )}
     </div>
   );
 }

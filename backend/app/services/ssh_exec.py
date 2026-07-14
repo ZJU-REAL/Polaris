@@ -28,6 +28,7 @@ WORKDIR_ROOT_SHELL = "~/polaris_runs"  # shell 命令用（~ 由远端展开）
 WORKDIR_ROOT_SFTP = "polaris_runs"  # SFTP 相对 home 目录
 SMOKE_TIMEOUT_SECONDS = 600.0  # 冒烟测试 10 分钟上限
 SETUP_TIMEOUT_SECONDS = 1800.0  # venv + pip install 30 分钟上限
+PLOT_TIMEOUT_SECONDS = 300.0  # plot_figures.py 5 分钟上限（docs/api-m5-a.md §1）
 DEFAULT_CMD_TIMEOUT_SECONDS = 60.0
 
 
@@ -52,6 +53,8 @@ class SSHSession(Protocol):
     async def run(self, command: str, timeout: float | None = None) -> SSHResult: ...
 
     async def write_file(self, path: str, content: str) -> None: ...
+
+    async def read_file(self, path: str) -> bytes: ...
 
     async def close(self) -> None: ...
 
@@ -86,6 +89,10 @@ class AsyncsshSession:
     async def write_file(self, path: str, content: str) -> None:
         async with self._conn.start_sftp_client() as sftp, sftp.open(path, "w") as f:
             await f.write(content)
+
+    async def read_file(self, path: str) -> bytes:
+        async with self._conn.start_sftp_client() as sftp, sftp.open(path, "rb") as f:
+            return await f.read()
 
     async def close(self) -> None:
         self._conn.close()
@@ -293,6 +300,34 @@ class SSHExecutor:
 
     async def run_smoke(self, timeout: float = SMOKE_TIMEOUT_SECONDS) -> SSHResult:
         return await self._run(f"cd {self.workdir} && bash run.sh --smoke", timeout=timeout)
+
+    async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> SSHResult:
+        """执行绘图脚本（固定文件名，LLM 只产出脚本内容，docs/api-m5-a.md §1）。"""
+        return await self._run(
+            f"cd {self.workdir} && .venv/bin/python plot_figures.py", timeout=timeout
+        )
+
+    async def list_dir(self, subdir: str) -> list[str]:
+        """列 workdir 子目录内文件名（相对路径过白名单校验；目录缺失返回空）。"""
+        rel = _validate_relpath(subdir)
+        result = await self._run(f"ls -1 {self.workdir}/{rel} 2>/dev/null")
+        if result.exit_status != 0:
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    async def read_file(self, relpath: str) -> bytes:
+        """SFTP 读回 workdir 内文件（figures 拉回本地镜像用）。"""
+        rel = _validate_relpath(relpath)
+        await self._audit(f"sftp:read {self.workdir}/{rel}")
+        return await self._session.read_file(f"{self._sftp_dir}/{rel}")
+
+    async def read_metrics_json(self) -> str | None:
+        """读 workdir/metrics.json（可选：训练脚本可能写的指标文件）；缺失返回 None。"""
+        result = await self._run(f"cat {self.workdir}/metrics.json 2>/dev/null")
+        text = result.stdout.strip()
+        if result.exit_status != 0 or not text:
+            return None
+        return text
 
     async def launch_run(self) -> tuple[int, str]:
         """后台启动正式运行，返回 (PID, 启动命令)。退出码落 run.exit 供轮询读取。"""

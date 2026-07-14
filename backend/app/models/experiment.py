@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -51,6 +51,10 @@ class Experiment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     report: Mapped[str | None] = mapped_column(Text)  # markdown 报告
     # {name: [{step, value}]} 全实验汇总（各 run 合并）
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    # [{index, name, caption, path 内部}]（docs/api-m5-a.md §2，path 不出 API）
+    figures: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONVariant)
+    # {no_improve_streak, debug_count, stopped_reason}（iterate 循环持续落库）
+    iteration_state: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
 
     runs: Mapped[list["ExperimentRun"]] = relationship(
         back_populates="experiment",
@@ -73,8 +77,12 @@ class ExperimentRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     exit_code: Mapped[int | None] = mapped_column(Integer)
     pid: Mapped[int | None] = mapped_column(Integer)  # 远端进程号（cancel 时 kill 用，不出 API）
     log_path: Mapped[str | None] = mapped_column(String(1024))  # 本地日志镜像路径
-    # {name: [{step, value}]}（解析 POLARIS_METRIC 行）
+    # {name: [{step, value}]}（解析 POLARIS_METRIC 行 + 可选 workdir/metrics.json）
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    # 该轮 structured reflection（docs/api-m5-a.md §1）
+    reflection: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    # 主指标值（plan.primary_metric，平台从 metrics 解析）
+    primary_value: Mapped[float | None] = mapped_column(Float)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

@@ -112,15 +112,15 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """experiment 固定五步计划（docs/api-m4.md §3）：
-    计划 →（compute_budget 闸门）建环境 → 冒烟 → 正式运行 → 报告。
+    """experiment 固定计划（docs/api-m5-a.md §1）：
+    计划 →（compute_budget 闸门）建环境 → 冒烟 → 自动迭代 → 图表 → 报告。
     固定管线不重规划：所有步骤 on_failure="fail"，失败即 voyage failed。
     """
     steps = [
         (
             "实验计划（LLM）",
             "experiment.plan",
-            "plan JSON 已通过严格校验并写入 Experiment.plan",
+            "plan JSON（含 primary_metric）已通过严格校验并写入 Experiment.plan",
             None,
         ),
         (
@@ -130,7 +130,18 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "compute_budget",
         ),
         ("冒烟测试", "experiment.smoke", "run.sh --smoke 退出码为 0", None),
-        ("正式运行（轮询监控）", "experiment.run", "运行结束且指标已解析", None),
+        (
+            "自动迭代（多轮运行 + reflection）",
+            "experiment.iterate",
+            "迭代已按终止条件结束，各轮 reflection 与主指标已落库",
+            None,
+        ),
+        (
+            "实验图表（脚本生成 + VLM 质检）",
+            "experiment.figures",
+            "figures 已生成、拉回本地并写入 Experiment.figures",
+            None,
+        ),
         ("实验报告（LLM）", "experiment.report", "markdown 报告已写入 Experiment.report", None),
     ]
     return [

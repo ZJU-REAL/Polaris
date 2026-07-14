@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
@@ -105,6 +105,29 @@ async def get_experiment(
         runs=experiments_service.serialize_runs(experiment),
         report=experiment.report,
         metrics=experiment.metrics,
+        figures=experiments_service.serialize_figures(experiment),
+        iteration_state=experiment.iteration_state,
+    )
+
+
+@router.get("/experiments/{experiment_id}/figures/{index}/image")
+async def get_experiment_figure_image(
+    experiment_id: uuid.UUID,
+    index: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> FileResponse:
+    """实验图表 PNG（成员校验，模式同论文 figures 图片端点，docs/api-m5-a.md §3）。"""
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    figure = next((f for f in experiment.figures or [] if int(f.get("index", -1)) == index), None)
+    path = Path(str(figure["path"])) if figure and figure.get("path") else None
+    if figure is None or path is None or not path.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FIGURE_NOT_FOUND")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        filename=str(figure.get("name") or f"fig_{index}.png"),
+        content_disposition_type="inline",
     )
 
 

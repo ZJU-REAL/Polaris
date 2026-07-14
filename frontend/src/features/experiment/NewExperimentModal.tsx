@@ -76,6 +76,8 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           budget: {
             ...(Number.isFinite(hours) && hours > 0 ? { max_hours: hours } : {}),
             ...(Number.isFinite(runs) && runs > 0 ? { max_runs: runs } : {}),
+            // M5-A 固定值：连续 2 轮主指标无提升自动停止
+            no_improve_stop: 2,
           },
         },
       });
@@ -105,7 +107,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           新建实验
         </>
       }
-      sub="从已晋级 idea 发起：计划 → 算力预算审批 → SSH 建环境 → 冒烟 → 正式运行 → 报告"
+      sub="从已晋级 idea 发起：计划 → 算力预算审批 → SSH 建环境 → 冒烟 → 自动迭代 → 图表 → 报告"
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>取消</button>
@@ -179,8 +181,16 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         <FormField label="预算 · 最长时数" en="max_hours" style={{ flex: 1 }}>
           <input className="input mono" inputMode="decimal" value={maxHours} onChange={(e) => setMaxHours(e.target.value)} placeholder="4" />
         </FormField>
-        <FormField label="预算 · 最多 run 数" en="max_runs" style={{ flex: 1 }}>
+        <FormField label="预算 · 最多运行轮数" en="max_runs" style={{ flex: 1 }}>
           <input className="input mono" inputMode="numeric" value={maxRuns} onChange={(e) => setMaxRuns(e.target.value)} placeholder="10" />
+        </FormField>
+        <FormField
+          label="预算 · 无提升自动停"
+          en="no_improve_stop"
+          style={{ flex: 1 }}
+          hint="固定值：连续 2 轮主指标无提升自动停止。"
+        >
+          <input className="input mono" value="2 轮" disabled />
         </FormField>
       </div>
       <FormField label="GPU 提示（可选）" en="gpu_hint" hint="如 A100 / cuda:0，供计划阶段参考。">
@@ -188,6 +198,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       </FormField>
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
         消耗真实算力前会提交算力预算审批等待人工确认；超时/超预算自动 kill 并置 failed。
+        进入自动迭代后，AI 每轮跑完会分析结果并决定继续改进、修错重试或停止；连续 2 轮主指标无提升也会自动停止。
       </div>
     </Modal>
   );

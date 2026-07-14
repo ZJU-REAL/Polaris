@@ -1,8 +1,9 @@
 """Experiment Lab 全流程测试：fake LLM + MockSSH 全离线，直接驱动 VoyageEngine。
 
-覆盖：plan→gate→approve→setup→smoke（失败修复重试）→run（POLARIS_METRIC 解析）→report→done、
-预算超时 kill、协作式 cancel（轮询循环内）、cancel API、闸门驳回联动、
-白名单越界拒绝、创建校验（idea promoted / 凭据归属）与成员权限。
+覆盖：plan→gate→approve→setup→smoke（失败修复重试）→iterate（3 轮 improve/stop）→
+figures→report→done、预算超时 kill、协作式 cancel（轮询循环内）、cancel API、
+闸门驳回联动、白名单越界拒绝、创建校验（idea promoted / 凭据归属）与成员权限。
+迭代/图表的专项用例见 test_experiment_iterate.py（docs/api-m5-a.md §6）。
 """
 
 import json
@@ -36,9 +37,25 @@ RUN_LOG = (
 )
 
 
+def metric_log(value: float, step: int = 1) -> str:
+    return (
+        f'POLARIS_METRIC {{"name": "accuracy", "step": {step}, "value": {value}}}\n'
+        "done (fake experiment)\n"
+    )
+
+
+FAKE_PNG = b"\x89PNG\r\n\x1a\n(fake png bytes)"
+
+
 @pytest_asyncio.fixture
 async def fake_ssh(app):
-    server = FakeSSHServer(run_log=RUN_LOG)
+    server = FakeSSHServer(
+        run_log=RUN_LOG,
+        plot_outputs={
+            "figures/primary_metric.png": FAKE_PNG,
+            "figures/primary_metric.pdf": b"%PDF-1.4 (fake pdf)",
+        },
+    )
     ssh_exec.set_connector_factory(lambda: FakeSSHConnector(server))
     yield server
     ssh_exec.set_connector_factory(None)
@@ -106,6 +123,8 @@ async def _approve_gate(client, headers, project_id, expected_exp_id=None):
 
 
 async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_recorder):
+    # 3 轮迭代路径（improve→improve→stop）：主指标逐轮提升
+    fake_ssh.run_logs = [RUN_LOG, metric_log(0.75), metric_log(0.8)]
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
@@ -119,7 +138,7 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     assert exp["status"] == "planning"
     assert exp["project_id"] == project_id
     assert exp["idea_title"] == "共引图增强检索（test idea）"
-    assert exp["budget"] == {"max_hours": 2, "max_runs": 3}
+    assert exp["budget"] == {"max_hours": 2, "max_runs": 3, "no_improve_stop": 2}
     assert exp["workdir"] == f"~/polaris_runs/{exp_id}"
     assert exp["server_host"] == CRED_PAYLOAD["host"]
     voyage_id = exp["voyage_id"]
@@ -142,55 +161,97 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     assert plan["hypotheses"] and all(h["status"] == "testing" for h in plan["hypotheses"])
     assert plan["repro_strategy"]
     assert plan["steps"]
+    assert plan["primary_metric"] == {"name": "accuracy", "direction": "maximize"}
     assert plan["budget_estimate"]["gpu_hours"] == 2
 
     # 闸门 payload 含实验 id 与预算摘要
     gate = await _approve_gate(client, headers, project_id, expected_exp_id=exp_id)
-    assert gate["payload"]["budget"] == {"max_hours": 2, "max_runs": 3}
+    assert gate["payload"]["budget"] == {"max_hours": 2, "max_runs": 3, "no_improve_stop": 2}
     assert gate["payload"]["plan_summary"]["hypotheses"]
     assert gate["payload"]["voyage_id"] == voyage_id
     assert ("resume_voyage", (voyage_id,), {}) in queue_stub.jobs
 
-    # 阶段二：setup → smoke → run → report → done
+    # 阶段二：setup → smoke → iterate → figures → report → done
     await engine.resume(uuid.UUID(voyage_id))
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
     assert voyage["status"] == "done", voyage
-    assert [s["status"] for s in voyage["steps"]] == ["passed"] * 5
+    assert [s["status"] for s in voyage["steps"]] == ["passed"] * 6
+    assert [s["action"] for s in voyage["steps"]] == [
+        "experiment.plan",
+        "experiment.setup",
+        "experiment.smoke",
+        "experiment.iterate",
+        "experiment.figures",
+        "experiment.report",
+    ]
+    iterate_step = voyage["steps"][3]
+    assert iterate_step["observation"]["rounds"] == 3
+    assert iterate_step["observation"]["stopped_reason"] == "假设已全部有结论（fake）"
 
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done"
-    # 运行记录
-    assert len(detail["runs"]) == 1
+    # 迭代运行记录：3 轮，seq 递增，主指标逐轮提升
+    assert len(detail["runs"]) == 3
+    assert [r["seq"] for r in detail["runs"]] == [1, 2, 3]
+    assert all(r["status"] == "succeeded" and r["exit_code"] == 0 for r in detail["runs"])
+    assert [r["primary_value"] for r in detail["runs"]] == [0.7, 0.75, 0.8]
     run = detail["runs"][0]
-    assert run["seq"] == 1
-    assert run["status"] == "succeeded"
-    assert run["exit_code"] == 0
     assert run["started_at"] and run["finished_at"]
     assert "run.sh" in run["command"]
     assert "pid" not in run  # 内部字段不出 API
+    # reflection 逐轮落库：前两轮 improve，末轮 stop
+    assert [r["reflection"]["decision"] for r in detail["runs"]] == ["improve", "improve", "stop"]
+    assert detail["runs"][0]["reflection"]["planned_change"]
+    # 假设回写：末轮 verified / falsified + evidence
+    hyps = detail["plan"]["hypotheses"]
+    assert [h["status"] for h in hyps] == ["verified", "falsified"]
+    assert all(h["evidence"] for h in hyps)
+    # iteration_state 落库
+    assert detail["iteration_state"] == {
+        "no_improve_streak": 0,
+        "debug_count": 0,
+        "stopped_reason": "假设已全部有结论（fake）",
+    }
     # POLARIS_METRIC 解析进 run 与 experiment
     assert run["metrics"]["accuracy"] == [
         {"step": 0, "value": 0.6},
         {"step": 1, "value": 0.7},
     ]
     assert detail["metrics"]["loss"] == [{"step": 1, "value": 0.4}]
+    assert [p["value"] for p in detail["metrics"]["accuracy"]] == [0.6, 0.7, 0.75, 0.8]
+    # 图表：LLM 脚本产图 → 拉回本地 → VLM 质检图注 → figures 落库（path 不出 API）
+    assert detail["figures"] == [
+        {"index": 0, "name": "primary_metric.png", "caption": "（fake）实验图注 0"}
+    ]
+    resp = await client.get(f"/api/experiments/{exp_id}/figures/0/image", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content == FAKE_PNG
+    resp = await client.get(f"/api/experiments/{exp_id}/figures/9/image", headers=headers)
+    assert resp.status_code == 404
     # 报告
     assert detail["report"].startswith("## 实验报告")
 
-    # 远端产物：代码文件经 SFTP 写入 workdir（含必需文件），venv/smoke/launch 命令有序发生
+    # 远端产物：代码文件经 SFTP 写入 workdir（含必需文件），venv/smoke/launch/plot 命令有序发生
     sftp_root = f"polaris_runs/{exp_id}"
-    for name in ("requirements.txt", "run.sh", "train.py"):
+    for name in ("requirements.txt", "run.sh", "train.py", "metrics_all.json", "plot_figures.py"):
         assert f"{sftp_root}/{name}" in fake_ssh.files
     assert "--smoke" in fake_ssh.files[f"{sftp_root}/run.sh"]
     assert "POLARIS_METRIC" in fake_ssh.files[f"{sftp_root}/train.py"]
+    # 平台写的 metrics_all.json 覆盖全部 run；绘图脚本只读该文件
+    metrics_all = json.loads(fake_ssh.files[f"{sftp_root}/metrics_all.json"])
+    assert [r["seq"] for r in metrics_all["runs"]] == [1, 2, 3]
+    assert metrics_all["primary_metric"] == {"name": "accuracy", "direction": "maximize"}
+    assert "metrics_all.json" in fake_ssh.files[f"{sftp_root}/plot_figures.py"]
     joined = "\n".join(fake_ssh.commands)
     assert f"mkdir -p ~/polaris_runs/{exp_id}" in joined
     assert "pip install -r requirements.txt" in joined
     assert "bash run.sh --smoke" in joined
-    assert "nohup" in joined
+    assert joined.count("nohup") == 3  # 3 轮 launch
+    assert ".venv/bin/python plot_figures.py" in joined
 
     # 审计：每条远程命令都有 Activity(kind=ssh.exec)
     async with get_sessionmaker()() as session:
@@ -317,7 +378,7 @@ async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_record
     assert detail["runs"][0]["status"] == "failed"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["status"] == "failed"
-    run_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.run")
+    run_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.iterate")
     assert "max_hours" in run_step["observation"]["error"]
 
 
@@ -550,10 +611,10 @@ async def test_create_experiment_validation(client, queue_stub, fake_ssh):
     assert resp.status_code == 404
     assert resp.json()["detail"] == "CREDENTIAL_NOT_FOUND"
 
-    # 默认预算
+    # 默认预算（M5-A：含 no_improve_stop）
     resp = await _create_experiment(client, headers, project_id, promoted_id, cred_id)
     assert resp.status_code == 201
-    assert resp.json()["budget"] == {"max_hours": 4, "max_runs": 10}
+    assert resp.json()["budget"] == {"max_hours": 4, "max_runs": 10, "no_improve_stop": 2}
 
 
 async def test_experiment_member_permissions(client, queue_stub, fake_ssh):
@@ -573,6 +634,7 @@ async def test_experiment_member_permissions(client, queue_stub, fake_ssh):
         ("post", f"/api/experiments/{exp_id}/cancel"),
         ("get", f"/api/experiments/{exp_id}/logs"),
         ("get", f"/api/experiments/{exp_id}/logs/stream"),
+        ("get", f"/api/experiments/{exp_id}/figures/0/image"),
     ):
         kwargs = {"headers": headers_b}
         if method == "post" and url.endswith("/experiments"):

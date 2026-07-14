@@ -1,4 +1,4 @@
-"""实验 / 运行 schema（docs/api-m4.md §2）。"""
+"""实验 / 运行 schema（docs/api-m4.md §2 + docs/api-m5-a.md §3）。"""
 
 import uuid
 from datetime import datetime
@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 class ExperimentBudget(BaseModel):
     max_hours: float = Field(default=4, ge=0)
     max_runs: int = Field(default=10, ge=1)
+    # 连续 N 轮主指标无提升即停（docs/api-m5-a.md §3）
+    no_improve_stop: int = Field(default=2, ge=1)
 
 
 class ExperimentParams(BaseModel):
@@ -48,8 +50,19 @@ class ExperimentRunRead(BaseModel):
     exit_code: int | None
     log_path: str | None
     metrics: dict[str, Any] | None
+    # 该轮 structured reflection（docs/api-m5-a.md §1）
+    reflection: dict[str, Any] | None
+    primary_value: float | None
     started_at: datetime | None
     finished_at: datetime | None
+
+
+class ExperimentFigure(BaseModel):
+    """实验图表（内部 path 不出 API，图片经 figures/{index}/image 端点取）。"""
+
+    index: int
+    name: str
+    caption: str | None
 
 
 class ExperimentDetail(ExperimentRead):
@@ -57,6 +70,9 @@ class ExperimentDetail(ExperimentRead):
     runs: list[ExperimentRunRead]
     report: str | None
     metrics: dict[str, Any] | None
+    figures: list[ExperimentFigure]
+    # {no_improve_streak, debug_count, stopped_reason}
+    iteration_state: dict[str, Any] | None
 
 
 class ExperimentLogsRead(BaseModel):

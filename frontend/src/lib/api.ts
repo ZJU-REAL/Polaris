@@ -716,6 +716,8 @@ export const EXPERIMENT_TERMINAL: ReadonlySet<string> = new Set(['done', 'failed
 export interface ExperimentBudget {
   max_hours?: number;
   max_runs?: number;
+  /** 连续 N 轮主指标无提升自动停止（M5-A 固定 2） */
+  no_improve_stop?: number;
 }
 
 export interface ExperimentRead {
@@ -737,6 +739,14 @@ export type HypothesisStatus = 'testing' | 'verified' | 'falsified';
 export interface ExperimentHypothesis {
   text: string;
   status: HypothesisStatus;
+  /** 最近一次回写的判定依据（后端可能暂未回传，前端会从 runs[].reflection 兜底） */
+  evidence?: string;
+}
+
+/** 主指标（docs/api-m5-a.md §1：plan 生成时 LLM 必填；旧实验可能缺失）。 */
+export interface PrimaryMetric {
+  name: string;
+  direction: 'maximize' | 'minimize';
 }
 
 /** plan JSON（契约只列字段名，内层结构宽松处理）。 */
@@ -745,9 +755,29 @@ export interface ExperimentPlan {
   repro_strategy?: string;
   steps?: (string | { title?: string; desc?: string; description?: string })[];
   budget_estimate?: string | Record<string, unknown>;
+  primary_metric?: PrimaryMetric;
 }
 
 export type ExperimentRunStatus = 'running' | 'succeeded' | 'failed';
+
+/** 每轮迭代后 AI 的决定：improve 改进 / debug 修错 / stop 停止。 */
+export type IterationDecision = 'improve' | 'debug' | 'stop';
+
+export interface ReflectionHypothesisUpdate {
+  index: number;
+  status: HypothesisStatus;
+  evidence?: string;
+}
+
+/** 每轮运行后的 LLM 结构化反思（docs/api-m5-a.md §1）。 */
+export interface RunReflection {
+  observation?: string;
+  diagnosis?: string;
+  hypothesis_updates?: ReflectionHypothesisUpdate[];
+  decision?: IterationDecision;
+  planned_change?: string;
+  stop_reason?: string | null;
+}
 
 export interface ExperimentRunRead {
   id: string;
@@ -759,11 +789,29 @@ export interface ExperimentRunRead {
   metrics: Record<string, unknown> | null;
   started_at: string | null;
   finished_at: string | null;
+  /** 该轮的结构化反思（M5-A；进行中/旧数据为 null 或缺失） */
+  reflection?: RunReflection | null;
+  /** 平台解析出的主指标值（M5-A；解析不到为 null） */
+  primary_value?: number | null;
 }
 
 export interface ExperimentMetricPoint {
   step: number;
   value: number;
+}
+
+/** 实验图表元数据（M5-A figures 步骤产出）；图片本体走 fetchExperimentFigureImage blob。 */
+export interface ExperimentFigureInfo {
+  index: number;
+  name?: string | null;
+  caption?: string | null;
+}
+
+/** 迭代状态（M5-A）：无提升计数 / 修错计数 / 停止原因。 */
+export interface ExperimentIterationState {
+  no_improve_streak?: number;
+  debug_count?: number;
+  stopped_reason?: string | null;
 }
 
 export interface ExperimentDetail extends ExperimentRead {
@@ -773,6 +821,10 @@ export interface ExperimentDetail extends ExperimentRead {
   report: string | null;
   /** {指标名: [{step, value}]} */
   metrics: Record<string, ExperimentMetricPoint[]> | null;
+  /** 实验图表列表（M5-A；后端未就绪时可能缺失） */
+  figures?: ExperimentFigureInfo[];
+  /** 迭代状态（M5-A；后端未就绪时可能缺失） */
+  iteration_state?: ExperimentIterationState | null;
 }
 
 export interface ExperimentLogs {
@@ -1128,6 +1180,10 @@ export const api = {
     if (opts.tail) params.set('tail', String(opts.tail));
     const qs = params.toString();
     return request<ExperimentLogs>(`/experiments/${id}/logs${qs ? `?${qs}` : ''}`);
+  },
+  /** 单张实验图表 PNG（blob → objectURL 显示，模式同论文 figures）。 */
+  fetchExperimentFigureImage(id: string, index: number): Promise<Blob> {
+    return requestBlob(`/experiments/${id}/figures/${index}/image`);
   },
 
   // —— Admin · LLM ——

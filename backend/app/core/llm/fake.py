@@ -26,8 +26,11 @@ _IDEAS_MARKER = '"ideas"'  # forge 候选生成
 _IDEA_SCORE_MARKER = '"operability"'  # forge 四维打分
 _JUDGE_MARKER = '"winner"'  # debate 裁判判定
 _EXP_PLAN_MARKER = '"repro_strategy"'  # experiment 计划
-_EXP_CODE_MARKER = '"requirements.txt"'  # experiment 代码生成/修复
+_EXP_CODE_MARKER = '"requirements.txt"'  # experiment 代码生成/修复/迭代改进
 _EXP_REPORT_MARKER = "## 实验报告"  # experiment 报告
+_EXP_REFLECTION_MARKER = '"hypothesis_updates"'  # experiment 迭代 reflection（M5-A）
+_EXP_PLOT_MARKER = '"plot_figures.py"'  # experiment 绘图脚本（M5-A）
+_EXP_FIGQC_MARKER = "图表质检员"  # experiment 图表 VLM 质检（M5-A，多模态）
 _READING_MARKER = "论文阅读助手"  # AI 伴读（papers.py CHAT_SYSTEM_PROMPT_TEMPLATE）
 
 EMBEDDING_DIM = 1024  # 与真实 embedding 模型（BGE-M3）维度一致
@@ -76,6 +79,18 @@ class FakeProvider(LLMProvider):
             # 多模态图文编译：librarian markdown 里插入一行 ![[fig:0]] 图片标记
             last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
             content = self._respond_librarian(last_user, with_figure=True)
+        elif images and _EXP_FIGQC_MARKER in full_text:
+            # 多模态实验图表质检：确定性通过并逐图配假图注
+            content = json.dumps(
+                {
+                    "passed": True,
+                    "figures": [
+                        {"index": i, "caption": f"（fake）实验图注 {i}"} for i in range(len(images))
+                    ],
+                    "issues": [],
+                },
+                ensure_ascii=False,
+            )
         elif images:
             # 多模态（论文图筛选注释）：确定性选前两张图并配假图注
             content = json.dumps(
@@ -85,6 +100,11 @@ class FakeProvider(LLMProvider):
                 ],
                 ensure_ascii=False,
             )
+        elif _EXP_REFLECTION_MARKER in full_text:
+            # 迭代 reflection：按调用计数依次 improve → improve → stop（循环，确定性可测）
+            content = self._respond_exp_reflection()
+        elif _EXP_PLOT_MARKER in full_text:
+            content = self._respond_exp_plot()
         else:
             content = self._respond(messages, model)
         prompt_len = sum(estimate_tokens(m.content) for m in messages)
@@ -333,7 +353,7 @@ class FakeProvider(LLMProvider):
 
     @staticmethod
     def _respond_exp_plan() -> str:
-        """experiment 计划：确定性合法 plan JSON（hypotheses/repro/steps/budget_estimate）。"""
+        """experiment 计划：确定性合法 plan JSON（含 M5-A 必填 primary_metric）。"""
         return json.dumps(
             {
                 "hypotheses": [
@@ -342,10 +362,73 @@ class FakeProvider(LLMProvider):
                 ],
                 "repro_strategy": "用官方基线代码在小型合成数据上复现（fake）",
                 "steps": ["准备合成数据（fake）", "训练基线与新方法（fake）", "对比指标（fake）"],
+                "primary_metric": {"name": "accuracy", "direction": "maximize"},
                 "budget_estimate": {"gpu_hours": 2, "runs": 3},
             },
             ensure_ascii=False,
         )
+
+    def _respond_exp_reflection(self) -> str:
+        """迭代 reflection：调用计数循环 improve → improve → stop（确定性，便于测试）。"""
+        seq = getattr(self, "_reflection_calls", 0)
+        self._reflection_calls = seq + 1
+        if seq % 3 == 2:  # 第 3 次（及每循环第 3 次）：stop + 假设定论
+            return json.dumps(
+                {
+                    "observation": "主指标已稳定，结果足以回答假设（fake）",
+                    "diagnosis": "继续迭代收益有限（fake）",
+                    "hypothesis_updates": [
+                        {"index": 0, "status": "verified", "evidence": "主指标逐轮提升（fake）"},
+                        {
+                            "index": 1,
+                            "status": "falsified",
+                            "evidence": "合成数据趋势未复现（fake）",
+                        },
+                    ],
+                    "decision": "stop",
+                    "planned_change": None,
+                    "stop_reason": "假设已全部有结论（fake）",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "observation": f"第 {seq + 1} 轮运行完成，主指标仍有提升空间（fake）",
+                "diagnosis": "学习率偏小导致收敛慢（fake）",
+                "hypothesis_updates": [
+                    {"index": 0, "status": "testing", "evidence": "趋势向好但未定论（fake）"}
+                ],
+                "decision": "improve",
+                "planned_change": f"增大学习率并延长训练步数（fake round {seq + 1}）",
+                "stop_reason": None,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_exp_plot() -> str:
+        """experiment 绘图脚本：只读 metrics_all.json 的确定性 matplotlib 脚本。"""
+        script = (
+            "import json\n"
+            "import os\n"
+            "import matplotlib\n"
+            "matplotlib.use('Agg')\n"
+            "import matplotlib.pyplot as plt\n"
+            "with open('metrics_all.json', encoding='utf-8') as f:\n"
+            "    data = json.load(f)\n"
+            "os.makedirs('figures', exist_ok=True)\n"
+            "seqs = [r['seq'] for r in data['runs']]\n"
+            "values = [r['primary_value'] for r in data['runs']]\n"
+            "plt.figure()\n"
+            "plt.plot(seqs, values, marker='o', label='primary')\n"
+            "plt.xlabel('run seq')\n"
+            "plt.ylabel('value')\n"
+            "plt.title('primary metric by run')\n"
+            "plt.legend()\n"
+            "plt.savefig('figures/primary_metric.png')\n"
+            "plt.savefig('figures/primary_metric.pdf')\n"
+        )
+        return json.dumps({"files": {"plot_figures.py": script}}, ensure_ascii=False)
 
     @staticmethod
     def _respond_exp_code() -> str:

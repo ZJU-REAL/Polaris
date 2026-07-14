@@ -21,12 +21,17 @@ from app.models.idea import Idea
 from app.models.project import Project, ProjectMember
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
-from app.schemas.experiment import ExperimentCreate, ExperimentRead, ExperimentRunRead
+from app.schemas.experiment import (
+    ExperimentCreate,
+    ExperimentFigure,
+    ExperimentRead,
+    ExperimentRunRead,
+)
 from app.services import ssh_exec
 
 logger = logging.getLogger("polaris.experiments")
 
-DEFAULT_BUDGET: dict[str, Any] = {"max_hours": 4, "max_runs": 10}
+DEFAULT_BUDGET: dict[str, Any] = {"max_hours": 4, "max_runs": 10, "no_improve_stop": 2}
 
 
 class IdeaNotFoundError(Exception):
@@ -71,6 +76,17 @@ def read_local_log_tail(path_str: str | None, tail: int) -> tuple[list[str], boo
     if tail <= 0 or len(lines) <= tail:
         return lines, False
     return lines[-tail:], True
+
+
+# ---- 本地图表镜像（docs/api-m5-a.md §1 figures 步骤拉回落盘） ----
+
+
+def figures_dir(experiment_id: uuid.UUID | str) -> Path:
+    return Path(get_settings().data_dir) / "experiments" / str(experiment_id) / "figures"
+
+
+def figure_local_path(experiment_id: uuid.UUID | str, name: str) -> Path:
+    return figures_dir(experiment_id) / name
 
 
 # ---- 创建 ----
@@ -169,6 +185,16 @@ def to_read(experiment: Experiment, idea_title: str) -> ExperimentRead:
 
 def serialize_runs(experiment: Experiment) -> list[ExperimentRunRead]:
     return [ExperimentRunRead.model_validate(r) for r in experiment.runs]
+
+
+def serialize_figures(experiment: Experiment) -> list[ExperimentFigure]:
+    """图表列表出 API：只暴露 index/name/caption（内部 path 不出去）。"""
+    return [
+        ExperimentFigure(
+            index=int(f["index"]), name=str(f["name"]), caption=f.get("caption") or None
+        )
+        for f in experiment.figures or []
+    ]
 
 
 async def list_experiments(
