@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 from redis.asyncio import Redis
 
+from app.core.config import get_settings
 from app.services.literature.cache import MinIntervalLimiter, ResponseCache, cache_key
 
 API_URL = "https://export.arxiv.org/api/query"
@@ -96,7 +97,9 @@ class ArxivClient:
         min_interval: float = 3.0,
         page_size: int = 100,
     ) -> None:
-        self._client = client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        self._client = client or httpx.AsyncClient(
+            proxy=get_settings().outbound_proxy or None, timeout=30.0, follow_redirects=True
+        )
         self._cache = ResponseCache(redis)
         self._limiter = MinIntervalLimiter(min_interval)
         self._page_size = page_size

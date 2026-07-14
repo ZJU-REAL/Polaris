@@ -90,6 +90,23 @@ async def cancel_voyage(
     return VoyageRead.model_validate(run)
 
 
+@router.post("/{voyage_id}/resume", response_model=VoyageRead)
+async def resume_voyage(
+    voyage_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> VoyageRead:
+    """重试 paused_error 的航程（如外部 API 暂时不可达），从断点续跑。"""
+    run = await _get_owned_voyage(session, voyage_id, user)
+    if run.status != "paused_error":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_NOT_PAUSED_ERROR")
+    run.status = "executing"
+    await session.commit()
+    await queue.enqueue("resume_voyage", str(run.id))
+    return VoyageRead.model_validate(run)
+
+
 def _sse_frame(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 

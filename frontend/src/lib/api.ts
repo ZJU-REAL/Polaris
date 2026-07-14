@@ -522,6 +522,10 @@ export const api = {
   cancelVoyage(id: string): Promise<VoyageRead> {
     return request<VoyageRead>(`/voyages/${id}/cancel`, { method: 'POST' });
   },
+  /** 重试 paused_error 的航程，从断点续跑。 */
+  resumeVoyage(id: string): Promise<VoyageRead> {
+    return request<VoyageRead>(`/voyages/${id}/resume`, { method: 'POST' });
+  },
 
   // —— Gates ——
   listGates(status?: 'pending' | 'decided', projectId?: string): Promise<GateRead[]> {

@@ -33,7 +33,9 @@ class SemanticScholarClient:
         rate: float = _FREE_RATE,
         backoff_base: float = 2.0,
     ) -> None:
-        self._client = client or httpx.AsyncClient(timeout=30.0)
+        self._client = client or httpx.AsyncClient(
+            proxy=get_settings().outbound_proxy or None, timeout=30.0
+        )
         self._cache = ResponseCache(redis)
         self._api_key = api_key if api_key is not None else get_settings().s2_api_key
         self._bucket = TokenBucket(rate=rate, capacity=max(1.0, rate * 10))

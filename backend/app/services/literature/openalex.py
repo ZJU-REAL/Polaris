@@ -40,7 +40,9 @@ class OpenAlexClient:
         redis: Redis | None = None,
         mailto: str | None = None,
     ) -> None:
-        self._client = client or httpx.AsyncClient(timeout=30.0)
+        self._client = client or httpx.AsyncClient(
+            proxy=get_settings().outbound_proxy or None, timeout=30.0
+        )
         self._cache = ResponseCache(redis)
         self._mailto = mailto if mailto is not None else get_settings().openalex_mailto
 

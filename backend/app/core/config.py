@@ -36,6 +36,9 @@ class Settings(BaseSettings):
 
     # ---- 文件卷（PDF/全文等产物；容器内挂 /srv/data）----
     data_dir: str = "./data"
+    # 文献 API（arXiv/S2/OpenAlex）出站代理，如 http://host.docker.internal:7897；
+    # LLM/内网服务不走此代理
+    outbound_proxy: str | None = None
 
     @property
     def is_sqlite(self) -> bool:

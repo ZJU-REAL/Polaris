@@ -49,7 +49,7 @@ function machineIndex(status: VoyageStatus): number {
   }
 }
 
-function MachineBar({ status, onOpenGates }: { status: VoyageStatus; onOpenGates: () => void }) {
+function MachineBar({ status, onOpenGates, onResume, resuming }: { status: VoyageStatus; onOpenGates: () => void; onResume?: () => void; resuming?: boolean }) {
   const idx = machineIndex(status);
   const paused = status === 'paused_gate';
   const errored = status === 'paused_error' || status === 'failed' || status === 'cancelled';
@@ -117,7 +117,12 @@ function MachineBar({ status, onOpenGates }: { status: VoyageStatus; onOpenGates
       {status === 'paused_error' && (
         <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 12.5 }}>
           <Icon name="x" size={14} />
-          航程因错误暂停，等待重试或取消。
+          航程因错误暂停（如外部 API 暂时不可达），可重试从断点续跑。
+          {onResume && (
+            <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} disabled={resuming} onClick={onResume}>
+              {resuming ? '重试中…' : '重试恢复'}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -224,6 +229,16 @@ export function VoyageDetailPage() {
     queryFn: () => api.getVoyage(id),
     retry: false,
     enabled: !!id,
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: () => api.resumeVoyage(id),
+    onSuccess: () => {
+      toast('已重新入队，从断点续跑', 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
+      void queryClient.invalidateQueries({ queryKey: ['voyages'] });
+    },
+    onError: (err) => toast(`重试失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   const cancelMutation = useMutation({
@@ -356,7 +371,7 @@ export function VoyageDetailPage() {
 
       {/* 状态机进度条 */}
       <div className="card card-pad" style={{ marginBottom: 20 }}>
-        <MachineBar status={voyage.status} onOpenGates={() => openGates(null)} />
+        <MachineBar status={voyage.status} onOpenGates={() => openGates(null)} onResume={() => resumeMutation.mutate()} resuming={resumeMutation.isPending} />
       </div>
 
       {/* 步骤时间线 */}
