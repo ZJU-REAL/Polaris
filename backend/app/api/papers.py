@@ -36,6 +36,7 @@ from app.services import figure_annotate as figure_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
 from app.services import projects as projects_service
+from app.services import wiki_compile as wiki_compile_service
 from app.services.literature.pdf_extract import figure_path
 
 logger = logging.getLogger(__name__)
@@ -254,6 +255,27 @@ async def extract_paper_figures(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PDF_NOT_AVAILABLE")
     figures = await figure_service.extract_and_annotate(session, paper, user_id=user.id)
     return PaperFiguresResponse(figures=[PaperFigure(**f) for f in figures])
+
+
+# ---- 图文交织 wiki 重编译（docs/api-lit.md §6.6，同步调用约 1 分钟） ----
+
+
+@router.post("/papers/{paper_id}/recompile", response_model=PaperDetail)
+async def recompile_paper(
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperDetail:
+    """重跑筛选注释 + 图文编译，覆盖 wiki_content；无 PDF 时跳过图片仅重写文字。"""
+    paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
+    try:
+        paper = await wiki_compile_service.recompile_paper(session, paper, user_id=user.id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 — LLM 空响应/调用失败等 → 502
+        logger.warning("recompile failed for paper %s", paper_id, exc_info=True)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="COMPILE_FAILED") from e
+    return await _paper_detail(session, paper, user.id)
 
 
 # ---- AI 伴读（docs/api-lit.md §3，SSE 流） ----

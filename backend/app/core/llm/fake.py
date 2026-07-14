@@ -71,7 +71,12 @@ class FakeProvider(LLMProvider):
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
     ) -> CompletionResult:
-        if images:
+        full_text = "\n".join(m.content for m in messages)
+        if images and _LIBRARIAN_MARKER in full_text:
+            # 多模态图文编译：librarian markdown 里插入一行 ![[fig:0]] 图片标记
+            last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+            content = self._respond_librarian(last_user, with_figure=True)
+        elif images:
             # 多模态（论文图筛选注释）：确定性选前两张图并配假图注
             content = json.dumps(
                 [
@@ -386,13 +391,16 @@ class FakeProvider(LLMProvider):
         )
 
     @staticmethod
-    def _respond_librarian(last_user: str) -> str:
+    def _respond_librarian(last_user: str, *, with_figure: bool = False) -> str:
         title_match = re.search(r"标题：(.+)", last_user)
         title = title_match.group(1).strip() if title_match else "未知论文"
+        # 多模态图文编译（请求带 images）时在方法段落后插入图片标记
+        figure_line = "![[fig:0]]\n\n" if with_figure else ""
         return (
             f"## TL;DR\n\n{title} 的一句话总结（fake librarian）。\n\n"
             "## 研究动机\n\n围绕 [[Agent]] 场景的关键问题展开（fake）。\n\n"
             "## 方法\n\n提出基于 [[Agent]] 与 [[强化学习]] 的方法（fake）。\n\n"
+            f"{figure_line}"
             "## 实验结论\n\n在多个基准上验证有效（fake）。\n\n"
             "## 可借鉴点\n\n- 可复用其训练流程（fake）\n\n"
             "## 相关概念\n\n[[Agent]] · [[强化学习]]\n"

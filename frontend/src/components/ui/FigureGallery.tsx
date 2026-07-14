@@ -9,12 +9,27 @@ import { api, ApiError, type FigureInfo, type PaperDetail } from '../../lib/api'
    论文图片画廊（docs/api-lit.md §6.5）：
    - FigureGallery：缩略图横向网格（默认只看重要图，可切换全部）
      + 点击开 Lightbox（大图 + 说明 + 左右切换 + Esc/点击关闭）
+   - FigureEmbed：wiki 正文 ![[fig:N]] 嵌入图（§6.6）：居中大图
+     + 灰色图注，点击开 Lightbox
    - FiguresSection：wiki 详情 / 阅读页信息面板共用的小节封装
-     （有图显示画廊；没图但有 PDF 时显示「提取图片」按钮）
+     （有图显示画廊；没图但有 PDF 时显示「提取图片」按钮；
+     正文已嵌图时可 defaultCollapsed 折叠，避免重复视觉）
    ============================================================ */
 
 function captionOf(fig: FigureInfo): string {
   return fig.caption?.trim() || `第 ${fig.page} 页的图`;
+}
+
+/** wiki 正文里是否有能解析到实际图片的 ![[fig:N]] 标记（用于详情页把画廊默认折叠）。 */
+export function hasEmbeddedFigures(content: string | null | undefined, figures: FigureInfo[]): boolean {
+  if (!content || figures.length === 0) return false;
+  const re = /!\[\[fig:(\d+)\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content))) {
+    const idx = Number(m[1]);
+    if (figures.some((f) => f.index === idx)) return true;
+  }
+  return false;
 }
 
 /** 单张图 blob → objectURL；卸载 / 换图时 revoke。 */
@@ -37,6 +52,101 @@ function useFigureUrl(paperId: string, index: number) {
     return () => URL.revokeObjectURL(u);
   }, [query.data]);
   return { url, isLoading: query.isLoading, isError: query.isError };
+}
+
+/* ---------------- 正文嵌入图（![[fig:N]]） ---------------- */
+
+/**
+ * wiki 正文里的嵌入图：居中大图 + 下方灰色图注。
+ * 点击开 Lightbox：传 onOpen 用外部 lightbox，否则用内置单图 Lightbox。
+ */
+export function FigureEmbed({
+  paperId,
+  fig,
+  onOpen,
+}: {
+  paperId: string;
+  fig: FigureInfo;
+  onOpen?: () => void;
+}) {
+  const { url, isLoading, isError } = useFigureUrl(paperId, fig.index);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  const open = () => {
+    if (onOpen) onOpen();
+    else setLightboxOpen(true);
+  };
+
+  return (
+    <figure style={{ margin: 0, textAlign: 'center' }}>
+      {isLoading ? (
+        <div
+          className="pulse"
+          style={{
+            width: 'min(420px, 100%)',
+            height: 200,
+            margin: '0 auto',
+            borderRadius: 10,
+            background: 'var(--surface-3)',
+          }}
+        />
+      ) : isError || !url ? (
+        <div
+          style={{
+            width: 'min(420px, 100%)',
+            margin: '0 auto',
+            padding: '26px 16px',
+            borderRadius: 10,
+            border: '0.5px dashed var(--border)',
+            background: 'var(--surface-2)',
+            color: 'var(--text-4)',
+          }}
+        >
+          <Icon name="file" size={18} style={{ margin: '0 auto 6px' }} />
+          <div style={{ fontSize: 11.5 }}>这张图加载失败了，稍后再试</div>
+        </div>
+      ) : (
+        <img
+          src={url}
+          alt={captionOf(fig)}
+          loading="lazy"
+          onClick={open}
+          style={{
+            maxWidth: '100%',
+            maxHeight: 420,
+            borderRadius: 10,
+            border: '0.5px solid var(--border)',
+            background: '#fff',
+            cursor: 'zoom-in',
+            objectFit: 'contain',
+          }}
+        />
+      )}
+      <figcaption
+        style={{
+          marginTop: 7,
+          fontSize: 11.5,
+          lineHeight: 1.6,
+          color: 'var(--text-3)',
+          maxWidth: 560,
+          marginLeft: 'auto',
+          marginRight: 'auto',
+        }}
+      >
+        {captionOf(fig)}
+      </figcaption>
+      {lightboxOpen && (
+        <Lightbox
+          paperId={paperId}
+          fig={fig}
+          index={0}
+          count={1}
+          onClose={() => setLightboxOpen(false)}
+          onNav={() => {}}
+        />
+      )}
+    </figure>
+  );
 }
 
 /* ---------------- 缩略图 ---------------- */
@@ -336,17 +446,38 @@ export function FigureGallery({ paperId, figures }: { paperId: string; figures: 
 
 /* ---------------- 小节封装（wiki 详情 / 阅读页共用） ---------------- */
 
-export function FiguresSection({ paper, style }: { paper: PaperDetail; style?: CSSProperties }) {
-  const queryClient = useQueryClient();
-
-  // PaperDetail 未带 figures 字段时兜底拉一次列表（接口未就绪则静默降级）
+/**
+ * 论文图片列表：PaperDetail 自带 figures 优先，缺失时兜底拉一次列表
+ * （接口未就绪则静默降级为 []）。paper 未加载完成时传 undefined，返回 []。
+ */
+export function usePaperFigures(paper: { id: string; figures?: FigureInfo[] } | undefined): FigureInfo[] {
   const figuresQuery = useQuery({
-    queryKey: ['paper-figures', paper.id],
-    queryFn: () => api.listFigures(paper.id),
-    enabled: paper.figures === undefined,
+    queryKey: ['paper-figures', paper?.id],
+    queryFn: () => api.listFigures(paper!.id),
+    enabled: !!paper && paper.figures === undefined,
     retry: false,
   });
-  const figures = paper.figures ?? figuresQuery.data ?? [];
+  return paper?.figures ?? figuresQuery.data ?? [];
+}
+
+export function FiguresSection({
+  paper,
+  style,
+  defaultCollapsed = false,
+}: {
+  paper: PaperDetail;
+  style?: CSSProperties;
+  /** 正文已内嵌图片时默认折叠画廊，避免重复视觉 */
+  defaultCollapsed?: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const figures = usePaperFigures(paper);
+
+  const [expanded, setExpanded] = useState(!defaultCollapsed);
+  // 换论文 / 折叠策略变化时重置展开状态
+  useEffect(() => {
+    setExpanded(!defaultCollapsed);
+  }, [paper.id, defaultCollapsed]);
 
   const extractMutation = useMutation({
     mutationFn: () => api.extractFigures(paper.id),
@@ -400,10 +531,22 @@ export function FiguresSection({ paper, style }: { paper: PaperDetail; style?: C
 
   return (
     <div style={{ marginTop: 18, ...style }}>
-      <div style={{ fontSize: 12.5, fontWeight: 650, marginBottom: 8 }}>
-        重要图片 <span className="en-label" style={{ fontSize: 11 }}>Figures</span>
+      <div className="row gap8" style={{ marginBottom: expanded ? 8 : 0 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 650 }}>
+          重要图片 <span className="en-label" style={{ fontSize: 11 }}>Figures</span>
+        </span>
+        {defaultCollapsed && (
+          <button className="btn btn-ghost sm" onClick={() => setExpanded((e) => !e)}>
+            <Icon
+              name="chevDown"
+              size={12}
+              style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+            />
+            {expanded ? '收起' : `展开全部图片（${figures.length} 张）`}
+          </button>
+        )}
       </div>
-      <FigureGallery paperId={paper.id} figures={figures} />
+      {expanded && <FigureGallery paperId={paper.id} figures={figures} />}
     </div>
   );
 }

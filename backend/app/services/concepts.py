@@ -27,9 +27,15 @@ _SLUG_STRIP_RE = re.compile(r"[^\w一-鿿]+", re.UNICODE)
 
 
 def extract_wikilinks(markdown: str) -> list[str]:
-    """解析 [[..]] 双链，返回去重（保序）的概念名列表。"""
+    """解析 [[..]] 双链，返回去重（保序）的概念名列表。
+
+    跳过 ``![[...]]`` 嵌入标记（如图文 wiki 的 ``![[fig:N]]``，docs/api-lit.md §6.6）。
+    """
+    markdown = markdown or ""
     seen: dict[str, None] = {}
-    for match in WIKILINK_RE.finditer(markdown or ""):
+    for match in WIKILINK_RE.finditer(markdown):
+        if match.start() > 0 and markdown[match.start() - 1] == "!":
+            continue  # 嵌入（图片）标记不是概念双链
         name = match.group(1).strip()
         if name:
             seen.setdefault(name, None)

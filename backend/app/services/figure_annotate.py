@@ -92,6 +92,31 @@ def _degrade(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def figures_annotated(figures: list[dict[str, Any]] | None) -> bool:
+    """是否已过筛选注释：提取初值全为 important=False/caption=None，任一非空即视为已注释。"""
+    return any(f.get("important") or f.get("caption") for f in figures or [])
+
+
+def important_figures_with_bytes(
+    paper: Paper, limit: int = 4
+) -> list[tuple[dict[str, Any], bytes]]:
+    """取重要图及其 PNG bytes（图文编译用）：文件缺失跳过、单张 >4MB 跳过、最多 limit 张。"""
+    out: list[tuple[dict[str, Any], bytes]] = []
+    for fig in paper.figures or []:
+        if not fig.get("important"):
+            continue
+        path = figure_path(str(paper.id), int(fig["index"]))
+        if not path.exists():
+            continue
+        data = path.read_bytes()
+        if len(data) > MAX_IMAGE_BYTES:
+            continue
+        out.append((fig, data))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _build_user_prompt(paper: Paper, sendable: list[dict[str, Any]]) -> str:
     lines = [
         f"标题：{paper.title}",

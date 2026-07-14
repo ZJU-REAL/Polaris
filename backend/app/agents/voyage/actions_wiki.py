@@ -30,11 +30,12 @@ from app.models.base import utcnow
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.services.concepts import extract_wikilinks, normalize_category, wiki_slug
-from app.services.figure_annotate import annotate_figures
+from app.services.figure_annotate import annotate_figures, figures_annotated
 from app.services.literature import get_arxiv_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
+from app.services.wiki_compile import compile_paper
 
 logger = logging.getLogger(__name__)
 
@@ -47,25 +48,11 @@ DEFAULT_KNOBS: dict[str, Any] = {
 }
 
 _MAX_CANDIDATES_CAP = 200
-_FULLTEXT_PROMPT_CHARS = 16000
 
 RELEVANCE_SYSTEM_PROMPT = """\
 你是文献相关性评审，对照研究方向定义评估一篇论文（只看标题与摘要）。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"score": 0 到 1 之间的小数, "reason": "简要理由", "tldr": "一句话中文总结"}
-"""
-
-LIBRARIAN_SYSTEM_PROMPT = """\
-你是 Librarian，负责把一篇论文编译成中文 wiki 页（markdown，正文优先引用全文）。
-按以下结构输出（保留标题层级）：
-## TL;DR
-## 研究动机
-## 方法
-## 实验结论
-## 可借鉴点
-## 相关概念
-文中出现的关键概念（方法/架构/问题/指标/数据集等）用双链 [[概念名]] 标注，
-「相关概念」一节列出全部双链。
 """
 
 CONCEPT_DEF_SYSTEM_PROMPT = """\
@@ -482,7 +469,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     return {"processed": len(papers), "succeeded": fetched, "degraded": degraded, "failed": failed}
 
 
-# ---- 5. Librarian 编译（LLM stage=librarian，全文优先，中文 wiki 页） ----
+# ---- 5. Librarian 图文编译（LLM stage=librarian 多模态，全文优先，中文 wiki 页） ----
 
 
 @register("wiki.compile")
@@ -509,48 +496,9 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             .all()
         )
         for paper in papers:
-            body = None
-            source = "abstract"
-            if paper.full_text_path and Path(paper.full_text_path).exists():
-                body = Path(paper.full_text_path).read_text(encoding="utf-8", errors="ignore")
-                source = "full_text"
-            body = (body or paper.abstract or "（无正文）")[:_FULLTEXT_PROMPT_CHARS]
-            authors = "、".join(
-                a.get("name", "") for a in (paper.authors or []) if isinstance(a, dict)
-            )
-            user_prompt = (
-                f"研究方向：{statement}\n"
-                f"标题：{paper.title}\n"
-                f"作者：{authors or '未知'}\n"
-                f"年份/发表：{paper.year or '未知'} {paper.venue or ''}\n"
-                f"正文来源：{source}\n"
-                f"正文：\n{body}"
-            )
-            try:
-                result = await ctx.llm.complete(
-                    "librarian",
-                    [
-                        Message(role="system", content=LIBRARIAN_SYSTEM_PROMPT),
-                        Message(role="user", content=user_prompt),
-                    ],
-                    user_id=ctx.run.created_by,
-                    project_id=ctx.run.project_id,
-                    voyage_id=ctx.run.id,
-                )
-                if not result.content.strip():
-                    raise ValueError("librarian returned empty content")
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 — 单篇失败跳过，下次续跑重试
-                failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
-                continue
-            paper.wiki_content = result.content
-            paper.compiled_at = utcnow()
-            paper.status = "compiled"
-            await session.commit()
-            compiled += 1
-            # 编译成功后筛选注释论文图（stage=librarian 多模态）；失败仅 log，figures 可后补
-            if paper.figures:
+            # ① 编译前筛选注释论文图（stage=librarian 多模态）：图文编译要用重要图；
+            #    失败仅 log（annotate 内部已带降级），不影响编译
+            if paper.figures and not figures_annotated(paper.figures):
                 try:
                     await annotate_figures(
                         paper,
@@ -564,6 +512,25 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                     raise
                 except Exception:  # noqa: BLE001
                     logger.warning("figure annotation failed for paper %s", paper.id, exc_info=True)
+            # ② 图文编译（重要图 ≤4 张随 prompt 送入）+ ③ 无效 ![[fig:N]] 标记剥除
+            try:
+                content = await compile_paper(
+                    paper,
+                    statement=statement,
+                    llm=ctx.llm,
+                    user_id=ctx.run.created_by,
+                    voyage_id=ctx.run.id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 单篇失败跳过，下次续跑重试
+                failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
+                continue
+            paper.wiki_content = content
+            paper.compiled_at = utcnow()
+            paper.status = "compiled"
+            await session.commit()
+            compiled += 1
 
     ctx.checkpoint["compiled_count"] = int(ctx.checkpoint.get("compiled_count") or 0) + compiled
     return {"processed": len(papers), "succeeded": compiled, "failed": failed}

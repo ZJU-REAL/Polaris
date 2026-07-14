@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -8,7 +8,7 @@ import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
-import { FiguresSection } from '../../components/ui/FigureGallery';
+import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
@@ -572,6 +572,28 @@ function PaperDetailPane({
     onError: (e) => toast(`更新失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
+  // 重新编译：用最新的图文模式重写 wiki 页（同步调用，约 1 分钟）
+  const recompileMutation = useMutation({
+    mutationFn: () => api.recompilePaper(paperId),
+    onSuccess: () => {
+      toast('重写完成，介绍已更新', 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['paper', paperId] });
+      void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
+    },
+    onError: (e) => toast(`重新编译失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  // 正文 ![[fig:N]] 嵌入图（docs/api-lit.md §6.6）
+  const figures = usePaperFigures(paper);
+  const renderFigure = useCallback(
+    (n: number) => {
+      const fig = figures.find((f) => f.index === n);
+      return fig ? <FigureEmbed paperId={paperId} fig={fig} /> : null;
+    },
+    [figures, paperId],
+  );
+
   if (isLoading) return <div className="empty">加载论文详情…</div>;
   if (isError || !paper) {
     return <EmptyState compact icon="x" title="无法加载论文详情" desc="后端不可用或该论文不存在。" />;
@@ -645,6 +667,24 @@ function PaperDetailPane({
         >
           <Icon name="x" size={13} />
           {paper.status === 'excluded' ? '已排除' : '排除 exclude'}
+        </button>
+        <button
+          className="btn btn-ghost sm"
+          title="用最新的图文模式重写这篇介绍"
+          disabled={recompileMutation.isPending}
+          onClick={() => recompileMutation.mutate()}
+        >
+          {recompileMutation.isPending ? (
+            <>
+              <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
+              AI 重新撰写中，约 1 分钟…
+            </>
+          ) : (
+            <>
+              <Icon name="sparkle" size={13} />
+              重新编译
+            </>
+          )}
         </button>
         {arxivUrl && (
           <a
@@ -778,13 +818,13 @@ function PaperDetailPane({
         </div>
       )}
 
-      {/* —— 重要图片画廊（有图显示；没图但有 PDF 时给「提取图片」按钮） —— */}
-      <FiguresSection paper={paper} />
+      {/* —— 重要图片画廊（有图显示；正文已嵌图时默认折叠，避免重复视觉） —— */}
+      <FiguresSection paper={paper} defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)} />
 
-      {/* —— Wiki 正文（markdown） —— */}
+      {/* —— Wiki 正文（markdown，含 ![[fig:N]] 嵌入图） —— */}
       <div style={{ marginTop: 22 }}>
         {paper.wiki_content ? (
-          <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} />
+          <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
         ) : (
           <EmptyState
             compact

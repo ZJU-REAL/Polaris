@@ -62,6 +62,14 @@
 - LLM 层：`complete()` 增加可选 `images: list[bytes]`（openai_compat 转 data-url image_url parts；fake 返回确定性筛选 JSON；anthropic 原生格式或 NotImplementedError 均可）
 - `PaperDetail` 增加 `figures` 字段
 
+## 6.6 图文交织 wiki（blog 式）
+
+- wiki_content 支持行内图片标记 `![[fig:N]]`（N=figures 数组里的 index）：编译时 Librarian **看图写作**——先筛选注释重要图，再把选中图（≤4 张，多模态）与图注一起给编译调用，要求在方法/实验等相关段落处插入标记；后端校验标记引用的 index 存在（无效标记剥除）
+- `POST /papers/{id}/recompile` → `PaperDetail`（重跑筛选注释+图文编译，覆盖 wiki_content；无全文时用摘要降级；同步调用，约 1 分钟）
+- 图片提取修复：合并 PDF SMask 软蒙版，透明区域铺白底（Pillow），杜绝黑底图；force 重提会重新生成图片文件
+- Obsidian 导出：figure PNG 打包进 `papers/figures/`，`![[fig:N]]` 重写为相对路径的标准 markdown 图片
+- 前端 Markdown 渲染器支持该标记：渲染为居中图 + 灰色图注（点击开 lightbox）；代码块内不解析
+
 ## 7. 前端要点
 
 - 新路由 `/papers/:id/read` 阅读工作台：左 PDF（fetch blob→objectURL→iframe，加载态/无 PDF 引导「获取 PDF」按钮）+ 右侧 Segmented 三面板：笔记（列表+编辑器 textarea/预览切换）/ AI 伴读（气泡+流式+存为笔记）/ 论文信息（复用 wiki 详情渲染）

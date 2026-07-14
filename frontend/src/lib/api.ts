@@ -939,6 +939,11 @@ export const api = {
     );
   },
 
+  /** 用最新的图文模式重写 wiki 页（docs/api-lit.md §6.6）：重跑图片筛选注释 + 图文编译，覆盖 wiki_content；同步调用，约 1 分钟。 */
+  recompilePaper(id: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/papers/${id}/recompile`, { method: 'POST' });
+  },
+
   // —— Lit · 笔记 ——
   listPaperNotes(paperId: string): Promise<NoteRead[]> {
     return request<NoteRead[]>(`/papers/${paperId}/notes`);

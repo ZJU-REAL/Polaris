@@ -8,14 +8,23 @@ import { createElement, useMemo, type ReactNode } from 'react';
      ``` 代码块、表格、> 引用、--- 分隔线、[文字](http链接)。
    - 扩展：`[[概念名]]` / `[[概念名|别名]]` 双链 → 可点击 chip，
      通过 onWikiLink(概念名) 回调（Research Wiki 用）。
+   - 扩展：独立一行的 `![[fig:N]]` 图片标记（docs/api-lit.md §6.6）
+     → 调用 renderFigure(N) 渲染嵌入图；未提供 renderFigure 或
+     返回 null 时该行静默跳过。行内出现的同标记也剥除不显示；
+     代码块 / 行内代码内不解析。
    样式见 global.css 的 .md / .wikilink。
    ============================================================ */
 
 export type WikiLinkHandler = (name: string) => void;
 
+/** `![[fig:N]]` 图片标记渲染回调；返回 null 表示不渲染（该行跳过）。 */
+export type FigureRenderer = (index: number) => ReactNode;
+
 export interface MarkdownProps {
   source: string;
   onWikiLink?: WikiLinkHandler;
+  /** 渲染独立一行的 `![[fig:N]]` 嵌入图 */
+  renderFigure?: FigureRenderer;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -23,7 +32,7 @@ export interface MarkdownProps {
 /* ---------------- inline ---------------- */
 
 const INLINE_RE =
-  /(`[^`\n]+`)|(\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\])|(\[([^\]\n]*)\]\((https?:\/\/[^\s)]+)\))|(\*\*([^*\n]+)\*\*)|(\*([^*\n]+)\*)|(~~([^~\n]+)~~)/g;
+  /(`[^`\n]+`)|(!\[\[fig:\d+\]\])|(\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\])|(\[([^\]\n]*)\]\((https?:\/\/[^\s)]+)\))|(\*\*([^*\n]+)\*\*)|(\*([^*\n]+)\*)|(~~([^~\n]+)~~)/g;
 
 function renderInline(text: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
   const out: ReactNode[] = [];
@@ -36,8 +45,10 @@ function renderInline(text: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
     if (m[1] !== undefined) {
       out.push(<code key={k++}>{m[1].slice(1, -1)}</code>);
     } else if (m[2] !== undefined) {
-      const target = (m[3] ?? '').trim();
-      const label = (m[4] ?? target).trim();
+      // 行内出现的 ![[fig:N]] 图片标记：剥除不显示（容错，只有独立成行才渲染图）
+    } else if (m[3] !== undefined) {
+      const target = (m[4] ?? '').trim();
+      const label = (m[5] ?? target).trim();
       out.push(
         <span
           key={k++}
@@ -53,18 +64,18 @@ function renderInline(text: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
           {label}
         </span>,
       );
-    } else if (m[5] !== undefined) {
+    } else if (m[6] !== undefined) {
       out.push(
-        <a key={k++} href={m[7]} target="_blank" rel="noreferrer noopener">
-          {m[6] || m[7]}
+        <a key={k++} href={m[8]} target="_blank" rel="noreferrer noopener">
+          {m[7] || m[8]}
         </a>,
       );
-    } else if (m[8] !== undefined) {
-      out.push(<strong key={k++}>{renderInline(m[9] ?? '', onWikiLink)}</strong>);
-    } else if (m[10] !== undefined) {
-      out.push(<em key={k++}>{renderInline(m[11] ?? '', onWikiLink)}</em>);
-    } else if (m[12] !== undefined) {
-      out.push(<del key={k++}>{m[13] ?? ''}</del>);
+    } else if (m[9] !== undefined) {
+      out.push(<strong key={k++}>{renderInline(m[10] ?? '', onWikiLink)}</strong>);
+    } else if (m[11] !== undefined) {
+      out.push(<em key={k++}>{renderInline(m[12] ?? '', onWikiLink)}</em>);
+    } else if (m[13] !== undefined) {
+      out.push(<del key={k++}>{m[14] ?? ''}</del>);
     }
     last = re.lastIndex;
   }
@@ -80,6 +91,8 @@ const RE_UL = /^\s*[-*+]\s+(.*)$/;
 const RE_OL = /^\s*\d+[.)]\s+(.*)$/;
 const RE_QUOTE = /^\s*>\s?(.*)$/;
 const RE_TABLE_SEP = /^\s*\|?\s*:?-{2,}[-\s:|]*$/;
+/** 独立一行的 ![[fig:N]] 图片标记（docs/api-lit.md §6.6） */
+const RE_FIG_LINE = /^\s*!\[\[fig:(\d+)\]\]\s*$/;
 
 function isBlockStart(line: string): boolean {
   return (
@@ -98,7 +111,7 @@ function splitTableRow(line: string): string[] {
   return s.split('|').map((c) => c.trim());
 }
 
-function parseBlocks(src: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
+function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: FigureRenderer): ReactNode[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n');
   const out: ReactNode[] = [];
   let i = 0;
@@ -125,6 +138,21 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
           {buf.join('\n')}
         </pre>,
       );
+      continue;
+    }
+
+    // 独立一行的 ![[fig:N]] 嵌入图：交给 renderFigure；无回调或返回 null 则该行静默跳过
+    const figMatch = RE_FIG_LINE.exec(line);
+    if (figMatch) {
+      const node = renderFigure?.(Number(figMatch[1])) ?? null;
+      if (node !== null && node !== undefined && node !== false) {
+        out.push(
+          <div key={key++} className="md-figure" style={{ margin: '14px 0' }}>
+            {node}
+          </div>,
+        );
+      }
+      i++;
       continue;
     }
 
@@ -187,7 +215,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
         buf.push(q[1] ?? '');
         i++;
       }
-      out.push(<blockquote key={key++}>{parseBlocks(buf.join('\n'), onWikiLink)}</blockquote>);
+      out.push(<blockquote key={key++}>{parseBlocks(buf.join('\n'), onWikiLink, renderFigure)}</blockquote>);
       continue;
     }
 
@@ -212,7 +240,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
     i++;
     while (i < lines.length) {
       const l = lines[i] ?? '';
-      if (!l.trim() || isBlockStart(l) || RE_HR.test(l)) break;
+      if (!l.trim() || isBlockStart(l) || RE_HR.test(l) || RE_FIG_LINE.test(l)) break;
       if (l.includes('|') && RE_TABLE_SEP.test(lines[i + 1] ?? '')) break;
       buf.push(l);
       i++;
@@ -231,9 +259,12 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
   return out;
 }
 
-/** 安全 markdown 渲染（含 [[概念]] 双链）。 */
-export function Markdown({ source, onWikiLink, className, style }: MarkdownProps) {
-  const nodes = useMemo(() => parseBlocks(source, onWikiLink), [source, onWikiLink]);
+/** 安全 markdown 渲染（含 [[概念]] 双链与 ![[fig:N]] 嵌入图）。 */
+export function Markdown({ source, onWikiLink, renderFigure, className, style }: MarkdownProps) {
+  const nodes = useMemo(
+    () => parseBlocks(source, onWikiLink, renderFigure),
+    [source, onWikiLink, renderFigure],
+  );
   return (
     <div className={`md${className ? ` ${className}` : ''}`} style={style}>
       {nodes}

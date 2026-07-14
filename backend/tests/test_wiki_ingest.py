@@ -329,13 +329,13 @@ class _CrashOnNthRelevance(FakeProvider):
         self.relevance_calls = 0
         self.crash_at = crash_at
 
-    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None):
+    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
         if any('"score"' in m.content for m in messages):
             self.relevance_calls += 1
             if self.relevance_calls == self.crash_at:
                 raise asyncio.CancelledError("simulated worker kill")
         return await super().complete(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
         )
 
 

@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { FiguresSection } from '../../components/ui/FigureGallery';
+import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import type { PaperDetail } from '../../lib/api';
@@ -38,6 +38,17 @@ export function InfoPanel({
   const authors = paper.authors.map((a) => a.name).join(' · ');
   const arxivUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null;
   const extUrl = arxivUrl ?? paper.url;
+
+  // 正文 ![[fig:N]] 嵌入图（docs/api-lit.md §6.6）
+  const figures = usePaperFigures(paper);
+  const paperId = paper.id;
+  const renderFigure = useCallback(
+    (n: number) => {
+      const fig = figures.find((f) => f.index === n);
+      return fig ? <FigureEmbed paperId={paperId} fig={fig} /> : null;
+    },
+    [figures, paperId],
+  );
 
   return (
     <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 40px' }}>
@@ -164,13 +175,22 @@ export function InfoPanel({
         </div>
       )}
 
-      {/* —— 重要图片画廊 —— */}
-      <FiguresSection paper={paper} style={{ marginTop: 14 }} />
+      {/* —— 重要图片画廊（正文已嵌图时默认折叠，避免重复视觉） —— */}
+      <FiguresSection
+        paper={paper}
+        style={{ marginTop: 14 }}
+        defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)}
+      />
 
-      {/* —— Wiki 正文 —— */}
+      {/* —— Wiki 正文（含 ![[fig:N]] 嵌入图） —— */}
       <div style={{ marginTop: 18 }}>
         {paper.wiki_content ? (
-          <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} style={{ fontSize: 12.5 }} />
+          <Markdown
+            source={paper.wiki_content}
+            onWikiLink={onWikiLink}
+            renderFigure={renderFigure}
+            style={{ fontSize: 12.5 }}
+          />
         ) : (
           <EmptyState
             compact

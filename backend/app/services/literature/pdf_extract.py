@@ -6,10 +6,14 @@
 """
 
 import asyncio
+import io
+import logging
 from pathlib import Path
 from typing import Any
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # 嵌入图候选过滤（docs/api-lit.md §6.5）：尺寸下限 + 面积降序取前 N
 FIGURE_MIN_WIDTH = 200
@@ -57,6 +61,26 @@ async def extract_full_text(paper_id: str, pdf_path: Path) -> Path:
     return txt_path
 
 
+def _flatten_png_white(png_bytes: bytes) -> bytes:
+    """Pillow 归一化：透明区域铺白底（RGBA/LA/P+transparency），CMYK 转 RGB，杜绝黑底图。"""
+    from PIL import Image  # 延迟导入：仅在真正抽取时需要
+
+    with Image.open(io.BytesIO(png_bytes)) as img:
+        img.load()
+        if img.mode == "P":
+            img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+        if img.mode in ("RGBA", "LA"):
+            rgba = img.convert("RGBA")
+            white = Image.new("RGB", rgba.size, (255, 255, 255))
+            white.paste(rgba, mask=rgba.getchannel("A"))
+            img = white
+        elif img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
+
+
 def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
     import pymupdf  # 延迟导入：仅在真正抽取时需要
 
@@ -66,7 +90,7 @@ def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]
     with pymupdf.open(pdf_path) as doc:
         for page in doc:
             for img in page.get_images(full=True):
-                xref = int(img[0])
+                xref, smask = int(img[0]), int(img[1])
                 if xref in seen_xrefs:
                     continue
                 seen_xrefs.add(xref)
@@ -75,7 +99,15 @@ def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]
                     continue
                 if pix.colorspace is None:
                     continue  # 掩膜等无色彩空间对象，跳过
-                if pix.n - pix.alpha >= 4:  # CMYK 等 → RGB（PNG 不支持 CMYK）
+                if smask > 0 and pix.alpha == 0:
+                    # 合并 SMask 软蒙版为 alpha 通道；失败退回原图（后续仍铺白）
+                    try:
+                        pix = pymupdf.Pixmap(pix, pymupdf.Pixmap(doc, smask))
+                    except Exception:  # noqa: BLE001 — 蒙版损坏等，保底用无 alpha 原图
+                        logger.warning(
+                            "smask merge failed for paper %s xref %d", paper_id, xref, exc_info=True
+                        )
+                if pix.n - pix.alpha >= 4:  # CMYK 等 → RGB（保留 alpha）
                     pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
                 candidates.append((page.number + 1, xref, pix))
 
@@ -88,7 +120,7 @@ def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]
             old.unlink()
         figures: list[dict[str, Any]] = []
         for index, (page_no, _xref, pix) in enumerate(selected):
-            (out_dir / f"fig_{index}.png").write_bytes(pix.tobytes("png"))
+            (out_dir / f"fig_{index}.png").write_bytes(_flatten_png_white(pix.tobytes("png")))
             figures.append(
                 {"index": index, "page": page_no, "width": pix.width, "height": pix.height}
             )

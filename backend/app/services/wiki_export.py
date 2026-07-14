@@ -1,11 +1,13 @@
-"""Obsidian vault 导出：内存构建 zip（docs/api-m2.md §5）。
+"""Obsidian vault 导出：内存构建 zip（docs/api-m2.md §5、docs/api-lit.md §6.6）。
 
 vault 结构：
     index.md
     papers/<slug>.md    （frontmatter: title/arxiv_id/year/relevance/status/concepts）
+    papers/figures/<paper_slug>-fig-<N>.png  （重要图 / 正文引用图）
     concepts/<slug>.md  （frontmatter: name/category）
     trends.md           （占位）
-正文保留 [[wikilink]] 双链。
+正文保留 [[wikilink]] 双链；``![[fig:N]]`` 重写为相对路径标准 markdown 图片，
+正文没引用但 important 的图追加到「## 重要图片」小节。
 """
 
 import io
@@ -23,7 +25,9 @@ from app.models.paper import Concept, Paper, PaperNote
 from app.models.project import Project
 from app.models.user import User
 from app.services.concepts import wiki_slug
+from app.services.literature.pdf_extract import figure_path
 from app.services.notes import author_name_of
+from app.services.wiki_compile import FIGURE_MARKER_RE
 
 
 def _yaml_value(value: Any) -> str:
@@ -54,6 +58,44 @@ def _unique_slug(base: str, used: set[str]) -> str:
         slug = f"{slug}-{uuid.uuid4().hex[:6]}"
     used.add(slug)
     return slug
+
+
+def _inline_paper_figures(
+    zf: zipfile.ZipFile, paper: Paper, slug: str, body: str
+) -> tuple[str, list[str]]:
+    """图文 wiki 导出（docs/api-lit.md §6.6）：打包 figure PNG 并重写正文标记。
+
+    - 重要图与正文引用的图写入 zip ``papers/figures/<slug>-fig-<N>.png``；
+    - ``![[fig:N]]`` 重写为 ``![fig N](figures/<slug>-fig-<N>.png)``（文件缺失则剥除标记）；
+    - 返回 (重写后的正文, 正文没引用但 important 的图的追加行)。
+    """
+    fig_by_index = {int(f["index"]): f for f in (paper.figures or [])}
+    referenced = {int(m.group(1)) for m in FIGURE_MARKER_RE.finditer(body)}
+    packaged: dict[int, str] = {}  # index → zip 内文件名（相对 papers/figures/）
+    wanted = referenced | {i for i, f in fig_by_index.items() if f.get("important")}
+    for index in sorted(wanted & set(fig_by_index)):
+        path = figure_path(str(paper.id), index)
+        if not path.exists():
+            continue
+        name = f"{slug}-fig-{index}.png"
+        zf.writestr(f"papers/figures/{name}", path.read_bytes())
+        packaged[index] = name
+
+    def _rewrite(match: Any) -> str:
+        index = int(match.group(1))
+        if index in packaged:
+            return f"![fig {index}](figures/{packaged[index]})"
+        return ""  # 引用的图未能打包（文件缺失/越界）→ 剥除标记
+
+    body = FIGURE_MARKER_RE.sub(_rewrite, body)
+
+    extra_lines: list[str] = []
+    for index in sorted(set(packaged) - referenced):
+        extra_lines.append(f"![fig {index}](figures/{packaged[index]})")
+        if caption := fig_by_index[index].get("caption"):
+            extra_lines.append(f"*{caption}*")
+        extra_lines.append("")
+    return body, extra_lines
 
 
 async def build_obsidian_zip(session: AsyncSession, project: Project) -> bytes:
@@ -125,6 +167,15 @@ async def build_obsidian_zip(session: AsyncSession, project: Project) -> bytes:
                 }
             )
             body = paper.wiki_content or (paper.abstract or "（尚未编译 wiki 页）")
+            if paper.figures:
+                body, extra_figure_lines = _inline_paper_figures(zf, paper, slug, body)
+                if extra_figure_lines:
+                    body = (
+                        body.rstrip("\n")
+                        + "\n\n## 重要图片\n\n"
+                        + "\n".join(extra_figure_lines).rstrip("\n")
+                        + "\n"
+                    )
             if notes := notes_by_paper.get(paper.id):
                 lines = ["", "## 笔记", ""]
                 for note, author_name in notes:
