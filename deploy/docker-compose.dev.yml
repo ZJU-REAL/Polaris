@@ -16,6 +16,8 @@ services:
       - appdata:/srv/data
 
   frontend:
+    # 注意：colima/虚拟机挂载下 vite 可能收不到文件变更事件而服务旧代码；
+    # 页面内容与源码不一致时 `docker compose restart frontend`
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
