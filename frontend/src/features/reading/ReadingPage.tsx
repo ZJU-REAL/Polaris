@@ -40,7 +40,9 @@ function PdfPane({ paper }: { paper: PaperDetail }) {
       setUrl(null);
       return;
     }
-    const u = URL.createObjectURL(blob);
+    // 确保 MIME 是 application/pdf——类型缺失/错误时 Chrome 会把 iframe 当下载处理
+    const typed = blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' });
+    const u = URL.createObjectURL(typed);
     setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [pdfQuery.data]);

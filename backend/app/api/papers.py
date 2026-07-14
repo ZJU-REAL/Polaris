@@ -184,7 +184,12 @@ async def get_paper_pdf(
     paper = await _get_member_paper(session, paper_id, user)
     if not paper.pdf_path or not Path(paper.pdf_path).exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PDF_NOT_AVAILABLE")
-    return FileResponse(paper.pdf_path, media_type="application/pdf", filename=f"{paper_id}.pdf")
+    return FileResponse(
+        paper.pdf_path,
+        media_type="application/pdf",
+        filename=f"{paper_id}.pdf",
+        content_disposition_type="inline",
+    )
 
 
 @router.post("/papers/{paper_id}/fetch-pdf", response_model=PaperDetail)
@@ -229,7 +234,9 @@ async def get_paper_figure_image(
     path = figure_path(str(paper_id), index)
     if index not in known or not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FIGURE_NOT_FOUND")
-    return FileResponse(path, media_type="image/png", filename=f"fig_{index}.png")
+    return FileResponse(
+        path, media_type="image/png", filename=f"fig_{index}.png", content_disposition_type="inline"
+    )
 
 
 @router.post("/papers/{paper_id}/extract-figures", response_model=PaperFiguresResponse)
