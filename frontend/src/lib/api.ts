@@ -454,6 +454,125 @@ export interface StatsRead {
 }
 
 // ============================================================
+// M3 · Ideas（Idea Forge 候选池）— docs/api-m3.md
+// ============================================================
+
+export type IdeaStatus = 'candidate' | 'under_review' | 'promoted' | 'rejected';
+
+export type IdeaSort = 'elo' | '-created_at' | 'score';
+
+/** 四维评分（0-10）。 */
+export interface IdeaScores {
+  novelty: number;
+  feasibility: number;
+  operability: number;
+  impact: number;
+}
+
+export interface IdeaRead {
+  id: string;
+  project_id: string;
+  title: string;
+  summary: string;
+  /** 未打分为 null */
+  scores: IdeaScores | null;
+  elo_rating: number;
+  status: IdeaStatus;
+  created_at: string;
+}
+
+export interface IdeaParentPaper {
+  id: string;
+  title: string;
+}
+
+export interface IdeaDetail extends IdeaRead {
+  /** markdown：动机/方法概述/预期实验/风险 */
+  content: string;
+  parent_paper_ids: string[];
+  parent_papers: IdeaParentPaper[];
+  score_rationale: Partial<Record<keyof IdeaScores, string>> | null;
+}
+
+// ============================================================
+// M3 · Forge（idea 生成 voyage）
+// ============================================================
+
+export interface ForgeKnobs {
+  num_ideas?: number;
+  dedup_threshold?: number;
+  max_context_papers?: number;
+}
+
+export interface IdeaCounts {
+  candidate?: number;
+  under_review?: number;
+  promoted?: number;
+  rejected?: number;
+  total?: number;
+}
+
+export interface ForgeLastRun {
+  voyage_id?: string;
+  status?: string;
+  finished_at?: string | null;
+}
+
+export interface ForgeState {
+  /** 进行中的 forge/review voyage（同项目同时只允许一个）。 */
+  running_voyage_id: string | null;
+  last_run: ForgeLastRun | null;
+  idea_counts: IdeaCounts;
+}
+
+// ============================================================
+// M3 · Review（多 agent 辩论锦标赛 + Elo + 人机讨论）
+// ============================================================
+
+export interface ReviewPersona {
+  name: string;
+  stance: string;
+}
+
+export interface TournamentInput {
+  /** null = 全部 candidate/under_review */
+  idea_ids?: string[] | null;
+  /** 每对 idea 的辩论轮数 */
+  rounds?: number;
+  /** null = 默认三人设 */
+  personas?: ReviewPersona[] | null;
+}
+
+export interface LeaderboardRow extends IdeaRead {
+  matches: number;
+  wins: number;
+}
+
+/** idea_match = 一场辩论；idea_discussion = 常驻人机讨论区。 */
+export type ReviewTargetType = 'idea_match' | 'idea_discussion';
+
+export interface ReviewSessionRead {
+  id: string;
+  target_type: string;
+  target_id: string;
+  status: string;
+  /** idea_match 时含 idea_a / idea_b / winner */
+  payload: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ReviewMessageRead {
+  id: string;
+  session_id: string;
+  author_type: 'agent' | 'human';
+  /** 人设名或用户 display name */
+  author_name: string;
+  content: string;
+  round: number | null;
+  created_at: string;
+}
+
+// ============================================================
 // api object
 // ============================================================
 
@@ -608,6 +727,53 @@ export const api = {
   // —— M2 · Dashboard 统计 ——
   getStats(projectId: string): Promise<StatsRead> {
     return request<StatsRead>(`/projects/${projectId}/stats`);
+  },
+
+  // —— M3 · Forge ——
+  startForge(projectId: string, knobs: ForgeKnobs): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/projects/${projectId}/forge`, 'POST', { knobs });
+  },
+  getForgeState(projectId: string): Promise<ForgeState> {
+    return request<ForgeState>(`/projects/${projectId}/forge/state`);
+  },
+
+  // —— M3 · Ideas ——
+  listIdeas(projectId: string, opts: { status?: IdeaStatus; sort?: IdeaSort } = {}): Promise<IdeaRead[]> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.sort) params.set('sort', opts.sort);
+    const qs = params.toString();
+    return request<IdeaRead[]>(`/projects/${projectId}/ideas${qs ? `?${qs}` : ''}`);
+  },
+  getIdea(id: string): Promise<IdeaDetail> {
+    return request<IdeaDetail>(`/ideas/${id}`);
+  },
+  /** 人工淘汰（其他状态转换走专用接口）。 */
+  patchIdea(id: string, input: { status: 'rejected' }): Promise<IdeaRead> {
+    return requestJson<IdeaRead>(`/ideas/${id}`, 'PATCH', input);
+  },
+  /** 发起晋级 → 创建 idea_promotion Gate（pending）。 */
+  promoteIdea(id: string): Promise<GateRead> {
+    return request<GateRead>(`/ideas/${id}/promote`, { method: 'POST' });
+  },
+
+  // —— M3 · Review 锦标赛 / 排行榜 ——
+  startTournament(projectId: string, input: TournamentInput): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/projects/${projectId}/review/tournament`, 'POST', input);
+  },
+  getLeaderboard(projectId: string): Promise<LeaderboardRow[]> {
+    return request<LeaderboardRow[]>(`/projects/${projectId}/review/leaderboard`);
+  },
+
+  // —— M3 · 讨论 / 辩论 session ——
+  listIdeaSessions(ideaId: string): Promise<ReviewSessionRead[]> {
+    return request<ReviewSessionRead[]>(`/ideas/${ideaId}/sessions`);
+  },
+  listSessionMessages(sessionId: string): Promise<ReviewMessageRead[]> {
+    return request<ReviewMessageRead[]>(`/sessions/${sessionId}/messages`);
+  },
+  postSessionMessage(sessionId: string, content: string): Promise<ReviewMessageRead> {
+    return requestJson<ReviewMessageRead>(`/sessions/${sessionId}/messages`, 'POST', { content });
   },
 
   // —— Admin · LLM ——

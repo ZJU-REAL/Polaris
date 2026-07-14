@@ -7,7 +7,7 @@ import { GateCard, gateTitle } from '../components/ui/GateCard';
 import { ToastHost, toast } from '../components/ui/Toast';
 import { useAuth } from './auth';
 import { useProject } from './project';
-import { api, getToken, isAdmin, type GateDecision, type GateRead } from '../lib/api';
+import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { connectNotifications } from '../lib/ws';
 
 interface NavEntry {
@@ -37,6 +37,7 @@ function crumbFor(pathname: string): [string, string] {
   if (pathname.startsWith('/projects/')) return ['研究方向', '方向详情'];
   if (pathname === '/voyages') return ['Polaris', '任务航程'];
   if (pathname.startsWith('/voyages/')) return ['任务航程', '航程详情'];
+  if (pathname.startsWith('/ideas/')) return ['Idea Forge', 'Idea 详情'];
   const table: Record<string, [string, string]> = {
     '/wiki': ['Stage 00', '文献追踪'],
     '/forge': ['Stage 01', 'Idea 生成'],
@@ -141,6 +142,17 @@ export function AppShell() {
         if (msg.status === 'paused_gate') toast('航程等待审批 · voyage paused at gate', 'info');
         else if (msg.status === 'done') toast('航程完成 · voyage done', 'ok');
         else if (msg.status === 'failed') toast('航程失败 · voyage failed', 'error');
+      } else if (msg.type === 'review.message') {
+        // 正在看该 session 的组件共享此 query cache → 直接乐观追加（按 id 去重）
+        queryClient.setQueryData<ReviewMessageRead[]>(['session-messages', msg.session_id], (old) =>
+          old === undefined ? undefined : old.some((m) => m.id === msg.message.id) ? old : [...old, msg.message],
+        );
+        void queryClient.invalidateQueries({ queryKey: ['idea-sessions'] });
+      } else if (msg.type === 'idea.status') {
+        void queryClient.invalidateQueries({ queryKey: ['ideas'] });
+        void queryClient.invalidateQueries({ queryKey: ['idea', msg.idea_id] });
+        void queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+        void queryClient.invalidateQueries({ queryKey: ['forge-state'] });
       }
     });
     return close;

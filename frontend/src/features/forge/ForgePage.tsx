@@ -1,22 +1,442 @@
-import { UnderConstruction } from '../shared/UnderConstruction';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Icon } from '../../components/ui/Icon';
+import { PageHead } from '../../components/ui/PageHead';
+import { StatusPill } from '../../components/ui/StatusPill';
+import { Segmented } from '../../components/ui/Segmented';
+import { Modal } from '../../components/ui/Modal';
+import { KnobRange } from '../../components/ui/KnobRange';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { toast } from '../../components/ui/Toast';
+import { useProject } from '../../app/project';
+import { fmtTime } from '../../lib/format';
+import { api, ApiError, type ForgeState, type IdeaRead, type IdeaSort, type IdeaStatus } from '../../lib/api';
+import { ScoreRingGroup } from './ideaShared';
+
+/* ============================================================
+   /forge — Stage 01 · Idea Forge（M3）
+   顶部：当前方向 + forge/state 卡（idea 计数漏斗）+ 运行按钮
+   （Modal 成本旋钮 → POST forge）；候选池 CandidateCard 网格，
+   点击进入 /ideas/:id 详情。
+   ============================================================ */
+
+type StatusFilter = 'all' | IdeaStatus;
+
+const STATUS_FILTERS: { v: StatusFilter; label: string }[] = [
+  { v: 'all', label: '全部' },
+  { v: 'candidate', label: '候选' },
+  { v: 'under_review', label: '评审中' },
+  { v: 'promoted', label: '已晋级' },
+  { v: 'rejected', label: '已淘汰' },
+];
+
+const SORTS: { v: IdeaSort; label: string }[] = [
+  { v: 'elo', label: 'Elo' },
+  { v: 'score', label: '评分' },
+  { v: '-created_at', label: '最新' },
+];
+
+/* ---------------- 收敛漏斗（横向阶段计数条） ---------------- */
+
+const FUNNEL_STAGES: { key: keyof NonNullable<ForgeState['idea_counts']>; zh: string; en: string }[] = [
+  { key: 'candidate', zh: '候选', en: 'candidate' },
+  { key: 'under_review', zh: '评审中', en: 'under review' },
+  { key: 'promoted', zh: '已晋级', en: 'promoted' },
+];
+
+function FunnelBar({ state }: { state: ForgeState | undefined }) {
+  const counts = state?.idea_counts;
+  return (
+    <div className="row gap8" style={{ alignItems: 'stretch' }}>
+      {FUNNEL_STAGES.map((s, i) => {
+        const n = counts?.[s.key];
+        return (
+          <div key={s.key} className="row gap8" style={{ flex: 1 }}>
+            {i > 0 && <Icon name="chevron" size={15} style={{ color: 'var(--text-4)', alignSelf: 'center' }} />}
+            <div
+              style={{
+                flex: 1,
+                borderRadius: 10,
+                padding: '12px 14px',
+                background: i === 2 ? 'var(--ok-bg)' : i === 1 ? 'var(--violet-bg)' : 'var(--accent-soft)',
+              }}
+            >
+              <div
+                className="mono"
+                style={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: i === 2 ? 'var(--ok-tx)' : i === 1 ? 'var(--violet-tx)' : 'var(--accent-text)',
+                }}
+              >
+                {n ?? '—'}
+              </div>
+              <div style={{ fontSize: 11.5, fontWeight: 600, marginTop: 2 }}>{s.zh}</div>
+              <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-3)' }}>{s.en}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------- 候选卡 ---------------- */
+
+function CandidateCard({ idea, onOpen }: { idea: IdeaRead; onOpen: () => void }) {
+  return (
+    <div className="card card-pad hoverable" onClick={onOpen} style={{ display: 'flex', flexDirection: 'column' }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{idea.id.slice(0, 8)}</span>
+        <StatusPill status={idea.status} sm />
+      </div>
+      <div style={{ fontSize: 14.5, fontWeight: 650, lineHeight: 1.35, marginBottom: 8 }}>{idea.title}</div>
+      <div
+        style={{
+          fontSize: 12.5,
+          color: 'var(--text-2)',
+          lineHeight: 1.55,
+          marginBottom: 14,
+          display: '-webkit-box',
+          WebkitLineClamp: 3,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}
+      >
+        {idea.summary}
+      </div>
+      <div className="row" style={{ marginTop: 'auto', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+        <ScoreRingGroup scores={idea.scores} size={36} />
+        <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 12 }}>
+          <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent-text)' }}>
+            {Math.round(idea.elo_rating)}
+          </div>
+          <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-3)' }}>Elo</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- 运行 forge Modal ---------------- */
+
+function RunForgeModal({
+  open,
+  onClose,
+  pid,
+}: {
+  open: boolean;
+  onClose: () => void;
+  pid: string;
+}) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [numIdeas, setNumIdeas] = useState(8);
+  const [dedupThreshold, setDedupThreshold] = useState(0.85);
+  const [maxContextPapers, setMaxContextPapers] = useState(20);
+
+  const forgeMutation = useMutation({
+    mutationFn: () =>
+      api.startForge(pid, {
+        num_ideas: numIdeas,
+        dedup_threshold: dedupThreshold,
+        max_context_papers: maxContextPapers,
+      }),
+    onSuccess: (v) => {
+      toast('Idea Forge 已开始，跳转航程详情…', 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
+      onClose();
+      navigate(`/voyages/${v.id}`);
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409) {
+        toast('该项目已有一个 forge/review 任务在运行，请等待其完成。', 'error');
+        void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
+      } else {
+        toast(`启动失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+    },
+  });
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={
+        <>
+          <Icon name="bulb" size={16} style={{ color: 'var(--accent)' }} />
+          运行 Idea Forge
+        </>
+      }
+      sub="读知识库 → gap 分析 → 生成候选 → 四维打分 → 语义去重 → 入候选池"
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>取消</button>
+          <button className="btn btn-primary" disabled={forgeMutation.isPending} onClick={() => forgeMutation.mutate()}>
+            {forgeMutation.isPending ? (
+              <>
+                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                启动中…
+              </>
+            ) : (
+              <>
+                <Icon name="play" size={14} />
+                开始生成
+              </>
+            )}
+          </button>
+        </>
+      }
+    >
+      <KnobRange
+        label="生成数量"
+        en="num_ideas"
+        hint="本次生成的候选 idea 数（去重前）。"
+        value={numIdeas}
+        min={3}
+        max={20}
+        step={1}
+        onChange={setNumIdeas}
+      />
+      <KnobRange
+        label="去重阈值"
+        en="dedup_threshold"
+        hint="embedding 相似度高于该阈值的 idea 视为重复（rerank 复核）。"
+        value={dedupThreshold}
+        min={0.5}
+        max={0.95}
+        step={0.05}
+        format={(v) => v.toFixed(2)}
+        onChange={setDedupThreshold}
+      />
+      <KnobRange
+        label="上下文论文数"
+        en="max_context_papers"
+        hint="gap 分析时注入的 compiled wiki 页上限（成本旋钮）。"
+        value={maxContextPapers}
+        min={5}
+        max={50}
+        step={5}
+        onChange={setMaxContextPapers}
+      />
+    </Modal>
+  );
+}
+
+/* ---------------- 页面 ---------------- */
 
 export function ForgePage() {
+  const navigate = useNavigate();
+  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const pid = currentProjectId;
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sort, setSort] = useState<IdeaSort>('elo');
+
+  const stateQuery = useQuery({
+    queryKey: ['forge-state', pid],
+    queryFn: () => api.getForgeState(pid!),
+    enabled: !!pid,
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.running_voyage_id ? 5_000 : 60_000),
+  });
+  const state = stateQuery.data;
+  const running = !!state?.running_voyage_id;
+
+  const ideasQuery = useQuery({
+    queryKey: ['ideas', pid, statusFilter, sort],
+    queryFn: () => api.listIdeas(pid!, { status: statusFilter === 'all' ? undefined : statusFilter, sort }),
+    enabled: !!pid,
+    retry: false,
+  });
+  const ideas = ideasQuery.data ?? [];
+
+  // —— 无项目：引导创建 ——
+  if (!projectsLoading && projects.length === 0) {
+    return (
+      <div className="page fadeup">
+        <PageHead
+          eyebrow="Stage 01 · Idea Forge"
+          title="Idea 生成 Idea Forge"
+          sub="从知识库出发的 gap 分析与候选 idea 生成：四维打分 + 语义去重入池。"
+        />
+        <div className="card">
+          <EmptyState
+            icon="bulb"
+            title="还没有研究方向"
+            desc="Idea Forge 需要一个研究方向和它的知识库：先创建方向并运行文献冷启动。"
+            action={
+              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
+                <Icon name="plus" size={14} />
+                新建研究方向 · New direction
+              </button>
+            }
+          />
+        </div>
+      </div>
+    );
+  }
+
+  const counts = state?.idea_counts;
+
   return (
-    <UnderConstruction
-      eyebrow="Stage 01 · Idea Forge"
-      icon="bulb"
-      title="Idea 生成"
-      titleEn="Idea Forge"
-      sub="generator × reviewer 分离的多轮生成-评审-反思循环"
-      subEn="Multi-round generate → review → refine loop with hard generator/reviewer separation"
-      milestone="M3"
-      features={[
-        { zh: '多轮生成-评审循环', desc: '每轮 generator 产出接地于文献的 raw ideas，reviewer×3 集成评审淘汰，读批评后反思 refine（默认 3 轮）。' },
-        { zh: 'Citation-graph 新颖性查重', desc: '强制走 Semantic Scholar 引用图判定新颖性（禁纯关键词），抑制“看似新实则已有”的新颖性幻觉。' },
-        { zh: 'Rubric 加权评分', desc: 'novelty/feasibility/operability/impact 加权 composite，低于闸门阈值（7.0）不入候选池。' },
-        { zh: '运行过程可观测', desc: 'run 轮次日志、存活曲线、SSE 流式输出 agent 推理过程。' },
-        { zh: '候选池入库', desc: '存活 idea 写入方向 vault，进入 Stage 02 排序与晋级。' },
-      ]}
-    />
+    <div className="page fadeup">
+      <PageHead
+        eyebrow="Stage 01 · Idea Forge"
+        title="Idea 生成 Idea Forge"
+        sub={
+          currentProject
+            ? `当前方向：${currentProject.name}`
+            : projectsLoading
+              ? '加载研究方向…'
+              : '选择一个研究方向'
+        }
+        en="gap analysis · candidates · dedup"
+        right={
+          <button className="btn btn-primary" disabled={!pid || running} onClick={() => setModalOpen(true)}>
+            {running ? (
+              <>
+                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                运行中…
+              </>
+            ) : (
+              <>
+                <Icon name="play" size={14} />
+                运行 Idea Forge
+              </>
+            )}
+          </button>
+        }
+      />
+
+      {/* 进行中航程 banner */}
+      {running && state?.running_voyage_id && (
+        <div
+          className="card card-pad hoverable"
+          onClick={() => navigate(`/voyages/${state.running_voyage_id}`)}
+          style={{ marginBottom: 16, borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
+        >
+          <div className="row gap10">
+            <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
+              <span className="dot pulse" />
+              运行中
+            </span>
+            <span style={{ fontSize: 13.5, fontWeight: 650 }}>Idea 任务进行中 — 点击查看航程实时进度</span>
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
+              voyage {state.running_voyage_id.slice(0, 8)}…
+            </span>
+            <Icon name="arrow" size={14} style={{ color: 'var(--accent-text)' }} />
+          </div>
+        </div>
+      )}
+
+      {/* forge/state 卡：漏斗 + 上次运行 */}
+      <div className="card card-pad" style={{ marginBottom: 22 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
+          <span className="section-h">
+            <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
+            收敛漏斗 <span className="en-label" style={{ fontSize: 11 }}>candidate → under review → promoted</span>
+          </span>
+          <div className="row gap8">
+            {counts?.rejected !== undefined && (
+              <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                已淘汰 <span className="mono" style={{ fontWeight: 700 }}>{counts.rejected}</span>
+              </span>
+            )}
+            {counts?.total !== undefined && (
+              <span className="pill sm" style={{ background: 'var(--surface-2)' }}>
+                总计 <span className="mono" style={{ fontWeight: 700 }}>{counts.total}</span>
+              </span>
+            )}
+          </div>
+        </div>
+        {stateQuery.isLoading ? (
+          <div className="empty" style={{ padding: 16 }}>加载状态…</div>
+        ) : stateQuery.isError ? (
+          <div className="empty" style={{ padding: 16 }}>无法加载 forge 状态（后端不可用或接口未就绪）</div>
+        ) : (
+          <>
+            <FunnelBar state={state} />
+            <div className="row gap8" style={{ marginTop: 14, fontSize: 11.5, color: 'var(--text-3)' }}>
+              <Icon name="clock" size={13} />
+              上次运行：
+              {state?.last_run?.voyage_id ? (
+                <span
+                  className="row gap6 hoverable"
+                  onClick={() => navigate(`/voyages/${state.last_run?.voyage_id ?? ''}`)}
+                  style={{ color: 'var(--accent-text)' }}
+                >
+                  {state.last_run.status && <StatusPill status={state.last_run.status} sm />}
+                  <span className="mono">{fmtTime(state.last_run.finished_at)}</span>
+                  <Icon name="chevron" size={12} />
+                </span>
+              ) : (
+                <span>尚未运行过 Idea Forge</span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* 候选池 */}
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
+        <span className="section-h">
+          <Icon name="bulb" size={15} style={{ color: 'var(--accent)' }} />
+          候选池 <span className="en-label" style={{ fontSize: 11 }}>{ideas.length} ideas</span>
+        </span>
+        <div className="row gap10">
+          <Segmented<StatusFilter> options={STATUS_FILTERS} value={statusFilter} onChange={setStatusFilter} />
+          <Segmented<IdeaSort> options={SORTS} value={sort} onChange={setSort} />
+        </div>
+      </div>
+
+      {!pid ? (
+        <div className="card">
+          <EmptyState compact icon="bulb" title="请先选择研究方向" />
+        </div>
+      ) : ideasQuery.isLoading ? (
+        <div className="card">
+          <div className="empty">加载候选池…</div>
+        </div>
+      ) : ideasQuery.isError ? (
+        <div className="card">
+          <EmptyState
+            compact
+            icon="x"
+            title="无法加载候选池"
+            desc="后端不可用或接口尚未就绪。"
+            action={
+              <button className="btn btn-soft sm" onClick={() => void ideasQuery.refetch()}>
+                重试 retry
+              </button>
+            }
+          />
+        </div>
+      ) : ideas.length === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon="bulb"
+            title="候选池为空"
+            desc="运行一次 Idea Forge，从知识库的 gap 分析中生成候选 idea。"
+            action={
+              <button className="btn btn-primary" disabled={running} onClick={() => setModalOpen(true)}>
+                <Icon name="play" size={14} />
+                运行 Idea Forge
+              </button>
+            }
+          />
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
+          {ideas.map((idea) => (
+            <CandidateCard key={idea.id} idea={idea} onOpen={() => navigate(`/ideas/${idea.id}`)} />
+          ))}
+        </div>
+      )}
+
+      {pid && <RunForgeModal open={modalOpen} onClose={() => setModalOpen(false)} pid={pid} />}
+    </div>
   );
 }

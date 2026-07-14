@@ -11,6 +11,9 @@ export const STATUS: Record<string, StatusMeta> = {
   drafted: { cls: 'st-drafted', zh: '初稿', en: 'drafted' },
   reviewed: { cls: 'st-reviewed', zh: '已评审', en: 'reviewed' },
   rejected: { cls: 'st-rejected', zh: '已淘汰', en: 'rejected' },
+  // —— Idea 状态（M3 Idea Forge / Review） ——
+  under_review: { cls: 'st-reviewed', zh: '评审中', en: 'under review' },
+  promoted: { cls: 'st-implemented', zh: '已晋级', en: 'promoted' },
   running: { cls: 'st-running', zh: '运行中', en: 'running' },
   done: { cls: 'st-implemented', zh: '完成', en: 'done' },
   summarized: { cls: 'st-implemented', zh: '已综合', en: 'summarized' },

@@ -67,35 +67,3 @@ export const activities: Activity[] = [
   { t: '09:14', skill: 'research-wiki', icon: 'book', text: 'ingest 日更：新增 3 篇相关论文，水位 → 2026-05-29' },
   { t: '08:40', skill: 'idea-forge', icon: 'bulb', text: 'run 完成：8 存活 → 6 candidate 入库' },
 ];
-
-// ---- Featured idea (dashboard hero card) ----
-
-export type IdeaStatus =
-  | 'candidate'
-  | 'accepted'
-  | 'implemented'
-  | 'drafted'
-  | 'reviewed'
-  | 'rejected';
-
-export interface FeaturedIdea {
-  id: string;
-  title: string;
-  titleEn: string;
-  status: IdeaStatus;
-  composite: number;
-  elo: number;
-  metric: { name: string; value: number; delta: string };
-  stagesDone: number;
-}
-
-export const featuredIdea: FeaturedIdea = {
-  id: 'I-20260529-003',
-  title: '用 citation-graph 重排序抑制 idea 生成的新颖性幻觉',
-  titleEn: 'Citation-graph reranking to suppress novelty hallucination in idea generation',
-  status: 'implemented',
-  composite: 7.74,
-  elo: 1576,
-  metric: { name: 'novelty-precision', value: 0.83, delta: '+9.4pt' },
-  stagesDone: 5,
-};

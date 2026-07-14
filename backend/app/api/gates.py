@@ -2,6 +2,7 @@
 
 - 项目成员可见与可审批本项目闸门（M2 再细化角色权限）；
 - approve：payload.voyage_id 存在时入队 resume_voyage 恢复航程；
+  payload.idea_id 存在时联动 idea.status=promoted 并发布 idea.status 事件（M3）；
 - reject：关联航程置 failed；
 - 决策后向 ``notify:project:{project_id}`` 发布 gate.decided。
 """
@@ -19,6 +20,7 @@ from app.models.gate import Gate
 from app.models.user import User
 from app.schemas.gate import GateDecision, GateRead
 from app.services import gates as gates_service
+from app.services import ideas as ideas_service
 
 router = APIRouter(prefix="/gates", tags=["gates"])
 
@@ -87,6 +89,15 @@ async def _decide(
                         "status": run.status,
                     },
                 )
+
+    # idea 晋级联动（M3）：批准 idea_promotion 闸门 → idea.status=promoted + WS 事件
+    if approved:
+        idea = await ideas_service.promote_from_gate(session, gate)
+        if idea is not None:
+            await bus.publish_notify(
+                gate.project_id,
+                {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status},
+            )
 
     await bus.publish_notify(
         gate.project_id,

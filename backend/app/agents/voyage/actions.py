@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.events import EventBus
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
@@ -18,11 +19,17 @@ from app.models.voyage import VoyageRun
 
 @dataclass(slots=True)
 class ActionContext:
-    """动作执行上下文：run 元数据 + LLM 路由器 + 可变 checkpoint 工作区。"""
+    """动作执行上下文：run 元数据 + LLM 路由器 + 可变 checkpoint 工作区 + 事件总线。"""
 
     run: VoyageRun
     llm: LLMRouter
     checkpoint: dict[str, Any] = field(default_factory=dict)
+    bus: EventBus | None = None  # 动作内实时事件（如 review.message）；无总线时静默跳过
+
+    async def notify(self, message: dict[str, Any]) -> None:
+        """向项目通知频道发布事件（bus 未注入时为 no-op）。"""
+        if self.bus is not None:
+            await self.bus.publish_notify(self.run.project_id, message)
 
 
 ActionFunc = Callable[[ActionContext, dict[str, Any]], Awaitable[dict[str, Any]]]

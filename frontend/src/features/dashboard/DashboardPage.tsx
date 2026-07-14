@@ -12,39 +12,85 @@ import { useShell } from '../../app/AppShell';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, type ActivityRead, type GateRead, type StatsRead } from '../../lib/api';
-import { featuredIdea, pipelineStages } from '../../lib/mock';
+import { compositeOf } from '../forge/ideaShared';
+import { pipelineStages } from '../../lib/mock';
 
-function FeaturedIdeaCard() {
+/** 当前重点 idea：取 leaderboard 第一名（真实数据）；无则空状态引导。 */
+function FeaturedIdeaCard({ pid }: { pid: string | null }) {
   const navigate = useNavigate();
-  const idea = featuredIdea;
+  const leaderboardQuery = useQuery({
+    queryKey: ['leaderboard', pid],
+    queryFn: () => api.getLeaderboard(pid!),
+    enabled: !!pid,
+    retry: false,
+  });
+  const idea = leaderboardQuery.data?.[0];
+
+  if (!idea) {
+    return (
+      <div className="card card-pad" style={{ background: 'linear-gradient(135deg, var(--surface) 60%, var(--accent-soft) 200%)' }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+          <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>
+            <Icon name="sparkle" size={12} />
+            当前重点 idea
+          </span>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>
+          {leaderboardQuery.isLoading
+            ? '加载 idea 排行榜…'
+            : leaderboardQuery.isError
+              ? '暂时无法加载 idea 排行榜（后端不可用或接口未就绪）。'
+              : '候选池还是空的 — 运行一次 Idea Forge，从知识库生成候选 idea。'}
+        </div>
+        {!leaderboardQuery.isLoading && (
+          <button className="btn btn-ghost sm" style={{ marginTop: 14 }} onClick={() => navigate('/forge')}>
+            <Icon name="bulb" size={13} />
+            前往 Idea Forge
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const composite = compositeOf(idea.scores);
   return (
     <div
       className="card card-pad hoverable"
-      onClick={() => navigate('/experiment')}
+      onClick={() => navigate(`/ideas/${idea.id}`)}
       style={{ background: 'linear-gradient(135deg, var(--surface) 60%, var(--accent-soft) 200%)' }}
     >
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>
           <Icon name="sparkle" size={12} />
-          当前重点 idea
+          当前重点 idea · Elo 榜首
         </span>
         <StatusPill status={idea.status} sm />
       </div>
       <div style={{ fontSize: 16, fontWeight: 680, letterSpacing: '-0.01em', lineHeight: 1.35 }}>{idea.title}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>{idea.titleEn}</div>
+      <div
+        style={{
+          fontSize: 12,
+          color: 'var(--text-3)',
+          marginTop: 4,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}
+      >
+        {idea.summary}
+      </div>
       <div className="row gap16" style={{ marginTop: 16, alignItems: 'center' }}>
-        <ScoreRing value={idea.composite} label="composite" />
+        {composite !== null && <ScoreRing value={composite} label="composite" />}
         <div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>主指标 {idea.metric.name}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>Elo rating</div>
           <div className="row" style={{ alignItems: 'baseline', gap: 8 }}>
-            <span className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{idea.metric.value}</span>
-            <Delta>{idea.metric.delta}</Delta>
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>vs baseline</span>
+            <span className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{Math.round(idea.elo_rating)}</span>
+            <Delta>{`${idea.wins}/${idea.matches} 胜`}</Delta>
           </div>
         </div>
         <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-          <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>Elo {idea.elo}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>已贯穿 {idea.stagesDone} 个阶段 →</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>查看详情与讨论 →</div>
         </div>
       </div>
     </div>
@@ -329,7 +375,7 @@ export function DashboardPage() {
 
       <div className="row gap20" style={{ alignItems: 'flex-start' }}>
         <div className="col gap20" style={{ flex: 1.5, minWidth: 0 }}>
-          <FeaturedIdeaCard />
+          <FeaturedIdeaCard pid={currentProjectId} />
           <ActivityFeed
             activities={statsQuery.data?.recent_activities ?? []}
             error={statsQuery.isError}

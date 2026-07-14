@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
@@ -37,6 +37,16 @@ export function WikiPage() {
     setConceptId(null);
     setPendingConceptName(null);
   }, [pid]);
+
+  // 深链 /wiki?paper=<id>（idea 详情的 parent paper 跳转）：选中后清掉参数
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const p = searchParams.get('paper');
+    if (!p) return;
+    setPaperId(p);
+    setTab('papers');
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // —— ingest 状态（tab 计数 + Ingest 面板共用） ——
   const ingestQuery = useQuery({

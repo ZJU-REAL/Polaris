@@ -1,15 +1,18 @@
 /* ============================================================
    WebSocket 通知客户端 — /ws/notifications?token=<jwt>
    断线指数退避重连；服务端推送 gate.created / gate.decided /
-   voyage.status（见 docs/api-m1.md §5）。
+   voyage.status（docs/api-m1.md §5）+ M3 的 review.message /
+   idea.status（docs/api-m3.md §5）。
    ============================================================ */
 
-import type { GateRead } from './api';
+import type { GateRead, ReviewMessageRead } from './api';
 
 export type NotificationMessage =
   | { type: 'gate.created'; gate: GateRead }
   | { type: 'gate.decided'; gate: GateRead }
-  | { type: 'voyage.status'; voyage_id: string; status: string };
+  | { type: 'voyage.status'; voyage_id: string; status: string }
+  | { type: 'review.message'; session_id: string; project_id?: string; message: ReviewMessageRead }
+  | { type: 'idea.status'; idea_id: string; status: string };
 
 const MAX_BACKOFF_MS = 30_000;
 

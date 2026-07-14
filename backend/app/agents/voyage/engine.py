@@ -296,7 +296,9 @@ class VoyageEngine:
         await session.commit()
         await self._emit_step(run, step_row)
 
-        ctx = ActionContext(run=run, llm=self._llm, checkpoint=dict(run.checkpoint or {}))
+        ctx = ActionContext(
+            run=run, llm=self._llm, checkpoint=dict(run.checkpoint or {}), bus=self._bus
+        )
         observation = await self.helm.execute(ctx, step_def)
         run.checkpoint = dict(ctx.checkpoint)
         step_row.observation = observation

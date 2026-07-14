@@ -13,13 +13,18 @@ from collections.abc import AsyncIterator, Sequence
 
 from app.core.llm.base import CompletionResult, LLMProvider, Message, RerankResult
 
-# 与 navigator.py / sextant.py / actions_wiki.py / services/projects.py 的 prompt 对齐的识别标记
+# 与 navigator.py / sextant.py / actions_wiki.py / actions_ideas.py /
+# services/projects.py 的 prompt 对齐的识别标记
 _PLAN_MARKER = '"steps"'
 _VERDICT_MARKER = '"passed"'
 _RELEVANCE_MARKER = '"score"'
 _CONCEPTS_MARKER = "概念列表："
 _LIBRARIAN_MARKER = "TL;DR"
 _INTERVIEW_MARKER = '"out_of_scope"'
+_GAPS_MARKER = '"gaps"'  # forge gap 分析
+_IDEAS_MARKER = '"ideas"'  # forge 候选生成
+_IDEA_SCORE_MARKER = '"operability"'  # forge 四维打分
+_JUDGE_MARKER = '"winner"'  # debate 裁判判定
 
 EMBEDDING_DIM = 1024  # 与真实 embedding 模型（BGE-M3）维度一致
 
@@ -134,6 +139,17 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_interview(last_user)
         if _CONCEPTS_MARKER in full_text:
             return FakeProvider._respond_concepts(last_user)
+        if _JUDGE_MARKER in full_text:
+            return json.dumps(
+                {"winner": "a", "reason": "fake-judge：正方论证更充分（确定性假判定）"},
+                ensure_ascii=False,
+            )
+        if _GAPS_MARKER in full_text:
+            return FakeProvider._respond_gaps()
+        if _IDEAS_MARKER in full_text:
+            return FakeProvider._respond_forge_ideas(last_user)
+        if _IDEA_SCORE_MARKER in full_text:
+            return FakeProvider._respond_idea_scores(last_user)
         if _RELEVANCE_MARKER in full_text:
             return FakeProvider._respond_relevance(last_user)
         if _LIBRARIAN_MARKER in full_text:
@@ -221,6 +237,56 @@ class FakeProvider(LLMProvider):
                     for n in names
                 ]
             },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_gaps() -> str:
+        """forge gap 分析：确定性两条研究空白。"""
+        return json.dumps(
+            {
+                "gaps": [
+                    {"title": "研究空白一（fake）", "description": "现有方法缺少 g1 能力（fake）"},
+                    {"title": "研究空白二（fake）", "description": "评测体系缺少 g2 维度（fake）"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_forge_ideas(last_user: str) -> str:
+        """forge 候选生成：从「生成 N 个」提取数量，返回 N 个互不相似的确定性想法。"""
+        m = re.search(r"生成\s*(\d+)\s*个", last_user)
+        n = int(m.group(1)) if m else 3
+        ideas = [
+            {
+                "title": f"候选想法 {i}：面向空白 g{i} 的方法（fake）",
+                "summary": f"fake-summary-{i}：探索主题 t{i} 的独立路线 token{i}",
+                "motivation": f"动机（fake idea {i}）",
+                "method": f"方法概述（fake idea {i}）",
+                "experiments": f"预期实验（fake idea {i}）",
+                "risks": f"风险（fake idea {i}）",
+            }
+            for i in range(1, n + 1)
+        ]
+        return json.dumps({"ideas": ideas}, ensure_ascii=False)
+
+    @staticmethod
+    def _respond_idea_scores(last_user: str) -> str:
+        """forge 四维打分：标题含 "weak" 给低分，否则给高分（确定性、可测）。"""
+        low = "weak" in last_user.lower()
+        base = (
+            {"novelty": 3.0, "feasibility": 4.0, "operability": 3.0, "impact": 2.0}
+            if low
+            else {
+                "novelty": 8.0,
+                "feasibility": 7.0,
+                "operability": 6.0,
+                "impact": 8.0,
+            }
+        )
+        return json.dumps(
+            base | {"rationale": {dim: f"fake-rationale：{dim} 的确定性假理由" for dim in base}},
             ensure_ascii=False,
         )
 

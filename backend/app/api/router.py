@@ -8,6 +8,7 @@ from app.api import (
     concepts,
     gates,
     health,
+    ideas,
     ingest,
     papers,
     projects,
@@ -26,3 +27,4 @@ api_router.include_router(papers.router)
 api_router.include_router(concepts.router)
 api_router.include_router(ingest.router)
 api_router.include_router(wiki.router)
+api_router.include_router(ideas.router)

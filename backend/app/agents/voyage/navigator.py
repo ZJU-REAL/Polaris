@@ -44,6 +44,7 @@ class NavigatorError(Exception):
 
 # 固定计划模板的 kind（不靠 LLM 自由规划）
 WIKI_KINDS = ("wiki_bootstrap", "wiki_ingest")
+IDEA_KINDS = ("idea_forge", "idea_review")
 
 
 def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
@@ -56,6 +57,47 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
         ("Librarian 编译 wiki 页", "wiki.compile", "top-N 论文已生成中文 wiki markdown"),
         ("概念上链 + embedding", "wiki.link_concepts", "双链概念已 upsert 并关联论文"),
         ("更新水位线", "wiki.update_watermark", "项目 ingest_state 已更新"),
+    ]
+    return [
+        {
+            "title": title,
+            "action": action,
+            "params": {},
+            "acceptance": acceptance,
+            "requires_gate": None,
+        }
+        for title, action, acceptance in steps
+    ]
+
+
+def forge_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """idea_forge 固定六步计划（docs/api-m3.md §1）；knobs 从 checkpoint.params 读。"""
+    steps = [
+        ("读取知识库上下文", "forge.read_context", "compiled wiki 页与概念已汇总为上下文"),
+        ("gap 分析（LLM）", "forge.gap_analysis", "已产出研究空白清单 JSON"),
+        ("生成候选 idea（LLM）", "forge.generate", "已生成 num_ideas 个候选 idea"),
+        ("四维打分（LLM 逐条）", "forge.score", "候选 idea 已获得四维评分与理由"),
+        ("语义去重（embedding + rerank）", "forge.dedup", "重复候选已丢弃并记录"),
+        ("入库候选池", "forge.persist", "存活候选已入库（status=candidate）"),
+    ]
+    return [
+        {
+            "title": title,
+            "action": action,
+            "params": {},
+            "acceptance": acceptance,
+            "requires_gate": None,
+        }
+        for title, action, acceptance in steps
+    ]
+
+
+def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """idea_review（辩论锦标赛）固定三步计划（docs/api-m3.md §3）。"""
+    steps = [
+        ("配对（Swiss：按 Elo 相邻配对）", "review.pair", "参与 idea 已配对并置 under_review"),
+        ("科学辩论 + 裁判判定 + Elo 更新", "review.debate", "各场辩论消息与判定已落库"),
+        ("锦标赛汇总", "review.summarize", "赛果已汇总并写入活动流"),
     ]
     return [
         {
@@ -183,6 +225,10 @@ class Navigator:
             return demo_plan(run)
         if run.kind in WIKI_KINDS:
             return wiki_plan(run)
+        if run.kind == "idea_forge":
+            return forge_plan(run)
+        if run.kind == "idea_review":
+            return review_plan(run)
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         user_prompt = f"目标：{run.goal}"
         if context:
