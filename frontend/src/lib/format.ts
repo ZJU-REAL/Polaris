@@ -9,6 +9,41 @@ export function fmtTime(iso: string | null | undefined): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** ISO 时间 → "YYYY-MM-DD HH:mm:ss"（本地时区），用于 hover 完整时间提示。 */
+export function fmtFullTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/**
+ * ISO 时间 → 相对时间大白话：
+ * "刚刚" / "8 分钟前" / "3 小时前" / "昨天 21:28" / "5 天前"；
+ * 超过 7 天回退到日期（跨年时带年份）。无效输入返回 '—'。
+ */
+export function fmtRelative(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  if (diff < 60_000) return '刚刚';
+  const min = Math.floor(diff / 60_000);
+  if (min < 60) return `${min} 分钟前`;
+
+  const p = (n: number) => String(n).padStart(2, '0');
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+
+  if (dayDiff <= 0) return `${Math.floor(min / 60)} 小时前`;
+  if (dayDiff === 1) return `昨天 ${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (dayDiff <= 7) return `${dayDiff} 天前`;
+  if (d.getFullYear() === now.getFullYear()) return `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /** 两个 ISO 时间之间的时长 → "42s" / "3m 12s" / "1h 04m"。 */
 export function fmtDuration(startIso: string | null | undefined, endIso?: string | null): string {
   if (!startIso) return '—';

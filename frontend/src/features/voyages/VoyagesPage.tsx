@@ -1,20 +1,21 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Icon } from '../../components/ui/Icon';
+import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { api, VOYAGE_TERMINAL, type VoyageRead } from '../../lib/api';
-import { fmtDuration, fmtTime } from '../../lib/format';
+import { fmtDuration, fmtFullTime, fmtRelative } from '../../lib/format';
 
 /* ============================================================
-   /voyages — 航程列表：状态过滤 + 行（kind/goal/status/进度/耗时）
-   + 「新建演示航程」（POST /voyages {kind:"demo"}）。
+   /voyages — AI 任务列表：状态/类型过滤 + 行（类型徽章/目标/
+   迷你进度条/耗时/状态）+ 「新建演示任务」（POST /voyages {kind:"demo"}）。
    ============================================================ */
 
 type Filter = 'all' | 'active' | 'paused' | 'done' | 'failed';
@@ -27,12 +28,15 @@ const FILTERS: { v: Filter; label: string }[] = [
   { v: 'failed', label: '失败/取消' },
 ];
 
+/** 正在推进中的状态（列表行左缘蓝条 + 淡蓝底 + 进度条动画）。 */
+const RUNNING_STATUSES: ReadonlySet<string> = new Set(['planning', 'executing', 'verifying', 'replanning']);
+
 function matchFilter(v: VoyageRead, f: Filter): boolean {
   switch (f) {
     case 'all':
       return true;
     case 'active':
-      return ['planning', 'executing', 'verifying', 'replanning'].includes(v.status);
+      return RUNNING_STATUSES.has(v.status);
     case 'paused':
       return v.status === 'paused_gate' || v.status === 'paused_error';
     case 'done':
@@ -42,11 +46,95 @@ function matchFilter(v: VoyageRead, f: Filter): boolean {
   }
 }
 
-/** 进度描述：cursor / plan 长度（plan 为数组时）。 */
-function progressText(v: VoyageRead): string {
-  const total = Array.isArray(v.plan) ? v.plan.length : null;
-  const cur = v.cursor ?? 0;
-  return total ? `step ${Math.min(cur + 1, total)}/${total}` : `cursor ${cur}`;
+// —— 任务类型：中文标签 + 图标 + 低饱和语义底色（全部走 token） ——
+interface KindMeta {
+  zh: string;
+  icon: IconName;
+  bg: string;
+  tx: string;
+}
+
+const KIND_META: Record<string, KindMeta> = {
+  wiki_bootstrap: { zh: '初始建库', icon: 'book', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
+  wiki_ingest: { zh: '增量更新', icon: 'refresh', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
+  idea_forge: { zh: '想法生成', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
+  idea_review: { zh: '评审锦标赛', icon: 'scale', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  experiment: { zh: '实验', icon: 'flask', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
+  demo: { zh: '演示', icon: 'play', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
+};
+
+function kindMeta(kind: string): KindMeta {
+  return KIND_META[kind] ?? { zh: kind, icon: 'sparkle', bg: 'var(--surface-3)', tx: 'var(--text-2)' };
+}
+
+/** 类型徽章：图标 + 中文标签，低饱和语义底色。 */
+function KindBadge({ kind }: { kind: string }) {
+  const m = kindMeta(kind);
+  return (
+    <span className="pill sm" style={{ background: m.bg, color: m.tx, flexShrink: 0 }} title={kind}>
+      <Icon name={m.icon} size={11} sw={1.9} />
+      {m.zh}
+    </span>
+  );
+}
+
+/** 迷你步骤进度条：~90px 细条 + "3/7" 等宽小字。 */
+function StepProgress({ v }: { v: VoyageRead }) {
+  const total = Array.isArray(v.plan) ? v.plan.length : 0;
+  if (!total) {
+    return (
+      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }} title="尚未生成执行计划">
+        —
+      </span>
+    );
+  }
+  const cur = Math.min((v.cursor ?? 0) + 1, total);
+  const done = v.status === 'done';
+  const failedLike = v.status === 'failed' || v.status === 'paused_error';
+  const cancelled = v.status === 'cancelled';
+  const running = RUNNING_STATUSES.has(v.status);
+  const frac = done ? 1 : cur / total;
+  const fill = done
+    ? 'var(--ok)'
+    : failedLike
+      ? 'var(--danger)'
+      : cancelled
+        ? 'var(--muted-dot)'
+        : 'var(--accent)';
+  return (
+    <span className="row gap8" title={done ? `全部 ${total} 步已完成` : `第 ${cur} 步，共 ${total} 步`}>
+      <span className="mini-bar">
+        <i className={running ? 'anim' : undefined} style={{ width: `${frac * 100}%`, background: fill }} />
+      </span>
+      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', minWidth: 30, textAlign: 'right' }}>
+        {cur}/{total}
+      </span>
+    </span>
+  );
+}
+
+/** 加载骨架：shimmer 行，占位结构与真实行一致。 */
+function SkeletonRows() {
+  return (
+    <div className="card" style={{ overflow: 'hidden' }}>
+      {[0, 1, 2, 3].map((i) => (
+        <div
+          key={i}
+          className="row gap12"
+          style={{ padding: '15px 18px', borderTop: i > 0 ? '0.5px solid var(--border)' : 'none' }}
+        >
+          <span className="skel" style={{ width: 76, height: 19 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="skel" style={{ width: '44%', height: 12, marginBottom: 7 }} />
+            <div className="skel" style={{ width: 148, height: 9 }} />
+          </div>
+          <span className="skel" style={{ width: 126, height: 8, flexShrink: 0 }} />
+          <span className="skel" style={{ width: 62, height: 10, flexShrink: 0 }} />
+          <span className="skel" style={{ width: 88, height: 19, borderRadius: 10, flexShrink: 0 }} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function VoyagesPage() {
@@ -55,6 +143,7 @@ export function VoyagesPage() {
   const { projects, currentProjectId, isLoading: projectsLoading } = useProject();
 
   const [filter, setFilter] = useState<Filter>('all');
+  const [kindFilter, setKindFilter] = useState<string>('all');
   const [scope, setScope] = useState<'current' | 'all'>('current');
 
   const projectId = scope === 'current' ? (currentProjectId ?? undefined) : undefined;
@@ -65,8 +154,8 @@ export function VoyagesPage() {
     refetchInterval: 30_000,
   });
   const voyages = useMemo(
-    () => (data ?? []).filter((v) => matchFilter(v, filter)),
-    [data, filter],
+    () => (data ?? []).filter((v) => matchFilter(v, filter) && (kindFilter === 'all' || v.kind === kindFilter)),
+    [data, filter, kindFilter],
   );
 
   // —— 新建演示航程 ——
@@ -103,21 +192,35 @@ export function VoyagesPage() {
       />
 
       {noProjects ? (
-        <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
-          <Icon name="compass" size={36} style={{ margin: '0 auto 14px', color: 'var(--text-4)' }} />
-          <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 6 }}>还没有研究方向</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            任务隶属于研究方向。先创建一个方向，再启动演示任务。
-          </div>
-          <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-            <Icon name="plus" size={14} />
-            新建研究方向
-          </button>
+        <div className="card">
+          <EmptyState
+            icon="compass"
+            title="还没有研究方向"
+            desc="任务隶属于研究方向。先创建一个方向，再启动演示任务。"
+            action={
+              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
+                <Icon name="plus" size={14} />
+                新建研究方向
+              </button>
+            }
+          />
         </div>
       ) : (
         <>
           <div className="row gap10" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
             <Segmented options={FILTERS.map((f) => ({ v: f.v, label: f.label }))} value={filter} onChange={setFilter} />
+            <select
+              className="input"
+              aria-label="按类型筛选"
+              value={kindFilter}
+              onChange={(e) => setKindFilter(e.target.value)}
+              style={{ height: 33, fontSize: 12.5, fontWeight: 600, width: 128, color: kindFilter === 'all' ? 'var(--text-3)' : 'var(--text)' }}
+            >
+              <option value="all">全部类型</option>
+              {Object.entries(KIND_META).map(([k, m]) => (
+                <option key={k} value={k}>{m.zh}</option>
+              ))}
+            </select>
             <div style={{ flex: 1 }} />
             <Segmented
               options={[
@@ -130,49 +233,76 @@ export function VoyagesPage() {
           </div>
 
           {isLoading ? (
-            <div className="empty" style={{ padding: 60 }}>加载中…</div>
+            <SkeletonRows />
           ) : isError ? (
-            <div className="card card-pad" style={{ textAlign: 'center', padding: 48 }}>
-              <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>无法加载任务列表</div>
-              <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 16 }}>后端不可用或 M1 接口尚未就绪</div>
-              <button className="btn btn-soft" onClick={() => void refetch()}>重试 retry</button>
+            <div className="card">
+              <EmptyState
+                icon="x"
+                title="无法加载任务列表"
+                desc="后端不可用或接口尚未就绪，稍后可重试。"
+                compact
+                action={
+                  <button className="btn btn-soft" onClick={() => void refetch()}>
+                    <Icon name="refresh" size={13} />
+                    重试 retry
+                  </button>
+                }
+              />
             </div>
           ) : voyages.length === 0 ? (
-            <div className="card card-pad" style={{ textAlign: 'center', padding: 48 }}>
-              <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>暂无任务</div>
-              <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 16 }}>
-                点击右上角「新建演示任务」体验 AI 任务的规划-执行-自检循环。
-              </div>
+            <div className="card">
+              <EmptyState
+                icon="compass"
+                title="暂无任务"
+                desc={
+                  filter !== 'all' || kindFilter !== 'all'
+                    ? '当前筛选条件下没有任务，换个筛选试试。'
+                    : '点击右上角「新建演示任务」体验 AI 任务的规划-执行-自检循环。'
+                }
+                compact
+              />
             </div>
           ) : (
             <div className="card" style={{ overflow: 'hidden' }}>
               {voyages.map((v, i) => {
                 const active = !VOYAGE_TERMINAL.has(v.status);
+                const running = RUNNING_STATUSES.has(v.status);
                 return (
                   <div
                     key={v.id}
-                    className="hoverable row gap12"
+                    className={`voyage-row${running ? ' running' : ''}`}
                     onClick={() => navigate(`/voyages/${v.id}`)}
-                    style={{ padding: '14px 18px', borderTop: i > 0 ? '0.5px solid var(--border)' : 'none', alignItems: 'center' }}
+                    style={{ borderTop: i > 0 ? '0.5px solid var(--border)' : 'none' }}
                   >
-                    <span className="pill sm mono" style={{ background: 'var(--surface-3)', flexShrink: 0 }}>{v.kind}</span>
+                    <KindBadge kind={v.kind} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div
+                        title={v.goal}
+                        style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      >
                         {v.goal}
                       </div>
                       <div className="row gap8" style={{ marginTop: 4 }}>
-                        <span className="mono muted" style={{ fontSize: 10.5 }}>{v.id.slice(0, 8)}</span>
-                        <span className="mono muted" style={{ fontSize: 10.5 }}>· {fmtTime(v.created_at)}</span>
+                        <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{v.id.slice(0, 8)}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-3)' }} title={fmtFullTime(v.created_at)}>
+                          · {fmtRelative(v.created_at)}
+                        </span>
                       </div>
                     </div>
-                    <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0 }}>
-                      {progressText(v)}
+                    <span style={{ width: 130, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+                      <StepProgress v={v} />
                     </span>
-                    <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)', width: 72, textAlign: 'right', flexShrink: 0 }}>
-                      <Icon name="clock" size={11} style={{ display: 'inline-block', verticalAlign: '-1px', marginRight: 4 }} />
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 11.5, color: 'var(--text-3)', width: 78, flexShrink: 0,
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
+                      }}
+                    >
+                      <Icon name="clock" size={11} />
                       {fmtDuration(v.created_at, active ? null : v.updated_at)}
                     </span>
-                    <span style={{ flexShrink: 0 }}>
+                    <span style={{ width: 134, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
                       <StatusPill status={v.status} sm />
                     </span>
                     <Icon name="chevron" size={14} style={{ color: 'var(--text-4)', flexShrink: 0 }} />

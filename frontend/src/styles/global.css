@@ -196,6 +196,48 @@ input {
 .bar { height: 6px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
 .bar > i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
 
+/* ============================================================
+   Voyage list rows（AI 任务列表）
+   ============================================================ */
+.voyage-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 18px; cursor: pointer;
+  box-shadow: inset 3px 0 0 transparent;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.voyage-row:hover { background: var(--surface-2); }
+.voyage-row.running { background: var(--accent-soft-row); box-shadow: inset 3px 0 0 var(--accent); }
+.voyage-row.running:hover { background: var(--accent-soft-row-hover); }
+
+/* mini step progress（列表内迷你进度条） */
+.mini-bar {
+  width: 90px; height: 5px; border-radius: 3px;
+  background: var(--surface-3); overflow: hidden; flex-shrink: 0;
+}
+.mini-bar > i {
+  display: block; height: 100%; border-radius: 3px;
+  background: var(--accent); transition: width 0.3s ease;
+}
+.mini-bar > i.anim {
+  background-image: linear-gradient(
+    115deg,
+    transparent 0 25%, rgba(255, 255, 255, 0.4) 25% 50%,
+    transparent 50% 75%, rgba(255, 255, 255, 0.4) 75% 100%
+  );
+  background-size: 14px 100%;
+  animation: barStripe 0.9s linear infinite;
+}
+@keyframes barStripe { to { background-position: 14px 0; } }
+
+/* skeleton shimmer（加载骨架） */
+.skel {
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-2) 45%, var(--surface-3) 65%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
 /* divider */
 .hr { height: 0.5px; background: var(--border); border: 0; margin: 0; }
 

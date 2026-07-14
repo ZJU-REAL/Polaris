@@ -31,6 +31,9 @@
   --accent-soft:   #e8f0fa;
   --accent-soft-2: #d2e2f4;
   --accent-text:   #0d4a94;
+  /* 列表「执行中」行的极淡蓝底（比 accent-soft 更浅一档） */
+  --accent-soft-row:       #f3f7fd;
+  --accent-soft-row-hover: #ebf2fb;
 
   /* — Semantic (calibrated to the blue theme, low chroma) — */
   --ok:        #3f8f5f;  --ok-bg:     #e4f1e9;  --ok-tx:     #2f7048;
