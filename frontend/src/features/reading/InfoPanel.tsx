@@ -3,6 +3,7 @@ import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { FiguresSection } from '../../components/ui/FigureGallery';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import type { PaperDetail } from '../../lib/api';
@@ -162,6 +163,9 @@ export function InfoPanel({
           {paper.tldr}
         </div>
       )}
+
+      {/* —— 重要图片画廊 —— */}
+      <FiguresSection paper={paper} style={{ marginTop: 14 }} />
 
       {/* —— Wiki 正文 —— */}
       <div style={{ marginTop: 18 }}>

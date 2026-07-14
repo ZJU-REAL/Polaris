@@ -46,8 +46,13 @@ class LLMProvider(ABC):
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
     ) -> CompletionResult:
-        """一次性补全，返回完整结果。"""
+        """一次性补全，返回完整结果。
+
+        ``images``：可选 PNG 字节列表（多模态输入，附在最后一条 user 消息上）；
+        不支持视觉输入的 provider 抛 NotImplementedError。
+        """
 
     @abstractmethod
     def stream(

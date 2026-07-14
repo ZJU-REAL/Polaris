@@ -8,6 +8,7 @@ import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
+import { FiguresSection } from '../../components/ui/FigureGallery';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
@@ -776,6 +777,9 @@ function PaperDetailPane({
           {paper.tldr}
         </div>
       )}
+
+      {/* —— 重要图片画廊（有图显示；没图但有 PDF 时给「提取图片」按钮） —— */}
+      <FiguresSection paper={paper} />
 
       {/* —— Wiki 正文（markdown） —— */}
       <div style={{ marginTop: 22 }}>

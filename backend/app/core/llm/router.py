@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 
@@ -168,16 +169,20 @@ class LLMRouter:
         *,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
         user_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> CompletionResult:
         provider, route = await self.resolve(stage)
+        # images 仅在提供时透传（兼容未声明该参数的 provider 子类/测试替身）
+        extra: dict[str, Any] = {"images": images} if images else {}
         result = await provider.complete(
             messages,
             model=route.model,
             temperature=route.temperature if temperature is None else temperature,
             max_tokens=max_tokens,
+            **extra,
         )
         result.usage = self._ensure_usage(messages, result.content, result.usage)
         await self._record_usage(

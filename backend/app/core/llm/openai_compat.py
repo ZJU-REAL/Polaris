@@ -3,6 +3,7 @@
 骨架实现：complete/stream 接口完整；重试、超时策略、tool-use 等留 TODO。
 """
 
+import base64
 import json
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
@@ -37,10 +38,27 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float | None,
         max_tokens: int | None,
         stream: bool,
+        images: list[bytes] | None = None,
     ) -> dict[str, Any]:
+        payload_messages: list[dict[str, Any]] = [
+            {"role": m.role, "content": m.content} for m in messages
+        ]
+        if images:
+            # 多模态：图片以 data-url image_url parts 附在最后一条 user 消息上
+            target = next(
+                (m for m in reversed(payload_messages) if m["role"] == "user"),
+                payload_messages[-1],
+            )
+            parts: list[dict[str, Any]] = [{"type": "text", "text": target["content"]}]
+            for image in images:
+                b64 = base64.b64encode(image).decode("ascii")
+                parts.append(
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+                )
+            target["content"] = parts
         payload: dict[str, Any] = {
             "model": model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": payload_messages,
             "stream": stream,
         }
         if temperature is not None:  # 新款 Claude 等模型已弃用该参数，None 则不发送
@@ -56,12 +74,15 @@ class OpenAICompatProvider(LLMProvider):
         model: str,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
     ) -> CompletionResult:
         # TODO(M2): 重试/限速/错误分类
         resp = await self._client.post(
             f"{self._base_url}/chat/completions",
             headers=self._headers(),
-            json=self._payload(messages, model, temperature, max_tokens, stream=False),
+            json=self._payload(
+                messages, model, temperature, max_tokens, stream=False, images=images
+            ),
         )
         if resp.status_code >= 400:
             body = resp.text[:500]

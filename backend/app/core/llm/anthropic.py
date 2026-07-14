@@ -61,8 +61,12 @@ class AnthropicProvider(LLMProvider):
         model: str,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
     ) -> CompletionResult:
         # TODO(M2): 重试/限速/错误分类
+        if images:
+            # TODO：Anthropic 原生 image block 支持
+            raise NotImplementedError("anthropic provider does not support image inputs yet")
         resp = await self._client.post(
             _API_URL,
             headers=self._headers(),

@@ -13,6 +13,7 @@
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,10 +30,13 @@ from app.models.base import utcnow
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.services.concepts import extract_wikilinks, normalize_category, wiki_slug
+from app.services.figure_annotate import annotate_figures
 from app.services.literature import get_arxiv_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
-from app.services.literature.pdf_extract import extract_full_text, save_pdf
+from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_KNOBS: dict[str, Any] = {
     "months_back": 6,
@@ -459,6 +463,18 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             except Exception as e:  # noqa: BLE001 — 下载/抽取失败降级用 abstract
                 degraded += 1
                 failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
+            # 顺带提取候选图（基础信息 caption=null；筛选注释在 wiki.compile 后做）；
+            # 失败不影响全文流程
+            if paper.pdf_path and paper.figures is None:
+                try:
+                    candidates = await extract_figures(str(paper.id), Path(paper.pdf_path))
+                    paper.figures = [c | {"caption": None, "important": False} for c in candidates]
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    failed.append(
+                        {"id": str(paper.id), "error": f"figures: {type(e).__name__}: {e}"}
+                    )
             paper.status = "fetched"  # 无全文也进入编译（Librarian 退化用摘要）
             await session.commit()
             fetched += 1
@@ -533,6 +549,21 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             paper.status = "compiled"
             await session.commit()
             compiled += 1
+            # 编译成功后筛选注释论文图（stage=librarian 多模态）；失败仅 log，figures 可后补
+            if paper.figures:
+                try:
+                    await annotate_figures(
+                        paper,
+                        paper.figures,
+                        llm=ctx.llm,
+                        user_id=ctx.run.created_by,
+                        voyage_id=ctx.run.id,
+                    )
+                    await session.commit()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    logger.warning("figure annotation failed for paper %s", paper.id, exc_info=True)
 
     ctx.checkpoint["compiled_count"] = int(ctx.checkpoint.get("compiled_count") or 0) + compiled
     return {"processed": len(papers), "succeeded": compiled, "failed": failed}

@@ -1,4 +1,4 @@
-"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（M5 文献管理增强）往返。"""
+"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（论文图片）往返。"""
 
 from pathlib import Path
 
@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b7c8d9e0f1a2"  # lit_notes_tags_m5
-PREV_REVISION = "a9b0c1d2e3f4"  # experiment_lab_m4
+HEAD_REVISION = "c9d0e1f2a3b4"  # paper_figures
+PREV_REVISION = "b7c8d9e0f1a2"  # lit_notes_tags_m5
 
 
 def _make_config(db_path: Path) -> Config:
@@ -74,16 +74,18 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"project_id", "name"} <= columns["paper_tags"]
     assert columns["paper_tag_links"] == {"paper_id", "tag_id"}
     assert {"paper_id", "user_id", "starred", "reading_status"} <= columns["paper_user_meta"]
+    # 论文图片：papers.figures JSON 列
+    assert "figures" in columns["papers"]
 
-    # 最新 revision 可往返（downgrade 移除 M5 表）
+    # 最新 revision 可往返（downgrade 移除 figures 列）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert (
-        not {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} & columns["_tables"]
-    )
+    assert "figures" not in columns["papers"]
+    # M5 表不受影响
+    assert {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} <= columns["_tables"]
     assert "ssh_credentials" in columns["_tables"]  # M4 表不受影响
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    assert {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} <= columns["_tables"]
+    assert "figures" in columns["papers"]

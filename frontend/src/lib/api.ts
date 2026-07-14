@@ -364,12 +364,26 @@ export interface PaperConceptRef {
   category: ConceptCategory;
 }
 
+/** 论文图片元数据（docs/api-lit.md §6.5）；文件本体走 fetchFigureImage blob。 */
+export interface FigureInfo {
+  index: number;
+  page: number;
+  width: number;
+  height: number;
+  /** 视觉模型生成的一句话中文说明；降级提取时为 null */
+  caption: string | null;
+  /** 视觉模型判定的重要图 */
+  important: boolean;
+}
+
 export interface PaperDetail extends PaperRead {
   abstract: string | null;
   /** markdown，双链为 [[概念名]] */
   wiki_content: string | null;
   pdf_available: boolean;
   concepts: PaperConceptRef[];
+  /** 论文图片列表（后端未就绪时可能缺失） */
+  figures?: FigureInfo[];
 }
 
 export interface PageOf<T> {
@@ -906,6 +920,23 @@ export const api = {
   /** 按需补下 PDF（仅 arXiv 来源）；已有 PDF 时幂等直接返回。 */
   requestPaperPdf(id: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/papers/${id}/fetch-pdf`, { method: 'POST' });
+  },
+
+  // —— Lit · 论文图片（docs/api-lit.md §6.5） ——
+  /** 论文图片元数据列表；无图返回 []。 */
+  listFigures(id: string): Promise<FigureInfo[]> {
+    return request<FigureInfo[]>(`/papers/${id}/figures`);
+  },
+  /** 单张图片 PNG（blob → objectURL 显示）。 */
+  fetchFigureImage(id: string, index: number): Promise<Blob> {
+    return requestBlob(`/papers/${id}/figures/${index}/image`);
+  },
+  /** 从 PDF 提取图片并由视觉模型筛选重要图；已有 figures 且非 force 时幂等直返。无 PDF → 404 PDF_NOT_AVAILABLE。 */
+  extractFigures(id: string, force = false): Promise<{ figures: FigureInfo[] }> {
+    return request<{ figures: FigureInfo[] }>(
+      `/papers/${id}/extract-figures${force ? '?force=true' : ''}`,
+      { method: 'POST' },
+    );
   },
 
   // —— Lit · 笔记 ——

@@ -62,11 +62,32 @@ class PaperConceptRead(BaseModel):
     category: str | None
 
 
+class PaperFigure(BaseModel):
+    """论文图（docs/api-lit.md §6.5）；图片经 GET /papers/{id}/figures/{index}/image 取。"""
+
+    index: int
+    page: int
+    width: int
+    height: int
+    caption: str | None = None
+    important: bool = False
+
+
+class PaperFiguresResponse(BaseModel):
+    figures: list[PaperFigure]
+
+
 class PaperDetail(PaperRead):
     abstract: str | None
     wiki_content: str | None
     pdf_available: bool = False
     concepts: list[PaperConceptRead] = []
+    figures: list[PaperFigure] = []
+
+    @field_validator("figures", mode="before")
+    @classmethod
+    def _figures(cls, v: Any) -> Any:
+        return v or []
 
 
 class PaperUpdate(BaseModel):

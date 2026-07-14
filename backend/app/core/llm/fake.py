@@ -69,8 +69,19 @@ class FakeProvider(LLMProvider):
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
     ) -> CompletionResult:
-        content = self._respond(messages, model)
+        if images:
+            # 多模态（论文图筛选注释）：确定性选前两张图并配假图注
+            content = json.dumps(
+                [
+                    {"index": i, "important": True, "caption": "（fake）图注"}
+                    for i in range(min(2, len(images)))
+                ],
+                ensure_ascii=False,
+            )
+        else:
+            content = self._respond(messages, model)
         prompt_len = sum(estimate_tokens(m.content) for m in messages)
         return CompletionResult(
             content=content,

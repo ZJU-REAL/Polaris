@@ -60,6 +60,9 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     relevance_score: Mapped[float | None]
     tldr: Mapped[str | None] = mapped_column(Text)
     wiki_content: Mapped[str | None] = mapped_column(Text)  # markdown，双链 [[概念名]]
+    # 提取的论文图列表：[{index, page, width, height, caption: str|null, important: bool}]，
+    # 图片文件落 <data_dir>/papers/<paper_id>/figures/fig_<index>.png（路径不出 API）
+    figures: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
     status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
     scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

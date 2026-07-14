@@ -52,6 +52,16 @@
   - `csl-json` → `application/json` 数组（Zotero 可直接导入）：id=citation key、type、title、author:[{family,given}]、issued:{date-parts}、DOI、URL、container-title
   - 过滤参数与论文列表一致；缺省导出 status in (compiled, included)
 
+## 6.5 论文图片（重要图提取与展示）
+
+- Paper 新列 `figures` JSON：`[{index, page, width, height, caption: str|null, important: bool}]`（文件路径不出 API，落盘 `<data_dir>/papers/<paper_id>/figures/fig_<index>.png`）
+- `GET /papers/{id}/figures` → 上述数组（无则 `[]`）
+- `GET /papers/{id}/figures/{index}/image` → `image/png` FileResponse（成员校验）
+- `POST /papers/{id}/extract-figures?force=false` → `{figures: [...]}`：PyMuPDF 提取嵌入图（尺寸过滤 ≥200×150、面积排序、去重、上限 8）→ 若视觉模型可用（stage=librarian 多模态）挑选重要图并配一句中文说明；VLM 失败降级：按面积取前 4 张 `important=true` 无 caption。无 PDF → 404 `PDF_NOT_AVAILABLE`；已有 figures 且非 force → 幂等直返
+- 管线集成：`wiki.fetch_extract` 抽全文时顺带提取候选图；`wiki.compile` 编译成功后对该论文调用同一套筛选注释逻辑（失败不影响编译，figures 留空可后补）
+- LLM 层：`complete()` 增加可选 `images: list[bytes]`（openai_compat 转 data-url image_url parts；fake 返回确定性筛选 JSON；anthropic 原生格式或 NotImplementedError 均可）
+- `PaperDetail` 增加 `figures` 字段
+
 ## 7. 前端要点
 
 - 新路由 `/papers/:id/read` 阅读工作台：左 PDF（fetch blob→objectURL→iframe，加载态/无 PDF 引导「获取 PDF」按钮）+ 右侧 Segmented 三面板：笔记（列表+编辑器 textarea/预览切换）/ AI 伴读（气泡+流式+存为笔记）/ 论文信息（复用 wiki 详情渲染）

@@ -21,6 +21,8 @@ from app.models.user import User
 from app.schemas.paper import (
     PaperChatRequest,
     PaperDetail,
+    PaperFigure,
+    PaperFiguresResponse,
     PaperListPage,
     PaperManualCreate,
     PaperMyMetaRead,
@@ -30,9 +32,11 @@ from app.schemas.paper import (
     PaperUpdate,
     TagRead,
 )
+from app.services import figure_annotate as figure_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
 from app.services import projects as projects_service
+from app.services.literature.pdf_extract import figure_path
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +202,51 @@ async def fetch_paper_pdf(
     except papers_service.PdfFetchFailedError as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="PDF_FETCH_FAILED") from e
     return await _paper_detail(session, paper, user.id)
+
+
+# ---- 论文图片（docs/api-lit.md §6.5） ----
+
+
+@router.get("/papers/{paper_id}/figures", response_model=list[PaperFigure])
+async def list_paper_figures(
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[PaperFigure]:
+    paper = await _get_member_paper(session, paper_id, user)
+    return [PaperFigure(**f) for f in (paper.figures or [])]
+
+
+@router.get("/papers/{paper_id}/figures/{index}/image")
+async def get_paper_figure_image(
+    paper_id: uuid.UUID,
+    index: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> FileResponse:
+    paper = await _get_member_paper(session, paper_id, user)
+    known = {int(f["index"]) for f in (paper.figures or [])}
+    path = figure_path(str(paper_id), index)
+    if index not in known or not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FIGURE_NOT_FOUND")
+    return FileResponse(path, media_type="image/png", filename=f"fig_{index}.png")
+
+
+@router.post("/papers/{paper_id}/extract-figures", response_model=PaperFiguresResponse)
+async def extract_paper_figures(
+    paper_id: uuid.UUID,
+    force: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperFiguresResponse:
+    """提取嵌入图 + LLM 筛选注释；已有 figures 且非 force 时幂等直返。"""
+    paper = await _get_member_paper(session, paper_id, user)
+    if paper.figures is not None and not force:
+        return PaperFiguresResponse(figures=[PaperFigure(**f) for f in paper.figures])
+    if not paper.pdf_path or not Path(paper.pdf_path).exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PDF_NOT_AVAILABLE")
+    figures = await figure_service.extract_and_annotate(session, paper, user_id=user.id)
+    return PaperFiguresResponse(figures=[PaperFigure(**f) for f in figures])
 
 
 # ---- AI 伴读（docs/api-lit.md §3，SSE 流） ----

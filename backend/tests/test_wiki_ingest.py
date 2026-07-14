@@ -30,6 +30,7 @@ from app.services.literature import (
     reset_clients,
     set_clients,
 )
+from app.services.literature.pdf_extract import figure_path
 from tests.conftest import RecordingBus, register_and_login
 
 DEFINITION = {
@@ -101,12 +102,23 @@ S2_ANCHOR_REFERENCES = {
 }
 
 
+def _make_image_bytes(width: int, height: int) -> bytes:
+    import pymupdf
+
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, width, height))
+    pix.clear_with(90)
+    return pix.tobytes("png")
+
+
 def _make_pdf_bytes() -> bytes:
     import pymupdf
 
     doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((72, 72), "Full text: research agents with reinforcement learning.")
+    # 嵌入一大一小两张图：大图为候选图，小图（<200×150）被尺寸过滤
+    page.insert_image(pymupdf.Rect(72, 100, 272, 250), stream=_make_image_bytes(400, 300))
+    page.insert_image(pymupdf.Rect(72, 260, 122, 300), stream=_make_image_bytes(100, 80))
     data = doc.tobytes()
     doc.close()
     return data
@@ -221,6 +233,18 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
             assert "[[Agent]]" in p.wiki_content  # 双链
             assert p.full_text_path and p.pdf_path  # PDF 已抽全文
             assert p.embedding is not None and len(p.embedding) == EMBEDDING_DIM
+            # 管线顺带提取论文图（小图被滤），compile 后由 fake VLM 注释
+            assert p.figures == [
+                {
+                    "index": 0,
+                    "page": 1,
+                    "width": 400,
+                    "height": 300,
+                    "caption": "（fake）图注",
+                    "important": True,
+                }
+            ]
+            assert figure_path(str(p.id), 0).exists()
 
         concepts = (
             (
