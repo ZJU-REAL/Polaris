@@ -325,6 +325,16 @@ function LeaderboardTab({
                   晋级
                 </button>
               )}
+              {r.status === 'promoted' && (
+                <button
+                  className="btn btn-soft sm"
+                  title="从该 idea 发起实验"
+                  onClick={() => navigate(`/experiment?new=${r.id}`)}
+                >
+                  <Icon name="flask" size={12} />
+                  发起实验
+                </button>
+              )}
             </div>
           </div>
         );

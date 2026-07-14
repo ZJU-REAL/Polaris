@@ -573,6 +573,129 @@ export interface ReviewMessageRead {
 }
 
 // ============================================================
+// M4 · SSH 凭据（每用户私有）— docs/api-m4.md §1
+// ============================================================
+
+export interface SshCredentialRead {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  created_at: string;
+  /** 最近一次测试连接成功时间；从未验证为 null */
+  last_verified_at: string | null;
+}
+
+export interface SshCredentialInput {
+  name: string;
+  host: string;
+  port?: number;
+  username: string;
+  /** PEM 文本，后端 Fernet 加密入库，绝不回传 */
+  private_key: string;
+  passphrase?: string;
+}
+
+export interface SshTestResult {
+  ok: boolean;
+  detail: string;
+}
+
+// ============================================================
+// M4 · Experiments（实验，与 kind=experiment 的 voyage 1:1）
+// ============================================================
+
+export type ExperimentStatus =
+  | 'planning'
+  | 'awaiting_gate'
+  | 'setup'
+  | 'running'
+  | 'reporting'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
+
+/** 实验终态集合。 */
+export const EXPERIMENT_TERMINAL: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled']);
+
+export interface ExperimentBudget {
+  max_hours?: number;
+  max_runs?: number;
+}
+
+export interface ExperimentRead {
+  id: string;
+  project_id: string;
+  idea_id: string;
+  idea_title: string;
+  status: ExperimentStatus;
+  voyage_id: string | null;
+  workdir: string | null;
+  server_host: string | null;
+  budget: ExperimentBudget | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type HypothesisStatus = 'testing' | 'verified' | 'falsified';
+
+export interface ExperimentHypothesis {
+  text: string;
+  status: HypothesisStatus;
+}
+
+/** plan JSON（契约只列字段名，内层结构宽松处理）。 */
+export interface ExperimentPlan {
+  hypotheses?: ExperimentHypothesis[];
+  repro_strategy?: string;
+  steps?: (string | { title?: string; desc?: string; description?: string })[];
+  budget_estimate?: string | Record<string, unknown>;
+}
+
+export type ExperimentRunStatus = 'running' | 'succeeded' | 'failed';
+
+export interface ExperimentRunRead {
+  id: string;
+  seq: number;
+  command: string;
+  status: ExperimentRunStatus;
+  exit_code: number | null;
+  log_path: string | null;
+  metrics: Record<string, unknown> | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ExperimentMetricPoint {
+  step: number;
+  value: number;
+}
+
+export interface ExperimentDetail extends ExperimentRead {
+  plan: ExperimentPlan | null;
+  runs: ExperimentRunRead[];
+  /** markdown 报告，未生成为 null */
+  report: string | null;
+  /** {指标名: [{step, value}]} */
+  metrics: Record<string, ExperimentMetricPoint[]> | null;
+}
+
+export interface ExperimentLogs {
+  lines: string[];
+  truncated: boolean;
+}
+
+export interface CreateExperimentInput {
+  idea_id: string;
+  credential_id: string;
+  params?: {
+    gpu_hint?: string;
+    budget?: ExperimentBudget;
+  };
+}
+
+// ============================================================
 // api object
 // ============================================================
 
@@ -774,6 +897,43 @@ export const api = {
   },
   postSessionMessage(sessionId: string, content: string): Promise<ReviewMessageRead> {
     return requestJson<ReviewMessageRead>(`/sessions/${sessionId}/messages`, 'POST', { content });
+  },
+
+  // —— M4 · SSH 凭据 ——
+  listSshCredentials(): Promise<SshCredentialRead[]> {
+    return request<SshCredentialRead[]>('/ssh-credentials');
+  },
+  createSshCredential(input: SshCredentialInput): Promise<SshCredentialRead> {
+    return requestJson<SshCredentialRead>('/ssh-credentials', 'POST', input);
+  },
+  deleteSshCredential(id: string): Promise<void> {
+    return request<void>(`/ssh-credentials/${id}`, { method: 'DELETE' });
+  },
+  /** asyncssh 真连一次 + echo ok；成功则后端更新 last_verified_at。 */
+  testSshCredential(id: string): Promise<SshTestResult> {
+    return request<SshTestResult>(`/ssh-credentials/${id}/test`, { method: 'POST' });
+  },
+
+  // —— M4 · Experiments ——
+  createExperiment(projectId: string, input: CreateExperimentInput): Promise<ExperimentRead> {
+    return requestJson<ExperimentRead>(`/projects/${projectId}/experiments`, 'POST', input);
+  },
+  listExperiments(projectId: string): Promise<ExperimentRead[]> {
+    return request<ExperimentRead[]>(`/projects/${projectId}/experiments`);
+  },
+  getExperiment(id: string): Promise<ExperimentDetail> {
+    return request<ExperimentDetail>(`/experiments/${id}`);
+  },
+  /** 取消关联 voyage + 尝试 SSH kill 运行中的进程。 */
+  cancelExperiment(id: string): Promise<void> {
+    return request<void>(`/experiments/${id}/cancel`, { method: 'POST' });
+  },
+  getExperimentLogs(id: string, opts: { runId?: string; tail?: number } = {}): Promise<ExperimentLogs> {
+    const params = new URLSearchParams();
+    if (opts.runId) params.set('run_id', opts.runId);
+    if (opts.tail) params.set('tail', String(opts.tail));
+    const qs = params.toString();
+    return request<ExperimentLogs>(`/experiments/${id}/logs${qs ? `?${qs}` : ''}`);
   },
 
   // —— Admin · LLM ——

@@ -49,9 +49,17 @@ class Sextant:
         action = str(step_def.get("action", ""))
         acceptance = step_def.get("acceptance")
 
-        if action in DETERMINISTIC_ACTIONS or action.startswith(("wiki.", "forge.", "review.")):
-            # wiki./forge./review. 为确定性批处理步骤：单条失败已汇总进 observation.failed，
-            # 步骤级失败（helm 捕获的异常）走上面的 observation.error 分支
+        if action == "experiment.smoke" and observation.get("exit_code") != 0:
+            return {
+                "passed": False,
+                "reason": f"冒烟测试退出码 {observation.get('exit_code')} != 0",
+            }, {}
+
+        if action in DETERMINISTIC_ACTIONS or action.startswith(
+            ("wiki.", "forge.", "review.", "experiment.")
+        ):
+            # wiki./forge./review./experiment. 为确定性批处理步骤：单条失败已汇总进
+            # observation.failed，步骤级失败（helm 捕获的异常）走上面的 observation.error 分支
             return {"passed": True, "reason": f"确定性步骤 {action} 执行成功"}, {}
 
         content = observation.get("content")

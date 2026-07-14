@@ -10,6 +10,7 @@ from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project, ProjectMember
 from app.models.review import ReviewMessage, ReviewSession
+from app.models.ssh_credential import SSHCredential
 from app.models.user import User
 from app.models.voyage import VoyageRun, VoyageStep
 
@@ -30,6 +31,7 @@ __all__ = [
     "ProjectMember",
     "ReviewMessage",
     "ReviewSession",
+    "SSHCredential",
     "TimestampMixin",
     "User",
     "UUIDPrimaryKeyMixin",

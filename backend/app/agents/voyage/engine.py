@@ -247,14 +247,19 @@ class VoyageEngine:
             await self._set_status(session, run, "paused_gate")
             return False
 
+        payload: dict[str, Any] = {
+            "voyage_id": str(run.id),
+            "step_seq": run.cursor,
+            "step_title": step_def.get("title"),
+        }
+        # 动作可在 checkpoint["gate_payload"] 预置业务上下文（如实验 id + 预算摘要）
+        extra_payload = checkpoint.get("gate_payload")
+        if isinstance(extra_payload, dict):
+            payload = extra_payload | payload
         gate = Gate(
             project_id=run.project_id,
             kind=str(step_def["requires_gate"]),
-            payload={
-                "voyage_id": str(run.id),
-                "step_seq": run.cursor,
-                "step_title": step_def.get("title"),
-            },
+            payload=payload,
             requested_by=f"voyage:{run.kind}",
         )
         session.add(gate)
@@ -380,6 +385,11 @@ class VoyageEngine:
         checkpoint = dict(run.checkpoint or {})
         replans = int(checkpoint.get("replans", 0))
         diagnosis = (step_row.verdict or {}).get("reason", "")
+        # 固定管线步骤可声明 on_failure="fail"：不重规划，直接判 voyage 失败
+        if failed_step.get("on_failure") == "fail":
+            await self._emit_log(run, f"步骤失败（on_failure=fail，不重规划）：{diagnosis}")
+            await self._set_status(session, run, "failed")
+            return False
         if replans >= MAX_REPLANS:
             await self._emit_log(run, f"重规划已达上限（{MAX_REPLANS} 次），航程暂停等待人工处理")
             await self._set_status(session, run, "paused_error")

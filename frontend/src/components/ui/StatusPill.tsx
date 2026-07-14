@@ -36,6 +36,11 @@ export const STATUS: Record<string, StatusMeta> = {
   paused_error: { cls: 'st-failed', zh: '出错暂停', en: 'error' },
   failed: { cls: 'st-failed', zh: '失败', en: 'failed' },
   cancelled: { cls: 'st-rejected', zh: '已取消', en: 'cancelled' },
+  // —— Experiment 状态（M4 Experiment Lab） ——
+  awaiting_gate: { cls: 'st-candidate', zh: '等待审批', en: 'awaiting gate' },
+  setup: { cls: 'st-drafted', zh: '建环境', en: 'setup' },
+  reporting: { cls: 'st-reviewed', zh: '报告中', en: 'reporting' },
+  succeeded: { cls: 'st-implemented', zh: '成功', en: 'succeeded' },
   // —— Project 状态 ——
   active: { cls: 'st-implemented', zh: '进行中', en: 'active' },
   draft: { cls: 'st-candidate', zh: '草稿', en: 'draft' },

@@ -5,6 +5,7 @@
 """
 
 from app.agents.voyage import (
+    actions_experiment,  # noqa: F401  注册 experiment.* 动作
     actions_ideas,  # noqa: F401  注册 forge.* / review.* 动作
     actions_wiki,  # noqa: F401  注册 wiki.* 动作
 )

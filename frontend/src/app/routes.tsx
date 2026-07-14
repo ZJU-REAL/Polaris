@@ -13,6 +13,7 @@ import { ForgePage } from '../features/forge/ForgePage';
 import { IdeaDetailPage } from '../features/forge/IdeaDetailPage';
 import { ReviewPage } from '../features/review/ReviewPage';
 import { ExperimentPage } from '../features/experiment/ExperimentPage';
+import { ExperimentDetailPage } from '../features/experiment/ExperimentDetailPage';
 import { WriterPage } from '../features/writer/WriterPage';
 import { PaperReviewPage } from '../features/paper-review/PaperReviewPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
       { path: 'ideas/:id', element: <IdeaDetailPage /> },
       { path: 'review', element: <ReviewPage /> },
       { path: 'experiment', element: <ExperimentPage /> },
+      { path: 'experiment/:id', element: <ExperimentDetailPage /> },
       { path: 'writer', element: <WriterPage /> },
       { path: 'paper-review', element: <PaperReviewPage /> },
       { path: 'settings', element: <SettingsPage /> },

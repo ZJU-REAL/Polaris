@@ -25,6 +25,9 @@ _GAPS_MARKER = '"gaps"'  # forge gap 分析
 _IDEAS_MARKER = '"ideas"'  # forge 候选生成
 _IDEA_SCORE_MARKER = '"operability"'  # forge 四维打分
 _JUDGE_MARKER = '"winner"'  # debate 裁判判定
+_EXP_PLAN_MARKER = '"repro_strategy"'  # experiment 计划
+_EXP_CODE_MARKER = '"requirements.txt"'  # experiment 代码生成/修复
+_EXP_REPORT_MARKER = "## 实验报告"  # experiment 报告
 
 EMBEDDING_DIM = 1024  # 与真实 embedding 模型（BGE-M3）维度一致
 
@@ -133,6 +136,15 @@ class FakeProvider(LLMProvider):
                 {"passed": True, "reason": "fake-sextant: 产出满足验收标准（确定性假判定）"},
                 ensure_ascii=False,
             )
+        # 注意顺序：experiment 计划 prompt 含 '"steps"'（与 navigator 计划 marker 重叠），
+        # 且 setup/报告的 user prompt 内嵌 plan JSON（含 "repro_strategy"），
+        # 所以 experiment 代码/报告/计划 marker 必须先于 navigator 计划 marker 判断
+        if _EXP_CODE_MARKER in full_text:
+            return FakeProvider._respond_exp_code()
+        if _EXP_REPORT_MARKER in full_text:
+            return FakeProvider._respond_exp_report()
+        if _EXP_PLAN_MARKER in full_text:
+            return FakeProvider._respond_exp_plan()
         if _PLAN_MARKER in full_text:
             return json.dumps(_FAKE_PLAN, ensure_ascii=False)
         if _INTERVIEW_MARKER in full_text:
@@ -288,6 +300,65 @@ class FakeProvider(LLMProvider):
         return json.dumps(
             base | {"rationale": {dim: f"fake-rationale：{dim} 的确定性假理由" for dim in base}},
             ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_exp_plan() -> str:
+        """experiment 计划：确定性合法 plan JSON（hypotheses/repro/steps/budget_estimate）。"""
+        return json.dumps(
+            {
+                "hypotheses": [
+                    {"text": "假设一：新方法优于基线（fake）", "status": "testing"},
+                    {"text": "假设二：合成数据足以验证趋势（fake）", "status": "testing"},
+                ],
+                "repro_strategy": "用官方基线代码在小型合成数据上复现（fake）",
+                "steps": ["准备合成数据（fake）", "训练基线与新方法（fake）", "对比指标（fake）"],
+                "budget_estimate": {"gpu_hours": 2, "runs": 3},
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_exp_code() -> str:
+        """experiment 代码生成/修复：含 requirements.txt / run.sh(--smoke) / train.py。"""
+        train_py = (
+            "import json\n"
+            "import sys\n"
+            "steps = 1 if '--smoke' in sys.argv else 3\n"
+            "for step in range(steps):\n"
+            "    value = 0.6 + 0.1 * step\n"
+            '    print("POLARIS_METRIC " + json.dumps('
+            '{"name": "accuracy", "step": step, "value": value}))\n'
+            'print("done (fake experiment)")\n'
+        )
+        run_sh = (
+            "#!/usr/bin/env bash\n"
+            "set -e\n"
+            'if [ "$1" = "--smoke" ]; then\n'
+            "  .venv/bin/python train.py --smoke\n"
+            "else\n"
+            "  .venv/bin/python train.py\n"
+            "fi\n"
+        )
+        return json.dumps(
+            {
+                "files": {
+                    "requirements.txt": "# no external deps (fake)\n",
+                    "run.sh": run_sh,
+                    "train.py": train_py,
+                }
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_exp_report() -> str:
+        return (
+            "## 实验报告\n\n"
+            "### 结果概览\n\n新方法在合成数据上优于基线（fake）。\n\n"
+            "### 指标表现\n\naccuracy 随 step 上升（fake）。\n\n"
+            "### 假设验证结论\n\n- 假设一：verified（fake）\n- 假设二：testing（fake）\n\n"
+            "### 局限与后续建议\n\n扩大数据规模复验（fake）。\n"
         )
 
     @staticmethod

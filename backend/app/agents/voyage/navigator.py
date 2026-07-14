@@ -111,6 +111,41 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
     ]
 
 
+def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """experiment 固定五步计划（docs/api-m4.md §3）：
+    计划 →（compute_budget 闸门）建环境 → 冒烟 → 正式运行 → 报告。
+    固定管线不重规划：所有步骤 on_failure="fail"，失败即 voyage failed。
+    """
+    steps = [
+        (
+            "实验计划（LLM）",
+            "experiment.plan",
+            "plan JSON 已通过严格校验并写入 Experiment.plan",
+            None,
+        ),
+        (
+            "建环境（SSH + 代码生成）",
+            "experiment.setup",
+            "远端 workdir 就绪、代码文件已写入、venv 依赖安装成功",
+            "compute_budget",
+        ),
+        ("冒烟测试", "experiment.smoke", "run.sh --smoke 退出码为 0", None),
+        ("正式运行（轮询监控）", "experiment.run", "运行结束且指标已解析", None),
+        ("实验报告（LLM）", "experiment.report", "markdown 报告已写入 Experiment.report", None),
+    ]
+    return [
+        {
+            "title": title,
+            "action": action,
+            "params": {},
+            "acceptance": acceptance,
+            "requires_gate": gate,
+            "on_failure": "fail",
+        }
+        for title, action, acceptance, gate in steps
+    ]
+
+
 def demo_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """demo 航程固定三步：分析目标 → 生成产物（过闸门）→ 总结。"""
     return [
@@ -229,6 +264,8 @@ class Navigator:
             return forge_plan(run)
         if run.kind == "idea_review":
             return review_plan(run)
+        if run.kind == "experiment":
+            return experiment_plan(run)
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         user_prompt = f"目标：{run.goal}"
         if context:

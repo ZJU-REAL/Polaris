@@ -38,6 +38,7 @@ function crumbFor(pathname: string): [string, string] {
   if (pathname === '/voyages') return ['Polaris', '任务航程'];
   if (pathname.startsWith('/voyages/')) return ['任务航程', '航程详情'];
   if (pathname.startsWith('/ideas/')) return ['Idea Forge', 'Idea 详情'];
+  if (pathname.startsWith('/experiment/')) return ['实验搭建', '实验详情'];
   const table: Record<string, [string, string]> = {
     '/wiki': ['Stage 00', '文献追踪'],
     '/forge': ['Stage 01', 'Idea 生成'],
@@ -153,6 +154,13 @@ export function AppShell() {
         void queryClient.invalidateQueries({ queryKey: ['idea', msg.idea_id] });
         void queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
         void queryClient.invalidateQueries({ queryKey: ['forge-state'] });
+      } else if (msg.type === 'experiment.status') {
+        void queryClient.invalidateQueries({ queryKey: ['experiments'] });
+        void queryClient.invalidateQueries({ queryKey: ['experiment', msg.experiment_id] });
+        if (msg.status === 'awaiting_gate') toast('实验等待预算审批 · experiment awaiting gate', 'info');
+        else if (msg.status === 'running') toast('实验正式运行中 · experiment running', 'info');
+        else if (msg.status === 'done') toast('实验完成 · experiment done', 'ok');
+        else if (msg.status === 'failed') toast('实验失败 · experiment failed', 'error');
       }
     });
     return close;

@@ -3,8 +3,9 @@
 - M1：Voyage 引擎驱动任务（run/resume）
 - M2：每日文献增量 ingest（cron，见 worker/settings.py）
 - M3：Idea Forge / 评审锦标赛 voyage（kind=idea_forge / idea_review，仍走 run_voyage）
-未来任务归属（M4+）：
-- experiment_*: 远程实验 setup/run/监控（asyncssh；写操作先过 Gate）
+- M4：Experiment Lab voyage（kind=experiment，仍走 run_voyage；SSH 执行与轮询
+  在 actions_experiment 内部，命令白名单见 app/services/ssh_exec.py）
+未来任务归属（M5+）：
 - writing_*: 稿件生成与编译
 """
 

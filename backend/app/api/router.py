@@ -6,12 +6,14 @@ from app.api import (
     admin_llm,
     auth,
     concepts,
+    experiments,
     gates,
     health,
     ideas,
     ingest,
     papers,
     projects,
+    ssh_credentials,
     voyages,
     wiki,
 )
@@ -28,3 +30,5 @@ api_router.include_router(concepts.router)
 api_router.include_router(ingest.router)
 api_router.include_router(wiki.router)
 api_router.include_router(ideas.router)
+api_router.include_router(ssh_credentials.router)
+api_router.include_router(experiments.router)

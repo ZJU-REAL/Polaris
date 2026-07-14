@@ -19,6 +19,7 @@ from app.core.queue import TaskQueue, get_task_queue
 from app.models.gate import Gate
 from app.models.user import User
 from app.schemas.gate import GateDecision, GateRead
+from app.services import experiments as experiments_service
 from app.services import gates as gates_service
 from app.services import ideas as ideas_service
 
@@ -87,6 +88,17 @@ async def _decide(
                         "type": "voyage.status",
                         "voyage_id": str(voyage_id),
                         "status": run.status,
+                    },
+                )
+            # 实验联动（M4）：驳回 compute_budget 闸门 → 关联实验置 failed + WS 事件
+            experiment = await experiments_service.fail_by_voyage(session, voyage_id)
+            if experiment is not None:
+                await bus.publish_notify(
+                    experiment.project_id,
+                    {
+                        "type": "experiment.status",
+                        "experiment_id": str(experiment.id),
+                        "status": experiment.status,
                     },
                 )
 
