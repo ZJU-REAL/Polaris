@@ -1,6 +1,7 @@
 """论文库与检索业务逻辑（不 import fastapi）。"""
 
 import json
+import logging
 import uuid
 from collections.abc import Sequence
 
@@ -8,10 +9,17 @@ from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.llm.router import LLMRouter
 from app.models.paper import Concept, Paper
 from app.models.project import ProjectMember
 
+logger = logging.getLogger(__name__)
+
 PAPER_SORTS = ("relevance", "-published_at")
+
+# 语义检索重排：向量召回候选数 / 送重排的文档截断长度
+RERANK_CANDIDATES = 30
+RERANK_DOC_CHARS = 512
 
 
 def _member_paper_filter(stmt: Select, user_id: uuid.UUID) -> Select:
@@ -137,3 +145,37 @@ async def semantic_search_papers(
     )
     by_id = {p.id: p for p in papers}
     return [(by_id[pid], scores[pid]) for pid, _ in ((r.id, r.score) for r in rows) if pid in by_id]
+
+
+def rerank_document_of(paper: Paper) -> str:
+    """重排送审文本：title + abstract，截断 RERANK_DOC_CHARS 字。"""
+    text_ = paper.title or ""
+    if paper.abstract:
+        text_ = f"{text_}\n{paper.abstract}"
+    return text_[:RERANK_DOC_CHARS]
+
+
+async def rerank_paper_rows(
+    llm_router: LLMRouter,
+    *,
+    query: str,
+    rows: list[tuple[Paper, float]],
+    limit: int,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+) -> tuple[list[tuple[Paper, float]], bool]:
+    """对向量召回结果做 rerank，返回 (top limit 结果, 是否重排成功)。
+
+    rerank 未配置（NotImplementedError）或调用异常时降级：按原向量分取前 limit。
+    """
+    if not rows:
+        return [], False
+    documents = [rerank_document_of(p) for p, _ in rows]
+    try:
+        ranked = await llm_router.rerank(
+            query, documents, top_n=limit, user_id=user_id, project_id=project_id
+        )
+    except Exception:  # 含 NotImplementedError：降级为纯向量分
+        logger.warning("rerank failed, falling back to vector scores", exc_info=True)
+        return rows[:limit], False
+    return [(rows[i][0], score) for i, score in ranked[:limit]], True

@@ -11,7 +11,7 @@ import math
 import re
 from collections.abc import AsyncIterator, Sequence
 
-from app.core.llm.base import CompletionResult, LLMProvider, Message
+from app.core.llm.base import CompletionResult, LLMProvider, Message, RerankResult
 
 # 与 navigator.py / sextant.py / actions_wiki.py / services/projects.py 的 prompt 对齐的识别标记
 _PLAN_MARKER = '"steps"'
@@ -21,7 +21,7 @@ _CONCEPTS_MARKER = "概念列表："
 _LIBRARIAN_MARKER = "TL;DR"
 _INTERVIEW_MARKER = '"out_of_scope"'
 
-EMBEDDING_DIM = 1536
+EMBEDDING_DIM = 1024  # 与真实 embedding 模型（BGE-M3）维度一致
 
 _FAKE_PLAN = {
     "steps": [
@@ -90,6 +90,31 @@ class FakeProvider(LLMProvider):
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
         return [fake_embedding(t) for t in texts]
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        *,
+        model: str,
+        top_n: int | None = None,
+    ) -> RerankResult:
+        """确定性重排：查询/文档词集 Jaccard 重叠打分，同分按原下标稳定排序。"""
+        query_tokens = set(re.findall(r"\w+", query.lower()))
+
+        def score_of(doc: str) -> float:
+            doc_tokens = set(re.findall(r"\w+", doc.lower()))
+            union = query_tokens | doc_tokens
+            if not union:
+                return 0.0
+            return len(query_tokens & doc_tokens) / len(union)
+
+        scored = [(i, score_of(doc)) for i, doc in enumerate(documents)]
+        scored.sort(key=lambda pair: (-pair[1], pair[0]))
+        if top_n is not None:
+            scored = scored[:top_n]
+        total = estimate_tokens(query) + sum(estimate_tokens(d) for d in documents)
+        return RerankResult(results=scored, usage={"total_tokens": total})
 
     @staticmethod
     def _respond(messages: Sequence[Message], model: str) -> str:

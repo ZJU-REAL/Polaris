@@ -45,7 +45,7 @@ class AnthropicProvider(LLMProvider):
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens or _DEFAULT_MAX_TOKENS,
-                        "messages": [
+            "messages": [
                 {"role": m.role, "content": m.content} for m in messages if m.role != "system"
             ],
             "stream": stream,

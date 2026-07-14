@@ -121,3 +121,4 @@ class SearchResponse(BaseModel):
     papers: list[ScoredPaper]
     concepts: list[ScoredConcept]
     mode_used: Literal["keyword", "semantic"]
+    reranked: bool = False  # semantic 模式下 rerank 是否成功（失败降级为纯向量分）

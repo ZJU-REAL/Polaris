@@ -20,7 +20,7 @@ from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.llm_config import LLMUsage
-from app.models.paper import Concept, Paper, paper_concepts
+from app.models.paper import EMBEDDING_DIM, Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.services import ingest as ingest_service
 from app.services.literature import (
@@ -220,7 +220,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
             assert p.tldr
             assert "[[Agent]]" in p.wiki_content  # 双链
             assert p.full_text_path and p.pdf_path  # PDF 已抽全文
-            assert p.embedding is not None and len(p.embedding) == 1536
+            assert p.embedding is not None and len(p.embedding) == EMBEDDING_DIM
 
         concepts = (
             (

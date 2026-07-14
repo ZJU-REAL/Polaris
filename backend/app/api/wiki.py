@@ -40,14 +40,27 @@ async def search(
     await _member_project(session, project_id, user)
 
     mode_used = "keyword"
+    reranked = False
     paper_rows: list = []
     if mode == "semantic" and papers_service.semantic_search_supported(session):
         try:
             vectors = await get_llm_router().embed([q], user_id=user.id, project_id=project_id)
-            paper_rows = await papers_service.semantic_search_papers(
-                session, project_id=project_id, query_vector=vectors[0], limit=limit
+            candidates = await papers_service.semantic_search_papers(
+                session,
+                project_id=project_id,
+                query_vector=vectors[0],
+                limit=max(papers_service.RERANK_CANDIDATES, limit),
             )
             mode_used = "semantic"
+            # 向量召回 top 30 → rerank 取 top limit；失败降级为纯向量分
+            paper_rows, reranked = await papers_service.rerank_paper_rows(
+                get_llm_router(),
+                query=q,
+                rows=candidates,
+                limit=limit,
+                user_id=user.id,
+                project_id=project_id,
+            )
         except NotImplementedError:
             mode_used = "keyword"  # embedding 路由的 provider 不支持 → 回退
     if mode_used == "keyword":
@@ -75,7 +88,7 @@ async def search(
     papers = [
         ScoredPaper(**PaperRead.model_validate(p).model_dump(), score=s) for p, s in paper_rows
     ]
-    return SearchResponse(papers=papers, concepts=concepts, mode_used=mode_used)
+    return SearchResponse(papers=papers, concepts=concepts, mode_used=mode_used, reranked=reranked)
 
 
 @router.get("/projects/{project_id}/export/obsidian")

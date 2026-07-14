@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from app.core.llm.base import CompletionResult, LLMProvider, Message
+from app.core.llm.base import CompletionResult, LLMProvider, Message, RerankResult
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -112,6 +112,39 @@ class OpenAICompatProvider(LLMProvider):
         # 按 index 还原顺序（OpenAI 兼容端点保证有 index 字段）
         data.sort(key=lambda item: item.get("index", 0))
         return [item["embedding"] for item in data]
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        *,
+        model: str,
+        top_n: int | None = None,
+    ) -> RerankResult:
+        """Cohere 风格 rerank 端点（LiteLLM 代理 /v1/rerank；base_url 已含 /v1）。"""
+        payload: dict[str, Any] = {"model": model, "query": query, "documents": documents}
+        if top_n is not None:
+            payload["top_n"] = top_n
+        resp = await self._client.post(
+            f"{self._base_url}/rerank",
+            headers=self._headers(),
+            json=payload,
+        )
+        if resp.status_code >= 400:
+            body = resp.text[:500]
+            raise RuntimeError(f"openai_compat {resp.status_code} from {self._base_url}: {body}")
+        data = resp.json()
+        results = sorted(
+            ((int(r["index"]), float(r["relevance_score"])) for r in data["results"]),
+            key=lambda pair: -pair[1],
+        )
+        if top_n is not None:
+            results = results[:top_n]
+        # 计费：Cohere 风格 meta.billed_units.total_tokens；部分代理放在 usage.total_tokens
+        billed = (data.get("meta") or {}).get("billed_units") or {}
+        total_tokens = billed.get("total_tokens") or (data.get("usage") or {}).get("total_tokens")
+        usage = {"total_tokens": int(total_tokens)} if total_tokens else {}
+        return RerankResult(results=results, usage=usage)
 
     async def aclose(self) -> None:
         await self._client.aclose()

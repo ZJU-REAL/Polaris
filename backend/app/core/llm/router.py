@@ -29,6 +29,7 @@ STAGES = (
     "relevance",
     "librarian",
     "embedding",
+    "rerank",
     "forge",
     "debate",
     "experiment",
@@ -208,6 +209,37 @@ class LLMRouter:
             voyage_id=voyage_id,
         )
         return vectors
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        *,
+        stage: str = "rerank",
+        top_n: int | None = None,
+        user_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+        voyage_id: uuid.UUID | None = None,
+    ) -> list[tuple[int, float]]:
+        """重排（stage 默认 rerank），返回 (documents 下标, 分数) 降序。
+
+        provider 不支持时抛 NotImplementedError；记账优先用响应的
+        billed_units.total_tokens，拿不到则按 len/4 估算。
+        """
+        provider, route = await self.resolve(stage)
+        result = await provider.rerank(query, documents, model=route.model, top_n=top_n)
+        total_tokens = int(result.usage.get("total_tokens", 0)) or (
+            estimate_tokens(query) + sum(estimate_tokens(d) for d in documents)
+        )
+        await self._record_usage(
+            stage=stage,
+            model=route.model,
+            usage={"prompt_tokens": total_tokens},
+            user_id=user_id,
+            project_id=project_id,
+            voyage_id=voyage_id,
+        )
+        return result.results
 
     async def stream(
         self,

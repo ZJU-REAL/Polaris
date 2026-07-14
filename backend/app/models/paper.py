@@ -11,7 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
-EMBEDDING_DIM = 1536
+EMBEDDING_DIM = 1024  # BGE-M3（lab LiteLLM /v1/embeddings）
 
 # postgres 用 pgvector（语义检索），sqlite 等回退 JSON 存 list（仅存不查）
 EmbeddingVariant = JSON().with_variant(Vector(EMBEDDING_DIM), "postgresql")
