@@ -10,6 +10,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.idea import Idea
+from app.models.manuscript import Manuscript
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.user import User
 
@@ -95,10 +96,14 @@ async def list_idea_sessions(session: AsyncSession, idea_id: uuid.UUID) -> list[
 async def session_project_id(
     session: AsyncSession, review_session: ReviewSession
 ) -> uuid.UUID | None:
-    """会话归属项目（权限判定用）：idea 系会话经 target_id 指向的 idea 解析。"""
+    """会话归属项目（权限判定用）：idea 系会话经 target_id 指向的 idea 解析，
+    manuscript 会话（M5-C 论文评审）经 target_id 指向的稿件解析。"""
     if review_session.target_type in ("idea_discussion", "idea_match"):
         idea = await session.get(Idea, review_session.target_id)
         return idea.project_id if idea is not None else None
+    if review_session.target_type == "manuscript":
+        manuscript = await session.get(Manuscript, review_session.target_id)
+        return manuscript.project_id if manuscript is not None else None
     return None
 
 

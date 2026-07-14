@@ -287,6 +287,14 @@ async def test_submit_requires_ok_compile_then_gate_flow(client, bus_recorder, q
         }
         await session.commit()
 
+    # M5-C：编译 ok 但评审未通过 → 409 REVIEW_REQUIRED
+    resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
+    assert resp.status_code == 409 and resp.json()["detail"] == "REVIEW_REQUIRED"
+    async with get_sessionmaker()() as session:
+        ms = await session.get(Manuscript, uuid.UUID(ms_id))
+        ms.review_passed = True
+        await session.commit()
+
     resp = await client.post(f"/api/manuscripts/{ms_id}/submit", headers=headers)
     assert resp.status_code == 201, resp.text
     gate = resp.json()
@@ -316,6 +324,7 @@ async def test_submit_reject_rolls_back_to_compiled(client, bus_recorder, queue_
     async with get_sessionmaker()() as session:
         ms = await session.get(Manuscript, uuid.UUID(ms_id))
         ms.status = "compiled"
+        ms.review_passed = True  # M5-C submit 前置
         ms.latest_compile = {
             "version": 1,
             "status": "ok",

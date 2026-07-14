@@ -870,6 +870,8 @@ export interface ManuscriptRead {
   title: string;
   template: string;
   status: ManuscriptStatus;
+  /** M5-C：同行评审通过（评分 ≥ 6 且无虚构引用）；后端未升级时缺失 */
+  review_passed?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -983,6 +985,100 @@ export interface CreateManuscriptInput {
 export interface DraftManuscriptInput {
   sections?: string[] | null;
   notes?: string;
+}
+
+// ============================================================
+// M5-C · Paper Review（论文同行评审）— docs/api-m5-c.md
+// ============================================================
+
+/** 引用存在性：库内/外部精确 | 模糊匹配 | 疑似编造。 */
+export type CitationExistence = 'exact' | 'minor' | 'fabricated';
+
+export type CitationSource = 'library' | 's2' | 'openalex' | 'none';
+
+/** 引用支撑性：语境句 + 被引论文摘要 → LLM 判定。 */
+export type CitationSupport = 'supported' | 'partial' | 'unsupported' | 'not_checked';
+
+export interface CitationCheckItem {
+  bibkey: string;
+  existence: CitationExistence;
+  matched_title?: string | null;
+  source?: CitationSource | null;
+  support?: CitationSupport | null;
+  /** 引用语境句（cite 前后 2 句），悬停展示 */
+  context_snippet?: string | null;
+}
+
+export interface CitationCheck {
+  total?: number;
+  items?: CitationCheckItem[];
+}
+
+export type FactCheckKind = 'number_mismatch' | 'unsupported_claim' | 'missing_figure' | 'other';
+
+export type FactCheckSeverity = 'major' | 'minor';
+
+export interface FactCheckItem {
+  /** "results.tex:42" 或章节名 */
+  location?: string | null;
+  issue?: string | null;
+  evidence?: string | null;
+  kind?: FactCheckKind | string;
+  severity?: FactCheckSeverity | string;
+}
+
+export interface FactCheck {
+  items?: FactCheckItem[];
+}
+
+export type ReviewDecisionHint = 'accept' | 'borderline' | 'reject';
+
+/** 汇总评审（meta-review）：三维度 1-4，总评 1-10。 */
+export interface MetaReview {
+  soundness?: number | null;
+  presentation?: number | null;
+  contribution?: number | null;
+  rating?: number | null;
+  decision_hint?: ReviewDecisionHint | null;
+  /** markdown 总结 */
+  summary?: string | null;
+  aggregation?: { ratings?: number[]; method?: string } | null;
+}
+
+export interface ReviewGuardrail {
+  passed?: boolean;
+  regenerated?: number;
+}
+
+/** 评审 ReviewSession.payload（各分区可选容错，后端未回传时降级展示）。 */
+export interface PaperReviewPayload {
+  citation_check?: CitationCheck | null;
+  fact_check?: FactCheck | null;
+  meta?: MetaReview | null;
+  guardrail?: ReviewGuardrail | null;
+}
+
+/** 单个评审员的结构化意见（ReviewMessage.content 为其 JSON；解析失败按 markdown 渲染）。 */
+export interface ReviewerOpinion {
+  soundness?: number;
+  presentation?: number;
+  contribution?: number;
+  rating?: number;
+  confidence?: number;
+  strengths?: string[];
+  weaknesses?: string[];
+  questions?: string[];
+  /** 可靠性校验未通过：灰显且不计入聚合 */
+  unreliable?: boolean;
+}
+
+/** GET /manuscripts/{id}/reviews 列表项（历史多轮）；meta / 完整 payload 均容错。 */
+export interface ReviewSummary {
+  session_id: string;
+  created_at: string;
+  meta?: MetaReview | null;
+  payload?: PaperReviewPayload | null;
+  message_count?: number;
 }
 
 // ============================================================
@@ -1386,9 +1482,19 @@ export const api = {
   draftManuscript(id: string, input: DraftManuscriptInput): Promise<VoyageRead> {
     return requestJson<VoyageRead>(`/manuscripts/${id}/draft`, 'POST', input);
   },
-  /** 投稿：创建 paper_submission 审批；最新编译非 ok → 409 COMPILE_REQUIRED。 */
+  /** 投稿：创建 paper_submission 审批；未通过同行评审 → 409 REVIEW_REQUIRED（M5-C 前为 COMPILE_REQUIRED）。 */
   submitManuscript(id: string): Promise<GateRead> {
     return request<GateRead>(`/manuscripts/${id}/submit`, { method: 'POST' });
+  },
+
+  // —— M5-C · 论文同行评审 ——
+  /** 发起同行评审（kind=paper_review 任务）：同稿件已有进行中 → 409；最新编译非 ok → 409 COMPILE_REQUIRED。 */
+  startManuscriptReview(id: string, personas?: ReviewPersona[] | null): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/manuscripts/${id}/review`, 'POST', { personas: personas ?? null });
+  },
+  /** 历史评审轮次列表；单轮详情复用 GET /sessions/{sid}/messages。 */
+  listManuscriptReviews(id: string): Promise<ReviewSummary[]> {
+    return request<ReviewSummary[]>(`/manuscripts/${id}/reviews`);
   },
 
   // —— Admin · LLM ——

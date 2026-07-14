@@ -7,6 +7,8 @@
   在 actions_experiment 内部，命令白名单见 app/services/ssh_exec.py）
 - M5-B：论文撰写 voyage（kind=paper_writing，仍走 run_voyage；分节撰写/静态校验/
   tectonic 编译在 actions_writing + services/latex_compile 内部）
+- M5-C：论文评审 voyage（kind=paper_review，仍走 run_voyage；引用核验/事实查错/
+  评审员×3/聚合在 actions_review + services/paper_review 内部）
 """
 
 import uuid

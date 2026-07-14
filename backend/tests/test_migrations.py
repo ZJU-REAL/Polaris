@@ -1,4 +1,4 @@
-"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（论文撰写 M5-B）往返。"""
+"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（论文评审 M5-C）往返。"""
 
 from pathlib import Path
 
@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e1f2a3b4c5d6"  # manuscripts_m5b
-PREV_REVISION = "d0e1f2a3b4c5"  # experiment_iterate_m5a
+HEAD_REVISION = "f3b4c5d6e7a8"  # paper_review_m5c
+PREV_REVISION = "e1f2a3b4c5d6"  # manuscripts_m5b
 
 
 def _make_config(db_path: Path) -> Config:
@@ -84,15 +84,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # M5-B 论文撰写：manuscripts 四新列 + manuscript_files 两新列
     assert {"experiment_id", "template", "fact_pack", "latest_compile"} <= columns["manuscripts"]
     assert {"readonly", "updated_by"} <= columns["manuscript_files"]
+    # M5-C 论文评审：manuscripts.review_passed
+    assert "review_passed" in columns["manuscripts"]
 
-    # 最新 revision 可往返（downgrade 移除 M5-B 六列）
+    # 最新 revision 可往返（downgrade 移除 M5-C review_passed 列）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert {"experiment_id", "template", "fact_pack", "latest_compile"} & columns[
-        "manuscripts"
-    ] == set()
-    assert {"readonly", "updated_by"} & columns["manuscript_files"] == set()
+    assert "review_passed" not in columns["manuscripts"]
+    # M5-B 列不受影响
+    assert {"experiment_id", "template", "fact_pack", "latest_compile"} <= columns["manuscripts"]
+    assert {"readonly", "updated_by"} <= columns["manuscript_files"]
     # M5-A 列不受影响
     assert {"reflection", "primary_value"} <= columns["experiment_runs"]
     assert {"figures", "iteration_state"} <= columns["experiments"]
@@ -103,5 +105,4 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    assert {"experiment_id", "template", "fact_pack", "latest_compile"} <= columns["manuscripts"]
-    assert {"readonly", "updated_by"} <= columns["manuscript_files"]
+    assert "review_passed" in columns["manuscripts"]

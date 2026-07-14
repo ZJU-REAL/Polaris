@@ -35,6 +35,12 @@ _READING_MARKER = "论文阅读助手"  # AI 伴读（papers.py CHAT_SYSTEM_PROM
 _WRITE_SECTION_MARKER = "POLARIS_WRITING_SECTION"  # 论文分节撰写（M5-B）
 _WRITE_RELATED_MARKER = "POLARIS_RELATED_WORK"  # Related Work 候选集内选引（M5-B）
 _WRITE_REFLECT_MARKER = "POLARIS_WRITING_REFLECT"  # 写作 self-reflection（M5-B）
+# M5-C 论文评审（actions_review.py 五个 system prompt 对齐）
+_PAPER_REVIEWER_MARKER = "POLARIS_PAPER_REVIEWER"  # 评审员意见（多模态）
+_REVIEW_GUARDRAIL_MARKER = "POLARIS_REVIEW_GUARDRAIL"  # 逐员 guardrail 校验
+_REVIEW_SUPPORT_MARKER = "POLARIS_REVIEW_SUPPORT"  # 引用支撑性判定
+_REVIEW_META_MARKER = "POLARIS_REVIEW_META"  # meta-review 总结
+_REVIEW_FACTCHECK_MARKER = "POLARIS_REVIEW_FACTCHECK"  # claim 抽查
 
 EMBEDDING_DIM = 1024  # 与真实 embedding 模型（BGE-M3）维度一致
 
@@ -78,7 +84,10 @@ class FakeProvider(LLMProvider):
         images: list[bytes] | None = None,
     ) -> CompletionResult:
         full_text = "\n".join(m.content for m in messages)
-        if images and _LIBRARIAN_MARKER in full_text:
+        if images and _PAPER_REVIEWER_MARKER in full_text:
+            # 多模态论文评审员：确定性 JSON（人设不同分便于聚合测试）
+            content = self._respond_paper_reviewer(full_text)
+        elif images and _LIBRARIAN_MARKER in full_text:
             # 多模态图文编译：librarian markdown 里插入一行 ![[fig:0]] 图片标记
             last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
             content = self._respond_librarian(last_user, with_figure=True)
@@ -171,6 +180,21 @@ class FakeProvider(LLMProvider):
             (m.content for m in reversed(messages) if m.role == "user"),
             full_text,
         )
+        # M5-C 论文评审五 marker：prompt 内嵌 LaTeX 源/评审意见（可能撞其他 marker），
+        # 且 guardrail/支撑性输出与 sextant 的 '"passed"' 形态重叠，须最先判断
+        if _REVIEW_GUARDRAIL_MARKER in full_text:
+            return FakeProvider._respond_review_guardrail(full_text)
+        if _REVIEW_SUPPORT_MARKER in full_text:
+            return FakeProvider._respond_review_support(full_text)
+        if _REVIEW_META_MARKER in full_text:
+            return json.dumps(
+                {"summary": "（fake meta-review）各评审员认可方法可溯源，主要不足在实验规模。"},
+                ensure_ascii=False,
+            )
+        if _REVIEW_FACTCHECK_MARKER in full_text:
+            return FakeProvider._respond_review_factcheck(full_text)
+        if _PAPER_REVIEWER_MARKER in full_text:
+            return FakeProvider._respond_paper_reviewer(full_text)
         # 伴读 system prompt 会内嵌论文全文/wiki（可能含 TL;DR 等其他 marker），须最先判断
         if _READING_MARKER in full_text:
             return FakeProvider._respond_reading(last_user)
@@ -525,6 +549,80 @@ class FakeProvider(LLMProvider):
         """self-reflection 精修：确定性回显原文（<<<SECTION ... SECTION>>> 之间）。"""
         m = re.search(r"<<<SECTION\n(.*?)\nSECTION>>>", last_user, re.DOTALL)
         return m.group(1) if m else last_user[:400]
+
+    # ---- M5-C 论文评审（actions_review.py 五个 system prompt 对齐） ----
+
+    @staticmethod
+    def _respond_paper_reviewer(full_text: str) -> str:
+        """评审员意见：人设不同分（便于聚合测试）；测试标记可控地给低分/坏意见。
+
+        - REVIEW_FAIL_TEST：全员低分 → 评审不通过路径；
+        - GUARDRAIL_FAIL_TEST + 人设「严格实验复现者」：意见内嵌
+          GUARDRAIL_FAIL_MARKER → guardrail 拒绝 → 重生成 → unreliable 路径。
+        """
+        profiles = {
+            "苛刻方法论者": (6.0, 4.0),
+            "建设性领域专家": (8.0, 5.0),
+            "严格实验复现者": (7.0, 2.0),  # 低 confidence → 聚合降权路径
+        }
+        rating, confidence = next(
+            (v for name, v in profiles.items() if name in full_text), (7.0, 4.0)
+        )
+        if "REVIEW_FAIL_TEST" in full_text:
+            rating = 3.0
+        strengths = ["方法围绕事实包展开，引用与图表可溯源（fake）"]
+        if "GUARDRAIL_FAIL_TEST" in full_text and "严格实验复现者" in full_text:
+            strengths = ["GUARDRAIL_FAIL_MARKER：论文提出了不存在的定理 9（幻觉，fake）"]
+        return json.dumps(
+            {
+                "soundness": 3.0,
+                "presentation": 3.0,
+                "contribution": 2.0 if rating <= 3 else 3.0,
+                "rating": rating,
+                "confidence": confidence,
+                "strengths": strengths,
+                "weaknesses": ["实验规模有限，缺少更大数据集上的验证（fake）"],
+                "questions": ["能否补充关键组件的消融实验？（fake）"],
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_review_guardrail(full_text: str) -> str:
+        """guardrail 校验：意见含 GUARDRAIL_FAIL_MARKER → 拒绝（可控失败路径）。"""
+        if "GUARDRAIL_FAIL_MARKER" in full_text:
+            return json.dumps(
+                {"passed": False, "reason": "fake-guardrail：意见含论文中不存在的内容（幻觉）"},
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {"passed": True, "reason": "fake-guardrail：意见具体且引用论文实际内容"},
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_review_support(full_text: str) -> str:
+        """引用支撑性判定：语境含 UNSUPPORTED_TEST → unsupported（可控标记）。"""
+        support = "unsupported" if "UNSUPPORTED_TEST" in full_text else "supported"
+        return json.dumps(
+            {"support": support, "reason": "fake-support：依据语境关键词的确定性假判定"},
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_review_factcheck(full_text: str) -> str:
+        """claim 抽查：源含 CLAIM_ISSUE_TEST → 报一条 unsupported_claim，否则无问题。"""
+        items = []
+        if "CLAIM_ISSUE_TEST" in full_text:
+            items.append(
+                {
+                    "location": "results",
+                    "issue": "结论超出事实包证据范围（fake）",
+                    "evidence": "事实包 metrics 未包含该对比（fake）",
+                    "severity": "minor",
+                }
+            )
+        return json.dumps({"items": items}, ensure_ascii=False)
 
     @staticmethod
     def _respond_librarian(last_user: str, *, with_figure: bool = False) -> str:

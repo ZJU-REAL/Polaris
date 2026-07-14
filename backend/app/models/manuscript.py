@@ -40,8 +40,14 @@ class Manuscript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(64), default="neurips2026", server_default="neurips2026", nullable=False
     )
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    # 论文评审通过标记（docs/api-m5-c.md §4）：meta.rating ≥ 6 且无 fabricated 引用
+    # → true；submit 前置条件（未通过 409 REVIEW_REQUIRED）
+    review_passed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     # 防幻觉事实源（docs/api-m5-b.md §3）：{idea, hypotheses, metrics, figures,
-    # citations, generated_at}；citations 条目附内部 paper_id / source 供编译生成 bib
+    # citations, generated_at}；M5-C 评审不通过时追加 revision_notes（修订说明）；
+    # citations 条目附内部 paper_id / source 供编译生成 bib
     fact_pack: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     # 最近一次编译结果（CompileResult：{version, status, pdf_available,
     # diagnostics, compiled_at, duration_ms}）

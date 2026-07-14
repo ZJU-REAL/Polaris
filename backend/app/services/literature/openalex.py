@@ -52,8 +52,12 @@ class OpenAlexClient:
         self._cache = ResponseCache(redis)
         self._mailto = mailto if mailto is not None else get_settings().openalex_mailto
 
-    async def _get(self, path: str) -> dict[str, Any] | None:
-        params = {"mailto": self._mailto} if self._mailto else {}
+    async def _get(
+        self, path: str, extra_params: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        params: dict[str, Any] = dict(extra_params or {})
+        if self._mailto:
+            params["mailto"] = self._mailto
         key = cache_key("openalex", path, params)
         if (cached := await self._cache.get(key)) is not None:
             return cached or None  # 缓存的 {} 表示 404
@@ -74,6 +78,12 @@ class OpenAlexClient:
     async def get_by_arxiv(self, arxiv_id: str) -> dict[str, Any] | None:
         """按 arxiv id 反查（经 DataCite DOI 10.48550/arXiv.<id>）。"""
         return await self.get_by_doi(ARXIV_DOI_TEMPLATE.format(arxiv_id=arxiv_id))
+
+    async def search_works(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+        """按标题/关键词全文检索 works（M5-C 引用核验的 S2 降级通道）。"""
+        data = await self._get("/works", {"search": query, "per-page": limit})
+        results = (data or {}).get("results") or []
+        return [_simplify(w) for w in results if isinstance(w, dict)]
 
     async def aclose(self) -> None:
         await self._client.aclose()

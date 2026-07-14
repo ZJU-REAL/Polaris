@@ -5,8 +5,9 @@
 - fact-pack：从 idea + experiment（假设/指标/图表）+ 项目文献库（compiled/included，
   bibkey 走 citations.assign_citation_keys）组装的防幻觉事实源；
 - 写作 voyage（kind=paper_writing）：同 manuscript 互斥；
-- submit：latest_compile.status=ok 前置，创建 paper_submission 闸门，
-  审批通过 → status=submitted（gates API 联动 decide_submission_from_gate）。
+- submit：latest_compile.status=ok + review_passed（M5-C）双前置，创建
+  paper_submission 闸门，审批通过 → status=submitted（gates API 联动
+  decide_submission_from_gate；review_passed 缺失时管理员可用 override 审批跳过）。
 """
 
 import json
@@ -80,7 +81,11 @@ class InvalidSectionsError(Exception):
 
 
 class CompileRequiredError(Exception):
-    """submit 前置：最新编译不存在或未通过。"""
+    """submit / review 前置：最新编译不存在或未通过。"""
+
+
+class ReviewRequiredError(Exception):
+    """submit 前置（M5-C）：评审未通过（review_passed=false）。"""
 
 
 # ---- 模板 pack ----
@@ -508,6 +513,9 @@ async def submit_manuscript(
     latest = manuscript.latest_compile or {}
     if latest.get("status") != "ok":
         raise CompileRequiredError(str(manuscript.id))
+    # M5-C：前置从 compile-ok 升级为 review_passed（管理员可在 gate 审批时 override）
+    if not manuscript.review_passed:
+        raise ReviewRequiredError(str(manuscript.id))
     gate = Gate(
         project_id=manuscript.project_id,
         kind="paper_submission",
@@ -515,6 +523,7 @@ async def submit_manuscript(
             "manuscript_id": str(manuscript.id),
             "title": manuscript.title,
             "compile_version": latest.get("version"),
+            "review_passed": manuscript.review_passed,
         },
         requested_by=f"user:{user_id}",
     )
@@ -534,10 +543,8 @@ async def submit_manuscript(
     return gate
 
 
-async def decide_submission_from_gate(
-    session: AsyncSession, gate: Gate, *, approved: bool
-) -> Manuscript | None:
-    """gates 审批联动：paper_submission 批准 → submitted；驳回 → 回退 compiled。"""
+async def gate_manuscript(session: AsyncSession, gate: Gate) -> Manuscript | None:
+    """paper_submission 闸门指向的稿件（payload.manuscript_id）。"""
     if gate.kind != "paper_submission":
         return None
     raw = (gate.payload or {}).get("manuscript_id")
@@ -547,7 +554,14 @@ async def decide_submission_from_gate(
         manuscript_id = uuid.UUID(str(raw))
     except ValueError:
         return None
-    manuscript = await session.get(Manuscript, manuscript_id)
+    return await session.get(Manuscript, manuscript_id)
+
+
+async def decide_submission_from_gate(
+    session: AsyncSession, gate: Gate, *, approved: bool
+) -> Manuscript | None:
+    """gates 审批联动：paper_submission 批准 → submitted；驳回 → 回退 compiled。"""
+    manuscript = await gate_manuscript(session, gate)
     if manuscript is None or manuscript.status != "under_review":
         return None
     manuscript.status = "submitted" if approved else "compiled"

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { EditorView } from '@codemirror/view';
 import { Icon } from '../../components/ui/Icon';
@@ -239,6 +239,35 @@ export function WriterEditorPage() {
     }, 400);
     return () => clearTimeout(t);
   }, [view, pendingJump, currentFileId, jumpToLine]);
+
+  // —— ?goto=file.tex:42 深链（论文评审页查错清单跳入，消费后从 URL 移除） ——
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (!ms) return;
+    const g = searchParams.get('goto');
+    if (!g) return;
+    const m = /^(.+):(\d+)$/.exec(g);
+    const rawFile = m ? m[1]! : g;
+    const line = m ? Number(m[2]) : null;
+    const norm = (p: string) => p.replace(/^\.\//, '').replace(/^\//, '');
+    const target =
+      ms.files.find((f) => norm(f.path) === norm(rawFile)) ??
+      ms.files.find((f) => norm(f.path).endsWith(`/${norm(rawFile)}`));
+    if (target) {
+      setCurrentFileId(target.id);
+      setPendingJump({ fileId: target.id, line });
+    } else {
+      toast(`稿件里没有找到文件 ${rawFile}`, 'info');
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('goto');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [ms, searchParams, setSearchParams]);
 
   function onDiagClick(d: DiagnosticItem) {
     if (!ms) return;

@@ -16,6 +16,8 @@ class GateCreate(BaseModel):
 
 class GateDecision(BaseModel):
     comment: str | None = None
+    # M5-C：paper_submission 闸门批准时跳过 review_passed 前置（管理员 override）
+    override: bool = False
 
 
 class GateRead(BaseModel):

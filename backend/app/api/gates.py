@@ -3,6 +3,8 @@
 - 项目成员可见与可审批本项目闸门（M2 再细化角色权限）；
 - approve：payload.voyage_id 存在时入队 resume_voyage 恢复航程；
   payload.idea_id 存在时联动 idea.status=promoted 并发布 idea.status 事件（M3）；
+  paper_submission 闸门批准前置稿件 review_passed（M5-C），管理员可传
+  override=true 跳过；
 - reject：关联航程置 failed；
 - 决策后向 ``notify:project:{project_id}`` 发布 gate.decided。
 """
@@ -59,6 +61,17 @@ async def _decide(
     bus: EventBus,
 ) -> GateRead:
     gate = await _get_decidable_gate(session, gate_id, user)
+
+    # M5-C：paper_submission 批准前置 review_passed；管理员可传 override=true 跳过
+    if approved and gate.kind == "paper_submission" and gate.status == "pending":
+        manuscript = await manuscripts_service.gate_manuscript(session, gate)
+        if (
+            manuscript is not None
+            and not manuscript.review_passed
+            and not (data is not None and data.override)
+        ):
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="REVIEW_REQUIRED")
+
     try:
         gate = await gates_service.decide_gate(
             session,

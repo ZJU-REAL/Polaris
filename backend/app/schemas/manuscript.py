@@ -36,6 +36,7 @@ class ManuscriptRead(BaseModel):
     title: str
     template: str
     status: str
+    review_passed: bool  # M5-C：评审通过标记（submit 前置）
     created_at: datetime
     updated_at: datetime
 

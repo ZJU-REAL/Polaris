@@ -220,6 +220,32 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
     return steps
 
 
+def paper_review_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """paper_review 固定六步计划（docs/api-m5-c.md §1）：
+    引用核验 → 事实查错 → 渲染稿件 → 评审员评审(×3) → 汇总(meta-review) → guardrail 校验。
+    固定管线不重规划：所有步骤 on_failure="fail"。
+    """
+    steps = [
+        ("引用核验", "review.citation_check", "全部 \\cite 已完成三态核验并写入 session payload"),
+        ("事实查错", "review.fact_check", "数字比对 / claim 抽查 / \\ref 检查结果已落库"),
+        ("渲染稿件", "review.render", "编译 PDF 前 9 页已渲染为 PNG（失败降级纯文本）"),
+        ("评审员评审（×3）", "review.referees", "三位评审员意见已过 guardrail 并发布为消息"),
+        ("汇总（meta-review）", "review.meta_review", "聚合评分与 meta 总结已写入 payload"),
+        ("guardrail 校验", "review.guardrail", "通过判定与稿件流转已完成"),
+    ]
+    return [
+        {
+            "title": title,
+            "action": action,
+            "params": {},
+            "acceptance": acceptance,
+            "requires_gate": None,
+            "on_failure": "fail",
+        }
+        for title, action, acceptance in steps
+    ]
+
+
 def demo_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """demo 航程固定三步：分析目标 → 生成产物（过闸门）→ 总结。"""
     return [
@@ -342,6 +368,8 @@ class Navigator:
             return experiment_plan(run)
         if run.kind == "paper_writing":
             return writing_plan(run)
+        if run.kind == "paper_review":
+            return paper_review_plan(run)
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         user_prompt = f"目标：{run.goal}"
         if context:

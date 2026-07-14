@@ -30,9 +30,11 @@ from app.schemas.manuscript import (
     ManuscriptUpdate,
     TemplateInfo,
 )
+from app.schemas.review import PaperReviewRequest, PaperReviewSummary
 from app.schemas.voyage import VoyageRead
 from app.services import latex_compile
 from app.services import manuscripts as manuscripts_service
+from app.services import paper_review as paper_review_service
 from app.services import projects as projects_service
 from app.services.crdt_rooms import get_crdt_rooms
 
@@ -348,6 +350,62 @@ async def draft_manuscript(
     return VoyageRead.model_validate(run)
 
 
+# ---- M5-C 论文评审 ----
+
+
+@router.post(
+    "/manuscripts/{manuscript_id}/review",
+    response_model=VoyageRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def review_manuscript(
+    manuscript_id: uuid.UUID,
+    data: PaperReviewRequest | None = None,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> VoyageRead:
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    personas = (
+        [p.model_dump() for p in data.personas] if data is not None and data.personas else None
+    )
+    try:
+        run = await paper_review_service.create_review_voyage(
+            session, manuscript=manuscript, personas=personas, created_by=user.id
+        )
+    except manuscripts_service.CompileRequiredError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="COMPILE_REQUIRED") from e
+    except paper_review_service.ReviewInProgressError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="REVIEW_IN_PROGRESS") from e
+    await queue.enqueue("run_voyage", str(run.id))
+    return VoyageRead.model_validate(run)
+
+
+@router.get("/manuscripts/{manuscript_id}/reviews", response_model=list[PaperReviewSummary])
+async def list_manuscript_reviews(
+    manuscript_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[PaperReviewSummary]:
+    """评审历史（新→旧）；消息明细复用 GET /sessions/{sid}/messages。"""
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    rows = await paper_review_service.list_manuscript_reviews(session, manuscript.id)
+    summaries = []
+    for review_session, message_count in rows:
+        payload = review_session.payload or {}
+        summaries.append(
+            PaperReviewSummary(
+                session_id=review_session.id,
+                created_at=review_session.created_at,
+                status=review_session.status,
+                passed=payload.get("passed"),
+                meta=payload.get("meta"),
+                message_count=message_count,
+            )
+        )
+    return summaries
+
+
 # ---- §7 投稿 ----
 
 
@@ -369,6 +427,8 @@ async def submit_manuscript(
         )
     except manuscripts_service.CompileRequiredError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="COMPILE_REQUIRED") from e
+    except manuscripts_service.ReviewRequiredError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="REVIEW_REQUIRED") from e
     gate_read = GateRead.model_validate(gate)
     await bus.publish_notify(
         manuscript.project_id,

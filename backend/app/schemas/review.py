@@ -19,6 +19,23 @@ class TournamentRequest(BaseModel):
     personas: list[Persona] | None = None
 
 
+class PaperReviewRequest(BaseModel):
+    """发起论文评审（docs/api-m5-c.md §1）：personas=null 用默认三人设。"""
+
+    personas: list[Persona] | None = None
+
+
+class PaperReviewSummary(BaseModel):
+    """评审历史条目（docs/api-m5-c.md §4）：payload.meta 摘要 + 消息数。"""
+
+    session_id: uuid.UUID
+    created_at: datetime
+    status: str  # open | closed
+    passed: bool | None  # 未完成的评审为 null
+    meta: dict[str, Any] | None
+    message_count: int
+
+
 class ReviewSessionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
