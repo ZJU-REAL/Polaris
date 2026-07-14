@@ -12,15 +12,18 @@ import io
 import json
 import uuid
 import zipfile
+from collections import defaultdict
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.paper import Concept, Paper
+from app.models.paper import Concept, Paper, PaperNote
 from app.models.project import Project
+from app.models.user import User
 from app.services.concepts import wiki_slug
+from app.services.notes import author_name_of
 
 
 def _yaml_value(value: Any) -> str:
@@ -82,6 +85,17 @@ async def build_obsidian_zip(session: AsyncSession, project: Project) -> bytes:
         .all()
     )
 
+    # 论文笔记（有笔记的论文页追加「## 笔记」小节）
+    note_rows = await session.execute(
+        select(PaperNote, User.display_name, User.email)
+        .join(User, User.id == PaperNote.author_id)
+        .where(PaperNote.project_id == project.id)
+        .order_by(PaperNote.created_at)
+    )
+    notes_by_paper: dict[uuid.UUID, list[tuple[PaperNote, str]]] = defaultdict(list)
+    for note, display_name, email in note_rows.all():
+        notes_by_paper[note.paper_id].append((note, author_name_of(display_name, email)))
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         used_paper_slugs: set[str] = set()
@@ -111,6 +125,12 @@ async def build_obsidian_zip(session: AsyncSession, project: Project) -> bytes:
                 }
             )
             body = paper.wiki_content or (paper.abstract or "（尚未编译 wiki 页）")
+            if notes := notes_by_paper.get(paper.id):
+                lines = ["", "## 笔记", ""]
+                for note, author_name in notes:
+                    lines += [f"> **{author_name}** ({note.created_at:%Y-%m-%d})", ""]
+                    lines += [note.content, ""]
+                body = body.rstrip("\n") + "\n" + "\n".join(lines).rstrip("\n")
             zf.writestr(f"papers/{slug}.md", fm + body + "\n")
 
         # concepts/<slug>.md

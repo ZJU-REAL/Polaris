@@ -18,6 +18,52 @@ export interface SseHandlers {
 
 const MAX_BACKOFF_MS = 15_000;
 
+/** 按 SSE 规范逐行解析响应流，每个完整事件回调一次 onEvent。 */
+async function readSseStream(res: Response, onEvent: (event: string, data: string) => void): Promise<void> {
+  if (!res.body) throw new Error('SSE response has no body');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let eventType = 'message';
+  let dataLines: string[] = [];
+
+  const dispatch = () => {
+    if (dataLines.length > 0) {
+      onEvent(eventType, dataLines.join('\n'));
+    }
+    eventType = 'message';
+    dataLines = [];
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      let line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (line.endsWith('\r')) line = line.slice(0, -1);
+      if (line === '') {
+        dispatch();
+        continue;
+      }
+      if (line.startsWith(':')) continue; // 注释行 = 心跳，忽略
+      const colon = line.indexOf(':');
+      const field = colon === -1 ? line : line.slice(0, colon);
+      let value2 = colon === -1 ? '' : line.slice(colon + 1);
+      if (value2.startsWith(' ')) value2 = value2.slice(1);
+      if (field === 'event') {
+        eventType = value2;
+      } else if (field === 'data') {
+        dataLines.push(value2);
+      }
+      // id / retry 字段 M1 不用，忽略
+    }
+  }
+  dispatch();
+}
+
 /**
  * 订阅 `/api{path}` 的 SSE 流。返回取消函数（中止连接并停止重连）。
  */
@@ -25,51 +71,6 @@ export function subscribeSse(path: string, handlers: SseHandlers): () => void {
   let stopped = false;
   let ctrl = new AbortController();
   let attempt = 0;
-
-  async function readStream(res: Response): Promise<void> {
-    if (!res.body) throw new Error('SSE response has no body');
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    let eventType = 'message';
-    let dataLines: string[] = [];
-
-    const dispatch = () => {
-      if (dataLines.length > 0) {
-        handlers.onEvent(eventType, dataLines.join('\n'));
-      }
-      eventType = 'message';
-      dataLines = [];
-    };
-
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        let line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        if (line.endsWith('\r')) line = line.slice(0, -1);
-        if (line === '') {
-          dispatch();
-          continue;
-        }
-        if (line.startsWith(':')) continue; // 注释行 = 心跳，忽略
-        const colon = line.indexOf(':');
-        const field = colon === -1 ? line : line.slice(0, colon);
-        let value2 = colon === -1 ? '' : line.slice(colon + 1);
-        if (value2.startsWith(' ')) value2 = value2.slice(1);
-        if (field === 'event') {
-          eventType = value2;
-        } else if (field === 'data') {
-          dataLines.push(value2);
-        }
-        // id / retry 字段 M1 不用，忽略
-      }
-    }
-    dispatch();
-  }
 
   async function loop(): Promise<void> {
     while (!stopped) {
@@ -82,7 +83,7 @@ export function subscribeSse(path: string, handlers: SseHandlers): () => void {
         if (!res.ok) throw new Error(`SSE HTTP ${res.status}`);
         attempt = 0;
         handlers.onOpen?.();
-        await readStream(res);
+        await readSseStream(res, handlers.onEvent);
         // 服务端正常关闭（如 voyage 到终态）——仍走重连逻辑，由调用方在
         // 状态变为终态后取消订阅。
       } catch (err) {
@@ -102,4 +103,72 @@ export function subscribeSse(path: string, handlers: SseHandlers): () => void {
     stopped = true;
     ctrl.abort();
   };
+}
+
+/* ============================================================
+   一次性 POST + SSE 响应流（AI 伴读 chat 用）。
+   与 subscribeSse 的区别：带 JSON body、不自动重连——一问一答，
+   流结束（done / error 事件或服务端关流）即完成。
+   ============================================================ */
+
+export interface PostSseHandlers {
+  /** 每收到一个完整事件（delta / done / error …）调用。 */
+  onEvent: (event: string, data: string) => void;
+  /** 流正常读完（服务端关流）。 */
+  onClose?: () => void;
+  /** 连接/HTTP 层错误（主动 abort 不触发）。 */
+  onError?: (err: unknown) => void;
+}
+
+/**
+ * POST `/api{path}`（JSON body）并按 SSE 解析响应流。
+ * 返回中止函数（断开连接，不再回调）。
+ */
+export function postSse(path: string, body: unknown, handlers: PostSseHandlers): () => void {
+  const ctrl = new AbortController();
+
+  void (async () => {
+    try {
+      const headers: Record<string, string> = {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+      };
+      const token = getToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`/api${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const j: unknown = await res.json();
+          if (j && typeof j === 'object' && 'detail' in j) {
+            const d = (j as { detail: unknown }).detail;
+            detail = typeof d === 'string' ? d : JSON.stringify(d);
+          }
+        } catch {
+          /* keep status */
+        }
+        throw new Error(detail);
+      }
+      await readSseStream(res, handlers.onEvent);
+      if (!ctrl.signal.aborted) handlers.onClose?.();
+    } catch (err) {
+      if (!ctrl.signal.aborted) handlers.onError?.(err);
+    }
+  })();
+
+  return () => ctrl.abort();
+}
+
+/** AI 伴读：POST /papers/{id}/chat 流式问答（delta 增量 → done/error 结束）。 */
+export function chatPaperSse(
+  paperId: string,
+  input: { question: string; history: { role: 'user' | 'assistant'; content: string }[] },
+  handlers: PostSseHandlers,
+): () => void {
+  return postSse(`/papers/${paperId}/chat`, input, handlers);
 }

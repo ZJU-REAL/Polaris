@@ -39,6 +39,18 @@ export function Section({ title, children }: { title: ReactNode; children: React
   );
 }
 
+/** 触发浏览器下载一个 blob（导出 zip / .bib / .json 用）。 */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** 输入防抖（搜索框用）。 */
 export function useDebounced<T>(value: T, delayMs = 350): T {
   const [debounced, setDebounced] = useState(value);

@@ -1,4 +1,4 @@
-"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（M4 experiment lab）往返。"""
+"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（M5 文献管理增强）往返。"""
 
 from pathlib import Path
 
@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a9b0c1d2e3f4"  # experiment_lab_m4
-PREV_REVISION = "e8f9a0b1c2d3"  # idea_forge_review_m3
+HEAD_REVISION = "b7c8d9e0f1a2"  # lit_notes_tags_m5
+PREV_REVISION = "a9b0c1d2e3f4"  # experiment_lab_m4
 
 
 def _make_config(db_path: Path) -> Config:
@@ -36,7 +36,12 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "review_messages",
                     "experiments",
                     "experiment_runs",
+                    "paper_notes",
+                    "paper_tags",
+                    "paper_tag_links",
+                    "paper_user_meta",
                 )
+                if table in tables  # downgrade 后新表不存在，跳过列检查
             }
             columns["_tables"] = tables
     finally:
@@ -63,16 +68,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "experiments"
     ]
     assert {"seq", "exit_code", "pid", "started_at", "finished_at"} <= columns["experiment_runs"]
+    # M5：笔记 / 标签 / 个人状态表
+    assert {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} <= columns["_tables"]
+    assert {"paper_id", "project_id", "author_id", "content"} <= columns["paper_notes"]
+    assert {"project_id", "name"} <= columns["paper_tags"]
+    assert columns["paper_tag_links"] == {"paper_id", "tag_id"}
+    assert {"paper_id", "user_id", "starred", "reading_status"} <= columns["paper_user_meta"]
 
-    # 最新 revision 可往返（downgrade 移除 M4 表与列）
+    # 最新 revision 可往返（downgrade 移除 M5 表）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "ssh_credentials" not in columns["_tables"]
-    assert "voyage_id" not in columns["experiments"]
-    assert "seq" not in columns["experiment_runs"]
+    assert (
+        not {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} & columns["_tables"]
+    )
+    assert "ssh_credentials" in columns["_tables"]  # M4 表不受影响
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    assert "ssh_credentials" in columns["_tables"]
-    assert "seq" in columns["experiment_runs"]
+    assert {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} <= columns["_tables"]

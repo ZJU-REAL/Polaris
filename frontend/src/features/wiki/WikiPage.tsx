@@ -11,14 +11,15 @@ import { api } from '../../lib/api';
 import { PapersTab } from './PapersTab';
 import { ConceptsTab } from './ConceptsTab';
 import { IngestTab } from './IngestTab';
+import { NotesTab } from './NotesTab';
 
 /* ============================================================
-   /wiki — Research Wiki 文献调研页（M2）
-   三个 Tab：论文库 / 概念库 / 冷启动·同步；
+   /wiki — Research Wiki 文献调研页（M2 + 文献管理增强）
+   四个 Tab：论文库 / 概念库 / 建库与同步 / 笔记本；
    顶部当前研究方向 + Obsidian 导出。
    ============================================================ */
 
-type WikiTab = 'papers' | 'concepts' | 'ingest';
+type WikiTab = 'papers' | 'concepts' | 'ingest' | 'notes';
 
 export function WikiPage() {
   const navigate = useNavigate();
@@ -38,13 +39,19 @@ export function WikiPage() {
     setPendingConceptName(null);
   }, [pid]);
 
-  // 深链 /wiki?paper=<id>（idea 详情的 parent paper 跳转）：选中后清掉参数
+  // 深链 /wiki?paper=<id>（idea 详情 / 阅读页返回）与 /wiki?concept=<名称>
+  // （阅读页双链跳转，按名称解析）：处理后清掉参数
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const p = searchParams.get('paper');
-    if (!p) return;
-    setPaperId(p);
-    setTab('papers');
+    const c = searchParams.get('concept');
+    if (!p && !c) return;
+    if (p) {
+      setPaperId(p);
+      setTab('papers');
+    } else if (c) {
+      setPendingConceptName(c);
+    }
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams]);
 
@@ -187,6 +194,7 @@ export function WikiPage() {
             { v: 'papers', label: `论文库 Papers${total !== undefined ? ` · ${total}` : ''}` },
             { v: 'concepts', label: '概念库 Concepts' },
             { v: 'ingest', label: '建库与同步 Ingest' },
+            { v: 'notes', label: '笔记 Notes' },
           ]}
           value={tab}
           onChange={setTab}
@@ -233,13 +241,15 @@ export function WikiPage() {
             onOpenPaper={goPaper}
             onWikiLink={onWikiLink}
           />
-        ) : (
+        ) : tab === 'ingest' ? (
           <IngestTab
             pid={pid}
             state={ingestQuery.data}
             stateError={ingestQuery.isError}
             stateLoading={ingestQuery.isLoading}
           />
+        ) : (
+          <NotesTab pid={pid} />
         )}
       </div>
     </div>

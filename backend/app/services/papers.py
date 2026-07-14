@@ -1,16 +1,20 @@
 """论文库与检索业务逻辑（不 import fastapi）。"""
 
+import asyncio
 import json
 import logging
 import uuid
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
-from sqlalchemy import Select, func, or_, select, text
+from sqlalchemy import Select, delete, exists, func, insert, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
-from app.models.paper import Concept, Paper
+from app.models.paper import Concept, Paper, PaperNote, PaperTag, PaperUserMeta, paper_tag_links
 from app.models.project import ProjectMember
 
 logger = logging.getLogger(__name__)
@@ -21,11 +25,65 @@ PAPER_SORTS = ("relevance", "-published_at")
 RERANK_CANDIDATES = 30
 RERANK_DOC_CHARS = 512
 
+# AI 伴读上下文：full_text 截断上限（超长时头尾各留一半）
+CHAT_CONTEXT_MAX_CHARS = 80_000
+
+
+class PdfSourceUnsupportedError(Exception):
+    """论文无 arxiv_id，不支持自动补下 PDF。"""
+
+
+class PdfFetchFailedError(Exception):
+    """PDF 下载失败（上游不可达 / 非 200 等）。"""
+
 
 def _member_paper_filter(stmt: Select, user_id: uuid.UUID) -> Select:
     return stmt.join(ProjectMember, ProjectMember.project_id == Paper.project_id).where(
         ProjectMember.user_id == user_id
     )
+
+
+def apply_paper_filters(
+    stmt: Select,
+    *,
+    project_id: uuid.UUID,
+    status: str | None = None,
+    q: str | None = None,
+    tag: str | None = None,
+    starred: bool | None = None,
+    reading_status: str | None = None,
+    user_id: uuid.UUID | None = None,
+) -> Select:
+    """论文列表 / 引用导出共用的过滤条件（starred / reading_status 为 user_id 的个人视角）。"""
+    stmt = stmt.where(Paper.project_id == project_id)
+    if status:
+        stmt = stmt.where(Paper.status == status)
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(or_(Paper.title.ilike(pattern), Paper.abstract.ilike(pattern)))
+    if tag:
+        stmt = stmt.where(
+            Paper.id.in_(
+                select(paper_tag_links.c.paper_id)
+                .join(PaperTag, PaperTag.id == paper_tag_links.c.tag_id)
+                .where(PaperTag.project_id == project_id, PaperTag.name == tag)
+            )
+        )
+    if starred is not None:
+        starred_exists = exists().where(
+            PaperUserMeta.paper_id == Paper.id,
+            PaperUserMeta.user_id == user_id,
+            PaperUserMeta.starred.is_(True),
+        )
+        stmt = stmt.where(starred_exists if starred else ~starred_exists)
+    if reading_status:
+        status_sub = (
+            select(PaperUserMeta.reading_status)
+            .where(PaperUserMeta.paper_id == Paper.id, PaperUserMeta.user_id == user_id)
+            .scalar_subquery()
+        )
+        stmt = stmt.where(func.coalesce(status_sub, "unread") == reading_status)
+    return stmt
 
 
 async def list_papers(
@@ -34,16 +92,24 @@ async def list_papers(
     project_id: uuid.UUID,
     status: str | None = None,
     q: str | None = None,
+    tag: str | None = None,
+    starred: bool | None = None,
+    reading_status: str | None = None,
+    user_id: uuid.UUID | None = None,
     sort: str = "relevance",
     page: int = 1,
     size: int = 20,
 ) -> tuple[Sequence[Paper], int]:
-    stmt = select(Paper).where(Paper.project_id == project_id)
-    if status:
-        stmt = stmt.where(Paper.status == status)
-    if q:
-        pattern = f"%{q}%"
-        stmt = stmt.where(or_(Paper.title.ilike(pattern), Paper.abstract.ilike(pattern)))
+    stmt = apply_paper_filters(
+        select(Paper),
+        project_id=project_id,
+        status=status,
+        q=q,
+        tag=tag,
+        starred=starred,
+        reading_status=reading_status,
+        user_id=user_id,
+    )
     total = (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     if sort == "-published_at":
         stmt = stmt.order_by(Paper.published_at.desc().nulls_last(), Paper.created_at.desc())
@@ -70,14 +136,212 @@ async def set_paper_status(session: AsyncSession, paper: Paper, status: str) -> 
     return paper
 
 
+# ---- 标签 / 个人状态 / 笔记数聚合（docs/api-lit.md §5） ----
+
+
+async def paper_extras_map(
+    session: AsyncSession, *, paper_ids: Sequence[uuid.UUID], user_id: uuid.UUID
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """批量取论文的 tags / starred / reading_status / note_count（3 条聚合查询，避免 N+1）。"""
+    extras: dict[uuid.UUID, dict[str, Any]] = {
+        pid: {"tags": [], "starred": False, "reading_status": "unread", "note_count": 0}
+        for pid in paper_ids
+    }
+    if not extras:
+        return extras
+    ids = list(extras.keys())
+    tag_rows = await session.execute(
+        select(paper_tag_links.c.paper_id, PaperTag.name)
+        .join(PaperTag, PaperTag.id == paper_tag_links.c.tag_id)
+        .where(paper_tag_links.c.paper_id.in_(ids))
+        .order_by(PaperTag.name)
+    )
+    for pid, name in tag_rows.all():
+        extras[pid]["tags"].append(name)
+    note_rows = await session.execute(
+        select(PaperNote.paper_id, func.count())
+        .where(PaperNote.paper_id.in_(ids))
+        .group_by(PaperNote.paper_id)
+    )
+    for pid, count in note_rows.all():
+        extras[pid]["note_count"] = int(count)
+    meta_rows = await session.execute(
+        select(PaperUserMeta).where(
+            PaperUserMeta.paper_id.in_(ids), PaperUserMeta.user_id == user_id
+        )
+    )
+    for meta in meta_rows.scalars():
+        extras[meta.paper_id]["starred"] = meta.starred
+        extras[meta.paper_id]["reading_status"] = meta.reading_status
+    return extras
+
+
+async def set_paper_tags(session: AsyncSession, paper: Paper, names: list[str]) -> list[str]:
+    """整组覆盖论文标签：新名字自动建 tag，空数组=清空。返回排序后的标签名。"""
+    cleaned = list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
+    existing = (
+        (
+            await session.execute(
+                select(PaperTag).where(
+                    PaperTag.project_id == paper.project_id, PaperTag.name.in_(cleaned or [""])
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_name = {t.name: t for t in existing}
+    for name in cleaned:
+        if name not in by_name:
+            tag = PaperTag(project_id=paper.project_id, name=name)
+            session.add(tag)
+            by_name[name] = tag
+    await session.flush()
+    await session.execute(delete(paper_tag_links).where(paper_tag_links.c.paper_id == paper.id))
+    if cleaned:
+        await session.execute(
+            insert(paper_tag_links).values(
+                [{"paper_id": paper.id, "tag_id": by_name[n].id} for n in cleaned]
+            )
+        )
+    await session.commit()
+    return sorted(cleaned)
+
+
+async def list_project_tags(
+    session: AsyncSession, *, project_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """项目标签列表（含引用论文数），按名称排序。"""
+    rows = await session.execute(
+        select(PaperTag.id, PaperTag.name, func.count(paper_tag_links.c.paper_id))
+        .outerjoin(paper_tag_links, paper_tag_links.c.tag_id == PaperTag.id)
+        .where(PaperTag.project_id == project_id)
+        .group_by(PaperTag.id, PaperTag.name)
+        .order_by(PaperTag.name)
+    )
+    return [{"id": tid, "name": name, "paper_count": int(count)} for tid, name, count in rows]
+
+
+async def upsert_paper_user_meta(
+    session: AsyncSession,
+    *,
+    paper: Paper,
+    user_id: uuid.UUID,
+    starred: bool | None = None,
+    reading_status: str | None = None,
+) -> PaperUserMeta:
+    """个人星标 / 阅读状态 upsert（只更新提供的字段）。"""
+    meta = (
+        await session.execute(
+            select(PaperUserMeta).where(
+                PaperUserMeta.paper_id == paper.id, PaperUserMeta.user_id == user_id
+            )
+        )
+    ).scalar_one_or_none()
+    if meta is None:
+        meta = PaperUserMeta(paper_id=paper.id, user_id=user_id)
+        session.add(meta)
+    if starred is not None:
+        meta.starred = starred
+    if reading_status is not None:
+        meta.reading_status = reading_status
+    await session.commit()
+    await session.refresh(meta)
+    return meta
+
+
+# ---- PDF 按需补下（docs/api-lit.md §1） ----
+
+
+async def fetch_pdf(session: AsyncSession, paper: Paper) -> Paper:
+    """按需补下 PDF + 抽全文；已有 PDF 文件时幂等直接返回。
+
+    - 无 arxiv_id → PdfSourceUnsupportedError（路由映射 400）
+    - 下载失败 → PdfFetchFailedError（路由映射 502）
+    - 全文抽取失败只记日志，不影响 PDF 落盘
+    """
+    from app.services.literature import get_arxiv_client
+    from app.services.literature.pdf_extract import extract_full_text, save_pdf
+
+    if paper.pdf_path and Path(paper.pdf_path).exists():
+        return paper
+    if not paper.arxiv_id:
+        raise PdfSourceUnsupportedError("论文没有 arxiv 编号，暂不支持自动获取 PDF")
+    try:
+        content = await get_arxiv_client().download_pdf(paper.arxiv_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        raise PdfFetchFailedError(f"{type(e).__name__}: {e}") from e
+    pdf_path = save_pdf(str(paper.id), content)
+    paper.pdf_path = str(pdf_path)
+    try:
+        txt_path = await extract_full_text(str(paper.id), pdf_path)
+        paper.full_text_path = str(txt_path)
+    except Exception:  # noqa: BLE001 — 抽取失败降级：仅有 PDF、无全文
+        logger.warning("full text extraction failed for paper %s", paper.id, exc_info=True)
+    await session.commit()
+    await session.refresh(paper)
+    return paper
+
+
+# ---- AI 伴读上下文（docs/api-lit.md §3） ----
+
+
+def build_chat_context(paper: Paper) -> str:
+    """伴读上下文：优先 full_text（超长头尾各留一半），否则 wiki_content，否则 abstract。"""
+    if paper.full_text_path and Path(paper.full_text_path).exists():
+        text_ = Path(paper.full_text_path).read_text(encoding="utf-8", errors="ignore")
+        if len(text_) > CHAT_CONTEXT_MAX_CHARS:
+            half = CHAT_CONTEXT_MAX_CHARS // 2
+            text_ = f"{text_[:half]}\n\n……（论文太长，中间部分已省略）……\n\n{text_[-half:]}"
+        return text_
+    return paper.wiki_content or paper.abstract or ""
+
+
+CHAT_SYSTEM_PROMPT_TEMPLATE = """\
+你是论文阅读助手，帮用户读懂下面这篇论文。回答要求：
+- 只依据下面给出的论文内容回答，不要编造论文里没有的信息；
+- 论文内容里没有提到或你不确定的，直接说明「论文中未提及」或「不确定」；
+- 用中文回答，讲清楚、说人话。
+
+论文标题：{title}
+
+论文内容：
+{context}
+"""
+
+
+def build_chat_messages(
+    paper: Paper, *, question: str, history: Sequence[tuple[str, str]] = ()
+) -> list[Message]:
+    """组装伴读消息：system（论文上下文）+ 历史对话（前端携带）+ 当前问题。"""
+    messages = [
+        Message(
+            role="system",
+            content=CHAT_SYSTEM_PROMPT_TEMPLATE.format(
+                title=paper.title, context=build_chat_context(paper)
+            ),
+        )
+    ]
+    messages += [Message(role=role, content=content) for role, content in history]
+    messages.append(Message(role="user", content=question))
+    return messages
+
+
 # ---- 检索 ----
 
 
 async def keyword_search_papers(
     session: AsyncSession, *, project_id: uuid.UUID, q: str, limit: int
 ) -> list[tuple[Paper, float]]:
-    """关键词检索：title/abstract/wiki_content ilike，按命中位置给启发式分。"""
+    """关键词检索：title/abstract/wiki_content/笔记内容 ilike，按命中位置给启发式分。"""
     pattern = f"%{q}%"
+    note_hit = Paper.id.in_(
+        select(PaperNote.paper_id).where(
+            PaperNote.project_id == project_id, PaperNote.content.ilike(pattern)
+        )
+    )
     stmt = (
         select(Paper)
         .where(
@@ -86,6 +350,7 @@ async def keyword_search_papers(
                 Paper.title.ilike(pattern),
                 Paper.abstract.ilike(pattern),
                 Paper.wiki_content.ilike(pattern),
+                note_hit,
             ),
         )
         .limit(limit * 3)
@@ -98,7 +363,7 @@ async def keyword_search_papers(
             return 1.0
         if needle in (p.abstract or "").lower():
             return 0.7
-        return 0.5  # wiki_content 命中
+        return 0.5  # wiki_content / 笔记命中
 
     ranked = sorted(((p, score_of(p)) for p in papers), key=lambda x: -x[1])
     return ranked[:limit]

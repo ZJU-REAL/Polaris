@@ -7,7 +7,15 @@ from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
 from app.models.manuscript import Manuscript, ManuscriptFile
-from app.models.paper import Concept, Paper, paper_concepts
+from app.models.paper import (
+    Concept,
+    Paper,
+    PaperNote,
+    PaperTag,
+    PaperUserMeta,
+    paper_concepts,
+    paper_tag_links,
+)
 from app.models.project import Project, ProjectMember
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.ssh_credential import SSHCredential
@@ -27,6 +35,9 @@ __all__ = [
     "ManuscriptFile",
     "ModelRoute",
     "Paper",
+    "PaperNote",
+    "PaperTag",
+    "PaperUserMeta",
     "Project",
     "ProjectMember",
     "ReviewMessage",
@@ -38,4 +49,5 @@ __all__ = [
     "VoyageRun",
     "VoyageStep",
     "paper_concepts",
+    "paper_tag_links",
 ]

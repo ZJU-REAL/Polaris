@@ -37,6 +37,7 @@ function crumbFor(pathname: string): [string, string] {
   if (pathname.startsWith('/projects/')) return ['研究方向', '方向详情'];
   if (pathname === '/voyages') return ['Polaris', 'AI 任务'];
   if (pathname.startsWith('/voyages/')) return ['AI 任务', '任务详情'];
+  if (pathname.startsWith('/papers/')) return ['文献追踪', '论文阅读'];
   if (pathname.startsWith('/ideas/')) return ['Idea Forge', 'Idea 详情'];
   if (pathname.startsWith('/experiment/')) return ['实验搭建', '实验详情'];
   const table: Record<string, [string, string]> = {

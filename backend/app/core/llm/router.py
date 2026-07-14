@@ -20,7 +20,8 @@ from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.security import decrypt_secret
 
-# 科研环节枚举（docs/api-m1.md §2；M2 新增 embedding，见 docs/api-m2.md §7）
+# 科研环节枚举（docs/api-m1.md §2；M2 新增 embedding，见 docs/api-m2.md §7；
+# 文献管理增强新增 reading（AI 伴读），见 docs/api-lit.md §3）
 STAGES = (
     "default",
     "navigator",
@@ -35,6 +36,7 @@ STAGES = (
     "experiment",
     "writing",
     "review",
+    "reading",
 )
 
 _ROUTE_CACHE_TTL = 60.0

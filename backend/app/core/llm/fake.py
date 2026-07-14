@@ -28,6 +28,7 @@ _JUDGE_MARKER = '"winner"'  # debate 裁判判定
 _EXP_PLAN_MARKER = '"repro_strategy"'  # experiment 计划
 _EXP_CODE_MARKER = '"requirements.txt"'  # experiment 代码生成/修复
 _EXP_REPORT_MARKER = "## 实验报告"  # experiment 报告
+_READING_MARKER = "论文阅读助手"  # AI 伴读（papers.py CHAT_SYSTEM_PROMPT_TEMPLATE）
 
 EMBEDDING_DIM = 1024  # 与真实 embedding 模型（BGE-M3）维度一致
 
@@ -131,6 +132,9 @@ class FakeProvider(LLMProvider):
             (m.content for m in reversed(messages) if m.role == "user"),
             full_text,
         )
+        # 伴读 system prompt 会内嵌论文全文/wiki（可能含 TL;DR 等其他 marker），须最先判断
+        if _READING_MARKER in full_text:
+            return FakeProvider._respond_reading(last_user)
         if _VERDICT_MARKER in full_text and _PLAN_MARKER not in full_text:
             return json.dumps(
                 {"passed": True, "reason": "fake-sextant: 产出满足验收标准（确定性假判定）"},
@@ -167,6 +171,15 @@ class FakeProvider(LLMProvider):
         if _LIBRARIAN_MARKER in full_text:
             return FakeProvider._respond_librarian(last_user)
         return f"[fake:{model}] {last_user[:400]}"
+
+    @staticmethod
+    def _respond_reading(last_user: str) -> str:
+        """AI 伴读：回显问题的确定性中文回答（流式分片由 stream() 按 64 字符切）。"""
+        return (
+            f"（fake 伴读）关于「{last_user[:200]}」：根据论文内容，"
+            "该问题的要点如下——方法部分给出了核心设计（fake），实验部分验证了有效性（fake）。"
+            "论文中未提及的内容，我无法确定。"
+        )
 
     @staticmethod
     def _respond_interview(last_user: str) -> str:

@@ -9,6 +9,7 @@ import { ProjectDetailPage } from '../features/projects/ProjectDetailPage';
 import { VoyagesPage } from '../features/voyages/VoyagesPage';
 import { VoyageDetailPage } from '../features/voyages/VoyageDetailPage';
 import { WikiPage } from '../features/wiki/WikiPage';
+import { ReadingPage } from '../features/reading/ReadingPage';
 import { ForgePage } from '../features/forge/ForgePage';
 import { IdeaDetailPage } from '../features/forge/IdeaDetailPage';
 import { ReviewPage } from '../features/review/ReviewPage';
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { path: 'voyages', element: <VoyagesPage /> },
       { path: 'voyages/:id', element: <VoyageDetailPage /> },
       { path: 'wiki', element: <WikiPage /> },
+      { path: 'papers/:id/read', element: <ReadingPage /> },
       { path: 'forge', element: <ForgePage /> },
       { path: 'ideas/:id', element: <IdeaDetailPage /> },
       { path: 'review', element: <ReviewPage /> },

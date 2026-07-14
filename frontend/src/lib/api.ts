@@ -16,6 +16,8 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** 解析后的错误响应体（如 409 PAPER_EXISTS 时含 paper_id），可能为空 */
+    public readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -43,8 +45,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`;
+    let body: unknown;
     try {
-      const body: unknown = await res.json();
+      body = await res.json();
       if (body && typeof body === 'object' && 'detail' in body) {
         const d = (body as { detail: unknown }).detail;
         detail = typeof d === 'string' ? d : JSON.stringify(d);
@@ -52,7 +55,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* non-JSON error body — keep statusText */
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, detail, body);
   }
   if (res.status === 204) {
     return undefined as T;
@@ -66,6 +69,29 @@ function requestJson<T>(path: string, method: string, body: unknown): Promise<T>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+/** 二进制下载（PDF / zip / .bib 等），带 Bearer，错误时解析 detail。 */
+async function requestBlob(path: string): Promise<Blob> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(`${BASE}${path}`, { headers });
+  if (!res.ok) {
+    let detail = res.statusText || `HTTP ${res.status}`;
+    let body: unknown;
+    try {
+      body = await res.json();
+      if (body && typeof body === 'object' && 'detail' in body) {
+        const d = (body as { detail: unknown }).detail;
+        detail = typeof d === 'string' ? d : JSON.stringify(d);
+      }
+    } catch {
+      /* keep statusText */
+    }
+    throw new ApiError(res.status, detail, body);
+  }
+  return res.blob();
 }
 
 // ============================================================
@@ -247,6 +273,7 @@ export const LLM_STAGES = [
   'interview',
   'relevance',
   'librarian',
+  'reading',
   'embedding',
   'forge',
   'debate',
@@ -320,6 +347,15 @@ export interface PaperRead {
   tldr: string | null;
   has_wiki: boolean;
   created_at: string;
+  /* —— 文献管理增强字段（docs/api-lit.md §5，后端未就绪时可能缺失，均可选容错） —— */
+  /** 项目级标签 */
+  tags?: string[];
+  /** 当前用户是否星标 */
+  starred?: boolean;
+  /** 当前用户阅读状态（无记录默认 unread） */
+  reading_status?: ReadingStatus;
+  /** 该论文笔记条数 */
+  note_count?: number;
 }
 
 export interface PaperConceptRef {
@@ -341,6 +377,50 @@ export interface PageOf<T> {
   total: number;
   page: number;
   size: number;
+}
+
+// ============================================================
+// Lit · 阅读 / 笔记 / 标签 / 引用导出 — docs/api-lit.md
+// ============================================================
+
+export type ReadingStatus = 'unread' | 'reading' | 'read';
+
+export interface NoteRead {
+  id: string;
+  paper_id: string;
+  project_id: string;
+  author_id: string;
+  /** display_name 回退 email 前缀 */
+  author_name: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NoteWithPaper extends NoteRead {
+  paper_title: string;
+}
+
+/** 手动添加文献：三选一。 */
+export type PaperImportInput = { arxiv_id: string } | { doi: string } | { bibtex: string };
+
+export interface TagRead {
+  id: string;
+  name: string;
+  paper_count: number;
+}
+
+export interface MyMeta {
+  starred: boolean;
+  reading_status: ReadingStatus;
+}
+
+export type CitationFormat = 'bibtex' | 'csl-json';
+
+/** AI 伴读多轮历史消息（前端无状态携带，最多最近 10 轮）。 */
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 // ============================================================
@@ -784,7 +864,19 @@ export const api = {
   // —— M2 · Papers ——
   listPapers(
     projectId: string,
-    opts: { status?: PaperStatus; q?: string; sort?: PaperSort; page?: number; size?: number } = {},
+    opts: {
+      status?: PaperStatus;
+      q?: string;
+      sort?: PaperSort;
+      page?: number;
+      size?: number;
+      /** 按标签名过滤 */
+      tag?: string;
+      /** 仅星标 */
+      starred?: boolean;
+      /** 按当前用户阅读状态过滤 */
+      reading_status?: ReadingStatus;
+    } = {},
   ): Promise<PageOf<PaperRead>> {
     const params = new URLSearchParams();
     if (opts.status) params.set('status', opts.status);
@@ -792,6 +884,9 @@ export const api = {
     if (opts.sort) params.set('sort', opts.sort);
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));
+    if (opts.tag) params.set('tag', opts.tag);
+    if (opts.starred) params.set('starred', 'true');
+    if (opts.reading_status) params.set('reading_status', opts.reading_status);
     const qs = params.toString();
     return request<PageOf<PaperRead>>(`/projects/${projectId}/papers${qs ? `?${qs}` : ''}`);
   },
@@ -801,6 +896,74 @@ export const api = {
   /** 人工纳入/排除。 */
   patchPaper(id: string, input: { status: 'included' | 'excluded' }): Promise<PaperRead> {
     return requestJson<PaperRead>(`/papers/${id}`, 'PATCH', input);
+  },
+
+  // —— Lit · PDF 阅读 ——
+  /** 论文 PDF 原件（blob，用 objectURL 喂给 iframe）。无 PDF → 404 PDF_NOT_AVAILABLE。 */
+  fetchPaperPdf(id: string): Promise<Blob> {
+    return requestBlob(`/papers/${id}/pdf`);
+  },
+  /** 按需补下 PDF（仅 arXiv 来源）；已有 PDF 时幂等直接返回。 */
+  requestPaperPdf(id: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/papers/${id}/fetch-pdf`, { method: 'POST' });
+  },
+
+  // —— Lit · 笔记 ——
+  listPaperNotes(paperId: string): Promise<NoteRead[]> {
+    return request<NoteRead[]>(`/papers/${paperId}/notes`);
+  },
+  createPaperNote(paperId: string, content: string): Promise<NoteRead> {
+    return requestJson<NoteRead>(`/papers/${paperId}/notes`, 'POST', { content });
+  },
+  patchNote(noteId: string, content: string): Promise<NoteRead> {
+    return requestJson<NoteRead>(`/notes/${noteId}`, 'PATCH', { content });
+  },
+  deleteNote(noteId: string): Promise<void> {
+    return request<void>(`/notes/${noteId}`, { method: 'DELETE' });
+  },
+  /** 项目笔记本：全项目笔记分页 + 搜索。 */
+  listProjectNotes(
+    projectId: string,
+    opts: { q?: string; paper_id?: string; page?: number; size?: number } = {},
+  ): Promise<PageOf<NoteWithPaper>> {
+    const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
+    if (opts.paper_id) params.set('paper_id', opts.paper_id);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    const qs = params.toString();
+    return request<PageOf<NoteWithPaper>>(`/projects/${projectId}/notes${qs ? `?${qs}` : ''}`);
+  },
+
+  // —— Lit · 手动添加文献 ——
+  /** 409 → ApiError(detail=PAPER_EXISTS, body 含 paper_id)；422 → PARSE_FAILED。 */
+  importPaper(projectId: string, input: PaperImportInput): Promise<PaperDetail> {
+    return requestJson<PaperDetail>(`/projects/${projectId}/papers`, 'POST', input);
+  },
+
+  // —— Lit · 标签与个人状态 ——
+  listTags(projectId: string): Promise<TagRead[]> {
+    return request<TagRead[]>(`/projects/${projectId}/tags`);
+  },
+  /** 整组覆盖论文标签；新名字自动建 tag；空数组=清空。 */
+  putPaperTags(id: string, names: string[]): Promise<PaperDetail> {
+    return requestJson<PaperDetail>(`/papers/${id}/tags`, 'PUT', { names });
+  },
+  /** 个人星标 / 阅读状态。 */
+  putMyMeta(id: string, input: Partial<MyMeta>): Promise<MyMeta> {
+    return requestJson<MyMeta>(`/papers/${id}/my-meta`, 'PUT', input);
+  },
+
+  // —— Lit · 引用导出（.bib / CSL-JSON blob） ——
+  downloadCitations(
+    projectId: string,
+    opts: { format: CitationFormat; status?: PaperStatus; tag?: string; starred?: boolean },
+  ): Promise<Blob> {
+    const params = new URLSearchParams({ format: opts.format });
+    if (opts.status) params.set('status', opts.status);
+    if (opts.tag) params.set('tag', opts.tag);
+    if (opts.starred) params.set('starred', 'true');
+    return requestBlob(`/projects/${projectId}/export/citations?${params.toString()}`);
   },
 
   // —— M2 · Concepts ——
@@ -838,13 +1001,8 @@ export const api = {
   },
 
   // —— M2 · Obsidian 导出（zip blob） ——
-  async downloadObsidianExport(projectId: string): Promise<Blob> {
-    const headers = new Headers();
-    const token = getToken();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
-    const res = await fetch(`${BASE}/projects/${projectId}/export/obsidian`, { headers });
-    if (!res.ok) throw new ApiError(res.status, res.statusText || `HTTP ${res.status}`);
-    return res.blob();
+  downloadObsidianExport(projectId: string): Promise<Blob> {
+    return requestBlob(`/projects/${projectId}/export/obsidian`);
   },
 
   // —— M2 · Dashboard 统计 ——

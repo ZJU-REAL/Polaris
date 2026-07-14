@@ -1,5 +1,7 @@
-"""Research Wiki 附属路由：检索 / Obsidian 导出 / 项目统计（docs/api-m2.md §3、§5、§6）。"""
+"""Research Wiki 附属路由：检索 / Obsidian 导出 / 引用导出 / 项目统计
+（docs/api-m2.md §3、§5、§6；docs/api-lit.md §6）。"""
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -12,6 +14,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.schemas.ingest import ProjectStatsRead
 from app.schemas.paper import PaperRead, ScoredConcept, ScoredPaper, SearchResponse
+from app.services import citations as citations_service
 from app.services import concepts as concepts_service
 from app.services import papers as papers_service
 from app.services import projects as projects_service
@@ -85,8 +88,12 @@ async def search(
                 score=score,
             )
         )
+    extras = await papers_service.paper_extras_map(
+        session, paper_ids=[p.id for p, _ in paper_rows], user_id=user.id
+    )
     papers = [
-        ScoredPaper(**PaperRead.model_validate(p).model_dump(), score=s) for p, s in paper_rows
+        ScoredPaper(**(PaperRead.model_validate(p).model_dump() | extras[p.id]), score=s)
+        for p, s in paper_rows
     ]
     return SearchResponse(papers=papers, concepts=concepts, mode_used=mode_used, reranked=reranked)
 
@@ -104,6 +111,42 @@ async def export_obsidian(
         content=content,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/projects/{project_id}/export/citations")
+async def export_citations(
+    project_id: uuid.UUID,
+    format_: str = Query(default="bibtex", alias="format", pattern="^(bibtex|csl-json)$"),
+    status_filter: str | None = Query(default=None, alias="status"),
+    tag: str | None = Query(default=None),
+    starred: bool | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """引用导出：BibTeX / CSL-JSON（docs/api-lit.md §6）。
+
+    过滤参数与论文列表一致；缺省导出 status in (compiled, included)。
+    """
+    project = await _member_project(session, project_id, user)
+    papers = await citations_service.papers_for_export(
+        session,
+        project_id=project_id,
+        user_id=user.id,
+        status=status_filter,
+        tag=tag,
+        starred=starred,
+    )
+    if format_ == "bibtex":
+        return Response(
+            content=citations_service.build_bibtex(papers),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{project.slug}-citations.bib"'},
+        )
+    return Response(
+        content=json.dumps(citations_service.build_csl_json(papers), ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{project.slug}-citations.json"'},
     )
 
 

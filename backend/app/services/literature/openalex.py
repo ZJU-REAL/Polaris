@@ -15,10 +15,16 @@ ARXIV_DOI_TEMPLATE = "10.48550/arXiv.{arxiv_id}"
 
 
 def _simplify(work: dict[str, Any]) -> dict[str, Any]:
+    primary_location = work.get("primary_location") or {}
     return {
         "openalex_id": work.get("id"),
         "title": work.get("title"),
         "doi": (work.get("doi") or "").removeprefix("https://doi.org/") or None,
+        "url": (
+            primary_location.get("landing_page_url") if isinstance(primary_location, dict) else None
+        )
+        or work.get("doi")
+        or None,
         "year": work.get("publication_year"),
         "venue": (work.get("primary_location") or {}).get("source", {}).get("display_name")
         if isinstance((work.get("primary_location") or {}).get("source"), dict)

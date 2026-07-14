@@ -5,7 +5,8 @@ export type IconName =
   | 'bell' | 'search' | 'settings' | 'plus' | 'chevron' | 'chevDown' | 'arrow'
   | 'link' | 'check' | 'x' | 'play' | 'pause' | 'clock' | 'cpu' | 'server'
   | 'file' | 'git' | 'chart' | 'grid' | 'layers' | 'sparkle' | 'refresh'
-  | 'logout' | 'dot' | 'compass' | 'users' | 'trash';
+  | 'logout' | 'dot' | 'compass' | 'users' | 'trash'
+  | 'star' | 'starFill' | 'chat' | 'download';
 
 export interface IconProps {
   name: IconName;
@@ -59,6 +60,10 @@ export function Icon({ name, size = 17, sw = 1.6, style }: IconProps) {
     compass: <><circle cx="12" cy="12" r="9" {...p} /><path d="M15.5 8.5l-2.2 5-4.8 2 2.2-5z" {...p} /></>,
     users: <><circle cx="9" cy="8" r="3.5" {...p} /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" {...p} /><circle cx="17" cy="9" r="2.5" {...p} /><path d="M16.5 14.6c2.6.6 4.5 2.8 4.5 5.4" {...p} /></>,
     trash: <><path d="M4 7h16M10 7V4h4v3M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" {...p} /><path d="M10 11v7M14 11v7" {...p} /></>,
+    star: <path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z" {...p} />,
+    starFill: <path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z" fill="currentColor" stroke="currentColor" strokeWidth={sw} strokeLinejoin="round" />,
+    chat: <><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.6 0-3-.4-4.3-1.1L3 20l1.1-5.2A8.5 8.5 0 1 1 21 11.5z" {...p} /><path d="M8 10.5h8M8 13.5h5" {...p} /></>,
+    download: <><path d="M12 3v11M7 10l5 5 5-5" {...p} /><path d="M4 20h16" {...p} /></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" style={{ display: 'block', ...style }}>

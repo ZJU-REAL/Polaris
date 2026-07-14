@@ -24,6 +24,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "pgvector>=0.5",
     "pymupdf>=1.26",
+    "bibtexparser>=1.4,<2",
 ]
 
 [project.optional-dependencies]

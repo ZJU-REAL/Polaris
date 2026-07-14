@@ -1,11 +1,21 @@
-"""论文（文献综述对象）、概念（wiki 词条）与其关联表。"""
+"""论文（文献综述对象）、概念（wiki 词条）、笔记 / 标签 / 个人阅读状态与其关联表。"""
 
 import uuid
 from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Table, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -66,6 +76,63 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     @property
     def pdf_available(self) -> bool:
         return bool(self.pdf_path)
+
+
+READING_STATUSES = ("unread", "reading", "read")
+
+paper_tag_links = Table(
+    "paper_tag_links",
+    Base.metadata,
+    Column("paper_id", ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", ForeignKey("paper_tags.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class PaperNote(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """论文笔记：项目成员可读，作者（或平台 admin）可改删。"""
+
+    __tablename__ = "paper_notes"
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class PaperTag(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """项目级论文标签（同项目内名字唯一）；与论文多对多（paper_tag_links）。"""
+
+    __tablename__ = "paper_tags"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_paper_tags_project_name"),)
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class PaperUserMeta(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """论文的个人视角状态：星标 + 阅读状态（每人每篇至多一条）。"""
+
+    __tablename__ = "paper_user_meta"
+    __table_args__ = (UniqueConstraint("paper_id", "user_id", name="uq_paper_user_meta"),)
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    starred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reading_status: Mapped[str] = mapped_column(
+        String(16), default="unread", nullable=False
+    )  # unread | reading | read
 
 
 class Concept(UUIDPrimaryKeyMixin, TimestampMixin, Base):
