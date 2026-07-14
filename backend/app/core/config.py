@@ -1,9 +1,13 @@
 """应用配置：pydantic-settings，环境变量前缀 ``POLARIS_``（见仓库根 .env.example）。"""
 
+import logging
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("polaris.config")
 
 
 class Settings(BaseSettings):
@@ -39,6 +43,22 @@ class Settings(BaseSettings):
     # 文献 API（arXiv/S2/OpenAlex）出站代理，如 http://host.docker.internal:7897；
     # LLM/内网服务不走此代理
     outbound_proxy: str | None = None
+
+    @field_validator(
+        "s2_api_key", "openai_compat_api_key", "anthropic_api_key", "outbound_proxy", mode="before"
+    )
+    @classmethod
+    def _sanitize_token(cls, v: object) -> object:
+        """env 文件行内注释误入值（如 docker compose 对空值+注释的解析差异）会把
+        '# 注释文字' 当成 token，非 ASCII 进 HTTP 头直接 UnicodeEncodeError——
+        这里统一剥离并拒绝明显非法的值。"""
+        if not isinstance(v, str):
+            return v
+        v = v.split(" #", 1)[0].strip()
+        if v and (v.startswith("#") or not v.isascii()):
+            logger.warning("忽略非法配置值（疑似注释混入）：%r", v[:40])
+            return ""
+        return v
 
     @property
     def is_sqlite(self) -> bool:

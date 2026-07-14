@@ -17,6 +17,8 @@ from app.services.literature.cache import ResponseCache, TokenBucket, cache_key
 API_BASE = "https://api.semanticscholar.org/graph/v1"
 
 PAPER_FIELDS = "title,abstract,year,venue,externalIds,url,citationCount,tldr,authors"
+# references/citations 端点不支持 tldr 字段（带上会 400）
+LINK_FIELDS = "title,abstract,year,venue,externalIds,url,citationCount,authors"
 
 # 免 key 100 req / 5 min 的 80%
 _FREE_RATE = 0.8 * 100 / 300
@@ -71,14 +73,14 @@ class SemanticScholarClient:
         return await self._get(f"/paper/{paper_id}", {"fields": fields})
 
     async def get_references(
-        self, paper_id: str, *, limit: int = 100, fields: str = PAPER_FIELDS
+        self, paper_id: str, *, limit: int = 100, fields: str = LINK_FIELDS
     ) -> list[dict[str, Any]]:
         """该论文引用的文献（citedPaper 列表）。"""
         data = await self._get(f"/paper/{paper_id}/references", {"fields": fields, "limit": limit})
         return [row["citedPaper"] for row in data.get("data", []) if row.get("citedPaper")]
 
     async def get_citations(
-        self, paper_id: str, *, limit: int = 100, fields: str = PAPER_FIELDS
+        self, paper_id: str, *, limit: int = 100, fields: str = LINK_FIELDS
     ) -> list[dict[str, Any]]:
         """引用该论文的文献（citingPaper 列表）。"""
         data = await self._get(f"/paper/{paper_id}/citations", {"fields": fields, "limit": limit})
