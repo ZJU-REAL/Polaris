@@ -78,7 +78,7 @@ export function VoyagesPage() {
   const createMutation = useMutation({
     mutationFn: () => api.createVoyage({ kind: 'demo', project_id: effectiveProjectId, goal: goal.trim() }),
     onSuccess: (v) => {
-      toast('演示航程已入队', 'ok');
+      toast('演示任务已入队', 'ok');
       setCreateOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
       navigate(`/voyages/${v.id}`);
@@ -92,12 +92,12 @@ export function VoyagesPage() {
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Voyages"
-        title="任务航程 Voyages"
-        sub="长时程 agent 任务：Navigator 规划 → Helm 执行 → Sextant 自验证，遇闸门暂停等待审批。"
+        title="AI 任务 Tasks"
+        sub="长时程 agent 任务：先规划 → 再执行 → 自动校验，需要人工审批时会自动暂停。"
         right={
           <button className="btn btn-primary" disabled={noProjects} onClick={() => setCreateOpen(true)}>
             <Icon name="play" size={14} />
-            新建演示航程
+            新建演示任务
           </button>
         }
       />
@@ -107,7 +107,7 @@ export function VoyagesPage() {
           <Icon name="compass" size={36} style={{ margin: '0 auto 14px', color: 'var(--text-4)' }} />
           <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 6 }}>还没有研究方向</div>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            航程隶属于研究方向。先创建一个方向，再启动演示航程。
+            任务隶属于研究方向。先创建一个方向，再启动演示任务。
           </div>
           <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
             <Icon name="plus" size={14} />
@@ -133,15 +133,15 @@ export function VoyagesPage() {
             <div className="empty" style={{ padding: 60 }}>加载中…</div>
           ) : isError ? (
             <div className="card card-pad" style={{ textAlign: 'center', padding: 48 }}>
-              <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>无法加载航程列表</div>
+              <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>无法加载任务列表</div>
               <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 16 }}>后端不可用或 M1 接口尚未就绪</div>
               <button className="btn btn-soft" onClick={() => void refetch()}>重试 retry</button>
             </div>
           ) : voyages.length === 0 ? (
             <div className="card card-pad" style={{ textAlign: 'center', padding: 48 }}>
-              <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>暂无航程</div>
+              <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>暂无任务</div>
               <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 16 }}>
-                点击右上角「新建演示航程」体验 Voyage agent 的规划-执行-自检循环。
+                点击右上角「新建演示任务」体验 AI 任务的规划-执行-自检循环。
               </div>
             </div>
           ) : (
@@ -191,10 +191,10 @@ export function VoyagesPage() {
         title={
           <>
             <Icon name="play" size={16} style={{ color: 'var(--accent)' }} />
-            新建演示航程
+            新建演示任务
           </>
         }
-        sub="kind=demo：分析目标 → 生成产物（含 compute_budget 闸门）→ 自检"
+        sub="kind=demo：分析目标 → 生成产物（含算力预算审批）→ 自检"
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setCreateOpen(false)}>取消</button>
@@ -203,7 +203,7 @@ export function VoyagesPage() {
               disabled={!goal.trim() || !effectiveProjectId || createMutation.isPending}
               onClick={() => createMutation.mutate()}
             >
-              {createMutation.isPending ? '入队中…' : '启动航程'}
+              {createMutation.isPending ? '入队中…' : '启动任务'}
             </button>
           </>
         }
@@ -215,7 +215,7 @@ export function VoyagesPage() {
             ))}
           </select>
         </FormField>
-        <FormField label="目标" en="Goal" hint="Navigator 将围绕该目标生成三步计划">
+        <FormField label="目标" en="Goal" hint="系统将围绕该目标自动生成三步计划">
           <textarea className="textarea" rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
         </FormField>
       </Modal>

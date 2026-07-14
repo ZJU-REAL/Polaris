@@ -126,7 +126,7 @@ export function WikiPage() {
           <EmptyState
             icon="book"
             title="还没有研究方向"
-            desc="Research Wiki 按研究方向组织：先通过结构化访谈创建一个方向，再运行冷启动回填文献。"
+            desc="Research Wiki 按研究方向组织：先通过结构化访谈创建一个方向，再运行初始建库回填文献。"
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
@@ -186,7 +186,7 @@ export function WikiPage() {
           options={[
             { v: 'papers', label: `论文库 Papers${total !== undefined ? ` · ${total}` : ''}` },
             { v: 'concepts', label: '概念库 Concepts' },
-            { v: 'ingest', label: '冷启动 / 同步 Ingest' },
+            { v: 'ingest', label: '建库与同步 Ingest' },
           ]}
           value={tab}
           onChange={setTab}

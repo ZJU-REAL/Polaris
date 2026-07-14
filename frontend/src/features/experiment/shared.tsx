@@ -22,7 +22,7 @@ export function HypChip({ status }: { status: HypothesisStatus | string }) {
 /** 实验主流程阶段（终态 failed/cancelled 不在其中）。 */
 export const EXP_FLOW: { key: ExperimentStatus; zh: string }[] = [
   { key: 'planning', zh: '计划' },
-  { key: 'awaiting_gate', zh: '预算闸门' },
+  { key: 'awaiting_gate', zh: '预算审批' },
   { key: 'setup', zh: '建环境' },
   { key: 'running', zh: '运行' },
   { key: 'reporting', zh: '报告' },

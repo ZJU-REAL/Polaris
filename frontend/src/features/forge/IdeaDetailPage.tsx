@@ -110,7 +110,7 @@ export function IdeaDetailPage() {
   const promoteMutation = useMutation({
     mutationFn: () => api.promoteIdea(id!),
     onSuccess: (gate) => {
-      toast('已创建晋级闸门，等待审批 · promotion gate created', 'ok');
+      toast('已提交晋级审批，等待人工审批 · promotion approval created', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
       invalidateIdea();
       openGates(gate.id);
@@ -237,7 +237,7 @@ export function IdeaDetailPage() {
             <div style={{ fontSize: 13.5, fontWeight: 650, marginBottom: 4 }}>晋级 / 淘汰</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.55, marginBottom: 14 }}>
               {actionable
-                ? '晋级会创建 idea_promotion 闸门（人在环），审批通过后进入实验阶段；淘汰将其移出候选池。'
+                ? '晋级会提交 idea_promotion 人工审批，审批通过后进入实验阶段；淘汰将其移出候选池。'
                 : idea.status === 'promoted'
                   ? '该 idea 已晋级，无需再操作。'
                   : '该 idea 已淘汰。'}

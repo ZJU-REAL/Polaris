@@ -144,7 +144,7 @@ function RunForgeModal({
         max_context_papers: maxContextPapers,
       }),
     onSuccess: (v) => {
-      toast('Idea Forge 已开始，跳转航程详情…', 'ok');
+      toast('Idea Forge 已开始，跳转任务详情…', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       onClose();
       navigate(`/voyages/${v.id}`);
@@ -266,7 +266,7 @@ export function ForgePage() {
           <EmptyState
             icon="bulb"
             title="还没有研究方向"
-            desc="Idea Forge 需要一个研究方向和它的知识库：先创建方向并运行文献冷启动。"
+            desc="Idea Forge 需要一个研究方向和它的知识库：先创建方向并运行文献初始建库。"
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
@@ -323,7 +323,7 @@ export function ForgePage() {
               <span className="dot pulse" />
               运行中
             </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650 }}>Idea 任务进行中 — 点击查看航程实时进度</span>
+            <span style={{ fontSize: 13.5, fontWeight: 650 }}>Idea 任务进行中 — 点击查看任务实时进度</span>
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
               voyage {state.running_voyage_id.slice(0, 8)}…
             </span>
@@ -337,7 +337,7 @@ export function ForgePage() {
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <span className="section-h">
             <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-            收敛漏斗 <span className="en-label" style={{ fontSize: 11 }}>candidate → under review → promoted</span>
+            筛选漏斗 <span className="en-label" style={{ fontSize: 11 }}>candidate → under review → promoted</span>
           </span>
           <div className="row gap8">
             {counts?.rejected !== undefined && (

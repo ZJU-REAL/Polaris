@@ -35,8 +35,8 @@ function crumbFor(pathname: string): [string, string] {
   if (pathname === '/') return ['Polaris', '总览'];
   if (pathname === '/projects/new') return ['研究方向', '新建方向'];
   if (pathname.startsWith('/projects/')) return ['研究方向', '方向详情'];
-  if (pathname === '/voyages') return ['Polaris', '任务航程'];
-  if (pathname.startsWith('/voyages/')) return ['任务航程', '航程详情'];
+  if (pathname === '/voyages') return ['Polaris', 'AI 任务'];
+  if (pathname.startsWith('/voyages/')) return ['AI 任务', '任务详情'];
   if (pathname.startsWith('/ideas/')) return ['Idea Forge', 'Idea 详情'];
   if (pathname.startsWith('/experiment/')) return ['实验搭建', '实验详情'];
   const table: Record<string, [string, string]> = {
@@ -140,9 +140,9 @@ export function AppShell() {
       } else if (msg.type === 'voyage.status') {
         void queryClient.invalidateQueries({ queryKey: ['voyages'] });
         void queryClient.invalidateQueries({ queryKey: ['voyage', msg.voyage_id] });
-        if (msg.status === 'paused_gate') toast('航程等待审批 · voyage paused at gate', 'info');
-        else if (msg.status === 'done') toast('航程完成 · voyage done', 'ok');
-        else if (msg.status === 'failed') toast('航程失败 · voyage failed', 'error');
+        if (msg.status === 'paused_gate') toast('任务等待审批 · voyage paused at gate', 'info');
+        else if (msg.status === 'done') toast('任务完成 · voyage done', 'ok');
+        else if (msg.status === 'failed') toast('任务失败 · voyage failed', 'error');
       } else if (msg.type === 'review.message') {
         // 正在看该 session 的组件共享此 query cache → 直接乐观追加（按 id 去重）
         queryClient.setQueryData<ReviewMessageRead[]>(['session-messages', msg.session_id], (old) =>
@@ -198,7 +198,7 @@ export function AppShell() {
           {NAV_MAIN.map((n) => (
             <NavItem key={n.to} n={n} />
           ))}
-          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务航程', en: 'Voyages' }} />
+          <NavItem n={{ to: '/voyages', icon: 'compass', zh: 'AI 任务', en: 'Tasks' }} />
 
           <div className="sb-section">研究方向 · Directions</div>
           {projectsLoading && <div style={{ padding: '4px 10px', fontSize: 12, color: 'var(--text-4)' }}>加载中…</div>}
@@ -295,7 +295,7 @@ export function AppShell() {
             <span style={{ fontSize: 15, fontWeight: 680 }}>审批中心</span>
           </>
         }
-        sub="人在环闸门 · Human-in-the-loop gates"
+        sub="人工审批 · Human-in-the-loop approvals"
       >
         <div className="row" style={{ marginBottom: 10 }}>
           <span className="sb-section" style={{ padding: 0 }}>待处理 · {pending.length}</span>
@@ -303,7 +303,7 @@ export function AppShell() {
         <div className="col gap10" style={{ marginBottom: 24 }}>
           {pendingQuery.isError ? (
             <div className="empty" style={{ padding: 20 }}>
-              无法加载闸门列表（后端不可用）
+              无法加载审批列表（后端不可用）
               <div style={{ marginTop: 10 }}>
                 <button className="btn btn-soft sm" onClick={() => void pendingQuery.refetch()}>
                   重试 retry
@@ -346,7 +346,7 @@ export function AppShell() {
           )}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5, marginTop: 20, padding: '0 2px' }}>
-          批准带 voyage 的闸门后，对应航程将自动从断点恢复；拒绝则置为 failed。
+          批准与任务关联的审批后，对应任务将自动从断点恢复；拒绝则置为 failed。
         </div>
       </Drawer>
 

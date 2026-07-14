@@ -132,7 +132,7 @@ function ActivityFeed({ activities, error }: { activities: ActivityRead[]; error
         {error ? (
           <div className="empty" style={{ padding: 18 }}>无法加载活动（后端不可用）</div>
         ) : activities.length === 0 ? (
-          <div className="empty" style={{ padding: 18 }}>暂无活动 — 运行一次文献冷启动试试</div>
+          <div className="empty" style={{ padding: 18 }}>暂无活动 — 运行一次文献初始建库试试</div>
         ) : (
           activities.map((a) => {
             const gate = a.kind.toLowerCase().includes('gate');
@@ -181,7 +181,7 @@ function GatePreview({ gates, gatesError, openGates }: {
       <div className="card-pad row" style={{ justifyContent: 'space-between', paddingBottom: 14 }}>
         <span className="section-h">
           <Icon name="gate" size={15} style={{ color: 'var(--accent)' }} />
-          人在环 · 审批中心 <span className="en-label" style={{ fontSize: 11 }}>Approvals</span>
+          人工审批 · 审批中心 <span className="en-label" style={{ fontSize: 11 }}>Approvals</span>
         </span>
         <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
           {gates.length} 待处理
@@ -189,7 +189,7 @@ function GatePreview({ gates, gatesError, openGates }: {
       </div>
       <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {gatesError ? (
-          <div className="empty" style={{ padding: 18 }}>无法加载闸门（后端不可用）</div>
+          <div className="empty" style={{ padding: 18 }}>无法加载审批列表（后端不可用）</div>
         ) : gates.length === 0 ? (
           <div className="empty" style={{ padding: 18 }}>没有待处理的审批 🎉</div>
         ) : (
@@ -300,10 +300,10 @@ function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number)
     },
     {
       icon: 'gate',
-      label: '待审批闸门',
-      en: 'Pending gates',
+      label: '待处理审批',
+      en: 'Pending approvals',
       value: stats ? stats.gates_pending : pendingGatesCount,
-      sub: '人在环',
+      sub: '人工审批',
       accent: true,
     },
   ];
@@ -351,7 +351,7 @@ export function DashboardPage() {
           <>
             <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
               <Icon name="compass" size={15} />
-              任务航程
+              AI 任务
             </button>
             <button className="btn btn-primary" onClick={() => navigate('/voyages')}>
               <Icon name="play" size={14} />

@@ -299,7 +299,7 @@ async def create_promotion_gate(session: AsyncSession, idea: Idea, user: User) -
             project_id=idea.project_id,
             actor=f"user:{user.id}",
             kind="idea.promote_requested",
-            message=f"想法「{idea.title}」申请晋级，等待闸门审批",
+            message=f"想法「{idea.title}」申请晋级，等待人工审批",
             payload={"idea_id": str(idea.id), "gate_id": None},
         )
     )
@@ -327,7 +327,7 @@ async def promote_from_gate(session: AsyncSession, gate: Gate) -> Idea | None:
                 project_id=idea.project_id,
                 actor=f"user:{gate.decided_by}" if gate.decided_by else "system",
                 kind="idea.promoted",
-                message=f"想法「{idea.title}」已通过闸门晋级",
+                message=f"想法「{idea.title}」已通过审批晋级",
                 payload={"idea_id": str(idea.id), "gate_id": str(gate.id)},
             )
         )

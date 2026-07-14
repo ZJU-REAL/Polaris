@@ -89,7 +89,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
   const ingestMutation = useMutation({
     mutationFn: (input: { mode: IngestMode; knobs: IngestKnobs }) => api.startIngest(pid, input),
     onSuccess: (v, input) => {
-      toast(input.mode === 'bootstrap' ? '冷启动已开始，跳转航程详情…' : '增量同步已开始，跳转航程详情…', 'ok');
+      toast(input.mode === 'bootstrap' ? '初始建库已开始，跳转任务详情…' : '增量同步已开始，跳转任务详情…', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
       navigate(`/voyages/${v.id}`);
     },
@@ -148,7 +148,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
                 <Icon name="arrow" size={14} style={{ marginLeft: 'auto', color: 'var(--accent-text)' }} />
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 8, lineHeight: 1.55 }}>
-                点击查看航程实时进度（SSE 流式）。运行期间无法再次启动 ingest。
+                点击查看任务实时进度（SSE 流式）。运行期间无法再次启动 ingest。
               </div>
               <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 6 }}>
                 voyage {state.running_voyage_id.slice(0, 8)}…
@@ -172,12 +172,12 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
               <div style={{ padding: '0 22px 20px' }}>
                 <div className="row gap16" style={{ marginBottom: 16 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>水位线 watermark</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>上次同步时间 last sync</div>
                     <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>
                       {state?.watermark ? state.watermark.slice(0, 10) : '—'}
                     </div>
                     {!state?.watermark && (
-                      <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>尚未运行过冷启动</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>尚未运行过初始建库</div>
                     )}
                   </div>
                   <div style={{ flex: 1 }}>
@@ -233,14 +233,14 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
               </span>
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 14px' }}>
-              从水位线之后抓取新论文并打分编译；已 bootstrap 的项目每日也会由定时任务自动增量。
+              从上次同步时间之后抓取新论文并打分编译；已建库的项目每日也会由定时任务自动增量。
             </p>
             <button className="btn btn-ghost" disabled={busy || !state?.watermark} onClick={runIncremental}>
               <Icon name="refresh" size={14} />
               立即增量同步
             </button>
             {!state?.watermark && !stateError && !stateLoading && (
-              <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 8 }}>需先完成一次冷启动 bootstrap。</div>
+              <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 8 }}>需先完成一次初始建库 bootstrap。</div>
             )}
           </div>
         </div>
@@ -250,11 +250,11 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
           <div className="row gap10" style={{ marginBottom: 6 }}>
             <span className="section-h">
               <Icon name="play" size={15} style={{ color: 'var(--accent)' }} />
-              冷启动 <span className="en-label" style={{ fontSize: 11 }}>Bootstrap</span>
+              初始建库 <span className="en-label" style={{ fontSize: 11 }}>Bootstrap</span>
             </span>
           </div>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 18px' }}>
-            空 Wiki 会让 idea-forge「无米下锅」。冷启动一次性回填近 N 个月文献 + 引文雪球，
+            空 Wiki 会让 idea-forge「无米下锅」。初始建库一次性回填近 N 个月文献 + 参考文献扩展，
             LLM 打分筛选后精读编译建立知识地图。以下成本旋钮控制本次开销。
           </p>
 
@@ -289,7 +289,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             format={(v) => v.toFixed(2)}
             onChange={setThreshold}
           />
-          <FormField label="引文雪球层数" en="snowball_depth" hint="沿引用图扩展检索的层数；0 为不雪球。">
+          <FormField label="参考文献扩展层数" en="snowball_depth" hint="沿引用关系扩展检索的层数；0 为不扩展。">
             <Segmented<'0' | '1' | '2'>
               options={[
                 { v: '0', label: '0 · 关' },
@@ -321,7 +321,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
               ) : (
                 <>
                   <Icon name="play" size={14} />
-                  运行冷启动 bootstrap
+                  运行初始建库 bootstrap
                 </>
               )}
             </button>
@@ -330,7 +330,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             )}
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 12, lineHeight: 1.6 }}>
-            以 Voyage 呈现进度，支持断点续跑；同一项目同时只允许一个 ingest 任务。
+            以 AI 任务呈现进度，支持断点续跑；同一项目同时只允许一个 ingest 任务。
           </div>
         </div>
       </div>

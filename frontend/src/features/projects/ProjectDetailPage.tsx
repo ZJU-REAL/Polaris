@@ -239,7 +239,7 @@ export function ProjectDetailPage() {
         </div>
         <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
           <Icon name="compass" size={14} />
-          查看航程
+          查看任务
         </button>
       </div>
 

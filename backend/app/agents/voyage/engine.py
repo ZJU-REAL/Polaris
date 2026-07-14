@@ -200,7 +200,7 @@ class VoyageEngine:
 
             # 预算：超限自动暂停
             if self._budget_exceeded(run):
-                await self._emit_log(run, "预算超限，航程暂停（paused_error）")
+                await self._emit_log(run, "预算超限，任务暂停（paused_error）")
                 await self._set_status(session, run, "paused_error")
                 return
 
@@ -240,7 +240,7 @@ class VoyageEngine:
                 await self._set_status(session, run, "executing")
                 return True
             if gate is not None and gate.status == "rejected":
-                await self._emit_log(run, f"闸门被驳回：{gate.comment or ''}")
+                await self._emit_log(run, f"审批被驳回：{gate.comment or ''}")
                 await self._set_status(session, run, "failed")
                 return False
             # 仍在等待审批
@@ -268,7 +268,7 @@ class VoyageEngine:
         checkpoint["gates"] = gates
         run.checkpoint = checkpoint
         await session.commit()
-        await self._emit_log(run, f"步骤 {run.cursor} 需要 {gate.kind} 闸门审批，航程暂停")
+        await self._emit_log(run, f"步骤 {run.cursor} 需要 {gate.kind} 人工审批，任务暂停")
         await self._emit_notify(
             run.project_id,
             {
@@ -391,7 +391,7 @@ class VoyageEngine:
             await self._set_status(session, run, "failed")
             return False
         if replans >= MAX_REPLANS:
-            await self._emit_log(run, f"重规划已达上限（{MAX_REPLANS} 次），航程暂停等待人工处理")
+            await self._emit_log(run, f"重规划已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理")
             await self._set_status(session, run, "paused_error")
             return False
 

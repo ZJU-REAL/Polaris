@@ -4,9 +4,9 @@ import { fmtTime } from '../../lib/format';
 import type { GateDecision, GateRead } from '../../lib/api';
 
 export const GATE_KIND_ZH: Record<string, string> = {
-  idea_promotion: 'Idea 晋级',
-  compute_budget: '算力预算',
-  remote_write: '远程写操作',
+  idea_promotion: 'Idea 晋级审批',
+  compute_budget: '算力预算审批',
+  remote_write: '远程操作审批',
   pr_push: '推送 PR',
   paper_submission: '论文投稿',
 };

@@ -30,8 +30,8 @@ export const STATUS: Record<string, StatusMeta> = {
   // —— Voyage 状态机 ——
   planning: { cls: 'st-drafted', zh: '规划中', en: 'planning' },
   executing: { cls: 'st-running', zh: '执行中', en: 'executing' },
-  verifying: { cls: 'st-reviewed', zh: '自检中', en: 'verifying' },
-  replanning: { cls: 'st-drafted', zh: '重规划', en: 'replanning' },
+  verifying: { cls: 'st-reviewed', zh: '校验中', en: 'verifying' },
+  replanning: { cls: 'st-drafted', zh: '调整计划', en: 'replanning' },
   paused_gate: { cls: 'st-candidate', zh: '等待审批', en: 'paused' },
   paused_error: { cls: 'st-failed', zh: '出错暂停', en: 'error' },
   failed: { cls: 'st-failed', zh: '失败', en: 'failed' },

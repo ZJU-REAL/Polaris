@@ -15,7 +15,7 @@ export function WriterPage() {
         { zh: '引用真实性校验', desc: 'bib 全量对 Semantic Scholar 校验存在性，杜绝幻觉引用；引用论述与原文一致性检查。' },
         { zh: 'LaTeX 编译检查', desc: 'latexmk 编译、overfull/undefined refs/缺图检测，页数限制与会议模板适配。' },
         { zh: '匿名化与图表质检', desc: '双盲匿名检查；VLM 审查指标图（坐标轴/图例/误差棒）并回灌修图。' },
-        { zh: '投稿闸门', desc: 'paper_submission 闸门：人工确认 venue/deadline 后才允许投稿动作。' },
+        { zh: '投稿审批', desc: 'paper_submission 人工审批：人工确认 venue/deadline 后才允许投稿动作。' },
       ]}
     />
   );

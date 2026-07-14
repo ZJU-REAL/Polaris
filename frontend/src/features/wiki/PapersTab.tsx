@@ -321,7 +321,7 @@ function PaperDetailPane({
             compact
             icon="pen"
             title="尚未编译 wiki 页"
-            desc="该论文还没有经过 Librarian 精读编译（相关度不足、或尚未运行冷启动 / 增量同步）。"
+            desc="该论文还没有经过 Librarian 精读编译（相关度不足、或尚未运行初始建库 / 增量同步）。"
           />
         )}
       </div>
@@ -453,7 +453,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
               compact
               icon="book"
               title={q ? '没有匹配的论文' : '论文库为空'}
-              desc={q ? '换个关键词试试。' : '先到「冷启动 / 同步」页运行 bootstrap 回填文献。'}
+              desc={q ? '换个关键词试试。' : '先到「建库与同步」页运行 bootstrap 回填文献。'}
             />
           ) : (
             <>

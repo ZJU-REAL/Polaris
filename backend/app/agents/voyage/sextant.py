@@ -93,6 +93,6 @@ class Sextant:
             except (ValueError, json.JSONDecodeError) as e:
                 last_error = e
         return (
-            {"passed": False, "reason": f"Sextant 输出无法解析为合法判定 JSON：{last_error}"},
+            {"passed": False, "reason": f"自动校验输出无法解析为合法判定 JSON：{last_error}"},
             usage_total,
         )

@@ -105,7 +105,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           新建实验
         </>
       }
-      sub="从已晋级 idea 发起：计划 → 预算闸门 → SSH 建环境 → 冒烟 → 正式运行 → 报告"
+      sub="从已晋级 idea 发起：计划 → 算力预算审批 → SSH 建环境 → 冒烟 → 正式运行 → 报告"
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>取消</button>
@@ -187,7 +187,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         <input className="input mono" value={gpuHint} onChange={(e) => setGpuHint(e.target.value)} placeholder="如 1×A100" />
       </FormField>
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
-        消耗真实算力前会创建 compute_budget 闸门等待人工确认；超时/超预算自动 kill 并置 failed。
+        消耗真实算力前会提交算力预算审批等待人工确认；超时/超预算自动 kill 并置 failed。
       </div>
     </Modal>
   );

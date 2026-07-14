@@ -61,7 +61,7 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           }}
         >
           <Icon name="gate" size={15} />
-          实验在 compute_budget 闸门处暂停：消耗真实算力前需人工确认方案与预算。
+          实验已暂停，等待算力预算审批：消耗真实算力前需人工确认方案与预算。
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
             前往审批
           </button>
@@ -74,7 +74,7 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
             compact
             icon="sparkle"
             title={exp.status === 'planning' ? '计划生成中…' : '计划尚未生成'}
-            desc="Navigator 读入 idea 内容与相关 wiki 页后产出假设清单、复现策略与预算估计。"
+            desc="系统读入 idea 内容与相关 wiki 页后自动产出假设清单、复现策略与预算估计。"
           />
         </div>
       ) : (
@@ -251,7 +251,7 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
   if (!vid) {
     return (
       <div className="card">
-        <EmptyState compact icon="server" title="尚未关联航程" desc="实验创建后会入队一个 kind=experiment 的 voyage。" />
+        <EmptyState compact icon="server" title="尚未关联任务" desc="实验创建后会入队一个 kind=experiment 的 voyage。" />
       </div>
     );
   }
@@ -259,7 +259,7 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
   if (isError || !voyage) {
     return (
       <div className="card">
-        <EmptyState compact icon="x" title="无法加载关联航程" desc="后端不可用或接口尚未就绪。" />
+        <EmptyState compact icon="x" title="无法加载关联任务" desc="后端不可用或接口尚未就绪。" />
       </div>
     );
   }
@@ -274,7 +274,7 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
       <div className="row gap8" style={{ marginBottom: 12, justifyContent: 'space-between' }}>
         <span className="section-h">
           <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          环境搭建步骤 <span className="en-label" style={{ fontSize: 11 }}>setup · smoke（来自关联航程）</span>
+          环境搭建步骤 <span className="en-label" style={{ fontSize: 11 }}>setup · smoke（来自关联任务）</span>
         </span>
         <button
           className="btn btn-ghost sm mono"
@@ -285,7 +285,7 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
         </button>
       </div>
       {steps.length === 0 ? (
-        <div className="card empty" style={{ padding: 32, marginBottom: 24 }}>航程尚未产生步骤</div>
+        <div className="card empty" style={{ padding: 32, marginBottom: 24 }}>任务尚未产生步骤</div>
       ) : (
         <div style={{ marginBottom: 24 }}>
           <Timeline>
@@ -308,7 +308,7 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
                     )}
                     {s.verdict && !s.verdict.passed && s.verdict.reason && (
                       <div style={{ marginTop: 7, fontSize: 12, color: 'var(--danger-tx)', lineHeight: 1.5 }}>
-                        Sextant：{s.verdict.reason}
+                        自动校验：{s.verdict.reason}
                       </div>
                     )}
                   </div>
@@ -474,7 +474,7 @@ export function ExperimentDetailPage() {
               className="btn btn-ghost"
               disabled={cancelMutation.isPending}
               onClick={() => {
-                if (window.confirm('确定取消该实验？将取消关联航程并尝试终止远端进程。')) {
+                if (window.confirm('确定取消该实验？将取消关联任务并尝试终止远端进程。')) {
                   cancelMutation.mutate();
                 }
               }}

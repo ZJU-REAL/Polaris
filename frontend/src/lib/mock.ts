@@ -44,7 +44,7 @@ export const stats: Stat[] = [
   { icon: 'book', label: '知识库论文', en: 'Papers in vault', value: '138', sub: '+3 今日' },
   { icon: 'bulb', label: 'Idea 候选池', en: 'Idea candidates', value: '6', sub: '4 candidate' },
   { icon: 'flask', label: '实验 GPU·h', en: 'Compute used', value: '31.4', sub: '/ 48' },
-  { icon: 'gate', label: '待审批闸门', en: 'Pending gates', value: '3', sub: '人在环', accent: true },
+  { icon: 'gate', label: '待处理审批', en: 'Pending approvals', value: '3', sub: '人工审批', accent: true },
 ];
 
 // ---- Activity feed ----

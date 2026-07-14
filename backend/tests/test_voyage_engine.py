@@ -91,7 +91,7 @@ async def test_demo_voyage_full_loop(client, queue_stub, bus_recorder):
     # checkpoint：artifact.write 的产物落入 checkpoint；usage 累加
     async with get_sessionmaker()() as session:
         run = await session.get(VoyageRun, uuid.UUID(run_id))
-        assert run.checkpoint["artifacts"]["demo-report.md"].startswith("# Demo 航程产物")
+        assert run.checkpoint["artifacts"]["demo-report.md"].startswith("# Demo 任务产物")
         assert run.usage["total_tokens"] > 0
         usage_rows = (
             (await session.execute(select(LLMUsage).where(LLMUsage.voyage_id == run.id)))

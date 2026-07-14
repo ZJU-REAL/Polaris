@@ -27,7 +27,7 @@ import {
 const MACHINE = [
   { key: 'planning', zh: '规划', en: 'planning' },
   { key: 'executing', zh: '执行', en: 'executing' },
-  { key: 'verifying', zh: '自检', en: 'verifying' },
+  { key: 'verifying', zh: '校验', en: 'verifying' },
   { key: 'done', zh: '完成', en: 'done' },
 ] as const;
 
@@ -108,7 +108,7 @@ function MachineBar({ status, onOpenGates, onResume, resuming }: { status: Voyag
           }}
         >
           <Icon name="gate" size={15} />
-          航程在闸门处暂停，等待人工审批后继续。
+          任务已暂停，等待人工审批后继续。
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
             前往审批
           </button>
@@ -117,7 +117,7 @@ function MachineBar({ status, onOpenGates, onResume, resuming }: { status: Voyag
       {status === 'paused_error' && (
         <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 12.5 }}>
           <Icon name="x" size={14} />
-          航程因错误暂停（如外部 API 暂时不可达），可重试从断点续跑。
+          任务因错误暂停（如外部 API 暂时不可达），可重试从断点续跑。
           {onResume && (
             <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} disabled={resuming} onClick={onResume}>
               {resuming ? '重试中…' : '重试恢复'}
@@ -189,7 +189,7 @@ function StepCard({ step }: { step: VoyageStepRead }) {
             title={step.verdict.reason}
           >
             <Icon name={step.verdict.passed ? 'check' : 'x'} size={11} />
-            Sextant {step.verdict.passed ? 'passed' : 'failed'}
+            自动校验{step.verdict.passed ? '通过' : '未通过'}
           </span>
         )}
         {step.tokens !== null && (
@@ -244,7 +244,7 @@ export function VoyageDetailPage() {
   const cancelMutation = useMutation({
     mutationFn: () => api.cancelVoyage(id),
     onSuccess: () => {
-      toast('航程已取消', 'ok');
+      toast('任务已取消', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
     },
@@ -311,7 +311,7 @@ export function VoyageDetailPage() {
       <div className="page fadeup">
         <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
           <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
-            {notFound ? '航程不存在' : '无法加载航程详情'}
+            {notFound ? '任务不存在' : '无法加载任务详情'}
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
             {error instanceof Error ? error.message : '后端不可用，请稍后重试'}
@@ -364,7 +364,7 @@ export function VoyageDetailPage() {
         {active && (
           <button className="btn btn-ghost" disabled={cancelMutation.isPending} onClick={() => cancelMutation.mutate()}>
             <Icon name="x" size={13} />
-            取消航程
+            取消任务
           </button>
         )}
       </div>
@@ -383,7 +383,7 @@ export function VoyageDetailPage() {
       </div>
       {steps.length === 0 ? (
         <div className="card card-pad empty" style={{ padding: 40 }}>
-          Navigator 正在规划步骤…
+          正在规划步骤…
         </div>
       ) : (
         <Timeline>

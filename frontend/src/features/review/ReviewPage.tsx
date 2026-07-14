@@ -54,7 +54,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
         personas: personas.filter((p) => p.name.trim() !== ''),
       }),
     onSuccess: (v) => {
-      toast('评审锦标赛已开始，跳转航程详情…', 'ok');
+      toast('评审锦标赛已开始，跳转任务详情…', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       onClose();
       navigate(`/voyages/${v.id}`);
@@ -191,7 +191,7 @@ function LeaderboardTab({
   const promoteMutation = useMutation({
     mutationFn: (ideaId: string) => api.promoteIdea(ideaId),
     onSuccess: () => {
-      toast('已创建晋级闸门，等待审批 · promotion gate created', 'ok');
+      toast('已提交晋级审批，等待人工审批 · promotion approval created', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
       void queryClient.invalidateQueries({ queryKey: ['leaderboard', pid] });
       void queryClient.invalidateQueries({ queryKey: ['ideas'] });
@@ -562,7 +562,7 @@ export function ReviewPage() {
         <PageHead
           eyebrow="Stage 02 · Idea Review"
           title="Idea 评审 Idea Review"
-          sub="多 agent 科学辩论 + Elo 锦标赛排序，人机同场讨论，人在环晋级。"
+          sub="多 agent 科学辩论 + Elo 锦标赛排序，人机同场讨论，晋级需人工审批。"
         />
         <div className="card">
           <EmptyState
@@ -622,7 +622,7 @@ export function ReviewPage() {
               <span className="dot pulse" />
               运行中
             </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650 }}>forge/review 任务进行中 — 点击查看航程实时进度</span>
+            <span style={{ fontSize: 13.5, fontWeight: 650 }}>forge/review 任务进行中 — 点击查看任务实时进度</span>
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
               voyage {runningVoyage.slice(0, 8)}…
             </span>

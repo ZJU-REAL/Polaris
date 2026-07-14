@@ -51,12 +51,12 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """文献 ingest 固定七步计划（docs/api-m2.md §7）；knobs 从 checkpoint.params 读。"""
     steps = [
         ("检索候选（arXiv）", "wiki.search_candidates", "候选论文已入库"),
-        ("引文雪球（Semantic Scholar）", "wiki.snowball", "雪球扩展完成"),
+        ("参考文献扩展（Semantic Scholar）", "wiki.snowball", "参考文献扩展完成"),
         ("相关性打分（LLM）", "wiki.score_relevance", "候选论文已全部打分或排除"),
         ("下载 PDF + 抽全文", "wiki.fetch_extract", "top-N 论文全文就绪（失败降级摘要）"),
         ("Librarian 编译 wiki 页", "wiki.compile", "top-N 论文已生成中文 wiki markdown"),
         ("概念上链 + embedding", "wiki.link_concepts", "双链概念已 upsert 并关联论文"),
-        ("更新水位线", "wiki.update_watermark", "项目 ingest_state 已更新"),
+        ("记录同步进度", "wiki.update_watermark", "项目 ingest_state 已更新"),
     ]
     return [
         {
@@ -164,7 +164,7 @@ def demo_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": "artifact.write",
             "params": {
                 "name": "demo-report.md",
-                "content": "# Demo 航程产物\n\n目标：{goal}\n\n（由 Voyage demo 航程生成）\n",
+                "content": "# Demo 任务产物\n\n目标：{goal}\n\n（由演示任务生成）\n",
             },
             "acceptance": "产物已写入 checkpoint",
             "requires_gate": "compute_budget",
@@ -174,7 +174,7 @@ def demo_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": "llm.complete",
             "params": {
                 "stage": "navigator",
-                "prompt": "请对围绕以下目标的本次航程做一个简短总结：{goal}",
+                "prompt": "请对围绕以下目标的本次任务做一个简短总结：{goal}",
             },
             "acceptance": "输出包含总结内容",
             "requires_gate": None,

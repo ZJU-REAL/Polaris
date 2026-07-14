@@ -97,7 +97,7 @@ export function ExperimentPage() {
         <PageHead
           eyebrow="Stage 03 · Experiment Lab"
           title="实验搭建 Experiment Lab"
-          sub="计划 → 预算闸门 → SSH 建环境 → 冒烟 → 正式运行 → 报告。"
+          sub="计划 → 算力预算审批 → SSH 建环境 → 冒烟 → 正式运行 → 报告。"
         />
         <div className="card">
           <EmptyState
@@ -162,7 +162,7 @@ export function ExperimentPage() {
           <EmptyState
             icon="flask"
             title="还没有实验"
-            desc="先在评审页晋级一个 idea（晋级闸门审批通过后 status=promoted），再回到这里发起实验。"
+            desc="先在评审页晋级一个 idea（晋级审批通过后 status=promoted），再回到这里发起实验。"
             action={
               <div className="row gap8">
                 <button className="btn btn-ghost" onClick={() => navigate('/review')}>

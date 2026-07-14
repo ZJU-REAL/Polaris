@@ -15,7 +15,7 @@ export function PaperReviewPage() {
         { zh: '模拟同行评审', desc: '多 reviewer（soundness/presentation/contribution/rating/confidence）+ meta-review 汇总推荐结论。' },
         { zh: '结构化评审意见', desc: 'strengths / weaknesses / questions 结构化输出，回灌写作阶段修订。' },
         { zh: 'Generator ≠ Reviewer', desc: '评审模型与写作模型硬分离（不同模型路由），规避自评偏差。' },
-        { zh: '投稿前把关', desc: '评审通过 + 问题清零后才解锁 paper_submission 闸门。' },
+        { zh: '投稿前把关', desc: '评审通过 + 问题清零后才解锁 paper_submission 投稿审批。' },
       ]}
     />
   );
