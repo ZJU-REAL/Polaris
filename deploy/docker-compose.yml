@@ -41,6 +41,7 @@ services:
       - "8000:8000"
     volumes:
       - appdata:/srv/data          # PDF / 编译产物等
+      - tectonic-cache:/root/.cache/Tectonic   # tectonic 宏包缓存（首次编译联网下载）
 
   worker:
     build:
@@ -57,6 +58,7 @@ services:
         condition: service_healthy
     volumes:
       - appdata:/srv/data
+      - tectonic-cache:/root/.cache/Tectonic   # tectonic 宏包缓存（与 api 共享）
 
   frontend:
     build:
@@ -72,3 +74,4 @@ volumes:
   pgdata:
   redisdata:
   appdata:
+  tectonic-cache:

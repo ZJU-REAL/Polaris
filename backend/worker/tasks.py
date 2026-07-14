@@ -5,8 +5,8 @@
 - M3：Idea Forge / 评审锦标赛 voyage（kind=idea_forge / idea_review，仍走 run_voyage）
 - M4：Experiment Lab voyage（kind=experiment，仍走 run_voyage；SSH 执行与轮询
   在 actions_experiment 内部，命令白名单见 app/services/ssh_exec.py）
-未来任务归属（M5+）：
-- writing_*: 稿件生成与编译
+- M5-B：论文撰写 voyage（kind=paper_writing，仍走 run_voyage；分节撰写/静态校验/
+  tectonic 编译在 actions_writing + services/latex_compile 内部）
 """
 
 import uuid

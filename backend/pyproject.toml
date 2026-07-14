@@ -26,6 +26,8 @@ dependencies = [
     "pymupdf>=1.26",
     "pillow>=10",
     "bibtexparser>=1.4,<2",
+    "pycrdt>=0.10",
+    "pycrdt-websocket>=0.15",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +43,10 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["app*", "worker*"]
+
+[tool.setuptools.package-data]
+# 论文模板 pack（meta.json / main.tex / .sty）随包分发（docker 非 editable 安装用）
+app = ["assets/templates/*/*"]
 
 [tool.ruff]
 target-version = "py312"

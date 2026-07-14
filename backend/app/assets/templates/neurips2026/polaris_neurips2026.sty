@@ -1,0 +1,25 @@
+% polaris_neurips2026.sty — 开发用简化样式（unofficial）
+% 说明：官方 neurips_2026.sty 体积大且下载不可靠，此文件仅以 basic article 类
+% 近似 NeurIPS 版式（letter 纸型、1in 边距、无衬线标题），供 Polaris 平台开发
+% 与预览编译使用。正式投稿前请替换为 NeurIPS 官方样式文件。
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{polaris_neurips2026}[2026/07/14 Polaris simplified NeurIPS-like style (unofficial)]
+
+\RequirePackage[letterpaper,margin=1in]{geometry}
+\RequirePackage{microtype}
+
+% 版式近似：紧凑段距、粗体节标题
+\setlength{\parskip}{2pt}
+\setlength{\parindent}{1em}
+\renewcommand{\abstractname}{Abstract}
+
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}%
+  {-1.8ex \@plus -0.5ex \@minus -0.2ex}{1.0ex \@plus 0.2ex}%
+  {\normalfont\large\bfseries}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}%
+  {-1.5ex \@plus -0.4ex \@minus -0.2ex}{0.8ex \@plus 0.2ex}%
+  {\normalfont\normalsize\bfseries}}
+\makeatother
+
+\endinput

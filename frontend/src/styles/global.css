@@ -426,6 +426,22 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 .md th { background: var(--surface-2); font-weight: 650; white-space: nowrap; }
 
 /* ============================================================
+   Paper Writer（M5-B）— 文件树 / 诊断行小件
+   ============================================================ */
+.writer-file:hover { background: rgba(10, 30, 66, 0.05); }
+.writer-file .writer-file-ops { display: none; }
+.writer-file:hover .writer-file-ops { display: flex; }
+.writer-mini-btn {
+  width: 20px; height: 20px; border-radius: 5px; border: none; padding: 0;
+  background: transparent; color: var(--text-3); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.writer-mini-btn:hover { background: var(--surface-3); color: var(--text); }
+.writer-mini-btn:disabled { opacity: 0.5; cursor: default; }
+.writer-diag:hover { background: var(--surface-2); }
+
+/* ============================================================
    Toast
    ============================================================ */
 .toast-host {

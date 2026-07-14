@@ -842,6 +842,150 @@ export interface CreateExperimentInput {
 }
 
 // ============================================================
+// M5-B · Manuscripts（论文撰写）— docs/api-m5-b.md
+// ============================================================
+
+/** 会议模板信息（GET /manuscripts/templates）。key 如 neurips2026 / iclr2026 / acl。 */
+export interface TemplateInfo {
+  key: string;
+  name: string;
+  page_limit: number | null;
+  /** 模板建议的分节顺序（AI 起草可选节来源） */
+  sections: string[];
+}
+
+export type ManuscriptStatus =
+  | 'draft'
+  | 'writing'
+  | 'compiled'
+  | 'under_review'
+  | 'approved'
+  | 'submitted';
+
+export interface ManuscriptRead {
+  id: string;
+  project_id: string;
+  idea_id: string | null;
+  experiment_id: string | null;
+  title: string;
+  template: string;
+  status: ManuscriptStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 稿件文件元数据（详情内 files[]）。模板样式文件 readonly=true 不可改删。 */
+export interface ManuscriptFileMeta {
+  id: string;
+  path: string;
+  size: number;
+  updated_at: string;
+  readonly?: boolean;
+}
+
+/** 单文件内容（编辑器初始加载 / readonly 文件查看用；实时同步走 WS CRDT）。 */
+export interface ManuscriptFileRead {
+  id: string;
+  path: string;
+  content: string;
+}
+
+export type DiagnosticSeverity = 'error' | 'warning';
+
+export type DiagnosticRule =
+  | 'undefined_citation'
+  | 'undefined_reference'
+  | 'latex_error'
+  | 'overfull'
+  | 'other';
+
+export interface DiagnosticItem {
+  severity: DiagnosticSeverity;
+  file: string;
+  line: number | null;
+  rule: DiagnosticRule;
+  message: string;
+}
+
+export type CompileStatus = 'ok' | 'error' | 'timeout';
+
+export interface CompileResult {
+  version: number;
+  status: CompileStatus;
+  pdf_available: boolean;
+  diagnostics: DiagnosticItem[];
+  compiled_at: string;
+  duration_ms: number;
+}
+
+// —— fact-pack（防幻觉事实源，AI 起草只允许引用其中的引文/图表/数字） ——
+
+export interface FactPackIdea {
+  title?: string | null;
+  summary?: string | null;
+}
+
+export interface FactPackHypothesis {
+  text: string;
+  status: string;
+  evidence?: string | null;
+}
+
+export interface FactPackMetricRun {
+  seq: number;
+  value: number;
+}
+
+export interface FactPackMetric {
+  name: string;
+  runs?: FactPackMetricRun[];
+  best?: number | null;
+}
+
+export interface FactPackFigure {
+  fig_id: string;
+  caption?: string | null;
+  source?: string | null;
+}
+
+export interface FactPackCitation {
+  bibkey: string;
+  title: string;
+  year?: number | null;
+}
+
+/** 各分区均可选容错（新建稿件后端异步组装时可能暂缺）。 */
+export interface FactPack {
+  idea?: FactPackIdea | null;
+  hypotheses?: FactPackHypothesis[];
+  metrics?: FactPackMetric[];
+  figures?: FactPackFigure[];
+  citations?: FactPackCitation[];
+  generated_at?: string | null;
+}
+
+export interface ManuscriptDetail extends ManuscriptRead {
+  files: ManuscriptFileMeta[];
+  fact_pack: FactPack | null;
+  latest_compile: CompileResult | null;
+  /** 进行中的 AI 起草任务（kind=paper_writing 的 voyage）；无则 null */
+  writing_voyage_id: string | null;
+}
+
+export interface CreateManuscriptInput {
+  title: string;
+  template: string;
+  idea_id?: string;
+  experiment_id?: string;
+}
+
+/** AI 起草入参：sections 为 null/缺省 = 全部节。 */
+export interface DraftManuscriptInput {
+  sections?: string[] | null;
+  notes?: string;
+}
+
+// ============================================================
 // api object
 // ============================================================
 
@@ -1184,6 +1328,67 @@ export const api = {
   /** 单张实验图表 PNG（blob → objectURL 显示，模式同论文 figures）。 */
   fetchExperimentFigureImage(id: string, index: number): Promise<Blob> {
     return requestBlob(`/experiments/${id}/figures/${index}/image`);
+  },
+
+  // —— M5-B · Manuscripts（论文撰写） ——
+  listManuscriptTemplates(): Promise<TemplateInfo[]> {
+    return request<TemplateInfo[]>('/manuscripts/templates');
+  },
+  createManuscript(projectId: string, input: CreateManuscriptInput): Promise<ManuscriptRead> {
+    return requestJson<ManuscriptRead>(`/projects/${projectId}/manuscripts`, 'POST', input);
+  },
+  listManuscripts(projectId: string): Promise<ManuscriptRead[]> {
+    return request<ManuscriptRead[]>(`/projects/${projectId}/manuscripts`);
+  },
+  getManuscript(id: string): Promise<ManuscriptDetail> {
+    return request<ManuscriptDetail>(`/manuscripts/${id}`);
+  },
+  patchManuscript(id: string, input: { title?: string }): Promise<ManuscriptRead> {
+    return requestJson<ManuscriptRead>(`/manuscripts/${id}`, 'PATCH', input);
+  },
+  /** 仅 owner/admin。 */
+  deleteManuscript(id: string): Promise<void> {
+    return request<void>(`/manuscripts/${id}`, { method: 'DELETE' });
+  },
+
+  // —— M5-B · 稿件文件 ——
+  getManuscriptFile(id: string, fid: string): Promise<ManuscriptFileRead> {
+    return request<ManuscriptFileRead>(`/manuscripts/${id}/files/${fid}`);
+  },
+  createManuscriptFile(id: string, input: { path: string; content?: string }): Promise<ManuscriptFileMeta> {
+    return requestJson<ManuscriptFileMeta>(`/manuscripts/${id}/files`, 'POST', input);
+  },
+  /** 重命名（readonly 文件后端会拒绝）。 */
+  renameManuscriptFile(id: string, fid: string, path: string): Promise<ManuscriptFileMeta> {
+    return requestJson<ManuscriptFileMeta>(`/manuscripts/${id}/files/${fid}`, 'PATCH', { path });
+  },
+  deleteManuscriptFile(id: string, fid: string): Promise<void> {
+    return request<void>(`/manuscripts/${id}/files/${fid}`, { method: 'DELETE' });
+  },
+
+  // —— M5-B · fact-pack / 编译 / AI 起草 / 投稿 ——
+  /** 重新从 experiment + 文献库组装事实包；前端以 invalidate 详情为准。 */
+  refreshFactPack(id: string): Promise<FactPack> {
+    return request<FactPack>(`/manuscripts/${id}/fact-pack/refresh`, { method: 'POST' });
+  },
+  /** 同步编译（tectonic，硬超时 120s），直接返回诊断结果。 */
+  compileManuscript(id: string): Promise<CompileResult> {
+    return request<CompileResult>(`/manuscripts/${id}/compile`, { method: 'POST' });
+  },
+  getLatestCompile(id: string): Promise<CompileResult> {
+    return request<CompileResult>(`/manuscripts/${id}/compile/latest`);
+  },
+  /** 最新成功版 PDF（blob → objectURL 喂 iframe）。从未编译成功 → 404。 */
+  fetchManuscriptPdf(id: string): Promise<Blob> {
+    return requestBlob(`/manuscripts/${id}/pdf`);
+  },
+  /** AI 起草：创建 kind=paper_writing 的任务；同稿件已有进行中任务 → 409。 */
+  draftManuscript(id: string, input: DraftManuscriptInput): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/manuscripts/${id}/draft`, 'POST', input);
+  },
+  /** 投稿：创建 paper_submission 审批；最新编译非 ok → 409 COMPILE_REQUIRED。 */
+  submitManuscript(id: string): Promise<GateRead> {
+    return request<GateRead>(`/manuscripts/${id}/submit`, { method: 'POST' });
   },
 
   // —— Admin · LLM ——

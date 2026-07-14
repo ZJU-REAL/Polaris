@@ -1,4 +1,4 @@
-"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（实验迭代 M5-A）往返。"""
+"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（论文撰写 M5-B）往返。"""
 
 from pathlib import Path
 
@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d0e1f2a3b4c5"  # experiment_iterate_m5a
-PREV_REVISION = "c9d0e1f2a3b4"  # paper_figures
+HEAD_REVISION = "e1f2a3b4c5d6"  # manuscripts_m5b
+PREV_REVISION = "d0e1f2a3b4c5"  # experiment_iterate_m5a
 
 
 def _make_config(db_path: Path) -> Config:
@@ -40,6 +40,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_tags",
                     "paper_tag_links",
                     "paper_user_meta",
+                    "manuscripts",
+                    "manuscript_files",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -79,13 +81,21 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # M5-A 实验迭代：runs.reflection/primary_value + experiments.figures/iteration_state
     assert {"reflection", "primary_value"} <= columns["experiment_runs"]
     assert {"figures", "iteration_state"} <= columns["experiments"]
+    # M5-B 论文撰写：manuscripts 四新列 + manuscript_files 两新列
+    assert {"experiment_id", "template", "fact_pack", "latest_compile"} <= columns["manuscripts"]
+    assert {"readonly", "updated_by"} <= columns["manuscript_files"]
 
-    # 最新 revision 可往返（downgrade 移除 M5-A 四列）
+    # 最新 revision 可往返（downgrade 移除 M5-B 六列）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert {"reflection", "primary_value"} & columns["experiment_runs"] == set()
-    assert {"figures", "iteration_state"} & columns["experiments"] == set()
+    assert {"experiment_id", "template", "fact_pack", "latest_compile"} & columns[
+        "manuscripts"
+    ] == set()
+    assert {"readonly", "updated_by"} & columns["manuscript_files"] == set()
+    # M5-A 列不受影响
+    assert {"reflection", "primary_value"} <= columns["experiment_runs"]
+    assert {"figures", "iteration_state"} <= columns["experiments"]
     assert "figures" in columns["papers"]  # 论文图片列不受影响
     # M5 表不受影响
     assert {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} <= columns["_tables"]
@@ -93,5 +103,5 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    assert {"reflection", "primary_value"} <= columns["experiment_runs"]
-    assert {"figures", "iteration_state"} <= columns["experiments"]
+    assert {"experiment_id", "template", "fact_pack", "latest_compile"} <= columns["manuscripts"]
+    assert {"readonly", "updated_by"} <= columns["manuscript_files"]
