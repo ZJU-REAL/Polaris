@@ -32,6 +32,7 @@ from app.services.concepts import extract_wikilinks, normalize_category, wiki_sl
 from app.services.literature import get_arxiv_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_full_text, save_pdf
+from app.services.projects import DEFAULT_ARXIV_CATEGORIES
 
 DEFAULT_KNOBS: dict[str, Any] = {
     "months_back": 6,
@@ -156,7 +157,10 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         project = await _get_project(session, ctx)
         definition = _definition(project)
         keywords_def = definition.get("keywords") or {}
-        categories = list(keywords_def.get("arxiv_categories") or [])
+        # 稀疏 definition 容忍：无 arxiv_categories 时回退默认 cs.* 分类
+        categories = list(keywords_def.get("arxiv_categories") or []) or list(
+            DEFAULT_ARXIV_CATEGORIES
+        )
         include = list(keywords_def.get("include") or [])
 
         watermark = _parse_iso((project.ingest_state or {}).get("watermark"))
@@ -344,9 +348,16 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
         definition = _definition(project)
-        rubric_text = json.dumps(definition.get("rubric") or [], ensure_ascii=False)
-        questions_text = json.dumps(definition.get("questions") or [], ensure_ascii=False)
+        # 稀疏 definition 容忍：rubric / questions 缺失时 prompt 只用 statement
+        rubric = definition.get("rubric") or []
+        questions = definition.get("questions") or []
         statement = definition.get("statement") or project.name
+        context_lines = [f"研究方向：{statement}"]
+        if rubric:
+            context_lines.append(f"评分标准（rubric）：{json.dumps(rubric, ensure_ascii=False)}")
+        if questions:
+            context_lines.append(f"研究问题：{json.dumps(questions, ensure_ascii=False)}")
+        context_text = "\n".join(context_lines)
 
         # 幂等断点：只取仍是 candidate 的论文（已打分的不重复调 LLM）
         papers = (
@@ -364,11 +375,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
         for paper in papers:
             user_prompt = (
-                f"研究方向：{statement}\n"
-                f"评分标准（rubric）：{rubric_text}\n"
-                f"研究问题：{questions_text}\n"
-                f"标题：{paper.title}\n"
-                f"摘要：{paper.abstract or '（无摘要）'}"
+                f"{context_text}\n标题：{paper.title}\n摘要：{paper.abstract or '（无摘要）'}"
             )
             try:
                 result = await ctx.llm.complete(

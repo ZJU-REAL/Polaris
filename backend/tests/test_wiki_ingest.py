@@ -364,6 +364,49 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
         assert sorted(statuses) == ["compiled", "compiled", "compiled", "excluded"]
 
 
+async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks):
+    """稀疏 definition（只有 statement）也能跑通 bootstrap 全链路（默认 cs.* 分类兜底）。"""
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = await client.post(
+        "/api/projects",
+        json={"name": "sparse-proj", "definition": {"statement": "自动化科研 agent 的方法研究"}},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    project_id = resp.json()["id"]
+
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    run_id = resp.json()["id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(run_id))
+
+    resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
+    detail = resp.json()
+    assert detail["status"] == "done", detail
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
+    assert detail["steps"][0]["observation"]["inserted"] == 3  # 默认分类兜底后仍能检索
+
+    async with get_sessionmaker()() as session:
+        statuses = (
+            (
+                await session.execute(
+                    select(Paper.status).where(Paper.project_id == uuid.UUID(project_id))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # 无锚点论文 → 雪球 0 篇；3 候选：2 编译 + 1 排除（无 rubric 时打分只用 statement）
+        assert sorted(statuses) == ["compiled", "compiled", "excluded"]
+
+
 async def test_daily_cron_project_selection(client, queue_stub, wiki_mocks):
     """cadence=daily 且已 bootstrap（有水位线）的项目才进入每日增量。"""
     project_id, headers = await _setup_project(client)

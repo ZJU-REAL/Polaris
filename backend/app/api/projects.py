@@ -10,6 +10,8 @@ from app.core.db import get_session
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import (
+    DraftDefinitionRequest,
+    DraftDefinitionResponse,
     ProjectCreate,
     ProjectDetailRead,
     ProjectMemberAdd,
@@ -60,6 +62,21 @@ async def create_project(
 ) -> ProjectRead:
     project = await projects_service.create_project(session, owner_id=user.id, data=data)
     return ProjectRead.model_validate(project)
+
+
+@router.post("/draft-definition", response_model=DraftDefinitionResponse)
+async def draft_definition(
+    data: DraftDefinitionRequest,
+    user: User = Depends(current_active_user),
+) -> DraftDefinitionResponse:
+    """LLM（stage=interview）起草完整 definition；失败时返回规则回退草稿（source=fallback）。"""
+    definition, source = await projects_service.draft_definition(
+        statement=data.statement,
+        name=data.name,
+        keywords_include=data.keywords_include,
+        user_id=user.id,
+    )
+    return DraftDefinitionResponse(definition=definition, source=source)
 
 
 @router.get("/{project_id}", response_model=ProjectDetailRead)

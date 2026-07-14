@@ -13,12 +13,13 @@ from collections.abc import AsyncIterator, Sequence
 
 from app.core.llm.base import CompletionResult, LLMProvider, Message
 
-# 与 navigator.py / sextant.py / actions_wiki.py 的 prompt 对齐的识别标记
+# 与 navigator.py / sextant.py / actions_wiki.py / services/projects.py 的 prompt 对齐的识别标记
 _PLAN_MARKER = '"steps"'
 _VERDICT_MARKER = '"passed"'
 _RELEVANCE_MARKER = '"score"'
 _CONCEPTS_MARKER = "概念列表："
 _LIBRARIAN_MARKER = "TL;DR"
+_INTERVIEW_MARKER = '"out_of_scope"'
 
 EMBEDDING_DIM = 1536
 
@@ -104,6 +105,8 @@ class FakeProvider(LLMProvider):
             )
         if _PLAN_MARKER in full_text:
             return json.dumps(_FAKE_PLAN, ensure_ascii=False)
+        if _INTERVIEW_MARKER in full_text:
+            return FakeProvider._respond_interview(last_user)
         if _CONCEPTS_MARKER in full_text:
             return FakeProvider._respond_concepts(last_user)
         if _RELEVANCE_MARKER in full_text:
@@ -111,6 +114,50 @@ class FakeProvider(LLMProvider):
         if _LIBRARIAN_MARKER in full_text:
             return FakeProvider._respond_librarian(last_user)
         return f"[fake:{model}] {last_user[:400]}"
+
+    @staticmethod
+    def _respond_interview(last_user: str) -> str:
+        """研究方向定义起草：从 prompt 提取 statement / 用户关键词，返回确定性合法草稿。"""
+        m = re.search(r"方向定义：(.+)", last_user)
+        statement = m.group(1).strip() if m else "研究方向（fake）"
+        include: list[str] = []
+        idx = last_user.find("用户关键词：")
+        start = last_user.find("[", idx)
+        end = last_user.find("]", start)
+        if idx != -1 and start != -1 and end > start:
+            try:
+                include = [
+                    str(k) for k in json.loads(last_user[start : end + 1]) if isinstance(k, str)
+                ]
+            except json.JSONDecodeError:
+                include = []
+        return json.dumps(
+            {
+                "statement": statement,
+                "goals": [
+                    f"梳理「{statement}」的研究现状（fake）",
+                    "识别关键开放问题并形成研究路线（fake）",
+                ],
+                "in_scope": [f"与「{statement}」直接相关的方法与评测（fake）"],
+                "out_of_scope": ["与该方向无关的一般性综述（fake）"],
+                "questions": [
+                    "主流方法有哪些？（fake）",
+                    "现有方法的局限是什么？（fake）",
+                    "如何设计评测验证改进？（fake）",
+                ],
+                "rubric": [
+                    {"name": "relevance", "description": "与方向的相关程度（fake）", "weight": 1.0}
+                ],
+                "keywords": {
+                    "arxiv_categories": ["cs.CL", "cs.LG"],
+                    "include": include + ["llm agent (fake)"],
+                    "synonyms": {"agent": ["智能体"]},
+                },
+                "anchor_papers": [],
+                "cadence": "daily",
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _respond_relevance(last_user: str) -> str:

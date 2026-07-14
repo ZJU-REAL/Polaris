@@ -129,6 +129,19 @@ export interface ProjectDefinition {
   cadence?: string;
 }
 
+/** AI 补全高级设置 — POST /projects/draft-definition 入参。 */
+export interface DraftDefinitionInput {
+  statement: string;
+  name: string;
+  keywords_include: string[];
+}
+
+/** AI 补全结果；source=fallback 表示 LLM 未配置，后端用默认模板生成。 */
+export interface DraftDefinitionResult {
+  definition: ProjectDefinition;
+  source: 'llm' | 'fallback';
+}
+
 export interface ProjectMemberRead {
   user_id?: string;
   email?: string;
@@ -472,6 +485,10 @@ export const api = {
   },
   createProject(input: { name: string; definition: ProjectDefinition }): Promise<ProjectRead> {
     return requestJson<ProjectRead>('/projects', 'POST', input);
+  },
+  /** 由 LLM 根据一句话定义草拟完整 definition（目标/问题/rubric/同义词等）。 */
+  draftDefinition(input: DraftDefinitionInput): Promise<DraftDefinitionResult> {
+    return requestJson<DraftDefinitionResult>('/projects/draft-definition', 'POST', input);
   },
   getProject(id: string): Promise<ProjectRead> {
     return request<ProjectRead>(`/projects/${id}`);
