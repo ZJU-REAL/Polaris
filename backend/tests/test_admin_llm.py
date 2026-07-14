@@ -102,7 +102,8 @@ async def test_routes_put_get_and_validation(client):
     assert resp.status_code == 200, resp.text
     got = {r["stage"]: r for r in resp.json()}
     assert got["default"]["model"] == "fake-cheap"
-    assert got["default"]["temperature"] == 0.7
+    # 未显式给 temperature 时为 None（= 不向模型发送该参数，新款 Claude 已弃用它）
+    assert got["default"]["temperature"] is None
     assert got["navigator"]["temperature"] == 0.2
 
     resp = await client.get("/api/admin/llm/routes", headers=admin)

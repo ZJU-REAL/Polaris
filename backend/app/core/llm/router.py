@@ -45,7 +45,7 @@ class ResolvedRoute:
     base_url: str | None
     api_key: str
     model: str
-    temperature: float
+    temperature: float | None
 
 
 # 无 DB 路由时的兜底：确定性 fake provider

@@ -39,7 +39,7 @@ class RouteItem(BaseModel):
     stage: str
     provider_id: uuid.UUID
     model: str = Field(min_length=1, max_length=255)
-    temperature: float = 0.7
+    temperature: float | None = None  # None = 用 provider 默认
 
 
 class UsageRow(BaseModel):

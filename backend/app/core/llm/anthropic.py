@@ -36,7 +36,7 @@ class AnthropicProvider(LLMProvider):
     def _payload(
         messages: Sequence[Message],
         model: str,
-        temperature: float,
+        temperature: float | None,
         max_tokens: int | None,
         stream: bool,
     ) -> dict[str, Any]:
@@ -45,8 +45,7 @@ class AnthropicProvider(LLMProvider):
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens or _DEFAULT_MAX_TOKENS,
-            "temperature": temperature,
-            "messages": [
+                        "messages": [
                 {"role": m.role, "content": m.content} for m in messages if m.role != "system"
             ],
             "stream": stream,
@@ -60,7 +59,7 @@ class AnthropicProvider(LLMProvider):
         messages: Sequence[Message],
         *,
         model: str,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> CompletionResult:
         # TODO(M2): 重试/限速/错误分类
@@ -84,7 +83,7 @@ class AnthropicProvider(LLMProvider):
         messages: Sequence[Message],
         *,
         model: str,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         # TODO(M2): 处理 message_delta 中的 usage / stop_reason

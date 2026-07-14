@@ -33,7 +33,7 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=False
     )
     model: Mapped[str] = mapped_column(String(255), nullable=False)
-    temperature: Mapped[float] = mapped_column(Float, default=0.7, nullable=False)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)  # None=不传该参数
 
     provider: Mapped[LLMProviderConfig] = relationship(back_populates="routes")
 

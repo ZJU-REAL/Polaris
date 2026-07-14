@@ -34,18 +34,19 @@ class OpenAICompatProvider(LLMProvider):
         self,
         messages: Sequence[Message],
         model: str,
-        temperature: float,
+        temperature: float | None,
         max_tokens: int | None,
         stream: bool,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "temperature": temperature,
             "stream": stream,
         }
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
+        if temperature is not None:  # 新款 Claude 等模型已弃用该参数，None 则不发送
+            payload["temperature"] = temperature
+        # Anthropic 系模型（经 LiteLLM 等代理）强制要求 max_tokens，缺省给足额度
+        payload["max_tokens"] = max_tokens if max_tokens is not None else 8192
         return payload
 
     async def complete(
@@ -53,7 +54,7 @@ class OpenAICompatProvider(LLMProvider):
         messages: Sequence[Message],
         *,
         model: str,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> CompletionResult:
         # TODO(M2): 重试/限速/错误分类
@@ -62,7 +63,9 @@ class OpenAICompatProvider(LLMProvider):
             headers=self._headers(),
             json=self._payload(messages, model, temperature, max_tokens, stream=False),
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            body = resp.text[:500]
+            raise RuntimeError(f"openai_compat {resp.status_code} from {self._base_url}: {body}")
         data = resp.json()
         choice = data["choices"][0]
         return CompletionResult(
@@ -77,7 +80,7 @@ class OpenAICompatProvider(LLMProvider):
         messages: Sequence[Message],
         *,
         model: str,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         # TODO(M2): usage 统计、错误恢复
