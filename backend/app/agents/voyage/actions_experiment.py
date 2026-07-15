@@ -163,6 +163,9 @@ def _platform_env_files(
         lines.append(f"export HF_ENDPOINT={HF_MIRROR_ENDPOINT}")
     if proxy_url:
         no_proxy = "localhost,127.0.0.1"
+        if _params(ctx).get("hf_mirror"):
+            # 国内镜像直连（走外网代理反而不通，2026-07-15 实测 transformers 连不上）
+            no_proxy += ",hf-mirror.com"
         if no_proxy_extra:
             no_proxy += f",{no_proxy_extra}"
         lines.append(f"export http_proxy={proxy_url} https_proxy={proxy_url}")
