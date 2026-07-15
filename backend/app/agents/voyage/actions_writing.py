@@ -56,6 +56,16 @@ SECTION_TITLES = {
     "conclusion": "Conclusion",
 }
 
+# 模板骨架已在各 \section 后预置这些标签（分节独立起草时跨节 \ref 的唯一合法目标）
+STANDARD_SECTION_LABELS = {
+    "sec:introduction",
+    "sec:related_work",
+    "sec:method",
+    "sec:experimental_setup",
+    "sec:results",
+    "sec:conclusion",
+}
+
 # fake provider 识别标记：POLARIS_WRITING_SECTION / POLARIS_RELATED_WORK /
 # POLARIS_WRITING_REFLECT（core/llm/fake.py 对齐）
 SECTION_SYSTEM_PROMPT = """\
@@ -68,6 +78,9 @@ POLARIS_SECTION 标记、不要 Markdown 代码块）。
   路径写 figures/<fig_id>.pdf；
 - 正文中的百分数与小数必须来自事实包 metrics 的数值（不得编造数字）；
   年份、章节/图表编号等小整数不受限；
+- 交叉引用 \\ref/\\autoref 只准指向标准章节标签（sec:introduction、sec:related_work、
+  sec:method、sec:experimental_setup、sec:results、sec:conclusion）或本节内
+  自己 \\label 定义的标签；
 - 事实包中没有的结论不要写。
 """
 
@@ -89,6 +102,8 @@ _CITE_RE = re.compile(r"\\cite[tp]?\*?(?:\[[^\]]*\])?(?:\[[^\]]*\])?\{([^{}]*)\}
 _GRAPHICS_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^{}]*)\}")
 _PERCENT_NUM_RE = re.compile(r"(\d+(?:\.\d+)?)(?:\\%|%)")
 _DECIMAL_RE = re.compile(r"\d+\.\d+")
+_REF_RE = re.compile(r"\\(?:auto|c|C)?ref\*?\{([^{}]*)\}")
+_LABEL_RE = re.compile(r"\\label\{([^{}]*)\}")
 # 章节/图表编号引用启发式：Section 3 / Table 2 / Figure 1 / Appendix A.1 等
 _REF_CONTEXT_RE = re.compile(
     r"(?:Section|Sections|Table|Tables|Figure|Figures|Fig\.|Chapter|Appendix|Eq\.|"
@@ -232,6 +247,16 @@ def validate_section_text(text: str, fact_pack: dict[str, Any]) -> list[str]:
             violations.append(
                 f"非法图表 \\includegraphics{{{match.group(1).strip()}}}：不在事实包 figures 中"
             )
+
+    # 交叉引用：分节独立起草，跨节 \ref 只准指向模板预置的标准章节标签或本节自定义标签
+    own_labels = {m.group(1).strip() for m in _LABEL_RE.finditer(text)}
+    for match in _REF_RE.finditer(text):
+        for target in match.group(1).split(","):
+            target = target.strip()
+            if target and target not in STANDARD_SECTION_LABELS and target not in own_labels:
+                violations.append(
+                    f"非法交叉引用 \\ref{{{target}}}：目标不在标准章节标签或本节 \\label 中"
+                )
 
     # 数字：先剥离 cite/includegraphics/注释再扫描（避免 bibkey 年份、宽度参数误报）；
     # 紧跟数字的 % 视为百分号而非注释起始（契约的 \d+\.?\d*% 形态）
