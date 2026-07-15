@@ -18,6 +18,8 @@ services:
   frontend:
     # 注意：colima/虚拟机挂载下 vite 可能收不到文件变更事件而服务旧代码；
     # 页面内容与源码不一致时 `docker compose restart frontend`
+    # 注意：package.json 新增依赖后必须 `up -d --build --force-recreate
+    # --renew-anon-volumes frontend`——node_modules 是匿名卷，普通 recreate 会复用旧卷
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
