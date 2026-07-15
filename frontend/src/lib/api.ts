@@ -346,7 +346,10 @@ export interface PaperRead {
   status: PaperStatus;
   tldr: string | null;
   has_wiki: boolean;
+  /** 入库时间 */
   created_at: string;
+  /** wiki 编译时间；未编译为 null（旧后端可能缺失） */
+  compiled_at?: string | null;
   /* —— 文献管理增强字段（docs/api-lit.md §5，后端未就绪时可能缺失，均可选容错） —— */
   /** 项目级标签 */
   tags?: string[];
@@ -483,6 +486,38 @@ export interface SearchResult {
   concepts: (ConceptRead & { score?: number | null })[];
   /** semantic 不可用时后端回退 keyword，并在此说明实际使用的模式 */
   mode_used?: SearchMode;
+}
+
+// ============================================================
+// 知识图谱（论文 / 作者 / 概念网络）
+// ============================================================
+
+export type GraphNodeType = 'paper' | 'concept' | 'author';
+
+export interface GraphNode {
+  /** paper/concept 为 uuid，author 为 "author:<slug>" */
+  id: string;
+  type: GraphNodeType;
+  label: string;
+  status?: string | null;
+  year?: number | null;
+  relevance?: number | null;
+  category?: string | null;
+  /** author/concept 关联论文数（决定节点大小） */
+  count?: number;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  kind: 'paper_concept' | 'paper_author';
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  paper_total: number;
+  truncated: boolean;
 }
 
 // ============================================================
@@ -679,6 +714,7 @@ export interface SshCredentialRead {
   created_at: string;
   /** 最近一次测试连接成功时间；从未验证为 null */
   last_verified_at: string | null;
+  proxy_url?: string | null;
 }
 
 export interface SshCredentialInput {
@@ -689,6 +725,7 @@ export interface SshCredentialInput {
   /** PEM 文本，后端 Fernet 加密入库，绝不回传 */
   private_key: string;
   passphrase?: string;
+  proxy_url?: string;
 }
 
 export interface SshTestResult {
@@ -1136,6 +1173,10 @@ export const api = {
   addProjectMember(id: string, input: { email: string; role: 'member' | 'owner' }): Promise<void> {
     return requestJson<void>(`/projects/${id}/members`, 'POST', input);
   },
+  /** 删除研究方向（仅 owner / 平台 admin），方向下的论文、概念、任务等一并删除。 */
+  deleteProject(id: string): Promise<void> {
+    return request<void>(`/projects/${id}`, { method: 'DELETE' });
+  },
 
   // —— Voyages ——
   createVoyage(input: {
@@ -1332,6 +1373,11 @@ export const api = {
   },
   getIngestState(projectId: string): Promise<IngestState> {
     return request<IngestState>(`/projects/${projectId}/ingest/state`);
+  },
+
+  // —— 知识图谱 ——
+  getProjectGraph(projectId: string): Promise<GraphData> {
+    return request<GraphData>(`/projects/${projectId}/graph`);
   },
 
   // —— M2 · Obsidian 导出（zip blob） ——

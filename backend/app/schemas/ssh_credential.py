@@ -13,6 +13,8 @@ class SSHCredentialCreate(BaseModel):
     username: str = Field(min_length=1, max_length=255)
     private_key: str = Field(min_length=1)  # PEM 文本，Fernet 加密后入库
     passphrase: str | None = None
+    # 服务器出外网代理（可空=直连）。严格格式校验：该值会进入远端 shell 的 export 语句
+    proxy_url: str | None = Field(default=None, pattern=r"^https?://[A-Za-z0-9.\-]+(:\d+)?$")
 
 
 class SSHCredentialRead(BaseModel):
@@ -25,6 +27,7 @@ class SSHCredentialRead(BaseModel):
     username: str
     created_at: datetime
     last_verified_at: datetime | None
+    proxy_url: str | None
 
 
 class SSHTestResult(BaseModel):

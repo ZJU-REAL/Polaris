@@ -55,6 +55,7 @@ async def test_credential_crud_and_encryption(client):
         "username",
         "created_at",
         "last_verified_at",
+        "proxy_url",
     }
     assert created["last_verified_at"] is None
 

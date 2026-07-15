@@ -152,12 +152,22 @@ def _prompt_with_context(base: str, ctx: ActionContext) -> str:
     return "".join(parts)
 
 
-def _platform_env_files(ctx: ActionContext) -> dict[str, str]:
+def _platform_env_files(
+    ctx: ActionContext, *, proxy_url: str | None = None, no_proxy_extra: str = ""
+) -> dict[str, str]:
     """平台生成的 env.sh（固定内容，非 LLM 产物）：恒定导出 POLARIS_WORKDIR，
-    hf_mirror 时追加 HF_ENDPOINT 镜像。白名单模板执行前会 source 该文件。"""
+    hf_mirror 时追加 HF_ENDPOINT 镜像；服务器配置了出网代理时导出 http(s)_proxy，
+    并把内网 LLM 地址列入 no_proxy（评测 API 不走代理）。模板执行前会 source。"""
     lines = ["export POLARIS_WORKDIR=$(pwd)"]
     if _params(ctx).get("hf_mirror"):
         lines.append(f"export HF_ENDPOINT={HF_MIRROR_ENDPOINT}")
+    if proxy_url:
+        no_proxy = "localhost,127.0.0.1"
+        if no_proxy_extra:
+            no_proxy += f",{no_proxy_extra}"
+        lines.append(f"export http_proxy={proxy_url} https_proxy={proxy_url}")
+        lines.append(f"export HTTP_PROXY={proxy_url} HTTPS_PROXY={proxy_url}")
+        lines.append(f"export no_proxy={no_proxy} NO_PROXY={no_proxy}")
     return {"env.sh": "\n".join(lines) + "\n"}
 
 
@@ -655,10 +665,21 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             ctx.checkpoint["exp_files"] = files
 
         # 平台注入文件（非 LLM 产物，不进 exp_files，避免被 smoke/iterate 修复覆写）：
-        # env.sh（POLARIS_WORKDIR + 可选 HF_ENDPOINT）与可选 llm_config.json（评测模型）
-        platform_files = _platform_env_files(ctx) | await _eval_model_config_file(ctx)
+        # env.sh（POLARIS_WORKDIR/HF_ENDPOINT/代理）与可选 llm_config.json（评测模型）
+        eval_files = await _eval_model_config_file(ctx)
+        llm_host = ""
+        if eval_files:
+            from urllib.parse import urlparse
+
+            llm_host = (
+                urlparse(json.loads(eval_files["llm_config.json"])["base_url"]).hostname or ""
+            )
 
         executor = await _open_executor(session, ctx, experiment)
+        platform_files = (
+            _platform_env_files(ctx, proxy_url=executor.proxy_url, no_proxy_extra=llm_host)
+            | eval_files
+        )
         try:
             await executor.mkdir_workdir()
             experiment.workdir = executor.workdir

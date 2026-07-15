@@ -60,10 +60,11 @@ interface SshDraft {
   username: string;
   private_key: string;
   passphrase: string;
+  proxy_url: string;
 }
 
 function emptySshDraft(): SshDraft {
-  return { name: '', host: '', port: '22', username: '', private_key: '', passphrase: '' };
+  return { name: '', host: '', port: '22', username: '', private_key: '', passphrase: '', proxy_url: '' };
 }
 
 function toSshInput(d: SshDraft): SshCredentialInput {
@@ -75,6 +76,7 @@ function toSshInput(d: SshDraft): SshCredentialInput {
     username: d.username.trim(),
     private_key: d.private_key,
     ...(d.passphrase ? { passphrase: d.passphrase } : {}),
+    ...(d.proxy_url.trim() ? { proxy_url: d.proxy_url.trim() } : {}),
   };
 }
 
@@ -253,6 +255,14 @@ function SshTab() {
         <FormField label="密钥口令（可选）" en="passphrase">
           <input className="input mono" type="password" autoComplete="new-password" value={draft.passphrase}
             onChange={(e) => setDraft({ ...draft, passphrase: e.target.value })} placeholder="私钥无口令则留空" />
+        </FormField>
+        <FormField label="出外网代理（可选）" en="proxy">
+          <input className="input mono" value={draft.proxy_url}
+            onChange={(e) => setDraft({ ...draft, proxy_url: e.target.value })}
+            placeholder="如 http://10.205.70.120:7899，服务器直连外网则留空" />
+          <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+            实验装依赖、下载模型数据时自动走该代理；内网 LLM 接口不受影响
+          </div>
         </FormField>
       </Modal>
     </div>

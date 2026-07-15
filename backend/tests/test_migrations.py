@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "f3b4c5d6e7a8"  # paper_review_m5c
-PREV_REVISION = "e1f2a3b4c5d6"  # manuscripts_m5b
+HEAD_REVISION = "a1b2c3d4e5f6"  # ssh_credential_proxy
+PREV_REVISION = "f3b4c5d6e7a8"  # paper_review_m5c
 
 
 def _make_config(db_path: Path) -> Config:

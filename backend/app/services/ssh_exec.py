@@ -12,6 +12,7 @@
 
 import logging
 import posixpath
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -34,6 +35,18 @@ DEFAULT_CMD_TIMEOUT_SECONDS = 60.0
 # 白名单模板内的固定前缀（无任何可变参数，无注入面）：workdir 下若有平台生成的
 # env.sh（POLARIS_WORKDIR / 可选 HF_ENDPOINT 等）则先 source，再执行实验命令。
 ENV_SOURCE_PREFIX = "[ -f env.sh ] && . ./env.sh;"
+
+_PROXY_URL_RE = re.compile(r"^https?://[A-Za-z0-9.\-]+(:\d+)?$")
+
+
+def validate_proxy_url(url: str | None) -> str | None:
+    """代理 URL 严格校验（该值会拼进远端 shell 的 export，格式外一律拒绝）。"""
+    if not url:
+        return None
+    url = url.strip()
+    if not _PROXY_URL_RE.match(url):
+        raise SSHExecError(f"代理地址格式非法：{url!r}")
+    return url
 
 
 class SSHExecError(Exception):
@@ -193,7 +206,13 @@ async def open_executor(
         private_key=private_key,
         passphrase=passphrase,
     )
-    return SSHExecutor(session, exp_id=exp_id, host=credential.host, project_id=project_id)
+    return SSHExecutor(
+        session,
+        exp_id=exp_id,
+        host=credential.host,
+        project_id=project_id,
+        proxy_url=getattr(credential, "proxy_url", None),
+    )
 
 
 async def test_credential(credential: SSHCredential) -> tuple[bool, str]:
@@ -236,12 +255,24 @@ class SSHExecutor:
         host: str,
         project_id: uuid.UUID,
         actor: str = "agent:experiment",
+        proxy_url: str | None = None,
     ) -> None:
         self._session = session
         self.exp_id = validate_exp_id(exp_id)
         self.host = host
         self.project_id = project_id
         self.actor = actor
+        self.proxy_url = validate_proxy_url(proxy_url)
+
+    def _proxy_prefix(self) -> str:
+        """setup 阶段（env.sh 尚未写入/不 source）需要的代理导出前缀。"""
+        if not self.proxy_url:
+            return ""
+        u = self.proxy_url
+        return (
+            f"export http_proxy={u} https_proxy={u} HTTP_PROXY={u} HTTPS_PROXY={u} "
+            "no_proxy=localhost,127.0.0.1; "
+        )
 
     @property
     def workdir(self) -> str:
@@ -303,7 +334,7 @@ class SSHExecutor:
         index = get_settings().pip_index_url
         index_arg = f" -i {index}" if index else ""
         return await self._run(
-            f"cd {self.workdir} && "
+            f"cd {self.workdir} && {self._proxy_prefix()}"
             "{ python3 -m venv .venv 2>/dev/null && test -x .venv/bin/pip; } || "
             "{ rm -rf .venv && pip3 install --user -q virtualenv"
             f"{index_arg} && python3 -m virtualenv -q .venv; }} && "

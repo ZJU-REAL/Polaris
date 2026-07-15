@@ -21,6 +21,7 @@ async def create_credential(
         host=data.host,
         port=data.port,
         username=data.username,
+        proxy_url=data.proxy_url,
         private_key_encrypted=encrypt_secret(data.private_key),
         passphrase_encrypted=encrypt_secret(data.passphrase) if data.passphrase else None,
     )

@@ -24,3 +24,6 @@ class SSHCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     private_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     passphrase_encrypted: Mapped[str | None] = mapped_column(Text)
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 服务器出外网需要的 HTTP 代理（如 http://10.205.70.120:7899），可空=直连；
+    # 注入实验环境 http(s)_proxy，并对内网 LLM 地址设 no_proxy
+    proxy_url: Mapped[str | None] = mapped_column(String(255))
