@@ -592,7 +592,11 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         finally:
             await executor.close()
         if venv.exit_status != 0:
-            raise RuntimeError(f"依赖安装失败（exit={venv.exit_status}）：{venv.stderr[-500:]}")
+            # pip/venv 的报错可能走 stdout 或 stderr，两路都带上便于定位
+            detail = (venv.stderr.strip() or venv.stdout.strip())[-600:]
+            if not detail:
+                detail = "（无输出，多为连接中断或超时）"
+            raise RuntimeError(f"依赖安装失败（exit={venv.exit_status}）：{detail}")
 
     return {"workdir": experiment.workdir, "files": written, "venv_exit": venv.exit_status}
 

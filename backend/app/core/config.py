@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # 文献 API（arXiv/S2/OpenAlex）出站代理，如 http://host.docker.internal:7897；
     # LLM/内网服务不走此代理
     outbound_proxy: str | None = None
+    # 实验服务器 pip 镜像源（可选，如 https://pypi.tuna.tsinghua.edu.cn/simple）
+    pip_index_url: str = ""
 
     @field_validator(
         "s2_api_key", "openai_compat_api_key", "anthropic_api_key", "outbound_proxy", mode="before"

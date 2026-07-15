@@ -292,9 +292,18 @@ class SSHExecutor:
         return written
 
     async def setup_venv(self, timeout: float = SETUP_TIMEOUT_SECONDS) -> SSHResult:
+        # Ubuntu 常见缺 python3-venv（无 ensurepip）→ 降级：pip3 --user 装 virtualenv
+        # （自带 pip，不依赖 ensurepip）再建环境。2026-07-15 实验室 GPU 服务器实测。
+        from app.core.config import get_settings
+
+        index = get_settings().pip_index_url
+        index_arg = f" -i {index}" if index else ""
         return await self._run(
-            f"cd {self.workdir} && python3 -m venv .venv && "
-            ".venv/bin/pip install -r requirements.txt",
+            f"cd {self.workdir} && "
+            "{ python3 -m venv .venv 2>/dev/null && test -x .venv/bin/pip; } || "
+            "{ rm -rf .venv && pip3 install --user -q virtualenv"
+            f"{index_arg} && python3 -m virtualenv -q .venv; }} && "
+            f".venv/bin/pip install{index_arg} -r requirements.txt",
             timeout=timeout,
         )
 
