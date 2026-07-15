@@ -112,6 +112,12 @@ async def update_project(session: AsyncSession, project: Project, data: ProjectU
     return project
 
 
+async def delete_project(session: AsyncSession, project: Project) -> None:
+    """删除项目；论文/概念/任务等子表靠 FK ondelete=CASCADE 一并清除。"""
+    await session.delete(project)
+    await session.commit()
+
+
 async def add_member(
     session: AsyncSession, project_id: uuid.UUID, *, email: str, role: str
 ) -> bool:

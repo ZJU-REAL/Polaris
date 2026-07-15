@@ -307,7 +307,9 @@ class SSHExecutor:
             "{ python3 -m venv .venv 2>/dev/null && test -x .venv/bin/pip; } || "
             "{ rm -rf .venv && pip3 install --user -q virtualenv"
             f"{index_arg} && python3 -m virtualenv -q .venv; }} && "
-            f".venv/bin/pip install{index_arg} -r requirements.txt",
+            # 激活而非直调 .venv/bin/pip：部分包的构建脚本调用裸 `python`，
+            # 激活后 PATH 里才有（如 fast-downward-textworld，2026-07-15 实测）
+            f". .venv/bin/activate && pip install{index_arg} -r requirements.txt",
             timeout=timeout,
         )
 

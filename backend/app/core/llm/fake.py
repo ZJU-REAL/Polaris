@@ -632,10 +632,9 @@ class FakeProvider(LLMProvider):
         figure_line = "![[fig:0]]\n\n" if with_figure else ""
         return (
             f"## TL;DR\n\n{title} 的一句话总结（fake librarian）。\n\n"
-            "## 研究动机\n\n围绕 [[Agent]] 场景的关键问题展开（fake）。\n\n"
-            "## 方法\n\n提出基于 [[Agent]] 与 [[强化学习]] 的方法（fake）。\n\n"
+            "## 研究背景与动机\n\n围绕 [[Agent]] 场景的关键问题展开叙述（fake）。\n\n"
+            "## 方法\n\n提出基于 [[Agent]] 与 [[强化学习]] 的方法，分段展开讲解（fake）。\n\n"
             f"{figure_line}"
-            "## 实验结论\n\n在多个基准上验证有效（fake）。\n\n"
-            "## 可借鉴点\n\n- 可复用其训练流程（fake）\n\n"
-            "## 相关概念\n\n[[Agent]] · [[强化学习]]\n"
+            "## 实验与结果\n\n在多个基准上验证有效（fake）。\n\n"
+            "## 讨论与可借鉴点\n\n可复用其训练流程，局限在于评测范围（fake）。\n"
         )

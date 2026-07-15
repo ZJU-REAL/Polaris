@@ -101,6 +101,17 @@ async def update_project(
     return await _detail(session, project)
 
 
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """删除研究方向（owner / 平台 admin），方向下的论文、概念、任务等一并删除。"""
+    project = await _get_managed_project(session, project_id, user)
+    await projects_service.delete_project(session, project)
+
+
 @router.post("/{project_id}/members", status_code=status.HTTP_204_NO_CONTENT)
 async def add_member(
     project_id: uuid.UUID,

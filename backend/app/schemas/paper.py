@@ -41,7 +41,8 @@ class PaperRead(BaseModel):
     status: str
     tldr: str | None
     has_wiki: bool = False
-    created_at: datetime
+    created_at: datetime  # 入库时间
+    compiled_at: datetime | None = None  # wiki 编译时间；未编译为 null
     # 以下字段不来自 ORM 属性，由 service 层聚合查询后回填（见 papers.paper_extras_map）
     tags: list[str] = []
     starred: bool = False  # 当前用户视角
