@@ -1,10 +1,12 @@
 """OpenAI 兼容接口 Provider（DeepSeek / vLLM / OpenRouter 等），基于 httpx。
 
-骨架实现：complete/stream 接口完整；重试、超时策略、tool-use 等留 TODO。
+429/5xx 自动指数退避重试（尊重 Retry-After）；tool-use 留 TODO。
 """
 
+import asyncio
 import base64
 import json
+import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -12,9 +14,50 @@ import httpx
 
 from app.core.llm.base import CompletionResult, LLMProvider, Message, RerankResult
 
+logger = logging.getLogger("polaris.llm")
+
+_MAX_ATTEMPTS = 4
+_BACKOFF_BASE_SECONDS = 3.0
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def _retry_delay(resp: httpx.Response, attempt: int) -> float:
+    retry_after = resp.headers.get("retry-after")
+    if retry_after:
+        try:
+            return min(60.0, max(1.0, float(retry_after)))
+        except ValueError:
+            pass
+    return _BACKOFF_BASE_SECONDS * (2**attempt)
+
 
 class OpenAICompatProvider(LLMProvider):
     name = "openai_compat"
+
+    async def _post_with_retry(self, url: str, payload: dict[str, Any]) -> httpx.Response:
+        """429/5xx/网络错误重试（指数退避，尊重 Retry-After），其余状态原样返回。"""
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                resp = await self._client.post(url, headers=self._headers(), json=payload)
+            except (httpx.TransportError, httpx.TimeoutException) as e:
+                last_exc = e
+                await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
+                continue
+            if resp.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS - 1:
+                delay = _retry_delay(resp, attempt)
+                logger.warning(
+                    "openai_compat %s，%.0fs 后重试（%d/%d）：%s",
+                    resp.status_code,
+                    delay,
+                    attempt + 1,
+                    _MAX_ATTEMPTS,
+                    url,
+                )
+                await asyncio.sleep(delay)
+                continue
+            return resp
+        raise RuntimeError(f"openai_compat 请求 {url} 重试 {_MAX_ATTEMPTS} 次后仍失败：{last_exc}")
 
     def __init__(
         self,
@@ -76,13 +119,9 @@ class OpenAICompatProvider(LLMProvider):
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
     ) -> CompletionResult:
-        # TODO(M2): 重试/限速/错误分类
-        resp = await self._client.post(
+        resp = await self._post_with_retry(
             f"{self._base_url}/chat/completions",
-            headers=self._headers(),
-            json=self._payload(
-                messages, model, temperature, max_tokens, stream=False, images=images
-            ),
+            self._payload(messages, model, temperature, max_tokens, stream=False, images=images),
         )
         if resp.status_code >= 400:
             body = resp.text[:500]
@@ -123,10 +162,8 @@ class OpenAICompatProvider(LLMProvider):
                     yield content
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
-        resp = await self._client.post(
-            f"{self._base_url}/embeddings",
-            headers=self._headers(),
-            json={"model": model, "input": texts},
+        resp = await self._post_with_retry(
+            f"{self._base_url}/embeddings", {"model": model, "input": texts}
         )
         resp.raise_for_status()
         data = resp.json()["data"]
@@ -146,11 +183,7 @@ class OpenAICompatProvider(LLMProvider):
         payload: dict[str, Any] = {"model": model, "query": query, "documents": documents}
         if top_n is not None:
             payload["top_n"] = top_n
-        resp = await self._client.post(
-            f"{self._base_url}/rerank",
-            headers=self._headers(),
-            json=payload,
-        )
+        resp = await self._post_with_retry(f"{self._base_url}/rerank", payload)
         if resp.status_code >= 400:
             body = resp.text[:500]
             raise RuntimeError(f"openai_compat {resp.status_code} from {self._base_url}: {body}")
