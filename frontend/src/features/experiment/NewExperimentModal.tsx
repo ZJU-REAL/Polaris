@@ -30,6 +30,10 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
   const [maxHours, setMaxHours] = useState('4');
   const [maxRuns, setMaxRuns] = useState('10');
   const [gpuHint, setGpuHint] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [evalModel, setEvalModel] = useState('');
+  const [hfMirror, setHfMirror] = useState(false);
+  const [extraNotes, setExtraNotes] = useState('');
 
   const ideasQuery = useQuery({
     queryKey: ['ideas', pid, 'promoted'],
@@ -53,6 +57,10 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     setMaxHours('4');
     setMaxRuns('10');
     setGpuHint('');
+    setShowAdvanced(false);
+    setEvalModel('');
+    setHfMirror(false);
+    setExtraNotes('');
   }, [open, initialIdeaId]);
 
   // 凭据加载后默认选第一个
@@ -73,6 +81,9 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         credential_id: credentialId,
         params: {
           ...(gpuHint.trim() ? { gpu_hint: gpuHint.trim() } : {}),
+          ...(evalModel.trim() ? { eval_model: evalModel.trim() } : {}),
+          ...(hfMirror ? { hf_mirror: true } : {}),
+          ...(extraNotes.trim() ? { extra_notes: extraNotes.trim() } : {}),
           budget: {
             ...(Number.isFinite(hours) && hours > 0 ? { max_hours: hours } : {}),
             ...(Number.isFinite(runs) && runs > 0 ? { max_runs: runs } : {}),
@@ -196,6 +207,56 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       <FormField label="GPU 提示（可选）" en="gpu_hint" hint="如 A100 / cuda:0，供计划阶段参考。">
         <input className="input mono" value={gpuHint} onChange={(e) => setGpuHint(e.target.value)} placeholder="如 1×A100" />
       </FormField>
+
+      <button
+        type="button"
+        className="btn btn-ghost sm"
+        style={{ marginBottom: showAdvanced ? 10 : 14, paddingLeft: 0 }}
+        onClick={() => setShowAdvanced((v) => !v)}
+      >
+        <Icon name={showAdvanced ? 'chevDown' : 'chevron'} size={13} />
+        高级选项 <span style={{ color: 'var(--text-4)', fontSize: 11 }}>advanced</span>
+      </button>
+      {showAdvanced && (
+        <>
+          <FormField
+            label="评测模型（可选）"
+            en="eval_model"
+            hint="实验代码将获得该模型的 API 访问（平台把接入点与密钥写入工作目录 llm_config.json），用于 ReAct 等 training-free 的 agentic 评测。"
+          >
+            <input
+              className="input mono"
+              value={evalModel}
+              onChange={(e) => setEvalModel(e.target.value)}
+              placeholder="qwen36-35b-a3b"
+            />
+          </FormField>
+          <FormField
+            label="HuggingFace 镜像"
+            en="hf_mirror"
+            hint="训练类实验从 hf-mirror.com 拉取模型与数据集（大陆网络推荐勾选）。"
+          >
+            <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
+              <input type="checkbox" checked={hfMirror} onChange={(e) => setHfMirror(e.target.checked)} />
+              启用 HF 镜像（注入 HF_ENDPOINT）
+            </label>
+          </FormField>
+          <FormField
+            label="补充说明（可选）"
+            en="extra_notes"
+            hint="对实验的额外要求，会原文提供给计划与代码生成的 AI，比如指定数据集子集、评测协议、对比基线。"
+          >
+            <textarea
+              className="textarea"
+              rows={3}
+              value={extraNotes}
+              onChange={(e) => setExtraNotes(e.target.value)}
+              placeholder="如：只评测 ALFWorld 前 30 个任务；必须对比 ReAct 基线"
+            />
+          </FormField>
+        </>
+      )}
+
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
         消耗真实算力前会提交算力预算审批等待人工确认；超时/超预算自动 kill 并置 failed。
         进入自动迭代后，AI 每轮跑完会分析结果并决定继续改进、修错重试或停止；连续 2 轮主指标无提升也会自动停止。

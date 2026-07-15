@@ -17,6 +17,13 @@ class ExperimentBudget(BaseModel):
 class ExperimentParams(BaseModel):
     gpu_hint: str | None = None
     budget: ExperimentBudget | None = None
+    # 评测模型：非空时 setup 会把 default 路由的 base_url/api_key + 该 model
+    # 写成 workdir/llm_config.json，供 training-free agentic 评测代码调用 LLM API
+    eval_model: str | None = None
+    # HF 镜像：env.sh 注入 HF_ENDPOINT=https://hf-mirror.com（大陆网络拉 HF 模型/数据集）
+    hf_mirror: bool = False
+    # 用户对实验的补充说明（原文进 plan 与 codegen prompt）
+    extra_notes: str | None = None
 
 
 class ExperimentCreate(BaseModel):

@@ -838,6 +838,12 @@ export interface CreateExperimentInput {
   params?: {
     gpu_hint?: string;
     budget?: ExperimentBudget;
+    /** 评测模型：实验代码将获得该模型的 API 访问（工作目录 llm_config.json） */
+    eval_model?: string;
+    /** HF 镜像：训练类实验经 hf-mirror.com 拉取模型/数据集 */
+    hf_mirror?: boolean;
+    /** 用户对实验的补充说明（进计划与代码生成 prompt） */
+    extra_notes?: string;
   };
 }
 

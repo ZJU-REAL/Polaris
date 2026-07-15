@@ -134,6 +134,9 @@ async def create_experiment(
             "params": {
                 "experiment_id": str(experiment.id),
                 "gpu_hint": params.gpu_hint if params else None,
+                "eval_model": params.eval_model if params else None,
+                "hf_mirror": bool(params.hf_mirror) if params else False,
+                "extra_notes": params.extra_notes if params else None,
             }
         },
         budget=None,

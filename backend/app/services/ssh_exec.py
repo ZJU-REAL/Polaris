@@ -31,6 +31,10 @@ SETUP_TIMEOUT_SECONDS = 1800.0  # venv + pip install 30 分钟上限
 PLOT_TIMEOUT_SECONDS = 300.0  # plot_figures.py 5 分钟上限（docs/api-m5-a.md §1）
 DEFAULT_CMD_TIMEOUT_SECONDS = 60.0
 
+# 白名单模板内的固定前缀（无任何可变参数，无注入面）：workdir 下若有平台生成的
+# env.sh（POLARIS_WORKDIR / 可选 HF_ENDPOINT 等）则先 source，再执行实验命令。
+ENV_SOURCE_PREFIX = "[ -f env.sh ] && . ./env.sh;"
+
 
 class SSHExecError(Exception):
     """SSH 执行层错误基类。"""
@@ -308,12 +312,17 @@ class SSHExecutor:
         )
 
     async def run_smoke(self, timeout: float = SMOKE_TIMEOUT_SECONDS) -> SSHResult:
-        return await self._run(f"cd {self.workdir} && bash run.sh --smoke", timeout=timeout)
+        # {} 分组保证 cd 失败时不在错误目录执行；组退出码即 run.sh 退出码
+        return await self._run(
+            f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} bash run.sh --smoke; }}",
+            timeout=timeout,
+        )
 
     async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> SSHResult:
         """执行绘图脚本（固定文件名，LLM 只产出脚本内容，docs/api-m5-a.md §1）。"""
         return await self._run(
-            f"cd {self.workdir} && .venv/bin/python plot_figures.py", timeout=timeout
+            f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} .venv/bin/python plot_figures.py; }}",
+            timeout=timeout,
         )
 
     async def list_dir(self, subdir: str) -> list[str]:
@@ -342,8 +351,8 @@ class SSHExecutor:
         """后台启动正式运行，返回 (PID, 启动命令)。退出码落 run.exit 供轮询读取。"""
         command = (
             f"cd {self.workdir} && rm -f run.exit && "
-            "nohup bash -c 'bash run.sh > run.log 2>&1; echo $? > run.exit' "
-            ">/dev/null 2>&1 & echo $!"
+            f"nohup bash -c '{ENV_SOURCE_PREFIX} bash run.sh > run.log 2>&1; "
+            "echo $? > run.exit' >/dev/null 2>&1 & echo $!"
         )
         result = await self._run(command)
         try:

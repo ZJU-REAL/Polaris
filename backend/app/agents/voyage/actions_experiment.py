@@ -110,6 +110,73 @@ DEBUG_SYSTEM_PROMPT = (
 """
 )
 
+# ---- 按实验 params 条件追加的 system prompt 段落（plan 与全部 codegen prompt 共用） ----
+
+EVAL_MODEL_PROMPT_SECTION = """\
+
+评测模型（LLM API 访问）：
+- 平台已在工作目录写入 llm_config.json，内容为 {"base_url": ..., "api_key": ..., "model": ...}；
+  代码必须从该文件读取 LLM 配置（禁止在代码中硬编码任何 api_key），
+  用 OpenAI 兼容的 /chat/completions 接口调用该模型；
+- 该模型可能是思考型模型（响应中可能带 reasoning_content 思考过程），
+  务必设置 max_tokens≥2048，并只读取 choices[0].message.content 作为答案；
+- API 有限流：请求失败/超时要做重试（如指数退避），不要因单次失败中断整个评测。
+"""
+
+HF_MIRROR_PROMPT_SECTION = """\
+
+HuggingFace 镜像：环境变量 HF_ENDPOINT 已指向 https://hf-mirror.com（平台在 env.sh 注入），
+transformers / datasets 按正常方式加载模型与数据集即可，代码里无需再做任何镜像设置。
+"""
+
+EXTRA_NOTES_PROMPT_SECTION = """\
+
+用户对本实验的补充说明（务必遵循）：
+{notes}
+"""
+
+HF_MIRROR_ENDPOINT = "https://hf-mirror.com"
+
+
+def _prompt_with_context(base: str, ctx: ActionContext) -> str:
+    """按 params.eval_model / hf_mirror / extra_notes 给 system prompt 条件追加段落。"""
+    params = _params(ctx)
+    parts = [base]
+    if str(params.get("eval_model") or "").strip():
+        parts.append(EVAL_MODEL_PROMPT_SECTION)
+    if params.get("hf_mirror"):
+        parts.append(HF_MIRROR_PROMPT_SECTION)
+    notes = str(params.get("extra_notes") or "").strip()
+    if notes:
+        parts.append(EXTRA_NOTES_PROMPT_SECTION.format(notes=notes))
+    return "".join(parts)
+
+
+def _platform_env_files(ctx: ActionContext) -> dict[str, str]:
+    """平台生成的 env.sh（固定内容，非 LLM 产物）：恒定导出 POLARIS_WORKDIR，
+    hf_mirror 时追加 HF_ENDPOINT 镜像。白名单模板执行前会 source 该文件。"""
+    lines = ["export POLARIS_WORKDIR=$(pwd)"]
+    if _params(ctx).get("hf_mirror"):
+        lines.append(f"export HF_ENDPOINT={HF_MIRROR_ENDPOINT}")
+    return {"env.sh": "\n".join(lines) + "\n"}
+
+
+async def _eval_model_config_file(ctx: ActionContext) -> dict[str, str]:
+    """eval_model 非空时：从 LLM 路由 default stage 解析 provider（api_key 已解密），
+    生成 llm_config.json 内容。审计侧安全：write_files 的审计只记路径与字节数，
+    api_key 不会出现在任何日志/Activity。"""
+    eval_model = str(_params(ctx).get("eval_model") or "").strip()
+    if not eval_model:
+        return {}
+    _provider, route = await ctx.llm.resolve("default")
+    config = {
+        "base_url": route.base_url or "",
+        "api_key": route.api_key,
+        "model": eval_model,
+    }
+    return {"llm_config.json": json.dumps(config, ensure_ascii=False, indent=2) + "\n"}
+
+
 REFLECTION_SYSTEM_PROMPT = """\
 你是 Experiment Lab 的实验分析师，基于本轮运行结果做结构化反思并决定下一步。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
@@ -530,7 +597,10 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 f"GPU 提示：{gpu_hint or '（无）'}"
             )
             plan = await _complete_json(
-                ctx, system=PLAN_SYSTEM_PROMPT, user=user_prompt, validate=validate_plan
+                ctx,
+                system=_prompt_with_context(PLAN_SYSTEM_PROMPT, ctx),
+                user=user_prompt,
+                validate=validate_plan,
             )
             experiment.plan = plan
             await session.commit()
@@ -577,9 +647,16 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 f"预算：{json.dumps(experiment.budget or {}, ensure_ascii=False)}"
             )
             files = await _complete_json(
-                ctx, system=CODE_SYSTEM_PROMPT, user=user_prompt, validate=validate_files
+                ctx,
+                system=_prompt_with_context(CODE_SYSTEM_PROMPT, ctx),
+                user=user_prompt,
+                validate=validate_files,
             )
             ctx.checkpoint["exp_files"] = files
+
+        # 平台注入文件（非 LLM 产物，不进 exp_files，避免被 smoke/iterate 修复覆写）：
+        # env.sh（POLARIS_WORKDIR + 可选 HF_ENDPOINT）与可选 llm_config.json（评测模型）
+        platform_files = _platform_env_files(ctx) | await _eval_model_config_file(ctx)
 
         executor = await _open_executor(session, ctx, experiment)
         try:
@@ -588,6 +665,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             experiment.server_host = executor.host
             await session.commit()
             written = await executor.write_files(files)
+            written += await executor.write_files(platform_files)
             venv = await executor.setup_venv()
         finally:
             await executor.close()
@@ -633,7 +711,10 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     f"stderr：\n{(result.stderr or result.stdout)[-_STDERR_CHARS:]}"
                 )
                 files = await _complete_json(
-                    ctx, system=FIX_SYSTEM_PROMPT, user=user_prompt, validate=validate_files
+                    ctx,
+                    system=_prompt_with_context(FIX_SYSTEM_PROMPT, ctx),
+                    user=user_prompt,
+                    validate=validate_files,
                 )
                 ctx.checkpoint["exp_files"] = files
                 await executor.write_files(files)
@@ -872,8 +953,8 @@ async def experiment_iterate(ctx: ActionContext, params: dict[str, Any]) -> dict
                     await session.commit()
 
                 # ---- improve / debug：LLM 改文件（diff 说明进 prompt）→ SSH 覆写 ----
-                system_prompt = (
-                    DEBUG_SYSTEM_PROMPT if decision == "debug" else IMPROVE_SYSTEM_PROMPT
+                system_prompt = _prompt_with_context(
+                    DEBUG_SYSTEM_PROMPT if decision == "debug" else IMPROVE_SYSTEM_PROMPT, ctx
                 )
                 fix_user = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
