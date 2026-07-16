@@ -33,3 +33,6 @@ logs/
 .idea/
 .vscode/
 *.swp
+
+# --- 本地 AI 助手配置（不入库） ---
+CLAUDE.md
