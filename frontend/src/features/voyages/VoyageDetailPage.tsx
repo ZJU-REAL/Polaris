@@ -374,6 +374,25 @@ export function VoyageDetailPage() {
         <MachineBar status={voyage.status} onOpenGates={() => openGates(null)} onResume={() => resumeMutation.mutate()} resuming={resumeMutation.isPending} />
       </div>
 
+      {/* 本次任务使用的技能（启动时快照，中途改技能不影响） */}
+      {(voyage.skills ?? []).length > 0 && (
+        <div className="card card-pad" style={{ marginBottom: 20 }}>
+          <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>本次任务使用的技能：</span>
+            {voyage.skills!.map((s) => (
+              <span
+                key={`${s.slug}-${s.target}`}
+                className="pill sm"
+                style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
+                title={`${s.slug} v${s.version} · ${s.target}`}
+              >
+                {s.name} v{s.version}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 步骤时间线 */}
       <div className="row" style={{ marginBottom: 12 }}>
         <span className="section-h">

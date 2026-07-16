@@ -239,6 +239,8 @@ export interface VoyageRead {
 
 export interface VoyageDetail extends VoyageRead {
   steps: VoyageStepRead[];
+  /** 本次任务快照使用的技能（启动时固定，见 docs/skill-system.md §3.2）。 */
+  skills?: { slug: string; name: string; kind: string; version: number; target: string }[];
 }
 
 // ============================================================
@@ -1128,6 +1130,156 @@ export interface ReviewSummary {
 // api object
 // ============================================================
 
+// ============================================================
+// Skills · 技能系统（docs/skill-system.md）
+// ============================================================
+
+export type SkillKind = 'guidance' | 'rubric' | 'persona' | 'workflow';
+export type SkillScope = 'builtin' | 'user' | 'project';
+
+export interface SkillPersona {
+  name: string;
+  stance: string;
+  style?: string | null;
+}
+
+export interface SkillManifest {
+  /** 注入点（后端白名单校验） */
+  targets: string[];
+  config_schema?: Record<string, unknown> | null;
+  variables?: string[];
+  personas?: SkillPersona[];
+  /** workflow 技能的步骤模板（Navigator 步骤 schema） */
+  steps?: Record<string, unknown>[];
+  output_contract?: Record<string, unknown> | null;
+  model_hint?: string | null;
+}
+
+export interface SkillRead {
+  id: string;
+  slug: string;
+  kind: SkillKind;
+  name: string;
+  name_en: string | null;
+  description: string | null;
+  scope: SkillScope;
+  owner_id: string | null;
+  project_id: string | null;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillVersionRead {
+  id: string;
+  skill_id: string;
+  version: number;
+  manifest: SkillManifest;
+  body: string;
+  changelog: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface SkillDetail extends SkillRead {
+  current_version: SkillVersionRead | null;
+}
+
+export interface ProjectSkillRead {
+  id: string;
+  project_id: string;
+  skill_id: string;
+  version_id: string | null;
+  target: string;
+  config: Record<string, unknown> | null;
+  sort_order: number;
+  enabled: boolean;
+  created_at: string;
+  skill: SkillRead | null;
+  pinned_version: number | null;
+}
+
+export interface SkillTestResult {
+  /** 注入到 prompt 的最终文本（persona/workflow 为结构预览） */
+  rendered: string;
+  output: string | null;
+  model: string | null;
+}
+
+export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
+  guidance: '指引',
+  rubric: '评分标准',
+  persona: '评审人设',
+  workflow: '流程模板',
+};
+
+/** 注入点 → 大白话标签（未收录的原样展示）。 */
+export const SKILL_TARGET_LABEL: Record<string, string> = {
+  'wiki.score_relevance': '文献相关性打分',
+  'wiki.compile': '论文笔记编译',
+  'forge.gap_analysis': '研究空白分析',
+  'forge.generate': '想法生成',
+  'forge.score': '想法打分',
+  'review.debate': '想法辩论',
+  'review.referees': '论文评审员',
+  'review.meta_review': '评审汇总',
+  'experiment.plan': '实验计划',
+  'experiment.setup': '实验搭建',
+  'experiment.iterate': '实验迭代',
+  'experiment.report': '实验报告',
+  'writing.section': '论文分节撰写',
+  'writing.related_work': '相关工作综述',
+  'navigator.free_plan': '自由任务规划',
+};
+
+export function skillTargetLabel(target: string): string {
+  return SKILL_TARGET_LABEL[target] ?? target;
+}
+
+export interface SkillListingRead {
+  id: string;
+  skill_id: string;
+  skill_version_id: string;
+  summary: string | null;
+  tags: string[] | null;
+  status: 'pending' | 'approved' | 'rejected' | 'delisted';
+  install_count: number;
+  published_by: string | null;
+  comment: string | null;
+  created_at: string;
+  skill: SkillRead | null;
+  version: number | null;
+  rating_avg: number | null;
+  rating_count: number;
+}
+
+export interface SkillListingDetail extends SkillListingRead {
+  manifest: SkillManifest | null;
+  body: string | null;
+}
+
+export interface SkillRatingRead {
+  id: string;
+  listing_id: string;
+  user_id: string;
+  rating: number;
+  comment: string | null;
+  created_at: string;
+}
+
+/** 跨部署分享的技能包（format 固定 polaris-skill@1）。 */
+export interface SkillExportData {
+  format: string;
+  slug: string;
+  kind: SkillKind;
+  name: string;
+  name_en?: string | null;
+  description?: string | null;
+  version?: number | null;
+  manifest: SkillManifest;
+  body: string;
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -1576,4 +1728,118 @@ export const api = {
     const qs = params.toString();
     return request<LlmUsageRow[]>(`/admin/llm/usage${qs ? `?${qs}` : ''}`);
   },
+
+  // —— Skills · 技能（docs/skill-system.md §4） ——
+  listSkills(opts: { scope?: 'builtin' | 'mine'; kind?: SkillKind; q?: string } = {}): Promise<SkillRead[]> {
+    const params = new URLSearchParams();
+    if (opts.scope) params.set('scope', opts.scope);
+    if (opts.kind) params.set('kind', opts.kind);
+    if (opts.q) params.set('q', opts.q);
+    const qs = params.toString();
+    return request<SkillRead[]>(`/skills${qs ? `?${qs}` : ''}`);
+  },
+  createSkill(input: {
+    slug: string;
+    kind: SkillKind;
+    name: string;
+    name_en?: string;
+    description?: string;
+    manifest: SkillManifest;
+    body: string;
+  }): Promise<SkillDetail> {
+    return requestJson<SkillDetail>('/skills', 'POST', input);
+  },
+  getSkill(id: string): Promise<SkillDetail> {
+    return request<SkillDetail>(`/skills/${id}`);
+  },
+  listSkillVersions(id: string): Promise<SkillVersionRead[]> {
+    return request<SkillVersionRead[]>(`/skills/${id}/versions`);
+  },
+  /** 编辑技能 = 追加新版本（版本不可变）。 */
+  addSkillVersion(
+    id: string,
+    input: { manifest: SkillManifest; body: string; changelog?: string },
+  ): Promise<SkillVersionRead> {
+    return requestJson<SkillVersionRead>(`/skills/${id}/versions`, 'POST', input);
+  },
+  /** 复制为我的技能（内置技能的编辑路径）。 */
+  forkSkill(id: string): Promise<SkillDetail> {
+    return request<SkillDetail>(`/skills/${id}/fork`, { method: 'POST' });
+  },
+  archiveSkill(id: string): Promise<void> {
+    return request<void>(`/skills/${id}`, { method: 'DELETE' });
+  },
+  /** 试运行：预览注入文本；指引/评分类会真实调用一次模型。 */
+  testSkill(id: string, input: { target?: string; goal?: string } = {}): Promise<SkillTestResult> {
+    return requestJson<SkillTestResult>(`/skills/${id}/test`, 'POST', input);
+  },
+  /** 运行流程技能：以其步骤为计划创建 AI 任务。 */
+  runWorkflowSkill(
+    id: string,
+    input: { project_id: string; goal: string; vars?: Record<string, string> },
+  ): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/skills/${id}/run`, 'POST', input);
+  },
+  listProjectSkills(projectId: string): Promise<ProjectSkillRead[]> {
+    return request<ProjectSkillRead[]>(`/projects/${projectId}/skills`);
+  },
+  enableProjectSkill(
+    projectId: string,
+    input: { skill_id: string; target: string; version_id?: string; config?: Record<string, unknown> },
+  ): Promise<ProjectSkillRead> {
+    return requestJson<ProjectSkillRead>(`/projects/${projectId}/skills`, 'POST', input);
+  },
+  patchProjectSkill(
+    enableId: string,
+    input: { enabled?: boolean; config?: Record<string, unknown>; sort_order?: number; unpin_version?: boolean },
+  ): Promise<ProjectSkillRead> {
+    return requestJson<ProjectSkillRead>(`/project-skills/${enableId}`, 'PATCH', input);
+  },
+  removeProjectSkill(enableId: string): Promise<void> {
+    return request<void>(`/project-skills/${enableId}`, { method: 'DELETE' });
+  },
+  /** 导出技能包 JSON（跨部署分享）。 */
+  exportSkill(id: string): Promise<SkillExportData> {
+    return request<SkillExportData>(`/skills/${id}/export`);
+  },
+  /** 导入技能包为我的技能（slug 冲突自动加后缀）。 */
+  importSkill(data: SkillExportData): Promise<SkillDetail> {
+    return requestJson<SkillDetail>('/skills/import', 'POST', data);
+  },
+
+  // —— Skills · 技能市场（docs/skill-system.md §4.3） ——
+  /** 发布我的技能到市场（当前版本），管理员审核后全员可安装。 */
+  publishSkill(id: string, input: { summary?: string; tags?: string[] } = {}): Promise<SkillListingRead> {
+    return requestJson<SkillListingRead>(`/skills/${id}/publish`, 'POST', input);
+  },
+  listMarketSkills(
+    opts: { q?: string; sort?: '-created_at' | 'installs'; status?: 'approved' | 'pending' } = {},
+  ): Promise<SkillListingRead[]> {
+    const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.status) params.set('status', opts.status);
+    const qs = params.toString();
+    return request<SkillListingRead[]>(`/market/skills${qs ? `?${qs}` : ''}`);
+  },
+  getMarketSkill(listingId: string): Promise<SkillListingDetail> {
+    return request<SkillListingDetail>(`/market/skills/${listingId}`);
+  },
+  /** 安装 = 拷贝为我的技能。 */
+  installMarketSkill(listingId: string): Promise<SkillDetail> {
+    return request<SkillDetail>(`/market/skills/${listingId}/install`, { method: 'POST' });
+  },
+  decideListing(listingId: string, decision: 'approve' | 'reject', comment?: string): Promise<SkillListingRead> {
+    return requestJson<SkillListingRead>(`/market/skills/${listingId}/${decision}`, 'POST', comment ? { comment } : {});
+  },
+  delistListing(listingId: string): Promise<SkillListingRead> {
+    return request<SkillListingRead>(`/market/skills/${listingId}`, { method: 'DELETE' });
+  },
+  listListingReviews(listingId: string): Promise<SkillRatingRead[]> {
+    return request<SkillRatingRead[]>(`/market/skills/${listingId}/reviews`);
+  },
+  addListingReview(listingId: string, input: { rating: number; comment?: string }): Promise<SkillRatingRead> {
+    return requestJson<SkillRatingRead>(`/market/skills/${listingId}/reviews`, 'POST', input);
+  },
 };
+

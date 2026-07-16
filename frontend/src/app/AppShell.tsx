@@ -48,6 +48,7 @@ function crumbFor(pathname: string): [string, string] {
     '/experiment': ['Stage 03', '实验搭建'],
     '/writer': ['Stage 04', '论文撰写'],
     '/paper-review': ['Stage 05', '论文评审'],
+    '/skills': ['Polaris', '技能'],
     '/settings': ['Polaris', '设置'],
   };
   return table[pathname] ?? ['Polaris', '—'];
@@ -201,6 +202,7 @@ export function AppShell() {
             <NavItem key={n.to} n={n} />
           ))}
           <NavItem n={{ to: '/voyages', icon: 'compass', zh: 'AI 任务', en: 'Tasks' }} />
+          <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
 
           <div className="sb-section">研究方向 · Directions</div>
           {projectsLoading && <div style={{ padding: '4px 10px', fontSize: 12, color: 'var(--text-4)' }}>加载中…</div>}

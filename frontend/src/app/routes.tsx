@@ -18,6 +18,7 @@ import { ExperimentDetailPage } from '../features/experiment/ExperimentDetailPag
 import { WriterPage } from '../features/writer/WriterPage';
 import { WriterEditorPage } from '../features/writer/WriterEditorPage';
 import { PaperReviewPage } from '../features/paper-review/PaperReviewPage';
+import { SkillsPage } from '../features/skills/SkillsPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 
 export const router = createBrowserRouter([
@@ -47,6 +48,7 @@ export const router = createBrowserRouter([
       { path: 'writer', element: <WriterPage /> },
       { path: 'writer/:id', element: <WriterEditorPage /> },
       { path: 'paper-review', element: <PaperReviewPage /> },
+      { path: 'skills', element: <SkillsPage /> },
       { path: 'settings', element: <SettingsPage /> },
     ],
   },
