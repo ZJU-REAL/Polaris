@@ -1,13 +1,17 @@
 """Sextant（六分仪 · self-verification）：每步完成后对照验收标准"对星定位"。
 
-- 确定性步骤（sleep / artifact.write）规则判定；
-- llm.complete 步骤用 stage=sextant 的 LLM 判定，输出严格 JSON
-  {"passed": bool, "reason": str}，解析失败重试。
+判定顺序（docs/voyage-loop.md §6，规则优先、LLM 兜底）：
+1. observation.error → 直接 fail；
+2. 动作自带机械验收结论 self_check → 直接采信；
+3. 步骤声明了结构化 checks → 检查注册表执行（确定性先跑，llm_rubric 最后）；
+4. 无 checks 的遗留路径：确定性动作白名单（sleep/artifact.write）→ 技能
+   output_contract → 验收标准文字走 LLM 判定 → 无标准但有产出默认通过。
 """
 
 import json
 from typing import Any
 
+from app.agents.voyage.checks import run_deterministic_checks
 from app.agents.voyage.skillset import check_output_contract, skill_output_contract
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
@@ -15,7 +19,7 @@ from app.models.voyage import VoyageRun
 
 _MAX_ATTEMPTS = 3  # 首次 + 重试 2 次
 
-# 无需 LLM 判断的确定性动作
+# 无需判定的 M1 基础动作（LLM 自由计划可用，无产出文本）
 DETERMINISTIC_ACTIONS = frozenset({"sleep", "artifact.write"})
 
 VERIFY_SYSTEM_PROMPT = """\
@@ -55,29 +59,30 @@ class Sextant:
                 "reason": str(self_check.get("reason", "")),
             }, {}
 
+        # ---- 结构化验收（docs/voyage-loop.md §6）----
+        checks = step_def.get("checks")
+        if isinstance(checks, list) and checks:
+            verdict, rubrics = run_deterministic_checks(
+                checks, observation=observation, checkpoint=run.checkpoint
+            )
+            if verdict is not None:
+                return verdict, {}
+            usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
+            for rubric in rubrics:
+                verdict, usage = await self._judge(
+                    run, step_def, observation, str(rubric.get("rubric") or "")
+                )
+                usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
+                if not verdict["passed"]:
+                    return verdict, usage_total
+            return {"passed": True, "reason": "全部检查通过（含 LLM 判定）"}, usage_total
+
+        # ---- 遗留路径（无 checks 声明的步骤）----
         action = str(step_def.get("action", ""))
         acceptance = step_def.get("acceptance")
 
-        if action == "experiment.smoke" and observation.get("exit_code") != 0:
-            return {
-                "passed": False,
-                "reason": f"冒烟测试退出码 {observation.get('exit_code')} != 0",
-            }, {}
-
-        if action in DETERMINISTIC_ACTIONS or action.startswith(
-            (
-                "wiki.",
-                "forge.",
-                "review.",
-                "experiment.",
-                "writing.",
-                "goal.",
-                "proposal.",
-                "present.",
-            )
-        ):
-            # wiki./forge./review./experiment./writing. 为确定性批处理步骤：单条失败已汇总进
-            # observation.failed，步骤级失败（helm 捕获的异常）走上面的 observation.error 分支
+        if action in DETERMINISTIC_ACTIONS:
             return {"passed": True, "reason": f"确定性步骤 {action} 执行成功"}, {}
 
         content = observation.get("content")
@@ -93,9 +98,22 @@ class Sextant:
         if not acceptance:
             return {"passed": True, "reason": "未声明验收标准，且步骤有产出，默认通过"}, {}
 
+        return await self._judge(run, step_def, observation, str(acceptance))
+
+    async def _judge(
+        self,
+        run: VoyageRun,
+        step_def: dict[str, Any],
+        observation: dict[str, Any],
+        rubric: str,
+    ) -> tuple[dict[str, Any], dict[str, int]]:
+        """LLM 对照 rubric 判定产出（llm_rubric 检查与遗留验收文字共用）。"""
+        content = observation.get("content")
+        if content is None:
+            content = json.dumps(observation, ensure_ascii=False, default=str)
         user_prompt = (
             f"步骤标题：{step_def.get('title', '')}\n"
-            f"验收标准：{acceptance}\n"
+            f"验收标准：{rubric}\n"
             f"步骤产出：\n{str(content)[:4000]}"
         )
         usage_total = {"prompt_tokens": 0, "completion_tokens": 0}

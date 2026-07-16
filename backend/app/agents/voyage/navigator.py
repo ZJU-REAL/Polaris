@@ -9,12 +9,16 @@ import json
 from typing import Any
 
 from app.agents.voyage.actions import known_actions
+from app.agents.voyage.checks import validate_checks
 from app.agents.voyage.skillset import skill_workflows
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
 
 _MAX_ATTEMPTS = 3  # 首次 + 重试 2 次
+
+# 产出文本、走遗留 LLM/内容判定的基础动作（其余动作缺省补 no_error 机械验收）
+_CONTENT_ACTIONS = frozenset({"llm.complete", "sleep", "artifact.write"})
 
 PLAN_SYSTEM_PROMPT = """\
 你是 Navigator，负责把科研目标分解为可执行的步骤计划。
@@ -65,6 +69,7 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": action,
             "params": {},
             "acceptance": acceptance,
+            "checks": [{"kind": "no_error"}],
             "requires_gate": None,
         }
         for title, action, acceptance in steps
@@ -88,6 +93,7 @@ def forge_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": action,
             "params": {},
             "acceptance": acceptance,
+            "checks": [{"kind": "no_error"}],
             "requires_gate": None,
         }
         for title, action, acceptance in steps
@@ -107,6 +113,7 @@ def _proposal_step(
         "action": action,
         "params": params or {},
         "acceptance": acceptance,
+        "checks": [{"kind": "no_error"}],
         "requires_gate": requires_gate,
     }
 
@@ -221,6 +228,7 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": action,
             "params": {},
             "acceptance": acceptance,
+            "checks": [{"kind": "no_error"}],
             "requires_gate": None,
         }
         for title, action, acceptance in steps
@@ -266,6 +274,10 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": action,
             "params": {},
             "acceptance": acceptance,
+            # 冒烟测试用退出码机械判定（原 Sextant 硬编码逻辑，docs/voyage-loop.md §6）
+            "checks": [{"kind": "exit_code", "value": 0}]
+            if action == "experiment.smoke"
+            else [{"kind": "no_error"}],
             "requires_gate": gate,
             "on_failure": "fail",
         }
@@ -297,6 +309,7 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": "writing.section",
             "params": {"section": s},
             "acceptance": f"{s} 节已通过静态校验并写入稿件文件",
+            "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
         }
@@ -309,6 +322,7 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
                 "action": "writing.compile",
                 "params": {"phase": "mid"},
                 "acceptance": "编译已执行并记录诊断（中期编译不阻塞）",
+                "checks": [{"kind": "no_error"}],
                 "requires_gate": None,
                 "on_failure": "fail",
             }
@@ -319,6 +333,7 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
                 "action": "writing.related_work",
                 "params": {},
                 "acceptance": "related_work 节已通过静态校验并写入稿件文件",
+                "checks": [{"kind": "no_error"}],
                 "requires_gate": None,
                 "on_failure": "fail",
             }
@@ -329,6 +344,7 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": "writing.compile",
             "params": {"phase": "final"},
             "acceptance": "全文编译 status=ok",
+            "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
         }
@@ -353,6 +369,7 @@ def presentation_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": action,
             "params": {},
             "acceptance": acceptance,
+            "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
         }
@@ -379,6 +396,7 @@ def paper_review_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "action": action,
             "params": {},
             "acceptance": acceptance,
+            "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
         }
@@ -455,12 +473,23 @@ def validate_steps(data: Any) -> list[dict[str, Any]]:
         acceptance = raw.get("acceptance")
         if acceptance is not None and not isinstance(acceptance, str):
             raise ValueError(f"step {i} acceptance must be string or null")
+        checks = raw.get("checks")
+        if checks is not None:
+            try:
+                checks = validate_checks(checks)
+            except ValueError as e:
+                raise ValueError(f"step {i} checks invalid: {e}") from e
+        elif action not in _CONTENT_ACTIONS:
+            # 平台批处理动作（wiki./forge./… 前缀）默认机械验收：无 error 即通过
+            # （等价于旧 Sextant 前缀白名单，docs/voyage-loop.md §6）
+            checks = [{"kind": "no_error"}]
         steps.append(
             {
                 "title": title.strip(),
                 "action": action,
                 "params": params,
                 "acceptance": acceptance,
+                "checks": checks,
                 "requires_gate": requires_gate or None,
             }
         )
