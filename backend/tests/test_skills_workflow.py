@@ -249,6 +249,39 @@ def test_expand_workflow_validates_steps():
         pass
 
 
+async def test_export_import_roundtrip(client):
+    headers, _ = await _setup(client)
+    skill = (
+        await client.post(
+            "/api/skills",
+            json={
+                "slug": "share-me",
+                "kind": "rubric",
+                "name": "可分享标准",
+                "manifest": {"targets": ["forge.score"]},
+                "body": "分享内容。",
+            },
+            headers=headers,
+        )
+    ).json()
+
+    export = (await client.get(f"/api/skills/{skill['id']}/export", headers=headers)).json()
+    assert export["format"] == "polaris-skill@1"
+    assert export["body"] == "分享内容。"
+    assert export["manifest"]["targets"] == ["forge.score"]
+
+    # 自己导入：slug 冲突自动加后缀；内容全量保留
+    resp = await client.post("/api/skills/import", json=export, headers=headers)
+    assert resp.status_code == 201, resp.text
+    imported = resp.json()
+    assert imported["slug"] == "share-me-2"
+    assert imported["current_version"]["body"] == "分享内容。"
+
+    # 非法包被拒绝
+    bad = dict(export, format="other@9")
+    assert (await client.post("/api/skills/import", json=bad, headers=headers)).status_code == 422
+
+
 async def test_voyage_detail_lists_snapshot_skills(client, queue_stub, bus_recorder):
     headers, project_id = await _setup(client)
     skill = (

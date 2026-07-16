@@ -21,6 +21,8 @@ from app.schemas.skill import (
     ProjectSkillUpdate,
     SkillCreate,
     SkillDetail,
+    SkillExport,
+    SkillManifest,
     SkillRead,
     SkillRunRequest,
     SkillTestRequest,
@@ -135,6 +137,58 @@ async def fork_skill(
     skill = await _get_visible_skill(session, skill_id, user)
     fork = await skills_service.fork_skill(session, skill, user_id=user.id)
     return await _detail(session, fork)
+
+
+@router.get("/skills/{skill_id}/export", response_model=SkillExport)
+async def export_skill(
+    skill_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> SkillExport:
+    """导出当前版本为可分享的技能包 JSON（跨部署导入用）。"""
+    skill = await _get_visible_skill(session, skill_id, user)
+    version = await skills_service.latest_version(session, skill.id)
+    if version is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SKILL_HAS_NO_VERSION")
+    return SkillExport(
+        slug=skill.slug,
+        kind=skill.kind,
+        name=skill.name,
+        name_en=skill.name_en,
+        description=skill.description,
+        version=version.version,
+        manifest=SkillManifest.model_validate(version.manifest),
+        body=version.body,
+    )
+
+
+@router.post("/skills/import", response_model=SkillDetail, status_code=status.HTTP_201_CREATED)
+async def import_skill(
+    data: SkillExport,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> SkillDetail:
+    """导入技能包为我的技能（全量校验；slug 冲突自动加后缀）。"""
+    slug = data.slug
+    for i in range(1, 100):
+        candidate = slug if i == 1 else f"{data.slug}-{i}"[:64]
+        create = SkillCreate(
+            slug=candidate,
+            kind=data.kind,
+            name=data.name,
+            name_en=data.name_en,
+            description=data.description,
+            manifest=data.manifest,
+            body=data.body,
+        )
+        try:
+            skill = await skills_service.create_skill(session, owner_id=user.id, data=create)
+            return await _detail(session, skill)
+        except skills_service.SkillSlugConflictError:
+            continue
+        except skills_service.SkillWorkflowInvalidError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
+    raise HTTPException(status.HTTP_409_CONFLICT, detail="SKILL_SLUG_TAKEN")
 
 
 @router.post("/skills/{skill_id}/test", response_model=SkillTestResult)

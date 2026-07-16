@@ -193,6 +193,90 @@ class SkillRunRequest(BaseModel):
     budget: dict[str, Any] | None = None  # {max_tokens?}
 
 
+SKILL_EXPORT_FORMAT = "polaris-skill@1"
+
+
+class SkillExport(BaseModel):
+    """跨部署分享的技能包（导出/导入均为此结构，导入走全量校验）。"""
+
+    format: str = SKILL_EXPORT_FORMAT
+    slug: str
+    kind: str
+    name: str
+    name_en: str | None = None
+    description: str | None = None
+    version: int | None = None  # 导出时的版本号，仅供参考
+    manifest: SkillManifest
+    body: str = Field(min_length=1, max_length=BODY_MAX_CHARS)
+
+    @field_validator("format")
+    @classmethod
+    def _check_format(cls, v: str) -> str:
+        if v != SKILL_EXPORT_FORMAT:
+            raise ValueError(f"unsupported format: {v}")
+        return v
+
+
+class SkillPublishRequest(BaseModel):
+    summary: str | None = Field(default=None, max_length=2000)
+    tags: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("tags")
+    @classmethod
+    def _check_tags(cls, v: list[str]) -> list[str]:
+        cleaned = [t.strip() for t in v if t.strip()]
+        if any(len(t) > 32 for t in cleaned):
+            raise ValueError("tag too long (max 32 chars)")
+        return cleaned
+
+
+class SkillListingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    skill_id: uuid.UUID
+    skill_version_id: uuid.UUID
+    summary: str | None
+    tags: list[str] | None
+    status: str  # pending | approved | rejected | delisted
+    install_count: int
+    published_by: uuid.UUID | None
+    comment: str | None
+    created_at: datetime
+    # 联表补充（service 填充）
+    skill: SkillRead | None = None
+    version: int | None = None
+    rating_avg: float | None = None
+    rating_count: int = 0
+
+
+class SkillListingDetail(SkillListingRead):
+    """详情：附发布版本全文（安装前强制可预览）。"""
+
+    manifest: dict[str, Any] | None = None
+    body: str | None = None
+
+
+class SkillRatingCreate(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class SkillRatingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    listing_id: uuid.UUID
+    user_id: uuid.UUID
+    rating: int
+    comment: str | None
+    created_at: datetime
+
+
+class ListingDecision(BaseModel):
+    comment: str | None = Field(default=None, max_length=2000)
+
+
 class ProjectSkillRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
