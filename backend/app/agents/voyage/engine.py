@@ -1,15 +1,23 @@
 """VoyageEngine：持久化状态机，驱动 Navigator/Helm/Sextant 三元组闭环。
 
-状态机（docs/architecture.md §3）：
-    planning → executing → verifying ─┬→ (下一步) executing
-                                      ├→ replanning → executing
+任务循环（docs/voyage-loop.md）：计划载体是**带状态位的扁平步骤清单**（真源在
+voyage_steps 行，run.plan 只是派生快照），调度规则 = 按 rank 取第一个非终态节点。
+
+    planning → executing → verifying ─┬→ (下一节点) executing
+                                      ├→ 原地重试（执行类错误，attempt < max）
+                                      ├→ replanning → executing（template/loop）
                                       ├→ paused_gate（审批后 resume）
-                                      ├→ paused_error（连续重规划超限）
+                                      ├→ paused_error（pipeline 失败/重规划超限，可修复后重试）
                                       └→ done / failed
 要点：
-- 每步执行/判定后持久化 cursor + checkpoint，worker 崩溃后可从断点续跑；
+- 失败分派按 run.mode（docs/voyage-loop.md §5.1）：
+  执行类错误（observation.error）在节点 max_attempts 内带诊断原地重试；
+  判断类失败（校验未过）不重试——pipeline 直接停（on_failure="fail" → failed，
+  否则 paused_error 等人工修复后断点重试），template/loop 走重规划；
+- 重规划不再删行：旧尾部节点标 obsolete 留痕，新节点按 rank 间隙追加（seq 只增不改）；
+- 每次尝试完整归档进 step.attempts（SSE 事件不持久，审计留痕一律落库）；
 - requires_gate 步骤执行前创建 Gate 并暂停（结束本次 ARQ 任务），approve 后
-  由 resume_voyage 续跑；
+  由 resume_voyage 续跑；resume 会把 paused_error 的失败节点复位重试；
 - cancel 协作式：每步开始前查 DB status，状态写入用条件 UPDATE 防覆盖 cancelled；
 - 全程向 Redis ``voyage:{id}:events`` 发布 status/step/log 事件；
 - 步骤与 Sextant 的 tokens 累加到 run.usage，超出 budget.max_tokens 则暂停。
@@ -18,10 +26,11 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.voyage.actions import ActionContext
+from app.agents.voyage.checks import run_deterministic_checks
 from app.agents.voyage.helm import Helm
 from app.agents.voyage.navigator import Navigator, NavigatorError
 from app.agents.voyage.sextant import Sextant
@@ -31,10 +40,11 @@ from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.base import utcnow
 from app.models.gate import Gate
 from app.models.llm_config import LLMUsage
-from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep
+from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep, mode_for_kind
 from app.services import skills as skills_service
 
 MAX_REPLANS = 2
+_RANK_GAP = 100.0
 
 
 class _ExternallyTerminated(Exception):
@@ -49,15 +59,37 @@ def _serialize_step(step: VoyageStep) -> dict[str, Any]:
     return {
         "id": str(step.id),
         "seq": step.seq,
+        "rank": step.rank,
         "title": step.title,
         "action": step.action,
         "params": step.params,
         "observation": step.observation,
         "verdict": step.verdict,
         "status": step.status,
+        "attempt": step.attempt,
         "tokens": step.tokens,
         "started_at": step.started_at.isoformat() if step.started_at else None,
         "finished_at": step.finished_at.isoformat() if step.finished_at else None,
+    }
+
+
+def _step_def_from_row(row: VoyageStep, plan: list[Any] | None) -> dict[str, Any]:
+    """从节点行重建步骤定义；迁移前的存量行缺列时回退到 run.plan 快照。"""
+    fallback: dict[str, Any] = {}
+    if isinstance(plan, list) and row.seq < len(plan) and isinstance(plan[row.seq], dict):
+        fallback = plan[row.seq]
+    acc = row.acceptance if isinstance(row.acceptance, dict) else {}
+    provenance = row.provenance if isinstance(row.provenance, dict) else {}
+    return {
+        "title": row.title,
+        "action": row.action,
+        "params": row.params or {},
+        "acceptance": acc.get("text") if "text" in acc else fallback.get("acceptance"),
+        "checks": acc.get("checks") if "checks" in acc else fallback.get("checks"),
+        "requires_gate": (
+            row.requires_gate if row.requires_gate is not None else fallback.get("requires_gate")
+        ),
+        "on_failure": provenance.get("on_failure", fallback.get("on_failure")),
     }
 
 
@@ -83,7 +115,24 @@ class VoyageEngine:
         await self._drive(run_id)
 
     async def resume(self, run_id: uuid.UUID) -> None:
-        """闸门审批 / worker 重启后从 cursor 断点续跑。"""
+        """闸门审批 / paused_error 重试 / worker 重启后从断点续跑。
+
+        失败节点复位重试（docs/voyage-loop.md：人工修复代码后从断点续跑，
+        前功不作废）：attempt 清零（历史已归档进 attempts），状态回 pending。
+        """
+        async with self._sessionmaker() as session:
+            run = await session.get(VoyageRun, run_id)
+            if run is None or run.status in TERMINAL_STATUSES:
+                return
+            stmt = (
+                select(VoyageStep)
+                .where(VoyageStep.run_id == run_id, VoyageStep.status.in_(("failed", "running")))
+                .order_by(VoyageStep.rank, VoyageStep.seq)
+            )
+            for row in (await session.execute(stmt)).scalars().all():
+                row.status = "pending"
+                row.attempt = 0
+            await session.commit()
         await self._drive(run_id)
 
     # ---- 事件发布 ----
@@ -138,6 +187,12 @@ class VoyageEngine:
             if run is None or run.status in TERMINAL_STATUSES:
                 return
             try:
+                # mode 由 kind 静态决定（docs/voyage-loop.md §2）；首次驱动时对齐，
+                # 顺带覆盖迁移前创建的存量 run
+                expected_mode = mode_for_kind(run.kind)
+                if run.mode != expected_mode:
+                    run.mode = expected_mode
+                    await session.commit()
                 await self._ensure_skills_snapshot(session, run)
                 if run.plan is None:
                     await self._plan(session, run)
@@ -178,27 +233,54 @@ class VoyageEngine:
         await self._emit_log(run, f"计划就绪，共 {len(steps)} 步")
 
     async def _ensure_step_rows(self, session: AsyncSession, run: VoyageRun) -> None:
-        """为 plan 中尚无记录的步骤补建 VoyageStep 行（断点恢复/重规划后）。"""
+        """为 plan 中尚无记录的步骤补建节点行（首次规划/断点恢复）。"""
         stmt = select(VoyageStep.seq).where(VoyageStep.run_id == run.id)
         existing = {seq for (seq,) in (await session.execute(stmt)).all()}
         for seq, step_def in enumerate(run.plan or []):
             if seq in existing:
                 continue
-            session.add(
-                VoyageStep(
-                    run_id=run.id,
-                    seq=seq,
-                    title=str(step_def.get("title", f"step {seq}")),
-                    action=str(step_def.get("action", "")),
-                    params=step_def.get("params") or {},
-                    status="pending",
-                )
-            )
+            session.add(self._new_step_row(run, seq=seq, rank=seq * _RANK_GAP, step_def=step_def))
         await session.commit()
 
-    async def _get_step_row(self, session: AsyncSession, run: VoyageRun, seq: int) -> VoyageStep:
-        stmt = select(VoyageStep).where(VoyageStep.run_id == run.id, VoyageStep.seq == seq)
-        return (await session.execute(stmt)).scalar_one()
+    def _new_step_row(
+        self, run: VoyageRun, *, seq: int, rank: float, step_def: dict[str, Any]
+    ) -> VoyageStep:
+        provenance: dict[str, Any] = {"plan_iteration": run.plan_iteration}
+        if step_def.get("on_failure"):
+            provenance["on_failure"] = step_def["on_failure"]
+        return VoyageStep(
+            run_id=run.id,
+            seq=seq,
+            rank=rank,
+            title=str(step_def.get("title", f"step {seq}")),
+            action=str(step_def.get("action", "")),
+            params=step_def.get("params") or {},
+            acceptance={
+                "text": step_def.get("acceptance"),
+                "checks": step_def.get("checks"),
+            },
+            requires_gate=step_def.get("requires_gate") or None,
+            budget=step_def.get("budget") or None,
+            provenance=provenance,
+            status="pending",
+        )
+
+    async def _active_rows(self, session: AsyncSession, run: VoyageRun) -> list[VoyageStep]:
+        """非 obsolete 节点，按清单序（rank, seq）。"""
+        stmt = (
+            select(VoyageStep)
+            .where(VoyageStep.run_id == run.id, VoyageStep.status != "obsolete")
+            .order_by(VoyageStep.rank, VoyageStep.seq)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    def _max_attempts(self, run: VoyageRun, row: VoyageStep) -> int:
+        budget = row.budget if isinstance(row.budget, dict) else {}
+        declared = budget.get("max_attempts")
+        if declared:
+            return int(declared)
+        # pipeline 默认不隐式重试（副作用步骤需显式声明），template/loop 默认重试 1 次
+        return 1 if run.mode == "pipeline" else 2
 
     async def _loop(self, session: AsyncSession, run: VoyageRun) -> None:
         while True:
@@ -208,11 +290,17 @@ class VoyageEngine:
                 await self._emit_status(run)
                 return
 
-            plan: list[dict[str, Any]] = list(run.plan or [])
-            if run.cursor >= len(plan):
-                await self._set_status(session, run, "done")
+            rows = await self._active_rows(session, run)
+            node_index, node = next(
+                ((i, r) for i, r in enumerate(rows) if r.status != "passed"),
+                (len(rows), None),
+            )
+            if run.cursor != node_index:
+                run.cursor = node_index
+                await session.commit()
+            if node is None:
+                await self._finalize(session, run)
                 return
-            step_def = plan[run.cursor]
 
             # 预算：超限自动暂停
             if self._budget_exceeded(run):
@@ -220,35 +308,58 @@ class VoyageEngine:
                 await self._set_status(session, run, "paused_error")
                 return
 
+            step_def = _step_def_from_row(node, run.plan)
+
+            # 复位失败节点（直接 run() 再驱动而未经 resume 复位时）
+            if node.status == "failed":
+                if not await self._handle_failure(session, run, node, node_index, step_def):
+                    return
+                continue
+
             # 人在环闸门
             if step_def.get("requires_gate") and not await self._gate_cleared(
-                session, run, step_def
+                session, run, node, node_index, step_def
             ):
                 return
 
-            step_row = await self._get_step_row(session, run, run.cursor)
-            await self._execute_and_verify(session, run, step_def, step_row)
+            await self._execute_and_verify(session, run, step_def, node)
 
-            if step_row.verdict and step_row.verdict.get("passed"):
-                run.cursor += 1
-                await session.commit()
-                if run.cursor >= len(run.plan or []):
-                    await self._set_status(session, run, "done")
-                    return
+            if node.verdict and node.verdict.get("passed"):
                 await self._set_status(session, run, "executing")
-            else:
-                if not await self._replan(session, run, step_def, step_row):
-                    return
+                continue
+            if not await self._handle_failure(session, run, node, node_index, step_def):
+                return
+
+    async def _finalize(self, session: AsyncSession, run: VoyageRun) -> None:
+        """所有节点走完 → voyage 级完成标准终检（docs/voyage-loop.md §5.4）。"""
+        criteria = run.done_criteria if isinstance(run.done_criteria, dict) else None
+        checks = criteria.get("checks") if criteria else None
+        if checks:
+            verdict, _rubrics = run_deterministic_checks(
+                checks, observation=None, checkpoint=run.checkpoint
+            )
+            if verdict is not None and not verdict.get("passed"):
+                await self._emit_log(run, f"完成标准未达成：{verdict.get('reason')}")
+                # 计划编辑（阶段 D）接入前，loop 模式也先暂停等人工
+                await self._set_status(session, run, "paused_error")
+                return
+        await self._set_status(session, run, "done")
 
     # ---- 闸门 ----
 
     async def _gate_cleared(
-        self, session: AsyncSession, run: VoyageRun, step_def: dict[str, Any]
+        self,
+        session: AsyncSession,
+        run: VoyageRun,
+        node: VoyageStep,
+        node_index: int,
+        step_def: dict[str, Any],
     ) -> bool:
         """闸门已批准返回 True；否则（创建/等待/驳回）处理状态并返回 False。"""
         checkpoint = dict(run.checkpoint or {})
         gates: dict[str, Any] = dict(checkpoint.get("gates") or {})
-        entry = gates.get(str(run.cursor))
+        # 键 = 节点 id；旧数据（迁移前 in-flight run）按游标键控，做读取回退
+        entry = gates.get(str(node.id)) or gates.get(str(node_index))
 
         if entry:
             gate = await session.get(Gate, uuid.UUID(entry["gate_id"]))
@@ -265,7 +376,7 @@ class VoyageEngine:
 
         payload: dict[str, Any] = {
             "voyage_id": str(run.id),
-            "step_seq": run.cursor,
+            "step_seq": node_index,
             "step_title": step_def.get("title"),
         }
         # 动作可在 checkpoint["gate_payload"] 预置业务上下文（如实验 id + 预算摘要）
@@ -280,11 +391,11 @@ class VoyageEngine:
         )
         session.add(gate)
         await session.flush()
-        gates[str(run.cursor)] = {"gate_id": str(gate.id)}
+        gates[str(node.id)] = {"gate_id": str(gate.id)}
         checkpoint["gates"] = gates
         run.checkpoint = checkpoint
         await session.commit()
-        await self._emit_log(run, f"步骤 {run.cursor} 需要 {gate.kind} 人工审批，任务暂停")
+        await self._emit_log(run, f"步骤 {node_index} 需要 {gate.kind} 人工审批，任务暂停")
         await self._emit_notify(
             run.project_id,
             {
@@ -313,12 +424,17 @@ class VoyageEngine:
         step_row: VoyageStep,
     ) -> None:
         step_row.status = "running"
+        step_row.attempt = step_row.attempt + 1
         step_row.started_at = utcnow()
         await session.commit()
         await self._emit_step(run, step_row)
 
         ctx = ActionContext(
-            run=run, llm=self._llm, checkpoint=dict(run.checkpoint or {}), bus=self._bus
+            run=run,
+            llm=self._llm,
+            checkpoint=dict(run.checkpoint or {}),
+            bus=self._bus,
+            step_id=step_row.id,
         )
         observation = await self.helm.execute(ctx, step_def)
         run.checkpoint = dict(ctx.checkpoint)
@@ -333,12 +449,29 @@ class VoyageEngine:
         step_row.verdict = verdict
         step_row.status = "passed" if verdict.get("passed") else "failed"
         step_row.tokens = self._sum_usage(action_usage or {}, verify_usage)
+        self._archive_attempt(step_row)
         self._accumulate_usage(run, step_row.tokens)
         # observation 未携带 usage 的动作（如 wiki 批处理）绕过了上面的累计，
         # 以 LLMUsage 明细（router 记账，含 voyage_id）为准刷新 run.usage
         await self._refresh_usage_from_ledger(session, run)
         await session.commit()
         await self._emit_step(run, step_row)
+
+    @staticmethod
+    def _archive_attempt(step_row: VoyageStep) -> None:
+        """每次尝试完整归档（docs/voyage-loop.md §4：审计留痕一律落库）。"""
+        archive = list(step_row.attempts or [])
+        archive.append(
+            {
+                "attempt": step_row.attempt,
+                "observation": step_row.observation,
+                "verdict": step_row.verdict,
+                "tokens": step_row.tokens,
+                "started_at": step_row.started_at.isoformat() if step_row.started_at else None,
+                "finished_at": step_row.finished_at.isoformat() if step_row.finished_at else None,
+            }
+        )
+        step_row.attempts = archive
 
     @staticmethod
     def _sum_usage(*usages: dict[str, Any]) -> dict[str, int]:
@@ -388,24 +521,66 @@ class VoyageEngine:
             return False
         return int((run.usage or {}).get("total_tokens", 0)) >= int(max_tokens)
 
+    # ---- 失败分派（docs/voyage-loop.md §5.1）----
+
+    async def _handle_failure(
+        self,
+        session: AsyncSession,
+        run: VoyageRun,
+        node: VoyageStep,
+        node_index: int,
+        step_def: dict[str, Any],
+    ) -> bool:
+        """验证失败后的分派。返回 True 表示可继续循环，False 表示已停。"""
+        diagnosis = str((node.verdict or {}).get("reason", ""))
+        is_execution_error = bool((node.observation or {}).get("error"))
+
+        # 执行类错误（工具/网络/代码异常）在节点尝试预算内原地重试；
+        # 判断类失败（校验未过）重试无意义，直接进入分派
+        if is_execution_error and node.attempt < self._max_attempts(run, node):
+            params = dict(node.params or {})
+            params["diagnosis"] = diagnosis[:2000]
+            node.params = params
+            node.status = "pending"
+            await session.commit()
+            await self._emit_log(
+                run,
+                f"步骤 {node_index} 执行出错，第 {node.attempt + 1} 次尝试（带诊断重试）",
+            )
+            return True
+
+        # 固定管线步骤可声明 on_failure="fail"：不重规划，直接判 voyage 失败
+        if step_def.get("on_failure") == "fail":
+            await self._emit_log(run, f"步骤失败（on_failure=fail，不重规划）：{diagnosis}")
+            await self._set_status(session, run, "failed")
+            return False
+
+        if run.mode == "pipeline":
+            # 确定性管线不经 LLM 重规划：暂停等人工（修复代码后可从断点重试，
+            # 前面步骤的成果不作废）
+            await self._emit_log(run, f"步骤失败，任务暂停等待人工处理：{diagnosis}")
+            await self._set_status(session, run, "paused_error")
+            return False
+
+        return await self._replan(session, run, node, step_def)
+
     # ---- 重规划 ----
 
     async def _replan(
         self,
         session: AsyncSession,
         run: VoyageRun,
+        failed_node: VoyageStep,
         failed_step: dict[str, Any],
-        step_row: VoyageStep,
     ) -> bool:
-        """验证失败后重规划。返回 True 表示可继续循环，False 表示已停。"""
+        """验证失败后重规划（template/loop）。返回 True 表示可继续循环，False 表示已停。
+
+        旧尾部节点标 obsolete 留痕（不删行），新节点按 rank 间隙追加，
+        run.plan 快照由节点行重新派生。
+        """
         checkpoint = dict(run.checkpoint or {})
         replans = int(checkpoint.get("replans", 0))
-        diagnosis = (step_row.verdict or {}).get("reason", "")
-        # 固定管线步骤可声明 on_failure="fail"：不重规划，直接判 voyage 失败
-        if failed_step.get("on_failure") == "fail":
-            await self._emit_log(run, f"步骤失败（on_failure=fail，不重规划）：{diagnosis}")
-            await self._set_status(session, run, "failed")
-            return False
+        diagnosis = str((failed_node.verdict or {}).get("reason", ""))
         if replans >= MAX_REPLANS:
             await self._emit_log(run, f"重规划已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理")
             await self._set_status(session, run, "paused_error")
@@ -413,26 +588,45 @@ class VoyageEngine:
 
         await self._set_status(session, run, "replanning")
         try:
-            new_tail = await self.navigator.replan(run, failed_step, str(diagnosis))
+            new_tail = await self.navigator.replan(run, failed_step, diagnosis)
         except NavigatorError as e:
             await self._emit_log(run, f"重规划失败：{e}")
             await self._set_status(session, run, "paused_error")
             return False
 
-        plan = list(run.plan or [])
-        run.plan = plan[: run.cursor] + new_tail
-        checkpoint["replans"] = replans + 1
-        # 被替换的失败步骤归档进 checkpoint 留痕（行记录将被新计划覆盖）
+        # 失败节点起的旧尾部整体作废（留痕；失败节点本身归档进 checkpoint 兼容回放）
+        rows = await self._active_rows(session, run)
+        tail = [r for r in rows if (r.rank, r.seq) >= (failed_node.rank, failed_node.seq)]
+        for row in tail:
+            row.status = "obsolete"
         replaced = list(checkpoint.get("replaced_steps") or [])
-        replaced.append(_serialize_step(step_row))
+        replaced.append(_serialize_step(failed_node))
         checkpoint["replaced_steps"] = replaced
+        checkpoint["replans"] = replans + 1
         run.checkpoint = checkpoint
-        # 丢弃失败步骤起的旧步骤记录，为新计划补建
-        await session.execute(
-            delete(VoyageStep).where(VoyageStep.run_id == run.id, VoyageStep.seq >= run.cursor)
-        )
+        run.plan_iteration = run.plan_iteration + 1
+
+        # 新节点追加：seq 只增不改，rank 从失败节点位置继续
+        max_seq = (
+            await session.execute(
+                select(func.coalesce(func.max(VoyageStep.seq), -1)).where(
+                    VoyageStep.run_id == run.id
+                )
+            )
+        ).scalar_one()
+        for i, step_def in enumerate(new_tail):
+            session.add(
+                self._new_step_row(
+                    run,
+                    seq=int(max_seq) + 1 + i,
+                    rank=failed_node.rank + i * _RANK_GAP,
+                    step_def=step_def,
+                )
+            )
+        # run.plan 快照单向派生：已通过前缀 + 新尾部
+        passed_defs = [_step_def_from_row(r, run.plan) for r in rows if r.status == "passed"]
+        run.plan = passed_defs + list(new_tail)
         await session.commit()
-        await self._ensure_step_rows(session, run)
         await self._emit_log(
             run, f"第 {replans + 1} 次重规划完成，剩余 {len(new_tail)} 步（诊断：{diagnosis}）"
         )

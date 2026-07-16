@@ -578,9 +578,10 @@ async def goal_refine(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
 
 
 async def _own_gate_comment(ctx: ActionContext) -> str:
-    """当前步骤自己的闸门 comment（engine 在 checkpoint.gates 记 {seq: {gate_id}}）。"""
+    """当前步骤自己的闸门 comment（engine 在 checkpoint.gates 记 {step_id: {gate_id}}；
+    迁移前的存量 run 按游标键控，做读取回退）。"""
     gates = ctx.checkpoint.get("gates") or {}
-    entry = gates.get(str(ctx.run.cursor))
+    entry = gates.get(str(ctx.step_id)) or gates.get(str(ctx.run.cursor))
     if not isinstance(entry, dict) or not entry.get("gate_id"):
         return ""
     async with get_sessionmaker()() as session:

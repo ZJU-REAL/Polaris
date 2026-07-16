@@ -97,6 +97,9 @@ async def get_voyage(
 ) -> VoyageDetailRead:
     run = await _get_owned_voyage(session, voyage_id, user, with_steps=True)
     detail = VoyageDetailRead.model_validate(run)
+    # 默认只回当前活动清单：计划调整时被作废的步骤（obsolete）留痕在库、
+    # 不进任务详情视图（docs/voyage-loop.md §4）
+    detail.steps = [s for s in detail.steps if s.status != "obsolete"]
     detail.skills = _skills_summary(run)
     return detail
 

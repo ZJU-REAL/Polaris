@@ -26,6 +26,7 @@ class ActionContext:
     llm: LLMRouter
     checkpoint: dict[str, Any] = field(default_factory=dict)
     bus: EventBus | None = None  # 动作内实时事件（如 review.message）；无总线时静默跳过
+    step_id: Any | None = None  # 当前节点 id（动作查自己的闸门等；engine 注入）
 
     async def notify(self, message: dict[str, Any]) -> None:
         """向项目通知频道发布事件（bus 未注入时为 no-op）。"""
