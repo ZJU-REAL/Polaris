@@ -114,10 +114,13 @@ loop:
   5. Helm 执行 → observation（沿用）
   6. Sextant 跑该节点 acceptance.checks → verdict（§6）
   7. passed → 更新状态，回到 3
-     failed → attempt < max_attempts：带诊断原节点重试（诊断注入 params.diagnosis；
-              pipeline 默认 max_attempts=1 即不重试，见 §4）
-              attempt 用尽 → 按 mode 分派：
-                pipeline → run failed（现 on_failure="fail" 语义）
+     failed → 分两类（0x00 事故的教训：重试只对暂时性故障有意义）：
+       执行类错误（observation.error：工具/网络/代码异常）→ attempt < max_attempts 时
+         带诊断原节点重试（诊断注入 params.diagnosis；pipeline 默认 max_attempts=1
+         即不隐式重试，见 §4）；
+       判断类失败（校验未过）→ 不原地重试，直接分派：
+                pipeline → 显式 on_failure="fail" 才 failed；否则 paused_error
+                           （人工修复代码后断点重试，前面步骤成果不作废）
                 template → 查确定性重规划分支表；未覆盖 → LLM 兜底一次 → 仍失败 paused_error
                 loop     → 回灌 Navigator（§5.3）
 ```
@@ -245,6 +248,9 @@ run 节点（由 experiment.run 轮询时自查时长并上报，引擎记账并
 再决定续跑还是重启——防 worker 重投导致重复训练。
 
 ## 8. 迁移路径
+
+进度：A/B/C 已实现（alembic `c1d2e3f4a5b6_voyage_loop_v1`，`agents/voyage/checks.py`，
+引擎重写 + `tests/test_voyage_loop.py`）；D-F 未开始。
 
 | 阶段 | 内容 | 兼容性 |
 | --- | --- | --- |
