@@ -15,6 +15,7 @@ from app.api import (
     notes,
     papers,
     projects,
+    skills,
     ssh_credentials,
     voyages,
     wiki,
@@ -33,6 +34,7 @@ api_router.include_router(concepts.router)
 api_router.include_router(ingest.router)
 api_router.include_router(wiki.router)
 api_router.include_router(ideas.router)
+api_router.include_router(skills.router)
 api_router.include_router(ssh_credentials.router)
 api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)

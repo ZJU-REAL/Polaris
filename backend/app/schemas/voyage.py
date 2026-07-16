@@ -50,5 +50,17 @@ class VoyageRead(BaseModel):
     updated_at: datetime
 
 
+class VoyageSkillUse(BaseModel):
+    """本次任务快照中的一个技能（docs/skill-system.md §4.4）。"""
+
+    slug: str
+    name: str
+    kind: str
+    version: int
+    target: str
+
+
 class VoyageDetailRead(VoyageRead):
     steps: list[VoyageStepRead]
+    # checkpoint["skills"] 快照摘要（路由填充；无快照为 []）
+    skills: list[VoyageSkillUse] = Field(default_factory=list)

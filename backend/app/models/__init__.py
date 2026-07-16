@@ -19,6 +19,7 @@ from app.models.paper import (
 from app.models.project import Project, ProjectMember
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.ssh_credential import SSHCredential
+from app.models.skill import ProjectSkill, Skill, SkillListing, SkillRating, SkillVersion
 from app.models.user import User
 from app.models.voyage import VoyageRun, VoyageStep
 
@@ -42,9 +43,14 @@ __all__ = [
     "ProjectMember",
     "ReviewMessage",
     "ReviewSession",
+    "ProjectSkill",
     "SSHCredential",
     "TimestampMixin",
     "User",
+    "Skill",
+    "SkillListing",
+    "SkillRating",
+    "SkillVersion",
     "UUIDPrimaryKeyMixin",
     "VoyageRun",
     "VoyageStep",

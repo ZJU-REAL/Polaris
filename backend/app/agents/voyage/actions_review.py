@@ -118,7 +118,9 @@ async def _get_manuscript(session: AsyncSession, ctx: ActionContext) -> Manuscri
 
 
 def _personas(ctx: ActionContext) -> list[dict[str, str]]:
-    return pr.resolve_review_personas(_params(ctx).get("personas"))
+    """优先级：显式 params.personas > persona 技能（review.referees）> 内置默认。"""
+    raw = _params(ctx).get("personas") or ctx.skill_personas("review.referees")
+    return pr.resolve_review_personas(raw)
 
 
 def _fact_pack(manuscript: Manuscript) -> dict[str, Any]:
@@ -511,7 +513,7 @@ async def review_referees(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 continue
             system = REVIEWER_SYSTEM_PROMPT.format(
                 name=persona["name"], stance=persona.get("stance") or ""
-            )
+            ) + ctx.skill_guidance("review.referees")
             review: dict[str, Any] | None = None
             unreliable = False
             regenerated = 0

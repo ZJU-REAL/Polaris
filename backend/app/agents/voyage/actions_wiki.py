@@ -364,6 +364,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             .all()
         )
 
+        system_prompt = RELEVANCE_SYSTEM_PROMPT + ctx.skill_guidance("wiki.score_relevance")
         for paper in papers:
             user_prompt = (
                 f"{context_text}\n标题：{paper.title}\n摘要：{paper.abstract or '（无摘要）'}"
@@ -372,7 +373,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 result = await ctx.llm.complete(
                     "relevance",
                     [
-                        Message(role="system", content=RELEVANCE_SYSTEM_PROMPT),
+                        Message(role="system", content=system_prompt),
                         Message(role="user", content=user_prompt),
                     ],
                     user_id=ctx.run.created_by,
@@ -520,6 +521,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                     llm=ctx.llm,
                     user_id=ctx.run.created_by,
                     voyage_id=ctx.run.id,
+                    extra_guidance=ctx.skill_guidance("wiki.compile"),
                 )
             except asyncio.CancelledError:
                 raise

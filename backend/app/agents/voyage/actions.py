@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agents.voyage.skillset import skill_guidance, skill_personas
 from app.core.events import EventBus
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
@@ -30,6 +31,14 @@ class ActionContext:
         """向项目通知频道发布事件（bus 未注入时为 no-op）。"""
         if self.bus is not None:
             await self.bus.publish_notify(self.run.project_id, message)
+
+    def skill_guidance(self, *targets: str) -> str:
+        """注入点上项目启用技能的补充指引（docs/skill-system.md §3）；无技能返回空串。"""
+        return skill_guidance(self.checkpoint, *targets)
+
+    def skill_personas(self, target: str) -> list[dict[str, Any]] | None:
+        """persona 技能人设列表；None = 用调用方内置默认。"""
+        return skill_personas(self.checkpoint, target)
 
 
 ActionFunc = Callable[[ActionContext, dict[str, Any]], Awaitable[dict[str, Any]]]

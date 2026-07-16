@@ -19,7 +19,7 @@ from app.core.queue import TaskQueue, get_task_queue
 from app.core.redis import get_redis_dep
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
-from app.schemas.voyage import VoyageCreate, VoyageDetailRead, VoyageRead
+from app.schemas.voyage import VoyageCreate, VoyageDetailRead, VoyageRead, VoyageSkillUse
 from app.services import projects as projects_service
 from app.services import voyages as voyages_service
 
@@ -66,6 +66,29 @@ async def list_voyages(
     return [VoyageRead.model_validate(r) for r in runs]
 
 
+def _skills_summary(run: VoyageRun) -> list[VoyageSkillUse]:
+    """checkpoint["skills"] 快照 → 摘要列表（详情页「本次任务使用的技能」）。"""
+    snapshot = (run.checkpoint or {}).get("skills")
+    if not isinstance(snapshot, dict):
+        return []
+    out: list[VoyageSkillUse] = []
+    for target, entries in snapshot.items():
+        if not isinstance(entries, list):
+            continue
+        for e in entries:
+            if isinstance(e, dict) and e.get("slug"):
+                out.append(
+                    VoyageSkillUse(
+                        slug=str(e["slug"]),
+                        name=str(e.get("name") or e["slug"]),
+                        kind=str(e.get("kind") or ""),
+                        version=int(e.get("version") or 0),
+                        target=str(target),
+                    )
+                )
+    return out
+
+
 @router.get("/{voyage_id}", response_model=VoyageDetailRead)
 async def get_voyage(
     voyage_id: uuid.UUID,
@@ -73,7 +96,9 @@ async def get_voyage(
     user: User = Depends(current_active_user),
 ) -> VoyageDetailRead:
     run = await _get_owned_voyage(session, voyage_id, user, with_steps=True)
-    return VoyageDetailRead.model_validate(run)
+    detail = VoyageDetailRead.model_validate(run)
+    detail.skills = _skills_summary(run)
+    return detail
 
 
 @router.post("/{voyage_id}/cancel", response_model=VoyageRead)

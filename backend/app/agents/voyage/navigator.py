@@ -9,6 +9,7 @@ import json
 from typing import Any
 
 from app.agents.voyage.actions import known_actions
+from app.agents.voyage.skillset import skill_workflows
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
@@ -329,12 +330,37 @@ def validate_steps(data: Any) -> list[dict[str, Any]]:
     return steps
 
 
+def _workflow_templates_prompt(workflows: list[dict[str, Any]]) -> str:
+    """自由规划 system prompt 的流程模板附录（项目启用的 workflow 技能）。"""
+    lines = ["\n可用的流程模板（项目启用的流程技能）："]
+    for w in workflows:
+        titles = " → ".join(str(s.get("title", "")) for s in w.get("steps") or [])
+        lines.append(f"- {w.get('slug')}：{w.get('name')}（步骤：{titles}）")
+    lines.append(
+        '若某个模板与目标匹配，直接输出 {"use_skill": "<slug>"}（不要再自拟 steps）；'
+        "都不匹配才自行规划。"
+    )
+    return "\n".join(lines)
+
+
+def _expand_workflow(slug: str, workflows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 slug 展开 workflow 技能的步骤模板；slug 未知或 steps 非法抛 ValueError。"""
+    entry = next((w for w in workflows if w.get("slug") == slug), None)
+    if entry is None:
+        raise ValueError(f"unknown workflow skill: {slug!r}")
+    return validate_steps({"steps": entry.get("steps") or []})
+
+
 class Navigator:
     def __init__(self, llm: LLMRouter) -> None:
         self._llm = llm
 
     async def _ask_for_steps(
-        self, run: VoyageRun, system: str, user_prompt: str
+        self,
+        run: VoyageRun,
+        system: str,
+        user_prompt: str,
+        workflows: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         last_error: Exception | None = None
         for _attempt in range(_MAX_ATTEMPTS):
@@ -349,7 +375,10 @@ class Navigator:
                 voyage_id=run.id,
             )
             try:
-                return validate_steps(_extract_json(result.content))
+                data = _extract_json(result.content)
+                if workflows and isinstance(data, dict) and data.get("use_skill"):
+                    return _expand_workflow(str(data["use_skill"]), workflows)
+                return validate_steps(data)
             except (ValueError, json.JSONDecodeError) as e:
                 last_error = e
         raise NavigatorError(f"navigator produced invalid plan: {last_error}")
@@ -371,10 +400,13 @@ class Navigator:
         if run.kind == "paper_review":
             return paper_review_plan(run)
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
+        workflows = skill_workflows(run.checkpoint or {})
+        if workflows:
+            system += _workflow_templates_prompt(workflows)
         user_prompt = f"目标：{run.goal}"
         if context:
             user_prompt += f"\n上下文：{json.dumps(context, ensure_ascii=False, default=str)}"
-        return await self._ask_for_steps(run, system, user_prompt)
+        return await self._ask_for_steps(run, system, user_prompt, workflows=workflows)
 
     async def replan(
         self, run: VoyageRun, failed_step: dict[str, Any], diagnosis: str

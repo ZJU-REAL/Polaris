@@ -105,14 +105,18 @@ async def compile_paper(
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
+    extra_guidance: str = "",
 ) -> str:
-    """图文编译一篇论文，返回校验过标记的 wiki markdown（调用方负责落库）。"""
+    """图文编译一篇论文，返回校验过标记的 wiki markdown（调用方负责落库）。
+
+    extra_guidance：追加到 system prompt 的补充指引（wiki.compile 注入点的项目技能）。
+    """
     llm = llm or get_llm_router()
     user_prompt, images = build_compile_prompt(paper, statement=statement)
     result = await llm.complete(
         "librarian",
         [
-            Message(role="system", content=LIBRARIAN_SYSTEM_PROMPT),
+            Message(role="system", content=LIBRARIAN_SYSTEM_PROMPT + extra_guidance),
             Message(role="user", content=user_prompt),
         ],
         images=images or None,

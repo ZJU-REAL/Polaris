@@ -1,5 +1,6 @@
 """FastAPI 应用工厂。"""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,9 +10,12 @@ from app import __version__
 from app.api.router import api_router
 from app.api.ws import router as ws_router
 from app.core.config import get_settings
-from app.core.db import create_all, dispose_engine
+from app.core.db import create_all, dispose_engine, get_sessionmaker
 from app.core.redis import close_redis
 from app.services.crdt_rooms import reset_crdt_rooms
+from app.services.skills import ensure_builtin_skills
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -20,6 +24,12 @@ async def lifespan(app: FastAPI):
     # 仅 sqlite（无 docker 的本地 dev）在启动时建表；postgres 走 alembic migration
     if settings.is_sqlite:
         await create_all()
+    # 内置技能种子（按 slug 幂等）；失败不阻断启动（如 migration 未跑）
+    try:
+        async with get_sessionmaker()() as session:
+            await ensure_builtin_skills(session)
+    except Exception:  # noqa: BLE001
+        logger.warning("builtin skill seeding failed (migrations pending?)", exc_info=True)
     yield
     await reset_crdt_rooms()  # 关停 CRDT 房间服务器（先冲刷不了的防抖任务直接取消）
     await dispose_engine()

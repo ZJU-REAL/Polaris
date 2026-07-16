@@ -306,7 +306,11 @@ async def forge_generate(ctx: ActionContext, params: dict[str, Any]) -> dict[str
         return normalized[:num_ideas]
 
     candidates = await _complete_json(
-        ctx, stage="forge", system=GENERATE_SYSTEM_PROMPT, user=user_prompt, validate=validate
+        ctx,
+        stage="forge",
+        system=GENERATE_SYSTEM_PROMPT + ctx.skill_guidance("forge.generate"),
+        user=user_prompt,
+        validate=validate,
     )
     ctx.checkpoint["forge_candidates"] = candidates
     return {"requested": num_ideas, "generated": len(candidates)}
@@ -358,7 +362,7 @@ async def forge_score(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             scores, rationale = await _complete_json(
                 ctx,
                 stage="forge",
-                system=SCORE_SYSTEM_PROMPT,
+                system=SCORE_SYSTEM_PROMPT + ctx.skill_guidance("forge.score"),
                 user=user_prompt,
                 validate=_validate_scores,
             )
@@ -566,8 +570,11 @@ async def forge_persist(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
 
 
 def _personas(ctx: ActionContext) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
-    """人设分工：[0]=正方 [1]=反方 [2]=裁判；不足三个用默认人设补齐。"""
-    raw = _params(ctx).get("personas")
+    """人设分工：[0]=正方 [1]=反方 [2]=裁判；不足三个用默认人设补齐。
+
+    优先级：显式 params.personas > persona 技能（review.debate）> 内置默认。
+    """
+    raw = _params(ctx).get("personas") or ctx.skill_personas("review.debate")
     personas = [p for p in raw if isinstance(p, dict) and p.get("name")] if raw else []
     merged = (personas + DEFAULT_PERSONAS[len(personas) :])[:3]
     return merged[0], merged[1], merged[2]

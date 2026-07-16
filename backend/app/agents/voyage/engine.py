@@ -32,6 +32,7 @@ from app.models.base import utcnow
 from app.models.gate import Gate
 from app.models.llm_config import LLMUsage
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep
+from app.services import skills as skills_service
 
 MAX_REPLANS = 2
 
@@ -137,6 +138,7 @@ class VoyageEngine:
             if run is None or run.status in TERMINAL_STATUSES:
                 return
             try:
+                await self._ensure_skills_snapshot(session, run)
                 if run.plan is None:
                     await self._plan(session, run)
                 await self._ensure_step_rows(session, run)
@@ -146,6 +148,20 @@ class VoyageEngine:
             except _ExternallyTerminated:
                 # 外部 cancel：补发一次终态事件后安静退出
                 await self._emit_status(run)
+
+    async def _ensure_skills_snapshot(self, session: AsyncSession, run: VoyageRun) -> None:
+        """首次驱动时把项目生效技能内容快照进 checkpoint["skills"]（docs/skill-system.md §3.2）。
+
+        此后本次 run 只读快照：中途改技能不影响进行中任务，断点恢复无需再查技能表，
+        且事后可回放「本次任务用了哪些技能的哪个版本」。
+        """
+        if "skills" in (run.checkpoint or {}):
+            return
+        snapshot = await skills_service.snapshot_for_project(session, run.project_id)
+        checkpoint = dict(run.checkpoint or {})
+        checkpoint["skills"] = snapshot
+        run.checkpoint = checkpoint
+        await session.commit()
 
     async def _plan(self, session: AsyncSession, run: VoyageRun) -> None:
         await self._set_status(session, run, "planning")

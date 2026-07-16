@@ -377,7 +377,12 @@ async def writing_section(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         f"当前文档骨架（节选）：\n{skeleton[:_SKELETON_CHARS]}"
     )
     text, rewrites = await _draft_with_validation(
-        ctx, system=SECTION_SYSTEM_PROMPT, user=user, fact_pack=fact_pack, label=section
+        ctx,
+        system=SECTION_SYSTEM_PROMPT
+        + ctx.skill_guidance("writing.section", f"writing.section({section})"),
+        user=user,
+        fact_pack=fact_pack,
+        label=section,
     )
     text, reflected = await _reflect(
         ctx, text=text, fact_pack=fact_pack, section_title=SECTION_TITLES[section]
@@ -486,7 +491,7 @@ async def writing_related_work(ctx: ActionContext, params: dict[str, Any]) -> di
     )
     text, rewrites = await _draft_with_validation(
         ctx,
-        system=RELATED_WORK_SYSTEM_PROMPT,
+        system=RELATED_WORK_SYSTEM_PROMPT + ctx.skill_guidance("writing.related_work"),
         user=user,
         fact_pack=fact_pack_for_validation,
         label="related_work",
