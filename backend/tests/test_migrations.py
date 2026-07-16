@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b8c9d0e1f2a3"  # user_system_u1（头像/配额/邀请链接）
-PREV_REVISION = "a7b8c9d0e1f2"  # paper_affiliations（发表机构）
+HEAD_REVISION = "c1d2e3f4a5b6"  # voyage_loop_v1（任务循环地基：mode/rank/attempts）
+PREV_REVISION = "b8c9d0e1f2a3"  # user_system_u1（头像/配额/邀请链接）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -43,6 +43,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "manuscripts",
                     "manuscript_files",
                     "users",
+                    "voyage_runs",
+                    "voyage_steps",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -100,14 +102,28 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 用户系统 U1：users 三新列 + project_invites 表
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
     assert "project_invites" in columns["_tables"]
+    # 任务循环 v1：voyage_runs / voyage_steps 新列
+    assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
+    assert {
+        "rank",
+        "acceptance",
+        "requires_gate",
+        "budget",
+        "attempt",
+        "attempts",
+        "provenance",
+    } <= columns["voyage_steps"]
 
-    # 最新 revision 可往返（downgrade 移除用户系统 U1 的列与表）
+    # 最新 revision 可往返（downgrade 移除任务循环 v1 的列）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "avatar_path" not in columns["users"]
-    assert "project_invites" not in columns["_tables"]
-    assert "affiliations" in columns["papers"]  # 上一版列不受影响
+    assert "mode" not in columns["voyage_runs"]
+    assert "rank" not in columns["voyage_steps"]
+    # 上一版（用户系统 U1）不受影响
+    assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
+    assert "project_invites" in columns["_tables"]
+    assert "affiliations" in columns["papers"]  # 更早的列不受影响
     assert {"skill_listings", "skill_ratings"} <= columns["_tables"]  # S4 表不受影响
     assert {"skills", "skill_versions", "project_skills"} <= columns["_tables"]  # S1 表不受影响
     assert "review_passed" in columns["manuscripts"]
