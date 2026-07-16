@@ -1,14 +1,28 @@
-"""概念库业务逻辑：wikilink 解析、slug、列表/详情查询（不 import fastapi）。"""
+"""概念库业务逻辑：wikilink 解析、slug、单篇上链、列表/详情查询（不 import fastapi）。"""
 
+import asyncio
 import hashlib
+import json
+import logging
 import re
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.llm.base import Message
+from app.core.llm.router import LLMRouter
 from app.models.paper import Concept, Paper, paper_concepts
+
+logger = logging.getLogger(__name__)
+
+CONCEPT_DEF_SYSTEM_PROMPT = """\
+你是 Librarian，为研究 wiki 的新概念词条给出一句话中文定义与类别。
+只输出一个 JSON 对象，不要输出任何其他文字，格式：
+{"concepts": [{"name": "概念名", "definition": "一句话定义", \
+"category": "method|architecture|methodology|problem|metric|dataset|other"}]}
+"""
 
 # [[概念名]] / [[概念名|别名]] / [[概念名#锚点]]
 WIKILINK_RE = re.compile(r"\[\[([^\[\]|#]+?)(?:[|#][^\[\]]*)?\]\]")
@@ -108,3 +122,111 @@ async def related_concepts(
         .limit(limit)
     )
     return [(c, int(n)) for c, n in (await session.execute(stmt)).all()]
+
+
+async def fetch_concept_definitions(
+    llm: LLMRouter,
+    names: list[str],
+    *,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+) -> dict[str, dict[str, str]]:
+    """批量向 LLM 要新概念的一句话定义与类别；失败返回空 dict（调用方用占位定义兜底）。"""
+    if not names:
+        return {}
+    try:
+        result = await llm.complete(
+            "librarian",
+            [
+                Message(role="system", content=CONCEPT_DEF_SYSTEM_PROMPT),
+                Message(role="user", content="概念列表：" + json.dumps(names, ensure_ascii=False)),
+            ],
+            user_id=user_id,
+            project_id=project_id,
+            voyage_id=voyage_id,
+        )
+        start = result.content.find("{")
+        end = result.content.rfind("}")
+        data = json.loads(result.content[start : end + 1])
+        return {
+            str(item["name"]): item
+            for item in data.get("concepts", [])
+            if isinstance(item, dict) and item.get("name")
+        }
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — 定义失败用占位，不阻塞上链
+        logger.warning("concept definition fetch failed", exc_info=True)
+        return {}
+
+
+async def link_paper_concepts(
+    session: AsyncSession,
+    paper: Paper,
+    *,
+    llm: LLMRouter | None = None,
+    user_id: uuid.UUID | None = None,
+) -> tuple[int, int]:
+    """单篇概念上链（手动编译后调用，docs/api-lit.md §6.6）：
+
+    从 wiki_content 抽 [[双链]] → 缺失概念建词条（LLM 定义，失败占位）→ 建关联。
+    返回 (新建概念数, 新建关联数)。调用方无需再 commit（本函数自行提交）。
+    """
+    names = extract_wikilinks(paper.wiki_content or "")
+    if not names:
+        return 0, 0
+    existing = (
+        (await session.execute(select(Concept).where(Concept.project_id == paper.project_id)))
+        .scalars()
+        .all()
+    )
+    by_name = {c.name: c for c in existing}
+    slugs = {c.slug for c in existing}
+    new_names = [n for n in names if n not in by_name]
+
+    definitions: dict[str, dict[str, str]] = {}
+    if new_names and llm is not None:
+        definitions = await fetch_concept_definitions(
+            llm, new_names, user_id=user_id, project_id=paper.project_id
+        )
+
+    created = 0
+    for name in new_names:
+        slug = wiki_slug(name)
+        if slug in slugs:
+            slug = f"{slug}-{uuid.uuid4().hex[:6]}"
+        slugs.add(slug)
+        meta = definitions.get(name) or {}
+        concept = Concept(
+            project_id=paper.project_id,
+            name=name,
+            slug=slug,
+            definition=str(meta.get("definition") or f"{name}（定义待补充）"),
+            category=normalize_category(meta.get("category")),
+        )
+        session.add(concept)
+        by_name[name] = concept
+        created += 1
+    await session.flush()
+
+    existing_pairs = {
+        cid
+        for (cid,) in (
+            await session.execute(
+                select(paper_concepts.c.concept_id).where(paper_concepts.c.paper_id == paper.id)
+            )
+        ).all()
+    }
+    linked = 0
+    for name in names:
+        concept = by_name.get(name)
+        if concept is None or concept.id in existing_pairs:
+            continue
+        await session.execute(
+            insert(paper_concepts).values(paper_id=paper.id, concept_id=concept.id)
+        )
+        existing_pairs.add(concept.id)
+        linked += 1
+    await session.commit()
+    return created, linked

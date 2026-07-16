@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
-import { PipelineFlow } from '../../components/ui/PipelineFlow';
+import { PipelineFlow, type PipelineStage } from '../../components/ui/PipelineFlow';
 import { StatCard, type StatCardProps } from '../../components/ui/StatCard';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { ScoreRing } from '../../components/ui/ScoreRing';
@@ -13,9 +13,29 @@ import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, type ActivityRead, type GateRead, type StatsRead } from '../../lib/api';
 import { compositeOf } from '../forge/ideaShared';
-import { pipelineStages } from '../../lib/mock';
 
-/** 当前重点 idea：取 leaderboard 第一名（真实数据）；无则空状态引导。 */
+/** 端到端流水线各阶段的真实计数（stats 未就绪时显示 —）。 */
+function buildPipelineStages(stats: StatsRead | undefined): PipelineStage[] {
+  return [
+    { key: 'wiki', path: '/wiki', no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki', count: stats?.papers_total ?? null },
+    { key: 'forge', path: '/forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge', count: stats?.ideas_candidate ?? null },
+    { key: 'review', path: '/review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review', count: stats?.ideas_under_review ?? null },
+    {
+      key: 'experiment',
+      path: '/experiment',
+      no: '03',
+      icon: 'flask',
+      zh: '实验搭建',
+      en: 'Experiment Lab',
+      count: stats?.experiments_active ?? null,
+      running: (stats?.experiments_running ?? 0) > 0,
+    },
+    { key: 'writer', path: '/writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer', count: stats?.manuscripts_total ?? null },
+    { key: 'paper-review', path: '/paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review', count: stats?.manuscripts_under_review ?? null },
+  ];
+}
+
+/** 当前重点想法：取 leaderboard 第一名（真实数据）；无则空状态引导。 */
 function FeaturedIdeaCard({ pid }: { pid: string | null }) {
   const navigate = useNavigate();
   const leaderboardQuery = useQuery({
@@ -32,20 +52,20 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
           <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>
             <Icon name="sparkle" size={12} />
-            当前重点 idea
+            当前重点想法
           </span>
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>
           {leaderboardQuery.isLoading
-            ? '加载 idea 排行榜…'
+            ? '加载想法排行榜…'
             : leaderboardQuery.isError
-              ? '暂时无法加载 idea 排行榜（后端不可用或接口未就绪）。'
-              : '候选池还是空的 — 运行一次 Idea Forge，从知识库生成候选 idea。'}
+              ? '暂时无法加载想法排行榜。'
+              : '候选池还是空的，先运行一次想法生成。'}
         </div>
         {!leaderboardQuery.isLoading && (
           <button className="btn btn-ghost sm" style={{ marginTop: 14 }} onClick={() => navigate('/forge')}>
             <Icon name="bulb" size={13} />
-            前往 Idea Forge
+            前往想法生成
           </button>
         )}
       </div>
@@ -62,7 +82,7 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>
           <Icon name="sparkle" size={12} />
-          当前重点 idea · Elo 榜首
+          当前重点想法 · Elo 榜首
         </span>
         <StatusPill status={idea.status} sm />
       </div>
@@ -191,7 +211,7 @@ function GatePreview({ gates, gatesError, openGates }: {
         {gatesError ? (
           <div className="empty" style={{ padding: 18 }}>无法加载审批列表（后端不可用）</div>
         ) : gates.length === 0 ? (
-          <div className="empty" style={{ padding: 18 }}>没有待处理的审批 🎉</div>
+          <div className="empty" style={{ padding: 18 }}>没有待处理的审批</div>
         ) : (
           gates.map((g) => {
             const desc = gateDesc(g);
@@ -263,7 +283,7 @@ function OnboardingEmpty() {
       </div>
       <div style={{ fontSize: 17, fontWeight: 680, marginBottom: 8 }}>从一个研究方向开始</div>
       <div style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 460, margin: '0 auto 22px', lineHeight: 1.6 }}>
-        Polaris 的一切都围绕研究方向展开：文献追踪、idea 生成、实验与论文。
+        Polaris 的一切都围绕研究方向展开：文献追踪、想法生成、实验与论文。
         通过一次结构化访谈，把你的兴趣固化为可执行的方向定义。
       </div>
       <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
@@ -293,10 +313,10 @@ function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number)
     },
     {
       icon: 'bulb',
-      label: '候选 Idea',
+      label: '候选想法',
       en: 'Idea candidates',
       value: stats ? stats.ideas_candidate : '—',
-      sub: 'candidate',
+      sub: '想法池',
     },
     {
       icon: 'gate',
@@ -329,7 +349,6 @@ export function DashboardPage() {
         <PageHead
           eyebrow="Polaris · Autonomous Research"
           title="总览 Dashboard"
-          sub="一个每日自动运行的 AI 自主科研系统：文献 → idea → 评审 → 实验 → 论文 → 评审。"
         />
         <OnboardingEmpty />
       </div>
@@ -337,16 +356,13 @@ export function DashboardPage() {
   }
 
   const statCards = buildStatCards(statsQuery.data, pendingGates.length);
-  const stages = pipelineStages.map((s) =>
-    s.key === 'wiki' && statsQuery.data ? { ...s, count: statsQuery.data.papers_total } : s,
-  );
+  const stages = buildPipelineStages(statsQuery.data);
 
   return (
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Autonomous Research"
         title="总览 Dashboard"
-        sub="一个每日自动运行的 AI 自主科研系统：文献 → idea → 评审 → 实验 → 论文 → 评审，知识在研究 Wiki 中复利增长。"
         right={
           <>
             <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>

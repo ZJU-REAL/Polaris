@@ -172,3 +172,12 @@ export function chatPaperSse(
 ): () => void {
   return postSse(`/papers/${paperId}/chat`, input, handlers);
 }
+
+/** 文献库对话：POST /projects/{pid}/chat（sources 引用清单 → delta* → done/error）。 */
+export function chatLibrarySse(
+  projectId: string,
+  input: { question: string; history: { role: 'user' | 'assistant'; content: string }[] },
+  handlers: PostSseHandlers,
+): () => void {
+  return postSse(`/projects/${projectId}/chat`, input, handlers);
+}

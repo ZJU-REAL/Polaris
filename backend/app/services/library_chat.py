@@ -1,0 +1,204 @@
+"""文献库对话（跨文献问答，不 import fastapi）。
+
+流程：问题向量化 → 全库分段检索（pgvector；不可用时关键词降级）→
+按论文分组拼编号上下文（附概念清单）→ stage=reading 流式回答，
+要求用 [n] 标注引用来源、用 [[概念名]] 双链标注概念。
+检索任何一步失败（表未迁移、embedding 挂了等）都不抛错：逐级降级，
+最终兜底用高分论文的 TL;DR/摘要拼上下文。
+"""
+
+import logging
+import uuid
+from dataclasses import dataclass, field
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.llm.base import Message
+from app.core.llm.router import LLMRouter
+from app.models.paper import Concept, Paper, PaperChunk, paper_concepts
+from app.models.project import Project
+from app.services import chunks as chunks_service
+
+logger = logging.getLogger(__name__)
+
+MAX_SOURCES = 8  # 上下文里最多引用的论文数
+MAX_CHUNKS = 16  # 检索片段数上限
+FALLBACK_PAPERS = 12  # 无分段时用的论文数（TL;DR/摘要）
+SNIPPET_CHARS = 1500  # 单来源送入上下文的字符上限（多段拼合后截断）
+
+LIBRARY_CHAT_SYSTEM_TEMPLATE = """\
+你是文献库研究助手，基于下面从文献库中检索到的资料，帮用户做跨文献的分析、比较与综合梳理。
+回答要求：
+- 只依据资料回答；资料没有覆盖的，直接说明「文献库中未检索到相关内容」，不要编造；
+- 引用某篇论文的内容时，在句末标注对应编号，如 [1] 或 [1][3]；
+- 提到资料「概念」清单里列出的概念时，用双链 [[概念名]] 标注（只用清单里出现过的概念名，
+  别的词不要加双链）；
+- 涉及多篇论文时主动做对比与归纳（共识、分歧、演进脉络），不要逐篇罗列了事；
+- 用中文回答，讲清楚、说人话。
+
+研究方向：{statement}
+
+检索到的资料（编号 = 论文）：
+{context}
+"""
+
+
+@dataclass
+class ChatSource:
+    """一条引用来源（回给前端渲染编号 → 论文跳转）。"""
+
+    index: int
+    paper_id: str
+    title: str
+    year: int | None
+    status: str | None = None
+    relevance: float | None = None
+    concepts: list[str] = field(default_factory=list)
+
+
+async def _retrieve_chunks(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    question: str,
+    llm: LLMRouter,
+    user_id: uuid.UUID | None,
+) -> list[tuple[PaperChunk, float]]:
+    """向量检索优先（postgres + embedding 可用），否则关键词降级；任何失败都不上抛。
+
+    典型失败：paper_chunks 表未迁移、embedding provider 挂了、向量维度不匹配——
+    统一 rollback 后逐级降级（向量 → 关键词 → 空，空由调用方走论文摘要兜底）。
+    """
+    if chunks_service.chunk_vector_search_supported(session):
+        try:
+            vectors = await llm.embed([question], user_id=user_id, project_id=project_id)
+            rows = await chunks_service.semantic_search_chunks(
+                session, project_id=project_id, query_vector=vectors[0], limit=MAX_CHUNKS
+            )
+            if rows:
+                return rows
+        except NotImplementedError:
+            pass
+        except Exception:  # noqa: BLE001 — 检索失败降级，不打断对话
+            logger.warning("chunk vector search failed; falling back to keyword", exc_info=True)
+            await session.rollback()  # postgres 报错后事务已中止，先回滚
+    try:
+        return await chunks_service.keyword_search_chunks(
+            session, project_id=project_id, q=question, limit=MAX_CHUNKS
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("chunk keyword search failed; falling back to summaries", exc_info=True)
+        await session.rollback()
+        return []
+
+
+def _group_by_paper(
+    rows: list[tuple[PaperChunk, float]], papers: dict[uuid.UUID, Paper]
+) -> list[tuple[Paper, list[PaperChunk]]]:
+    """按检索得分顺序把片段归到论文（保持论文首次出现的顺序），最多 MAX_SOURCES 篇。"""
+    grouped: dict[uuid.UUID, list[PaperChunk]] = {}
+    order: list[uuid.UUID] = []
+    for chunk, _score in rows:
+        if chunk.paper_id not in papers:
+            continue
+        if chunk.paper_id not in grouped:
+            if len(order) >= MAX_SOURCES:
+                continue
+            grouped[chunk.paper_id] = []
+            order.append(chunk.paper_id)
+        grouped[chunk.paper_id].append(chunk)
+    return [(papers[pid], grouped[pid]) for pid in order]
+
+
+async def build_library_messages(
+    session: AsyncSession,
+    *,
+    project: Project,
+    question: str,
+    history: list[tuple[str, str]],
+    llm: LLMRouter,
+    user_id: uuid.UUID | None = None,
+) -> tuple[list[Message], list[ChatSource]]:
+    """组装文献库对话消息，返回 (messages, 引用来源列表)。"""
+    # 先取出所需字段：检索失败路径里的 rollback 会使 ORM 对象过期，之后再取属性会报错
+    project_id = project.id
+    definition = project.definition if isinstance(project.definition, dict) else {}
+    statement = definition.get("statement") or project.name
+
+    rows = await _retrieve_chunks(
+        session, project_id=project_id, question=question, llm=llm, user_id=user_id
+    )
+    papers: dict[uuid.UUID, Paper] = {}
+    if rows:
+        paper_ids = list({c.paper_id for c, _ in rows})
+        found = (
+            (await session.execute(select(Paper).where(Paper.id.in_(paper_ids)))).scalars().all()
+        )
+        papers = {p.id: p for p in found}
+
+    # (paper, 送入上下文的正文) 顺序清单：优先检索片段，否则高分论文摘要兜底
+    entries: list[tuple[Paper, str]] = []
+    if rows and papers:
+        for paper, chunk_list in _group_by_paper(rows, papers):
+            snippet = "\n…\n".join(c.text for c in chunk_list)[:SNIPPET_CHARS]
+            entries.append((paper, snippet))
+    else:
+        fallback = (
+            (
+                await session.execute(
+                    select(Paper)
+                    .where(
+                        Paper.project_id == project_id,
+                        Paper.status.in_(("scored", "fetched", "compiled", "included")),
+                    )
+                    .order_by(Paper.relevance_score.desc().nulls_last())
+                    .limit(FALLBACK_PAPERS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        entries = [(p, p.tldr or (p.abstract or "")[:400] or "（无摘要）") for p in fallback]
+
+    # 涉及论文的概念清单（回答里的 [[双链]] 只允许用这些名字，保证前端可点可跳）
+    concepts_by_paper: dict[uuid.UUID, list[str]] = {}
+    if entries:
+        concept_rows = (
+            await session.execute(
+                select(paper_concepts.c.paper_id, Concept.name)
+                .join(Concept, Concept.id == paper_concepts.c.concept_id)
+                .where(paper_concepts.c.paper_id.in_([p.id for p, _ in entries]))
+            )
+        ).all()
+        for paper_id, name in concept_rows:
+            concepts_by_paper.setdefault(paper_id, []).append(name)
+
+    sources: list[ChatSource] = []
+    blocks: list[str] = []
+    for i, (paper, body) in enumerate(entries, start=1):
+        names = concepts_by_paper.get(paper.id, [])[:10]
+        concept_line = f"\n概念：{'、'.join(names)}" if names else ""
+        blocks.append(f"[{i}] {paper.title}（{paper.year or '年份未知'}）{concept_line}\n{body}")
+        sources.append(
+            ChatSource(
+                index=i,
+                paper_id=str(paper.id),
+                title=paper.title,
+                year=paper.year,
+                status=paper.status,
+                relevance=paper.relevance_score,
+                concepts=names,
+            )
+        )
+
+    context = "\n\n".join(blocks) or "（文献库为空）"
+    messages = [
+        Message(
+            role="system",
+            content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(statement=statement, context=context),
+        )
+    ]
+    messages += [Message(role=role, content=content) for role, content in history]
+    messages.append(Message(role="user", content=question))
+    return messages, sources

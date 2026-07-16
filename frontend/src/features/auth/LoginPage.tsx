@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
+import { PolarisMark, PolarisWordmark } from '../../components/ui/PolarisLogo';
 import { Segmented } from '../../components/ui/Segmented';
 import { useAuth } from '../../app/auth';
 import { ApiError } from '../../lib/api';
@@ -57,10 +58,10 @@ export function LoginPage() {
       <div className="auth-card fadeup">
         {/* 品牌区 */}
         <div className="col" style={{ alignItems: 'center', marginBottom: 24 }}>
-          <div className="sb-logo" style={{ width: 44, height: 44, borderRadius: 12, marginBottom: 14 }}>
-            <Icon name="sparkle" size={24} style={{ color: '#fff' }} />
+          <div style={{ marginBottom: 14 }}>
+            <PolarisMark size={72} />
           </div>
-          <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-0.02em' }}>Polaris</div>
+          <PolarisWordmark height={28} />
           <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>自动 AI 科研平台</div>
           <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2, fontFamily: 'var(--mono)' }}>
             Autonomous AI Research Platform

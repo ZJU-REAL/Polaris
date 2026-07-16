@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Avatar } from '../components/ui/Avatar';
 import { Icon, type IconName } from '../components/ui/Icon';
+import { PolarisMark, PolarisWordmark } from '../components/ui/PolarisLogo';
 import { Drawer } from '../components/ui/Drawer';
 import { GateCard, gateTitle } from '../components/ui/GateCard';
 import { ToastHost, toast } from '../components/ui/Toast';
 import { useAuth } from './auth';
 import { useProject } from './project';
+import { SearchPalette } from './SearchPalette';
 import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { connectNotifications } from '../lib/ws';
 
@@ -24,12 +27,21 @@ const NAV_MAIN: NavEntry[] = [
 
 const NAV_PIPE: NavEntry[] = [
   { to: '/wiki', no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki' },
-  { to: '/forge', no: '01', icon: 'bulb', zh: 'Idea 生成', en: 'Idea Forge' },
-  { to: '/review', no: '02', icon: 'scale', zh: 'Idea 评审', en: 'Idea Review' },
+  { to: '/forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge' },
+  { to: '/review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review' },
   { to: '/experiment', no: '03', icon: 'flask', zh: '实验搭建', en: 'Experiment Lab' },
   { to: '/writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer' },
   { to: '/paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review' },
 ];
+
+// 阶段路径 → 功能权限键（管理员在设置里可禁用；被禁用的阶段从导航隐藏）
+const FEATURE_BY_PATH: Record<string, string> = {
+  '/forge': 'forge',
+  '/review': 'review',
+  '/experiment': 'experiment',
+  '/writer': 'writer',
+  '/paper-review': 'paper_review',
+};
 
 function crumbFor(pathname: string): [string, string] {
   if (pathname === '/') return ['Polaris', '总览'];
@@ -38,13 +50,14 @@ function crumbFor(pathname: string): [string, string] {
   if (pathname === '/voyages') return ['Polaris', 'AI 任务'];
   if (pathname.startsWith('/voyages/')) return ['AI 任务', '任务详情'];
   if (pathname.startsWith('/papers/')) return ['文献追踪', '论文阅读'];
-  if (pathname.startsWith('/ideas/')) return ['Idea Forge', 'Idea 详情'];
+  if (pathname.startsWith('/ideas/')) return ['想法生成', '想法详情'];
+  if (pathname.startsWith('/join/')) return ['研究方向', '接受邀请'];
   if (pathname.startsWith('/experiment/')) return ['实验搭建', '实验详情'];
   if (pathname.startsWith('/writer/')) return ['论文撰写', '编辑工作台'];
   const table: Record<string, [string, string]> = {
     '/wiki': ['Stage 00', '文献追踪'],
-    '/forge': ['Stage 01', 'Idea 生成'],
-    '/review': ['Stage 02', 'Idea 评审'],
+    '/forge': ['Stage 01', '想法生成'],
+    '/review': ['Stage 02', '想法评审'],
     '/experiment': ['Stage 03', '实验搭建'],
     '/writer': ['Stage 04', '论文撰写'],
     '/paper-review': ['Stage 05', '论文评审'],
@@ -68,6 +81,200 @@ export function useShell(): ShellContext {
   return useOutletContext<ShellContext>();
 }
 
+/* ============================================================
+   顶栏研究方向切换器：胶囊触发器 + 卡片式下拉菜单。
+   菜单含方向列表（当前项打勾 + 蓝点）、新建方向、方向详情入口。
+   ============================================================ */
+function DirectionSwitcher() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { projects, isLoading, currentProjectId, currentProject, setCurrentProjectId } = useProject();
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // 点外面 / Esc 关闭
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const triggerLabel = currentProject?.name ?? (isLoading ? '加载中…' : '选择研究方向');
+
+  const itemStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    padding: '7px 12px',
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    fontSize: 12.5,
+    fontFamily: 'var(--sans)',
+    color: 'var(--text)',
+    textAlign: 'left',
+    borderRadius: 8,
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', marginLeft: 18 }}>
+      {/* 触发器：胶囊（图标 + 当前方向名 + 折叠箭头） */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="切换研究方向"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          height: 32,
+          maxWidth: 280,
+          padding: '0 10px 0 11px',
+          borderRadius: 16,
+          border: `0.5px solid ${open ? 'var(--accent)' : 'var(--border-2)'}`,
+          background: open ? 'var(--accent-soft)' : 'var(--surface)',
+          cursor: 'pointer',
+          fontFamily: 'var(--sans)',
+          transition: 'border-color .12s, background .12s',
+        }}
+      >
+        <Icon name="layers" size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+        <span
+          style={{
+            fontSize: 12.5,
+            fontWeight: 620,
+            color: currentProject ? 'var(--text)' : 'var(--text-3)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            minWidth: 0,
+          }}
+        >
+          {triggerLabel}
+        </span>
+        <Icon
+          name="chevDown"
+          size={12}
+          style={{ color: 'var(--text-3)', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+        />
+      </button>
+
+      {/* 下拉菜单 */}
+      {open && (
+        <div
+          className="card"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            zIndex: 40,
+            width: 300,
+            padding: 6,
+            boxShadow: 'var(--shadow-pop)',
+            animation: 'fadeUp 0.12s ease',
+          }}
+        >
+          <div className="mono" style={{ fontSize: 10, color: 'var(--text-4)', padding: '4px 12px 6px', letterSpacing: '0.06em' }}>
+            研究方向 · DIRECTIONS
+          </div>
+          <div className="scroll" style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {projects.length === 0 && (
+              <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-4)' }}>
+                {isLoading ? '加载中…' : '还没有研究方向，先新建一个'}
+              </div>
+            )}
+            {projects.map((p) => {
+              const active = p.id === currentProjectId;
+              return (
+                <button
+                  key={p.id}
+                  style={{ ...itemStyle, background: active ? 'var(--accent-soft)' : 'transparent' }}
+                  onMouseEnter={(e) => {
+                    if (!active) e.currentTarget.style.background = 'var(--surface-2)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active) e.currentTarget.style.background = 'transparent';
+                  }}
+                  onClick={() => {
+                    setCurrentProjectId(p.id);
+                    setOpen(false);
+                    // 正在看某个方向的详情页时，切换方向同步跳到新方向的详情（URL 驱动的页面）
+                    if (/^\/projects\/(?!new)/.test(location.pathname)) {
+                      navigate(`/projects/${p.id}`);
+                    }
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: active ? 'var(--accent)' : 'var(--border-strong)',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      fontWeight: active ? 650 : 450,
+                      color: active ? 'var(--accent-text)' : 'var(--text)',
+                    }}
+                    title={p.name}
+                  >
+                    {p.name}
+                  </span>
+                  {active && <Icon name="check" size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="hr" style={{ margin: '6px 4px' }} />
+          <button
+            style={{ ...itemStyle, color: 'var(--text-2)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            onClick={() => {
+              setOpen(false);
+              navigate('/projects/new');
+            }}
+          >
+            <Icon name="plus" size={13} style={{ color: 'var(--text-3)' }} />
+            新建方向
+          </button>
+          {currentProjectId && (
+            <button
+              style={{ ...itemStyle, color: 'var(--text-2)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              onClick={() => {
+                setOpen(false);
+                navigate(`/projects/${currentProjectId}`);
+              }}
+            >
+              <Icon name="settings" size={13} style={{ color: 'var(--text-3)' }} />
+              当前方向详情与设置
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NavItem({ n }: { n: NavEntry }) {
   return (
     <NavLink to={n.to} end={n.to === '/'} className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
@@ -85,11 +292,23 @@ export function AppShell() {
   const location = useLocation();
   const { logout } = useAuth();
   const queryClient = useQueryClient();
-  const { projects, isLoading: projectsLoading, currentProjectId, currentProject, setCurrentProjectId } = useProject();
 
   // —— 审批抽屉 ——
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [expandedGate, setExpandedGate] = useState<string | null>(null);
+
+  // —— 全局搜索（⌘K / Ctrl+K）——
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen((o) => !o);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   // —— 闸门（真实 API，后端未起时优雅降级为空列表 + 提示） ——
   const pendingQuery = useQuery({
@@ -176,7 +395,6 @@ export function AppShell() {
     retry: false,
     staleTime: 60_000,
   });
-  const avatarText = me?.email?.slice(0, 2).toUpperCase() ?? '研';
 
   const [c1, c2] = crumbFor(location.pathname);
 
@@ -187,15 +405,8 @@ export function AppShell() {
       {/* —— 侧栏 —— */}
       <div className="sidebar">
         <div className="sb-brand">
-          <div className="sb-logo">
-            <Icon name="sparkle" size={15} style={{ color: '#fff' }} />
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <h1>Polaris</h1>
-            <p style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {currentProject?.name ?? 'autonomous research'}
-            </p>
-          </div>
+          <PolarisMark size={46} />
+          <PolarisWordmark height={27} />
         </div>
         <div className="sb-scroll scroll">
           {NAV_MAIN.map((n) => (
@@ -204,39 +415,16 @@ export function AppShell() {
           <NavItem n={{ to: '/voyages', icon: 'compass', zh: 'AI 任务', en: 'Tasks' }} />
           <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
 
-          <div className="sb-section">研究方向 · Directions</div>
-          {projectsLoading && <div style={{ padding: '4px 10px', fontSize: 12, color: 'var(--text-4)' }}>加载中…</div>}
-          {projects.map((p) => (
-            <NavLink
-              key={p.id}
-              to={`/projects/${p.id}`}
-              className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
-              onClick={() => setCurrentProjectId(p.id)}
-              title={p.name}
-            >
-              <span className="nav-ic">
-                <Icon name="layers" size={15} />
-              </span>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-              {p.id === currentProjectId && (
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
-              )}
-            </NavLink>
-          ))}
-          <NavLink to="/projects/new" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
-            <span className="nav-ic">
-              <Icon name="plus" size={15} />
-            </span>
-            <span style={{ flex: 1, color: 'var(--text-3)' }}>新建方向</span>
-          </NavLink>
-
           <div className="sb-section">研究流水线 · Pipeline</div>
-          {NAV_PIPE.map((n) => (
+          {NAV_PIPE.filter((n) => {
+            const key = FEATURE_BY_PATH[n.to];
+            return key == null || me?.features?.[key] !== false;
+          }).map((n) => (
             <NavItem key={n.to} n={n} />
           ))}
         </div>
         <div className="sb-foot">
-          <div className="av">{avatarText}</div>
+          <Avatar userId={me?.id} hasAvatar={!!me?.has_avatar} name={me?.display_name || me?.email || '研'} size={26} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {me?.display_name ?? me?.email ?? '研究员'}
@@ -273,10 +461,13 @@ export function AppShell() {
             <span className="sep">›</span>
             <b>{c2}</b>
           </div>
+          {/* —— 研究方向选择器 —— */}
+          <DirectionSwitcher />
           <div className="spacer" />
-          <div className="searchbox">
+          <div className="searchbox" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSearchOpen(true); }}>
             <Icon name="search" size={14} />
-            <span>搜索论文 / idea / 实验…</span>
+            <span>搜索论文 / 想法 / 实验…</span>
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
           </div>
           <button className="icon-btn" onClick={() => openGates(null)} title="审批中心 Approvals">
@@ -326,7 +517,7 @@ export function AppShell() {
               />
             ))
           ) : (
-            <div className="empty" style={{ padding: 20 }}>没有待处理的审批 🎉</div>
+            <div className="empty" style={{ padding: 20 }}>没有待处理的审批</div>
           )}
         </div>
         <div className="row" style={{ marginBottom: 10 }}>
@@ -353,6 +544,9 @@ export function AppShell() {
           批准与任务关联的审批后，对应任务将自动从断点恢复；拒绝则置为 failed。
         </div>
       </Drawer>
+
+      {/* —— 全局搜索面板 —— */}
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
 
       <ToastHost />
     </div>

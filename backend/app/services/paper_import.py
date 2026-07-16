@@ -117,6 +117,7 @@ async def _fields_from_doi(doi: str) -> dict[str, Any]:
     return {
         "title": meta["title"],
         "authors": meta.get("authors"),
+        "affiliations": meta.get("affiliations") or [],
         "year": meta.get("year"),
         "venue": meta.get("venue"),
         "doi": meta.get("doi") or doi,
@@ -179,6 +180,7 @@ async def add_manual_paper(
         external_ids=external_ids or None,
         title=fields["title"],
         authors=fields.get("authors"),
+        affiliations=fields.get("affiliations"),
         abstract=fields.get("abstract"),
         year=fields.get("year"),
         venue=fields.get("venue"),

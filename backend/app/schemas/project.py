@@ -86,3 +86,36 @@ class ProjectDetailRead(ProjectRead):
 class ProjectMemberAdd(BaseModel):
     email: EmailStr
     role: str = Field(default="member", pattern="^(member|owner)$")
+
+
+# ---- 邀请链接 ----
+
+
+class InviteCreate(BaseModel):
+    # 有效天数；None = 永久有效
+    expires_days: int | None = Field(default=7, ge=1, le=365)
+    # 最大使用次数；None = 不限
+    max_uses: int | None = Field(default=None, ge=1, le=1000)
+
+
+class InviteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    token: str
+    expires_at: datetime | None
+    max_uses: int | None
+    used_count: int
+    revoked: bool
+    created_at: datetime
+
+
+class InviteInfo(BaseModel):
+    """接受邀请前的预览信息。"""
+
+    project_id: uuid.UUID
+    project_name: str
+    inviter_name: str | None
+    valid: bool
+    already_member: bool

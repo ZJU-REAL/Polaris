@@ -1,8 +1,8 @@
 """idea forge / review 动作（Voyage kinds ``idea_forge`` / ``idea_review`` 的固定计划执行体）。
 
-forge 流水线（docs/api-m3.md §1）：
-    forge.read_context → forge.gap_analysis → forge.generate →
-    forge.score → forge.dedup → forge.persist
+forge 流水线（docs/api-m3.md §1，Idea 2.0 信号升级见 docs/api-idea2.md §1）：
+    forge.read_context → forge.collect_signals → forge.gap_analysis →
+    forge.generate → forge.score → forge.dedup → forge.persist
 review 流水线（docs/api-m3.md §3）：
     review.pair → review.debate → review.summarize
 
@@ -16,7 +16,10 @@ review 流水线（docs/api-m3.md §3）：
 import asyncio
 import json
 import math
+import re
 import uuid
+from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -26,10 +29,12 @@ from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
 from app.models.activity import Activity
+from app.models.base import utcnow
 from app.models.idea import Idea
-from app.models.paper import Concept, Paper
+from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.models.review import ReviewMessage, ReviewSession
+from app.schemas.idea import FORGE_SIGNALS
 from app.services.review import (
     DEFAULT_PERSONAS,
     elo_update,
@@ -41,6 +46,7 @@ DEFAULT_FORGE_KNOBS: dict[str, Any] = {
     "num_ideas": 8,
     "dedup_threshold": 0.85,
     "max_context_papers": 20,
+    "signals": list(FORGE_SIGNALS),
 }
 DEFAULT_ROUNDS = 2
 
@@ -57,10 +63,21 @@ GAP_SYSTEM_PROMPT = """\
 给出 3-6 个研究空白。
 """
 
+LIMITATIONS_SYSTEM_PROMPT = """\
+你是 Idea Forge 的文献局限分析师。下面给出若干论文中「局限/未来工作」相关段落摘录，
+请归纳出其中反复出现或值得跟进的研究空白。
+只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
+{"gaps": [{"title": "空白标题", "description": "来自哪些论文的什么局限、机会在哪"}]}
+给出 2-4 个研究空白。
+"""
+
 GENERATE_SYSTEM_PROMPT = """\
 你是 Idea Forge 的想法生成器，围绕研究空白提出具体可执行的研究想法。
+研究空白清单中每条带有下标与信号来源（signal），生成时注意：
+- 每个想法通过 gap_index 绑定它主要针对的空白（0 起下标）；
+- 不同想法尽量覆盖不同空白与不同信号来源，避免扎堆。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
-{"ideas": [{"title": "想法标题", "summary": "一句话概述", "motivation": "动机",
+{"ideas": [{"title": "想法标题", "summary": "一句话概述", "gap_index": 0, "motivation": "动机",
 "method": "方法概述", "experiments": "预期实验", "risks": "风险"}]}
 """
 
@@ -228,40 +245,269 @@ def _context_prompt(ctx: ActionContext, statement: str) -> str:
     )
 
 
-# ---- forge 2. gap 分析（LLM stage=forge） ----
+# ---- forge 2. 信号采集（确定性优先，docs/api-idea2.md §1） ----
+
+_TREND_WINDOW_DAYS = 90
+_HOLE_TOP_CONCEPTS = 8  # 每组参与配对的高频概念数
+_HOLE_MAX_PAIRS = 5
+_TREND_MAX = 5
+_LIMIT_KEYWORDS = ("limitation", "future work", "future direction", "局限", "未来工作", "不足")
+_LIMIT_PAPERS = 8  # 参与局限抽取的论文数上限
+_LIMIT_EXCERPT_CHARS = 600
+# method 系类别 ×（problem 类）做组合空白挖掘
+_HOLE_METHOD_CATEGORIES = ("method", "architecture", "methodology")
+
+
+def _signals_enabled(ctx: ActionContext) -> list[str]:
+    raw = _forge_knobs(ctx).get("signals")
+    if not isinstance(raw, list):
+        return list(FORGE_SIGNALS)
+    enabled = [s for s in raw if s in FORGE_SIGNALS]
+    return enabled or list(FORGE_SIGNALS)
+
+
+async def _concept_paper_map(
+    session: AsyncSession, project_id: uuid.UUID
+) -> dict[uuid.UUID, tuple[str, str, set[uuid.UUID]]]:
+    """概念 → (name, category, 关联论文集合)。"""
+    rows = (
+        await session.execute(
+            select(Concept.id, Concept.name, Concept.category, paper_concepts.c.paper_id)
+            .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
+            .where(Concept.project_id == project_id)
+        )
+    ).all()
+    result: dict[uuid.UUID, tuple[str, str, set[uuid.UUID]]] = {}
+    for concept_id, name, category, paper_id in rows:
+        entry = result.setdefault(concept_id, (str(name), str(category or "other"), set()))
+        entry[2].add(paper_id)
+    return result
+
+
+def _concept_holes(
+    concept_map: dict[uuid.UUID, tuple[str, str, set[uuid.UUID]]],
+) -> list[dict[str, Any]]:
+    """method 系 × problem 类中各自高频但零共现的概念对（纯代码，无 LLM）。"""
+    methods = sorted(
+        (v for v in concept_map.values() if v[1] in _HOLE_METHOD_CATEGORIES),
+        key=lambda v: -len(v[2]),
+    )[:_HOLE_TOP_CONCEPTS]
+    problems = sorted(
+        (v for v in concept_map.values() if v[1] == "problem"),
+        key=lambda v: -len(v[2]),
+    )[:_HOLE_TOP_CONCEPTS]
+    pairs: list[tuple[int, dict[str, Any]]] = []
+    for m_name, _, m_papers in methods:
+        for p_name, _, p_papers in problems:
+            if m_papers & p_papers:
+                continue
+            coverage = len(m_papers) + len(p_papers)
+            pairs.append(
+                (
+                    coverage,
+                    {
+                        "method": m_name,
+                        "problem": p_name,
+                        "method_papers": len(m_papers),
+                        "problem_papers": len(p_papers),
+                    },
+                )
+            )
+    pairs.sort(key=lambda x: -x[0])
+    return [p for _, p in pairs[:_HOLE_MAX_PAIRS]]
+
+
+async def _trend_concepts(session: AsyncSession, project_id: uuid.UUID) -> list[dict[str, Any]]:
+    """近 90 天入库论文中的高频概念（纯代码，无 LLM）。"""
+    cutoff = utcnow() - timedelta(days=_TREND_WINDOW_DAYS)
+    rows = (
+        await session.execute(
+            select(Concept.name, Paper.id)
+            .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
+            .join(Paper, Paper.id == paper_concepts.c.paper_id)
+            .where(Concept.project_id == project_id, Paper.created_at >= cutoff)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for name, _paper_id in rows:
+        counts[str(name)] = counts.get(str(name), 0) + 1
+    top = sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:_TREND_MAX]
+    return [{"concept": name, "recent_papers": n} for name, n in top if n >= 2]
+
+
+def _limitation_excerpts(full_text: str) -> list[str]:
+    """定位「局限/未来工作」相关段落（标题/关键词启发式），最多 2 段。"""
+    excerpts: list[str] = []
+    for para in re.split(r"\n\s*\n", full_text):
+        stripped = para.strip()
+        if len(stripped) < 60:
+            continue
+        lowered = stripped.lower()
+        if any(k in lowered for k in _LIMIT_KEYWORDS):
+            excerpts.append(stripped[:_LIMIT_EXCERPT_CHARS])
+            if len(excerpts) >= 2:
+                break
+    return excerpts
+
+
+@register("forge.collect_signals")
+async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    """确定性信号采集：概念组合空白 / 时间趋势 / 论文局限（LLM 仅做局限归纳）。"""
+    if isinstance(ctx.checkpoint.get("forge_signals"), dict):  # 断点幂等
+        signals = ctx.checkpoint["forge_signals"]
+        return {"skipped": True, **{k: len(v) for k, v in signals.items() if isinstance(v, list)}}
+    enabled = _signals_enabled(ctx)
+    signals: dict[str, Any] = {}
+
+    async with get_sessionmaker()() as session:
+        if "concept_holes" in enabled:
+            concept_map = await _concept_paper_map(session, ctx.run.project_id)
+            signals["concept_holes"] = _concept_holes(concept_map)
+        if "trends" in enabled:
+            signals["trends"] = await _trend_concepts(session, ctx.run.project_id)
+        excerpt_blocks: list[str] = []
+        if "limitations" in enabled:
+            papers = (
+                (
+                    await session.execute(
+                        select(Paper)
+                        .where(
+                            Paper.project_id == ctx.run.project_id,
+                            Paper.full_text_path.is_not(None),
+                            Paper.status.in_(("compiled", "included")),
+                        )
+                        .order_by(Paper.relevance_score.desc().nulls_last(), Paper.created_at)
+                        .limit(_LIMIT_PAPERS)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for paper in papers:
+                path = Path(paper.full_text_path or "")
+                if not path.is_file():
+                    continue
+                excerpts = _limitation_excerpts(path.read_text(encoding="utf-8", errors="ignore"))
+                if excerpts:
+                    excerpt_blocks.append(f"### {paper.title}\n" + "\n".join(excerpts))
+
+    if "limitations" in enabled:
+        if excerpt_blocks:
+
+            def validate(data: Any) -> list[dict[str, str]]:
+                gaps = data.get("gaps") if isinstance(data, dict) else None
+                if not isinstance(gaps, list) or not gaps:
+                    raise ValueError('expected {"gaps": [...]}')
+                return [
+                    {"title": str(g["title"]), "description": str(g.get("description") or "")}
+                    for g in gaps
+                    if isinstance(g, dict) and g.get("title")
+                ]
+
+            try:
+                signals["limitations"] = await _complete_json(
+                    ctx,
+                    stage="forge_signal",
+                    system=LIMITATIONS_SYSTEM_PROMPT,
+                    user="\n\n".join(excerpt_blocks)[:12000],
+                    validate=validate,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 单信号失败不阻塞其余信号
+                signals["limitations"] = []
+                signals["limitations_error"] = f"{type(e).__name__}: {e}"
+        else:
+            signals["limitations"] = []
+
+    ctx.checkpoint["forge_signals"] = signals
+    return {
+        "enabled": enabled,
+        **{k: len(v) for k, v in signals.items() if isinstance(v, list)},
+    }
+
+
+# ---- forge 3. gap 综合（LLM 综述空白 + 确定性信号合并，stage=forge） ----
 
 
 @register("forge.gap_analysis")
 async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     if isinstance(ctx.checkpoint.get("forge_gaps"), list):  # 断点幂等
         return {"gaps": len(ctx.checkpoint["forge_gaps"]), "skipped": True}
+    enabled = _signals_enabled(ctx)
 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
         statement = _statement(project)
 
-    def validate(data: Any) -> list[dict[str, str]]:
-        gaps = data.get("gaps") if isinstance(data, dict) else None
-        if not isinstance(gaps, list) or not gaps:
-            raise ValueError('expected {"gaps": [...]}')
-        normalized = []
-        for gap in gaps:
-            if not isinstance(gap, dict) or not gap.get("title"):
-                raise ValueError("gap missing title")
-            normalized.append(
-                {"title": str(gap["title"]), "description": str(gap.get("description") or "")}
-            )
-        return normalized
+    gaps: list[dict[str, str]] = []
+    if "survey_gap" in enabled:
 
-    gaps = await _complete_json(
-        ctx,
-        stage="forge",
-        system=GAP_SYSTEM_PROMPT,
-        user=_context_prompt(ctx, statement),
-        validate=validate,
-    )
+        def validate(data: Any) -> list[dict[str, str]]:
+            raw_gaps = data.get("gaps") if isinstance(data, dict) else None
+            if not isinstance(raw_gaps, list) or not raw_gaps:
+                raise ValueError('expected {"gaps": [...]}')
+            normalized = []
+            for gap in raw_gaps:
+                if not isinstance(gap, dict) or not gap.get("title"):
+                    raise ValueError("gap missing title")
+                normalized.append(
+                    {
+                        "title": str(gap["title"]),
+                        "description": str(gap.get("description") or ""),
+                        "signal": "survey_gap",
+                    }
+                )
+            return normalized
+
+        gaps.extend(
+            await _complete_json(
+                ctx,
+                stage="forge",
+                system=GAP_SYSTEM_PROMPT + ctx.skill_guidance("forge.gap_analysis"),
+                user=_context_prompt(ctx, statement),
+                validate=validate,
+            )
+        )
+
+    # 确定性信号 → gap 条目（不经 LLM）
+    signals = ctx.checkpoint.get("forge_signals") or {}
+    for hole in signals.get("concept_holes") or []:
+        gaps.append(
+            {
+                "title": f"概念组合空白：{hole['method']} × {hole['problem']}",
+                "description": (
+                    f"「{hole['method']}」（{hole['method_papers']} 篇）与"
+                    f"「{hole['problem']}」（{hole['problem_papers']} 篇）在库内零共现，"
+                    "两者的结合尚无人探索"
+                ),
+                "signal": "concept_holes",
+            }
+        )
+    for trend in signals.get("trends") or []:
+        gaps.append(
+            {
+                "title": f"新兴主题：{trend['concept']}",
+                "description": (
+                    f"近 {_TREND_WINDOW_DAYS} 天有 {trend['recent_papers']} 篇新论文涉及"
+                    f"「{trend['concept']}」，处于快速演化期，存在跟进机会"
+                ),
+                "signal": "trends",
+            }
+        )
+    for gap in signals.get("limitations") or []:
+        gaps.append({**gap, "signal": "limitations"})
+
+    if not gaps:
+        raise ValueError("没有可用的研究空白（所有信号源均为空）")
     ctx.checkpoint["forge_gaps"] = gaps
-    return {"gaps": len(gaps), "titles": [g["title"] for g in gaps]}
+    return {
+        "gaps": len(gaps),
+        "by_signal": {
+            s: sum(1 for g in gaps if g.get("signal") == s) for s in {g.get("signal") for g in gaps}
+        },
+        "titles": [g["title"] for g in gaps],
+    }
 
 
 # ---- forge 3. 生成候选（LLM stage=forge） ----
@@ -290,9 +536,29 @@ async def forge_generate(ctx: ActionContext, params: dict[str, Any]) -> dict[str
         if not isinstance(ideas, list) or not ideas:
             raise ValueError('expected {"ideas": [...]}')
         normalized = []
-        for item in ideas:
+        for i, item in enumerate(ideas):
             if not isinstance(item, dict) or not str(item.get("title") or "").strip():
                 raise ValueError("idea missing title")
+            # gap 绑定（evidence 记录依据信号，docs/api-idea2.md §1）；非法下标回退轮转
+            raw_index = item.get("gap_index")
+            index = (
+                raw_index
+                if isinstance(raw_index, int) and 0 <= raw_index < len(gaps)
+                else i % len(gaps)
+                if gaps
+                else None
+            )
+            evidence = None
+            if index is not None:
+                gap = gaps[index]
+                evidence = [
+                    {
+                        "source": "signal",
+                        "title": str(gap.get("title") or ""),
+                        "why": str(gap.get("description") or ""),
+                        "signal": str(gap.get("signal") or "survey_gap"),
+                    }
+                ]
             normalized.append(
                 {
                     "title": str(item["title"]).strip()[:512],
@@ -301,6 +567,7 @@ async def forge_generate(ctx: ActionContext, params: dict[str, Any]) -> dict[str
                     "scores": None,
                     "score_rationale": None,
                     "duplicate": False,
+                    "evidence": evidence,
                 }
             )
         return normalized[:num_ideas]
@@ -537,6 +804,8 @@ async def forge_persist(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                 scores=cand.get("scores"),
                 score_rationale=cand.get("score_rationale"),
                 status="candidate",
+                depth="sketch",
+                evidence=cand.get("evidence"),
                 parent_paper_ids=parent_paper_ids,
                 embedding=vector,
             )
@@ -612,12 +881,18 @@ async def review_pair(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             await ctx.notify(
                 {"type": "idea.status", "idea_id": str(idea.id), "status": idea.status}
             )
-        ordered_ids = [str(i.id) for i in ideas]
+        ordered = [(str(i.id), i.depth) for i in ideas]
 
-    pairs = [[ordered_ids[i], ordered_ids[i + 1]] for i in range(0, len(ordered_ids) - 1, 2)]
-    bye = ordered_ids[-1] if len(ordered_ids) % 2 == 1 else None
+    # 同 depth 才配对（sketch 对 sketch、proposal 对 proposal，docs/api-idea2.md §7）
+    pairs: list[list[str]] = []
+    byes: list[str] = []
+    for depth in ("proposal", "sketch"):
+        group = [idea_id for idea_id, d in ordered if d == depth]
+        pairs.extend([group[i], group[i + 1]] for i in range(0, len(group) - 1, 2))
+        if len(group) % 2 == 1:
+            byes.append(group[-1])
     ctx.checkpoint["review_pairs"] = pairs
-    return {"participants": len(ordered_ids), "pairs": len(pairs), "bye": bye}
+    return {"participants": len(ordered), "pairs": len(pairs), "bye": byes or None}
 
 
 # ---- review 2. 科学辩论 + 裁判判定 + Elo 更新 ----
@@ -633,10 +908,12 @@ def _persona_system(persona: dict[str, str], side: str, idea_title: str) -> str:
 
 
 def _debate_brief(label: str, idea: Idea) -> str:
+    # proposal 型内容厚（Research Proposal），截断放宽（docs/api-idea2.md §7）
+    limit = 4000 if idea.depth == "proposal" else 2000
     return (
         f"想法 {label}：{idea.title}\n"
         f"概述：{idea.summary or '（无）'}\n"
-        f"详情：\n{(idea.content or '')[:2000]}"
+        f"详情：\n{(idea.content or '')[:limit]}"
     )
 
 

@@ -8,9 +8,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import Activity
+from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment
 from app.models.gate import Gate
 from app.models.idea import Idea
+from app.models.manuscript import Manuscript
 from app.models.paper import Paper
+from app.services.papers import PAPER_STATUS_GROUPS
 
 
 async def _count(session: AsyncSession, stmt) -> int:
@@ -19,14 +22,47 @@ async def _count(session: AsyncSession, stmt) -> int:
 
 async def project_stats(session: AsyncSession, project_id: uuid.UUID) -> dict[str, Any]:
     today_start = datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
-    papers_total = await _count(session, select(func.count()).where(Paper.project_id == project_id))
+    # 「知识库论文」与文献页口径一致：只算库内（相关性达标及之后），
+    # 不含回收站（excluded）与尚未打分的中间状态（candidate）
+    in_library = Paper.status.in_(PAPER_STATUS_GROUPS["library"])
+    papers_total = await _count(
+        session, select(func.count()).where(Paper.project_id == project_id, in_library)
+    )
     papers_today = await _count(
         session,
-        select(func.count()).where(Paper.project_id == project_id, Paper.created_at >= today_start),
+        select(func.count()).where(
+            Paper.project_id == project_id, in_library, Paper.created_at >= today_start
+        ),
     )
     ideas_candidate = await _count(
         session,
         select(func.count()).where(Idea.project_id == project_id, Idea.status == "candidate"),
+    )
+    ideas_under_review = await _count(
+        session,
+        select(func.count()).where(Idea.project_id == project_id, Idea.status == "under_review"),
+    )
+    experiments_active = await _count(
+        session,
+        select(func.count()).where(
+            Experiment.project_id == project_id,
+            Experiment.status.notin_(EXPERIMENT_TERMINAL_STATUSES),
+        ),
+    )
+    experiments_running = await _count(
+        session,
+        select(func.count()).where(
+            Experiment.project_id == project_id, Experiment.status == "running"
+        ),
+    )
+    manuscripts_total = await _count(
+        session, select(func.count()).where(Manuscript.project_id == project_id)
+    )
+    manuscripts_under_review = await _count(
+        session,
+        select(func.count()).where(
+            Manuscript.project_id == project_id, Manuscript.status == "under_review"
+        ),
     )
     gates_pending = await _count(
         session,
@@ -48,6 +84,11 @@ async def project_stats(session: AsyncSession, project_id: uuid.UUID) -> dict[st
         "papers_total": papers_total,
         "papers_today": papers_today,
         "ideas_candidate": ideas_candidate,
+        "ideas_under_review": ideas_under_review,
+        "experiments_active": experiments_active,
+        "experiments_running": experiments_running,
+        "manuscripts_total": manuscripts_total,
+        "manuscripts_under_review": manuscripts_under_review,
         "gates_pending": gates_pending,
         "recent_activities": [
             {"id": a.id, "kind": a.kind, "message": a.message, "created_at": a.created_at}

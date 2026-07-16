@@ -21,7 +21,7 @@ import {
   type PaperImportInput,
   type PaperRead,
   type PaperSort,
-  type PaperStatus,
+  type PaperStatusFilter,
   type ReadingStatus,
   type SearchMode,
 } from '../../lib/api';
@@ -31,21 +31,26 @@ import { READING_STATUS, ReadingDot } from '../reading/shared';
 /* ============================================================
    论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
    + 右详情（元数据 + wiki markdown + 概念 chips + 标签/星标/
-   阅读状态 + 人工纳入/排除 + 阅读入口）。
+   阅读状态 + 编译/删除 + 阅读入口）；列表支持多选批量删除/导出。
    ============================================================ */
 
 const PAGE_SIZE = 20;
 
-type StatusFilter = 'all' | Extract<PaperStatus, 'candidate' | 'scored' | 'compiled' | 'excluded' | 'included'>;
+/** 论文库视图（docs/api-lit.md §8.5）：只展示相关性达标的文献（低相关论文不进库）。 */
+type ViewFilter = 'all' | 'compiled' | 'starred';
 
-const STATUS_FILTERS: { v: StatusFilter; label: string }[] = [
-  { v: 'all', label: '全部' },
-  { v: 'candidate', label: '候选' },
-  { v: 'scored', label: '已打分' },
-  { v: 'compiled', label: '已编译' },
-  { v: 'included', label: '已纳入' },
-  { v: 'excluded', label: '已排除' },
+const VIEW_FILTERS: { v: ViewFilter; label: string; hint?: string }[] = [
+  { v: 'all', label: '全部', hint: '相关性达到阈值的全部文献' },
+  { v: 'compiled', label: '已编译', hint: 'AI 已精读编译出介绍' },
+  { v: 'starred', label: '已星标', hint: '我加了星标的文献' },
 ];
+
+/** 视图 → 列表查询参数（低相关/未筛选论文一律不出现在论文库）。 */
+function viewQuery(view: ViewFilter): { status: PaperStatusFilter; starred?: boolean } {
+  if (view === 'compiled') return { status: 'compiled_any' };
+  if (view === 'starred') return { status: 'library', starred: true };
+  return { status: 'library' };
+}
 
 export interface PapersTabProps {
   pid: string;
@@ -240,13 +245,13 @@ function AddPaperModal({
 
 /* ---------------- 导出下拉菜单 ---------------- */
 
-function ExportMenu({
+export function ExportMenu({
   pid,
-  filters,
+  filters = {},
 }: {
   pid: string;
-  /** 当前列表过滤条件，透传给引用导出 */
-  filters: { status?: PaperStatus; tag?: string; starred?: boolean };
+  /** 列表过滤条件，透传给引用导出；不传导出全部库内文献 */
+  filters?: { status?: PaperStatusFilter; tag?: string; starred?: boolean };
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -298,11 +303,11 @@ function ExportMenu({
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button className="btn btn-ghost sm" onClick={() => setOpen((o) => !o)} disabled={busy}>
+      <button className="btn btn-ghost" onClick={() => setOpen((o) => !o)} disabled={busy}>
         {busy ? (
-          <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
+          <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
         ) : (
-          <Icon name="download" size={13} />
+          <Icon name="download" size={14} />
         )}
         导出
         <Icon name="chevDown" size={12} />
@@ -313,7 +318,7 @@ function ExportMenu({
           style={{
             position: 'absolute',
             top: 'calc(100% + 4px)',
-            left: 0,
+            right: 0,
             zIndex: 30,
             minWidth: 210,
             padding: '4px 0',
@@ -343,7 +348,7 @@ function ExportMenu({
             <Icon name="book" size={13} style={{ color: 'var(--text-3)' }} />
             <span>
               BibTeX 引用
-              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>.bib · 按当前筛选</span>
+              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>.bib · 全部库内文献</span>
             </span>
           </button>
           <button
@@ -365,9 +370,202 @@ function ExportMenu({
   );
 }
 
+/* ---------------- 垃圾桶 ---------------- */
+
+function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
+  const [trashQ, setTrashQ] = useState('');
+
+  const trashQuery = useQuery({
+    queryKey: ['papers-trash', pid],
+    queryFn: () => api.listPapers(pid, { status: 'excluded', size: 100, sort: '-published_at' }),
+    enabled: open,
+    retry: false,
+  });
+  const allItems = trashQuery.data?.items ?? [];
+  // 桶内搜索：标题 / 作者（客户端过滤）
+  const kw = trashQ.trim().toLowerCase();
+  const items = kw
+    ? allItems.filter(
+        (p) =>
+          p.title.toLowerCase().includes(kw) ||
+          p.authors.some((a) => a.name.toLowerCase().includes(kw)),
+      )
+    : allItems;
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['papers-trash', pid] });
+    void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
+    void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
+    void queryClient.invalidateQueries({ queryKey: ['project-graph', pid] });
+  };
+
+  const restoreMutation = useMutation({
+    mutationFn: (id: string) => api.restorePaper(id),
+    onSuccess: (p) => {
+      toast(`已召回：${p.title.slice(0, 30)}`, 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`召回失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const purgeMutation = useMutation({
+    mutationFn: (id: string) => api.deletePaper(id),
+    onSuccess: () => {
+      toast('已彻底删除', 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const emptyMutation = useMutation({
+    mutationFn: () => api.emptyTrash(pid),
+    onSuccess: (res) => {
+      toast(`垃圾桶已清空（${res.deleted} 篇）`, 'ok');
+      setConfirmEmpty(false);
+      invalidate();
+    },
+    onError: (e) => toast(`清空失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const busy = restoreMutation.isPending || purgeMutation.isPending || emptyMutation.isPending;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="垃圾桶"
+      sub="已删除的文献（含相关性不足自动删除的）"
+      width={640}
+      footer={
+        <>
+          {confirmEmpty ? (
+            <>
+              <span style={{ fontSize: 12, color: 'var(--danger-tx)', marginRight: 'auto' }}>
+                将彻底删除全部 {allItems.length} 篇及其文件，无法恢复
+              </span>
+              <button className="btn btn-ghost sm" onClick={() => setConfirmEmpty(false)}>
+                取消
+              </button>
+              <button
+                className="btn btn-primary sm"
+                style={{ background: 'var(--danger-tx)' }}
+                disabled={busy}
+                onClick={() => emptyMutation.mutate()}
+              >
+                {emptyMutation.isPending ? '清空中…' : '确认清空'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="btn btn-ghost sm"
+                style={{ color: 'var(--danger-tx)', marginRight: 'auto' }}
+                disabled={allItems.length === 0 || busy}
+                onClick={() => setConfirmEmpty(true)}
+              >
+                <Icon name="x" size={12} />
+                清空垃圾桶
+              </button>
+              <button className="btn btn-soft sm" onClick={onClose}>
+                关闭
+              </button>
+            </>
+          )}
+        </>
+      }
+    >
+      {trashQuery.isLoading ? (
+        <div className="empty" style={{ padding: 24 }}>加载中…</div>
+      ) : allItems.length === 0 ? (
+        <div className="empty" style={{ padding: 24 }}>垃圾桶是空的</div>
+      ) : (
+        <div className="col" style={{ gap: 6 }}>
+          <SearchInput value={trashQ} onChange={setTrashQ} placeholder="搜索标题 / 作者…" />
+          {items.length === 0 && <div className="empty" style={{ padding: 16 }}>没有匹配的文献</div>}
+          {items.map((p) => (
+            <div
+              key={p.id}
+              className="row gap8"
+              style={{
+                padding: '8px 10px',
+                borderRadius: 9,
+                background: 'var(--surface-2)',
+                alignItems: 'flex-start',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.45, overflowWrap: 'break-word' }}>
+                  {p.title}
+                </div>
+                {p.authors.length > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.5 }}>
+                    {p.authors.map((a) => a.name).join(' · ')}
+                  </div>
+                )}
+                <div className="row gap8" style={{ marginTop: 3 }}>
+                  {p.year !== null && <span className="mono muted" style={{ fontSize: 10.5 }}>{p.year}</span>}
+                  {p.relevance_score !== null && (
+                    <span className="mono muted" style={{ fontSize: 10.5 }}>
+                      相关度 {(p.relevance_score * 10).toFixed(1)}
+                    </span>
+                  )}
+                  {p.has_wiki && (
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)' }}>有介绍</span>
+                  )}
+                </div>
+              </div>
+              <button
+                className="btn btn-soft sm"
+                style={{ height: 26, flexShrink: 0 }}
+                disabled={busy}
+                title="召回到论文库"
+                onClick={() => restoreMutation.mutate(p.id)}
+              >
+                <Icon name="refresh" size={12} />
+                召回
+              </button>
+              <button
+                className="btn btn-ghost sm"
+                style={{ height: 26, flexShrink: 0, color: 'var(--danger-tx)' }}
+                disabled={busy}
+                title="彻底删除（连同文件，无法恢复）"
+                onClick={() => purgeMutation.mutate(p.id)}
+              >
+                <Icon name="x" size={12} />
+                彻底删除
+              </button>
+            </div>
+          ))}
+          {(trashQuery.data?.total ?? 0) > items.length && (
+            <div className="muted" style={{ fontSize: 11, textAlign: 'center', padding: 6 }}>
+              仅显示最近 {items.length} 篇（共 {trashQuery.data?.total} 篇）
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 /* ---------------- 列表行 ---------------- */
 
-function PaperRow({ p, active, onClick }: { p: PaperRead; active: boolean; onClick: () => void }) {
+function PaperRow({
+  p,
+  active,
+  checked,
+  selectMode,
+  onClick,
+  onToggleCheck,
+}: {
+  p: PaperRead;
+  active: boolean;
+  checked: boolean;
+  selectMode: boolean;
+  onClick: () => void;
+  onToggleCheck: () => void;
+}) {
   const tags = p.tags ?? [];
   return (
     <div
@@ -382,6 +580,16 @@ function PaperRow({ p, active, onClick }: { p: PaperRead; active: boolean; onCli
       }}
     >
       <div className="row gap8" style={{ marginBottom: 5 }}>
+        {selectMode && (
+          <input
+            type="checkbox"
+            checked={checked}
+            onClick={(e) => e.stopPropagation()}
+            onChange={onToggleCheck}
+            title="选中后可批量删除 / 导出"
+            style={{ width: 13, height: 13, margin: 0, flexShrink: 0, accentColor: 'var(--accent)', cursor: 'pointer' }}
+          />
+        )}
         {p.starred && <Icon name="starFill" size={11} style={{ color: 'var(--warn-tx)', flexShrink: 0 }} />}
         <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
           {p.arxiv_id ?? p.venue ?? '—'}
@@ -515,6 +723,9 @@ function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
 
 /* ---------------- 详情面板 ---------------- */
 
+/** 概念 chips 默认最多展示数，超出折叠 */
+const CONCEPT_CHIP_LIMIT = 12;
+
 function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="row" style={{ gap: 12, padding: '4px 0', alignItems: 'flex-start' }}>
@@ -533,15 +744,19 @@ function PaperDetailPane({
   pid,
   onOpenConcept,
   onWikiLink,
+  onDeleted,
 }: {
   paperId: string;
   pid: string;
   onOpenConcept: (id: string) => void;
   onWikiLink: WikiLinkHandler;
+  /** 删除成功后回调（父组件清空选中，自动跳到列表第一篇） */
+  onDeleted: () => void;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [abstractOpen, setAbstractOpen] = useState(false);
+  const [conceptsOpen, setConceptsOpen] = useState(false);
 
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['paper', paperId],
@@ -549,15 +764,17 @@ function PaperDetailPane({
     retry: false,
   });
 
-  const patchMutation = useMutation({
-    mutationFn: (status: 'included' | 'excluded') => api.patchPaper(paperId, { status }),
-    onSuccess: (_p, status) => {
-      toast(status === 'included' ? '已纳入知识库' : '已排除该论文', 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['paper', paperId] });
+  const deleteMutation = useMutation({
+    mutationFn: () => api.patchPaper(paperId, { status: 'excluded' }),
+    onSuccess: () => {
+      toast('已移入垃圾桶，可在列表底部的垃圾桶中召回', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['papers-trash', pid] });
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['project-graph', pid] });
+      onDeleted();
     },
-    onError: (e) => toast(`操作失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 星标 / 阅读状态（个人视角）
@@ -576,7 +793,7 @@ function PaperDetailPane({
   const recompileMutation = useMutation({
     mutationFn: () => api.recompilePaper(paperId),
     onSuccess: () => {
-      toast('重写完成，介绍已更新', 'ok');
+      toast('编译完成，介绍已更新', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['paper', paperId] });
       void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
       void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
@@ -654,37 +871,31 @@ function PaperDetailPane({
         </button>
         <button
           className="btn btn-soft sm"
-          disabled={patchMutation.isPending || paper.status === 'included'}
-          onClick={() => patchMutation.mutate('included')}
-        >
-          <Icon name="check" size={13} />
-          {paper.status === 'included' ? '已纳入' : '纳入 include'}
-        </button>
-        <button
-          className="btn btn-ghost sm"
-          disabled={patchMutation.isPending || paper.status === 'excluded'}
-          onClick={() => patchMutation.mutate('excluded')}
-        >
-          <Icon name="x" size={13} />
-          {paper.status === 'excluded' ? '已排除' : '排除 exclude'}
-        </button>
-        <button
-          className="btn btn-ghost sm"
-          title="用最新的图文模式重写这篇介绍"
+          title={paper.has_wiki ? '用最新的图文模式重写这篇介绍' : 'AI 精读并编译图文介绍'}
           disabled={recompileMutation.isPending}
           onClick={() => recompileMutation.mutate()}
         >
           {recompileMutation.isPending ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              AI 重新撰写中，约 1 分钟…
+              AI 编译中，约 1 分钟…
             </>
           ) : (
             <>
               <Icon name="sparkle" size={13} />
-              重新编译
+              {paper.has_wiki ? '重新编译' : '编译'}
             </>
           )}
+        </button>
+        <button
+          className="btn btn-ghost sm"
+          style={{ color: 'var(--danger-tx)' }}
+          title="移入垃圾桶（可召回）"
+          disabled={deleteMutation.isPending}
+          onClick={() => deleteMutation.mutate()}
+        >
+          <Icon name="x" size={13} />
+          删除
         </button>
         {arxivUrl && (
           <a
@@ -748,15 +959,22 @@ function PaperDetailPane({
         <MetaItem label="relevance">
           {relevance !== null ? <RelevanceBar value={relevance} width={140} /> : <span className="muted">未打分</span>}
         </MetaItem>
-        <MetaItem label="ingested">
+        <MetaItem label="入库时间">
           <span className="mono">{fmtTime(paper.created_at)}</span>
+        </MetaItem>
+        <MetaItem label="编译时间">
+          {paper.compiled_at ? (
+            <span className="mono">{fmtTime(paper.compiled_at)}</span>
+          ) : (
+            <span className="muted">未编译</span>
+          )}
         </MetaItem>
       </div>
 
-      {/* —— 概念 chips —— */}
+      {/* —— 概念 chips（过多时折叠） —— */}
       {paper.concepts.length > 0 && (
         <div className="row gap8 wrap" style={{ marginTop: 16 }}>
-          {paper.concepts.map((c) => {
+          {(conceptsOpen ? paper.concepts : paper.concepts.slice(0, CONCEPT_CHIP_LIMIT)).map((c) => {
             const meta = categoryMeta(c.category);
             return (
               <span
@@ -770,6 +988,11 @@ function PaperDetailPane({
               </span>
             );
           })}
+          {paper.concepts.length > CONCEPT_CHIP_LIMIT && (
+            <span className="chip" style={{ fontSize: 11 }} onClick={() => setConceptsOpen((o) => !o)}>
+              {conceptsOpen ? '收起' : `+${paper.concepts.length - CONCEPT_CHIP_LIMIT} 个概念`}
+            </span>
+          )}
         </div>
       )}
 
@@ -829,11 +1052,12 @@ function PaperDetailPane({
           <EmptyState
             compact
             icon="pen"
-            title="尚未编译 wiki 页"
-            desc="该论文还没有经过 Librarian 精读编译（相关度不足、或尚未运行初始建库 / 增量同步）。"
+            title="还没有 AI 介绍"
+            desc="点上方的编译按钮，让 AI 精读这篇论文并生成图文介绍。"
           />
         )}
       </div>
+
     </div>
   );
 }
@@ -841,7 +1065,7 @@ function PaperDetailPane({
 /* ---------------- Tab 主体 ---------------- */
 
 export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink }: PapersTabProps) {
-  const [status, setStatus] = useState<StatusFilter>('all');
+  const [view, setView] = useState<ViewFilter>('all');
   const [sort, setSort] = useState<PaperSort>('relevance');
   const [mode, setMode] = useState<SearchMode>('keyword');
   const [qInput, setQInput] = useState('');
@@ -849,9 +1073,54 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
 
   // —— 文献管理增强过滤器 ——
   const [tagFilter, setTagFilter] = useState('');
-  const [starredOnly, setStarredOnly] = useState(false);
   const [readingFilter, setReadingFilter] = useState<'' | ReadingStatus>('');
   const [addOpen, setAddOpen] = useState(false);
+  // 高级检索（作者/机构/发表时间/入库时间）
+  const [advOpen, setAdvOpen] = useState(false);
+  const [advAuthor, setAdvAuthor] = useState('');
+  const [advAffiliation, setAdvAffiliation] = useState('');
+  const [advPubFrom, setAdvPubFrom] = useState('');
+  const [advPubTo, setAdvPubTo] = useState('');
+  const [advCreatedFrom, setAdvCreatedFrom] = useState('');
+  const [advCreatedTo, setAdvCreatedTo] = useState('');
+  const author = useDebounced(advAuthor.trim());
+  const affiliation = useDebounced(advAffiliation.trim());
+  const advActive = !!(author || affiliation || advPubFrom || advPubTo || advCreatedFrom || advCreatedTo);
+
+  // 多选（批量删除/导出）：默认关闭，底部「多选」按钮开启后行首出现复选框
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [trashOpen, setTrashOpen] = useState(false);
+  const queryClient = useQueryClient();
+
+  // 切换方向/视图/搜索时退出多选
+  useEffect(() => {
+    setSelected(new Set());
+    setSelectMode(false);
+  }, [pid, view, q, tagFilter, readingFilter]);
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: () => api.batchDeletePapers(pid, [...selected]),
+    onSuccess: (res) => {
+      toast(`已把 ${res.deleted} 篇移入垃圾桶，可召回`, 'ok');
+      if (selectedId && selected.has(selectedId)) onSelect('');
+      setSelected(new Set());
+      setSelectMode(false);
+      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['project-graph', pid] });
+    },
+    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const bulkExportMutation = useMutation({
+    mutationFn: () => api.downloadCitations(pid, { format: 'bibtex', ids: [...selected] }),
+    onSuccess: (blob) => {
+      saveBlob(blob, 'polaris-selected.bib');
+      toast(`已导出 ${selected.size} 篇的 BibTeX`, 'ok');
+    },
+    onError: (e) => toast(`导出失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
 
   const semanticActive = mode === 'semantic' && q.length > 0;
 
@@ -865,15 +1134,20 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
 
   // —— 关键词/浏览：分页列表 ——
   const listQuery = useInfiniteQuery({
-    queryKey: ['papers', pid, status, q, sort, tagFilter, starredOnly, readingFilter],
+    queryKey: ['papers', pid, view, q, sort, tagFilter, readingFilter, author, affiliation, advPubFrom, advPubTo, advCreatedFrom, advCreatedTo],
     queryFn: ({ pageParam }) =>
       api.listPapers(pid, {
-        status: status === 'all' ? undefined : status,
+        ...viewQuery(view),
         q: q || undefined,
         sort,
         tag: tagFilter || undefined,
-        starred: starredOnly || undefined,
         reading_status: readingFilter || undefined,
+        author: author || undefined,
+        affiliation: affiliation || undefined,
+        published_from: advPubFrom ? `${advPubFrom}T00:00:00Z` : undefined,
+        published_to: advPubTo ? `${advPubTo}T23:59:59Z` : undefined,
+        created_from: advCreatedFrom ? `${advCreatedFrom}T00:00:00Z` : undefined,
+        created_to: advCreatedTo ? `${advCreatedTo}T23:59:59Z` : undefined,
         page: pageParam,
         size: PAGE_SIZE,
       }),
@@ -896,12 +1170,11 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
     return listQuery.data?.pages.flatMap((p) => p.items) ?? [];
   }, [semanticActive, semQuery.data, listQuery.data]);
 
-  const total = semanticActive ? papers.length : (listQuery.data?.pages[0]?.total ?? null);
   const isLoading = semanticActive ? semQuery.isLoading : listQuery.isLoading;
   const isError = semanticActive ? semQuery.isError : listQuery.isError;
   const fallbackNotice = semanticActive && semQuery.data && semQuery.data.mode_used === 'keyword';
 
-  const hasFilter = !!q || status !== 'all' || !!tagFilter || starredOnly || !!readingFilter;
+  const hasFilter = !!q || view !== 'all' || !!tagFilter || !!readingFilter || advActive;
 
   // 列表变化后自动选中第一篇
   const firstId = papers[0]?.id ?? null;
@@ -916,21 +1189,6 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
       {/* —— 左：列表 —— */}
       <div className="split-list">
         <div style={{ padding: '12px 14px 10px', borderBottom: '0.5px solid var(--border)' }}>
-          {/* 工具栏：添加文献 / 导出 */}
-          <div className="row gap8" style={{ marginBottom: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => setAddOpen(true)}>
-              <Icon name="plus" size={13} />
-              添加文献
-            </button>
-            <ExportMenu
-              pid={pid}
-              filters={{
-                status: status === 'all' ? undefined : status,
-                tag: tagFilter || undefined,
-                starred: starredOnly || undefined,
-              }}
-            />
-          </div>
           <div className="row gap8">
             <SearchInput
               value={qInput}
@@ -945,18 +1203,116 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
               value={mode}
               onChange={setMode}
             />
+            <button
+              className="icon-btn"
+              style={{
+                width: 28,
+                height: 28,
+                flexShrink: 0,
+                position: 'relative',
+                ...(advOpen || advActive ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {}),
+              }}
+              title="高级检索：作者 / 机构 / 发表时间 / 入库时间"
+              onClick={() => setAdvOpen((o) => !o)}
+            >
+              <Icon name="sliders" size={14} />
+              {advActive && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: 3,
+                    right: 3,
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: 'var(--accent)',
+                  }}
+                />
+              )}
+            </button>
           </div>
+          {advOpen && (
+            <div
+              className="col gap8"
+              style={{
+                marginTop: 8,
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: 'var(--surface-2)',
+                ...filterDisabled,
+              }}
+            >
+              <div className="row gap8">
+                <input
+                  className="input"
+                  style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
+                  placeholder="作者姓名…"
+                  value={advAuthor}
+                  onChange={(e) => setAdvAuthor(e.target.value)}
+                />
+                <input
+                  className="input"
+                  style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
+                  placeholder="发表机构…"
+                  title="需要论文元数据带有机构信息（入库时自动从 OpenAlex 补充）"
+                  value={advAffiliation}
+                  onChange={(e) => setAdvAffiliation(e.target.value)}
+                />
+              </div>
+              <div className="row gap6" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                <span style={{ width: 52, flexShrink: 0 }}>发表时间</span>
+                <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
+                  value={advPubFrom} onChange={(e) => setAdvPubFrom(e.target.value)} />
+                <span>—</span>
+                <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
+                  value={advPubTo} onChange={(e) => setAdvPubTo(e.target.value)} />
+              </div>
+              <div className="row gap6" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                <span style={{ width: 52, flexShrink: 0 }}>入库时间</span>
+                <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
+                  value={advCreatedFrom} onChange={(e) => setAdvCreatedFrom(e.target.value)} />
+                <span>—</span>
+                <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
+                  value={advCreatedTo} onChange={(e) => setAdvCreatedTo(e.target.value)} />
+              </div>
+              {advActive && (
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ alignSelf: 'flex-start', height: 22, fontSize: 10.5 }}
+                  onClick={() => {
+                    setAdvAuthor('');
+                    setAdvAffiliation('');
+                    setAdvPubFrom('');
+                    setAdvPubTo('');
+                    setAdvCreatedFrom('');
+                    setAdvCreatedTo('');
+                  }}
+                >
+                  清空高级条件
+                </button>
+              )}
+            </div>
+          )}
           <div className="row gap6 wrap" style={{ marginTop: 10 }}>
-            {STATUS_FILTERS.map((f) => (
+            {VIEW_FILTERS.map((f) => (
               <span
                 key={f.v}
-                className={`chip${status === f.v ? ' on' : ''}`}
+                className={`chip${view === f.v ? ' on' : ''}`}
                 style={filterDisabled}
-                onClick={() => setStatus(f.v)}
+                title={f.hint}
+                onClick={() => setView(f.v)}
               >
                 {f.label}
               </span>
             ))}
+            <span
+              className="chip"
+              style={{ marginLeft: 'auto' }}
+              title="垃圾桶：已删除的文献，可召回或彻底删除"
+              onClick={() => setTrashOpen(true)}
+            >
+              垃圾桶
+            </span>
           </div>
           {/* 标签 / 阅读状态 / 仅星标 过滤 */}
           <div className="row gap6" style={{ marginTop: 8, ...filterDisabled }}>
@@ -988,16 +1344,8 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                 </option>
               ))}
             </select>
-            <span
-              className={`chip${starredOnly ? ' on' : ''}`}
-              style={{ flexShrink: 0 }}
-              onClick={() => setStarredOnly((s) => !s)}
-              title="只看加了星标的论文"
-            >
-              ★ 星标
-            </span>
           </div>
-          <div className="row" style={{ marginTop: 10, justifyContent: 'space-between' }}>
+          <div className="row gap8" style={{ marginTop: 10 }}>
             <Segmented<PaperSort>
               options={[
                 { v: 'relevance', label: '按相关度' },
@@ -1006,9 +1354,10 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
               value={sort}
               onChange={setSort}
             />
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-              {total !== null ? `${total} 篇` : ''}
-            </span>
+            <button className="btn btn-soft sm" style={{ height: 26 }} onClick={() => setAddOpen(true)}>
+              <Icon name="plus" size={12} />
+              添加文献
+            </button>
           </div>
           {fallbackNotice && (
             <div
@@ -1037,12 +1386,27 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
               compact
               icon="book"
               title={hasFilter ? '没有匹配的论文' : '论文库为空'}
-              desc={hasFilter ? '换个关键词或过滤条件试试。' : '先到「建库与同步」页运行 bootstrap 回填文献，或点上方「添加文献」手动加一篇。'}
+              desc={hasFilter ? '换个关键词或过滤条件试试。' : '先到建库与同步页运行初始建库，或点上方的添加文献按钮手动添加。'}
             />
           ) : (
             <>
               {papers.map((p) => (
-                <PaperRow key={p.id} p={p} active={p.id === selectedId} onClick={() => onSelect(p.id)} />
+                <PaperRow
+                  key={p.id}
+                  p={p}
+                  active={p.id === selectedId}
+                  checked={selected.has(p.id)}
+                  selectMode={selectMode}
+                  onClick={() => onSelect(p.id)}
+                  onToggleCheck={() =>
+                    setSelected((old) => {
+                      const next = new Set(old);
+                      if (next.has(p.id)) next.delete(p.id);
+                      else next.add(p.id);
+                      return next;
+                    })
+                  }
+                />
               ))}
               {!semanticActive && listQuery.hasNextPage && (
                 <div style={{ padding: 12, display: 'flex', justifyContent: 'center' }}>
@@ -1068,12 +1432,57 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
             </>
           )}
         </div>
+
+        {/* —— 底部固定操作栏 —— */}
+        <div
+          className="row gap8"
+          style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
+        >
+          <button
+            className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
+            title="开启后列表出现复选框，可批量删除 / 导出"
+            onClick={() => {
+              setSelectMode((m) => !m);
+              setSelected(new Set());
+            }}
+          >
+            <Icon name="check" size={13} />
+            {selectMode ? `已选 ${selected.size}` : '多选'}
+          </button>
+          {selectMode && (
+            <>
+              <button
+                className="btn btn-ghost sm"
+                style={{ color: 'var(--danger-tx)' }}
+                disabled={selected.size === 0 || bulkDeleteMutation.isPending}
+                onClick={() => bulkDeleteMutation.mutate()}
+              >
+                <Icon name="x" size={12} />
+                删除
+              </button>
+              <button
+                className="btn btn-ghost sm"
+                disabled={selected.size === 0 || bulkExportMutation.isPending}
+                onClick={() => bulkExportMutation.mutate()}
+              >
+                <Icon name="download" size={12} />
+                导出 BibTeX
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* —— 右：详情 —— */}
       <div className="split-detail">
         {selectedId ? (
-          <PaperDetailPane paperId={selectedId} pid={pid} onOpenConcept={onOpenConcept} onWikiLink={onWikiLink} />
+          <PaperDetailPane
+            paperId={selectedId}
+            pid={pid}
+            onOpenConcept={onOpenConcept}
+            onWikiLink={onWikiLink}
+            onDeleted={() => onSelect('')}
+          />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
             从左侧选择一篇论文
@@ -1083,6 +1492,9 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
 
       {/* —— 添加文献 Modal —— */}
       <AddPaperModal pid={pid} open={addOpen} onClose={() => setAddOpen(false)} onImported={onSelect} />
+
+      {/* —— 垃圾桶 —— */}
+      <TrashModal pid={pid} open={trashOpen} onClose={() => setTrashOpen(false)} />
     </div>
   );
 }

@@ -39,6 +39,66 @@ async def test_create_and_list_projects(client):
     assert resp.json()["id"] == project["id"]
 
 
+async def test_delete_project(client):
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = await client.post("/api/projects", json={"name": "to-delete"}, headers=headers)
+    project_id = resp.json()["id"]
+
+    # 方向下的论文随删除级联清掉
+    import uuid as _uuid
+
+    from sqlalchemy import func, select
+
+    from app.core.db import get_sessionmaker
+    from app.models.paper import Paper
+
+    async with get_sessionmaker()() as session:
+        session.add(Paper(project_id=_uuid.UUID(project_id), title="orphan check"))
+        await session.commit()
+
+    resp = await client.delete(f"/api/projects/{project_id}", headers=headers)
+    assert resp.status_code == 204
+
+    resp = await client.get(f"/api/projects/{project_id}", headers=headers)
+    assert resp.status_code == 404
+    async with get_sessionmaker()() as session:
+        count = (
+            await session.execute(
+                select(func.count()).where(Paper.project_id == _uuid.UUID(project_id))
+            )
+        ).scalar_one()
+        assert count == 0
+
+
+async def test_delete_project_requires_owner(client):
+    token_a = await register_and_login(client, email="owner@example.com")
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    resp = await client.post("/api/projects", json={"name": "guarded"}, headers=headers_a)
+    project_id = resp.json()["id"]
+
+    # 普通成员：403；非成员：404
+    token_b = await register_and_login(client, email="member@example.com")
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    await client.post(
+        "/api/projects/" + project_id + "/members",
+        json={"email": "member@example.com", "role": "member"},
+        headers=headers_a,
+    )
+    resp = await client.delete(f"/api/projects/{project_id}", headers=headers_b)
+    assert resp.status_code == 403
+
+    token_c = await register_and_login(client, email="stranger@example.com")
+    resp = await client.delete(
+        f"/api/projects/{project_id}", headers={"Authorization": f"Bearer {token_c}"}
+    )
+    assert resp.status_code == 404
+
+    # owner 可删
+    resp = await client.delete(f"/api/projects/{project_id}", headers=headers_a)
+    assert resp.status_code == 204
+
+
 async def test_get_project_not_member_404(client):
     token_a = await register_and_login(client, email="a@example.com")
     resp = await client.post(

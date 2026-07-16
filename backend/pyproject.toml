@@ -28,6 +28,7 @@ dependencies = [
     "bibtexparser>=1.4,<2",
     "pycrdt>=0.10",
     "pycrdt-websocket>=0.15",
+    "python-pptx>=1.0",
 ]
 
 [project.optional-dependencies]

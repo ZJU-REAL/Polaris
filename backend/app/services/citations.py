@@ -193,8 +193,12 @@ async def papers_for_export(
     status: str | None = None,
     tag: str | None = None,
     starred: bool | None = None,
+    paper_ids: list[uuid.UUID] | None = None,
 ) -> Sequence[Paper]:
-    """导出对象：过滤参数与论文列表一致；缺省 status in (compiled, included)。"""
+    """导出对象：过滤参数与论文列表一致；缺省 status in (compiled, included)。
+
+    paper_ids 指定时按 id 精确导出（多选导出），忽略状态缺省过滤。
+    """
     stmt = apply_paper_filters(
         select(Paper),
         project_id=project_id,
@@ -203,7 +207,9 @@ async def papers_for_export(
         starred=starred,
         user_id=user_id,
     )
-    if not status:
+    if paper_ids:
+        stmt = stmt.where(Paper.id.in_(paper_ids))
+    elif not status:
         stmt = stmt.where(Paper.status.in_(DEFAULT_EXPORT_STATUSES))
     stmt = stmt.order_by(Paper.year.asc().nulls_last(), Paper.created_at.asc())
     return (await session.execute(stmt)).scalars().all()

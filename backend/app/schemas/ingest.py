@@ -34,6 +34,10 @@ class PaperCounts(BaseModel):
     excluded: int = 0
     included: int = 0
     total: int = 0
+    # 库内 = 相关性达标及之后（scored+fetched+compiled+included），论文库计数口径
+    library: int = 0
+    # 待编译 = 达标但还没有 AI 解读（scored+fetched）
+    pending_compile: int = 0
 
 
 class IngestStateRead(BaseModel):
@@ -41,6 +45,8 @@ class IngestStateRead(BaseModel):
     last_run: IngestLastRun | None
     paper_counts: PaperCounts
     running_voyage_id: uuid.UUID | None
+    # 下一次自动同步时间（cadence=daily 且已完成初始建库才有）
+    next_sync_at: str | None = None
 
 
 class ActivityBrief(BaseModel):
@@ -54,5 +60,10 @@ class ProjectStatsRead(BaseModel):
     papers_total: int
     papers_today: int
     ideas_candidate: int
+    ideas_under_review: int
+    experiments_active: int
+    experiments_running: int
+    manuscripts_total: int
+    manuscripts_under_review: int
     gates_pending: int
     recent_activities: list[ActivityBrief]

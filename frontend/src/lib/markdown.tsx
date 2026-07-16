@@ -1,11 +1,16 @@
 import { createElement, useMemo, type ReactNode } from 'react';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 
 /* ============================================================
-   轻量安全 markdown 渲染器（零依赖）。
+   轻量安全 markdown 渲染器（数学公式外零依赖）。
    - 输出 React 元素而非 innerHTML：原文中的 HTML 一律按纯文本
-     渲染，天然免疫 XSS，无需 sanitizer。
+     渲染，天然免疫 XSS，无需 sanitizer（KaTeX 输出为库生成的
+     受控 HTML，是唯一的 innerHTML 注入点）。
    - 支持：# 标题、无序/有序列表、**粗体**、*斜体*、`行内代码`、
      ``` 代码块、表格、> 引用、--- 分隔线、[文字](http链接)。
+   - 数学公式（KaTeX）：行内 `$...$` / `\(...\)`，块级 `$$...$$`
+     （可多行，独立成段）；解析失败按原文显示，不抛错。
    - 扩展：`[[概念名]]` / `[[概念名|别名]]` 双链 → 可点击 chip，
      通过 onWikiLink(概念名) 回调（Research Wiki 用）。
    - 扩展：独立一行的 `![[fig:N]]` 图片标记（docs/api-lit.md §6.6）
@@ -15,16 +20,56 @@ import { createElement, useMemo, type ReactNode } from 'react';
    样式见 global.css 的 .md / .wikilink。
    ============================================================ */
 
+/** KaTeX 渲染（错误容忍：非法 TeX 原样显示为红色文本而不抛错）。 */
+function MathSpan({ tex, display }: { tex: string; display: boolean }) {
+  const html = useMemo(
+    () =>
+      katex.renderToString(tex, {
+        displayMode: display,
+        throwOnError: false,
+        strict: false,
+        output: 'html',
+      }),
+    [tex, display],
+  );
+  if (display) {
+    return (
+      <div
+        className="md-math-block"
+        style={{ margin: '10px 0', overflowX: 'auto', textAlign: 'center' }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    );
+  }
+  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 export type WikiLinkHandler = (name: string) => void;
 
 /** `![[fig:N]]` 图片标记渲染回调；返回 null 表示不渲染（该行跳过）。 */
 export type FigureRenderer = (index: number) => ReactNode;
+
+/**
+ * `[[paper:uuid]]` 库内论文引用渲染回调（docs/api-idea2.md §6）；
+ * 返回 null 时回退为普通 [[双链]] chip 行为。
+ */
+export type PaperRefRenderer = (paperId: string) => ReactNode;
+
+/**
+ * `[n]`（1-2 位数字）引用角标渲染回调（文献库对话用，编号对应来源清单）；
+ * 返回 null 时按普通文本渲染。未提供回调时 `[n]` 不做任何解析。
+ */
+export type CitationRenderer = (index: number) => ReactNode;
 
 export interface MarkdownProps {
   source: string;
   onWikiLink?: WikiLinkHandler;
   /** 渲染独立一行的 `![[fig:N]]` 嵌入图 */
   renderFigure?: FigureRenderer;
+  /** 渲染行内 `[[paper:uuid]]` 库内论文引用 */
+  renderPaperRef?: PaperRefRenderer;
+  /** 渲染行内 `[n]` 引用角标（文献库对话） */
+  renderCitation?: CitationRenderer;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -32,9 +77,14 @@ export interface MarkdownProps {
 /* ---------------- inline ---------------- */
 
 const INLINE_RE =
-  /(`[^`\n]+`)|(!\[\[fig:\d+\]\])|(\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\])|(\[([^\]\n]*)\]\((https?:\/\/[^\s)]+)\))|(\*\*([^*\n]+)\*\*)|(\*([^*\n]+)\*)|(~~([^~\n]+)~~)/g;
+  /(`[^`\n]+`)|(!\[\[fig:\d+\]\])|(\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\])|(\[([^\]\n]*)\]\((https?:\/\/[^\s)]+)\))|(\*\*([^*\n]+)\*\*)|(\*([^*\n]+)\*)|(~~([^~\n]+)~~)|(\[(\d{1,2})\])|(\$([^\s$](?:[^$\n]*?[^\s$])?)\$)|(\\\((.+?)\\\))/g;
 
-function renderInline(text: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
+function renderInline(
+  text: string,
+  onWikiLink?: WikiLinkHandler,
+  renderPaperRef?: PaperRefRenderer,
+  renderCitation?: CitationRenderer,
+): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   let k = 0;
@@ -46,9 +96,26 @@ function renderInline(text: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
       out.push(<code key={k++}>{m[1].slice(1, -1)}</code>);
     } else if (m[2] !== undefined) {
       // 行内出现的 ![[fig:N]] 图片标记：剥除不显示（容错，只有独立成行才渲染图）
+    } else if (m[15] !== undefined) {
+      // [n] 引用角标：交给 renderCitation；无回调 / 返回 null 时按原文输出
+      const node = renderCitation?.(Number(m[16])) ?? null;
+      if (node !== null && node !== undefined && node !== false) {
+        out.push(<span key={k++}>{node}</span>);
+      } else {
+        out.push(m[15]);
+      }
     } else if (m[3] !== undefined) {
       const target = (m[4] ?? '').trim();
       const label = (m[5] ?? target).trim();
+      // [[paper:uuid]] 库内论文引用：交给 renderPaperRef；无回调 / 返回 null 时回退普通双链
+      if (renderPaperRef && target.toLowerCase().startsWith('paper:')) {
+        const node = renderPaperRef(target.slice('paper:'.length).trim());
+        if (node !== null && node !== undefined && node !== false) {
+          out.push(<span key={k++}>{node}</span>);
+          last = re.lastIndex;
+          continue;
+        }
+      }
       out.push(
         <span
           key={k++}
@@ -71,11 +138,15 @@ function renderInline(text: string, onWikiLink?: WikiLinkHandler): ReactNode[] {
         </a>,
       );
     } else if (m[9] !== undefined) {
-      out.push(<strong key={k++}>{renderInline(m[10] ?? '', onWikiLink)}</strong>);
+      out.push(<strong key={k++}>{renderInline(m[10] ?? '', onWikiLink, renderPaperRef, renderCitation)}</strong>);
     } else if (m[11] !== undefined) {
-      out.push(<em key={k++}>{renderInline(m[12] ?? '', onWikiLink)}</em>);
+      out.push(<em key={k++}>{renderInline(m[12] ?? '', onWikiLink, renderPaperRef, renderCitation)}</em>);
     } else if (m[13] !== undefined) {
       out.push(<del key={k++}>{m[14] ?? ''}</del>);
+    } else if (m[17] !== undefined) {
+      out.push(<MathSpan key={k++} tex={m[18] ?? ''} display={false} />);
+    } else if (m[19] !== undefined) {
+      out.push(<MathSpan key={k++} tex={m[20] ?? ''} display={false} />);
     }
     last = re.lastIndex;
   }
@@ -93,6 +164,8 @@ const RE_QUOTE = /^\s*>\s?(.*)$/;
 const RE_TABLE_SEP = /^\s*\|?\s*:?-{2,}[-\s:|]*$/;
 /** 独立一行的 ![[fig:N]] 图片标记（docs/api-lit.md §6.6） */
 const RE_FIG_LINE = /^\s*!\[\[fig:(\d+)\]\]\s*$/;
+/** 块级公式起始：$$… 或 \[… */
+const RE_MATH_OPEN = /^\s*(\$\$|\\\[)/;
 
 function isBlockStart(line: string): boolean {
   return (
@@ -111,7 +184,13 @@ function splitTableRow(line: string): string[] {
   return s.split('|').map((c) => c.trim());
 }
 
-function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: FigureRenderer): ReactNode[] {
+function parseBlocks(
+  src: string,
+  onWikiLink?: WikiLinkHandler,
+  renderFigure?: FigureRenderer,
+  renderPaperRef?: PaperRefRenderer,
+  renderCitation?: CitationRenderer,
+): ReactNode[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n');
   const out: ReactNode[] = [];
   let i = 0;
@@ -141,6 +220,34 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
       continue;
     }
 
+    // 块级公式：$$…$$ / \[…\]（可多行）
+    const mathOpen = RE_MATH_OPEN.exec(line);
+    if (mathOpen) {
+      const delim = mathOpen[1] === '$$' ? '$$' : '\\]';
+      let first = line.trim().slice(2);
+      const texLines: string[] = [];
+      if (first.endsWith(delim) && first.length > delim.length) {
+        texLines.push(first.slice(0, -delim.length));
+        i++;
+      } else {
+        if (first.endsWith(delim)) first = first.slice(0, -delim.length);
+        texLines.push(first);
+        i++;
+        while (i < lines.length) {
+          const l = (lines[i] ?? '').trim();
+          i++;
+          if (l.endsWith(delim)) {
+            texLines.push(l.slice(0, -delim.length));
+            break;
+          }
+          texLines.push(l);
+        }
+      }
+      const tex = texLines.join('\n').trim();
+      if (tex) out.push(<MathSpan key={key++} tex={tex} display />);
+      continue;
+    }
+
     // 独立一行的 ![[fig:N]] 嵌入图：交给 renderFigure；无回调或返回 null 则该行静默跳过
     const figMatch = RE_FIG_LINE.exec(line);
     if (figMatch) {
@@ -160,7 +267,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
     const h = RE_HEADING.exec(line);
     if (h) {
       const lvl = (h[1] ?? '#').length;
-      out.push(createElement(`h${lvl}`, { key: key++ }, renderInline(h[2] ?? '', onWikiLink)));
+      out.push(createElement(`h${lvl}`, { key: key++ }, renderInline(h[2] ?? '', onWikiLink, renderPaperRef, renderCitation)));
       i++;
       continue;
     }
@@ -187,7 +294,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
             <thead>
               <tr>
                 {header.map((c, ci) => (
-                  <th key={ci}>{renderInline(c, onWikiLink)}</th>
+                  <th key={ci}>{renderInline(c, onWikiLink, renderPaperRef, renderCitation)}</th>
                 ))}
               </tr>
             </thead>
@@ -195,7 +302,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
               {rows.map((r, ri) => (
                 <tr key={ri}>
                   {header.map((_, ci) => (
-                    <td key={ci}>{renderInline(r[ci] ?? '', onWikiLink)}</td>
+                    <td key={ci}>{renderInline(r[ci] ?? '', onWikiLink, renderPaperRef, renderCitation)}</td>
                   ))}
                 </tr>
               ))}
@@ -215,7 +322,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
         buf.push(q[1] ?? '');
         i++;
       }
-      out.push(<blockquote key={key++}>{parseBlocks(buf.join('\n'), onWikiLink, renderFigure)}</blockquote>);
+      out.push(<blockquote key={key++}>{parseBlocks(buf.join('\n'), onWikiLink, renderFigure, renderPaperRef, renderCitation)}</blockquote>);
       continue;
     }
 
@@ -230,7 +337,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
         items.push(it[1] ?? '');
         i++;
       }
-      const children = items.map((it, ii) => <li key={ii}>{renderInline(it, onWikiLink)}</li>);
+      const children = items.map((it, ii) => <li key={ii}>{renderInline(it, onWikiLink, renderPaperRef, renderCitation)}</li>);
       out.push(ordered ? <ol key={key++}>{children}</ol> : <ul key={key++}>{children}</ul>);
       continue;
     }
@@ -240,7 +347,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
     i++;
     while (i < lines.length) {
       const l = lines[i] ?? '';
-      if (!l.trim() || isBlockStart(l) || RE_HR.test(l) || RE_FIG_LINE.test(l)) break;
+      if (!l.trim() || isBlockStart(l) || RE_HR.test(l) || RE_FIG_LINE.test(l) || RE_MATH_OPEN.test(l)) break;
       if (l.includes('|') && RE_TABLE_SEP.test(lines[i + 1] ?? '')) break;
       buf.push(l);
       i++;
@@ -250,7 +357,7 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
         {buf.map((l, li) => (
           <span key={li}>
             {li > 0 && <br />}
-            {renderInline(l, onWikiLink)}
+            {renderInline(l, onWikiLink, renderPaperRef, renderCitation)}
           </span>
         ))}
       </p>,
@@ -260,10 +367,10 @@ function parseBlocks(src: string, onWikiLink?: WikiLinkHandler, renderFigure?: F
 }
 
 /** 安全 markdown 渲染（含 [[概念]] 双链与 ![[fig:N]] 嵌入图）。 */
-export function Markdown({ source, onWikiLink, renderFigure, className, style }: MarkdownProps) {
+export function Markdown({ source, onWikiLink, renderFigure, renderPaperRef, renderCitation, className, style }: MarkdownProps) {
   const nodes = useMemo(
-    () => parseBlocks(source, onWikiLink, renderFigure),
-    [source, onWikiLink, renderFigure],
+    () => parseBlocks(source, onWikiLink, renderFigure, renderPaperRef, renderCitation),
+    [source, onWikiLink, renderFigure, renderPaperRef, renderCitation],
   );
   return (
     <div className={`md${className ? ` ${className}` : ''}`} style={style}>

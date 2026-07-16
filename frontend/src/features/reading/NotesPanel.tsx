@@ -216,7 +216,7 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
               <Markdown source={draft} style={{ fontSize: 12.5 }} />
             ) : (
               <span className="muted" style={{ fontSize: 12 }}>
-                （还没写内容，切回「编辑」开始写）
+                （还没有内容，切换到编辑标签开始写）
               </span>
             )}
           </div>

@@ -150,10 +150,10 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
 
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
         <FormField
-          label="关联 idea（可选）"
+          label="关联想法（可选）"
           en="idea"
           style={{ flex: 1 }}
-          hint="事实包的「研究想法」分区来源；仅列已晋级 idea。"
+          hint="论文事实包中研究想法分区的来源；仅列出已晋级的想法。"
         >
           <select className="input" value={ideaId} onChange={(e) => setIdeaId(e.target.value)}>
             <option value="">

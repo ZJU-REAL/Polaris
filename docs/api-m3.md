@@ -2,6 +2,10 @@
 
 延续 api-m1/m2 总则。所有路由挂 `/api`，JWT Bearer，权限=项目成员。
 
+> Idea 2.0 升级（docs/api-idea2.md）：§1 forge 管线已升级为多信号源七步版（端点不变，
+> knobs 新增 signals，产物 depth=sketch）；深度生成（Research Proposal）、Idea 新字段与
+> 锦标赛同 depth 配对规则见 api-idea2.md。
+
 ## 1. Idea Forge（生成）
 
 - `POST /projects/{pid}/forge` body：

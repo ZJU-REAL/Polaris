@@ -5,10 +5,12 @@ import json
 import logging
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Select, delete, exists, func, insert, or_, select, text
+from sqlalchemy import Select, and_, cast, delete, exists, func, insert, or_, select, text
+from sqlalchemy import Text as SAText
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,6 +26,13 @@ PAPER_SORTS = ("relevance", "-published_at")
 # 语义检索重排：向量召回候选数 / 送重排的文档截断长度
 RERANK_CANDIDATES = 30
 RERANK_DOC_CHARS = 512
+
+# status 组别名：库内（相关性达标及之后）/ 待编译（达标但未编译）/ 已编译（含人工纳入的历史数据）
+PAPER_STATUS_GROUPS: dict[str, tuple[str, ...]] = {
+    "library": ("scored", "fetched", "compiled", "included"),
+    "pending_compile": ("scored", "fetched"),
+    "compiled_any": ("compiled", "included"),
+}
 
 # AI 伴读上下文：full_text 截断上限（超长时头尾各留一半）
 CHAT_CONTEXT_MAX_CHARS = 80_000
@@ -53,14 +62,50 @@ def apply_paper_filters(
     starred: bool | None = None,
     reading_status: str | None = None,
     user_id: uuid.UUID | None = None,
+    author: str | None = None,
+    affiliation: str | None = None,
+    published_from: datetime | None = None,
+    published_to: datetime | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
 ) -> Select:
-    """论文列表 / 引用导出共用的过滤条件（starred / reading_status 为 user_id 的个人视角）。"""
+    """论文列表 / 引用导出共用的过滤条件（starred / reading_status 为 user_id 的个人视角）。
+
+    status 支持组别名（docs/api-lit.md §8.5）：
+    - ``library``：库内文献 = 相关性达标及之后的状态（scored/fetched/compiled/included）
+    - ``pending_compile``：待编译 = 已达标但还没有解读（scored/fetched）
+    """
     stmt = stmt.where(Paper.project_id == project_id)
-    if status:
+    if status in PAPER_STATUS_GROUPS:
+        stmt = stmt.where(Paper.status.in_(PAPER_STATUS_GROUPS[status]))
+    elif status:
         stmt = stmt.where(Paper.status == status)
     if q:
         pattern = f"%{q}%"
         stmt = stmt.where(or_(Paper.title.ilike(pattern), Paper.abstract.ilike(pattern)))
+    # 高级检索（docs/api-lit.md §8.7）：作者/机构在 JSON 列上做文本包含匹配（两种方言通用）
+    if author:
+        stmt = stmt.where(cast(Paper.authors, SAText).ilike(f"%{author}%"))
+    if affiliation:
+        stmt = stmt.where(cast(Paper.affiliations, SAText).ilike(f"%{affiliation}%"))
+    if published_from:
+        stmt = stmt.where(
+            or_(
+                Paper.published_at >= published_from,
+                and_(Paper.published_at.is_(None), Paper.year >= published_from.year),
+            )
+        )
+    if published_to:
+        stmt = stmt.where(
+            or_(
+                Paper.published_at <= published_to,
+                and_(Paper.published_at.is_(None), Paper.year <= published_to.year),
+            )
+        )
+    if created_from:
+        stmt = stmt.where(Paper.created_at >= created_from)
+    if created_to:
+        stmt = stmt.where(Paper.created_at <= created_to)
     if tag:
         stmt = stmt.where(
             Paper.id.in_(
@@ -99,6 +144,12 @@ async def list_papers(
     sort: str = "relevance",
     page: int = 1,
     size: int = 20,
+    author: str | None = None,
+    affiliation: str | None = None,
+    published_from: datetime | None = None,
+    published_to: datetime | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
 ) -> tuple[Sequence[Paper], int]:
     stmt = apply_paper_filters(
         select(Paper),
@@ -109,6 +160,12 @@ async def list_papers(
         starred=starred,
         reading_status=reading_status,
         user_id=user_id,
+        author=author,
+        affiliation=affiliation,
+        published_from=published_from,
+        published_to=published_to,
+        created_from=created_from,
+        created_to=created_to,
     )
     total = (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     if sort == "-published_at":
@@ -250,6 +307,102 @@ async def upsert_paper_user_meta(
     return meta
 
 
+# ---- 删除论文（docs/api-lit.md §8.6） ----
+
+
+def _remove_paper_files(paper: Paper) -> None:
+    """尽力清理论文落盘文件（PDF / 全文 / 图片目录）；失败只记日志。"""
+    import shutil
+
+    from app.services.literature.pdf_extract import figures_dir
+
+    for raw in (paper.pdf_path, paper.full_text_path):
+        if not raw:
+            continue
+        try:
+            Path(raw).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("failed to remove paper file %s", raw, exc_info=True)
+    try:
+        fig_dir = figures_dir(str(paper.id)).parent  # <data_dir>/papers/<paper_id>/
+        if fig_dir.exists():
+            shutil.rmtree(fig_dir, ignore_errors=True)
+    except OSError:
+        logger.warning("failed to remove figures dir for %s", paper.id, exc_info=True)
+
+
+async def delete_paper(session: AsyncSession, paper: Paper) -> None:
+    """删除一篇论文：清理落盘文件 + 删行（分段/笔记/标签/概念关联 FK 级联）。"""
+    _remove_paper_files(paper)
+    await session.delete(paper)
+    await session.commit()
+
+
+async def delete_papers(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    paper_ids: list[uuid.UUID],
+    hard: bool = False,
+) -> int:
+    """批量删除项目内论文（非本项目的 id 忽略），返回处理数。
+
+    默认软删（移入垃圾桶 = status excluded，可召回）；hard=True 彻底删除（清文件+删行）。
+    """
+    papers = (
+        (
+            await session.execute(
+                select(Paper).where(Paper.project_id == project_id, Paper.id.in_(paper_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for paper in papers:
+        if hard:
+            _remove_paper_files(paper)
+            await session.delete(paper)
+        else:
+            paper.status = "excluded"
+    await session.commit()
+    return len(papers)
+
+
+def restore_status_of(paper: Paper) -> str:
+    """垃圾桶召回后的状态：已编译回 compiled；打过分回 scored；否则按人工精选处理。"""
+    if paper.wiki_content:
+        return "compiled"
+    if paper.relevance_score is not None:
+        return "scored"
+    return "included"
+
+
+async def restore_paper(session: AsyncSession, paper: Paper) -> Paper:
+    """从垃圾桶召回（docs/api-lit.md §8.6）。"""
+    paper.status = restore_status_of(paper)
+    await session.commit()
+    await session.refresh(paper)
+    return paper
+
+
+async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
+    """清空垃圾桶：彻底删除项目内全部 excluded 论文（清文件 + 删行），返回删除数。"""
+    papers = (
+        (
+            await session.execute(
+                select(Paper).where(Paper.project_id == project_id, Paper.status == "excluded")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for paper in papers:
+        _remove_paper_files(paper)
+        await session.delete(paper)
+    await session.commit()
+    return len(papers)
+
+
 # ---- PDF 按需补下（docs/api-lit.md §1） ----
 
 
@@ -280,6 +433,14 @@ async def fetch_pdf(session: AsyncSession, paper: Paper) -> Paper:
         paper.full_text_path = str(txt_path)
     except Exception:  # noqa: BLE001 — 抽取失败降级：仅有 PDF、无全文
         logger.warning("full text extraction failed for paper %s", paper.id, exc_info=True)
+    # 全文分段索引（文献问答底座）；失败不影响 PDF 落盘
+    if paper.full_text_path:
+        from app.services.chunks import index_paper_fulltext
+
+        try:
+            await index_paper_fulltext(session, paper)
+        except Exception:  # noqa: BLE001
+            logger.warning("chunk indexing failed for paper %s", paper.id, exc_info=True)
     await session.commit()
     await session.refresh(paper)
     return paper
@@ -335,7 +496,10 @@ def build_chat_messages(
 async def keyword_search_papers(
     session: AsyncSession, *, project_id: uuid.UUID, q: str, limit: int
 ) -> list[tuple[Paper, float]]:
-    """关键词检索：title/abstract/wiki_content/笔记内容 ilike，按命中位置给启发式分。"""
+    """关键词检索：title/abstract/wiki_content/笔记内容 ilike，按命中位置给启发式分。
+
+    只检索库内文献（相关性达标）：已删除（excluded）/未筛选（candidate）不出现。
+    """
     pattern = f"%{q}%"
     note_hit = Paper.id.in_(
         select(PaperNote.paper_id).where(
@@ -345,6 +509,7 @@ async def keyword_search_papers(
     stmt = (
         select(Paper)
         .where(
+            Paper.status.in_(PAPER_STATUS_GROUPS["library"]),
             Paper.project_id == project_id,
             or_(
                 Paper.title.ilike(pattern),

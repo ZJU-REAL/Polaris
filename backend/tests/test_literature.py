@@ -143,3 +143,32 @@ async def test_openalex_404_returns_none(cache_redis):
     client = OpenAlexClient(redis=cache_redis, mailto="test@example.org")
     assert await client.get_by_doi("10.1/nope") is None
     await client.aclose()
+
+
+# ---- 抽取文本清洗（postgres UTF8 拒绝 0x00，见 wiki.fetch_extract 失败案例） ----
+
+
+def test_sanitize_text_strips_nul_and_control_chars():
+    from app.services.literature.pdf_extract import sanitize_text
+
+    dirty = "abc\x00def\x01\x02\r\nline2\rline3\tkeep\n\npara"
+    clean = sanitize_text(dirty)
+    assert "\x00" not in clean
+    assert "\x01" not in clean and "\x02" not in clean
+    assert "line2\nline3\tkeep" in clean  # \n \t 保留，\r 统一成 \n
+
+
+def test_sanitize_text_drops_lone_surrogates():
+    from app.services.literature.pdf_extract import sanitize_text
+
+    clean = sanitize_text("ok\ud800tail")
+    assert clean == "oktail"
+    clean.encode("utf-8")  # 不再抛 UnicodeEncodeError
+
+
+def test_split_text_after_sanitize_has_no_nul():
+    from app.services.chunks import split_text
+    from app.services.literature.pdf_extract import sanitize_text
+
+    chunks = split_text(sanitize_text("para1 with \x00 nul\n\npara2" * 100))
+    assert chunks and all("\x00" not in c for c in chunks)

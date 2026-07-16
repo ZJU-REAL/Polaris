@@ -7,6 +7,11 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
+/* 全站等比放大 10%（用户反馈基准字号偏小）：
+   组件字号均为 px 定值，zoom 统一缩放字体与间距，视觉比例不变 */
+html { zoom: 1.1; }
+/* 右侧详情面板恢复原始大小（0.91 ≈ 1/1.1，抵消全局放大） */
+.split-detail { zoom: 0.91; }
 body {
   font-family: var(--sans);
   color: var(--text);
@@ -53,12 +58,6 @@ input {
   display: flex; flex-direction: column;
 }
 .sb-brand { display: flex; align-items: center; gap: 9px; margin: 18px 14px 12px; }
-.sb-logo {
-  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
-  background: linear-gradient(150deg, #1d5cb0 0%, var(--accent) 55%, var(--accent-press) 100%);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 1px 2px rgba(0, 47, 100, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
-}
 .sb-brand h1 { font-size: 14px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .sb-brand p { font-size: 11px; color: var(--text-3); margin: 1px 0 0; font-family: var(--mono); }
 
@@ -440,6 +439,25 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 .writer-mini-btn:hover { background: var(--surface-3); color: var(--text); }
 .writer-mini-btn:disabled { opacity: 0.5; cursor: default; }
 .writer-diag:hover { background: var(--surface-2); }
+
+/* —— Writer 工作台可拖拽分栏：拖拽条 + 收起/展开按钮 —— */
+.panel-gutter {
+  position: relative; flex-shrink: 0; background: transparent; z-index: 5;
+  transition: background 0.12s;
+}
+.panel-gutter.v { width: 7px; cursor: col-resize; }
+.panel-gutter.h { height: 7px; cursor: row-resize; }
+.panel-gutter.no-drag { cursor: default; }
+.panel-gutter:not(.no-drag):hover, .panel-gutter.dragging { background: var(--accent-soft); }
+.panel-gutter-btn {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 17px; height: 36px; border-radius: 8px; border: 0.5px solid var(--border-2);
+  background: var(--surface); color: var(--text-3); cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow-card); opacity: 0; transition: opacity 0.12s, color 0.12s;
+}
+.panel-gutter:hover .panel-gutter-btn, .panel-gutter-btn.always { opacity: 1; }
+.panel-gutter-btn:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ============================================================
    Toast

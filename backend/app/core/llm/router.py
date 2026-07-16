@@ -6,6 +6,7 @@
   归属到 user + project + voyage。
 """
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -21,6 +22,8 @@ from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.security import decrypt_secret
 
+logger = logging.getLogger(__name__)
+
 # 科研环节枚举（docs/api-m1.md §2；M2 新增 embedding，见 docs/api-m2.md §7；
 # 文献管理增强新增 reading（AI 伴读），见 docs/api-lit.md §3）
 STAGES = (
@@ -33,6 +36,10 @@ STAGES = (
     "embedding",
     "rerank",
     "forge",
+    "forge_signal",
+    "goal_explore",
+    "proposal",
+    "proposal_review",
     "debate",
     "experiment",
     "writing",
@@ -136,19 +143,22 @@ class LLMRouter:
     ) -> None:
         from app.models.llm_config import LLMUsage
 
-        async with get_sessionmaker()() as session:
-            session.add(
-                LLMUsage(
-                    user_id=user_id,
-                    project_id=project_id,
-                    voyage_id=voyage_id,
-                    stage=stage,
-                    model=model,
-                    prompt_tokens=int(usage.get("prompt_tokens", 0)),
-                    completion_tokens=int(usage.get("completion_tokens", 0)),
+        try:
+            async with get_sessionmaker()() as session:
+                session.add(
+                    LLMUsage(
+                        user_id=user_id,
+                        project_id=project_id,
+                        voyage_id=voyage_id,
+                        stage=stage,
+                        model=model,
+                        prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                        completion_tokens=int(usage.get("completion_tokens", 0)),
+                    )
                 )
-            )
-            await session.commit()
+                await session.commit()
+        except Exception:  # noqa: BLE001 — 记账尽力而为，失败不打断 LLM 主流程
+            logger.warning("llm usage accounting failed (stage=%s)", stage, exc_info=True)
 
     @staticmethod
     def _ensure_usage(

@@ -19,7 +19,9 @@ from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.base import utcnow
 from app.models.paper import Paper
 from app.models.project import Project
+from app.services.concepts import link_paper_concepts
 from app.services.figure_annotate import (
+    FIGURE_KIND_ZH,
     annotate_figures,
     important_figures_with_bytes,
 )
@@ -48,7 +50,10 @@ LIBRARIAN_SYSTEM_PROMPT = """\
 写作要求：
 - 篇幅充分展开（通常 800–1500 字）；有全文时要利用正文细节，不要只复述摘要；
 - 文中出现的关键概念（方法/架构/问题/指标/数据集等）在首次出现处用双链 [[概念名]] 就地标注；
-- 不要在文末单独罗列「相关概念」清单，双链只放在正文叙述里。
+- 不要在文末单独罗列「相关概念」清单，双链只放在正文叙述里；
+- 数学符号与公式用 LaTeX：行内 $...$，重要公式独立一行用 $$...$$；
+- 若随消息附带了论文配图，文章必须图文交织：把每张图插到对应小节，并用文字介绍这张图
+  （具体规则见「可用图片清单」后的说明）。
 """
 
 
@@ -63,14 +68,30 @@ def strip_invalid_figure_markers(content: str, valid_indices: set[int]) -> str:
     return "\n".join(lines) + ("\n" if content.endswith("\n") else "")
 
 
+# 图片类型 → 建议落位的小节（编译 prompt 用）
+_KIND_SECTION_HINT = {
+    "motivation": "研究背景与动机",
+    "method": "方法",
+    "architecture": "方法",
+    "experiment": "实验与结果",
+    "other": "最相关的小节",
+}
+
+
 def _figure_prompt_section(selected: list[tuple[dict[str, Any], bytes]]) -> str:
     lines = ["可用图片清单（与附带图片顺序一致）："]
     for fig, _ in selected:
+        kind = str(fig.get("kind") or "other")
+        kind_zh = FIGURE_KIND_ZH.get(kind, "其他")
+        section = _KIND_SECTION_HINT.get(kind, "最相关的小节")
         caption = fig.get("caption") or f"第 {fig.get('page')} 页插图"
-        lines.append(f"- fig:{int(fig['index'])} —— {caption}")
+        lines.append(f"- fig:{int(fig['index'])}【{kind_zh}，建议放在「{section}」】—— {caption}")
     lines.append(
-        "请在正文最相关的段落后插入独立一行 ![[fig:N]]"
-        "（只用清单中的 N，2-4 处，不要集中堆在开头或结尾）。"
+        "图文交织要求：\n"
+        "1. 清单里的每一张图都要用上：在建议的小节里插入独立一行 ![[fig:N]]（只用清单中的 N）；\n"
+        "2. 每处插图必须配文字介绍——插图前后用 1-3 句话讲清这张图画了什么、"
+        "如何支撑正文的论点、读者应该注意图中哪个部分，行文像「如图所示，……」的博客写法；\n"
+        "3. 不要只丢一个图标记不解释，也不要把图集中堆在文章开头或结尾。"
     )
     return "\n".join(lines)
 
@@ -113,21 +134,35 @@ async def compile_paper(
     """
     llm = llm or get_llm_router()
     user_prompt, images = build_compile_prompt(paper, statement=statement)
-    result = await llm.complete(
-        "librarian",
-        [
-            Message(role="system", content=LIBRARIAN_SYSTEM_PROMPT + extra_guidance),
-            Message(role="user", content=user_prompt),
-        ],
-        images=images or None,
-        user_id=user_id,
-        project_id=paper.project_id,
-        voyage_id=voyage_id,
-    )
-    if not result.content.strip():
-        raise ValueError("librarian returned empty content")
     valid = {int(f["index"]) for f in (paper.figures or [])}
-    return strip_invalid_figure_markers(result.content, valid)
+
+    content = ""
+    for attempt in range(2):
+        prompt = user_prompt
+        if attempt == 1:
+            prompt += (
+                "\n\n注意：上一稿没有在正文里插入任何图片标记。请重写全文，"
+                "务必按「可用图片清单」把每张图以独立一行 ![[fig:N]] 插到对应小节，"
+                "并在插图前后用文字介绍这张图。"
+            )
+        result = await llm.complete(
+            "librarian",
+            [
+                Message(role="system", content=LIBRARIAN_SYSTEM_PROMPT + extra_guidance),
+                Message(role="user", content=prompt),
+            ],
+            images=images or None,
+            user_id=user_id,
+            project_id=paper.project_id,
+            voyage_id=voyage_id,
+        )
+        if not result.content.strip():
+            raise ValueError("librarian returned empty content")
+        content = strip_invalid_figure_markers(result.content, valid)
+        # 有配图但一张都没插 → 带强指令重写一次；仍失败则接受纯文字稿（图库里还能看图）
+        if not images or FIGURE_MARKER_RE.search(content):
+            break
+    return content
 
 
 async def recompile_paper(
@@ -146,9 +181,12 @@ async def recompile_paper(
     statement = definition.get("statement") or (project.name if project else paper.title)
 
     if paper.pdf_path and Path(paper.pdf_path).exists():
-        if paper.figures is None:
+        # 从未提取过，或上一轮一张重要图都没选出来（多为旧提取逻辑漏掉矢量图）→ 重提候选
+        if paper.figures is None or not any(f.get("important") for f in paper.figures):
             candidates = await extract_figures(str(paper.id), Path(paper.pdf_path))
-            paper.figures = [c | {"caption": None, "important": False} for c in candidates]
+            paper.figures = [
+                c | {"caption": None, "kind": None, "important": False} for c in candidates
+            ]
         if paper.figures:
             await annotate_figures(paper, paper.figures, llm=llm, user_id=user_id)
         await session.commit()
@@ -159,4 +197,6 @@ async def recompile_paper(
     if paper.status in ("scored", "fetched"):
         paper.status = "compiled"
     await session.commit()
+    # 单篇概念上链：新介绍里的 [[双链]] 建词条并关联（否则点击提示"概念尚未入库"）
+    await link_paper_concepts(session, paper, llm=llm, user_id=user_id)
     return paper

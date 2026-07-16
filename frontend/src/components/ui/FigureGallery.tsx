@@ -20,6 +20,41 @@ function captionOf(fig: FigureInfo): string {
   return fig.caption?.trim() || `第 ${fig.page} 页的图`;
 }
 
+/** 图片类型中文标签；无类型返回 null（不显示）。 */
+const FIGURE_KIND_ZH: Record<string, string> = {
+  motivation: '动机图',
+  method: '方法图',
+  architecture: '架构图',
+  experiment: '实验图',
+};
+
+function kindLabelOf(fig: FigureInfo): string | null {
+  return fig.kind ? (FIGURE_KIND_ZH[fig.kind] ?? null) : null;
+}
+
+/** 图注前的小型类型标签（嵌入图/缩略图/大图共用）。 */
+function KindTag({ fig, light }: { fig: FigureInfo; light?: boolean }) {
+  const label = kindLabelOf(fig);
+  if (!label) return null;
+  return (
+    <span
+      className="mono"
+      style={{
+        display: 'inline-block',
+        marginRight: 6,
+        padding: '0 5px',
+        borderRadius: 4,
+        fontSize: '0.85em',
+        lineHeight: 1.7,
+        background: light ? 'rgba(255,255,255,0.18)' : 'var(--accent-soft)',
+        color: light ? 'rgba(255,255,255,0.92)' : 'var(--accent-text)',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** wiki 正文里是否有能解析到实际图片的 ![[fig:N]] 标记（用于详情页把画廊默认折叠）。 */
 export function hasEmbeddedFigures(content: string | null | undefined, figures: FigureInfo[]): boolean {
   if (!content || figures.length === 0) return false;
@@ -133,6 +168,7 @@ export function FigureEmbed({
           marginRight: 'auto',
         }}
       >
+        <KindTag fig={fig} />
         {captionOf(fig)}
       </figcaption>
       {lightboxOpen && (
@@ -210,6 +246,7 @@ function FigureThumb({
           whiteSpace: 'nowrap',
         }}
       >
+        <KindTag fig={fig} />
         {captionOf(fig)}
       </div>
     </div>
@@ -379,6 +416,7 @@ function Lightbox({
             color: 'rgba(255,255,255,0.88)',
           }}
         >
+          <KindTag fig={fig} light />
           {captionOf(fig)}
         </div>
         <div className="mono" style={{ marginTop: 6, fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>

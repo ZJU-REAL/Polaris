@@ -75,7 +75,7 @@ export function FactPackDrawer({ open, onClose, manuscript }: FactPackDrawerProp
 
       {!fp ? (
         <div className="empty" style={{ padding: 40 }}>
-          还没有事实包。点上方「刷新」从实验结果和文献库重新组装一份。
+          还没有事实包。点上方的刷新按钮，从实验结果和文献库重新组装一份。
         </div>
       ) : (
         <>
@@ -91,7 +91,7 @@ export function FactPackDrawer({ open, onClose, manuscript }: FactPackDrawerProp
               )}
             </div>
           ) : (
-            <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>未关联 idea</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>未关联想法</div>
           )}
 
           {/* —— 假设 —— */}
@@ -184,7 +184,7 @@ export function FactPackDrawer({ open, onClose, manuscript }: FactPackDrawerProp
 
           <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6, marginTop: 20 }}>
             编译时会按这里的文献自动生成 references.bib，实验图表自动复制到 figures/ 目录（均为只读文件）。
-            实验或文献库更新后，点「刷新」重新组装。
+            实验或文献库更新后，点刷新重新组装。
           </div>
         </>
       )}

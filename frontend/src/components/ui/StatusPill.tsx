@@ -26,7 +26,7 @@ export const STATUS: Record<string, StatusMeta> = {
   fetched: { cls: 'st-drafted', zh: '已抓取', en: 'fetched' },
   compiled: { cls: 'st-reviewed', zh: '已编译', en: 'compiled' },
   included: { cls: 'st-implemented', zh: '已纳入', en: 'included' },
-  excluded: { cls: 'st-rejected', zh: '已排除', en: 'excluded' },
+  excluded: { cls: 'st-rejected', zh: '已删除', en: 'removed' },
   // —— Voyage 状态机 ——
   planning: { cls: 'st-drafted', zh: '规划中', en: 'planning' },
   executing: { cls: 'st-running', zh: '执行中', en: 'executing' },

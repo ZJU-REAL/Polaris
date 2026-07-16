@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_llm_task
 from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.user import User
@@ -26,7 +26,7 @@ async def start_ingest(
     project_id: uuid.UUID,
     data: IngestRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_llm_task),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)

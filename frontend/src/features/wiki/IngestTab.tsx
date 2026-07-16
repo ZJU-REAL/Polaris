@@ -25,11 +25,12 @@ export interface IngestTabProps {
 }
 
 const COUNT_ROWS: { key: keyof NonNullable<IngestState['paper_counts']>; zh: string }[] = [
-  { key: 'candidate', zh: '候选' },
-  { key: 'scored', zh: '已打分' },
+  { key: 'library', zh: '库内文献' },
   { key: 'compiled', zh: '已编译' },
-  { key: 'included', zh: '已纳入' },
-  { key: 'excluded', zh: '已排除' },
+  { key: 'pending_compile', zh: '待编译' },
+  { key: 'included', zh: '人工精选' },
+  { key: 'candidate', zh: '未筛选' },
+  { key: 'excluded', zh: '已删除' },
 ];
 
 function KnobRange({
@@ -179,6 +180,17 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
                     {!state?.watermark && (
                       <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>尚未运行过初始建库</div>
                     )}
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '10px 0 4px' }}>下次自动同步 next sync</div>
+                    <div className="mono" style={{ fontSize: 13, fontWeight: 650 }}>
+                      {state?.next_sync_at
+                        ? new Date(state.next_sync_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                        : '—'}
+                    </div>
+                    {!state?.next_sync_at && (
+                      <div style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 2 }}>
+                        运行节奏为每日且完成初始建库后，才会自动同步
+                      </div>
+                    )}
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>论文总数 total</div>
@@ -254,8 +266,8 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             </span>
           </div>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 18px' }}>
-            空 Wiki 会让 idea-forge「无米下锅」。初始建库一次性回填近 N 个月文献 + 参考文献扩展，
-            LLM 打分筛选后精读编译建立知识地图。以下成本旋钮控制本次开销。
+            初始建库一次性回填近 N 个月文献并做参考文献扩展，
+            AI 打分筛选后精读编译建立知识库。以下选项控制本次开销。
           </p>
 
           <KnobRange

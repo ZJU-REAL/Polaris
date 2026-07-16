@@ -1,10 +1,48 @@
 import { ScoreRing } from '../../components/ui/ScoreRing';
-import type { IdeaScores } from '../../lib/api';
+import type { IdeaDepth, IdeaScores } from '../../lib/api';
 
 /* ============================================================
    Idea 四维评分共享工具（Forge / Review / Dashboard 共用）：
-   维度定义、composite、ScoreRing 组、mini 条。
+   维度定义、composite、ScoreRing 组、mini 条；
+   Idea 2.0：深度 / 研究类型徽标。
    ============================================================ */
+
+/** 研究类型中文标签（大白话，界面不出现英文枚举）。 */
+export const RESEARCH_TYPE_ZH: Record<string, string> = {
+  method: '方法',
+  benchmark: '评测基准',
+  analysis: '分析',
+  survey: '综述',
+  application: '应用',
+  theory: '理论',
+};
+
+/** 深度徽标：草案 / 研究方案。 */
+export function DepthBadge({ depth }: { depth: IdeaDepth | undefined }) {
+  if (!depth) return null;
+  const proposal = depth === 'proposal';
+  return (
+    <span
+      className="pill sm"
+      style={{
+        background: proposal ? 'var(--violet-bg)' : 'var(--surface-3)',
+        color: proposal ? 'var(--violet-tx)' : 'var(--text-2)',
+      }}
+    >
+      {proposal ? '研究方案' : '草案'}
+    </span>
+  );
+}
+
+/** 研究类型徽标（无类型时不渲染）。 */
+export function ResearchTypeBadge({ type }: { type: string | null | undefined }) {
+  if (!type) return null;
+  return (
+    <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+      {RESEARCH_TYPE_ZH[type] ?? type}
+    </span>
+  );
+}
 
 export interface ScoreDim {
   key: keyof IdeaScores;

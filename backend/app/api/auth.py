@@ -71,6 +71,68 @@ async def require_admin(user: User = Depends(current_active_user)) -> User:
     return user
 
 
+async def _check_llm_quota(session: AsyncSession, user: User) -> None:
+    if user.token_quota is not None:
+        from app.services.users import tokens_used_by_user
+
+        if await tokens_used_by_user(session, user.id) >= user.token_quota:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="TOKEN_QUOTA_EXCEEDED")
+
+
+def _check_llm_access(user: User, *, chat: bool) -> None:
+    """大模型使用权限：full=不限 | chat_only=仅文献对话与 AI 伴读 | blocked=锁定。"""
+    level = user.llm_access or "full"
+    if level == "blocked":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LLM_ACCESS_BLOCKED")
+    if level == "chat_only" and not chat:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LLM_ACCESS_CHAT_ONLY")
+
+
+def require_stage_access(feature: str):
+    """阶段发起入口依赖：功能权限被禁用 → 403 FEATURE_DISABLED；
+    大模型权限受限 → 403 LLM_ACCESS_*；用量达到配额 → 403 TOKEN_QUOTA_EXCEEDED。"""
+
+    async def dep(
+        user: User = Depends(current_active_user),
+        session: AsyncSession = Depends(get_session),
+    ) -> User:
+        if not user.feature_enabled(feature):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="FEATURE_DISABLED")
+        _check_llm_access(user, chat=False)
+        await _check_llm_quota(session, user)
+        return user
+
+    return dep
+
+
+# 各阶段守卫单例（ruff B008：避免在参数默认值中调用工厂）
+require_forge = require_stage_access("forge")
+require_review = require_stage_access("review")
+require_experiment = require_stage_access("experiment")
+require_writer = require_stage_access("writer")
+require_paper_review = require_stage_access("paper_review")
+
+
+async def require_llm_task(
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """其他消耗大模型的入口（建库/精读编译/PPT/技能试运行等）：需 full 权限。"""
+    _check_llm_access(user, chat=False)
+    await _check_llm_quota(session, user)
+    return user
+
+
+async def require_llm_chat(
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """文献对话 / AI 伴读入口：full 或 chat_only 均可。"""
+    _check_llm_access(user, chat=True)
+    await _check_llm_quota(session, user)
+    return user
+
+
 router = APIRouter()
 router.include_router(
     fastapi_users.get_auth_router(auth_backend), prefix="/auth/jwt", tags=["auth"]

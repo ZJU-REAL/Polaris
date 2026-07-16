@@ -11,8 +11,19 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
-import { api, ApiError, type ForgeState, type IdeaRead, type IdeaSort, type IdeaStatus } from '../../lib/api';
-import { ScoreRingGroup } from './ideaShared';
+import { useShell } from '../../app/AppShell';
+import {
+  api,
+  ApiError,
+  RESEARCH_TYPES,
+  type ForgeState,
+  type IdeaDepth,
+  type IdeaRead,
+  type IdeaSort,
+  type IdeaStatus,
+} from '../../lib/api';
+import { DepthBadge, RESEARCH_TYPE_ZH, ResearchTypeBadge, ScoreRingGroup } from './ideaShared';
+import { DeepDiveDrawer } from './DeepDiveDrawer';
 
 /* ============================================================
    /forge — Stage 01 · Idea Forge（M3）
@@ -22,6 +33,8 @@ import { ScoreRingGroup } from './ideaShared';
    ============================================================ */
 
 type StatusFilter = 'all' | IdeaStatus;
+
+type DepthFilter = 'all' | IdeaDepth;
 
 const STATUS_FILTERS: { v: StatusFilter; label: string }[] = [
   { v: 'all', label: '全部' },
@@ -84,12 +97,25 @@ function FunnelBar({ state }: { state: ForgeState | undefined }) {
 
 /* ---------------- 候选卡 ---------------- */
 
-function CandidateCard({ idea, onOpen }: { idea: IdeaRead; onOpen: () => void }) {
+function CandidateCard({
+  idea,
+  onOpen,
+  onDeepen,
+}: {
+  idea: IdeaRead;
+  onOpen: () => void;
+  /** 草案行内「深化为研究方案」入口（进行中任务时不传）。 */
+  onDeepen?: () => void;
+}) {
   return (
     <div className="card card-pad hoverable" onClick={onOpen} style={{ display: 'flex', flexDirection: 'column' }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+      <div className="row gap6" style={{ marginBottom: 10 }}>
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{idea.id.slice(0, 8)}</span>
-        <StatusPill status={idea.status} sm />
+        <DepthBadge depth={idea.depth} />
+        <ResearchTypeBadge type={idea.research_type} />
+        <span style={{ marginLeft: 'auto' }}>
+          <StatusPill status={idea.status} sm />
+        </span>
       </div>
       <div style={{ fontSize: 14.5, fontWeight: 650, lineHeight: 1.35, marginBottom: 8 }}>{idea.title}</div>
       <div
@@ -115,6 +141,19 @@ function CandidateCard({ idea, onOpen }: { idea: IdeaRead; onOpen: () => void })
           <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-3)' }}>Elo</div>
         </div>
       </div>
+      {idea.depth === 'sketch' && onDeepen && (
+        <button
+          className="btn btn-soft sm"
+          style={{ marginTop: 12, justifyContent: 'center' }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeepen();
+          }}
+        >
+          <Icon name="sparkle" size={13} />
+          深化为研究方案
+        </button>
+      )}
     </div>
   );
 }
@@ -144,14 +183,14 @@ function RunForgeModal({
         max_context_papers: maxContextPapers,
       }),
     onSuccess: (v) => {
-      toast('Idea Forge 已开始，跳转任务详情…', 'ok');
+      toast('想法生成已开始，跳转任务详情…', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       onClose();
       navigate(`/voyages/${v.id}`);
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
-        toast('该项目已有一个 forge/review 任务在运行，请等待其完成。', 'error');
+        toast('已有 AI 想法任务在运行，请等待其完成。', 'error');
         void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       } else {
         toast(`启动失败：${e instanceof Error ? e.message : String(e)}`, 'error');
@@ -169,7 +208,7 @@ function RunForgeModal({
           运行 Idea Forge
         </>
       }
-      sub="读知识库 → gap 分析 → 生成候选 → 四维打分 → 语义去重 → 入候选池"
+      sub="从知识库分析研究空白，生成并筛选候选想法。"
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>取消</button>
@@ -192,7 +231,7 @@ function RunForgeModal({
       <KnobRange
         label="生成数量"
         en="num_ideas"
-        hint="本次生成的候选 idea 数（去重前）。"
+        hint="本次生成的候选想法数（去重前）。"
         value={numIdeas}
         min={3}
         max={20}
@@ -202,7 +241,7 @@ function RunForgeModal({
       <KnobRange
         label="去重阈值"
         en="dedup_threshold"
-        hint="embedding 相似度高于该阈值的 idea 视为重复（rerank 复核）。"
+        hint="语义相似度高于该阈值的想法视为重复。"
         value={dedupThreshold}
         min={0.5}
         max={0.95}
@@ -228,11 +267,16 @@ function RunForgeModal({
 
 export function ForgePage() {
   const navigate = useNavigate();
+  const { openGates } = useShell();
   const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
   const pid = currentProjectId;
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [deepOpen, setDeepOpen] = useState(false);
+  const [deepSeedIdea, setDeepSeedIdea] = useState<{ id: string; title: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [depthFilter, setDepthFilter] = useState<DepthFilter>('all');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
   const [sort, setSort] = useState<IdeaSort>('elo');
 
   const stateQuery = useQuery({
@@ -243,15 +287,39 @@ export function ForgePage() {
     refetchInterval: (q) => (q.state.data?.running_voyage_id ? 5_000 : 60_000),
   });
   const state = stateQuery.data;
-  const running = !!state?.running_voyage_id;
+
+  // —— 深度生成状态（进行中任务 / 待确认研究目标） ——
+  const deepQuery = useQuery({
+    queryKey: ['deep-state', pid],
+    queryFn: () => api.getDeepIdeaState(pid!),
+    enabled: !!pid,
+    retry: false,
+    refetchInterval: (q) =>
+      q.state.data?.running_voyage_id || q.state.data?.pending_gate_id ? 5_000 : 60_000,
+  });
+  const deep = deepQuery.data;
+  const deepRunningId = deep?.running_voyage_id ?? null;
+  // forge / 深度生成同项目互斥（后端共用 409）
+  const running = !!state?.running_voyage_id || !!deepRunningId;
 
   const ideasQuery = useQuery({
-    queryKey: ['ideas', pid, statusFilter, sort],
-    queryFn: () => api.listIdeas(pid!, { status: statusFilter === 'all' ? undefined : statusFilter, sort }),
+    queryKey: ['ideas', pid, statusFilter, sort, depthFilter, typeFilter],
+    queryFn: () =>
+      api.listIdeas(pid!, {
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        sort,
+        depth: depthFilter === 'all' ? undefined : depthFilter,
+        research_type: typeFilter === 'all' ? undefined : typeFilter,
+      }),
     enabled: !!pid,
     retry: false,
   });
   const ideas = ideasQuery.data ?? [];
+
+  function openDeepDrawer(seedIdea?: { id: string; title: string }) {
+    setDeepSeedIdea(seedIdea ?? null);
+    setDeepOpen(true);
+  }
 
   // —— 无项目：引导创建 ——
   if (!projectsLoading && projects.length === 0) {
@@ -259,14 +327,14 @@ export function ForgePage() {
       <div className="page fadeup">
         <PageHead
           eyebrow="Stage 01 · Idea Forge"
-          title="Idea 生成 Idea Forge"
-          sub="从知识库出发的 gap 分析与候选 idea 生成：四维打分 + 语义去重入池。"
+          title="想法生成 Idea Forge"
+          sub="从知识库分析研究空白，生成候选想法。"
         />
         <div className="card">
           <EmptyState
             icon="bulb"
             title="还没有研究方向"
-            desc="Idea Forge 需要一个研究方向和它的知识库：先创建方向并运行文献初始建库。"
+            desc="想法生成需要一个研究方向和它的知识库：先创建方向并运行文献初始建库。"
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
@@ -285,7 +353,7 @@ export function ForgePage() {
     <div className="page fadeup">
       <PageHead
         eyebrow="Stage 01 · Idea Forge"
-        title="Idea 生成 Idea Forge"
+        title="想法生成 Idea Forge"
         sub={
           currentProject
             ? `当前方向：${currentProject.name}`
@@ -295,24 +363,72 @@ export function ForgePage() {
         }
         en="gap analysis · candidates · dedup"
         right={
-          <button className="btn btn-primary" disabled={!pid || running} onClick={() => setModalOpen(true)}>
-            {running ? (
-              <>
-                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                运行中…
-              </>
-            ) : (
-              <>
-                <Icon name="play" size={14} />
-                运行 Idea Forge
-              </>
-            )}
-          </button>
+          <div className="row gap8">
+            <button className="btn btn-soft" disabled={!pid || running} onClick={() => setModalOpen(true)}>
+              <Icon name="play" size={14} />
+              运行 Idea Forge
+            </button>
+            <button className="btn btn-primary" disabled={!pid || running} onClick={() => openDeepDrawer()}>
+              {running ? (
+                <>
+                  <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  运行中…
+                </>
+              ) : (
+                <>
+                  <Icon name="sparkle" size={14} />
+                  深度生成 Deep Dive
+                </>
+              )}
+            </button>
+          </div>
         }
       />
 
-      {/* 进行中航程 banner */}
-      {running && state?.running_voyage_id && (
+      {/* 待确认研究目标提示 */}
+      {deep?.pending_gate_id && (
+        <div
+          className="card card-pad hoverable"
+          onClick={() => openGates(deep.pending_gate_id)}
+          style={{ marginBottom: 16, borderColor: 'var(--warn)', background: 'var(--warn-bg)' }}
+        >
+          <div className="row gap10">
+            <span className="pill" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
+              <span className="dot pulse" />
+              待确认
+            </span>
+            <span style={{ fontSize: 13.5, fontWeight: 650, color: 'var(--warn-tx)' }}>
+              有研究目标待确认 — AI 已完成目标构建，等你确认后继续起草研究方案
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--warn-tx)' }}>去审批</span>
+            <Icon name="arrow" size={14} style={{ color: 'var(--warn-tx)' }} />
+          </div>
+        </div>
+      )}
+
+      {/* 深度生成进行中 banner */}
+      {deepRunningId && (
+        <div
+          className="card card-pad hoverable"
+          onClick={() => navigate(`/voyages/${deepRunningId}`)}
+          style={{ marginBottom: 16, borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
+        >
+          <div className="row gap10">
+            <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
+              <span className="dot pulse" />
+              运行中
+            </span>
+            <span style={{ fontSize: 13.5, fontWeight: 650 }}>深度生成进行中 — 点击查看目标构建 / 方案起草的实时进度</span>
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
+              {deepRunningId.slice(0, 8)}…
+            </span>
+            <Icon name="arrow" size={14} style={{ color: 'var(--accent-text)' }} />
+          </div>
+        </div>
+      )}
+
+      {/* 进行中任务 banner（深度生成任务另有专属 banner，避免重复） */}
+      {state?.running_voyage_id && state.running_voyage_id !== deepRunningId && (
         <div
           className="card card-pad hoverable"
           onClick={() => navigate(`/voyages/${state.running_voyage_id}`)}
@@ -323,7 +439,7 @@ export function ForgePage() {
               <span className="dot pulse" />
               运行中
             </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650 }}>Idea 任务进行中 — 点击查看任务实时进度</span>
+            <span style={{ fontSize: 13.5, fontWeight: 650 }}>想法生成任务进行中 — 点击查看实时进度</span>
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
               voyage {state.running_voyage_id.slice(0, 8)}…
             </span>
@@ -337,7 +453,7 @@ export function ForgePage() {
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <span className="section-h">
             <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-            筛选漏斗 <span className="en-label" style={{ fontSize: 11 }}>candidate → under review → promoted</span>
+            筛选漏斗 <span className="en-label" style={{ fontSize: 11 }}>候选 → 评审中 → 已晋级</span>
           </span>
           <div className="row gap8">
             {counts?.rejected !== undefined && (
@@ -373,7 +489,7 @@ export function ForgePage() {
                   <Icon name="chevron" size={12} />
                 </span>
               ) : (
-                <span>尚未运行过 Idea Forge</span>
+                <span>尚未运行过想法生成</span>
               )}
             </div>
           </>
@@ -386,7 +502,30 @@ export function ForgePage() {
           <Icon name="bulb" size={15} style={{ color: 'var(--accent)' }} />
           候选池 <span className="en-label" style={{ fontSize: 11 }}>{ideas.length} ideas</span>
         </span>
-        <div className="row gap10">
+        <div className="row gap10 wrap">
+          <select
+            className="input"
+            style={{ height: 32, fontSize: 12.5, padding: '0 8px' }}
+            value={depthFilter}
+            title="按草案 / 研究方案过滤"
+            onChange={(e) => setDepthFilter(e.target.value as DepthFilter)}
+          >
+            <option value="all">全部深度</option>
+            <option value="sketch">草案</option>
+            <option value="proposal">研究方案</option>
+          </select>
+          <select
+            className="input"
+            style={{ height: 32, fontSize: 12.5, padding: '0 8px' }}
+            value={typeFilter}
+            title="按研究类型过滤"
+            onChange={(e) => setTypeFilter(e.target.value)}
+          >
+            <option value="all">全部类型</option>
+            {RESEARCH_TYPES.map((t) => (
+              <option key={t} value={t}>{RESEARCH_TYPE_ZH[t] ?? t}</option>
+            ))}
+          </select>
           <Segmented<StatusFilter> options={STATUS_FILTERS} value={statusFilter} onChange={setStatusFilter} />
           <Segmented<IdeaSort> options={SORTS} value={sort} onChange={setSort} />
         </div>
@@ -419,7 +558,7 @@ export function ForgePage() {
           <EmptyState
             icon="bulb"
             title="候选池为空"
-            desc="运行一次 Idea Forge，从知识库的 gap 分析中生成候选 idea。"
+            desc="运行一次想法生成，从知识库中分析研究空白并生成候选想法。"
             action={
               <button className="btn btn-primary" disabled={running} onClick={() => setModalOpen(true)}>
                 <Icon name="play" size={14} />
@@ -431,12 +570,25 @@ export function ForgePage() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
           {ideas.map((idea) => (
-            <CandidateCard key={idea.id} idea={idea} onOpen={() => navigate(`/ideas/${idea.id}`)} />
+            <CandidateCard
+              key={idea.id}
+              idea={idea}
+              onOpen={() => navigate(`/ideas/${idea.id}`)}
+              onDeepen={running ? undefined : () => openDeepDrawer({ id: idea.id, title: idea.title })}
+            />
           ))}
         </div>
       )}
 
       {pid && <RunForgeModal open={modalOpen} onClose={() => setModalOpen(false)} pid={pid} />}
+      {pid && (
+        <DeepDiveDrawer
+          open={deepOpen}
+          onClose={() => setDeepOpen(false)}
+          pid={pid}
+          initialSeedIdea={deepSeedIdea}
+        />
+      )}
     </div>
   );
 }

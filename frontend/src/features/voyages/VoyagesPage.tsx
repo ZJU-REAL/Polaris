@@ -60,6 +60,8 @@ const KIND_META: Record<string, KindMeta> = {
   idea_forge: { zh: '想法生成', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   idea_review: { zh: '评审锦标赛', icon: 'scale', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   experiment: { zh: '实验', icon: 'flask', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
+  presentation: { zh: '论文分享', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
+  custom: { zh: '流程技能', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   demo: { zh: '演示', icon: 'play', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
 };
 
@@ -160,7 +162,7 @@ export function VoyagesPage() {
 
   // —— 新建演示航程 ——
   const [createOpen, setCreateOpen] = useState(false);
-  const [goal, setGoal] = useState('演示：分析目标 → 生成产物 → 自检');
+  const [goal, setGoal] = useState('演示任务');
   const [createProjectId, setCreateProjectId] = useState<string>('');
   const effectiveProjectId = createProjectId || currentProjectId || projects[0]?.id || '';
 
@@ -182,7 +184,7 @@ export function VoyagesPage() {
       <PageHead
         eyebrow="Polaris · Voyages"
         title="AI 任务 Tasks"
-        sub="长时程 agent 任务：先规划 → 再执行 → 自动校验，需要人工审批时会自动暂停。"
+        sub="需要人工审批时任务会自动暂停，审批通过后继续执行。"
         right={
           <button className="btn btn-primary" disabled={noProjects} onClick={() => setCreateOpen(true)}>
             <Icon name="play" size={14} />
@@ -257,7 +259,7 @@ export function VoyagesPage() {
                 desc={
                   filter !== 'all' || kindFilter !== 'all'
                     ? '当前筛选条件下没有任务，换个筛选试试。'
-                    : '点击右上角「新建演示任务」体验 AI 任务的规划-执行-自检循环。'
+                    : '点击右上角的新建演示任务按钮创建第一个任务。'
                 }
                 compact
               />
@@ -324,7 +326,7 @@ export function VoyagesPage() {
             新建演示任务
           </>
         }
-        sub="kind=demo：分析目标 → 生成产物（含算力预算审批）→ 自检"
+        sub="创建一个演示任务，体验规划、执行与自动校验的完整流程。"
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setCreateOpen(false)}>取消</button>

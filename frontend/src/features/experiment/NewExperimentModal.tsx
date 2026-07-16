@@ -118,7 +118,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           新建实验
         </>
       }
-      sub="从已晋级 idea 发起：计划 → 算力预算审批 → SSH 建环境 → 冒烟 → 自动迭代 → 图表 → 报告"
+      sub="从已晋级的想法发起实验。"
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>取消</button>
@@ -139,14 +139,14 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       }
     >
       <FormField
-        label="Idea"
+        label="想法"
         en="promoted idea"
-        hint={noIdeas ? undefined : '仅列出 status=promoted 的 idea（评审页晋级并审批通过）。'}
-        error={noIdeas ? '当前方向还没有已晋级的 idea，先在评审页晋级一个。' : null}
+        hint={noIdeas ? undefined : '仅列出已晋级的想法。'}
+        error={noIdeas ? '当前方向还没有已晋级的想法，先在想法评审页晋级一个。' : null}
       >
         <select className="input" value={ideaId} onChange={(e) => setIdeaId(e.target.value)} disabled={noIdeas}>
           <option value="" disabled>
-            {ideasQuery.isLoading ? '加载中…' : ideasQuery.isError ? '（无法加载 idea 列表）' : '— 选择已晋级 idea —'}
+            {ideasQuery.isLoading ? '加载中…' : ideasQuery.isError ? '（无法加载想法列表）' : '— 选择已晋级的想法 —'}
           </option>
           {ideas.map((i) => (
             <option key={i.id} value={i.id}>{i.title}</option>
@@ -157,7 +157,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         <div style={{ marginTop: -6, marginBottom: 14 }}>
           <button className="btn btn-soft sm" onClick={() => { onClose(); navigate('/review'); }}>
             <Icon name="scale" size={13} />
-            前往 Idea 评审
+            前往想法评审
           </button>
         </div>
       )}

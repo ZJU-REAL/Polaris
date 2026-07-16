@@ -31,6 +31,7 @@ class PaperRead(BaseModel):
     project_id: uuid.UUID
     title: str
     authors: list[AuthorRead] = []
+    affiliations: list[str] = []  # 发表机构（OpenAlex 补充；可能为空）
     year: int | None
     venue: str | None
     arxiv_id: str | None
@@ -54,6 +55,11 @@ class PaperRead(BaseModel):
     def _authors(cls, v: Any) -> list[dict[str, str]]:
         return _normalize_authors(v)
 
+    @field_validator("affiliations", mode="before")
+    @classmethod
+    def _affiliations(cls, v: Any) -> list[str]:
+        return [str(x) for x in v] if isinstance(v, list) else []
+
 
 class PaperConceptRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -71,6 +77,8 @@ class PaperFigure(BaseModel):
     width: int
     height: int
     caption: str | None = None
+    # motivation | method | architecture | experiment | other；旧数据/未注释为 null
+    kind: str | None = None
     important: bool = False
 
 
@@ -117,6 +125,14 @@ class PaperManualCreate(BaseModel):
         if len(provided) != 1:
             raise ValueError("arxiv_id / doi / bibtex 必须且只能填一个")
         return self
+
+
+class PaperBatchIds(BaseModel):
+    """批量操作（删除/导出）的论文 id 列表。"""
+
+    paper_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    # 批量删除：默认软删（移入垃圾桶，可召回）；true = 彻底删除
+    hard: bool = False
 
 
 class PaperTagsUpdate(BaseModel):

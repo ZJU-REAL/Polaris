@@ -184,6 +184,9 @@ export function ProjectWizardPage() {
     goals: false, questions: false, rubric: false, anchors: false, synonyms: false, cadence: false,
   });
   const [aiFilled, setAiFilled] = useState<Set<SectionKey>>(new Set());
+  // 高级设置是否已初始化过（AI 草拟或手动进入过）：回到第 1 步再前进时不重新起草，
+  // 避免覆盖用户已填写/修改的高级设置
+  const [advancedTouched, setAdvancedTouched] = useState(false);
 
   function toggleSection(k: SectionKey) {
     setOpen((o) => ({ ...o, [k]: !o[k] }));
@@ -237,27 +240,28 @@ export function ProjectWizardPage() {
   /** 把 AI 草稿写入第 2 步各分区状态；返回被填入的分区（用于默认展开）。 */
   function applyDraft(d: ProjectDefinition): Set<SectionKey> {
     const filled = new Set<SectionKey>();
+    // 只填当前为空的分区：用户已填写的内容一律不覆盖
     if (d.goals?.length || d.in_scope?.length || d.out_of_scope?.length) {
-      if (d.goals?.length) setGoals(d.goals);
-      if (d.in_scope?.length) setInScope(d.in_scope);
-      if (d.out_of_scope?.length) setOutScope(d.out_of_scope);
+      if (d.goals?.length && goals.length === 0) setGoals(d.goals);
+      if (d.in_scope?.length && inScope.length === 0) setInScope(d.in_scope);
+      if (d.out_of_scope?.length && outScope.length === 0) setOutScope(d.out_of_scope);
       filled.add('goals');
     }
-    if (d.questions?.length) {
+    if (d.questions?.length && questions.length === 0) {
       setQuestions(d.questions);
       filled.add('questions');
     }
-    if (d.rubric?.length) {
+    if (d.rubric?.length && JSON.stringify(rubric) === JSON.stringify(DEFAULT_RUBRIC)) {
       setRubric(d.rubric.map((r) => ({ name: r.name, description: r.description ?? '', weight: String(r.weight ?? 1) })));
       filled.add('rubric');
     }
-    if (d.anchor_papers?.length) {
+    if (d.anchor_papers?.length && anchors.length === 0) {
       setAnchors(d.anchor_papers);
       filled.add('anchors');
     }
     if (d.keywords) {
       const syn = d.keywords.synonyms;
-      if (syn && Object.keys(syn).length) {
+      if (syn && Object.keys(syn).length && synonyms.length === 0) {
         setSynonyms(Object.entries(syn).map(([term, list]) => ({ term, syns: list.join(', ') })));
         filled.add('synonyms');
       }
@@ -290,6 +294,10 @@ export function ProjectWizardPage() {
     const err = validateBasics();
     setFormError(err);
     if (err) return;
+    if (advancedTouched) {
+      setStep(1); // 已起草/进入过：保留现有高级设置，不重新覆盖
+      return;
+    }
     setDrafting(true);
     try {
       const res = await api.draftDefinition({
@@ -309,6 +317,7 @@ export function ProjectWizardPage() {
       toast(`AI 补全失败：${e instanceof Error ? e.message : String(e)}，可手动填写高级设置`, 'error');
       setStep(1);
     } finally {
+      setAdvancedTouched(true);
       setDrafting(false);
     }
   }
@@ -379,7 +388,7 @@ export function ProjectWizardPage() {
             </FormField>
             <FormField label="一句话定义" en="Statement" hint="用一句话说清这个方向研究什么、为什么重要">
               <textarea className="textarea" rows={3} value={statement} onChange={(e) => setStatement(e.target.value)}
-                placeholder="如：研究让 LLM agent 端到端完成文献调研 → idea → 实验 → 论文的方法与系统" />
+                placeholder="如：让 LLM agent 端到端完成从文献调研到论文的研究方法与系统" />
             </FormField>
             <FormField label="Include 关键词" en="Include terms" hint="标题/摘要命中这些词才进入相关性判定；回车添加，点击移除（至少 1 个）">
               <ChipsInput items={includeTerms} onChange={setIncludeTerms} placeholder="如 agent、tool use，回车添加" />
@@ -403,13 +412,13 @@ export function ProjectWizardPage() {
           </div>
 
           <div className="row gap10" style={{ marginTop: 18 }}>
-            <button className="btn btn-ghost" onClick={() => { setFormError(null); setStep(1); }} disabled={busy}>
+            <button className="btn btn-ghost" onClick={() => { setFormError(null); setAdvancedTouched(true); setStep(1); }} disabled={busy}>
               跳过 AI，手动配置
             </button>
             <div style={{ flex: 1 }} />
             <button className="btn btn-soft" onClick={() => void aiDraft()} disabled={busy}>
               <Icon name="sparkle" size={14} />
-              {drafting ? 'AI 草拟中…' : 'AI 补全高级设置'}
+              {drafting ? 'AI 草拟中…' : advancedTouched ? '继续高级设置（已保留填写内容）' : 'AI 补全高级设置'}
             </button>
             <button className="btn btn-primary" onClick={() => void create()} disabled={busy}>
               <Icon name="check" size={14} />
@@ -422,8 +431,8 @@ export function ProjectWizardPage() {
       {step === 1 && (
         <>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', margin: '0 2px 12px', lineHeight: 1.6 }}>
-            以下全部可选，可直接点「创建方向」跳过。
-            {aiFilled.size > 0 && ' 标有「AI 草稿」的分区已由 AI 预填，请确认或微调。'}
+            以下内容全部可选，可直接创建方向。
+            {aiFilled.size > 0 && ' AI 已预填部分分区，请确认或微调。'}
           </div>
           <div className="col gap10">
             {SECTIONS.map((s) => (
@@ -487,7 +496,7 @@ export function ProjectWizardPage() {
                 {s.key === 'anchors' && (
                   <>
                     <div className="field-hint" style={{ marginBottom: 10 }}>
-                      定义方向「品味」的代表作（可留空）
+                      体现方向研究品味的代表作（可留空）
                     </div>
                     <div className="col gap12">
                       {anchors.map((a, i) => (

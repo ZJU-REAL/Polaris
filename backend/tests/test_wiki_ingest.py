@@ -241,6 +241,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
                     "width": 400,
                     "height": 300,
                     "caption": "（fake）图注",
+                    "kind": "method",
                     "important": True,
                 }
             ]

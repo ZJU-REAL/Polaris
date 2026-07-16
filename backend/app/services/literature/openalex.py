@@ -35,6 +35,15 @@ def _simplify(work: dict[str, Any]) -> dict[str, Any]:
             for a in work.get("authorships", [])
             if a.get("author", {}).get("display_name")
         ],
+        # 发表机构（去重保序）：authorships[].institutions[].display_name
+        "affiliations": list(
+            dict.fromkeys(
+                inst.get("display_name")
+                for a in work.get("authorships", [])
+                for inst in (a.get("institutions") or [])
+                if isinstance(inst, dict) and inst.get("display_name")
+            )
+        ),
     }
 
 

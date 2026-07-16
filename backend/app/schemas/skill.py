@@ -27,6 +27,8 @@ SKILL_TARGETS = frozenset(
         "experiment.report",
         "writing.section",
         "writing.related_work",
+        "present.outline",
+        "present.slides",
         "navigator.free_plan",
     }
 )

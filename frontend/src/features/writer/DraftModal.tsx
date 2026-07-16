@@ -152,7 +152,7 @@ export function DraftModal({ open, onClose, manuscript }: DraftModalProps) {
       </FormField>
 
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
-        起草期间可以随时打开编辑器围观 AI 写作（协同编辑实时可见），也可以在「AI 任务」页取消任务。
+        起草期间可在编辑器中实时查看 AI 写作进度，也可以在 AI 任务页取消任务。
         每一节写完都会做真实性自检：引用必须在事实包文献里、图表只能用实验产出、正文数字必须能对上实验指标。
       </div>
     </Modal>

@@ -213,9 +213,15 @@ async def test_project_stats(client):
     project_id, headers, ids = await _setup(client)
     resp = await client.get(f"/api/projects/{project_id}/stats", headers=headers)
     stats = resp.json()
-    assert stats["papers_total"] == 2
-    assert stats["papers_today"] == 2  # 刚插入
+    # p1=compiled 在库内；p2=excluded 在回收站，不计入
+    assert stats["papers_total"] == 1
+    assert stats["papers_today"] == 1  # 刚插入
     assert stats["ideas_candidate"] == 0
+    assert stats["ideas_under_review"] == 0
+    assert stats["experiments_active"] == 0
+    assert stats["experiments_running"] == 0
+    assert stats["manuscripts_total"] == 0
+    assert stats["manuscripts_under_review"] == 0
     assert stats["gates_pending"] == 0
     assert stats["recent_activities"][0]["kind"] == "ingest.completed"
 
@@ -225,3 +231,256 @@ async def test_project_stats(client):
         f"/api/projects/{project_id}/stats", headers={"Authorization": f"Bearer {other}"}
     )
     assert resp.status_code == 404
+
+
+async def test_project_graph(client):
+    project_id, headers, ids = await _setup(client)
+    resp = await client.get(f"/api/projects/{project_id}/graph", headers=headers)
+    assert resp.status_code == 200
+    graph = resp.json()
+
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    # p1 (compiled) 进图；p2 (excluded) 不进图
+    assert ids["p1"] in by_id and ids["p2"] not in by_id
+    assert by_id[ids["p1"]]["type"] == "paper"
+    # 概念节点（p1 上链了两个概念）
+    assert by_id[ids["c1"]]["type"] == "concept"
+    assert by_id[ids["c1"]]["count"] == 1
+    # 作者节点（Alice）
+    authors = [n for n in graph["nodes"] if n["type"] == "author"]
+    assert [a["label"] for a in authors] == ["Alice"]
+
+    kinds = {(e["source"], e["target"], e["kind"]) for e in graph["edges"]}
+    assert (ids["p1"], ids["c1"], "paper_concept") in kinds
+    assert (ids["p1"], authors[0]["id"], "paper_author") in kinds
+    assert graph["paper_total"] == 1
+    assert graph["truncated"] is False
+
+    # 非成员 404
+    other = await register_and_login(client, email="mallory@example.com")
+    resp = await client.get(
+        f"/api/projects/{project_id}/graph", headers={"Authorization": f"Bearer {other}"}
+    )
+    assert resp.status_code == 404
+
+
+async def test_papers_status_group_filters(client):
+    """status 组别名（docs/api-lit.md §8.5）：library / pending_compile + 计数口径。"""
+    project_id, headers, ids = await _setup(client)
+
+    from app.core.db import get_sessionmaker
+    from app.models.paper import Paper
+
+    async with get_sessionmaker()() as session:
+        session.add_all(
+            [
+                Paper(project_id=uuid.UUID(project_id), title="scored one", status="scored"),
+                Paper(project_id=uuid.UUID(project_id), title="fetched one", status="fetched"),
+                Paper(project_id=uuid.UUID(project_id), title="included one", status="included"),
+                Paper(project_id=uuid.UUID(project_id), title="cand one", status="candidate"),
+            ]
+        )
+        await session.commit()
+    # 库内 = scored + fetched + compiled(1, 来自 _setup 的 p1) + included = 4
+    resp = await client.get(f"/api/projects/{project_id}/papers?status=library", headers=headers)
+    assert resp.json()["total"] == 4
+    resp = await client.get(
+        f"/api/projects/{project_id}/papers?status=pending_compile", headers=headers
+    )
+    assert resp.json()["total"] == 2
+    # 单状态过滤不受影响
+    resp = await client.get(f"/api/projects/{project_id}/papers?status=candidate", headers=headers)
+    assert resp.json()["total"] == 1
+
+    # 计数口径：library / pending_compile
+    resp = await client.get(f"/api/projects/{project_id}/ingest/state", headers=headers)
+    counts = resp.json()["paper_counts"]
+    assert counts["library"] == 4 and counts["pending_compile"] == 2
+    assert counts["total"] == 6  # 全部（含候选/排除）
+
+
+async def test_delete_paper_and_batch(client, tmp_path):
+    """删除论文（docs/api-lit.md §8.6）：单删 + 批量删 + 文件清理 + 成员校验。"""
+    project_id, headers, ids = await _setup(client)
+
+    from app.core.db import get_sessionmaker
+    from app.models.paper import Paper
+    from app.services.literature.pdf_extract import figure_path
+
+    # 给 p1 落一个假 PDF 和图片文件，删除时应一并清理
+    pdf = tmp_path / "p1.pdf"
+    pdf.write_bytes(b"%PDF-fake")
+    fig = figure_path(ids["p1"], 0)
+    fig.write_bytes(b"\x89PNG fake")
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(ids["p1"]))
+        paper.pdf_path = str(pdf)
+        await session.commit()
+
+    # 非成员 404
+    other = await register_and_login(client, email="del-outsider@example.com")
+    resp = await client.delete(
+        f"/api/papers/{ids['p1']}", headers={"Authorization": f"Bearer {other}"}
+    )
+    assert resp.status_code == 404
+
+    resp = await client.delete(f"/api/papers/{ids['p1']}", headers=headers)
+    assert resp.status_code == 204
+    assert not pdf.exists() and not fig.exists()
+    resp = await client.get(f"/api/papers/{ids['p1']}", headers=headers)
+    assert resp.status_code == 404
+
+    # 批量彻底删除：p2 + 一个不存在的 id（忽略）
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers/batch-delete",
+        json={"paper_ids": [ids["p2"], str(uuid.uuid4())], "hard": True},
+        headers=headers,
+    )
+    assert resp.status_code == 200 and resp.json()["deleted"] == 1
+    resp = await client.get(f"/api/projects/{project_id}/papers?status=all", headers=headers)
+    # p1/p2 都没了（_setup 只有这两篇）
+    resp2 = await client.get(f"/api/projects/{project_id}/papers", headers=headers)
+    assert resp2.json()["total"] == 0
+
+
+async def test_export_citations_by_ids(client):
+    project_id, headers, ids = await _setup(client)
+    resp = await client.get(
+        f"/api/projects/{project_id}/export/citations?format=bibtex&ids={ids['p2']}",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    bib = resp.text
+    assert "Benchmark of weaving" in bib and "Agent Planning" not in bib
+    # 非法 id → 422
+    resp = await client.get(
+        f"/api/projects/{project_id}/export/citations?ids=not-a-uuid", headers=headers
+    )
+    assert resp.status_code == 422
+
+
+async def test_recompile_links_new_concepts(client):
+    """手动编译后自动做单篇概念上链：新 [[双链]] 建词条并关联（修复"概念尚未入库"）。"""
+    project_id, headers, ids = await _setup(client)
+
+    resp = await client.post(f"/api/papers/{ids['p2']}/recompile", headers=headers)
+    assert resp.status_code == 200, resp.text
+    detail = resp.json()
+    assert "[[强化学习]]" in detail["wiki_content"]  # fake librarian 输出
+
+    # 概念已建（强化学习为新词条，Agent 已存在不重复建）并关联到论文
+    resp = await client.get(f"/api/projects/{project_id}/concepts", headers=headers)
+    names = {c["name"] for c in resp.json()}
+    assert "强化学习" in names and "Agent" in names
+    resp = await client.get(f"/api/papers/{ids['p2']}", headers=headers)
+    linked = {c["name"] for c in resp.json()["concepts"]}
+    assert {"Agent", "强化学习"} <= linked
+
+
+async def test_search_hides_deleted_papers(client):
+    """已删除（excluded）/未筛选（candidate）不出现在搜索结果。"""
+    project_id, headers, ids = await _setup(client)
+    # p2 是 excluded 且标题含 weaving → 关键词搜索不应返回
+    resp = await client.get(f"/api/projects/{project_id}/search?q=weaving", headers=headers)
+    assert resp.json()["papers"] == []
+    # 库内论文照常可搜
+    resp = await client.get(f"/api/projects/{project_id}/search?q=Planning", headers=headers)
+    assert [p["arxiv_id"] for p in resp.json()["papers"]] == ["2406.10001"]
+
+
+async def test_trash_soft_delete_restore_and_empty(client):
+    """垃圾桶（docs/api-lit.md §8.6）：软删 → 召回 → 清空。"""
+    project_id, headers, ids = await _setup(client)
+
+    # 批量软删（默认）：p1 移入垃圾桶
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers/batch-delete",
+        json={"paper_ids": [ids["p1"]]},
+        headers=headers,
+    )
+    assert resp.json()["deleted"] == 1
+    resp = await client.get(f"/api/projects/{project_id}/papers?status=library", headers=headers)
+    assert resp.json()["total"] == 0  # 库内不再可见
+    resp = await client.get(f"/api/projects/{project_id}/papers?status=excluded", headers=headers)
+    assert resp.json()["total"] == 2  # p1 + 原本就 excluded 的 p2
+
+    # 召回：p1 有 wiki → 回 compiled
+    resp = await client.post(f"/api/papers/{ids['p1']}/restore", headers=headers)
+    assert resp.status_code == 200 and resp.json()["status"] == "compiled"
+    # p2 无 wiki 有分数 → 回 scored
+    resp = await client.post(f"/api/papers/{ids['p2']}/restore", headers=headers)
+    assert resp.json()["status"] == "scored"
+
+    # 再软删 p2 → 清空垃圾桶（彻底删除）
+    await client.post(
+        f"/api/projects/{project_id}/papers/batch-delete",
+        json={"paper_ids": [ids["p2"]]},
+        headers=headers,
+    )
+    resp = await client.post(f"/api/projects/{project_id}/trash/empty", headers=headers)
+    assert resp.json()["deleted"] == 1
+    resp = await client.get(f"/api/papers/{ids['p2']}", headers=headers)
+    assert resp.status_code == 404
+    # 库内 p1 不受影响
+    resp = await client.get(f"/api/papers/{ids['p1']}", headers=headers)
+    assert resp.status_code == 200
+
+
+async def test_papers_advanced_filters(client):
+    """高级检索（docs/api-lit.md §8.7）：作者 / 机构 / 发表时间 / 入库时间。"""
+    from datetime import UTC, datetime
+
+    from app.core.db import get_sessionmaker
+    from app.models.paper import Paper
+
+    project_id, headers, ids = await _setup(client)
+    async with get_sessionmaker()() as session:
+        session.add(
+            Paper(
+                project_id=uuid.UUID(project_id),
+                title="Affiliation Paper",
+                authors=[{"name": "Carol Zhang"}],
+                affiliations=["Zhejiang University", "MIT"],
+                year=2024,
+                published_at=datetime(2024, 3, 1, tzinfo=UTC),
+                status="scored",
+            )
+        )
+        await session.commit()
+
+    base = f"/api/projects/{project_id}/papers"
+    resp = await client.get(f"{base}?author=carol", headers=headers)
+    assert [p["title"] for p in resp.json()["items"]] == ["Affiliation Paper"]
+    resp = await client.get(f"{base}?affiliation=zhejiang", headers=headers)
+    assert resp.json()["total"] == 1
+    assert resp.json()["items"][0]["affiliations"] == ["Zhejiang University", "MIT"]
+    # 发表时间范围：2024 全年命中新论文；published_at 缺失时按 year 兜底
+    resp = await client.get(
+        f"{base}?published_from=2024-01-01T00:00:00Z&published_to=2024-12-31T23:59:59Z",
+        headers=headers,
+    )
+    assert resp.json()["total"] == 1
+    # 入库时间：未来起点 → 空
+    resp = await client.get(f"{base}?created_from=2999-01-01T00:00:00Z", headers=headers)
+    assert resp.json()["total"] == 0
+
+
+async def test_ingest_state_next_sync_at(client):
+    """建库与同步：daily + 已建库 → 有下次自动同步时间；否则 null。"""
+    project_id, headers, ids = await _setup(client)
+
+    resp = await client.get(f"/api/projects/{project_id}/ingest/state", headers=headers)
+    assert resp.json()["next_sync_at"] is None  # 未 bootstrap（无水位线）
+
+    from app.core.db import get_sessionmaker
+    from app.models.project import Project
+
+    async with get_sessionmaker()() as session:
+        project = await session.get(Project, uuid.UUID(project_id))
+        project.definition = {"cadence": "daily"}
+        project.ingest_state = {"watermark": "2026-07-15T00:00:00+00:00"}
+        await session.commit()
+
+    resp = await client.get(f"/api/projects/{project_id}/ingest/state", headers=headers)
+    nxt = resp.json()["next_sync_at"]
+    assert nxt is not None and "T03:00:00" in nxt  # 每日 03:00 UTC

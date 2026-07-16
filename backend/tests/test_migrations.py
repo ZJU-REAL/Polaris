@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a1b2c3d4e5f6"  # ssh_credential_proxy
-PREV_REVISION = "f3b4c5d6e7a8"  # paper_review_m5c
+HEAD_REVISION = "b8c9d0e1f2a3"  # user_system_u1（头像/配额/邀请链接）
+PREV_REVISION = "a7b8c9d0e1f2"  # paper_affiliations（发表机构）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -42,6 +42,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_user_meta",
                     "manuscripts",
                     "manuscript_files",
+                    "users",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -86,12 +87,30 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"readonly", "updated_by"} <= columns["manuscript_files"]
     # M5-C 论文评审：manuscripts.review_passed
     assert "review_passed" in columns["manuscripts"]
+    # idea 2.0：ideas 深耕字段
+    assert {"depth", "research_type", "goal", "evidence", "seed_idea_id"} <= columns["ideas"]
+    # 文献知识底座：paper_chunks 表
+    assert "paper_chunks" in columns["_tables"]
+    # 技能系统 S1：skills / skill_versions / project_skills 表
+    assert {"skills", "skill_versions", "project_skills"} <= columns["_tables"]
+    # 技能市场 S4：skill_listings / skill_ratings 表
+    assert {"skill_listings", "skill_ratings"} <= columns["_tables"]
+    # 发表机构列（高级检索）
+    assert "affiliations" in columns["papers"]
+    # 用户系统 U1：users 三新列 + project_invites 表
+    assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
+    assert "project_invites" in columns["_tables"]
 
-    # 最新 revision 可往返（downgrade 移除 M5-C review_passed 列）
+    # 最新 revision 可往返（downgrade 移除用户系统 U1 的列与表）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "review_passed" not in columns["manuscripts"]
+    assert "avatar_path" not in columns["users"]
+    assert "project_invites" not in columns["_tables"]
+    assert "affiliations" in columns["papers"]  # 上一版列不受影响
+    assert {"skill_listings", "skill_ratings"} <= columns["_tables"]  # S4 表不受影响
+    assert {"skills", "skill_versions", "project_skills"} <= columns["_tables"]  # S1 表不受影响
+    assert "review_passed" in columns["manuscripts"]
     # M5-B 列不受影响
     assert {"experiment_id", "template", "fact_pack", "latest_compile"} <= columns["manuscripts"]
     assert {"readonly", "updated_by"} <= columns["manuscript_files"]

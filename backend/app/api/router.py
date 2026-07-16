@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api import (
     admin_llm,
+    admin_users,
     auth,
     concepts,
     experiments,
@@ -11,13 +12,17 @@ from app.api import (
     health,
     ideas,
     ingest,
+    invites,
     manuscripts,
     market,
     notes,
     papers,
+    presentations,
     projects,
+    search,
     skills,
     ssh_credentials,
+    users_profile,
     voyages,
     wiki,
 )
@@ -25,6 +30,9 @@ from app.api import (
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(users_profile.router)
+api_router.include_router(invites.router)
+api_router.include_router(admin_users.router)
 api_router.include_router(projects.router)
 api_router.include_router(gates.router)
 api_router.include_router(voyages.router)
@@ -35,8 +43,10 @@ api_router.include_router(concepts.router)
 api_router.include_router(ingest.router)
 api_router.include_router(wiki.router)
 api_router.include_router(ideas.router)
+api_router.include_router(search.router)
 api_router.include_router(skills.router)
 api_router.include_router(market.router)
+api_router.include_router(presentations.router)
 api_router.include_router(ssh_credentials.router)
 api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)

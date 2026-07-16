@@ -106,13 +106,19 @@ async def test_forge_full_pipeline(client, queue_stub):
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
     assert detail["steps"][0]["observation"]["papers"] == 3  # 上下文读到 3 篇 compiled
-    assert detail["steps"][1]["observation"]["gaps"] == 2
-    assert detail["steps"][2]["observation"]["generated"] == 2
-    assert detail["steps"][3]["observation"]["succeeded"] == 2
-    assert detail["steps"][4]["observation"]["dropped"] == 0
-    assert detail["steps"][5]["observation"]["inserted"] == 2
+    assert detail["steps"][1]["observation"]["enabled"] == [
+        "survey_gap",
+        "concept_holes",
+        "limitations",
+        "trends",
+    ]
+    assert detail["steps"][2]["observation"]["gaps"] == 2  # 无概念/全文/近期趋势 → 仅综述 gap
+    assert detail["steps"][3]["observation"]["generated"] == 2
+    assert detail["steps"][4]["observation"]["succeeded"] == 2
+    assert detail["steps"][5]["observation"]["dropped"] == 0
+    assert detail["steps"][6]["observation"]["inserted"] == 2
 
     async with get_sessionmaker()() as session:
         ideas = (
@@ -130,6 +136,8 @@ async def test_forge_full_pipeline(client, queue_stub):
             assert sorted(idea.parent_paper_ids) == sorted(paper_ids)
             assert idea.embedding is not None and len(idea.embedding) == EMBEDDING_DIM
             assert "## 动机" in idea.content and "## 风险" in idea.content
+            assert idea.depth == "sketch"
+            assert idea.evidence and idea.evidence[0]["source"] == "signal"
         activity_kinds = {
             a.kind
             for a in (
@@ -152,8 +160,11 @@ async def test_forge_full_pipeline(client, queue_stub):
         "scores",
         "elo_rating",
         "status",
+        "depth",
+        "research_type",
         "created_at",
     }
+    assert all(i["depth"] == "sketch" for i in items)
     for sort in ("elo", "-created_at", "score"):
         resp = await client.get(f"/api/projects/{project_id}/ideas?sort={sort}", headers=headers)
         assert resp.status_code == 200 and len(resp.json()) == 2
@@ -206,13 +217,13 @@ async def test_forge_dedup_drops_duplicates(client, queue_stub):
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
-    dedup_obs = detail["steps"][4]["observation"]
+    dedup_obs = detail["steps"][5]["observation"]
     assert dedup_obs["existing_compared"] == 1  # 既有 idea 现场补嵌后参与比对
     assert dedup_obs["dropped"] == 1
     dropped = dedup_obs["dropped_detail"][0]
     assert dropped["title"] == FAKE_IDEA_1_TITLE
     assert dropped["cosine"] > 0.9 and dropped["rerank_score"] >= 0.5
-    assert detail["steps"][5]["observation"]["inserted"] == 1  # 只入库存活的候选 2
+    assert detail["steps"][6]["observation"]["inserted"] == 1  # 只入库存活的候选 2
 
     async with get_sessionmaker()() as session:
         titles = (
@@ -315,3 +326,70 @@ async def test_forge_api_permissions(client, queue_stub):
             url, **({"json": body} if body is not None else {}), headers=headers_b
         )
         assert resp.status_code == 404, (method, url, resp.status_code)
+
+
+async def test_collect_signals_concept_holes_and_trends(client, queue_stub):
+    """确定性信号：method×problem 零共现概念对 + 近 90 天概念趋势（纯代码，无 LLM）。"""
+    from app.agents.voyage.actions import ActionContext
+    from app.agents.voyage.actions_ideas import forge_collect_signals
+    from app.models.paper import Concept
+    from app.models.voyage import VoyageRun
+
+    project_id, headers = await _setup_project(client)
+    paper_ids = await _seed_compiled_papers(project_id, n=4)
+
+    async with get_sessionmaker()() as session:
+        pid = uuid.UUID(project_id)
+        method_a = Concept(project_id=pid, name="方法A", slug="m-a", category="method")
+        method_b = Concept(project_id=pid, name="方法B", slug="m-b", category="method")
+        problem_x = Concept(project_id=pid, name="问题X", slug="p-x", category="problem")
+        session.add_all([method_a, method_b, problem_x])
+        await session.flush()
+        # 方法A 与 问题X 共现（paper0）；方法B 只出现在 paper1/2 → 方法B×问题X 零共现
+        from app.models.paper import paper_concepts
+
+        links = [
+            (paper_ids[0], method_a.id),
+            (paper_ids[0], problem_x.id),
+            (paper_ids[1], method_b.id),
+            (paper_ids[2], method_b.id),
+            (paper_ids[3], problem_x.id),
+        ]
+        for paper_id, concept_id in links:
+            await session.execute(
+                paper_concepts.insert().values(paper_id=uuid.UUID(paper_id), concept_id=concept_id)
+            )
+        await session.commit()
+
+        run = VoyageRun(
+            kind="idea_forge",
+            goal="signals",
+            status="executing",
+            cursor=0,
+            project_id=pid,
+            checkpoint={"params": {"knobs": {"signals": ["concept_holes", "trends"]}}},
+        )
+        session.add(run)
+        await session.commit()
+        await session.refresh(run)
+
+    from app.core.llm.router import LLMRouter
+
+    ctx = ActionContext(run=run, llm=LLMRouter(), checkpoint=dict(run.checkpoint))
+    obs = await forge_collect_signals(ctx, {})
+    signals = ctx.checkpoint["forge_signals"]
+    holes = signals["concept_holes"]
+    assert {k: holes[0][k] for k in ("method", "problem")} == {
+        "method": "方法B",
+        "problem": "问题X",
+    }
+    assert holes[0]["method_papers"] == 2 and holes[0]["problem_papers"] == 2
+    # 方法A×问题X 有共现 → 不在空白列表
+    assert all(h["method"] != "方法A" for h in holes)
+    # 刚入库的论文都在 90 天窗口内 → 概念计数进趋势（阈值 ≥2）
+    trend_names = {t["concept"] for t in signals["trends"]}
+    assert {"方法B", "问题X"} <= trend_names
+    assert obs["enabled"] == ["concept_holes", "trends"]
+    # 幂等：重跑不重复采集
+    obs2 = await forge_collect_signals(ctx, {})
+    assert obs2["skipped"] is True

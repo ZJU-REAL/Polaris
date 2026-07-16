@@ -50,6 +50,7 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     external_ids: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # {arxiv, s2, doi..}
     title: Mapped[str] = mapped_column(Text, nullable=False)
     authors: Mapped[list[Any] | None] = mapped_column(JSONVariant)  # [{"name": ...}]
+    affiliations: Mapped[list[Any] | None] = mapped_column(JSONVariant)  # 发表机构 ["MIT", ...]
     abstract: Mapped[str | None] = mapped_column(Text)
     year: Mapped[int | None]
     venue: Mapped[str | None] = mapped_column(String(255))
@@ -79,6 +80,27 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     @property
     def pdf_available(self) -> bool:
         return bool(self.pdf_path)
+
+
+class PaperChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """论文全文分段（文献问答 / idea 生成的检索底座）。
+
+    入库抽全文后确定性切分（services/chunks.py），embedding 由
+    wiki.link_concepts 步骤批量补齐（provider 不支持时留空，检索降级关键词）。
+    """
+
+    __tablename__ = "paper_chunks"
+    __table_args__ = (UniqueConstraint("paper_id", "seq", name="uq_paper_chunks_paper_seq"),)
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    seq: Mapped[int] = mapped_column(nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
 
 
 READING_STATUSES = ("unread", "reading", "read")

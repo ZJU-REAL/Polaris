@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_paper_review, require_writer
 from app.core.db import get_session
 from app.core.events import EventBus, get_event_bus
 from app.core.queue import TaskQueue, get_task_queue
@@ -329,7 +329,7 @@ async def draft_manuscript(
     manuscript_id: uuid.UUID,
     data: DraftRequest | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_writer),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     manuscript = await _member_manuscript(session, manuscript_id, user)
@@ -362,7 +362,7 @@ async def review_manuscript(
     manuscript_id: uuid.UUID,
     data: PaperReviewRequest | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_paper_review),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     manuscript = await _member_manuscript(session, manuscript_id, user)

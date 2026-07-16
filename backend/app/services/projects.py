@@ -2,8 +2,10 @@
 
 import json
 import re
+import secrets
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -11,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.base import Message
 from app.core.llm.router import get_llm_router
-from app.models.project import Project, ProjectMember
+from app.models.project import Project, ProjectInvite, ProjectMember
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectDefinition, ProjectUpdate
 
@@ -239,3 +241,105 @@ async def draft_definition(
             continue
         return _finalize_draft(draft, statement, keywords_include), "llm"
     return fallback_definition(statement, keywords_include), "fallback"
+
+
+# ---- 邀请链接 ----
+
+
+class InviteInvalidError(Exception):
+    """邀请链接不存在/已撤销/已过期/次数用尽。"""
+
+
+async def create_invite(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    created_by: uuid.UUID,
+    expires_days: int | None,
+    max_uses: int | None,
+) -> ProjectInvite:
+    invite = ProjectInvite(
+        project_id=project_id,
+        token=secrets.token_urlsafe(24),
+        created_by=created_by,
+        expires_at=(datetime.now(UTC) + timedelta(days=expires_days)) if expires_days else None,
+        max_uses=max_uses,
+    )
+    session.add(invite)
+    await session.commit()
+    await session.refresh(invite)
+    return invite
+
+
+async def list_invites(session: AsyncSession, project_id: uuid.UUID) -> Sequence[ProjectInvite]:
+    stmt = (
+        select(ProjectInvite)
+        .where(ProjectInvite.project_id == project_id, ProjectInvite.revoked.is_(False))
+        .order_by(ProjectInvite.created_at.desc())
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+def _invite_usable(invite: ProjectInvite) -> bool:
+    if invite.revoked:
+        return False
+    if invite.expires_at is not None:
+        expires = invite.expires_at
+        if expires.tzinfo is None:  # sqlite 存储丢 tz
+            expires = expires.replace(tzinfo=UTC)
+        if expires < datetime.now(UTC):
+            return False
+    return not (invite.max_uses is not None and invite.used_count >= invite.max_uses)
+
+
+async def resolve_invite(
+    session: AsyncSession, token: str, *, user_id: uuid.UUID
+) -> dict[str, Any]:
+    """邀请预览：项目名 / 邀请人 / 是否有效 / 是否已是成员。"""
+    invite = (
+        await session.execute(select(ProjectInvite).where(ProjectInvite.token == token))
+    ).scalar_one_or_none()
+    if invite is None:
+        raise InviteInvalidError
+    project = await session.get(Project, invite.project_id)
+    if project is None:
+        raise InviteInvalidError
+    inviter = await session.get(User, invite.created_by) if invite.created_by else None
+    member = await session.get(ProjectMember, (invite.project_id, user_id))
+    return {
+        "project_id": project.id,
+        "project_name": project.name,
+        "inviter_name": (inviter.display_name or inviter.email) if inviter else None,
+        "valid": _invite_usable(invite),
+        "already_member": member is not None,
+    }
+
+
+async def accept_invite(session: AsyncSession, token: str, *, user_id: uuid.UUID) -> Project:
+    """接受邀请：加入为 member（已是成员则幂等返回项目）。"""
+    invite = (
+        await session.execute(select(ProjectInvite).where(ProjectInvite.token == token))
+    ).scalar_one_or_none()
+    if invite is None:
+        raise InviteInvalidError
+    project = await session.get(Project, invite.project_id)
+    if project is None:
+        raise InviteInvalidError
+    member = await session.get(ProjectMember, (invite.project_id, user_id))
+    if member is not None:
+        return project
+    if not _invite_usable(invite):
+        raise InviteInvalidError
+    session.add(ProjectMember(project_id=invite.project_id, user_id=user_id, role="member"))
+    invite.used_count += 1
+    await session.commit()
+    return project
+
+
+async def revoke_invite(session: AsyncSession, invite_id: uuid.UUID, project_id: uuid.UUID) -> bool:
+    invite = await session.get(ProjectInvite, invite_id)
+    if invite is None or invite.project_id != project_id:
+        return False
+    invite.revoked = True
+    await session.commit()
+    return True

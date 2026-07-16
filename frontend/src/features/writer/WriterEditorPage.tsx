@@ -23,8 +23,10 @@ import { colorForUser, ruleText } from './shared';
 
 /* ============================================================
    /writer/:id — 论文编辑工作台（全屏三栏）：
-   左 220px 文件树 / 中 CodeMirror6 协同编辑（LaTeX 高亮 +
+   左 文件树 / 中 CodeMirror6 协同编辑（LaTeX 高亮 +
    多人光标 + ⌘S 编译）/ 右上下分栏（PDF 预览 + 编译诊断）。
+   三栏之间可拖拽调宽（双击拖拽条恢复默认），左右两栏与
+   PDF/诊断小节都可收起再展开，布局记在 localStorage。
    顶栏：面包屑标题、协作者在线点、事实包抽屉、AI 起草、
    编译、投稿。
    ============================================================ */
@@ -62,7 +64,7 @@ function PdfPane({ msId, compile }: { msId: string; compile: CompileResult | nul
           compact
           icon="file"
           title="还没有 PDF"
-          desc="写好后点右上角「编译」或按 ⌘S，编译成功的 PDF 会出现在这里。"
+          desc="写好后点右上角的编译按钮或按 ⌘S，编译成功的 PDF 会出现在这里。"
         />
       </div>
     );
@@ -134,6 +136,89 @@ function DiagRow({ d, onClick }: { d: DiagnosticItem; onClick: () => void }) {
           {d.message}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------------- 可拖拽分栏 ---------------- */
+
+/** 工作台布局：面板宽度/占比 + 各面板是否展开，整体存 localStorage。 */
+interface WriterLayout {
+  /** 左侧文件树宽度 px */
+  leftW: number;
+  /** 右侧预览栏宽度 px */
+  rightW: number;
+  /** PDF 在右栏中的高度占比（0~1，与诊断互补） */
+  pdfFrac: number;
+  leftOpen: boolean;
+  rightOpen: boolean;
+  pdfOpen: boolean;
+  diagOpen: boolean;
+}
+
+const LAYOUT_KEY = 'polaris-writer-layout';
+const DEFAULT_LAYOUT: WriterLayout = {
+  leftW: 220,
+  rightW: 420,
+  pdfFrac: 0.6,
+  leftOpen: true,
+  rightOpen: true,
+  pdfOpen: true,
+  diagOpen: true,
+};
+
+function loadLayout(): WriterLayout {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    return raw ? { ...DEFAULT_LAYOUT, ...(JSON.parse(raw) as Partial<WriterLayout>) } : DEFAULT_LAYOUT;
+  } catch {
+    return DEFAULT_LAYOUT;
+  }
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** 分栏拖拽条；collapsed 时只保留展开按钮，不可拖。 */
+function Gutter({
+  horizontal,
+  dragging,
+  onMouseDown,
+  onReset,
+  collapsed,
+  onToggle,
+  toggleTitle,
+  chevronDeg,
+}: {
+  horizontal?: boolean;
+  dragging?: boolean;
+  onMouseDown?: (e: React.MouseEvent) => void;
+  /** 双击恢复默认尺寸 */
+  onReset?: () => void;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  toggleTitle?: string;
+  /** 展开/收起箭头角度（基于右向 chevron 旋转） */
+  chevronDeg?: number;
+}) {
+  const canDrag = !!onMouseDown && !collapsed;
+  return (
+    <div
+      className={`panel-gutter ${horizontal ? 'h' : 'v'}${canDrag ? '' : ' no-drag'}${dragging ? ' dragging' : ''}`}
+      onMouseDown={canDrag ? onMouseDown : undefined}
+      onDoubleClick={collapsed ? undefined : onReset}
+      title={canDrag ? '拖动调整宽度，双击恢复默认' : undefined}
+    >
+      {onToggle && (
+        <button
+          className={`panel-gutter-btn${collapsed ? ' always' : ''}`}
+          title={toggleTitle}
+          onMouseDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onClick={onToggle}
+        >
+          <Icon name="chevron" size={10} style={{ transform: `rotate(${chevronDeg ?? 0}deg)` }} />
+        </button>
+      )}
     </div>
   );
 }
@@ -324,7 +409,7 @@ export function WriterEditorPage() {
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409 && e.message.includes('COMPILE_REQUIRED')) {
-        toast('要先编译成功一次才能投稿（点右上角「编译」）', 'error');
+        toast('要先编译成功一次才能投稿', 'error');
       } else {
         toast(`投稿失败：${e instanceof Error ? e.message : String(e)}`, 'error');
       }
@@ -332,10 +417,10 @@ export function WriterEditorPage() {
   });
   function onSubmit() {
     if (!compile || compile.status !== 'ok') {
-      toast('要先编译成功一次才能投稿（点右上角「编译」或按 ⌘S）', 'error');
+      toast('要先编译成功一次才能投稿', 'error');
       return;
     }
-    if (window.confirm('确认发起投稿？\n会创建一条「论文投稿」审批，人工批准后状态变为已投稿。')) {
+    if (window.confirm('确认发起投稿？\n会创建一条论文投稿审批，人工批准后状态变为已投稿。')) {
       submitMutation.mutate();
     }
   }
@@ -353,6 +438,61 @@ export function WriterEditorPage() {
   // —— 抽屉 / Modal ——
   const [factOpen, setFactOpen] = useState(false);
   const [draftOpen, setDraftOpen] = useState(false);
+
+  // —— 分栏布局：宽度/占比 + 展开状态，持久化到 localStorage ——
+  const [layout, setLayout] = useState<WriterLayout>(loadLayout);
+  const patchLayout = useCallback(
+    (patch: Partial<WriterLayout>) => setLayout((l) => ({ ...l, ...patch })),
+    [],
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    } catch {
+      /* 隐私模式等存不了就算了 */
+    }
+  }, [layout]);
+
+  const splitRef = useRef<HTMLDivElement | null>(null); // 三栏容器（算右栏最大宽）
+  const rightColRef = useRef<HTMLDivElement | null>(null); // 右栏（算 PDF 占比）
+  const [dragging, setDragging] = useState<'left' | 'right' | 'pdf' | null>(null);
+
+  const startDrag = useCallback(
+    (e: React.MouseEvent, which: 'left' | 'right' | 'pdf', move: (dx: number, dy: number) => void) => {
+      e.preventDefault();
+      const sx = e.clientX;
+      const sy = e.clientY;
+      setDragging(which);
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = which === 'pdf' ? 'row-resize' : 'col-resize';
+      const onMove = (ev: MouseEvent) => move(ev.clientX - sx, ev.clientY - sy);
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        setDragging(null);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [],
+  );
+
+  function onLeftGutterDown(e: React.MouseEvent) {
+    const start = layout.leftW;
+    startDrag(e, 'left', (dx) => patchLayout({ leftW: clamp(start + dx, 140, 420) }));
+  }
+  function onRightGutterDown(e: React.MouseEvent) {
+    const start = layout.rightW;
+    const max = Math.max(320, (splitRef.current?.clientWidth ?? 1200) * 0.6);
+    startDrag(e, 'right', (dx) => patchLayout({ rightW: clamp(start - dx, 260, max) }));
+  }
+  function onPdfGutterDown(e: React.MouseEvent) {
+    const start = layout.pdfFrac;
+    const h = rightColRef.current?.clientHeight || 600;
+    startDrag(e, 'pdf', (_dx, dy) => patchLayout({ pdfFrac: clamp(start + dy / h, 0.15, 0.85) }));
+  }
 
   /* ---------------- 渲染 ---------------- */
 
@@ -536,30 +676,43 @@ export function WriterEditorPage() {
         </div>
       )}
 
-      {/* —— 三栏 —— */}
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'grid',
-          gridTemplateColumns: '220px minmax(0, 1fr) minmax(300px, 34%)',
-        }}
-      >
+      {/* —— 三栏（可拖拽调宽 / 可收起） —— */}
+      <div ref={splitRef} style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         {/* 左：文件树 */}
-        <div style={{ borderRight: '0.5px solid var(--border)', background: 'var(--sidebar-bg)', minHeight: 0 }}>
-          <FileTree
-            files={ms.files}
-            currentId={currentFileId}
-            busy={fileOpsBusy}
-            onSelect={(f) => setCurrentFileId(f.id)}
-            onCreate={(path) => createFileMutation.mutate(path)}
-            onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
-            onDelete={(f) => deleteFileMutation.mutate(f.id)}
-          />
-        </div>
+        {layout.leftOpen && (
+          <div
+            style={{
+              width: layout.leftW,
+              flexShrink: 0,
+              borderRight: '0.5px solid var(--border)',
+              background: 'var(--sidebar-bg)',
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
+            <FileTree
+              files={ms.files}
+              currentId={currentFileId}
+              busy={fileOpsBusy}
+              onSelect={(f) => setCurrentFileId(f.id)}
+              onCreate={(path) => createFileMutation.mutate(path)}
+              onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
+              onDelete={(f) => deleteFileMutation.mutate(f.id)}
+            />
+          </div>
+        )}
+        <Gutter
+          dragging={dragging === 'left'}
+          onMouseDown={layout.leftOpen ? onLeftGutterDown : undefined}
+          onReset={() => patchLayout({ leftW: DEFAULT_LAYOUT.leftW })}
+          collapsed={!layout.leftOpen}
+          onToggle={() => patchLayout({ leftOpen: !layout.leftOpen })}
+          toggleTitle={layout.leftOpen ? '收起文件列表' : '展开文件列表'}
+          chevronDeg={layout.leftOpen ? 180 : 0}
+        />
 
         {/* 中：编辑器 */}
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--surface)' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--surface)' }}>
           {currentFile ? (
             <>
               <div
@@ -588,51 +741,121 @@ export function WriterEditorPage() {
             </>
           ) : (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EmptyState compact icon="file" title="还没有文件" desc="左侧「+」新建一个 .tex 文件开始写作。" />
+              <EmptyState compact icon="file" title="还没有文件" desc="点左侧 + 号新建一个 .tex 文件开始写作。" />
             </div>
           )}
         </div>
 
+        <Gutter
+          dragging={dragging === 'right'}
+          onMouseDown={layout.rightOpen ? onRightGutterDown : undefined}
+          onReset={() => patchLayout({ rightW: DEFAULT_LAYOUT.rightW })}
+          collapsed={!layout.rightOpen}
+          onToggle={() => patchLayout({ rightOpen: !layout.rightOpen })}
+          toggleTitle={layout.rightOpen ? '收起预览面板' : '展开预览面板'}
+          chevronDeg={layout.rightOpen ? 0 : 180}
+        />
+
         {/* 右：PDF 预览 + 诊断 */}
-        <div style={{ borderLeft: '0.5px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          {/* 上：PDF */}
-          <div style={{ flex: 3, minHeight: 0, display: 'flex', flexDirection: 'column', borderBottom: '0.5px solid var(--border)' }}>
-            <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: '0.5px solid var(--border)', background: 'var(--surface)' }}>
-              <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>编译预览 · PDF</span>
-              {compile && (
-                <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
-                  v{compile.version} · {fmtRelative(compile.compiled_at)} · {(compile.duration_ms / 1000).toFixed(1)}s
-                </span>
-              )}
-            </div>
-            <PdfPane msId={ms.id} compile={compile} />
-          </div>
-          {/* 下：诊断 */}
-          <div style={{ flex: 2, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface)' }}>
-            <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: '0.5px solid var(--border)' }}>
-              <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>编译诊断</span>
-              {compile && (
-                <span className="mono" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
-                  {errCount > 0 && <span style={{ color: 'var(--danger-tx)', fontWeight: 700 }}>{errCount} 错误</span>}
-                  {errCount > 0 && warnCount > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
-                  {warnCount > 0 && <span style={{ color: 'var(--warn-tx)', fontWeight: 700 }}>{warnCount} 警告</span>}
-                  {errCount === 0 && warnCount === 0 && <span style={{ color: 'var(--ok-tx)' }}>没有问题 ✓</span>}
-                </span>
-              )}
-            </div>
-            <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
-              {!compile ? (
-                <div className="empty" style={{ padding: 24, fontSize: 12 }}>还没编译过，编译后这里显示错误和警告。</div>
-              ) : compile.diagnostics.length === 0 ? (
-                <div className="empty" style={{ padding: 24, fontSize: 12 }}>
-                  {compile.status === 'ok' ? '编译干净，没有错误和警告 🎉' : '编译未产出诊断信息。'}
+        {layout.rightOpen && (
+          <div
+            ref={rightColRef}
+            style={{
+              width: layout.rightW,
+              flexShrink: 0,
+              borderLeft: '0.5px solid var(--border)',
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
+            {/* 上：PDF */}
+            <div
+              style={{
+                flex: layout.pdfOpen ? `${layout.pdfFrac} 1 0px` : '0 0 auto',
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                borderBottom: '0.5px solid var(--border)',
+              }}
+            >
+              <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: layout.pdfOpen ? '0.5px solid var(--border)' : 'none', background: 'var(--surface)' }}>
+                <button
+                  className="writer-mini-btn"
+                  title={layout.pdfOpen ? '收起编译预览' : '展开编译预览'}
+                  onClick={() => patchLayout({ pdfOpen: !layout.pdfOpen })}
+                >
+                  <Icon name="chevDown" size={11} style={{ transform: layout.pdfOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
+                </button>
+                <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>编译预览 · PDF</span>
+                {compile && (
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
+                    v{compile.version} · {fmtRelative(compile.compiled_at)} · {(compile.duration_ms / 1000).toFixed(1)}s
+                  </span>
+                )}
+              </div>
+              {layout.pdfOpen && (
+                // 拖动分栏时挡住 iframe，避免鼠标事件被它吞掉
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', pointerEvents: dragging ? 'none' : 'auto' }}>
+                  <PdfPane msId={ms.id} compile={compile} />
                 </div>
-              ) : (
-                compile.diagnostics.map((d, i) => <DiagRow key={i} d={d} onClick={() => onDiagClick(d)} />)
+              )}
+            </div>
+
+            {layout.pdfOpen && layout.diagOpen && (
+              <Gutter
+                horizontal
+                dragging={dragging === 'pdf'}
+                onMouseDown={onPdfGutterDown}
+                onReset={() => patchLayout({ pdfFrac: DEFAULT_LAYOUT.pdfFrac })}
+              />
+            )}
+
+            {/* 下：诊断 */}
+            <div
+              style={{
+                flex: layout.diagOpen ? `${1 - layout.pdfFrac} 1 0px` : '0 0 auto',
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                background: 'var(--surface)',
+              }}
+            >
+              <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: layout.diagOpen ? '0.5px solid var(--border)' : 'none' }}>
+                <button
+                  className="writer-mini-btn"
+                  title={layout.diagOpen ? '收起编译诊断' : '展开编译诊断'}
+                  onClick={() => patchLayout({ diagOpen: !layout.diagOpen })}
+                >
+                  <Icon name="chevDown" size={11} style={{ transform: layout.diagOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
+                </button>
+                <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>编译诊断</span>
+                {compile && (
+                  <span className="mono" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
+                    {errCount > 0 && <span style={{ color: 'var(--danger-tx)', fontWeight: 700 }}>{errCount} 错误</span>}
+                    {errCount > 0 && warnCount > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
+                    {warnCount > 0 && <span style={{ color: 'var(--warn-tx)', fontWeight: 700 }}>{warnCount} 警告</span>}
+                    {errCount === 0 && warnCount === 0 && <span style={{ color: 'var(--ok-tx)' }}>没有问题 ✓</span>}
+                  </span>
+                )}
+              </div>
+              {layout.diagOpen && (
+                <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+                  {!compile ? (
+                    <div className="empty" style={{ padding: 24, fontSize: 12 }}>还没编译过，编译后这里显示错误和警告。</div>
+                  ) : compile.diagnostics.length === 0 ? (
+                    <div className="empty" style={{ padding: 24, fontSize: 12 }}>
+                      {compile.status === 'ok' ? '编译干净，没有错误和警告 🎉' : '编译未产出诊断信息。'}
+                    </div>
+                  ) : (
+                    compile.diagnostics.map((d, i) => <DiagRow key={i} d={d} onClick={() => onDiagClick(d)} />)
+                  )}
+                </div>
               )}
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* —— 抽屉 / Modal —— */}

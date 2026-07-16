@@ -70,13 +70,14 @@ async def get_or_create_discussion(session: AsyncSession, idea_id: uuid.UUID) ->
 
 
 async def list_idea_sessions(session: AsyncSession, idea_id: uuid.UUID) -> list[ReviewSession]:
-    """该 idea 的讨论区 + 参与的全部辩论场次（idea_a 走 target_id，idea_b 走 payload）。"""
+    """该 idea 的讨论区 + 评审修订记录 + 参与的全部辩论场次
+    （idea_a 走 target_id，idea_b 走 payload）。"""
     stmt = (
         select(ReviewSession)
         .where(
             or_(
                 and_(
-                    ReviewSession.target_type == "idea_discussion",
+                    ReviewSession.target_type.in_(("idea_discussion", "idea_revision")),
                     ReviewSession.target_id == idea_id,
                 ),
                 and_(
@@ -98,7 +99,7 @@ async def session_project_id(
 ) -> uuid.UUID | None:
     """会话归属项目（权限判定用）：idea 系会话经 target_id 指向的 idea 解析，
     manuscript 会话（M5-C 论文评审）经 target_id 指向的稿件解析。"""
-    if review_session.target_type in ("idea_discussion", "idea_match"):
+    if review_session.target_type in ("idea_discussion", "idea_match", "idea_revision"):
         idea = await session.get(Idea, review_session.target_id)
         return idea.project_id if idea is not None else None
     if review_session.target_type == "manuscript":

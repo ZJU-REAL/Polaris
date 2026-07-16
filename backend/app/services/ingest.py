@@ -1,6 +1,7 @@
 """文献 ingest 业务逻辑：ingest voyage 创建 / 状态查询 / 每日增量选表（不 import fastapi）。"""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -96,7 +97,32 @@ async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str
         counts[status] = int(count)
         total += int(count)
     counts["total"] = total
+    # 库内 = 相关性达标及之后（论文库默认视图/计数口径，docs/api-lit.md §8.5）
+    counts["library"] = (
+        counts["scored"] + counts["fetched"] + counts["compiled"] + counts["included"]
+    )
+    counts["pending_compile"] = counts["scored"] + counts["fetched"]
     return counts
+
+
+# 每日自动同步的触发时刻（UTC，与 worker/settings.py 的 cron 保持一致）
+DAILY_SYNC_UTC_HOUR = 3
+DAILY_SYNC_UTC_MINUTE = 0
+
+
+def next_daily_sync_at(project: Project) -> datetime | None:
+    """下一次自动同步时间：cadence=daily 且已完成初始建库才有；否则 None。"""
+    definition = project.definition if isinstance(project.definition, dict) else {}
+    state = project.ingest_state or {}
+    if definition.get("cadence") != "daily" or not state.get("watermark"):
+        return None
+    now = datetime.now(UTC)
+    candidate = now.replace(
+        hour=DAILY_SYNC_UTC_HOUR, minute=DAILY_SYNC_UTC_MINUTE, second=0, microsecond=0
+    )
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    return candidate
 
 
 async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any]:
@@ -116,6 +142,7 @@ async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any
         "last_run": last_run,
         "paper_counts": await paper_counts(session, project.id),
         "running_voyage_id": running.id if running else None,
+        "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(project)) else None),
     }
 
 

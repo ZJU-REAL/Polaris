@@ -1,27 +1,51 @@
-"""Research Wiki 附属路由：检索 / Obsidian 导出 / 引用导出 / 项目统计
-（docs/api-m2.md §3、§5、§6；docs/api-lit.md §6）。"""
+"""Research Wiki 附属路由：检索 / Obsidian 导出 / 引用导出 / 项目统计 / 图谱 / 文献库对话
+（docs/api-m2.md §3、§5、§6；docs/api-lit.md §6、§8）。"""
 
+import asyncio
 import json
+import logging
 import uuid
+from collections.abc import AsyncIterator
+from dataclasses import asdict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_llm_chat
 from app.core.db import get_session
+from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
+from app.models.paper import Paper, PaperChunk
 from app.models.project import Project
 from app.models.user import User
+from app.schemas.graph import GraphResponse
 from app.schemas.ingest import ProjectStatsRead
-from app.schemas.paper import PaperRead, ScoredConcept, ScoredPaper, SearchResponse
+from app.schemas.paper import (
+    PaperChatRequest,
+    PaperRead,
+    ScoredConcept,
+    ScoredPaper,
+    SearchResponse,
+)
+from app.services import chunks as chunks_service
 from app.services import citations as citations_service
 from app.services import concepts as concepts_service
+from app.services import graph as graph_service
+from app.services import library_chat as library_chat_service
 from app.services import papers as papers_service
 from app.services import projects as projects_service
 from app.services import stats as stats_service
 from app.services.wiki_export import build_obsidian_zip
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["wiki"])
+
+_HEARTBEAT_SECONDS = 15.0
 
 
 async def _member_project(session: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
@@ -121,14 +145,22 @@ async def export_citations(
     status_filter: str | None = Query(default=None, alias="status"),
     tag: str | None = Query(default=None),
     starred: bool | None = Query(default=None),
+    ids: str | None = Query(default=None, description="逗号分隔的论文 id（多选导出）"),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> Response:
     """引用导出：BibTeX / CSL-JSON（docs/api-lit.md §6）。
 
-    过滤参数与论文列表一致；缺省导出 status in (compiled, included)。
+    过滤参数与论文列表一致；缺省导出 status in (compiled, included)；
+    ids 指定时按 id 精确导出（多选导出）。
     """
     project = await _member_project(session, project_id, user)
+    paper_ids: list[uuid.UUID] | None = None
+    if ids:
+        try:
+            paper_ids = [uuid.UUID(x) for x in ids.split(",") if x.strip()]
+        except ValueError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="INVALID_IDS") from e
     papers = await citations_service.papers_for_export(
         session,
         project_id=project_id,
@@ -136,6 +168,7 @@ async def export_citations(
         status=status_filter,
         tag=tag,
         starred=starred,
+        paper_ids=paper_ids,
     )
     if format_ == "bibtex":
         return Response(
@@ -148,6 +181,142 @@ async def export_citations(
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{project.slug}-citations.json"'},
     )
+
+
+def _sse_frame(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+@router.post("/projects/{project_id}/chat")
+async def chat_with_library(
+    project_id: uuid.UUID,
+    data: PaperChatRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_chat),
+) -> StreamingResponse:
+    """文献库对话（docs/api-lit.md §8）：跨文献检索 + stage=reading 流式回答。
+
+    事件：``sources``（引用来源清单）→ ``delta``* → ``done``；错误 ``error`` 后关流。
+    """
+    project = await _member_project(session, project_id, user)
+    user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
+    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    llm = get_llm_router()
+    messages, sources = await library_chat_service.build_library_messages(
+        session, project=project, question=data.question, history=history, llm=llm, user_id=user_id
+    )
+
+    async def event_stream() -> AsyncIterator[str]:
+        yield _sse_frame("sources", {"items": [asdict(s) for s in sources]})
+        queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
+
+        async def pump() -> None:
+            try:
+                async for chunk in llm.stream(
+                    "reading", messages, user_id=user_id, project_id=project_id
+                ):
+                    await queue.put(("delta", chunk))
+                await queue.put(("done", None))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 转成 error 事件后关流
+                logger.warning("library chat stream failed", exc_info=True)
+                await queue.put(("error", f"{type(e).__name__}: {e}"))
+
+        task = asyncio.create_task(pump())
+        collected: list[str] = []
+        try:
+            while True:
+                try:
+                    kind, payload = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
+                except TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                if kind == "delta":
+                    collected.append(payload or "")
+                    yield _sse_frame("delta", {"text": payload})
+                elif kind == "done":
+                    usage = {
+                        "prompt_tokens": sum(estimate_tokens(m.content) for m in messages),
+                        "completion_tokens": estimate_tokens("".join(collected)),
+                    }
+                    yield _sse_frame("done", {"usage": usage})
+                    return
+                else:  # error
+                    yield _sse_frame("error", {"detail": payload})
+                    return
+        finally:
+            task.cancel()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.post("/projects/{project_id}/index/rebuild")
+async def rebuild_fulltext_index(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """重建全文分段索引（docs/api-lit.md §8）：给已有全文但缺分段的论文补分段并嵌入。
+
+    幂等：已有分段的论文跳过；新入库论文由 ingest 流水线自动处理，通常无需手动调用。
+    """
+    await _member_project(session, project_id, user)
+    chunked_ids = select(PaperChunk.paper_id).where(PaperChunk.project_id == project_id)
+    try:
+        papers = (
+            (
+                await session.execute(
+                    select(Paper).where(
+                        Paper.project_id == project_id,
+                        Paper.full_text_path.is_not(None),
+                        Paper.id.not_in(chunked_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    except ProgrammingError as e:  # paper_chunks 表还没迁移
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="DB_MIGRATION_REQUIRED: 请先执行数据库迁移（make migrate）",
+        ) from e
+    indexed = 0
+    chunk_count = 0
+    for paper in papers:
+        n = await chunks_service.index_paper_fulltext(session, paper)
+        if n:
+            indexed += 1
+            chunk_count += n
+    await session.commit()
+    embedded, embed_error = await chunks_service.embed_pending_chunks(
+        session, project_id=project_id, llm=get_llm_router(), user_id=user.id
+    )
+    total_chunks = int(
+        (
+            await session.execute(select(func.count()).where(PaperChunk.project_id == project_id))
+        ).scalar_one()
+    )
+    return {
+        "papers_indexed": indexed,
+        "chunks_created": chunk_count,
+        "embedded": embedded,
+        "embed_error": embed_error,
+        "total_chunks": total_chunks,
+    }
+
+
+@router.get("/projects/{project_id}/graph", response_model=GraphResponse)
+async def project_graph(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> GraphResponse:
+    """知识图谱：论文 / 作者 / 概念节点与关联边（确定性构建，不走 LLM）。"""
+    await _member_project(session, project_id, user)
+    data = await graph_service.project_graph(session, project_id=project_id)
+    return GraphResponse(**data)
 
 
 @router.get("/projects/{project_id}/stats", response_model=ProjectStatsRead)

@@ -9,26 +9,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.activity import Activity
 from app.models.gate import Gate
 from app.models.idea import IDEA_STATUSES, Idea
-from app.models.paper import Paper
+from app.models.paper import Concept, Paper
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
-from app.schemas.idea import ForgeKnobs
+from app.schemas.idea import DeepIdeaRequest, ForgeKnobs
 from app.schemas.review import TournamentRequest
 
-# 同项目 forge/review 互斥（docs/api-m3.md §1）
-IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review")
+# 同项目 idea 类 voyage 互斥（docs/api-m3.md §1 + docs/api-idea2.md §2）
+IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 # 预算从 knobs 派生：每个候选 idea 预留的 token 额度（gap 分析+生成+打分+去重）
 _TOKENS_PER_IDEA = 20_000
 # 每场辩论预留：正/反方每轮各一次 + 裁判一次
 _TOKENS_PER_MATCH_CALL = 8_000
+# 深耕 voyage 默认预算（目标构建工具循环 + 各节起草 + 评审修订）
+_DEEP_DEFAULT_BUDGET = 400_000
 
 IDEA_SORTS = ("elo", "-created_at", "score")
 
+# 深耕相关闸门（docs/api-idea2.md §4/§5）
+DEEP_GATE_KINDS = ("idea_goal", "idea_pivot")
+
 
 class IdeaVoyageConflictError(Exception):
-    """同一项目已有 forge/review voyage 在跑。"""
+    """同一项目已有 idea 类 voyage 在跑。"""
 
 
 class NotEnoughIdeasError(Exception):
@@ -37,6 +42,10 @@ class NotEnoughIdeasError(Exception):
 
 class InvalidIdeaIdsError(Exception):
     """显式 idea_ids 含不存在/不属于本项目的 id。"""
+
+
+class InvalidSeedError(Exception):
+    """深耕种子引用的 concept/paper/idea 不存在或不属于本项目。"""
 
 
 # ---- voyage 创建 ----
@@ -154,6 +163,124 @@ async def create_tournament_voyage(
     return run
 
 
+async def _validate_seed(
+    session: AsyncSession, *, project_id: uuid.UUID, seed_type: str, value: str
+) -> str:
+    """引用型种子存在性校验，返回种子摘要（写入 voyage goal 文案）。"""
+    if seed_type == "text":
+        return value[:80]
+    try:
+        target_id = uuid.UUID(value)
+    except ValueError as e:
+        raise InvalidSeedError(value) from e
+    if seed_type == "paper":
+        paper = await session.get(Paper, target_id)
+        if paper is None or paper.project_id != project_id:
+            raise InvalidSeedError(value)
+        return f"论文《{paper.title[:60]}》"
+    if seed_type == "concept":
+        concept = await session.get(Concept, target_id)
+        if concept is None or concept.project_id != project_id:
+            raise InvalidSeedError(value)
+        return f"概念「{concept.name}」"
+    if seed_type == "idea":
+        idea = await session.get(Idea, target_id)
+        if idea is None or idea.project_id != project_id:
+            raise InvalidSeedError(value)
+        return f"草案「{idea.title[:60]}」"
+    raise InvalidSeedError(seed_type)
+
+
+async def create_deep_voyage(
+    session: AsyncSession,
+    *,
+    project: Project,
+    data: DeepIdeaRequest,
+    created_by: uuid.UUID | None,
+) -> VoyageRun:
+    """建 idea_proposal voyage（深度生成，docs/api-idea2.md §2），由调用方入队 run_voyage。"""
+    if await find_running_idea_voyage(session, project.id) is not None:
+        raise IdeaVoyageConflictError(str(project.id))
+    seed_brief = await _validate_seed(
+        session, project_id=project.id, seed_type=data.seed.type, value=data.seed.value
+    )
+    budget = data.knobs.budget_tokens or _DEEP_DEFAULT_BUDGET
+    run = VoyageRun(
+        kind="idea_proposal",
+        goal=f"深度研究方案：{project.name}（种子：{seed_brief}）",
+        status="planning",
+        cursor=0,
+        checkpoint={"params": {"seed": data.seed.model_dump(), "knobs": data.knobs.model_dump()}},
+        budget={"max_tokens": budget},
+        project_id=project.id,
+        created_by=created_by,
+    )
+    session.add(run)
+    session.add(
+        Activity(
+            project_id=project.id,
+            actor=f"user:{created_by}" if created_by else "system",
+            kind="idea.deep_started",
+            message=f"深度想法生成已启动（种子：{seed_brief}）",
+            payload={"seed": data.seed.model_dump(), "knobs": data.knobs.model_dump()},
+        )
+    )
+    await session.commit()
+    await session.refresh(run)
+    return run
+
+
+async def deep_state(session: AsyncSession, project: Project) -> dict[str, Any]:
+    """深度生成状态（docs/api-idea2.md §2）：运行中 voyage + 待审批闸门 + 上次运行。"""
+    running_stmt = (
+        select(VoyageRun)
+        .where(
+            VoyageRun.project_id == project.id,
+            VoyageRun.kind == "idea_proposal",
+            VoyageRun.status.not_in(tuple(TERMINAL_STATUSES)),
+        )
+        .order_by(VoyageRun.created_at.desc())
+        .limit(1)
+    )
+    running = (await session.execute(running_stmt)).scalar_one_or_none()
+
+    pending_gate_id: uuid.UUID | None = None
+    if running is not None:
+        gate_stmt = (
+            select(Gate)
+            .where(
+                Gate.project_id == project.id,
+                Gate.kind.in_(DEEP_GATE_KINDS),
+                Gate.status == "pending",
+                Gate.payload["voyage_id"].as_string() == str(running.id),
+            )
+            .order_by(Gate.created_at.desc())
+            .limit(1)
+        )
+        gate = (await session.execute(gate_stmt)).scalars().first()
+        pending_gate_id = gate.id if gate is not None else None
+
+    last_stmt = (
+        select(VoyageRun)
+        .where(VoyageRun.project_id == project.id, VoyageRun.kind == "idea_proposal")
+        .order_by(VoyageRun.created_at.desc())
+        .limit(1)
+    )
+    last = (await session.execute(last_stmt)).scalar_one_or_none()
+    last_run: dict[str, Any] | None = None
+    if last is not None:
+        last_run = {
+            "voyage_id": last.id,
+            "status": last.status,
+            "finished_at": last.updated_at if last.status in TERMINAL_STATUSES else None,
+        }
+    return {
+        "running_voyage_id": running.id if running else None,
+        "pending_gate_id": pending_gate_id,
+        "last_run": last_run,
+    }
+
+
 # ---- forge 状态 ----
 
 
@@ -211,11 +338,17 @@ async def list_ideas(
     *,
     project_id: uuid.UUID,
     status: str | None = None,
+    depth: str | None = None,
+    research_type: str | None = None,
     sort: str = "-created_at",
 ) -> list[Idea]:
     stmt = select(Idea).where(Idea.project_id == project_id)
     if status:
         stmt = stmt.where(Idea.status == status)
+    if depth:
+        stmt = stmt.where(Idea.depth == depth)
+    if research_type:
+        stmt = stmt.where(Idea.research_type == research_type)
     if sort == "elo":
         stmt = stmt.order_by(Idea.elo_rating.desc(), Idea.created_at.desc())
     else:
@@ -264,6 +397,14 @@ async def parent_papers_brief(session: AsyncSession, idea: Idea) -> list[dict[st
     rows = (await session.execute(select(Paper.id, Paper.title).where(Paper.id.in_(ids)))).all()
     by_id = {pid: title for pid, title in rows}
     return [{"id": pid, "title": by_id[pid]} for pid in ids if pid in by_id]
+
+
+async def seed_idea_brief(session: AsyncSession, idea: Idea) -> dict[str, Any] | None:
+    """IdeaDetail.seed_idea：深化来源草案 {id, title}（已删除静默为 None）。"""
+    if idea.seed_idea_id is None:
+        return None
+    seed = await session.get(Idea, idea.seed_idea_id)
+    return {"id": seed.id, "title": seed.title} if seed is not None else None
 
 
 # ---- 晋级（idea_promotion 闸门） ----

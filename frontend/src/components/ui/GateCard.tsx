@@ -4,7 +4,9 @@ import { fmtTime } from '../../lib/format';
 import type { GateDecision, GateRead } from '../../lib/api';
 
 export const GATE_KIND_ZH: Record<string, string> = {
-  idea_promotion: 'Idea 晋级审批',
+  idea_promotion: '想法晋级审批',
+  idea_goal: '研究目标确认',
+  idea_pivot: '方向调整确认',
   compute_budget: '算力预算审批',
   remote_write: '远程操作审批',
   pr_push: '推送 PR',
@@ -37,6 +39,153 @@ function payloadLines(payload: Record<string, unknown> | null): string[] {
   );
 }
 
+/* ---------------- Idea 2.0 · 研究目标确认 / 方向调整确认 ---------------- */
+
+const GOAL_TYPE_ZH: Record<string, string> = {
+  method: '方法',
+  benchmark: '评测基准',
+  analysis: '分析',
+  survey: '综述',
+  application: '应用',
+  theory: '理论',
+};
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function asStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+}
+
+function GoalRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-3)', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 12.5, lineHeight: 1.55 }}>{children}</div>
+    </div>
+  );
+}
+
+/** kind=idea_goal：payload.goal 结构化展示 + trace_summary 一行灰字。 */
+function IdeaGoalView({ payload }: { payload: Record<string, unknown> | null }) {
+  const goal = asRecord(payload?.goal);
+  const trace = typeof payload?.trace_summary === 'string' && payload.trace_summary.trim() !== ''
+    ? payload.trace_summary
+    : null;
+  const researchType = typeof goal?.research_type === 'string' ? goal.research_type : null;
+  const task = typeof goal?.task === 'string' ? goal.task : null;
+  const question = typeof goal?.question === 'string' ? goal.question : null;
+  const objectives = asStringArray(goal?.objectives);
+  const criteria = asStringArray(goal?.success_criteria);
+  const groundingCount = Array.isArray(goal?.grounding) ? goal.grounding.length : 0;
+  return (
+    <div style={{ marginTop: 12 }}>
+      {researchType && (
+        <div style={{ marginBottom: 10 }}>
+          <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+            研究类型：{GOAL_TYPE_ZH[researchType] ?? researchType}
+          </span>
+        </div>
+      )}
+      {task && <GoalRow label="研究任务">{task}</GoalRow>}
+      {question && <GoalRow label="核心问题">{question}</GoalRow>}
+      {objectives.length > 0 && (
+        <GoalRow label="研究目标">
+          <ol style={{ margin: 0, paddingLeft: 18 }}>
+            {objectives.map((o, i) => (
+              <li key={i} style={{ marginBottom: 2 }}>{o}</li>
+            ))}
+          </ol>
+        </GoalRow>
+      )}
+      {criteria.length > 0 && (
+        <GoalRow label="成功标准">
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {criteria.map((c, i) => (
+              <li key={i} style={{ marginBottom: 2 }}>{c}</li>
+            ))}
+          </ul>
+        </GoalRow>
+      )}
+      {groundingCount > 0 && (
+        <GoalRow label="依据文献">共 {groundingCount} 篇（详情见生成后的想法页）</GoalRow>
+      )}
+      {trace && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5, marginTop: 4 }}>
+          探索过程：{trace}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CMP_FIELD_ZH: Record<string, string> = {
+  similarity: '相似点',
+  overlap: '重合点',
+  difference: '差异',
+  why: '说明',
+  reason: '原因',
+  verdict: '判定',
+  note: '备注',
+};
+
+/** kind=idea_pivot：payload.reason + payload.comparisons（相似工作对比）。 */
+function IdeaPivotView({ payload }: { payload: Record<string, unknown> | null }) {
+  const reason = typeof payload?.reason === 'string' && payload.reason.trim() !== '' ? payload.reason : null;
+  const comparisons = Array.isArray(payload?.comparisons) ? payload.comparisons : [];
+  return (
+    <div style={{ marginTop: 12 }}>
+      {reason && (
+        <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55, marginBottom: 10 }}>{reason}</div>
+      )}
+      {comparisons.length > 0 && (
+        <GoalRow label={`高度重合的已有工作 · ${comparisons.length} 项`}>
+          <div className="col gap6">
+            {comparisons.map((c, i) => {
+              const item = asRecord(c);
+              if (!item) {
+                return (
+                  <div key={i} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '8px 11px' }}>
+                    {typeof c === 'string' ? c : JSON.stringify(c)}
+                  </div>
+                );
+              }
+              const title = typeof item.title === 'string' ? item.title : null;
+              const url = typeof item.url === 'string' ? item.url : null;
+              const details = Object.entries(item).filter(
+                ([k, v]) => !['title', 'url', 'paper_id', 'id'].includes(k) && typeof v === 'string' && v.trim() !== '',
+              ) as [string, string][];
+              return (
+                <div key={i} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '8px 11px' }}>
+                  {title && (
+                    <div style={{ fontSize: 12, fontWeight: 650, marginBottom: details.length > 0 ? 4 : 0 }}>
+                      {url ? (
+                        <a href={url} target="_blank" rel="noreferrer noopener">{title}</a>
+                      ) : (
+                        title
+                      )}
+                    </div>
+                  )}
+                  {details.map(([k, v]) => (
+                    <div key={k} style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
+                      {CMP_FIELD_ZH[k] ? <b style={{ color: 'var(--text)' }}>{CMP_FIELD_ZH[k]}：</b> : null}
+                      {v}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </GoalRow>
+      )}
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5 }}>
+        批准 = AI 按你的意见调整研究方向后继续；拒绝 = 终止本次深度生成。
+      </div>
+    </div>
+  );
+}
+
 export interface GateCardProps {
   gate: GateRead;
   expanded: boolean;
@@ -51,8 +200,11 @@ export interface GateCardProps {
 export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: GateCardProps) {
   const pending = g.status === 'pending';
   const [comment, setComment] = useState('');
-  const lines = payloadLines(g.payload);
-  const desc = gateDesc(g);
+  const isGoal = g.kind === 'idea_goal';
+  const isPivot = g.kind === 'idea_pivot';
+  const structured = isGoal || isPivot;
+  const lines = structured ? [] : payloadLines(g.payload);
+  const desc = structured ? null : gateDesc(g);
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <div
@@ -93,6 +245,8 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
       {expanded && (
         <div style={{ padding: '0 16px 16px', borderTop: '0.5px solid var(--border)' }}>
           {desc && <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55, margin: '12px 0 0' }}>{desc}</div>}
+          {isGoal && <IdeaGoalView payload={g.payload} />}
+          {isPivot && <IdeaPivotView payload={g.payload} />}
           {lines.length > 0 && (
             <div className="codeblock" style={{ fontSize: 11, margin: '12px 0 0' }}>
               {lines.map((line, i) => (
@@ -104,7 +258,13 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
             <>
               <textarea
                 className="textarea"
-                placeholder="审批意见（可选） · comment"
+                placeholder={
+                  isGoal
+                    ? '可填写修改意见，AI 将按意见调整目标后继续'
+                    : isPivot
+                      ? '可填写调整意见，AI 将按意见调整研究方向后继续'
+                      : '审批意见（可选） · comment'
+                }
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 rows={2}
@@ -118,7 +278,7 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
                   onClick={() => onDecide(g.id, 'approve', comment.trim() || undefined)}
                 >
                   <Icon name="check" size={13} />
-                  批准 approve
+                  {isPivot ? '调整方向继续' : isGoal ? '确认目标' : '批准 approve'}
                 </button>
                 <button
                   className="btn btn-ghost sm"
@@ -127,7 +287,7 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
                   onClick={() => onDecide(g.id, 'reject', comment.trim() || undefined)}
                 >
                   <Icon name="x" size={13} />
-                  拒绝 reject
+                  {isPivot ? '终止' : isGoal ? '驳回' : '拒绝 reject'}
                 </button>
               </div>
             </>

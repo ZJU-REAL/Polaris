@@ -143,7 +143,7 @@ function StartReviewModal({
   const mutation = useMutation({
     mutationFn: () => api.startManuscriptReview(msId, personas.filter((p) => p.name.trim() !== '')),
     onSuccess: () => {
-      toast('同行评审已开始：核验引用 → 查错 → 三位评审员打分 → 汇总', 'ok');
+      toast('同行评审已开始', 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyages', pid] });
       void queryClient.invalidateQueries({ queryKey: ['manuscript', msId] });
       onClose();
@@ -1089,7 +1089,7 @@ export function PaperReviewPage() {
           <EmptyState
             icon="pen"
             title="还没有可评审的稿件"
-            desc="同行评审只对编译成功的稿件开放。先去「AI 写论文」把稿子写好、编译通过，再回来发起评审。"
+            desc="同行评审只对编译成功的稿件开放。先在论文撰写页完成编译，再回来发起评审。"
             action={
               <button className="btn btn-ghost" onClick={() => navigate('/writer')}>
                 <Icon name="pen" size={14} />

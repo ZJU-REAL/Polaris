@@ -1,0 +1,39 @@
+# 生产部署覆盖（zju-54）：数据持久化到用户目录（bind mount，不用匿名卷）
+#
+# 服务器目录约定：
+#   ~/polaris/app   代码（rsync 同步）
+#   ~/polaris/data  持久化数据（pgdata / redisdata / appdata / tectonic-cache）
+# 相对路径以本文件所在目录（app/deploy/）为基准，../../data 即 ~/polaris/data。
+#
+# 用法（在 ~/polaris/app 下）：
+#   GITHUB_PROXY=https://gh-proxy.com/ docker compose \
+#     -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#
+# GITHUB_PROXY：内网直连不了 GitHub 时给 tectonic 下载加速前缀，能直连则留空。
+
+name: polaris
+
+services:
+  postgres:
+    volumes:
+      - ../../data/pgdata:/var/lib/postgresql/data
+
+  redis:
+    volumes:
+      - ../../data/redisdata:/data
+
+  api:
+    build:
+      args:
+        GITHUB_PROXY: ${GITHUB_PROXY:-}
+    volumes:
+      - ../../data/appdata:/srv/data
+      - ../../data/tectonic-cache:/root/.cache/Tectonic
+
+  worker:
+    build:
+      args:
+        GITHUB_PROXY: ${GITHUB_PROXY:-}
+    volumes:
+      - ../../data/appdata:/srv/data
+      - ../../data/tectonic-cache:/root/.cache/Tectonic

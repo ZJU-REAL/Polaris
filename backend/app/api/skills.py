@@ -1,16 +1,19 @@
 """技能路由（docs/skill-system.md §4.1/§4.2）。
 
 - /skills：技能 CRUD / 版本 / fork（builtin 只读，user 技能仅本人可改）
+- /skills/import-md：导入 Claude 官方风格技能包（SKILL.md frontmatter + markdown）
 - /projects/{pid}/skills + /project-skills/{id}：启用到项目（项目成员）
 """
 
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_llm_task
 from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.skill import Skill
@@ -162,6 +165,76 @@ async def export_skill(
     )
 
 
+class SkillMdImport(BaseModel):
+    """Claude 官方技能包（SKILL.md）导入：frontmatter 的 name/description + markdown 正文。"""
+
+    content: str = Field(min_length=1, max_length=65536)
+    targets: list[str] = Field(min_length=1, max_length=8)  # Polaris 注入点（官方包没有此概念）
+    kind: str = "guidance"
+    slug: str | None = None
+
+
+_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def _parse_skill_md(content: str) -> tuple[str, str, str]:
+    """解析 SKILL.md → (name, description, body)。无 frontmatter 时取首个标题当 name。"""
+    m = _FRONTMATTER_RE.match(content)
+    name, description = "", ""
+    body = content
+    if m:
+        body = content[m.end() :]
+        for line in m.group(1).splitlines():
+            key, _, value = line.partition(":")
+            if key.strip() == "name":
+                name = value.strip().strip("\"'")
+            elif key.strip() == "description":
+                description = value.strip().strip("\"'")
+    if not name:
+        heading = re.search(r"^#\s+(.+)$", body, re.MULTILINE)
+        name = heading.group(1).strip() if heading else "imported-skill"
+    return name, description, body.strip()
+
+
+@router.post("/skills/import-md", response_model=SkillDetail, status_code=201)
+async def import_skill_md(
+    data: SkillMdImport,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> SkillDetail:
+    """导入 Claude 官方风格技能包（SKILL.md）为我的技能（指定注入点，正文截断到上限）。"""
+    name, description, body = _parse_skill_md(data.content)
+    if not body:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="EMPTY_SKILL_BODY")
+    from app.schemas.skill import BODY_MAX_CHARS
+
+    truncated = len(body) > BODY_MAX_CHARS
+    if truncated:
+        body = body[: BODY_MAX_CHARS - 20] + "\n（正文超长已截断）"
+    base_slug = data.slug or re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")[:48] or "skill"
+    for i in range(1, 100):
+        candidate = base_slug if i == 1 else f"{base_slug}-{i}"[:64]
+        try:
+            create = SkillCreate(
+                slug=candidate,
+                kind=data.kind,
+                name=name[:255],
+                description=(description or None),
+                manifest=SkillManifest(targets=data.targets),
+                body=body,
+            )
+        except ValueError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
+        try:
+            skill = await skills_service.create_skill(session, owner_id=user.id, data=create)
+            return await _detail(session, skill)
+        except skills_service.SkillSlugConflictError:
+            continue
+        except skills_service.SkillWorkflowInvalidError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
+    raise HTTPException(status.HTTP_409_CONFLICT, detail="SKILL_SLUG_TAKEN")
+
+
 @router.post("/skills/import", response_model=SkillDetail, status_code=status.HTTP_201_CREATED)
 async def import_skill(
     data: SkillExport,
@@ -196,7 +269,7 @@ async def test_skill(
     skill_id: uuid.UUID,
     data: SkillTestRequest | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_llm_task),
 ) -> SkillTestResult:
     """试运行：预览注入文本；guidance/rubric 真实调用一次 LLM（stage=default）。"""
     skill = await _get_visible_skill(session, skill_id, user)
@@ -212,7 +285,7 @@ async def run_workflow_skill(
     skill_id: uuid.UUID,
     data: SkillRunRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_llm_task),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     """「运行此流程」：以 workflow 技能 steps 为计划创建 AI 任务并入队执行。"""

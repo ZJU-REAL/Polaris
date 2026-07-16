@@ -23,13 +23,35 @@ logger = logging.getLogger(__name__)
 MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 单图超过 4MB 不送 LLM（仍保留在 figures 里）
 DEGRADE_TOP_N = 4  # LLM 失败降级：按面积取前 N 张标记 important
 
+# 图片类型：动机 / 方法 / 架构 / 实验 / 其他（编译时决定插到哪个小节）
+FIGURE_KINDS = ("motivation", "method", "architecture", "experiment", "other")
+FIGURE_KIND_ZH = {
+    "motivation": "动机图",
+    "method": "方法图",
+    "architecture": "架构图",
+    "experiment": "实验图",
+    "other": "其他",
+}
+
 FIGURE_ANNOTATE_SYSTEM_PROMPT = """\
-你是文献图片评审，从一篇论文提取出的候选图里挑出对理解论文最关键的图
-（方法/架构图、核心结果图等，重要的通常 2-4 张），并为每张重要图配一句中文说明。
+你是文献图片评审，从一篇论文提取出的候选图里挑出对理解论文最关键的图，
+给每张重要图标注类型并配中文说明。优先覆盖这四类（论文里有就选）：
+- motivation：动机/问题示意图（说明为什么要做这件事）
+- method：方法/流程图（核心思路怎么运转）
+- architecture：模型/系统架构图
+- experiment：核心实验结果或分析图
+重要图通常 2-6 张；纯装饰图、logo、不影响理解的小图不要选。
 只输出一个 JSON 数组，不要输出任何其他文字或 Markdown 代码块，格式：
-[{"index": 候选图编号, "important": true, "caption": "一句中文说明"}]
+[{"index": 候选图编号, "important": true, \
+"kind": "motivation|method|architecture|experiment|other", \
+"caption": "1-2 句中文说明：图里画了什么、说明了什么"}]
 index 必须取自下面给出的候选编号；不重要的图可以不列出。
 """
+
+
+def normalize_figure_kind(raw: Any) -> str | None:
+    value = str(raw or "").strip().lower()
+    return value if value in FIGURE_KINDS else None
 
 
 def _extract_json_array(content: str) -> list[Any]:
@@ -60,6 +82,8 @@ def _merge(candidates: list[dict[str, Any]], selections: list[Any]) -> list[dict
     for cand in candidates:
         sel = by_index.get(int(cand["index"]))
         caption = sel.get("caption") if sel else None
+        important = bool(sel.get("important", True)) if sel else False
+        kind = normalize_figure_kind(sel.get("kind")) if sel else None
         merged.append(
             {
                 "index": int(cand["index"]),
@@ -67,7 +91,9 @@ def _merge(candidates: list[dict[str, Any]], selections: list[Any]) -> list[dict
                 "width": int(cand["width"]),
                 "height": int(cand["height"]),
                 "caption": str(caption) if caption else None,
-                "important": bool(sel.get("important", True)) if sel else False,
+                # 重要图缺类型时归 other（前端标签/编译分节指令都依赖 kind）
+                "kind": kind or ("other" if important else None),
+                "important": important,
             }
         )
     return merged
@@ -86,6 +112,7 @@ def _degrade(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "width": int(c["width"]),
             "height": int(c["height"]),
             "caption": None,
+            "kind": None,
             "important": int(c["index"]) in top,
         }
         for c in candidates
@@ -98,7 +125,7 @@ def figures_annotated(figures: list[dict[str, Any]] | None) -> bool:
 
 
 def important_figures_with_bytes(
-    paper: Paper, limit: int = 4
+    paper: Paper, limit: int = 6
 ) -> list[tuple[dict[str, Any], bytes]]:
     """取重要图及其 PNG bytes（图文编译用）：文件缺失跳过、单张 >4MB 跳过、最多 limit 张。"""
     out: list[tuple[dict[str, Any], bytes]] = []

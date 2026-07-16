@@ -10,16 +10,17 @@ from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.paper import (
     Concept,
     Paper,
+    PaperChunk,
     PaperNote,
     PaperTag,
     PaperUserMeta,
     paper_concepts,
     paper_tag_links,
 )
-from app.models.project import Project, ProjectMember
+from app.models.project import Project, ProjectInvite, ProjectMember
 from app.models.review import ReviewMessage, ReviewSession
-from app.models.ssh_credential import SSHCredential
 from app.models.skill import ProjectSkill, Skill, SkillListing, SkillRating, SkillVersion
+from app.models.ssh_credential import SSHCredential
 from app.models.user import User
 from app.models.voyage import VoyageRun, VoyageStep
 
@@ -36,21 +37,23 @@ __all__ = [
     "ManuscriptFile",
     "ModelRoute",
     "Paper",
+    "PaperChunk",
     "PaperNote",
     "PaperTag",
     "PaperUserMeta",
     "Project",
+    "ProjectInvite",
     "ProjectMember",
+    "ProjectSkill",
     "ReviewMessage",
     "ReviewSession",
-    "ProjectSkill",
     "SSHCredential",
-    "TimestampMixin",
-    "User",
     "Skill",
     "SkillListing",
     "SkillRating",
     "SkillVersion",
+    "TimestampMixin",
+    "User",
     "UUIDPrimaryKeyMixin",
     "VoyageRun",
     "VoyageStep",

@@ -6,6 +6,7 @@ import { LoginPage } from '../features/auth/LoginPage';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { ProjectWizardPage } from '../features/projects/ProjectWizardPage';
 import { ProjectDetailPage } from '../features/projects/ProjectDetailPage';
+import { JoinPage } from '../features/projects/JoinPage';
 import { VoyagesPage } from '../features/voyages/VoyagesPage';
 import { VoyageDetailPage } from '../features/voyages/VoyageDetailPage';
 import { WikiPage } from '../features/wiki/WikiPage';
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'projects/new', element: <ProjectWizardPage /> },
       { path: 'projects/:id', element: <ProjectDetailPage /> },
+      { path: 'join/:token', element: <JoinPage /> },
       { path: 'voyages', element: <VoyagesPage /> },
       { path: 'voyages/:id', element: <VoyageDetailPage /> },
       { path: 'wiki', element: <WikiPage /> },

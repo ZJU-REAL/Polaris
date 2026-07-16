@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
@@ -8,8 +8,11 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { api } from '../../lib/api';
-import { PapersTab } from './PapersTab';
+import { ExportMenu, PapersTab } from './PapersTab';
+import { PresentationModal } from './PresentationModal';
 import { ConceptsTab } from './ConceptsTab';
+import { GraphTab } from './GraphTab';
+import { LibraryChatTab } from './LibraryChatTab';
 import { IngestTab } from './IngestTab';
 import { NotesTab } from './NotesTab';
 
@@ -19,7 +22,7 @@ import { NotesTab } from './NotesTab';
    顶部当前研究方向 + Obsidian 导出。
    ============================================================ */
 
-type WikiTab = 'papers' | 'concepts' | 'ingest' | 'notes';
+type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes';
 
 export function WikiPage() {
   const navigate = useNavigate();
@@ -27,6 +30,7 @@ export function WikiPage() {
   const pid = currentProjectId;
 
   const [tab, setTab] = useState<WikiTab>('papers');
+  const [presentOpen, setPresentOpen] = useState(false);
   const [paperId, setPaperId] = useState<string | null>(null);
   const [conceptId, setConceptId] = useState<string | null>(null);
   /** [[概念名]] 双链点击后待解析的概念名 */
@@ -86,7 +90,7 @@ export function WikiPage() {
       setConceptId(hit.id);
       setTab('concepts');
     } else {
-      toast(`概念「${pendingConceptName}」尚未入库`, 'info');
+      toast(`概念 ${pendingConceptName} 尚未入库`, 'info');
     }
     setPendingConceptName(null);
   }, [pendingConceptName, resolveQuery.data, resolveQuery.isError]);
@@ -102,23 +106,6 @@ export function WikiPage() {
   const onWikiLink = useCallback((name: string) => {
     setPendingConceptName(name);
   }, []);
-
-  // —— Obsidian 导出 ——
-  const exportMutation = useMutation({
-    mutationFn: () => api.downloadObsidianExport(pid!),
-    onSuccess: (blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `polaris-wiki-${(currentProject?.name ?? 'vault').replace(/\s+/g, '-')}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      toast('Obsidian vault 已导出', 'ok');
-    },
-    onError: (e) => toast(`导出失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
 
   // —— 无项目：引导创建 ——
   if (!projectsLoading && projects.length === 0) {
@@ -146,7 +133,8 @@ export function WikiPage() {
     );
   }
 
-  const total = ingestQuery.data?.paper_counts?.total;
+  // 论文库计数口径 = 库内（相关性达标）；旧后端无 library 字段时退回 total
+  const total = ingestQuery.data?.paper_counts?.library ?? ingestQuery.data?.paper_counts?.total;
 
   return (
     <div className="page fadeup" style={{ maxWidth: 1360, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}>
@@ -172,18 +160,11 @@ export function WikiPage() {
                 方向详情
               </button>
             )}
-            <button
-              className="btn btn-ghost"
-              disabled={!pid || exportMutation.isPending}
-              onClick={() => exportMutation.mutate()}
-            >
-              {exportMutation.isPending ? (
-                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-              ) : (
-                <Icon name="file" size={14} />
-              )}
-              导出 Obsidian
+            <button className="btn btn-ghost" disabled={!pid} onClick={() => setPresentOpen(true)}>
+              <Icon name="chart" size={14} />
+              论文分享 PPT
             </button>
+            {pid && <ExportMenu pid={pid} />}
           </>
         }
       />
@@ -193,6 +174,8 @@ export function WikiPage() {
           options={[
             { v: 'papers', label: `论文库 Papers${total !== undefined ? ` · ${total}` : ''}` },
             { v: 'concepts', label: '概念库 Concepts' },
+            { v: 'graph', label: '图谱 Graph' },
+            { v: 'chat', label: '文献对话 Chat' },
             { v: 'ingest', label: '建库与同步 Ingest' },
             { v: 'notes', label: '笔记 Notes' },
           ]}
@@ -241,6 +224,10 @@ export function WikiPage() {
             onOpenPaper={goPaper}
             onWikiLink={onWikiLink}
           />
+        ) : tab === 'graph' ? (
+          <GraphTab pid={pid} onOpenPaper={goPaper} onOpenConcept={goConcept} />
+        ) : tab === 'chat' ? (
+          <LibraryChatTab pid={pid} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
         ) : tab === 'ingest' ? (
           <IngestTab
             pid={pid}
@@ -252,6 +239,14 @@ export function WikiPage() {
           <NotesTab pid={pid} />
         )}
       </div>
+
+      {presentOpen && pid && (
+        <PresentationModal
+          projectId={pid}
+          initialPaperId={paperId ?? undefined}
+          onClose={() => setPresentOpen(false)}
+        />
+      )}
     </div>
   );
 }

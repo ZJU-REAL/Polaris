@@ -47,6 +47,14 @@ class Sextant:
         if observation.get("error"):
             return {"passed": False, "reason": str(observation["error"])}, {}
 
+        # 动作自带机械验收结论（goal./proposal. 系动作，docs/api-idea2.md）：直接采信
+        self_check = observation.get("self_check")
+        if isinstance(self_check, dict) and isinstance(self_check.get("passed"), bool):
+            return {
+                "passed": self_check["passed"],
+                "reason": str(self_check.get("reason", "")),
+            }, {}
+
         action = str(step_def.get("action", ""))
         acceptance = step_def.get("acceptance")
 
@@ -57,7 +65,16 @@ class Sextant:
             }, {}
 
         if action in DETERMINISTIC_ACTIONS or action.startswith(
-            ("wiki.", "forge.", "review.", "experiment.", "writing.")
+            (
+                "wiki.",
+                "forge.",
+                "review.",
+                "experiment.",
+                "writing.",
+                "goal.",
+                "proposal.",
+                "present.",
+            )
         ):
             # wiki./forge./review./experiment./writing. 为确定性批处理步骤：单条失败已汇总进
             # observation.failed，步骤级失败（helm 捕获的异常）走上面的 observation.error 分支

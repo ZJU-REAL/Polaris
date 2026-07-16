@@ -5,6 +5,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,13 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_llm_chat, require_llm_task
 from app.core.db import get_session
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
 from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.paper import (
+    PaperBatchIds,
     PaperChatRequest,
     PaperDetail,
     PaperFigure,
@@ -66,6 +68,13 @@ async def _paper_detail(session: AsyncSession, paper: Paper, user_id: uuid.UUID)
     return detail  # type: ignore[return-value]
 
 
+async def _get_member_project(session: AsyncSession, project_id: uuid.UUID, user: User):
+    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    return project
+
+
 async def _get_member_paper(
     session: AsyncSession, paper_id: uuid.UUID, user: User, *, with_concepts: bool = False
 ) -> Paper:
@@ -85,6 +94,12 @@ async def list_papers(
     tag: str | None = Query(default=None),
     starred: bool | None = Query(default=None),
     reading_status: str | None = Query(default=None, pattern="^(unread|reading|read)$"),
+    author: str | None = Query(default=None, description="作者姓名（包含匹配）"),
+    affiliation: str | None = Query(default=None, description="发表机构（包含匹配）"),
+    published_from: datetime | None = Query(default=None),
+    published_to: datetime | None = Query(default=None),
+    created_from: datetime | None = Query(default=None),
+    created_to: datetime | None = Query(default=None),
     sort: str = Query(default="relevance", pattern="^(relevance|-published_at)$"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
@@ -106,6 +121,12 @@ async def list_papers(
         sort=sort,
         page=page,
         size=size,
+        author=author,
+        affiliation=affiliation,
+        published_from=published_from,
+        published_to=published_to,
+        created_from=created_from,
+        created_to=created_to,
     )
     return PaperListPage(
         items=await _reads_with_extras(session, items, user.id), total=total, page=page, size=size
@@ -171,6 +192,59 @@ async def update_paper(
     if data.status is not None:
         paper = await papers_service.set_paper_status(session, paper, data.status)
     return await _paper_detail(session, paper, user.id)
+
+
+@router.delete("/papers/{paper_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_paper(
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """彻底删除论文（垃圾桶里的「彻底删除」）：清理落盘文件，关联数据级联删除。"""
+    paper = await _get_member_paper(session, paper_id, user)
+    await papers_service.delete_paper(session, paper)
+
+
+@router.post("/papers/{paper_id}/restore", response_model=PaperDetail)
+async def restore_paper(
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperDetail:
+    """从垃圾桶召回：已编译回 compiled、打过分回 scored、否则按人工精选。"""
+    paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
+    paper = await papers_service.restore_paper(session, paper)
+    return await _paper_detail(session, paper, user.id)
+
+
+@router.post("/projects/{project_id}/papers/batch-delete")
+async def batch_delete_papers(
+    project_id: uuid.UUID,
+    data: PaperBatchIds,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, int]:
+    """批量删除项目内论文（非本项目的 id 忽略），返回 {deleted}。
+
+    默认软删（移入垃圾桶，可召回）；hard=true 彻底删除。
+    """
+    await _get_member_project(session, project_id, user)
+    deleted = await papers_service.delete_papers(
+        session, project_id=project_id, paper_ids=data.paper_ids, hard=data.hard
+    )
+    return {"deleted": deleted}
+
+
+@router.post("/projects/{project_id}/trash/empty")
+async def empty_trash(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, int]:
+    """清空垃圾桶：彻底删除项目内全部已删除论文。"""
+    await _get_member_project(session, project_id, user)
+    deleted = await papers_service.empty_trash(session, project_id=project_id)
+    return {"deleted": deleted}
 
 
 # ---- PDF 阅读（docs/api-lit.md §1） ----
@@ -264,7 +338,7 @@ async def extract_paper_figures(
 async def recompile_paper(
     paper_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_llm_task),
 ) -> PaperDetail:
     """重跑筛选注释 + 图文编译，覆盖 wiki_content；无 PDF 时跳过图片仅重写文字。"""
     paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
@@ -290,7 +364,7 @@ async def chat_with_paper(
     paper_id: uuid.UUID,
     data: PaperChatRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_llm_chat),
 ) -> StreamingResponse:
     """AI 伴读：stage=reading 流式回答；事件 delta/done/error + 15s 心跳注释。"""
     paper = await _get_member_paper(session, paper_id, user)

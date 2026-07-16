@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_forge, require_review
 from app.core.db import get_session
 from app.core.events import EventBus, get_event_bus
 from app.core.queue import TaskQueue, get_task_queue
@@ -18,6 +18,8 @@ from app.models.review import ReviewSession
 from app.models.user import User
 from app.schemas.gate import GateRead
 from app.schemas.idea import (
+    DeepIdeaRequest,
+    DeepStateRead,
     ForgeRequest,
     ForgeStateRead,
     IdeaDetail,
@@ -78,7 +80,7 @@ async def start_forge(
     project_id: uuid.UUID,
     data: ForgeRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_forge),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     project = await _member_project(session, project_id, user)
@@ -103,6 +105,45 @@ async def get_forge_state(
     return ForgeStateRead(**state)
 
 
+# ---- 深度生成（docs/api-idea2.md §2） ----
+
+
+@router.post(
+    "/projects/{project_id}/ideas/deep",
+    response_model=VoyageRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_deep_idea(
+    project_id: uuid.UUID,
+    data: DeepIdeaRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_forge),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> VoyageRead:
+    project = await _member_project(session, project_id, user)
+    try:
+        run = await ideas_service.create_deep_voyage(
+            session, project=project, data=data, created_by=user.id
+        )
+    except ideas_service.IdeaVoyageConflictError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="IDEA_VOYAGE_ALREADY_RUNNING") from e
+    except ideas_service.InvalidSeedError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEED_NOT_FOUND") from e
+    await queue.enqueue("run_voyage", str(run.id))
+    return VoyageRead.model_validate(run)
+
+
+@router.get("/projects/{project_id}/ideas/deep/state", response_model=DeepStateRead)
+async def get_deep_state(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DeepStateRead:
+    project = await _member_project(session, project_id, user)
+    state = await ideas_service.deep_state(session, project)
+    return DeepStateRead(**state)
+
+
 # ---- Ideas ----
 
 
@@ -110,13 +151,20 @@ async def get_forge_state(
 async def list_ideas(
     project_id: uuid.UUID,
     status_filter: str | None = Query(default=None, alias="status"),
+    depth: str | None = Query(default=None, pattern="^(sketch|proposal)$"),
+    research_type: str | None = Query(default=None),
     sort: str = Query(default="-created_at", pattern="^(elo|-created_at|score)$"),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[IdeaRead]:
     await _member_project(session, project_id, user)
     ideas = await ideas_service.list_ideas(
-        session, project_id=project_id, status=status_filter, sort=sort
+        session,
+        project_id=project_id,
+        status=status_filter,
+        depth=depth,
+        research_type=research_type,
+        sort=sort,
     )
     return [IdeaRead.model_validate(i) for i in ideas]
 
@@ -129,12 +177,16 @@ async def get_idea(
 ) -> IdeaDetail:
     idea = await _member_idea(session, idea_id, user)
     parents = await ideas_service.parent_papers_brief(session, idea)
+    seed_idea = await ideas_service.seed_idea_brief(session, idea)
     return IdeaDetail(
         **IdeaRead.model_validate(idea).model_dump(),
         content=idea.content,
         parent_paper_ids=ideas_service.parse_parent_ids(idea),
         parent_papers=parents,
         score_rationale=idea.score_rationale,
+        goal=idea.goal,
+        evidence=idea.evidence,
+        seed_idea=seed_idea,
     )
 
 
@@ -193,7 +245,7 @@ async def start_tournament(
     project_id: uuid.UUID,
     data: TournamentRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_review),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     project = await _member_project(session, project_id, user)

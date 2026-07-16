@@ -148,7 +148,7 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
             compact
             icon="sparkle"
             title={exp.status === 'planning' ? '计划生成中…' : '计划尚未生成'}
-            desc="系统读入 idea 内容与相关 wiki 页后自动产出假设清单、复现策略与预算估计。"
+            desc="系统读入想法内容与相关文献后自动产出假设清单、复现策略与预算估计。"
           />
         </div>
       ) : (

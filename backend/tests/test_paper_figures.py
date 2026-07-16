@@ -70,19 +70,32 @@ async def test_extract_figures_filters_dedupes_and_saves(tmp_path):
     assert not figure_path(paper_id, 1).exists()
 
 
-async def test_extract_figures_caps_at_8_by_area_keeps_page_order(tmp_path):
-    # 10 页各 1 图，面积随页码递增 → 面积前 8 为第 3..10 页；编号仍按页码顺序
+async def test_extract_figures_page_round_robin_cap(tmp_path):
+    # 14 页各 1 图 → 上限 12：按页轮转选优，前 12 页各 1 张；编号仍按页码顺序
     pdf_path = tmp_path / "many.pdf"
-    pdf_path.write_bytes(_pdf_with_images([[(200 + 10 * i, 150 + 5 * i)] for i in range(10)]))
+    pdf_path.write_bytes(_pdf_with_images([[(200 + 10 * i, 150 + 5 * i)] for i in range(14)]))
     paper_id = str(uuid.uuid4())
 
     figures = await extract_figures(paper_id, pdf_path)
-    assert len(figures) == 8
-    assert [f["index"] for f in figures] == list(range(8))
-    assert [f["page"] for f in figures] == list(range(3, 11))  # 面积最小的前 2 页被淘汰
-    assert [f["width"] for f in figures] == [200 + 10 * i for i in range(2, 10)]
+    assert len(figures) == 12
+    assert [f["index"] for f in figures] == list(range(12))
+    assert [f["page"] for f in figures] == list(range(1, 13))
     for f in figures:
         assert figure_path(paper_id, f["index"]).exists()
+
+
+async def test_extract_figures_per_page_limit(tmp_path):
+    # 单页 5 张（尺寸各异，防 digest 去重）+ 另一页 1 张 → 单页最多取 3 张（面积降序）
+    pdf_path = tmp_path / "crowded.pdf"
+    pdf_path.write_bytes(_pdf_with_images([[(300 + 2 * i, 200) for i in range(5)], [(250, 180)]]))
+    paper_id = str(uuid.uuid4())
+
+    figures = await extract_figures(paper_id, pdf_path)
+    pages = [f["page"] for f in figures]
+    assert pages.count(1) == 3 and pages.count(2) == 1
+    # 取的是面积最大的 3 张（300/302 被淘汰），编号仍按文中出现顺序
+    page1_widths = [f["width"] for f in figures if f["page"] == 1]
+    assert page1_widths == [304, 306, 308]
 
 
 # ---- figures API：三端点 / 幂等 / force / 越界 / 成员校验 ----
@@ -290,5 +303,13 @@ def test_figure_files_do_not_leak_paths():
     from app.schemas.paper import PaperFigure
 
     fig = PaperFigure(index=0, page=1, width=400, height=300)
-    assert set(fig.model_dump()) == {"index", "page", "width", "height", "caption", "important"}
+    assert set(fig.model_dump()) == {
+        "index",
+        "page",
+        "width",
+        "height",
+        "caption",
+        "kind",
+        "important",
+    }
     assert fig.caption is None and fig.important is False

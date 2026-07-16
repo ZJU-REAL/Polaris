@@ -214,19 +214,20 @@ async def test_recompile_with_pdf_full_flow(client):
             "width": 400,
             "height": 300,
             "caption": "（fake）图注",
+            "kind": "method",
             "important": True,
         }
     ]
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, uuid.UUID(paper_id))
         assert paper.compiled_at is not None
-        # LLMUsage 记账归属 project（annotate + 编译各 1 次 librarian 调用）
+        # LLMUsage 记账归属 project（annotate + 编译 + 概念定义各 1 次 librarian 调用）
         rows = (
             (await session.execute(select(LLMUsage).where(LLMUsage.stage == "librarian")))
             .scalars()
             .all()
         )
-        assert len(rows) == 2
+        assert len(rows) == 3
         assert all(str(r.project_id) == project_id for r in rows)
 
     # 再跑一次：覆盖 wiki_content，仍成功（重跑 annotate + 编译）
@@ -316,3 +317,59 @@ async def test_obsidian_export_rewrites_figure_markers(client):
     assert f"![fig 1](figures/{slug}-fig-1.png)" in paper_md
     assert "*结果图*" in paper_md
     assert "[[Agent]]" in paper_md  # 双链保留
+
+
+class _NoMarkerLibrarian(FakeProvider):
+    """图文编译时不插任何 ![[fig:N]] 标记（模拟模型忽略配图指令），记录调用次数。"""
+
+    def __init__(self) -> None:
+        self.compile_calls = 0
+
+    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+        result = await super().complete(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
+        )
+        if images:
+            self.compile_calls += 1
+            result.content = "\n".join(
+                line for line in result.content.splitlines() if "![[fig:" not in line
+            )
+        return result
+
+
+async def test_compile_paper_retries_when_figures_not_used(app):
+    """有配图但模型一张没插 → 带强指令重试一次；仍失败则接受纯文字稿。"""
+    paper = _paper_stub(
+        figures=[
+            {"index": 0, "page": 1, "width": 400, "height": 300, "caption": None, "important": True}
+        ]
+    )
+    figure_path(str(paper.id), 0).write_bytes(_opaque_png_bytes(40, 30))
+    provider = _NoMarkerLibrarian()
+    router = LLMRouter()
+    router._providers[("fake", None, "")] = provider
+
+    content = await compile_paper(paper, statement="研究方向", llm=router)
+    assert provider.compile_calls == 2  # 首稿无标记 → 重试一次
+    assert "![[fig:" not in content and content.strip()  # 重试仍无标记 → 纯文字稿兜底
+
+
+async def test_annotate_figures_records_kind(app):
+    """fake 视觉筛选返回 kind → figures JSON 带类型（编译分节指令 / 前端标签用）。"""
+    import uuid as _uuid
+
+    from app.models.paper import Paper
+    from app.services.figure_annotate import annotate_figures
+
+    paper = Paper(id=_uuid.uuid4(), project_id=_uuid.uuid4(), title="Kind Paper", status="fetched")
+    candidates = [
+        {"index": 0, "page": 1, "width": 400, "height": 300},
+        {"index": 1, "page": 2, "width": 300, "height": 200},
+        {"index": 2, "page": 3, "width": 200, "height": 150},
+    ]
+    for c in candidates:
+        figure_path(str(paper.id), int(c["index"])).write_bytes(_opaque_png_bytes(40, 30))
+
+    merged = await annotate_figures(paper, candidates, llm=LLMRouter())
+    assert [f["kind"] for f in merged] == ["method", "experiment", None]  # fake：前两张
+    assert merged[0]["important"] and not merged[2]["important"]

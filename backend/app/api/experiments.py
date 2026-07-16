@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_experiment
 from app.core.db import get_session, get_sessionmaker
 from app.core.events import EventBus, get_event_bus
 from app.core.queue import TaskQueue, get_task_queue
@@ -58,7 +58,7 @@ async def create_experiment(
     project_id: uuid.UUID,
     data: ExperimentCreate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_experiment),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> ExperimentRead:
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)

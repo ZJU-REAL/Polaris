@@ -290,7 +290,7 @@ function SkillDetailModal({
             <textarea
               className="textarea"
               rows={2}
-              placeholder="例如：综述「LLM 推理加速」的研究现状"
+              placeholder="例如：综述 LLM 推理加速的研究现状"
               value={runGoal}
               onChange={(e) => setRunGoal(e.target.value)}
             />
@@ -497,7 +497,7 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
       onClose={onClose}
       width={620}
       title="新建技能"
-      sub="人设包 / 流程模板建议从内置技能「复制为我的技能」后修改"
+      sub="评审人设与流程模板建议从内置技能复制后修改"
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
@@ -622,7 +622,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string; onClose
   const installMutation = useMutation({
     mutationFn: () => api.installMarketSkill(listingId),
     onSuccess: (skill) => {
-      toast(`已安装到「我的技能」：${skill.name}`, 'ok');
+      toast(`已安装到我的技能：${skill.name}`, 'ok');
       void queryClient.invalidateQueries({ queryKey: ['skills'] });
       void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
     },
@@ -785,7 +785,7 @@ function MarketView() {
         {isError ? (
           <EmptyState icon="sparkle" title="市场加载失败" desc="后端服务未启动或版本过旧" />
         ) : isLoading ? null : (listings ?? []).length === 0 ? (
-          <EmptyState icon="sparkle" title="市场还是空的" desc="在「技能库」里把你的技能发布到市场，审核通过后大家就能安装" />
+          <EmptyState icon="sparkle" title="市场还是空的" desc="在技能库把你的技能发布到市场，审核通过后即可安装" />
         ) : (
           listings!.map((l) => <ListingCard key={l.id} l={l} onOpen={() => setOpenListing(l.id)} />)
         )}
@@ -836,7 +836,7 @@ function EnabledPanel({ projectId }: { projectId: string }) {
         新发起的 AI 任务会按下面的技能执行；进行中的任务不受影响
       </div>
       {isLoading ? null : grouped.length === 0 ? (
-        <EmptyState compact icon="sparkle" title="还没有启用技能" desc="从左侧技能列表选择「启用到当前方向」" />
+        <EmptyState compact icon="sparkle" title="还没有启用技能" desc="从左侧技能列表点启用到当前方向" />
       ) : (
         grouped.map(([target, list]) => (
           <div key={target} style={{ marginBottom: 12 }}>
@@ -935,7 +935,7 @@ export function SkillsPage() {
   }, [skills, scope, kind, q]);
 
   return (
-    <div>
+    <div className="page fadeup">
       <PageHead
         eyebrow="Polaris"
         title="技能"

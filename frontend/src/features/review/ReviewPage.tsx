@@ -84,7 +84,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
           运行评审锦标赛
         </>
       }
-      sub="Swiss/循环配对 → 每对一场科学辩论（正/反/裁判）→ Elo 更新（K=32）"
+      sub="候选想法两两配对辩论，按胜负更新排名。"
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>取消</button>
@@ -107,7 +107,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
       <KnobRange
         label="辩论轮数"
         en="rounds"
-        hint="每对 idea 的正反辩论轮数。"
+        hint="每对想法的正反辩论轮数。"
         value={rounds}
         min={1}
         max={5}
@@ -156,7 +156,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
         </div>
       </FormField>
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
-        对全部 candidate / under_review 的 idea 进行配对辩论；讨论区中的人类评论会注入相关 agent 的上下文。
+        对全部候选与评审中的想法进行配对辩论；讨论区中的人工评论会提供给相关 AI 评审员参考。
       </div>
     </Modal>
   );
@@ -216,11 +216,11 @@ function LeaderboardTab({
       <EmptyState
         icon="chart"
         title="排行榜为空"
-        desc="先在 Idea Forge 生成候选 idea，再运行一次评审锦标赛。"
+        desc="先在想法生成页生成候选想法，再运行一次评审。"
         action={
           <button className="btn btn-ghost" onClick={() => navigate('/forge')}>
             <Icon name="bulb" size={14} />
-            前往 Idea Forge
+            前往想法生成
           </button>
         }
       />
@@ -245,7 +245,7 @@ function LeaderboardTab({
         }}
       >
         <span>#</span>
-        <span>Idea</span>
+        <span>想法</span>
         <span style={{ textAlign: 'right' }}>Elo</span>
         <span>四维 rubric</span>
         <span style={{ textAlign: 'right' }}>对局</span>
@@ -328,7 +328,7 @@ function LeaderboardTab({
               {r.status === 'promoted' && (
                 <button
                   className="btn btn-soft sm"
-                  title="从该 idea 发起实验"
+                  title="从该想法发起实验"
                   onClick={() => navigate(`/experiment?new=${r.id}`)}
                 >
                   <Icon name="flask" size={12} />
@@ -399,7 +399,7 @@ function MatchesTab({
     <div style={{ padding: '16px 18px' }}>
       {/* idea 选择 */}
       <div className="row gap10" style={{ marginBottom: 16 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', flexShrink: 0 }}>选择 idea</span>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', flexShrink: 0 }}>选择想法</span>
         <select
           className="input"
           style={{ maxWidth: 480 }}
@@ -421,13 +421,13 @@ function MatchesTab({
       </div>
 
       {!ideaId ? (
-        <EmptyState compact icon="scale" title="选择一个 idea" desc="从上方下拉或排行榜点入，查看其全部辩论场次。" />
+        <EmptyState compact icon="scale" title="选择一个想法" desc="从上方下拉或排行榜点入，查看其全部辩论场次。" />
       ) : sessionsQuery.isLoading ? (
         <div className="empty" style={{ padding: 30 }}>加载场次…</div>
       ) : sessionsQuery.isError ? (
         <EmptyState compact icon="x" title="无法加载辩论场次" desc="后端不可用或接口尚未就绪。" />
       ) : matches.length === 0 ? (
-        <EmptyState compact icon="scale" title="暂无对局记录" desc="运行一次评审锦标赛后，这里会出现该 idea 的每场辩论。" />
+        <EmptyState compact icon="scale" title="暂无对局记录" desc="运行一次评审后，这里会出现该想法的每场辩论。" />
       ) : (
         <div className="row gap16" style={{ alignItems: 'flex-start' }}>
           {/* 场次列表 */}
@@ -561,14 +561,14 @@ export function ReviewPage() {
       <div className="page fadeup">
         <PageHead
           eyebrow="Stage 02 · Idea Review"
-          title="Idea 评审 Idea Review"
-          sub="多 agent 科学辩论 + Elo 锦标赛排序，人机同场讨论，晋级需人工审批。"
+          title="想法评审 Idea Review"
+          sub="AI 评审员对候选想法辩论排序，晋级需人工审批。"
         />
         <div className="card">
           <EmptyState
             icon="scale"
             title="还没有研究方向"
-            desc="先创建研究方向、生成候选 idea，再运行评审锦标赛。"
+            desc="先创建研究方向、生成候选想法，再运行评审。"
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
@@ -585,7 +585,7 @@ export function ReviewPage() {
     <div className="page fadeup" style={{ maxWidth: 1280 }}>
       <PageHead
         eyebrow="Stage 02 · Idea Review"
-        title="Idea 评审 Idea Review"
+        title="想法评审 Idea Review"
         sub={
           currentProject
             ? `当前方向：${currentProject.name}`

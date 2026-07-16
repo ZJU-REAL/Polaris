@@ -1,6 +1,18 @@
 import { Fragment } from 'react';
-import { Icon } from './Icon';
-import type { PipelineStage } from '../../lib/mock';
+import { Icon, type IconName } from './Icon';
+
+export interface PipelineStage {
+  key: string;
+  path: string;
+  no: string;
+  icon: IconName;
+  zh: string;
+  en: string;
+  /** 阶段计数（null = 统计不可用，显示 —） */
+  count: number | null;
+  /** 当前有任务运行中的阶段 */
+  running?: boolean;
+}
 
 export interface PipelineFlowProps {
   stages: PipelineStage[];
@@ -25,7 +37,7 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
         </div>
         <span className="pill">
           <span className="dot" style={{ background: 'var(--ok)' }} />
-          自动运行中 · 方向 {directionLabel}
+          当前方向 · {directionLabel}
         </span>
       </div>
       <div className="row" style={{ alignItems: 'stretch', gap: 0 }}>
@@ -75,14 +87,14 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
                   color: s.running ? 'var(--accent-text)' : 'var(--text)',
                 }}
               >
-                {s.count}
+                {s.count ?? '—'}
               </div>
               {s.running && (
                 <div
                   className="pulse"
                   style={{ position: 'absolute', bottom: 8, left: 0, right: 0, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 600 }}
                 >
-                  ● 1 running
+                  ● 运行中
                 </div>
               )}
             </div>

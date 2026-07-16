@@ -29,9 +29,15 @@ from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
-from app.services.concepts import extract_wikilinks, normalize_category, wiki_slug
+from app.services.chunks import embed_pending_chunks, index_paper_fulltext
+from app.services.concepts import (
+    CONCEPT_DEF_SYSTEM_PROMPT,
+    extract_wikilinks,
+    normalize_category,
+    wiki_slug,
+)
 from app.services.figure_annotate import annotate_figures, figures_annotated
-from app.services.literature import get_arxiv_client, get_s2_client
+from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
@@ -49,19 +55,19 @@ DEFAULT_KNOBS: dict[str, Any] = {
 
 _MAX_CANDIDATES_CAP = 200
 
+# observation 里给用户看的论文/概念清单上限（避免 observation JSON 过大）
+_OBS_LIST_CAP = 30
+
+
+def _paper_brief(papers: list[Paper]) -> list[dict[str, str]]:
+    return [{"id": str(p.id), "title": p.title} for p in papers[:_OBS_LIST_CAP]]
+
+
 RELEVANCE_SYSTEM_PROMPT = """\
 你是文献相关性评审，对照研究方向定义评估一篇论文（只看标题与摘要）。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"score": 0 到 1 之间的小数, "reason": "简要理由", "tldr": "一句话中文总结"}
 """
-
-CONCEPT_DEF_SYSTEM_PROMPT = """\
-你是 Librarian，为研究 wiki 的新概念词条给出一句话中文定义与类别。
-只输出一个 JSON 对象，不要输出任何其他文字，格式：
-{"concepts": [{"name": "概念名", "definition": "一句话定义", \
-"category": "method|architecture|methodology|problem|metric|dataset|other"}]}
-"""
-
 
 # ---- 公共小件 ----
 
@@ -166,42 +172,42 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         )
 
         arxiv_ids, dois, titles = await _existing_keys(session, project.id)
-        inserted = 0
+        new_papers: list[Paper] = []
         for entry in entries:
             aid = entry.get("arxiv_id")
             title = (entry.get("title") or "").strip()
             if not title or (aid and aid in arxiv_ids) or title.lower() in titles:
                 continue
-            session.add(
-                Paper(
-                    project_id=project.id,
-                    source="arxiv",
-                    arxiv_id=aid,
-                    doi=entry.get("doi"),
-                    external_ids=(
-                        {"arxiv": aid} | ({"doi": entry["doi"]} if entry.get("doi") else {})
-                    ),
-                    title=title,
-                    authors=entry.get("authors"),
-                    abstract=entry.get("abstract"),
-                    year=entry.get("year"),
-                    venue=entry.get("primary_category"),
-                    url=entry.get("url"),
-                    published_at=_parse_iso(entry.get("published")),
-                    status="candidate",
-                )
+            paper = Paper(
+                project_id=project.id,
+                source="arxiv",
+                arxiv_id=aid,
+                doi=entry.get("doi"),
+                external_ids=({"arxiv": aid} | ({"doi": entry["doi"]} if entry.get("doi") else {})),
+                title=title,
+                authors=entry.get("authors"),
+                abstract=entry.get("abstract"),
+                year=entry.get("year"),
+                venue=entry.get("primary_category"),
+                url=entry.get("url"),
+                published_at=_parse_iso(entry.get("published")),
+                status="candidate",
             )
+            session.add(paper)
+            new_papers.append(paper)
             if aid:
                 arxiv_ids.add(aid)
             titles.add(title.lower())
-            inserted += 1
+        await session.flush()  # 拿到新论文 id，供 observation 清单
+        brief = _paper_brief(new_papers)
         await session.commit()
 
     # 新水位线 = 本次检索时刻，由 wiki.update_watermark 落库
     ctx.checkpoint["watermark_candidate"] = now.isoformat()
     return {
         "found": len(entries),
-        "inserted": inserted,
+        "inserted": len(new_papers),
+        "new_papers": brief,
         "window_since": since.isoformat(),
         "mode": _mode(ctx),
     }
@@ -219,6 +225,7 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
 
     s2 = get_s2_client()
     failed: list[dict[str, str]] = []
+    new_papers: list[Paper] = []
     inserted = 0
     max_new = int(knobs["max_papers"]) * 2
 
@@ -275,35 +282,35 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                         continue
                     if (aid and aid in arxiv_ids) or (doi and doi in dois):
                         continue
-                    session.add(
-                        Paper(
-                            project_id=project.id,
-                            source="semantic_scholar",
-                            arxiv_id=aid,
-                            doi=ext.get("DOI"),
-                            external_ids={
-                                k: v
-                                for k, v in (
-                                    ("s2", item.get("paperId")),
-                                    ("arxiv", aid),
-                                    ("doi", ext.get("DOI")),
-                                )
-                                if v
-                            },
-                            title=title,
-                            authors=[
-                                {"name": a.get("name")}
-                                for a in (item.get("authors") or [])
-                                if a.get("name")
-                            ]
-                            or None,
-                            abstract=item.get("abstract"),
-                            year=item.get("year"),
-                            venue=item.get("venue") or None,
-                            url=item.get("url"),
-                            status="candidate",
-                        )
+                    paper = Paper(
+                        project_id=project.id,
+                        source="semantic_scholar",
+                        arxiv_id=aid,
+                        doi=ext.get("DOI"),
+                        external_ids={
+                            k: v
+                            for k, v in (
+                                ("s2", item.get("paperId")),
+                                ("arxiv", aid),
+                                ("doi", ext.get("DOI")),
+                            )
+                            if v
+                        },
+                        title=title,
+                        authors=[
+                            {"name": a.get("name")}
+                            for a in (item.get("authors") or [])
+                            if a.get("name")
+                        ]
+                        or None,
+                        abstract=item.get("abstract"),
+                        year=item.get("year"),
+                        venue=item.get("venue") or None,
+                        url=item.get("url"),
+                        status="candidate",
                     )
+                    session.add(paper)
+                    new_papers.append(paper)
                     inserted += 1
                     titles.add(title.lower())
                     if aid:
@@ -314,12 +321,15 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
             frontier = next_frontier[:10]
             if not frontier:
                 break
+        await session.flush()  # 拿到新论文 id，供 observation 清单
+        brief = _paper_brief(new_papers)
         await session.commit()
 
     return {
         "depth": depth,
         "processed": processed_seeds,
         "inserted": inserted,
+        "new_papers": brief,
         "failed": failed,
     }
 
@@ -335,6 +345,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
     excluded = 0
     failed: list[dict[str, str]] = []
     scored_ids: list[str] = []
+    scored_brief: list[dict[str, Any]] = []
 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
@@ -397,6 +408,15 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             await session.commit()
             succeeded += 1
             scored_ids.append(str(paper.id))
+            if len(scored_brief) < _OBS_LIST_CAP:
+                scored_brief.append(
+                    {
+                        "id": str(paper.id),
+                        "title": paper.title,
+                        "score": score,
+                        "passed": paper.status == "scored",
+                    }
+                )
 
     # 步内进度记入 checkpoint（审计用；幂等本身靠 Paper.status）
     ctx.checkpoint["scored_ids"] = list(ctx.checkpoint.get("scored_ids") or []) + scored_ids
@@ -405,6 +425,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         "succeeded": succeeded,
         "excluded": excluded,
         "threshold": threshold,
+        "scored_papers": scored_brief,
         "failed": failed,
     }
 
@@ -451,6 +472,29 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             except Exception as e:  # noqa: BLE001 — 下载/抽取失败降级用 abstract
                 degraded += 1
                 failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
+            # 发表机构补充（OpenAlex 反查，高级检索用）；失败不影响主流程
+            if paper.affiliations is None and (paper.arxiv_id or paper.doi):
+                try:
+                    meta = (
+                        await get_openalex_client().get_by_arxiv(paper.arxiv_id)
+                        if paper.arxiv_id
+                        else await get_openalex_client().get_by_doi(paper.doi)
+                    )
+                    paper.affiliations = (meta or {}).get("affiliations") or []
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 — 机构补充尽力而为
+                    logger.warning("affiliation enrich failed for %s", paper.id, exc_info=True)
+            # 全文分段索引（文献问答/idea 生成的知识底座）；失败不影响主流程
+            if paper.full_text_path:
+                try:
+                    await index_paper_fulltext(session, paper)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    failed.append(
+                        {"id": str(paper.id), "error": f"chunks: {type(e).__name__}: {e}"}
+                    )
             # 顺带提取候选图（基础信息 caption=null；筛选注释在 wiki.compile 后做）；
             # 失败不影响全文流程
             if paper.pdf_path and paper.figures is None:
@@ -467,7 +511,16 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             await session.commit()
             fetched += 1
 
-    return {"processed": len(papers), "succeeded": fetched, "degraded": degraded, "failed": failed}
+    return {
+        "processed": len(papers),
+        "succeeded": fetched,
+        "degraded": degraded,
+        "fetched_papers": [
+            {"id": str(p.id), "title": p.title, "pdf": bool(p.pdf_path)}
+            for p in papers[:_OBS_LIST_CAP]
+        ],
+        "failed": failed,
+    }
 
 
 # ---- 5. Librarian 图文编译（LLM stage=librarian 多模态，全文优先，中文 wiki 页） ----
@@ -478,6 +531,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
     knobs = _knobs(ctx)
     top_n = _compile_limit(knobs)
     compiled = 0
+    compiled_papers: list[Paper] = []
     failed: list[dict[str, str]] = []
 
     async with get_sessionmaker()() as session:
@@ -533,9 +587,15 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             paper.status = "compiled"
             await session.commit()
             compiled += 1
+            compiled_papers.append(paper)
 
     ctx.checkpoint["compiled_count"] = int(ctx.checkpoint.get("compiled_count") or 0) + compiled
-    return {"processed": len(papers), "succeeded": compiled, "failed": failed}
+    return {
+        "processed": len(papers),
+        "succeeded": compiled,
+        "compiled_papers": _paper_brief(compiled_papers),
+        "failed": failed,
+    }
 
 
 # ---- 6. 概念上链 + embedding ----
@@ -662,12 +722,24 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             except Exception as e:  # noqa: BLE001 — 嵌入失败不影响上链结果
                 embed_error = f"{type(e).__name__}: {e}"
 
+        # 全文分段向量：补齐缺失的 chunk embedding（文献问答检索底座）
+        chunks_embedded, chunk_embed_error = await embed_pending_chunks(
+            session,
+            project_id=project.id,
+            llm=ctx.llm,
+            user_id=ctx.run.created_by,
+            voyage_id=ctx.run.id,
+        )
+
     return {
         "papers": len(papers),
         "concepts_created": created,
+        "new_concepts": new_names[:_OBS_LIST_CAP],
         "links_created": new_links,
         "embedded": embedded,
         "embed_error": embed_error,
+        "chunks_embedded": chunks_embedded,
+        "chunk_embed_error": chunk_embed_error,
     }
 
 

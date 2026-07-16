@@ -97,13 +97,13 @@ export function ExperimentPage() {
         <PageHead
           eyebrow="Stage 03 · Experiment Lab"
           title="实验搭建 Experiment Lab"
-          sub="计划 → 算力预算审批 → SSH 建环境 → 冒烟 → 正式运行 → 报告。"
+          sub="从计划、审批、建环境到运行与报告。"
         />
         <div className="card">
           <EmptyState
             icon="flask"
             title="还没有研究方向"
-            desc="先创建研究方向、生成并晋级 idea，再发起实验。"
+            desc="先创建研究方向、生成并晋级想法，再发起实验。"
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
@@ -162,12 +162,12 @@ export function ExperimentPage() {
           <EmptyState
             icon="flask"
             title="还没有实验"
-            desc="先在评审页晋级一个 idea（晋级审批通过后 status=promoted），再回到这里发起实验。"
+            desc="先在想法评审页晋级一个想法，再回到这里发起实验。"
             action={
               <div className="row gap8">
                 <button className="btn btn-ghost" onClick={() => navigate('/review')}>
                   <Icon name="scale" size={14} />
-                  前往 Idea 评审
+                  前往想法评审
                 </button>
                 <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
                   <Icon name="plus" size={14} />

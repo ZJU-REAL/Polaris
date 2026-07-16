@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
+import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/Toast';
+import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectDefinition, type ProjectRead } from '../../lib/api';
 
@@ -133,6 +135,24 @@ export function ProjectDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { currentProjectId, setCurrentProjectId } = useProject();
+
+  // —— 删除方向（owner / admin） ——
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteProject(id),
+    onSuccess: () => {
+      toast('研究方向已删除', 'ok');
+      setDeleteOpen(false);
+      if (currentProjectId === id) setCurrentProjectId(null);
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      navigate('/');
+    },
+    onError: (err) => {
+      const forbidden = err instanceof ApiError && err.status === 403;
+      toast(forbidden ? '只有方向创建者或管理员可以删除' : `删除失败：${err instanceof Error ? err.message : String(err)}`, 'error');
+    },
+  });
 
   const { data: project, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['project', id],
@@ -163,6 +183,32 @@ export function ProjectDetailPage() {
     },
     onError: (err) => toast(`添加失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
+
+  // —— 邀请链接 ——
+  const { data: invites } = useQuery({
+    queryKey: ['invites', id],
+    queryFn: () => api.listInvites(id),
+    retry: false,
+  });
+  const createInviteMutation = useMutation({
+    mutationFn: () => api.createInvite(id, { expires_days: 7 }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['invites', id] }),
+    onError: (err) => toast(`生成失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+  });
+  const revokeInviteMutation = useMutation({
+    mutationFn: (inviteId: string) => api.revokeInvite(id, inviteId),
+    onSuccess: () => {
+      toast('邀请链接已撤销', 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['invites', id] });
+    },
+    onError: (err) => toast(`撤销失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+  });
+  const copyInvite = (token: string) => {
+    void navigator.clipboard.writeText(`${window.location.origin}/join/${token}`).then(
+      () => toast('邀请链接已复制', 'ok'),
+      () => toast('复制失败，请手动复制', 'error'),
+    );
+  };
 
   // —— 名称编辑 ——
   const [editingName, setEditingName] = useState(false);
@@ -237,11 +283,50 @@ export function ProjectDetailPage() {
             <span className="mono muted" style={{ fontSize: 11 }}>创建于 {fmtTime(project.created_at)}</span>
           </div>
         </div>
-        <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
-          <Icon name="compass" size={14} />
-          查看任务
-        </button>
+        <div className="row gap8">
+          <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
+            <Icon name="compass" size={14} />
+            查看任务
+          </button>
+          <button
+            className="btn btn-ghost"
+            style={{ color: 'var(--danger-tx)' }}
+            onClick={() => setDeleteOpen(true)}
+          >
+            <Icon name="x" size={13} />
+            删除方向
+          </button>
+        </div>
       </div>
+
+      {/* —— 删除确认 —— */}
+      <Modal
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        title="删除研究方向"
+        sub={project.name}
+        width={440}
+        footer={
+          <>
+            <button className="btn btn-ghost sm" onClick={() => setDeleteOpen(false)}>
+              取消
+            </button>
+            <button
+              className="btn btn-primary sm"
+              style={{ background: 'var(--danger-tx)' }}
+              disabled={deleteMutation.isPending}
+              onClick={() => deleteMutation.mutate()}
+            >
+              {deleteMutation.isPending ? '删除中…' : '确认删除'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-2)' }}>
+          删除后，该方向下的<b>论文库、概念库、笔记、AI 任务记录、想法与实验</b>都会一并删除，
+          且<b>无法恢复</b>。确定要删除 “{project.name}” 吗？
+        </div>
+      </Modal>
 
       <div className="col gap16">
         {/* 一句话定义 */}
@@ -407,6 +492,41 @@ export function ProjectDetailPage() {
               <Icon name="plus" size={13} />
               添加成员
             </button>
+          </div>
+
+          {/* 邀请链接 */}
+          <div style={{ marginTop: 18, borderTop: '0.5px solid var(--border)', paddingTop: 14 }}>
+            <div className="row" style={{ marginBottom: 10 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 650 }}>邀请链接</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-3)', marginLeft: 8 }}>已注册用户打开链接即可加入本方向</span>
+              <button
+                className="btn btn-soft sm"
+                style={{ marginLeft: 'auto' }}
+                disabled={createInviteMutation.isPending}
+                onClick={() => createInviteMutation.mutate()}
+              >
+                生成链接（7 天有效）
+              </button>
+            </div>
+            {(invites ?? []).length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>还没有有效的邀请链接</div>
+            ) : (
+              <div className="col gap6">
+                {invites!.map((inv) => (
+                  <div key={inv.id} className="row gap8" style={{ padding: '7px 10px', background: 'var(--surface-2)', borderRadius: 9 }}>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {`${window.location.origin}/join/${inv.token}`}
+                    </span>
+                    <span style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
+                      已用 {inv.used_count}{inv.max_uses != null ? `/${inv.max_uses}` : ''} 次
+                      {inv.expires_at ? ` · ${fmtTime(inv.expires_at)} 过期` : ''}
+                    </span>
+                    <button className="btn btn-ghost sm" onClick={() => copyInvite(inv.token)}>复制</button>
+                    <button className="btn btn-ghost sm" onClick={() => revokeInviteMutation.mutate(inv.id)}>撤销</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </SectionCard>
       </div>

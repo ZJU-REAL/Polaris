@@ -107,6 +107,48 @@ export interface UserRead {
   /** Polaris 扩展字段（后端可能暂未返回，均可选） */
   display_name?: string | null;
   role?: string;
+  llm_access?: 'full' | 'chat_only' | 'blocked';
+  has_avatar?: boolean;
+  token_quota?: number | null;
+  features?: Record<string, boolean> | null;
+}
+
+export interface UsageSummary {
+  tokens_used: number;
+  token_quota: number | null;
+}
+
+export interface AdminUserRead {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  is_active: boolean;
+  has_avatar: boolean;
+  llm_access: string;
+  token_quota: number | null;
+  features: Record<string, boolean> | null;
+  tokens_used: number;
+  created_at: string;
+}
+
+export interface InviteRead {
+  id: string;
+  project_id: string;
+  token: string;
+  expires_at: string | null;
+  max_uses: number | null;
+  used_count: number;
+  revoked: boolean;
+  created_at: string;
+}
+
+export interface InviteInfo {
+  project_id: string;
+  project_name: string;
+  inviter_name: string | null;
+  valid: boolean;
+  already_member: boolean;
 }
 
 export interface RegisterInput {
@@ -217,7 +259,8 @@ export interface VoyageStepRead {
   observation: unknown;
   verdict: VoyageVerdict | null;
   status: string;
-  tokens: number | null;
+  /** 后端为 {prompt_tokens, completion_tokens} 字典（历史数据可能是数字） */
+  tokens: { prompt_tokens?: number; completion_tokens?: number } | number | null;
   started_at: string | null;
   finished_at: string | null;
 }
@@ -278,6 +321,10 @@ export const LLM_STAGES = [
   'reading',
   'embedding',
   'forge',
+  'forge_signal',
+  'goal_explore',
+  'proposal',
+  'proposal_review',
   'debate',
   'experiment',
   'writing',
@@ -326,6 +373,9 @@ export interface LlmUsageRow {
 
 export type PaperStatus = 'candidate' | 'scored' | 'excluded' | 'fetched' | 'compiled' | 'included';
 
+/** 状态组别名（docs/api-lit.md §8.5）：library=库内（达标及之后）；pending_compile=待编译。 */
+export type PaperStatusFilter = PaperStatus | 'library' | 'pending_compile' | 'compiled_any';
+
 export type PaperSort = 'relevance' | '-published_at';
 
 export interface PaperAuthor {
@@ -337,6 +387,8 @@ export interface PaperRead {
   project_id: string;
   title: string;
   authors: PaperAuthor[];
+  /** 发表机构（OpenAlex 补充；可能为空） */
+  affiliations?: string[];
   year: number | null;
   venue: string | null;
   arxiv_id: string | null;
@@ -369,14 +421,19 @@ export interface PaperConceptRef {
   category: ConceptCategory;
 }
 
+/** 论文图片类型（视觉模型判定；编译时决定插到哪个小节）。 */
+export type FigureKind = 'motivation' | 'method' | 'architecture' | 'experiment' | 'other';
+
 /** 论文图片元数据（docs/api-lit.md §6.5）；文件本体走 fetchFigureImage blob。 */
 export interface FigureInfo {
   index: number;
   page: number;
   width: number;
   height: number;
-  /** 视觉模型生成的一句话中文说明；降级提取时为 null */
+  /** 视觉模型生成的中文说明；降级提取时为 null */
   caption: string | null;
+  /** 图片类型；旧数据/未注释为 null（后端未升级时可能缺失） */
+  kind?: FigureKind | null;
   /** 视觉模型判定的重要图 */
   important: boolean;
 }
@@ -491,6 +548,31 @@ export interface SearchResult {
 }
 
 // ============================================================
+// 文献知识底座：全文分段索引 + 文献库对话（docs/api-lit.md §8）
+// ============================================================
+
+/** 文献库对话的引用来源（SSE sources 事件 items）。 */
+export interface LibraryChatSource {
+  index: number;
+  paper_id: string;
+  title: string;
+  year: number | null;
+  status?: string | null;
+  /** 0-1 相关度 */
+  relevance?: number | null;
+  /** 该论文关联的概念名（回答里的 [[双链]] 用） */
+  concepts?: string[];
+}
+
+export interface RebuildIndexResult {
+  papers_indexed: number;
+  chunks_created: number;
+  embedded: number;
+  embed_error: string | null;
+  total_chunks: number;
+}
+
+// ============================================================
 // 知识图谱（论文 / 作者 / 概念网络）
 // ============================================================
 
@@ -503,6 +585,8 @@ export interface GraphNode {
   label: string;
   status?: string | null;
   year?: number | null;
+  /** 发表日期（ISO date），时间线按月分组用 */
+  published?: string | null;
   relevance?: number | null;
   category?: string | null;
   /** author/concept 关联论文数（决定节点大小） */
@@ -555,6 +639,10 @@ export interface PaperCounts {
   excluded?: number;
   included?: number;
   total?: number;
+  /** 库内 = 相关性达标及之后（论文库计数口径） */
+  library?: number;
+  /** 待编译 = 达标但还没有 AI 解读 */
+  pending_compile?: number;
 }
 
 export interface IngestState {
@@ -563,6 +651,8 @@ export interface IngestState {
   last_run: IngestLastRun | null;
   paper_counts: PaperCounts;
   running_voyage_id: string | null;
+  /** 下一次自动同步时间（ISO）；cadence 非 daily 或未完成初始建库为 null */
+  next_sync_at?: string | null;
 }
 
 // ============================================================
@@ -580,6 +670,11 @@ export interface StatsRead {
   papers_total: number;
   papers_today: number;
   ideas_candidate: number;
+  ideas_under_review: number;
+  experiments_active: number;
+  experiments_running: number;
+  manuscripts_total: number;
+  manuscripts_under_review: number;
   gates_pending: number;
   recent_activities: ActivityRead[];
 }
@@ -591,6 +686,14 @@ export interface StatsRead {
 export type IdeaStatus = 'candidate' | 'under_review' | 'promoted' | 'rejected';
 
 export type IdeaSort = 'elo' | '-created_at' | 'score';
+
+/** idea 深度：sketch=方向草案（阶段 0 发散产物）| proposal=完整研究方案（深度生成产物）。 */
+export type IdeaDepth = 'sketch' | 'proposal';
+
+/** 研究类型枚举（docs/api-idea2.md §3 goal.research_type）。 */
+export const RESEARCH_TYPES = ['method', 'benchmark', 'analysis', 'survey', 'application', 'theory'] as const;
+
+export type ResearchType = (typeof RESEARCH_TYPES)[number];
 
 /** 四维评分（0-10）。 */
 export interface IdeaScores {
@@ -609,6 +712,10 @@ export interface IdeaRead {
   scores: IdeaScores | null;
   elo_rating: number;
   status: IdeaStatus;
+  /** 草案 / 研究方案 */
+  depth: IdeaDepth;
+  /** 研究类型（method/benchmark/…）；草案通常为 null */
+  research_type: string | null;
   created_at: string;
 }
 
@@ -617,12 +724,70 @@ export interface IdeaParentPaper {
   title: string;
 }
 
+// —— Idea 2.0 · 研究目标与依据文献（docs/api-idea2.md §3/§7） ——
+
+export interface IdeaGoalScope {
+  in_scope?: string[];
+  out_of_scope?: string[];
+}
+
+export interface IdeaGoalGrounding {
+  paper_id: string;
+  /** 该文献与目标的关系（支撑/空白/对比） */
+  why: string;
+}
+
+export interface IdeaGoalResources {
+  /** 算力需求描述 */
+  compute?: string | null;
+  /** 数据集名（含是否公开可得） */
+  data?: string[];
+  time_weeks?: number | null;
+}
+
+/** 研究目标（goal.explore 产物，随 Idea 落库）。字段均可选容错。 */
+export interface IdeaGoal {
+  research_type?: string;
+  /** 研究任务（领域内的具体任务） */
+  task?: string;
+  /** 核心研究问题（一句话） */
+  question?: string;
+  /** 具体、可检验的研究目标，1-5 条 */
+  objectives?: string[];
+  scope?: IdeaGoalScope | null;
+  /** 怎样算成功（可量化优先） */
+  success_criteria?: string[];
+  grounding?: IdeaGoalGrounding[];
+  key_concepts?: string[];
+  resources_needed?: IdeaGoalResources | null;
+  /** 最小验证实验（1-3 天可出信号的 smoke 设计，结构化 JSON） */
+  smoke_plan?: Record<string, unknown> | null;
+}
+
+export type IdeaEvidenceSource = 'library' | 'external' | 'signal';
+
+/** 依据文献 / 证据条目。 */
+export interface IdeaEvidence {
+  /** 库内论文 id；外部文献 / 信号为 null */
+  paper_id: string | null;
+  title: string;
+  url: string | null;
+  why: string;
+  source: IdeaEvidenceSource;
+}
+
 export interface IdeaDetail extends IdeaRead {
-  /** markdown：动机/方法概述/预期实验/风险 */
+  /** markdown：草案为四段式；研究方案为完整结构（[[paper:uuid]] 渲染为库内论文链接） */
   content: string;
   parent_paper_ids: string[];
   parent_papers: IdeaParentPaper[];
   score_rationale: Partial<Record<keyof IdeaScores, string>> | null;
+  /** 研究目标（深度生成产物；草案为 null） */
+  goal: IdeaGoal | null;
+  /** 依据文献（库内 / 外部 / 信号） */
+  evidence: IdeaEvidence[] | null;
+  /** 深化来源草案（seed.type=idea 时） */
+  seed_idea: { id: string; title: string } | null;
 }
 
 // ============================================================
@@ -654,6 +819,39 @@ export interface ForgeState {
   running_voyage_id: string | null;
   last_run: ForgeLastRun | null;
   idea_counts: IdeaCounts;
+}
+
+// ============================================================
+// Idea 深度生成（Idea 2.0）— docs/api-idea2.md §2
+// ============================================================
+
+export type DeepSeedType = 'text' | 'concept' | 'paper' | 'idea';
+
+export interface DeepSeed {
+  type: DeepSeedType;
+  /** 自由文本，或 concept / paper / idea 的 id */
+  value: string;
+}
+
+export interface DeepKnobs {
+  /** 生成前人工确认研究目标（默认 true） */
+  confirm_goal?: boolean;
+  /** 目标构建阶段文献工具调用上限 */
+  max_tool_calls?: number;
+  /** 外部检索（Semantic Scholar / OpenAlex）做相似工作核查 */
+  external_search?: boolean;
+  /** 评审-修订循环轮数 */
+  revise_rounds?: number;
+  /** token 预算（超限自动暂停）；null = 不限 */
+  budget_tokens?: number | null;
+}
+
+export interface DeepIdeaState {
+  /** 进行中的深度生成任务（kind=idea_proposal） */
+  running_voyage_id: string | null;
+  /** 待人工确认的研究目标审批 */
+  pending_gate_id: string | null;
+  last_run: ForgeLastRun | null;
 }
 
 // ============================================================
@@ -1280,6 +1478,22 @@ export interface SkillExportData {
   body: string;
 }
 
+// —— 全局搜索（顶栏 ⌘K）——
+export type GlobalSearchHitType = 'paper' | 'concept' | 'idea' | 'experiment' | 'voyage' | 'manuscript';
+
+export interface GlobalSearchHit {
+  type: GlobalSearchHitType;
+  id: string;
+  title: string;
+  snippet: string | null;
+  status: string | null;
+}
+
+export interface GlobalSearchResponse {
+  query: string;
+  hits: GlobalSearchHit[];
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -1300,6 +1514,61 @@ export const api = {
   /** Current user. */
   me(): Promise<UserRead> {
     return request<UserRead>('/users/me');
+  },
+  updateMe(input: { display_name?: string }): Promise<UserRead> {
+    return requestJson<UserRead>('/users/me', 'PATCH', input);
+  },
+  uploadAvatar(file: File): Promise<UserRead> {
+    const form = new FormData();
+    form.append('file', file);
+    return request<UserRead>('/users/me/avatar', { method: 'POST', body: form });
+  },
+  avatarBlob(userId: string): Promise<Blob> {
+    return requestBlob(`/users/${userId}/avatar`);
+  },
+  myUsage(): Promise<UsageSummary> {
+    return request<UsageSummary>('/users/me/usage');
+  },
+
+  // —— 邀请链接 ——
+  createInvite(projectId: string, input: { expires_days?: number | null; max_uses?: number | null }): Promise<InviteRead> {
+    return requestJson<InviteRead>(`/projects/${projectId}/invites`, 'POST', input);
+  },
+  listInvites(projectId: string): Promise<InviteRead[]> {
+    return request<InviteRead[]>(`/projects/${projectId}/invites`);
+  },
+  revokeInvite(projectId: string, inviteId: string): Promise<void> {
+    return request<void>(`/projects/${projectId}/invites/${inviteId}`, { method: 'DELETE' });
+  },
+  inviteInfo(token: string): Promise<InviteInfo> {
+    return request<InviteInfo>(`/invites/${token}`);
+  },
+  acceptInvite(token: string): Promise<ProjectRead> {
+    return request<ProjectRead>(`/invites/${token}/accept`, { method: 'POST' });
+  },
+
+  // —— 管理员：用户管理 ——
+  adminListUsers(): Promise<AdminUserRead[]> {
+    return request<AdminUserRead[]>('/admin/users');
+  },
+  adminUpdateUser(
+    userId: string,
+    input: {
+      display_name?: string;
+      role?: string;
+      is_active?: boolean;
+      token_quota?: number;
+      features?: Record<string, boolean>;
+      llm_access?: string;
+    },
+  ): Promise<AdminUserRead> {
+    return requestJson<AdminUserRead>(`/admin/users/${userId}`, 'PATCH', input);
+  },
+  adminListProjects(): Promise<ProjectRead[]> {
+    return request<ProjectRead[]>('/admin/projects');
+  },
+  adminBatchAssign(input: { user_ids: string[]; project_ids: string[]; role?: string }): Promise<{ added: number }> {
+    return requestJson<{ added: number }>('/admin/users/batch-assign', 'POST', input);
   },
 
   // —— Projects ——
@@ -1366,11 +1635,17 @@ export const api = {
     return requestJson<GateRead>(`/gates/${id}/${decision}`, 'POST', comment ? { comment } : {});
   },
 
+  // —— 全局搜索（顶栏 ⌘K）：论文/概念/想法/实验/AI 任务/稿件跨实体检索 ——
+  globalSearch(projectId: string, q: string, limit = 5): Promise<GlobalSearchResponse> {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    return request<GlobalSearchResponse>(`/projects/${projectId}/global-search?${params}`);
+  },
+
   // —— M2 · Papers ——
   listPapers(
     projectId: string,
     opts: {
-      status?: PaperStatus;
+      status?: PaperStatusFilter;
       q?: string;
       sort?: PaperSort;
       page?: number;
@@ -1381,6 +1656,13 @@ export const api = {
       starred?: boolean;
       /** 按当前用户阅读状态过滤 */
       reading_status?: ReadingStatus;
+      /** 高级检索：作者 / 机构（包含匹配）、发表时间与入库时间范围（ISO） */
+      author?: string;
+      affiliation?: string;
+      published_from?: string;
+      published_to?: string;
+      created_from?: string;
+      created_to?: string;
     } = {},
   ): Promise<PageOf<PaperRead>> {
     const params = new URLSearchParams();
@@ -1392,6 +1674,12 @@ export const api = {
     if (opts.tag) params.set('tag', opts.tag);
     if (opts.starred) params.set('starred', 'true');
     if (opts.reading_status) params.set('reading_status', opts.reading_status);
+    if (opts.author) params.set('author', opts.author);
+    if (opts.affiliation) params.set('affiliation', opts.affiliation);
+    if (opts.published_from) params.set('published_from', opts.published_from);
+    if (opts.published_to) params.set('published_to', opts.published_to);
+    if (opts.created_from) params.set('created_from', opts.created_from);
+    if (opts.created_to) params.set('created_to', opts.created_to);
     const qs = params.toString();
     return request<PageOf<PaperRead>>(`/projects/${projectId}/papers${qs ? `?${qs}` : ''}`);
   },
@@ -1433,6 +1721,25 @@ export const api = {
   /** 用最新的图文模式重写 wiki 页（docs/api-lit.md §6.6）：重跑图片筛选注释 + 图文编译，覆盖 wiki_content；同步调用，约 1 分钟。 */
   recompilePaper(id: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/papers/${id}/recompile`, { method: 'POST' });
+  },
+  /** 删除论文（清理落盘文件，笔记/标签/分段级联删除）。 */
+  deletePaper(id: string): Promise<void> {
+    return request<void>(`/papers/${id}`, { method: 'DELETE' });
+  },
+  /** 批量删除：默认软删（移入垃圾桶，可召回）；hard=true 彻底删除。 */
+  batchDeletePapers(projectId: string, paperIds: string[], hard = false): Promise<{ deleted: number }> {
+    return requestJson<{ deleted: number }>(`/projects/${projectId}/papers/batch-delete`, 'POST', {
+      paper_ids: paperIds,
+      hard,
+    });
+  },
+  /** 从垃圾桶召回（已编译回 compiled、打过分回 scored、否则按人工精选）。 */
+  restorePaper(id: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/papers/${id}/restore`, { method: 'POST' });
+  },
+  /** 清空垃圾桶：彻底删除项目内全部已删除论文。 */
+  emptyTrash(projectId: string): Promise<{ deleted: number }> {
+    return request<{ deleted: number }>(`/projects/${projectId}/trash/empty`, { method: 'POST' });
   },
 
   // —— Lit · 笔记 ——
@@ -1484,12 +1791,13 @@ export const api = {
   // —— Lit · 引用导出（.bib / CSL-JSON blob） ——
   downloadCitations(
     projectId: string,
-    opts: { format: CitationFormat; status?: PaperStatus; tag?: string; starred?: boolean },
+    opts: { format: CitationFormat; status?: PaperStatusFilter; tag?: string; starred?: boolean; ids?: string[] },
   ): Promise<Blob> {
     const params = new URLSearchParams({ format: opts.format });
     if (opts.status) params.set('status', opts.status);
     if (opts.tag) params.set('tag', opts.tag);
     if (opts.starred) params.set('starred', 'true');
+    if (opts.ids?.length) params.set('ids', opts.ids.join(','));
     return requestBlob(`/projects/${projectId}/export/citations?${params.toString()}`);
   },
 
@@ -1532,6 +1840,11 @@ export const api = {
     return request<GraphData>(`/projects/${projectId}/graph`);
   },
 
+  // —— 文献知识底座：全文索引重建（对话走 sse.ts chatLibrarySse） ——
+  rebuildFulltextIndex(projectId: string): Promise<RebuildIndexResult> {
+    return request<RebuildIndexResult>(`/projects/${projectId}/index/rebuild`, { method: 'POST' });
+  },
+
   // —— M2 · Obsidian 导出（zip blob） ——
   downloadObsidianExport(projectId: string): Promise<Blob> {
     return requestBlob(`/projects/${projectId}/export/obsidian`);
@@ -1550,11 +1863,25 @@ export const api = {
     return request<ForgeState>(`/projects/${projectId}/forge/state`);
   },
 
+  // —— Idea 深度生成（Idea 2.0）——
+  /** 发起深度生成（kind=idea_proposal）；并发冲突 409；seed 引用对象不存在 404。 */
+  startDeepIdea(projectId: string, input: { seed: DeepSeed; knobs?: DeepKnobs }): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/projects/${projectId}/ideas/deep`, 'POST', input);
+  },
+  getDeepIdeaState(projectId: string): Promise<DeepIdeaState> {
+    return request<DeepIdeaState>(`/projects/${projectId}/ideas/deep/state`);
+  },
+
   // —— M3 · Ideas ——
-  listIdeas(projectId: string, opts: { status?: IdeaStatus; sort?: IdeaSort } = {}): Promise<IdeaRead[]> {
+  listIdeas(
+    projectId: string,
+    opts: { status?: IdeaStatus; sort?: IdeaSort; depth?: IdeaDepth; research_type?: string } = {},
+  ): Promise<IdeaRead[]> {
     const params = new URLSearchParams();
     if (opts.status) params.set('status', opts.status);
     if (opts.sort) params.set('sort', opts.sort);
+    if (opts.depth) params.set('depth', opts.depth);
+    if (opts.research_type) params.set('research_type', opts.research_type);
     const qs = params.toString();
     return request<IdeaRead[]>(`/projects/${projectId}/ideas${qs ? `?${qs}` : ''}`);
   },
@@ -1798,6 +2125,19 @@ export const api = {
   removeProjectSkill(enableId: string): Promise<void> {
     return request<void>(`/project-skills/${enableId}`, { method: 'DELETE' });
   },
+  // —— 论文分享 PPT（文献追踪板块） ——
+  /** 发起 PPT 生成任务：single=单篇分享 / survey=多篇主题梳理。 */
+  createPresentation(
+    projectId: string,
+    input: { paper_ids: string[]; mode: 'single' | 'survey'; notes?: string },
+  ): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/projects/${projectId}/presentations`, 'POST', input);
+  },
+  /** 下载生成的 PPT（blob；未生成完成时 404 FILE_NOT_READY）。 */
+  downloadPresentation(voyageId: string): Promise<Blob> {
+    return requestBlob(`/presentations/${voyageId}/file`);
+  },
+
   /** 导出技能包 JSON（跨部署分享）。 */
   exportSkill(id: string): Promise<SkillExportData> {
     return request<SkillExportData>(`/skills/${id}/export`);
@@ -1842,4 +2182,3 @@ export const api = {
     return requestJson<SkillRatingRead>(`/market/skills/${listingId}/reviews`, 'POST', input);
   },
 };
-

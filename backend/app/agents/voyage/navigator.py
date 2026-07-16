@@ -45,7 +45,7 @@ class NavigatorError(Exception):
 
 # 固定计划模板的 kind（不靠 LLM 自由规划）
 WIKI_KINDS = ("wiki_bootstrap", "wiki_ingest")
-IDEA_KINDS = ("idea_forge", "idea_review")
+IDEA_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 
 def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
@@ -72,14 +72,15 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 def forge_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """idea_forge 固定六步计划（docs/api-m3.md §1）；knobs 从 checkpoint.params 读。"""
+    """idea_forge 固定七步计划（docs/api-m3.md §1 + docs/api-idea2.md §1 信号升级）。"""
     steps = [
         ("读取知识库上下文", "forge.read_context", "compiled wiki 页与概念已汇总为上下文"),
-        ("gap 分析（LLM）", "forge.gap_analysis", "已产出研究空白清单 JSON"),
+        ("信号采集（组合空白/趋势/局限）", "forge.collect_signals", "启用的信号源已完成采集"),
+        ("研究空白综合", "forge.gap_analysis", "已产出带信号来源的研究空白清单"),
         ("生成候选 idea（LLM）", "forge.generate", "已生成 num_ideas 个候选 idea"),
         ("四维打分（LLM 逐条）", "forge.score", "候选 idea 已获得四维评分与理由"),
         ("语义去重（embedding + rerank）", "forge.dedup", "重复候选已丢弃并记录"),
-        ("入库候选池", "forge.persist", "存活候选已入库（status=candidate）"),
+        ("入库候选池", "forge.persist", "存活候选已入库（status=candidate，depth=sketch）"),
     ]
     return [
         {
@@ -91,6 +92,120 @@ def forge_plan(run: VoyageRun) -> list[dict[str, Any]]:
         }
         for title, action, acceptance in steps
     ]
+
+
+def _proposal_step(
+    title: str,
+    action: str,
+    acceptance: str,
+    *,
+    requires_gate: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "title": title,
+        "action": action,
+        "params": params or {},
+        "acceptance": acceptance,
+        "requires_gate": requires_gate,
+    }
+
+
+def _proposal_body_steps() -> list[dict[str, Any]]:
+    """阶段二/三固定骨架（docs/api-idea2.md §5/§6）。"""
+    return [
+        _proposal_step(
+            "相关工作定位", "proposal.related_work", "覆盖全部 grounding 论文并给出差异对比"
+        ),
+        _proposal_step(
+            "研究方案设计", "proposal.design", "按 research_type 模板完成设计且给出依据"
+        ),
+        _proposal_step(
+            "实验与评估计划", "proposal.experiments", "含主指标、资源核对与最小验证实验"
+        ),
+        _proposal_step(
+            "新颖性核查", "proposal.novelty_check", "库内+外部相似工作已逐条差异论证且判定 novel"
+        ),
+        _proposal_step("风险与备选方案", "proposal.risks", "至少 2 条风险且各配缓解/备选"),
+        _proposal_step("汇编入库", "proposal.assemble", "Research Proposal 已入库为 idea"),
+        _proposal_step(
+            "评审与修订", "proposal.review_revise", "四维专职评审完成，终评分数与遗留问题已落库"
+        ),
+    ]
+
+
+def proposal_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """idea_proposal 固定计划（docs/api-idea2.md）：
+    目标构建 →（confirm_goal 时 idea_goal 闸门 + 修订）→ 方案深耕 → 评审修订。
+    """
+    params = (run.checkpoint or {}).get("params") or {}
+    knobs = params.get("knobs") if isinstance(params.get("knobs"), dict) else {}
+    confirm_goal = knobs.get("confirm_goal", True)
+    steps = [
+        _proposal_step(
+            "目标构建（文献探索）", "goal.explore", "goal 已通过结构校验（grounding/可检验目标）"
+        )
+    ]
+    if confirm_goal:
+        steps.append(
+            _proposal_step(
+                "目标确认（人工审批）",
+                "goal.refine",
+                "研究目标已确认（如有审批意见则已并入）",
+                requires_gate="idea_goal",
+            )
+        )
+    return steps + _proposal_body_steps()
+
+
+# 确定性重规划的诊断前缀（proposal.novelty_check 产出）
+_DIAG_NEEDS_DIFF = "NEEDS_DIFFERENTIATION"
+_DIAG_DUPLICATE = "DUPLICATE"
+
+
+def proposal_replan(
+    run: VoyageRun, failed_step: dict[str, Any], diagnosis: str
+) -> list[dict[str, Any]]:
+    """idea_proposal 确定性重规划（不经 LLM，docs/api-idea2.md §5）：
+
+    - DUPLICATE → 插入 idea_pivot 闸门的 goal.refine，再从 design 起重跑；
+    - NEEDS_DIFFERENTIATION → 从 design 起重跑（带诊断回炉设计）；
+    - 其余失败 → 从失败步骤起原样重跑（失败步骤带上诊断）。
+    """
+    body = _proposal_body_steps()
+
+    def tail_from(action: str, diag: str | None) -> list[dict[str, Any]]:
+        index = next((i for i, s in enumerate(body) if s["action"] == action), 0)
+        tail = [dict(s, params=dict(s["params"])) for s in body[index:]]
+        if diag:
+            tail[0]["params"]["diagnosis"] = diag[:2000]
+        return tail
+
+    if diagnosis.startswith(_DIAG_DUPLICATE):
+        pivot = _proposal_step(
+            "方向调整确认（人工审批）",
+            "goal.refine",
+            "研究方向已按人工意见调整并通过结构校验",
+            requires_gate="idea_pivot",
+            params={"reason": "duplicate"},
+        )
+        return [pivot, *tail_from("proposal.design", f"方向已调整（原判定：{diagnosis[:500]}）")]
+    if diagnosis.startswith(_DIAG_NEEDS_DIFF):
+        return tail_from("proposal.design", diagnosis)
+
+    failed_action = str(failed_step.get("action") or "")
+    if failed_action == "goal.explore":
+        steps = proposal_plan(run)
+        steps[0]["params"] = dict(steps[0]["params"]) | {"diagnosis": diagnosis[:2000]}
+        return steps
+    if failed_action == "goal.refine":
+        # 修订失败：保留闸门语义重跑该步（闸门已批准过，engine 会直接放行）
+        retry = dict(failed_step, params=dict(failed_step.get("params") or {}))
+        retry["params"]["diagnosis"] = diagnosis[:2000]
+        return [retry, *_proposal_body_steps()]
+    if any(s["action"] == failed_action for s in body):
+        return tail_from(failed_action, diagnosis)
+    return tail_from(body[0]["action"], diagnosis)
 
 
 def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
@@ -219,6 +334,30 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
         }
     )
     return steps
+
+
+def presentation_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """presentation 固定四步计划（论文分享 PPT）：
+    取材 → 大纲（LLM）→ 甲板内容（LLM）→ 版式渲染 + 规范/视觉反馈迭代。
+    固定管线不重规划：所有步骤 on_failure="fail"。
+    """
+    steps = [
+        ("读取论文材料与配图", "present.collect", "论文正文/配图目录已汇总进 checkpoint"),
+        ("设计分享大纲（LLM）", "present.outline", "已产出章节大纲 JSON"),
+        ("生成幻灯片内容（LLM）", "present.slides", "甲板 JSON 已通过结构校验"),
+        ("渲染 PPT + 反馈迭代", "present.build", "pptx 已生成并通过规范校验（视觉反馈尽力而为）"),
+    ]
+    return [
+        {
+            "title": title,
+            "action": action,
+            "params": {},
+            "acceptance": acceptance,
+            "requires_gate": None,
+            "on_failure": "fail",
+        }
+        for title, action, acceptance in steps
+    ]
 
 
 def paper_review_plan(run: VoyageRun) -> list[dict[str, Any]]:
@@ -393,12 +532,16 @@ class Navigator:
             return forge_plan(run)
         if run.kind == "idea_review":
             return review_plan(run)
+        if run.kind == "idea_proposal":
+            return proposal_plan(run)
         if run.kind == "experiment":
             return experiment_plan(run)
         if run.kind == "paper_writing":
             return writing_plan(run)
         if run.kind == "paper_review":
             return paper_review_plan(run)
+        if run.kind == "presentation":
+            return presentation_plan(run)
         system = PLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         workflows = skill_workflows(run.checkpoint or {})
         if workflows:
@@ -411,7 +554,12 @@ class Navigator:
     async def replan(
         self, run: VoyageRun, failed_step: dict[str, Any], diagnosis: str
     ) -> list[dict[str, Any]]:
-        """验证失败后重规划：返回替换「失败步骤起的剩余计划」的新步骤列表。"""
+        """验证失败后重规划：返回替换「失败步骤起的剩余计划」的新步骤列表。
+
+        idea_proposal 走确定性重规划（novelty 三档分支等），不经 LLM。
+        """
+        if run.kind == "idea_proposal":
+            return proposal_replan(run, failed_step, diagnosis)
         system = REPLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         user_prompt = (
             f"目标：{run.goal}\n"

@@ -5,6 +5,7 @@ engine 懒初始化，便于测试通过环境变量覆盖 DATABASE_URL。
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -28,6 +29,14 @@ def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         _engine = create_async_engine(get_settings().database_url, echo=False)
+        if _engine.url.get_backend_name() == "sqlite":
+            # sqlite 默认不强制外键：打开 pragma，让 ON DELETE CASCADE 生效（对齐 postgres）
+            @event.listens_for(_engine.sync_engine, "connect")
+            def _sqlite_fk_on(dbapi_connection, _record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
     return _engine
 
 

@@ -96,7 +96,7 @@ export function WriterPage() {
         <PageHead
           eyebrow="Stage 04 · Paper Writer"
           title="论文撰写 Paper Writer"
-          sub="从实验产物到可编译投稿稿件：模板起稿 → AI 起草 → 协同编辑 → 编译预览 → 投稿审批。"
+          sub="从模板起稿、AI 起草到编译预览与投稿审批。"
         />
         <div className="card">
           <EmptyState
