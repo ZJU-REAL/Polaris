@@ -32,14 +32,14 @@ TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})
 # ---- 运行模式（docs/voyage-loop.md §2/§3）：由 kind 静态决定，不暴露给用户/LLM 选择 ----
 # pipeline：固定计划 + 机械校验，失败不经 LLM 重规划；
 # template：固定骨架 + 确定性重规划分支表（LLM 兜底）；
-# loop    ：完整 plan-execute-verify 循环（demo 及 LLM 自由规划的 kind）。
+# loop    ：完整 plan-execute-verify 循环——experiment（模板起步 + plan_signal 分支表推进 +
+#           失败回灌计划调整）、demo 及 LLM 自由规划的 kind。
 PIPELINE_KINDS = frozenset(
     {
         "wiki_bootstrap",
         "wiki_ingest",
         "idea_forge",
         "idea_review",
-        "experiment",
         "paper_writing",
         "paper_review",
         "presentation",

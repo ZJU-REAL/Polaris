@@ -178,6 +178,7 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
     assert voyage["status"] == "done", voyage
+    assert voyage["mode"] == "loop"  # 实验按动态循环走（docs/voyage-loop.md §3 档2）
     # 3 轮 improve→improve→stop：每轮是可见的 run+analyze 节点（docs/voyage-loop.md §7）
     assert [s["status"] for s in voyage["steps"]] == ["passed"] * 11
     assert [s["action"] for s in voyage["steps"]] == [
@@ -541,7 +542,8 @@ class _PathViolationProvider(FakeProvider):
 
 
 async def test_path_violation_rejected(client, queue_stub, fake_ssh, bus_recorder):
-    """LLM 产出 workdir 外路径 → SSHPathViolationError，不重试、不写任何文件，实验 failed。"""
+    """LLM 产出 workdir 外路径 → SSHPathViolationError：不写任何文件（安全护栏），
+    实验 failed；voyage 走 loop 失败回灌（重试 → 计划调整）仍无法推进 → paused_error 等人工。"""
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
@@ -550,16 +552,19 @@ async def test_path_violation_rejected(client, queue_stub, fake_ssh, bus_recorde
 
     router = LLMRouter()
     router._providers[("fake", None, "")] = _PathViolationProvider()
-    engine, _ = _make_engine(router)
+    engine, bus = _make_engine(router)
     await engine.run(uuid.UUID(voyage_id))
     await _approve_gate(client, headers, project_id)
     await engine.resume(uuid.UUID(voyage_id))
 
-    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    resp = await client.get(f"/api/voyages/{voyage_id}?include_obsolete=true", headers=headers)
     voyage = resp.json()
-    assert voyage["status"] == "failed"
+    assert voyage["status"] == "paused_error"
     setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
     assert "越界" in setup_step["observation"]["error"]
+    assert setup_step["attempt"] == 2  # 执行类错误带诊断原地重试过一次
+    statuses = [e[2]["status"] for e in bus.voyage_events if e[1] == "status"]
+    assert "replanning" in statuses  # 重试尽后走了计划调整
     assert fake_ssh.files == {}  # 一个文件都没写出去
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.json()["status"] == "failed"

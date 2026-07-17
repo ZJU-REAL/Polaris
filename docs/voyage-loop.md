@@ -256,13 +256,17 @@ run 节点（由 experiment.run 轮询时自查时长并上报，引擎记账并
 - F：任务详情页按清单序（rank）渲染 + 尝试徽标 + 计划调整计数 +
   已作废步骤开关（`include_obsolete` 查询参数）。
 
-实现相对本文的三处偏差（有意为之）：
+实现相对本文的偏差（有意为之）：
 
-1. **experiment 保持 pipeline 模式**：轮次动态性完全由「通过节点的 observation.plan_signal
-   → kind 确定性分支表」提供（§5.3 的"能写成规则就不问 LLM"推到极致）；失败语义与旧管线
-   一致（on_failure=fail）。Navigator LLM 计划编辑只对 loop kind（demo/自由规划）生效。
+1. ~~experiment 保持 pipeline 模式~~ **已撤销（2026-07-17 用户定调）**：experiment 归入
+   mode=loop（migration `e3f4a5b6c7d8` 回填存量）。失败语义按节点分派——
+   plan/setup/analyze/figures/report 失败走 loop 回灌（原地重试 → AI 计划调整，
+   MAX_REPLANS 封顶）；**run 与 smoke 保留 on_failure="fail" + max_attempts=1 硬停**：
+   运行级失败 = 预算超时/基础设施故障，盲目重跑或交 AI 重排都在烧算力；smoke 动作
+   内部已有 LLM 修复循环，修完仍失败说明代码根本性不可用。正常轮次推进仍由
+   plan_signal 确定性分支表驱动（规则优先，AI 只兜失败的底）。
 2. **done_criteria 终检未达时 loop 模式暂不回灌 Navigator**，一律 paused_error 等人工
-   （防过早宣告完成的保守实现；回灌留待有真实 loop kind 需求时再开）。
+   （防过早宣告完成的保守实现；回灌留待有真实需求时再开）。
 3. **reflection 的 decision 集仍为 improve/debug/stop**：§7 表中 pivot（方法调整闸门）与
    ablate（补消融）分支表已预留结构，待 reflection prompt 升级后开放。
 

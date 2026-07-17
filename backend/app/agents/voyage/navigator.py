@@ -255,11 +255,15 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """experiment 启动计划（docs/voyage-loop.md §7）：
+    """experiment 启动计划（docs/voyage-loop.md §7，mode=loop）：
     计划 →（compute_budget 闸门）建环境 → 冒烟 → 第 1 轮运行 → 第 1 轮分析。
     后续轮次由 experiment.analyze 的 plan_signal 走确定性分支表动态追加
     （improve/debug → 下一轮 run+analyze；终止 → figures+report 收尾）。
-    环境/运行步骤 on_failure="fail"：执行异常即 voyage failed（实验由 _guarded 同步 failed）。
+
+    失败语义按节点分派：plan/setup/analyze/figures/report 失败走 loop 回灌
+    （原地重试 → AI 计划调整）；smoke 保留 on_failure="fail"——动作内部已有
+    LLM 修复循环（MAX_SMOKE_FIXES），修完仍失败说明代码根本性不可用，诚实硬停
+    且 max_attempts=1 防引擎级重跑整个修复循环。
     """
     steps = [
         (
@@ -276,8 +280,9 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
         ),
         ("冒烟测试", "experiment.smoke", "run.sh --smoke 退出码为 0", None),
     ]
-    head = [
-        {
+    head = []
+    for title, action, acceptance, gate in steps:
+        node: dict[str, Any] = {
             "title": title,
             "action": action,
             "params": {},
@@ -287,10 +292,11 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
             if action == "experiment.smoke"
             else [{"kind": "no_error"}],
             "requires_gate": gate,
-            "on_failure": "fail",
         }
-        for title, action, acceptance, gate in steps
-    ]
+        if action == "experiment.smoke":
+            node["on_failure"] = "fail"
+            node["budget"] = {"max_attempts": 1}
+        head.append(node)
     return head + experiment_round_nodes(1)
 
 

@@ -67,8 +67,8 @@ const MODE_INFO: Record<string, { zh: string; en: string; hintZh: string; hintEn
   loop: {
     zh: 'AI 动态规划',
     en: 'AI dynamic planning',
-    hintZh: 'AI 规划步骤并循环推进：每步执行后自动校验，再按结果动态调整后续计划',
-    hintEn: 'AI plans the steps and runs a loop: each step is auto-checked, then the remaining plan is adjusted based on results',
+    hintZh: '循环推进：每步执行后自动校验，再按结果动态调整后续计划（规则分支优先，AI 兜底）',
+    hintEn: 'Runs in a loop: each step is auto-checked, then the remaining plan is adjusted based on results (preset rules first, AI as fallback)',
   },
 };
 

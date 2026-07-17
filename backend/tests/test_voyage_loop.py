@@ -139,6 +139,27 @@ class _RowStub:
         self.status = status
 
 
+def test_experiment_node_failure_semantics():
+    """experiment mode=loop 的节点级失败语义（docs/voyage-loop.md §7）：
+    run/smoke 硬停（on_failure=fail + max_attempts=1，防盲目重跑烧算力/重复修复循环），
+    plan/setup/analyze/figures/report 走 loop 回灌（原地重试 → AI 计划调整）。"""
+    from app.agents.voyage.navigator import experiment_plan
+    from app.agents.voyage.plan_edit import experiment_wrapup_nodes
+    from app.models.voyage import mode_for_kind
+
+    assert mode_for_kind("experiment") == "loop"
+
+    nodes = {n["action"]: n for n in experiment_plan(None)}  # run 参数未用
+    assert nodes["experiment.smoke"]["on_failure"] == "fail"
+    assert nodes["experiment.smoke"]["budget"] == {"max_attempts": 1}
+    assert nodes["experiment.run"]["on_failure"] == "fail"
+    assert nodes["experiment.run"]["budget"] == {"max_attempts": 1}
+    for action in ("experiment.plan", "experiment.setup", "experiment.analyze"):
+        assert "on_failure" not in nodes[action], action
+    for n in experiment_wrapup_nodes():
+        assert "on_failure" not in n, n["action"]
+
+
 def test_experiment_signal_edits_idempotent():
     """分支表幂等：待办节点已存在则不重复追加（防 resume 重放）。"""
     rows = [_RowStub("experiment.analyze", "passed")]

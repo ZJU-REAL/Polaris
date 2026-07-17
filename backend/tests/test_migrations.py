@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d2e3f4a5b6c7"  # paper_trash_reason（垃圾桶原因标签）
-PREV_REVISION = "c1d2e3f4a5b6"  # voyage_loop_v1（任务循环地基：mode/rank/attempts）
+HEAD_REVISION = "e3f4a5b6c7d8"  # experiment_mode_loop（实验任务归入动态循环档）
+PREV_REVISION = "d2e3f4a5b6c7"  # paper_trash_reason（垃圾桶原因标签）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -116,11 +116,11 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 垃圾桶原因标签
     assert "trash_reason" in columns["papers"]
 
-    # 最新 revision 可往返（downgrade 移除垃圾桶原因列）
+    # 最新 revision 可往返（experiment mode 回填是纯 UPDATE，列结构不变）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "trash_reason" not in columns["papers"]
+    assert "trash_reason" in columns["papers"]  # 上一版列不受影响
     # 上一版（任务循环 v1）不受影响
     assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
     assert "rank" in columns["voyage_steps"]

@@ -104,6 +104,13 @@ def validate_plan_edit(
 
 
 def experiment_round_nodes(next_round: int) -> list[dict[str, Any]]:
+    """一轮 run + analyze（experiment mode=loop，docs/voyage-loop.md §7）。
+
+    run 保留 on_failure="fail" 且 max_attempts=1：运行级失败 = 预算超时/基础设施
+    故障，盲目重跑或交 AI 重排都在烧算力，诚实硬停；训练本身失败（exit != 0）
+    不是步骤失败——observation 携带 exit_code 交由 analyze 走 debug 分支。
+    analyze 失败走 loop 回灌（原地重试 → AI 计划调整）。
+    """
     return [
         {
             "title": f"第 {next_round} 轮运行",
@@ -113,6 +120,7 @@ def experiment_round_nodes(next_round: int) -> list[dict[str, Any]]:
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
+            "budget": {"max_attempts": 1},
         },
         {
             "title": f"第 {next_round} 轮分析",
@@ -121,12 +129,12 @@ def experiment_round_nodes(next_round: int) -> list[dict[str, Any]]:
             "acceptance": "reflection 已落库并给出继续/收束判定",
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
-            "on_failure": "fail",
         },
     ]
 
 
 def experiment_wrapup_nodes() -> list[dict[str, Any]]:
+    """收尾 figures + report：失败走 loop 回灌（figures 内部已有降级，极少硬失败）。"""
     return [
         {
             "title": "实验图表（脚本生成 + 自动质检）",
@@ -135,7 +143,6 @@ def experiment_wrapup_nodes() -> list[dict[str, Any]]:
             "acceptance": "figures 已生成、拉回本地并写入 Experiment.figures",
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
-            "on_failure": "fail",
         },
         {
             "title": "实验报告（LLM）",
@@ -144,7 +151,6 @@ def experiment_wrapup_nodes() -> list[dict[str, Any]]:
             "acceptance": "markdown 报告已写入 Experiment.report",
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
-            "on_failure": "fail",
         },
     ]
 
