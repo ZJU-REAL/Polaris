@@ -61,8 +61,8 @@ input {
 .nav-collapsed .sidebar { width: 66px; }
 /* 品牌标缩到能装进轨道，居中，隐藏文字 wordmark */
 .nav-collapsed .sb-brand { justify-content: center; margin: 16px 0 12px; }
+/* 收起后只保留左侧图形标（隐藏文字 wordmark）；图形标尺寸与展开态一致，不缩放 */
 .nav-collapsed .sb-brand > :not(:first-child) { display: none; }
-.nav-collapsed .sb-brand svg { width: 38px !important; height: 38px !important; }
 .nav-collapsed .sb-scroll { padding: 4px 8px 14px; }
 .nav-collapsed .sb-section { text-align: center; padding-left: 0; padding-right: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; color: transparent; height: 10px; }
 /* 收起态：行加高、居中成方块（图标尺寸与展开态一致，不再单独放大） */

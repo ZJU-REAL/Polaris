@@ -432,8 +432,8 @@ export function AppShell() {
       {/* —— 侧栏 —— */}
       <div className="sidebar">
         <div className="sb-brand">
-          <PolarisMark size={46} />
-          <PolarisWordmark height={27} />
+          <PolarisMark size={34} />
+          <PolarisWordmark height={20} />
         </div>
         <div className="sb-scroll scroll">
           {NAV_MAIN.map((n) => (
