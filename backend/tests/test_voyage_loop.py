@@ -1,9 +1,10 @@
-"""任务循环 v1（docs/voyage-loop.md 阶段 A-C）：检查注册表 + 引擎失败分派。
+"""任务循环 v1（docs/voyage-loop.md 阶段 A-E）：检查注册表 + 引擎失败分派 + 计划编辑。
 
 - checks：确定性检查注册表的判定与 actionable 诊断；
 - pipeline 失败 → paused_error（不经 LLM 重规划），resume 复位失败节点后续跑；
 - 判断类失败（校验未过）不原地重试；执行类错误在 max_attempts 内带诊断重试；
-- 每次尝试归档进 step.attempts；重规划旧节点标 obsolete 留痕不删行。
+- 每次尝试归档进 step.attempts；重规划旧节点标 obsolete 留痕不删行；
+- PlanEdit 操作集 schema 校验 + experiment plan_signal 确定性分支表的幂等。
 """
 
 import uuid
@@ -13,6 +14,8 @@ from sqlalchemy import select
 
 from app.agents.voyage.checks import run_deterministic_checks, validate_checks
 from app.agents.voyage.engine import VoyageEngine
+from app.agents.voyage.navigator import validate_steps
+from app.agents.voyage.plan_edit import experiment_signal_edits, validate_plan_edit
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun, VoyageStep
@@ -76,6 +79,85 @@ def test_checks_llm_rubric_deferred_and_validate():
         validate_checks([{"kind": "unknown_kind"}])
     with pytest.raises(ValueError):
         validate_checks("not-a-list")
+
+
+# ---- PlanEdit 操作集（阶段 D/E）----
+
+
+def test_validate_plan_edit_schema():
+    ok = validate_plan_edit(
+        {
+            "reason": "补一个替代步骤",
+            "edits": [
+                {
+                    "op": "add_nodes",
+                    "insert_after": None,
+                    "nodes": [
+                        {
+                            "title": "替代步骤",
+                            "action": "sleep",
+                            "params": {"seconds": 0},
+                            "acceptance": "已等待完成",
+                        }
+                    ],
+                }
+            ],
+        },
+        step_validator=validate_steps,
+    )
+    assert ok["finish"] is False and len(ok["edits"]) == 1
+    assert ok["edits"][0]["nodes"][0]["acceptance"] == "已等待完成"
+
+    fin = validate_plan_edit(
+        {"finish": True, "reason": "按当前结果收束"}, step_validator=validate_steps
+    )
+    assert fin["finish"] is True and fin["edits"] == []
+
+    for bad in (
+        "not-an-object",
+        {"edits": [{"op": "teleport"}]},  # 未知操作
+        {"edits": []},  # 空编辑（应改用 finish）
+        # 新节点缺验收（sleep 属内容动作，不补缺省 checks）
+        {
+            "edits": [
+                {
+                    "op": "add_nodes",
+                    "nodes": [{"title": "t", "action": "sleep", "params": {}}],
+                }
+            ]
+        },
+        {"edits": [{"op": "update_node", "step_id": "x"}]},  # 无补丁字段
+        {"edits": [{"op": "obsolete_nodes", "step_ids": []}]},  # 空作废列表
+    ):
+        with pytest.raises(ValueError):
+            validate_plan_edit(bad, step_validator=validate_steps)
+
+
+class _RowStub:
+    def __init__(self, action: str, status: str) -> None:
+        self.action = action
+        self.status = status
+
+
+def test_experiment_signal_edits_idempotent():
+    """分支表幂等：待办节点已存在则不重复追加（防 resume 重放）。"""
+    rows = [_RowStub("experiment.analyze", "passed")]
+    edit = experiment_signal_edits({"decision": "continue", "next_round": 2}, rows)
+    assert edit is not None
+    actions = [n["action"] for n in edit["edits"][0]["nodes"]]
+    assert actions == ["experiment.run", "experiment.analyze"]
+
+    rows.append(_RowStub("experiment.run", "pending"))
+    assert experiment_signal_edits({"decision": "continue", "next_round": 2}, rows) is None
+
+    edit = experiment_signal_edits({"decision": "finish", "stopped_reason": "no_improve"}, rows)
+    assert [n["action"] for n in edit["edits"][0]["nodes"]] == [
+        "experiment.figures",
+        "experiment.report",
+    ]
+    rows.append(_RowStub("experiment.report", "pending"))
+    assert experiment_signal_edits({"decision": "finish"}, rows) is None
+    assert experiment_signal_edits({"decision": "unknown"}, rows) is None
 
 
 # ---- 引擎失败分派 ----

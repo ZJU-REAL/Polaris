@@ -32,7 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agents.voyage.actions import ActionContext
 from app.agents.voyage.checks import run_deterministic_checks
 from app.agents.voyage.helm import Helm
-from app.agents.voyage.navigator import Navigator, NavigatorError
+from app.agents.voyage.navigator import Navigator, NavigatorError, done_criteria_for_kind
+from app.agents.voyage.plan_edit import SIGNAL_TABLES, PlanEditError
 from app.agents.voyage.sextant import Sextant
 from app.core.db import get_sessionmaker
 from app.core.events import EventBus
@@ -229,6 +230,8 @@ class VoyageEngine:
             await self._set_status(session, run, "failed")
             raise _ExternallyTerminated("failed") from e
         run.plan = steps
+        if run.done_criteria is None:
+            run.done_criteria = done_criteria_for_kind(run.kind)
         await session.commit()
         await self._emit_log(run, f"计划就绪，共 {len(steps)} 步")
 
@@ -325,6 +328,9 @@ class VoyageEngine:
             await self._execute_and_verify(session, run, step_def, node)
 
             if node.verdict and node.verdict.get("passed"):
+                # 节点可携带 plan_signal（如 experiment.analyze 的继续/收束判定）：
+                # 走 kind 确定性分支表做计划编辑，不经 LLM（docs/voyage-loop.md §7）
+                await self._apply_signal_edits(session, run, node)
                 await self._set_status(session, run, "executing")
                 continue
             if not await self._handle_failure(session, run, node, node_index, step_def):
@@ -340,7 +346,7 @@ class VoyageEngine:
             )
             if verdict is not None and not verdict.get("passed"):
                 await self._emit_log(run, f"完成标准未达成：{verdict.get('reason')}")
-                # 计划编辑（阶段 D）接入前，loop 模式也先暂停等人工
+                # 终检回灌（loop 模式）留待后续：先一律暂停等人工，防"过早宣告完成"
                 await self._set_status(session, run, "paused_error")
                 return
         await self._set_status(session, run, "done")
@@ -562,9 +568,196 @@ class VoyageEngine:
             await self._set_status(session, run, "paused_error")
             return False
 
-        return await self._replan(session, run, node, step_def)
+        if run.mode == "template":
+            # 模板骨架：确定性重规划分支表（idea_proposal），LLM 尾部替换兜底
+            return await self._replan(session, run, node, step_def)
+        # loop：失败回灌 Navigator 做计划编辑（阶段 D）
+        return await self._navigator_edit(session, run, node, step_def)
 
-    # ---- 重规划 ----
+    # ---- 计划编辑（loop 模式失败回灌 + plan_signal 分支表，docs/voyage-loop.md §5.3/§7）----
+
+    @staticmethod
+    def _plan_state_summary(rows: list[VoyageStep]) -> str:
+        """给 Navigator 的计划状态摘要：尾部节点全量、更早的压缩计数（防 context rot）。"""
+        lines: list[str] = []
+        tail = rows[-8:]
+        if len(rows) > len(tail):
+            passed = sum(1 for r in rows[: len(rows) - len(tail)] if r.status == "passed")
+            lines.append(f"（更早 {len(rows) - len(tail)} 步省略，其中 {passed} 步已通过）")
+        for r in tail:
+            reason = str((r.verdict or {}).get("reason") or "")[:120]
+            suffix = f"：{reason}" if reason else ""
+            lines.append(f"- id={r.id} [{r.status}] {r.title}（{r.action}）{suffix}")
+        return "\n".join(lines)
+
+    async def _regen_plan_snapshot(self, session: AsyncSession, run: VoyageRun) -> None:
+        """run.plan 快照单向派生自活动节点行（节点表是唯一真源）。"""
+        rows = await self._active_rows(session, run)
+        run.plan = [_step_def_from_row(r, None) for r in rows]
+
+    async def _apply_signal_edits(
+        self, session: AsyncSession, run: VoyageRun, node: VoyageStep
+    ) -> None:
+        """节点通过后消费 observation.plan_signal：kind 确定性分支表 → 计划编辑。
+
+        能写成规则的决策不问 LLM（docs/voyage-loop.md §5.3）；分支表自带幂等
+        （待办节点已存在则返回 None，防 resume 重放导致重复追加）。
+        """
+        signal = (node.observation or {}).get("plan_signal")
+        builder = SIGNAL_TABLES.get(run.kind)
+        if not isinstance(signal, dict) or builder is None:
+            return
+        rows = await self._active_rows(session, run)
+        edit = builder(signal, rows)
+        if not edit or edit.get("finish") or not edit.get("edits"):
+            return
+        added = await self._apply_plan_edit(session, run, edit, anchor=node)
+        run.plan_iteration = run.plan_iteration + 1
+        await self._regen_plan_snapshot(session, run)
+        await session.commit()
+        await self._emit_log(
+            run, f"计划已按执行结果调整：{edit.get('reason') or ''}（新增 {added} 步）"
+        )
+
+    async def _apply_plan_edit(
+        self,
+        session: AsyncSession,
+        run: VoyageRun,
+        edit: dict[str, Any],
+        *,
+        anchor: VoyageStep | None,
+    ) -> int:
+        """应用一次已通过 schema 校验的计划编辑；引用非法抛 PlanEditError。
+
+        应用期不变量（docs/voyage-loop.md §5.3）：只能编辑/作废非终态节点，
+        插入位置必须在当前执行点之后；seq 只增不改，rank 取间隙值。
+        返回新增节点数；调用方负责 commit 与快照重生成。
+        """
+        rows = await self._active_rows(session, run)
+        by_id = {str(r.id): r for r in rows}
+        max_passed_rank = max((r.rank for r in rows if r.status == "passed"), default=-1.0)
+        max_seq = (
+            await session.execute(
+                select(func.coalesce(func.max(VoyageStep.seq), -1)).where(
+                    VoyageStep.run_id == run.id
+                )
+            )
+        ).scalar_one()
+        next_seq = int(max_seq) + 1
+        added = 0
+        for op in edit["edits"]:
+            if op["op"] == "add_nodes":
+                if op.get("insert_after"):
+                    anchor_row = by_id.get(str(op["insert_after"]))
+                    if anchor_row is None:
+                        raise PlanEditError(f"insert_after 引用不存在的步骤：{op['insert_after']}")
+                    if anchor_row.rank < max_passed_rank:
+                        raise PlanEditError("插入位置必须在当前执行点之后")
+                    base = anchor_row.rank
+                elif anchor is not None:
+                    base = anchor.rank  # 缺省：失败/信号节点的位置
+                else:
+                    base = max((r.rank for r in rows), default=0.0)
+                following = min((r.rank for r in rows if r.rank > base), default=None)
+                nodes = op["nodes"]
+                gap = (following - base) / (len(nodes) + 1) if following is not None else _RANK_GAP
+                for i, node_def in enumerate(nodes):
+                    session.add(
+                        self._new_step_row(
+                            run, seq=next_seq, rank=base + gap * (i + 1), step_def=node_def
+                        )
+                    )
+                    next_seq += 1
+                    added += 1
+            elif op["op"] == "update_node":
+                row = by_id.get(str(op["step_id"]))
+                if row is None or row.status == "passed":
+                    raise PlanEditError(f"update_node 只能修改未完成步骤：{op['step_id']}")
+                patch = op["patch"]
+                if "params" in patch:
+                    row.params = dict(row.params or {}) | dict(patch["params"])
+                if "title" in patch:
+                    row.title = str(patch["title"])[:255]
+                if "acceptance" in patch or "checks" in patch:
+                    acc = dict(row.acceptance or {})
+                    if "acceptance" in patch:
+                        acc["text"] = patch["acceptance"]
+                    if "checks" in patch:
+                        acc["checks"] = patch["checks"]
+                    row.acceptance = acc
+            else:  # obsolete_nodes
+                for step_id in op["step_ids"]:
+                    row = by_id.get(str(step_id))
+                    if row is None or row.status == "passed":
+                        raise PlanEditError(f"obsolete_nodes 只能作废未完成步骤：{step_id}")
+                    row.status = "obsolete"
+        return added
+
+    async def _navigator_edit(
+        self,
+        session: AsyncSession,
+        run: VoyageRun,
+        failed_node: VoyageStep,
+        failed_step: dict[str, Any],
+    ) -> bool:
+        """loop 模式失败回灌：Navigator 产出计划编辑。返回 True 表示可继续循环。
+
+        无进展硬停（docs/voyage-loop.md §5.4）：存在失败步骤而 Navigator 返回
+        finish/noop → paused_error 等人工；编辑生效后失败节点自动作废并归档。
+        """
+        checkpoint = dict(run.checkpoint or {})
+        replans = int(checkpoint.get("replans", 0))
+        diagnosis = str((failed_node.verdict or {}).get("reason", ""))
+        if replans >= MAX_REPLANS:
+            await self._emit_log(run, f"计划调整已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理")
+            await self._set_status(session, run, "paused_error")
+            return False
+
+        await self._set_status(session, run, "replanning")
+        rows = await self._active_rows(session, run)
+        failed_def = dict(failed_step) | {"step_id": str(failed_node.id)}
+        try:
+            edit = await self.navigator.on_result(
+                run, failed_def, diagnosis, self._plan_state_summary(rows)
+            )
+        except NavigatorError as e:
+            await self._emit_log(run, f"计划调整失败：{e}")
+            await self._set_status(session, run, "paused_error")
+            return False
+
+        if edit.get("finish") or not edit.get("edits"):
+            await self._emit_log(
+                run, f"Navigator 未给出有效调整（{edit.get('reason') or 'noop'}），任务暂停等待人工"
+            )
+            await self._set_status(session, run, "paused_error")
+            return False
+
+        try:
+            added = await self._apply_plan_edit(session, run, edit, anchor=failed_node)
+        except PlanEditError as e:
+            await self._emit_log(run, f"计划编辑被拒绝：{e}")
+            await self._set_status(session, run, "paused_error")
+            return False
+
+        # 失败节点归档（保留失败态）后自动作废——Navigator 只需给出替代/补充步骤
+        replaced = list(checkpoint.get("replaced_steps") or [])
+        replaced.append(_serialize_step(failed_node))
+        failed_node.status = "obsolete"
+        checkpoint["replaced_steps"] = replaced
+        checkpoint["replans"] = replans + 1
+        run.checkpoint = checkpoint
+        run.plan_iteration = run.plan_iteration + 1
+        await self._regen_plan_snapshot(session, run)
+        await session.commit()
+        await self._emit_log(
+            run,
+            f"第 {replans + 1} 次计划调整完成（{edit.get('reason') or ''}，"
+            f"新增 {added} 步，诊断：{diagnosis}）",
+        )
+        await self._set_status(session, run, "executing")
+        return True
+
+    # ---- 重规划（template 模式：确定性分支表 + LLM 尾部替换兜底）----
 
     async def _replan(
         self,
@@ -573,7 +766,7 @@ class VoyageEngine:
         failed_node: VoyageStep,
         failed_step: dict[str, Any],
     ) -> bool:
-        """验证失败后重规划（template/loop）。返回 True 表示可继续循环，False 表示已停。
+        """验证失败后重规划（template 模式）。返回 True 表示可继续循环，False 表示已停。
 
         旧尾部节点标 obsolete 留痕（不删行），新节点按 rank 间隙追加，
         run.plan 快照由节点行重新派生。

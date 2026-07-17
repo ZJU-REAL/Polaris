@@ -16,6 +16,7 @@ from app.core.llm.base import CompletionResult, LLMProvider, Message, RerankResu
 # 与 navigator.py / sextant.py / actions_wiki.py / actions_ideas.py /
 # services/projects.py 的 prompt 对齐的识别标记
 _PLAN_MARKER = '"steps"'
+_PLAN_EDIT_MARKER = "POLARIS_PLAN_EDIT"  # 计划编辑（loop 失败回灌，navigator.on_result）
 _VERDICT_MARKER = '"passed"'
 _RELEVANCE_MARKER = '"score"'
 _CONCEPTS_MARKER = "概念列表："
@@ -125,6 +126,9 @@ class FakeProvider(LLMProvider):
                 ],
                 ensure_ascii=False,
             )
+        elif _PLAN_EDIT_MARKER in full_text:
+            # 计划编辑（loop 失败回灌）：确定性给出一个替代步骤
+            content = self._respond_plan_edit()
         elif _EXP_REFLECTION_MARKER in full_text:
             # 迭代 reflection：按调用计数依次 improve → improve → stop（循环，确定性可测）
             content = self._respond_exp_reflection()
@@ -453,6 +457,30 @@ class FakeProvider(LLMProvider):
                 "steps": ["准备合成数据（fake）", "训练基线与新方法（fake）", "对比指标（fake）"],
                 "primary_metric": {"name": "accuracy", "direction": "maximize"},
                 "budget_estimate": {"gpu_hours": 2, "runs": 3},
+            },
+            ensure_ascii=False,
+        )
+
+    def _respond_plan_edit(self) -> str:
+        """计划编辑（navigator.on_result）：确定性替代步骤，engine 会自动作废失败节点。"""
+        return json.dumps(
+            {
+                "reason": "失败步骤不可行，改用替代步骤（fake）",
+                "edits": [
+                    {
+                        "op": "add_nodes",
+                        "insert_after": None,
+                        "nodes": [
+                            {
+                                "title": "替代步骤（fake）",
+                                "action": "llm.complete",
+                                "params": {"stage": "navigator", "prompt": "替代执行：{goal}"},
+                                "acceptance": "输出包含替代执行的结果",
+                                "requires_gate": None,
+                            }
+                        ],
+                    }
+                ],
             },
             ensure_ascii=False,
         )

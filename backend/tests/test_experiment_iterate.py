@@ -158,8 +158,9 @@ async def _get_detail(client, headers, exp_id):
 
 
 async def _iterate_observation(client, headers, voyage_id):
+    """末个 analyze 节点的 observation（迭代终止判定所在，docs/voyage-loop.md §7）。"""
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
-    step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.iterate")
+    step = next(s for s in reversed(resp.json()["steps"]) if s["action"] == "experiment.analyze")
     return resp.json()["status"], step["observation"]
 
 

@@ -1,19 +1,23 @@
-"""experiment voyage 动作（kind ``experiment`` 固定管线的执行体，docs/api-m5-a.md §1）。
+"""experiment voyage 动作（kind ``experiment``，docs/api-m5-a.md §1 + docs/voyage-loop.md §7）。
 
-流水线：experiment.plan →（compute_budget 闸门）experiment.setup →
-       experiment.smoke → experiment.iterate → experiment.figures → experiment.report
+启动计划：experiment.plan →（compute_budget 闸门）experiment.setup →
+         experiment.smoke → experiment.run（第 1 轮）→ experiment.analyze（第 1 轮）
+后续轮次由 analyze 的 plan_signal 走引擎确定性分支表动态追加：
+         improve/debug → 下一轮 run + analyze；终止 → experiment.figures → experiment.report
 
 约定：
 - LLM 只产出 plan JSON / 代码文件内容 / reflection JSON / 绘图脚本 / 报告 markdown，
   远程命令一律走 services/ssh_exec 的白名单模板（LLM 永远不拼 shell）；
 - Experiment.status 与步骤联动（awaiting_gate/setup/running/reporting/done），
   每次流转发 WS ``experiment.status``；
-- 步骤均声明 ``on_failure="fail"``：固定管线不重规划，失败即 voyage failed，
-  动作内部先把 Experiment 置 failed 再抛错；
-- experiment.iterate 内部多轮循环：每轮 launch run → 轮询（30s，协作式 cancel /
-  日志镜像 / POLARIS_METRIC + 可选 metrics.json 解析 / 预算超时）→ 主指标
-  direction 感知比较 → LLM structured reflection → 假设回写 → decision 分支
-  improve/debug/stop；iteration_state 持续落库，checkpoint 记轮次进度断点安全；
+- 步骤均声明 ``on_failure="fail"``：执行异常即 voyage failed，动作内部先把
+  Experiment 置 failed 再抛错（_guarded）；轮次的非零退出码**不是**步骤失败——
+  observation 携带 exit_code，由 analyze 诊断走 debug 分支；
+- experiment.run：单轮 launch → 轮询（30s，协作式 cancel / 日志镜像 /
+  POLARIS_METRIC + 可选 metrics.json 解析 / 预算超时）→ 主指标 direction 感知比较；
+- experiment.analyze：LLM structured reflection → 假设回写 → 终止判定
+  （stop/假设定论/无提升/max_runs/max_hours/debug 限额）→ improve/debug 改代码
+  → plan_signal（continue/finish）；iteration_state 持续落库；
 - experiment.figures：平台写 metrics_all.json → LLM 绘图脚本（只准读该文件）→
   白名单 run_plot → 拉回 figures/*.png(+.pdf) → VLM 质检（失败修脚本 ≤2 次）。
 """
@@ -26,7 +30,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
@@ -756,14 +760,6 @@ async def _voyage_cancelled(session: AsyncSession, ctx: ActionContext) -> bool:
     return status == "cancelled"
 
 
-async def _persist_checkpoint(session: AsyncSession, ctx: ActionContext) -> None:
-    """轮次进度落 VoyageRun.checkpoint（断点安全：worker 崩溃后已完成轮次不重跑）。"""
-    await session.execute(
-        update(VoyageRun).where(VoyageRun.id == ctx.run.id).values(checkpoint=dict(ctx.checkpoint))
-    )
-    await session.commit()
-
-
 def _apply_hypothesis_updates(
     plan: dict[str, Any], updates: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -796,9 +792,15 @@ def _best_primary_value(runs: list[ExperimentRun], direction: str) -> float | No
     return max(values) if direction == "maximize" else min(values)
 
 
-@register("experiment.iterate")
+@register("experiment.run")
 @_guarded
-async def experiment_iterate(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    """单轮正式运行：launch → 轮询（cancel/日志镜像/指标/超时 kill）→ metrics 合并。
+
+    原 experiment.iterate 的一轮循环体（docs/voyage-loop.md §7）：每轮是独立的
+    任务步骤，可见、可审计、可断点恢复；非零退出码不算步骤失败（observation 携带
+    exit_code，交由 experiment.analyze 诊断走 debug 分支）。
+    """
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         experiment = await _get_experiment(session, ctx)
@@ -814,12 +816,8 @@ async def experiment_iterate(ctx: ActionContext, params: dict[str, Any]) -> dict
         budget = experiment.budget or {}
         max_hours = float(budget.get("max_hours") or 0)
         max_runs = int(budget.get("max_runs") or 0)
-        no_improve_stop = int(budget.get("no_improve_stop") or DEFAULT_NO_IMPROVE_STOP)
 
-        state = _iteration_state(experiment)
-        files: dict[str, str] = dict(ctx.checkpoint.get("exp_files") or {})
-
-        # 断点安全：迭代起始时间与已完成轮次都可从 DB / checkpoint 恢复
+        # 迭代起始时间（多轮共享；断点/恢复从 checkpoint 读回）
         iterate_cp = dict(ctx.checkpoint.get("iterate") or {})
         if iterate_cp.get("started_at"):
             iterate_started = datetime.fromisoformat(str(iterate_cp["started_at"]))
@@ -827,7 +825,6 @@ async def experiment_iterate(ctx: ActionContext, params: dict[str, Any]) -> dict
             iterate_started = utcnow()
             iterate_cp["started_at"] = iterate_started.isoformat()
             ctx.checkpoint["iterate"] = iterate_cp
-            await _persist_checkpoint(session, ctx)
 
         prior_runs = (
             (
@@ -840,181 +837,228 @@ async def experiment_iterate(ctx: ActionContext, params: dict[str, Any]) -> dict
             .scalars()
             .all()
         )
+        seq = (prior_runs[-1].seq + 1) if prior_runs else 1
+
+        # 恢复现场护栏：预算已满就不再启动（正常路径由 analyze 的终止判定拦截）
+        for reason, exhausted in (
+            ("max_runs", bool(max_runs and seq > max_runs)),
+            (
+                "max_hours",
+                bool(prior_runs and max_hours and _elapsed_hours(iterate_started) > max_hours),
+            ),
+        ):
+            if exhausted:
+                iterate_cp["stopped_reason"] = reason
+                ctx.checkpoint["iterate"] = iterate_cp
+                return {
+                    "skipped": True,
+                    "stopped_reason": reason,
+                    "plan_signal": {"decision": "finish", "stopped_reason": reason},
+                }
+
         best = _best_primary_value(list(prior_runs), pm_direction)
-        next_seq = (prior_runs[-1].seq + 1) if prior_runs else 1
-        rounds = 0
-        history: list[dict[str, Any]] = [
+        state = _iteration_state(experiment)
+
+        executor = await _open_executor(session, ctx, experiment)
+        try:
+            pid, command = await executor.launch_run()
+            log_path = experiments_service.append_local_log(experiment.id, seq, "")
+            run = ExperimentRun(
+                experiment_id=experiment.id,
+                seq=seq,
+                command=command,
+                status="running",
+                pid=pid,
+                log_path=str(log_path),
+                started_at=utcnow(),
+            )
+            session.add(run)
+            await session.commit()
+            await session.refresh(run)
+            observation = await _poll_run(ctx, session, executor, experiment, run, max_hours)
+            if observation.get("cancelled"):
+                return observation  # _poll_run 已 kill 进程并同步实验状态
+
+            # 可选 workdir/metrics.json 合并（平台确定性解析，非 LLM）
+            metrics_text = await executor.read_metrics_json()
+            if metrics_text:
+                extra_points = parse_metrics_json(metrics_text)
+                if extra_points:
+                    run.metrics = merge_metrics(run.metrics, extra_points)
+                    experiment.metrics = merge_metrics(experiment.metrics, extra_points)
+        finally:
+            await executor.close()
+
+        # 主指标解析 + direction 感知比较（无提升连击数供 analyze 终止判定用）
+        primary_value = extract_primary_value(run.metrics, pm_name)
+        run.primary_value = primary_value
+        if primary_value is not None:
+            if is_improvement(primary_value, best, pm_direction):
+                state["no_improve_streak"] = 0
+            else:
+                state["no_improve_streak"] += 1
+        experiment.iteration_state = dict(state)
+        await session.commit()
+
+        # 轮询之外的取消窗口（如 metrics 读取期间被取消）：同步实验状态后安静收尾
+        if await _voyage_cancelled(session, ctx):
+            await session.refresh(experiment)
+            if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
+                await _set_status(ctx, session, experiment, "cancelled")
+            return {"cancelled": True, "seq": seq, "run_id": str(run.id)}
+
+        return {**observation, "primary_value": primary_value}
+
+
+@register("experiment.analyze")
+@_guarded
+async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    """单轮分析：structured reflection → 假设回写 → 终止判定 → improve/debug 改代码。
+
+    产出 plan_signal 供引擎的确定性分支表消费（docs/voyage-loop.md §7）：
+    - continue：已按 reflection 改完代码，追加下一轮 run + analyze；
+    - finish：终止条件命中（stop/假设定论/无提升/预算/debug 限额），进入收尾。
+    终止判定顺序与原 experiment.iterate 完全一致。
+    """
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        experiment = await _get_experiment(session, ctx)
+
+        plan: dict[str, Any] = dict(experiment.plan or {})
+        pm = plan.get("primary_metric") or {}
+        budget = experiment.budget or {}
+        max_hours = float(budget.get("max_hours") or 0)
+        max_runs = int(budget.get("max_runs") or 0)
+        no_improve_stop = int(budget.get("no_improve_stop") or DEFAULT_NO_IMPROVE_STOP)
+        state = _iteration_state(experiment)
+
+        runs = (
+            (
+                await session.execute(
+                    select(ExperimentRun)
+                    .where(ExperimentRun.experiment_id == experiment.id)
+                    .order_by(ExperimentRun.seq)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not runs:
+            raise ValueError("没有可分析的运行轮次")
+        run = runs[-1]
+        history = [
             {
                 "seq": r.seq,
                 "status": r.status,
                 "exit_code": r.exit_code,
                 "primary_value": r.primary_value,
             }
-            for r in prior_runs
+            for r in runs
         ]
-        stopped_reason: str | None = state.get("stopped_reason")
 
-        executor = await _open_executor(session, ctx, experiment)
-        try:
-            while stopped_reason is None:
-                # 协作式取消：每轮开始先查 voyage 状态
-                if await _voyage_cancelled(session, ctx):
-                    await session.refresh(experiment)
-                    if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
-                        await _set_status(ctx, session, experiment, "cancelled")
-                    return {"cancelled": True, "rounds": rounds}
+        # structured reflection（stage=experiment，JSON 校验重试 2）
+        log_lines, _ = experiments_service.read_local_log_tail(
+            run.log_path, _LOG_TAIL_FOR_REFLECTION
+        )
+        hyp_count = len(plan.get("hypotheses", []))
+        reflection_user = (
+            f"实验计划：{json.dumps(plan, ensure_ascii=False)[:4000]}\n"
+            f"主指标：{json.dumps(pm, ensure_ascii=False)}（假设共 {hyp_count} 条）\n"
+            f"本轮运行：seq={run.seq} status={run.status} exit_code={run.exit_code} "
+            f"primary_value={run.primary_value}\n"
+            f"历史各轮：{json.dumps(history, ensure_ascii=False)}\n"
+            f"迭代状态：无提升连续 {state['no_improve_streak']} 轮，"
+            f"debug 已用 {state['debug_count']}/{MAX_DEBUG_FIXES} 次\n"
+            f"本轮日志尾部：\n" + "\n".join(log_lines)
+        )
+        reflection = await _complete_json(
+            ctx,
+            system=REFLECTION_SYSTEM_PROMPT,
+            user=reflection_user,
+            validate=validate_reflection,
+        )
+        run.reflection = reflection
 
-                seq = next_seq
-                if max_runs and seq > max_runs:  # 恢复现场：已跑满就直接收口
-                    stopped_reason = "max_runs"
-                    break
-                if rounds > 0 and max_hours and _elapsed_hours(iterate_started) > max_hours:
-                    stopped_reason = "max_hours"
-                    break
-
-                # ---- launch + 轮询（复用 _poll_run：cancel/日志镜像/指标/超时 kill） ----
-                pid, command = await executor.launch_run()
-                log_path = experiments_service.append_local_log(experiment.id, seq, "")
-                run = ExperimentRun(
-                    experiment_id=experiment.id,
-                    seq=seq,
-                    command=command,
-                    status="running",
-                    pid=pid,
-                    log_path=str(log_path),
-                    started_at=utcnow(),
-                )
-                session.add(run)
-                await session.commit()
-                await session.refresh(run)
-                observation = await _poll_run(ctx, session, executor, experiment, run, max_hours)
-                if observation.get("cancelled"):
-                    return {"cancelled": True, "rounds": rounds, "seq": seq}
-                next_seq = seq + 1
-                rounds += 1
-
-                # ---- 可选 workdir/metrics.json 合并（平台确定性解析，非 LLM） ----
-                metrics_text = await executor.read_metrics_json()
-                if metrics_text:
-                    extra_points = parse_metrics_json(metrics_text)
-                    if extra_points:
-                        run.metrics = merge_metrics(run.metrics, extra_points)
-                        experiment.metrics = merge_metrics(experiment.metrics, extra_points)
-
-                # ---- 主指标解析 + direction 感知比较 ----
-                primary_value = extract_primary_value(run.metrics, pm_name)
-                run.primary_value = primary_value
-                if primary_value is not None:
-                    if is_improvement(primary_value, best, pm_direction):
-                        best = primary_value
-                        state["no_improve_streak"] = 0
-                    else:
-                        state["no_improve_streak"] += 1
-                history.append(
-                    {
-                        "seq": seq,
-                        "status": run.status,
-                        "exit_code": run.exit_code,
-                        "primary_value": primary_value,
-                    }
-                )
-                experiment.iteration_state = dict(state)
-                await session.commit()
-
-                # ---- structured reflection（stage=experiment，JSON 校验重试 2） ----
-                log_lines, _ = experiments_service.read_local_log_tail(
-                    run.log_path, _LOG_TAIL_FOR_REFLECTION
-                )
-                hyp_count = len(plan.get("hypotheses", []))
-                reflection_user = (
-                    f"实验计划：{json.dumps(plan, ensure_ascii=False)[:4000]}\n"
-                    f"主指标：{json.dumps(pm, ensure_ascii=False)}（假设共 {hyp_count} 条）\n"
-                    f"本轮运行：seq={seq} status={run.status} exit_code={run.exit_code} "
-                    f"primary_value={primary_value}\n"
-                    f"历史各轮：{json.dumps(history, ensure_ascii=False)}\n"
-                    f"迭代状态：无提升连续 {state['no_improve_streak']} 轮，"
-                    f"debug 已用 {state['debug_count']}/{MAX_DEBUG_FIXES} 次\n"
-                    f"本轮日志尾部：\n" + "\n".join(log_lines)
-                )
-                reflection = await _complete_json(
-                    ctx,
-                    system=REFLECTION_SYSTEM_PROMPT,
-                    user=reflection_user,
-                    validate=validate_reflection,
-                )
-                run.reflection = reflection
-
-                # ---- 假设回写 + iteration_state 持续落库 ----
-                plan = _apply_hypothesis_updates(plan, reflection["hypothesis_updates"])
-                experiment.plan = plan
-                experiment.iteration_state = dict(state)
-                await session.commit()
-
-                # ---- decision 分支与终止条件（五项，docs/api-m5-a.md §1） ----
-                decision = reflection["decision"]
-                hyps = plan.get("hypotheses", [])
-                if decision == "stop":
-                    stopped_reason = reflection.get("stop_reason") or "decision_stop"
-                    break
-                if hyps and all(h.get("status") != "testing" for h in hyps):
-                    stopped_reason = "hypotheses_resolved"
-                    break
-                if state["no_improve_streak"] >= no_improve_stop:
-                    stopped_reason = "no_improve"
-                    break
-                if max_runs and seq >= max_runs:
-                    stopped_reason = "max_runs"
-                    break
-                if max_hours and _elapsed_hours(iterate_started) > max_hours:
-                    stopped_reason = "max_hours"
-                    break
-                if decision == "debug":
-                    if state["debug_count"] >= MAX_DEBUG_FIXES:
-                        stopped_reason = "debug_limit"
-                        break
-                    state["debug_count"] += 1
-                    experiment.iteration_state = dict(state)
-                    await session.commit()
-
-                # ---- improve / debug：LLM 改文件（diff 说明进 prompt）→ SSH 覆写 ----
-                system_prompt = _prompt_with_context(
-                    DEBUG_SYSTEM_PROMPT if decision == "debug" else IMPROVE_SYSTEM_PROMPT, ctx
-                )
-                fix_user = (
-                    f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
-                    f"reflection 观察：{reflection['observation']}\n"
-                    f"诊断：{reflection['diagnosis']}\n"
-                    f"planned_change（修改说明）：{reflection.get('planned_change') or '（无）'}\n"
-                    f"本轮 exit_code：{run.exit_code}\n"
-                    f"本轮日志尾部：\n" + "\n".join(log_lines[-20:])
-                )
-                files = await _complete_json(
-                    ctx, system=system_prompt, user=fix_user, validate=validate_files
-                )
-                await executor.write_files(files)
-
-                # ---- checkpoint 记轮次进度（断点安全） ----
-                ctx.checkpoint["exp_files"] = files
-                iterate_cp["last_completed_seq"] = seq
-                ctx.checkpoint["iterate"] = iterate_cp
-                await _persist_checkpoint(session, ctx)
-        finally:
-            await executor.close()
-
-        state["stopped_reason"] = stopped_reason
+        # 假设回写 + iteration_state 落库
+        plan = _apply_hypothesis_updates(plan, reflection["hypothesis_updates"])
+        experiment.plan = plan
         experiment.iteration_state = dict(state)
         await session.commit()
-        iterate_cp["stopped_reason"] = stopped_reason
-        ctx.checkpoint["iterate"] = iterate_cp
-        await _persist_checkpoint(session, ctx)
 
-    return {
-        "rounds": rounds,
-        "total_runs": len(history),
-        "stopped_reason": stopped_reason,
-        "primary_values": [h["primary_value"] for h in history],
-        "iteration_state": state,
-    }
+        # decision 分支与终止条件（顺序与原 iterate 一致，docs/api-m5-a.md §1）
+        decision = reflection["decision"]
+        hyps = plan.get("hypotheses", [])
+        iterate_cp = dict(ctx.checkpoint.get("iterate") or {})
+        iterate_started = (
+            datetime.fromisoformat(str(iterate_cp["started_at"]))
+            if iterate_cp.get("started_at")
+            else utcnow()
+        )
+        stopped_reason: str | None = None
+        if decision == "stop":
+            stopped_reason = reflection.get("stop_reason") or "decision_stop"
+        elif hyps and all(h.get("status") != "testing" for h in hyps):
+            stopped_reason = "hypotheses_resolved"
+        elif state["no_improve_streak"] >= no_improve_stop:
+            stopped_reason = "no_improve"
+        elif max_runs and run.seq >= max_runs:
+            stopped_reason = "max_runs"
+        elif max_hours and _elapsed_hours(iterate_started) > max_hours:
+            stopped_reason = "max_hours"
+        elif decision == "debug" and state["debug_count"] >= MAX_DEBUG_FIXES:
+            stopped_reason = "debug_limit"
+
+        if stopped_reason:
+            state["stopped_reason"] = stopped_reason
+            experiment.iteration_state = dict(state)
+            await session.commit()
+            iterate_cp["stopped_reason"] = stopped_reason
+            iterate_cp["last_completed_seq"] = run.seq
+            ctx.checkpoint["iterate"] = iterate_cp
+            return {
+                "seq": run.seq,
+                "decision": decision,
+                "rounds": len(runs),
+                "stopped_reason": stopped_reason,
+                "plan_signal": {"decision": "finish", "stopped_reason": stopped_reason},
+            }
+
+        if decision == "debug":
+            state["debug_count"] += 1
+            experiment.iteration_state = dict(state)
+            await session.commit()
+
+        # improve / debug：LLM 改文件（diff 说明进 prompt）→ SSH 覆写
+        files: dict[str, str] = dict(ctx.checkpoint.get("exp_files") or {})
+        system_prompt = _prompt_with_context(
+            DEBUG_SYSTEM_PROMPT if decision == "debug" else IMPROVE_SYSTEM_PROMPT, ctx
+        )
+        fix_user = (
+            f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
+            f"reflection 观察：{reflection['observation']}\n"
+            f"诊断：{reflection['diagnosis']}\n"
+            f"planned_change（修改说明）：{reflection.get('planned_change') or '（无）'}\n"
+            f"本轮 exit_code：{run.exit_code}\n"
+            f"本轮日志尾部：\n" + "\n".join(log_lines[-20:])
+        )
+        files = await _complete_json(
+            ctx, system=system_prompt, user=fix_user, validate=validate_files
+        )
+        executor = await _open_executor(session, ctx, experiment)
+        try:
+            await executor.write_files(files)
+        finally:
+            await executor.close()
+        ctx.checkpoint["exp_files"] = files
+        iterate_cp["last_completed_seq"] = run.seq
+        ctx.checkpoint["iterate"] = iterate_cp
+
+        return {
+            "seq": run.seq,
+            "decision": decision,
+            "rounds": len(runs),
+            "plan_signal": {"decision": "continue", "next_round": run.seq + 1},
+        }
 
 
 async def _poll_run(
@@ -1347,6 +1391,8 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
         )
         await _set_status(ctx, session, experiment, final_status)
 
+    # voyage 级完成标准（done_criteria）断言该标记：防"过早宣告完成"
+    ctx.checkpoint["report_done"] = True
     return {
         "report_chars": len(experiment.report or ""),
         "final_status": final_status,

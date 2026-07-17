@@ -10,6 +10,7 @@ from typing import Any
 
 from app.agents.voyage.actions import known_actions
 from app.agents.voyage.checks import validate_checks
+from app.agents.voyage.plan_edit import experiment_round_nodes, validate_plan_edit
 from app.agents.voyage.skillset import skill_workflows
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
@@ -40,6 +41,24 @@ REPLAN_SYSTEM_PROMPT = """\
 "acceptance": "验收标准", "requires_gate": null}]}
 约束与初次规划相同；action 只能取：%(actions)s。
 输出的 steps 将替换原计划中失败步骤起的剩余部分。
+"""
+
+PLAN_EDIT_SYSTEM_PROMPT = """\
+POLARIS_PLAN_EDIT
+你是 Navigator，负责在某个步骤失败后对任务计划做增量编辑（docs/voyage-loop.md §5.3）。
+只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，两种形式二选一：
+1. 编辑计划：{"reason": "一句话说明", "edits": [
+   {"op": "add_nodes", "insert_after": "步骤id 或 null（null=插到失败位置）",
+    "nodes": [{"title": "...", "action": "动作名", "params": {}, "acceptance": "验收标准",
+    "requires_gate": null}]},
+   {"op": "update_node", "step_id": "...", "params": {}},
+   {"op": "obsolete_nodes", "step_ids": ["..."], "reason": "..."}]}
+2. 建议收束：{"finish": true, "reason": "..."}
+约束：
+- action 只能取：%(actions)s
+- 每个新节点必须带 acceptance；单次编辑新增节点 ≤ 8 个
+- 只能引用未完成的步骤 id；已通过/已作废的步骤不可编辑
+- 失败步骤会在编辑生效后自动作废，你只需给出替代/补充步骤
 """
 
 
@@ -236,9 +255,11 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
 
 def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """experiment 固定计划（docs/api-m5-a.md §1）：
-    计划 →（compute_budget 闸门）建环境 → 冒烟 → 自动迭代 → 图表 → 报告。
-    固定管线不重规划：所有步骤 on_failure="fail"，失败即 voyage failed。
+    """experiment 启动计划（docs/voyage-loop.md §7）：
+    计划 →（compute_budget 闸门）建环境 → 冒烟 → 第 1 轮运行 → 第 1 轮分析。
+    后续轮次由 experiment.analyze 的 plan_signal 走确定性分支表动态追加
+    （improve/debug → 下一轮 run+analyze；终止 → figures+report 收尾）。
+    环境/运行步骤 on_failure="fail"：执行异常即 voyage failed（实验由 _guarded 同步 failed）。
     """
     steps = [
         (
@@ -254,21 +275,8 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "compute_budget",
         ),
         ("冒烟测试", "experiment.smoke", "run.sh --smoke 退出码为 0", None),
-        (
-            "自动迭代（多轮运行 + reflection）",
-            "experiment.iterate",
-            "迭代已按终止条件结束，各轮 reflection 与主指标已落库",
-            None,
-        ),
-        (
-            "实验图表（脚本生成 + VLM 质检）",
-            "experiment.figures",
-            "figures 已生成、拉回本地并写入 Experiment.figures",
-            None,
-        ),
-        ("实验报告（LLM）", "experiment.report", "markdown 报告已写入 Experiment.report", None),
     ]
-    return [
+    head = [
         {
             "title": title,
             "action": action,
@@ -283,6 +291,23 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
         }
         for title, action, acceptance, gate in steps
     ]
+    return head + experiment_round_nodes(1)
+
+
+# voyage 级完成标准（docs/voyage-loop.md §5.4）：engine 在规划时写入 run.done_criteria。
+# experiment 防"过早宣告完成"：迭代必须有明确终止判定、报告必须已生成
+_DONE_CRITERIA_BY_KIND: dict[str, dict[str, Any]] = {
+    "experiment": {
+        "checks": [
+            {"kind": "artifact_exists", "key": "iterate.stopped_reason"},
+            {"kind": "artifact_exists", "key": "report_done"},
+        ]
+    },
+}
+
+
+def done_criteria_for_kind(kind: str) -> dict[str, Any] | None:
+    return _DONE_CRITERIA_BY_KIND.get(kind)
 
 
 _WRITING_SECTION_TITLES = {
@@ -597,3 +622,41 @@ class Navigator:
             f"失败诊断：{diagnosis}"
         )
         return await self._ask_for_steps(run, system, user_prompt)
+
+    async def on_result(
+        self,
+        run: VoyageRun,
+        failed_step: dict[str, Any],
+        diagnosis: str,
+        plan_state: str,
+    ) -> dict[str, Any]:
+        """loop 模式失败回灌：LLM 产出**计划编辑**而非替换尾部（docs/voyage-loop.md §5.3）。
+
+        输出经 validate_plan_edit 严格校验（schema / 动作注册表 / 新增节点上限 /
+        新节点必须带验收）；连续非法抛 NavigatorError（engine 转 paused_error）。
+        """
+        system = PLAN_EDIT_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
+        user_prompt = (
+            f"目标：{run.goal}\n"
+            f"当前计划状态：\n{plan_state}\n"
+            f"失败步骤：{json.dumps(failed_step, ensure_ascii=False, default=str)}\n"
+            f"失败诊断：{diagnosis}"
+        )
+        last_error: Exception | None = None
+        for _attempt in range(_MAX_ATTEMPTS):
+            result = await self._llm.complete(
+                "navigator",
+                [
+                    Message(role="system", content=system),
+                    Message(role="user", content=user_prompt),
+                ],
+                user_id=run.created_by,
+                project_id=run.project_id,
+                voyage_id=run.id,
+            )
+            try:
+                data = _extract_json(result.content)
+                return validate_plan_edit(data, step_validator=validate_steps)
+            except (ValueError, json.JSONDecodeError) as e:
+                last_error = e
+        raise NavigatorError(f"navigator produced invalid plan edit: {last_error}")

@@ -1,6 +1,7 @@
 """Experiment Lab 全流程测试：fake LLM + MockSSH 全离线，直接驱动 VoyageEngine。
 
-覆盖：plan→gate→approve→setup→smoke（失败修复重试）→iterate（3 轮 improve/stop）→
+覆盖：plan→gate→approve→setup→smoke（失败修复重试）→run/analyze 轮次（3 轮 improve/stop，
+plan_signal 动态追加节点）→
 figures→report→done、预算超时 kill、协作式 cancel（轮询循环内）、cancel API、
 闸门驳回联动、白名单越界拒绝、创建校验（idea promoted / 凭据归属）与成员权限。
 迭代/图表的专项用例见 test_experiment_iterate.py（docs/api-m5-a.md §6）。
@@ -171,24 +172,31 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     assert gate["payload"]["voyage_id"] == voyage_id
     assert ("resume_voyage", (voyage_id,), {}) in queue_stub.jobs
 
-    # 阶段二：setup → smoke → iterate → figures → report → done
+    # 阶段二：setup → smoke → 轮次（run+analyze 由 plan_signal 动态追加）→ figures → report
     await engine.resume(uuid.UUID(voyage_id))
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
     assert voyage["status"] == "done", voyage
-    assert [s["status"] for s in voyage["steps"]] == ["passed"] * 6
+    # 3 轮 improve→improve→stop：每轮是可见的 run+analyze 节点（docs/voyage-loop.md §7）
+    assert [s["status"] for s in voyage["steps"]] == ["passed"] * 11
     assert [s["action"] for s in voyage["steps"]] == [
         "experiment.plan",
         "experiment.setup",
         "experiment.smoke",
-        "experiment.iterate",
+        "experiment.run",
+        "experiment.analyze",
+        "experiment.run",
+        "experiment.analyze",
+        "experiment.run",
+        "experiment.analyze",
         "experiment.figures",
         "experiment.report",
     ]
-    iterate_step = voyage["steps"][3]
-    assert iterate_step["observation"]["rounds"] == 3
-    assert iterate_step["observation"]["stopped_reason"] == "假设已全部有结论（fake）"
+    last_analyze = voyage["steps"][8]
+    assert last_analyze["observation"]["rounds"] == 3
+    assert last_analyze["observation"]["stopped_reason"] == "假设已全部有结论（fake）"
+    assert last_analyze["observation"]["plan_signal"]["decision"] == "finish"
 
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     detail = resp.json()
@@ -378,7 +386,7 @@ async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_record
     assert detail["runs"][0]["status"] == "failed"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["status"] == "failed"
-    run_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.iterate")
+    run_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.run")
     assert "max_hours" in run_step["observation"]["error"]
 
 
