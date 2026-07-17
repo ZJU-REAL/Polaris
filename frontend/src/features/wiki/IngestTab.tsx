@@ -281,9 +281,9 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             onChange={setMonthsBack}
           />
           <KnobRange
-            label="最大精读篇数"
+            label="最大检索篇数"
             en="max_papers"
-            hint="本次最多下载 PDF 并精读编译的论文数（成本上限）。"
+            hint="本次检索与参考文献扩展的收录规模上限，也是任务成本上限（候选按其 3 倍检索）。"
             value={maxPapers}
             min={10}
             max={300}
@@ -313,9 +313,9 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             />
           </FormField>
           <KnobRange
-            label="精读编译 Top-N"
+            label="最大编译篇数"
             en="compile_top_n"
-            hint="打分排序后取前 N 篇交给 Librarian 编译 wiki。"
+            hint="打分排序后取前 N 篇下载 PDF 并精读编译，不超过最大检索篇数。"
             value={compileTopN}
             min={5}
             max={100}
