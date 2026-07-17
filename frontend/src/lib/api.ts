@@ -250,6 +250,46 @@ export interface VoyageVerdict {
   reason: string;
 }
 
+/** 结构化验收检查项；kind: no_error / exit_code / artifact_exists / schema_valid / metric / min_count / llm_rubric（未知 kind 前端原样展示）。 */
+export interface VoyageAcceptanceCheck {
+  kind: string;
+  /** exit_code / metric / min_count */
+  value?: unknown;
+  /** artifact_exists */
+  key?: string;
+  /** schema_valid / min_count */
+  field?: string;
+  required_keys?: string[];
+  /** metric */
+  name?: string;
+  op?: string;
+  /** llm_rubric */
+  rubric?: string;
+  [extra: string]: unknown;
+}
+
+/** 步骤验收标准：这一步"怎样算通过"（text 为大白话补充说明）。 */
+export interface VoyageAcceptance {
+  text?: string | null;
+  checks?: VoyageAcceptanceCheck[] | null;
+}
+
+/** 单次尝试的归档（attempt 从 1 起）。 */
+export interface VoyageStepAttempt {
+  attempt: number;
+  observation: unknown;
+  verdict: VoyageVerdict | null;
+  tokens: unknown;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** 步骤溯源：第几次计划调整创建了它（0 = 初始计划）。 */
+export interface VoyageStepProvenance {
+  plan_iteration: number;
+  [extra: string]: unknown;
+}
+
 export interface VoyageStepRead {
   id: string;
   /** 创建序（不可变锚点，计划调整后可能不连续） */
@@ -261,11 +301,19 @@ export interface VoyageStepRead {
   title: string;
   action: string;
   params: unknown;
+  /** 验收标准（可能缺失：老数据 / pipeline 简单步骤） */
+  acceptance?: VoyageAcceptance | null;
+  /** 非空 = 该步需人工审批（如 compute_budget） */
+  requires_gate?: string | null;
+  /** 溯源：哪次计划调整创建了它 */
+  provenance?: VoyageStepProvenance | null;
   observation: unknown;
   verdict: VoyageVerdict | null;
   status: string;
   /** 后端为 {prompt_tokens, completion_tokens} 字典（历史数据可能是数字） */
   tokens: { prompt_tokens?: number; completion_tokens?: number } | number | null;
+  /** 每次尝试的归档（>1 条 = 出错后重试过） */
+  attempts?: VoyageStepAttempt[] | null;
   started_at: string | null;
   finished_at: string | null;
 }
@@ -289,10 +337,24 @@ export interface VoyageRead {
   updated_at: string;
 }
 
+/** 一次计划调整的留痕（source: signal=执行结果规则分支 / navigator=AI 调整 / template=模板分支）。 */
+export interface VoyagePlanEvent {
+  iteration: number;
+  source: 'signal' | 'navigator' | 'template' | (string & {});
+  reason: string;
+  added: number;
+  obsoleted: number;
+  /** 触发调整的步骤标题 */
+  trigger_step: string | null;
+  at: string | null;
+}
+
 export interface VoyageDetail extends VoyageRead {
   steps: VoyageStepRead[];
   /** 本次任务快照使用的技能（启动时固定，见 docs/skill-system.md §3.2）。 */
   skills?: { slug: string; name: string; kind: string; version: number; target: string }[];
+  /** 计划调整历史（无调整为 [] / 缺失） */
+  plan_history?: VoyagePlanEvent[] | null;
 }
 
 // ============================================================

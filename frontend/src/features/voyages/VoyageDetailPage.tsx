@@ -8,17 +8,26 @@ import { toast } from '../../components/ui/Toast';
 import { useShell } from '../../app/AppShell';
 import { subscribeSse } from '../../lib/sse';
 import { fmtDuration, fmtTime, fmtTokens } from '../../lib/format';
+import { tr } from '../../lib/i18n';
 import {
   api,
   ApiError,
   VOYAGE_TERMINAL,
+  type VoyageAcceptance,
+  type VoyageAcceptanceCheck,
   type VoyageDetail,
+  type VoyagePlanEvent,
   type VoyageStatus,
+  type VoyageStepAttempt,
   type VoyageStepRead,
 } from '../../lib/api';
 
 /* ============================================================
-   /voyages/:id — 航程详情：状态机进度条 + 步骤时间线 + SSE 实时。
+   /voyages/:id — 任务详情：循环感知的活动状态 + 步骤时间线 + SSE 实时。
+   体现背后 agent 的「规划 → 执行 → 校验 → 按结果调整计划」循环：
+   - 顶部显示当前活动的一句话（而非线性四段进度条）与执行方式徽标；
+   - 步骤卡展示验收标准、判定理由、来源（第几次调整新增）、尝试记录；
+   - 时间线按 plan_history 插入「计划调整」分隔条目，解释为什么多出新步骤。
    活动状态订阅 /voyages/{id}/events，事件与 TanStack Query 缓存合并。
    ============================================================ */
 
@@ -31,79 +40,152 @@ function stepTokenCount(tokens: VoyageStepRead['tokens']): number | null {
   return null;
 }
 
-// —— 状态机进度条 ——
+function asObj(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
 
-const MACHINE = [
-  { key: 'planning', zh: '规划', en: 'planning' },
-  { key: 'executing', zh: '执行', en: 'executing' },
-  { key: 'verifying', zh: '校验', en: 'verifying' },
-  { key: 'done', zh: '完成', en: 'done' },
-] as const;
+function num(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
 
-function machineIndex(status: VoyageStatus): number {
-  switch (status) {
+// —— 顶部状态区：执行方式徽标 + 当前活动 ——
+
+/** mode → 大白话标签与说明（模块级常量只存 zh/en 字段，渲染处再 tr）。 */
+const MODE_INFO: Record<string, { zh: string; en: string; hintZh: string; hintEn: string }> = {
+  pipeline: {
+    zh: '固定流程',
+    en: 'Fixed pipeline',
+    hintZh: '步骤在创建时已完全确定，按固定顺序执行，不会中途调整计划',
+    hintEn: 'Steps are fully fixed at creation and run in order; the plan never changes mid-run',
+  },
+  template: {
+    zh: '模板流程',
+    en: 'Template flow',
+    hintZh: '按预设模板执行，在预设的分支点根据执行结果补充后续步骤',
+    hintEn: 'Runs from a preset template; follow-up steps are added at preset branch points based on results',
+  },
+  loop: {
+    zh: 'AI 动态规划',
+    en: 'AI dynamic planning',
+    hintZh: 'AI 规划步骤并循环推进：每步执行后自动校验，再按结果动态调整后续计划',
+    hintEn: 'AI plans the steps and runs a loop: each step is auto-checked, then the remaining plan is adjusted based on results',
+  },
+};
+
+function ModeBadge({ mode }: { mode: string }) {
+  const m = MODE_INFO[mode];
+  if (!m) return null;
+  return (
+    <span
+      className="pill sm"
+      style={{ background: 'var(--surface-3)', color: 'var(--text-2)', flexShrink: 0 }}
+      title={tr(m.hintZh, m.hintEn)}
+    >
+      <Icon name={mode === 'loop' ? 'sparkle' : 'layers'} size={11} />
+      {tr(m.zh, m.en)}
+    </span>
+  );
+}
+
+/** 从 status + cursor + steps 推导当前活动的一句话。 */
+function activityText(voyage: VoyageDetail, steps: VoyageStepRead[]): string {
+  const live = steps.filter((s) => s.status !== 'obsolete');
+  let curIdx = live.findIndex((s) => s.status === 'running' || s.status === 'verifying');
+  if (curIdx < 0 && typeof voyage.cursor === 'number' && voyage.cursor >= 0 && voyage.cursor < live.length) {
+    curIdx = voyage.cursor;
+  }
+  const cur = curIdx >= 0 ? live[curIdx] : null;
+  const stepRef = cur
+    ? tr(`第 ${curIdx + 1} 步 · ${cur.title}`, `step ${curIdx + 1} · ${cur.title}`)
+    : null;
+
+  switch (voyage.status) {
     case 'planning':
-      return 0;
-    case 'executing':
-    case 'replanning':
-    case 'paused_gate':
-    case 'paused_error':
-      return 1;
+      return tr('AI 正在规划步骤…', 'AI is planning the steps…');
+    case 'executing': {
+      if (!stepRef) return tr('正在执行步骤…', 'Executing steps…');
+      const runSuffix =
+        cur && cur.attempt > 1
+          ? tr(`（第 ${cur.attempt} 次运行）`, ` (run ${cur.attempt})`)
+          : '';
+      return tr(`正在执行：${stepRef}${runSuffix}`, `Executing ${stepRef}${runSuffix}`);
+    }
     case 'verifying':
-      return 2;
-    case 'done':
+      return stepRef
+        ? tr(`正在校验：${stepRef}`, `Checking ${stepRef}`)
+        : tr('正在校验执行结果…', 'Checking results…');
+    case 'replanning':
+      return tr(
+        `正在调整计划（第 ${(voyage.plan_iteration ?? 0) + 1} 次）…`,
+        `Adjusting the plan (adjustment ${(voyage.plan_iteration ?? 0) + 1})…`,
+      );
+    case 'paused_gate':
+      return tr('已暂停：等待人工审批', 'Paused: waiting for approval');
+    case 'paused_error':
+      return tr('已暂停：执行出错', 'Paused: an error occurred');
+    case 'done': {
+      const passed = live.filter((s) => s.status === 'passed').length;
+      const adj = voyage.plan_iteration ?? 0;
+      return (
+        tr(`任务完成：共执行 ${passed} 步`, `Task finished: ${passed} steps completed`) +
+        (adj > 0 ? tr(`，期间计划调整 ${adj} 次`, `; the plan was adjusted ${adj} time(s)`) : '')
+      );
+    }
     case 'failed':
+      return tr('任务失败', 'Task failed');
     case 'cancelled':
-      return 3;
+      return tr('任务已取消', 'Task cancelled');
   }
 }
 
-function MachineBar({ status, onOpenGates, onResume, resuming }: { status: VoyageStatus; onOpenGates: () => void; onResume?: () => void; resuming?: boolean }) {
-  const idx = machineIndex(status);
-  const paused = status === 'paused_gate';
-  const errored = status === 'paused_error' || status === 'failed' || status === 'cancelled';
+function activityDot(status: VoyageStatus): { color: string; pulse: boolean } {
+  switch (status) {
+    case 'paused_gate':
+      return { color: 'var(--warn-tx)', pulse: false };
+    case 'paused_error':
+    case 'failed':
+      return { color: 'var(--danger-tx)', pulse: false };
+    case 'done':
+      return { color: 'var(--ok)', pulse: false };
+    case 'cancelled':
+      return { color: 'var(--text-4)', pulse: false };
+    default:
+      return { color: 'var(--accent)', pulse: true };
+  }
+}
+
+function ActivityBar({
+  voyage,
+  steps,
+  onOpenGates,
+  onResume,
+  resuming,
+}: {
+  voyage: VoyageDetail;
+  steps: VoyageStepRead[];
+  onOpenGates: () => void;
+  onResume?: () => void;
+  resuming?: boolean;
+}) {
+  const status = voyage.status;
+  const dot = activityDot(status);
+  const live = steps.filter((s) => s.status !== 'obsolete');
+  const passed = live.filter((s) => s.status === 'passed').length;
   return (
     <div>
-      <div className="sm-bar">
-        {MACHINE.map((m, i) => {
-          const isCur = i === idx;
-          const isDone = i < idx || (i === idx && status === 'done');
-          let bg = 'var(--surface-3)';
-          let color = 'var(--text-3)';
-          if (isDone) {
-            bg = 'var(--ok-bg)';
-            color = 'var(--ok-tx)';
-          }
-          if (isCur && status !== 'done') {
-            if (paused) {
-              bg = 'var(--warn-bg)';
-              color = 'var(--warn-tx)';
-            } else if (errored) {
-              bg = 'var(--danger-bg)';
-              color = 'var(--danger-tx)';
-            } else {
-              bg = 'var(--accent)';
-              color = '#fff';
-            }
-          }
-          return (
-            <div key={m.key} className="row" style={{ flex: i < MACHINE.length - 1 ? 1 : 'none' }}>
-              <span
-                className={'sm-node' + (isCur && !paused && !errored && status !== 'done' ? ' pulse' : '')}
-                style={{ background: bg, color }}
-              >
-                {isDone ? <Icon name="check" size={11} /> : null}
-                {m.zh}
-                <span style={{ opacity: 0.7, fontSize: '0.88em' }}>{m.en}</span>
-              </span>
-              {i < MACHINE.length - 1 && (
-                <span className="sm-link" style={{ background: i < idx ? 'var(--ok)' : 'var(--border-2)' }} />
-              )}
-            </div>
-          );
-        })}
+      <div className="row gap10" style={{ flexWrap: 'wrap' }}>
+        <span className={'dot' + (dot.pulse ? ' pulse' : '')} style={{ background: dot.color, flexShrink: 0 }} />
+        <span style={{ fontSize: 13.5, fontWeight: 650, minWidth: 0 }}>{activityText(voyage, steps)}</span>
+        <div className="row gap8" style={{ marginLeft: 'auto' }}>
+          {live.length > 0 && (
+            <span className="mono muted" style={{ fontSize: 11 }}>
+              {tr(`已完成 ${passed}/${live.length} 步`, `${passed}/${live.length} steps done`)}
+            </span>
+          )}
+          <ModeBadge mode={voyage.mode} />
+        </div>
       </div>
-      {paused && (
+      {status === 'paused_gate' && (
         <div
           className="row gap8"
           style={{
@@ -117,19 +199,19 @@ function MachineBar({ status, onOpenGates, onResume, resuming }: { status: Voyag
           }}
         >
           <Icon name="gate" size={15} />
-          任务已暂停，等待人工审批后继续。
+          {tr('任务已暂停，等待人工审批后继续。', 'Task paused — it will continue after approval.')}
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
-            前往审批
+            {tr('前往审批', 'Go to approvals')}
           </button>
         </div>
       )}
       {status === 'paused_error' && (
         <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 12.5 }}>
           <Icon name="x" size={14} />
-          任务因错误暂停：暂时性故障可直接重试；若是程序问题，修复后再重试，已完成的步骤不会重跑。
+          {tr('任务因错误暂停：暂时性故障可直接重试；若是程序问题，修复后再重试，已完成的步骤不会重跑。', 'Task paused on an error. Retry directly for transient failures; for code issues, fix first then retry — finished steps will not rerun.')}
           {onResume && (
             <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} disabled={resuming} onClick={onResume}>
-              {resuming ? '重试中…' : '重试恢复'}
+              {resuming ? tr('重试中…', 'Retrying…') : tr('重试恢复', 'Retry & resume')}
             </button>
           )}
         </div>
@@ -154,8 +236,8 @@ function PresentationDownload({ voyageId, goal }: { voyageId: string; goal: stri
     onError: (e) =>
       toast(
         e instanceof ApiError && e.message === 'FILE_NOT_READY'
-          ? '文件还没生成好，稍后再试'
-          : `下载失败：${e instanceof Error ? e.message : String(e)}`,
+          ? tr('文件还没生成好，稍后再试', 'File not ready yet — try again shortly')
+          : `${tr('下载失败：', 'Download failed: ')}${e instanceof Error ? e.message : String(e)}`,
         'error',
       ),
   });
@@ -166,7 +248,7 @@ function PresentationDownload({ voyageId, goal }: { voyageId: string; goal: stri
       onClick={() => downloadMutation.mutate()}
     >
       <Icon name="download" size={13} />
-      {downloadMutation.isPending ? '下载中…' : '下载 PPT'}
+      {downloadMutation.isPending ? tr('下载中…', 'Downloading…') : tr('下载 PPT', 'Download PPT')}
     </button>
   );
 }
@@ -181,14 +263,6 @@ interface PaperBrief {
   score?: number;
   passed?: boolean;
   pdf?: boolean;
-}
-
-function asObj(v: unknown): Record<string, unknown> | null {
-  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-}
-
-function num(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
 function briefsOf(v: unknown): PaperBrief[] {
@@ -217,54 +291,71 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
   switch (action) {
     case 'wiki.search_candidates':
       return {
-        text: `从 arXiv 检索到 ${num(obs.found)} 篇，去重后新收录 ${num(obs.inserted)} 篇`,
+        text: tr(
+          `从 arXiv 检索到 ${num(obs.found)} 篇，去重后新收录 ${num(obs.inserted)} 篇`,
+          `Found ${num(obs.found)} papers on arXiv; ${num(obs.inserted)} new after dedup`,
+        ),
         papers: briefsOf(obs.new_papers),
       };
     case 'wiki.snowball':
-      if (obs.skipped) return { text: '已跳过（未开启参考文献扩展）', papers: [] };
+      if (obs.skipped) return { text: tr('已跳过（未开启参考文献扩展）', 'Skipped (reference expansion is off)'), papers: [] };
       return {
         text:
-          `顺着 ${num(obs.processed)} 篇种子论文的参考文献与引用扩展，新收录 ${num(obs.inserted)} 篇` +
-          (failedCount ? `（${failedCount} 篇种子查询失败）` : ''),
+          tr(
+            `顺着 ${num(obs.processed)} 篇种子论文的参考文献与引用扩展，新收录 ${num(obs.inserted)} 篇`,
+            `Expanded references and citations of ${num(obs.processed)} seed papers; ${num(obs.inserted)} new papers added`,
+          ) +
+          (failedCount ? tr(`（${failedCount} 篇种子查询失败）`, ` (${failedCount} seed lookups failed)`) : ''),
         papers: briefsOf(obs.new_papers),
       };
     case 'wiki.score_relevance': {
       const passed = num(obs.succeeded) - num(obs.excluded);
       return {
         text:
-          `AI 按研究方向给 ${num(obs.processed)} 篇候选论文打了相关性分：` +
-          `${passed} 篇通过，${num(obs.excluded)} 篇相关性不足自动删除` +
-          (failedCount ? `，${failedCount} 篇打分失败` : ''),
+          tr(
+            `AI 按研究方向给 ${num(obs.processed)} 篇候选论文打了相关性分：${passed} 篇通过，${num(obs.excluded)} 篇相关性不足自动删除`,
+            `AI scored ${num(obs.processed)} candidate papers against the research direction: ${passed} passed, ${num(obs.excluded)} removed as not relevant enough`,
+          ) +
+          (failedCount ? tr(`，${failedCount} 篇打分失败`, `; ${failedCount} failed to score`) : ''),
         papers: briefsOf(obs.scored_papers),
       };
     }
     case 'wiki.fetch_extract':
       return {
         text:
-          `为 ${num(obs.processed)} 篇高分论文下载 PDF 并提取全文` +
-          (num(obs.degraded) ? `，${num(obs.degraded)} 篇没拿到原文（后续用摘要代替）` : ''),
+          tr(
+            `为 ${num(obs.processed)} 篇高分论文下载 PDF 并提取全文`,
+            `Downloaded PDFs and extracted full text for ${num(obs.processed)} high-scoring papers`,
+          ) +
+          (num(obs.degraded)
+            ? tr(`，${num(obs.degraded)} 篇没拿到原文（后续用摘要代替）`, `; ${num(obs.degraded)} had no full text (abstract used instead)`)
+            : ''),
         papers: briefsOf(obs.fetched_papers),
       };
     case 'wiki.compile':
       return {
         text:
-          `AI 精读并编译了 ${num(obs.succeeded)} 篇论文介绍` +
-          (failedCount ? `，${failedCount} 篇失败（下次同步会重试）` : ''),
+          tr(`AI 精读并编译了 ${num(obs.succeeded)} 篇论文介绍`, `AI read and compiled intros for ${num(obs.succeeded)} papers`) +
+          (failedCount ? tr(`，${failedCount} 篇失败（下次同步会重试）`, `; ${failedCount} failed (will retry next sync)`) : ''),
         papers: briefsOf(obs.compiled_papers),
       };
     case 'wiki.link_concepts':
       return {
-        text:
-          `从编译的介绍中整理概念：新增 ${num(obs.concepts_created)} 个概念，` +
-          `建立 ${num(obs.links_created)} 条论文—概念关联`,
+        text: tr(
+          `从编译的介绍中整理概念：新增 ${num(obs.concepts_created)} 个概念，建立 ${num(obs.links_created)} 条论文—概念关联`,
+          `Organized concepts from the compiled intros: ${num(obs.concepts_created)} new concepts, ${num(obs.links_created)} paper–concept links`,
+        ),
         papers: [],
         concepts: namesOf(obs.new_concepts),
       };
     case 'wiki.update_watermark':
       return {
         text: obs.watermark
-          ? `已记录本次同步时间，下次增量同步从 ${String(obs.watermark).slice(0, 10)} 附近继续`
-          : '已记录本次同步时间',
+          ? tr(
+              `已记录本次同步时间，下次增量同步从 ${String(obs.watermark).slice(0, 10)} 附近继续`,
+              `Sync time recorded — the next incremental sync resumes from around ${String(obs.watermark).slice(0, 10)}`,
+            )
+          : tr('已记录本次同步时间', 'Sync time recorded'),
         papers: [],
       };
     default:
@@ -309,7 +400,7 @@ function StepPaperList({ papers }: { papers: PaperBrief[] }) {
             </span>
           )}
           {p.pdf === false && (
-            <span className="mono" style={{ fontSize: 10, color: 'var(--warn-tx)', flexShrink: 0 }}>无 PDF</span>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--warn-tx)', flexShrink: 0 }}>{tr('无 PDF', 'no PDF')}</span>
           )}
         </div>
       ))}
@@ -318,7 +409,7 @@ function StepPaperList({ papers }: { papers: PaperBrief[] }) {
           onClick={() => setOpen(!open)}
           style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, color: 'var(--accent-text)', textAlign: 'left' }}
         >
-          {open ? '收起' : `展开全部 ${papers.length} 篇`}
+          {open ? tr('收起', 'Collapse') : tr(`展开全部 ${papers.length} 篇`, `Show all ${papers.length} papers`)}
         </button>
       )}
     </div>
@@ -365,10 +456,10 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
   if (!search && !compile) return null;
 
   const stats: { label: string; value: number }[] = [];
-  if (search || snowball) stats.push({ label: '新收录论文', value: num(search?.inserted) + num(snowball?.inserted) });
-  if (score) stats.push({ label: '通过筛选', value: num(score.succeeded) - num(score.excluded) });
-  if (compile) stats.push({ label: '已编译', value: num(compile.succeeded) });
-  if (link) stats.push({ label: '新增概念', value: num(link.concepts_created) });
+  if (search || snowball) stats.push({ label: tr('新收录论文', 'New papers'), value: num(search?.inserted) + num(snowball?.inserted) });
+  if (score) stats.push({ label: tr('通过筛选', 'Passed screening'), value: num(score.succeeded) - num(score.excluded) });
+  if (compile) stats.push({ label: tr('已编译', 'Compiled'), value: num(compile.succeeded) });
+  if (link) stats.push({ label: tr('新增概念', 'New concepts'), value: num(link.concepts_created) });
   if (stats.length === 0) return null;
 
   return (
@@ -376,7 +467,7 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
       <div className="row" style={{ marginBottom: 10 }}>
         <span className="section-h">
           <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
-          本次同步结果 <span className="en-label" style={{ fontSize: 11 }}>Summary</span>
+          {tr('本次同步结果', 'Sync summary')}
         </span>
       </div>
       <div className="row" style={{ gap: 28, flexWrap: 'wrap' }}>
@@ -391,7 +482,223 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
   );
 }
 
+// —— 验收标准 / 判定 ——
+
+/** 结构化检查项 → 大白话（未知 kind 原样展示）。 */
+function checkText(c: VoyageAcceptanceCheck): string {
+  switch (c.kind) {
+    case 'no_error':
+      return tr('执行无报错', 'Runs without errors');
+    case 'exit_code':
+      return tr(`退出码为 ${String(c.value ?? 0)}`, `Exit code is ${String(c.value ?? 0)}`);
+    case 'artifact_exists':
+      return tr(`产物 ${String(c.key ?? '')} 已生成`, `Artifact ${String(c.key ?? '')} exists`);
+    case 'schema_valid': {
+      const keys = Array.isArray(c.required_keys) ? c.required_keys.join(', ') : '';
+      return tr(
+        `${String(c.field ?? '')} 结构完整${keys ? `（需包含 ${keys}）` : ''}`,
+        `${String(c.field ?? '')} has a valid structure${keys ? ` (must include ${keys})` : ''}`,
+      );
+    }
+    case 'metric':
+      return tr(
+        `指标 ${String(c.name ?? '')} ${String(c.op ?? '')} ${String(c.value ?? '')}`,
+        `Metric ${String(c.name ?? '')} ${String(c.op ?? '')} ${String(c.value ?? '')}`,
+      );
+    case 'min_count':
+      return tr(
+        `${String(c.field ?? '')} 数量 ≥ ${String(c.value ?? '')}`,
+        `${String(c.field ?? '')} count ≥ ${String(c.value ?? '')}`,
+      );
+    case 'llm_rubric':
+      return tr(`AI 按标准评审：${String(c.rubric ?? '')}`, `AI reviews against the rubric: ${String(c.rubric ?? '')}`);
+    default:
+      return c.kind;
+  }
+}
+
+/** 验收标准区：这一步"怎样算通过"，默认收起。 */
+function AcceptanceBlock({ acceptance }: { acceptance: VoyageAcceptance }) {
+  const [open, setOpen] = useState(false);
+  const checks = acceptance.checks ?? [];
+  if (checks.length === 0 && !acceptance.text) return null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        className="row gap6"
+        onClick={() => setOpen(!open)}
+        style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, fontWeight: 600, color: 'var(--text-3)' }}
+      >
+        <Icon name="chevDown" size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+        {checks.length > 0
+          ? tr(`验收标准（${checks.length} 项）`, `Pass criteria (${checks.length})`)
+          : tr('验收标准', 'Pass criteria')}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, padding: '8px 12px', background: 'var(--surface-2)', borderRadius: 8, fontSize: 12, lineHeight: 1.7, color: 'var(--text-2)' }}>
+          {checks.map((c, i) => (
+            <div key={i} className="row gap6" style={{ alignItems: 'flex-start' }}>
+              <Icon name="check" size={11} style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 4 }} />
+              <span style={{ minWidth: 0 }}>{checkText(c)}</span>
+            </div>
+          ))}
+          {acceptance.text && (
+            <div style={{ marginTop: checks.length > 0 ? 6 : 0, color: 'var(--text-3)', fontSize: 11.5 }}>
+              {acceptance.text}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// —— 计划调整（plan_history）——
+
+/** source → 大白话（模块级常量只存 zh/en，渲染处再 tr）。 */
+const PLAN_SOURCE: Record<string, { zh: string; en: string }> = {
+  signal: { zh: '按执行结果自动调整', en: 'Auto-adjusted by results' },
+  navigator: { zh: 'AI 调整计划', en: 'AI adjusted the plan' },
+  template: { zh: '按预设分支调整', en: 'Preset branch adjustment' },
+};
+
+/** 时间线里的「计划调整」分隔条目：解释为什么多出/作废了步骤。 */
+function PlanEventCard({ event }: { event: VoyagePlanEvent }) {
+  const src = PLAN_SOURCE[event.source];
+  return (
+    <div
+      style={{
+        padding: '10px 14px',
+        background: 'var(--accent-soft)',
+        borderRadius: 10,
+        fontSize: 12.5,
+        lineHeight: 1.6,
+      }}
+    >
+      <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 650, color: 'var(--accent-text)' }}>
+          <Icon name="refresh" size={12} style={{ display: 'inline-block', verticalAlign: '-1.5px', marginRight: 5 }} />
+          {tr(`计划调整 #${event.iteration}`, `Plan adjustment #${event.iteration}`)}
+        </span>
+        <span className="pill sm" style={{ background: 'var(--surface)', color: 'var(--text-2)' }}>
+          {src ? tr(src.zh, src.en) : event.source}
+        </span>
+        {event.at && <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 'auto' }}>{fmtTime(event.at)}</span>}
+      </div>
+      {event.reason && <div style={{ marginTop: 4, color: 'var(--text)' }}>{event.reason}</div>}
+      <div className="row gap10" style={{ marginTop: 4, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-3)' }}>
+        {event.added > 0 && <span>{tr(`新增 ${event.added} 步`, `${event.added} step(s) added`)}</span>}
+        {event.obsoleted > 0 && <span>{tr(`作废 ${event.obsoleted} 步`, `${event.obsoleted} step(s) dropped`)}</span>}
+        {event.trigger_step && (
+          <span>{tr(`由「${event.trigger_step}」触发`, `Triggered by “${event.trigger_step}”`)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 作废步骤的原因：找作废它的那次计划调整（iteration 大于其创建轮次且最接近的一条）。 */
+function obsoleteReasonOf(step: VoyageStepRead, events: VoyagePlanEvent[]): string {
+  const created = step.provenance?.plan_iteration ?? 0;
+  const ev = events
+    .filter((e) => e.iteration > created && e.obsoleted > 0)
+    .sort((a, b) => a.iteration - b.iteration)[0];
+  return ev?.reason
+    ? tr(`已作废：${ev.reason}`, `Dropped: ${ev.reason}`)
+    : tr('已作废：计划调整时被替换', 'Dropped: replaced during a plan adjustment');
+}
+
+// —— analyze 步骤的因果摘要（observation.plan_signal）——
+
+/** stopped_reason → 大白话（未收录原样展示）。 */
+const STOPPED_REASON: Record<string, { zh: string; en: string }> = {
+  no_improve: { zh: '连续无提升', en: 'no improvement across rounds' },
+  max_runs: { zh: '达到轮次上限', en: 'hit the round limit' },
+  max_hours: { zh: '达到时长上限', en: 'hit the time limit' },
+  debug_limit: { zh: '修复次数用尽', en: 'debug attempts exhausted' },
+  hypotheses_resolved: { zh: '假设已全部有结论', en: 'all hypotheses resolved' },
+};
+
+/** plan_signal → 一句因果摘要（为什么后面多了/没多新步骤）。 */
+function planSignalText(sig: Record<string, unknown>): string | null {
+  if (sig.decision === 'continue') {
+    const nr = num(sig.next_round);
+    return nr > 0
+      ? tr(`分析判定：继续迭代 → 已追加第 ${nr} 轮`, `Analysis verdict: keep iterating → round ${nr} appended`)
+      : tr('分析判定：继续迭代 → 已追加下一轮', 'Analysis verdict: keep iterating → next round appended');
+  }
+  if (sig.decision === 'finish') {
+    const raw = typeof sig.stopped_reason === 'string' ? sig.stopped_reason : '';
+    const m = STOPPED_REASON[raw];
+    const reasonZh = m ? m.zh : raw;
+    const reasonEn = m ? m.en : raw;
+    return tr(
+      `判定迭代结束${reasonZh ? `（${reasonZh}）` : ''} → 进入图表与报告`,
+      `Iteration finished${reasonEn ? ` (${reasonEn})` : ''} → moving on to figures & report`,
+    );
+  }
+  return null;
+}
+
+// —— 尝试记录（attempts 归档）——
+
+function AttemptsBlock({ attempts }: { attempts: VoyageStepAttempt[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        className="row gap6"
+        onClick={() => setOpen(!open)}
+        style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, fontWeight: 600, color: 'var(--text-3)' }}
+      >
+        <Icon name="chevDown" size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+        {open ? tr('收起尝试记录', 'Hide run history') : tr(`查看 ${attempts.length} 次尝试记录`, `Show ${attempts.length} runs`)}
+      </button>
+      {open && (
+        <div className="col" style={{ gap: 6, marginTop: 6 }}>
+          {attempts.map((a) => (
+            <div key={a.attempt} style={{ padding: '7px 12px', background: 'var(--surface-2)', borderRadius: 8, fontSize: 11.5, lineHeight: 1.6 }}>
+              <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+                <span className="mono" style={{ fontWeight: 650 }}>#{a.attempt}</span>
+                {a.started_at && (
+                  <span className="mono muted" style={{ fontSize: 10.5 }}>
+                    {fmtTime(a.started_at)}
+                    {a.finished_at ? ` – ${fmtTime(a.finished_at)} · ${fmtDuration(a.started_at, a.finished_at)}` : ''}
+                  </span>
+                )}
+                {a.verdict && (
+                  <span
+                    className="pill sm"
+                    style={
+                      a.verdict.passed
+                        ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)', marginLeft: 'auto' }
+                        : { background: 'var(--danger-bg)', color: 'var(--danger-tx)', marginLeft: 'auto' }
+                    }
+                  >
+                    {a.verdict.passed ? tr('通过', 'Passed') : tr('未通过', 'Failed')}
+                  </span>
+                )}
+              </div>
+              {a.verdict?.reason && (
+                <div style={{ marginTop: 3, color: a.verdict.passed ? 'var(--text-3)' : 'var(--danger-tx)' }}>
+                  {a.verdict.reason}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // —— 步骤卡 ——
+
+/** 需审批的类型 → 大白话（未知 kind 原样展示）。 */
+const GATE_KIND: Record<string, { zh: string; en: string }> = {
+  compute_budget: { zh: '算力预算', en: 'compute budget' },
+  experiment_pivot: { zh: '方法调整', en: 'method pivot' },
+};
 
 function stepMarker(step: VoyageStepRead): { bg: string; color: string } {
   if (step.status === 'obsolete') return { bg: 'var(--surface-3)', color: 'var(--text-4)' };
@@ -427,7 +734,7 @@ function ObservationBlock({ observation, compact }: { observation: unknown; comp
         style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, fontWeight: 600, color: 'var(--text-3)' }}
       >
         <Icon name="chevDown" size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
-        {compact ? '原始数据 raw' : '观察 observation'}
+        {compact ? tr('原始数据', 'Raw data') : tr('运行结果数据', 'Result data')}
       </button>
       {/* 有可读摘要（compact）时原始 JSON 只在展开后出现 */}
       {(open || !compact) && (
@@ -439,10 +746,15 @@ function ObservationBlock({ observation, compact }: { observation: unknown; comp
   );
 }
 
-function StepCard({ step }: { step: VoyageStepRead }) {
+function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvents: VoyagePlanEvent[] }) {
   const obs = asObj(step.observation);
   const friendly = obs ? wikiStepFriendly(step.action, obs) : null;
   const obsolete = step.status === 'obsolete';
+  const planIter = step.provenance?.plan_iteration ?? 0;
+  const gateKind = step.requires_gate ? GATE_KIND[step.requires_gate] : null;
+  const signal = obs ? asObj(obs.plan_signal) : null;
+  const signalText = signal ? planSignalText(signal) : null;
+  const attempts = step.attempts ?? [];
   return (
     <div className="card" style={{ padding: '14px 16px', opacity: obsolete ? 0.55 : 1 }}>
       <div className="row gap8" style={{ flexWrap: 'wrap' }}>
@@ -450,9 +762,28 @@ function StepCard({ step }: { step: VoyageStepRead }) {
           {step.title}
         </span>
         <span className="tag mono" style={{ fontSize: 10.5 }}>{step.action}</span>
+        {planIter > 0 && (
+          <span
+            className="pill sm"
+            style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
+            title={tr('这一步不在初始计划里，是后来计划调整时新增的', 'Not in the initial plan — added by a later plan adjustment')}
+          >
+            {tr(`第 ${planIter} 次调整新增`, `Added in adjustment ${planIter}`)}
+          </span>
+        )}
+        {step.requires_gate && (
+          <span
+            className="pill sm"
+            style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}
+            title={tr('执行到这一步会暂停，等人工审批通过后继续', 'The task pauses here until a human approves')}
+          >
+            <Icon name="gate" size={11} />
+            {tr(`需审批：${gateKind ? gateKind.zh : step.requires_gate}`, `Needs approval: ${gateKind ? gateKind.en : step.requires_gate}`)}
+          </span>
+        )}
         {step.attempt > 1 && (
-          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }} title="出错后带诊断自动重试过">
-            第 {step.attempt} 次尝试
+          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }} title={tr('出错后带诊断自动重试过', 'Auto-retried with diagnostics after an error')}>
+            {tr(`第 ${step.attempt} 次尝试`, `Attempt ${step.attempt}`)}
           </span>
         )}
         <div style={{ marginLeft: 'auto' }}>
@@ -471,7 +802,7 @@ function StepCard({ step }: { step: VoyageStepRead }) {
             title={step.verdict.reason}
           >
             <Icon name={step.verdict.passed ? 'check' : 'x'} size={11} />
-            自动校验{step.verdict.passed ? '通过' : '未通过'}
+            {step.verdict.passed ? tr('自动校验通过', 'Auto-check passed') : tr('自动校验未通过', 'Auto-check failed')}
           </span>
         )}
         {stepTokenCount(step.tokens) !== null && (
@@ -482,19 +813,62 @@ function StepCard({ step }: { step: VoyageStepRead }) {
         )}
         {step.started_at && (
           <span className="mono muted" style={{ fontSize: 11 }}>
-            {fmtTime(step.started_at)} · 耗时 {step.finished_at ? fmtDuration(step.started_at, step.finished_at) : '进行中'}
+            {fmtTime(step.started_at)} · {step.finished_at ? `${tr('耗时', 'took')} ${fmtDuration(step.started_at, step.finished_at)}` : tr('进行中', 'in progress')}
           </span>
         )}
       </div>
-      {step.verdict && !step.verdict.passed && step.verdict.reason && (
-        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--danger-tx)', lineHeight: 1.5 }}>
+      {/* 判定理由：通过与否都展示（通过时用弱色） */}
+      {step.verdict?.reason && (
+        <div style={{ marginTop: 8, fontSize: 12, color: step.verdict.passed ? 'var(--text-3)' : 'var(--danger-tx)', lineHeight: 1.5 }}>
+          {tr('判定理由：', 'Verdict: ')}
           {step.verdict.reason}
         </div>
       )}
+      {/* 作废步骤：补一行为什么被作废 */}
+      {obsolete && (
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-4)', lineHeight: 1.5 }}>
+          {obsoleteReasonOf(step, planEvents)}
+        </div>
+      )}
+      {/* 分析步骤的因果摘要：这一步的结论如何改变了后续计划 */}
+      {signalText && (
+        <div
+          className="row gap6"
+          style={{ marginTop: 10, padding: '8px 12px', background: 'var(--accent-soft)', color: 'var(--accent-text)', borderRadius: 8, fontSize: 12.5, lineHeight: 1.5, alignItems: 'flex-start' }}
+        >
+          <Icon name="compass" size={13} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span style={{ minWidth: 0 }}>{signalText}</span>
+        </div>
+      )}
       {friendly && <WikiStepSummary friendly={friendly} />}
+      {step.acceptance && <AcceptanceBlock acceptance={step.acceptance} />}
+      {attempts.length > 1 && <AttemptsBlock attempts={attempts} />}
       <ObservationBlock observation={step.observation} compact={!!friendly} />
     </div>
   );
+}
+
+// —— 时间线条目：步骤 + 计划调整分隔 ——
+
+type TimelineEntry =
+  | { kind: 'step'; step: VoyageStepRead; index: number }
+  | { kind: 'plan'; event: VoyagePlanEvent };
+
+/** 按 plan_history 在第一个「该次调整新增」的步骤前插入分隔条目。 */
+function buildTimelineEntries(steps: VoyageStepRead[], events: VoyagePlanEvent[]): TimelineEntry[] {
+  const byIteration = new Map(events.map((e) => [e.iteration, e]));
+  const inserted = new Set<number>();
+  const entries: TimelineEntry[] = [];
+  let index = 0;
+  for (const step of steps) {
+    const iter = step.provenance?.plan_iteration ?? 0;
+    if (iter > 0 && !inserted.has(iter) && byIteration.has(iter)) {
+      inserted.add(iter);
+      entries.push({ kind: 'plan', event: byIteration.get(iter)! });
+    }
+    entries.push({ kind: 'step', step, index: ++index });
+  }
+  return entries;
 }
 
 // —— 页面 ——
@@ -518,21 +892,21 @@ export function VoyageDetailPage() {
   const resumeMutation = useMutation({
     mutationFn: () => api.resumeVoyage(id),
     onSuccess: () => {
-      toast('已重新入队，从断点续跑', 'ok');
+      toast(tr('已重新入队，从断点续跑', 'Re-queued — resuming from where it stopped'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
     },
-    onError: (err) => toast(`重试失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('重试失败：', 'Retry failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   const cancelMutation = useMutation({
     mutationFn: () => api.cancelVoyage(id),
     onSuccess: () => {
-      toast('任务已取消', 'ok');
+      toast(tr('任务已取消', 'Task cancelled'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
     },
-    onError: (err) => toast(`取消失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('取消失败：', 'Cancel failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   const active = !!voyage && !VOYAGE_TERMINAL.has(voyage.status);
@@ -585,7 +959,7 @@ export function VoyageDetailPage() {
   if (isLoading) {
     return (
       <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>加载中…</div>
+        <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>
       </div>
     );
   }
@@ -595,14 +969,14 @@ export function VoyageDetailPage() {
       <div className="page fadeup">
         <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
           <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
-            {notFound ? '任务不存在' : '无法加载任务详情'}
+            {notFound ? tr('任务不存在', 'Task not found') : tr('无法加载任务详情', 'Failed to load task detail')}
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            {error instanceof Error ? error.message : '后端不可用，请稍后重试'}
+            {error instanceof Error ? error.message : tr('后端不可用，请稍后重试', 'Backend unavailable — try again later')}
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
-            <button className="btn btn-soft" onClick={() => void refetch()}>重试 retry</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>返回列表</button>
+            <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>{tr('返回列表', 'Back to list')}</button>
           </div>
         </div>
       </div>
@@ -610,6 +984,8 @@ export function VoyageDetailPage() {
   }
 
   const steps = [...(voyage.steps ?? [])].sort(byListOrder);
+  const planEvents = voyage.plan_history ?? [];
+  const entries = buildTimelineEntries(steps, planEvents);
   const totalTokens = steps.reduce((acc, s) => acc + (stepTokenCount(s.tokens) ?? 0), 0);
   const planAdjusted = (voyage.plan_iteration ?? 0) > 0;
 
@@ -642,13 +1018,13 @@ export function VoyageDetailPage() {
               <span
                 className="pill sm"
                 style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-                title="执行过程中计划被调整过（自动重试后的调整 / 按执行结果追加的轮次）"
+                title={tr('执行过程中计划被调整过（自动重试后的调整 / 按执行结果追加的轮次）', 'The plan was adjusted during execution (after auto-retries / extra rounds based on results)')}
               >
-                计划调整 ×{voyage.plan_iteration}
+                {tr('计划调整', 'Plan adjusted')} ×{voyage.plan_iteration}
               </span>
             )}
             <span className="mono muted" style={{ fontSize: 11 }}>
-              创建 {fmtTime(voyage.created_at)} · 耗时 {fmtDuration(voyage.created_at, active ? null : voyage.updated_at)}
+              {tr('创建', 'Created')} {fmtTime(voyage.created_at)} · {tr('耗时', 'took')} {fmtDuration(voyage.created_at, active ? null : voyage.updated_at)}
             </span>
             {totalTokens > 0 && (
               <span className="mono muted" style={{ fontSize: 11 }}>· {fmtTokens(totalTokens)} tokens</span>
@@ -658,7 +1034,7 @@ export function VoyageDetailPage() {
         {active && (
           <button className="btn btn-ghost" disabled={cancelMutation.isPending} onClick={() => cancelMutation.mutate()}>
             <Icon name="x" size={13} />
-            取消任务
+            {tr('取消任务', 'Cancel task')}
           </button>
         )}
         {voyage.kind === 'presentation' && voyage.status === 'done' && (
@@ -666,9 +1042,15 @@ export function VoyageDetailPage() {
         )}
       </div>
 
-      {/* 状态机进度条 */}
+      {/* 当前活动（循环感知：执行中的任务可能反复经过 执行→校验→调整计划） */}
       <div className="card card-pad" style={{ marginBottom: 20 }}>
-        <MachineBar status={voyage.status} onOpenGates={() => openGates(null)} onResume={() => resumeMutation.mutate()} resuming={resumeMutation.isPending} />
+        <ActivityBar
+          voyage={voyage}
+          steps={steps}
+          onOpenGates={() => openGates(null)}
+          onResume={() => resumeMutation.mutate()}
+          resuming={resumeMutation.isPending}
+        />
       </div>
 
       {/* 文献任务：本次同步结果汇总 */}
@@ -678,7 +1060,7 @@ export function VoyageDetailPage() {
       {(voyage.skills ?? []).length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 20 }}>
           <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>本次任务使用的技能：</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('本次任务使用的技能：', 'Skills used in this task:')}</span>
             {voyage.skills!.map((s) => (
               <span
                 key={`${s.slug}-${s.target}`}
@@ -693,11 +1075,11 @@ export function VoyageDetailPage() {
         </div>
       )}
 
-      {/* 步骤时间线（任务板：清单序渲染，作废步骤可选显示） */}
+      {/* 步骤时间线（任务板：清单序渲染，计划调整插入分隔条目，作废步骤可选显示） */}
       <div className="row" style={{ marginBottom: 12 }}>
         <span className="section-h">
           <Icon name="compass" size={15} style={{ color: 'var(--accent)' }} />
-          步骤时间线 <span className="en-label" style={{ fontSize: 11 }}>Steps</span>
+          {tr('步骤时间线', 'Steps')}
         </span>
         {planAdjusted && (
           <label
@@ -709,21 +1091,35 @@ export function VoyageDetailPage() {
               checked={showObsolete}
               onChange={(e) => setShowObsolete(e.target.checked)}
             />
-            显示已作废步骤
+            {tr('显示已作废步骤', 'Show obsolete steps')}
           </label>
         )}
       </div>
-      {steps.length === 0 ? (
+      {entries.length === 0 ? (
         <div className="card card-pad empty" style={{ padding: 40 }}>
-          正在规划步骤…
+          {tr('正在规划步骤…', 'Planning steps…')}
         </div>
       ) : (
         <Timeline>
-          {steps.map((s, i) => {
-            const m = stepMarker(s);
+          {entries.map((entry, i) => {
+            const last = i === entries.length - 1;
+            if (entry.kind === 'plan') {
+              return (
+                <TimelineItem
+                  key={`plan-${entry.event.iteration}`}
+                  marker={<Icon name="refresh" size={12} />}
+                  markerBg="var(--accent-soft)"
+                  markerColor="var(--accent-text)"
+                  last={last}
+                >
+                  <PlanEventCard event={entry.event} />
+                </TimelineItem>
+              );
+            }
+            const m = stepMarker(entry.step);
             return (
-              <TimelineItem key={s.id} marker={i + 1} markerBg={m.bg} markerColor={m.color} last={i === steps.length - 1}>
-                <StepCard step={s} />
+              <TimelineItem key={entry.step.id} marker={entry.index} markerBg={m.bg} markerColor={m.color} last={last}>
+                <StepCard step={entry.step} planEvents={planEvents} />
               </TimelineItem>
             );
           })}
@@ -736,7 +1132,7 @@ export function VoyageDetailPage() {
           <div className="row" style={{ margin: '20px 0 12px' }}>
             <span className="section-h">
               <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
-              实时日志 <span className="en-label" style={{ fontSize: 11 }}>Live log</span>
+              {tr('实时日志', 'Live log')}
             </span>
           </div>
           <div className="codeblock scroll" style={{ fontSize: 11, maxHeight: 240, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
