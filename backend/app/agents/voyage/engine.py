@@ -64,10 +64,14 @@ def _serialize_step(step: VoyageStep) -> dict[str, Any]:
         "title": step.title,
         "action": step.action,
         "params": step.params,
+        "acceptance": step.acceptance,
+        "requires_gate": step.requires_gate,
+        "provenance": step.provenance,
         "observation": step.observation,
         "verdict": step.verdict,
         "status": step.status,
         "attempt": step.attempt,
+        "attempts": step.attempts,
         "tokens": step.tokens,
         "started_at": step.started_at.isoformat() if step.started_at else None,
         "finished_at": step.finished_at.isoformat() if step.finished_at else None,
@@ -595,6 +599,36 @@ class VoyageEngine:
         rows = await self._active_rows(session, run)
         run.plan = [_step_def_from_row(r, None) for r in rows]
 
+    @staticmethod
+    def _record_plan_event(
+        run: VoyageRun,
+        *,
+        source: str,
+        reason: str,
+        added: int,
+        obsoleted: int,
+        trigger_step: str | None,
+    ) -> None:
+        """计划调整留痕进 checkpoint["plan_history"]（SSE log 不持久，因果叙事必须落库）。
+
+        source: signal（执行结果规则分支）| navigator（AI 调整）| template（模板分支）。
+        """
+        checkpoint = dict(run.checkpoint or {})
+        history = list(checkpoint.get("plan_history") or [])
+        history.append(
+            {
+                "iteration": run.plan_iteration,
+                "source": source,
+                "reason": reason[:500],
+                "added": added,
+                "obsoleted": obsoleted,
+                "trigger_step": trigger_step,
+                "at": utcnow().isoformat(),
+            }
+        )
+        checkpoint["plan_history"] = history
+        run.checkpoint = checkpoint
+
     async def _apply_signal_edits(
         self, session: AsyncSession, run: VoyageRun, node: VoyageStep
     ) -> None:
@@ -613,6 +647,14 @@ class VoyageEngine:
             return
         added = await self._apply_plan_edit(session, run, edit, anchor=node)
         run.plan_iteration = run.plan_iteration + 1
+        self._record_plan_event(
+            run,
+            source="signal",
+            reason=str(edit.get("reason") or ""),
+            added=added,
+            obsoleted=0,
+            trigger_step=node.title,
+        )
         await self._regen_plan_snapshot(session, run)
         await session.commit()
         await self._emit_log(
@@ -747,6 +789,17 @@ class VoyageEngine:
         checkpoint["replans"] = replans + 1
         run.checkpoint = checkpoint
         run.plan_iteration = run.plan_iteration + 1
+        obsoleted = 1 + sum(
+            len(op.get("step_ids") or []) for op in edit["edits"] if op["op"] == "obsolete_nodes"
+        )
+        self._record_plan_event(
+            run,
+            source="navigator",
+            reason=str(edit.get("reason") or "") or diagnosis,
+            added=added,
+            obsoleted=obsoleted,
+            trigger_step=failed_node.title,
+        )
         await self._regen_plan_snapshot(session, run)
         await session.commit()
         await self._emit_log(
@@ -816,6 +869,14 @@ class VoyageEngine:
                     step_def=step_def,
                 )
             )
+        self._record_plan_event(
+            run,
+            source="template",
+            reason=diagnosis or "步骤未通过，按模板分支重排剩余步骤",
+            added=len(new_tail),
+            obsoleted=len(tail),
+            trigger_step=failed_node.title,
+        )
         # run.plan 快照单向派生：已通过前缀 + 新尾部
         passed_defs = [_step_def_from_row(r, run.plan) for r in rows if r.status == "passed"]
         run.plan = passed_defs + list(new_tail)

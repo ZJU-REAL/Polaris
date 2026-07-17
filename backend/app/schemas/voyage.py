@@ -27,10 +27,18 @@ class VoyageStepRead(BaseModel):
     title: str
     action: str
     params: dict[str, Any] | None
+    # 结构化验收 {text: str|None, checks: [...]|None}：这一步"怎样算通过"
+    acceptance: dict[str, Any] | None = None
+    # 闸门类型（需要人工审批的步骤）
+    requires_gate: str | None = None
+    # 溯源 {plan_iteration, ...}：第几次计划调整创建了它（0 = 初始计划）
+    provenance: dict[str, Any] | None = None
     observation: dict[str, Any] | None
     verdict: dict[str, Any] | None  # null | {passed, reason}
     status: str
     tokens: dict[str, Any] | None
+    # 每次尝试的完整归档 [{attempt, observation, verdict, tokens, started_at, finished_at}]
+    attempts: list[Any] | None = None
     started_at: datetime | None
     finished_at: datetime | None
 
@@ -64,7 +72,21 @@ class VoyageSkillUse(BaseModel):
     target: str
 
 
+class VoyagePlanEvent(BaseModel):
+    """一次计划调整的留痕（checkpoint["plan_history"]，engine 记录）。"""
+
+    iteration: int  # 调整后的 plan_iteration
+    source: str  # signal（执行结果规则分支）| navigator（AI 调整）| template（模板分支）
+    reason: str  # 调整原因（大白话）
+    added: int = 0  # 新增步骤数
+    obsoleted: int = 0  # 作废步骤数
+    trigger_step: str | None = None  # 触发调整的步骤标题
+    at: datetime | None = None
+
+
 class VoyageDetailRead(VoyageRead):
     steps: list[VoyageStepRead]
     # checkpoint["skills"] 快照摘要（路由填充；无快照为 []）
     skills: list[VoyageSkillUse] = Field(default_factory=list)
+    # 计划调整历史（路由从 checkpoint["plan_history"] 填充；无调整为 []）
+    plan_history: list[VoyagePlanEvent] = Field(default_factory=list)
