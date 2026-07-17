@@ -11,13 +11,14 @@ import { useProject } from '../../app/project';
 import { api, type AnchorPaper, type ProjectDefinition, type RubricDimension } from '../../lib/api';
 
 /* ============================================================
-   /projects/new — 两步创建向导。
-   第 1 步（唯一必填）：名称 + 一句话定义 + include 关键词；
-   可「直接创建」，或让 AI 草拟高级设置后进入第 2 步微调。
-   第 2 步（全部可选）：折叠分区编辑 definition 其余字段。
+   /projects/new — 创建页，两个可自由切换的标签页。
+   基本信息（唯一必填）：名称 + 一句话定义 + include 关键词；
+   高级设置（全部可选）：折叠分区编辑 definition 其余字段。
+   底部操作栏两页共用：「AI 帮我设置」按基本信息草拟高级设置
+   （只填空白分区，不覆盖已填内容，可反复点）+「创建方向」。
    ============================================================ */
 
-const STEPS = [
+const TABS = [
   { zh: '基本信息', en: 'Basics' },
   { zh: '高级设置', en: 'Advanced · optional' },
 ] as const;
@@ -160,7 +161,7 @@ export function ProjectWizardPage() {
   const queryClient = useQueryClient();
   const { setCurrentProjectId } = useProject();
 
-  const [step, setStep] = useState<0 | 1>(0);
+  const [tab, setTab] = useState<0 | 1>(0);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [drafting, setDrafting] = useState(false);
@@ -184,9 +185,6 @@ export function ProjectWizardPage() {
     goals: false, questions: false, rubric: false, anchors: false, synonyms: false, cadence: false,
   });
   const [aiFilled, setAiFilled] = useState<Set<SectionKey>>(new Set());
-  // 高级设置是否已初始化过（AI 草拟或手动进入过）：回到第 1 步再前进时不重新起草，
-  // 避免覆盖用户已填写/修改的高级设置
-  const [advancedTouched, setAdvancedTouched] = useState(false);
 
   function toggleSection(k: SectionKey) {
     setOpen((o) => ({ ...o, [k]: !o[k] }));
@@ -277,25 +275,26 @@ export function ProjectWizardPage() {
       setCadence(d.cadence);
       filled.add('cadence');
     }
-    setAiFilled(filled);
-    setOpen({
-      goals: filled.has('goals'),
-      questions: filled.has('questions'),
-      rubric: filled.has('rubric'),
-      anchors: filled.has('anchors'),
-      synonyms: filled.has('synonyms'),
-      cadence: filled.has('cadence'),
-    });
+    // 反复点「AI 帮我设置」时：徽标与展开状态做并集，不清掉上一轮的
+    setAiFilled((prev) => new Set([...prev, ...filled]));
+    setOpen((o) => ({
+      goals: o.goals || filled.has('goals'),
+      questions: o.questions || filled.has('questions'),
+      rubric: o.rubric || filled.has('rubric'),
+      anchors: o.anchors || filled.has('anchors'),
+      synonyms: o.synonyms || filled.has('synonyms'),
+      cadence: o.cadence || filled.has('cadence'),
+    }));
     return filled;
   }
 
-  /** 「AI 补全高级设置」：草拟 definition → 填入第 2 步并进入。 */
+  /** 「AI 帮我设置」：按基本信息草拟 definition → 填入高级设置空白分区并切过去。
+      不覆盖已填内容，可反复点（每次只补当前仍为空的分区）。 */
   async function aiDraft() {
     const err = validateBasics();
     setFormError(err);
-    if (err) return;
-    if (advancedTouched) {
-      setStep(1); // 已起草/进入过：保留现有高级设置，不重新覆盖
+    if (err) {
+      setTab(0); // 基本信息没填全：切回去看错误提示
       return;
     }
     setDrafting(true);
@@ -305,19 +304,20 @@ export function ProjectWizardPage() {
         name: name.trim(),
         keywords_include: includeTerms,
       });
-      applyDraft(res.definition ?? {});
+      const filled = applyDraft(res.definition ?? {});
       if (res.source === 'fallback') {
         toast('AI 未配置，已用默认模板', 'info');
+      } else if (filled.size === 0) {
+        toast('高级设置各分区都已有内容，没有需要 AI 补的空白', 'info');
       } else {
         toast('AI 草稿已生成，可在下方微调', 'ok');
       }
-      setStep(1);
+      setTab(1);
     } catch (e) {
       // 端点未就绪/调用失败：优雅降级，仍可手动填写或直接创建
-      toast(`AI 补全失败：${e instanceof Error ? e.message : String(e)}，可手动填写高级设置`, 'error');
-      setStep(1);
+      toast(`AI 设置失败：${e instanceof Error ? e.message : String(e)}，可手动填写高级设置`, 'error');
+      setTab(1);
     } finally {
-      setAdvancedTouched(true);
       setDrafting(false);
     }
   }
@@ -327,7 +327,7 @@ export function ProjectWizardPage() {
     const err = validateBasics();
     if (err) {
       setFormError(err);
-      setStep(0);
+      setTab(0);
       return;
     }
     setFormError(null);
@@ -356,21 +356,16 @@ export function ProjectWizardPage() {
         en="Two-step direction setup"
       />
 
-      {/* 步骤指示器 */}
+      {/* 标签页切换：两页随时可来回切，填写内容都保留 */}
       <div className="wiz-steps">
-        {STEPS.map((s, i) => (
+        {TABS.map((s, i) => (
           <div
             key={s.en}
-            className={'wiz-step' + (i === step ? ' on' : i < step ? ' done' : '')}
-            onClick={() => {
-              if (i < step) {
-                setFormError(null);
-                setStep(0);
-              }
-            }}
-            style={{ cursor: i < step ? 'pointer' : 'default' }}
+            className={'wiz-step' + (i === tab ? ' on' : '')}
+            onClick={() => setTab(i as 0 | 1)}
+            style={{ cursor: 'pointer' }}
           >
-            <span className="wiz-no mono">{i < step ? <Icon name="check" size={11} /> : i + 1}</span>
+            <span className="wiz-no mono">{i + 1}</span>
             <span className="wiz-label">
               {s.zh}
               <span className="en">{s.en}</span>
@@ -379,7 +374,7 @@ export function ProjectWizardPage() {
         ))}
       </div>
 
-      {step === 0 && (
+      {tab === 0 && (
         <>
           <div className="card card-pad">
             <FormField label="方向名称" en="Name" hint="将显示在侧栏与项目列表中">
@@ -410,25 +405,10 @@ export function ProjectWizardPage() {
             </FormField>
             {formError && <div className="field-error" style={{ marginTop: 4 }}>{formError}</div>}
           </div>
-
-          <div className="row gap10" style={{ marginTop: 18 }}>
-            <button className="btn btn-ghost" onClick={() => { setFormError(null); setAdvancedTouched(true); setStep(1); }} disabled={busy}>
-              跳过 AI，手动配置
-            </button>
-            <div style={{ flex: 1 }} />
-            <button className="btn btn-soft" onClick={() => void aiDraft()} disabled={busy}>
-              <Icon name="sparkle" size={14} />
-              {drafting ? 'AI 草拟中…' : advancedTouched ? '继续高级设置（已保留填写内容）' : 'AI 补全高级设置'}
-            </button>
-            <button className="btn btn-primary" onClick={() => void create()} disabled={busy}>
-              <Icon name="check" size={14} />
-              {submitting ? '创建中…' : '直接创建'}
-            </button>
-          </div>
         </>
       )}
 
-      {step === 1 && (
+      {tab === 1 && (
         <>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', margin: '0 2px 12px', lineHeight: 1.6 }}>
             以下内容全部可选，可直接创建方向。
@@ -575,18 +555,24 @@ export function ProjectWizardPage() {
             ))}
           </div>
 
-          <div className="row gap10" style={{ marginTop: 18 }}>
-            <button className="btn btn-ghost" onClick={() => { setFormError(null); setStep(0); }} disabled={busy}>
-              返回上一步
-            </button>
-            <div style={{ flex: 1 }} />
-            <button className="btn btn-primary" onClick={() => void create()} disabled={busy}>
-              <Icon name="check" size={14} />
-              {submitting ? '创建中…' : '创建方向'}
-            </button>
-          </div>
         </>
       )}
+
+      {/* 底部操作栏：两个标签页共用 */}
+      <div className="row gap10" style={{ marginTop: 18 }}>
+        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+          AI 按基本信息草拟高级设置，只补空白分区，不覆盖你已填的内容
+        </span>
+        <div style={{ flex: 1 }} />
+        <button className="btn btn-soft" onClick={() => void aiDraft()} disabled={busy}>
+          <Icon name="sparkle" size={14} />
+          {drafting ? 'AI 草拟中…' : 'AI 帮我设置'}
+        </button>
+        <button className="btn btn-primary" onClick={() => void create()} disabled={busy}>
+          <Icon name="check" size={14} />
+          {submitting ? '创建中…' : '创建方向'}
+        </button>
+      </div>
     </div>
   );
 }
