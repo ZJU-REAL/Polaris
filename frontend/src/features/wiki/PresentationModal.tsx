@@ -7,6 +7,7 @@ import { FormField } from '../../components/ui/FormField';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    论文分享 PPT 弹窗（文献追踪板块）：
@@ -54,11 +55,15 @@ export function PresentationModal({
         notes: notes.trim() || undefined,
       }),
     onSuccess: (run) => {
-      toast('PPT 生成任务已发起，完成后可在任务详情页下载', 'ok');
+      toast(
+        tr('PPT 生成任务已发起，完成后可在任务详情页下载', 'PPT task started — download it from the task detail page when done'),
+        'ok',
+      );
       onClose();
       navigate(`/voyages/${run.id}`);
     },
-    onError: (e) => toast(`发起失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('发起失败：', 'Failed to start: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   function toggle(id: string) {
@@ -76,23 +81,28 @@ export function PresentationModal({
       open
       onClose={onClose}
       width={640}
-      title="生成论文分享 PPT"
-      sub="按实验室模板生成，可在技能页调整论文分享 PPT 制作技能的规范"
+      title={tr('生成论文分享 PPT', 'Generate paper sharing PPT')}
+      sub={tr(
+        '按实验室模板生成，可在技能页调整论文分享 PPT 制作技能的规范',
+        'Generated from the lab template — tweak the PPT skill rules on the Skills page',
+      )}
       footer={
         <>
           <span style={{ marginRight: 'auto', fontSize: 11.5, color: 'var(--text-3)' }}>
-            已选 {selected.length} 篇
-            {mode === 'survey' && selected.length < 2 ? '（梳理模式至少选 2 篇）' : ''}
+            {tr(`已选 ${selected.length} 篇`, `${selected.length} selected`)}
+            {mode === 'survey' && selected.length < 2
+              ? tr('（梳理模式至少选 2 篇）', '(survey mode needs at least 2)')
+              : ''}
           </span>
           <button className="btn btn-ghost" onClick={onClose}>
-            取消
+            {tr('取消', 'Cancel')}
           </button>
           <button
             className="btn btn-primary"
             disabled={!canSubmit || createMutation.isPending}
             onClick={() => createMutation.mutate()}
           >
-            {createMutation.isPending ? '发起中…' : '生成 PPT'}
+            {createMutation.isPending ? tr('发起中…', 'Starting…') : tr('生成 PPT', 'Generate PPT')}
           </button>
         </>
       }
@@ -100,8 +110,8 @@ export function PresentationModal({
       <div className="row gap10" style={{ marginBottom: 12 }}>
         <Segmented<Mode>
           options={[
-            { v: 'single', label: '单篇分享' },
-            { v: 'survey', label: '多篇梳理' },
+            { v: 'single', label: tr('单篇分享', 'Single paper') },
+            { v: 'survey', label: tr('多篇梳理', 'Multi-paper survey') },
           ]}
           value={mode}
           onChange={(m) => {
@@ -112,7 +122,7 @@ export function PresentationModal({
         <input
           className="input"
           style={{ flex: 1 }}
-          placeholder="搜索论文标题…"
+          placeholder={tr('搜索论文标题…', 'Search paper titles…')}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -129,7 +139,12 @@ export function PresentationModal({
         }}
       >
         {isLoading ? null : papers.length === 0 ? (
-          <EmptyState compact icon="book" title="没有可选论文" desc="先在建库与同步里收录论文" />
+          <EmptyState
+            compact
+            icon="book"
+            title={tr('没有可选论文', 'No papers to pick')}
+            desc={tr('先在建库与同步里收录论文', 'Add papers via Ingest & sync first')}
+          />
         ) : (
           papers.map((p) => {
             const on = selected.includes(p.id);
@@ -156,7 +171,7 @@ export function PresentationModal({
                     className="pill sm"
                     style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)', flexShrink: 0 }}
                   >
-                    已精读
+                    {tr('已精读', 'Compiled')}
                   </span>
                 )}
               </label>
@@ -165,17 +180,29 @@ export function PresentationModal({
         )}
       </div>
 
-      <FormField label="讲者备注" en="Notes" hint="可选：听众背景、要突出的侧重点，AI 会照顾到">
+      <FormField
+        label={tr('讲者备注', 'Speaker notes')}
+        hint={tr(
+          '可选：听众背景、要突出的侧重点，AI 会照顾到',
+          'Optional: audience background and points to highlight — the AI will take them into account',
+        )}
+      >
         <textarea
           className="textarea"
           rows={2}
-          placeholder="例如：面向组会分享，听众了解 LLM 基础，重点讲清训练闭环"
+          placeholder={tr(
+            '例如：面向组会分享，听众了解 LLM 基础，重点讲清训练闭环',
+            'e.g. lab meeting talk, audience knows LLM basics, focus on the training loop',
+          )}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />
       </FormField>
       <p style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 8 }}>
-        提示：优先选择已精读的论文，PPT 内容与配图会更充实。
+        {tr(
+          '提示：优先选择已精读的论文，PPT 内容与配图会更充实。',
+          'Tip: prefer compiled papers — the slides get richer content and figures.',
+        )}
       </p>
     </Modal>
   );

@@ -1,3 +1,5 @@
+import { tr } from '../../lib/i18n';
+
 export interface StatusMeta {
   cls: string;
   zh: string;
@@ -70,8 +72,7 @@ export function PaperStatusPill({ status, sm }: StatusPillProps) {
   return (
     <span className={`pill ${s.cls}${sm ? ' sm' : ''}`}>
       <span className="dot" />
-      {s.zh}
-      <span style={{ opacity: 0.55, fontWeight: 500, fontSize: '0.9em' }}>{s.en}</span>
+      {tr(s.zh, s.en)}
     </span>
   );
 }
@@ -86,8 +87,7 @@ export function StatusPill({ status, sm }: StatusPillProps) {
   return (
     <span className={`pill ${s.cls}${sm ? ' sm' : ''}`}>
       <span className="dot" />
-      {s.zh}
-      <span style={{ opacity: 0.55, fontWeight: 500, fontSize: '0.9em' }}>{s.en}</span>
+      {tr(s.zh, s.en)}
     </span>
   );
 }

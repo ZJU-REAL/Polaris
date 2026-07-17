@@ -8,6 +8,7 @@ import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { api, type ChatTurn, type LibraryChatSource } from '../../lib/api';
 import { chatLibrarySse } from '../../lib/sse';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    文献库对话 Tab：对整个文献库做跨文献分析与综合梳理。
@@ -28,10 +29,20 @@ interface ChatMsg {
 
 const MAX_HISTORY_TURNS = 10;
 
-const SUGGESTIONS = [
-  '这个方向目前的主流方法可以分成哪几类？各自的代表工作是什么？',
-  '综合文献库，当前还有哪些没有解决好的问题？',
-  '对比一下库里方法们使用的评测基准和指标。',
+// 模块级常量存 zh/en 两份，渲染处再 tr（import 时求值不会随语言切换更新）
+const SUGGESTIONS: { zh: string; en: string }[] = [
+  {
+    zh: '这个方向目前的主流方法可以分成哪几类？各自的代表工作是什么？',
+    en: 'What are the main families of methods in this direction, and the representative work of each?',
+  },
+  {
+    zh: '综合文献库，当前还有哪些没有解决好的问题？',
+    en: 'Across the library, which problems remain unsolved?',
+  },
+  {
+    zh: '对比一下库里方法们使用的评测基准和指标。',
+    en: 'Compare the benchmarks and metrics used by the methods in the library.',
+  },
 ];
 
 function SourceCard({
@@ -71,7 +82,7 @@ function SourceCard({
               whiteSpace: 'nowrap',
               minWidth: 0,
             }}
-            title={`${s.title} · 点击打开详情`}
+            title={`${s.title} · ${tr('点击打开详情', 'click to open detail')}`}
             onClick={() => onOpenPaper(s.paper_id)}
           >
             {s.title}
@@ -92,7 +103,7 @@ function SourceCard({
                 key={name}
                 className="tag"
                 style={{ fontSize: 9.5, height: 15, lineHeight: '15px', padding: '0 5px', cursor: 'pointer' }}
-                title={`打开概念：${name}`}
+                title={`${tr('打开概念：', 'Open concept: ')}${name}`}
                 onClick={() => onWikiLink?.(name)}
               >
                 {name}
@@ -105,7 +116,7 @@ function SourceCard({
         <button
           className="icon-btn"
           style={{ width: 22, height: 22, border: 'none', background: 'transparent' }}
-          title="打开论文详情"
+          title={tr('打开论文详情', 'Open paper detail')}
           onClick={() => onOpenPaper(s.paper_id)}
         >
           <Icon name="layers" size={12} />
@@ -113,7 +124,7 @@ function SourceCard({
         <button
           className="icon-btn"
           style={{ width: 22, height: 22, border: 'none', background: 'transparent' }}
-          title="去阅读（PDF + AI 伴读）"
+          title={tr('去阅读（PDF + AI 伴读）', 'Read (PDF + AI companion)')}
           onClick={() => navigate(`/papers/${s.paper_id}/read`)}
         >
           <Icon name="book" size={12} />
@@ -137,7 +148,9 @@ function SourceList({
   const shown = open ? sources : sources.slice(0, 3);
   return (
     <div className="col" style={{ gap: 4, marginTop: 10, paddingTop: 8, borderTop: '0.5px solid var(--border)' }}>
-      <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>引用来源 · {sources.length} 篇</span>
+      <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+        {tr(`引用来源 · ${sources.length} 篇`, `Sources · ${sources.length}`)}
+      </span>
       {shown.map((s) => (
         <SourceCard key={s.index} s={s} onOpenPaper={onOpenPaper} onWikiLink={onWikiLink} />
       ))}
@@ -146,7 +159,7 @@ function SourceList({
           onClick={() => setOpen(!open)}
           style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11, color: 'var(--accent-text)', textAlign: 'left' }}
         >
-          {open ? '收起' : `展开全部 ${sources.length} 篇来源`}
+          {open ? tr('收起', 'Collapse') : tr(`展开全部 ${sources.length} 篇来源`, `Show all ${sources.length} sources`)}
         </button>
       )}
     </div>
@@ -183,12 +196,19 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
     mutationFn: () => api.rebuildFulltextIndex(pid),
     onSuccess: (r) => {
       if (r.papers_indexed === 0) {
-        toast('全文索引已是最新', 'info');
+        toast(tr('全文索引已是最新', 'Full-text index is up to date'), 'info');
       } else {
-        toast(`已为 ${r.papers_indexed} 篇论文建好全文索引（${r.chunks_created} 段）`, 'ok');
+        toast(
+          tr(
+            `已为 ${r.papers_indexed} 篇论文建好全文索引（${r.chunks_created} 段）`,
+            `Indexed ${r.papers_indexed} papers (${r.chunks_created} chunks)`,
+          ),
+          'ok',
+        );
       }
     },
-    onError: (e) => toast(`索引重建失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('索引重建失败：', 'Index rebuild failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const finishStream = (failed: boolean, fallbackText?: string) => {
@@ -258,20 +278,20 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
         } else if (event === 'done') {
           finishStream(false);
         } else if (event === 'error') {
-          let detail = '服务端出错';
+          let detail = tr('服务端出错', 'Server error');
           try {
             detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
           } catch {
             /* keep default */
           }
-          toast(`文献对话出错：${detail}`, 'error');
-          finishStream(true, '（回答中断了，请重试）');
+          toast(`${tr('文献对话出错：', 'Library chat error: ')}${detail}`, 'error');
+          finishStream(true, tr('（回答中断了，请重试）', '(Answer interrupted — please retry)'));
         }
       },
       onClose: () => finishStream(false),
       onError: (err) => {
-        toast(`连接失败：${err instanceof Error ? err.message : String(err)}`, 'error');
-        finishStream(true, '（连接失败，请稍后重试）');
+        toast(`${tr('连接失败：', 'Connection failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error');
+        finishStream(true, tr('（连接失败，请稍后重试）', '(Connection failed — try again later)'));
       },
     });
   };
@@ -290,7 +310,7 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
         <span
           role="link"
           tabIndex={0}
-          title={`${src.title} · 点击打开`}
+          title={`${src.title} · ${tr('点击打开', 'click to open')}`}
           onClick={() => onOpenPaper(src.paper_id)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') onOpenPaper(src.paper_id);
@@ -333,12 +353,18 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
         }}
       >
         <span style={{ flex: 1 }}>
-          回答基于从整个文献库检索到的全文片段，可做跨文献对比与综合梳理；[n] 为引用来源编号。
+          {tr(
+            '回答基于从整个文献库检索到的全文片段，可做跨文献对比与综合梳理；[n] 为引用来源编号。',
+            'Answers are grounded in full-text passages retrieved from the whole library, so cross-paper comparison and synthesis work; [n] marks a source number.',
+          )}
         </span>
         <button
           className="btn btn-ghost sm"
           style={{ height: 22, fontSize: 10.5, flexShrink: 0 }}
-          title="给较早入库、还没建全文索引的论文补索引（新论文由任务自动处理）"
+          title={tr(
+            '给较早入库、还没建全文索引的论文补索引（新论文由任务自动处理）',
+            'Backfill the full-text index for older papers (new papers are indexed automatically)',
+          )}
           disabled={rebuildMutation.isPending}
           onClick={() => rebuildMutation.mutate()}
         >
@@ -347,7 +373,7 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
           ) : (
             <Icon name="refresh" size={11} />
           )}
-          补建全文索引
+          {tr('补建全文索引', 'Rebuild full-text index')}
         </button>
       </div>
 
@@ -358,13 +384,16 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
             <EmptyState
               compact
               icon="chat"
-              title="和整个文献库对话"
-              desc="跨文献的分析、比较、综合梳理都可以问，AI 会先检索相关论文片段再回答。"
+              title={tr('和整个文献库对话', 'Chat with the whole library')}
+              desc={tr(
+                '跨文献的分析、比较、综合梳理都可以问，AI 会先检索相关论文片段再回答。',
+                'Ask cross-paper analysis, comparison, or synthesis questions — the AI retrieves relevant passages before answering.',
+              )}
             />
             <div className="col gap8" style={{ marginTop: 18 }}>
               {SUGGESTIONS.map((s) => (
                 <button
-                  key={s}
+                  key={s.zh}
                   className="card"
                   style={{
                     textAlign: 'left',
@@ -376,9 +405,9 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
                     background: 'var(--surface)',
                     lineHeight: 1.5,
                   }}
-                  onClick={() => send(s)}
+                  onClick={() => send(tr(s.zh, s.en))}
                 >
-                  {s}
+                  {tr(s.zh, s.en)}
                 </button>
               ))}
             </div>
@@ -423,7 +452,7 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
                   {thinking ? (
                     <span className="row gap6 muted" style={{ fontSize: 12 }}>
                       <Icon name="refresh" size={12} style={{ animation: 'spin 1s linear infinite' }} />
-                      正在检索文献库并思考…
+                      {tr('正在检索文献库并思考…', 'Searching the library and thinking…')}
                     </span>
                   ) : (
                     <Markdown
@@ -451,7 +480,10 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
         <input
           className="input"
           style={{ flex: 1, minWidth: 0, height: 34, fontSize: 12.5 }}
-          placeholder="向整个文献库提问，比如：这些方法的共同局限是什么？"
+          placeholder={tr(
+            '向整个文献库提问，比如：这些方法的共同局限是什么？',
+            'Ask the whole library, e.g. what limitations do these methods share?',
+          )}
           value={input}
           disabled={streaming}
           onChange={(e) => setInput(e.target.value)}
@@ -462,7 +494,7 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
         {streaming ? (
           <button className="btn btn-ghost sm" style={{ height: 34 }} onClick={stop}>
             <Icon name="pause" size={13} />
-            停止
+            {tr('停止', 'Stop')}
           </button>
         ) : (
           <button
@@ -472,7 +504,7 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
             onClick={() => send()}
           >
             <Icon name="arrow" size={13} />
-            发送
+            {tr('发送', 'Send')}
           </button>
         )}
       </div>

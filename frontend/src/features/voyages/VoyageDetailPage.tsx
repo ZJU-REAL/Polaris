@@ -8,6 +8,7 @@ import { toast } from '../../components/ui/Toast';
 import { useShell } from '../../app/AppShell';
 import { subscribeSse } from '../../lib/sse';
 import { fmtDuration, fmtTime, fmtTokens } from '../../lib/format';
+import { tr } from '../../lib/i18n';
 import {
   api,
   ApiError,
@@ -34,10 +35,10 @@ function stepTokenCount(tokens: VoyageStepRead['tokens']): number | null {
 // —— 状态机进度条 ——
 
 const MACHINE = [
-  { key: 'planning', zh: '规划', en: 'planning' },
-  { key: 'executing', zh: '执行', en: 'executing' },
-  { key: 'verifying', zh: '校验', en: 'verifying' },
-  { key: 'done', zh: '完成', en: 'done' },
+  { key: 'planning', zh: '规划', en: 'Planning' },
+  { key: 'executing', zh: '执行', en: 'Executing' },
+  { key: 'verifying', zh: '校验', en: 'Verifying' },
+  { key: 'done', zh: '完成', en: 'Done' },
 ] as const;
 
 function machineIndex(status: VoyageStatus): number {
@@ -93,8 +94,7 @@ function MachineBar({ status, onOpenGates, onResume, resuming }: { status: Voyag
                 style={{ background: bg, color }}
               >
                 {isDone ? <Icon name="check" size={11} /> : null}
-                {m.zh}
-                <span style={{ opacity: 0.7, fontSize: '0.88em' }}>{m.en}</span>
+                {tr(m.zh, m.en)}
               </span>
               {i < MACHINE.length - 1 && (
                 <span className="sm-link" style={{ background: i < idx ? 'var(--ok)' : 'var(--border-2)' }} />
@@ -117,19 +117,19 @@ function MachineBar({ status, onOpenGates, onResume, resuming }: { status: Voyag
           }}
         >
           <Icon name="gate" size={15} />
-          任务已暂停，等待人工审批后继续。
+          {tr('任务已暂停，等待人工审批后继续。', 'Task paused — it will continue after approval.')}
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
-            前往审批
+            {tr('前往审批', 'Go to approvals')}
           </button>
         </div>
       )}
       {status === 'paused_error' && (
         <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 12.5 }}>
           <Icon name="x" size={14} />
-          任务因错误暂停：暂时性故障可直接重试；若是程序问题，修复后再重试，已完成的步骤不会重跑。
+          {tr('任务因错误暂停：暂时性故障可直接重试；若是程序问题，修复后再重试，已完成的步骤不会重跑。', 'Task paused on an error. Retry directly for transient failures; for code issues, fix first then retry — finished steps will not rerun.')}
           {onResume && (
             <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} disabled={resuming} onClick={onResume}>
-              {resuming ? '重试中…' : '重试恢复'}
+              {resuming ? tr('重试中…', 'Retrying…') : tr('重试恢复', 'Retry & resume')}
             </button>
           )}
         </div>
@@ -154,8 +154,8 @@ function PresentationDownload({ voyageId, goal }: { voyageId: string; goal: stri
     onError: (e) =>
       toast(
         e instanceof ApiError && e.message === 'FILE_NOT_READY'
-          ? '文件还没生成好，稍后再试'
-          : `下载失败：${e instanceof Error ? e.message : String(e)}`,
+          ? tr('文件还没生成好，稍后再试', 'File not ready yet — try again shortly')
+          : `${tr('下载失败：', 'Download failed: ')}${e instanceof Error ? e.message : String(e)}`,
         'error',
       ),
   });
@@ -166,7 +166,7 @@ function PresentationDownload({ voyageId, goal }: { voyageId: string; goal: stri
       onClick={() => downloadMutation.mutate()}
     >
       <Icon name="download" size={13} />
-      {downloadMutation.isPending ? '下载中…' : '下载 PPT'}
+      {downloadMutation.isPending ? tr('下载中…', 'Downloading…') : tr('下载 PPT', 'Download PPT')}
     </button>
   );
 }
@@ -217,54 +217,71 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
   switch (action) {
     case 'wiki.search_candidates':
       return {
-        text: `从 arXiv 检索到 ${num(obs.found)} 篇，去重后新收录 ${num(obs.inserted)} 篇`,
+        text: tr(
+          `从 arXiv 检索到 ${num(obs.found)} 篇，去重后新收录 ${num(obs.inserted)} 篇`,
+          `Found ${num(obs.found)} papers on arXiv; ${num(obs.inserted)} new after dedup`,
+        ),
         papers: briefsOf(obs.new_papers),
       };
     case 'wiki.snowball':
-      if (obs.skipped) return { text: '已跳过（未开启参考文献扩展）', papers: [] };
+      if (obs.skipped) return { text: tr('已跳过（未开启参考文献扩展）', 'Skipped (reference expansion is off)'), papers: [] };
       return {
         text:
-          `顺着 ${num(obs.processed)} 篇种子论文的参考文献与引用扩展，新收录 ${num(obs.inserted)} 篇` +
-          (failedCount ? `（${failedCount} 篇种子查询失败）` : ''),
+          tr(
+            `顺着 ${num(obs.processed)} 篇种子论文的参考文献与引用扩展，新收录 ${num(obs.inserted)} 篇`,
+            `Expanded references and citations of ${num(obs.processed)} seed papers; ${num(obs.inserted)} new papers added`,
+          ) +
+          (failedCount ? tr(`（${failedCount} 篇种子查询失败）`, ` (${failedCount} seed lookups failed)`) : ''),
         papers: briefsOf(obs.new_papers),
       };
     case 'wiki.score_relevance': {
       const passed = num(obs.succeeded) - num(obs.excluded);
       return {
         text:
-          `AI 按研究方向给 ${num(obs.processed)} 篇候选论文打了相关性分：` +
-          `${passed} 篇通过，${num(obs.excluded)} 篇相关性不足自动删除` +
-          (failedCount ? `，${failedCount} 篇打分失败` : ''),
+          tr(
+            `AI 按研究方向给 ${num(obs.processed)} 篇候选论文打了相关性分：${passed} 篇通过，${num(obs.excluded)} 篇相关性不足自动删除`,
+            `AI scored ${num(obs.processed)} candidate papers against the research direction: ${passed} passed, ${num(obs.excluded)} removed as not relevant enough`,
+          ) +
+          (failedCount ? tr(`，${failedCount} 篇打分失败`, `; ${failedCount} failed to score`) : ''),
         papers: briefsOf(obs.scored_papers),
       };
     }
     case 'wiki.fetch_extract':
       return {
         text:
-          `为 ${num(obs.processed)} 篇高分论文下载 PDF 并提取全文` +
-          (num(obs.degraded) ? `，${num(obs.degraded)} 篇没拿到原文（后续用摘要代替）` : ''),
+          tr(
+            `为 ${num(obs.processed)} 篇高分论文下载 PDF 并提取全文`,
+            `Downloaded PDFs and extracted full text for ${num(obs.processed)} high-scoring papers`,
+          ) +
+          (num(obs.degraded)
+            ? tr(`，${num(obs.degraded)} 篇没拿到原文（后续用摘要代替）`, `; ${num(obs.degraded)} had no full text (abstract used instead)`)
+            : ''),
         papers: briefsOf(obs.fetched_papers),
       };
     case 'wiki.compile':
       return {
         text:
-          `AI 精读并编译了 ${num(obs.succeeded)} 篇论文介绍` +
-          (failedCount ? `，${failedCount} 篇失败（下次同步会重试）` : ''),
+          tr(`AI 精读并编译了 ${num(obs.succeeded)} 篇论文介绍`, `AI read and compiled intros for ${num(obs.succeeded)} papers`) +
+          (failedCount ? tr(`，${failedCount} 篇失败（下次同步会重试）`, `; ${failedCount} failed (will retry next sync)`) : ''),
         papers: briefsOf(obs.compiled_papers),
       };
     case 'wiki.link_concepts':
       return {
-        text:
-          `从编译的介绍中整理概念：新增 ${num(obs.concepts_created)} 个概念，` +
-          `建立 ${num(obs.links_created)} 条论文—概念关联`,
+        text: tr(
+          `从编译的介绍中整理概念：新增 ${num(obs.concepts_created)} 个概念，建立 ${num(obs.links_created)} 条论文—概念关联`,
+          `Organized concepts from the compiled intros: ${num(obs.concepts_created)} new concepts, ${num(obs.links_created)} paper–concept links`,
+        ),
         papers: [],
         concepts: namesOf(obs.new_concepts),
       };
     case 'wiki.update_watermark':
       return {
         text: obs.watermark
-          ? `已记录本次同步时间，下次增量同步从 ${String(obs.watermark).slice(0, 10)} 附近继续`
-          : '已记录本次同步时间',
+          ? tr(
+              `已记录本次同步时间，下次增量同步从 ${String(obs.watermark).slice(0, 10)} 附近继续`,
+              `Sync time recorded — the next incremental sync resumes from around ${String(obs.watermark).slice(0, 10)}`,
+            )
+          : tr('已记录本次同步时间', 'Sync time recorded'),
         papers: [],
       };
     default:
@@ -309,7 +326,7 @@ function StepPaperList({ papers }: { papers: PaperBrief[] }) {
             </span>
           )}
           {p.pdf === false && (
-            <span className="mono" style={{ fontSize: 10, color: 'var(--warn-tx)', flexShrink: 0 }}>无 PDF</span>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--warn-tx)', flexShrink: 0 }}>{tr('无 PDF', 'no PDF')}</span>
           )}
         </div>
       ))}
@@ -318,7 +335,7 @@ function StepPaperList({ papers }: { papers: PaperBrief[] }) {
           onClick={() => setOpen(!open)}
           style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, color: 'var(--accent-text)', textAlign: 'left' }}
         >
-          {open ? '收起' : `展开全部 ${papers.length} 篇`}
+          {open ? tr('收起', 'Collapse') : tr(`展开全部 ${papers.length} 篇`, `Show all ${papers.length} papers`)}
         </button>
       )}
     </div>
@@ -365,10 +382,10 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
   if (!search && !compile) return null;
 
   const stats: { label: string; value: number }[] = [];
-  if (search || snowball) stats.push({ label: '新收录论文', value: num(search?.inserted) + num(snowball?.inserted) });
-  if (score) stats.push({ label: '通过筛选', value: num(score.succeeded) - num(score.excluded) });
-  if (compile) stats.push({ label: '已编译', value: num(compile.succeeded) });
-  if (link) stats.push({ label: '新增概念', value: num(link.concepts_created) });
+  if (search || snowball) stats.push({ label: tr('新收录论文', 'New papers'), value: num(search?.inserted) + num(snowball?.inserted) });
+  if (score) stats.push({ label: tr('通过筛选', 'Passed screening'), value: num(score.succeeded) - num(score.excluded) });
+  if (compile) stats.push({ label: tr('已编译', 'Compiled'), value: num(compile.succeeded) });
+  if (link) stats.push({ label: tr('新增概念', 'New concepts'), value: num(link.concepts_created) });
   if (stats.length === 0) return null;
 
   return (
@@ -376,7 +393,7 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
       <div className="row" style={{ marginBottom: 10 }}>
         <span className="section-h">
           <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
-          本次同步结果 <span className="en-label" style={{ fontSize: 11 }}>Summary</span>
+          {tr('本次同步结果', 'Sync summary')}
         </span>
       </div>
       <div className="row" style={{ gap: 28, flexWrap: 'wrap' }}>
@@ -427,7 +444,7 @@ function ObservationBlock({ observation, compact }: { observation: unknown; comp
         style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, fontWeight: 600, color: 'var(--text-3)' }}
       >
         <Icon name="chevDown" size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
-        {compact ? '原始数据 raw' : '观察 observation'}
+        {compact ? tr('原始数据', 'Raw data') : tr('观察', 'Observation')}
       </button>
       {/* 有可读摘要（compact）时原始 JSON 只在展开后出现 */}
       {(open || !compact) && (
@@ -451,8 +468,8 @@ function StepCard({ step }: { step: VoyageStepRead }) {
         </span>
         <span className="tag mono" style={{ fontSize: 10.5 }}>{step.action}</span>
         {step.attempt > 1 && (
-          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }} title="出错后带诊断自动重试过">
-            第 {step.attempt} 次尝试
+          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }} title={tr('出错后带诊断自动重试过', 'Auto-retried with diagnostics after an error')}>
+            {tr(`第 ${step.attempt} 次尝试`, `Attempt ${step.attempt}`)}
           </span>
         )}
         <div style={{ marginLeft: 'auto' }}>
@@ -471,7 +488,7 @@ function StepCard({ step }: { step: VoyageStepRead }) {
             title={step.verdict.reason}
           >
             <Icon name={step.verdict.passed ? 'check' : 'x'} size={11} />
-            自动校验{step.verdict.passed ? '通过' : '未通过'}
+            {step.verdict.passed ? tr('自动校验通过', 'Auto-check passed') : tr('自动校验未通过', 'Auto-check failed')}
           </span>
         )}
         {stepTokenCount(step.tokens) !== null && (
@@ -482,7 +499,7 @@ function StepCard({ step }: { step: VoyageStepRead }) {
         )}
         {step.started_at && (
           <span className="mono muted" style={{ fontSize: 11 }}>
-            {fmtTime(step.started_at)} · 耗时 {step.finished_at ? fmtDuration(step.started_at, step.finished_at) : '进行中'}
+            {fmtTime(step.started_at)} · {step.finished_at ? `${tr('耗时', 'took')} ${fmtDuration(step.started_at, step.finished_at)}` : tr('进行中', 'in progress')}
           </span>
         )}
       </div>
@@ -518,21 +535,21 @@ export function VoyageDetailPage() {
   const resumeMutation = useMutation({
     mutationFn: () => api.resumeVoyage(id),
     onSuccess: () => {
-      toast('已重新入队，从断点续跑', 'ok');
+      toast(tr('已重新入队，从断点续跑', 'Re-queued — resuming from where it stopped'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
     },
-    onError: (err) => toast(`重试失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('重试失败：', 'Retry failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   const cancelMutation = useMutation({
     mutationFn: () => api.cancelVoyage(id),
     onSuccess: () => {
-      toast('任务已取消', 'ok');
+      toast(tr('任务已取消', 'Task cancelled'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
     },
-    onError: (err) => toast(`取消失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('取消失败：', 'Cancel failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   const active = !!voyage && !VOYAGE_TERMINAL.has(voyage.status);
@@ -585,7 +602,7 @@ export function VoyageDetailPage() {
   if (isLoading) {
     return (
       <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>加载中…</div>
+        <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>
       </div>
     );
   }
@@ -595,14 +612,14 @@ export function VoyageDetailPage() {
       <div className="page fadeup">
         <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
           <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
-            {notFound ? '任务不存在' : '无法加载任务详情'}
+            {notFound ? tr('任务不存在', 'Task not found') : tr('无法加载任务详情', 'Failed to load task detail')}
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            {error instanceof Error ? error.message : '后端不可用，请稍后重试'}
+            {error instanceof Error ? error.message : tr('后端不可用，请稍后重试', 'Backend unavailable — try again later')}
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
-            <button className="btn btn-soft" onClick={() => void refetch()}>重试 retry</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>返回列表</button>
+            <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>{tr('返回列表', 'Back to list')}</button>
           </div>
         </div>
       </div>
@@ -642,13 +659,13 @@ export function VoyageDetailPage() {
               <span
                 className="pill sm"
                 style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
-                title="执行过程中计划被调整过（自动重试后的调整 / 按执行结果追加的轮次）"
+                title={tr('执行过程中计划被调整过（自动重试后的调整 / 按执行结果追加的轮次）', 'The plan was adjusted during execution (after auto-retries / extra rounds based on results)')}
               >
-                计划调整 ×{voyage.plan_iteration}
+                {tr('计划调整', 'Plan adjusted')} ×{voyage.plan_iteration}
               </span>
             )}
             <span className="mono muted" style={{ fontSize: 11 }}>
-              创建 {fmtTime(voyage.created_at)} · 耗时 {fmtDuration(voyage.created_at, active ? null : voyage.updated_at)}
+              {tr('创建', 'Created')} {fmtTime(voyage.created_at)} · {tr('耗时', 'took')} {fmtDuration(voyage.created_at, active ? null : voyage.updated_at)}
             </span>
             {totalTokens > 0 && (
               <span className="mono muted" style={{ fontSize: 11 }}>· {fmtTokens(totalTokens)} tokens</span>
@@ -658,7 +675,7 @@ export function VoyageDetailPage() {
         {active && (
           <button className="btn btn-ghost" disabled={cancelMutation.isPending} onClick={() => cancelMutation.mutate()}>
             <Icon name="x" size={13} />
-            取消任务
+            {tr('取消任务', 'Cancel task')}
           </button>
         )}
         {voyage.kind === 'presentation' && voyage.status === 'done' && (
@@ -678,7 +695,7 @@ export function VoyageDetailPage() {
       {(voyage.skills ?? []).length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 20 }}>
           <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>本次任务使用的技能：</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', flexShrink: 0 }}>{tr('本次任务使用的技能：', 'Skills used in this task:')}</span>
             {voyage.skills!.map((s) => (
               <span
                 key={`${s.slug}-${s.target}`}
@@ -697,7 +714,7 @@ export function VoyageDetailPage() {
       <div className="row" style={{ marginBottom: 12 }}>
         <span className="section-h">
           <Icon name="compass" size={15} style={{ color: 'var(--accent)' }} />
-          步骤时间线 <span className="en-label" style={{ fontSize: 11 }}>Steps</span>
+          {tr('步骤时间线', 'Steps')}
         </span>
         {planAdjusted && (
           <label
@@ -709,13 +726,13 @@ export function VoyageDetailPage() {
               checked={showObsolete}
               onChange={(e) => setShowObsolete(e.target.checked)}
             />
-            显示已作废步骤
+            {tr('显示已作废步骤', 'Show obsolete steps')}
           </label>
         )}
       </div>
       {steps.length === 0 ? (
         <div className="card card-pad empty" style={{ padding: 40 }}>
-          正在规划步骤…
+          {tr('正在规划步骤…', 'Planning steps…')}
         </div>
       ) : (
         <Timeline>
@@ -736,7 +753,7 @@ export function VoyageDetailPage() {
           <div className="row" style={{ margin: '20px 0 12px' }}>
             <span className="section-h">
               <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
-              实时日志 <span className="en-label" style={{ fontSize: 11 }}>Live log</span>
+              {tr('实时日志', 'Live log')}
             </span>
           </div>
           <div className="codeblock scroll" style={{ fontSize: 11, maxHeight: 240, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>

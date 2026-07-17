@@ -16,6 +16,7 @@ import {
   type ReviewMessageRead,
   type ReviewSessionRead,
 } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { useShell } from '../../app/AppShell';
 import { DiscussionPanel } from '../review/DiscussionPanel';
 import { DiscussionBubble } from '../review/messages';
@@ -50,20 +51,20 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
       <div className="row gap8" style={{ marginBottom: 14 }}>
         <span className="section-h">
           <Icon name="compass" size={14} style={{ color: 'var(--accent)' }} />
-          研究目标 <span className="en-label" style={{ fontSize: 11 }}>Research Goal</span>
+          {tr('研究目标', 'Research goal')}
         </span>
         <span style={{ marginLeft: 'auto' }}>
           <ResearchTypeBadge type={goal.research_type} />
         </span>
       </div>
-      {goal.task && <GoalField label="研究任务">{goal.task}</GoalField>}
+      {goal.task && <GoalField label={tr('研究任务', 'Task')}>{goal.task}</GoalField>}
       {goal.question && (
-        <GoalField label="核心问题">
+        <GoalField label={tr('核心问题', 'Core question')}>
           <b>{goal.question}</b>
         </GoalField>
       )}
       {(goal.objectives?.length ?? 0) > 0 && (
-        <GoalField label="研究目标">
+        <GoalField label={tr('研究目标', 'Objectives')}>
           <ol style={{ margin: 0, paddingLeft: 18 }}>
             {goal.objectives!.map((o, i) => (
               <li key={i} style={{ marginBottom: 3 }}>{o}</li>
@@ -72,11 +73,11 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
         </GoalField>
       )}
       {(inScope.length > 0 || outScope.length > 0) && (
-        <GoalField label="研究范围">
+        <GoalField label={tr('研究范围', 'Scope')}>
           <div className="row gap12 wrap" style={{ alignItems: 'flex-start' }}>
             {inScope.length > 0 && (
               <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--ok-tx)', marginBottom: 3 }}>做什么</div>
+                <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--ok-tx)', marginBottom: 3 }}>{tr('做什么', 'In scope')}</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {inScope.map((s, i) => (
                     <li key={i}>{s}</li>
@@ -86,7 +87,7 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
             )}
             {outScope.length > 0 && (
               <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-3)', marginBottom: 3 }}>不做什么</div>
+                <div style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-3)', marginBottom: 3 }}>{tr('不做什么', 'Out of scope')}</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {outScope.map((s, i) => (
                     <li key={i}>{s}</li>
@@ -98,7 +99,7 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
         </GoalField>
       )}
       {(goal.success_criteria?.length ?? 0) > 0 && (
-        <GoalField label="成功标准">
+        <GoalField label={tr('成功标准', 'Success criteria')}>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {goal.success_criteria!.map((c, i) => (
               <li key={i} style={{ marginBottom: 3 }}>{c}</li>
@@ -107,7 +108,7 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
         </GoalField>
       )}
       {(goal.key_concepts?.length ?? 0) > 0 && (
-        <GoalField label="关键概念">
+        <GoalField label={tr('关键概念', 'Key concepts')}>
           <div className="row gap6 wrap">
             {goal.key_concepts!.map((c, i) => (
               <span key={i} className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
@@ -118,24 +119,24 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
         </GoalField>
       )}
       {res && (
-        <GoalField label="资源需求">
+        <GoalField label={tr('资源需求', 'Resources')}>
           <div className="col gap4">
             {res.compute && (
               <div className="row gap6">
                 <Icon name="cpu" size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-                <span>算力：{res.compute}</span>
+                <span>{tr('算力：', 'Compute: ')}{res.compute}</span>
               </div>
             )}
             {(res.data?.length ?? 0) > 0 && (
               <div className="row gap6" style={{ alignItems: 'flex-start' }}>
                 <Icon name="grid" size={13} style={{ color: 'var(--text-3)', flexShrink: 0, marginTop: 3 }} />
-                <span>数据：{res.data!.join('、')}</span>
+                <span>{tr('数据：', 'Data: ')}{res.data!.join(tr('、', ', '))}</span>
               </div>
             )}
             {res.time_weeks != null && (
               <div className="row gap6">
                 <Icon name="clock" size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-                <span>预计约 {res.time_weeks} 周</span>
+                <span>{tr(`预计约 ${res.time_weeks} 周`, `About ${res.time_weeks} weeks expected`)}</span>
               </div>
             )}
           </div>
@@ -149,7 +150,7 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
               size={12}
               style={{ transform: showSmoke ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}
             />
-            最小验证实验 <span style={{ color: 'var(--text-4)', fontSize: 11 }}>1-3 天可出信号</span>
+            {tr('最小验证实验', 'Smoke test')} <span style={{ color: 'var(--text-4)', fontSize: 11 }}>{tr('1-3 天可出信号', 'signal in 1-3 days')}</span>
           </button>
           {showSmoke && (
             <pre className="codeblock" style={{ fontSize: 11, marginTop: 10 }}>
@@ -164,10 +165,11 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
 
 /* ---------------- 依据文献列表（Idea 2.0） ---------------- */
 
-const EVIDENCE_SOURCE_META: Record<IdeaEvidenceSource, { zh: string; bg: string; tx: string }> = {
-  library: { zh: '库内', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
-  external: { zh: '外部', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
-  signal: { zh: '信号', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
+/* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
+const EVIDENCE_SOURCE_META: Record<IdeaEvidenceSource, { zh: string; en: string; bg: string; tx: string }> = {
+  library: { zh: '库内', en: 'Library', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
+  external: { zh: '外部', en: 'External', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  signal: { zh: '信号', en: 'Signal', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
 };
 
 function EvidenceCard({ idea }: { idea: IdeaDetail }) {
@@ -178,7 +180,7 @@ function EvidenceCard({ idea }: { idea: IdeaDetail }) {
     <div className="card card-pad">
       <span className="section-h" style={{ marginBottom: 12 }}>
         <Icon name="book" size={14} style={{ color: 'var(--accent)' }} />
-        依据文献 <span className="en-label" style={{ fontSize: 11 }}>{evidence.length} 条</span>
+        {tr('依据文献', 'Evidence papers')} <span className="en-label" style={{ fontSize: 11 }}>{tr(`${evidence.length} 条`, `${evidence.length} items`)}</span>
       </span>
       <div className="col gap6">
         {evidence.map((ev, i) => {
@@ -198,7 +200,7 @@ function EvidenceCard({ idea }: { idea: IdeaDetail }) {
               }}
             >
               <span className="pill sm" style={{ background: meta.bg, color: meta.tx, flexShrink: 0 }}>
-                {meta.zh}
+                {tr(meta.zh, meta.en)}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, lineHeight: 1.4, fontWeight: 600 }}>
@@ -240,7 +242,7 @@ function roundInfoOf(payload: Record<string, unknown> | null, round: number): { 
   const scoresRec = item.scores && typeof item.scores === 'object' ? (item.scores as Record<string, unknown>) : null;
   const scores = scoresRec
     ? SCORE_DIMS.filter((d) => typeof scoresRec[d.key] === 'number')
-        .map((d) => `${d.zh} ${(scoresRec[d.key] as number).toFixed(1)}`)
+        .map((d) => `${tr(d.zh, d.en)} ${(scoresRec[d.key] as number).toFixed(1)}`)
         .join(' · ') || null
     : null;
   return { scores, summary };
@@ -264,10 +266,10 @@ function RevisionSessionBlock({ session }: { session: ReviewSessionRead }) {
   }, [messages]);
 
   if (messagesQuery.isLoading) {
-    return <div className="empty" style={{ padding: 16 }}>加载评审记录…</div>;
+    return <div className="empty" style={{ padding: 16 }}>{tr('加载评审记录…', 'Loading review history…')}</div>;
   }
   if (rounds.length === 0) {
-    return <div className="empty" style={{ padding: 16 }}>暂无评审意见记录</div>;
+    return <div className="empty" style={{ padding: 16 }}>{tr('暂无评审意见记录', 'No review comments recorded')}</div>;
   }
   return (
     <Timeline>
@@ -282,7 +284,7 @@ function RevisionSessionBlock({ session }: { session: ReviewSessionRead }) {
             last={i === rounds.length - 1}
           >
             <div className="row gap8" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12.5, fontWeight: 650 }}>第 {round > 0 ? round : i + 1} 轮评审</span>
+              <span style={{ fontSize: 12.5, fontWeight: 650 }}>{tr(`第 ${round > 0 ? round : i + 1} 轮评审`, `Review round ${round > 0 ? round : i + 1}`)}</span>
               {info.scores && (
                 <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{info.scores}</span>
               )}
@@ -301,7 +303,7 @@ function RevisionSessionBlock({ session }: { session: ReviewSessionRead }) {
                   padding: '7px 10px',
                 }}
               >
-                <b style={{ color: 'var(--text)' }}>本轮修订：</b>
+                <b style={{ color: 'var(--text)' }}>{tr('本轮修订：', 'This round’s revision: ')}</b>
                 {info.summary}
               </div>
             )}
@@ -324,10 +326,13 @@ function RevisionTimeline({ ideaId }: { ideaId: string }) {
     <div className="card card-pad">
       <span className="section-h" style={{ marginBottom: 6 }}>
         <Icon name="shield" size={14} style={{ color: 'var(--accent)' }} />
-        评审修订记录 <span className="en-label" style={{ fontSize: 11 }}>review &amp; revise</span>
+        {tr('评审修订记录', 'Review & revision history')}
       </span>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5, marginBottom: 14 }}>
-        深度生成时，多位 AI 评审员逐轮提出必须修改项，作者 AI 修订后重评（只读记录）。
+        {tr(
+          '深度生成时，多位 AI 评审员逐轮提出必须修改项，作者 AI 修订后重评（只读记录）。',
+          'During Deep Dive, multiple AI reviewers raise must-fix items each round; the author AI revises and is re-scored (read-only record).',
+        )}
       </div>
       <div className="scroll" style={{ maxHeight: 460, overflowY: 'auto' }}>
         {sessions.map((s) => (
@@ -346,18 +351,18 @@ function ScoresCard({ idea }: { idea: IdeaDetail }) {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <span className="section-h">
           <Icon name="scale" size={14} style={{ color: 'var(--accent)' }} />
-          四维评分
+          {tr('四维评分', 'Scores')}
         </span>
         {composite !== null && (
           <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-            composite <span className="mono" style={{ fontWeight: 700 }}>{composite.toFixed(1)}</span>
+            {tr('综合', 'composite')} <span className="mono" style={{ fontWeight: 700 }}>{composite.toFixed(1)}</span>
           </span>
         )}
       </div>
       {idea.scores ? (
         <>
           {SCORE_DIMS.map((d) => (
-            <RubricBar key={d.key} label={`${d.zh} ${d.en}`} value={idea.scores![d.key]} />
+            <RubricBar key={d.key} label={tr(d.zh, d.en)} value={idea.scores![d.key]} />
           ))}
           {idea.score_rationale && (
             <>
@@ -371,7 +376,7 @@ function ScoresCard({ idea }: { idea: IdeaDetail }) {
                   size={12}
                   style={{ transform: showRationale ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}
                 />
-                打分理由 rationale
+                {tr('打分理由', 'Rationale')}
               </button>
               {showRationale && (
                 <div className="col gap8" style={{ marginTop: 10 }}>
@@ -390,7 +395,7 @@ function ScoresCard({ idea }: { idea: IdeaDetail }) {
                           padding: '8px 11px',
                         }}
                       >
-                        <b style={{ color: 'var(--text)' }}>{d.zh} {d.en}</b> — {r}
+                        <b style={{ color: 'var(--text)' }}>{tr(d.zh, d.en)}</b> — {r}
                       </div>
                     );
                   })}
@@ -400,7 +405,7 @@ function ScoresCard({ idea }: { idea: IdeaDetail }) {
           )}
         </>
       ) : (
-        <span className="muted" style={{ fontSize: 12.5 }}>尚未打分 · not scored yet</span>
+        <span className="muted" style={{ fontSize: 12.5 }}>{tr('尚未打分', 'Not scored yet')}</span>
       )}
     </div>
   );
@@ -430,21 +435,21 @@ export function IdeaDetailPage() {
   const promoteMutation = useMutation({
     mutationFn: () => api.promoteIdea(id!),
     onSuccess: (gate) => {
-      toast('已提交晋级审批，等待人工审批 · promotion approval created', 'ok');
+      toast(tr('已提交晋级审批，等待人工审批', 'Promotion approval submitted — awaiting human review'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
       invalidateIdea();
       openGates(gate.id);
     },
-    onError: (e) => toast(`晋级失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('晋级失败：', 'Promotion failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const rejectMutation = useMutation({
     mutationFn: () => api.patchIdea(id!, { status: 'rejected' }),
     onSuccess: () => {
-      toast('已淘汰该 idea · rejected', 'ok');
+      toast(tr('已淘汰该 idea', 'Idea rejected'), 'ok');
       invalidateIdea();
     },
-    onError: (e) => toast(`淘汰失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('淘汰失败：', 'Reject failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // —— [[paper:uuid]] → 库内论文链接（标题优先取依据文献 / 来源论文 / 目标 grounding） ——
@@ -462,13 +467,13 @@ export function IdeaDetailPage() {
         className="wikilink"
         role="link"
         tabIndex={0}
-        title="打开库内论文"
+        title={tr('打开库内论文', 'Open the paper in the library')}
         onClick={() => navigate(`/wiki?paper=${paperId}`)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') navigate(`/wiki?paper=${paperId}`);
         }}
       >
-        {paperTitles.get(paperId) ?? `论文 ${paperId.slice(0, 8)}`}
+        {paperTitles.get(paperId) ?? tr(`论文 ${paperId.slice(0, 8)}`, `Paper ${paperId.slice(0, 8)}`)}
       </span>
     ),
     [paperTitles, navigate],
@@ -477,7 +482,7 @@ export function IdeaDetailPage() {
   if (ideaQuery.isLoading) {
     return (
       <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>加载 idea 详情…</div>
+        <div className="empty" style={{ padding: 80 }}>{tr('加载 idea 详情…', 'Loading idea…')}</div>
       </div>
     );
   }
@@ -487,12 +492,12 @@ export function IdeaDetailPage() {
         <div className="card">
           <EmptyState
             icon="x"
-            title="无法加载 idea"
-            desc="后端不可用、接口未就绪，或该 idea 不存在。"
+            title={tr('无法加载 idea', 'Could not load the idea')}
+            desc={tr('后端不可用、接口未就绪，或该 idea 不存在。', 'Backend unavailable, API not ready, or the idea does not exist.')}
             action={
               <button className="btn btn-ghost" onClick={() => navigate('/forge')}>
                 <Icon name="arrow" size={14} style={{ transform: 'rotate(180deg)' }} />
-                返回候选池
+                {tr('返回候选池', 'Back to candidates')}
               </button>
             }
           />
@@ -508,7 +513,7 @@ export function IdeaDetailPage() {
       {/* 头部 */}
       <button className="btn btn-soft sm" onClick={() => navigate('/forge')} style={{ marginBottom: 16 }}>
         <Icon name="arrow" size={13} style={{ transform: 'rotate(180deg)' }} />
-        返回候选池
+        {tr('返回候选池', 'Back to candidates')}
       </button>
       <div className="row gap8" style={{ marginBottom: 8 }}>
         <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{idea.id.slice(0, 8)}</span>
@@ -531,7 +536,7 @@ export function IdeaDetailPage() {
       {idea.seed_idea ? (
         <div className="row gap6" style={{ fontSize: 12, color: 'var(--text-3)', margin: '0 0 22px' }}>
           <Icon name="git" size={13} />
-          深化自：
+          {tr('深化自：', 'Deepened from: ')}
           <span
             className="hoverable"
             style={{ color: 'var(--accent-text)', fontWeight: 600 }}
@@ -553,19 +558,17 @@ export function IdeaDetailPage() {
             <span className="section-h" style={{ marginBottom: 14 }}>
               <Icon name="file" size={14} style={{ color: 'var(--accent)' }} />
               {idea.depth === 'proposal' ? (
-                <>
-                  研究方案 <span className="en-label" style={{ fontSize: 11 }}>Research Proposal</span>
-                </>
+                tr('研究方案', 'Research proposal')
               ) : (
                 <>
-                  提案正文 <span className="en-label" style={{ fontSize: 11 }}>动机 · 方法 · 预期实验 · 风险</span>
+                  {tr('提案正文', 'Proposal body')} <span className="en-label" style={{ fontSize: 11 }}>{tr('动机 · 方法 · 预期实验 · 风险', 'motivation · method · experiments · risks')}</span>
                 </>
               )}
             </span>
             {idea.content ? (
               <Markdown source={idea.content} renderPaperRef={renderPaperRef} />
             ) : (
-              <span className="muted" style={{ fontSize: 12.5 }}>暂无正文</span>
+              <span className="muted" style={{ fontSize: 12.5 }}>{tr('暂无正文', 'No content yet')}</span>
             )}
           </div>
           <RevisionTimeline ideaId={idea.id} />
@@ -581,7 +584,7 @@ export function IdeaDetailPage() {
           <div className="card card-pad">
             <span className="section-h" style={{ marginBottom: 12 }}>
               <Icon name="book" size={14} style={{ color: 'var(--accent)' }} />
-              来源论文 <span className="en-label" style={{ fontSize: 11 }}>parent papers</span>
+              {tr('来源论文', 'Source papers')}
             </span>
             {idea.parent_papers.length > 0 ? (
               <div className="col gap6">
@@ -604,19 +607,19 @@ export function IdeaDetailPage() {
                 ))}
               </div>
             ) : (
-              <span className="muted" style={{ fontSize: 12.5 }}>无来源论文记录</span>
+              <span className="muted" style={{ fontSize: 12.5 }}>{tr('无来源论文记录', 'No source papers recorded')}</span>
             )}
           </div>
 
           {/* 操作 */}
           <div className="card card-pad" style={{ background: actionable ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
-            <div style={{ fontSize: 13.5, fontWeight: 650, marginBottom: 4 }}>晋级 / 淘汰</div>
+            <div style={{ fontSize: 13.5, fontWeight: 650, marginBottom: 4 }}>{tr('晋级 / 淘汰', 'Promote / reject')}</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.55, marginBottom: 14 }}>
               {actionable
-                ? '晋级会提交 idea_promotion 人工审批，审批通过后进入实验阶段；淘汰将其移出候选池。'
+                ? tr('晋级会提交 idea_promotion 人工审批，审批通过后进入实验阶段；淘汰将其移出候选池。', 'Promoting submits an idea_promotion approval; once approved it moves to the experiment stage. Rejecting removes it from the pool.')
                 : idea.status === 'promoted'
-                  ? '该 idea 已晋级，无需再操作。'
-                  : '该 idea 已淘汰。'}
+                  ? tr('该 idea 已晋级，无需再操作。', 'This idea is already promoted — nothing more to do.')
+                  : tr('该 idea 已淘汰。', 'This idea has been rejected.')}
             </div>
             <div className="row gap8">
               <button
@@ -626,7 +629,7 @@ export function IdeaDetailPage() {
                 onClick={() => promoteMutation.mutate()}
               >
                 <Icon name="arrow" size={14} />
-                发起晋级 promote
+                {tr('发起晋级', 'Promote')}
               </button>
               <button
                 className="btn btn-ghost"
@@ -635,7 +638,7 @@ export function IdeaDetailPage() {
                 onClick={() => rejectMutation.mutate()}
               >
                 <Icon name="x" size={14} />
-                人工淘汰 reject
+                {tr('人工淘汰', 'Reject')}
               </button>
             </div>
           </div>
@@ -647,7 +650,7 @@ export function IdeaDetailPage() {
             style={{ justifyContent: 'center' }}
           >
             <Icon name="scale" size={14} />
-            查看该 idea 的辩论记录 →
+            {tr('查看该 idea 的辩论记录 →', 'View this idea’s debate history →')}
           </button>
         </div>
       </div>

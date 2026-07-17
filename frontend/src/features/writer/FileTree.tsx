@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import type { ManuscriptFileMeta } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    左侧文件树（220px）：文件列表（readonly 锁图标）、当前文件
@@ -52,12 +53,12 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
         style={{ padding: '10px 12px 8px', justifyContent: 'space-between', flexShrink: 0 }}
       >
         <span style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
-          文件 · FILES
+          {tr('文件', 'FILES')}
         </span>
         <button
           className="icon-btn"
           style={{ width: 22, height: 22, borderRadius: 6 }}
-          title="新建文件"
+          title={tr('新建文件', 'New file')}
           disabled={busy}
           onClick={() => setAdding((v) => !v)}
         >
@@ -71,7 +72,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
             className="input mono"
             autoFocus
             style={{ height: 28, fontSize: 11.5, width: '100%' }}
-            placeholder="如 appendix.tex"
+            placeholder={tr('如 appendix.tex', 'e.g. appendix.tex')}
             value={newPath}
             onChange={(e) => setNewPath(e.target.value)}
             onKeyDown={(e) => {
@@ -88,7 +89,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
 
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '0 8px 10px' }}>
         {sorted.length === 0 && (
-          <div style={{ fontSize: 11.5, color: 'var(--text-4)', padding: '8px 6px' }}>还没有文件</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-4)', padding: '8px 6px' }}>{tr('还没有文件', 'No files yet')}</div>
         )}
         {sorted.map((f) => {
           const active = f.id === currentId;
@@ -124,17 +125,17 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
                 {f.path}
               </span>
               {f.readonly ? (
-                <span title="只读文件（模板样式 / 自动生成）" style={{ color: 'var(--text-4)', display: 'flex' }}>
+                <span title={tr('只读文件（模板样式 / 自动生成）', 'Read-only file (template style / auto-generated)')} style={{ color: 'var(--text-4)', display: 'flex' }}>
                   <LockIcon />
                 </span>
               ) : (
                 <span className="row gap6 writer-file-ops" onClick={(e) => e.stopPropagation()}>
                   <button
                     className="writer-mini-btn"
-                    title="重命名"
+                    title={tr('重命名', 'Rename')}
                     disabled={busy}
                     onClick={() => {
-                      const next = window.prompt('新文件名（含路径）', f.path);
+                      const next = window.prompt(tr('新文件名（含路径）', 'New file name (with path)'), f.path);
                       if (next && next.trim() && next.trim() !== f.path) onRename(f, next.trim());
                     }}
                   >
@@ -142,10 +143,10 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
                   </button>
                   <button
                     className="writer-mini-btn"
-                    title="删除"
+                    title={tr('删除', 'Delete')}
                     disabled={busy}
                     onClick={() => {
-                      if (window.confirm(`确定删除 ${f.path}？删除后无法恢复。`)) onDelete(f);
+                      if (window.confirm(tr(`确定删除 ${f.path}？删除后无法恢复。`, `Delete ${f.path}? This cannot be undone.`))) onDelete(f);
                     }}
                   >
                     <Icon name="trash" size={11} />

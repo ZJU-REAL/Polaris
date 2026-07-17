@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { api } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { ExportMenu, PapersTab } from './PapersTab';
 import { ConceptsTab } from './ConceptsTab';
 import { LibraryChatTab } from './LibraryChatTab';
@@ -82,7 +83,7 @@ export function WikiPage() {
   useEffect(() => {
     if (!pendingConceptName) return;
     if (resolveQuery.isError) {
-      toast('概念解析失败（后端不可用）', 'error');
+      toast(tr('概念解析失败（后端不可用）', 'Concept lookup failed (backend unavailable)'), 'error');
       setPendingConceptName(null);
       return;
     }
@@ -94,7 +95,10 @@ export function WikiPage() {
       setConceptId(hit.id);
       setTab('concepts');
     } else {
-      toast(`概念 ${pendingConceptName} 尚未入库`, 'info');
+      toast(
+        tr(`概念 ${pendingConceptName} 尚未入库`, `Concept ${pendingConceptName} is not in the library yet`),
+        'info',
+      );
     }
     setPendingConceptName(null);
   }, [pendingConceptName, resolveQuery.data, resolveQuery.isError]);
@@ -117,18 +121,24 @@ export function WikiPage() {
       <div className="page fadeup">
         <PageHead
           eyebrow="Stage 00 · Research Wiki"
-          title="文献调研 Research Wiki"
-          sub="每日自动抓取、打分、精读编译前沿文献，知识库复利增长。"
+          title={tr('文献调研', 'Research Wiki')}
+          sub={tr(
+            '每日自动抓取、打分、精读编译前沿文献，知识库复利增长。',
+            'Fetch, score, and compile new papers daily — the library compounds over time.',
+          )}
         />
         <div className="card">
           <EmptyState
             icon="book"
-            title="还没有研究方向"
-            desc="Research Wiki 按研究方向组织：先通过结构化访谈创建一个方向，再运行初始建库回填文献。"
+            title={tr('还没有研究方向', 'No research directions yet')}
+            desc={tr(
+              'Research Wiki 按研究方向组织：先通过结构化访谈创建一个方向，再运行初始建库回填文献。',
+              'The Research Wiki is organized by direction: create one via the structured interview, then run the initial library build.',
+            )}
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
-                新建研究方向 · New direction
+                {tr('新建研究方向', 'New direction')}
               </button>
             }
           />
@@ -144,15 +154,14 @@ export function WikiPage() {
     <div className="page fadeup" style={{ maxWidth: 1360, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}>
       <PageHead
         eyebrow="Stage 00 · Research Wiki"
-        title="文献调研 Research Wiki"
+        title={tr('文献调研', 'Research Wiki')}
         sub={
           currentProject
-            ? `当前方向：${currentProject.name}`
+            ? `${tr('当前方向：', 'Current direction: ')}${currentProject.name}`
             : projectsLoading
-              ? '加载研究方向…'
-              : '选择一个研究方向'
+              ? tr('加载研究方向…', 'Loading directions…')
+              : tr('选择一个研究方向', 'Pick a direction')
         }
-        en="papers · concepts · ingest"
         right={
           <>
             {currentProject && (
@@ -161,12 +170,12 @@ export function WikiPage() {
                 onClick={() => navigate(`/projects/${currentProject.id}`)}
               >
                 <Icon name="compass" size={14} />
-                方向详情
+                {tr('方向详情', 'Direction detail')}
               </button>
             )}
             <button className="btn btn-ghost" disabled={!pid} onClick={() => setPresentOpen(true)}>
               <Icon name="chart" size={14} />
-              论文分享 PPT
+              {tr('论文分享 PPT', 'Paper sharing PPT')}
             </button>
             {pid && <ExportMenu pid={pid} />}
           </>
@@ -176,12 +185,12 @@ export function WikiPage() {
       <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <Segmented<WikiTab>
           options={[
-            { v: 'papers', label: `论文库 Papers${total !== undefined ? ` · ${total}` : ''}` },
-            { v: 'concepts', label: '概念库 Concepts' },
-            { v: 'graph', label: '图谱 Graph' },
-            { v: 'chat', label: '文献对话 Chat' },
-            { v: 'ingest', label: '建库与同步 Ingest' },
-            { v: 'notes', label: '笔记 Notes' },
+            { v: 'papers', label: `${tr('论文库', 'Papers')}${total !== undefined ? ` · ${total}` : ''}` },
+            { v: 'concepts', label: tr('概念库', 'Concepts') },
+            { v: 'graph', label: tr('图谱', 'Graph') },
+            { v: 'chat', label: tr('文献对话', 'Chat') },
+            { v: 'ingest', label: tr('建库与同步', 'Ingest & sync') },
+            { v: 'notes', label: tr('笔记', 'Notes') },
           ]}
           value={tab}
           onChange={setTab}
@@ -193,7 +202,7 @@ export function WikiPage() {
             onClick={() => navigate(`/voyages/${ingestQuery.data?.running_voyage_id ?? ''}`)}
           >
             <span className="dot pulse" />
-            文献任务运行中 →
+            {tr('文献任务运行中 →', 'Literature task running →')}
           </span>
         )}
       </div>
@@ -210,7 +219,9 @@ export function WikiPage() {
       >
         {!pid ? (
           <div className="empty" style={{ margin: 'auto' }}>
-            {projectsLoading ? '加载研究方向…' : '请先选择研究方向'}
+            {projectsLoading
+              ? tr('加载研究方向…', 'Loading directions…')
+              : tr('请先选择研究方向', 'Pick a direction first')}
           </div>
         ) : tab === 'papers' ? (
           <PapersTab

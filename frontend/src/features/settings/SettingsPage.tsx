@@ -8,6 +8,7 @@ import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
+import { setLang, tr, useLang } from '../../lib/i18n';
 import {
   LLM_STAGES,
   api,
@@ -44,27 +45,27 @@ function PersonalTab() {
   const saveMutation = useMutation({
     mutationFn: () => api.updateMe({ display_name: name.trim() }),
     onSuccess: () => {
-      toast('个人资料已保存', 'ok');
+      toast(tr('个人资料已保存', 'Profile saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['me'] });
     },
-    onError: (e) => toast(`保存失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const avatarMutation = useMutation({
     mutationFn: (file: File) => api.uploadAvatar(file),
     onSuccess: () => {
-      toast('头像已更新', 'ok');
+      toast(tr('头像已更新', 'Avatar updated'), 'ok');
       setAvatarVersion((v) => v + 1);
       void queryClient.invalidateQueries({ queryKey: ['me'] });
       void queryClient.invalidateQueries({ queryKey: ['avatar'] });
     },
     onError: (e) => {
       const msg = e instanceof Error ? e.message : String(e);
-      toast(msg === 'AVATAR_TOO_LARGE' ? '图片超过 2MB' : msg === 'AVATAR_NOT_IMAGE' ? '不是有效的图片文件' : `上传失败：${msg}`, 'error');
+      toast(msg === 'AVATAR_TOO_LARGE' ? tr('图片超过 2MB', 'Image exceeds 2MB') : msg === 'AVATAR_NOT_IMAGE' ? tr('不是有效的图片文件', 'Not a valid image file') : `${tr('上传失败', 'Upload failed')}：${msg}`, 'error');
     },
   });
 
-  if (isLoading) return <div className="empty">加载中…</div>;
-  if (isError || !me) return <div className="empty">无法加载用户信息（后端不可用）</div>;
+  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
+  if (isError || !me) return <div className="empty">{tr('无法加载用户信息（后端不可用）', 'Failed to load user info (backend unavailable)')}</div>;
 
   return (
     <div className="card card-pad" style={{ maxWidth: 560 }}>
@@ -83,25 +84,25 @@ function PersonalTab() {
             }}
           />
           <button className="btn btn-soft" disabled={avatarMutation.isPending} onClick={() => avatarInputRef.current?.click()}>
-            {avatarMutation.isPending ? '上传中…' : '更换头像'}
+            {avatarMutation.isPending ? tr('上传中…', 'Uploading…') : tr('更换头像', 'Change avatar')}
           </button>
-          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 6 }}>PNG / JPEG / WebP，2MB 以内</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 6 }}>{tr('PNG / JPEG / WebP，2MB 以内', 'PNG / JPEG / WebP, up to 2MB')}</div>
         </div>
       </div>
-      <FormField label="显示名" en="Display name">
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="如：王小明" />
+      <FormField label={tr('显示名', 'Display name')}>
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('如：王小明', 'e.g. Alice Wang')} />
       </FormField>
-      <FormField label="邮箱" en="Email">
+      <FormField label={tr('邮箱', 'Email')}>
         <input className="input" value={me.email} disabled />
       </FormField>
       <div className="row gap12" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12.5, color: 'var(--text-2)' }}>
-          角色：{me.role === 'admin' ? '管理员' : '成员'}
+          {tr('角色', 'Role')}：{me.role === 'admin' ? tr('管理员', 'Admin') : tr('成员', 'Member')}
         </div>
         {usage && (
           <div style={{ fontSize: 12.5, color: 'var(--text-2)' }}>
-            AI 用量：{usage.tokens_used.toLocaleString()} tokens
-            {usage.token_quota != null && ` / 配额 ${usage.token_quota.toLocaleString()}`}
+            {tr('AI 用量', 'AI usage')}：{usage.tokens_used.toLocaleString()} tokens
+            {usage.token_quota != null && ` / ${tr('配额', 'quota')} ${usage.token_quota.toLocaleString()}`}
           </div>
         )}
       </div>
@@ -111,8 +112,34 @@ function PersonalTab() {
           disabled={saveMutation.isPending || (me.display_name ?? '') === name.trim()}
           onClick={() => saveMutation.mutate()}
         >
-          保存
+          {tr('保存', 'Save')}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- 界面语言 ----------------
+
+function LanguageCard() {
+  const lang = useLang();
+  return (
+    <div className="card card-pad" style={{ maxWidth: 560, marginTop: 16 }}>
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 650 }}>{tr('界面语言', 'Language')}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4 }}>
+            {tr('只影响界面文字，不影响 AI 生成内容的语言', 'Only affects the UI, not AI-generated content')}
+          </div>
+        </div>
+        <Segmented
+          options={[
+            { v: 'zh' as const, label: '中文' },
+            { v: 'en' as const, label: 'English' },
+          ]}
+          value={lang}
+          onChange={setLang}
+        />
       </div>
     </div>
   );
@@ -164,27 +191,27 @@ function SshTab() {
   const createMutation = useMutation({
     mutationFn: () => api.createSshCredential(toSshInput(draft)),
     onSuccess: () => {
-      toast('SSH 凭据已添加（私钥加密存储）', 'ok');
+      toast(tr('SSH 凭据已添加（私钥加密存储）', 'SSH credential added (private key stored encrypted)'), 'ok');
       setModalOpen(false);
       invalidate();
     },
-    onError: (e) => toast(`添加失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('添加失败', 'Add failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.deleteSshCredential(id),
     onSuccess: () => {
-      toast('凭据已删除', 'ok');
+      toast(tr('凭据已删除', 'Credential deleted'), 'ok');
       invalidate();
     },
-    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败', 'Delete failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const testMutation = useMutation({
     mutationFn: (id: string) => api.testSshCredential(id),
     onSuccess: (r) => {
-      toast(r.ok ? `连接成功：${r.detail}` : `连接失败：${r.detail}`, r.ok ? 'ok' : 'error');
+      toast(r.ok ? `${tr('连接成功', 'Connected')}：${r.detail}` : `${tr('连接失败', 'Connection failed')}：${r.detail}`, r.ok ? 'ok' : 'error');
       if (r.ok) invalidate(); // 后端更新 last_verified_at
     },
-    onError: (e) => toast(`测试失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('测试失败', 'Test failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const canSave =
@@ -199,39 +226,42 @@ function SshTab() {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
         <span className="section-h">
           <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          SSH 凭据 <span className="en-label" style={{ fontSize: 11 }}>实验用远程服务器</span>
+          {tr('SSH 凭据', 'SSH credentials')} <span className="en-label" style={{ fontSize: 11 }}>{tr('实验用远程服务器', 'remote servers for experiments')}</span>
         </span>
         <button className="btn btn-primary sm" onClick={() => { setDraft(emptySshDraft()); setModalOpen(true); }}>
           <Icon name="plus" size={13} />
-          添加凭据
+          {tr('添加凭据', 'Add credential')}
         </button>
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
-        私钥加密存储（Fernet），仅用于你自己的实验任务，绝不回传前端；实验工作目录限定 ~/polaris_runs/。
+        {tr(
+          '私钥加密存储（Fernet），仅用于你自己的实验任务，绝不回传前端；实验工作目录限定 ~/polaris_runs/。',
+          'Private keys are stored encrypted (Fernet), used only for your own experiment jobs and never sent back to the browser; the experiment working dir is limited to ~/polaris_runs/.',
+        )}
       </div>
 
       {isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>加载中…</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
       ) : isError ? (
         <div className="empty" style={{ padding: 24 }}>
-          无法加载（后端不可用或接口尚未就绪）
+          {tr('无法加载（后端不可用或接口尚未就绪）', 'Failed to load (backend unavailable or API not ready)')}
           <div style={{ marginTop: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => void refetch()}>重试</button>
+            <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
           </div>
         </div>
       ) : creds.length === 0 ? (
         <div className="empty" style={{ padding: 24 }}>
-          还没有 SSH 凭据 — 添加一台 GPU 服务器后即可在 Experiment Lab 发起实验
+          {tr('还没有 SSH 凭据 — 添加一台 GPU 服务器后即可在 Experiment Lab 发起实验', 'No SSH credentials yet — add a GPU server to run experiments in Experiment Lab')}
         </div>
       ) : (
         <table className="table">
           <thead>
             <tr>
-              <th>名称</th>
+              <th>{tr('名称', 'Name')}</th>
               <th>host</th>
               <th style={{ width: 60 }}>port</th>
               <th>username</th>
-              <th style={{ width: 130 }}>最近验证</th>
+              <th style={{ width: 130 }}>{tr('最近验证', 'Last verified')}</th>
               <th style={{ width: 150 }} />
             </tr>
           </thead>
@@ -243,7 +273,7 @@ function SshTab() {
                 <td className="mono" style={{ fontSize: 11.5 }}>{c.port}</td>
                 <td className="mono" style={{ fontSize: 11.5 }}>{c.username}</td>
                 <td className="mono" style={{ fontSize: 11, color: c.last_verified_at ? 'var(--ok-tx)' : 'var(--text-4)' }}>
-                  {c.last_verified_at ? fmtTime(c.last_verified_at) : '从未验证'}
+                  {c.last_verified_at ? fmtTime(c.last_verified_at) : tr('从未验证', 'Never verified')}
                 </td>
                 <td>
                   <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
@@ -252,15 +282,15 @@ function SshTab() {
                       disabled={testMutation.isPending}
                       onClick={() => testMutation.mutate(c.id)}
                     >
-                      {testMutation.isPending && testMutation.variables === c.id ? '连接中…' : '测试连接'}
+                      {testMutation.isPending && testMutation.variables === c.id ? tr('连接中…', 'Connecting…') : tr('测试连接', 'Test connection')}
                     </button>
                     <button
                       className="icon-btn"
                       style={{ width: 26, height: 26 }}
-                      title="删除"
+                      title={tr('删除', 'Delete')}
                       disabled={deleteMutation.isPending}
                       onClick={() => {
-                        if (window.confirm(`确定删除凭据 “${c.name}” ？使用中的实验将无法再连接该服务器。`)) {
+                        if (window.confirm(`${tr('确定删除凭据', 'Delete credential')} “${c.name}”？${tr('使用中的实验将无法再连接该服务器。', 'Experiments using it will no longer be able to reach this server.')}`)) {
                           deleteMutation.mutate(c.id);
                         }
                       }}
@@ -279,36 +309,36 @@ function SshTab() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         width={560}
-        title="添加 SSH 凭据"
-        sub="私钥加密存储，仅用于你自己的实验任务"
+        title={tr('添加 SSH 凭据', 'Add SSH credential')}
+        sub={tr('私钥加密存储，仅用于你自己的实验任务', 'Private key stored encrypted; used only for your own experiments')}
         footer={
           <>
-            <button className="btn btn-ghost" onClick={() => setModalOpen(false)}>取消</button>
+            <button className="btn btn-ghost" onClick={() => setModalOpen(false)}>{tr('取消', 'Cancel')}</button>
             <button className="btn btn-primary" disabled={!canSave} onClick={() => createMutation.mutate()}>
-              {createMutation.isPending ? '保存中…' : '保存'}
+              {createMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
             </button>
           </>
         }
       >
-        <FormField label="名称" en="name">
+        <FormField label={tr('名称', 'Name')}>
           <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            placeholder="如 lab-gpu-1" />
+            placeholder={tr('如 lab-gpu-1', 'e.g. lab-gpu-1')} />
         </FormField>
         <div className="row gap12" style={{ alignItems: 'flex-start' }}>
-          <FormField label="主机" en="host" style={{ flex: 1 }}>
+          <FormField label={tr('主机', 'Host')} style={{ flex: 1 }}>
             <input className="input mono" value={draft.host} onChange={(e) => setDraft({ ...draft, host: e.target.value })}
               placeholder="gpu.example.edu" />
           </FormField>
-          <FormField label="端口" en="port" style={{ width: 100 }}>
+          <FormField label={tr('端口', 'Port')} style={{ width: 100 }}>
             <input className="input mono" inputMode="numeric" value={draft.port}
               onChange={(e) => setDraft({ ...draft, port: e.target.value })} placeholder="22" />
           </FormField>
         </div>
-        <FormField label="用户名" en="username">
+        <FormField label={tr('用户名', 'Username')}>
           <input className="input mono" value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })}
             placeholder="ubuntu" autoComplete="off" />
         </FormField>
-        <FormField label="私钥" en="private_key（PEM）" hint="粘贴完整 PEM 文本；后端 Fernet 加密入库，只写不读。">
+        <FormField label={tr('私钥（PEM）', 'Private key (PEM)')} hint={tr('粘贴完整 PEM 文本；后端 Fernet 加密入库，只写不读。', 'Paste the full PEM text; stored encrypted on the backend, write-only.')}>
           <textarea
             className="textarea mono"
             style={{ minHeight: 130, fontSize: 11 }}
@@ -319,16 +349,16 @@ function SshTab() {
             spellCheck={false}
           />
         </FormField>
-        <FormField label="密钥口令（可选）" en="passphrase">
+        <FormField label={tr('密钥口令（可选）', 'Passphrase (optional)')}>
           <input className="input mono" type="password" autoComplete="new-password" value={draft.passphrase}
-            onChange={(e) => setDraft({ ...draft, passphrase: e.target.value })} placeholder="私钥无口令则留空" />
+            onChange={(e) => setDraft({ ...draft, passphrase: e.target.value })} placeholder={tr('私钥无口令则留空', 'Leave empty if the key has no passphrase')} />
         </FormField>
-        <FormField label="出外网代理（可选）" en="proxy">
+        <FormField label={tr('出外网代理（可选）', 'Outbound proxy (optional)')}>
           <input className="input mono" value={draft.proxy_url}
             onChange={(e) => setDraft({ ...draft, proxy_url: e.target.value })}
-            placeholder="如 http://10.205.70.120:7899，服务器直连外网则留空" />
+            placeholder={tr('如 http://10.205.70.120:7899，服务器直连外网则留空', 'e.g. http://10.205.70.120:7899; leave empty if the server has direct internet access')} />
           <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
-            实验装依赖、下载模型数据时自动走该代理；内网 LLM 接口不受影响
+            {tr('实验装依赖、下载模型数据时自动走该代理；内网 LLM 接口不受影响', 'Used when experiments install dependencies or download models; internal LLM endpoints are unaffected')}
           </div>
         </FormField>
       </Modal>
@@ -371,12 +401,12 @@ function ProviderForm({ draft, setDraft, isNew }: {
 }) {
   return (
     <>
-      <FormField label="名称" en="Name">
+      <FormField label={tr('名称', 'Name')}>
         <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-          placeholder="如 deepseek / claude / local-fake" />
+          placeholder={tr('如 deepseek / claude / local-fake', 'e.g. deepseek / claude / local-fake')} />
       </FormField>
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
-        <FormField label="类型" en="Kind" style={{ width: 180 }}>
+        <FormField label={tr('类型', 'Kind')} style={{ width: 180 }}>
           <select className="input" value={draft.kind}
             onChange={(e) => setDraft({ ...draft, kind: e.target.value as LlmProviderKind })}>
             {KINDS.map((k) => (
@@ -384,20 +414,20 @@ function ProviderForm({ draft, setDraft, isNew }: {
             ))}
           </select>
         </FormField>
-        <FormField label="Base URL" en="base_url" style={{ flex: 1 }}>
+        <FormField label="Base URL" style={{ flex: 1 }}>
           <input className="input mono" value={draft.base_url} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })}
             placeholder="https://api.example.com/v1" disabled={draft.kind === 'fake'} />
         </FormField>
       </div>
-      <FormField label="API Key" en="api_key"
-        hint={isNew ? 'fake provider 无需 key' : '留空 = 保持不变；后端只写不读，展示为 masked'}>
+      <FormField label="API Key"
+        hint={isNew ? tr('fake provider 无需 key', 'fake providers need no key') : tr('留空 = 保持不变；后端只写不读，展示为 masked', 'Leave empty to keep unchanged; write-only on the backend, shown masked')}>
         <input className="input mono" type="password" autoComplete="new-password" value={draft.api_key}
           onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
-          placeholder={isNew ? 'sk-…' : '••••••（留空不变）'} disabled={draft.kind === 'fake'} />
+          placeholder={isNew ? 'sk-…' : tr('••••••（留空不变）', '•••••• (empty = unchanged)')} disabled={draft.kind === 'fake'} />
       </FormField>
       <label className="row gap8" style={{ fontSize: 13, cursor: 'pointer', userSelect: 'none' }}>
         <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
-        启用 enabled
+        {tr('启用', 'Enabled')}
       </label>
     </>
   );
@@ -420,28 +450,28 @@ function ProvidersSection() {
   const createMutation = useMutation({
     mutationFn: () => api.createLlmProvider(toInput(draft)),
     onSuccess: () => {
-      toast('Provider 已创建', 'ok');
+      toast(tr('Provider 已创建', 'Provider created'), 'ok');
       setModal('closed');
       invalidate();
     },
-    onError: (err) => toast(`创建失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('创建失败', 'Create failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const patchMutation = useMutation({
     mutationFn: (id: string) => api.patchLlmProvider(id, toInput(draft)),
     onSuccess: () => {
-      toast('Provider 已更新', 'ok');
+      toast(tr('Provider 已更新', 'Provider updated'), 'ok');
       setModal('closed');
       invalidate();
     },
-    onError: (err) => toast(`更新失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('更新失败', 'Update failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.deleteLlmProvider(id),
     onSuccess: () => {
-      toast('Provider 已删除', 'ok');
+      toast(tr('Provider 已删除', 'Provider deleted'), 'ok');
       invalidate();
     },
-    onError: (err) => toast(`删除失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('删除失败', 'Delete failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   const isNew = modal === 'create';
@@ -452,34 +482,34 @@ function ProvidersSection() {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <span className="section-h">
           <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          Providers <span className="en-label" style={{ fontSize: 11 }}>LLM 供应商</span>
+          {tr('LLM 供应商', 'Providers')}
         </span>
         <button className="btn btn-primary sm" onClick={() => { setDraft(emptyDraft()); setModal('create'); }}>
           <Icon name="plus" size={13} />
-          新增 Provider
+          {tr('新增 Provider', 'Add provider')}
         </button>
       </div>
 
       {isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>加载中…</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
       ) : isError ? (
         <div className="empty" style={{ padding: 24 }}>
-          无法加载（后端不可用或无权限）
+          {tr('无法加载（后端不可用或无权限）', 'Failed to load (backend unavailable or no permission)')}
           <div style={{ marginTop: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => void refetch()}>重试</button>
+            <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
           </div>
         </div>
       ) : providers.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>还没有 provider，先添加一个（kind=fake 可无 key 演示）</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('还没有 provider，先添加一个（kind=fake 可无 key 演示）', 'No providers yet — add one (kind=fake works without a key for demos)')}</div>
       ) : (
         <table className="table">
           <thead>
             <tr>
-              <th>名称</th>
+              <th>{tr('名称', 'Name')}</th>
               <th>kind</th>
               <th>base_url</th>
               <th>api_key</th>
-              <th style={{ width: 60 }}>状态</th>
+              <th style={{ width: 60 }}>{tr('状态', 'Status')}</th>
               <th style={{ width: 90 }} />
             </tr>
           </thead>
@@ -494,16 +524,16 @@ function ProvidersSection() {
                 <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
                 <td>
                   <span className="pill sm" style={p.enabled ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' } : {}}>
-                    {p.enabled ? '启用' : '停用'}
+                    {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
                   </span>
                 </td>
                 <td>
                   <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
-                    <button className="icon-btn" style={{ width: 26, height: 26 }} title="编辑"
+                    <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('编辑', 'Edit')}
                       onClick={() => { setDraft(draftFrom(p)); setModal(p.id); }}>
                       <Icon name="pen" size={13} />
                     </button>
-                    <button className="icon-btn" style={{ width: 26, height: 26 }} title="删除"
+                    <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('删除', 'Delete')}
                       disabled={deleteMutation.isPending}
                       onClick={() => deleteMutation.mutate(p.id)}>
                       <Icon name="trash" size={13} />
@@ -519,14 +549,14 @@ function ProvidersSection() {
       <Modal
         open={modal !== 'closed'}
         onClose={() => setModal('closed')}
-        title={isNew ? '新增 Provider' : '编辑 Provider'}
-        sub="api_key 后端只写不读；kind=fake 用于测试与无 key 演示"
+        title={isNew ? tr('新增 Provider', 'Add provider') : tr('编辑 Provider', 'Edit provider')}
+        sub={tr('api_key 后端只写不读；kind=fake 用于测试与无 key 演示', 'api_key is write-only on the backend; kind=fake is for tests and keyless demos')}
         footer={
           <>
-            <button className="btn btn-ghost" onClick={() => setModal('closed')}>取消</button>
+            <button className="btn btn-ghost" onClick={() => setModal('closed')}>{tr('取消', 'Cancel')}</button>
             <button className="btn btn-primary" disabled={!draft.name.trim() || busy}
               onClick={() => (isNew ? createMutation.mutate() : patchMutation.mutate(modal))}>
-              {busy ? '保存中…' : '保存'}
+              {busy ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
             </button>
           </>
         }
@@ -539,25 +569,25 @@ function ProvidersSection() {
 
 // ---------------- 模型路由表 ----------------
 
-/** stage 中文标签（代码标识符照常显示在下方）。 */
-const STAGE_ZH: Record<string, string> = {
-  default: '默认',
-  navigator: '任务规划',
-  sextant: '自动校验',
-  interview: '方向访谈',
-  relevance: '相关度打分',
-  librarian: '文献抓取',
-  reading: '精读编译',
-  embedding: '向量嵌入',
-  forge: '想法生成',
-  forge_signal: '信号摘要',
-  goal_explore: '目标构建',
-  proposal: '方案起草',
-  proposal_review: '方案评审',
-  debate: '辩论评审',
-  experiment: '实验',
-  writing: '论文撰写',
-  review: '论文评审',
+/** stage 标签（渲染处再 tr；代码标识符照常显示在下方）。 */
+const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
+  default: { zh: '默认', en: 'Default' },
+  navigator: { zh: '任务规划', en: 'Task planning' },
+  sextant: { zh: '自动校验', en: 'Auto verification' },
+  interview: { zh: '方向访谈', en: 'Direction interview' },
+  relevance: { zh: '相关度打分', en: 'Relevance scoring' },
+  librarian: { zh: '文献抓取', en: 'Paper fetching' },
+  reading: { zh: '精读编译', en: 'Deep reading' },
+  embedding: { zh: '向量嵌入', en: 'Embeddings' },
+  forge: { zh: '想法生成', en: 'Idea generation' },
+  forge_signal: { zh: '信号摘要', en: 'Signal digest' },
+  goal_explore: { zh: '目标构建', en: 'Goal building' },
+  proposal: { zh: '方案起草', en: 'Proposal drafting' },
+  proposal_review: { zh: '方案评审', en: 'Proposal review' },
+  debate: { zh: '辩论评审', en: 'Debate review' },
+  experiment: { zh: '实验', en: 'Experiments' },
+  writing: { zh: '论文撰写', en: 'Paper writing' },
+  review: { zh: '论文评审', en: 'Paper review' },
 };
 
 interface RouteDraft {
@@ -603,10 +633,10 @@ function RoutesSection() {
       return api.putLlmRoutes(routes);
     },
     onSuccess: () => {
-      toast('模型路由表已保存', 'ok');
+      toast(tr('模型路由表已保存', 'Model routing saved'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['llm', 'routes'] });
     },
-    onError: (err) => toast(`保存失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('保存失败', 'Save failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   const setRow = (stage: string, patch: Partial<RouteDraft>) =>
@@ -620,16 +650,16 @@ function RoutesSection() {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <span className="section-h">
           <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
-          模型路由表 <span className="en-label" style={{ fontSize: 11 }}>Model routes（整表保存）</span>
+          {tr('模型路由表', 'Model routing')} <span className="en-label" style={{ fontSize: 11 }}>{tr('整表保存', 'saved as one table')}</span>
         </span>
         <button className="btn btn-primary sm" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
           <Icon name="check" size={13} />
-          {saveMutation.isPending ? '保存中…' : '保存路由表'}
+          {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存路由表', 'Save routing')}
         </button>
       </div>
       {routesQuery.isError && (
         <div className="field-hint" style={{ marginBottom: 10, color: 'var(--warn-tx)' }}>
-          路由表加载失败（后端不可用），保存将覆盖整表。
+          {tr('路由表加载失败（后端不可用），保存将覆盖整表。', 'Failed to load routes (backend unavailable); saving will overwrite the whole table.')}
         </div>
       )}
       <table className="table">
@@ -644,16 +674,17 @@ function RoutesSection() {
         <tbody>
           {LLM_STAGES.map((stage) => {
             const r = rows[stage] ?? { provider_id: '', model: '', temperature: '' };
+            const label = STAGE_LABELS[stage];
             return (
               <tr key={stage}>
                 <td>
-                  <div style={{ fontSize: 12, fontWeight: 650 }}>{STAGE_ZH[stage] ?? stage}</div>
+                  <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : stage}</div>
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{stage}</div>
                 </td>
                 <td>
                   <select className="input" style={{ height: 32, width: '100%' }} value={r.provider_id}
                     onChange={(e) => setRow(stage, { provider_id: e.target.value })}>
-                    <option value="">（未配置）</option>
+                    <option value="">{tr('（未配置）', '(not set)')}</option>
                     {providers.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
@@ -661,11 +692,11 @@ function RoutesSection() {
                 </td>
                 <td>
                   <input className="input mono" style={{ height: 32, width: '100%', fontSize: 12 }} value={r.model}
-                    placeholder="如 deepseek-chat" onChange={(e) => setRow(stage, { model: e.target.value })} />
+                    placeholder={tr('如 deepseek-chat', 'e.g. deepseek-chat')} onChange={(e) => setRow(stage, { model: e.target.value })} />
                 </td>
                 <td>
                   <input className="input mono" style={{ height: 32, width: '100%', fontSize: 12 }} value={r.temperature}
-                    placeholder="默认" inputMode="decimal" onChange={(e) => setRow(stage, { temperature: e.target.value })} />
+                    placeholder={tr('默认', 'default')} inputMode="decimal" onChange={(e) => setRow(stage, { temperature: e.target.value })} />
                 </td>
               </tr>
             );
@@ -713,27 +744,27 @@ function UsageTab() {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <span className="section-h">
           <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-          LLM 用量 <span className="en-label" style={{ fontSize: 11 }}>按天 × stage</span>
+          {tr('LLM 用量', 'LLM usage')} <span className="en-label" style={{ fontSize: 11 }}>{tr('按天 × stage', 'per day × stage')}</span>
         </span>
-        <Segmented options={[{ v: '7' as const, label: '7 天' }, { v: '30' as const, label: '30 天' }, { v: '90' as const, label: '90 天' }]}
+        <Segmented options={[{ v: '7' as const, label: tr('7 天', '7 days') }, { v: '30' as const, label: tr('30 天', '30 days') }, { v: '90' as const, label: tr('90 天', '90 days') }]}
           value={days} onChange={setDays} />
       </div>
       {isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>加载中…</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
       ) : isError ? (
         <div className="empty" style={{ padding: 24 }}>
-          无法加载用量数据（后端不可用或无权限）
+          {tr('无法加载用量数据（后端不可用或无权限）', 'Failed to load usage data (backend unavailable or no permission)')}
           <div style={{ marginTop: 10 }}>
-            <button className="btn btn-soft sm" onClick={() => void refetch()}>重试</button>
+            <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
           </div>
         </div>
       ) : rows.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>近 {days} 天暂无用量记录</div>
+        <div className="empty" style={{ padding: 24 }}>{tr(`近 ${days} 天暂无用量记录`, `No usage records in the last ${days} days`)}</div>
       ) : (
         <table className="table">
           <thead>
             <tr>
-              <th>日期</th>
+              <th>{tr('日期', 'Date')}</th>
               <th>stage</th>
               <th>model</th>
               <th style={{ textAlign: 'right' }}>prompt tok</th>
@@ -753,7 +784,7 @@ function UsageTab() {
               </tr>
             ))}
             <tr>
-              <td colSpan={3} style={{ fontWeight: 650 }}>合计</td>
+              <td colSpan={3} style={{ fontWeight: 650 }}>{tr('合计', 'Total')}</td>
               <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.prompt.toLocaleString()}</td>
               <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.completion.toLocaleString()}</td>
               <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.calls.toLocaleString()}</td>
@@ -772,12 +803,12 @@ type Tab = 'personal' | 'ssh' | 'llm' | 'usage' | 'users';
 
 // ---------------- 用户管理（admin） ----------------
 
-const FEATURE_LABELS: [string, string][] = [
-  ['forge', '想法生成'],
-  ['review', '想法评审'],
-  ['experiment', '实验搭建'],
-  ['writer', '论文撰写'],
-  ['paper_review', '论文评审'],
+const FEATURE_LABELS: [string, string, string][] = [
+  ['forge', '想法生成', 'Idea generation'],
+  ['review', '想法评审', 'Idea review'],
+  ['experiment', '实验搭建', 'Experiment lab'],
+  ['writer', '论文撰写', 'Paper writing'],
+  ['paper_review', '论文评审', 'Paper review'],
 ];
 
 function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }) {
@@ -802,13 +833,13 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
         llm_access: llmAccess,
       }),
     onSuccess: () => {
-      toast('用户已更新', 'ok');
+      toast(tr('用户已更新', 'User updated'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       onClose();
     },
     onError: (e) => {
       const msg = e instanceof Error ? e.message : String(e);
-      toast(msg === 'CANNOT_MODIFY_SELF_ROLE' ? '不能修改自己的角色或停用自己' : `保存失败：${msg}`, 'error');
+      toast(msg === 'CANNOT_MODIFY_SELF_ROLE' ? tr('不能修改自己的角色或停用自己', 'You cannot change your own role or deactivate yourself') : `${tr('保存失败', 'Save failed')}：${msg}`, 'error');
     },
   });
 
@@ -819,44 +850,44 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
       open
       onClose={onClose}
       width={520}
-      title={`编辑用户：${u.display_name || u.email}`}
+      title={`${tr('编辑用户', 'Edit user')}：${u.display_name || u.email}`}
       sub={u.email}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose}>取消</button>
+          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
           <button className="btn btn-primary" disabled={saveMutation.isPending || quotaInvalid} onClick={() => saveMutation.mutate()}>
-            保存
+            {tr('保存', 'Save')}
           </button>
         </>
       }
     >
       <div className="row gap10" style={{ marginBottom: 16 }}>
-        <FormField label="角色" en="Role" style={{ flex: 1, marginBottom: 0 }}>
+        <FormField label={tr('角色', 'Role')} style={{ flex: 1, marginBottom: 0 }}>
           <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="member">成员</option>
-            <option value="admin">管理员</option>
+            <option value="member">{tr('成员', 'Member')}</option>
+            <option value="admin">{tr('管理员', 'Admin')}</option>
           </select>
         </FormField>
-        <FormField label="状态" en="Active" style={{ flex: 1, marginBottom: 0 }}>
+        <FormField label={tr('状态', 'Status')} style={{ flex: 1, marginBottom: 0 }}>
           <select className="input" value={active ? '1' : '0'} onChange={(e) => setActive(e.target.value === '1')}>
-            <option value="1">启用</option>
-            <option value="0">停用</option>
+            <option value="1">{tr('启用', 'Active')}</option>
+            <option value="0">{tr('停用', 'Disabled')}</option>
           </select>
         </FormField>
       </div>
-      <FormField label="大模型使用" en="LLM access" hint="限制该用户能否调用大模型">
+      <FormField label={tr('大模型使用', 'LLM access')} hint={tr('限制该用户能否调用大模型', 'Controls whether this user can call LLMs')}>
         <select className="input" value={llmAccess} onChange={(e) => setLlmAccess(e.target.value)}>
-          <option value="full">不限（全部功能）</option>
-          <option value="chat_only">仅文献对话与 AI 伴读</option>
-          <option value="blocked">锁定（禁止使用大模型）</option>
+          <option value="full">{tr('不限（全部功能）', 'Unrestricted (all features)')}</option>
+          <option value="chat_only">{tr('仅文献对话与 AI 伴读', 'Paper chat and reading assistant only')}</option>
+          <option value="blocked">{tr('锁定（禁止使用大模型）', 'Blocked (no LLM use)')}</option>
         </select>
       </FormField>
-      <FormField label="AI token 配额" en="Token quota" hint={`已用 ${u.tokens_used.toLocaleString()} tokens；留空 = 不限。达到配额后不能再发起 AI 任务`}>
-        <input className="input mono" value={quota} onChange={(e) => setQuota(e.target.value)} placeholder="不限" />
+      <FormField label={tr('AI token 配额', 'Token quota')} hint={`${tr('已用', 'Used')} ${u.tokens_used.toLocaleString()} tokens${tr('；留空 = 不限。达到配额后不能再发起 AI 任务', '; empty = unlimited. Once the quota is reached, no new AI tasks can start')}`}>
+        <input className="input mono" value={quota} onChange={(e) => setQuota(e.target.value)} placeholder={tr('不限', 'Unlimited')} />
       </FormField>
-      <FormField label="功能权限" en="Features" hint="取消勾选后该用户不能发起对应环节的 AI 任务">
+      <FormField label={tr('功能权限', 'Feature toggles')} hint={tr('取消勾选后该用户不能发起对应环节的 AI 任务', 'Unchecked features block this user from starting those AI tasks')}>
         <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-          {FEATURE_LABELS.map(([k, label]) => (
+          {FEATURE_LABELS.map(([k, zh, en]) => (
             <button
               key={k}
               className="pill sm"
@@ -868,7 +899,7 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
               }}
               onClick={() => setFeatures((f) => ({ ...f, [k]: !f[k] }))}
             >
-              {label}
+              {tr(zh, en)}
             </button>
           ))}
         </div>
@@ -884,11 +915,11 @@ function BatchAssignModal({ userIds, onClose, onDone }: { userIds: string[]; onC
   const assignMutation = useMutation({
     mutationFn: () => api.adminBatchAssign({ user_ids: userIds, project_ids: [...selected] }),
     onSuccess: (r) => {
-      toast(`已分配：新增 ${r.added} 个成员关系`, 'ok');
+      toast(tr(`已分配：新增 ${r.added} 个成员关系`, `Assigned — ${r.added} memberships added`), 'ok');
       onDone();
       onClose();
     },
-    onError: (e) => toast(`分配失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('分配失败', 'Assign failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   return (
@@ -896,21 +927,21 @@ function BatchAssignModal({ userIds, onClose, onDone }: { userIds: string[]; onC
       open
       onClose={onClose}
       width={480}
-      title="批量分配研究方向"
-      sub={`已选 ${userIds.length} 个用户，将以成员身份加入所选方向`}
+      title={tr('批量分配研究方向', 'Assign directions in bulk')}
+      sub={tr(`已选 ${userIds.length} 个用户，将以成员身份加入所选方向`, `${userIds.length} users selected; they will join the chosen directions as members`)}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose}>取消</button>
+          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
           <button className="btn btn-primary" disabled={selected.size === 0 || assignMutation.isPending} onClick={() => assignMutation.mutate()}>
-            分配
+            {tr('分配', 'Assign')}
           </button>
         </>
       }
     >
       {!projects ? (
-        <div className="empty">加载方向列表…</div>
+        <div className="empty">{tr('加载方向列表…', 'Loading directions…')}</div>
       ) : projects.length === 0 ? (
-        <div className="empty">还没有研究方向</div>
+        <div className="empty">{tr('还没有研究方向', 'No research directions yet')}</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {projects.map((p) => {
@@ -946,8 +977,8 @@ function UsersTab() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [assignOpen, setAssignOpen] = useState(false);
 
-  if (isLoading) return <div className="empty">加载中…</div>;
-  if (isError || !users) return <div className="empty">无法加载用户列表</div>;
+  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
+  if (isError || !users) return <div className="empty">{tr('无法加载用户列表', 'Failed to load users')}</div>;
 
   const toggle = (id: string) =>
     setChecked((s) => {
@@ -959,16 +990,16 @@ function UsersTab() {
   const allChecked = users.length > 0 && checked.size === users.length;
 
   const featureSummary = (u: AdminUserRead): string => {
-    const disabled = FEATURE_LABELS.filter(([k]) => u.features?.[k] === false).map(([, l]) => l);
-    return disabled.length === 0 ? '全部' : `禁用：${disabled.join('、')}`;
+    const disabled = FEATURE_LABELS.filter(([k]) => u.features?.[k] === false).map(([, zh, en]) => tr(zh, en));
+    return disabled.length === 0 ? tr('全部', 'All') : `${tr('禁用', 'Disabled')}：${disabled.join(tr('、', ', '))}`;
   };
 
   return (
     <div>
       <div className="row gap10" style={{ marginBottom: 14 }}>
-        <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{users.length} 个用户</span>
+        <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{tr(`${users.length} 个用户`, `${users.length} users`)}</span>
         <button className="btn btn-soft" style={{ marginLeft: 'auto' }} disabled={checked.size === 0} onClick={() => setAssignOpen(true)}>
-          批量分配方向{checked.size > 0 ? `（${checked.size}）` : ''}
+          {tr('批量分配方向', 'Assign directions')}{checked.size > 0 ? `（${checked.size}）` : ''}
         </button>
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -982,12 +1013,12 @@ function UsersTab() {
                   onChange={() => setChecked(allChecked ? new Set() : new Set(users.map((u) => u.id)))}
                 />
               </th>
-              <th>用户</th>
-              <th>角色</th>
-              <th>状态</th>
-              <th>AI 用量 / 配额</th>
-              <th>大模型</th>
-              <th>功能权限</th>
+              <th>{tr('用户', 'User')}</th>
+              <th>{tr('角色', 'Role')}</th>
+              <th>{tr('状态', 'Status')}</th>
+              <th>{tr('AI 用量 / 配额', 'AI usage / quota')}</th>
+              <th>{tr('大模型', 'LLM')}</th>
+              <th>{tr('功能权限', 'Features')}</th>
               <th style={{ width: 70 }}></th>
             </tr>
           </thead>
@@ -1008,24 +1039,24 @@ function UsersTab() {
                 </td>
                 <td>
                   <span className="pill sm" style={u.role === 'admin' ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : undefined}>
-                    {u.role === 'admin' ? '管理员' : '成员'}
+                    {u.role === 'admin' ? tr('管理员', 'Admin') : tr('成员', 'Member')}
                   </span>
                 </td>
                 <td>
                   <span className="pill sm" style={{ background: u.is_active ? 'var(--ok-bg)' : 'var(--surface-3)', color: u.is_active ? 'var(--ok-tx)' : 'var(--text-3)' }}>
-                    {u.is_active ? '启用' : '停用'}
+                    {u.is_active ? tr('启用', 'Active') : tr('停用', 'Disabled')}
                   </span>
                 </td>
                 <td className="mono" style={{ fontSize: 11.5 }}>
                   {u.tokens_used.toLocaleString()}
-                  <span style={{ color: 'var(--text-3)' }}> / {u.token_quota != null ? u.token_quota.toLocaleString() : '不限'}</span>
+                  <span style={{ color: 'var(--text-3)' }}> / {u.token_quota != null ? u.token_quota.toLocaleString() : tr('不限', 'unlimited')}</span>
                 </td>
                 <td style={{ fontSize: 11.5, color: 'var(--text-2)' }}>
-                  {u.llm_access === 'blocked' ? '锁定' : u.llm_access === 'chat_only' ? '仅对话' : '不限'}
+                  {u.llm_access === 'blocked' ? tr('锁定', 'Blocked') : u.llm_access === 'chat_only' ? tr('仅对话', 'Chat only') : tr('不限', 'Unrestricted')}
                 </td>
                 <td style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{featureSummary(u)}</td>
                 <td>
-                  <button className="btn btn-ghost sm" onClick={() => setEditing(u)}>编辑</button>
+                  <button className="btn btn-ghost sm" onClick={() => setEditing(u)}>{tr('编辑', 'Edit')}</button>
                 </td>
               </tr>
             ))}
@@ -1053,13 +1084,13 @@ export function SettingsPage() {
   const [tab, setTab] = useState<Tab>('personal');
 
   const tabs: { v: Tab; label: string }[] = [
-    { v: 'personal', label: '个人 Profile' },
-    { v: 'ssh', label: 'SSH 凭据' },
+    { v: 'personal', label: tr('个人', 'Profile') },
+    { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
     ...(admin
       ? [
-          { v: 'llm' as Tab, label: 'LLM 管理' },
-          { v: 'usage' as Tab, label: '用量 Usage' },
-          { v: 'users' as Tab, label: '用户管理' },
+          { v: 'llm' as Tab, label: tr('LLM 管理', 'LLM admin') },
+          { v: 'usage' as Tab, label: tr('用量', 'Usage') },
+          { v: 'users' as Tab, label: tr('用户管理', 'Users') },
         ]
       : []),
   ];
@@ -1069,13 +1100,18 @@ export function SettingsPage() {
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Settings"
-        title="设置 Settings"
-        sub="个人资料、SSH 凭据、LLM 服务与模型路由、用量统计、用户管理。"
+        title={tr('设置', 'Settings')}
+        sub={tr('个人资料、界面语言、SSH 凭据、LLM 服务与模型路由、用量统计、用户管理。', 'Profile, language, SSH credentials, LLM providers and model routing, usage stats, user management.')}
       />
       <div style={{ marginBottom: 20 }}>
         <Segmented options={tabs} value={effectiveTab} onChange={setTab} />
       </div>
-      {effectiveTab === 'personal' && <PersonalTab />}
+      {effectiveTab === 'personal' && (
+        <>
+          <PersonalTab />
+          <LanguageCard />
+        </>
+      )}
       {effectiveTab === 'ssh' && <SshTab />}
       {effectiveTab === 'llm' && admin && <LlmTab />}
       {effectiveTab === 'usage' && admin && <UsageTab />}

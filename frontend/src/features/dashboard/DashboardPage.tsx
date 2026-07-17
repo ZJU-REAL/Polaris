@@ -7,11 +7,12 @@ import { StatCard, type StatCardProps } from '../../components/ui/StatCard';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { Delta } from '../../components/ui/Delta';
-import { gateTitle, gateDesc, GATE_KIND_ZH } from '../../components/ui/GateCard';
+import { gateTitle, gateDesc, gateKindLabel } from '../../components/ui/GateCard';
 import { useShell } from '../../app/AppShell';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, type ActivityRead, type GateRead, type StatsRead } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { compositeOf } from '../forge/ideaShared';
 
 /** 端到端流水线各阶段的真实计数（stats 未就绪时显示 —）。 */
@@ -52,20 +53,20 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
           <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>
             <Icon name="sparkle" size={12} />
-            当前重点想法
+            {tr('当前重点想法', 'Featured idea')}
           </span>
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>
           {leaderboardQuery.isLoading
-            ? '加载想法排行榜…'
+            ? tr('加载想法排行榜…', 'Loading idea leaderboard…')
             : leaderboardQuery.isError
-              ? '暂时无法加载想法排行榜。'
-              : '候选池还是空的，先运行一次想法生成。'}
+              ? tr('暂时无法加载想法排行榜。', 'Idea leaderboard is unavailable right now.')
+              : tr('候选池还是空的，先运行一次想法生成。', 'The candidate pool is empty — run idea generation first.')}
         </div>
         {!leaderboardQuery.isLoading && (
           <button className="btn btn-ghost sm" style={{ marginTop: 14 }} onClick={() => navigate('/forge')}>
             <Icon name="bulb" size={13} />
-            前往想法生成
+            {tr('前往想法生成', 'Go to Idea Forge')}
           </button>
         )}
       </div>
@@ -82,7 +83,7 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>
           <Icon name="sparkle" size={12} />
-          当前重点想法 · Elo 榜首
+          {tr('当前重点想法 · Elo 榜首', 'Featured idea · Elo leader')}
         </span>
         <StatusPill status={idea.status} sm />
       </div>
@@ -106,11 +107,11 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
           <div style={{ fontSize: 11, color: 'var(--text-3)' }}>Elo rating</div>
           <div className="row" style={{ alignItems: 'baseline', gap: 8 }}>
             <span className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{Math.round(idea.elo_rating)}</span>
-            <Delta>{`${idea.wins}/${idea.matches} 胜`}</Delta>
+            <Delta>{tr(`${idea.wins}/${idea.matches} 胜`, `${idea.wins}/${idea.matches} wins`)}</Delta>
           </div>
         </div>
         <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>查看详情与讨论 →</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr('查看详情与讨论 →', 'View details & discussion →')}</div>
         </div>
       </div>
     </div>
@@ -145,14 +146,14 @@ function ActivityFeed({ activities, error }: { activities: ActivityRead[]; error
       <div className="card-pad row" style={{ paddingBottom: 12, justifyContent: 'space-between' }}>
         <span className="section-h">
           <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
-          近期活动 <span className="en-label" style={{ fontSize: 11 }}>Activity</span>
+          {tr('近期活动', 'Activity')}
         </span>
       </div>
       <div style={{ padding: '0 6px 8px' }}>
         {error ? (
-          <div className="empty" style={{ padding: 18 }}>无法加载活动（后端不可用）</div>
+          <div className="empty" style={{ padding: 18 }}>{tr('无法加载活动（后端不可用）', 'Failed to load activity (backend unavailable)')}</div>
         ) : activities.length === 0 ? (
-          <div className="empty" style={{ padding: 18 }}>暂无活动 — 运行一次文献初始建库试试</div>
+          <div className="empty" style={{ padding: 18 }}>{tr('暂无活动 — 运行一次文献初始建库试试', 'No activity yet — try running an initial library build')}</div>
         ) : (
           activities.map((a) => {
             const gate = a.kind.toLowerCase().includes('gate');
@@ -201,17 +202,17 @@ function GatePreview({ gates, gatesError, openGates }: {
       <div className="card-pad row" style={{ justifyContent: 'space-between', paddingBottom: 14 }}>
         <span className="section-h">
           <Icon name="gate" size={15} style={{ color: 'var(--accent)' }} />
-          人工审批 · 审批中心 <span className="en-label" style={{ fontSize: 11 }}>Approvals</span>
+          {tr('人工审批 · 审批中心', 'Approvals')}
         </span>
         <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-          {gates.length} 待处理
+          {gates.length} {tr('待处理', 'pending')}
         </span>
       </div>
       <div style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {gatesError ? (
-          <div className="empty" style={{ padding: 18 }}>无法加载审批列表（后端不可用）</div>
+          <div className="empty" style={{ padding: 18 }}>{tr('无法加载审批列表（后端不可用）', 'Failed to load approvals (backend unavailable)')}</div>
         ) : gates.length === 0 ? (
-          <div className="empty" style={{ padding: 18 }}>没有待处理的审批</div>
+          <div className="empty" style={{ padding: 18 }}>{tr('没有待处理的审批', 'No pending approvals')}</div>
         ) : (
           gates.map((g) => {
             const desc = gateDesc(g);
@@ -230,7 +231,7 @@ function GatePreview({ gates, gatesError, openGates }: {
                 <div className="row" style={{ justifyContent: 'space-between' }}>
                   <span style={{ fontSize: 13, fontWeight: 650 }}>{gateTitle(g)}</span>
                   <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-                    {GATE_KIND_ZH[g.kind] ?? g.kind}
+                    {gateKindLabel(g.kind)}
                   </span>
                 </div>
                 {desc && <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 5, lineHeight: 1.45 }}>{desc}</div>}
@@ -243,7 +244,7 @@ function GatePreview({ gates, gatesError, openGates }: {
                     }}
                   >
                     <Icon name="check" size={13} />
-                    审批
+                    {tr('审批', 'Review')}
                   </button>
                   <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginLeft: 'auto' }}>
                     {fmtTime(g.created_at)}
@@ -254,7 +255,7 @@ function GatePreview({ gates, gatesError, openGates }: {
           })
         )}
         <button className="btn btn-soft" onClick={() => openGates(null)} style={{ justifyContent: 'center' }}>
-          查看全部审批记录
+          {tr('查看全部审批记录', 'View all approval records')}
         </button>
       </div>
     </div>
@@ -281,14 +282,16 @@ function OnboardingEmpty() {
       >
         <Icon name="sparkle" size={24} />
       </div>
-      <div style={{ fontSize: 17, fontWeight: 680, marginBottom: 8 }}>从一个研究方向开始</div>
+      <div style={{ fontSize: 17, fontWeight: 680, marginBottom: 8 }}>{tr('从一个研究方向开始', 'Start with a research direction')}</div>
       <div style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 460, margin: '0 auto 22px', lineHeight: 1.6 }}>
-        Polaris 的一切都围绕研究方向展开：文献追踪、想法生成、实验与论文。
-        通过一次结构化访谈，把你的兴趣固化为可执行的方向定义。
+        {tr(
+          'Polaris 的一切都围绕研究方向展开：文献追踪、想法生成、实验与论文。通过一次结构化访谈，把你的兴趣固化为可执行的方向定义。',
+          'Everything in Polaris revolves around a research direction: literature tracking, idea generation, experiments and papers. A structured interview turns your interests into an actionable direction definition.',
+        )}
       </div>
       <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
         <Icon name="plus" size={14} />
-        新建研究方向 · New direction
+        {tr('新建研究方向', 'New research direction')}
       </button>
     </div>
   );
@@ -299,31 +302,31 @@ function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number)
   return [
     {
       icon: 'book',
-      label: '知识库论文',
+      label: tr('知识库论文', 'Papers in vault'),
       en: 'Papers in vault',
       value: stats ? stats.papers_total : '—',
-      sub: stats ? `+${stats.papers_today} 今日` : undefined,
+      sub: stats ? `+${stats.papers_today} ${tr('今日', 'today')}` : undefined,
     },
     {
       icon: 'refresh',
-      label: '今日新增',
+      label: tr('今日新增', 'New today'),
       en: 'New today',
       value: stats ? stats.papers_today : '—',
-      sub: '篇论文',
+      sub: tr('篇论文', 'papers'),
     },
     {
       icon: 'bulb',
-      label: '候选想法',
+      label: tr('候选想法', 'Idea candidates'),
       en: 'Idea candidates',
       value: stats ? stats.ideas_candidate : '—',
-      sub: '想法池',
+      sub: tr('想法池', 'in the pool'),
     },
     {
       icon: 'gate',
-      label: '待处理审批',
+      label: tr('待处理审批', 'Pending approvals'),
       en: 'Pending approvals',
       value: stats ? stats.gates_pending : pendingGatesCount,
-      sub: '人工审批',
+      sub: tr('人工审批', 'need review'),
       accent: true,
     },
   ];
@@ -348,7 +351,7 @@ export function DashboardPage() {
       <div className="page fadeup">
         <PageHead
           eyebrow="Polaris · Autonomous Research"
-          title="总览 Dashboard"
+          title={tr('总览', 'Dashboard')}
         />
         <OnboardingEmpty />
       </div>
@@ -362,16 +365,16 @@ export function DashboardPage() {
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Autonomous Research"
-        title="总览 Dashboard"
+        title={tr('总览', 'Dashboard')}
         right={
           <>
             <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
               <Icon name="compass" size={15} />
-              AI 任务
+              {tr('AI 任务', 'AI Tasks')}
             </button>
             <button className="btn btn-primary" onClick={() => navigate('/voyages')}>
               <Icon name="play" size={14} />
-              运行今日循环
+              {tr('运行今日循环', "Run today's loop")}
             </button>
           </>
         }

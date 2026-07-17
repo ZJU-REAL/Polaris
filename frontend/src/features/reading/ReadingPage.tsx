@@ -6,6 +6,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { api, ApiError, type MyMeta, type PaperDetail, type ReadingStatus } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { NotesPanel } from './NotesPanel';
 import { ChatPanel } from './ChatPanel';
 import { InfoPanel } from './InfoPanel';
@@ -50,15 +51,15 @@ function PdfPane({ paper }: { paper: PaperDetail }) {
   const fetchPdfMutation = useMutation({
     mutationFn: () => api.requestPaperPdf(paper.id),
     onSuccess: () => {
-      toast('PDF 已下载好，正在打开', 'ok');
+      toast(tr('PDF 已下载好，正在打开', 'PDF downloaded — opening'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['paper-pdf', paper.id] });
       void queryClient.invalidateQueries({ queryKey: ['paper', paper.id] });
     },
     onError: (e) => {
       const msg = e instanceof ApiError && e.message.includes('PDF_FETCH_FAILED')
-        ? '下载失败，源站暂时取不到，稍后再试'
+        ? tr('下载失败，源站暂时取不到，稍后再试', 'Download failed — the source is unavailable, try again later')
         : e instanceof Error ? e.message : String(e);
-      toast(`获取 PDF 失败：${msg}`, 'error');
+      toast(`${tr('获取 PDF 失败：', 'Fetch PDF failed: ')}${msg}`, 'error');
     },
   });
 
@@ -76,7 +77,7 @@ function PdfPane({ paper }: { paper: PaperDetail }) {
               background: 'var(--surface-3)',
             }}
           />
-          <div className="muted" style={{ fontSize: 12.5 }}>正在加载 PDF…</div>
+          <div className="muted" style={{ fontSize: 12.5 }}>{tr('正在加载 PDF…', 'Loading PDF…')}</div>
         </div>
       </div>
     );
@@ -89,11 +90,11 @@ function PdfPane({ paper }: { paper: PaperDetail }) {
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <EmptyState
           icon="file"
-          title="该论文还没有 PDF"
+          title={tr('该论文还没有 PDF', 'No PDF for this paper yet')}
           desc={
             canFetch
-              ? '可以从 arXiv 自动下载一份，下载后就能在这里阅读。'
-              : '这篇论文不是 arXiv 来源，暂时不支持自动下载 PDF，可以通过右上角原文链接查看。'
+              ? tr('可以从 arXiv 自动下载一份，下载后就能在这里阅读。', 'It can be downloaded from arXiv automatically, then read here.')
+              : tr('这篇论文不是 arXiv 来源，暂时不支持自动下载 PDF，可以通过右上角原文链接查看。', 'This paper is not from arXiv, so automatic PDF download is not supported — use the source link at the top right.')
           }
           action={
             canFetch ? (
@@ -105,19 +106,19 @@ function PdfPane({ paper }: { paper: PaperDetail }) {
                 {fetchPdfMutation.isPending ? (
                   <>
                     <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                    正在下载…
+                    {tr('正在下载…', 'Downloading…')}
                   </>
                 ) : (
                   <>
                     <Icon name="download" size={14} />
-                    获取 PDF
+                    {tr('获取 PDF', 'Fetch PDF')}
                   </>
                 )}
               </button>
             ) : paper.url ? (
               <a className="btn btn-ghost" href={paper.url} target="_blank" rel="noreferrer noopener" style={{ textDecoration: 'none' }}>
                 <Icon name="link" size={14} />
-                打开原文链接
+                {tr('打开原文链接', 'Open source link')}
               </a>
             ) : undefined
           }
@@ -126,7 +127,7 @@ function PdfPane({ paper }: { paper: PaperDetail }) {
     );
   }
 
-  return <iframe src={url} title="论文 PDF" style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }} />;
+  return <iframe src={url} title={tr('论文 PDF', 'Paper PDF')} style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }} />;
 }
 
 /* ---------------- 页面 ---------------- */
@@ -154,7 +155,7 @@ export function ReadingPage() {
       );
       if (paper) void queryClient.invalidateQueries({ queryKey: ['papers', paper.project_id] });
     },
-    onError: (e) => toast(`更新失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const onWikiLink = useCallback(
@@ -163,19 +164,19 @@ export function ReadingPage() {
   );
 
   if (paperQuery.isLoading) {
-    return <div className="empty" style={{ marginTop: 120 }}>加载论文…</div>;
+    return <div className="empty" style={{ marginTop: 120 }}>{tr('加载论文…', 'Loading paper…')}</div>;
   }
   if (paperQuery.isError || !paper) {
     return (
       <div style={{ marginTop: 100 }}>
         <EmptyState
           icon="x"
-          title="打不开这篇论文"
-          desc="论文不存在、你不在这个研究方向里，或后端暂时不可用。"
+          title={tr('打不开这篇论文', 'Cannot open this paper')}
+          desc={tr('论文不存在、你不在这个研究方向里，或后端暂时不可用。', 'It does not exist, you are not in this research direction, or the backend is unavailable.')}
           action={
             <button className="btn btn-ghost" onClick={() => navigate('/wiki')}>
               <Icon name="book" size={14} />
-              回文献库
+              {tr('回文献库', 'Back to library')}
             </button>
           }
         />
@@ -192,7 +193,7 @@ export function ReadingPage() {
       <div className="row gap12" style={{ flexShrink: 0, marginBottom: 12 }}>
         <button className="btn btn-ghost sm" onClick={() => navigate(`/wiki?paper=${paper.id}`)}>
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
-          回文献库
+          {tr('回文献库', 'Back to library')}
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
@@ -209,12 +210,12 @@ export function ReadingPage() {
             {paper.title}
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 1 }}>
-            {paper.arxiv_id ?? paper.venue ?? '论文阅读 · Reading'}
+            {paper.arxiv_id ?? paper.venue ?? tr('论文阅读', 'Paper reading')}
           </div>
         </div>
         <button
           className="icon-btn"
-          title={starred ? '取消星标' : '加星标'}
+          title={starred ? tr('取消星标', 'Unstar') : tr('加星标', 'Star')}
           disabled={metaMutation.isPending}
           onClick={() => metaMutation.mutate({ starred: !starred })}
           style={{ color: starred ? 'var(--warn-tx)' : 'var(--text-3)' }}
@@ -222,7 +223,7 @@ export function ReadingPage() {
           <Icon name={starred ? 'starFill' : 'star'} size={17} />
         </button>
         <Segmented<ReadingStatus>
-          options={READING_STATUS.map((m) => ({ v: m.v, label: m.label }))}
+          options={READING_STATUS.map((m) => ({ v: m.v, label: tr(m.label, m.en) }))}
           value={readingStatus}
           onChange={(v) => metaMutation.mutate({ reading_status: v })}
         />
@@ -254,9 +255,9 @@ export function ReadingPage() {
           <div style={{ padding: '10px 14px 0', flexShrink: 0 }}>
             <Segmented<PanelTab>
               options={[
-                { v: 'notes', label: `笔记${paper.note_count ? ` · ${paper.note_count}` : ''}` },
-                { v: 'chat', label: 'AI 伴读' },
-                { v: 'info', label: '论文信息' },
+                { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` · ${paper.note_count}` : ''}` },
+                { v: 'chat', label: tr('AI 伴读', 'AI chat') },
+                { v: 'info', label: tr('论文信息', 'Paper info') },
               ]}
               value={panel}
               onChange={setPanel}

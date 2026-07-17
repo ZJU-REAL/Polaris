@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { api, type ExperimentFigureInfo } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    实验图表画廊（docs/api-m5-a.md §3）：
@@ -13,7 +14,7 @@ import { api, type ExperimentFigureInfo } from '../../lib/api';
    ============================================================ */
 
 function captionOf(fig: ExperimentFigureInfo): string {
-  return fig.caption?.trim() || fig.name?.trim() || `图 ${fig.index + 1}`;
+  return fig.caption?.trim() || fig.name?.trim() || tr(`图 ${fig.index + 1}`, `Figure ${fig.index + 1}`);
 }
 
 /** 单张实验图 blob → objectURL；卸载 / 换图时 revoke。 */
@@ -77,7 +78,7 @@ function ExpFigureThumb({
         ) : isError || !url ? (
           <div style={{ textAlign: 'center', color: 'var(--text-4)' }}>
             <Icon name="chart" size={16} style={{ margin: '0 auto 4px' }} />
-            <div style={{ fontSize: 10 }}>图片加载失败</div>
+            <div style={{ fontSize: 10 }}>{tr('图片加载失败', 'Image failed to load')}</div>
           </div>
         ) : (
           <img
@@ -168,7 +169,7 @@ function ExpLightbox({
     >
       {/* 关闭 */}
       <button
-        aria-label="关闭"
+        aria-label={tr('关闭', 'Close')}
         onClick={onClose}
         style={{
           position: 'absolute',
@@ -193,7 +194,7 @@ function ExpLightbox({
       {count > 1 && (
         <>
           <button
-            aria-label="上一张"
+            aria-label={tr('上一张', 'Previous')}
             disabled={index === 0}
             style={{ ...navBtn, left: 18, opacity: index === 0 ? 0.3 : 1 }}
             onClick={(e) => {
@@ -204,7 +205,7 @@ function ExpLightbox({
             <Icon name="chevron" size={17} style={{ transform: 'rotate(180deg)' }} />
           </button>
           <button
-            aria-label="下一张"
+            aria-label={tr('下一张', 'Next')}
             disabled={index === count - 1}
             style={{ ...navBtn, right: 18, opacity: index === count - 1 ? 0.3 : 1 }}
             onClick={(e) => {
@@ -237,7 +238,7 @@ function ExpLightbox({
         ) : isError || !url ? (
           <div style={{ textAlign: 'center', color: 'var(--on-scrim-2)' }}>
             <Icon name="chart" size={26} style={{ margin: '0 auto 8px' }} />
-            <div style={{ fontSize: 13 }}>这张图加载失败了，稍后再试</div>
+            <div style={{ fontSize: 13 }}>{tr('这张图加载失败了，稍后再试', 'This figure failed to load — try again later')}</div>
           </div>
         ) : (
           <img

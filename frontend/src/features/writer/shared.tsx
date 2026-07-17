@@ -1,4 +1,5 @@
 import type { DiagnosticRule } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    Paper Writer 共享小件：协作者颜色 hash、诊断规则文案、
@@ -39,11 +40,11 @@ export function colorForUser(name: string): string {
 /** 编译诊断规则 → 大白话。 */
 export function ruleText(rule: DiagnosticRule | string): string {
   const map: Record<string, string> = {
-    undefined_citation: '引用没找到',
-    undefined_reference: '交叉引用没找到',
-    latex_error: 'LaTeX 错误',
-    overfull: '排版溢出',
-    other: '其他',
+    undefined_citation: tr('引用没找到', 'Citation not found'),
+    undefined_reference: tr('交叉引用没找到', 'Cross-reference not found'),
+    latex_error: tr('LaTeX 错误', 'LaTeX error'),
+    overfull: tr('排版溢出', 'Overfull box'),
+    other: tr('其他', 'Other'),
   };
   return map[rule] ?? rule;
 }
@@ -51,14 +52,14 @@ export function ruleText(rule: DiagnosticRule | string): string {
 /** 论文分节 key → 中文（模板 sections / AI 起草选节用）。 */
 export function sectionText(key: string): string {
   const map: Record<string, string> = {
-    abstract: '摘要',
-    introduction: '引言',
-    related_work: '相关工作',
-    method: '方法',
-    experimental_setup: '实验设置',
-    experiments: '实验',
-    results: '实验结果',
-    conclusion: '结论',
+    abstract: tr('摘要', 'Abstract'),
+    introduction: tr('引言', 'Introduction'),
+    related_work: tr('相关工作', 'Related work'),
+    method: tr('方法', 'Method'),
+    experimental_setup: tr('实验设置', 'Experimental setup'),
+    experiments: tr('实验', 'Experiments'),
+    results: tr('实验结果', 'Results'),
+    conclusion: tr('结论', 'Conclusion'),
   };
   return map[key] ?? key;
 }

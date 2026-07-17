@@ -1,17 +1,24 @@
 import { useState } from 'react';
 import { Icon } from './Icon';
 import { fmtTime } from '../../lib/format';
+import { tr } from '../../lib/i18n';
 import type { GateDecision, GateRead } from '../../lib/api';
 
-export const GATE_KIND_ZH: Record<string, string> = {
-  idea_promotion: '想法晋级审批',
-  idea_goal: '研究目标确认',
-  idea_pivot: '方向调整确认',
-  compute_budget: '算力预算审批',
-  remote_write: '远程操作审批',
-  pr_push: '推送 PR',
-  paper_submission: '论文投稿',
+const GATE_KIND: Record<string, { zh: string; en: string }> = {
+  idea_promotion: { zh: '想法晋级审批', en: 'Idea promotion approval' },
+  idea_goal: { zh: '研究目标确认', en: 'Research goal confirmation' },
+  idea_pivot: { zh: '方向调整确认', en: 'Direction change confirmation' },
+  compute_budget: { zh: '算力预算审批', en: 'Compute budget approval' },
+  remote_write: { zh: '远程操作审批', en: 'Remote operation approval' },
+  pr_push: { zh: '推送 PR', en: 'Push PR' },
+  paper_submission: { zh: '论文投稿', en: 'Paper submission' },
 };
+
+/** gate kind → 当前语言标签（未收录的原样展示）。 */
+export function gateKindLabel(kind: string): string {
+  const m = GATE_KIND[kind];
+  return m ? tr(m.zh, m.en) : kind;
+}
 
 function pickString(payload: Record<string, unknown> | null, keys: string[]): string | null {
   if (!payload) return null;
@@ -24,7 +31,7 @@ function pickString(payload: Record<string, unknown> | null, keys: string[]): st
 
 /** 闸门标题：payload.title / summary，否则按 kind 显示。 */
 export function gateTitle(g: GateRead): string {
-  return pickString(g.payload, ['title', 'summary']) ?? GATE_KIND_ZH[g.kind] ?? g.kind;
+  return pickString(g.payload, ['title', 'summary']) ?? gateKindLabel(g.kind);
 }
 
 /** 闸门描述：payload.description / reason / message。 */
@@ -41,13 +48,13 @@ function payloadLines(payload: Record<string, unknown> | null): string[] {
 
 /* ---------------- Idea 2.0 · 研究目标确认 / 方向调整确认 ---------------- */
 
-const GOAL_TYPE_ZH: Record<string, string> = {
-  method: '方法',
-  benchmark: '评测基准',
-  analysis: '分析',
-  survey: '综述',
-  application: '应用',
-  theory: '理论',
+const GOAL_TYPE: Record<string, { zh: string; en: string }> = {
+  method: { zh: '方法', en: 'Method' },
+  benchmark: { zh: '评测基准', en: 'Benchmark' },
+  analysis: { zh: '分析', en: 'Analysis' },
+  survey: { zh: '综述', en: 'Survey' },
+  application: { zh: '应用', en: 'Application' },
+  theory: { zh: '理论', en: 'Theory' },
 };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -79,19 +86,21 @@ function IdeaGoalView({ payload }: { payload: Record<string, unknown> | null }) 
   const objectives = asStringArray(goal?.objectives);
   const criteria = asStringArray(goal?.success_criteria);
   const groundingCount = Array.isArray(goal?.grounding) ? goal.grounding.length : 0;
+  const typeMeta = researchType ? GOAL_TYPE[researchType] : undefined;
+  const typeLabel = researchType ? (typeMeta ? tr(typeMeta.zh, typeMeta.en) : researchType) : null;
   return (
     <div style={{ marginTop: 12 }}>
-      {researchType && (
+      {typeLabel && (
         <div style={{ marginBottom: 10 }}>
           <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-            研究类型：{GOAL_TYPE_ZH[researchType] ?? researchType}
+            {tr(`研究类型：${typeLabel}`, `Research type: ${typeLabel}`)}
           </span>
         </div>
       )}
-      {task && <GoalRow label="研究任务">{task}</GoalRow>}
-      {question && <GoalRow label="核心问题">{question}</GoalRow>}
+      {task && <GoalRow label={tr('研究任务', 'Research task')}>{task}</GoalRow>}
+      {question && <GoalRow label={tr('核心问题', 'Core question')}>{question}</GoalRow>}
       {objectives.length > 0 && (
-        <GoalRow label="研究目标">
+        <GoalRow label={tr('研究目标', 'Objectives')}>
           <ol style={{ margin: 0, paddingLeft: 18 }}>
             {objectives.map((o, i) => (
               <li key={i} style={{ marginBottom: 2 }}>{o}</li>
@@ -100,7 +109,7 @@ function IdeaGoalView({ payload }: { payload: Record<string, unknown> | null }) 
         </GoalRow>
       )}
       {criteria.length > 0 && (
-        <GoalRow label="成功标准">
+        <GoalRow label={tr('成功标准', 'Success criteria')}>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {criteria.map((c, i) => (
               <li key={i} style={{ marginBottom: 2 }}>{c}</li>
@@ -109,25 +118,27 @@ function IdeaGoalView({ payload }: { payload: Record<string, unknown> | null }) 
         </GoalRow>
       )}
       {groundingCount > 0 && (
-        <GoalRow label="依据文献">共 {groundingCount} 篇（详情见生成后的想法页）</GoalRow>
+        <GoalRow label={tr('依据文献', 'Grounding papers')}>
+          {tr(`共 ${groundingCount} 篇（详情见生成后的想法页）`, `${groundingCount} papers (details on the generated idea page)`)}
+        </GoalRow>
       )}
       {trace && (
         <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5, marginTop: 4 }}>
-          探索过程：{trace}
+          {tr('探索过程：', 'Exploration trace: ')}{trace}
         </div>
       )}
     </div>
   );
 }
 
-const CMP_FIELD_ZH: Record<string, string> = {
-  similarity: '相似点',
-  overlap: '重合点',
-  difference: '差异',
-  why: '说明',
-  reason: '原因',
-  verdict: '判定',
-  note: '备注',
+const CMP_FIELD: Record<string, { zh: string; en: string }> = {
+  similarity: { zh: '相似点', en: 'Similarity' },
+  overlap: { zh: '重合点', en: 'Overlap' },
+  difference: { zh: '差异', en: 'Difference' },
+  why: { zh: '说明', en: 'Why' },
+  reason: { zh: '原因', en: 'Reason' },
+  verdict: { zh: '判定', en: 'Verdict' },
+  note: { zh: '备注', en: 'Note' },
 };
 
 /** kind=idea_pivot：payload.reason + payload.comparisons（相似工作对比）。 */
@@ -140,7 +151,7 @@ function IdeaPivotView({ payload }: { payload: Record<string, unknown> | null })
         <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55, marginBottom: 10 }}>{reason}</div>
       )}
       {comparisons.length > 0 && (
-        <GoalRow label={`高度重合的已有工作 · ${comparisons.length} 项`}>
+        <GoalRow label={tr(`高度重合的已有工作 · ${comparisons.length} 项`, `Highly overlapping prior work · ${comparisons.length}`)}>
           <div className="col gap6">
             {comparisons.map((c, i) => {
               const item = asRecord(c);
@@ -167,12 +178,15 @@ function IdeaPivotView({ payload }: { payload: Record<string, unknown> | null })
                       )}
                     </div>
                   )}
-                  {details.map(([k, v]) => (
-                    <div key={k} style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
-                      {CMP_FIELD_ZH[k] ? <b style={{ color: 'var(--text)' }}>{CMP_FIELD_ZH[k]}：</b> : null}
-                      {v}
-                    </div>
-                  ))}
+                  {details.map(([k, v]) => {
+                    const f = CMP_FIELD[k];
+                    return (
+                      <div key={k} style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
+                        {f ? <b style={{ color: 'var(--text)' }}>{tr(`${f.zh}：`, `${f.en}: `)}</b> : null}
+                        {v}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -180,7 +194,10 @@ function IdeaPivotView({ payload }: { payload: Record<string, unknown> | null })
         </GoalRow>
       )}
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5 }}>
-        批准 = AI 按你的意见调整研究方向后继续；拒绝 = 终止本次深度生成。
+        {tr(
+          '批准 = AI 按你的意见调整研究方向后继续；拒绝 = 终止本次深度生成。',
+          'Approve = AI adjusts the research direction per your comment and continues; reject = stop this deep generation.',
+        )}
       </div>
     </div>
   );
@@ -214,20 +231,20 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
       >
         <div className="row gap8" style={{ marginBottom: 6 }}>
           <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
-            {GATE_KIND_ZH[g.kind] ?? g.kind}
+            {gateKindLabel(g.kind)}
           </span>
           {pending ? (
             <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
               <span className="dot" />
-              待审批
+              {tr('待审批', 'Pending')}
             </span>
           ) : g.status === 'approved' ? (
             <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              已批准
+              {tr('已批准', 'Approved')}
             </span>
           ) : (
             <span className="pill sm" style={{ background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}>
-              已拒绝
+              {tr('已拒绝', 'Rejected')}
             </span>
           )}
           <Icon
@@ -260,10 +277,10 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
                 className="textarea"
                 placeholder={
                   isGoal
-                    ? '可填写修改意见，AI 将按意见调整目标后继续'
+                    ? tr('可填写修改意见，AI 将按意见调整目标后继续', 'Optional comment — AI will adjust the goal accordingly and continue')
                     : isPivot
-                      ? '可填写调整意见，AI 将按意见调整研究方向后继续'
-                      : '审批意见（可选） · comment'
+                      ? tr('可填写调整意见，AI 将按意见调整研究方向后继续', 'Optional comment — AI will adjust the direction accordingly and continue')
+                      : tr('审批意见（可选）', 'Comment (optional)')
                 }
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
@@ -278,7 +295,7 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
                   onClick={() => onDecide(g.id, 'approve', comment.trim() || undefined)}
                 >
                   <Icon name="check" size={13} />
-                  {isPivot ? '调整方向继续' : isGoal ? '确认目标' : '批准 approve'}
+                  {isPivot ? tr('调整方向继续', 'Adjust and continue') : isGoal ? tr('确认目标', 'Confirm goal') : tr('批准', 'Approve')}
                 </button>
                 <button
                   className="btn btn-ghost sm"
@@ -287,7 +304,7 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
                   onClick={() => onDecide(g.id, 'reject', comment.trim() || undefined)}
                 >
                   <Icon name="x" size={13} />
-                  {isPivot ? '终止' : isGoal ? '驳回' : '拒绝 reject'}
+                  {isPivot ? tr('终止', 'Stop') : isGoal ? tr('驳回', 'Reject') : tr('拒绝', 'Reject')}
                 </button>
               </div>
             </>
@@ -295,9 +312,11 @@ export function GateCard({ gate: g, expanded, onToggle, onDecide, deciding }: Ga
             <div className="col gap6" style={{ marginTop: 12, fontSize: 11.5, color: 'var(--text-3)' }}>
               <div className="row gap8">
                 <Icon name="check" size={13} style={{ color: g.status === 'approved' ? 'var(--ok-tx)' : 'var(--danger-tx)' }} />
-                于 {fmtTime(g.decided_at)} {g.status === 'approved' ? '批准' : '拒绝'}
+                {g.status === 'approved'
+                  ? tr(`于 ${fmtTime(g.decided_at)} 批准`, `Approved at ${fmtTime(g.decided_at)}`)
+                  : tr(`于 ${fmtTime(g.decided_at)} 拒绝`, `Rejected at ${fmtTime(g.decided_at)}`)}
               </div>
-              {g.comment && <div style={{ paddingLeft: 21 }}>意见：{g.comment}</div>}
+              {g.comment && <div style={{ paddingLeft: 21 }}>{tr('意见：', 'Comment: ')}{g.comment}</div>}
             </div>
           )}
         </div>

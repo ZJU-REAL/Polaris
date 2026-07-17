@@ -25,6 +25,7 @@ import {
   type ReadingStatus,
   type SearchMode,
 } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { categoryMeta, saveBlob, SearchInput, useDebounced } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
 
@@ -40,10 +41,11 @@ const PAGE_SIZE = 20;
     相关性不足的进垃圾桶，不显示不计数。 */
 type ViewFilter = 'all' | 'compiled' | 'starred';
 
-const VIEW_FILTERS: { v: ViewFilter; label: string; hint?: string }[] = [
-  { v: 'all', label: '全部', hint: '已纳入知识库的全部文献' },
-  { v: 'compiled', label: '已编译', hint: 'AI 已精读编译出介绍' },
-  { v: 'starred', label: '已星标', hint: '我加了星标的文献' },
+// 模块级常量存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
+const VIEW_FILTERS: { v: ViewFilter; zh: string; en: string; hintZh: string; hintEn: string }[] = [
+  { v: 'all', zh: '全部', en: 'All', hintZh: '已纳入知识库的全部文献', hintEn: 'Every paper included in the library' },
+  { v: 'compiled', zh: '已编译', en: 'Compiled', hintZh: 'AI 已精读编译出介绍', hintEn: 'Papers the AI has compiled an intro for' },
+  { v: 'starred', zh: '已星标', en: 'Starred', hintZh: '我加了星标的文献', hintEn: 'Papers I starred' },
 ];
 
 /** 视图 → 列表查询参数（未纳入/垃圾桶文献一律不出现在论文库）。 */
@@ -108,7 +110,7 @@ function AddPaperModal({
   const importMutation = useMutation({
     mutationFn: (inp: PaperImportInput) => api.importPaper(pid, inp),
     onSuccess: (p) => {
-      toast('文献已加进论文库', 'ok');
+      toast(tr('文献已加进论文库', 'Paper added to the library'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
       reset();
@@ -118,14 +120,16 @@ function AddPaperModal({
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
         const paperId = (e.body as { paper_id?: string } | null | undefined)?.paper_id;
-        toast('这篇论文已经在库中，已为你打开', 'info');
+        toast(tr('这篇论文已经在库中，已为你打开', 'This paper is already in the library — opened it for you'), 'info');
         reset();
         onClose();
         if (paperId) onImported(paperId);
       } else if (e instanceof ApiError && e.status === 422) {
-        setParseError(e.message.replace(/^PARSE_FAILED:?\s*/, '') || '内容解析失败，请检查格式');
+        setParseError(
+          e.message.replace(/^PARSE_FAILED:?\s*/, '') || tr('内容解析失败，请检查格式', 'Failed to parse — check the format'),
+        );
       } else {
-        toast(`添加失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('添加失败：', 'Failed to add: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -134,13 +138,13 @@ function AddPaperModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="添加文献"
-      sub="手动把一篇论文加进当前研究方向的论文库"
+      title={tr('添加文献', 'Add paper')}
+      sub={tr('手动把一篇论文加进当前研究方向的论文库', 'Manually add a paper to this direction’s library')}
       width={520}
       footer={
         <>
           <button className="btn btn-ghost sm" onClick={onClose}>
-            取消
+            {tr('取消', 'Cancel')}
           </button>
           <button
             className="btn btn-primary sm"
@@ -150,12 +154,12 @@ function AddPaperModal({
             {importMutation.isPending ? (
               <>
                 <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                添加中…
+                {tr('添加中…', 'Adding…')}
               </>
             ) : (
               <>
                 <Icon name="plus" size={13} />
-                添加
+                {tr('添加', 'Add')}
               </>
             )}
           </button>
@@ -166,7 +170,7 @@ function AddPaperModal({
         options={[
           { v: 'arxiv', label: 'arXiv ID' },
           { v: 'doi', label: 'DOI' },
-          { v: 'bibtex', label: 'BibTeX 粘贴' },
+          { v: 'bibtex', label: tr('BibTeX 粘贴', 'Paste BibTeX') },
         ]}
         value={method}
         onChange={(m) => {
@@ -180,7 +184,7 @@ function AddPaperModal({
             <input
               className="input mono"
               style={{ width: '100%' }}
-              placeholder="例如 2405.01234 或 2405.01234v2"
+              placeholder={tr('例如 2405.01234 或 2405.01234v2', 'e.g. 2405.01234 or 2405.01234v2')}
               value={arxivId}
               onChange={(e) => {
                 setArxivId(e.target.value);
@@ -188,7 +192,10 @@ function AddPaperModal({
               }}
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              填 arXiv 编号即可，标题、作者、摘要会自动抓取，并顺带下载 PDF。
+              {tr(
+                '填 arXiv 编号即可，标题、作者、摘要会自动抓取，并顺带下载 PDF。',
+                'Just the arXiv ID — title, authors, and abstract are fetched automatically, plus the PDF.',
+              )}
             </div>
           </>
         ) : method === 'doi' ? (
@@ -196,7 +203,7 @@ function AddPaperModal({
             <input
               className="input mono"
               style={{ width: '100%' }}
-              placeholder="例如 10.1145/3567890.1234567"
+              placeholder={tr('例如 10.1145/3567890.1234567', 'e.g. 10.1145/3567890.1234567')}
               value={doi}
               onChange={(e) => {
                 setDoi(e.target.value);
@@ -204,7 +211,10 @@ function AddPaperModal({
               }}
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              通过 DOI 反查论文信息（OpenAlex），适合期刊/会议论文。
+              {tr(
+                '通过 DOI 反查论文信息（OpenAlex），适合期刊/会议论文。',
+                'Looks up paper metadata by DOI (OpenAlex) — good for journal/conference papers.',
+              )}
             </div>
           </>
         ) : (
@@ -212,7 +222,10 @@ function AddPaperModal({
             <textarea
               className="textarea mono"
               style={{ width: '100%', minHeight: 150, resize: 'vertical', fontSize: 12 }}
-              placeholder={'粘贴单条 BibTeX 条目，例如：\n@inproceedings{smith2024example,\n  title = {...},\n  author = {...},\n  year = {2024},\n}'}
+              placeholder={tr(
+                '粘贴单条 BibTeX 条目，例如：\n@inproceedings{smith2024example,\n  title = {...},\n  author = {...},\n  year = {2024},\n}',
+                'Paste one BibTeX entry, e.g.:\n@inproceedings{smith2024example,\n  title = {...},\n  author = {...},\n  year = {2024},\n}',
+              )}
               value={bibtex}
               onChange={(e) => {
                 setBibtex(e.target.value);
@@ -220,7 +233,10 @@ function AddPaperModal({
               }}
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              一次粘贴一条；title 必填，作者/年份/期刊/DOI 能解析多少取多少。
+              {tr(
+                '一次粘贴一条；title 必填，作者/年份/期刊/DOI 能解析多少取多少。',
+                'One entry at a time; title is required — authors/year/venue/DOI are parsed on a best-effort basis.',
+              )}
             </div>
           </>
         )}
@@ -236,7 +252,7 @@ function AddPaperModal({
               lineHeight: 1.6,
             }}
           >
-            解析失败：{parseError}
+            {tr('解析失败：', 'Parse failed: ')}{parseError}
           </div>
         )}
       </div>
@@ -271,18 +287,23 @@ export function ExportMenu({
     mutationFn: () => api.downloadObsidianExport(pid),
     onSuccess: (blob) => {
       saveBlob(blob, 'polaris-wiki.zip');
-      toast('Obsidian 笔记库已导出', 'ok');
+      toast(tr('Obsidian 笔记库已导出', 'Obsidian vault exported'), 'ok');
     },
-    onError: (e) => toast(`导出失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const citationsMutation = useMutation({
     mutationFn: (format: CitationFormat) => api.downloadCitations(pid, { format, ...filters }),
     onSuccess: (blob, format) => {
       saveBlob(blob, format === 'bibtex' ? 'polaris-references.bib' : 'polaris-references.json');
-      toast(format === 'bibtex' ? 'BibTeX 文件已导出' : 'CSL-JSON 文件已导出', 'ok');
+      toast(
+        format === 'bibtex' ? tr('BibTeX 文件已导出', 'BibTeX file exported') : tr('CSL-JSON 文件已导出', 'CSL-JSON file exported'),
+        'ok',
+      );
     },
-    onError: (e) => toast(`导出失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const busy = obsidianMutation.isPending || citationsMutation.isPending;
@@ -310,7 +331,7 @@ export function ExportMenu({
         ) : (
           <Icon name="download" size={14} />
         )}
-        导出
+        {tr('导出', 'Export')}
         <Icon name="chevDown" size={12} />
       </button>
       {open && (
@@ -335,7 +356,7 @@ export function ExportMenu({
           >
             <Icon name="file" size={13} style={{ color: 'var(--text-3)' }} />
             <span>
-              Obsidian 笔记库
+              {tr('Obsidian 笔记库', 'Obsidian vault')}
               <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>.zip</span>
             </span>
           </button>
@@ -348,8 +369,10 @@ export function ExportMenu({
           >
             <Icon name="book" size={13} style={{ color: 'var(--text-3)' }} />
             <span>
-              BibTeX 引用
-              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>.bib · 全部库内文献</span>
+              {tr('BibTeX 引用', 'BibTeX citations')}
+              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>
+                {tr('.bib · 全部库内文献', '.bib · whole library')}
+              </span>
             </span>
           </button>
           <button
@@ -362,7 +385,9 @@ export function ExportMenu({
             <Icon name="layers" size={13} style={{ color: 'var(--text-3)' }} />
             <span>
               CSL-JSON
-              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>Zotero 可直接导入</span>
+              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>
+                {tr('Zotero 可直接导入', 'imports straight into Zotero')}
+              </span>
             </span>
           </button>
         </div>
@@ -405,29 +430,32 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
   const restoreMutation = useMutation({
     mutationFn: (id: string) => api.restorePaper(id),
     onSuccess: (p) => {
-      toast(`已召回：${p.title.slice(0, 30)}`, 'ok');
+      toast(`${tr('已召回：', 'Restored: ')}${p.title.slice(0, 30)}`, 'ok');
       invalidate();
     },
-    onError: (e) => toast(`召回失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('召回失败：', 'Restore failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const purgeMutation = useMutation({
     mutationFn: (id: string) => api.deletePaper(id),
     onSuccess: () => {
-      toast('已彻底删除', 'ok');
+      toast(tr('已彻底删除', 'Permanently deleted'), 'ok');
       invalidate();
     },
-    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const emptyMutation = useMutation({
     mutationFn: () => api.emptyTrash(pid),
     onSuccess: (res) => {
-      toast(`垃圾桶已清空（${res.deleted} 篇）`, 'ok');
+      toast(tr(`垃圾桶已清空（${res.deleted} 篇）`, `Trash emptied (${res.deleted} papers)`), 'ok');
       setConfirmEmpty(false);
       invalidate();
     },
-    onError: (e) => toast(`清空失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('清空失败：', 'Empty failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const busy = restoreMutation.isPending || purgeMutation.isPending || emptyMutation.isPending;
@@ -436,18 +464,24 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
     <Modal
       open={open}
       onClose={onClose}
-      title="垃圾桶"
-      sub="相关性不足自动淘汰与手动删除的文献；召回后回到论文库"
+      title={tr('垃圾桶', 'Trash')}
+      sub={tr(
+        '相关性不足自动淘汰与手动删除的文献；召回后回到论文库',
+        'Papers auto-dropped for low relevance or deleted manually; restoring puts them back in the library',
+      )}
       width={680}
       footer={
         <>
           {confirmEmpty ? (
             <>
               <span style={{ fontSize: 12, color: 'var(--danger-tx)', marginRight: 'auto' }}>
-                将彻底删除全部 {allItems.length} 篇及其文件，无法恢复
+                {tr(
+                  `将彻底删除全部 ${allItems.length} 篇及其文件，无法恢复`,
+                  `This permanently deletes all ${allItems.length} papers and their files — no undo`,
+                )}
               </span>
               <button className="btn btn-ghost sm" onClick={() => setConfirmEmpty(false)}>
-                取消
+                {tr('取消', 'Cancel')}
               </button>
               <button
                 className="btn btn-primary sm"
@@ -455,7 +489,7 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
                 disabled={busy}
                 onClick={() => emptyMutation.mutate()}
               >
-                {emptyMutation.isPending ? '清空中…' : '确认清空'}
+                {emptyMutation.isPending ? tr('清空中…', 'Emptying…') : tr('确认清空', 'Confirm empty')}
               </button>
             </>
           ) : (
@@ -467,10 +501,10 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
                 onClick={() => setConfirmEmpty(true)}
               >
                 <Icon name="x" size={12} />
-                清空垃圾桶
+                {tr('清空垃圾桶', 'Empty trash')}
               </button>
               <button className="btn btn-soft sm" onClick={onClose}>
-                关闭
+                {tr('关闭', 'Close')}
               </button>
             </>
           )}
@@ -480,18 +514,20 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
       {/* 搜索区固定不随列表滚动：列表自带滚动容器，整体高度不超出 Modal 内容区 */}
       <div className="row gap10" style={{ marginBottom: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <SearchInput value={trashQ} onChange={setTrashQ} placeholder="搜索标题 / 作者…" />
+          <SearchInput value={trashQ} onChange={setTrashQ} placeholder={tr('搜索标题 / 作者…', 'Search title / author…')} />
         </div>
         <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>
-          {kw ? `${items.length} / ${allItems.length} 篇` : `${allItems.length} 篇`}
+          {kw
+            ? tr(`${items.length} / ${allItems.length} 篇`, `${items.length} / ${allItems.length}`)
+            : tr(`${allItems.length} 篇`, `${allItems.length} papers`)}
         </span>
       </div>
       {trashQuery.isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>加载中…</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
       ) : allItems.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>垃圾桶是空的</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('垃圾桶是空的', 'Trash is empty')}</div>
       ) : items.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>没有匹配的文献</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('没有匹配的文献', 'No matching papers')}</div>
       ) : (
         <div
           className="scroll"
@@ -510,7 +546,10 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
           ))}
           {(trashQuery.data?.total ?? 0) > allItems.length && (
             <div className="muted" style={{ fontSize: 11, textAlign: 'center', padding: 8 }}>
-              仅显示最近 {allItems.length} 篇（共 {trashQuery.data?.total} 篇）
+              {tr(
+                `仅显示最近 ${allItems.length} 篇（共 ${trashQuery.data?.total} 篇）`,
+                `Showing the latest ${allItems.length} (of ${trashQuery.data?.total})`,
+              )}
             </div>
           )}
         </div>
@@ -568,11 +607,11 @@ function TrashRow({
         <div className="row gap8" style={{ marginTop: 6 }}>
           {reason === 'irrelevant' ? (
             <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-              不相关
+              {tr('不相关', 'Irrelevant')}
             </span>
           ) : (
             <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
-              手动删除
+              {tr('手动删除', 'Deleted manually')}
             </span>
           )}
           {p.tldr && (
@@ -593,19 +632,25 @@ function TrashRow({
         </div>
       </div>
       <div className="col" style={{ gap: 6, flexShrink: 0 }}>
-        <button className="btn btn-soft sm" style={{ height: 26 }} disabled={busy} title="召回到论文库" onClick={onRestore}>
+        <button
+          className="btn btn-soft sm"
+          style={{ height: 26 }}
+          disabled={busy}
+          title={tr('召回到论文库', 'Restore to the library')}
+          onClick={onRestore}
+        >
           <Icon name="refresh" size={12} />
-          召回
+          {tr('召回', 'Restore')}
         </button>
         <button
           className="btn btn-ghost sm"
           style={{ height: 26, color: 'var(--danger-tx)' }}
           disabled={busy}
-          title="彻底删除（连同文件，无法恢复）"
+          title={tr('彻底删除（连同文件，无法恢复）', 'Delete permanently (files included, no undo)')}
           onClick={onPurge}
         >
           <Icon name="x" size={12} />
-          彻底删除
+          {tr('彻底删除', 'Delete forever')}
         </button>
       </div>
     </div>
@@ -651,7 +696,7 @@ const PaperRow = memo(function PaperRow({
             checked={checked}
             onClick={(e) => e.stopPropagation()}
             onChange={onToggleCheck}
-            title="选中后可批量删除 / 导出"
+            title={tr('选中后可批量删除 / 导出', 'Select for bulk delete / export')}
             style={{ width: 13, height: 13, margin: 0, flexShrink: 0, accentColor: 'var(--accent)', cursor: 'pointer' }}
           />
         )}
@@ -688,7 +733,11 @@ const PaperRow = memo(function PaperRow({
           </span>
         )}
         {(p.note_count ?? 0) > 0 && (
-          <span className="row" style={{ gap: 3, fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }} title={`${p.note_count} 条笔记`}>
+          <span
+            className="row"
+            style={{ gap: 3, fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}
+            title={tr(`${p.note_count} 条笔记`, `${p.note_count} notes`)}
+          >
             <Icon name="pen" size={10} />
             {p.note_count}
           </span>
@@ -730,7 +779,8 @@ function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
       void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
       void queryClient.invalidateQueries({ queryKey: ['project-tags', pid] });
     },
-    onError: (e) => toast(`标签更新失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('标签更新失败：', 'Tag update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const commit = () => {
@@ -744,13 +794,13 @@ function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
   return (
     <div className="row gap6 wrap" style={{ marginTop: 14 }}>
       <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}>
-        标签
+        {tr('标签', 'Tags')}
       </span>
       {tags.map((t) => (
         <span key={t} className="tag" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           {t}
           <span
-            title="移除标签"
+            title={tr('移除标签', 'Remove tag')}
             style={{ cursor: 'pointer', display: 'inline-flex', opacity: 0.6 }}
             onClick={() => putMutation.mutate(tags.filter((x) => x !== t))}
           >
@@ -763,7 +813,7 @@ function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
           className="input"
           autoFocus
           style={{ height: 24, fontSize: 11.5, width: 120, padding: '0 8px' }}
-          placeholder="标签名，回车确定"
+          placeholder={tr('标签名，回车确定', 'Tag name, Enter to confirm')}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
@@ -781,7 +831,7 @@ function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
           style={{ fontSize: 11, opacity: putMutation.isPending ? 0.5 : 1 }}
           onClick={() => !putMutation.isPending && setAdding(true)}
         >
-          <Icon name="plus" size={10} style={{ display: 'inline-block', verticalAlign: -1 }} /> 标签
+          <Icon name="plus" size={10} style={{ display: 'inline-block', verticalAlign: -1 }} /> {tr('标签', 'Tag')}
         </span>
       )}
     </div>
@@ -834,14 +884,15 @@ function PaperDetailPane({
   const deleteMutation = useMutation({
     mutationFn: () => api.patchPaper(paperId, { status: 'excluded' }),
     onSuccess: () => {
-      toast('已移入垃圾桶，可在列表底部的垃圾桶中召回', 'ok');
+      toast(tr('已移入垃圾桶，可在列表底部的垃圾桶中召回', 'Moved to trash — restore it from the trash any time'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
       void queryClient.invalidateQueries({ queryKey: ['papers-trash', pid] });
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
       void queryClient.invalidateQueries({ queryKey: ['project-graph', pid] });
       onDeleted();
     },
-    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 星标 / 阅读状态（个人视角）
@@ -853,19 +904,21 @@ function PaperDetailPane({
       );
       void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
     },
-    onError: (e) => toast(`更新失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 重新编译：用最新的图文模式重写 wiki 页（同步调用，约 1 分钟）
   const recompileMutation = useMutation({
     mutationFn: () => api.recompilePaper(paperId),
     onSuccess: () => {
-      toast('编译完成，介绍已更新', 'ok');
+      toast(tr('编译完成，介绍已更新', 'Compiled — the intro has been updated'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['paper', paperId] });
       void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
       void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
     },
-    onError: (e) => toast(`重新编译失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('重新编译失败：', 'Recompile failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 正文 ![[fig:N]] 嵌入图（docs/api-lit.md §6.6）
@@ -878,9 +931,16 @@ function PaperDetailPane({
     [figures, paperId],
   );
 
-  if (isLoading) return <div className="empty">加载论文详情…</div>;
+  if (isLoading) return <div className="empty">{tr('加载论文详情…', 'Loading paper…')}</div>;
   if (isError || !paper) {
-    return <EmptyState compact icon="x" title="无法加载论文详情" desc="后端不可用或该论文不存在。" />;
+    return (
+      <EmptyState
+        compact
+        icon="x"
+        title={tr('无法加载论文详情', 'Failed to load paper')}
+        desc={tr('后端不可用或该论文不存在。', 'Backend unavailable or the paper does not exist.')}
+      />
+    );
   }
 
   const authors = paper.authors.map((a) => a.name).join(' · ');
@@ -916,7 +976,7 @@ function PaperDetailPane({
             {(paper.note_count ?? 0) > 0 && (
               <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
                 <Icon name="pen" size={10} />
-                {paper.note_count} 条笔记
+                {tr(`${paper.note_count} 条笔记`, `${paper.note_count} notes`)}
               </span>
             )}
           </div>
@@ -926,7 +986,7 @@ function PaperDetailPane({
           {authors && <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.5 }}>{authors}</div>}
         </div>
         {relevance !== null && (
-          <ScoreRing value={Math.round(relevance * 100) / 10} size={56} label="相关度" />
+          <ScoreRing value={Math.round(relevance * 100) / 10} size={56} label={tr('相关度', 'Relevance')} />
         )}
       </div>
 
@@ -934,35 +994,39 @@ function PaperDetailPane({
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
         <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`)}>
           <Icon name="book" size={13} />
-          阅读
+          {tr('阅读', 'Read')}
         </button>
         <button
           className="btn btn-soft sm"
-          title={paper.has_wiki ? '用最新的图文模式重写这篇介绍' : 'AI 精读并编译图文介绍'}
+          title={
+            paper.has_wiki
+              ? tr('用最新的图文模式重写这篇介绍', 'Rewrite this intro with the latest text+figures mode')
+              : tr('AI 精读并编译图文介绍', 'Have the AI read and compile an illustrated intro')
+          }
           disabled={recompileMutation.isPending}
           onClick={() => recompileMutation.mutate()}
         >
           {recompileMutation.isPending ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              AI 编译中，约 1 分钟…
+              {tr('AI 编译中，约 1 分钟…', 'Compiling — about a minute…')}
             </>
           ) : (
             <>
               <Icon name="sparkle" size={13} />
-              {paper.has_wiki ? '重新编译' : '编译'}
+              {paper.has_wiki ? tr('重新编译', 'Recompile') : tr('编译', 'Compile')}
             </>
           )}
         </button>
         <button
           className="btn btn-ghost sm"
           style={{ color: 'var(--danger-tx)' }}
-          title="移入垃圾桶（可召回）"
+          title={tr('移入垃圾桶（可召回）', 'Move to trash (restorable)')}
           disabled={deleteMutation.isPending}
           onClick={() => deleteMutation.mutate()}
         >
           <Icon name="x" size={13} />
-          删除
+          {tr('删除', 'Delete')}
         </button>
         {arxivUrl && (
           <a
@@ -985,7 +1049,7 @@ function PaperDetailPane({
             style={{ textDecoration: 'none' }}
           >
             <Icon name="link" size={13} />
-            原文链接
+            {tr('原文链接', 'Source link')}
           </a>
         )}
       </div>
@@ -999,14 +1063,14 @@ function PaperDetailPane({
           style={starred ? { color: 'var(--warn-tx)' } : undefined}
         >
           <Icon name={starred ? 'starFill' : 'star'} size={13} />
-          {starred ? '已星标' : '加星标'}
+          {starred ? tr('已星标', 'Starred') : tr('加星标', 'Star')}
         </button>
         <span className="row gap8">
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-            阅读状态
+            {tr('阅读状态', 'Reading status')}
           </span>
           <Segmented<ReadingStatus>
-            options={READING_STATUS.map((m) => ({ v: m.v, label: m.label }))}
+            options={READING_STATUS.map((m) => ({ v: m.v, label: tr(m.label, m.en) }))}
             value={readingStatus}
             onChange={(v) => metaMutation.mutate({ reading_status: v })}
           />
@@ -1024,16 +1088,20 @@ function PaperDetailPane({
           {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
         </MetaItem>
         <MetaItem label="relevance">
-          {relevance !== null ? <RelevanceBar value={relevance} width={140} /> : <span className="muted">未打分</span>}
+          {relevance !== null ? (
+            <RelevanceBar value={relevance} width={140} />
+          ) : (
+            <span className="muted">{tr('未打分', 'not scored')}</span>
+          )}
         </MetaItem>
-        <MetaItem label="入库时间">
+        <MetaItem label={tr('入库时间', 'added at')}>
           <span className="mono">{fmtTime(paper.created_at)}</span>
         </MetaItem>
-        <MetaItem label="编译时间">
+        <MetaItem label={tr('编译时间', 'compiled at')}>
           {paper.compiled_at ? (
             <span className="mono">{fmtTime(paper.compiled_at)}</span>
           ) : (
-            <span className="muted">未编译</span>
+            <span className="muted">{tr('未编译', 'not compiled')}</span>
           )}
         </MetaItem>
       </div>
@@ -1051,13 +1119,15 @@ function PaperDetailPane({
                 onClick={() => onOpenConcept(c.id)}
               >
                 {c.name}
-                <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{meta.zh}</span>
+                <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{tr(meta.zh, meta.en)}</span>
               </span>
             );
           })}
           {paper.concepts.length > CONCEPT_CHIP_LIMIT && (
             <span className="chip" style={{ fontSize: 11 }} onClick={() => setConceptsOpen((o) => !o)}>
-              {conceptsOpen ? '收起' : `+${paper.concepts.length - CONCEPT_CHIP_LIMIT} 个概念`}
+              {conceptsOpen
+                ? tr('收起', 'Collapse')
+                : tr(`+${paper.concepts.length - CONCEPT_CHIP_LIMIT} 个概念`, `+${paper.concepts.length - CONCEPT_CHIP_LIMIT} concepts`)}
             </span>
           )}
         </div>
@@ -1071,9 +1141,7 @@ function PaperDetailPane({
             onClick={() => setAbstractOpen((o) => !o)}
             style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
           >
-            <span style={{ fontSize: 12.5, fontWeight: 650 }}>
-              摘要 <span className="en-label" style={{ fontSize: 11 }}>Abstract</span>
-            </span>
+            <span style={{ fontSize: 12.5, fontWeight: 650 }}>{tr('摘要', 'Abstract')}</span>
             <Icon
               name="chevDown"
               size={14}
@@ -1119,8 +1187,11 @@ function PaperDetailPane({
           <EmptyState
             compact
             icon="pen"
-            title="还没有 AI 介绍"
-            desc="点上方的编译按钮，让 AI 精读这篇论文并生成图文介绍。"
+            title={tr('还没有 AI 介绍', 'No AI intro yet')}
+            desc={tr(
+              '点上方的编译按钮，让 AI 精读这篇论文并生成图文介绍。',
+              'Hit the compile button above to have the AI read this paper and write an illustrated intro.',
+            )}
           />
         )}
       </div>
@@ -1169,7 +1240,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
   const bulkDeleteMutation = useMutation({
     mutationFn: () => api.batchDeletePapers(pid, [...selected]),
     onSuccess: (res) => {
-      toast(`已把 ${res.deleted} 篇移入垃圾桶，可召回`, 'ok');
+      toast(tr(`已把 ${res.deleted} 篇移入垃圾桶，可召回`, `Moved ${res.deleted} papers to trash — restorable`), 'ok');
       if (selectedId && selected.has(selectedId)) onSelect('');
       setSelected(new Set());
       setSelectMode(false);
@@ -1177,16 +1248,18 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
       void queryClient.invalidateQueries({ queryKey: ['project-graph', pid] });
     },
-    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const bulkExportMutation = useMutation({
     mutationFn: () => api.downloadCitations(pid, { format: 'bibtex', ids: [...selected] }),
     onSuccess: (blob) => {
       saveBlob(blob, 'polaris-selected.bib');
-      toast(`已导出 ${selected.size} 篇的 BibTeX`, 'ok');
+      toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
     },
-    onError: (e) => toast(`导出失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) =>
+      toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const semanticActive = mode === 'semantic' && q.length > 0;
@@ -1260,12 +1333,16 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
             <SearchInput
               value={qInput}
               onChange={setQInput}
-              placeholder={mode === 'semantic' ? '语义检索（自然语言描述）…' : '搜索标题 / 关键词…'}
+              placeholder={
+                mode === 'semantic'
+                  ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
+                  : tr('搜索标题 / 关键词…', 'Search title / keywords…')
+              }
             />
             <Segmented<SearchMode>
               options={[
-                { v: 'keyword', label: '关键词' },
-                { v: 'semantic', label: '语义' },
+                { v: 'keyword', label: tr('关键词', 'Keyword') },
+                { v: 'semantic', label: tr('语义', 'Semantic') },
               ]}
               value={mode}
               onChange={setMode}
@@ -1279,7 +1356,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                 position: 'relative',
                 ...(advOpen || advActive ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {}),
               }}
-              title="高级检索：作者 / 机构 / 发表时间 / 入库时间"
+              title={tr('高级检索：作者 / 机构 / 发表时间 / 入库时间', 'Advanced search: author / affiliation / publish date / added date')}
               onClick={() => setAdvOpen((o) => !o)}
             >
               <Icon name="sliders" size={14} />
@@ -1313,21 +1390,24 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                 <input
                   className="input"
                   style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
-                  placeholder="作者姓名…"
+                  placeholder={tr('作者姓名…', 'Author name…')}
                   value={advAuthor}
                   onChange={(e) => setAdvAuthor(e.target.value)}
                 />
                 <input
                   className="input"
                   style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
-                  placeholder="发表机构…"
-                  title="需要论文元数据带有机构信息（入库时自动从 OpenAlex 补充）"
+                  placeholder={tr('发表机构…', 'Affiliation…')}
+                  title={tr(
+                    '需要论文元数据带有机构信息（入库时自动从 OpenAlex 补充）',
+                    'Needs affiliation metadata (auto-filled from OpenAlex on ingest)',
+                  )}
                   value={advAffiliation}
                   onChange={(e) => setAdvAffiliation(e.target.value)}
                 />
               </div>
               <div className="row gap6" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                <span style={{ width: 52, flexShrink: 0 }}>发表时间</span>
+                <span style={{ width: 52, flexShrink: 0 }}>{tr('发表时间', 'Published')}</span>
                 <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
                   value={advPubFrom} onChange={(e) => setAdvPubFrom(e.target.value)} />
                 <span>—</span>
@@ -1335,7 +1415,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                   value={advPubTo} onChange={(e) => setAdvPubTo(e.target.value)} />
               </div>
               <div className="row gap6" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                <span style={{ width: 52, flexShrink: 0 }}>入库时间</span>
+                <span style={{ width: 52, flexShrink: 0 }}>{tr('入库时间', 'Added')}</span>
                 <input className="input" type="date" style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11 }}
                   value={advCreatedFrom} onChange={(e) => setAdvCreatedFrom(e.target.value)} />
                 <span>—</span>
@@ -1355,7 +1435,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                     setAdvCreatedTo('');
                   }}
                 >
-                  清空高级条件
+                  {tr('清空高级条件', 'Clear advanced filters')}
                 </button>
               )}
             </div>
@@ -1366,19 +1446,19 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                 key={f.v}
                 className={`chip${view === f.v ? ' on' : ''}`}
                 style={filterDisabled}
-                title={f.hint}
+                title={tr(f.hintZh, f.hintEn)}
                 onClick={() => setView(f.v)}
               >
-                {f.label}
+                {tr(f.zh, f.en)}
               </span>
             ))}
             <span
               className="chip"
               style={{ marginLeft: 'auto' }}
-              title="垃圾桶：已删除的文献，可召回或彻底删除"
+              title={tr('垃圾桶：已删除的文献，可召回或彻底删除', 'Trash: deleted papers — restore or delete forever')}
               onClick={() => setTrashOpen(true)}
             >
-              垃圾桶
+              {tr('垃圾桶', 'Trash')}
             </span>
           </div>
           {/* 标签 / 阅读状态 / 仅星标 过滤 */}
@@ -1388,9 +1468,9 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
               style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
               value={tagFilter}
               onChange={(e) => setTagFilter(e.target.value)}
-              title="按标签过滤"
+              title={tr('按标签过滤', 'Filter by tag')}
             >
-              <option value="">全部标签</option>
+              <option value="">{tr('全部标签', 'All tags')}</option>
               {projectTags.map((t) => (
                 <option key={t.id} value={t.name}>
                   {t.name}（{t.paper_count}）
@@ -1402,9 +1482,9 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
               style={{ height: 26, fontSize: 11.5, width: 88, padding: '0 6px' }}
               value={readingFilter}
               onChange={(e) => setReadingFilter(e.target.value as '' | ReadingStatus)}
-              title="按阅读状态过滤"
+              title={tr('按阅读状态过滤', 'Filter by reading status')}
             >
-              <option value="">读没读</option>
+              <option value="">{tr('读没读', 'Read?')}</option>
               {READING_STATUS.map((m) => (
                 <option key={m.v} value={m.v}>
                   {m.label}
@@ -1415,15 +1495,15 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
           <div className="row gap8" style={{ marginTop: 10 }}>
             <Segmented<PaperSort>
               options={[
-                { v: 'relevance', label: '按相关度' },
-                { v: '-published_at', label: '按时间' },
+                { v: 'relevance', label: tr('按相关度', 'By relevance') },
+                { v: '-published_at', label: tr('按时间', 'By date') },
               ]}
               value={sort}
               onChange={setSort}
             />
             <button className="btn btn-primary sm" style={{ height: 26, marginLeft: 'auto' }} onClick={() => setAddOpen(true)}>
               <Icon name="plus" size={12} />
-              添加文献
+              {tr('添加文献', 'Add paper')}
             </button>
           </div>
           {fallbackNotice && (
@@ -1438,22 +1518,34 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                 lineHeight: 1.5,
               }}
             >
-              语义检索暂不可用，已回退为关键词匹配。
+              {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
             </div>
           )}
         </div>
 
         <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
           {isLoading ? (
-            <div className="empty">加载论文…</div>
+            <div className="empty">{tr('加载论文…', 'Loading papers…')}</div>
           ) : isError ? (
-            <EmptyState compact icon="x" title="无法加载论文列表" desc="后端不可用或接口尚未就绪，稍后重试。" />
+            <EmptyState
+              compact
+              icon="x"
+              title={tr('无法加载论文列表', 'Failed to load papers')}
+              desc={tr('后端不可用或接口尚未就绪，稍后重试。', 'Backend unavailable or API not ready — try again later.')}
+            />
           ) : papers.length === 0 ? (
             <EmptyState
               compact
               icon="book"
-              title={hasFilter ? '没有匹配的论文' : '论文库为空'}
-              desc={hasFilter ? '换个关键词或过滤条件试试。' : '先到建库与同步页运行初始建库，或点上方的添加文献按钮手动添加。'}
+              title={hasFilter ? tr('没有匹配的论文', 'No matching papers') : tr('论文库为空', 'Library is empty')}
+              desc={
+                hasFilter
+                  ? tr('换个关键词或过滤条件试试。', 'Try a different keyword or filter.')
+                  : tr(
+                      '先到建库与同步页运行初始建库，或点上方的添加文献按钮手动添加。',
+                      'Run the initial library build under Ingest & sync, or add papers manually with the button above.',
+                    )
+              }
             />
           ) : (
             <>
@@ -1485,12 +1577,12 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                     {listQuery.isFetchingNextPage ? (
                       <>
                         <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                        加载中…
+                        {tr('加载中…', 'Loading…')}
                       </>
                     ) : (
                       <>
                         <Icon name="chevDown" size={13} />
-                        加载更多
+                        {tr('加载更多', 'Load more')}
                       </>
                     )}
                   </button>
@@ -1507,14 +1599,14 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
         >
           <button
             className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-            title="开启后列表出现复选框，可批量删除 / 导出"
+            title={tr('开启后列表出现复选框，可批量删除 / 导出', 'Show checkboxes for bulk delete / export')}
             onClick={() => {
               setSelectMode((m) => !m);
               setSelected(new Set());
             }}
           >
             <Icon name="check" size={13} />
-            {selectMode ? `已选 ${selected.size}` : '多选'}
+            {selectMode ? tr(`已选 ${selected.size}`, `${selected.size} selected`) : tr('多选', 'Select')}
           </button>
           {selectMode && (
             <>
@@ -1525,7 +1617,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                 onClick={() => bulkDeleteMutation.mutate()}
               >
                 <Icon name="x" size={12} />
-                删除
+                {tr('删除', 'Delete')}
               </button>
               <button
                 className="btn btn-ghost sm"
@@ -1533,7 +1625,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                 onClick={() => bulkExportMutation.mutate()}
               >
                 <Icon name="download" size={12} />
-                导出 BibTeX
+                {tr('导出 BibTeX', 'Export BibTeX')}
               </button>
             </>
           )}
@@ -1552,7 +1644,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
           />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
-            从左侧选择一篇论文
+            {tr('从左侧选择一篇论文', 'Pick a paper from the list')}
           </div>
         )}
       </div>

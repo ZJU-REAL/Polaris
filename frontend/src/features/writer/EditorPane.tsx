@@ -8,6 +8,7 @@ import { stex } from '@codemirror/legacy-modes/mode/stex';
 import * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import { api, getToken } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { ManuscriptProvider, type ProviderStatus } from '../../lib/yjs-provider';
 import { EmptyState } from '../../components/ui/EmptyState';
 
@@ -114,7 +115,7 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
         const pu = (state as { user?: { name?: string; color?: string } }).user;
         peers.push({
           clientId,
-          name: pu?.name ?? '协作者',
+          name: pu?.name ?? tr('协作者', 'Collaborator'),
           color: pu?.color ?? '#8a94a8',
         });
       });
@@ -203,7 +204,7 @@ function ReadonlyEditor({ manuscriptId, fileId, onView }: EditorPaneProps) {
   }, [content]);
 
   if (fileQuery.isLoading) {
-    return <div className="empty" style={{ flex: 1, paddingTop: 80 }}>加载文件内容…</div>;
+    return <div className="empty" style={{ flex: 1, paddingTop: 80 }}>{tr('加载文件内容…', 'Loading file…')}</div>;
   }
   if (fileQuery.isError) {
     return (
@@ -211,11 +212,11 @@ function ReadonlyEditor({ manuscriptId, fileId, onView }: EditorPaneProps) {
         <EmptyState
           compact
           icon="x"
-          title="读不到这个文件"
-          desc="后端不可用或文件已被删除。"
+          title={tr('读不到这个文件', 'Cannot read this file')}
+          desc={tr('后端不可用或文件已被删除。', 'Backend unavailable or the file was deleted.')}
           action={
             <button className="btn btn-soft sm" onClick={() => void fileQuery.refetch()}>
-              重试 retry
+              {tr('重试', 'Retry')}
             </button>
           }
         />

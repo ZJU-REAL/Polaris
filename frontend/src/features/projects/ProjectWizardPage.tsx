@@ -9,6 +9,7 @@ import { AccordionSection } from '../../components/ui/Accordion';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { api, type AnchorPaper, type ProjectDefinition, type RubricDimension } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    /projects/new — 创建页，两个可自由切换的标签页。
@@ -27,9 +28,9 @@ const TABS = [
 const QUICK_CATEGORIES = ['cs.CL', 'cs.AI', 'cs.LG', 'cs.CV', 'cs.MA', 'stat.ML'];
 
 const CADENCES = [
-  { v: 'daily', label: '每日 daily' },
-  { v: 'weekly', label: '每周 weekly' },
-  { v: 'manual', label: '手动 manual' },
+  { v: 'daily', zh: '每日', en: 'Daily' },
+  { v: 'weekly', zh: '每周', en: 'Weekly' },
+  { v: 'manual', zh: '手动', en: 'Manual' },
 ] as const;
 
 const DEFAULT_RUBRIC: RubricRow[] = [
@@ -93,7 +94,7 @@ function ListEditor({
           </span>
           <span style={{ flex: 1, fontSize: 13, lineHeight: 1.45 }}>{it}</span>
           <button className="icon-btn" style={{ width: 24, height: 24, border: 'none', background: 'transparent' }}
-            onClick={() => onChange(items.filter((_, j) => j !== i))} title="删除">
+            onClick={() => onChange(items.filter((_, j) => j !== i))} title={tr('删除', 'Remove')}>
             <Icon name="x" size={13} />
           </button>
         </div>
@@ -114,7 +115,7 @@ function ListEditor({
         />
         <button className="btn btn-soft sm" style={{ height: 38 }} onClick={add}>
           <Icon name="plus" size={13} />
-          添加
+          {tr('添加', 'Add')}
         </button>
       </div>
     </div>
@@ -142,7 +143,7 @@ function ChipsInput({
     <div className="row gap6 wrap" style={{ alignItems: 'center' }}>
       {items.map((t) => (
         <button key={t} type="button" className="chip on" onClick={() => onChange(items.filter((x) => x !== t))}
-          title="点击移除">
+          title={tr('点击移除', 'Click to remove')}>
           {t} ×
         </button>
       ))}
@@ -203,9 +204,9 @@ export function ProjectWizardPage() {
   }
 
   function validateBasics(): string | null {
-    if (!name.trim()) return '请填写方向名称';
-    if (!statement.trim()) return '请用一句话定义这个研究方向';
-    if (includeTerms.length === 0) return '至少添加 1 个 include 关键词（标题/摘要命中才进入相关性判定）';
+    if (!name.trim()) return tr('请填写方向名称', 'Please enter a direction name');
+    if (!statement.trim()) return tr('请用一句话定义这个研究方向', 'Please define this research direction in one sentence');
+    if (includeTerms.length === 0) return tr('至少添加 1 个 include 关键词（标题/摘要命中才进入相关性判定）', 'Add at least 1 include term (papers must match it in title/abstract to be scored)');
     return null;
   }
 
@@ -314,16 +315,16 @@ export function ProjectWizardPage() {
       });
       const filled = applyDraft(res.definition ?? {});
       if (res.source === 'fallback') {
-        toast('AI 未配置，已用默认模板', 'info');
+        toast(tr('AI 未配置，已用默认模板', 'AI not configured — used the default template'), 'info');
       } else if (filled.size === 0) {
-        toast('高级设置各分区都已有内容，没有需要 AI 补的空白', 'info');
+        toast(tr('高级设置各分区都已有内容，没有需要 AI 补的空白', 'All advanced sections already have content — nothing for AI to fill'), 'info');
       } else {
-        toast('AI 草稿已生成，可在下方微调', 'ok');
+        toast(tr('AI 草稿已生成，可在下方微调', 'AI draft ready — tweak it below'), 'ok');
       }
       setTab(1);
     } catch (e) {
       // 端点未就绪/调用失败：优雅降级，仍可手动填写或直接创建
-      toast(`AI 设置失败：${e instanceof Error ? e.message : String(e)}，可手动填写高级设置`, 'error');
+      toast(tr(`AI 设置失败：${e instanceof Error ? e.message : String(e)}，可手动填写高级设置`, `AI setup failed: ${e instanceof Error ? e.message : String(e)} — you can fill the advanced settings manually`), 'error');
       setTab(1);
     } finally {
       setDrafting(false);
@@ -344,10 +345,10 @@ export function ProjectWizardPage() {
       const created = await api.createProject({ name: name.trim(), definition: buildDefinition() });
       await queryClient.invalidateQueries({ queryKey: ['projects'] });
       setCurrentProjectId(created.id);
-      toast('研究方向已创建', 'ok');
+      toast(tr('研究方向已创建', 'Research direction created'), 'ok');
       navigate(`/projects/${created.id}`);
     } catch (e) {
-      toast(`创建失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+      toast(`${tr('创建失败：', 'Create failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -359,9 +360,8 @@ export function ProjectWizardPage() {
     <div className="page fadeup" style={{ maxWidth: 860 }}>
       <PageHead
         eyebrow="Polaris · Directions"
-        title="新建研究方向"
-        sub="填三项必填信息即可创建；高级设置可交给 AI 草拟后再微调。"
-        en="Two-step direction setup"
+        title={tr('新建研究方向', 'New research direction')}
+        sub={tr('填三项必填信息即可创建；高级设置可交给 AI 草拟后再微调。', 'Fill in three required fields to create; let AI draft the advanced settings, then tweak.')}
       />
 
       {/* 标签页切换：两页随时可来回切，填写内容都保留 */}
@@ -374,10 +374,7 @@ export function ProjectWizardPage() {
             style={{ cursor: 'pointer' }}
           >
             <span className="wiz-no mono">{i + 1}</span>
-            <span className="wiz-label">
-              {s.zh}
-              <span className="en">{s.en}</span>
-            </span>
+            <span className="wiz-label">{tr(s.zh, s.en)}</span>
           </div>
         ))}
       </div>
@@ -385,18 +382,18 @@ export function ProjectWizardPage() {
       {tab === 0 && (
         <>
           <div className="card card-pad">
-            <FormField label="方向名称" en="Name" hint="将显示在侧栏与项目列表中">
+            <FormField label={tr('方向名称', 'Name')} hint={tr('将显示在侧栏与项目列表中', 'Shown in the sidebar and project list')}>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)}
-                placeholder="如：LLM 自主科研智能体" />
+                placeholder={tr('如：LLM 自主科研智能体', 'e.g. LLM autonomous research agents')} />
             </FormField>
-            <FormField label="一句话定义" en="Statement" hint="用一句话说清这个方向研究什么、为什么重要">
+            <FormField label={tr('一句话定义', 'Statement')} hint={tr('用一句话说清这个方向研究什么、为什么重要', 'One sentence on what this direction studies and why it matters')}>
               <textarea className="textarea" rows={3} value={statement} onChange={(e) => setStatement(e.target.value)}
-                placeholder="如：让 LLM agent 端到端完成从文献调研到论文的研究方法与系统" />
+                placeholder={tr('如：让 LLM agent 端到端完成从文献调研到论文的研究方法与系统', 'e.g. Methods and systems for LLM agents to go end-to-end from literature survey to paper')} />
             </FormField>
-            <FormField label="Include 关键词" en="Include terms" hint="标题/摘要命中这些词才进入相关性判定；回车添加，点击移除（至少 1 个）">
-              <ChipsInput items={includeTerms} onChange={setIncludeTerms} placeholder="如 agent、tool use，回车添加" />
+            <FormField label={tr('Include 关键词', 'Include terms')} hint={tr('标题/摘要命中这些词才进入相关性判定；回车添加，点击移除（至少 1 个）', 'Papers must match these in title/abstract to be scored; Enter to add, click to remove (at least 1)')}>
+              <ChipsInput items={includeTerms} onChange={setIncludeTerms} placeholder={tr('如 agent、tool use，回车添加', 'e.g. agent, tool use — Enter to add')} />
             </FormField>
-            <FormField label="arXiv 分类" en="Categories" hint="常用分类快捷多选；更多分类可在创建后编辑">
+            <FormField label={tr('arXiv 分类', 'arXiv categories')} hint={tr('常用分类快捷多选；更多分类可在创建后编辑', 'Quick-pick common categories; edit more after creating')}>
               <div className="row gap6 wrap">
                 {QUICK_CATEGORIES.map((c) => (
                   <button key={c} type="button" className={'chip mono' + (categories.includes(c) ? ' on' : '')}
@@ -405,7 +402,7 @@ export function ProjectWizardPage() {
                   </button>
                 ))}
                 {categories.filter((c) => !QUICK_CATEGORIES.includes(c)).map((c) => (
-                  <button key={c} type="button" className="chip mono on" onClick={() => toggleCategory(c)} title="点击移除">
+                  <button key={c} type="button" className="chip mono on" onClick={() => toggleCategory(c)} title={tr('点击移除', 'Click to remove')}>
                     {c} ×
                   </button>
                 ))}
@@ -419,54 +416,54 @@ export function ProjectWizardPage() {
       {tab === 1 && (
         <>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', margin: '0 2px 12px', lineHeight: 1.6 }}>
-            以下内容全部可选，可直接创建方向。
-            {aiFilled.size > 0 && ' AI 已预填部分分区，请确认或微调。'}
+            {tr('以下内容全部可选，可直接创建方向。', 'Everything below is optional — you can create the direction right away.')}
+            {aiFilled.size > 0 && tr(' AI 已预填部分分区，请确认或微调。', ' AI pre-filled some sections; review or tweak them.')}
           </div>
           <div className="col gap10">
             {SECTIONS.map((s) => (
-              <AccordionSection key={s.key} title={s.zh} en={s.en} open={open[s.key]}
+              <AccordionSection key={s.key} title={tr(s.zh, s.en)} open={open[s.key]}
                 onToggle={() => toggleSection(s.key)}
-                badge={aiFilled.has(s.key) ? 'AI 草稿' : undefined}>
+                badge={aiFilled.has(s.key) ? tr('AI 草稿', 'AI draft') : undefined}>
                 {s.key === 'goals' && (
                   <>
-                    <FormField label="研究目标" en="Goals" hint="这个方向希望达成什么">
-                      <ListEditor items={goals} onChange={setGoals} placeholder="输入一个目标后回车" />
+                    <FormField label={tr('研究目标', 'Goals')} hint={tr('这个方向希望达成什么', 'What this direction aims to achieve')}>
+                      <ListEditor items={goals} onChange={setGoals} placeholder={tr('输入一个目标后回车', 'Type a goal, then press Enter')} />
                     </FormField>
                     <div className="row gap16" style={{ alignItems: 'flex-start' }}>
-                      <FormField label="范围内" en="In scope" style={{ flex: 1 }}>
-                        <ListEditor items={inScope} onChange={setInScope} placeholder="明确包含的主题" />
+                      <FormField label={tr('范围内', 'In scope')} style={{ flex: 1 }}>
+                        <ListEditor items={inScope} onChange={setInScope} placeholder={tr('明确包含的主题', 'Topics explicitly included')} />
                       </FormField>
-                      <FormField label="范围外" en="Out of scope" style={{ flex: 1 }}>
-                        <ListEditor items={outScope} onChange={setOutScope} placeholder="明确排除的主题" />
+                      <FormField label={tr('范围外', 'Out of scope')} style={{ flex: 1 }}>
+                        <ListEditor items={outScope} onChange={setOutScope} placeholder={tr('明确排除的主题', 'Topics explicitly excluded')} />
                       </FormField>
                     </div>
                   </>
                 )}
 
                 {s.key === 'questions' && (
-                  <FormField label="具体研究问题" en="Research questions" hint="建议 3–5 个可验证的具体问题">
-                    <ListEditor items={questions} onChange={setQuestions} placeholder="如：citation-graph 重排序能否降低新颖性幻觉？" />
+                  <FormField label={tr('具体研究问题', 'Research questions')} hint={tr('建议 3–5 个可验证的具体问题', '3–5 specific, verifiable questions recommended')}>
+                    <ListEditor items={questions} onChange={setQuestions} placeholder={tr('如：citation-graph 重排序能否降低新颖性幻觉？', 'e.g. Can citation-graph reranking reduce novelty hallucination?')} />
                   </FormField>
                 )}
 
                 {s.key === 'rubric' && (
                   <>
                     <div className="field-hint" style={{ marginBottom: 10 }}>
-                      论文相关性 / idea 质量打分标准，可增删维度与权重
+                      {tr('论文相关性 / idea 质量打分标准，可增删维度与权重', 'Scoring criteria for paper relevance / idea quality; add or remove dimensions and weights')}
                     </div>
                     <div className="col gap10">
                       {rubric.map((r, i) => (
                         <div key={r._k} className="row gap8" style={{ alignItems: 'flex-start' }}>
-                          <input className="input" style={{ width: 130 }} placeholder="维度名"
+                          <input className="input" style={{ width: 130 }} placeholder={tr('维度名', 'Dimension')}
                             value={r.name}
                             onChange={(e) => setRubric(rubric.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-                          <input className="input" style={{ flex: 1 }} placeholder="打分标准描述"
+                          <input className="input" style={{ flex: 1 }} placeholder={tr('打分标准描述', 'Scoring criteria')}
                             value={r.description}
                             onChange={(e) => setRubric(rubric.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))} />
-                          <input className="input mono" style={{ width: 72 }} placeholder="权重" inputMode="decimal"
+                          <input className="input mono" style={{ width: 72 }} placeholder={tr('权重', 'Weight')} inputMode="decimal"
                             value={r.weight}
                             onChange={(e) => setRubric(rubric.map((x, j) => (j === i ? { ...x, weight: e.target.value } : x)))} />
-                          <button className="icon-btn" style={{ height: 38 }} title="删除维度"
+                          <button className="icon-btn" style={{ height: 38 }} title={tr('删除维度', 'Remove dimension')}
                             onClick={() => setRubric(rubric.filter((_, j) => j !== i))}>
                             <Icon name="trash" size={14} />
                           </button>
@@ -476,7 +473,7 @@ export function ProjectWizardPage() {
                     <button className="btn btn-soft sm" style={{ marginTop: 12 }}
                       onClick={() => setRubric([...rubric, withKey({ name: '', description: '', weight: '1.0' })])}>
                       <Icon name="plus" size={13} />
-                      添加维度
+                      {tr('添加维度', 'Add dimension')}
                     </button>
                   </>
                 )}
@@ -484,16 +481,16 @@ export function ProjectWizardPage() {
                 {s.key === 'anchors' && (
                   <>
                     <div className="field-hint" style={{ marginBottom: 10 }}>
-                      体现方向研究品味的代表作（可留空）
+                      {tr('体现方向研究品味的代表作（可留空）', 'Representative papers that capture the taste of this direction (optional)')}
                     </div>
                     <div className="col gap12">
                       {anchors.map((a, i) => (
                         <div key={a._k} className="card" style={{ padding: '12px 14px', background: 'var(--surface-2)' }}>
                           <div className="row gap8" style={{ marginBottom: 8 }}>
-                            <input className="input" style={{ flex: 1 }} placeholder="论文标题 title（必填）"
+                            <input className="input" style={{ flex: 1 }} placeholder={tr('论文标题（必填）', 'Paper title (required)')}
                               value={a.title}
                               onChange={(e) => setAnchors(anchors.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
-                            <button className="icon-btn" style={{ height: 38 }} title="删除"
+                            <button className="icon-btn" style={{ height: 38 }} title={tr('删除', 'Remove')}
                               onClick={() => setAnchors(anchors.filter((_, j) => j !== i))}>
                               <Icon name="trash" size={14} />
                             </button>
@@ -506,7 +503,7 @@ export function ProjectWizardPage() {
                               value={a.url ?? ''}
                               onChange={(e) => setAnchors(anchors.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))} />
                           </div>
-                          <input className="input" style={{ width: '100%' }} placeholder="为什么它是这个方向的锚点 reason"
+                          <input className="input" style={{ width: '100%' }} placeholder={tr('为什么它是这个方向的锚点', 'Why this paper anchors the direction')}
                             value={a.reason ?? ''}
                             onChange={(e) => setAnchors(anchors.map((x, j) => (j === i ? { ...x, reason: e.target.value } : x)))} />
                         </div>
@@ -515,7 +512,7 @@ export function ProjectWizardPage() {
                     <button className="btn btn-soft sm" style={{ marginTop: 12 }}
                       onClick={() => setAnchors([...anchors, withKey({ title: '', arxiv_id: '', url: '', reason: '' })])}>
                       <Icon name="plus" size={13} />
-                      添加论文
+                      {tr('添加论文', 'Add paper')}
                     </button>
                   </>
                 )}
@@ -523,19 +520,19 @@ export function ProjectWizardPage() {
                 {s.key === 'synonyms' && (
                   <>
                     <div className="field-hint" style={{ marginBottom: 10 }}>
-                      术语 → 同义词（逗号分隔），提升关键词召回
+                      {tr('术语 → 同义词（逗号分隔），提升关键词召回', 'Term → synonyms (comma-separated) to improve keyword recall')}
                     </div>
                     <div className="col gap8">
                       {synonyms.map((sy, i) => (
                         <div key={sy._k} className="row gap8">
-                          <input className="input" style={{ width: 180 }} placeholder="术语"
+                          <input className="input" style={{ width: 180 }} placeholder={tr('术语', 'Term')}
                             value={sy.term}
                             onChange={(e) => setSynonyms(synonyms.map((x, j) => (j === i ? { ...x, term: e.target.value } : x)))} />
                           <span style={{ color: 'var(--text-4)' }}>→</span>
-                          <input className="input" style={{ flex: 1 }} placeholder="同义词1, 同义词2, …"
+                          <input className="input" style={{ flex: 1 }} placeholder={tr('同义词1, 同义词2, …', 'synonym 1, synonym 2, …')}
                             value={sy.syns}
                             onChange={(e) => setSynonyms(synonyms.map((x, j) => (j === i ? { ...x, syns: e.target.value } : x)))} />
-                          <button className="icon-btn" style={{ height: 38 }} title="删除"
+                          <button className="icon-btn" style={{ height: 38 }} title={tr('删除', 'Remove')}
                             onClick={() => setSynonyms(synonyms.filter((_, j) => j !== i))}>
                             <Icon name="trash" size={14} />
                           </button>
@@ -544,16 +541,16 @@ export function ProjectWizardPage() {
                       <button className="btn btn-soft sm" style={{ alignSelf: 'flex-start' }}
                         onClick={() => setSynonyms([...synonyms, withKey({ term: '', syns: '' })])}>
                         <Icon name="plus" size={13} />
-                        添加映射
+                        {tr('添加映射', 'Add mapping')}
                       </button>
                     </div>
                   </>
                 )}
 
                 {s.key === 'cadence' && (
-                  <FormField label="运行节奏" en="Cadence" hint="文献追踪等自动任务的运行频率">
+                  <FormField label={tr('运行节奏', 'Cadence')} hint={tr('文献追踪等自动任务的运行频率', 'How often automatic tasks like literature tracking run')}>
                     <div>
-                      <Segmented options={CADENCES.map((c) => ({ v: c.v, label: c.label }))}
+                      <Segmented options={CADENCES.map((c) => ({ v: c.v, label: tr(c.zh, c.en) }))}
                         value={cadence as (typeof CADENCES)[number]['v']}
                         onChange={(v) => setCadence(v)} />
                     </div>
@@ -569,16 +566,16 @@ export function ProjectWizardPage() {
       {/* 底部操作栏：两个标签页共用 */}
       <div className="row gap10" style={{ marginTop: 18 }}>
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          AI 按基本信息草拟高级设置，只补空白分区，不覆盖你已填的内容
+          {tr('AI 按基本信息草拟高级设置，只补空白分区，不覆盖你已填的内容', 'AI drafts the advanced settings from the basics — it only fills blank sections and never overwrites your input')}
         </span>
         <div style={{ flex: 1 }} />
         <button className="btn btn-soft" onClick={() => void aiDraft()} disabled={busy}>
           <Icon name="sparkle" size={14} />
-          {drafting ? 'AI 草拟中…' : 'AI 帮我设置'}
+          {drafting ? tr('AI 草拟中…', 'AI drafting…') : tr('AI 帮我设置', 'Set up with AI')}
         </button>
         <button className="btn btn-primary" onClick={() => void create()} disabled={busy}>
           <Icon name="check" size={14} />
-          {submitting ? '创建中…' : '创建方向'}
+          {submitting ? tr('创建中…', 'Creating…') : tr('创建方向', 'Create direction')}
         </button>
       </div>
     </div>

@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
 import { fmtDuration, fmtTime } from '../../lib/format';
 import { api, EXPERIMENT_TERMINAL, type ExperimentRead } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { clickable } from '../../lib/a11y';
 import { budgetText, expProgress } from './shared';
 import { NewExperimentModal } from './NewExperimentModal';
@@ -32,7 +33,7 @@ const ExperimentCard = memo(function ExperimentCard({ exp, onClick }: { exp: Exp
             {exp.idea_title}
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
-            {exp.id.slice(0, 8)} · 创建 {fmtTime(exp.created_at)}
+            {exp.id.slice(0, 8)} · {tr('创建', 'Created')} {fmtTime(exp.created_at)}
           </div>
         </div>
         <StatusPill status={exp.status} sm />
@@ -40,7 +41,7 @@ const ExperimentCard = memo(function ExperimentCard({ exp, onClick }: { exp: Exp
       <div className="row gap10" style={{ marginTop: 12, flexWrap: 'wrap' }}>
         <span className="pill sm">
           <Icon name="server" size={11} />
-          {exp.server_host ?? '未分配'}
+          {exp.server_host ?? tr('未分配', 'Unassigned')}
         </span>
         <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>{budgetText(exp.budget)}</span>
         <span className="mono muted" style={{ fontSize: 11, marginLeft: 'auto' }}>
@@ -98,18 +99,18 @@ export function ExperimentPage() {
       <div className="page fadeup">
         <PageHead
           eyebrow="Stage 03 · Experiment Lab"
-          title="实验搭建 Experiment Lab"
-          sub="从计划、审批、建环境到运行与报告。"
+          title={tr('实验搭建', 'Experiment Lab')}
+          sub={tr('从计划、审批、建环境到运行与报告。', 'From plan, approval and environment setup to runs and report.')}
         />
         <div className="card">
           <EmptyState
             icon="flask"
-            title="还没有研究方向"
-            desc="先创建研究方向、生成并晋级想法，再发起实验。"
+            title={tr('还没有研究方向', 'No research direction yet')}
+            desc={tr('先创建研究方向、生成并晋级想法，再发起实验。', 'Create a direction, generate and promote an idea, then start an experiment.')}
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
-                新建研究方向 · New direction
+                {tr('新建研究方向', 'New direction')}
               </button>
             }
           />
@@ -122,19 +123,18 @@ export function ExperimentPage() {
     <div className="page fadeup" style={{ maxWidth: 1180 }}>
       <PageHead
         eyebrow="Stage 03 · Experiment Lab"
-        title="实验搭建 Experiment Lab"
+        title={tr('实验搭建', 'Experiment Lab')}
         sub={
           currentProject
-            ? `当前方向：${currentProject.name}`
+            ? tr(`当前方向：${currentProject.name}`, `Current direction: ${currentProject.name}`)
             : projectsLoading
-              ? '加载研究方向…'
-              : '选择一个研究方向'
+              ? tr('加载研究方向…', 'Loading directions…')
+              : tr('选择一个研究方向', 'Pick a research direction')
         }
-        en="plan · gate · setup · run · report"
         right={
           <button className="btn btn-primary" disabled={!pid} onClick={() => setModalOpen(true)}>
             <Icon name="plus" size={14} />
-            新建实验
+            {tr('新建实验', 'New experiment')}
           </button>
         }
       />
@@ -142,38 +142,38 @@ export function ExperimentPage() {
       {!pid ? (
         <div className="card">
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? '加载研究方向…' : '请先选择研究方向'}
+            {projectsLoading ? tr('加载研究方向…', 'Loading directions…') : tr('请先选择研究方向', 'Pick a research direction first')}
           </div>
         </div>
       ) : isLoading ? (
         <div className="card">
-          <div className="empty" style={{ padding: 60 }}>加载实验列表…</div>
+          <div className="empty" style={{ padding: 60 }}>{tr('加载实验列表…', 'Loading experiments…')}</div>
         </div>
       ) : isError ? (
         <div className="card">
           <EmptyState
             compact
             icon="x"
-            title="无法加载实验列表"
-            desc="后端不可用或接口尚未就绪。"
-            action={<button className="btn btn-soft sm" onClick={() => void refetch()}>重试 retry</button>}
+            title={tr('无法加载实验列表', 'Could not load experiments')}
+            desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+            action={<button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>}
           />
         </div>
       ) : experiments.length === 0 ? (
         <div className="card">
           <EmptyState
             icon="flask"
-            title="还没有实验"
-            desc="先在想法评审页晋级一个想法，再回到这里发起实验。"
+            title={tr('还没有实验', 'No experiments yet')}
+            desc={tr('先在想法评审页晋级一个想法，再回到这里发起实验。', 'Promote an idea in Idea Review first, then come back to start an experiment.')}
             action={
               <div className="row gap8">
                 <button className="btn btn-ghost" onClick={() => navigate('/review')}>
                   <Icon name="scale" size={14} />
-                  前往想法评审
+                  {tr('前往想法评审', 'Go to Idea Review')}
                 </button>
                 <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
                   <Icon name="plus" size={14} />
-                  新建实验
+                  {tr('新建实验', 'New experiment')}
                 </button>
               </div>
             }

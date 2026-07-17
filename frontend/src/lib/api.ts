@@ -1,3 +1,4 @@
+import { tr } from './i18n';
 /* ============================================================
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
@@ -1429,34 +1430,43 @@ export interface SkillTestResult {
   model: string | null;
 }
 
-export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
-  guidance: '指引',
-  rubric: '评分标准',
-  persona: '评审人设',
-  workflow: '流程模板',
+const SKILL_KIND: Record<SkillKind, { zh: string; en: string }> = {
+  guidance: { zh: '指引', en: 'Guidance' },
+  rubric: { zh: '评分标准', en: 'Rubric' },
+  persona: { zh: '评审人设', en: 'Reviewer persona' },
+  workflow: { zh: '流程模板', en: 'Workflow template' },
 };
+
+export function skillKindLabel(kind: SkillKind): string {
+  const m = SKILL_KIND[kind];
+  return m ? tr(m.zh, m.en) : kind;
+}
 
 /** 注入点 → 大白话标签（未收录的原样展示）。 */
-export const SKILL_TARGET_LABEL: Record<string, string> = {
-  'wiki.score_relevance': '文献相关性打分',
-  'wiki.compile': '论文笔记编译',
-  'forge.gap_analysis': '研究空白分析',
-  'forge.generate': '想法生成',
-  'forge.score': '想法打分',
-  'review.debate': '想法辩论',
-  'review.referees': '论文评审员',
-  'review.meta_review': '评审汇总',
-  'experiment.plan': '实验计划',
-  'experiment.setup': '实验搭建',
-  'experiment.iterate': '实验迭代',
-  'experiment.report': '实验报告',
-  'writing.section': '论文分节撰写',
-  'writing.related_work': '相关工作综述',
-  'navigator.free_plan': '自由任务规划',
+const SKILL_TARGET: Record<string, { zh: string; en: string }> = {
+  'wiki.score_relevance': { zh: '文献相关性打分', en: 'Paper relevance scoring' },
+  'wiki.compile': { zh: '论文笔记编译', en: 'Paper note compilation' },
+  'forge.gap_analysis': { zh: '研究空白分析', en: 'Research gap analysis' },
+  'forge.generate': { zh: '想法生成', en: 'Idea generation' },
+  'forge.score': { zh: '想法打分', en: 'Idea scoring' },
+  'review.debate': { zh: '想法辩论', en: 'Idea debate' },
+  'review.referees': { zh: '论文评审员', en: 'Paper referees' },
+  'review.meta_review': { zh: '评审汇总', en: 'Review synthesis' },
+  'experiment.plan': { zh: '实验计划', en: 'Experiment planning' },
+  'experiment.setup': { zh: '实验搭建', en: 'Experiment setup' },
+  'experiment.iterate': { zh: '实验迭代', en: 'Experiment iteration' },
+  'experiment.report': { zh: '实验报告', en: 'Experiment report' },
+  'writing.section': { zh: '论文分节撰写', en: 'Paper section writing' },
+  'writing.related_work': { zh: '相关工作综述', en: 'Related-work survey' },
+  'navigator.free_plan': { zh: '自由任务规划', en: 'Free-form task planning' },
 };
 
+/** 全部注入点 key（选择器用）。 */
+export const SKILL_TARGETS = Object.keys(SKILL_TARGET);
+
 export function skillTargetLabel(target: string): string {
-  return SKILL_TARGET_LABEL[target] ?? target;
+  const m = SKILL_TARGET[target];
+  return m ? tr(m.zh, m.en) : target;
 }
 
 export interface SkillListingRead {

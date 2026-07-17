@@ -1,3 +1,5 @@
+import { tr } from '../../lib/i18n';
+
 /** 相关度条（0-1），按阈值显色：≥0.85 绿 / ≥0.7 蓝 / 其余 黄。 */
 export interface RelevanceBarProps {
   /** 0-1；null/undefined 显示未打分占位 */
@@ -21,7 +23,7 @@ export function RelevanceBar({ value, width = 92 }: RelevanceBarProps) {
   const v = Math.max(0, Math.min(1, value));
   const color = v >= 0.85 ? 'var(--ok)' : v >= 0.7 ? 'var(--accent)' : 'var(--warn)';
   return (
-    <div className="row gap8" style={{ width, flexShrink: 0 }} title={`相关度 ${v.toFixed(2)}`}>
+    <div className="row gap8" style={{ width, flexShrink: 0 }} title={tr(`相关度 ${v.toFixed(2)}`, `Relevance ${v.toFixed(2)}`)}>
       <div className="bar" style={{ flex: 1 }}>
         <i style={{ width: `${v * 100}%`, background: color }} />
       </div>
