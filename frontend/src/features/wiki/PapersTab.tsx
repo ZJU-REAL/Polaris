@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -614,7 +614,9 @@ function TrashRow({
 
 /* ---------------- 列表行 ---------------- */
 
-function PaperRow({
+/* memo：父组件（大量筛选/选中 state）任一变更都会触发全列表重渲染。
+   忽略函数 props 的比较是安全的：两个 handler 只捕获稳定引用与 p.id。 */
+const PaperRow = memo(function PaperRow({
   p,
   active,
   checked,
@@ -709,7 +711,9 @@ function PaperRow({
       </div>
     </div>
   );
-}
+}, (prev, next) =>
+  prev.p === next.p && prev.active === next.active && prev.checked === next.checked && prev.selectMode === next.selectMode,
+);
 
 /* ---------------- 标签就地编辑 ---------------- */
 

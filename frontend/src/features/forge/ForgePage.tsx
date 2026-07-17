@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -98,7 +98,8 @@ function FunnelBar({ state }: { state: ForgeState | undefined }) {
 
 /* ---------------- 候选卡 ---------------- */
 
-function CandidateCard({
+/* memo：onOpen/onDeepen 只捕获稳定引用与 id；onDeepen 的有无（运行中禁用）参与比较 */
+const CandidateCard = memo(function CandidateCard({
   idea,
   onOpen,
   onDeepen,
@@ -157,7 +158,7 @@ function CandidateCard({
       )}
     </div>
   );
-}
+}, (prev, next) => prev.idea === next.idea && (prev.onDeepen === undefined) === (next.onDeepen === undefined));
 
 /* ---------------- 运行 forge Modal ---------------- */
 

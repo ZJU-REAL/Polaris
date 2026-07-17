@@ -683,7 +683,8 @@ function FactCheckCard({
       ) : (
         <div style={{ borderTop: '0.5px solid var(--border)' }}>
           {items.map((it, i) => (
-            <FactRow key={i} item={it} msId={msId} files={files} />
+            // 内容指纹作 key：结果刷新/重排时展开状态不串行（无稳定 id 可用）
+            <FactRow key={`${it.location ?? ''}|${it.kind ?? ''}|${it.issue ?? i}`} item={it} msId={msId} files={files} />
           ))}
         </div>
       )}

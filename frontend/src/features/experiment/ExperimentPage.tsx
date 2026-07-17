@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -18,7 +18,8 @@ import { NewExperimentModal } from './NewExperimentModal';
    深链 ?new=<idea_id>（Review 页「发起实验」）自动开 Modal。
    ============================================================ */
 
-function ExperimentCard({ exp, onClick }: { exp: ExperimentRead; onClick: () => void }) {
+/* memo：列表页轮询刷新时避免未变卡片重渲染（onClick 只捕获稳定的 navigate 与 id） */
+const ExperimentCard = memo(function ExperimentCard({ exp, onClick }: { exp: ExperimentRead; onClick: () => void }) {
   const terminal = EXPERIMENT_TERMINAL.has(exp.status);
   const pct = expProgress(exp.status);
   const barColor =
@@ -52,7 +53,7 @@ function ExperimentCard({ exp, onClick }: { exp: ExperimentRead; onClick: () => 
       </div>
     </div>
   );
-}
+}, (prev, next) => prev.exp === next.exp);
 
 export function ExperimentPage() {
   const navigate = useNavigate();

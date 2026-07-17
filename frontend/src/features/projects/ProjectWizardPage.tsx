@@ -59,6 +59,14 @@ interface SynonymRow {
   syns: string; // 逗号分隔
 }
 
+/* 可编辑列表行的稳定 key：index 作 key 时增删行会让受控输入串位 */
+let rowSeq = 0;
+type Keyed<T> = T & { _k: number };
+function withKey<T extends object>(row: T): Keyed<T> {
+  rowSeq += 1;
+  return { ...row, _k: rowSeq };
+}
+
 /** 字符串列表编辑器（回车/按钮添加，逐条删除）。 */
 function ListEditor({
   items,
@@ -177,9 +185,9 @@ export function ProjectWizardPage() {
   const [inScope, setInScope] = useState<string[]>([]);
   const [outScope, setOutScope] = useState<string[]>([]);
   const [questions, setQuestions] = useState<string[]>([]);
-  const [rubric, setRubric] = useState<RubricRow[]>(DEFAULT_RUBRIC);
-  const [anchors, setAnchors] = useState<AnchorPaper[]>([]);
-  const [synonyms, setSynonyms] = useState<SynonymRow[]>([]);
+  const [rubric, setRubric] = useState<Keyed<RubricRow>[]>(() => DEFAULT_RUBRIC.map(withKey));
+  const [anchors, setAnchors] = useState<Keyed<AnchorPaper>[]>([]);
+  const [synonyms, setSynonyms] = useState<Keyed<SynonymRow>[]>([]);
   const [cadence, setCadence] = useState<string>('daily');
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
     goals: false, questions: false, rubric: false, anchors: false, synonyms: false, cadence: false,
@@ -249,18 +257,18 @@ export function ProjectWizardPage() {
       setQuestions(d.questions);
       filled.add('questions');
     }
-    if (d.rubric?.length && JSON.stringify(rubric) === JSON.stringify(DEFAULT_RUBRIC)) {
-      setRubric(d.rubric.map((r) => ({ name: r.name, description: r.description ?? '', weight: String(r.weight ?? 1) })));
+    if (d.rubric?.length && JSON.stringify(rubric.map(({ _k, ...r }) => r)) === JSON.stringify(DEFAULT_RUBRIC)) {
+      setRubric(d.rubric.map((r) => withKey({ name: r.name, description: r.description ?? '', weight: String(r.weight ?? 1) })));
       filled.add('rubric');
     }
     if (d.anchor_papers?.length && anchors.length === 0) {
-      setAnchors(d.anchor_papers);
+      setAnchors(d.anchor_papers.map(withKey));
       filled.add('anchors');
     }
     if (d.keywords) {
       const syn = d.keywords.synonyms;
       if (syn && Object.keys(syn).length && synonyms.length === 0) {
-        setSynonyms(Object.entries(syn).map(([term, list]) => ({ term, syns: list.join(', ') })));
+        setSynonyms(Object.entries(syn).map(([term, list]) => withKey({ term, syns: list.join(', ') })));
         filled.add('synonyms');
       }
       // AI 建议的分类/关键词与用户已选合并（去重）
@@ -448,7 +456,7 @@ export function ProjectWizardPage() {
                     </div>
                     <div className="col gap10">
                       {rubric.map((r, i) => (
-                        <div key={i} className="row gap8" style={{ alignItems: 'flex-start' }}>
+                        <div key={r._k} className="row gap8" style={{ alignItems: 'flex-start' }}>
                           <input className="input" style={{ width: 130 }} placeholder="维度名"
                             value={r.name}
                             onChange={(e) => setRubric(rubric.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
@@ -466,7 +474,7 @@ export function ProjectWizardPage() {
                       ))}
                     </div>
                     <button className="btn btn-soft sm" style={{ marginTop: 12 }}
-                      onClick={() => setRubric([...rubric, { name: '', description: '', weight: '1.0' }])}>
+                      onClick={() => setRubric([...rubric, withKey({ name: '', description: '', weight: '1.0' })])}>
                       <Icon name="plus" size={13} />
                       添加维度
                     </button>
@@ -480,7 +488,7 @@ export function ProjectWizardPage() {
                     </div>
                     <div className="col gap12">
                       {anchors.map((a, i) => (
-                        <div key={i} className="card" style={{ padding: '12px 14px', background: 'var(--surface-2)' }}>
+                        <div key={a._k} className="card" style={{ padding: '12px 14px', background: 'var(--surface-2)' }}>
                           <div className="row gap8" style={{ marginBottom: 8 }}>
                             <input className="input" style={{ flex: 1 }} placeholder="论文标题 title（必填）"
                               value={a.title}
@@ -505,7 +513,7 @@ export function ProjectWizardPage() {
                       ))}
                     </div>
                     <button className="btn btn-soft sm" style={{ marginTop: 12 }}
-                      onClick={() => setAnchors([...anchors, { title: '', arxiv_id: '', url: '', reason: '' }])}>
+                      onClick={() => setAnchors([...anchors, withKey({ title: '', arxiv_id: '', url: '', reason: '' })])}>
                       <Icon name="plus" size={13} />
                       添加论文
                     </button>
@@ -519,7 +527,7 @@ export function ProjectWizardPage() {
                     </div>
                     <div className="col gap8">
                       {synonyms.map((sy, i) => (
-                        <div key={i} className="row gap8">
+                        <div key={sy._k} className="row gap8">
                           <input className="input" style={{ width: 180 }} placeholder="术语"
                             value={sy.term}
                             onChange={(e) => setSynonyms(synonyms.map((x, j) => (j === i ? { ...x, term: e.target.value } : x)))} />
@@ -534,7 +542,7 @@ export function ProjectWizardPage() {
                         </div>
                       ))}
                       <button className="btn btn-soft sm" style={{ alignSelf: 'flex-start' }}
-                        onClick={() => setSynonyms([...synonyms, { term: '', syns: '' }])}>
+                        onClick={() => setSynonyms([...synonyms, withKey({ term: '', syns: '' })])}>
                         <Icon name="plus" size={13} />
                         添加映射
                       </button>
