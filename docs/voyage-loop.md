@@ -249,8 +249,20 @@ run 节点（由 experiment.run 轮询时自查时长并上报，引擎记账并
 
 ## 8. 迁移路径
 
-进度：A/B/C 已实现（alembic `c1d2e3f4a5b6_voyage_loop_v1`，`agents/voyage/checks.py`，
-引擎重写 + `tests/test_voyage_loop.py`）；D-F 未开始。
+进度：A-E 已实现；F（前端任务板）未开始。
+- A/B/C：alembic `c1d2e3f4a5b6_voyage_loop_v1`、`agents/voyage/checks.py`、引擎重写；
+- D/E：`agents/voyage/plan_edit.py`（操作集校验 + 确定性分支表）、`Navigator.on_result`、
+  `experiment.run`/`experiment.analyze` 替代 `experiment.iterate`。
+
+实现相对本文的三处偏差（有意为之）：
+
+1. **experiment 保持 pipeline 模式**：轮次动态性完全由「通过节点的 observation.plan_signal
+   → kind 确定性分支表」提供（§5.3 的"能写成规则就不问 LLM"推到极致）；失败语义与旧管线
+   一致（on_failure=fail）。Navigator LLM 计划编辑只对 loop kind（demo/自由规划）生效。
+2. **done_criteria 终检未达时 loop 模式暂不回灌 Navigator**，一律 paused_error 等人工
+   （防过早宣告完成的保守实现；回灌留待有真实 loop kind 需求时再开）。
+3. **reflection 的 decision 集仍为 improve/debug/stop**：§7 表中 pivot（方法调整闸门）与
+   ablate（补消融）分支表已预留结构，待 reflection prompt 升级后开放。
 
 | 阶段 | 内容 | 兼容性 |
 | --- | --- | --- |
