@@ -370,7 +370,7 @@ export function DashboardPage() {
           <>
             <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
               <Icon name="compass" size={15} />
-              {tr('AI 任务', 'AI Tasks')}
+              {tr('任务', 'Tasks')}
             </button>
             <button className="btn btn-primary" onClick={() => navigate('/voyages')}>
               <Icon name="play" size={14} />

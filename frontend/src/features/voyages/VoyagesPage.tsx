@@ -185,7 +185,7 @@ export function VoyagesPage() {
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Voyages"
-        title={tr('AI 任务', 'AI Tasks')}
+        title={tr('任务', 'Tasks')}
         sub={tr('需要人工审批时任务会自动暂停，审批通过后继续执行。', 'Tasks pause automatically when they need approval, then resume once approved.')}
         right={
           <button className="btn btn-primary" disabled={noProjects} onClick={() => setCreateOpen(true)}>

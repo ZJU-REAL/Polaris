@@ -49,8 +49,8 @@ function crumbFor(pathname: string): [string, string] {
   if (pathname === '/') return ['Polaris', tr('总览', 'Dashboard')];
   if (pathname === '/projects/new') return [tr('研究方向', 'Directions'), tr('新建方向', 'New direction')];
   if (pathname.startsWith('/projects/')) return [tr('研究方向', 'Directions'), tr('方向详情', 'Direction detail')];
-  if (pathname === '/voyages') return ['Polaris', tr('AI 任务', 'AI Tasks')];
-  if (pathname.startsWith('/voyages/')) return [tr('AI 任务', 'AI Tasks'), tr('任务详情', 'Task detail')];
+  if (pathname === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
+  if (pathname.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
   if (pathname.startsWith('/papers/')) return [tr('文献追踪', 'Research Wiki'), tr('论文阅读', 'Paper reading')];
   if (pathname.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
   if (pathname.startsWith('/join/')) return [tr('研究方向', 'Directions'), tr('接受邀请', 'Accept invite')];
