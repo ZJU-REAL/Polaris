@@ -132,6 +132,37 @@ class PaperNote(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+HIGHLIGHT_COLORS = ("yellow", "green", "blue", "pink", "purple")
+
+
+class PaperHighlight(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """PDF 划线标注：文本层里选中的句子 + 可选批注。
+
+    定位策略「文本锚点为主 + 归一化坐标加速」：selected_text 存选中的原文
+    （PDF 换版重抽也能靠文本回锚），rects 存归一化到页面 0..1 的矩形列表
+    （每行一个，渲染时按当前页宽高还原色块，缩放无关）。
+    权限同 PaperNote：项目成员可读，作者（或平台 admin）可改删。
+    """
+
+    __tablename__ = "paper_highlights"
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    page: Mapped[int] = mapped_column(nullable=False)  # 1-indexed 页码
+    # 归一化矩形列表 [{"x0","y0","x1","y1"}]，值域 0..1（相对页面左上角）
+    rects: Mapped[list[Any]] = mapped_column(JSONVariant, nullable=False)
+    selected_text: Mapped[str] = mapped_column(Text, nullable=False)
+    color: Mapped[str] = mapped_column(String(16), default="yellow", nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)  # 挂在划线上的批注，可空
+
+
 class PaperTag(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """项目级论文标签（同项目内名字唯一）；与论文多对多（paper_tag_links）。"""
 

@@ -10,6 +10,7 @@ from app.api import (
     experiments,
     gates,
     health,
+    highlights,
     ideas,
     ingest,
     invites,
@@ -39,6 +40,7 @@ api_router.include_router(voyages.router)
 api_router.include_router(admin_llm.router)
 api_router.include_router(papers.router)
 api_router.include_router(notes.router)
+api_router.include_router(highlights.router)
 api_router.include_router(concepts.router)
 api_router.include_router(ingest.router)
 api_router.include_router(wiki.router)
