@@ -1354,7 +1354,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
               value={sort}
               onChange={setSort}
             />
-            <button className="btn btn-soft sm" style={{ height: 26 }} onClick={() => setAddOpen(true)}>
+            <button className="btn btn-primary sm" style={{ height: 26, marginLeft: 'auto' }} onClick={() => setAddOpen(true)}>
               <Icon name="plus" size={12} />
               添加文献
             </button>
