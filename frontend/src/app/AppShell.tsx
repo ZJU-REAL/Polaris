@@ -279,12 +279,17 @@ function DirectionSwitcher() {
 
 function NavItem({ n }: { n: NavEntry }) {
   return (
-    <NavLink to={n.to} end={n.to === '/'} className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+    <NavLink
+      to={n.to}
+      end={n.to === '/'}
+      className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
+      title={tr(n.zh, n.en)}
+    >
       {n.no && <span className="stage-no mono">{n.no}</span>}
       <span className="nav-ic">
         <Icon name={n.icon} size={16} />
       </span>
-      <span style={{ flex: 1 }}>{tr(n.zh, n.en)}</span>
+      <span className="nav-label" style={{ flex: 1 }}>{tr(n.zh, n.en)}</span>
     </NavLink>
   );
 }
@@ -298,6 +303,26 @@ export function AppShell() {
   // —— 审批抽屉 ——
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [expandedGate, setExpandedGate] = useState<string | null>(null);
+
+  // —— 侧栏收起（图标轨道），记忆到 localStorage ——
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('polaris.navCollapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleNav = () => {
+    setNavCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem('polaris.navCollapsed', next ? '1' : '0');
+      } catch {
+        /* 隐私模式：仅本次会话生效 */
+      }
+      return next;
+    });
+  };
 
   // —— 全局搜索（⌘K / Ctrl+K）——
   const [searchOpen, setSearchOpen] = useState(false);
@@ -403,7 +428,7 @@ export function AppShell() {
   const ctx: ShellContext = { pendingGates: pending, gatesError: pendingQuery.isError, openGates };
 
   return (
-    <div className="app">
+    <div className={'app' + (navCollapsed ? ' nav-collapsed' : '')}>
       {/* —— 侧栏 —— */}
       <div className="sidebar">
         <div className="sb-brand">
@@ -458,6 +483,14 @@ export function AppShell() {
       {/* —— 主列 —— */}
       <div className="main">
         <div className="topbar">
+          <button
+            className="icon-btn nav-toggle"
+            onClick={toggleNav}
+            title={navCollapsed ? tr('展开菜单栏', 'Expand sidebar') : tr('收起菜单栏', 'Collapse sidebar')}
+            aria-label={navCollapsed ? tr('展开菜单栏', 'Expand sidebar') : tr('收起菜单栏', 'Collapse sidebar')}
+          >
+            <Icon name="sidebar" size={16} />
+          </button>
           <div className="crumb">
             <span>{c1}</span>
             <span className="sep">›</span>

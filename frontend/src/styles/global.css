@@ -54,7 +54,21 @@ input {
   background: var(--sidebar-bg);
   border-right: 0.5px solid var(--border-2);
   display: flex; flex-direction: column;
+  transition: width 0.16s ease;
 }
+
+/* —— 收起态：图标轨道（只留图标，隐藏文字） —— */
+.nav-collapsed .sidebar { width: 64px; }
+.nav-collapsed .sb-brand { justify-content: center; margin-left: 0; margin-right: 0; }
+.nav-collapsed .sb-brand > :not(:first-child) { display: none; }
+.nav-collapsed .sb-section { text-align: center; padding-left: 0; padding-right: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; color: transparent; }
+.nav-collapsed .nav-item { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
+.nav-collapsed .nav-item .nav-label,
+.nav-collapsed .nav-item .stage-no { display: none; }
+.nav-collapsed .sb-foot { justify-content: center; padding-left: 0; padding-right: 0; }
+.nav-collapsed .sb-foot > div,
+.nav-collapsed .sb-foot > button { display: none; }
+.nav-toggle { margin-right: 2px; }
 .sb-brand { display: flex; align-items: center; gap: 9px; margin: 18px 14px 12px; }
 .sb-brand h1 { font-size: 14px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .sb-brand p { font-size: 11px; color: var(--text-3); margin: 1px 0 0; font-family: var(--mono); }
