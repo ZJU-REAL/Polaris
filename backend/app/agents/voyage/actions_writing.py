@@ -8,7 +8,8 @@
 约定：
 - 每节 LLM 产出经三类静态校验（\\cite ∈ fact_pack.citations、\\includegraphics 只准
   引 fact_pack.figures 的 fig_id、正文数字须命中 metrics ±0.01 或白名单启发式豁免），
-  违规回 LLM 重写 ≤2 次，仍违规判 voyage failed；
+  违规回 LLM 重写 ≤2 次；仍违规不判整单失败——降级写入最后一稿并加 TODO 注释
+  （needs_review），记 Activity 提醒人工核对，继续写后续节；
 - 每节一轮 self-reflection 精修（精修稿再过校验，不过则保留原稿）；
 - 写入经 crdt_rooms.apply_ai_edit：有活跃协同房间时经 Y 事务区间替换（协同者
   实时可见），无房间直接写库；
@@ -310,22 +311,55 @@ async def _draft_with_validation(
     user: str,
     fact_pack: dict[str, Any],
     label: str,
-) -> tuple[str, int]:
-    """撰写 + 静态校验（违规重写 ≤MAX_SECTION_REWRITES）→ (通过文本, 重写次数)。"""
+) -> tuple[str, int, list[str]]:
+    """撰写 + 静态校验（违规重写 ≤MAX_SECTION_REWRITES）→ (文本, 重写次数, 未解决违规)。
+
+    连续重写仍未通过时不再抛错整单失败：返回最后一稿与违规清单，
+    调用方降级处理（加 TODO 标注继续写后续节，人工核对）。
+    """
     prompt = user
+    text = ""
     violations: list[str] = []
     for attempt in range(1 + MAX_SECTION_REWRITES):
         text = _strip_code_fence(await _complete_text(ctx, system=system, user=prompt))
         violations = validate_section_text(text, fact_pack)
         if not violations:
-            return text, attempt
+            return text, attempt, []
         prompt = (
             user
             + "\n\n上一稿静态校验未通过，请修复以下问题后重写（保持其余内容）：\n- "
             + "\n- ".join(violations)
             + f"\n\n上一稿：\n{text}"
         )
-    raise ValueError(f"{label} 连续 {1 + MAX_SECTION_REWRITES} 稿静态校验未通过：{violations[0]}")
+    return text, MAX_SECTION_REWRITES, violations
+
+
+def _degraded_text(text: str, violations: list[str]) -> str:
+    """校验未通过的降级稿：顶部加 TODO 注释标出问题，供人工核对。"""
+    header = ["% TODO(AI 起草)：本节自动校验未通过，请人工核对下列问题后删除本注释："]
+    header += [f"% - {v}" for v in violations]
+    return "\n".join(header) + "\n" + text
+
+
+async def _record_needs_review(ctx: ActionContext, *, section: str, violations: list[str]) -> None:
+    """降级写入后记 Activity，让「最近动态」里能看到哪节需要人工核对。"""
+    async with get_sessionmaker()() as session:
+        manuscript = await _get_manuscript(session, ctx)
+        session.add(
+            Activity(
+                project_id=manuscript.project_id,
+                actor="agent:writing",
+                kind="manuscript.section_needs_review",
+                message=f"AI 起草「{SECTION_TITLES.get(section, section)}」未通过自动校验，"
+                "已写入草稿并加 TODO 标注，需人工核对",
+                payload={
+                    "manuscript_id": str(manuscript.id),
+                    "section": section,
+                    "violations": violations[:20],
+                },
+            )
+        )
+        await session.commit()
 
 
 async def _reflect(
@@ -376,7 +410,7 @@ async def writing_section(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         f"备注：{notes or '（无）'}\n"
         f"当前文档骨架（节选）：\n{skeleton[:_SKELETON_CHARS]}"
     )
-    text, rewrites = await _draft_with_validation(
+    text, rewrites, violations = await _draft_with_validation(
         ctx,
         system=SECTION_SYSTEM_PROMPT
         + ctx.skill_guidance("writing.section", f"writing.section({section})"),
@@ -384,9 +418,14 @@ async def writing_section(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         fact_pack=fact_pack,
         label=section,
     )
-    text, reflected = await _reflect(
-        ctx, text=text, fact_pack=fact_pack, section_title=SECTION_TITLES[section]
-    )
+    reflected = False
+    if violations:
+        text = _degraded_text(text, violations)
+        await _record_needs_review(ctx, section=section, violations=violations)
+    else:
+        text, reflected = await _reflect(
+            ctx, text=text, fact_pack=fact_pack, section_title=SECTION_TITLES[section]
+        )
 
     via_room = await get_crdt_rooms().apply_ai_edit(file_id, section, text)
     return {
@@ -395,6 +434,8 @@ async def writing_section(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         "rewrites": rewrites,
         "reflected": reflected,
         "via_room": via_room,
+        "needs_review": bool(violations),
+        "violations": violations[:20],
     }
 
 
@@ -489,16 +530,21 @@ async def writing_related_work(ctx: ActionContext, params: dict[str, Any]) -> di
         f"研究背景（事实包节选）：\n"
         f"{json.dumps(fact_pack.get('idea'), ensure_ascii=False)}"
     )
-    text, rewrites = await _draft_with_validation(
+    text, rewrites, violations = await _draft_with_validation(
         ctx,
         system=RELATED_WORK_SYSTEM_PROMPT + ctx.skill_guidance("writing.related_work"),
         user=user,
         fact_pack=fact_pack_for_validation,
         label="related_work",
     )
-    text, reflected = await _reflect(
-        ctx, text=text, fact_pack=fact_pack_for_validation, section_title="Related Work"
-    )
+    reflected = False
+    if violations:
+        text = _degraded_text(text, violations)
+        await _record_needs_review(ctx, section="related_work", violations=violations)
+    else:
+        text, reflected = await _reflect(
+            ctx, text=text, fact_pack=fact_pack_for_validation, section_title="Related Work"
+        )
 
     # 被引用的 S2 命中追加进 fact_pack.citations（编译生成 @misc 条目）
     cited = {
