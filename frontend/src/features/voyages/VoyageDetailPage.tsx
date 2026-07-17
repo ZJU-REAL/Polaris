@@ -126,7 +126,7 @@ function MachineBar({ status, onOpenGates, onResume, resuming }: { status: Voyag
       {status === 'paused_error' && (
         <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 12.5 }}>
           <Icon name="x" size={14} />
-          任务因错误暂停（如外部 API 暂时不可达），可重试从断点续跑。
+          任务因错误暂停：暂时性故障可直接重试；若是程序问题，修复后再重试，已完成的步骤不会重跑。
           {onResume && (
             <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} disabled={resuming} onClick={onResume}>
               {resuming ? '重试中…' : '重试恢复'}
@@ -356,7 +356,7 @@ function WikiStepSummary({ friendly }: { friendly: WikiStepFriendly }) {
 /** 文献任务的整体结果卡：从各步 observation 汇总本次新增/编译数量。 */
 function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
   const obsOf = (action: string) =>
-    asObj(steps.find((s) => s.action === action && s.status === 'done')?.observation);
+    asObj(steps.find((s) => s.action === action && s.status === 'passed')?.observation);
   const search = obsOf('wiki.search_candidates');
   const snowball = obsOf('wiki.snowball');
   const score = obsOf('wiki.score_relevance');
@@ -394,17 +394,24 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
 // —— 步骤卡 ——
 
 function stepMarker(step: VoyageStepRead): { bg: string; color: string } {
+  if (step.status === 'obsolete') return { bg: 'var(--surface-3)', color: 'var(--text-4)' };
   if (step.verdict && !step.verdict.passed) return { bg: 'var(--danger-bg)', color: 'var(--danger-tx)' };
   switch (step.status) {
-    case 'done':
+    case 'passed':
       return { bg: 'var(--ok-bg)', color: 'var(--ok-tx)' };
     case 'running':
+    case 'verifying':
       return { bg: 'var(--accent)', color: '#fff' };
     case 'failed':
       return { bg: 'var(--danger-bg)', color: 'var(--danger-tx)' };
     default:
       return { bg: 'var(--surface-2)', color: 'var(--text-3)' };
   }
+}
+
+/** 清单序 = 执行序：按 rank 排（计划调整的插入节点 rank 取间隙值），seq 只是创建序。 */
+function byListOrder(a: VoyageStepRead, b: VoyageStepRead): number {
+  return (a.rank ?? 0) - (b.rank ?? 0) || a.seq - b.seq;
 }
 
 function ObservationBlock({ observation, compact }: { observation: unknown; compact?: boolean }) {
@@ -435,11 +442,19 @@ function ObservationBlock({ observation, compact }: { observation: unknown; comp
 function StepCard({ step }: { step: VoyageStepRead }) {
   const obs = asObj(step.observation);
   const friendly = obs ? wikiStepFriendly(step.action, obs) : null;
+  const obsolete = step.status === 'obsolete';
   return (
-    <div className="card" style={{ padding: '14px 16px' }}>
+    <div className="card" style={{ padding: '14px 16px', opacity: obsolete ? 0.55 : 1 }}>
       <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 13.5, fontWeight: 650 }}>{step.title}</span>
+        <span style={{ fontSize: 13.5, fontWeight: 650, textDecoration: obsolete ? 'line-through' : 'none' }}>
+          {step.title}
+        </span>
         <span className="tag mono" style={{ fontSize: 10.5 }}>{step.action}</span>
+        {step.attempt > 1 && (
+          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }} title="出错后带诊断自动重试过">
+            第 {step.attempt} 次尝试
+          </span>
+        )}
         <div style={{ marginLeft: 'auto' }}>
           <StatusPill status={step.status} sm />
         </div>
@@ -491,10 +506,11 @@ export function VoyageDetailPage() {
   const { openGates } = useShell();
   const [logs, setLogs] = useState<string[]>([]);
   const [live, setLive] = useState(false);
+  const [showObsolete, setShowObsolete] = useState(false);
 
   const { data: voyage, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['voyage', id],
-    queryFn: () => api.getVoyage(id),
+    queryKey: ['voyage', id, showObsolete],
+    queryFn: () => api.getVoyage(id, { includeObsolete: showObsolete }),
     retry: false,
     enabled: !!id,
   });
@@ -536,7 +552,7 @@ export function VoyageDetailPage() {
         }
         if (event === 'status') {
           const p = payload as { status: VoyageStatus; cursor: number | null };
-          queryClient.setQueryData<VoyageDetail>(['voyage', id], (old) =>
+          queryClient.setQueriesData<VoyageDetail>({ queryKey: ['voyage', id] }, (old) =>
             old ? { ...old, status: p.status, cursor: p.cursor ?? old.cursor } : old,
           );
           if (VOYAGE_TERMINAL.has(p.status)) {
@@ -546,12 +562,12 @@ export function VoyageDetailPage() {
         } else if (event === 'step') {
           const p = payload as { step: VoyageStepRead };
           if (!p.step) return;
-          queryClient.setQueryData<VoyageDetail>(['voyage', id], (old) => {
+          queryClient.setQueriesData<VoyageDetail>({ queryKey: ['voyage', id] }, (old) => {
             if (!old) return old;
             const steps = old.steps ?? [];
             const i = steps.findIndex((s) => s.id === p.step.id);
             const next = i >= 0 ? steps.map((s, j) => (j === i ? p.step : s)) : [...steps, p.step];
-            next.sort((a, b) => a.seq - b.seq);
+            next.sort(byListOrder);
             return { ...old, steps: next };
           });
         } else if (event === 'log') {
@@ -593,8 +609,9 @@ export function VoyageDetailPage() {
     );
   }
 
-  const steps = [...(voyage.steps ?? [])].sort((a, b) => a.seq - b.seq);
+  const steps = [...(voyage.steps ?? [])].sort(byListOrder);
   const totalTokens = steps.reduce((acc, s) => acc + (stepTokenCount(s.tokens) ?? 0), 0);
+  const planAdjusted = (voyage.plan_iteration ?? 0) > 0;
 
   return (
     <div className="page fadeup" style={{ maxWidth: 920 }}>
@@ -621,6 +638,15 @@ export function VoyageDetailPage() {
           <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
             <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>{voyage.kind}</span>
             <StatusPill status={voyage.status} sm />
+            {planAdjusted && (
+              <span
+                className="pill sm"
+                style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
+                title="执行过程中计划被调整过（自动重试后的调整 / 按执行结果追加的轮次）"
+              >
+                计划调整 ×{voyage.plan_iteration}
+              </span>
+            )}
             <span className="mono muted" style={{ fontSize: 11 }}>
               创建 {fmtTime(voyage.created_at)} · 耗时 {fmtDuration(voyage.created_at, active ? null : voyage.updated_at)}
             </span>
@@ -667,12 +693,25 @@ export function VoyageDetailPage() {
         </div>
       )}
 
-      {/* 步骤时间线 */}
+      {/* 步骤时间线（任务板：清单序渲染，作废步骤可选显示） */}
       <div className="row" style={{ marginBottom: 12 }}>
         <span className="section-h">
           <Icon name="compass" size={15} style={{ color: 'var(--accent)' }} />
           步骤时间线 <span className="en-label" style={{ fontSize: 11 }}>Steps</span>
         </span>
+        {planAdjusted && (
+          <label
+            className="row gap6"
+            style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-3)', cursor: 'pointer', userSelect: 'none' }}
+          >
+            <input
+              type="checkbox"
+              checked={showObsolete}
+              onChange={(e) => setShowObsolete(e.target.checked)}
+            />
+            显示已作废步骤
+          </label>
+        )}
       </div>
       {steps.length === 0 ? (
         <div className="card card-pad empty" style={{ padding: 40 }}>
@@ -683,7 +722,7 @@ export function VoyageDetailPage() {
           {steps.map((s, i) => {
             const m = stepMarker(s);
             return (
-              <TimelineItem key={s.id} marker={s.seq} markerBg={m.bg} markerColor={m.color} last={i === steps.length - 1}>
+              <TimelineItem key={s.id} marker={i + 1} markerBg={m.bg} markerColor={m.color} last={i === steps.length - 1}>
                 <StepCard step={s} />
               </TimelineItem>
             );

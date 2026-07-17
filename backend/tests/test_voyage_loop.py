@@ -263,8 +263,8 @@ async def test_judgment_failure_no_inplace_retry(client, queue_stub):
 
 
 async def test_loop_execution_error_retries_then_replans(client, queue_stub):
-    """loop 模式执行类错误：先带诊断原地重试，重试尽后重规划；旧节点 obsolete 留痕。"""
-    project_id, _headers = await _make_project(client)
+    """loop 模式执行类错误：先带诊断原地重试，重试尽后计划编辑；旧节点 obsolete 留痕。"""
+    project_id, headers = await _make_project(client)
     plan = [
         {
             "title": "会失败的步骤",
@@ -299,3 +299,13 @@ async def test_loop_execution_error_retries_then_replans(client, queue_stub):
         assert failed.params.get("diagnosis")  # 重试带诊断
         assert all(r.status == "passed" for r in rows[1:])
         assert all(r.seq > failed.seq for r in rows[1:])  # seq 只增不改
+
+    # 详情 API：默认只回活动清单，include_obsolete=true 才含作废节点（任务板开关）
+    resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
+    detail = resp.json()
+    assert detail["plan_iteration"] == 1 and detail["mode"] == "loop"
+    assert all(s["status"] != "obsolete" for s in detail["steps"])
+    resp = await client.get(f"/api/voyages/{run_id}?include_obsolete=true", headers=headers)
+    steps = resp.json()["steps"]
+    assert any(s["status"] == "obsolete" for s in steps)
+    assert all("rank" in s and "attempt" in s for s in steps)

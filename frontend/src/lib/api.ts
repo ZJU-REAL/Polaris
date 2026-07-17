@@ -252,7 +252,12 @@ export interface VoyageVerdict {
 
 export interface VoyageStepRead {
   id: string;
+  /** 创建序（不可变锚点，计划调整后可能不连续） */
   seq: number;
+  /** 清单序 = 执行序（渲染排序用这个，不用 seq） */
+  rank: number;
+  /** 尝试次数（>1 = 出错后带诊断重试过） */
+  attempt: number;
   title: string;
   action: string;
   params: unknown;
@@ -268,8 +273,12 @@ export interface VoyageStepRead {
 export interface VoyageRead {
   id: string;
   kind: string;
+  /** pipeline（固定流程）| template（模板骨架）| loop（动态调整） */
+  mode: string;
   goal: string;
   status: VoyageStatus;
+  /** 计划调整次数（重规划/动态追加轮次） */
+  plan_iteration: number;
   plan: unknown;
   cursor: number | null;
   budget: Record<string, unknown> | null;
@@ -1612,8 +1621,8 @@ export const api = {
     const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
     return request<VoyageRead[]>(`/voyages${qs}`);
   },
-  getVoyage(id: string): Promise<VoyageDetail> {
-    return request<VoyageDetail>(`/voyages/${id}`);
+  getVoyage(id: string, opts?: { includeObsolete?: boolean }): Promise<VoyageDetail> {
+    return request<VoyageDetail>(`/voyages/${id}${opts?.includeObsolete ? '?include_obsolete=true' : ''}`);
   },
   cancelVoyage(id: string): Promise<VoyageRead> {
     return request<VoyageRead>(`/voyages/${id}/cancel`, { method: 'POST' });

@@ -36,6 +36,9 @@ export const STATUS: Record<string, StatusMeta> = {
   paused_error: { cls: 'st-failed', zh: '出错暂停', en: 'error' },
   failed: { cls: 'st-failed', zh: '失败', en: 'failed' },
   cancelled: { cls: 'st-rejected', zh: '已取消', en: 'cancelled' },
+  // —— Voyage 步骤（任务板，docs/voyage-loop.md §4） ——
+  passed: { cls: 'st-implemented', zh: '通过', en: 'passed' },
+  obsolete: { cls: 'st-rejected', zh: '已作废', en: 'obsolete' },
   // —— Experiment 状态（M4 Experiment Lab） ——
   awaiting_gate: { cls: 'st-candidate', zh: '等待审批', en: 'awaiting gate' },
   setup: { cls: 'st-drafted', zh: '建环境', en: 'setup' },

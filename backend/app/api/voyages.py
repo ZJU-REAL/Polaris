@@ -92,14 +92,16 @@ def _skills_summary(run: VoyageRun) -> list[VoyageSkillUse]:
 @router.get("/{voyage_id}", response_model=VoyageDetailRead)
 async def get_voyage(
     voyage_id: uuid.UUID,
+    include_obsolete: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> VoyageDetailRead:
     run = await _get_owned_voyage(session, voyage_id, user, with_steps=True)
     detail = VoyageDetailRead.model_validate(run)
-    # 默认只回当前活动清单：计划调整时被作废的步骤（obsolete）留痕在库、
-    # 不进任务详情视图（docs/voyage-loop.md §4）
-    detail.steps = [s for s in detail.steps if s.status != "obsolete"]
+    # 默认只回当前活动清单：计划调整时被作废的步骤（obsolete）留痕在库，
+    # include_obsolete=true 才随详情返回（任务板的"显示已作废步骤"开关）
+    if not include_obsolete:
+        detail.steps = [s for s in detail.steps if s.status != "obsolete"]
     detail.skills = _skills_summary(run)
     return detail
 

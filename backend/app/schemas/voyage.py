@@ -21,7 +21,9 @@ class VoyageStepRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    seq: int
+    seq: int  # 创建序（不可变锚点）
+    rank: float = 0.0  # 清单序 = 执行序（计划调整插入取间隙值）
+    attempt: int = 0  # 尝试次数（>1 = 带诊断重试过）
     title: str
     action: str
     params: dict[str, Any] | None
@@ -38,8 +40,10 @@ class VoyageRead(BaseModel):
 
     id: uuid.UUID
     kind: str
+    mode: str = "loop"  # pipeline | template | loop（docs/voyage-loop.md §2）
     goal: str
     status: str
+    plan_iteration: int = 0  # 计划调整次数
     plan: list[Any] | None
     cursor: int
     budget: dict[str, Any] | None
