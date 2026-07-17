@@ -53,10 +53,9 @@ async def create_ingest_voyage(
         raise IngestConflictError(str(project.id))
     kind = "wiki_bootstrap" if mode == "bootstrap" else "wiki_ingest"
     goal = (
-        f"文献调研初始建库：{project.name}（回填 {knobs.months_back} 个月，"
-        f"编译上限 {knobs.max_papers} 篇）"
+        f"文献调研初始建库：{project.name}"
         if mode == "bootstrap"
-        else f"文献调研增量更新：{project.name}（从上次同步时间续跑）"
+        else f"文献调研增量更新：{project.name}"
     )
     run = VoyageRun(
         kind=kind,

@@ -79,7 +79,7 @@ async def create_forge_voyage(
         raise IdeaVoyageConflictError(str(project.id))
     run = VoyageRun(
         kind="idea_forge",
-        goal=f"Idea Forge：{project.name}（生成 {knobs.num_ideas} 个候选想法）",
+        goal=f"Idea Forge：{project.name}",
         status="planning",
         cursor=0,
         checkpoint={"params": {"knobs": knobs.model_dump()}},
@@ -207,7 +207,7 @@ async def create_deep_voyage(
     budget = data.knobs.budget_tokens or _DEEP_DEFAULT_BUDGET
     run = VoyageRun(
         kind="idea_proposal",
-        goal=f"深度研究方案：{project.name}（种子：{seed_brief}）",
+        goal=f"深度研究方案：{project.name}",
         status="planning",
         cursor=0,
         checkpoint={"params": {"seed": data.seed.model_dump(), "knobs": data.knobs.model_dump()}},
