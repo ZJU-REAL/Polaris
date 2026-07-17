@@ -403,10 +403,14 @@ async def test_trash_soft_delete_restore_and_empty(client):
     assert resp.json()["total"] == 0  # 库内不再可见
     resp = await client.get(f"/api/projects/{project_id}/papers?status=excluded", headers=headers)
     assert resp.json()["total"] == 2  # p1 + 原本就 excluded 的 p2
+    # 垃圾桶原因标签：手动删除的 p1 = manual
+    trashed = {p["id"]: p for p in resp.json()["items"]}
+    assert trashed[ids["p1"]]["trash_reason"] == "manual"
 
-    # 召回：p1 有 wiki → 回 compiled
+    # 召回：p1 有 wiki → 回 compiled；原因标签清空
     resp = await client.post(f"/api/papers/{ids['p1']}/restore", headers=headers)
     assert resp.status_code == 200 and resp.json()["status"] == "compiled"
+    assert resp.json()["trash_reason"] is None
     # p2 无 wiki 有分数 → 回 scored
     resp = await client.post(f"/api/papers/{ids['p2']}/restore", headers=headers)
     assert resp.json()["status"] == "scored"

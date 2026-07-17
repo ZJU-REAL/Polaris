@@ -53,6 +53,29 @@ export const STATUS: Record<string, StatusMeta> = {
   archived: { cls: 'st-rejected', zh: '已归档', en: 'archived' },
 };
 
+/** 论文三态（docs/api-lit.md §8.5 大白话）：检索到 = 已抓取；相关性达标 = 已纳入；编译完成 = 已编译。
+    与全局 STATUS 分开：candidate 等键在 Idea 等场景有不同含义。 */
+const PAPER_STATUS: Record<string, StatusMeta> = {
+  candidate: { cls: 'st-drafted', zh: '已抓取', en: 'fetched' },
+  scored: { cls: 'st-accepted', zh: '已纳入', en: 'included' },
+  fetched: { cls: 'st-accepted', zh: '已纳入', en: 'included' },
+  included: { cls: 'st-accepted', zh: '已纳入', en: 'included' },
+  compiled: { cls: 'st-implemented', zh: '已编译', en: 'compiled' },
+  excluded: { cls: 'st-rejected', zh: '已删除', en: 'removed' },
+};
+
+/** 论文状态 pill：把内部六种 status 折叠为用户可见三态。 */
+export function PaperStatusPill({ status, sm }: StatusPillProps) {
+  const s = PAPER_STATUS[status] ?? { cls: '', zh: status, en: status };
+  return (
+    <span className={`pill ${s.cls}${sm ? ' sm' : ''}`}>
+      <span className="dot" />
+      {s.zh}
+      <span style={{ opacity: 0.55, fontWeight: 500, fontSize: '0.9em' }}>{s.en}</span>
+    </span>
+  );
+}
+
 export interface StatusPillProps {
   status: string;
   sm?: boolean;

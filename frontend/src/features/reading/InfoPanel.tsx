@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
-import { StatusPill } from '../../components/ui/StatusPill';
+import { PaperStatusPill } from '../../components/ui/StatusPill';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
@@ -54,7 +54,7 @@ export function InfoPanel({
     <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 40px' }}>
       {/* —— 头部 —— */}
       <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
-        <StatusPill status={paper.status} sm />
+        <PaperStatusPill status={paper.status} sm />
         {paper.venue && (
           <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
             {paper.venue}

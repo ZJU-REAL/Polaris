@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { StatusPill } from '../../components/ui/StatusPill';
+import { PaperStatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
@@ -36,20 +36,23 @@ import { READING_STATUS, ReadingDot } from '../reading/shared';
 
 const PAGE_SIZE = 20;
 
-/** 论文库视图（docs/api-lit.md §8.5）：只展示相关性达标的文献（低相关论文不进库）。 */
-type ViewFilter = 'all' | 'compiled' | 'starred';
+/** 论文库视图（docs/api-lit.md §8.5）：三态 = 已抓取（检索到）/ 已纳入（相关性达标）/
+    已编译；相关性不足的进垃圾桶，不显示不计数。 */
+type ViewFilter = 'all' | 'included' | 'compiled' | 'starred';
 
 const VIEW_FILTERS: { v: ViewFilter; label: string; hint?: string }[] = [
-  { v: 'all', label: '全部', hint: '相关性达到阈值的全部文献' },
+  { v: 'all', label: '全部', hint: '检索到的全部文献（不含垃圾桶）' },
+  { v: 'included', label: '已纳入', hint: '相关性达到阈值、正式进入知识库的文献' },
   { v: 'compiled', label: '已编译', hint: 'AI 已精读编译出介绍' },
   { v: 'starred', label: '已星标', hint: '我加了星标的文献' },
 ];
 
-/** 视图 → 列表查询参数（低相关/未筛选论文一律不出现在论文库）。 */
+/** 视图 → 列表查询参数（垃圾桶文献一律不出现在论文库）。 */
 function viewQuery(view: ViewFilter): { status: PaperStatusFilter; starred?: boolean } {
+  if (view === 'included') return { status: 'library' };
   if (view === 'compiled') return { status: 'compiled_any' };
   if (view === 'starred') return { status: 'library', starred: true };
-  return { status: 'library' };
+  return { status: 'visible' };
 }
 
 export interface PapersTabProps {
@@ -436,8 +439,8 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
       open={open}
       onClose={onClose}
       title="垃圾桶"
-      sub="已删除的文献（含相关性不足自动删除的）"
-      width={640}
+      sub="相关性不足自动淘汰与手动删除的文献；召回后回到论文库"
+      width={680}
       footer={
         <>
           {confirmEmpty ? (
@@ -476,76 +479,138 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
         </>
       }
     >
+      {/* 搜索区固定不随列表滚动：列表自带滚动容器，整体高度不超出 Modal 内容区 */}
+      <div className="row gap10" style={{ marginBottom: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <SearchInput value={trashQ} onChange={setTrashQ} placeholder="搜索标题 / 作者…" />
+        </div>
+        <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>
+          {kw ? `${items.length} / ${allItems.length} 篇` : `${allItems.length} 篇`}
+        </span>
+      </div>
       {trashQuery.isLoading ? (
         <div className="empty" style={{ padding: 24 }}>加载中…</div>
       ) : allItems.length === 0 ? (
         <div className="empty" style={{ padding: 24 }}>垃圾桶是空的</div>
+      ) : items.length === 0 ? (
+        <div className="empty" style={{ padding: 24 }}>没有匹配的文献</div>
       ) : (
-        <div className="col" style={{ gap: 6 }}>
-          <SearchInput value={trashQ} onChange={setTrashQ} placeholder="搜索标题 / 作者…" />
-          {items.length === 0 && <div className="empty" style={{ padding: 16 }}>没有匹配的文献</div>}
-          {items.map((p) => (
-            <div
-              key={p.id}
-              className="row gap8"
-              style={{
-                padding: '8px 10px',
-                borderRadius: 9,
-                background: 'var(--surface-2)',
-                alignItems: 'flex-start',
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.45, overflowWrap: 'break-word' }}>
-                  {p.title}
-                </div>
-                {p.authors.length > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.5 }}>
-                    {p.authors.map((a) => a.name).join(' · ')}
-                  </div>
-                )}
-                <div className="row gap8" style={{ marginTop: 3 }}>
-                  {p.year !== null && <span className="mono muted" style={{ fontSize: 10.5 }}>{p.year}</span>}
-                  {p.relevance_score !== null && (
-                    <span className="mono muted" style={{ fontSize: 10.5 }}>
-                      相关度 {(p.relevance_score * 10).toFixed(1)}
-                    </span>
-                  )}
-                  {p.has_wiki && (
-                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)' }}>有介绍</span>
-                  )}
-                </div>
-              </div>
-              <button
-                className="btn btn-soft sm"
-                style={{ height: 26, flexShrink: 0 }}
-                disabled={busy}
-                title="召回到论文库"
-                onClick={() => restoreMutation.mutate(p.id)}
-              >
-                <Icon name="refresh" size={12} />
-                召回
-              </button>
-              <button
-                className="btn btn-ghost sm"
-                style={{ height: 26, flexShrink: 0, color: 'var(--danger-tx)' }}
-                disabled={busy}
-                title="彻底删除（连同文件，无法恢复）"
-                onClick={() => purgeMutation.mutate(p.id)}
-              >
-                <Icon name="x" size={12} />
-                彻底删除
-              </button>
-            </div>
+        <div
+          className="scroll"
+          style={{
+            maxHeight: '46vh',
+            overflowY: 'auto',
+            border: '0.5px solid var(--border)',
+            borderRadius: 10,
+          }}
+        >
+          {items.map((p, i) => (
+            <TrashRow key={p.id} p={p} last={i === items.length - 1} busy={busy}
+              onRestore={() => restoreMutation.mutate(p.id)}
+              onPurge={() => purgeMutation.mutate(p.id)}
+            />
           ))}
-          {(trashQuery.data?.total ?? 0) > items.length && (
-            <div className="muted" style={{ fontSize: 11, textAlign: 'center', padding: 6 }}>
-              仅显示最近 {items.length} 篇（共 {trashQuery.data?.total} 篇）
+          {(trashQuery.data?.total ?? 0) > allItems.length && (
+            <div className="muted" style={{ fontSize: 11, textAlign: 'center', padding: 8 }}>
+              仅显示最近 {allItems.length} 篇（共 {trashQuery.data?.total} 篇）
             </div>
           )}
         </div>
       )}
     </Modal>
+  );
+}
+
+/** 垃圾桶原因标签：打分淘汰 = 不相关；否则视为手动删除（老数据缺字段时按分数推断）。 */
+function trashReasonOf(p: PaperRead): 'irrelevant' | 'manual' {
+  if (p.trash_reason === 'manual' || p.trash_reason === 'irrelevant') return p.trash_reason;
+  return p.relevance_score !== null ? 'irrelevant' : 'manual';
+}
+
+/** 垃圾桶列表行：与论文库 PaperRow 同款版式，标签换成删除原因，右侧召回/彻底删除。 */
+function TrashRow({
+  p,
+  last,
+  busy,
+  onRestore,
+  onPurge,
+}: {
+  p: PaperRead;
+  last: boolean;
+  busy: boolean;
+  onRestore: () => void;
+  onPurge: () => void;
+}) {
+  const reason = trashReasonOf(p);
+  return (
+    <div
+      className="row gap10"
+      style={{
+        padding: '12px 16px',
+        borderBottom: last ? 'none' : '0.5px solid var(--border)',
+        alignItems: 'flex-start',
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="row gap8" style={{ marginBottom: 5 }}>
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+            {p.arxiv_id ?? p.venue ?? '—'}
+          </span>
+          {p.year !== null && (
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+              {p.year}
+            </span>
+          )}
+          {p.has_wiki && <Icon name="sparkle" size={11} style={{ color: 'var(--accent)' }} />}
+          <span style={{ marginLeft: 'auto' }}>
+            <RelevanceBar value={p.relevance_score} />
+          </span>
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>{p.title}</div>
+        <div className="row gap8" style={{ marginTop: 6 }}>
+          {reason === 'irrelevant' ? (
+            <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
+              不相关
+            </span>
+          ) : (
+            <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+              手动删除
+            </span>
+          )}
+          {p.tldr && (
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: 11.5,
+                color: 'var(--text-3)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {p.tldr}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="col" style={{ gap: 6, flexShrink: 0 }}>
+        <button className="btn btn-soft sm" style={{ height: 26 }} disabled={busy} title="召回到论文库" onClick={onRestore}>
+          <Icon name="refresh" size={12} />
+          召回
+        </button>
+        <button
+          className="btn btn-ghost sm"
+          style={{ height: 26, color: 'var(--danger-tx)' }}
+          disabled={busy}
+          title="彻底删除（连同文件，无法恢复）"
+          onClick={onPurge}
+        >
+          <Icon name="x" size={12} />
+          彻底删除
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -606,7 +671,7 @@ function PaperRow({
       </div>
       <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>{p.title}</div>
       <div className="row gap8" style={{ marginTop: 6 }}>
-        <StatusPill status={p.status} sm />
+        <PaperStatusPill status={p.status} sm />
         <ReadingDot status={p.reading_status} />
         {tags.slice(0, 2).map((t) => (
           <span
@@ -828,7 +893,7 @@ function PaperDetailPane({
       <div className="row" style={{ alignItems: 'flex-start', gap: 20 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
-            <StatusPill status={paper.status} sm />
+            <PaperStatusPill status={paper.status} sm />
             {paper.venue && (
               <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
                 {paper.venue}

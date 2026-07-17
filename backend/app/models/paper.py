@@ -66,6 +66,8 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     figures: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
     status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
+    # 进垃圾桶的原因（status=excluded 时有值）：irrelevant 相关性不足自动淘汰 | manual 手动删除
+    trash_reason: Mapped[str | None] = mapped_column(String(16))
     scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     compiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

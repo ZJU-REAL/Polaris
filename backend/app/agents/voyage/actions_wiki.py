@@ -398,6 +398,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             paper.tldr = str(data.get("tldr") or "") or paper.tldr
             paper.scored_at = utcnow()
             paper.status = "scored" if score >= threshold else "excluded"
+            paper.trash_reason = None if paper.status == "scored" else "irrelevant"
             if paper.status == "excluded":
                 excluded += 1
             # 逐篇 commit：worker 中途被杀后按 status 断点续跑，不重复打分

@@ -40,6 +40,8 @@ class PaperRead(BaseModel):
     published_at: datetime | None
     relevance_score: float | None
     status: str
+    # 垃圾桶原因（status=excluded 时有值）：irrelevant 相关性不足 | manual 手动删除
+    trash_reason: str | None = None
     tldr: str | None
     has_wiki: bool = False
     created_at: datetime  # 入库时间

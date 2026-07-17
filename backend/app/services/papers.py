@@ -27,8 +27,10 @@ PAPER_SORTS = ("relevance", "-published_at")
 RERANK_CANDIDATES = 30
 RERANK_DOC_CHARS = 512
 
-# status 组别名：库内（相关性达标及之后）/ 待编译（达标但未编译）/ 已编译（含人工纳入的历史数据）
+# status 组别名：可见（检索到的全部，不含垃圾桶）/ 库内（相关性达标及之后）/
+# 待编译（达标但未编译）/ 已编译（含人工纳入的历史数据）
 PAPER_STATUS_GROUPS: dict[str, tuple[str, ...]] = {
+    "visible": ("candidate", "scored", "fetched", "compiled", "included"),
     "library": ("scored", "fetched", "compiled", "included"),
     "pending_compile": ("scored", "fetched"),
     "compiled_any": ("compiled", "included"),
@@ -364,6 +366,7 @@ async def delete_papers(
             await session.delete(paper)
         else:
             paper.status = "excluded"
+            paper.trash_reason = "manual"
     await session.commit()
     return len(papers)
 
@@ -380,6 +383,7 @@ def restore_status_of(paper: Paper) -> str:
 async def restore_paper(session: AsyncSession, paper: Paper) -> Paper:
     """从垃圾桶召回（docs/api-lit.md §8.6）。"""
     paper.status = restore_status_of(paper)
+    paper.trash_reason = None
     await session.commit()
     await session.refresh(paper)
     return paper

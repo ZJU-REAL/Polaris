@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c1d2e3f4a5b6"  # voyage_loop_v1（任务循环地基：mode/rank/attempts）
-PREV_REVISION = "b8c9d0e1f2a3"  # user_system_u1（头像/配额/邀请链接）
+HEAD_REVISION = "d2e3f4a5b6c7"  # paper_trash_reason（垃圾桶原因标签）
+PREV_REVISION = "c1d2e3f4a5b6"  # voyage_loop_v1（任务循环地基：mode/rank/attempts）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -113,14 +113,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "attempts",
         "provenance",
     } <= columns["voyage_steps"]
+    # 垃圾桶原因标签
+    assert "trash_reason" in columns["papers"]
 
-    # 最新 revision 可往返（downgrade 移除任务循环 v1 的列）
+    # 最新 revision 可往返（downgrade 移除垃圾桶原因列）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "mode" not in columns["voyage_runs"]
-    assert "rank" not in columns["voyage_steps"]
-    # 上一版（用户系统 U1）不受影响
+    assert "trash_reason" not in columns["papers"]
+    # 上一版（任务循环 v1）不受影响
+    assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
+    assert "rank" in columns["voyage_steps"]
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
     assert "project_invites" in columns["_tables"]
     assert "affiliations" in columns["papers"]  # 更早的列不受影响

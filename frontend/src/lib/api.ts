@@ -382,8 +382,14 @@ export interface LlmUsageRow {
 
 export type PaperStatus = 'candidate' | 'scored' | 'excluded' | 'fetched' | 'compiled' | 'included';
 
-/** 状态组别名（docs/api-lit.md §8.5）：library=库内（达标及之后）；pending_compile=待编译。 */
-export type PaperStatusFilter = PaperStatus | 'library' | 'pending_compile' | 'compiled_any';
+/** 状态组别名（docs/api-lit.md §8.5）：visible=检索到的全部（不含垃圾桶）；
+    library=库内（达标及之后）；pending_compile=待编译。 */
+export type PaperStatusFilter =
+  | PaperStatus
+  | 'visible'
+  | 'library'
+  | 'pending_compile'
+  | 'compiled_any';
 
 export type PaperSort = 'relevance' | '-published_at';
 
@@ -407,6 +413,8 @@ export interface PaperRead {
   /** 0-1，未打分为 null */
   relevance_score: number | null;
   status: PaperStatus;
+  /** 垃圾桶原因（status=excluded 时有值）：irrelevant 相关性不足 | manual 手动删除 */
+  trash_reason?: 'irrelevant' | 'manual' | null;
   tldr: string | null;
   has_wiki: boolean;
   /** 入库时间 */
