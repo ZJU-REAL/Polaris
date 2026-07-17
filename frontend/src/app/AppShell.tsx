@@ -287,7 +287,7 @@ function NavItem({ n }: { n: NavEntry }) {
     >
       {n.no && <span className="stage-no mono">{n.no}</span>}
       <span className="nav-ic">
-        <Icon name={n.icon} size={16} />
+        <Icon name={n.icon} size={18} />
       </span>
       <span className="nav-label" style={{ flex: 1 }}>{tr(n.zh, n.en)}</span>
     </NavLink>
