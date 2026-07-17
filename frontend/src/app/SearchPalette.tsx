@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../components/ui/Icon';
-import { StatusPill } from '../components/ui/StatusPill';
+import { PaperStatusPill, StatusPill } from '../components/ui/StatusPill';
 import { api, type GlobalSearchHit, type GlobalSearchHitType } from '../lib/api';
 import { useProject } from './project';
 
@@ -167,7 +167,12 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
                         </span>
                       )}
                     </span>
-                    {h.status && <StatusPill status={h.status} sm />}
+                    {h.status &&
+                      (h.type === 'paper' ? (
+                        <PaperStatusPill status={h.status} sm />
+                      ) : (
+                        <StatusPill status={h.status} sm />
+                      ))}
                   </button>
                 );
               })}
