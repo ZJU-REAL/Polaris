@@ -19,6 +19,7 @@ import { EditorPane, type PeerInfo } from './EditorPane';
 import { FileTree } from './FileTree';
 import { FactPackDrawer } from './FactPackDrawer';
 import { DraftModal } from './DraftModal';
+import { OutlinePanel } from './OutlinePanel';
 import { colorForUser, ruleText } from './shared';
 
 /* ============================================================
@@ -154,6 +155,7 @@ interface WriterLayout {
   rightOpen: boolean;
   pdfOpen: boolean;
   diagOpen: boolean;
+  outlineOpen: boolean;
 }
 
 const LAYOUT_KEY = 'polaris-writer-layout';
@@ -165,6 +167,7 @@ const DEFAULT_LAYOUT: WriterLayout = {
   rightOpen: true,
   pdfOpen: true,
   diagOpen: true,
+  outlineOpen: true,
 };
 
 function loadLayout(): WriterLayout {
@@ -261,17 +264,52 @@ export function WriterEditorPage() {
     setCurrentFileId(pick?.id ?? null);
   }, [ms, currentFileId]);
 
-  // —— 协同连接状态 / 协作者 / 编辑器 view ——
+  // —— 协同连接状态 / 协作者 / 编辑器 view / 当前文件内容（大纲用） ——
   const [wsStatus, setWsStatus] = useState<ProviderStatus>('connecting');
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [view, setView] = useState<EditorView | null>(null);
+  const [docContent, setDocContent] = useState<string | null>(null);
   const handleStatus = useCallback((s: ProviderStatus) => setWsStatus(s), []);
   const handlePeers = useCallback((p: PeerInfo[]) => setPeers(p), []);
   const handleView = useCallback((v: EditorView | null) => setView(v), []);
+  const handleDocChange = useCallback((c: string) => setDocContent(c), []);
   useEffect(() => {
     setWsStatus('connecting');
     setPeers([]);
+    setDocContent(null);
   }, [currentFileId]);
+
+  // —— 事实包引文/图表插入到编辑器光标处 ——
+  const canInsert = !!view && !!currentFile && !currentFile.readonly;
+  const insertSnippet = useCallback(
+    (text: string) => {
+      if (!view) return false;
+      const sel = view.state.selection.main;
+      view.dispatch({
+        changes: { from: sel.from, to: sel.to, insert: text },
+        selection: { anchor: sel.from + text.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+      return true;
+    },
+    [view],
+  );
+  function onInsertCite(bibkey: string) {
+    if (insertSnippet(`\\cite{${bibkey}}`)) toast(`已在光标处插入 \\cite{${bibkey}}`, 'ok');
+  }
+  function onInsertFigure(figId: string, caption?: string | null) {
+    const snippet = [
+      '\\begin{figure}[t]',
+      '  \\centering',
+      `  \\includegraphics[width=\\linewidth]{figures/${figId}.pdf}`,
+      `  \\caption{${caption ?? '（补充图注）'}}`,
+      `  \\label{fig:${figId}}`,
+      '\\end{figure}',
+      '',
+    ].join('\n');
+    if (insertSnippet(snippet)) toast(`已在光标处插入图表 ${figId}`, 'ok');
+  }
 
   // —— 编译 ——
   const compileMutation = useMutation({
@@ -688,16 +726,28 @@ export function WriterEditorPage() {
               background: 'var(--sidebar-bg)',
               minHeight: 0,
               overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
-            <FileTree
-              files={ms.files}
-              currentId={currentFileId}
-              busy={fileOpsBusy}
-              onSelect={(f) => setCurrentFileId(f.id)}
-              onCreate={(path) => createFileMutation.mutate(path)}
-              onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
-              onDelete={(f) => deleteFileMutation.mutate(f.id)}
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <FileTree
+                files={ms.files}
+                currentId={currentFileId}
+                busy={fileOpsBusy}
+                onSelect={(f) => setCurrentFileId(f.id)}
+                onCreate={(path) => createFileMutation.mutate(path)}
+                onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
+                onDelete={(f) => deleteFileMutation.mutate(f.id)}
+              />
+            </div>
+            <OutlinePanel
+              content={docContent}
+              open={layout.outlineOpen}
+              onToggle={() => patchLayout({ outlineOpen: !layout.outlineOpen })}
+              onJump={(line) => {
+                if (view) jumpToLine(view, line);
+              }}
             />
           </div>
         )}
@@ -737,6 +787,7 @@ export function WriterEditorPage() {
                 onStatus={handleStatus}
                 onPeers={handlePeers}
                 onView={handleView}
+                onDocChange={handleDocChange}
               />
             </>
           ) : (
@@ -859,7 +910,14 @@ export function WriterEditorPage() {
       </div>
 
       {/* —— 抽屉 / Modal —— */}
-      <FactPackDrawer open={factOpen} onClose={() => setFactOpen(false)} manuscript={ms} />
+      <FactPackDrawer
+        open={factOpen}
+        onClose={() => setFactOpen(false)}
+        manuscript={ms}
+        canInsert={canInsert}
+        onInsertCite={onInsertCite}
+        onInsertFigure={onInsertFigure}
+      />
       <DraftModal open={draftOpen} onClose={() => setDraftOpen(false)} manuscript={ms} />
     </div>
   );

@@ -72,6 +72,8 @@ export interface EditorPaneProps {
   onPeers: (peers: PeerInfo[]) => void;
   /** view 就绪/销毁回调（诊断跳行用）。 */
   onView: (v: EditorView | null) => void;
+  /** 文档内容变化（防抖后回调，大纲面板用）。 */
+  onDocChange?: (content: string) => void;
 }
 
 export function EditorPane(props: EditorPaneProps) {
@@ -81,12 +83,12 @@ export function EditorPane(props: EditorPaneProps) {
 
 /* ---------------- 协同编辑（CRDT） ---------------- */
 
-function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, onPeers, onView }: EditorPaneProps) {
+function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, onPeers, onView, onDocChange }: EditorPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const providerRef = useRef<ManuscriptProvider | null>(null);
   // 最新回调放 ref，避免父组件重渲染导致编辑器/连接重建
-  const cbRef = useRef({ onCompile, onStatus, onPeers, onView });
-  cbRef.current = { onCompile, onStatus, onPeers, onView };
+  const cbRef = useRef({ onCompile, onStatus, onPeers, onView, onDocChange });
+  cbRef.current = { onCompile, onStatus, onPeers, onView, onDocChange };
   const userRef = useRef(user);
   userRef.current = user;
 
@@ -123,6 +125,13 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
     provider.awareness.on('change', emitPeers);
     emitPeers();
 
+    // 文档变化 → 防抖 400ms 通知父组件（大纲面板重算）
+    let docTimer: ReturnType<typeof setTimeout> | null = null;
+    const emitDoc = (text: string) => {
+      if (docTimer) clearTimeout(docTimer);
+      docTimer = setTimeout(() => cbRef.current.onDocChange?.(text), 400);
+    };
+
     const state = EditorState.create({
       doc: ytext.toString(),
       extensions: [
@@ -142,13 +151,18 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
         keymap.of(yUndoManagerKeymap),
         ...baseExtensions,
         yCollab(ytext, provider.awareness, { undoManager }),
+        EditorView.updateListener.of((u) => {
+          if (u.docChanged) emitDoc(u.state.doc.toString());
+        }),
       ],
     });
     const view = new EditorView({ state, parent: host });
     cbRef.current.onView(view);
+    emitDoc(view.state.doc.toString());
 
     return () => {
       cbRef.current.onView(null);
+      if (docTimer) clearTimeout(docTimer);
       view.destroy();
       offStatus();
       provider.awareness.off('change', emitPeers);
@@ -172,10 +186,12 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
 
 /* ---------------- 只读文件查看 ---------------- */
 
-function ReadonlyEditor({ manuscriptId, fileId, onView }: EditorPaneProps) {
+function ReadonlyEditor({ manuscriptId, fileId, onView, onDocChange }: EditorPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const onViewRef = useRef(onView);
   onViewRef.current = onView;
+  const onDocChangeRef = useRef(onDocChange);
+  onDocChangeRef.current = onDocChange;
 
   const fileQuery = useQuery({
     queryKey: ['manuscript-file', manuscriptId, fileId],
@@ -196,6 +212,7 @@ function ReadonlyEditor({ manuscriptId, fileId, onView }: EditorPaneProps) {
       parent: host,
     });
     onViewRef.current(view);
+    onDocChangeRef.current?.(content);
     return () => {
       onViewRef.current(null);
       view.destroy();

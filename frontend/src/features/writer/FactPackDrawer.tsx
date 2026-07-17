@@ -16,6 +16,10 @@ export interface FactPackDrawerProps {
   open: boolean;
   onClose: () => void;
   manuscript: ManuscriptDetail;
+  /** 当前编辑器可插入（有 view 且当前文件可写）时为 true。 */
+  canInsert?: boolean;
+  onInsertCite?: (bibkey: string) => void;
+  onInsertFigure?: (figId: string, caption?: string | null) => void;
 }
 
 function SectionTitle({ zh, count }: { zh: string; count?: number }) {
@@ -29,7 +33,7 @@ function SectionTitle({ zh, count }: { zh: string; count?: number }) {
   );
 }
 
-export function FactPackDrawer({ open, onClose, manuscript }: FactPackDrawerProps) {
+export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertCite, onInsertFigure }: FactPackDrawerProps) {
   const queryClient = useQueryClient();
   const fp = manuscript.fact_pack;
 
@@ -151,6 +155,18 @@ export function FactPackDrawer({ open, onClose, manuscript }: FactPackDrawerProp
                       {f.fig_id}
                     </span>
                     {f.source && <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>来自{f.source === 'experiment' ? '实验' : f.source}</span>}
+                    {onInsertFigure && (
+                      <button
+                        className="btn btn-soft sm"
+                        style={{ marginLeft: 'auto', height: 22, fontSize: 10.5, padding: '0 8px' }}
+                        disabled={!canInsert}
+                        title={canInsert ? '在编辑器光标处插入 figure 环境' : '先在编辑器里打开一个可写的 .tex 文件'}
+                        onClick={() => onInsertFigure(f.fig_id, f.caption)}
+                      >
+                        <Icon name="plus" size={11} />
+                        插入
+                      </button>
+                    )}
                   </div>
                   {f.caption && (
                     <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4, lineHeight: 1.55 }}>{f.caption}</div>
@@ -177,6 +193,18 @@ export function FactPackDrawer({ open, onClose, manuscript }: FactPackDrawerProp
                     {c.title}
                     {c.year != null && <span style={{ color: 'var(--text-4)' }}>（{c.year}）</span>}
                   </span>
+                  {onInsertCite && (
+                    <button
+                      className="btn btn-soft sm"
+                      style={{ height: 22, fontSize: 10.5, padding: '0 8px', flexShrink: 0 }}
+                      disabled={!canInsert}
+                      title={canInsert ? `在编辑器光标处插入 \\cite{${c.bibkey}}` : '先在编辑器里打开一个可写的 .tex 文件'}
+                      onClick={() => onInsertCite(c.bibkey)}
+                    >
+                      <Icon name="plus" size={11} />
+                      插入
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
