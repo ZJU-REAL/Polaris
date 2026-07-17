@@ -376,6 +376,10 @@ export function AppShell() {
         void queryClient.invalidateQueries({ queryKey: ['idea', msg.idea_id] });
         void queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
         void queryClient.invalidateQueries({ queryKey: ['forge-state'] });
+      } else if (msg.type === 'manuscript.status') {
+        // 论文撰写页靠这里实时刷新（起草 writing→compiled 等流转），不再快轮询
+        void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
+        void queryClient.invalidateQueries({ queryKey: ['manuscript', msg.manuscript_id] });
       } else if (msg.type === 'experiment.status') {
         void queryClient.invalidateQueries({ queryKey: ['experiments'] });
         void queryClient.invalidateQueries({ queryKey: ['experiment', msg.experiment_id] });

@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d2e3f4a5b6c7"  # paper_trash_reason（垃圾桶原因标签）
-PREV_REVISION = "c1d2e3f4a5b6"  # voyage_loop_v1（任务循环地基：mode/rank/attempts）
+HEAD_REVISION = "e4f5a6b7c8d9"  # manuscript_file_versions（稿件文件版本快照）
+PREV_REVISION = "d2e3f4a5b6c7"  # paper_trash_reason（垃圾桶原因标签）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -42,6 +42,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_user_meta",
                     "manuscripts",
                     "manuscript_files",
+                    "manuscript_file_versions",
                     "users",
                     "voyage_runs",
                     "voyage_steps",
@@ -115,12 +116,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["voyage_steps"]
     # 垃圾桶原因标签
     assert "trash_reason" in columns["papers"]
+    # 稿件文件版本快照表
+    assert "manuscript_file_versions" in columns["_tables"]
+    assert {"file_id", "seq", "origin", "label", "content"} <= columns["manuscript_file_versions"]
 
-    # 最新 revision 可往返（downgrade 移除垃圾桶原因列）
+    # 最新 revision 可往返（downgrade 移除版本快照表）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "trash_reason" not in columns["papers"]
+    assert "manuscript_file_versions" not in columns["_tables"]
+    assert "trash_reason" in columns["papers"]  # 上一版（垃圾桶原因）不受影响
     # 上一版（任务循环 v1）不受影响
     assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
     assert "rank" in columns["voyage_steps"]

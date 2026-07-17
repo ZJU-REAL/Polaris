@@ -242,8 +242,9 @@ export function WriterEditorPage() {
     queryFn: () => api.getManuscript(id),
     enabled: !!id,
     retry: false,
-    // AI 起草进行中：10s 轮询状态（正文内容走 CRDT 实时可见）
-    refetchInterval: (q) => (q.state.data?.status === 'writing' ? 10_000 : false),
+    // 状态流转靠 WS manuscript.status 实时 invalidate（AppShell）；
+    // 起草中仅留 30s 慢轮询兜底（WS 断线时不至于卡住）
+    refetchInterval: (q) => (q.state.data?.status === 'writing' ? 30_000 : false),
   });
   const ms = detailQuery.data;
 

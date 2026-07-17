@@ -14,7 +14,8 @@ export type NotificationMessage =
   | { type: 'voyage.status'; voyage_id: string; status: string }
   | { type: 'review.message'; session_id: string; project_id?: string; message: ReviewMessageRead }
   | { type: 'idea.status'; idea_id: string; status: string }
-  | { type: 'experiment.status'; experiment_id: string; status: string };
+  | { type: 'experiment.status'; experiment_id: string; status: string }
+  | { type: 'manuscript.status'; manuscript_id: string; status: string };
 
 const MAX_BACKOFF_MS = 30_000;
 

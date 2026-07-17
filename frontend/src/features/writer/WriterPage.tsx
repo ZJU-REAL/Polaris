@@ -77,8 +77,8 @@ export function WriterPage() {
     queryFn: () => api.listManuscripts(pid!),
     enabled: !!pid,
     retry: false,
-    // 有 AI 起草进行中时轮询列表状态
-    refetchInterval: (q) => ((q.state.data ?? []).some((m) => m.status === 'writing') ? 10_000 : false),
+    // 状态流转靠 WS manuscript.status 实时 invalidate（AppShell）；起草中留 30s 慢轮询兜底
+    refetchInterval: (q) => ((q.state.data ?? []).some((m) => m.status === 'writing') ? 30_000 : false),
   });
   const manuscripts = data ?? [];
 
