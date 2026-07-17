@@ -5,6 +5,8 @@ import type { EditorView } from '@codemirror/view';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { PromptModal } from '../../components/ui/PromptModal';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
@@ -463,17 +465,17 @@ export function WriterEditorPage() {
       }
     },
   });
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   function onSubmit() {
     if (!compile || compile.status !== 'ok') {
       toast('要先编译成功一次才能投稿', 'error');
       return;
     }
-    if (window.confirm('确认发起投稿？\n会创建一条论文投稿审批，人工批准后状态变为已投稿。')) {
-      submitMutation.mutate();
-    }
+    setSubmitConfirmOpen(true);
   }
 
   // —— 改标题 ——
+  const [titleEditOpen, setTitleEditOpen] = useState(false);
   const titleMutation = useMutation({
     mutationFn: (title: string) => api.patchManuscript(id, { title }),
     onSuccess: () => {
@@ -604,10 +606,7 @@ export function WriterEditorPage() {
             className="writer-mini-btn"
             title="改标题"
             disabled={titleMutation.isPending}
-            onClick={() => {
-              const next = window.prompt('论文标题', ms.title);
-              if (next && next.trim() && next.trim() !== ms.title) titleMutation.mutate(next.trim());
-            }}
+            onClick={() => setTitleEditOpen(true)}
           >
             <Icon name="pen" size={11} />
           </button>
@@ -958,6 +957,31 @@ export function WriterEditorPage() {
       </div>
 
       {/* —— 抽屉 / Modal —— */}
+      <PromptModal
+        open={titleEditOpen}
+        onClose={() => setTitleEditOpen(false)}
+        title="修改论文标题"
+        initial={ms.title}
+        placeholder="论文标题"
+        submitText="保存"
+        busy={titleMutation.isPending}
+        onSubmit={(title) => {
+          if (title !== ms.title) titleMutation.mutate(title);
+          setTitleEditOpen(false);
+        }}
+      />
+      <ConfirmModal
+        open={submitConfirmOpen}
+        onClose={() => setSubmitConfirmOpen(false)}
+        title="发起投稿"
+        message="会创建一条论文投稿审批，人工批准后状态变为已投稿。确认发起？"
+        confirmText="发起投稿"
+        busy={submitMutation.isPending}
+        onConfirm={() => {
+          submitMutation.mutate();
+          setSubmitConfirmOpen(false);
+        }}
+      />
       {currentFile && (
         <HistoryModal
           open={historyOpen}

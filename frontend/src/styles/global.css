@@ -185,6 +185,9 @@ input {
 .btn-ghost:hover { background: var(--surface-2); }
 .btn-soft { background: var(--surface-2); color: var(--text-2); }
 .btn-soft:hover { background: var(--surface-3); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { filter: brightness(1.06); }
+.btn-danger:disabled { opacity: 0.6; cursor: default; }
 .btn.sm { height: 28px; font-size: 12px; padding: 0 11px; }
 
 /* metric delta */
