@@ -6,6 +6,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
+import { clickable } from '../../lib/a11y';
 import type { PaperDetail } from '../../lib/api';
 
 /* ============================================================
@@ -120,7 +121,7 @@ export function InfoPanel({
       {paper.concepts.length > 0 && (
         <div className="row gap6 wrap" style={{ marginTop: 12 }}>
           {paper.concepts.map((c) => (
-            <span key={c.id} className="wikilink" style={{ height: 22 }} onClick={() => onWikiLink(c.name)}>
+            <span key={c.id} className="wikilink" style={{ height: 22 }} {...clickable(() => onWikiLink(c.name))}>
               {c.name}
             </span>
           ))}

@@ -84,7 +84,7 @@ function ExpFigureThumb({
             src={url}
             alt={captionOf(fig)}
             loading="lazy"
-            style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--media-bg)' }}
           />
         )}
       </div>
@@ -142,8 +142,8 @@ function ExpLightbox({
     height: 38,
     borderRadius: 19,
     border: 'none',
-    background: 'rgba(255,255,255,0.14)',
-    color: '#fff',
+    background: 'var(--scrim-btn)',
+    color: 'var(--on-scrim)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -157,7 +157,7 @@ function ExpLightbox({
         position: 'fixed',
         inset: 0,
         zIndex: 70,
-        background: 'rgba(10, 22, 44, 0.82)',
+        background: 'var(--scrim)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -178,8 +178,8 @@ function ExpLightbox({
           height: 34,
           borderRadius: 17,
           border: 'none',
-          background: 'rgba(255,255,255,0.14)',
-          color: '#fff',
+          background: 'var(--scrim-btn)',
+          color: 'var(--on-scrim)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -232,10 +232,10 @@ function ExpLightbox({
         {isLoading ? (
           <div
             className="pulse"
-            style={{ width: 420, maxWidth: '80vw', height: 300, borderRadius: 10, background: 'rgba(255,255,255,0.14)' }}
+            style={{ width: 420, maxWidth: '80vw', height: 300, borderRadius: 10, background: 'var(--scrim-btn)' }}
           />
         ) : isError || !url ? (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.75)' }}>
+          <div style={{ textAlign: 'center', color: 'var(--on-scrim-2)' }}>
             <Icon name="chart" size={26} style={{ margin: '0 auto 8px' }} />
             <div style={{ fontSize: 13 }}>这张图加载失败了，稍后再试</div>
           </div>
@@ -249,7 +249,7 @@ function ExpLightbox({
               maxHeight: '74vh',
               objectFit: 'contain',
               borderRadius: 10,
-              background: '#fff',
+              background: 'var(--media-bg)',
               boxShadow: 'var(--shadow-win)',
             }}
           />
@@ -261,12 +261,12 @@ function ExpLightbox({
             textAlign: 'center',
             fontSize: 12.5,
             lineHeight: 1.6,
-            color: 'rgba(255,255,255,0.88)',
+            color: 'var(--on-scrim)',
           }}
         >
           {captionOf(fig)}
         </div>
-        <div className="mono" style={{ marginTop: 6, fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+        <div className="mono" style={{ marginTop: 6, fontSize: 11, color: 'var(--on-scrim-3)' }}>
           {index + 1} / {count}
           {fig.name ? ` · ${fig.name}` : ''}
         </div>

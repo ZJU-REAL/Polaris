@@ -5,6 +5,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { api, type ConceptCategory, type ConceptRead } from '../../lib/api';
+import { clickable } from '../../lib/a11y';
 import { categoryMeta, CONCEPT_CATEGORY, SearchInput, Section, useDebounced } from './shared';
 
 /* ============================================================
@@ -165,7 +166,7 @@ function ConceptDetailPane({
         <Section title={<>相关概念 <span className="en-label" style={{ fontSize: 11 }}>related</span></>}>
           <div className="row gap8 wrap">
             {concept.related.map((r) => (
-              <span key={r.id} className="wikilink" style={{ height: 24 }} onClick={() => onOpenConcept(r.id)}>
+              <span key={r.id} className="wikilink" style={{ height: 24 }} {...clickable(() => onOpenConcept(r.id))}>
                 {r.name}
               </span>
             ))}

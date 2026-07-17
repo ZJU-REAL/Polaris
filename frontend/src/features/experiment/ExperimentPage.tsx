@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
 import { fmtDuration, fmtTime } from '../../lib/format';
 import { api, EXPERIMENT_TERMINAL, type ExperimentRead } from '../../lib/api';
+import { clickable } from '../../lib/a11y';
 import { budgetText, expProgress } from './shared';
 import { NewExperimentModal } from './NewExperimentModal';
 
@@ -23,7 +24,7 @@ function ExperimentCard({ exp, onClick }: { exp: ExperimentRead; onClick: () => 
   const barColor =
     exp.status === 'failed' ? 'var(--danger)' : exp.status === 'cancelled' ? 'var(--text-4)' : exp.status === 'done' ? 'var(--ok)' : 'var(--accent)';
   return (
-    <div className="card card-pad hoverable" onClick={onClick} style={{ cursor: 'pointer' }}>
+    <div className="card card-pad hoverable" {...clickable(onClick)} style={{ cursor: 'pointer' }}>
       <div className="row gap10" style={{ alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 650, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

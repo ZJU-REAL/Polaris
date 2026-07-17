@@ -11,6 +11,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
+import { clickable } from '../../lib/a11y';
 import { useShell } from '../../app/AppShell';
 import {
   api,
@@ -108,7 +109,7 @@ function CandidateCard({
   onDeepen?: () => void;
 }) {
   return (
-    <div className="card card-pad hoverable" onClick={onOpen} style={{ display: 'flex', flexDirection: 'column' }}>
+    <div className="card card-pad hoverable" {...clickable(onOpen)} style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="row gap6" style={{ marginBottom: 10 }}>
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{idea.id.slice(0, 8)}</span>
         <DepthBadge depth={idea.depth} />
