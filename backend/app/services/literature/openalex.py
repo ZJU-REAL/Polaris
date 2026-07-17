@@ -26,6 +26,7 @@ def _simplify(work: dict[str, Any]) -> dict[str, Any]:
         or work.get("doi")
         or None,
         "year": work.get("publication_year"),
+        "published": work.get("publication_date"),  # ISO date，精确发表日期
         "venue": (work.get("primary_location") or {}).get("source", {}).get("display_name")
         if isinstance((work.get("primary_location") or {}).get("source"), dict)
         else None,

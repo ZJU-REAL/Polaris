@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -85,9 +85,11 @@ def _parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # OpenAlex 的 publication_date 是纯日期，parse 出来无时区 → 按 UTC 处理
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 async def _fields_from_arxiv(arxiv_id: str) -> dict[str, Any]:
@@ -122,6 +124,7 @@ async def _fields_from_doi(doi: str) -> dict[str, Any]:
         "venue": meta.get("venue"),
         "doi": meta.get("doi") or doi,
         "url": meta.get("url") or f"https://doi.org/{doi}",
+        "published_at": _parse_iso(meta.get("published")),
     }
 
 

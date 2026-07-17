@@ -16,9 +16,11 @@ from app.services.literature.cache import ResponseCache, TokenBucket, cache_key
 
 API_BASE = "https://api.semanticscholar.org/graph/v1"
 
-PAPER_FIELDS = "title,abstract,year,venue,externalIds,url,citationCount,tldr,authors"
+PAPER_FIELDS = (
+    "title,abstract,year,publicationDate,venue,externalIds,url,citationCount,tldr,authors"
+)
 # references/citations 端点不支持 tldr 字段（带上会 400）
-LINK_FIELDS = "title,abstract,year,venue,externalIds,url,citationCount,authors"
+LINK_FIELDS = "title,abstract,year,publicationDate,venue,externalIds,url,citationCount,authors"
 
 # 免 key 100 req / 5 min 的 80%
 _FREE_RATE = 0.8 * 100 / 300
