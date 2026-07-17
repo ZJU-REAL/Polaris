@@ -283,7 +283,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
           <KnobRange
             label="最大检索篇数"
             en="max_papers"
-            hint="本次检索与参考文献扩展的收录规模上限，也是任务成本上限。"
+            hint="本次检索与参考文献扩展最多加入知识库的论文数。"
             value={maxPapers}
             min={10}
             max={300}
