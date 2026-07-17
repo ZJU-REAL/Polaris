@@ -69,6 +69,10 @@ async def notifications_ws(
         await pubsub.subscribe(*channels)
 
     async def forward() -> None:
+        if not channels:
+            # 用户暂无项目：没有频道可订阅（未 subscribe 时 get_message 会抛
+            # RuntimeError），挂起等 watch_disconnect 感知断开即可
+            await asyncio.Event().wait()
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0)
             if message is None:
