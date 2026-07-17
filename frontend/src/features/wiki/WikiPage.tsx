@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -9,12 +9,16 @@ import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { api } from '../../lib/api';
 import { ExportMenu, PapersTab } from './PapersTab';
-import { PresentationModal } from './PresentationModal';
 import { ConceptsTab } from './ConceptsTab';
-import { GraphTab } from './GraphTab';
 import { LibraryChatTab } from './LibraryChatTab';
 import { IngestTab } from './IngestTab';
 import { NotesTab } from './NotesTab';
+
+// 图谱与 PPT 弹窗体量大且非默认视图：按需加载
+const GraphTab = lazy(() => import('./GraphTab').then((m) => ({ default: m.GraphTab })));
+const PresentationModal = lazy(() =>
+  import('./PresentationModal').then((m) => ({ default: m.PresentationModal })),
+);
 
 /* ============================================================
    /wiki — Research Wiki 文献调研页（M2 + 文献管理增强）
@@ -225,7 +229,9 @@ export function WikiPage() {
             onWikiLink={onWikiLink}
           />
         ) : tab === 'graph' ? (
-          <GraphTab pid={pid} onOpenPaper={goPaper} onOpenConcept={goConcept} />
+          <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
+            <GraphTab pid={pid} onOpenPaper={goPaper} onOpenConcept={goConcept} />
+          </Suspense>
         ) : tab === 'chat' ? (
           <LibraryChatTab pid={pid} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
         ) : tab === 'ingest' ? (
@@ -241,11 +247,13 @@ export function WikiPage() {
       </div>
 
       {presentOpen && pid && (
-        <PresentationModal
-          projectId={pid}
-          initialPaperId={paperId ?? undefined}
-          onClose={() => setPresentOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <PresentationModal
+            projectId={pid}
+            initialPaperId={paperId ?? undefined}
+            onClose={() => setPresentOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );
