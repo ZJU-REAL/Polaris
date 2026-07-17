@@ -36,23 +36,21 @@ import { READING_STATUS, ReadingDot } from '../reading/shared';
 
 const PAGE_SIZE = 20;
 
-/** 论文库视图（docs/api-lit.md §8.5）：三态 = 已抓取（检索到）/ 已纳入（相关性达标）/
-    已编译；相关性不足的进垃圾桶，不显示不计数。 */
-type ViewFilter = 'all' | 'included' | 'compiled' | 'starred';
+/** 论文库视图（docs/api-lit.md §8.5）：全部 = 已纳入（相关性达标）的文献；
+    相关性不足的进垃圾桶，不显示不计数。 */
+type ViewFilter = 'all' | 'compiled' | 'starred';
 
 const VIEW_FILTERS: { v: ViewFilter; label: string; hint?: string }[] = [
-  { v: 'all', label: '全部', hint: '检索到的全部文献（不含垃圾桶）' },
-  { v: 'included', label: '已纳入', hint: '相关性达到阈值、正式进入知识库的文献' },
+  { v: 'all', label: '全部', hint: '已纳入知识库的全部文献' },
   { v: 'compiled', label: '已编译', hint: 'AI 已精读编译出介绍' },
   { v: 'starred', label: '已星标', hint: '我加了星标的文献' },
 ];
 
-/** 视图 → 列表查询参数（垃圾桶文献一律不出现在论文库）。 */
+/** 视图 → 列表查询参数（未纳入/垃圾桶文献一律不出现在论文库）。 */
 function viewQuery(view: ViewFilter): { status: PaperStatusFilter; starred?: boolean } {
-  if (view === 'included') return { status: 'library' };
   if (view === 'compiled') return { status: 'compiled_any' };
   if (view === 'starred') return { status: 'library', starred: true };
-  return { status: 'visible' };
+  return { status: 'library' };
 }
 
 export interface PapersTabProps {
