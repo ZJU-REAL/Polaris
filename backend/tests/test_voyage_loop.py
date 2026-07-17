@@ -305,6 +305,15 @@ async def test_loop_execution_error_retries_then_replans(client, queue_stub):
     detail = resp.json()
     assert detail["plan_iteration"] == 1 and detail["mode"] == "loop"
     assert all(s["status"] != "obsolete" for s in detail["steps"])
+    # 计划调整历史落库并随详情返回（因果叙事：谁触发、为什么、加了几步）
+    assert len(detail["plan_history"]) == 1
+    event = detail["plan_history"][0]
+    assert event["source"] == "navigator" and event["iteration"] == 1
+    assert event["trigger_step"] == "会失败的步骤"
+    assert event["reason"] and event["added"] >= 1 and event["obsoleted"] >= 1
+    # 步骤携带验收与溯源（任务板展示"怎样算通过"与"第几次调整创建"）
+    step = detail["steps"][0]
+    assert "acceptance" in step and "provenance" in step and "attempts" in step
     resp = await client.get(f"/api/voyages/{run_id}?include_obsolete=true", headers=headers)
     steps = resp.json()["steps"]
     assert any(s["status"] == "obsolete" for s in steps)

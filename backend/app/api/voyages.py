@@ -19,7 +19,13 @@ from app.core.queue import TaskQueue, get_task_queue
 from app.core.redis import get_redis_dep
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
-from app.schemas.voyage import VoyageCreate, VoyageDetailRead, VoyageRead, VoyageSkillUse
+from app.schemas.voyage import (
+    VoyageCreate,
+    VoyageDetailRead,
+    VoyagePlanEvent,
+    VoyageRead,
+    VoyageSkillUse,
+)
 from app.services import projects as projects_service
 from app.services import voyages as voyages_service
 
@@ -103,6 +109,11 @@ async def get_voyage(
     if not include_obsolete:
         detail.steps = [s for s in detail.steps if s.status != "obsolete"]
     detail.skills = _skills_summary(run)
+    history = (run.checkpoint or {}).get("plan_history")
+    if isinstance(history, list):
+        detail.plan_history = [
+            VoyagePlanEvent.model_validate(e) for e in history if isinstance(e, dict)
+        ]
     return detail
 
 
