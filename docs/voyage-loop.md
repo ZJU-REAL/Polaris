@@ -249,10 +249,12 @@ run 节点（由 experiment.run 轮询时自查时长并上报，引擎记账并
 
 ## 8. 迁移路径
 
-进度：A-E 已实现；F（前端任务板）未开始。
+进度：**A-F 全部实现**（2026-07-16）。
 - A/B/C：alembic `c1d2e3f4a5b6_voyage_loop_v1`、`agents/voyage/checks.py`、引擎重写；
 - D/E：`agents/voyage/plan_edit.py`（操作集校验 + 确定性分支表）、`Navigator.on_result`、
-  `experiment.run`/`experiment.analyze` 替代 `experiment.iterate`。
+  `experiment.run`/`experiment.analyze` 替代 `experiment.iterate`；
+- F：任务详情页按清单序（rank）渲染 + 尝试徽标 + 计划调整计数 +
+  已作废步骤开关（`include_obsolete` 查询参数）。
 
 实现相对本文的三处偏差（有意为之）：
 
