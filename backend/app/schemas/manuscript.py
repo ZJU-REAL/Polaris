@@ -93,3 +93,13 @@ class DraftRequest(BaseModel):
     # null = 模板全部节；显式列表时只写指定节（related_work 也在可选值内）
     sections: list[str] | None = None
     notes: str | None = None
+
+
+class AssistRequest(BaseModel):
+    """内联 AI 写作辅助（SSE 流）：polish/rewrite 需要 text，rewrite 还需要 instruction。"""
+
+    mode: Literal["polish", "rewrite", "continue"]
+    text: str = Field(default="", max_length=20_000)
+    instruction: str = Field(default="", max_length=4_000)
+    before: str = Field(default="", max_length=8_000)
+    after: str = Field(default="", max_length=8_000)

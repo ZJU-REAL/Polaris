@@ -97,7 +97,7 @@ export function OutlinePanel({ content, open, onToggle, onJump }: OutlinePanelPr
           title={open ? '收起大纲' : '展开大纲'}
         >
           <Icon name="chevDown" size={10} style={{ transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
-          <span style={{ fontSize: 11, fontWeight: 650, letterSpacing: '0.04em' }}>大纲 · OUTLINE</span>
+          <span style={{ fontSize: 11, fontWeight: 650, letterSpacing: '0.04em' }}>大纲</span>
         </button>
         {open && entries.length > 0 && (
           <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{totalWords} 词</span>

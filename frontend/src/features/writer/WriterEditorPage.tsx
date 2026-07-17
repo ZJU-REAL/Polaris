@@ -20,6 +20,7 @@ import { FileTree } from './FileTree';
 import { FactPackDrawer } from './FactPackDrawer';
 import { DraftModal } from './DraftModal';
 import { OutlinePanel } from './OutlinePanel';
+import { AssistPanel, type AssistMode } from './AssistPanel';
 import { colorForUser, ruleText } from './shared';
 
 /* ============================================================
@@ -298,6 +299,10 @@ export function WriterEditorPage() {
   function onInsertCite(bibkey: string) {
     if (insertSnippet(`\\cite{${bibkey}}`)) toast(`已在光标处插入 \\cite{${bibkey}}`, 'ok');
   }
+  // —— 内联 AI（润色/改写/续写）——
+  const [assistMode, setAssistMode] = useState<AssistMode | null>(null);
+  useEffect(() => setAssistMode(null), [currentFileId]);
+
   function onInsertFigure(figId: string, caption?: string | null) {
     const snippet = [
       '\\begin{figure}[t]',
@@ -773,6 +778,27 @@ export function WriterEditorPage() {
                 {currentFile.readonly && (
                   <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>只读</span>
                 )}
+                {!currentFile.readonly && (
+                  <span className="row gap6" style={{ marginLeft: 4 }}>
+                    {(['polish', 'rewrite', 'continue'] as const).map((m) => (
+                      <button
+                        key={m}
+                        className="btn btn-ghost sm"
+                        style={{ height: 22, fontSize: 10.5, padding: '0 8px' }}
+                        disabled={!view || isWriting}
+                        title={
+                          m === 'continue'
+                            ? 'AI 从光标处向后续写'
+                            : `选中一段文字后 AI ${m === 'polish' ? '润色' : '按要求改写'}`
+                        }
+                        onClick={() => setAssistMode((cur) => (cur === m ? null : m))}
+                      >
+                        <Icon name="sparkle" size={11} />
+                        {m === 'polish' ? '润色' : m === 'rewrite' ? '改写' : '续写'}
+                      </button>
+                    ))}
+                  </span>
+                )}
                 <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
                   ⌘S 编译
                 </span>
@@ -789,6 +815,15 @@ export function WriterEditorPage() {
                 onView={handleView}
                 onDocChange={handleDocChange}
               />
+              {assistMode && view && currentFile && !currentFile.readonly && (
+                <AssistPanel
+                  key={`${currentFile.id}-${assistMode}`}
+                  manuscriptId={ms.id}
+                  mode={assistMode}
+                  view={view}
+                  onClose={() => setAssistMode(null)}
+                />
+              )}
             </>
           ) : (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
