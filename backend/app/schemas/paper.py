@@ -203,6 +203,15 @@ class ConceptDetail(ConceptRead):
     related: list[ConceptRelatedRead] = []
 
 
+class ConceptRelinkResult(BaseModel):
+    """全库概念补建结果（POST /projects/{id}/concepts/relink）。"""
+
+    papers: int
+    concepts_created: int
+    links_created: int
+    new_concepts: list[str] = []
+
+
 class ScoredPaper(PaperRead):
     score: float
 

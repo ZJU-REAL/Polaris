@@ -543,6 +543,14 @@ export interface ConceptDetail extends ConceptRead {
   related: { id: string; name: string }[];
 }
 
+/** 全库概念补建结果（POST /projects/{id}/concepts/relink）。 */
+export interface ConceptRelinkResult {
+  papers: number;
+  concepts_created: number;
+  links_created: number;
+  new_concepts: string[];
+}
+
 // ============================================================
 // M2 · Search（关键词 / 语义检索）
 // ============================================================
@@ -1823,6 +1831,12 @@ export const api = {
   },
   getConcept(id: string): Promise<ConceptDetail> {
     return request<ConceptDetail>(`/concepts/${id}`);
+  },
+  /** 全库概念补建：对已编译论文重抽 [[双链]]、建缺失概念并补齐关联（幂等）。 */
+  relinkConcepts(projectId: string): Promise<ConceptRelinkResult> {
+    return request<ConceptRelinkResult>(`/projects/${projectId}/concepts/relink`, {
+      method: 'POST',
+    });
   },
 
   // —— M2 · Search ——

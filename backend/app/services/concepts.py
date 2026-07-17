@@ -161,6 +161,107 @@ async def fetch_concept_definitions(
         return {}
 
 
+async def link_all_paper_concepts(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    llm: LLMRouter | None = None,
+    user_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+) -> tuple[dict[str, Any], list[Paper]]:
+    """全库概念上链（voyage wiki.link_concepts 步骤与手动补建端点共用）：
+
+    对项目内全部已编译论文（compiled/included 且有 wiki_content）抽 [[双链]]，
+    缺失概念建词条（新概念批量调一次 LLM 拿定义，失败占位）、补齐 paper_concepts
+    关联；已存在的概念与关联跳过，幂等可重跑。
+    返回 (统计 dict, 涉及的论文列表)；本函数自行 commit。
+    """
+    papers = (
+        (
+            await session.execute(
+                select(Paper).where(
+                    Paper.project_id == project_id,
+                    Paper.status.in_(("compiled", "included")),
+                    Paper.wiki_content.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    links_by_paper = {p.id: extract_wikilinks(p.wiki_content or "") for p in papers}
+    all_names = sorted({name for names in links_by_paper.values() for name in names})
+
+    existing = (
+        (await session.execute(select(Concept).where(Concept.project_id == project_id)))
+        .scalars()
+        .all()
+    )
+    by_name = {c.name: c for c in existing}
+    slugs = {c.slug for c in existing}
+    new_names = [n for n in all_names if n not in by_name]
+
+    definitions: dict[str, dict[str, str]] = {}
+    if new_names and llm is not None:
+        definitions = await fetch_concept_definitions(
+            llm, new_names, user_id=user_id, project_id=project_id, voyage_id=voyage_id
+        )
+
+    created = 0
+    for name in new_names:
+        slug = wiki_slug(name)
+        if slug in slugs:
+            slug = f"{slug}-{uuid.uuid4().hex[:6]}"
+        slugs.add(slug)
+        meta = definitions.get(name) or {}
+        concept = Concept(
+            project_id=project_id,
+            name=name,
+            slug=slug,
+            definition=str(meta.get("definition") or f"{name}（定义待补充）"),
+            category=normalize_category(meta.get("category")),
+        )
+        session.add(concept)
+        by_name[name] = concept
+        created += 1
+    await session.flush()
+
+    existing_pairs = (
+        {
+            (pid, cid)
+            for pid, cid in (
+                await session.execute(
+                    select(paper_concepts.c.paper_id, paper_concepts.c.concept_id).where(
+                        paper_concepts.c.paper_id.in_(list(links_by_paper))
+                    )
+                )
+            ).all()
+        }
+        if links_by_paper
+        else set()
+    )
+    new_links = 0
+    for paper_id, names in links_by_paper.items():
+        for name in names:
+            concept = by_name.get(name)
+            if concept is None or (paper_id, concept.id) in existing_pairs:
+                continue
+            await session.execute(
+                insert(paper_concepts).values(paper_id=paper_id, concept_id=concept.id)
+            )
+            existing_pairs.add((paper_id, concept.id))
+            new_links += 1
+    await session.commit()
+
+    stats = {
+        "papers": len(papers),
+        "concepts_created": created,
+        "new_concepts": new_names,
+        "links_created": new_links,
+    }
+    return stats, list(papers)
+
+
 async def link_paper_concepts(
     session: AsyncSession,
     paper: Paper,

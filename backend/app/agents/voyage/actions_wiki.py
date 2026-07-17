@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import insert, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
@@ -27,15 +27,10 @@ from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
 from app.models.activity import Activity
 from app.models.base import utcnow
-from app.models.paper import Concept, Paper, paper_concepts
+from app.models.paper import Paper
 from app.models.project import Project
 from app.services.chunks import embed_pending_chunks, index_paper_fulltext
-from app.services.concepts import (
-    CONCEPT_DEF_SYSTEM_PROMPT,
-    extract_wikilinks,
-    normalize_category,
-    wiki_slug,
-)
+from app.services.concepts import link_all_paper_concepts
 from app.services.figure_annotate import annotate_figures, figures_annotated
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
@@ -307,6 +302,7 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                         year=item.get("year"),
                         venue=item.get("venue") or None,
                         url=item.get("url"),
+                        published_at=_parse_iso(item.get("publicationDate")),
                         status="candidate",
                     )
                     session.add(paper)
@@ -459,6 +455,20 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             .scalars()
             .all()
         )
+        # 发表日期回填：雪球/DOI 来源的论文只有年份，arXiv 能查到精确日期（时间线/趋势视图用）
+        need_dates = [p for p in papers if p.published_at is None and p.arxiv_id]
+        if need_dates:
+            try:
+                entries = await arxiv.fetch_by_ids([p.arxiv_id for p in need_dates])
+                by_aid = {e.get("arxiv_id"): e for e in entries if e.get("arxiv_id")}
+                for p in need_dates:
+                    entry = by_aid.get(p.arxiv_id)
+                    if entry:
+                        p.published_at = _parse_iso(entry.get("published"))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — 日期回填尽力而为
+                logger.warning("published_at backfill failed", exc_info=True)
         for paper in papers:
             try:
                 if paper.full_text_path is None and paper.arxiv_id:
@@ -481,6 +491,9 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                         else await get_openalex_client().get_by_doi(paper.doi)
                     )
                     paper.affiliations = (meta or {}).get("affiliations") or []
+                    # 顺带补发表日期（无 arxiv_id 的 DOI 论文走不了上面的 arXiv 回填）
+                    if paper.published_at is None:
+                        paper.published_at = _parse_iso((meta or {}).get("published"))
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001 — 机构补充尽力而为
@@ -605,98 +618,17 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
 async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
-        papers = (
-            (
-                await session.execute(
-                    select(Paper).where(
-                        Paper.project_id == project.id,
-                        Paper.status.in_(("compiled", "included")),
-                        Paper.wiki_content.is_not(None),
-                    )
-                )
-            )
-            .scalars()
-            .all()
+        # 全库上链逻辑与手动补建端点共用（services/concepts.py）
+        stats, papers = await link_all_paper_concepts(
+            session,
+            project_id=project.id,
+            llm=ctx.llm,
+            user_id=ctx.run.created_by,
+            voyage_id=ctx.run.id,
         )
-        links_by_paper = {p.id: extract_wikilinks(p.wiki_content or "") for p in papers}
-        all_names = sorted({name for names in links_by_paper.values() for name in names})
-
-        existing = (
-            (await session.execute(select(Concept).where(Concept.project_id == project.id)))
-            .scalars()
-            .all()
-        )
-        by_name = {c.name: c for c in existing}
-        slugs = {c.slug for c in existing}
-        new_names = [n for n in all_names if n not in by_name]
-
-        # 新概念一次批量调 LLM 拿定义与类别；失败则用占位定义（确定性兜底）
-        definitions: dict[str, dict[str, str]] = {}
-        if new_names:
-            try:
-                result = await ctx.llm.complete(
-                    "librarian",
-                    [
-                        Message(role="system", content=CONCEPT_DEF_SYSTEM_PROMPT),
-                        Message(
-                            role="user",
-                            content="概念列表：" + json.dumps(new_names, ensure_ascii=False),
-                        ),
-                    ],
-                    user_id=ctx.run.created_by,
-                    project_id=ctx.run.project_id,
-                    voyage_id=ctx.run.id,
-                )
-                for item in _extract_json(result.content).get("concepts", []):
-                    if isinstance(item, dict) and item.get("name"):
-                        definitions[str(item["name"])] = item
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001
-                definitions = {}
-
-        created = 0
-        for name in new_names:
-            slug = wiki_slug(name)
-            if slug in slugs:
-                slug = f"{slug}-{uuid.uuid4().hex[:6]}"
-            slugs.add(slug)
-            meta = definitions.get(name) or {}
-            concept = Concept(
-                project_id=project.id,
-                name=name,
-                slug=slug,
-                definition=str(meta.get("definition") or f"{name}（定义待补充）"),
-                category=normalize_category(meta.get("category")),
-            )
-            session.add(concept)
-            by_name[name] = concept
-            created += 1
-        await session.flush()
-
-        # 上链（paper_concepts），跳过已存在的关联
-        existing_pairs = {
-            (pid, cid)
-            for pid, cid in (
-                await session.execute(
-                    select(paper_concepts.c.paper_id, paper_concepts.c.concept_id).where(
-                        paper_concepts.c.paper_id.in_(list(links_by_paper))
-                    )
-                )
-            ).all()
-        }
-        new_links = 0
-        for paper_id, names in links_by_paper.items():
-            for name in names:
-                concept = by_name.get(name)
-                if concept is None or (paper_id, concept.id) in existing_pairs:
-                    continue
-                await session.execute(
-                    insert(paper_concepts).values(paper_id=paper_id, concept_id=concept.id)
-                )
-                existing_pairs.add((paper_id, concept.id))
-                new_links += 1
-        await session.commit()
+        created = int(stats["concepts_created"])
+        new_names = list(stats["new_concepts"])
+        new_links = int(stats["links_created"])
 
         # embedding：编译完成且尚无向量的论文批量嵌入（provider 不支持则跳过）
         embedded = 0

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { api, type ConceptCategory, type ConceptRead } from '../../lib/api';
 import { categoryMeta, CONCEPT_CATEGORY, SearchInput, Section, useDebounced } from './shared';
@@ -176,6 +177,7 @@ function ConceptDetailPane({
 }
 
 export function ConceptsTab({ pid, selectedId, onSelect, onOpenPaper, onWikiLink }: ConceptsTabProps) {
+  const queryClient = useQueryClient();
   const [category, setCategory] = useState<CategoryFilter>('all');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
@@ -191,6 +193,23 @@ export function ConceptsTab({ pid, selectedId, onSelect, onOpenPaper, onWikiLink
   });
   const concepts = useMemo(() => data ?? [], [data]);
 
+  // 全库概念补建：编译过但概念没上链的历史论文（比如批量任务中断）从这里补
+  const relinkMutation = useMutation({
+    mutationFn: () => api.relinkConcepts(pid),
+    onSuccess: (r) => {
+      if (r.concepts_created === 0 && r.links_created === 0) {
+        toast(`已检查 ${r.papers} 篇论文，概念关联都是全的`, 'info');
+      } else {
+        toast(`新建 ${r.concepts_created} 个概念，补上 ${r.links_created} 条论文关联`, 'ok');
+      }
+      void queryClient.invalidateQueries({ queryKey: ['concepts', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['concept'] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['paper'] });
+    },
+    onError: (e) => toast(`提取失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
   const firstId = concepts[0]?.id ?? null;
   useEffect(() => {
     if (!selectedId && firstId) onSelect(firstId);
@@ -205,6 +224,19 @@ export function ConceptsTab({ pid, selectedId, onSelect, onOpenPaper, onWikiLink
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
               {concepts.length ? `${concepts.length} 个` : ''}
             </span>
+            <button
+              className="icon-btn"
+              style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0 }}
+              title="从已编译论文提取概念：重抽正文 [[双链]]，补建缺失的概念和关联"
+              disabled={relinkMutation.isPending}
+              onClick={() => relinkMutation.mutate()}
+            >
+              <Icon
+                name="refresh"
+                size={13}
+                style={relinkMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
+              />
+            </button>
           </div>
           <div className="row gap6 wrap" style={{ marginTop: 10 }}>
             {CATEGORY_FILTERS.map((f) => {
@@ -228,7 +260,19 @@ export function ConceptsTab({ pid, selectedId, onSelect, onOpenPaper, onWikiLink
               compact
               icon="layers"
               title={q ? '没有匹配的概念' : '概念库为空'}
-              desc={q ? '换个关键词试试。' : 'Librarian 编译论文 wiki 时会自动抽取 [[概念]] 上链。'}
+              desc={q ? '换个关键词试试。' : '编译论文解读时会自动提取概念；已有解读的论文可以点下面按钮补一次。'}
+              action={
+                q ? undefined : (
+                  <button
+                    className="btn btn-soft sm"
+                    disabled={relinkMutation.isPending}
+                    onClick={() => relinkMutation.mutate()}
+                  >
+                    <Icon name="refresh" size={13} />
+                    {relinkMutation.isPending ? '提取中…' : '从已编译论文提取概念'}
+                  </button>
+                )
+              }
             />
           ) : (
             concepts.map((c) => (
