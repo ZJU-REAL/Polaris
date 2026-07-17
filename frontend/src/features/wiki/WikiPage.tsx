@@ -155,9 +155,10 @@ export function WikiPage() {
       <PageHead
         eyebrow="Stage 00 · Research Wiki"
         title={tr('文献调研', 'Research Wiki')}
+        dense
         sub={
           currentProject
-            ? `${tr('当前方向：', 'Current direction: ')}${currentProject.name}`
+            ? undefined
             : projectsLoading
               ? tr('加载研究方向…', 'Loading directions…')
               : tr('选择一个研究方向', 'Pick a direction')
