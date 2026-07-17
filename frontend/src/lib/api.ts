@@ -1160,6 +1160,23 @@ export interface ManuscriptFileRead {
   content: string;
 }
 
+/** 文件版本快照来源：AI 写入前 / 编译当刻 / 恢复前备份。 */
+export type FileVersionOrigin = 'pre_ai' | 'compile' | 'pre_restore';
+
+export interface FileVersionMeta {
+  id: string;
+  seq: number;
+  origin: FileVersionOrigin;
+  label: string | null;
+  size: number;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface FileVersionContent extends FileVersionMeta {
+  content: string;
+}
+
 export type DiagnosticSeverity = 'error' | 'warning';
 
 export type DiagnosticRule =
@@ -2022,6 +2039,20 @@ export const api = {
   },
   deleteManuscriptFile(id: string, fid: string): Promise<void> {
     return request<void>(`/manuscripts/${id}/files/${fid}`, { method: 'DELETE' });
+  },
+
+  // —— M5-B · 文件版本历史 ——
+  listFileVersions(id: string, fid: string): Promise<FileVersionMeta[]> {
+    return request<FileVersionMeta[]>(`/manuscripts/${id}/files/${fid}/versions`);
+  },
+  getFileVersion(id: string, fid: string, vid: string): Promise<FileVersionContent> {
+    return request<FileVersionContent>(`/manuscripts/${id}/files/${fid}/versions/${vid}`);
+  },
+  /** 恢复到指定版本（当前内容自动备份为 pre_restore 快照）；readonly 文件 → 409。 */
+  restoreFileVersion(id: string, fid: string, vid: string): Promise<ManuscriptFileRead> {
+    return request<ManuscriptFileRead>(`/manuscripts/${id}/files/${fid}/versions/${vid}/restore`, {
+      method: 'POST',
+    });
   },
 
   // —— M5-B · fact-pack / 编译 / AI 起草 / 投稿 ——

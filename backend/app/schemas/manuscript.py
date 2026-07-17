@@ -95,6 +95,22 @@ class DraftRequest(BaseModel):
     notes: str | None = None
 
 
+class FileVersionMeta(BaseModel):
+    """版本快照元数据（列表用，不含内容）。"""
+
+    id: uuid.UUID
+    seq: int
+    origin: Literal["pre_ai", "compile", "pre_restore"]
+    label: str | None
+    size: int  # 内容 utf-8 字节数
+    created_by: uuid.UUID | None
+    created_at: datetime
+
+
+class FileVersionContent(FileVersionMeta):
+    content: str
+
+
 class AssistRequest(BaseModel):
     """内联 AI 写作辅助（SSE 流）：polish/rewrite 需要 text，rewrite 还需要 instruction。"""
 

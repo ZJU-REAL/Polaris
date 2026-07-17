@@ -18,6 +18,7 @@ from pycrdt.websocket import WebsocketServer, YRoom
 
 from app.core.db import get_sessionmaker
 from app.models.manuscript import ManuscriptFile
+from app.services import manuscript_versions
 
 logger = logging.getLogger("polaris.crdt")
 
@@ -162,6 +163,7 @@ class CRDTRoomManager:
         if room is not None:
             text = room.ydoc.get("content", type=Text)
             current = str(text)
+            await self._snapshot_version(file_id, current, section_marker)
             new = replace_section(current, section_marker, content)
             if new != current:
                 span = section_span(current, section_marker)
@@ -184,9 +186,46 @@ class CRDTRoomManager:
             file = await session.get(ManuscriptFile, file_id)
             if file is None:
                 raise ValueError(f"manuscript file not found: {file_id}")
+            await manuscript_versions.snapshot_file(
+                session, file, origin="pre_ai", label=f"AI 写入前（{section_marker}）"
+            )
             file.content = replace_section(file.content, section_marker, content)
             await session.commit()
         return False
+
+    async def _snapshot_version(self, file_id: uuid.UUID, content: str, section: str) -> None:
+        """AI 写入前把当前（房间）内容存一份版本快照（失败不阻塞写入）。"""
+        try:
+            async with get_sessionmaker()() as session:
+                file = await session.get(ManuscriptFile, file_id)
+                if file is not None:
+                    await manuscript_versions.snapshot_file(
+                        session,
+                        file,
+                        origin="pre_ai",
+                        label=f"AI 写入前（{section}）",
+                        content=content,
+                    )
+                    await session.commit()
+        except Exception:  # noqa: BLE001 — 快照尽力而为
+            logger.exception("版本快照失败：file=%s", file_id)
+
+    async def set_content(self, file_id: uuid.UUID, new_content: str) -> bool:
+        """整文件替换（版本恢复用）。有活跃房间经 Y 事务替换并立即快照落库，
+        返回 True；无房间返回 False（调用方直接写库）。"""
+        room = self.active_room(file_id)
+        if room is None:
+            return False
+        text = room.ydoc.get("content", type=Text)
+        current = str(text)
+        if new_content != current:
+            with room.ydoc.transaction():
+                if current:
+                    del text[0 : len(current.encode("utf-8"))]
+                if new_content:
+                    text += new_content
+        await self.flush(file_id)
+        return True
 
     # ---- 生命周期 ----
 

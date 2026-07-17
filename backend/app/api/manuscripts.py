@@ -28,6 +28,8 @@ from app.schemas.manuscript import (
     AssistRequest,
     CompileResult,
     DraftRequest,
+    FileVersionContent,
+    FileVersionMeta,
     ManuscriptCreate,
     ManuscriptDetail,
     ManuscriptFileBrief,
@@ -41,6 +43,7 @@ from app.schemas.manuscript import (
 from app.schemas.review import PaperReviewRequest, PaperReviewSummary
 from app.schemas.voyage import VoyageRead
 from app.services import latex_compile, writing_assist
+from app.services import manuscript_versions as manuscript_versions_service
 from app.services import manuscripts as manuscripts_service
 from app.services import paper_review as paper_review_service
 from app.services import projects as projects_service
@@ -268,6 +271,101 @@ async def delete_file(
         await manuscripts_service.delete_file(session, file=file)
     except manuscripts_service.FileReadonlyError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="FILE_READONLY") from e
+
+
+# ---- §2b 文件版本历史 ----
+
+
+def _version_meta(v) -> FileVersionMeta:
+    return FileVersionMeta(
+        id=v.id,
+        seq=v.seq,
+        origin=v.origin,
+        label=v.label,
+        size=len(v.content.encode("utf-8")),
+        created_by=v.created_by,
+        created_at=v.created_at,
+    )
+
+
+@router.get(
+    "/manuscripts/{manuscript_id}/files/{file_id}/versions",
+    response_model=list[FileVersionMeta],
+)
+async def list_file_versions(
+    manuscript_id: uuid.UUID,
+    file_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[FileVersionMeta]:
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    file = await _member_file(session, manuscript, file_id)
+    versions = await manuscript_versions_service.list_versions(session, file.id)
+    return [_version_meta(v) for v in versions]
+
+
+@router.get(
+    "/manuscripts/{manuscript_id}/files/{file_id}/versions/{version_id}",
+    response_model=FileVersionContent,
+)
+async def get_file_version(
+    manuscript_id: uuid.UUID,
+    file_id: uuid.UUID,
+    version_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> FileVersionContent:
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    file = await _member_file(session, manuscript, file_id)
+    version = await manuscript_versions_service.get_version(session, file.id, version_id)
+    if version is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="VERSION_NOT_FOUND")
+    return FileVersionContent(**_version_meta(version).model_dump(), content=version.content)
+
+
+@router.post(
+    "/manuscripts/{manuscript_id}/files/{file_id}/versions/{version_id}/restore",
+    response_model=ManuscriptFileContent,
+)
+async def restore_file_version(
+    manuscript_id: uuid.UUID,
+    file_id: uuid.UUID,
+    version_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ManuscriptFileContent:
+    """恢复到指定版本：先把当前内容备份为 pre_restore 快照，再整文件替换。
+
+    有活跃协同房间时经 Y 事务替换（协同者实时可见），无房间直接写库。
+    """
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    file = await _member_file(session, manuscript, file_id)
+    if file.readonly:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="FILE_READONLY")
+    version = await manuscript_versions_service.get_version(session, file.id, version_id)
+    if version is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="VERSION_NOT_FOUND")
+
+    rooms = get_crdt_rooms()
+    current = rooms.room_content(file.id)
+    current = current if current is not None else file.content
+    await manuscript_versions_service.snapshot_file(
+        session,
+        file,
+        origin="pre_restore",
+        label=f"恢复 #{version.seq} 前备份",
+        created_by=user.id,
+        content=current,
+    )
+    restored = version.content
+    via_room = await rooms.set_content(file.id, restored)
+    if not via_room:
+        file.content = restored
+        file.updated_by = user.id
+    await session.commit()
+    return ManuscriptFileContent(
+        id=file.id, path=file.path, content=restored, readonly=file.readonly
+    )
 
 
 # ---- §3 fact-pack ----

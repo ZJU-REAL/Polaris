@@ -73,3 +73,29 @@ class ManuscriptFile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     manuscript: Mapped[Manuscript] = relationship(back_populates="files")
+    versions: Mapped[list["ManuscriptFileVersion"]] = relationship(
+        back_populates="file", cascade="all, delete-orphan"
+    )
+
+
+# 版本快照来源：pre_ai（AI 分节写入前）| compile（编译当刻）| pre_restore（恢复前备份）
+FILE_VERSION_ORIGINS = ("pre_ai", "compile", "pre_restore")
+
+
+class ManuscriptFileVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """稿件文件的版本快照（自动打点，人工可回滚）。"""
+
+    __tablename__ = "manuscript_file_versions"
+
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("manuscript_files.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    seq: Mapped[int] = mapped_column(nullable=False)  # 同文件内递增
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(256))
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    file: Mapped[ManuscriptFile] = relationship(back_populates="versions")

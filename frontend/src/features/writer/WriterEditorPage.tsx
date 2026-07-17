@@ -21,6 +21,7 @@ import { FactPackDrawer } from './FactPackDrawer';
 import { DraftModal } from './DraftModal';
 import { OutlinePanel } from './OutlinePanel';
 import { AssistPanel, type AssistMode } from './AssistPanel';
+import { HistoryModal } from './HistoryModal';
 import { colorForUser, ruleText } from './shared';
 
 /* ============================================================
@@ -299,9 +300,13 @@ export function WriterEditorPage() {
   function onInsertCite(bibkey: string) {
     if (insertSnippet(`\\cite{${bibkey}}`)) toast(`已在光标处插入 \\cite{${bibkey}}`, 'ok');
   }
-  // —— 内联 AI（润色/改写/续写）——
+  // —— 内联 AI（润色/改写/续写）/ 版本历史 ——
   const [assistMode, setAssistMode] = useState<AssistMode | null>(null);
-  useEffect(() => setAssistMode(null), [currentFileId]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => {
+    setAssistMode(null);
+    setHistoryOpen(false);
+  }, [currentFileId]);
 
   function onInsertFigure(figId: string, caption?: string | null) {
     const snippet = [
@@ -799,7 +804,15 @@ export function WriterEditorPage() {
                     ))}
                   </span>
                 )}
-                <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
+                <button
+                  className="writer-mini-btn"
+                  style={{ marginLeft: 'auto' }}
+                  title="版本历史（AI 写入前 / 每次编译自动存档）"
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  <Icon name="clock" size={11} />
+                </button>
+                <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
                   ⌘S 编译
                 </span>
               </div>
@@ -945,6 +958,14 @@ export function WriterEditorPage() {
       </div>
 
       {/* —— 抽屉 / Modal —— */}
+      {currentFile && (
+        <HistoryModal
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          manuscriptId={ms.id}
+          file={currentFile}
+        />
+      )}
       <FactPackDrawer
         open={factOpen}
         onClose={() => setFactOpen(false)}
