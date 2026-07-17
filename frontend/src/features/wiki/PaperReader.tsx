@@ -16,12 +16,22 @@ export function PaperReader({
   renderFigure,
   onWikiLink,
   onClose,
+  autoPrint,
 }: {
   paper: PaperDetail;
   renderFigure: (n: number) => ReactNode;
   onWikiLink?: WikiLinkHandler;
   onClose: () => void;
+  /** 打开后自动唤起打印对话框（「导出 PDF」一步直达） */
+  autoPrint?: boolean;
 }) {
+  // 打开即打印：等一帧让正文（含图）渲染完再唤起打印
+  useEffect(() => {
+    if (!autoPrint) return;
+    const t = setTimeout(() => window.print(), 350);
+    return () => clearTimeout(t);
+  }, [autoPrint]);
+
   // Esc 关闭 + 锁定背景滚动
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

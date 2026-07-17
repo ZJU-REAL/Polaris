@@ -876,6 +876,7 @@ function PaperDetailPane({
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [conceptsOpen, setConceptsOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
+  const [readerPrint, setReaderPrint] = useState(false);
 
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['paper', paperId],
@@ -1024,7 +1025,10 @@ function PaperDetailPane({
           <button
             className="btn btn-soft sm"
             title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
-            onClick={() => setReaderOpen(true)}
+            onClick={() => {
+              setReaderPrint(false);
+              setReaderOpen(true);
+            }}
           >
             <Icon name="book" size={13} />
             {tr('阅览模式', 'Reading mode')}
@@ -1194,7 +1198,47 @@ function PaperDetailPane({
       {/* —— Wiki 正文（markdown，含 ![[fig:N]] 嵌入图） —— */}
       <div style={{ marginTop: 22 }}>
         {paper.wiki_content ? (
-          <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
+          <>
+            <div
+              className="row"
+              style={{
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                paddingBottom: 10,
+                marginBottom: 16,
+                borderBottom: '0.5px solid var(--border)',
+              }}
+            >
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+                {tr('AI 图文介绍', 'AI intro')}
+              </span>
+              <div className="row gap6">
+                <button
+                  className="btn btn-soft sm"
+                  title={tr('全屏专注阅读', 'Full-screen focused reading')}
+                  onClick={() => {
+                    setReaderPrint(false);
+                    setReaderOpen(true);
+                  }}
+                >
+                  <Icon name="book" size={13} />
+                  {tr('阅览模式', 'Reading mode')}
+                </button>
+                <button
+                  className="btn btn-ghost sm"
+                  title={tr('打开阅览页并唤起打印，另存为 PDF', 'Open the reader and print to save as PDF')}
+                  onClick={() => {
+                    setReaderPrint(true);
+                    setReaderOpen(true);
+                  }}
+                >
+                  <Icon name="download" size={13} />
+                  {tr('导出 PDF', 'Export PDF')}
+                </button>
+              </div>
+            </div>
+            <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
+          </>
         ) : (
           <EmptyState
             compact
@@ -1213,6 +1257,7 @@ function PaperDetailPane({
           paper={paper}
           renderFigure={renderFigure}
           onWikiLink={onWikiLink}
+          autoPrint={readerPrint}
           onClose={() => setReaderOpen(false)}
         />
       )}
