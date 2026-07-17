@@ -137,10 +137,7 @@ async def create_tournament_voyage(
     }
     run = VoyageRun(
         kind="idea_review",
-        goal=(
-            f"Idea 评审锦标赛：{project.name}"
-            f"（{participant_count} 个想法，每场 {data.rounds} 轮辩论）"
-        ),
+        goal=f"Idea 评审锦标赛：{project.name}",
         status="planning",
         cursor=0,
         checkpoint={"params": params},
