@@ -1454,10 +1454,11 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
             ))}
             <span
               className="chip"
-              style={{ marginLeft: 'auto' }}
+              style={{ marginLeft: 'auto', gap: 5 }}
               title={tr('垃圾桶：已删除的文献，可召回或彻底删除', 'Trash: deleted papers — restore or delete forever')}
               onClick={() => setTrashOpen(true)}
             >
+              <Icon name="trash" size={12} />
               {tr('垃圾桶', 'Trash')}
             </span>
           </div>
