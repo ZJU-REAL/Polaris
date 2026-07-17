@@ -721,11 +721,27 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 .paper-reader-body p { margin: 0 0 1.05em; }
 .paper-reader-body img { border-radius: 10px; }
 
+.author-link {
+  cursor: pointer; border-radius: 4px; transition: color 0.12s, background 0.12s;
+  text-underline-offset: 2px;
+}
+.author-link:hover { color: var(--accent-text); text-decoration: underline; }
+.paper-reader-links { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; }
+.paper-reader-links a {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 550;
+  color: var(--accent-text); text-decoration: none;
+}
+.paper-reader-links a:hover { text-decoration: underline; }
+.paper-reader-links a svg { color: var(--accent); }
+
 /* —— 打印：只保留正文，另存为 PDF —— */
 @media print {
   @page { margin: 16mm; }
   body.reader-open #root { display: none !important; }
-  .paper-reader { position: static !important; height: auto !important; overflow: visible !important; background: #fff !important; animation: none !important; }
+  .paper-reader { position: static !important; height: auto !important; overflow: visible !important; background: #fff !important; animation: none !important;
+    -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  .paper-reader *, .paper-reader-body * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  .paper-reader-links { display: flex !important; }
   .paper-reader-topbar { display: none !important; }
   .paper-reader-scroll { overflow: visible !important; height: auto !important; padding: 0 !important; }
   .paper-reader-article {

@@ -862,12 +862,15 @@ function PaperDetailPane({
   pid,
   onOpenConcept,
   onWikiLink,
+  onFilterAuthor,
   onDeleted,
 }: {
   paperId: string;
   pid: string;
   onOpenConcept: (id: string) => void;
   onWikiLink: WikiLinkHandler;
+  /** 点击作者名 → 论文库按该作者过滤 */
+  onFilterAuthor: (name: string) => void;
   /** 删除成功后回调（父组件清空选中，自动跳到列表第一篇） */
   onDeleted: () => void;
 }) {
@@ -946,7 +949,6 @@ function PaperDetailPane({
     );
   }
 
-  const authors = paper.authors.map((a) => a.name).join(' · ');
   const arxivUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null;
   const relevance = paper.relevance_score;
   const starred = paper.starred ?? false;
@@ -986,7 +988,30 @@ function PaperDetailPane({
           <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
             {paper.title}
           </h1>
-          {authors && <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.5 }}>{authors}</div>}
+          {paper.authors.length > 0 && (
+            <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
+              {paper.authors.map((a, i) => (
+                <span key={`${a.name}-${i}`}>
+                  {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
+                  <span
+                    className="author-link"
+                    role="button"
+                    tabIndex={0}
+                    title={tr(`只看 ${a.name} 的论文`, `Show only ${a.name}'s papers`)}
+                    onClick={() => onFilterAuthor(a.name)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onFilterAuthor(a.name);
+                      }
+                    }}
+                  >
+                    {a.name}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         {relevance !== null && (
           <ScoreRing value={Math.round(relevance * 100) / 10} size={56} label={tr('相关度', 'Relevance')} />
@@ -996,8 +1021,8 @@ function PaperDetailPane({
       {/* —— 操作 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
         <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`)}>
-          <Icon name="book" size={13} />
-          {tr('阅读', 'Read')}
+          <Icon name="file" size={13} />
+          {tr('阅读原文', 'Read original')}
         </button>
         <button
           className="btn btn-soft sm"
@@ -1257,6 +1282,10 @@ function PaperDetailPane({
           paper={paper}
           renderFigure={renderFigure}
           onWikiLink={onWikiLink}
+          onFilterAuthor={(name) => {
+            setReaderOpen(false);
+            onFilterAuthor(name);
+          }}
           autoPrint={readerPrint}
           onClose={() => setReaderOpen(false)}
         />
@@ -1289,6 +1318,21 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
   const author = useDebounced(advAuthor.trim());
   const affiliation = useDebounced(advAffiliation.trim());
   const advActive = !!(author || affiliation || advPubFrom || advPubTo || advCreatedFrom || advCreatedTo);
+
+  // 点击作者名 → 论文库只留该作者的论文（走已有的高级检索作者过滤）
+  const filterByAuthor = useCallback((name: string) => {
+    setMode('keyword');
+    setQInput('');
+    setAdvAuthor(name);
+    setAdvAffiliation('');
+    setAdvPubFrom('');
+    setAdvPubTo('');
+    setAdvCreatedFrom('');
+    setAdvCreatedTo('');
+    setAdvOpen(true);
+    onSelect('');
+    toast(tr(`已筛选作者：${name}`, `Filtered by author: ${name}`), 'info');
+  }, [onSelect]);
 
   // 多选（批量删除/导出）：默认关闭，底部「多选」按钮开启后行首出现复选框
   const [selectMode, setSelectMode] = useState(false);
@@ -1706,6 +1750,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
             pid={pid}
             onOpenConcept={onOpenConcept}
             onWikiLink={onWikiLink}
+            onFilterAuthor={filterByAuthor}
             onDeleted={() => onSelect('')}
           />
         ) : (

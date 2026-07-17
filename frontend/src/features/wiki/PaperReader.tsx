@@ -15,12 +15,15 @@ export function PaperReader({
   paper,
   renderFigure,
   onWikiLink,
+  onFilterAuthor,
   onClose,
   autoPrint,
 }: {
   paper: PaperDetail;
   renderFigure: (n: number) => ReactNode;
   onWikiLink?: WikiLinkHandler;
+  /** 点击作者名 → 论文库按该作者过滤 */
+  onFilterAuthor?: (name: string) => void;
   onClose: () => void;
   /** 打开后自动唤起打印对话框（「导出 PDF」一步直达） */
   autoPrint?: boolean;
@@ -49,8 +52,10 @@ export function PaperReader({
     };
   }, [onClose]);
 
-  const authors = paper.authors.map((a) => a.name).join(' · ');
   const venueYear = [paper.venue, paper.year].filter(Boolean).join(' · ');
+  const readLink = `${window.location.origin}/papers/${paper.id}/read`;
+  const sourceUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : paper.url ?? null;
+  const sourceLabel = paper.arxiv_id ? `arXiv:${paper.arxiv_id}` : tr('论文源链接', 'Source');
 
   return createPortal(
     <div className="paper-reader">
@@ -71,10 +76,46 @@ export function PaperReader({
           <header className="paper-reader-header">
             {venueYear && <div className="paper-reader-eyebrow mono">{venueYear}</div>}
             <h1>{paper.title}</h1>
-            {authors && <div className="paper-reader-authors">{authors}</div>}
-            {paper.arxiv_id && (
-              <div className="paper-reader-arxiv mono">arXiv:{paper.arxiv_id}</div>
+            {paper.authors.length > 0 && (
+              <div className="paper-reader-authors">
+                {paper.authors.map((a, i) => (
+                  <span key={`${a.name}-${i}`}>
+                    {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
+                    {onFilterAuthor ? (
+                      <span
+                        className="author-link"
+                        role="button"
+                        tabIndex={0}
+                        title={tr(`只看 ${a.name} 的论文`, `Show only ${a.name}'s papers`)}
+                        onClick={() => onFilterAuthor(a.name)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onFilterAuthor(a.name);
+                          }
+                        }}
+                      >
+                        {a.name}
+                      </span>
+                    ) : (
+                      a.name
+                    )}
+                  </span>
+                ))}
+              </div>
             )}
+            <div className="paper-reader-links">
+              <a href={readLink} target="_blank" rel="noreferrer noopener">
+                <Icon name="book" size={12} />
+                {tr('平台阅读链接', 'Read on platform')}
+              </a>
+              {sourceUrl && (
+                <a href={sourceUrl} target="_blank" rel="noreferrer noopener">
+                  <Icon name="link" size={12} />
+                  {sourceLabel}
+                </a>
+              )}
+            </div>
           </header>
 
           {paper.tldr && (
