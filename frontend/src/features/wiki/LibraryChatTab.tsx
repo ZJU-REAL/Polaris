@@ -1,35 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
-import { api, type ChatTurn, type LibraryChatSource } from '../../lib/api';
+import { api, type LibraryChatSource } from '../../lib/api';
 import { chatLibrarySse } from '../../lib/sse';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { tr } from '../../lib/i18n';
+import { ChatSurface } from '../chat/ChatSurface';
+import type { ChatMsg } from '../chat/types';
 
 /* ============================================================
    文献库对话 Tab：对整个文献库做跨文献分析与综合梳理。
-   气泡对话 + 流式回答，回答里嵌入文献库的可交互元素：
-   - [n] 引用角标 → 点击打开对应论文详情；
-   - [[概念名]] 双链 → 点击跳概念库；
-   - 来源卡：标题/年份/相关度 + 概念 chips +「详情 / 阅读」操作。
+   壳（历史/技能条/输入/ 上下文/@ 分享）复用 ChatSurface；
+   这里只提供库对话特有的：引用角标、来源卡、补建索引、建议。
    ============================================================ */
 
-interface ChatMsg {
-  role: 'user' | 'assistant';
-  content: string;
-  /** assistant：本次回答检索到的引用来源 */
-  sources?: LibraryChatSource[];
-  done?: boolean;
-  failed?: boolean;
-}
-
-const MAX_HISTORY_TURNS = 10;
-
-// 模块级常量存 zh/en 两份，渲染处再 tr（import 时求值不会随语言切换更新）
 const SUGGESTIONS: { zh: string; en: string }[] = [
   {
     zh: '这个方向目前的主流方法可以分成哪几类？各自的代表工作是什么？',
@@ -174,24 +161,6 @@ export interface LibraryChatTabProps {
 }
 
 export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabProps) {
-  const [msgs, setMsgs] = useState<ChatMsg[]>([]);
-  const [input, setInput] = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const stopRef = useRef<(() => void) | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-
-  // 切换方向清空对话；卸载时断流
-  useEffect(() => {
-    setMsgs([]);
-    return () => stopRef.current?.();
-  }, [pid]);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [msgs]);
-
-  // 老数据补建全文分段索引（新入库论文由任务自动处理）
   const rebuildMutation = useMutation({
     mutationFn: () => api.rebuildFulltextIndex(pid),
     onSuccess: (r) => {
@@ -210,96 +179,6 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
     onError: (e) =>
       toast(`${tr('索引重建失败：', 'Index rebuild failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
-
-  const finishStream = (failed: boolean, fallbackText?: string) => {
-    setStreaming(false);
-    stopRef.current = null;
-    setMsgs((m) => {
-      const next = [...m];
-      const last = next[next.length - 1];
-      if (last && last.role === 'assistant') {
-        next[next.length - 1] = {
-          ...last,
-          done: true,
-          failed: failed || undefined,
-          content: last.content || fallbackText || '',
-        };
-      }
-      return next;
-    });
-  };
-
-  const send = (question?: string) => {
-    const q = (question ?? input).trim();
-    if (!q || streaming) return;
-
-    const history: ChatTurn[] = msgs
-      .filter((m) => m.content && !m.failed)
-      .slice(-MAX_HISTORY_TURNS * 2)
-      .map((m) => ({ role: m.role, content: m.content }));
-
-    setMsgs((m) => [...m, { role: 'user', content: q }, { role: 'assistant', content: '' }]);
-    setInput('');
-    setStreaming(true);
-
-    stopRef.current = chatLibrarySse(pid, { question: q, history }, {
-      onEvent: (event, dataStr) => {
-        if (event === 'sources') {
-          let items: LibraryChatSource[] = [];
-          try {
-            items = (JSON.parse(dataStr) as { items?: LibraryChatSource[] }).items ?? [];
-          } catch {
-            return;
-          }
-          setMsgs((m) => {
-            const next = [...m];
-            const last = next[next.length - 1];
-            if (last && last.role === 'assistant' && !last.done) {
-              next[next.length - 1] = { ...last, sources: items };
-            }
-            return next;
-          });
-        } else if (event === 'delta') {
-          let text = '';
-          try {
-            text = (JSON.parse(dataStr) as { text?: string }).text ?? '';
-          } catch {
-            return;
-          }
-          if (!text) return;
-          setMsgs((m) => {
-            const next = [...m];
-            const last = next[next.length - 1];
-            if (last && last.role === 'assistant' && !last.done) {
-              next[next.length - 1] = { ...last, content: last.content + text };
-            }
-            return next;
-          });
-        } else if (event === 'done') {
-          finishStream(false);
-        } else if (event === 'error') {
-          let detail = tr('服务端出错', 'Server error');
-          try {
-            detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
-          } catch {
-            /* keep default */
-          }
-          toast(`${tr('文献对话出错：', 'Library chat error: ')}${detail}`, 'error');
-          finishStream(true, tr('（回答中断了，请重试）', '(Answer interrupted — please retry)'));
-        }
-      },
-      onClose: () => finishStream(false),
-      onError: (err) => {
-        toast(`${tr('连接失败：', 'Connection failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error');
-        finishStream(true, tr('（连接失败，请稍后重试）', '(Connection failed — try again later)'));
-      },
-    });
-  };
-
-  const stop = () => {
-    stopRef.current?.();
-    finishStream(false);
-  };
 
   // [n] 引用角标：可点击，悬停显示论文标题；编号不在来源清单里则按原文渲染
   const citationRenderer = useCallback(
@@ -336,178 +215,87 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
     [onOpenPaper],
   );
 
+  const stream = useCallback(
+    (
+      args: { question: string; history: { role: 'user' | 'assistant'; content: string }[] },
+      ctrl: {
+        onDelta: (t: string) => void;
+        onSources?: (s: string) => void;
+        onDone: () => void;
+        onError: (d: string) => void;
+      },
+    ) =>
+      chatLibrarySse(pid, { question: args.question, history: args.history }, {
+        onEvent: (event, dataStr) => {
+          if (event === 'sources') ctrl.onSources?.(dataStr);
+          else if (event === 'delta') {
+            try {
+              const t = (JSON.parse(dataStr) as { text?: string }).text ?? '';
+              if (t) ctrl.onDelta(t);
+            } catch {
+              /* ignore */
+            }
+          } else if (event === 'done') ctrl.onDone();
+          else if (event === 'error') {
+            let detail = tr('服务端出错', 'Server error');
+            try {
+              detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
+            } catch {
+              /* keep */
+            }
+            ctrl.onError(detail);
+          }
+        },
+        onClose: () => ctrl.onDone(),
+        onError: (err) => ctrl.onError(err instanceof Error ? err.message : String(err)),
+      }),
+    [pid],
+  );
+
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      {/* —— 提示条 —— */}
-      <div
-        className="row gap8"
-        style={{
-          flexShrink: 0,
-          margin: '10px 14px 0',
-          padding: '6px 10px',
-          borderRadius: 8,
-          background: 'var(--surface-2)',
-          fontSize: 11,
-          color: 'var(--text-3)',
-          lineHeight: 1.5,
-        }}
-      >
-        <span style={{ flex: 1 }}>
-          {tr(
-            '回答基于从整个文献库检索到的全文片段，可做跨文献对比与综合梳理；[n] 为引用来源编号。',
-            'Answers are grounded in full-text passages retrieved from the whole library, so cross-paper comparison and synthesis work; [n] marks a source number.',
-          )}
-        </span>
+    <ChatSurface
+      surfaceKey={`library:${pid}`}
+      pid={pid}
+      title={tr('文献对话', 'Library chat')}
+      contextKinds={['paper', 'idea', 'experiment', 'concept']}
+      hint={tr(
+        '回答基于从整个文献库检索到的全文片段，可做跨文献对比与综合梳理；[n] 为引用来源编号。',
+        'Answers are grounded in full-text passages from the whole library; [n] marks a source number.',
+      )}
+      headerAction={
         <button
           className="btn btn-ghost sm"
-          style={{ height: 22, fontSize: 10.5, flexShrink: 0 }}
-          title={tr(
-            '给较早入库、还没建全文索引的论文补索引（新论文由任务自动处理）',
-            'Backfill the full-text index for older papers (new papers are indexed automatically)',
-          )}
+          style={{ height: 26, fontSize: 10.5, flexShrink: 0 }}
+          title={tr('给较早入库、还没建全文索引的论文补索引', 'Backfill the full-text index for older papers')}
           disabled={rebuildMutation.isPending}
           onClick={() => rebuildMutation.mutate()}
         >
-          {rebuildMutation.isPending ? (
-            <Icon name="refresh" size={11} style={{ animation: 'spin 1s linear infinite' }} />
-          ) : (
-            <Icon name="refresh" size={11} />
-          )}
-          {tr('补建全文索引', 'Rebuild full-text index')}
+          <Icon name="refresh" size={11} style={rebuildMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
+          {tr('补建索引', 'Rebuild index')}
         </button>
-      </div>
-
-      {/* —— 对话区 —— */}
-      <div ref={scrollRef} className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '12px 14px' }}>
-        {msgs.length === 0 ? (
-          <div style={{ maxWidth: 560, margin: '40px auto 0' }}>
-            <EmptyState
-              compact
-              icon="chat"
-              title={tr('和整个文献库对话', 'Chat with the whole library')}
-              desc={tr(
-                '跨文献的分析、比较、综合梳理都可以问，AI 会先检索相关论文片段再回答。',
-                'Ask cross-paper analysis, comparison, or synthesis questions — the AI retrieves relevant passages before answering.',
-              )}
-            />
-            <div className="col gap8" style={{ marginTop: 18 }}>
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s.zh}
-                  className="card"
-                  style={{
-                    textAlign: 'left',
-                    padding: '9px 12px',
-                    fontSize: 12,
-                    color: 'var(--text-2)',
-                    cursor: 'pointer',
-                    border: '0.5px solid var(--border)',
-                    background: 'var(--surface)',
-                    lineHeight: 1.5,
-                  }}
-                  onClick={() => send(tr(s.zh, s.en))}
-                >
-                  {tr(s.zh, s.en)}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          msgs.map((m, i) => {
-            if (m.role === 'user') {
-              return (
-                <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
-                  <div
-                    style={{
-                      maxWidth: '78%',
-                      padding: '8px 12px',
-                      borderRadius: '12px 12px 3px 12px',
-                      background: 'var(--accent)',
-                      color: '#fff',
-                      fontSize: 12.5,
-                      lineHeight: 1.6,
-                      whiteSpace: 'pre-wrap',
-                      overflowWrap: 'break-word',
-                    }}
-                  >
-                    {m.content}
-                  </div>
-                </div>
-              );
-            }
-            const thinking = !m.done && !m.content;
-            return (
-              <div key={i} style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 10 }}>
-                <div
-                  style={{
-                    maxWidth: '86%',
-                    minWidth: 0,
-                    padding: '8px 12px',
-                    borderRadius: '12px 12px 12px 3px',
-                    background: 'var(--surface-2)',
-                    border: '0.5px solid var(--border)',
-                    fontSize: 12.5,
-                  }}
-                >
-                  {thinking ? (
-                    <span className="row gap6 muted" style={{ fontSize: 12 }}>
-                      <Icon name="refresh" size={12} style={{ animation: 'spin 1s linear infinite' }} />
-                      {tr('正在检索文献库并思考…', 'Searching the library and thinking…')}
-                    </span>
-                  ) : (
-                    <Markdown
-                      source={m.content}
-                      style={{ fontSize: 12.5 }}
-                      onWikiLink={onWikiLink}
-                      renderCitation={citationRenderer(m.sources)}
-                    />
-                  )}
-                  {(m.sources?.length ?? 0) > 0 && (m.done || m.content) && (
-                    <SourceList sources={m.sources ?? []} onOpenPaper={onOpenPaper} onWikiLink={onWikiLink} />
-                  )}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {/* —— 输入区 —— */}
-      <div
-        className="row gap8"
-        style={{ borderTop: '0.5px solid var(--border)', padding: '10px 14px', flexShrink: 0 }}
-      >
-        <input
-          className="input"
-          style={{ flex: 1, minWidth: 0, height: 34, fontSize: 12.5 }}
-          placeholder={tr(
-            '向整个文献库提问，比如：这些方法的共同局限是什么？',
-            'Ask the whole library, e.g. what limitations do these methods share?',
-          )}
-          value={input}
-          disabled={streaming}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) send();
-          }}
+      }
+      emptyIcon="chat"
+      emptyTitle={tr('和整个文献库对话', 'Chat with the whole library')}
+      emptyDesc={tr(
+        '跨文献的分析、比较、综合梳理都可以问；/ 放入指定论文，@ 分享推荐给同事或群。',
+        'Ask cross-paper questions; use / to pin papers, @ to share or recommend to teammates.',
+      )}
+      suggestions={SUGGESTIONS}
+      placeholder={tr('提问，或输入 / 放入上下文、@ 分享…', 'Ask, or type / for context, @ to share…')}
+      renderAssistant={(m: ChatMsg) => (
+        <Markdown
+          source={m.content}
+          style={{ fontSize: 12.5 }}
+          onWikiLink={onWikiLink}
+          renderCitation={citationRenderer(m.sources)}
         />
-        {streaming ? (
-          <button className="btn btn-ghost sm" style={{ height: 34 }} onClick={stop}>
-            <Icon name="pause" size={13} />
-            {tr('停止', 'Stop')}
-          </button>
-        ) : (
-          <button
-            className="btn btn-primary sm"
-            style={{ height: 34 }}
-            disabled={!input.trim()}
-            onClick={() => send()}
-          >
-            <Icon name="arrow" size={13} />
-            {tr('发送', 'Send')}
-          </button>
-        )}
-      </div>
-    </div>
+      )}
+      assistantExtras={(m: ChatMsg) =>
+        (m.sources?.length ?? 0) > 0 && (m.done || m.content) ? (
+          <SourceList sources={m.sources ?? []} onOpenPaper={onOpenPaper} onWikiLink={onWikiLink} />
+        ) : null
+      }
+      stream={stream}
+    />
   );
 }
