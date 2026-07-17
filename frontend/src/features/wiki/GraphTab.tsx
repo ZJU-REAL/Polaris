@@ -12,7 +12,8 @@ import { categoryMeta, SearchInput } from './shared';
    - 网络 Network：canvas 力导向（分层径向初始 + 碰撞防重叠），自由探索；
    - 时间线 Timeline：按发表年份分列的整齐排布；
    - 主题 Topics：按概念聚类的分组网格；
-   - 趋势 Trends：概念演化冲积图（河流图），条带宽度 = 当期关联论文数。
+   - 趋势 Trends：概念演化冲积图（alluvial），每期一列节点块按数量排名
+     堆叠、相邻列间连飘带，块高 = 当期关联论文数。
    全部视图共享「子主题」过滤：选中一个概念后只看它牵出的论文子图。
    ============================================================ */
 
@@ -622,27 +623,26 @@ function TimelineView({ model, onOpenPaper }: { model: GraphModel; onOpenPaper: 
   );
 }
 
-/* ---------------- 趋势视图（概念演化冲积图 / 河流图） ---------------- */
+/* ---------------- 趋势视图（概念演化冲积图） ---------------- */
 
-const TREND_BAND_LIMIT = 12;
+const TREND_BAND_LIMIT = 10;
 
-// 概念类别 → 基准色相/饱和度（HSL）；同类别的条带用明度错开
-const TREND_HUE: Record<string, [number, number]> = {
-  method: [214, 60],
-  architecture: [199, 58],
-  methodology: [262, 46],
-  problem: [4, 56],
-  metric: [152, 40],
-  dataset: [40, 64],
-  other: [222, 12],
-};
-
-const TREND_HUE_FALLBACK: [number, number] = [222, 12];
-
-function trendColor(category: string | null | undefined, seq: number): string {
-  const [h, sat] = TREND_HUE[category ?? 'other'] ?? TREND_HUE_FALLBACK;
-  return `hsl(${h} ${sat}% ${50 + (seq % 3) * 9}%)`;
-}
+// 固定顺序分类色板（按条带总量排名依次取色，一个概念一个专属色，不按类别复用色相
+// ——top 概念常集中在同一类别，按类别配色会撞色）。
+// 10 色已过 dataviz 校验（明度带 / 色度下限 / CVD 相邻区分）；
+// 黄色对浅底对比不足 3:1，靠图例 + 悬停提示 + 末列直接标注兜底。
+const TREND_PALETTE = [
+  'hsl(214 62% 46%)',
+  'hsl(40 64% 50%)',
+  'hsl(262 46% 52%)',
+  'hsl(152 42% 42%)',
+  'hsl(222 48% 62%)',
+  'hsl(4 56% 52%)',
+  'hsl(199 72% 42%)',
+  'hsl(80 45% 40%)',
+  'hsl(330 50% 55%)',
+  'hsl(25 60% 48%)',
+];
 
 /** 论文归属的时间桶；缺发表日期用年份兜底（按月粒度归到年中），都没有返回 null 不计入。 */
 function paperPeriod(p: GraphNode, granularity: TimelineGranularity): string | null {
@@ -654,53 +654,25 @@ function paperPeriod(p: GraphNode, granularity: TimelineGranularity): string | n
   return p.published?.slice(0, 4) ?? null;
 }
 
-/** [min, max] 间的连续时间桶（补齐中间的空桶）。 */
-function periodRange(min: string, max: string, granularity: TimelineGranularity): string[] {
-  const out: string[] = [];
-  if (granularity === 'year') {
-    for (let y = Number(min); y <= Number(max); y += 1) out.push(String(y));
-    return out;
-  }
-  let y = Number(min.slice(0, 4));
-  let m = Number(min.slice(5, 7));
-  const endY = Number(max.slice(0, 4));
-  const endM = Number(max.slice(5, 7));
-  while (y < endY || (y === endY && m <= endM)) {
-    out.push(`${y}-${String(m).padStart(2, '0')}`);
-    m += 1;
-    if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-  }
-  return out;
-}
-
-/** Catmull-Rom 过点平滑 → 贝塞尔 C 段（调用前需已 M/L 到 pts[0]）。 */
-function smoothSegments(pts: { x: number; y: number }[]): string {
-  let d = '';
-  for (let i = 0; i < pts.length - 1; i += 1) {
-    const p0 = pts[Math.max(0, i - 1)]!;
-    const p1 = pts[i]!;
-    const p2 = pts[i + 1]!;
-    const p3 = pts[Math.min(pts.length - 1, i + 2)]!;
-    const c1x = p1.x + (p2.x - p0.x) / 6;
-    const c1y = p1.y + (p2.y - p0.y) / 6;
-    const c2x = p2.x - (p3.x - p1.x) / 6;
-    const c2y = p2.y - (p3.y - p1.y) / 6;
-    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
-  }
-  return d;
-}
-
 interface TrendBand {
-  id: string; // conceptId；合并的长尾条带为 '__other__'
+  id: string; // conceptId
   label: string;
   category: string | null | undefined;
-  raw: number[]; // 原始每期论文数（tooltip 显示用）
-  values: number[]; // 平滑后的绘图值
+  values: number[]; // 每期关联论文数（原始计数，冲积图不平滑）
   color: string;
 }
+
+/** 概念在某一期的节点块矩形。 */
+interface TrendBlock {
+  x: number;
+  y0: number;
+  y1: number;
+}
+
+const TREND_NODE_W = 10; // 节点块宽
+const TREND_GAP = 3; // 同列块间留白（代替描边做分隔）
+const TREND_MIN_H = 3; // 计数 = 1 也要看得见
+const TREND_MAX_UNIT = 26; // 单篇论文的最大像素高：数据稀疏时块不至于撑满全高
 
 function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConcept: (id: string) => void }) {
   const [granularity, setGranularity] = useState<TimelineGranularity>('month');
@@ -718,7 +690,7 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
   }, []);
 
   const data = useMemo(() => {
-    // —— 概念 × 时间桶 → 关联论文数矩阵 ——
+    // —— 概念 × 时间桶 → 关联论文数矩阵；只保留有论文的时间桶（离散列，跳过空档） ——
     const periodOfPaper = new Map<string, string | null>();
     let unknown = 0;
     for (const p of model.papers) {
@@ -742,115 +714,136 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
         totals.set(c.id, total);
       }
     }
-    const allKeys = [...perConcept.values()].flatMap((m) => [...m.keys()]).sort();
-    if (allKeys.length === 0) return { bands: [] as TrendBand[], periods: [] as string[], unknown };
-    const periods = periodRange(allKeys[0]!, allKeys[allKeys.length - 1]!, granularity);
+    // 长尾概念不进图（几十个单次出现的概念会汇成巨大的灰带、压扁主角），只注记数量；
+    // 时间桶也只从入选概念取，避免出现只有长尾的空列
+    const ranked = [...totals.keys()].sort((a, b) => totals.get(b)! - totals.get(a)!);
+    const top = ranked.slice(0, TREND_BAND_LIMIT);
+    const periods = [...new Set(top.flatMap((id) => [...perConcept.get(id)!.keys()]))].sort();
+    if (periods.length === 0) {
+      return { bands: [] as TrendBand[], periods: [] as string[], unknown, rest: 0 };
+    }
 
     const byId = new Map(model.concepts.map((c) => [c.id, c]));
-    const catSeq = new Map<string, number>();
-    const mkBand = (
-      id: string,
-      label: string,
-      category: string | null | undefined,
-      counts: Map<string, number>,
-    ): TrendBand => {
-      const raw = periods.map((k) => counts.get(k) ?? 0);
-      // 月度桶稀疏，1-2-1 加权平滑只影响形状；tooltip 仍显示原始数
-      const values =
-        granularity === 'month'
-          ? raw.map((v, i) => (raw[i - 1] ?? 0) * 0.25 + v * 0.5 + (raw[i + 1] ?? 0) * 0.25)
-          : [...raw];
-      const seq = catSeq.get(category ?? 'other') ?? 0;
-      catSeq.set(category ?? 'other', seq + 1);
-      return { id, label, category, raw, values, color: trendColor(category, seq) };
-    };
-    const ranked = [...totals.keys()].sort((a, b) => totals.get(b)! - totals.get(a)!);
-    const bandsRaw = ranked.slice(0, TREND_BAND_LIMIT).map((id) => {
+    const bands = top.map((id, rank) => {
       const c = byId.get(id)!;
-      return mkBand(id, c.label, c.category, perConcept.get(id)!);
+      const counts = perConcept.get(id)!;
+      return {
+        id,
+        label: c.label,
+        category: c.category,
+        values: periods.map((k) => counts.get(k) ?? 0),
+        color: TREND_PALETTE[rank]!,
+      };
     });
-    const restIds = ranked.slice(TREND_BAND_LIMIT);
-    if (restIds.length > 0) {
-      const merged = new Map<string, number>();
-      for (const id of restIds) {
-        for (const [k, v] of perConcept.get(id)!) merged.set(k, (merged.get(k) ?? 0) + v);
-      }
-      bandsRaw.push({
-        ...mkBand('__other__', `其他 ${restIds.length} 个概念`, 'other', merged),
-        color: 'hsl(222 8% 78%)',
-      });
-    }
-    // inside-out：按峰值时间排序后从中心向两侧交替放，条带汇聚分流更可读
-    const peakAt = (b: TrendBand) => b.values.indexOf(Math.max(...b.values));
-    const byPeak = [...bandsRaw].sort((a, b) => peakAt(a) - peakAt(b));
-    const upper: TrendBand[] = [];
-    const lower: TrendBand[] = [];
-    byPeak.forEach((b, i) => (i % 2 === 0 ? upper : lower).push(b));
-    return { bands: [...upper.reverse(), ...lower], periods, unknown };
+    return { bands, periods, unknown, rest: ranked.length - top.length };
   }, [model, granularity]);
 
-  // —— 几何：silhouette 基线（每期条带围绕中轴对称堆叠） ——
+  // —— 冲积图几何：每列独立按当期数量排名堆叠，相邻列间连飘带 ——
   const geom = useMemo(() => {
     const { bands, periods } = data;
     const { w, h } = size;
     if (!w || !h || bands.length === 0 || periods.length < 2) return null;
     const mL = 14;
-    const mR = 14;
+    const mR = 96; // 右侧留白放末列概念名
     const mT = 10;
-    const mB = 24;
+    const mB = 26;
     const n = periods.length;
-    const xs = periods.map((_, i) => mL + ((w - mL - mR) * i) / (n - 1));
-    let maxTotal = 0;
+    const span = Math.max(1, w - mL - mR - TREND_NODE_W);
+    const xs = periods.map((_, i) => mL + (span * i) / (n - 1));
+    const H = h - mT - mB;
+
+    // 每列出现的条带（值>0）：当期数量多的在上，排名随时间变化产生交叉
+    const colCells: number[][] = periods.map((_, i) => {
+      const idxs = bands.map((_, bi) => bi).filter((bi) => (bands[bi]!.values[i] ?? 0) > 0);
+      idxs.sort((a, b) => bands[b]!.values[i]! - bands[a]!.values[i]! || a - b);
+      return idxs;
+    });
+
+    // 全局比例尺：受最挤的列约束；单篇高度设上限，稀疏期不至于虚胖
+    let unit = TREND_MAX_UNIT;
     for (let i = 0; i < n; i += 1) {
-      maxTotal = Math.max(maxTotal, bands.reduce((sum, b) => sum + (b.values[i] ?? 0), 0));
+      const total = colCells[i]!.reduce((s, bi) => s + bands[bi]!.values[i]!, 0);
+      const k = colCells[i]!.length;
+      if (total > 0) unit = Math.min(unit, (H - TREND_GAP * (k - 1)) / total);
     }
-    if (maxTotal === 0) return null;
-    const yScale = (h - mT - mB) / maxTotal;
-    const mid = mT + (h - mT - mB) / 2;
-    const layers = bands.map(() => ({ top: [] as { x: number; y: number }[], bot: [] as { x: number; y: number }[] }));
+    if (unit <= 0) return null;
+
+    // 节点块：每列垂直居中堆叠
+    const blocks: (TrendBlock | null)[][] = bands.map(() => periods.map(() => null));
     for (let i = 0; i < n; i += 1) {
-      const total = bands.reduce((sum, b) => sum + (b.values[i] ?? 0), 0);
-      const x = xs[i]!;
-      let y = mid - (total * yScale) / 2;
-      bands.forEach((b, bi) => {
-        layers[bi]!.top.push({ x, y });
-        y += (b.values[i] ?? 0) * yScale;
-        layers[bi]!.bot.push({ x, y });
+      const idxs = colCells[i]!;
+      const heights = idxs.map((bi) => Math.max(TREND_MIN_H, bands[bi]!.values[i]! * unit));
+      const totalPx = heights.reduce((s, v) => s + v, 0) + TREND_GAP * (idxs.length - 1);
+      let y = mT + Math.max(0, (H - totalPx) / 2);
+      idxs.forEach((bi, j) => {
+        blocks[bi]![i] = { x: xs[i]!, y0: y, y1: y + heights[j]! };
+        y += heights[j]! + TREND_GAP;
       });
     }
-    const paths = layers.map(({ top, bot }) => {
-      const rb = [...bot].reverse();
-      const t0 = top[0]!;
-      const b0 = rb[0]!;
-      return (
-        `M ${t0.x.toFixed(1)} ${t0.y.toFixed(1)}` +
-        smoothSegments(top) +
-        ` L ${b0.x.toFixed(1)} ${b0.y.toFixed(1)}` +
-        smoothSegments(rb) +
-        ' Z'
-      );
+
+    // 飘带：同一概念在相邻两列都出现才连；中断处自然断开
+    const ribbons: { bi: number; d: string }[] = [];
+    for (let bi = 0; bi < bands.length; bi += 1) {
+      for (let i = 0; i < n - 1; i += 1) {
+        const a = blocks[bi]![i];
+        const b = blocks[bi]![i + 1];
+        if (!a || !b) continue;
+        const x1 = a.x + TREND_NODE_W;
+        const x2 = b.x;
+        const cx = (x2 - x1) * 0.45;
+        ribbons.push({
+          bi,
+          d:
+            `M ${x1.toFixed(1)} ${a.y0.toFixed(1)}` +
+            ` C ${(x1 + cx).toFixed(1)} ${a.y0.toFixed(1)}, ${(x2 - cx).toFixed(1)} ${b.y0.toFixed(1)}, ${x2.toFixed(1)} ${b.y0.toFixed(1)}` +
+            ` L ${x2.toFixed(1)} ${b.y1.toFixed(1)}` +
+            ` C ${(x2 - cx).toFixed(1)} ${b.y1.toFixed(1)}, ${(x1 + cx).toFixed(1)} ${a.y1.toFixed(1)}, ${x1.toFixed(1)} ${a.y1.toFixed(1)}` +
+            ' Z',
+        });
+      }
+    }
+
+    // 末列直接标注：自上而下排开、再从底部回推，避免重叠/越界
+    const last = n - 1;
+    const labels = colCells[last]!.map((bi) => {
+      const blk = blocks[bi]![last]!;
+      return { bi, y: (blk.y0 + blk.y1) / 2 };
     });
+    labels.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labels.length; i += 1) {
+      labels[i]!.y = Math.max(labels[i]!.y, labels[i - 1]!.y + 12);
+    }
+    let bottom = h - mB - 4;
+    for (let i = labels.length - 1; i >= 0; i -= 1) {
+      labels[i]!.y = Math.min(labels[i]!.y, bottom);
+      bottom = labels[i]!.y - 12;
+    }
+    const labelX = (xs[last] ?? 0) + TREND_NODE_W + 7;
+
     const step = Math.max(1, Math.ceil(n / 8));
     const ticks = periods
-      .map((label, i) => ({ label, x: xs[i] ?? 0 }))
+      .map((label, i) => ({ label, x: (xs[i] ?? 0) + TREND_NODE_W / 2 }))
       .filter((_, i) => i % step === 0 || i === n - 1);
-    return { paths, xs, ticks, mid, mB };
+
+    return { xs, blocks, ribbons, labels, labelX, ticks };
   }, [data, size]);
 
-  const { bands, periods, unknown } = data;
+  const { bands, periods, unknown, rest } = data;
   const enough = bands.length >= 1 && periods.length >= 2;
 
-  const handleMove = (band: TrendBand) => (e: React.MouseEvent) => {
+  const handleMove = (band: TrendBand, ti?: number) => (e: React.MouseEvent) => {
     const svg = svgRef.current;
     if (!svg || !geom) return;
     const rect = svg.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    let ti = 0;
-    for (let i = 1; i < geom.xs.length; i += 1) {
-      if (Math.abs((geom.xs[i] ?? 0) - x) < Math.abs((geom.xs[ti] ?? 0) - x)) ti = i;
+    let col = ti ?? 0;
+    if (ti === undefined) {
+      for (let i = 1; i < geom.xs.length; i += 1) {
+        if (Math.abs((geom.xs[i] ?? 0) - x) < Math.abs((geom.xs[col] ?? 0) - x)) col = i;
+      }
     }
-    setHover({ band, ti, x, y });
+    setHover({ band, ti: col, x, y });
   };
 
   return (
@@ -865,7 +858,8 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
           onChange={setGranularity}
         />
         <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
-          条带宽度 = 当期关联论文数
+          块高 = 当期关联论文数
+          {rest > 0 ? ` · 只画前 ${bands.length} 个概念（另 ${rest} 个未显示）` : ''}
           {unknown > 0 ? ` · ${unknown} 篇缺发表时间未计入` : ''}
         </span>
       </div>
@@ -875,7 +869,7 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
             <span
               key={b.id}
               className="pill sm"
-              title={b.id === '__other__' ? undefined : '只看这个子主题'}
+              title="只看这个子主题"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -883,10 +877,10 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
                 background: 'var(--surface-2)',
                 color: 'var(--text-2)',
                 opacity: hover && hover.band.id !== b.id ? 0.45 : 1,
-                cursor: b.id === '__other__' ? 'default' : 'pointer',
+                cursor: 'pointer',
                 transition: 'opacity 0.15s',
               }}
-              onClick={() => b.id !== '__other__' && onFocusConcept(b.id)}
+              onClick={() => onFocusConcept(b.id)}
             >
               <span style={{ width: 8, height: 8, borderRadius: 2, background: b.color, flexShrink: 0 }} />
               {truncate(b.label, 16)}
@@ -903,34 +897,56 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
           geom && (
             <>
               <svg ref={svgRef} width={size.w} height={size.h} style={{ display: 'block' }} onMouseLeave={() => setHover(null)}>
-                <line x1={0} x2={size.w} y1={geom.mid} y2={geom.mid} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="3 5" />
-                {geom.paths.map((d, i) => {
-                  const band = bands[i]!;
+                {/* 飘带（底层，半透明） */}
+                {geom.ribbons.map(({ bi, d }, i) => {
+                  const band = bands[bi]!;
                   return (
                     <path
-                      key={band.id}
+                      key={`r-${band.id}-${i}`}
                       d={d}
                       fill={band.color}
-                      fillOpacity={hover ? (hover.band.id === band.id ? 0.95 : 0.25) : 0.82}
-                      stroke="var(--surface)"
-                      strokeWidth={0.8}
-                      style={{ cursor: band.id === '__other__' ? 'default' : 'pointer', transition: 'fill-opacity 0.15s' }}
+                      fillOpacity={hover ? (hover.band.id === band.id ? 0.6 : 0.08) : 0.38}
+                      style={{ cursor: 'pointer', transition: 'fill-opacity 0.15s' }}
                       onMouseMove={handleMove(band)}
-                      onClick={() => band.id !== '__other__' && onFocusConcept(band.id)}
+                      onClick={() => onFocusConcept(band.id)}
                     />
                   );
                 })}
-                {hover && (
-                  <line
-                    x1={geom.xs[hover.ti] ?? 0}
-                    x2={geom.xs[hover.ti] ?? 0}
-                    y1={8}
-                    y2={size.h - geom.mB}
-                    stroke="var(--text-3)"
-                    strokeWidth={0.6}
-                    strokeDasharray="2 3"
-                  />
-                )}
+                {/* 节点块（顶层，实色） */}
+                {geom.blocks.map((row, bi) => {
+                  const band = bands[bi]!;
+                  return row.map(
+                    (blk, i) =>
+                      blk && (
+                        <rect
+                          key={`b-${band.id}-${periods[i]}`}
+                          x={blk.x}
+                          y={blk.y0}
+                          width={TREND_NODE_W}
+                          height={blk.y1 - blk.y0}
+                          rx={1.5}
+                          fill={band.color}
+                          fillOpacity={hover ? (hover.band.id === band.id ? 1 : 0.25) : 0.95}
+                          style={{ cursor: 'pointer', transition: 'fill-opacity 0.15s' }}
+                          onMouseMove={handleMove(band, i)}
+                          onClick={() => onFocusConcept(band.id)}
+                        />
+                      ),
+                  );
+                })}
+                {/* 末列直接标注：色块 + 文字（文字用文本色，不用序列色） */}
+                {geom.labels.map(({ bi, y }) => {
+                  const band = bands[bi]!;
+                  const dim = hover && hover.band.id !== band.id;
+                  return (
+                    <g key={`l-${band.id}`} opacity={dim ? 0.35 : 1} style={{ transition: 'opacity 0.15s' }}>
+                      <rect x={geom.labelX} y={y - 3.5} width={7} height={7} rx={1.5} fill={band.color} />
+                      <text x={geom.labelX + 11} y={y + 3.5} fontSize={10} fill="var(--text-2)" fontFamily="var(--sans)">
+                        {truncate(band.label, 10)}
+                      </text>
+                    </g>
+                  );
+                })}
                 {geom.ticks.map((t) => (
                   <text key={t.label} x={t.x} y={size.h - 8} textAnchor="middle" fontSize={9.5} fill="var(--text-4)" fontFamily="var(--mono)">
                     {t.label}
@@ -955,7 +971,7 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
                     {truncate(hover.band.label, 26)}
                   </div>
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 2 }}>
-                    {periods[hover.ti]} · {hover.band.raw[hover.ti]} 篇
+                    {periods[hover.ti]} · {hover.band.values[hover.ti]} 篇
                   </div>
                 </div>
               )}
