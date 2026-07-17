@@ -9,6 +9,7 @@ import { ScoreRing } from '../../components/ui/ScoreRing';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
+import { PaperReader } from './PaperReader';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
@@ -874,6 +875,7 @@ function PaperDetailPane({
   const queryClient = useQueryClient();
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [conceptsOpen, setConceptsOpen] = useState(false);
+  const [readerOpen, setReaderOpen] = useState(false);
 
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['paper', paperId],
@@ -1018,6 +1020,16 @@ function PaperDetailPane({
             </>
           )}
         </button>
+        {paper.has_wiki && paper.wiki_content && (
+          <button
+            className="btn btn-soft sm"
+            title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
+            onClick={() => setReaderOpen(true)}
+          >
+            <Icon name="book" size={13} />
+            {tr('阅览模式', 'Reading mode')}
+          </button>
+        )}
         <button
           className="btn btn-ghost sm"
           style={{ color: 'var(--danger-tx)' }}
@@ -1196,6 +1208,14 @@ function PaperDetailPane({
         )}
       </div>
 
+      {readerOpen && (
+        <PaperReader
+          paper={paper}
+          renderFigure={renderFigure}
+          onWikiLink={onWikiLink}
+          onClose={() => setReaderOpen(false)}
+        />
+      )}
     </div>
   );
 }
