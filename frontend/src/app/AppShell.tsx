@@ -414,7 +414,7 @@ export function AppShell() {
           {NAV_MAIN.map((n) => (
             <NavItem key={n.to} n={n} />
           ))}
-          <NavItem n={{ to: '/voyages', icon: 'compass', zh: 'AI 任务', en: 'Tasks' }} />
+          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
           <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
 
           <div className="sb-section">{tr('研究流水线', 'Pipeline')}</div>
