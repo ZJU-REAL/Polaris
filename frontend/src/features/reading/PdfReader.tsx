@@ -1,4 +1,5 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -99,11 +100,13 @@ function collectTextRects(range: Range): DOMRect[] {
 // 标注渲染几何：高亮块压到行盒约 3/4 并略偏下（贴文字），下划线/波浪线贴文字底部。
 const HL_TOP = 0.2; // 高亮块从行盒顶部裁掉的比例（去掉字上方行距）
 const HL_HEIGHT = 0.68; // 高亮块占行盒高度的比例（≈ 文字高度的 3/4）
-const LINE_BOTTOM = 0.9; // 下划线/波浪线相对行盒的纵向位置
+const UNDERLINE_TOP = 0.9; // 下划线相对行盒的纵向位置
+const WAVE_TOP = 0.76; // 波浪线相对行盒的纵向位置（比下划线更贴近文字，且留出波高不被裁）
+const WAVE_H = 6; // 波浪线绘制高度（px），需容纳完整波形
 
-/** 波浪线背景：一段可平铺的 SVG，按颜色着色。 */
+/** 波浪线背景：一段可平铺的 SVG（高度与 WAVE_H 一致，波形完整），按颜色着色。 */
 function waveBg(color: string): string {
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 4 Q2 1 4 4 T8 4' fill='none' stroke='${color}' stroke-width='1.2'/></svg>`;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='${WAVE_H}'><path d='M0 5 Q2 1 4 5 T8 5' fill='none' stroke='${color}' stroke-width='1.3'/></svg>`;
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
@@ -137,13 +140,13 @@ function annotationRectStyle(
   const isWave = style === 'wave';
   return {
     ...base,
-    top: `${(r.y0 + rh * LINE_BOTTOM) * 100}%`,
-    height: isWave ? 5 : active ? 3 : 2,
+    top: `${(r.y0 + rh * (isWave ? WAVE_TOP : UNDERLINE_TOP)) * 100}%`,
+    height: isWave ? WAVE_H : active ? 3 : 2,
     background: isWave ? undefined : color.solid,
     backgroundImage: isWave ? waveBg(color.solid) : undefined,
     backgroundRepeat: isWave ? 'repeat-x' : undefined,
-    backgroundSize: isWave ? '8px 5px' : undefined,
-    backgroundPosition: isWave ? 'bottom' : undefined,
+    backgroundSize: isWave ? `8px ${WAVE_H}px` : undefined,
+    backgroundPosition: isWave ? 'center' : undefined,
     borderBottom: !isWave && active ? `1px solid ${color.solid}` : undefined,
   };
 }
@@ -458,12 +461,13 @@ export function PdfReader({
           })}
       </Document>
 
-      {/* —— 划词浮动配色条 —— */}
-      {pending && (
-        <div
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            position: 'fixed',
+      {/* —— 划词浮动配色条：portal 到 body，避免祖先 transform 破坏 fixed 定位 —— */}
+      {pending &&
+        createPortal(
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
             left: Math.min(Math.max(pending.x, 10), window.innerWidth - 280),
             // 下方空间不够（浮条约 40px 高）时翻到选区上方，避免超出窗口底部
             top:
@@ -543,8 +547,9 @@ export function PdfReader({
               }}
             />
           ))}
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
