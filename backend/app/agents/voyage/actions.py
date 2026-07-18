@@ -33,6 +33,23 @@ class ActionContext:
         if self.bus is not None:
             await self.bus.publish_notify(self.run.project_id, message)
 
+    async def log(self, message: str, *, level: str = "info") -> None:
+        """向本任务日志频道发一条进度日志（任务详情页 terminal 消费）。
+
+        供批处理动作播报逐项进度（如"打分 12/50: <标题>"）；bus 未注入时 no-op。
+        level 同 engine._emit_log（info/step/success/error/plan/budget/gate）。
+        """
+        if self.bus is not None:
+            await self.bus.publish_voyage_event(
+                self.run.id,
+                "log",
+                {
+                    "message": message,
+                    "level": level,
+                    "step_id": str(self.step_id) if self.step_id else None,
+                },
+            )
+
     def skill_guidance(self, *targets: str) -> str:
         """注入点上项目启用技能的补充指引（docs/skill-system.md §3）；无技能返回空串。"""
         return skill_guidance(self.checkpoint, *targets)
