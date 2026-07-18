@@ -21,6 +21,7 @@
     "lib0": "^0.2.117",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-pdf": "^9.2.1",
     "react-router-dom": "^6.26.0",
     "y-codemirror.next": "^0.3.5",
     "y-protocols": "^1.0.7",
