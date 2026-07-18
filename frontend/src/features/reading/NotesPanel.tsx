@@ -85,9 +85,7 @@ function NoteCard({
               title="删除笔记"
               style={{ width: 24, height: 24 }}
               disabled={deleteMutation.isPending}
-              onClick={() => {
-                if (window.confirm('删除这条笔记？删掉就找不回来了。')) deleteMutation.mutate();
-              }}
+              onClick={() => deleteMutation.mutate()}
             >
               <Icon name="trash" size={12} />
             </button>

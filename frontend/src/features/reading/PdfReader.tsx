@@ -141,7 +141,17 @@ export function PdfReader({
       return;
     }
     const range = sel.getRangeAt(0);
-    const clientRects = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+    const raw = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+    if (raw.length === 0) {
+      setPending(null);
+      return;
+    }
+    // 选区跨图/跨段时，getClientRects 会带回覆盖中间空白的「巨型矩形」，导致标注框过大、
+    // 且配色条会贴着它的底边被钳到屏幕最下方。以中位行高为基准，丢掉明显超高的矩形，
+    // 标注框只贴文字行。
+    const sortedH = raw.map((r) => r.height).sort((a, b) => a - b);
+    const medianH = sortedH[Math.floor(sortedH.length / 2)] ?? 0;
+    const clientRects = medianH > 0 ? raw.filter((r) => r.height <= medianH * 1.8) : raw;
     if (clientRects.length === 0) {
       setPending(null);
       return;

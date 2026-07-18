@@ -181,9 +181,7 @@ function HighlightCard({
               title="删除划线"
               style={{ width: 22, height: 22 }}
               disabled={deleteMutation.isPending}
-              onClick={() => {
-                if (window.confirm('删除这条划线？删掉就找不回来了。')) deleteMutation.mutate();
-              }}
+              onClick={() => deleteMutation.mutate()}
             >
               <Icon name="trash" size={11} />
             </button>
