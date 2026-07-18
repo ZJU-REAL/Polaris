@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e3f4a5b6c7d8"  # paper_highlights（PDF 划线标注表）
-PREV_REVISION = "d2e3f4a5b6c7"  # paper_trash_reason（垃圾桶原因标签）
+HEAD_REVISION = "c7d8e9f0a1b2"  # highlight_style（标注样式列）
+PREV_REVISION = "e3f4a5b6c7d8"  # paper_highlights（PDF 划线标注表）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -126,15 +126,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "rects",
         "selected_text",
         "color",
+        "style",
         "note",
     } <= columns["paper_highlights"]
 
-    # 最新 revision 可往返（downgrade 移除 paper_highlights 表）
+    # 最新 revision 可往返（downgrade 移除 paper_highlights.style 列）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "paper_highlights" not in columns["_tables"]
-    # 上一版（垃圾桶原因标签）不受影响
+    assert "paper_highlights" in columns["_tables"]  # 表还在，只掉了 style 列
+    assert "style" not in columns["paper_highlights"]
+    # 更早的列 / 表不受影响
     assert "trash_reason" in columns["papers"]
     assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
     assert "rank" in columns["voyage_steps"]

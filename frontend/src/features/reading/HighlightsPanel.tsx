@@ -5,8 +5,14 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
-import { api, isAdmin, type HighlightColor, type HighlightRead } from '../../lib/api';
-import { HIGHLIGHT_COLORS, highlightColorMeta } from './shared';
+import {
+  api,
+  isAdmin,
+  type HighlightColor,
+  type HighlightRead,
+  type HighlightStyle,
+} from '../../lib/api';
+import { HIGHLIGHT_COLORS, HIGHLIGHT_STYLES, highlightColorMeta } from './shared';
 
 /* ============================================================
    阅读工作台 · 标注面板：
@@ -49,7 +55,7 @@ function HighlightCard({
   }, [active]);
 
   const patchMutation = useMutation({
-    mutationFn: (input: { color?: HighlightColor; note?: string | null }) =>
+    mutationFn: (input: { color?: HighlightColor; style?: HighlightStyle; note?: string | null }) =>
       api.patchHighlight(hl.id, input),
     onSuccess: () => onChanged(),
     onError: (e) => toast(`保存失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -85,8 +91,9 @@ function HighlightCard({
         padding: '10px 12px',
         marginBottom: 10,
         borderLeft: `3px solid ${meta.solid}`,
-        outline: active ? '1.5px solid var(--accent)' : 'none',
-        transition: 'outline-color 0.15s',
+        // 选中时只在下方加一条 accent 线（不整框描边）
+        boxShadow: active ? 'inset 0 -2px 0 0 var(--accent)' : 'none',
+        transition: 'box-shadow 0.15s',
       }}
     >
       {/* 原文引用（点它跳回 PDF） */}
@@ -105,7 +112,7 @@ function HighlightCard({
           overflow: 'hidden',
         }}
       >
-        「{hl.selected_text}」
+        {hl.selected_text}
       </div>
 
       {/* 批注展示 / 编辑 */}
@@ -119,6 +126,19 @@ function HighlightCard({
             onChange={(e) => setDraft(e.target.value)}
             autoFocus
           />
+          {/* 改样式 */}
+          <div className="row gap6" style={{ marginTop: 6 }}>
+            {HIGHLIGHT_STYLES.map((st) => (
+              <span
+                key={st.v}
+                className={`chip${hl.style === st.v ? ' on' : ''}`}
+                style={{ fontSize: 11 }}
+                onClick={() => patchMutation.mutate({ style: st.v })}
+              >
+                {st.label}
+              </span>
+            ))}
+          </div>
           <div className="row gap8" style={{ marginTop: 6 }}>
             {/* 改颜色 */}
             <span className="row gap6" style={{ marginRight: 'auto' }}>
@@ -181,9 +201,7 @@ function HighlightCard({
               title="删除划线"
               style={{ width: 22, height: 22 }}
               disabled={deleteMutation.isPending}
-              onClick={() => {
-                if (window.confirm('删除这条划线？删掉就找不回来了。')) deleteMutation.mutate();
-              }}
+              onClick={() => deleteMutation.mutate()}
             >
               <Icon name="trash" size={11} />
             </button>

@@ -30,6 +30,7 @@ async def create_highlight(
         rects=[r.model_dump() for r in data.rects],
         selected_text=data.selected_text,
         color=data.color,
+        style=data.style,
         note=data.note,
     )
     session.add(hl)
@@ -77,8 +78,8 @@ def can_modify_highlight(hl: PaperHighlight, user: User) -> bool:
 async def update_highlight(
     session: AsyncSession, hl: PaperHighlight, *, updates: dict[str, Any]
 ) -> PaperHighlight:
-    """按 exclude_unset 后的字段增量更新（仅 color / note）。"""
-    for key in ("color", "note"):
+    """按 exclude_unset 后的字段增量更新（仅 color / style / note）。"""
+    for key in ("color", "style", "note"):
         if key in updates:
             setattr(hl, key, updates[key])
     await session.commit()
