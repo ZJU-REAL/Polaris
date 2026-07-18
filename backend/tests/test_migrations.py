@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "f4a5b6c7d8e9"  # paper_highlights（PDF 划线标注表）
-PREV_REVISION = "e3f4a5b6c7d8"  # experiment_mode_loop（实验任务归入动态循环档，纯数据回填）
+HEAD_REVISION = "e4f5a6b7c8d9"  # manuscript_file_versions（稿件文件版本快照，本分支置于链最新）
+PREV_REVISION = "f4a5b6c7d8e9"  # paper_highlights（PDF 划线标注表）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -43,6 +43,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_highlights",
                     "manuscripts",
                     "manuscript_files",
+                    "manuscript_file_versions",
                     "users",
                     "voyage_runs",
                     "voyage_steps",
@@ -116,7 +117,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["voyage_steps"]
     # 垃圾桶原因标签
     assert "trash_reason" in columns["papers"]
-    # PDF 划线标注表
+    # PDF 划线标注表（上一版 paper_highlights）
     assert "paper_highlights" in columns["_tables"]
     assert {
         "paper_id",
@@ -128,14 +129,18 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "color",
         "note",
     } <= columns["paper_highlights"]
+    # 稿件文件版本快照表（本分支新增，位于迁移链最新）
+    assert "manuscript_file_versions" in columns["_tables"]
+    assert {"file_id", "seq", "origin", "label", "content"} <= columns["manuscript_file_versions"]
 
-    # 最新 revision 可往返（downgrade 移除 paper_highlights 表，落到 experiment_mode_loop）
+    # 最新 revision 可往返（downgrade 移除版本快照表，落到 paper_highlights）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "paper_highlights" not in columns["_tables"]
-    # 上一版（experiment_mode_loop 纯数据回填，列结构不变）不受影响
-    assert "trash_reason" in columns["papers"]
+    assert "manuscript_file_versions" not in columns["_tables"]
+    assert "paper_highlights" in columns["_tables"]  # 上一版（PDF 划线标注）不受影响
+    assert "trash_reason" in columns["papers"]  # 更早的列不受影响
+    # 更早版本不受影响
     assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
     assert "rank" in columns["voyage_steps"]
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]

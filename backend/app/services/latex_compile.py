@@ -31,7 +31,7 @@ from app.core.config import get_settings
 from app.models.experiment import Experiment
 from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.paper import Paper
-from app.services import crdt_rooms
+from app.services import crdt_rooms, manuscript_versions
 from app.services.citations import build_bibtex_for
 
 COMPILE_TIMEOUT_SECONDS = 120.0
@@ -235,9 +235,17 @@ def _safe_relpath(path: str) -> Path | None:
 
 
 async def assemble_workdir(
-    session: AsyncSession, manuscript: Manuscript, workdir: Path
+    session: AsyncSession,
+    manuscript: Manuscript,
+    workdir: Path,
+    *,
+    snapshot_label: str | None = None,
 ) -> list[dict[str, Any]]:
-    """稿件文件（活跃 CRDT 房间以房间内容为准）+ references.bib + figures/。"""
+    """稿件文件（活跃 CRDT 房间以房间内容为准）+ references.bib + figures/。
+
+    可写文件同时存一份版本快照（origin=compile，内容与本次编译一致；
+    与上份相同则跳过），调用方 commit。
+    """
     rooms = crdt_rooms.get_crdt_rooms()
     stmt = select(ManuscriptFile).where(ManuscriptFile.manuscript_id == manuscript.id)
     files = (await session.execute(stmt)).scalars().all()
@@ -249,7 +257,12 @@ async def assemble_workdir(
         content = rooms.room_content(file.id)
         target = workdir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content if content is not None else file.content, encoding="utf-8")
+        text = content if content is not None else file.content
+        target.write_text(text, encoding="utf-8")
+        if not file.readonly:
+            await manuscript_versions.snapshot_file(
+                session, file, origin="compile", label=snapshot_label, content=text
+            )
     (workdir / "references.bib").write_text(
         await build_references_bib(session, manuscript), encoding="utf-8"
     )
@@ -302,7 +315,11 @@ async def compile_manuscript(session: AsyncSession, manuscript: Manuscript) -> d
         out_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="polaris-tex-") as tmp:
             workdir = Path(tmp)
-            diagnostics.extend(await assemble_workdir(session, manuscript, workdir))
+            diagnostics.extend(
+                await assemble_workdir(
+                    session, manuscript, workdir, snapshot_label=f"编译 v{version}"
+                )
+            )
             run = await asyncio.to_thread(_run_tectonic, binary, workdir)
 
             log_file = workdir / "main.log"

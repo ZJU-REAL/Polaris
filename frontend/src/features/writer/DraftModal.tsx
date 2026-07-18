@@ -162,8 +162,8 @@ export function DraftModal({ open, onClose, manuscript }: DraftModalProps) {
 
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
         {tr(
-          '起草期间可在编辑器中实时查看 AI 写作进度，也可以在 AI 任务页取消任务。每一节写完都会做真实性自检：引用必须在事实包文献里、图表只能用实验产出、正文数字必须能对上实验指标。',
-          'While drafting, you can watch AI progress live in the editor, or cancel from the AI tasks page. Every finished section is fact-checked: citations must be in the fact pack, figures must come from experiment outputs, and numbers must match experiment metrics.',
+          '起草时编辑器里会出现一个「✨ AI」光标，逐字把每一节写进正文、自动滚动跟随，你可以在旁边实时看着它写（也能随时在 AI 任务页取消）。每一节写完都会做真实性自检：引用必须在事实包文献里、图表只能用实验产出、正文数字必须能对上实验指标。',
+          'While drafting, a "✨ AI" cursor types each section into the manuscript character by character and auto-scrolls to follow — watch it write live (or cancel from the AI tasks page). Every finished section is fact-checked: citations must be in the fact pack, figures must come from experiment outputs, and numbers must match experiment metrics.',
         )}
       </div>
     </Modal>

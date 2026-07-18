@@ -93,3 +93,29 @@ class DraftRequest(BaseModel):
     # null = 模板全部节；显式列表时只写指定节（related_work 也在可选值内）
     sections: list[str] | None = None
     notes: str | None = None
+
+
+class FileVersionMeta(BaseModel):
+    """版本快照元数据（列表用，不含内容）。"""
+
+    id: uuid.UUID
+    seq: int
+    origin: Literal["pre_ai", "compile", "pre_restore"]
+    label: str | None
+    size: int  # 内容 utf-8 字节数
+    created_by: uuid.UUID | None
+    created_at: datetime
+
+
+class FileVersionContent(FileVersionMeta):
+    content: str
+
+
+class AssistRequest(BaseModel):
+    """内联 AI 写作辅助（SSE 流）：polish/rewrite 需要 text，rewrite 还需要 instruction。"""
+
+    mode: Literal["polish", "rewrite", "continue"]
+    text: str = Field(default="", max_length=20_000)
+    instruction: str = Field(default="", max_length=4_000)
+    before: str = Field(default="", max_length=8_000)
+    after: str = Field(default="", max_length=8_000)

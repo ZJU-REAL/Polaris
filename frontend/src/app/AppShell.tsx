@@ -403,6 +403,23 @@ export function AppShell() {
         void queryClient.invalidateQueries({ queryKey: ['idea', msg.idea_id] });
         void queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
         void queryClient.invalidateQueries({ queryKey: ['forge-state'] });
+      } else if (msg.type === 'manuscript.status') {
+        // 论文撰写页靠这里实时刷新（起草 writing→compiled 等流转），不再快轮询
+        void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
+        void queryClient.invalidateQueries({ queryKey: ['manuscript', msg.manuscript_id] });
+        // 起草结束（离开 writing 态）→ 收起 AI 光标/状态条
+        if (msg.status !== 'writing') {
+          queryClient.setQueryData(['ai-writing', msg.manuscript_id], null);
+        }
+      } else if (msg.type === 'manuscript.ai_writing') {
+        // AI 起草相位 → 写入本地缓存，撰写页据此画 AI 光标与状态条（无网络请求）。
+        // done 不清空（避免节间状态条闪烁），整体收起交给 manuscript.status 离开 writing 态。
+        queryClient.setQueryData(['ai-writing', msg.manuscript_id], {
+          fileId: msg.file_id,
+          section: msg.section,
+          phase: msg.phase,
+          at: Date.now(),
+        });
       } else if (msg.type === 'experiment.status') {
         void queryClient.invalidateQueries({ queryKey: ['experiments'] });
         void queryClient.invalidateQueries({ queryKey: ['experiment', msg.experiment_id] });

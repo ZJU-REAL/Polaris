@@ -4,22 +4,32 @@
 编译为同步端点（tectonic 硬超时 120s）；实时协同走 /ws/manuscripts/{fid}（api/ws.py）。
 """
 
+import asyncio
+import json
+import logging
 import uuid
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_paper_review, require_writer
 from app.core.db import get_session
 from app.core.events import EventBus, get_event_bus
+from app.core.llm.fake import estimate_tokens
+from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.user import User
 from app.schemas.gate import GateRead
 from app.schemas.manuscript import (
+    AssistRequest,
     CompileResult,
     DraftRequest,
+    FileVersionContent,
+    FileVersionMeta,
     ManuscriptCreate,
     ManuscriptDetail,
     ManuscriptFileBrief,
@@ -32,11 +42,14 @@ from app.schemas.manuscript import (
 )
 from app.schemas.review import PaperReviewRequest, PaperReviewSummary
 from app.schemas.voyage import VoyageRead
-from app.services import latex_compile
+from app.services import latex_compile, writing_assist
+from app.services import manuscript_versions as manuscript_versions_service
 from app.services import manuscripts as manuscripts_service
 from app.services import paper_review as paper_review_service
 from app.services import projects as projects_service
 from app.services.crdt_rooms import get_crdt_rooms
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["manuscripts"])
 
@@ -260,6 +273,101 @@ async def delete_file(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="FILE_READONLY") from e
 
 
+# ---- §2b 文件版本历史 ----
+
+
+def _version_meta(v) -> FileVersionMeta:
+    return FileVersionMeta(
+        id=v.id,
+        seq=v.seq,
+        origin=v.origin,
+        label=v.label,
+        size=len(v.content.encode("utf-8")),
+        created_by=v.created_by,
+        created_at=v.created_at,
+    )
+
+
+@router.get(
+    "/manuscripts/{manuscript_id}/files/{file_id}/versions",
+    response_model=list[FileVersionMeta],
+)
+async def list_file_versions(
+    manuscript_id: uuid.UUID,
+    file_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[FileVersionMeta]:
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    file = await _member_file(session, manuscript, file_id)
+    versions = await manuscript_versions_service.list_versions(session, file.id)
+    return [_version_meta(v) for v in versions]
+
+
+@router.get(
+    "/manuscripts/{manuscript_id}/files/{file_id}/versions/{version_id}",
+    response_model=FileVersionContent,
+)
+async def get_file_version(
+    manuscript_id: uuid.UUID,
+    file_id: uuid.UUID,
+    version_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> FileVersionContent:
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    file = await _member_file(session, manuscript, file_id)
+    version = await manuscript_versions_service.get_version(session, file.id, version_id)
+    if version is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="VERSION_NOT_FOUND")
+    return FileVersionContent(**_version_meta(version).model_dump(), content=version.content)
+
+
+@router.post(
+    "/manuscripts/{manuscript_id}/files/{file_id}/versions/{version_id}/restore",
+    response_model=ManuscriptFileContent,
+)
+async def restore_file_version(
+    manuscript_id: uuid.UUID,
+    file_id: uuid.UUID,
+    version_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ManuscriptFileContent:
+    """恢复到指定版本：先把当前内容备份为 pre_restore 快照，再整文件替换。
+
+    有活跃协同房间时经 Y 事务替换（协同者实时可见），无房间直接写库。
+    """
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    file = await _member_file(session, manuscript, file_id)
+    if file.readonly:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="FILE_READONLY")
+    version = await manuscript_versions_service.get_version(session, file.id, version_id)
+    if version is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="VERSION_NOT_FOUND")
+
+    rooms = get_crdt_rooms()
+    current = rooms.room_content(file.id)
+    current = current if current is not None else file.content
+    await manuscript_versions_service.snapshot_file(
+        session,
+        file,
+        origin="pre_restore",
+        label=f"恢复 #{version.seq} 前备份",
+        created_by=user.id,
+        content=current,
+    )
+    restored = version.content
+    via_room = await rooms.set_content(file.id, restored)
+    if not via_room:
+        file.content = restored
+        file.updated_by = user.id
+    await session.commit()
+    return ManuscriptFileContent(
+        id=file.id, path=file.path, content=restored, readonly=file.readonly
+    )
+
+
 # ---- §3 fact-pack ----
 
 
@@ -348,6 +456,108 @@ async def draft_manuscript(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="INVALID_SECTIONS") from e
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)
+
+
+# ---- §6 内联 AI 写作辅助（SSE 流） ----
+
+_ASSIST_HEARTBEAT_SECONDS = 15.0
+
+
+def _sse_frame(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+@router.post("/manuscripts/{manuscript_id}/assist")
+async def assist_manuscript(
+    manuscript_id: uuid.UUID,
+    data: AssistRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_writer),
+) -> StreamingResponse:
+    """选中润色/按指示改写/光标续写：stage=writing 流式输出。
+
+    事件：delta（文本增量）* → warnings（越界引用/图表提示，可无）→ done；
+    异常转 error 事件后关流。15s 心跳注释防代理断连。
+    """
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    if data.mode in ("polish", "rewrite") and not data.text.strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ASSIST_TEXT_REQUIRED")
+    if data.mode == "rewrite" and not data.instruction.strip():
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ASSIST_INSTRUCTION_REQUIRED"
+        )
+    if data.mode == "continue" and not data.before.strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ASSIST_BEFORE_REQUIRED")
+
+    messages = writing_assist.build_assist_messages(
+        manuscript,
+        mode=data.mode,
+        text=data.text,
+        instruction=data.instruction,
+        before=data.before,
+        after=data.after,
+    )
+    fact_pack = manuscript.fact_pack
+    project_id = manuscript.project_id
+    llm = get_llm_router()
+
+    async def event_stream() -> AsyncIterator[str]:
+        queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
+
+        async def pump() -> None:
+            try:
+                # router.stream 结束时自动写 LLMUsage 记账（归属 user + project）
+                async for chunk in llm.stream(
+                    "writing", messages, user_id=user.id, project_id=project_id
+                ):
+                    await queue.put(("delta", chunk))
+                await queue.put(("done", None))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 转成 error 事件后关流
+                logger.warning("manuscript assist stream failed", exc_info=True)
+                await queue.put(("error", f"{type(e).__name__}: {e}"))
+
+        task = asyncio.create_task(pump())
+        collected: list[str] = []
+        try:
+            while True:
+                try:
+                    kind, payload = await asyncio.wait_for(
+                        queue.get(), timeout=_ASSIST_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                if kind == "delta":
+                    collected.append(payload or "")
+                    yield _sse_frame("delta", {"text": payload})
+                elif kind == "done":
+                    result = "".join(collected)
+                    warnings = writing_assist.scan_result_warnings(fact_pack, result)
+                    if warnings:
+                        yield _sse_frame("warnings", {"items": warnings})
+                    usage = {
+                        "prompt_tokens": sum(estimate_tokens(m.content) for m in messages),
+                        "completion_tokens": estimate_tokens(result),
+                    }
+                    yield _sse_frame("done", {"usage": usage})
+                    return
+                else:  # error
+                    yield _sse_frame("error", {"detail": payload})
+                    return
+        finally:
+            task.cancel()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # nginx 关缓冲
+        },
+    )
 
 
 # ---- M5-C 论文评审 ----

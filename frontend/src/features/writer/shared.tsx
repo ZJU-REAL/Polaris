@@ -64,6 +64,15 @@ export function sectionText(key: string): string {
   return map[key] ?? key;
 }
 
+/** AI 起草实时相位（AppShell 从 manuscript.ai_writing 事件写入 query 缓存）。 */
+export interface AiWritingState {
+  fileId: string | null;
+  section: string | null;
+  /** typing=撰写；revising=改写/精修；done=本节完成（节间过渡）；compiling=编译中 */
+  phase: 'typing' | 'revising' | 'done' | 'compiling';
+  at: number;
+}
+
 /** AI 起草的默认分节（模板未返回 sections 时的兜底，顺序同后端管线）。 */
 export const DEFAULT_SECTIONS = [
   'abstract',

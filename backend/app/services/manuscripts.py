@@ -261,7 +261,12 @@ async def build_fact_pack(session: AsyncSession, manuscript: Manuscript) -> dict
 
 
 async def refresh_fact_pack(session: AsyncSession, manuscript: Manuscript) -> dict[str, Any]:
-    manuscript.fact_pack = await build_fact_pack(session, manuscript)
+    fresh = await build_fact_pack(session, manuscript)
+    # 评审修订说明不是事实源本身，重建时保留（供下次 AI 起草参考）
+    old = manuscript.fact_pack or {}
+    if old.get("revision_notes"):
+        fresh["revision_notes"] = old["revision_notes"]
+    manuscript.fact_pack = fresh
     await session.commit()
     await session.refresh(manuscript)
     return manuscript.fact_pack
@@ -472,6 +477,8 @@ async def create_writing_voyage(
     if await find_active_writing_voyage(session, manuscript) is not None:
         raise WritingInProgressError(str(manuscript.id))
     body, related = resolve_sections(manuscript.template, sections)
+    # 起草永远基于最新事实源：先自动重建 fact-pack（库/实验更新后不必手动刷新）
+    await refresh_fact_pack(session, manuscript)
     run = VoyageRun(
         kind=WRITING_VOYAGE_KIND,
         goal=f"论文撰写：{manuscript.title}",
