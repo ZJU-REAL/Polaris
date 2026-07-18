@@ -1,5 +1,4 @@
-import type { HighlightColor, ReadingStatus } from '../../lib/api';
-import { tr } from '../../lib/i18n';
+import type { HighlightColor, HighlightStyle, ReadingStatus } from '../../lib/api';
 
 /* ============================================================
    阅读工作台共享：阅读状态元信息（文案 + 配色）。
@@ -8,10 +7,7 @@ import { tr } from '../../lib/i18n';
 
 export interface ReadingStatusMeta {
   v: ReadingStatus;
-  /** 中文文案（模块级常量，渲染处用 tr(label, en) 取当前语言） */
   label: string;
-  /** 英文文案 */
-  en: string;
   /** 前景色 token */
   c: string;
   /** 背景色 token */
@@ -19,9 +15,9 @@ export interface ReadingStatusMeta {
 }
 
 export const READING_STATUS: readonly ReadingStatusMeta[] = [
-  { v: 'unread', label: '未读', en: 'Unread', c: 'var(--text-3)', bg: 'var(--surface-3)' },
-  { v: 'reading', label: '在读', en: 'Reading', c: 'var(--warn-tx)', bg: 'var(--warn-bg)' },
-  { v: 'read', label: '已读', en: 'Read', c: 'var(--ok-tx)', bg: 'var(--ok-bg)' },
+  { v: 'unread', label: '未读', c: 'var(--text-3)', bg: 'var(--surface-3)' },
+  { v: 'reading', label: '在读', c: 'var(--warn-tx)', bg: 'var(--warn-bg)' },
+  { v: 'read', label: '已读', c: 'var(--ok-tx)', bg: 'var(--ok-bg)' },
 ] as const;
 
 export function readingStatusMeta(s: string | undefined): ReadingStatusMeta {
@@ -53,13 +49,25 @@ export function highlightColorMeta(c: string | undefined): HighlightColorMeta {
   return HIGHLIGHT_COLORS.find((m) => m.v === c) ?? HIGHLIGHT_COLORS[0]!;
 }
 
+/* 标注样式：高亮块 / 下方横线 / 下方波浪线。 */
+export interface HighlightStyleMeta {
+  v: HighlightStyle;
+  label: string;
+}
+
+export const HIGHLIGHT_STYLES: readonly HighlightStyleMeta[] = [
+  { v: 'highlight', label: '高亮' },
+  { v: 'underline', label: '下划线' },
+  { v: 'wave', label: '波浪线' },
+] as const;
+
 /** 列表行里的阅读状态小圆点（未读不显示）。 */
 export function ReadingDot({ status }: { status: string | undefined }) {
   if (!status || status === 'unread') return null;
   const meta = readingStatusMeta(status);
   return (
     <span
-      title={tr(`阅读状态：${meta.label}`, `Reading status: ${meta.en}`)}
+      title={`阅读状态：${meta.label}`}
       style={{
         width: 7,
         height: 7,

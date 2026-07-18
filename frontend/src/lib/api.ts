@@ -559,6 +559,8 @@ export interface NoteWithPaper extends NoteRead {
 
 /* —— PDF 划线标注 —— */
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
+/** 标注样式：高亮块 / 下方横线 / 下方波浪线 */
+export type HighlightStyle = 'highlight' | 'underline' | 'wave';
 
 /** 归一化矩形（相对页面左上角，值域 0..1；每行一个）。 */
 export interface HighlightRect {
@@ -578,6 +580,7 @@ export interface HighlightRead {
   rects: HighlightRect[];
   selected_text: string;
   color: HighlightColor;
+  style: HighlightStyle;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -588,6 +591,7 @@ export interface HighlightCreateInput {
   rects: HighlightRect[];
   selected_text: string;
   color?: HighlightColor;
+  style?: HighlightStyle;
   note?: string | null;
 }
 
@@ -1954,10 +1958,10 @@ export const api = {
   createPaperHighlight(paperId: string, input: HighlightCreateInput): Promise<HighlightRead> {
     return requestJson<HighlightRead>(`/papers/${paperId}/highlights`, 'POST', input);
   },
-  /** 改颜色 / 批注（字段缺省表示不改；note 传空串清空批注）。 */
+  /** 改颜色 / 样式 / 批注（字段缺省表示不改；note 传空串清空批注）。 */
   patchHighlight(
     highlightId: string,
-    input: { color?: HighlightColor; note?: string | null },
+    input: { color?: HighlightColor; style?: HighlightStyle; note?: string | null },
   ): Promise<HighlightRead> {
     return requestJson<HighlightRead>(`/highlights/${highlightId}`, 'PATCH', input);
   },

@@ -4,8 +4,8 @@ paper_highlights：论文划线（paper/project/author 外键、page 页码、
 rects 归一化矩形 JSON、selected_text 选中原文、color 颜色、note 可选批注）。
 权限同 paper_notes。
 
-Revision ID: f4a5b6c7d8e9
-Revises: e3f4a5b6c7d8
+Revision ID: e3f4a5b6c7d8
+Revises: d2e3f4a5b6c7
 Create Date: 2026-07-17
 """
 
@@ -16,8 +16,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "f4a5b6c7d8e9"
-down_revision: str | None = "e3f4a5b6c7d8"
+revision: str = "e3f4a5b6c7d8"
+down_revision: str | None = "d2e3f4a5b6c7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

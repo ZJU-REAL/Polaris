@@ -128,6 +128,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "rects",
         "selected_text",
         "color",
+        "style",
         "note",
     } <= columns["paper_highlights"]
     # 稿件文件版本快照表
