@@ -61,6 +61,33 @@ interface Pending {
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
+/**
+ * 只从选区内「真正有文字的文本节点」收集矩形。
+ * pdf.js 文本层里图片/公式/大段空白区域没有文本节点，跨图选择时 range.getClientRects()
+ * 会把选区覆盖的空白也画成一个巨型矩形——这是标注框过大的根因。逐个文本节点取矩形、
+ * 首尾节点按选区偏移裁剪，空白区没有节点就自然不产生矩形。
+ */
+function collectTextRects(range: Range): DOMRect[] {
+  const cac = range.commonAncestorContainer;
+  // 选区落在单个文本节点内：直接用它的矩形
+  if (cac.nodeType === Node.TEXT_NODE) {
+    return Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+  }
+  const out: DOMRect[] = [];
+  const walker = document.createTreeWalker(cac, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!range.intersectsNode(node) || !(node.textContent ?? '').trim()) continue;
+    const sub = document.createRange();
+    sub.selectNodeContents(node);
+    if (node === range.startContainer) sub.setStart(node, range.startOffset);
+    if (node === range.endContainer) sub.setEnd(node, range.endOffset);
+    for (const r of Array.from(sub.getClientRects())) {
+      if (r.width > 1 && r.height > 1) out.push(r);
+    }
+  }
+  return out;
+}
+
 export function PdfReader({
   paper,
   highlights,
@@ -141,17 +168,16 @@ export function PdfReader({
       return;
     }
     const range = sel.getRangeAt(0);
-    const raw = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+    // 只取有文字的文本节点矩形：跨图/跨段的空白区没有文本节点，覆盖空白的巨型矩形不会进来
+    const raw = collectTextRects(range);
     if (raw.length === 0) {
       setPending(null);
       return;
     }
-    // 选区跨图/跨段时，getClientRects 会带回覆盖中间空白的「巨型矩形」，导致标注框过大、
-    // 且配色条会贴着它的底边被钳到屏幕最下方。以中位行高为基准，丢掉明显超高的矩形，
-    // 标注框只贴文字行。
+    // 二次保险：极端情况下仍以中位行高滤掉异常超高矩形
     const sortedH = raw.map((r) => r.height).sort((a, b) => a - b);
     const medianH = sortedH[Math.floor(sortedH.length / 2)] ?? 0;
-    const clientRects = medianH > 0 ? raw.filter((r) => r.height <= medianH * 1.8) : raw;
+    const clientRects = medianH > 0 ? raw.filter((r) => r.height <= medianH * 2.2) : raw;
     if (clientRects.length === 0) {
       setPending(null);
       return;
