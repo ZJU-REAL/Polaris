@@ -60,9 +60,15 @@ class ManuscriptRead(BaseModel):
 class ManuscriptFileBrief(BaseModel):
     id: uuid.UUID
     path: str
-    size: int  # 内容 utf-8 字节数
+    size: int  # 内容 utf-8 字节数（二进制文件为磁盘字节数）
     readonly: bool
+    is_binary: bool = False
+    is_folder: bool = False
     updated_at: datetime
+
+
+class FolderCreate(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
 
 
 class CompileDiagnostic(BaseModel):

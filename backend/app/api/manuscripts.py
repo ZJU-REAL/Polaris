@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import mimetypes
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -35,6 +36,7 @@ from app.schemas.manuscript import (
     DraftRequest,
     FileVersionContent,
     FileVersionMeta,
+    FolderCreate,
     ManuscriptCreate,
     ManuscriptDetail,
     ManuscriptFileBrief,
@@ -76,11 +78,18 @@ async def _member_manuscript(
 
 
 def _file_brief(file: ManuscriptFile) -> ManuscriptFileBrief:
+    if file.is_binary:
+        raw = manuscripts_service.read_binary_asset(file.manuscript_id, file.path)
+        size = len(raw) if raw is not None else 0
+    else:
+        size = len(file.content.encode("utf-8"))
     return ManuscriptFileBrief(
         id=file.id,
         path=file.path,
-        size=len(file.content.encode("utf-8")),
+        size=size,
         readonly=file.readonly,
+        is_binary=file.is_binary,
+        is_folder=file.is_folder,
         updated_at=file.updated_at,
     )
 
@@ -346,6 +355,30 @@ async def get_file(
     )
 
 
+@router.get("/manuscripts/{manuscript_id}/files/{file_id}/raw")
+async def get_file_raw(
+    manuscript_id: uuid.UUID,
+    file_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """二进制文件原始字节（图片/PDF/字体预览与下载）。"""
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    file = await _member_file(session, manuscript, file_id)
+    if not file.is_binary:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="NOT_BINARY")
+    data = manuscripts_service.read_binary_asset(manuscript.id, file.path)
+    if data is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ASSET_MISSING")
+    media = mimetypes.guess_type(file.path)[0] or "application/octet-stream"
+    filename = file.path.rsplit("/", 1)[-1]
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 @router.post(
     "/manuscripts/{manuscript_id}/files",
     response_model=ManuscriptFileBrief,
@@ -365,6 +398,52 @@ async def create_file(
     except manuscripts_service.FilePathInvalidError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="FILE_PATH_INVALID") from e
     return _file_brief(file)
+
+
+@router.post(
+    "/manuscripts/{manuscript_id}/folders",
+    response_model=ManuscriptFileBrief,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_folder(
+    manuscript_id: uuid.UUID,
+    data: FolderCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ManuscriptFileBrief:
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    try:
+        folder = await manuscripts_service.create_folder(
+            session, manuscript=manuscript, path=data.path, user_id=user.id
+        )
+    except manuscripts_service.FilePathInvalidError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="FILE_PATH_INVALID") from e
+    return _file_brief(folder)
+
+
+@router.post(
+    "/manuscripts/{manuscript_id}/files/upload",
+    response_model=ManuscriptFileBrief,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_file(
+    manuscript_id: uuid.UUID,
+    file: UploadFile = File(...),
+    path: str | None = Form(None),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ManuscriptFileBrief:
+    """上传文件（文本或二进制）；path 缺省用文件名。文本可编辑，二进制只读落盘。"""
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    target = (path or file.filename or "upload.bin").strip()
+    data = await file.read()
+    try:
+        created = await manuscripts_service.upload_file(
+            session, manuscript=manuscript, path=target, data=data, user_id=user.id
+        )
+    except manuscripts_service.FilePathInvalidError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="FILE_PATH_INVALID") from e
+    return _file_brief(created)
 
 
 @router.patch("/manuscripts/{manuscript_id}/files/{file_id}", response_model=ManuscriptFileBrief)

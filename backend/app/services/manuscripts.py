@@ -465,6 +465,60 @@ async def create_file(
     return file
 
 
+async def create_folder(
+    session: AsyncSession, *, manuscript: Manuscript, path: str, user_id: uuid.UUID
+) -> ManuscriptFile:
+    """新建文件夹占位（is_folder=True，无内容）；供文件树显示空目录。"""
+    path = _validate_file_path(path).rstrip("/")
+    await _assert_path_free(session, manuscript.id, path)
+    folder = ManuscriptFile(
+        manuscript_id=manuscript.id,
+        path=path,
+        content="",
+        readonly=False,
+        is_folder=True,
+        updated_by=user_id,
+    )
+    session.add(folder)
+    await session.commit()
+    await session.refresh(folder)
+    return folder
+
+
+async def upload_file(
+    session: AsyncSession,
+    *,
+    manuscript: Manuscript,
+    path: str,
+    data: bytes,
+    user_id: uuid.UUID,
+) -> ManuscriptFile:
+    """上传文件：文本入 content（可编辑）；二进制字节落磁盘（is_binary，只读）。"""
+    path = _validate_file_path(path)
+    await _assert_path_free(session, manuscript.id, path)
+    binary = b"\x00" in data
+    text = ""
+    if not binary:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            binary = True
+    if binary:
+        write_binary_asset(manuscript.id, path, data)
+    file = ManuscriptFile(
+        manuscript_id=manuscript.id,
+        path=path,
+        content="" if binary else text,
+        readonly=binary,
+        is_binary=binary,
+        updated_by=user_id,
+    )
+    session.add(file)
+    await session.commit()
+    await session.refresh(file)
+    return file
+
+
 async def rename_file(
     session: AsyncSession, *, file: ManuscriptFile, path: str, user_id: uuid.UUID
 ) -> ManuscriptFile:
@@ -481,8 +535,21 @@ async def rename_file(
 
 
 async def delete_file(session: AsyncSession, *, file: ManuscriptFile) -> None:
-    if file.readonly:
-        raise FileReadonlyError(file.path)
+    if file.readonly and not file.is_binary:
+        raise FileReadonlyError(file.path)  # 模板样式只读文件不可删；上传的二进制可删
+    mid = file.manuscript_id
+    if file.is_binary:
+        asset_path(mid, file.path).unlink(missing_ok=True)
+    if file.is_folder:
+        # 连带删除该目录下的所有文件（含二进制资源）
+        prefix = file.path.rstrip("/") + "/"
+        stmt = select(ManuscriptFile).where(
+            ManuscriptFile.manuscript_id == mid, ManuscriptFile.path.startswith(prefix)
+        )
+        for child in (await session.execute(stmt)).scalars().all():
+            if child.is_binary:
+                asset_path(mid, child.path).unlink(missing_ok=True)
+            await session.delete(child)
     await session.delete(file)
     await session.commit()
 
