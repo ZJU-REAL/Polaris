@@ -5,6 +5,7 @@ LLM 解析失败重试 1 次，仍失败降级：按面积取前 4 张 important
 """
 
 import asyncio
+import io
 import json
 import logging
 import uuid
@@ -20,8 +21,60 @@ from app.services.literature.pdf_extract import extract_figures, figure_path
 
 logger = logging.getLogger(__name__)
 
-MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 单图超过 4MB 不送 LLM（仍保留在 figures 里）
 DEGRADE_TOP_N = 4  # LLM 失败降级：按面积取前 N 张标记 important
+
+# 视觉大模型（经 LiteLLM 代理的 Anthropic）对单图的硬限制：
+# 任一边 ≤8000px、base64 数据 ≤5MB。base64 相对原始字节膨胀约 4/3，
+# 故原始字节需 ≤ ~3.75MB，这里留余量取 3.5MB / 单边 7600px。
+_MAX_IMAGE_DIM = 7600
+_MAX_SENDABLE_BYTES = 3_500_000
+
+
+def prepare_image_for_llm(data: bytes) -> bytes | None:
+    """把一张图压到视觉大模型能接收的范围内（单边 ≤7600px、base64 ≤5MB）。
+
+    - 已在限制内：原样返回（沿用旧行为，jpeg/png 皆可）。
+    - 超尺寸或超体积：等比缩放并重编码为 PNG，必要时继续缩到体积达标。
+    - 无法解码或压不下去：返回 None（调用方跳过该图，不阻断任务）。
+    """
+    from PIL import Image  # 延迟导入：仅在真正处理图片时需要
+
+    try:
+        with Image.open(io.BytesIO(data)) as probe:
+            width, height = probe.size
+    except Exception:  # noqa: BLE001 — 无法探测尺寸的图，仅在体积安全时才敢原样送
+        return data if len(data) <= _MAX_SENDABLE_BYTES else None
+
+    if max(width, height) <= _MAX_IMAGE_DIM and len(data) <= _MAX_SENDABLE_BYTES:
+        return data
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:  # noqa: BLE001 — 解码失败无法安全缩放，丢弃
+        return None
+
+    if max(img.width, img.height) > _MAX_IMAGE_DIM:
+        scale = _MAX_IMAGE_DIM / max(img.width, img.height)
+        img = img.resize(
+            (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+            Image.LANCZOS,
+        )
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    for _ in range(6):  # 反复缩到 PNG 体积达标，最多 6 轮
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        out = buf.getvalue()
+        if len(out) <= _MAX_SENDABLE_BYTES:
+            return out
+        new_size = (round(img.width * 0.8), round(img.height * 0.8))
+        if min(new_size) < 8:
+            break
+        img = img.resize(new_size, Image.LANCZOS)
+    return None
+
 
 # 图片类型：动机 / 方法 / 架构 / 实验 / 其他（编译时决定插到哪个小节）
 FIGURE_KINDS = ("motivation", "method", "architecture", "experiment", "other")
@@ -127,7 +180,7 @@ def figures_annotated(figures: list[dict[str, Any]] | None) -> bool:
 def important_figures_with_bytes(
     paper: Paper, limit: int = 6
 ) -> list[tuple[dict[str, Any], bytes]]:
-    """取重要图及其 PNG bytes（图文编译用）：文件缺失跳过、单张 >4MB 跳过、最多 limit 张。"""
+    """取重要图及其 PNG bytes（图文编译用）：文件缺失跳过、超限图降采样、最多 limit 张。"""
     out: list[tuple[dict[str, Any], bytes]] = []
     for fig in paper.figures or []:
         if not fig.get("important"):
@@ -135,8 +188,8 @@ def important_figures_with_bytes(
         path = figure_path(str(paper.id), int(fig["index"]))
         if not path.exists():
             continue
-        data = path.read_bytes()
-        if len(data) > MAX_IMAGE_BYTES:
+        data = prepare_image_for_llm(path.read_bytes())
+        if data is None:
             continue
         out.append((fig, data))
         if len(out) >= limit:
@@ -172,8 +225,8 @@ async def annotate_figures(
         path = figure_path(str(paper.id), int(cand["index"]))
         if not path.exists():
             continue
-        data = path.read_bytes()
-        if len(data) > MAX_IMAGE_BYTES:
+        data = prepare_image_for_llm(path.read_bytes())
+        if data is None:
             continue
         sendable.append(cand)
         images.append(data)
