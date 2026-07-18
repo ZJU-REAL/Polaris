@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Git & contribution workflow
+    url: https://github.com/ZJU-REAL/Polaris/blob/main/docs/git-workflow.md
+    about: Branch model, PR flow, migrations, local preview — read this before opening a PR.
+  - name: Project README
+    url: https://github.com/ZJU-REAL/Polaris/blob/main/README.md
+    about: Project overview and setup.
