@@ -14,7 +14,9 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
+import { tr } from '../../lib/i18n';
 import {
   api,
   ApiError,
@@ -55,6 +57,14 @@ export interface JumpTarget {
   page: number;
   nonce: number;
 }
+
+/** 阅读器模式：annotate = 自建可划线阅读器；standard = 浏览器内置 PDF 阅读器（不支持划线）。 */
+type ReaderMode = 'annotate' | 'standard';
+
+// 缩放范围与步进（相对「适应宽度」的倍率）。
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3;
+const ZOOM_STEP = 0.1;
 
 interface PdfReaderProps {
   paper: PaperDetail;
@@ -109,12 +119,15 @@ function collectTextRects(range: Range): DOMRect[] {
 const HL_TOP = 0.2; // 高亮块从行盒顶部裁掉的比例（去掉字上方行距）
 const HL_HEIGHT = 0.68; // 高亮块占行盒高度的比例（≈ 文字高度的 3/4）
 const UNDERLINE_TOP = 0.9; // 下划线相对行盒的纵向位置
-const WAVE_TOP = 0.76; // 波浪线相对行盒的纵向位置（比下划线更贴近文字，且留出波高不被裁）
-const WAVE_H = 6; // 波浪线绘制高度（px），需容纳完整波形
+const WAVE_TOP = 0.74; // 波浪线相对行盒的纵向位置（贴文字底部，波形上下居中于绘制带）
+const WAVE_H = 8; // 波浪线绘制带高度（px）：波形上下都留出余量，下缘不再被裁
 
-/** 波浪线背景：一段可平铺的 SVG（高度与 WAVE_H 一致，波形完整），按颜色着色。 */
+/**
+ * 波浪线背景：可平铺的 SVG（高度与 WAVE_H 一致）。波形在 8×8 瓦片内上下居中——
+ * 波峰约 y=2.5、波谷约 y=5.5，加描边仍落在 0..8 内，因此波谷（下缘）不会被裁掉。
+ */
 function waveBg(color: string): string {
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='${WAVE_H}'><path d='M0 5 Q2 1 4 5 T8 5' fill='none' stroke='${color}' stroke-width='1.3'/></svg>`;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='${WAVE_H}'><path d='M0 4 Q2 1 4 4 T8 4' fill='none' stroke='${color}' stroke-width='1.4'/></svg>`;
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
@@ -173,10 +186,13 @@ export function PdfReader({
   const pageWrapRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [numPages, setNumPages] = useState(0);
   const [pageWidth, setPageWidth] = useState(0);
+  const [scale, setScale] = useState(1); // 缩放倍率（1 = 适应宽度）
+  const [mode, setMode] = useState<ReaderMode>('annotate'); // 标注阅读器 / 标准浏览器
   const [url, setUrl] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [pendingStyle, setPendingStyle] = useState<HighlightStyle>('highlight');
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const wheelAccum = useRef(0); // 捏合/滚轮缩放的手势累积量：攒够一档才缩放，避免频繁重渲染卡顿
 
   // 浮条渲染后按实际位置纠偏：若溢出窗口上/下缘，就把它推回可视区（不依赖坐标系假设）
   useLayoutEffect(() => {
@@ -220,7 +236,30 @@ export function PdfReader({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [url]);
+  }, [url, mode]); // 从标准模式切回时容器重新挂载，需重新测量并观察
+
+  // 触控板双指捏合 / Ctrl(⌘)+滚轮 缩放：浏览器默认会整页缩放，这里拦下来只缩放 PDF。
+  // 捏合手势在浏览器里表现为 ctrlKey=true 的 wheel 事件；必须用 passive:false 才能 preventDefault。
+  // 每个 wheel 事件都改 scale 会让 react-pdf 每秒重渲染整页画布几十次而卡顿——这里改成
+  // 离散步进：攒够一定手势量才跳一档（±ZOOM_STEP），缩放变「一档一档」但不再卡。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || mode !== 'annotate') return;
+    const WHEEL_THRESHOLD = 45; // 累积 deltaY 达到此值才跳一档
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return; // 普通滚动不拦截，照常翻页
+      e.preventDefault();
+      wheelAccum.current += e.deltaY;
+      if (Math.abs(wheelAccum.current) < WHEEL_THRESHOLD) return;
+      const dir = wheelAccum.current > 0 ? -1 : 1; // 上滑放大、下滑缩小
+      wheelAccum.current = 0;
+      setScale((s) =>
+        Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((s + dir * ZOOM_STEP) * 100) / 100)),
+      );
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [url, mode]);
 
   const fetchPdfMutation = useMutation({
     mutationFn: () => api.requestPaperPdf(paper.id),
@@ -347,6 +386,13 @@ export function PdfReader({
     return m;
   }, [highlights]);
 
+  // 缩放后的实际渲染宽度（划线归一化存储，随宽度自动缩放，无需重算坐标）。
+  const renderWidth = Math.round(pageWidth * scale);
+  const zoomBy = useCallback(
+    (d: number) => setScale((s) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((s + d) * 100) / 100))),
+    [],
+  );
+
   if (pdfQuery.isLoading) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -412,6 +458,64 @@ export function PdfReader({
   }
 
   return (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      {/* —— 顶部控制条：阅读器模式切换 + 缩放 —— */}
+      <div
+        className="row"
+        style={{ flexShrink: 0, gap: 10, padding: '8px 12px', borderBottom: '0.5px solid var(--border)' }}
+      >
+        <Segmented<ReaderMode>
+          options={[
+            { v: 'annotate', label: tr('标注阅读器', 'Annotate') },
+            { v: 'standard', label: tr('标准阅读器', 'Standard') },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
+        {mode === 'annotate' ? (
+          <span className="row gap6" style={{ marginLeft: 'auto' }}>
+            <button
+              className="icon-btn"
+              title={tr('缩小', 'Zoom out')}
+              disabled={scale <= ZOOM_MIN}
+              onClick={() => zoomBy(-ZOOM_STEP)}
+              style={{ width: 26, height: 26 }}
+            >
+              <Icon name="minus" size={14} />
+            </button>
+            <button
+              className="btn btn-ghost sm"
+              title={tr('适应宽度', 'Fit width')}
+              onClick={() => setScale(1)}
+              style={{ minWidth: 52, justifyContent: 'center', fontVariantNumeric: 'tabular-nums' }}
+            >
+              {Math.round(scale * 100)}%
+            </button>
+            <button
+              className="icon-btn"
+              title={tr('放大', 'Zoom in')}
+              disabled={scale >= ZOOM_MAX}
+              onClick={() => zoomBy(ZOOM_STEP)}
+              style={{ width: 26, height: 26 }}
+            >
+              <Icon name="plus" size={14} />
+            </button>
+          </span>
+        ) : (
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>
+            {tr('标准阅读器不支持划线标注', 'Standard viewer has no highlighting')}
+          </span>
+        )}
+      </div>
+
+      {mode === 'standard' ? (
+        // 浏览器内置 PDF 阅读器：自带缩放/搜索/打印，但不承载我们的标注层
+        <iframe
+          title={paper.title}
+          src={url}
+          style={{ flex: 1, minHeight: 0, width: '100%', border: 'none', background: '#525659' }}
+        />
+      ) : (
     <div
       ref={scrollRef}
       className="scroll"
@@ -445,17 +549,17 @@ export function PdfReader({
                   if (el) pageWrapRefs.current.set(pageNo, el);
                   else pageWrapRefs.current.delete(pageNo);
                 }}
-                style={{ position: 'relative', width: pageWidth, margin: '0 auto 14px', boxShadow: '0 2px 10px rgba(0,0,0,0.4)' }}
+                style={{ position: 'relative', width: renderWidth, margin: '0 auto 14px', boxShadow: '0 2px 10px rgba(0,0,0,0.4)' }}
               >
                 <Page
                   pageNumber={pageNo}
-                  width={pageWidth}
+                  width={renderWidth}
                   renderTextLayer
                   renderAnnotationLayer={false}
                   loading={
                     <div
                       className="pulse"
-                      style={{ width: pageWidth, height: pageWidth * 1.29, background: 'var(--surface-3)' }}
+                      style={{ width: renderWidth, height: renderWidth * 1.29, background: 'var(--surface-3)' }}
                     />
                   }
                 />
@@ -539,12 +643,12 @@ export function PdfReader({
                         ? { width: 14, borderBottom: '2px solid var(--text-3)', marginBottom: 5 }
                         : {
                             width: 14,
-                            height: 5,
-                            marginBottom: 3,
+                            height: WAVE_H,
+                            marginBottom: 2,
                             backgroundImage: waveBg('#888'),
                             backgroundRepeat: 'repeat-x',
-                            backgroundSize: '8px 5px',
-                            backgroundPosition: 'bottom',
+                            backgroundSize: `8px ${WAVE_H}px`,
+                            backgroundPosition: 'center',
                           }
                   }
                 />
@@ -572,6 +676,8 @@ export function PdfReader({
           </div>,
           document.body,
         )}
+    </div>
+      )}
     </div>
   );
 }
