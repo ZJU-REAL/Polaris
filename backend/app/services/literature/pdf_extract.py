@@ -28,8 +28,18 @@ FIGURE_MAX_PER_PAGE = 3
 VECTOR_MIN_W_PT = 140.0  # 簇最小宽（pt）
 VECTOR_MIN_H_PT = 90.0  # 簇最小高（pt）
 VECTOR_MAX_PAGE_FRAC = 0.85  # 簇面积超过页面 85% 视为背景/整页边框，跳过
-VECTOR_RENDER_DPI = 150
+VECTOR_RENDER_DPI = 300  # 矢量簇渲染 DPI（原 150 太糊；300 让烤出的 PNG 像素翻倍）
 VECTOR_CLIP_MARGIN_PT = 6.0  # 渲染时四周留白，把坐标轴刻度/图例框进来
+
+# 裁剪框扩展：cluster_drawings 只圈矢量线条，坐标轴刻度/图例/图题等文本对象在簇外，
+# 会被裁掉。渲染前把「压在簇上 or 紧邻簇的短文本块」并进裁剪框（正文整栏段落除外）。
+EXPAND_GAP_PT = 12.0  # 文本块与簇的最大间隙，超出视为不相关
+EXPAND_MAX_WIDTH_RATIO = 1.4  # 邻近文本块宽度上限（相对当前框），滤掉整栏正文
+EXPAND_CAPTION_GAP_PT = 24.0  # 图题（Figure N…）允许的更大间隙
+EXPAND_MAX_PASSES = 3  # 定点扩展最多轮数（吸收后可能带来新的重叠/邻近）
+EXPAND_MAX_PAGE_FRAC = 0.75  # 扩展后框面积上限（占页面比），越界则不吸收该块，防跑飞
+# 图题起始模式：Figure 1 / Fig. 2 / 图 3 / Table 1 / 表 2
+CAPTION_RE = re.compile(r"^\s*(fig(?:ure)?\.?|图|表|tab(?:le)?\.?)\s*\.?\s*\d", re.IGNORECASE)
 
 
 def papers_dir() -> Path:
@@ -103,6 +113,71 @@ def _flatten_png_white(png_bytes: bytes) -> bytes:
         return out.getvalue()
 
 
+def _rect_gap(a: Any, b: Any) -> float:
+    """两个轴对齐矩形的最小间隙（重叠为 0）。"""
+    dx = max(0.0, a.x0 - b.x1, b.x0 - a.x1)
+    dy = max(0.0, a.y0 - b.y1, b.y0 - a.y1)
+    return max(dx, dy)
+
+
+def _should_absorb(box: Any, bb: Any, text: str) -> bool:
+    """文本块是否属于该图（应并进裁剪框）：图题、或压在图上/紧邻的短文本。"""
+    if bb.is_empty or bb.width <= 0 or bb.height <= 0:
+        return False
+    # 图题（Figure N…）：匹配模式 + 间隙够近即收（图题可能较宽，不受宽度闸门约束）
+    if _rect_gap(box, bb) <= EXPAND_CAPTION_GAP_PT and CAPTION_RE.match(text):
+        return True
+    # 其余文本必须"够窄"才像标签（轴标/刻度/图例/节点标签），否则视为整栏正文段落跳过。
+    # 宽度闸门对「重叠」也生效——框向下长到轴标后会与下方正文竖直重叠，不加约束会把正文吞掉。
+    if bb.width > box.width * EXPAND_MAX_WIDTH_RATIO:
+        return False
+    if box.intersects(bb):  # 压在图上的文字
+        return True
+    return _rect_gap(box, bb) <= EXPAND_GAP_PT  # 紧邻的短文本
+
+
+def _expand_clip_with_text_blocks(
+    rect: Any,
+    blocks: list[tuple[float, float, float, float, str]],
+    page_rect: Any,
+    page_area: float,
+) -> Any:
+    """把与矢量簇重叠 / 紧邻的文本块并进裁剪框（轴标/图例/图题），整栏正文与越界吸收除外。
+
+    定点扩展：吸收一块可能让框变大而带来新的重叠/邻近，故多轮直到不再增长；
+    每次吸收前校验不越界（不超过页面 EXPAND_MAX_PAGE_FRAC），防扩到整栏正文。纯几何，便于单测。
+    """
+    import pymupdf
+
+    box = pymupdf.Rect(rect)
+    cap = page_area * EXPAND_MAX_PAGE_FRAC
+    remaining = [(pymupdf.Rect(b[0], b[1], b[2], b[3]), b[4]) for b in blocks]
+    for _ in range(EXPAND_MAX_PASSES):
+        grew = False
+        keep: list[tuple[Any, str]] = []
+        for bb, text in remaining:
+            if _should_absorb(box, bb, text):
+                cand = box | bb
+                if cand.width * cand.height <= cap:  # 不越界才吸收
+                    box = cand
+                    grew = True
+                    continue
+            keep.append((bb, text))
+        remaining = keep
+        if not grew:
+            break
+    return box & pymupdf.Rect(page_rect)
+
+
+def _page_text_blocks(page: Any) -> list[tuple[float, float, float, float, str]]:
+    """页面上的文本块 (x0,y0,x1,y1,text)；图片块（block_type=1）与空块剔除。"""
+    out: list[tuple[float, float, float, float, str]] = []
+    for b in page.get_text("blocks"):
+        if len(b) >= 7 and b[6] == 0 and isinstance(b[4], str) and b[4].strip():
+            out.append((b[0], b[1], b[2], b[3], b[4]))
+    return out
+
+
 def _vector_figure_pixmaps(page: Any) -> list[Any]:
     """矢量图兜底：把页面上的矢量绘图簇渲染为 Pixmap（架构图/曲线图通常是矢量的）。"""
     import pymupdf
@@ -115,16 +190,19 @@ def _vector_figure_pixmaps(page: Any) -> list[Any]:
     except Exception:  # noqa: BLE001 — 个别页绘图指令损坏，跳过该页
         logger.warning("cluster_drawings failed on page %d", page.number + 1, exc_info=True)
         return []
+    text_blocks = _page_text_blocks(page)
     for rect in clusters:
         if rect.width < VECTOR_MIN_W_PT or rect.height < VECTOR_MIN_H_PT:
             continue
         if rect.width * rect.height / page_area > VECTOR_MAX_PAGE_FRAC:
             continue  # 整页背景/页面边框
+        # 先把簇外的轴标/图例/图题并进来，再按当前框加渲染留白并裁回页面
+        expanded = _expand_clip_with_text_blocks(rect, text_blocks, page_rect, page_area)
         clip = pymupdf.Rect(
-            max(page_rect.x0, rect.x0 - VECTOR_CLIP_MARGIN_PT),
-            max(page_rect.y0, rect.y0 - VECTOR_CLIP_MARGIN_PT),
-            min(page_rect.x1, rect.x1 + VECTOR_CLIP_MARGIN_PT),
-            min(page_rect.y1, rect.y1 + VECTOR_CLIP_MARGIN_PT),
+            max(page_rect.x0, expanded.x0 - VECTOR_CLIP_MARGIN_PT),
+            max(page_rect.y0, expanded.y0 - VECTOR_CLIP_MARGIN_PT),
+            min(page_rect.x1, expanded.x1 + VECTOR_CLIP_MARGIN_PT),
+            min(page_rect.y1, expanded.y1 + VECTOR_CLIP_MARGIN_PT),
         )
         try:
             pixmaps.append(page.get_pixmap(clip=clip, dpi=VECTOR_RENDER_DPI))
