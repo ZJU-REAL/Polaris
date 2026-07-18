@@ -64,7 +64,7 @@ type ReaderMode = 'annotate' | 'standard';
 // 缩放范围与步进（相对「适应宽度」的倍率）。
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
-const ZOOM_STEP = 0.2;
+const ZOOM_STEP = 0.1;
 
 interface PdfReaderProps {
   paper: PaperDetail;
