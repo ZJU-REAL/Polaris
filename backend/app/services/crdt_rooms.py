@@ -210,6 +210,54 @@ class CRDTRoomManager:
         except Exception:  # noqa: BLE001 — 快照尽力而为
             logger.exception("版本快照失败：file=%s", file_id)
 
+    async def stream_section(
+        self, file_id: uuid.UUID, section: str, *, op: str, text: str = ""
+    ) -> bool:
+        """AI 起草流式镜像（API 进程订阅 redis 后调用）：把增量写进活跃房间的
+        分节区间，连接中的编辑器实时可见。无活跃房间时 no-op（worker 的 DB 写为准）。
+
+        - ``open``：清空该节正文（去掉「待撰写」占位，为流式开头做准备）；
+        - ``delta``：在该节正文末尾追加 ``text``；
+        - ``replace``：用 ``text`` 覆盖该节正文（重写/精修/收尾对齐用）。
+        本方法只碰房间内存文档；落库交给房间自身的防抖快照（会把并发的人工
+        编辑一起合并持久化），不在此处触发。
+        """
+        room = self.active_room(file_id)
+        if room is None:
+            return False
+        ytext = room.ydoc.get("content", type=Text)
+        current = str(ytext)
+        span = section_span(current, section)
+        if span is None:
+            return False
+        start, end = span
+        body = current[start:end]
+        # pycrdt Text 用 UTF-8 字节偏移
+        start_b = len(current[:start].encode("utf-8"))
+        end_b = start_b + len(current[start:end].encode("utf-8"))
+
+        # 不变式：正文末尾恒有一个换行符（END 标记的前导终止符），delta 插到它之前，
+        # 保证 END 标记始终独占一行、区间定位不被增量破坏。
+        if op == "delta" and text and body.endswith("\n"):
+            insert_b = len(current[: end - 1].encode("utf-8"))
+            with room.ydoc.transaction():
+                ytext.insert(insert_b, text)
+            return True
+
+        # open（清空为单换行）/ replace / delta 兜底：整节正文规范化重写
+        if op == "delta":
+            new_body = (body + text).strip("\n")
+        elif op == "open":
+            new_body = ""
+        else:  # replace
+            new_body = text.strip("\n")
+        normalized = f"{new_body}\n" if new_body else "\n"
+        with room.ydoc.transaction():
+            if end_b > start_b:
+                del ytext[start_b:end_b]
+            ytext.insert(start_b, normalized)
+        return True
+
     async def set_content(self, file_id: uuid.UUID, new_content: str) -> bool:
         """整文件替换（版本恢复用）。有活跃房间经 Y 事务替换并立即快照落库，
         返回 True；无房间返回 False（调用方直接写库）。"""

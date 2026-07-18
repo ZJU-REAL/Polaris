@@ -61,12 +61,16 @@ class RecordingBus:
     def __init__(self):
         self.voyage_events: list[tuple[str, str, dict]] = []
         self.notify: list[tuple[str, dict]] = []
+        self.crdt_stream: list[dict] = []
 
     async def publish_voyage_event(self, voyage_id, event: str, data: dict) -> None:
         self.voyage_events.append((str(voyage_id), event, data))
 
     async def publish_notify(self, project_id, message: dict) -> None:
         self.notify.append((str(project_id), message))
+
+    async def publish_crdt_stream(self, command: dict) -> None:
+        self.crdt_stream.append(command)
 
 
 @pytest_asyncio.fixture

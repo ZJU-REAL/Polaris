@@ -56,8 +56,15 @@
 - 管线（stage=writing）：分节固定顺序 Intro→Method→Experimental Setup→Results→Conclusion→Abstract→（编译）→Related Work（检索文献库+S2 命中集内选引）→ 终编译，全文编译 ok 为完成条件
 - 每节输出静态校验（违规重写 ≤2）：`\cite{k}` 必须∈fact_pack.citations；`\includegraphics` 只能引用 fact_pack.figures 的 fig_id；正文数字（\d+\.?\d*% 与小数）必须能在 metrics 表内找到（±0.01 容差）或在白名单（年份/章节号等启发式豁免）
 - 重写用尽仍违规**不判整单失败**：降级写入最后一稿并在节顶加 TODO 注释（step 结果含 `needs_review`/`violations`），记 Activity `manuscript.section_needs_review`，继续写后续节
-- 每节一轮 self-reflection 精修；写入对应 ManuscriptFile **经 CRDT 事务**（协同者实时可见），无房间时直接写库
+- 每节一轮 self-reflection 精修；权威落库经 `apply_ai_edit`（worker 无活跃房间直接写库 + 版本快照）
 - status 流转：draft→writing→compiled；流转推 WS `manuscript.status`（前端靠它实时刷新，仅留 30s 慢轮询兜底）
+
+### 5a. 流式直播（AI 光标实时撰写）
+
+- worker 与 API 是独立容器，CRDT 房间只在 API 进程。撰写时 worker 把 LLM 增量按分节发布到 redis `crdt:stream`（`{op: open|delta|replace, file_id, section, text}`）；API 进程的 `CRDTStreamSubscriber`（随 lifespan 启停）订阅后写进**活跃房间**的分节区间 → 连接中的编辑器逐字看到 AI「打字」。无活跃房间时 no-op（worker 的 DB 写为准）
+- 房间写入维持「正文末尾恒有一个换行」不变式：`open` 清空占位、`delta` 插到末换行前、`replace` 整节规范化覆盖（收尾/重写/精修对齐，房间与 DB 收敛到同一节正文）
+- 撰写相位经 `ctx.notify` 推 WS `manuscript.ai_writing {manuscript_id, file_id, section, phase}`，`phase ∈ typing|revising|done|compiling`。前端据此在编辑器画「✨ AI」光标（脉动竖条 + 标签 + 当前小节整行高亮 + 自动滚动跟随），并在顶栏显示状态条；跨文件时给「到 X 看 AI 撰写」跳转。`done` 或 `status!=writing` 时收起
+- 直播为**尽力而为**：redis 不可达或无人观看时静默降级，不影响起草与权威落库
 
 ### 5b. 内联 AI 写作辅助（SSE）
 

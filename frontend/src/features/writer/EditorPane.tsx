@@ -10,6 +10,7 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import { api, getToken } from '../../lib/api';
 import { ManuscriptProvider, type ProviderStatus } from '../../lib/yjs-provider';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { aiCursorExtension, setAiTarget, type AiTarget } from './aiCursor';
 
 /* ============================================================
    CodeMirror6 编辑面板：
@@ -74,6 +75,8 @@ export interface EditorPaneProps {
   onView: (v: EditorView | null) => void;
   /** 文档内容变化（防抖后回调，大纲面板用）。 */
   onDocChange?: (content: string) => void;
+  /** AI 起草时当前正在写的小节（画 AI 光标）；null = 无。 */
+  aiTarget?: AiTarget | null;
 }
 
 export function EditorPane(props: EditorPaneProps) {
@@ -83,9 +86,10 @@ export function EditorPane(props: EditorPaneProps) {
 
 /* ---------------- 协同编辑（CRDT） ---------------- */
 
-function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, onPeers, onView, onDocChange }: EditorPaneProps) {
+function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, onPeers, onView, onDocChange, aiTarget }: EditorPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const providerRef = useRef<ManuscriptProvider | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
   // 最新回调放 ref，避免父组件重渲染导致编辑器/连接重建
   const cbRef = useRef({ onCompile, onStatus, onPeers, onView, onDocChange });
   cbRef.current = { onCompile, onStatus, onPeers, onView, onDocChange };
@@ -150,6 +154,7 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
         ),
         keymap.of(yUndoManagerKeymap),
         ...baseExtensions,
+        aiCursorExtension,
         yCollab(ytext, provider.awareness, { undoManager }),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) emitDoc(u.state.doc.toString());
@@ -157,11 +162,13 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
       ],
     });
     const view = new EditorView({ state, parent: host });
+    viewRef.current = view;
     cbRef.current.onView(view);
     emitDoc(view.state.doc.toString());
 
     return () => {
       cbRef.current.onView(null);
+      viewRef.current = null;
       if (docTimer) clearTimeout(docTimer);
       view.destroy();
       offStatus();
@@ -180,6 +187,11 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
       colorLight: `${user.color}33`,
     });
   }, [user.name, user.color]);
+
+  // AI 起草目标变化 → 派发装饰效果（不重建编辑器）
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: setAiTarget.of(aiTarget ?? null) });
+  }, [aiTarget?.section, aiTarget?.phase]);
 
   return <div ref={hostRef} style={{ flex: 1, minHeight: 0, minWidth: 0 }} />;
 }

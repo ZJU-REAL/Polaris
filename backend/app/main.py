@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.db import create_all, dispose_engine, get_sessionmaker
 from app.core.redis import close_redis
 from app.services.crdt_rooms import reset_crdt_rooms
+from app.services.crdt_stream import get_crdt_stream_subscriber, stop_crdt_stream_subscriber
 from app.services.skills import ensure_builtin_skills
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,10 @@ async def lifespan(app: FastAPI):
             await ensure_builtin_skills(session)
     except Exception:  # noqa: BLE001
         logger.warning("builtin skill seeding failed (migrations pending?)", exc_info=True)
+    # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）
+    get_crdt_stream_subscriber().start()
     yield
+    await stop_crdt_stream_subscriber()
     await reset_crdt_rooms()  # 关停 CRDT 房间服务器（先冲刷不了的防抖任务直接取消）
     await dispose_engine()
     await close_redis()

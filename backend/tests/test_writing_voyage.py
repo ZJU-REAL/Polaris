@@ -185,6 +185,25 @@ async def test_writing_full_pipeline(client, queue_stub):
     statuses = [m["status"] for _, m in bus.notify if m.get("type") == "manuscript.status"]
     assert "writing" in statuses and statuses[-1] == "compiled"
 
+    # 流式镜像：每节至少 open + delta + 收尾 replace（发布到 crdt:stream）
+    intro_cmds = [c for c in bus.crdt_stream if c["section"] == "introduction"]
+    ops = [c["op"] for c in intro_cmds]
+    assert ops[0] == "open"
+    assert "delta" in ops
+    assert ops[-1] == "replace"
+    assert "".join(c["text"] for c in intro_cmds if c["op"] == "delta")  # 增量非空
+    # 增量拼接 == 收尾 replace 的干净文本
+    joined = "".join(c["text"] for c in intro_cmds if c["op"] == "delta")
+    final_replace = [c for c in intro_cmds if c["op"] == "replace"][-1]["text"]
+    assert final_replace in joined or joined.strip() == final_replace.strip()
+
+    # AI 撰写相位：typing → done（每节），末尾 compiling
+    ai_events = [m for _, m in bus.notify if m.get("type") == "manuscript.ai_writing"]
+    intro_phases = [m["phase"] for m in ai_events if m.get("section") == "introduction"]
+    assert intro_phases[0] == "typing"
+    assert intro_phases[-1] == "done"
+    assert any(m["phase"] == "compiling" for m in ai_events)
+
 
 async def test_writing_selected_sections_only(client, queue_stub):
     _, headers, ms_id, voyage = await _prepare(

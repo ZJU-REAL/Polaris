@@ -127,6 +127,39 @@ async def test_room_snapshot_debounce_and_ai_edit(client, monkeypatch):
     assert str(room2.ydoc.get("content", type=Text)) == current
 
 
+async def test_stream_section_open_delta_replace(client):
+    """流式镜像：open 清空占位 → delta 逐块追加 → replace 覆盖对齐。"""
+    _, _, file_id = await _seed_file(client)
+    manager = get_crdt_rooms()
+
+    # 无活跃房间 → no-op（worker DB 写为准）
+    assert await manager.stream_section(file_id, "introduction", op="delta", text="x") is False
+
+    room = await manager.connect(file_id=file_id, db_content=SKELETON)
+    text = room.ydoc.get("content", type=Text)
+
+    # open：清空「待撰写」占位（正文留单换行，END 标记独占一行的不变式）
+    assert await manager.stream_section(file_id, "introduction", op="open") is True
+    span = section_span(str(text), "introduction")
+    assert str(text)[span[0] : span[1]] == "\n"
+    assert "（待撰写" not in str(text)
+    assert "% POLARIS_SECTION_END: introduction" in str(text)  # 标记完好
+
+    # delta：逐块追加到该节末尾（含 CJK，标记始终完好）
+    await manager.stream_section(file_id, "introduction", op="delta", text="Hello ")
+    await manager.stream_section(file_id, "introduction", op="delta", text="world 世界.")
+    span = section_span(str(text), "introduction")
+    assert str(text)[span[0] : span[1]].strip() == "Hello world 世界."
+    assert "Hello world 世界.\n% POLARIS_SECTION_END: introduction" in str(text)
+    assert "old results body" in str(text)  # 其他节不受影响
+
+    # replace：整节覆盖（去围栏后的干净稿）
+    await manager.stream_section(file_id, "introduction", op="replace", text="Final intro.")
+    current = str(text)
+    assert "Final intro.\n% POLARIS_SECTION_END: introduction" in current
+    assert "Hello world" not in current
+
+
 async def test_ws_connect_guards_file_lookup(client):
     """WS on_connect 用的查询：非成员不可见；readonly 文件拒开房间（4403 依据）。"""
     ms_id, headers, file_id = await _seed_file(client)

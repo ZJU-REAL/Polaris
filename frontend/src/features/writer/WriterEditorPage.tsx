@@ -24,7 +24,7 @@ import { DraftModal } from './DraftModal';
 import { OutlinePanel } from './OutlinePanel';
 import { AssistPanel, type AssistMode } from './AssistPanel';
 import { HistoryModal } from './HistoryModal';
-import { colorForUser, ruleText } from './shared';
+import { colorForUser, ruleText, sectionText, type AiWritingState } from './shared';
 
 /* ============================================================
    /writer/:id — 论文编辑工作台（全屏三栏）：
@@ -247,6 +247,13 @@ export function WriterEditorPage() {
     refetchInterval: (q) => (q.state.data?.status === 'writing' ? 30_000 : false),
   });
   const ms = detailQuery.data;
+
+  // AI 起草实时相位（AppShell 从 WS manuscript.ai_writing 写入缓存；无网络请求）
+  const { data: aiWriting } = useQuery<AiWritingState | null>({
+    queryKey: ['ai-writing', id],
+    enabled: false,
+    initialData: null,
+  });
 
   // —— 当前用户（awareness 用户名 + hash 颜色） ——
   const meQuery = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
@@ -569,6 +576,14 @@ export function WriterEditorPage() {
   }
 
   const isWriting = ms.status === 'writing';
+  // AI 正在写当前文件的哪一节（给编辑器画光标，仅撰写/修订相位）；跨文件时只在状态条给跳转
+  const aiPenActive =
+    isWriting && (aiWriting?.phase === 'typing' || aiWriting?.phase === 'revising');
+  const aiTarget =
+    aiPenActive && aiWriting!.fileId === currentFileId && aiWriting!.section
+      ? { section: aiWriting!.section, phase: aiWriting!.phase as 'typing' | 'revising' }
+      : null;
+  const aiFile = aiWriting?.fileId ? ms.files.find((f) => f.id === aiWriting.fileId) : null;
   const showDisconnect = !!currentFile && !currentFile.readonly && wsStatus === 'disconnected';
   const errCount = compile?.diagnostics.filter((d) => d.severity === 'error').length ?? 0;
   const warnCount = compile?.diagnostics.filter((d) => d.severity === 'warning').length ?? 0;
@@ -724,6 +739,50 @@ export function WriterEditorPage() {
         </div>
       )}
 
+      {/* —— AI 起草实时状态条 —— */}
+      {isWriting && aiWriting && (
+        <div
+          className="row gap8"
+          style={{
+            background: 'var(--accent-soft)',
+            color: 'var(--accent-text)',
+            fontSize: 12,
+            padding: '6px 16px',
+            flexShrink: 0,
+          }}
+        >
+          <span className="ai-writing-dot" />
+          {aiWriting.phase === 'compiling' ? (
+            <span>AI 正在编译论文…</span>
+          ) : aiWriting.phase === 'done' ? (
+            <span>AI 起草中…</span>
+          ) : (
+            <span>
+              AI 正在{aiWriting.phase === 'revising' ? '修订' : '撰写'}
+              〈{aiWriting.section ? sectionText(aiWriting.section) : '正文'}〉…
+            </span>
+          )}
+          {aiFile && aiWriting.fileId !== currentFileId && (
+            <button
+              className="btn btn-ghost sm"
+              style={{ height: 22, fontSize: 10.5, padding: '0 8px', marginLeft: 4 }}
+              onClick={() => setCurrentFileId(aiFile.id)}
+            >
+              到 {aiFile.path} 看 AI 撰写
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          {ms.writing_voyage_id && (
+            <Link
+              to={`/voyages/${ms.writing_voyage_id}`}
+              style={{ color: 'var(--accent-text)', textDecoration: 'underline', fontSize: 11 }}
+            >
+              看任务进度
+            </Link>
+          )}
+        </div>
+      )}
+
       {/* —— 三栏（可拖拽调宽 / 可收起） —— */}
       <div ref={splitRef} style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         {/* 左：文件树 */}
@@ -827,6 +886,7 @@ export function WriterEditorPage() {
                 onPeers={handlePeers}
                 onView={handleView}
                 onDocChange={handleDocChange}
+                aiTarget={aiTarget}
               />
               {assistMode && view && currentFile && !currentFile.readonly && (
                 <AssistPanel
