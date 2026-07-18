@@ -64,25 +64,26 @@ input {
   overflow: hidden;
 }
 
-/* —— 收起态：图标轨道（只留图标，隐藏文字） —— */
+/* —— 收起态：图标轨道（只留图标，隐藏文字） ——
+   图标列中心恒为侧栏中线（66/2 = 33px），与展开态一致，收放不跳动。 */
 .nav-collapsed .sidebar { width: 66px; }
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
-.nav-collapsed .sb-brand { justify-content: center; margin: 16px 0 12px; }
+.nav-collapsed .sb-brand { justify-content: center; margin: 18px 0 12px; }
 .nav-collapsed .sb-scroll { padding: 4px 8px 14px; }
 .nav-collapsed .sb-section { text-align: center; padding-left: 0; padding-right: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; color: transparent; height: 10px; }
-/* 收起态：行加高、居中成方块（图标尺寸与展开态一致，不再单独放大） */
-.nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 10px 0; }
-.nav-collapsed .nav-item .nav-label,
-.nav-collapsed .nav-item .stage-no { display: none; }
+/* 收起态：整行居中，仅留图标（行高与展开态相同，图标尺寸不变） */
+.nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 8px 0; }
+.nav-collapsed .nav-item .nav-label { display: none; }
 .nav-collapsed .sb-foot { justify-content: center; padding-left: 0; padding-right: 0; }
 .nav-collapsed .sb-foot > div,
 .nav-collapsed .sb-foot > button { display: none; }
 .nav-toggle { margin-right: 2px; }
-.sb-brand { display: flex; align-items: center; gap: 9px; margin: 18px 14px 12px; }
+/* 图形标中心对齐图标列中线（12+24/2+... = 33px），与收起态一致 */
+.sb-brand { display: flex; align-items: center; gap: 9px; margin: 18px 16px 12px; }
 .sb-brand h1 { font-size: 14px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .sb-brand p { font-size: 11px; color: var(--text-3); margin: 1px 0 0; font-family: var(--mono); }
 
-.sb-scroll { flex: 1; overflow-y: auto; padding: 4px 10px 14px; }
+.sb-scroll { flex: 1; overflow-y: auto; padding: 4px 12px 14px; }
 .sb-section {
   font-size: 11px; font-weight: 600; color: var(--text-4);
   letter-spacing: 0.04em; text-transform: uppercase; padding: 14px 10px 6px;
@@ -90,7 +91,7 @@ input {
 
 .nav-item {
   display: flex; align-items: center; gap: 11px;
-  padding: 7px 10px; border-radius: 9px; cursor: pointer;
+  padding: 8px 9px; border-radius: 9px; cursor: pointer;
   font-size: 13.5px; color: var(--text-2); font-weight: 500;
   position: relative; user-select: none; margin-bottom: 1px;
   text-decoration: none;
@@ -99,8 +100,9 @@ input {
 .nav-item:hover { background: rgba(10, 30, 66, 0.04); color: var(--text); }
 .nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
 .nav-item.active .nav-ic { color: var(--accent); }
-.nav-ic { width: 19px; height: 19px; flex-shrink: 0; color: var(--text-3); display: flex; }
-.nav-item .stage-no { font-family: var(--mono); font-size: 10px; color: var(--text-4); width: 14px; text-align: center; flex-shrink: 0; }
+/* 24px 图标框、图标居中：展开态 icon 中心 = 12(scroll)+9(item)+12 = 33px；
+   收起态 icon 居中于 50px 轨道 = 8+13+12 = 33px，两态完全对齐 */
+.nav-ic { width: 24px; height: 19px; flex-shrink: 0; color: var(--text-3); display: flex; align-items: center; justify-content: center; }
 
 .sb-foot { padding: 10px 14px; border-top: 0.5px solid var(--border-2); display: flex; align-items: center; gap: 9px; }
 .sb-foot .av {

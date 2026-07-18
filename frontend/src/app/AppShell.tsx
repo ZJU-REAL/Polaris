@@ -285,7 +285,6 @@ function NavItem({ n }: { n: NavEntry }) {
       className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
       title={tr(n.zh, n.en)}
     >
-      {n.no && <span className="stage-no mono">{n.no}</span>}
       <span className="nav-ic">
         <Icon name={n.icon} size={18} />
       </span>
