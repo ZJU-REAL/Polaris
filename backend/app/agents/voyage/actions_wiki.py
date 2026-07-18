@@ -372,7 +372,9 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         )
 
         system_prompt = RELEVANCE_SYSTEM_PROMPT + ctx.skill_guidance("wiki.score_relevance")
-        for paper in papers:
+        total = len(papers)
+        for i, paper in enumerate(papers, start=1):
+            await ctx.log(f"相关性打分 {i}/{total}：{paper.title[:60]}")
             user_prompt = (
                 f"{context_text}\n标题：{paper.title}\n摘要：{paper.abstract or '（无摘要）'}"
             )
@@ -564,7 +566,9 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             .scalars()
             .all()
         )
-        for paper in papers:
+        total = len(papers)
+        for i, paper in enumerate(papers, start=1):
+            await ctx.log(f"精读编译 {i}/{total}：{paper.title[:60]}")
             # ① 编译前筛选注释论文图（stage=librarian 多模态）：图文编译要用重要图；
             #    失败仅 log（annotate 内部已带降级），不影响编译
             if paper.figures and not figures_annotated(paper.figures):

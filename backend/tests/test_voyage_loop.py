@@ -427,3 +427,45 @@ async def test_budget_exhausted_no_wrapup_pauses(client, queue_stub):
     async with get_sessionmaker()() as session:
         run = await session.get(VoyageRun, run_id)
         assert run.status == "paused_error"
+
+
+async def test_llm_stream_broadcasts_deltas(app):
+    """长文本 stage（navigator 等）在有 event_bus + voyage_id 时流式广播 token 增量：
+    llm_start → 若干 llm_delta → llm_end；拼接的 delta == 返回的完整 content（终端展示）。"""
+    from app.core.llm.base import Message
+    from app.core.llm.router import LLMRouter
+
+    bus = RecordingBus()
+    router = LLMRouter()
+    router.event_bus = bus
+    vid = uuid.uuid4()
+
+    result = await router.complete(
+        "navigator",
+        [Message(role="user", content="请规划一个较长的多步任务并逐条说明理由。")],
+        voyage_id=vid,
+    )
+
+    events = [(e, d) for _v, e, d in bus.voyage_events]
+    kinds = [e for e, _ in events]
+    assert kinds[0] == "llm_start" and kinds[-1] == "llm_end"
+    deltas = [d["delta"] for e, d in events if e == "llm_delta"]
+    assert deltas, "应至少广播一段 llm_delta"
+    assert all(d["stage"] == "navigator" for _e, d in events)
+    assert "".join(deltas) == result.content  # 增量拼接 == 完整结果
+
+
+async def test_llm_short_stage_not_streamed(app):
+    """短 JSON stage（sextant 判定）不流式，避免噪声：无 llm_delta 事件。"""
+    from app.core.llm.base import Message
+    from app.core.llm.router import LLMRouter
+
+    bus = RecordingBus()
+    router = LLMRouter()
+    router.event_bus = bus
+    await router.complete(
+        "sextant",
+        [Message(role="user", content='{"passed": true}')],
+        voyage_id=uuid.uuid4(),
+    )
+    assert not any(e == "llm_delta" for _v, e, _d in bus.voyage_events)

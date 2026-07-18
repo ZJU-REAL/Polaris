@@ -118,6 +118,8 @@ class VoyageEngine:
         self._sessionmaker = sessionmaker or get_sessionmaker()
         self._bus = event_bus
         llm = llm_router or get_llm_router()
+        # 注入事件总线：长文本 stage 的 LLM 调用自动流式广播 token 增量到任务终端
+        llm.event_bus = event_bus
         self._llm = llm
         self.navigator = Navigator(llm)
         self.helm = Helm()
@@ -170,8 +172,24 @@ class VoyageEngine:
     async def _emit_step(self, run: VoyageRun, step: VoyageStep) -> None:
         await self._emit_voyage(run.id, "step", {"step": _serialize_step(step)})
 
-    async def _emit_log(self, run: VoyageRun, message: str) -> None:
-        await self._emit_voyage(run.id, "log", {"message": message})
+    async def _emit_log(
+        self,
+        run: VoyageRun,
+        message: str,
+        *,
+        level: str = "info",
+        step_id: uuid.UUID | str | None = None,
+    ) -> None:
+        """结构化日志事件（任务详情页 terminal 消费）。
+
+        level: info | step（步骤开始）| success（通过/完成）| error（失败/暂停）|
+        plan（计划调整）| budget（预算收尾）| gate（人工审批）——前端据此上色。
+        step_id 关联到某步骤（可点/高亮）。旧订阅端只读 message，向后兼容。
+        """
+        data: dict[str, Any] = {"message": message, "level": level, "at": utcnow().isoformat()}
+        if step_id is not None:
+            data["step_id"] = str(step_id)
+        await self._emit_voyage(run.id, "log", data)
 
     # ---- 状态持久化 ----
 
@@ -240,14 +258,14 @@ class VoyageEngine:
             steps = await self.navigator.plan(run, context if isinstance(context, dict) else None)
         except NavigatorError as e:
             run.plan = []
-            await self._emit_log(run, f"规划失败：{e}")
+            await self._emit_log(run, f"规划失败：{e}", level="error")
             await self._set_status(session, run, "failed")
             raise _ExternallyTerminated("failed") from e
         run.plan = steps
         if run.done_criteria is None:
             run.done_criteria = done_criteria_for_kind(run.kind)
         await session.commit()
-        await self._emit_log(run, f"计划就绪，共 {len(steps)} 步")
+        await self._emit_log(run, f"计划就绪，共 {len(steps)} 步", level="success")
 
     async def _ensure_step_rows(self, session: AsyncSession, run: VoyageRun) -> None:
         """为 plan 中尚无记录的步骤补建节点行（首次规划/断点恢复）。"""
@@ -327,11 +345,13 @@ class VoyageEngine:
             # 工作变成产出，其余未执行步骤作废；无收尾步骤可救才 paused_error
             if self._budget_exceeded(run):
                 if _is_wrapup(step_def):
-                    await self._emit_log(run, "预算已用尽，用已完成的结果收尾")
+                    await self._emit_log(run, "预算已用尽，用已完成的结果收尾", level="budget")
                 elif await self._budget_wrapup(session, run, rows):
                     continue
                 else:
-                    await self._emit_log(run, "预算超限，无可收尾步骤，任务暂停（paused_error）")
+                    await self._emit_log(
+                        run, "预算超限，无可收尾步骤，任务暂停（paused_error）", level="error"
+                    )
                     await self._set_status(session, run, "paused_error")
                     return
 
@@ -367,7 +387,7 @@ class VoyageEngine:
                 checks, observation=None, checkpoint=run.checkpoint
             )
             if verdict is not None and not verdict.get("passed"):
-                await self._emit_log(run, f"完成标准未达成：{verdict.get('reason')}")
+                await self._emit_log(run, f"完成标准未达成：{verdict.get('reason')}", level="error")
                 # 终检回灌（loop 模式）留待后续：先一律暂停等人工，防"过早宣告完成"
                 await self._set_status(session, run, "paused_error")
                 return
@@ -395,7 +415,7 @@ class VoyageEngine:
                 await self._set_status(session, run, "executing")
                 return True
             if gate is not None and gate.status == "rejected":
-                await self._emit_log(run, f"审批被驳回：{gate.comment or ''}")
+                await self._emit_log(run, f"审批被驳回：{gate.comment or ''}", level="error")
                 await self._set_status(session, run, "failed")
                 return False
             # 仍在等待审批
@@ -423,7 +443,9 @@ class VoyageEngine:
         checkpoint["gates"] = gates
         run.checkpoint = checkpoint
         await session.commit()
-        await self._emit_log(run, f"步骤 {node_index} 需要 {gate.kind} 人工审批，任务暂停")
+        await self._emit_log(
+            run, f"步骤 {node_index} 需要 {gate.kind} 人工审批，任务暂停", level="gate"
+        )
         await self._emit_notify(
             run.project_id,
             {
@@ -456,6 +478,13 @@ class VoyageEngine:
         step_row.started_at = utcnow()
         await session.commit()
         await self._emit_step(run, step_row)
+        retry_note = f"（第 {step_row.attempt} 次尝试）" if step_row.attempt > 1 else ""
+        await self._emit_log(
+            run,
+            f"▶ 执行 第 {run.cursor + 1} 步：{step_row.title}{retry_note}",
+            level="step",
+            step_id=step_row.id,
+        )
 
         ctx = ActionContext(
             run=run,
@@ -476,6 +505,15 @@ class VoyageEngine:
         verdict, verify_usage = await self.sextant.verify(run, step_def, observation)
         step_row.verdict = verdict
         step_row.status = "passed" if verdict.get("passed") else "failed"
+        passed = bool(verdict.get("passed"))
+        reason = str(verdict.get("reason") or "")
+        await self._emit_log(
+            run,
+            f"{'✓ 通过' if passed else '✗ 未通过'}：{step_row.title}"
+            + (f" — {reason}" if reason else ""),
+            level="success" if passed else "error",
+            step_id=step_row.id,
+        )
         step_row.tokens = self._sum_usage(action_usage or {}, verify_usage)
         self._archive_attempt(step_row)
         self._accumulate_usage(run, step_row.tokens)
@@ -574,7 +612,9 @@ class VoyageEngine:
             )
             await self._regen_plan_snapshot(session, run)
         await session.commit()
-        await self._emit_log(run, f"预算用尽，作废 {len(dropped)} 个未执行步骤，用已完成的结果收尾")
+        await self._emit_log(
+            run, f"预算用尽，作废 {len(dropped)} 个未执行步骤，用已完成的结果收尾", level="budget"
+        )
         return True
 
     # ---- 失败分派（docs/voyage-loop.md §5.1）----
@@ -602,19 +642,22 @@ class VoyageEngine:
             await self._emit_log(
                 run,
                 f"步骤 {node_index} 执行出错，第 {node.attempt + 1} 次尝试（带诊断重试）",
+                level="plan",
             )
             return True
 
         # 固定管线步骤可声明 on_failure="fail"：不重规划，直接判 voyage 失败
         if step_def.get("on_failure") == "fail":
-            await self._emit_log(run, f"步骤失败（on_failure=fail，不重规划）：{diagnosis}")
+            await self._emit_log(
+                run, f"步骤失败（on_failure=fail，不重规划）：{diagnosis}", level="error"
+            )
             await self._set_status(session, run, "failed")
             return False
 
         if run.mode == "pipeline":
             # 确定性管线不经 LLM 重规划：暂停等人工（修复代码后可从断点重试，
             # 前面步骤的成果不作废）
-            await self._emit_log(run, f"步骤失败，任务暂停等待人工处理：{diagnosis}")
+            await self._emit_log(run, f"步骤失败，任务暂停等待人工处理：{diagnosis}", level="error")
             await self._set_status(session, run, "paused_error")
             return False
 
@@ -704,7 +747,9 @@ class VoyageEngine:
         await self._regen_plan_snapshot(session, run)
         await session.commit()
         await self._emit_log(
-            run, f"计划已按执行结果调整：{edit.get('reason') or ''}（新增 {added} 步）"
+            run,
+            f"计划已按执行结果调整：{edit.get('reason') or ''}（新增 {added} 步）",
+            level="plan",
         )
 
     async def _apply_plan_edit(
@@ -797,7 +842,9 @@ class VoyageEngine:
         replans = int(checkpoint.get("replans", 0))
         diagnosis = str((failed_node.verdict or {}).get("reason", ""))
         if replans >= MAX_REPLANS:
-            await self._emit_log(run, f"计划调整已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理")
+            await self._emit_log(
+                run, f"计划调整已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理", level="error"
+            )
             await self._set_status(session, run, "paused_error")
             return False
 
@@ -809,13 +856,15 @@ class VoyageEngine:
                 run, failed_def, diagnosis, self._plan_state_summary(rows)
             )
         except NavigatorError as e:
-            await self._emit_log(run, f"计划调整失败：{e}")
+            await self._emit_log(run, f"计划调整失败：{e}", level="error")
             await self._set_status(session, run, "paused_error")
             return False
 
         if edit.get("finish") or not edit.get("edits"):
             await self._emit_log(
-                run, f"Navigator 未给出有效调整（{edit.get('reason') or 'noop'}），任务暂停等待人工"
+                run,
+                f"Navigator 未给出有效调整（{edit.get('reason') or 'noop'}），任务暂停等待人工",
+                level="error",
             )
             await self._set_status(session, run, "paused_error")
             return False
@@ -823,7 +872,7 @@ class VoyageEngine:
         try:
             added = await self._apply_plan_edit(session, run, edit, anchor=failed_node)
         except PlanEditError as e:
-            await self._emit_log(run, f"计划编辑被拒绝：{e}")
+            await self._emit_log(run, f"计划编辑被拒绝：{e}", level="error")
             await self._set_status(session, run, "paused_error")
             return False
 
@@ -852,6 +901,7 @@ class VoyageEngine:
             run,
             f"第 {replans + 1} 次计划调整完成（{edit.get('reason') or ''}，"
             f"新增 {added} 步，诊断：{diagnosis}）",
+            level="plan",
         )
         await self._set_status(session, run, "executing")
         return True
@@ -874,7 +924,9 @@ class VoyageEngine:
         replans = int(checkpoint.get("replans", 0))
         diagnosis = str((failed_node.verdict or {}).get("reason", ""))
         if replans >= MAX_REPLANS:
-            await self._emit_log(run, f"重规划已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理")
+            await self._emit_log(
+                run, f"重规划已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理", level="error"
+            )
             await self._set_status(session, run, "paused_error")
             return False
 
@@ -882,7 +934,7 @@ class VoyageEngine:
         try:
             new_tail = await self.navigator.replan(run, failed_step, diagnosis)
         except NavigatorError as e:
-            await self._emit_log(run, f"重规划失败：{e}")
+            await self._emit_log(run, f"重规划失败：{e}", level="error")
             await self._set_status(session, run, "paused_error")
             return False
 
@@ -928,7 +980,9 @@ class VoyageEngine:
         run.plan = passed_defs + list(new_tail)
         await session.commit()
         await self._emit_log(
-            run, f"第 {replans + 1} 次重规划完成，剩余 {len(new_tail)} 步（诊断：{diagnosis}）"
+            run,
+            f"第 {replans + 1} 次重规划完成，剩余 {len(new_tail)} 步（诊断：{diagnosis}）",
+            level="plan",
         )
         await self._set_status(session, run, "executing")
         return True

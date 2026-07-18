@@ -65,13 +65,27 @@ _FALLBACK_ROUTE = ResolvedRoute(
 )
 
 
+# 长文本生成的 stage：complete() 有 event_bus + voyage_id 时改走流式并逐段广播
+# llm_delta（任务详情页 terminal 实时展示"大模型正在输出什么"）。短 JSON 调用
+# （relevance 打分 / sextant 判定等）不流式，避免噪声。
+STREAM_STAGES = frozenset(
+    {"navigator", "debate", "experiment", "writing", "proposal", "review", "librarian", "present"}
+)
+_STREAM_FLUSH_CHARS = 80  # token 增量攒到此长度再广播一段（节流，防刷爆 pub/sub）
+
+
 class LLMRouter:
-    """stage → (provider 实例, model)；complete/stream 自动记账。"""
+    """stage → (provider 实例, model)；complete/stream 自动记账。
+
+    ``event_bus`` 由驱动方（VoyageEngine）注入：置上后长文本 stage 的 complete()
+    自动流式广播 token 增量到任务事件频道，对所有调用点透明。
+    """
 
     def __init__(self) -> None:
         self._routes: dict[str, ResolvedRoute] = {}
         self._routes_loaded_at: float = 0.0
         self._providers: dict[tuple[str, str | None, str], LLMProvider] = {}
+        self.event_bus: Any | None = None
 
     def invalidate_cache(self) -> None:
         """管理端改动 providers/routes 后调用。"""
@@ -185,15 +199,23 @@ class LLMRouter:
         voyage_id: uuid.UUID | None = None,
     ) -> CompletionResult:
         provider, route = await self.resolve(stage)
-        # images 仅在提供时透传（兼容未声明该参数的 provider 子类/测试替身）
-        extra: dict[str, Any] = {"images": images} if images else {}
-        result = await provider.complete(
-            messages,
-            model=route.model,
-            temperature=route.temperature if temperature is None else temperature,
-            max_tokens=max_tokens,
-            **extra,
-        )
+        temp = route.temperature if temperature is None else temperature
+        # 长文本 stage 且有任务事件频道 + 非多模态：流式并逐段广播（终端实时展示）
+        if (
+            self.event_bus is not None
+            and voyage_id is not None
+            and stage in STREAM_STAGES
+            and not images
+        ):
+            result = await self._stream_and_broadcast(
+                stage, provider, route, messages, temp, max_tokens, voyage_id
+            )
+        else:
+            # images 仅在提供时透传（兼容未声明该参数的 provider 子类/测试替身）
+            extra: dict[str, Any] = {"images": images} if images else {}
+            result = await provider.complete(
+                messages, model=route.model, temperature=temp, max_tokens=max_tokens, **extra
+            )
         result.usage = self._ensure_usage(messages, result.content, result.usage)
         await self._record_usage(
             stage=stage,
@@ -204,6 +226,52 @@ class LLMRouter:
             voyage_id=voyage_id,
         )
         return result
+
+    async def _stream_and_broadcast(
+        self,
+        stage: str,
+        provider: LLMProvider,
+        route: ResolvedRoute,
+        messages: Sequence[Message],
+        temperature: float,
+        max_tokens: int | None,
+        voyage_id: uuid.UUID,
+    ) -> CompletionResult:
+        """流式补全并把 token 增量节流广播成 llm_delta 事件，返回拼好的完整结果。
+
+        节流见 _STREAM_FLUSH_CHARS：攒够长度再发一段，避免每 token 刷爆 pub/sub；始终
+        返回完整 content，对调用方与 complete() 等价（流式 provider 拿不到精确 usage，
+        由 _ensure_usage 估算）。
+        """
+        collected: list[str] = []
+        buf: list[str] = []
+        buf_len = 0
+        seq = 0
+
+        async def flush() -> None:
+            nonlocal buf, buf_len, seq
+            if not buf:
+                return
+            await self.event_bus.publish_voyage_event(
+                voyage_id, "llm_delta", {"stage": stage, "delta": "".join(buf), "seq": seq}
+            )
+            seq += 1
+            buf, buf_len = [], 0
+
+        await self.event_bus.publish_voyage_event(voyage_id, "llm_start", {"stage": stage})
+        try:
+            async for chunk in provider.stream(
+                messages, model=route.model, temperature=temperature, max_tokens=max_tokens
+            ):
+                collected.append(chunk)
+                buf.append(chunk)
+                buf_len += len(chunk)
+                if buf_len >= _STREAM_FLUSH_CHARS:
+                    await flush()
+            await flush()
+        finally:
+            await self.event_bus.publish_voyage_event(voyage_id, "llm_end", {"stage": stage})
+        return CompletionResult(content="".join(collected), model=route.model)
 
     async def embed(
         self,
