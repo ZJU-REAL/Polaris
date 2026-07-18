@@ -557,6 +557,23 @@ async def get_pdf(
     )
 
 
+@router.get("/manuscripts/{manuscript_id}/export/arxiv")
+async def export_arxiv(
+    manuscript_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """arXiv 提交用清洁源码包（tar.gz）：源文件 + references.bib + figures + .bbl，
+    剔除 aux/log/pdf 等。导出时重编一遍以生成与当前源一致的 .bbl。提示信息放响应头。"""
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    data, notes = await latex_compile.build_arxiv_tarball(session, manuscript)
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in manuscript.title)[:60] or "paper"
+    headers = {"Content-Disposition": f'attachment; filename="{safe}-arxiv.tar.gz"'}
+    if notes:
+        headers["X-Export-Notes"] = " | ".join(notes)
+    return Response(content=data, media_type="application/gzip", headers=headers)
+
+
 # ---- §5 AI 起草 ----
 
 
