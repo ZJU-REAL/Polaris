@@ -28,14 +28,14 @@ export function DraftModal({ open, onClose, manuscript }: DraftModalProps) {
 
   // 模板 sections 优先（GET templates），拿不到用固定顺序兜底
   const templatesQuery = useQuery({
-    queryKey: ['manuscript-templates'],
-    queryFn: () => api.listManuscriptTemplates(),
+    queryKey: ['manuscript-templates', manuscript.project_id],
+    queryFn: () => api.listManuscriptTemplates(manuscript.project_id),
     enabled: open,
     retry: false,
     staleTime: 5 * 60_000,
   });
   const sections = useMemo(() => {
-    const tpl = templatesQuery.data?.find((t) => t.key === manuscript.template);
+    const tpl = templatesQuery.data?.find((t) => t.id === manuscript.template);
     return tpl?.sections && tpl.sections.length > 0 ? tpl.sections : DEFAULT_SECTIONS;
   }, [templatesQuery.data, manuscript.template]);
 

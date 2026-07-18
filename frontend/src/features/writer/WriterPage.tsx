@@ -84,12 +84,12 @@ export function WriterPage() {
   const manuscripts = data ?? [];
 
   const templatesQuery = useQuery({
-    queryKey: ['manuscript-templates'],
-    queryFn: () => api.listManuscriptTemplates(),
+    queryKey: ['manuscript-templates', pid],
+    queryFn: () => api.listManuscriptTemplates(pid ?? undefined),
     retry: false,
     staleTime: 5 * 60_000,
   });
-  const templateName = (key: string) => templatesQuery.data?.find((t) => t.key === key)?.name ?? key;
+  const templateName = (key: string) => templatesQuery.data?.find((t) => t.id === key)?.name ?? key;
 
   if (!projectsLoading && projects.length === 0) {
     return (

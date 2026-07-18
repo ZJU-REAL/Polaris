@@ -1210,13 +1210,28 @@ export interface CreateExperimentInput {
 // M5-B · Manuscripts（论文撰写）— docs/api-m5-b.md
 // ============================================================
 
-/** 会议模板信息（GET /manuscripts/templates）。key 如 neurips2026 / iclr2026 / acl。 */
+/**
+ * 论文模板信息（GET /manuscripts/templates）。
+ * 后端已 DB 化：id 内置=key（neurips2026 等），库内模板=uuid。
+ */
 export interface TemplateInfo {
-  key: string;
+  /** 内置=key（neurips2026 等）；库内模板=uuid。创建稿件时传这个。 */
+  id: string;
   name: string;
+  description: string | null;
+  /** builtin=内置；seeded=官方入库；uploaded=用户自定义上传 */
+  source: 'builtin' | 'seeded' | 'uploaded';
+  scope: 'global' | 'project';
+  project_id: string | null;
+  /** 编译引擎：tectonic|pdflatex|xelatex|lualatex */
+  engine: string;
   page_limit: number | null;
   /** 模板建议的分节顺序（AI 起草可选节来源） */
   sections: string[];
+  unofficial: boolean;
+  /** 库内模板 true（可下载 zip），内置 false */
+  downloadable: boolean;
+  file_count: number;
 }
 
 export type ManuscriptStatus =
@@ -2131,8 +2146,36 @@ export const api = {
   },
 
   // —— M5-B · Manuscripts（论文撰写） ——
-  listManuscriptTemplates(): Promise<TemplateInfo[]> {
-    return request<TemplateInfo[]>('/manuscripts/templates');
+  /** 不带 projectId 只返回内置+全平台模板；带上则并入该研究方向私有上传模板。 */
+  listManuscriptTemplates(projectId?: string): Promise<TemplateInfo[]> {
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+    return request<TemplateInfo[]>(`/manuscripts/templates${qs}`);
+  },
+  /** 上传模板 zip。给 project_id=项目私有；不给=全平台（需平台管理员，否则 403 ADMIN_REQUIRED_FOR_GLOBAL）。zip 无 .tex → 422。 */
+  uploadManuscriptTemplate(input: {
+    file: File;
+    name: string;
+    description?: string;
+    engine?: string;
+    page_limit?: number;
+    project_id?: string;
+  }): Promise<TemplateInfo> {
+    const form = new FormData();
+    form.append('file', input.file);
+    form.append('name', input.name);
+    if (input.description) form.append('description', input.description);
+    if (input.engine) form.append('engine', input.engine);
+    if (input.page_limit != null) form.append('page_limit', String(input.page_limit));
+    if (input.project_id) form.append('project_id', input.project_id);
+    return request<TemplateInfo>('/manuscripts/templates', { method: 'POST', body: form });
+  },
+  /** 下载库内模板 zip（downloadable=true 的模板）。 */
+  downloadManuscriptTemplate(id: string): Promise<Blob> {
+    return requestBlob(`/manuscripts/templates/${id}/download`);
+  },
+  /** 删除模板（创建者/项目管理者/平台 admin 可删）。 */
+  deleteManuscriptTemplate(id: string): Promise<void> {
+    return request<void>(`/manuscripts/templates/${id}`, { method: 'DELETE' });
   },
   createManuscript(projectId: string, input: CreateManuscriptInput): Promise<ManuscriptRead> {
     return requestJson<ManuscriptRead>(`/projects/${projectId}/manuscripts`, 'POST', input);
