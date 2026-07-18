@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e3f4a5b6c7d8"  # experiment_mode_loop（实验任务归入动态循环档）
-PREV_REVISION = "d2e3f4a5b6c7"  # paper_trash_reason（垃圾桶原因标签）
+HEAD_REVISION = "f4a5b6c7d8e9"  # paper_highlights（PDF 划线标注表）
+PREV_REVISION = "e3f4a5b6c7d8"  # experiment_mode_loop（实验任务归入动态循环档，纯数据回填）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -40,6 +40,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_tags",
                     "paper_tag_links",
                     "paper_user_meta",
+                    "paper_highlights",
                     "manuscripts",
                     "manuscript_files",
                     "users",
@@ -115,13 +116,26 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["voyage_steps"]
     # 垃圾桶原因标签
     assert "trash_reason" in columns["papers"]
+    # PDF 划线标注表
+    assert "paper_highlights" in columns["_tables"]
+    assert {
+        "paper_id",
+        "project_id",
+        "author_id",
+        "page",
+        "rects",
+        "selected_text",
+        "color",
+        "note",
+    } <= columns["paper_highlights"]
 
-    # 最新 revision 可往返（experiment mode 回填是纯 UPDATE，列结构不变）
+    # 最新 revision 可往返（downgrade 移除 paper_highlights 表，落到 experiment_mode_loop）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "trash_reason" in columns["papers"]  # 上一版列不受影响
-    # 上一版（任务循环 v1）不受影响
+    assert "paper_highlights" not in columns["_tables"]
+    # 上一版（experiment_mode_loop 纯数据回填，列结构不变）不受影响
+    assert "trash_reason" in columns["papers"]
     assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
     assert "rank" in columns["voyage_steps"]
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]

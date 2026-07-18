@@ -557,6 +557,40 @@ export interface NoteWithPaper extends NoteRead {
   paper_title: string;
 }
 
+/* —— PDF 划线标注 —— */
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
+
+/** 归一化矩形（相对页面左上角，值域 0..1；每行一个）。 */
+export interface HighlightRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface HighlightRead {
+  id: string;
+  paper_id: string;
+  project_id: string;
+  author_id: string;
+  author_name: string;
+  page: number; // 1-indexed
+  rects: HighlightRect[];
+  selected_text: string;
+  color: HighlightColor;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HighlightCreateInput {
+  page: number;
+  rects: HighlightRect[];
+  selected_text: string;
+  color?: HighlightColor;
+  note?: string | null;
+}
+
 /** 手动添加文献：三选一。 */
 export type PaperImportInput = { arxiv_id: string } | { doi: string } | { bibtex: string };
 
@@ -1852,6 +1886,25 @@ export const api = {
   deleteNote(noteId: string): Promise<void> {
     return request<void>(`/notes/${noteId}`, { method: 'DELETE' });
   },
+  // —— Lit · PDF 划线标注 ——
+  /** 某论文的全部划线（按页码排序）。 */
+  listPaperHighlights(paperId: string): Promise<HighlightRead[]> {
+    return request<HighlightRead[]>(`/papers/${paperId}/highlights`);
+  },
+  createPaperHighlight(paperId: string, input: HighlightCreateInput): Promise<HighlightRead> {
+    return requestJson<HighlightRead>(`/papers/${paperId}/highlights`, 'POST', input);
+  },
+  /** 改颜色 / 批注（字段缺省表示不改；note 传空串清空批注）。 */
+  patchHighlight(
+    highlightId: string,
+    input: { color?: HighlightColor; note?: string | null },
+  ): Promise<HighlightRead> {
+    return requestJson<HighlightRead>(`/highlights/${highlightId}`, 'PATCH', input);
+  },
+  deleteHighlight(highlightId: string): Promise<void> {
+    return request<void>(`/highlights/${highlightId}`, { method: 'DELETE' });
+  },
+
   /** 项目笔记本：全项目笔记分页 + 搜索。 */
   listProjectNotes(
     projectId: string,
