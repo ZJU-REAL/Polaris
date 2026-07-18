@@ -174,7 +174,10 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
 
 /* ---------------- Tab ① 排行榜 ---------------- */
 
-const LB_GRID = '36px minmax(0,1fr) 64px 150px 56px 56px 96px 96px';
+// 表头与各行是独立 grid，列宽必须定宽才能上下对齐；状态列要放得下
+// 「评审中 under review」pill，操作列要放得下「图标 + 发起实验」，
+// 否则右对齐的操作区会向左溢出、盖住状态标签
+const LB_GRID = '36px minmax(0,1fr) 64px 150px 48px 48px 150px 136px';
 
 function LeaderboardTab({
   pid,
