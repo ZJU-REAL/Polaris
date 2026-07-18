@@ -36,6 +36,7 @@ from app.models.paper import Paper
 from app.models.review import ReviewMessage, ReviewSession
 from app.services import latex_compile
 from app.services import paper_review as pr
+from app.services.figure_annotate import prepare_image_for_llm
 from app.services.literature.openalex import OpenAlexClient
 from app.services.literature.semantic_scholar import SemanticScholarClient
 from app.services.review import serialize_message
@@ -44,7 +45,6 @@ _MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次（评审员 JSON 严格校验）
 MAX_GUARDRAIL_REGENS = 2  # guardrail 未过重生成次数上限
 MAX_REVIEW_PAGES = 9  # 编译 PDF 渲染前 9 页
 RENDER_DPI = 120
-MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 单页 PNG 超 4MB 不送 LLM
 MAX_SUPPORT_CHECKS = 30  # 支撑性 LLM 判定上限（超出标 not_checked）
 _SOURCE_CHARS = 12_000  # LaTeX 源注入 prompt 的上限
 _DIGEST_CHARS = 4_000  # 核验/查错摘要注入 prompt 的上限
@@ -425,8 +425,8 @@ def _load_page_images(ctx: ActionContext) -> list[bytes]:
         path = Path(str(raw))
         if not path.is_file():
             continue
-        data = path.read_bytes()
-        if len(data) > MAX_IMAGE_BYTES:
+        data = prepare_image_for_llm(path.read_bytes())
+        if data is None:
             continue
         images.append(data)
     return images

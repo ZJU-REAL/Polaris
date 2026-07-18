@@ -1,6 +1,7 @@
 """论文图片（docs/api-lit.md §6.5）：提取过滤/落盘、figures API、注释与降级、多模态 payload。"""
 
 import base64
+import io
 import json
 import uuid
 
@@ -254,6 +255,26 @@ async def test_annotate_figures_degrades_to_top4_by_area(app):
     assert [f["important"] for f in merged] == [True] * 4 + [False] * 2
     assert all(f["caption"] is None for f in merged)
     assert paper.figures == merged
+
+
+def test_prepare_image_for_llm_downscales_oversized():
+    from PIL import Image
+
+    from app.services.figure_annotate import _MAX_IMAGE_DIM, prepare_image_for_llm
+
+    # 已在限制内：原样返回
+    small = _image_bytes(400, 300)
+    assert prepare_image_for_llm(small) == small
+
+    # 单边超 8000px：降采样到 ≤7600px，仍是可解码的图
+    big = _image_bytes(9000, 200)
+    out = prepare_image_for_llm(big)
+    assert out is not None and out != big
+    with Image.open(io.BytesIO(out)) as im:
+        assert max(im.size) <= _MAX_IMAGE_DIM
+
+    # 无法解码且超体积：丢弃（None），调用方跳过而非把坏图发出去触发 400
+    assert prepare_image_for_llm(b"\x89PNG" + b"\x00" * (4 * 1024 * 1024)) is None
 
 
 # ---- openai_compat：images → data-url content parts ----

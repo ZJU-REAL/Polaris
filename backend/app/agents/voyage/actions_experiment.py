@@ -45,6 +45,7 @@ from app.models.ssh_credential import SSHCredential
 from app.models.voyage import VoyageRun
 from app.services import experiments as experiments_service
 from app.services import ssh_exec
+from app.services.figure_annotate import prepare_image_for_llm
 
 RUN_POLL_SECONDS = 30.0  # 正式运行轮询间隔（测试 monkeypatch 为 0）
 MAX_SMOKE_FIXES = 2  # 冒烟失败回 LLM 修代码的次数上限
@@ -52,7 +53,6 @@ MAX_DEBUG_FIXES = 3  # 迭代内 debug 分支独立限额（docs/api-m5-a.md §1
 MAX_FIGURE_FIXES = 2  # 绘图脚本执行失败 / VLM 质检不合格的修复次数上限
 DEFAULT_NO_IMPROVE_STOP = 2  # 连续 N 轮主指标无提升即停（budget.no_improve_stop 可覆盖）
 MAX_QC_IMAGES = 8  # 单次质检最多送 LLM 的图数
-MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 单图超过 4MB 不送 LLM（与 figure_annotate 一致）
 _MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次
 _WIKI_CONTEXT_PAPERS = 6
 _WIKI_EXCERPT_CHARS = 600
@@ -1278,10 +1278,12 @@ async def experiment_figures(ctx: ActionContext, params: dict[str, Any]) -> dict
                         images: list[bytes] = []
                         sendable: list[str] = []
                         for name in pngs[:MAX_QC_IMAGES]:
-                            data = experiments_service.figure_local_path(
-                                experiment.id, name
-                            ).read_bytes()
-                            if len(data) > MAX_IMAGE_BYTES:
+                            data = prepare_image_for_llm(
+                                experiments_service.figure_local_path(
+                                    experiment.id, name
+                                ).read_bytes()
+                            )
+                            if data is None:
                                 continue
                             sendable.append(name)
                             images.append(data)
