@@ -1,4 +1,12 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -168,6 +176,19 @@ export function PdfReader({
   const [url, setUrl] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [pendingStyle, setPendingStyle] = useState<HighlightStyle>('highlight');
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
+  // 浮条渲染后按实际位置纠偏：若溢出窗口上/下缘，就把它推回可视区（不依赖坐标系假设）
+  useLayoutEffect(() => {
+    const el = toolbarRef.current;
+    if (!el || !pending) return;
+    const m = 8;
+    const r = el.getBoundingClientRect();
+    let dy = 0;
+    if (r.bottom > window.innerHeight - m) dy = window.innerHeight - m - r.bottom;
+    else if (r.top < m) dy = m - r.top;
+    if (dy !== 0) el.style.top = `${parseFloat(el.style.top || '0') + dy}px`;
+  }, [pending]);
 
   const pdfQuery = useQuery({
     queryKey: ['paper-pdf', paper.id],
@@ -465,6 +486,7 @@ export function PdfReader({
       {pending &&
         createPortal(
           <div
+            ref={toolbarRef}
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               position: 'fixed',
