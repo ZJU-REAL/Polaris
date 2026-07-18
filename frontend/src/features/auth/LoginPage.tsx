@@ -2,27 +2,29 @@ import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
+import { LangToggle } from '../../components/ui/LangToggle';
 import { PolarisMark, PolarisWordmark } from '../../components/ui/PolarisLogo';
 import { Segmented } from '../../components/ui/Segmented';
 import { useAuth } from '../../app/auth';
 import { ApiError } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 type Mode = 'login' | 'register';
 
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 400 && err.message.includes('LOGIN_BAD_CREDENTIALS')) {
-      return '邮箱或密码错误 Invalid email or password';
+      return tr('邮箱或密码错误', 'Invalid email or password');
     }
     if (err.status === 400 && err.message.includes('REGISTER_USER_ALREADY_EXISTS')) {
-      return '该邮箱已注册 Email already registered';
+      return tr('该邮箱已注册', 'Email already registered');
     }
-    return `请求失败（${err.status}）：${err.message}`;
+    return `${tr('请求失败', 'Request failed')}（${err.status}）：${err.message}`;
   }
   if (err instanceof TypeError) {
-    return '无法连接服务器，请确认后端已启动 Cannot reach the API server';
+    return tr('无法连接服务器，请确认后端已启动', 'Cannot reach the API server — make sure the backend is running');
   }
-  return err instanceof Error ? err.message : '未知错误 Unknown error';
+  return err instanceof Error ? err.message : tr('未知错误', 'Unknown error');
 }
 
 export function LoginPage() {
@@ -55,6 +57,9 @@ export function LoginPage() {
 
   return (
     <div className="auth-page">
+      <div style={{ position: 'absolute', top: 18, right: 20 }}>
+        <LangToggle />
+      </div>
       <div className="auth-card fadeup">
         {/* 品牌区 */}
         <div className="col" style={{ alignItems: 'center', marginBottom: 24 }}>
@@ -62,17 +67,16 @@ export function LoginPage() {
             <PolarisMark size={72} />
           </div>
           <PolarisWordmark height={28} />
-          <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>自动 AI 科研平台</div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2, fontFamily: 'var(--mono)' }}>
-            Autonomous AI Research Platform
+          <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>
+            {tr('自动 AI 科研平台', 'Autonomous AI Research Platform')}
           </div>
         </div>
 
         <div className="row" style={{ justifyContent: 'center', marginBottom: 22 }}>
           <Segmented<Mode>
             options={[
-              { v: 'login', label: '登录 Sign in' },
-              { v: 'register', label: '注册 Sign up' },
+              { v: 'login', label: tr('登录', 'Sign in') },
+              { v: 'register', label: tr('注册', 'Sign up') },
             ]}
             value={mode}
             onChange={(m) => {
@@ -86,9 +90,7 @@ export function LoginPage() {
 
         <form onSubmit={onSubmit}>
           <div className="auth-field">
-            <label htmlFor="email">
-              邮箱<span className="en">Email</span>
-            </label>
+            <label htmlFor="email">{tr('邮箱', 'Email')}</label>
             <input
               id="email"
               className="auth-input"
@@ -101,9 +103,7 @@ export function LoginPage() {
             />
           </div>
           <div className="auth-field">
-            <label htmlFor="password">
-              密码<span className="en">Password</span>
-            </label>
+            <label htmlFor="password">{tr('密码', 'Password')}</label>
             <input
               id="password"
               className="auth-input"
@@ -111,16 +111,14 @@ export function LoginPage() {
               required
               minLength={8}
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              placeholder="至少 8 位"
+              placeholder={tr('至少 8 位', 'At least 8 characters')}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
           {mode === 'register' && (
             <div className="auth-field">
-              <label htmlFor="invite">
-                邀请码<span className="en">Invite code</span>
-              </label>
+              <label htmlFor="invite">{tr('邀请码', 'Invite code')}</label>
               <input
                 id="invite"
                 className="auth-input"
@@ -143,12 +141,12 @@ export function LoginPage() {
             ) : (
               <Icon name={mode === 'login' ? 'arrow' : 'plus'} size={14} />
             )}
-            {mode === 'login' ? '登录 Sign in' : '注册并登录 Sign up'}
+            {mode === 'login' ? tr('登录', 'Sign in') : tr('注册并登录', 'Sign up and log in')}
           </button>
         </form>
 
         <div style={{ fontSize: 11, color: 'var(--text-4)', textAlign: 'center', marginTop: 18, lineHeight: 1.5 }}>
-          注册需要邀请码 · 如需访问权限请联系管理员
+          {tr('注册需要邀请码 · 如需访问权限请联系管理员', 'Registration requires an invite code · contact the admin for access')}
         </div>
       </div>
     </div>

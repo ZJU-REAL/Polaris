@@ -14,6 +14,7 @@ import {
   type PrimaryMetric,
   type RunReflection,
 } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { stopReasonText } from './shared';
 
 /* ============================================================
@@ -102,7 +103,7 @@ function LogPanel({ expId, active }: { expId: string; active: boolean }) {
       <div className="row card-pad" style={{ justifyContent: 'space-between', paddingBottom: 12 }}>
         <span className="section-h">
           <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
-          实时日志 <span className="en-label" style={{ fontSize: 11 }}>run.log · 跟踪最新一轮</span>
+          {tr('实时日志', 'Live log')} <span className="en-label" style={{ fontSize: 11 }}>run.log · {tr('跟踪最新一轮', 'follows the latest run')}</span>
         </span>
         <div className="row gap8">
           {live && (
@@ -113,7 +114,7 @@ function LogPanel({ expId, active }: { expId: string; active: boolean }) {
           )}
           <button className="btn btn-soft sm" onClick={() => setPaused((p) => !p)}>
             <Icon name={paused ? 'play' : 'pause'} size={12} />
-            {paused ? '恢复滚动' : '暂停滚动'}
+            {paused ? tr('恢复滚动', 'Resume scroll') : tr('暂停滚动', 'Pause scroll')}
           </button>
         </div>
       </div>
@@ -133,11 +134,11 @@ function LogPanel({ expId, active }: { expId: string; active: boolean }) {
           wordBreak: 'break-all',
         }}
       >
-        {truncated && <div style={{ color: 'var(--text-4)' }}>…（更早日志已截断，仅显示尾部）</div>}
+        {truncated && <div style={{ color: 'var(--text-4)' }}>{tr('…（更早日志已截断，仅显示尾部）', '… (earlier log truncated, showing the tail)')}</div>}
         {loadError && lines.length === 0 ? (
-          <div style={{ color: 'var(--text-4)' }}>暂无日志（尚未开始运行，或后端不可用）</div>
+          <div style={{ color: 'var(--text-4)' }}>{tr('暂无日志（尚未开始运行，或后端不可用）', 'No logs yet (not running, or backend unavailable)')}</div>
         ) : lines.length === 0 ? (
-          <div style={{ color: 'var(--text-4)' }}>等待日志输出…</div>
+          <div style={{ color: 'var(--text-4)' }}>{tr('等待日志输出…', 'Waiting for log output…')}</div>
         ) : (
           lines.map((l, i) => <div key={i}>{l}</div>)
         )}
@@ -159,9 +160,9 @@ function fmtMetric(v: number): string {
 /** AI 决定徽章：improve 蓝 / debug 橙 / stop 灰。 */
 function DecisionBadge({ decision }: { decision: IterationDecision | string }) {
   const map: Record<string, [string, string, string]> = {
-    improve: ['var(--accent-soft)', 'var(--accent-text)', '↻ 继续改进'],
-    debug: ['var(--warn-bg)', 'var(--warn-tx)', '⚒ 修错重试'],
-    stop: ['var(--surface-3)', 'var(--text-3)', '■ 停止迭代'],
+    improve: ['var(--accent-soft)', 'var(--accent-text)', tr('↻ 继续改进', '↻ Keep improving')],
+    debug: ['var(--warn-bg)', 'var(--warn-tx)', tr('⚒ 修错重试', '⚒ Debug & retry')],
+    stop: ['var(--surface-3)', 'var(--text-3)', tr('■ 停止迭代', '■ Stop iterating')],
   };
   const meta = map[decision];
   if (!meta) return null;
@@ -188,7 +189,7 @@ function PrimaryValue({
   if (delta !== null) {
     if (delta === 0) {
       deltaEl = (
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', fontWeight: 650 }}>— 持平</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', fontWeight: 650 }}>{tr('— 持平', '— flat')}</span>
       );
     } else {
       const improved = direction === 'minimize' ? delta < 0 : delta > 0;
@@ -211,9 +212,9 @@ function PrimaryValue({
 function ReflectionBlock({ reflection }: { reflection: RunReflection }) {
   const [open, setOpen] = useState(false);
   const fields: [string, string, string | undefined][] = [
-    ['看到了什么', 'observation', reflection.observation],
-    ['原因分析', 'diagnosis', reflection.diagnosis],
-    ['下一步改动', 'planned_change', reflection.planned_change],
+    [tr('看到了什么', 'What happened'), 'observation', reflection.observation],
+    [tr('原因分析', 'Diagnosis'), 'diagnosis', reflection.diagnosis],
+    [tr('下一步改动', 'Next change'), 'planned_change', reflection.planned_change],
   ];
   const present = fields.filter(([, , v]) => !!v && v.trim() !== '');
   const stopText = stopReasonText(reflection.stop_reason);
@@ -236,7 +237,7 @@ function ReflectionBlock({ reflection }: { reflection: RunReflection }) {
         }}
       >
         <Icon name="sparkle" size={12} />
-        AI 分析 <span className="en-label" style={{ fontSize: 10.5 }}>reflection</span>
+        {tr('AI 分析', 'AI reflection')}
         <Icon
           name="chevDown"
           size={11}
@@ -257,7 +258,7 @@ function ReflectionBlock({ reflection }: { reflection: RunReflection }) {
           {present.map(([zh, en, v]) => (
             <div key={en}>
               <div style={{ fontSize: 10.5, color: 'var(--text-3)', fontWeight: 650, marginBottom: 3 }}>
-                {zh} <span className="en-label mono" style={{ fontSize: 9.5 }}>{en}</span>
+                {zh}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{v}</div>
             </div>
@@ -265,7 +266,7 @@ function ReflectionBlock({ reflection }: { reflection: RunReflection }) {
           {stopText && (
             <div>
               <div style={{ fontSize: 10.5, color: 'var(--text-3)', fontWeight: 650, marginBottom: 3 }}>
-                停止原因 <span className="en-label mono" style={{ fontSize: 9.5 }}>stop_reason</span>
+                {tr('停止原因', 'Stop reason')}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6 }}>{stopText}</div>
             </div>
@@ -303,12 +304,12 @@ function IterationCard({
   return (
     <div className="card" style={{ padding: '12px 16px' }}>
       <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-        <span className="mono" style={{ fontSize: 12, fontWeight: 700 }}>第 {run.seq} 轮</span>
+        <span className="mono" style={{ fontSize: 12, fontWeight: 700 }}>{tr(`第 ${run.seq} 轮`, `Run ${run.seq}`)}</span>
         <StatusPill status={run.status} sm />
         {hasValue ? (
           <PrimaryValue curr={run.primary_value as number} prev={prevValue} direction={direction} />
         ) : (
-          <span className="mono muted" style={{ fontSize: 11 }}>主指标 —</span>
+          <span className="mono muted" style={{ fontSize: 11 }}>{tr('主指标 —', 'metric —')}</span>
         )}
         <div style={{ marginLeft: 'auto' }}>
           {run.reflection?.decision && <DecisionBadge decision={run.reflection.decision} />}
@@ -330,8 +331,8 @@ function IterationCard({
       </div>
       <div className="mono muted" style={{ fontSize: 10.5, marginTop: 4 }}>
         {run.started_at
-          ? `${fmtTime(run.started_at)} · ${run.finished_at ? `耗时 ${fmtDuration(run.started_at, run.finished_at)}` : '运行中'}`
-          : '未开始'}
+          ? `${fmtTime(run.started_at)} · ${run.finished_at ? `${tr('耗时', 'took')} ${fmtDuration(run.started_at, run.finished_at)}` : tr('运行中', 'running')}`
+          : tr('未开始', 'not started')}
         {run.exit_code !== null && (
           <span style={{ color: run.exit_code === 0 ? 'var(--ok-tx)' : 'var(--danger-tx)', marginLeft: 8 }}>
             exit {run.exit_code}
@@ -350,16 +351,16 @@ function IterationStateBar({ exp, runCount }: { exp: ExperimentDetail; runCount:
   const noImproveLimit = exp.budget?.no_improve_stop ?? 2;
   const items: { label: string; value: string; warn?: boolean }[] = [
     {
-      label: '已跑轮数',
+      label: tr('已跑轮数', 'Runs done'),
       value: exp.budget?.max_runs ? `${runCount} / ${exp.budget.max_runs}` : String(runCount),
     },
     {
-      label: '连续无提升',
-      value: `${st?.no_improve_streak ?? 0} / ${noImproveLimit} 轮`,
+      label: tr('连续无提升', 'No-gain streak'),
+      value: tr(`${st?.no_improve_streak ?? 0} / ${noImproveLimit} 轮`, `${st?.no_improve_streak ?? 0} / ${noImproveLimit} runs`),
       warn: (st?.no_improve_streak ?? 0) >= noImproveLimit - 1 && (st?.no_improve_streak ?? 0) > 0,
     },
     {
-      label: '修错次数',
+      label: tr('修错次数', 'Debug attempts'),
       value: `${st?.debug_count ?? 0} / 3`,
       warn: (st?.debug_count ?? 0) >= 2,
     },
@@ -381,7 +382,7 @@ function IterationStateBar({ exp, runCount }: { exp: ExperimentDetail; runCount:
       {stopText && (
         <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
           <Icon name="pause" size={11} />
-          已停止：{stopText}
+          {tr('已停止：', 'Stopped: ')}{stopText}
         </span>
       )}
     </div>
@@ -429,16 +430,16 @@ export function RunTab({ exp, active }: { exp: ExperimentDetail; active: boolean
         <div className="row gap8" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
           <span className="section-h">
             <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-            主指标趋势 <span className="en-label" style={{ fontSize: 11 }}>{primary?.name ?? 'primary metric'} by run</span>
+            {tr('主指标趋势', 'Primary metric trend')} <span className="en-label" style={{ fontSize: 11 }}>{primary?.name ?? tr('主指标', 'primary metric')}</span>
           </span>
           {primary && (
             <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-              {direction === 'minimize' ? '↓ 越低越好' : '↑ 越高越好'}
+              {direction === 'minimize' ? tr('↓ 越低越好', '↓ lower is better') : tr('↑ 越高越好', '↑ higher is better')}
             </span>
           )}
           {best && (
             <span className="pill sm mono" style={{ marginLeft: 'auto', background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              最佳 第 {best.step} 轮 · {fmtMetric(best.value)}
+              {tr(`最佳 第 ${best.step} 轮`, `Best: run ${best.step}`)} · {fmtMetric(best.value)}
             </span>
           )}
         </div>
@@ -446,7 +447,7 @@ export function RunTab({ exp, active }: { exp: ExperimentDetail; active: boolean
           <MetricChart series={[{ name: primary?.name ?? 'primary', points: primaryPoints }]} height={180} />
         ) : (
           <div className="empty" style={{ padding: 26, fontSize: 12.5 }}>
-            暂无主指标数据 · 每轮运行结束后系统会解析出主指标值画在这里
+            {tr('暂无主指标数据 · 每轮运行结束后系统会解析出主指标值画在这里', 'No primary metric data yet — each run’s value is parsed and plotted here once it finishes')}
           </div>
         )}
         <IterationStateBar exp={exp} runCount={runs.length} />
@@ -456,11 +457,14 @@ export function RunTab({ exp, active }: { exp: ExperimentDetail; active: boolean
       <div className="card card-pad">
         <span className="section-h" style={{ marginBottom: 14 }}>
           <Icon name="refresh" size={15} style={{ color: 'var(--accent)' }} />
-          自动迭代过程 <span className="en-label" style={{ fontSize: 11 }}>Iterations · {runs.length}</span>
+          {tr('自动迭代过程', 'Auto-iteration')} <span className="en-label" style={{ fontSize: 11 }}>{runs.length}</span>
         </span>
         {runs.length === 0 ? (
           <div className="empty" style={{ padding: 28 }}>
-            还没有运行记录 · 冒烟测试通过后开始自动迭代：每轮跑完 AI 会分析结果，决定继续改进、修错重试或停止
+            {tr(
+              '还没有运行记录 · 冒烟测试通过后开始自动迭代：每轮跑完 AI 会分析结果，决定继续改进、修错重试或停止',
+              'No runs yet — auto-iteration starts after the smoke test passes: the AI analyzes each run and decides to improve, debug or stop',
+            )}
           </div>
         ) : (
           <Timeline>
@@ -481,7 +485,7 @@ export function RunTab({ exp, active }: { exp: ExperimentDetail; active: boolean
         <div className="card card-pad">
           <span className="section-h" style={{ marginBottom: 12 }}>
             <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-            全部指标曲线 <span className="en-label" style={{ fontSize: 11 }}>POLARIS_METRIC</span>
+            {tr('全部指标曲线', 'All metric curves')} <span className="en-label" style={{ fontSize: 11 }}>POLARIS_METRIC</span>
           </span>
           <MetricChart series={allSeries} />
         </div>

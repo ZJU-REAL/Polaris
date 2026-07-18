@@ -6,6 +6,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import { api, type NoteWithPaper } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { SearchInput, useDebounced } from './shared';
 
 /* ============================================================
@@ -23,12 +24,12 @@ function NoteItem({ note, onOpenPaper }: { note: NoteWithPaper; onOpenPaper: () 
         <span style={{ fontSize: 12.5, fontWeight: 650 }}>{note.author_name}</span>
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
           {fmtTime(note.created_at)}
-          {edited ? ' · 已编辑' : ''}
+          {edited ? ` · ${tr('已编辑', 'edited')}` : ''}
         </span>
         <span
           className="row gap6"
           onClick={onOpenPaper}
-          title="打开这篇论文的阅读页"
+          title={tr('打开这篇论文的阅读页', 'Open the reading page for this paper')}
           style={{
             marginLeft: 'auto',
             minWidth: 0,
@@ -81,28 +82,36 @@ export function NotesTab({ pid }: { pid: string }) {
         style={{ padding: '12px 16px', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}
       >
         <div style={{ maxWidth: 380, flex: 1 }}>
-          <SearchInput value={qInput} onChange={setQInput} placeholder="搜索笔记内容…" />
+          <SearchInput value={qInput} onChange={setQInput} placeholder={tr('搜索笔记内容…', 'Search notes…')} />
         </div>
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
-          {data ? `共 ${data.total} 条` : ''}
+          {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
         </span>
       </div>
 
       {/* —— 列表 —— */}
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
         {notesQuery.isLoading ? (
-          <div className="empty">加载笔记…</div>
+          <div className="empty">{tr('加载笔记…', 'Loading notes…')}</div>
         ) : notesQuery.isError ? (
-          <EmptyState compact icon="x" title="笔记暂时加载不出来" desc="后端不可用或接口尚未就绪，稍后再试。" />
+          <EmptyState
+            compact
+            icon="x"
+            title={tr('笔记暂时加载不出来', 'Notes failed to load')}
+            desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+          />
         ) : notes.length === 0 ? (
           <EmptyState
             compact
             icon="pen"
-            title={q ? '没有匹配的笔记' : '还没有笔记'}
+            title={q ? tr('没有匹配的笔记', 'No matching notes') : tr('还没有笔记', 'No notes yet')}
             desc={
               q
-                ? '换个关键词试试。'
-                : '打开一篇论文的阅读页，在右侧笔记面板写下第一条笔记。'
+                ? tr('换个关键词试试。', 'Try a different keyword.')
+                : tr(
+                    '打开一篇论文的阅读页，在右侧笔记面板写下第一条笔记。',
+                    'Open a paper reading page and write your first note in the notes panel.',
+                  )
             }
           />
         ) : (
@@ -127,17 +136,17 @@ export function NotesTab({ pid }: { pid: string }) {
         >
           <button className="btn btn-ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             <Icon name="chevron" size={12} style={{ transform: 'rotate(180deg)' }} />
-            上一页
+            {tr('上一页', 'Prev')}
           </button>
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            第 {page} / {totalPages} 页
+            {tr(`第 ${page} / ${totalPages} 页`, `Page ${page} / ${totalPages}`)}
           </span>
           <button
             className="btn btn-ghost sm"
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            下一页
+            {tr('下一页', 'Next')}
             <Icon name="chevron" size={12} />
           </button>
         </div>

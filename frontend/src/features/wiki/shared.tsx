@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { ConceptCategory } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    Research Wiki 页共享：概念类别配色、Section、防抖 hook。
@@ -7,19 +8,21 @@ import type { ConceptCategory } from '../../lib/api';
 
 export interface CategoryMeta {
   zh: string;
+  en: string;
   c: string;
   bg: string;
 }
 
-/** 概念类别 → 中文名 + 配色（token 变量，参考原型 CONCEPT_KIND）。 */
+/** 概念类别 → 中英文名 + 配色（token 变量，参考原型 CONCEPT_KIND）。
+    文案在渲染处用 tr(meta.zh, meta.en) 取当前语言。 */
 export const CONCEPT_CATEGORY: Record<ConceptCategory, CategoryMeta> = {
-  method: { zh: '方法', c: 'var(--accent-text)', bg: 'var(--accent-soft)' },
-  architecture: { zh: '架构', c: 'var(--info-tx)', bg: 'var(--info-bg)' },
-  methodology: { zh: '方法论', c: 'var(--violet-tx)', bg: 'var(--violet-bg)' },
-  problem: { zh: '问题', c: 'var(--danger-tx)', bg: 'var(--danger-bg)' },
-  metric: { zh: '指标', c: 'var(--ok-tx)', bg: 'var(--ok-bg)' },
-  dataset: { zh: '数据集', c: 'var(--warn-tx)', bg: 'var(--warn-bg)' },
-  other: { zh: '其他', c: 'var(--text-2)', bg: 'var(--surface-3)' },
+  method: { zh: '方法', en: 'Method', c: 'var(--accent-text)', bg: 'var(--accent-soft)' },
+  architecture: { zh: '架构', en: 'Architecture', c: 'var(--info-tx)', bg: 'var(--info-bg)' },
+  methodology: { zh: '方法论', en: 'Methodology', c: 'var(--violet-tx)', bg: 'var(--violet-bg)' },
+  problem: { zh: '问题', en: 'Problem', c: 'var(--danger-tx)', bg: 'var(--danger-bg)' },
+  metric: { zh: '指标', en: 'Metric', c: 'var(--ok-tx)', bg: 'var(--ok-bg)' },
+  dataset: { zh: '数据集', en: 'Dataset', c: 'var(--warn-tx)', bg: 'var(--warn-bg)' },
+  other: { zh: '其他', en: 'Other', c: 'var(--text-2)', bg: 'var(--surface-3)' },
 };
 
 export function categoryMeta(cat: string): CategoryMeta {
@@ -77,7 +80,7 @@ export function SearchInput({
       style={{ height: 32, fontSize: 12.5, flex: 1, minWidth: 0 }}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder ?? '搜索…'}
+      placeholder={placeholder ?? tr('搜索…', 'Search…')}
       type="search"
     />
   );

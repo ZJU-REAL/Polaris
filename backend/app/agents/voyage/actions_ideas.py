@@ -892,7 +892,13 @@ async def review_pair(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
         if len(group) % 2 == 1:
             byes.append(group[-1])
     ctx.checkpoint["review_pairs"] = pairs
-    return {"participants": len(ordered), "pairs": len(pairs), "bye": byes or None}
+    # 配对数决定对局数：信号表据此把辩论展开成 N 个 review.match 节点（引擎可逐场查预算）
+    return {
+        "participants": len(ordered),
+        "pairs": len(pairs),
+        "bye": byes or None,
+        "plan_signal": {"decision": "matches", "count": len(pairs)},
+    }
 
 
 # ---- review 2. 科学辩论 + 裁判判定 + Elo 更新 ----
@@ -1056,6 +1062,8 @@ async def _run_match(
 
 @register("review.debate")
 async def review_debate(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    """已废弃：新计划用 review.match 逐场展开（引擎可逐场查预算）。仅为迁移前
+    在途 idea_review 断点续跑保留（它们的计划里仍有 review.debate 节点）。"""
     pairs: list[list[str]] = list(ctx.checkpoint.get("review_pairs") or [])
     results: list[dict[str, Any]] = list(ctx.checkpoint.get("review_results") or [])
     done = {(r["idea_a"], r["idea_b"]) for r in results}
@@ -1084,6 +1092,40 @@ async def review_debate(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
 
     ctx.checkpoint["review_results"] = results
     return {"matches": len(pairs), "completed": len(results), "failed": failed}
+
+
+@register("review.match")
+async def review_match(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    """单场辩论（review.pair 后由信号表按对局数展开成 N 个 review.match 节点）。
+
+    炸开单体 debate 的收益：每场对局是可见节点，引擎能在对局之间查预算、超限走降级
+    收尾（docs/voyage-loop.md §5.4/§7）；单场失败隔离（记 failed，不炸锦标赛）；
+    断点幂等按 pair key（已跑过的对局不重赛）。
+    """
+    idx = int(params.get("match_index", 0))
+    pairs: list[list[str]] = list(ctx.checkpoint.get("review_pairs") or [])
+    if idx >= len(pairs):
+        return {"match_index": idx, "skipped": True}
+    pair = pairs[idx]
+    results: list[dict[str, Any]] = list(ctx.checkpoint.get("review_results") or [])
+    if any(r["idea_a"] == str(pair[0]) and r["idea_b"] == str(pair[1]) for r in results):
+        return {"match_index": idx, "skipped": True}  # 断点幂等
+
+    async with get_sessionmaker()() as session:
+        try:
+            idea_a = await session.get(Idea, uuid.UUID(str(pair[0])))
+            idea_b = await session.get(Idea, uuid.UUID(str(pair[1])))
+            if idea_a is None or idea_b is None:
+                raise ValueError("idea not found")
+            result = await _run_match(ctx, session, idea_a, idea_b, idx + 1)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — 单场辩论失败隔离，不炸锦标赛
+            return {"match_index": idx, "failed": f"{type(e).__name__}: {e}"}
+
+    results.append(result)
+    ctx.checkpoint["review_results"] = results
+    return {"match_index": idx, "winner": result["winner"], "elo": result["elo"]}
 
 
 # ---- review 3. 汇总 ----

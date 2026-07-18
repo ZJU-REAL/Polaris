@@ -17,6 +17,7 @@ import {
   type ExperimentPlan,
   type VoyageStepRead,
 } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { budgetText, HypChip } from './shared';
 import { RunTab } from './RunTab';
 import { ExperimentFigures } from './ExperimentFigures';
@@ -29,11 +30,12 @@ import { ExperimentFigures } from './ExperimentFigures';
 
 type TabKey = 'plan' | 'setup' | 'run' | 'report';
 
-const TABS: { k: TabKey; label: string }[] = [
-  { k: 'plan', label: 'Plan 计划' },
-  { k: 'setup', label: 'Setup 环境' },
-  { k: 'run', label: 'Run 运行与迭代' },
-  { k: 'report', label: 'Report 报告' },
+/* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
+const TABS: { k: TabKey; zh: string; en: string }[] = [
+  { k: 'plan', zh: '计划', en: 'Plan' },
+  { k: 'setup', zh: '环境', en: 'Setup' },
+  { k: 'run', zh: '运行与迭代', en: 'Run & iterate' },
+  { k: 'report', zh: '报告', en: 'Report' },
 ];
 
 /* ---------------- Plan ---------------- */
@@ -85,7 +87,7 @@ function HypRow({
             style={{ flexShrink: 0 }}
             onClick={() => setOpen((o) => !o)}
           >
-            依据
+            {tr('依据', 'Evidence')}
             <Icon
               name="chevDown"
               size={11}
@@ -108,7 +110,7 @@ function HypRow({
             whiteSpace: 'pre-wrap',
           }}
         >
-          判定依据：{evidence}
+          {tr('判定依据：', 'Evidence: ')}{evidence}
         </div>
       )}
     </div>
@@ -135,9 +137,12 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           }}
         >
           <Icon name="gate" size={15} />
-          实验已暂停，等待算力预算审批：消耗真实算力前需人工确认方案与预算。
+          {tr(
+            '实验已暂停，等待算力预算审批：消耗真实算力前需人工确认方案与预算。',
+            'Experiment paused for compute budget approval: the plan and budget need a human sign-off before real compute is spent.',
+          )}
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
-            前往审批
+            {tr('前往审批', 'Open approvals')}
           </button>
         </div>
       )}
@@ -147,8 +152,11 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           <EmptyState
             compact
             icon="sparkle"
-            title={exp.status === 'planning' ? '计划生成中…' : '计划尚未生成'}
-            desc="系统读入想法内容与相关文献后自动产出假设清单、复现策略与预算估计。"
+            title={exp.status === 'planning' ? tr('计划生成中…', 'Generating the plan…') : tr('计划尚未生成', 'Plan not generated yet')}
+            desc={tr(
+              '系统读入想法内容与相关文献后自动产出假设清单、复现策略与预算估计。',
+              'The system reads the idea and related papers, then produces hypotheses, a repro strategy and a budget estimate.',
+            )}
           />
         </div>
       ) : (
@@ -156,10 +164,10 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           {/* 假设清单 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
             <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
-            假设清单 <span className="en-label" style={{ fontSize: 11 }}>Hypotheses</span>
+            {tr('假设清单', 'Hypotheses')}
           </span>
           {(plan.hypotheses ?? []).length === 0 ? (
-            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>计划中未包含假设清单</div>
+            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>{tr('计划中未包含假设清单', 'The plan has no hypotheses')}</div>
           ) : (
             <div className="col gap8" style={{ marginBottom: 22 }}>
               {(plan.hypotheses ?? []).map((h, i) => (
@@ -171,21 +179,21 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           {/* 复现策略 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
             <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-            复现策略 <span className="en-label" style={{ fontSize: 11 }}>Repro strategy</span>
+            {tr('复现策略', 'Repro strategy')}
           </span>
           <div className="card card-pad" style={{ marginBottom: 22, background: 'var(--surface-2)' }}>
             <p style={{ fontSize: 13, lineHeight: 1.65, margin: 0, color: 'var(--text-2)', whiteSpace: 'pre-wrap' }}>
-              {plan.repro_strategy || '（计划中未包含复现策略）'}
+              {plan.repro_strategy || tr('（计划中未包含复现策略）', '(the plan has no repro strategy)')}
             </p>
           </div>
 
           {/* 实验步骤 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
             <Icon name="compass" size={15} style={{ color: 'var(--accent)' }} />
-            实验步骤 <span className="en-label" style={{ fontSize: 11 }}>Steps</span>
+            {tr('实验步骤', 'Steps')}
           </span>
           {(plan.steps ?? []).length === 0 ? (
-            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>计划中未包含步骤列表</div>
+            <div className="card empty" style={{ padding: 24, marginBottom: 22 }}>{tr('计划中未包含步骤列表', 'The plan has no step list')}</div>
           ) : (
             <div className="card" style={{ overflow: 'hidden', marginBottom: 22 }}>
               {(plan.steps ?? []).map((s, i, arr) => (
@@ -206,15 +214,15 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
           {/* 预算 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
             <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
-            预算 <span className="en-label" style={{ fontSize: 11 }}>Budget</span>
+            {tr('预算', 'Budget')}
           </span>
           <div className="row gap12" style={{ alignItems: 'stretch' }}>
             <div className="card card-pad" style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>硬上限（超限自动 kill）</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('硬上限（超限自动 kill）', 'Hard limits (auto-killed when exceeded)')}</div>
               <div className="mono" style={{ fontSize: 18, fontWeight: 700 }}>{budgetText(exp.budget)}</div>
             </div>
             <div className="card card-pad" style={{ flex: 1.6, background: 'var(--surface-2)' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>计划估计 budget_estimate</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('计划估计', 'Planned estimate')}</div>
               <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
                 {plan.budget_estimate
                   ? typeof plan.budget_estimate === 'string'
@@ -299,7 +307,7 @@ function FileCard({ file }: { file: GeneratedFile }) {
           className="codeblock scroll"
           style={{ margin: 0, borderRadius: 0, borderTop: '0.5px solid var(--border)', fontSize: 11, maxHeight: 360, overflow: 'auto' }}
         >
-          {file.content || '（空文件）'}
+          {file.content || tr('（空文件）', '(empty file)')}
         </pre>
       )}
     </div>
@@ -319,15 +327,25 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
   if (!vid) {
     return (
       <div className="card">
-        <EmptyState compact icon="server" title="尚未关联任务" desc="实验创建后会入队一个 kind=experiment 的 voyage。" />
+        <EmptyState
+          compact
+          icon="server"
+          title={tr('尚未关联任务', 'No linked task yet')}
+          desc={tr('实验创建后会入队一个 kind=experiment 的 voyage。', 'Creating an experiment queues a kind=experiment voyage.')}
+        />
       </div>
     );
   }
-  if (isLoading) return <div className="empty" style={{ padding: 40 }}>加载环境搭建步骤…</div>;
+  if (isLoading) return <div className="empty" style={{ padding: 40 }}>{tr('加载环境搭建步骤…', 'Loading setup steps…')}</div>;
   if (isError || !voyage) {
     return (
       <div className="card">
-        <EmptyState compact icon="x" title="无法加载关联任务" desc="后端不可用或接口尚未就绪。" />
+        <EmptyState
+          compact
+          icon="x"
+          title={tr('无法加载关联任务', 'Could not load the linked task')}
+          desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+        />
       </div>
     );
   }
@@ -342,7 +360,7 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
       <div className="row gap8" style={{ marginBottom: 12, justifyContent: 'space-between' }}>
         <span className="section-h">
           <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          环境搭建步骤 <span className="en-label" style={{ fontSize: 11 }}>setup · smoke（来自关联任务）</span>
+          {tr('环境搭建步骤', 'Setup steps')} <span className="en-label" style={{ fontSize: 11 }}>{tr('来自关联任务', 'from the linked task')}</span>
         </span>
         <button
           className="btn btn-ghost sm mono"
@@ -353,7 +371,7 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
         </button>
       </div>
       {steps.length === 0 ? (
-        <div className="card empty" style={{ padding: 32, marginBottom: 24 }}>任务尚未产生步骤</div>
+        <div className="card empty" style={{ padding: 32, marginBottom: 24 }}>{tr('任务尚未产生步骤', 'The task has no steps yet')}</div>
       ) : (
         <div style={{ marginBottom: 24 }}>
           <Timeline>
@@ -371,12 +389,12 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
                     </div>
                     {s.started_at && (
                       <div className="mono muted" style={{ fontSize: 11, marginTop: 7 }}>
-                        {fmtTime(s.started_at)} · 耗时 {s.finished_at ? fmtDuration(s.started_at, s.finished_at) : '进行中'}
+                        {fmtTime(s.started_at)} · {s.finished_at ? `${tr('耗时', 'took')} ${fmtDuration(s.started_at, s.finished_at)}` : tr('进行中', 'in progress')}
                       </div>
                     )}
                     {s.verdict && !s.verdict.passed && s.verdict.reason && (
                       <div style={{ marginTop: 7, fontSize: 12, color: 'var(--danger-tx)', lineHeight: 1.5 }}>
-                        自动校验：{s.verdict.reason}
+                        {tr('自动校验：', 'Auto check: ')}{s.verdict.reason}
                       </div>
                     )}
                   </div>
@@ -389,11 +407,14 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
 
       <span className="section-h" style={{ marginBottom: 12 }}>
         <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
-        生成的代码文件 <span className="en-label" style={{ fontSize: 11 }}>Generated files · {files.length}</span>
+        {tr('生成的代码文件', 'Generated code files')} <span className="en-label" style={{ fontSize: 11 }}>{files.length}</span>
       </span>
       {files.length === 0 ? (
         <div className="card empty" style={{ padding: 28 }}>
-          暂无生成文件（建环境阶段 LLM 生成 train.py / eval.py / requirements.txt / run.sh 后显示在这里）
+          {tr(
+            '暂无生成文件（建环境阶段 LLM 生成 train.py / eval.py / requirements.txt / run.sh 后显示在这里）',
+            'No generated files yet (train.py / eval.py / requirements.txt / run.sh written during setup will show up here)',
+          )}
         </div>
       ) : (
         <div className="col gap8">
@@ -417,7 +438,7 @@ function ReportTab({ exp }: { exp: ExperimentDetail }) {
         <>
           <span className="section-h" style={{ marginBottom: 12 }}>
             <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-            实验图表 <span className="en-label" style={{ fontSize: 11 }}>Figures · {figures.length}</span>
+            {tr('实验图表', 'Figures')} <span className="en-label" style={{ fontSize: 11 }}>{figures.length}</span>
           </span>
           <div className="card card-pad" style={{ marginBottom: 22 }}>
             <ExperimentFigures expId={exp.id} figures={figures} />
@@ -430,11 +451,11 @@ function ReportTab({ exp }: { exp: ExperimentDetail }) {
           <EmptyState
             compact
             icon="pen"
-            title="报告尚未生成"
+            title={tr('报告尚未生成', 'No report yet')}
             desc={
               EXPERIMENT_TERMINAL.has(exp.status)
-                ? '该实验未产出报告。'
-                : '自动迭代结束后，AI 会汇总各轮指标、图表与日志生成 markdown 报告。'
+                ? tr('该实验未产出报告。', 'This experiment produced no report.')
+                : tr('自动迭代结束后，AI 会汇总各轮指标、图表与日志生成 markdown 报告。', 'After the auto-iteration finishes, the AI summarizes metrics, figures and logs into a markdown report.')
             }
           />
         </div>
@@ -479,18 +500,18 @@ export function ExperimentDetailPage() {
   const cancelMutation = useMutation({
     mutationFn: () => api.cancelExperiment(id),
     onSuccess: () => {
-      toast('实验已取消 · experiment cancelled', 'ok');
+      toast(tr('实验已取消', 'Experiment cancelled'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['experiment', id] });
       void queryClient.invalidateQueries({ queryKey: ['experiments'] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
     },
-    onError: (e) => toast(`取消失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('取消失败：', 'Cancel failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   if (isLoading) {
     return (
       <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>加载实验详情…</div>
+        <div className="empty" style={{ padding: 80 }}>{tr('加载实验详情…', 'Loading experiment…')}</div>
       </div>
     );
   }
@@ -500,14 +521,14 @@ export function ExperimentDetailPage() {
       <div className="page fadeup">
         <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
           <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
-            {notFound ? '实验不存在' : '无法加载实验详情'}
+            {notFound ? tr('实验不存在', 'Experiment not found') : tr('无法加载实验详情', 'Could not load the experiment')}
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            {error instanceof Error ? error.message : '后端不可用，请稍后重试'}
+            {error instanceof Error ? error.message : tr('后端不可用，请稍后重试', 'Backend unavailable — try again later')}
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
-            <button className="btn btn-soft" onClick={() => void refetch()}>重试 retry</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/experiment')}>返回列表</button>
+            <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate('/experiment')}>{tr('返回列表', 'Back to list')}</button>
           </div>
         </div>
       </div>
@@ -532,14 +553,14 @@ export function ExperimentDetailPage() {
             <StatusPill status={exp.status} sm />
             <span className="pill sm">
               <Icon name="server" size={11} />
-              {exp.server_host ?? '未分配'}
+              {exp.server_host ?? tr('未分配', 'Unassigned')}
             </span>
             <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>{budgetText(exp.budget)}</span>
             {exp.workdir && (
               <span className="mono muted" style={{ fontSize: 11 }}>{exp.workdir}</span>
             )}
             <span className="mono muted" style={{ fontSize: 11 }}>
-              创建 {fmtTime(exp.created_at)} · 耗时 {fmtDuration(exp.created_at, active ? null : exp.updated_at)}
+              {tr('创建', 'Created')} {fmtTime(exp.created_at)} · {tr('耗时', 'took')} {fmtDuration(exp.created_at, active ? null : exp.updated_at)}
             </span>
           </div>
         </div>
@@ -550,20 +571,20 @@ export function ExperimentDetailPage() {
             onClick={() => navigate(`/ideas/${exp.idea_id}`)}
           >
             <Icon name="bulb" size={13} />
-            查看 idea
+            {tr('查看 idea', 'View idea')}
           </button>
           {active && (
             <button
               className="btn btn-ghost"
               disabled={cancelMutation.isPending}
               onClick={() => {
-                if (window.confirm('确定取消该实验？将取消关联任务并尝试终止远端进程。')) {
+                if (window.confirm(tr('确定取消该实验？将取消关联任务并尝试终止远端进程。', 'Cancel this experiment? The linked task will be cancelled and remote processes killed.'))) {
                   cancelMutation.mutate();
                 }
               }}
             >
               <Icon name="x" size={13} />
-              {cancelMutation.isPending ? '取消中…' : '取消实验'}
+              {cancelMutation.isPending ? tr('取消中…', 'Cancelling…') : tr('取消实验', 'Cancel experiment')}
             </button>
           )}
         </div>
@@ -588,7 +609,7 @@ export function ExperimentDetailPage() {
               marginBottom: -1,
             }}
           >
-            {t.label}
+            {tr(t.zh, t.en)}
           </button>
         ))}
       </div>

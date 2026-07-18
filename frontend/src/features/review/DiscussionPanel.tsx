@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { api, type ReviewMessageRead } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { DiscussionBubble } from './messages';
 
 /* ============================================================
@@ -51,7 +52,7 @@ export function DiscussionPanel({ ideaId }: { ideaId: string }) {
         old === undefined ? [msg] : old.some((m) => m.id === msg.id) ? old : [...old, msg],
       );
     },
-    onError: (e) => toast(`发送失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('发送失败', 'Failed to send')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   function send() {
@@ -65,10 +66,12 @@ export function DiscussionPanel({ ideaId }: { ideaId: string }) {
       <div className="card-pad row" style={{ paddingBottom: 12, justifyContent: 'space-between' }}>
         <span className="section-h">
           <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
-          讨论区 <span className="en-label" style={{ fontSize: 11 }}>Discussion · 人机同场</span>
+          {tr('讨论区', 'Discussion')}
         </span>
         {messages.length > 0 && (
-          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{messages.length} 条</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+            {tr(`${messages.length} 条`, `${messages.length} messages`)}
+          </span>
         )}
       </div>
 
@@ -86,19 +89,25 @@ export function DiscussionPanel({ ideaId }: { ideaId: string }) {
         }}
       >
         <Icon name="sparkle" size={13} style={{ flexShrink: 0 }} />
-        你的评论会作为上下文进入下一轮 agent 评审 · your comments feed the next review round
+        {tr('你的评论会作为上下文进入下一轮 agent 评审', 'Your comments feed the next agent review round as context')}
       </div>
 
       {/* 消息列表 */}
       <div ref={listRef} className="scroll" style={{ maxHeight: 380, overflowY: 'auto', padding: '4px 22px 8px' }}>
         {sessionsQuery.isLoading || (sid && messagesQuery.isLoading) ? (
-          <div className="empty" style={{ padding: 24 }}>加载讨论…</div>
+          <div className="empty" style={{ padding: 24 }}>{tr('加载讨论…', 'Loading discussion…')}</div>
         ) : sessionsQuery.isError ? (
-          <div className="empty" style={{ padding: 24 }}>无法加载讨论区（后端不可用或接口未就绪）</div>
+          <div className="empty" style={{ padding: 24 }}>
+            {tr('无法加载讨论区（后端不可用或接口未就绪）', 'Failed to load the discussion (backend unavailable or API not ready)')}
+          </div>
         ) : !session ? (
-          <div className="empty" style={{ padding: 24 }}>讨论区尚未创建（后端未就绪）</div>
+          <div className="empty" style={{ padding: 24 }}>
+            {tr('讨论区尚未创建（后端未就绪）', 'Discussion not created yet (backend not ready)')}
+          </div>
         ) : messages.length === 0 ? (
-          <div className="empty" style={{ padding: 24 }}>还没有讨论 — 说点什么，给 agent 评审提供人类视角</div>
+          <div className="empty" style={{ padding: 24 }}>
+            {tr('还没有讨论 — 说点什么，给 agent 评审提供人类视角', 'No discussion yet — say something to give the agent reviewers a human perspective')}
+          </div>
         ) : (
           messages.map((m) => <DiscussionBubble key={m.id} msg={m} />)
         )}
@@ -109,7 +118,11 @@ export function DiscussionPanel({ ideaId }: { ideaId: string }) {
         <textarea
           className="textarea"
           rows={2}
-          placeholder={session ? '写下你的评论…（Enter 发送，Shift+Enter 换行）' : '讨论区不可用'}
+          placeholder={
+            session
+              ? tr('写下你的评论…（Enter 发送，Shift+Enter 换行）', 'Write a comment… (Enter to send, Shift+Enter for a new line)')
+              : tr('讨论区不可用', 'Discussion unavailable')
+          }
           value={draft}
           disabled={!session || sendMutation.isPending}
           onChange={(e) => setDraft(e.target.value)}
@@ -132,7 +145,7 @@ export function DiscussionPanel({ ideaId }: { ideaId: string }) {
           ) : (
             <Icon name="arrow" size={14} />
           )}
-          发送
+          {tr('发送', 'Send')}
         </button>
       </div>
     </div>

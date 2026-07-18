@@ -174,8 +174,12 @@ acceptance 与 done_criteria 即可。
 循环终止不再是"列表走完"：
 
 1. `done_criteria` 全部通过 → `done`；
-2. 预算（token / gpu_hours / 时长）到 **90% 触发降级收束**：loop 模式强制切到收尾分支
-   （experiment 即 figures → report），确保烧完预算前有产出；100% 耗尽 → `paused_error`；
+2. 预算耗尽 → **降级收尾（已实现，`_budget_wrapup`）**：步骤可声明 `wrapup=True`（把已完成
+   工作变成产出的廉价终步，如 review.summarize / experiment.figures+report / writing 终编译）；
+   预算超限时收尾步骤仍放行、其余未执行步骤作废并记 `plan_history`（source=budget），
+   确保烧完预算前有产出，不再一刀切 `paused_error` 白费已完成工作；**无收尾步骤可救才
+   `paused_error`**。（注：设计里的"90% 提前触发"未实现,当前是 100% 耗尽才收尾;因 usage
+   仅在每步后累加、单体动作可能已超支，靠此兜底而非提前预判。）
 3. Gate 驳回**按闸门 kind 分派**：入口类（compute_budget 等）驳回 = `failed`（沿用）；
    过程类（experiment_pivot 等）驳回 = 该分支节点 `obsolete` + 驳回意见作为诊断回灌
    Navigator，继续当前路线或收束——**驳回 ≠ 整个任务作废**；
@@ -216,7 +220,20 @@ acceptance 与 done_criteria 即可。
 4. 失败时 verdict.reason 必须 actionable（哪条 check、期望什么、实际什么）——
    好的错误信息就是免费的 rules-based feedback（[Tools]），直接作为重试/计划编辑的诊断输入。
 
-## 7. `experiment.iterate` 拆解
+## 7. 单体动作炸开成节点（experiment / idea_review）
+
+**通用形态**：单体动作把"循环/批处理"埋在 action 内部（引擎看不见、插不进预算与闸门），
+应炸开成节点——一个"发现步"产出 `plan_signal`，kind 的**确定性分支表**据此把后续
+展开成 N 个可见节点。收益：每单元可审计、引擎能在单元之间查预算走降级收尾、断点更细。
+
+- **idea_review**（确定性 fan-out）：`review.pair` 发现对局数 → 信号表展开 N 个
+  `review.match` 节点插在 pair 与 summarize 之间。引擎逐场查预算，超限时未跑的 match
+  作废、summarize（wrapup）收尾——修复了"辩论全跑完却卡在汇总前 paused_error"。
+  单场失败隔离（记 failed，不炸锦标赛）。旧 `review.debate` 单体动作保留仅供在途 run 续跑。
+- **experiment**（决策 fan-out）：见下，`experiment.analyze` 的 reflection decision
+  展开下一轮或收尾。
+
+### experiment.iterate 拆解
 
 现状：六步固定管线，动态循环埋在 `experiment.iterate`（内部多轮 launch → 轮询 →
 reflection → improve/debug/stop）。重构为 `mode=loop`，初始计划：
@@ -256,13 +273,17 @@ run 节点（由 experiment.run 轮询时自查时长并上报，引擎记账并
 - F：任务详情页按清单序（rank）渲染 + 尝试徽标 + 计划调整计数 +
   已作废步骤开关（`include_obsolete` 查询参数）。
 
-实现相对本文的三处偏差（有意为之）：
+实现相对本文的偏差（有意为之）：
 
-1. **experiment 保持 pipeline 模式**：轮次动态性完全由「通过节点的 observation.plan_signal
-   → kind 确定性分支表」提供（§5.3 的"能写成规则就不问 LLM"推到极致）；失败语义与旧管线
-   一致（on_failure=fail）。Navigator LLM 计划编辑只对 loop kind（demo/自由规划）生效。
+1. ~~experiment 保持 pipeline 模式~~ **已撤销（2026-07-17 用户定调）**：experiment 归入
+   mode=loop（migration `e3f4a5b6c7d8` 回填存量）。失败语义按节点分派——
+   plan/setup/analyze/figures/report 失败走 loop 回灌（原地重试 → AI 计划调整，
+   MAX_REPLANS 封顶）；**run 与 smoke 保留 on_failure="fail" + max_attempts=1 硬停**：
+   运行级失败 = 预算超时/基础设施故障，盲目重跑或交 AI 重排都在烧算力；smoke 动作
+   内部已有 LLM 修复循环，修完仍失败说明代码根本性不可用。正常轮次推进仍由
+   plan_signal 确定性分支表驱动（规则优先，AI 只兜失败的底）。
 2. **done_criteria 终检未达时 loop 模式暂不回灌 Navigator**，一律 paused_error 等人工
-   （防过早宣告完成的保守实现；回灌留待有真实 loop kind 需求时再开）。
+   （防过早宣告完成的保守实现；回灌留待有真实需求时再开）。
 3. **reflection 的 decision 集仍为 improve/debug/stop**：§7 表中 pivot（方法调整闸门）与
    ablate（补消融）分支表已预留结构，待 reflection prompt 升级后开放。
 

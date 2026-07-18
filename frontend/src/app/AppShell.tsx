@@ -11,6 +11,8 @@ import { useAuth } from './auth';
 import { useProject } from './project';
 import { SearchPalette } from './SearchPalette';
 import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
+import { tr } from '../lib/i18n';
+import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
 
 interface NavEntry {
@@ -44,25 +46,25 @@ const FEATURE_BY_PATH: Record<string, string> = {
 };
 
 function crumbFor(pathname: string): [string, string] {
-  if (pathname === '/') return ['Polaris', '总览'];
-  if (pathname === '/projects/new') return ['研究方向', '新建方向'];
-  if (pathname.startsWith('/projects/')) return ['研究方向', '方向详情'];
-  if (pathname === '/voyages') return ['Polaris', 'AI 任务'];
-  if (pathname.startsWith('/voyages/')) return ['AI 任务', '任务详情'];
-  if (pathname.startsWith('/papers/')) return ['文献追踪', '论文阅读'];
-  if (pathname.startsWith('/ideas/')) return ['想法生成', '想法详情'];
-  if (pathname.startsWith('/join/')) return ['研究方向', '接受邀请'];
-  if (pathname.startsWith('/experiment/')) return ['实验搭建', '实验详情'];
-  if (pathname.startsWith('/writer/')) return ['论文撰写', '编辑工作台'];
+  if (pathname === '/') return ['Polaris', tr('总览', 'Dashboard')];
+  if (pathname === '/projects/new') return [tr('研究方向', 'Directions'), tr('新建方向', 'New direction')];
+  if (pathname.startsWith('/projects/')) return [tr('研究方向', 'Directions'), tr('方向详情', 'Direction detail')];
+  if (pathname === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
+  if (pathname.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
+  if (pathname.startsWith('/papers/')) return [tr('文献追踪', 'Research Wiki'), tr('论文阅读', 'Paper reading')];
+  if (pathname.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
+  if (pathname.startsWith('/join/')) return [tr('研究方向', 'Directions'), tr('接受邀请', 'Accept invite')];
+  if (pathname.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
+  if (pathname.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
   const table: Record<string, [string, string]> = {
-    '/wiki': ['Stage 00', '文献追踪'],
-    '/forge': ['Stage 01', '想法生成'],
-    '/review': ['Stage 02', '想法评审'],
-    '/experiment': ['Stage 03', '实验搭建'],
-    '/writer': ['Stage 04', '论文撰写'],
-    '/paper-review': ['Stage 05', '论文评审'],
-    '/skills': ['Polaris', '技能'],
-    '/settings': ['Polaris', '设置'],
+    '/wiki': ['Stage 00', tr('文献追踪', 'Research Wiki')],
+    '/forge': ['Stage 01', tr('想法生成', 'Idea Forge')],
+    '/review': ['Stage 02', tr('想法评审', 'Idea Review')],
+    '/experiment': ['Stage 03', tr('实验搭建', 'Experiment Lab')],
+    '/writer': ['Stage 04', tr('论文撰写', 'Paper Writer')],
+    '/paper-review': ['Stage 05', tr('论文评审', 'Paper Review')],
+    '/skills': ['Polaris', tr('技能', 'Skills')],
+    '/settings': ['Polaris', tr('设置', 'Settings')],
   };
   return table[pathname] ?? ['Polaris', '—'];
 }
@@ -109,7 +111,7 @@ function DirectionSwitcher() {
     };
   }, [open]);
 
-  const triggerLabel = currentProject?.name ?? (isLoading ? '加载中…' : '选择研究方向');
+  const triggerLabel = currentProject?.name ?? (isLoading ? tr('加载中…', 'Loading…') : tr('选择研究方向', 'Pick a direction'));
 
   const itemStyle: React.CSSProperties = {
     display: 'flex',
@@ -132,7 +134,7 @@ function DirectionSwitcher() {
       {/* 触发器：胶囊（图标 + 当前方向名 + 折叠箭头） */}
       <button
         onClick={() => setOpen((o) => !o)}
-        title="切换研究方向"
+        title={tr('切换研究方向', 'Switch research direction')}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -185,12 +187,12 @@ function DirectionSwitcher() {
           }}
         >
           <div className="mono" style={{ fontSize: 10, color: 'var(--text-4)', padding: '4px 12px 6px', letterSpacing: '0.06em' }}>
-            研究方向 · DIRECTIONS
+            {tr('研究方向', 'DIRECTIONS')}
           </div>
           <div className="scroll" style={{ maxHeight: 320, overflowY: 'auto' }}>
             {projects.length === 0 && (
               <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-4)' }}>
-                {isLoading ? '加载中…' : '还没有研究方向，先新建一个'}
+                {isLoading ? tr('加载中…', 'Loading…') : tr('还没有研究方向，先新建一个', 'No directions yet — create one first')}
               </div>
             )}
             {projects.map((p) => {
@@ -253,7 +255,7 @@ function DirectionSwitcher() {
             }}
           >
             <Icon name="plus" size={13} style={{ color: 'var(--text-3)' }} />
-            新建方向
+            {tr('新建方向', 'New direction')}
           </button>
           {currentProjectId && (
             <button
@@ -266,7 +268,7 @@ function DirectionSwitcher() {
               }}
             >
               <Icon name="settings" size={13} style={{ color: 'var(--text-3)' }} />
-              当前方向详情与设置
+              {tr('当前方向详情与设置', 'Current direction detail & settings')}
             </button>
           )}
         </div>
@@ -277,12 +279,17 @@ function DirectionSwitcher() {
 
 function NavItem({ n }: { n: NavEntry }) {
   return (
-    <NavLink to={n.to} end={n.to === '/'} className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+    <NavLink
+      to={n.to}
+      end={n.to === '/'}
+      className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
+      title={tr(n.zh, n.en)}
+    >
       {n.no && <span className="stage-no mono">{n.no}</span>}
       <span className="nav-ic">
-        <Icon name={n.icon} size={16} />
+        <Icon name={n.icon} size={18} />
       </span>
-      <span style={{ flex: 1 }}>{n.zh}</span>
+      <span className="nav-label" style={{ flex: 1 }}>{tr(n.zh, n.en)}</span>
     </NavLink>
   );
 }
@@ -296,6 +303,26 @@ export function AppShell() {
   // —— 审批抽屉 ——
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [expandedGate, setExpandedGate] = useState<string | null>(null);
+
+  // —— 侧栏收起（图标轨道），记忆到 localStorage ——
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('polaris.navCollapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleNav = () => {
+    setNavCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem('polaris.navCollapsed', next ? '1' : '0');
+      } catch {
+        /* 隐私模式：仅本次会话生效 */
+      }
+      return next;
+    });
+  };
 
   // —— 全局搜索（⌘K / Ctrl+K）——
   const [searchOpen, setSearchOpen] = useState(false);
@@ -330,13 +357,13 @@ export function AppShell() {
     mutationFn: ({ id, decision, comment }: { id: string; decision: GateDecision; comment?: string }) =>
       api.decideGate(id, decision, comment),
     onSuccess: (gate, vars) => {
-      toast(`已${vars.decision === 'approve' ? '批准' : '拒绝'}：${gateTitle(gate)}`, 'ok');
+      toast(`${vars.decision === 'approve' ? tr('已批准', 'Approved') : tr('已拒绝', 'Rejected')}：${gateTitle(gate)}`, 'ok');
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
       void queryClient.invalidateQueries({ queryKey: ['voyage'] });
     },
     onError: (err) => {
-      toast(`审批失败：${err instanceof Error ? err.message : String(err)}`, 'error');
+      toast(`${tr('审批失败', 'Approval failed')}：${err instanceof Error ? err.message : String(err)}`, 'error');
     },
   });
 
@@ -355,16 +382,16 @@ export function AppShell() {
     const close = connectNotifications(getToken, (msg) => {
       if (msg.type === 'gate.created') {
         void queryClient.invalidateQueries({ queryKey: ['gates'] });
-        toast(`新审批请求：${gateTitle(msg.gate)}`, 'info');
+        toast(`${tr('新审批请求', 'New approval request')}：${gateTitle(msg.gate)}`, 'info');
       } else if (msg.type === 'gate.decided') {
         void queryClient.invalidateQueries({ queryKey: ['gates'] });
         void queryClient.invalidateQueries({ queryKey: ['voyages'] });
       } else if (msg.type === 'voyage.status') {
         void queryClient.invalidateQueries({ queryKey: ['voyages'] });
         void queryClient.invalidateQueries({ queryKey: ['voyage', msg.voyage_id] });
-        if (msg.status === 'paused_gate') toast('任务等待审批 · voyage paused at gate', 'info');
-        else if (msg.status === 'done') toast('任务完成 · voyage done', 'ok');
-        else if (msg.status === 'failed') toast('任务失败 · voyage failed', 'error');
+        if (msg.status === 'paused_gate') toast(tr('任务等待审批', 'Task paused for approval'), 'info');
+        else if (msg.status === 'done') toast(tr('任务完成', 'Task done'), 'ok');
+        else if (msg.status === 'failed') toast(tr('任务失败', 'Task failed'), 'error');
       } else if (msg.type === 'review.message') {
         // 正在看该 session 的组件共享此 query cache → 直接乐观追加（按 id 去重）
         queryClient.setQueryData<ReviewMessageRead[]>(['session-messages', msg.session_id], (old) =>
@@ -396,10 +423,10 @@ export function AppShell() {
       } else if (msg.type === 'experiment.status') {
         void queryClient.invalidateQueries({ queryKey: ['experiments'] });
         void queryClient.invalidateQueries({ queryKey: ['experiment', msg.experiment_id] });
-        if (msg.status === 'awaiting_gate') toast('实验等待预算审批 · experiment awaiting gate', 'info');
-        else if (msg.status === 'running') toast('实验正式运行中 · experiment running', 'info');
-        else if (msg.status === 'done') toast('实验完成 · experiment done', 'ok');
-        else if (msg.status === 'failed') toast('实验失败 · experiment failed', 'error');
+        if (msg.status === 'awaiting_gate') toast(tr('实验等待预算审批', 'Experiment awaiting budget approval'), 'info');
+        else if (msg.status === 'running') toast(tr('实验正式运行中', 'Experiment running'), 'info');
+        else if (msg.status === 'done') toast(tr('实验完成', 'Experiment done'), 'ok');
+        else if (msg.status === 'failed') toast(tr('实验失败', 'Experiment failed'), 'error');
       }
     });
     return close;
@@ -418,21 +445,22 @@ export function AppShell() {
   const ctx: ShellContext = { pendingGates: pending, gatesError: pendingQuery.isError, openGates };
 
   return (
-    <div className="app">
+    <div className={'app' + (navCollapsed ? ' nav-collapsed' : '')}>
       {/* —— 侧栏 —— */}
       <div className="sidebar">
         <div className="sb-brand">
-          <PolarisMark size={46} />
-          <PolarisWordmark height={27} />
+          <PolarisMark size={34} />
+          {/* 收起后只留左侧图形标：直接不渲染字标，杜绝溢出（不靠 CSS 隐藏） */}
+          {!navCollapsed && <PolarisWordmark height={20} />}
         </div>
         <div className="sb-scroll scroll">
           {NAV_MAIN.map((n) => (
             <NavItem key={n.to} n={n} />
           ))}
-          <NavItem n={{ to: '/voyages', icon: 'compass', zh: 'AI 任务', en: 'Tasks' }} />
+          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
           <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
 
-          <div className="sb-section">研究流水线 · Pipeline</div>
+          <div className="sb-section">{tr('研究流水线', 'Pipeline')}</div>
           {NAV_PIPE.filter((n) => {
             const key = FEATURE_BY_PATH[n.to];
             return key == null || me?.features?.[key] !== false;
@@ -444,14 +472,14 @@ export function AppShell() {
           <Avatar userId={me?.id} hasAvatar={!!me?.has_avatar} name={me?.display_name || me?.email || '研'} size={26} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {me?.display_name ?? me?.email ?? '研究员'}
+              {me?.display_name ?? me?.email ?? tr('研究员', 'Researcher')}
             </div>
             <div style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{isAdmin(me) ? 'Admin' : 'Researcher'}</div>
           </div>
           <button
             className="icon-btn"
             style={{ width: 28, height: 28, border: 'none', background: 'transparent' }}
-            title="设置 Settings"
+            title={tr('设置', 'Settings')}
             onClick={() => navigate('/settings')}
           >
             <Icon name="settings" size={16} />
@@ -459,7 +487,7 @@ export function AppShell() {
           <button
             className="icon-btn"
             style={{ width: 28, height: 28, border: 'none', background: 'transparent' }}
-            title="退出登录 Logout"
+            title={tr('退出登录', 'Log out')}
             onClick={() => {
               logout();
               navigate('/login');
@@ -473,6 +501,14 @@ export function AppShell() {
       {/* —— 主列 —— */}
       <div className="main">
         <div className="topbar">
+          <button
+            className="icon-btn nav-toggle"
+            onClick={toggleNav}
+            title={navCollapsed ? tr('展开菜单栏', 'Expand sidebar') : tr('收起菜单栏', 'Collapse sidebar')}
+            aria-label={navCollapsed ? tr('展开菜单栏', 'Expand sidebar') : tr('收起菜单栏', 'Collapse sidebar')}
+          >
+            <Icon name="sidebar" size={16} />
+          </button>
           <div className="crumb">
             <span>{c1}</span>
             <span className="sep">›</span>
@@ -484,10 +520,11 @@ export function AppShell() {
           <div className="searchbox" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSearchOpen(true); }}>
             <Icon name="search" size={14} />
-            <span>搜索论文 / 想法 / 实验…</span>
+            <span>{tr('搜索论文 / 想法 / 实验…', 'Search papers / ideas / experiments…')}</span>
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
           </div>
-          <button className="icon-btn" onClick={() => openGates(null)} title="审批中心 Approvals">
+          <LangToggle />
+          <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
             <Icon name="bell" size={16} />
             {pending.length > 0 && <span className="badge">{pending.length}</span>}
           </button>
@@ -504,21 +541,21 @@ export function AppShell() {
         title={
           <>
             <Icon name="gate" size={18} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 15, fontWeight: 680 }}>审批中心</span>
+            <span style={{ fontSize: 15, fontWeight: 680 }}>{tr('审批中心', 'Approvals')}</span>
           </>
         }
-        sub="人工审批 · Human-in-the-loop approvals"
+        sub={tr('人工审批', 'Human-in-the-loop approvals')}
       >
         <div className="row" style={{ marginBottom: 10 }}>
-          <span className="sb-section" style={{ padding: 0 }}>待处理 · {pending.length}</span>
+          <span className="sb-section" style={{ padding: 0 }}>{tr('待处理', 'Pending')} · {pending.length}</span>
         </div>
         <div className="col gap10" style={{ marginBottom: 24 }}>
           {pendingQuery.isError ? (
             <div className="empty" style={{ padding: 20 }}>
-              无法加载审批列表（后端不可用）
+              {tr('无法加载审批列表（后端不可用）', 'Failed to load approvals (backend unavailable)')}
               <div style={{ marginTop: 10 }}>
                 <button className="btn btn-soft sm" onClick={() => void pendingQuery.refetch()}>
-                  重试 retry
+                  {tr('重试', 'Retry')}
                 </button>
               </div>
             </div>
@@ -534,15 +571,15 @@ export function AppShell() {
               />
             ))
           ) : (
-            <div className="empty" style={{ padding: 20 }}>没有待处理的审批</div>
+            <div className="empty" style={{ padding: 20 }}>{tr('没有待处理的审批', 'No pending approvals')}</div>
           )}
         </div>
         <div className="row" style={{ marginBottom: 10 }}>
-          <span className="sb-section" style={{ padding: 0 }}>历史记录</span>
+          <span className="sb-section" style={{ padding: 0 }}>{tr('历史记录', 'History')}</span>
         </div>
         <div className="col gap10">
           {decidedQuery.isLoading ? (
-            <div className="empty" style={{ padding: 16 }}>加载中…</div>
+            <div className="empty" style={{ padding: 16 }}>{tr('加载中…', 'Loading…')}</div>
           ) : decided.length > 0 ? (
             decided.map((g) => (
               <GateCard
@@ -554,11 +591,11 @@ export function AppShell() {
               />
             ))
           ) : (
-            <div className="empty" style={{ padding: 16 }}>暂无历史审批记录</div>
+            <div className="empty" style={{ padding: 16 }}>{tr('暂无历史审批记录', 'No past approvals')}</div>
           )}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5, marginTop: 20, padding: '0 2px' }}>
-          批准与任务关联的审批后，对应任务将自动从断点恢复；拒绝则置为 failed。
+          {tr('批准与任务关联的审批后，对应任务将自动从断点恢复；拒绝则置为 failed。', 'Approving a task-linked request resumes the task from its checkpoint; rejecting marks it failed.')}
         </div>
       </Drawer>
 

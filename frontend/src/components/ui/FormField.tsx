@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { tr } from '../../lib/i18n';
 
 export interface FormFieldProps {
   label: string;
@@ -15,8 +16,7 @@ export function FormField({ label, en, hint, error, children, style }: FormField
   return (
     <div className="field" style={style}>
       <label className="field-label">
-        {label}
-        {en && <span className="en">{en}</span>}
+        {tr(label, en)}
       </label>
       {children}
       {error ? (

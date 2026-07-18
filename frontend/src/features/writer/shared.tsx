@@ -1,21 +1,31 @@
 import type { DiagnosticRule } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    Paper Writer 共享小件：协作者颜色 hash、诊断规则文案、
    论文分节的大白话名称。
    ============================================================ */
 
-/** 协作者光标/头像颜色盘（与浙大蓝主题协调的中低饱和色）。 */
-const PEER_COLORS = [
-  '#0d4a94', // 求是蓝
-  '#3f8f5f', // 绿
-  '#b4892f', // 金
-  '#7263b0', // 紫
-  '#1f7fa8', // 青
-  '#c14f44', // 红
-  '#5b8a3c', // 橄榄
-  '#a05286', // 玫紫
-];
+/** 读主题 token 的具体色值（协作光标要传给编辑器，必须是字面量色）。 */
+function cssColor(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+/** 协作者光标/头像颜色盘：主题语义色 + 两个补充色（与浙大蓝主题协调的中低饱和色）。 */
+function peerColors(): string[] {
+  return [
+    cssColor('--accent-text', '#0d4a94'), // 求是蓝
+    cssColor('--ok', '#3f8f5f'), // 绿
+    cssColor('--warn', '#b4892f'), // 金
+    cssColor('--violet', '#7263b0'), // 紫
+    cssColor('--info', '#1f7fa8'), // 青
+    cssColor('--danger', '#c14f44'), // 红
+    '#5b8a3c', // 橄榄（无对应 token）
+    '#a05286', // 玫紫（无对应 token）
+  ];
+}
 
 /** 用户名 → 稳定颜色（简单字符串 hash 取模）。 */
 export function colorForUser(name: string): string {
@@ -23,17 +33,18 @@ export function colorForUser(name: string): string {
   for (let i = 0; i < name.length; i += 1) {
     h = (h * 31 + name.charCodeAt(i)) >>> 0;
   }
-  return PEER_COLORS[h % PEER_COLORS.length]!;
+  const colors = peerColors();
+  return colors[h % colors.length]!;
 }
 
 /** 编译诊断规则 → 大白话。 */
 export function ruleText(rule: DiagnosticRule | string): string {
   const map: Record<string, string> = {
-    undefined_citation: '引用没找到',
-    undefined_reference: '交叉引用没找到',
-    latex_error: 'LaTeX 错误',
-    overfull: '排版溢出',
-    other: '其他',
+    undefined_citation: tr('引用没找到', 'Citation not found'),
+    undefined_reference: tr('交叉引用没找到', 'Cross-reference not found'),
+    latex_error: tr('LaTeX 错误', 'LaTeX error'),
+    overfull: tr('排版溢出', 'Overfull box'),
+    other: tr('其他', 'Other'),
   };
   return map[rule] ?? rule;
 }
@@ -41,14 +52,14 @@ export function ruleText(rule: DiagnosticRule | string): string {
 /** 论文分节 key → 中文（模板 sections / AI 起草选节用）。 */
 export function sectionText(key: string): string {
   const map: Record<string, string> = {
-    abstract: '摘要',
-    introduction: '引言',
-    related_work: '相关工作',
-    method: '方法',
-    experimental_setup: '实验设置',
-    experiments: '实验',
-    results: '实验结果',
-    conclusion: '结论',
+    abstract: tr('摘要', 'Abstract'),
+    introduction: tr('引言', 'Introduction'),
+    related_work: tr('相关工作', 'Related work'),
+    method: tr('方法', 'Method'),
+    experimental_setup: tr('实验设置', 'Experimental setup'),
+    experiments: tr('实验', 'Experiments'),
+    results: tr('实验结果', 'Results'),
+    conclusion: tr('结论', 'Conclusion'),
   };
   return map[key] ?? key;
 }

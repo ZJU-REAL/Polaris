@@ -61,7 +61,7 @@ async def create_presentation(
     goal = (
         f"论文分享 PPT：{first_title[:80]}"
         if data.mode == "single"
-        else f"主题梳理 PPT：{len(data.paper_ids)} 篇（{first_title[:50]} 等）"
+        else f"主题梳理 PPT：{first_title[:50]} 等 {len(data.paper_ids)} 篇"
     )
     run = VoyageRun(
         kind="presentation",

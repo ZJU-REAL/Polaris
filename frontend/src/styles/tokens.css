@@ -43,6 +43,18 @@
   --danger:    #c14f44;  --danger-bg: #f8e7e4;  --danger-tx: #a23c32;
   --muted-dot: #a7b0c0;
 
+  /* — Media / lightbox（图片灯箱遮罩层） — */
+  --media-bg:   #ffffff;                   /* 图片底色：论文图表默认白底 */
+  --scrim:      rgba(10, 22, 44, 0.82);    /* 灯箱全屏遮罩 */
+  --scrim-btn:  rgba(255, 255, 255, 0.14); /* 遮罩上的按钮/占位底 */
+  --on-scrim:   #ffffff;                   /* 遮罩上的主文字 */
+  --on-scrim-2: rgba(255, 255, 255, 0.75); /* 遮罩上的次级文字 */
+  --on-scrim-3: rgba(255, 255, 255, 0.55); /* 遮罩上的弱文字 */
+
+  /* — Avatar — */
+  --grad-avatar: linear-gradient(140deg, #4a6fa5, var(--accent));
+  --on-accent:   #ffffff;                  /* 深色强调底（accent/渐变）上的文字 */
+
   /* — Radii — */
   --radius:    12px;
   --radius-sm: 8px;

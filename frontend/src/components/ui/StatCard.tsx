@@ -1,4 +1,5 @@
 import { Icon, type IconName } from './Icon';
+import { tr } from '../../lib/i18n';
 
 export interface StatCardProps {
   icon: IconName;
@@ -29,8 +30,7 @@ export function StatCard({ icon, label, en, value, sub, accent }: StatCardProps)
           <Icon name={icon} size={16} />
         </div>
         <div>
-          <div style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{en}</div>
+          <div style={{ fontSize: 12.5, fontWeight: 600 }}>{tr(label, en)}</div>
         </div>
       </div>
       <div className="row" style={{ alignItems: 'baseline', gap: 8 }}>

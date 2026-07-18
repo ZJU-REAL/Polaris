@@ -104,6 +104,13 @@ def validate_plan_edit(
 
 
 def experiment_round_nodes(next_round: int) -> list[dict[str, Any]]:
+    """一轮 run + analyze（experiment mode=loop，docs/voyage-loop.md §7）。
+
+    run 保留 on_failure="fail" 且 max_attempts=1：运行级失败 = 预算超时/基础设施
+    故障，盲目重跑或交 AI 重排都在烧算力，诚实硬停；训练本身失败（exit != 0）
+    不是步骤失败——observation 携带 exit_code 交由 analyze 走 debug 分支。
+    analyze 失败走 loop 回灌（原地重试 → AI 计划调整）。
+    """
     return [
         {
             "title": f"第 {next_round} 轮运行",
@@ -113,6 +120,7 @@ def experiment_round_nodes(next_round: int) -> list[dict[str, Any]]:
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
+            "budget": {"max_attempts": 1},
         },
         {
             "title": f"第 {next_round} 轮分析",
@@ -121,12 +129,16 @@ def experiment_round_nodes(next_round: int) -> list[dict[str, Any]]:
             "acceptance": "reflection 已落库并给出继续/收束判定",
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
-            "on_failure": "fail",
         },
     ]
 
 
 def experiment_wrapup_nodes() -> list[dict[str, Any]]:
+    """收尾 figures + report：失败走 loop 回灌（figures 内部已有降级，极少硬失败）。
+
+    标 wrapup=True：预算耗尽时（budget 90%/超限）跳过剩余 run/analyze 直接来这里，
+    把已跑完的轮次变成图表与报告（docs/voyage-loop.md §5.4）。
+    """
     return [
         {
             "title": "实验图表（脚本生成 + 自动质检）",
@@ -135,7 +147,7 @@ def experiment_wrapup_nodes() -> list[dict[str, Any]]:
             "acceptance": "figures 已生成、拉回本地并写入 Experiment.figures",
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
-            "on_failure": "fail",
+            "wrapup": True,
         },
         {
             "title": "实验报告（LLM）",
@@ -144,7 +156,7 @@ def experiment_wrapup_nodes() -> list[dict[str, Any]]:
             "acceptance": "markdown 报告已写入 Experiment.report",
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
-            "on_failure": "fail",
+            "wrapup": True,
         },
     ]
 
@@ -187,7 +199,46 @@ def experiment_signal_edits(
     return None
 
 
+def review_match_node(index: int) -> dict[str, Any]:
+    return {
+        "title": f"第 {index + 1} 场辩论",
+        "action": "review.match",
+        "params": {"match_index": index},
+        "acceptance": "本场辩论完成并更新 Elo（单场失败隔离，不影响锦标赛）",
+        "checks": [{"kind": "no_error"}],
+        "requires_gate": None,
+    }
+
+
+def review_signal_edits(signal: dict[str, Any], active_rows: list[Any]) -> dict[str, Any] | None:
+    """review.pair 的 plan_signal → 按对局数展开 N 个 review.match 节点（幂等）。
+
+    确定性 fan-out（对局数由配对结果决定，非 LLM 判断）：插在 pair 与 summarize 之间，
+    引擎逐场执行、逐场可查预算；预算超限时未跑的 match 作废、summarize 收尾。
+    """
+    if str(signal.get("decision")) != "matches":
+        return None
+    pending_actions = {r.action for r in active_rows if r.status != "passed"}
+    if "review.match" in pending_actions:  # 已展开（防 resume 重放）
+        return None
+    count = int(signal.get("count") or 0)
+    if count == 0:  # 无对局（参与者不足配对）：直接让汇总跑
+        return None
+    return {
+        "finish": False,
+        "reason": f"配对完成，展开 {count} 场辩论",
+        "edits": [
+            {
+                "op": "add_nodes",
+                "insert_after": None,
+                "nodes": [review_match_node(i) for i in range(count)],
+            }
+        ],
+    }
+
+
 # kind → plan_signal 分支表（engine 在节点通过后查表应用；返回 None = 无编辑）
 SIGNAL_TABLES: dict[str, Callable[[dict[str, Any], list[Any]], dict[str, Any] | None]] = {
     "experiment": experiment_signal_edits,
+    "idea_review": review_signal_edits,
 }

@@ -1,7 +1,7 @@
 """manuscript file versions: 稿件文件版本快照（AI 写入前 / 编译当刻 / 恢复前备份）
 
 Revision ID: e4f5a6b7c8d9
-Revises: d2e3f4a5b6c7
+Revises: f4a5b6c7d8e9
 Create Date: 2026-07-17
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e4f5a6b7c8d9"
-down_revision: str | None = "d2e3f4a5b6c7"
+down_revision: str | None = "f4a5b6c7d8e9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

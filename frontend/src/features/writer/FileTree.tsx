@@ -3,6 +3,7 @@ import { Icon } from '../../components/ui/Icon';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { PromptModal } from '../../components/ui/PromptModal';
 import type { ManuscriptFileMeta } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    左侧文件树（220px）：按目录分组（figures/ 等可折叠），
@@ -132,14 +133,14 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
           {display}
         </span>
         {f.readonly ? (
-          <span title="只读文件（模板样式 / 自动生成）" style={{ color: 'var(--text-4)', display: 'flex' }}>
+          <span title={tr('只读文件（模板样式 / 自动生成）', 'Read-only file (template style / auto-generated)')} style={{ color: 'var(--text-4)', display: 'flex' }}>
             <LockIcon />
           </span>
         ) : (
           <span className="row gap6 writer-file-ops" onClick={(e) => e.stopPropagation()}>
             <button
               className="writer-mini-btn"
-              title="重命名"
+              title={tr('重命名', 'Rename')}
               disabled={busy}
               onClick={() => setRenameTarget(f)}
             >
@@ -147,7 +148,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
             </button>
             <button
               className="writer-mini-btn"
-              title="删除"
+              title={tr('删除', 'Delete')}
               disabled={busy}
               onClick={() => setDeleteTarget(f)}
             >
@@ -166,12 +167,12 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
         style={{ padding: '10px 12px 8px', justifyContent: 'space-between', flexShrink: 0 }}
       >
         <span style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
-          文件
+          {tr('文件', 'FILES')}
         </span>
         <button
           className="icon-btn"
           style={{ width: 22, height: 22, borderRadius: 6 }}
-          title="新建文件"
+          title={tr('新建文件', 'New file')}
           disabled={busy}
           onClick={() => setAdding((v) => !v)}
         >
@@ -185,7 +186,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
             className="input mono"
             autoFocus
             style={{ height: 28, fontSize: 11.5, width: '100%' }}
-            placeholder="如 appendix.tex"
+            placeholder={tr('如 appendix.tex', 'e.g. appendix.tex')}
             value={newPath}
             onChange={(e) => setNewPath(e.target.value)}
             onKeyDown={(e) => {
@@ -202,7 +203,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
 
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '0 8px 10px' }}>
         {roots.length === 0 && groups.length === 0 && (
-          <div style={{ fontSize: 11.5, color: 'var(--text-4)', padding: '8px 6px' }}>还没有文件</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-4)', padding: '8px 6px' }}>{tr('还没有文件', 'No files yet')}</div>
         )}
         {groups.map(({ dir, files: dirFiles }) => {
           const isCollapsed = collapsed.has(dir);
@@ -212,7 +213,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
                 className="row gap6 writer-file"
                 onClick={() => toggleDir(dir)}
                 style={{ padding: '5px 8px', borderRadius: 7, cursor: 'pointer', color: 'var(--text-3)' }}
-                title={isCollapsed ? '展开目录' : '收起目录'}
+                title={isCollapsed ? tr('展开目录', 'Expand folder') : tr('收起目录', 'Collapse folder')}
               >
                 <Icon
                   name="chevDown"
@@ -241,11 +242,11 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
         <PromptModal
           open
           onClose={() => setRenameTarget(null)}
-          title="重命名文件"
-          label={`当前路径：${renameTarget.path}`}
-          placeholder="新文件名（含路径）"
+          title={tr('重命名文件', 'Rename file')}
+          label={`${tr('当前路径：', 'Current path: ')}${renameTarget.path}`}
+          placeholder={tr('新文件名（含路径）', 'New file name (with path)')}
           initial={renameTarget.path}
-          submitText="重命名"
+          submitText={tr('重命名', 'Rename')}
           mono
           busy={busy}
           onSubmit={(path) => {
@@ -258,14 +259,14 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
         <ConfirmModal
           open
           onClose={() => setDeleteTarget(null)}
-          title="删除文件"
+          title={tr('删除文件', 'Delete file')}
           message={
             <>
-              确定删除 <span className="mono">{deleteTarget.path}</span>
-              ？删除后无法恢复（版本历史也会一并删除）。
+              {tr('确定删除', 'Delete')} <span className="mono">{deleteTarget.path}</span>
+              {tr('？删除后无法恢复（版本历史也会一并删除）。', '? This cannot be undone (its version history is deleted too).')}
             </>
           }
-          confirmText="删除"
+          confirmText={tr('删除', 'Delete')}
           danger
           busy={busy}
           onConfirm={() => {

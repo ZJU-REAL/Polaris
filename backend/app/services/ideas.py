@@ -21,8 +21,9 @@ IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 # 预算从 knobs 派生：每个候选 idea 预留的 token 额度（gap 分析+生成+打分+去重）
 _TOKENS_PER_IDEA = 20_000
-# 每场辩论预留：正/反方每轮各一次 + 裁判一次
-_TOKENS_PER_MATCH_CALL = 8_000
+# 每场辩论每次 LLM 调用预留：辩论上下文逐轮累积（双方发言+人设+历史），裁判看全场，
+# 思考型模型下单次可达 15-20k，估低会在汇总前触发预算门（改由 §5.4 降级收尾兜底）
+_TOKENS_PER_MATCH_CALL = 16_000
 # 深耕 voyage 默认预算（目标构建工具循环 + 各节起草 + 评审修订）
 _DEEP_DEFAULT_BUDGET = 400_000
 
@@ -79,7 +80,7 @@ async def create_forge_voyage(
         raise IdeaVoyageConflictError(str(project.id))
     run = VoyageRun(
         kind="idea_forge",
-        goal=f"Idea Forge：{project.name}（生成 {knobs.num_ideas} 个候选想法）",
+        goal=f"Idea Forge：{project.name}",
         status="planning",
         cursor=0,
         checkpoint={"params": {"knobs": knobs.model_dump()}},
@@ -137,10 +138,7 @@ async def create_tournament_voyage(
     }
     run = VoyageRun(
         kind="idea_review",
-        goal=(
-            f"Idea 评审锦标赛：{project.name}"
-            f"（{participant_count} 个想法，每场 {data.rounds} 轮辩论）"
-        ),
+        goal=f"Idea 评审锦标赛：{project.name}",
         status="planning",
         cursor=0,
         checkpoint={"params": params},
@@ -207,7 +205,7 @@ async def create_deep_voyage(
     budget = data.knobs.budget_tokens or _DEEP_DEFAULT_BUDGET
     run = VoyageRun(
         kind="idea_proposal",
-        goal=f"深度研究方案：{project.name}（种子：{seed_brief}）",
+        goal=f"深度研究方案：{project.name}",
         status="planning",
         cursor=0,
         checkpoint={"params": {"seed": data.seed.model_dump(), "knobs": data.knobs.model_dump()}},

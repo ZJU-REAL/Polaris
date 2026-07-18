@@ -1,5 +1,6 @@
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
+import { tr } from '../../lib/i18n';
 import type { ReviewMessageRead } from '../../lib/api';
 
 /* ============================================================
@@ -39,6 +40,7 @@ export function classifyDebateAuthors(messages: ReviewMessageRead[]): Map<string
 
 interface RoleStyle {
   zh: string;
+  en: string;
   border: string;
   badgeBg: string;
   badgeTx: string;
@@ -46,16 +48,17 @@ interface RoleStyle {
 }
 
 const ROLE_STYLE: Record<DebateRole, RoleStyle> = {
-  pro: { zh: '正方', border: 'var(--accent-soft-2)', badgeBg: 'var(--accent-soft)', badgeTx: 'var(--accent-text)' },
-  con: { zh: '反方', border: 'var(--danger-bg)', badgeBg: 'var(--danger-bg)', badgeTx: 'var(--danger-tx)' },
+  pro: { zh: '正方', en: 'Pro', border: 'var(--accent-soft-2)', badgeBg: 'var(--accent-soft)', badgeTx: 'var(--accent-text)' },
+  con: { zh: '反方', en: 'Con', border: 'var(--danger-bg)', badgeBg: 'var(--danger-bg)', badgeTx: 'var(--danger-tx)' },
   judge: {
     zh: '裁判',
+    en: 'Judge',
     border: 'var(--warn)',
     badgeBg: 'var(--warn-bg)',
     badgeTx: 'var(--warn-tx)',
     bg: 'var(--warn-bg)',
   },
-  other: { zh: '评审', border: 'var(--border-2)', badgeBg: 'var(--surface-3)', badgeTx: 'var(--text-2)' },
+  other: { zh: '评审', en: 'Reviewer', border: 'var(--border-2)', badgeBg: 'var(--surface-3)', badgeTx: 'var(--text-2)' },
 };
 
 /** 辩论逐轮记录气泡（round 分组由调用方负责）。 */
@@ -75,7 +78,7 @@ export function DebateBubble({ msg, role }: { msg: ReviewMessageRead; role: Deba
     >
       <div className="row gap8" style={{ marginBottom: 6 }}>
         <span className="pill sm" style={{ background: s.badgeBg, color: s.badgeTx }}>
-          {s.zh}
+          {tr(s.zh, s.en)}
         </span>
         <span style={{ fontSize: 12, fontWeight: 650 }}>{msg.author_name}</span>
         {msg.round !== null && (
@@ -87,7 +90,7 @@ export function DebateBubble({ msg, role }: { msg: ReviewMessageRead; role: Deba
       </div>
       {judge && (
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--warn-tx)', marginBottom: 4 }}>
-          裁判判决 · verdict
+          {tr('裁判判决', 'Judge verdict')}
         </div>
       )}
       <Markdown source={msg.content} style={{ fontSize: 12.5 }} />

@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../components/ui/Icon';
 import { PaperStatusPill, StatusPill } from '../components/ui/StatusPill';
 import { api, type GlobalSearchHit, type GlobalSearchHitType } from '../lib/api';
+import { tr } from '../lib/i18n';
 import { useProject } from './project';
 
 /** 各实体类型的展示顺序 / 文案 / 图标 / 跳转目标。 */
@@ -88,19 +89,22 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   const showing = debounced.length > 0;
   let body: React.ReactNode;
   if (!currentProjectId) {
-    body = <div className="empty" style={{ padding: 24 }}>请先在顶栏选择一个研究方向</div>;
+    body = <div className="empty" style={{ padding: 24 }}>{tr('请先在顶栏选择一个研究方向', 'Pick a research direction in the top bar first')}</div>;
   } else if (!showing) {
     body = (
       <div className="empty" style={{ padding: 24 }}>
-        输入关键词，搜索当前方向下的论文、概念、想法、实验、AI 任务与论文稿
+        {tr(
+          '输入关键词，搜索当前方向下的论文、概念、想法、实验、AI 任务与论文稿',
+          'Type keywords to search papers, concepts, ideas, experiments, AI tasks and drafts in this direction',
+        )}
       </div>
     );
   } else if (query.isLoading) {
-    body = <div className="empty" style={{ padding: 24 }}>搜索中…</div>;
+    body = <div className="empty" style={{ padding: 24 }}>{tr('搜索中…', 'Searching…')}</div>;
   } else if (query.isError) {
-    body = <div className="empty" style={{ padding: 24 }}>搜索失败（后端不可用）</div>;
+    body = <div className="empty" style={{ padding: 24 }}>{tr('搜索失败（后端不可用）', 'Search failed (backend unavailable)')}</div>;
   } else if (flat.length === 0) {
-    body = <div className="empty" style={{ padding: 24 }}>没有找到与 “{debounced}” 相关的内容</div>;
+    body = <div className="empty" style={{ padding: 24 }}>{tr(`没有找到与 “${debounced}” 相关的内容`, `No results for “${debounced}”`)}</div>;
   } else {
     let offset = 0;
     body = (
@@ -112,7 +116,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
           return (
             <div key={g.type}>
               <div className="mono" style={{ fontSize: 10, color: 'var(--text-4)', letterSpacing: '0.06em', padding: '8px 10px 4px' }}>
-                {meta.zh} · {meta.en.toUpperCase()}
+                {tr(meta.zh, meta.en.toUpperCase())}
               </div>
               {g.hits.map((h, i) => {
                 const idx = start + i;
@@ -211,7 +215,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="搜索论文 / 概念 / 想法 / 实验 / AI 任务 / 论文稿…"
+            placeholder={tr('搜索论文 / 概念 / 想法 / 实验 / AI 任务 / 论文稿…', 'Search papers / concepts / ideas / experiments / AI tasks / drafts…')}
             style={{
               flex: 1,
               border: 'none',
@@ -238,9 +242,9 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
             color: 'var(--text-4)',
           }}
         >
-          <span>↑↓ 选择</span>
-          <span>↵ 打开</span>
-          <span style={{ marginLeft: 'auto' }}>仅搜索当前研究方向</span>
+          <span>↑↓ {tr('选择', 'select')}</span>
+          <span>↵ {tr('打开', 'open')}</span>
+          <span style={{ marginLeft: 'auto' }}>{tr('仅搜索当前研究方向', 'Searches current direction only')}</span>
         </div>
       </div>
     </div>

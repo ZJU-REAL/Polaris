@@ -6,6 +6,7 @@ import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    新建实验 Modal：选 promoted idea + SSH 凭据 + 预算 →
@@ -94,13 +95,13 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       });
     },
     onSuccess: (exp) => {
-      toast('实验已创建并入队 · experiment queued', 'ok');
+      toast(tr('实验已创建并入队', 'Experiment created and queued'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['experiments', pid] });
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
       onClose();
       navigate(`/experiment/${exp.id}`);
     },
-    onError: (e) => toast(`创建失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('创建失败：', 'Create failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const noIdeas = !ideasQuery.isLoading && ideas.length === 0;
@@ -115,23 +116,23 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       title={
         <>
           <Icon name="flask" size={16} style={{ color: 'var(--accent)' }} />
-          新建实验
+          {tr('新建实验', 'New experiment')}
         </>
       }
-      sub="从已晋级的想法发起实验。"
+      sub={tr('从已晋级的想法发起实验。', 'Start an experiment from a promoted idea.')}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose}>取消</button>
+          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
           <button className="btn btn-primary" disabled={!canSubmit} onClick={() => mutation.mutate()}>
             {mutation.isPending ? (
               <>
                 <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                创建中…
+                {tr('创建中…', 'Creating…')}
               </>
             ) : (
               <>
                 <Icon name="play" size={14} />
-                创建实验
+                {tr('创建实验', 'Create experiment')}
               </>
             )}
           </button>
@@ -139,14 +140,14 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       }
     >
       <FormField
-        label="想法"
+        label={tr('想法', 'Idea')}
         en="promoted idea"
-        hint={noIdeas ? undefined : '仅列出已晋级的想法。'}
-        error={noIdeas ? '当前方向还没有已晋级的想法，先在想法评审页晋级一个。' : null}
+        hint={noIdeas ? undefined : tr('仅列出已晋级的想法。', 'Only promoted ideas are listed.')}
+        error={noIdeas ? tr('当前方向还没有已晋级的想法，先在想法评审页晋级一个。', 'No promoted ideas in this direction yet — promote one in Idea Review first.') : null}
       >
         <select className="input" value={ideaId} onChange={(e) => setIdeaId(e.target.value)} disabled={noIdeas}>
           <option value="" disabled>
-            {ideasQuery.isLoading ? '加载中…' : ideasQuery.isError ? '（无法加载想法列表）' : '— 选择已晋级的想法 —'}
+            {ideasQuery.isLoading ? tr('加载中…', 'Loading…') : ideasQuery.isError ? tr('（无法加载想法列表）', '(could not load ideas)') : tr('— 选择已晋级的想法 —', '— pick a promoted idea —')}
           </option>
           {ideas.map((i) => (
             <option key={i.id} value={i.id}>{i.title}</option>
@@ -157,20 +158,20 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         <div style={{ marginTop: -6, marginBottom: 14 }}>
           <button className="btn btn-soft sm" onClick={() => { onClose(); navigate('/review'); }}>
             <Icon name="scale" size={13} />
-            前往想法评审
+            {tr('前往想法评审', 'Go to Idea Review')}
           </button>
         </div>
       )}
 
       <FormField
-        label="SSH 凭据"
+        label={tr('SSH 凭据', 'SSH credential')}
         en="ssh credential"
-        hint={noCreds ? undefined : '实验将在该服务器的 ~/polaris_runs/ 下建隔离环境运行。'}
-        error={noCreds ? '还没有 SSH 凭据，请先到设置页添加。' : null}
+        hint={noCreds ? undefined : tr('实验将在该服务器的 ~/polaris_runs/ 下建隔离环境运行。', 'The experiment runs in an isolated environment under ~/polaris_runs/ on that server.')}
+        error={noCreds ? tr('还没有 SSH 凭据，请先到设置页添加。', 'No SSH credentials yet — add one in Settings first.') : null}
       >
         <select className="input" value={credentialId} onChange={(e) => setCredentialId(e.target.value)} disabled={noCreds}>
           <option value="" disabled>
-            {credsQuery.isLoading ? '加载中…' : credsQuery.isError ? '（无法加载凭据列表）' : '— 选择凭据 —'}
+            {credsQuery.isLoading ? tr('加载中…', 'Loading…') : credsQuery.isError ? tr('（无法加载凭据列表）', '(could not load credentials)') : tr('— 选择凭据 —', '— pick a credential —')}
           </option>
           {creds.map((c) => (
             <option key={c.id} value={c.id}>
@@ -183,29 +184,29 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         <div style={{ marginTop: -6, marginBottom: 14 }}>
           <button className="btn btn-soft sm" onClick={() => { onClose(); navigate('/settings'); }}>
             <Icon name="settings" size={13} />
-            去设置页添加 SSH 凭据
+            {tr('去设置页添加 SSH 凭据', 'Add an SSH credential in Settings')}
           </button>
         </div>
       )}
 
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
-        <FormField label="预算 · 最长时数" en="max_hours" style={{ flex: 1 }}>
+        <FormField label={tr('预算 · 最长时数', 'Budget · max hours')} en="max_hours" style={{ flex: 1 }}>
           <input className="input mono" inputMode="decimal" value={maxHours} onChange={(e) => setMaxHours(e.target.value)} placeholder="4" />
         </FormField>
-        <FormField label="预算 · 最多运行轮数" en="max_runs" style={{ flex: 1 }}>
+        <FormField label={tr('预算 · 最多运行轮数', 'Budget · max runs')} en="max_runs" style={{ flex: 1 }}>
           <input className="input mono" inputMode="numeric" value={maxRuns} onChange={(e) => setMaxRuns(e.target.value)} placeholder="10" />
         </FormField>
         <FormField
-          label="预算 · 无提升自动停"
+          label={tr('预算 · 无提升自动停', 'Budget · auto stop')}
           en="no_improve_stop"
           style={{ flex: 1 }}
-          hint="固定值：连续 2 轮主指标无提升自动停止。"
+          hint={tr('固定值：连续 2 轮主指标无提升自动停止。', 'Fixed: stops after 2 runs in a row without metric gain.')}
         >
-          <input className="input mono" value="2 轮" disabled />
+          <input className="input mono" value={tr('2 轮', '2 runs')} disabled />
         </FormField>
       </div>
-      <FormField label="GPU 提示（可选）" en="gpu_hint" hint="如 A100 / cuda:0，供计划阶段参考。">
-        <input className="input mono" value={gpuHint} onChange={(e) => setGpuHint(e.target.value)} placeholder="如 1×A100" />
+      <FormField label={tr('GPU 提示（可选）', 'GPU hint (optional)')} en="gpu_hint" hint={tr('如 A100 / cuda:0，供计划阶段参考。', 'e.g. A100 / cuda:0 — used as a reference when planning.')}>
+        <input className="input mono" value={gpuHint} onChange={(e) => setGpuHint(e.target.value)} placeholder={tr('如 1×A100', 'e.g. 1×A100')} />
       </FormField>
 
       <button
@@ -215,14 +216,17 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         onClick={() => setShowAdvanced((v) => !v)}
       >
         <Icon name={showAdvanced ? 'chevDown' : 'chevron'} size={13} />
-        高级选项 <span style={{ color: 'var(--text-4)', fontSize: 11 }}>advanced</span>
+        {tr('高级选项', 'Advanced options')}
       </button>
       {showAdvanced && (
         <>
           <FormField
-            label="评测模型（可选）"
+            label={tr('评测模型（可选）', 'Eval model (optional)')}
             en="eval_model"
-            hint="实验代码将获得该模型的 API 访问（平台把接入点与密钥写入工作目录 llm_config.json），用于 ReAct 等 training-free 的 agentic 评测。"
+            hint={tr(
+              '实验代码将获得该模型的 API 访问（平台把接入点与密钥写入工作目录 llm_config.json），用于 ReAct 等 training-free 的 agentic 评测。',
+              'The experiment code gets API access to this model (endpoint and key written to llm_config.json in the workdir), for training-free agentic evals like ReAct.',
+            )}
           >
             <input
               className="input mono"
@@ -232,34 +236,39 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
             />
           </FormField>
           <FormField
-            label="HuggingFace 镜像"
+            label={tr('HuggingFace 镜像', 'HuggingFace mirror')}
             en="hf_mirror"
-            hint="训练类实验从 hf-mirror.com 拉取模型与数据集（大陆网络推荐勾选）。"
+            hint={tr('训练类实验从 hf-mirror.com 拉取模型与数据集（大陆网络推荐勾选）。', 'Training experiments pull models and datasets from hf-mirror.com (recommended on mainland-China networks).')}
           >
             <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
               <input type="checkbox" checked={hfMirror} onChange={(e) => setHfMirror(e.target.checked)} />
-              启用 HF 镜像（注入 HF_ENDPOINT）
+              {tr('启用 HF 镜像（注入 HF_ENDPOINT）', 'Enable HF mirror (injects HF_ENDPOINT)')}
             </label>
           </FormField>
           <FormField
-            label="补充说明（可选）"
+            label={tr('补充说明（可选）', 'Extra notes (optional)')}
             en="extra_notes"
-            hint="对实验的额外要求，会原文提供给计划与代码生成的 AI，比如指定数据集子集、评测协议、对比基线。"
+            hint={tr(
+              '对实验的额外要求，会原文提供给计划与代码生成的 AI，比如指定数据集子集、评测协议、对比基线。',
+              'Extra requirements passed verbatim to the planning and code-writing AI, e.g. dataset subset, eval protocol, baselines to compare.',
+            )}
           >
             <textarea
               className="textarea"
               rows={3}
               value={extraNotes}
               onChange={(e) => setExtraNotes(e.target.value)}
-              placeholder="如：只评测 ALFWorld 前 30 个任务；必须对比 ReAct 基线"
+              placeholder={tr('如：只评测 ALFWorld 前 30 个任务；必须对比 ReAct 基线', 'e.g. only eval the first 30 ALFWorld tasks; must compare against the ReAct baseline')}
             />
           </FormField>
         </>
       )}
 
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
-        消耗真实算力前会提交算力预算审批等待人工确认；超时/超预算自动 kill 并置 failed。
-        进入自动迭代后，AI 每轮跑完会分析结果并决定继续改进、修错重试或停止；连续 2 轮主指标无提升也会自动停止。
+        {tr(
+          '消耗真实算力前会提交算力预算审批等待人工确认；超时/超预算自动 kill 并置 failed。进入自动迭代后，AI 每轮跑完会分析结果并决定继续改进、修错重试或停止；连续 2 轮主指标无提升也会自动停止。',
+          'Before real compute is spent, a budget approval is submitted for human sign-off; runs over time/budget are killed and marked failed. During auto-iteration the AI analyzes each run and decides to improve, debug or stop; it also stops after 2 runs in a row without metric gain.',
+        )}
       </div>
     </Modal>
   );

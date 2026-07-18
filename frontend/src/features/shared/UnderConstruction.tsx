@@ -1,6 +1,7 @@
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { BiTitle } from '../../components/ui/BiTitle';
+import { tr } from '../../lib/i18n';
 
 export interface PlannedFeature {
   zh: string;
@@ -24,7 +25,7 @@ export function UnderConstruction(props: UnderConstructionProps) {
   const { eyebrow, icon, title, titleEn, sub, subEn, milestone, features } = props;
   return (
     <div className="page fadeup">
-      <PageHead eyebrow={eyebrow} title={title} sub={sub} en={subEn} />
+      <PageHead eyebrow={eyebrow} title={tr(title, titleEn)} sub={tr(sub, subEn)} />
 
       <div className="card card-pad" style={{ marginBottom: 20 }}>
         <div className="row gap12">
@@ -46,12 +47,14 @@ export function UnderConstruction(props: UnderConstructionProps) {
           <BiTitle zh={`${title} · 建设中`} en={`${titleEn} · under construction`} />
           <span className="pill" style={{ marginLeft: 'auto', background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
             <span className="dot" />
-            {milestone} 交付
+            {tr(`${milestone} 交付`, `Ships in ${milestone}`)}
           </span>
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, margin: '14px 0 0' }}>
-          本模块为 M1 骨架占位页。当前仅提供导航与信息架构，功能实现排期见里程碑 {milestone}（M2–M5 迭代交付）。
-          以下为规划中的功能点：
+          {tr(
+            `本模块为 M1 骨架占位页。当前仅提供导航与信息架构，功能实现排期见里程碑 ${milestone}（M2–M5 迭代交付）。以下为规划中的功能点：`,
+            `This module is an M1 skeleton placeholder — only navigation and information architecture for now. Implementation is scheduled for ${milestone} (delivered iteratively across M2–M5). Planned features:`,
+          )}
         </p>
       </div>
 

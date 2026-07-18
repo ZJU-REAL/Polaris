@@ -6,6 +6,7 @@ import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import { api, isAdmin, type NoteRead } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    阅读工作台 · 笔记面板：
@@ -41,20 +42,20 @@ function NoteCard({
   const saveMutation = useMutation({
     mutationFn: () => api.patchNote(note.id, draft.trim()),
     onSuccess: () => {
-      toast('笔记已更新', 'ok');
+      toast(tr('笔记已更新', 'Note updated'), 'ok');
       setEditing(false);
       onSaved();
     },
-    onError: (e) => toast(`保存失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败：', 'Save failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteNote(note.id),
     onSuccess: () => {
-      toast('笔记已删除', 'ok');
+      toast(tr('笔记已删除', 'Note deleted'), 'ok');
       onSaved();
     },
-    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const edited = note.updated_at && note.updated_at !== note.created_at;
@@ -65,13 +66,13 @@ function NoteCard({
         <span style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>{note.author_name}</span>
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
           {fmtTime(note.created_at)}
-          {edited ? ' · 已编辑' : ''}
+          {edited ? ` · ${tr('已编辑', 'edited')}` : ''}
         </span>
         {canEdit && !editing && (
           <span className="row gap6" style={{ marginLeft: 'auto' }}>
             <button
               className="icon-btn"
-              title="编辑笔记"
+              title={tr('编辑笔记', 'Edit note')}
               style={{ width: 24, height: 24 }}
               onClick={() => {
                 setDraft(note.content);
@@ -82,12 +83,10 @@ function NoteCard({
             </button>
             <button
               className="icon-btn"
-              title="删除笔记"
+              title={tr('删除笔记', 'Delete note')}
               style={{ width: 24, height: 24 }}
               disabled={deleteMutation.isPending}
-              onClick={() => {
-                if (window.confirm('删除这条笔记？删掉就找不回来了。')) deleteMutation.mutate();
-              }}
+              onClick={() => deleteMutation.mutate()}
             >
               <Icon name="trash" size={12} />
             </button>
@@ -104,14 +103,14 @@ function NoteCard({
           />
           <div className="row gap8" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
             <button className="btn btn-ghost sm" onClick={() => setEditing(false)}>
-              取消
+              {tr('取消', 'Cancel')}
             </button>
             <button
               className="btn btn-primary sm"
               disabled={saveMutation.isPending || !draft.trim()}
               onClick={() => saveMutation.mutate()}
             >
-              保存
+              {tr('保存', 'Save')}
             </button>
           </div>
         </>
@@ -138,12 +137,12 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
   const createMutation = useMutation({
     mutationFn: () => api.createPaperNote(paperId, draft.trim()),
     onSuccess: () => {
-      toast('笔记已发布', 'ok');
+      toast(tr('笔记已发布', 'Note published'), 'ok');
       setDraft('');
       setPreview(false);
       invalidateNotes(queryClient, paperId, pid);
     },
-    onError: (e) => toast(`发布失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('发布失败：', 'Publish failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const onSaved = () => invalidateNotes(queryClient, paperId, pid);
@@ -154,15 +153,15 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
       {/* —— 列表 —— */}
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '14px 14px 6px' }}>
         {notesQuery.isLoading ? (
-          <div className="empty">加载笔记…</div>
+          <div className="empty">{tr('加载笔记…', 'Loading notes…')}</div>
         ) : notesQuery.isError ? (
-          <EmptyState compact icon="x" title="笔记暂时加载不出来" desc="后端不可用或接口尚未就绪，稍后再试。" />
+          <EmptyState compact icon="x" title={tr('笔记暂时加载不出来', 'Notes failed to load')} desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')} />
         ) : notes.length === 0 ? (
           <EmptyState
             compact
             icon="pen"
-            title="还没有笔记"
-            desc="在下方写下第一条阅读笔记，支持 Markdown 格式。"
+            title={tr('还没有笔记', 'No notes yet')}
+            desc={tr('在下方写下第一条阅读笔记，支持 Markdown 格式。', 'Write your first reading note below — Markdown supported.')}
           />
         ) : (
           notes.map((n) => (
@@ -180,7 +179,7 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
       <div style={{ borderTop: '0.5px solid var(--border)', padding: '10px 14px 12px', flexShrink: 0 }}>
         <div className="row" style={{ marginBottom: 8, justifyContent: 'space-between' }}>
           <span style={{ fontSize: 12, fontWeight: 650 }}>
-            写笔记 <span className="en-label" style={{ fontSize: 10.5 }}>New note</span>
+            {tr('写笔记', 'New note')}
           </span>
           <span className="row gap6">
             <span
@@ -188,14 +187,14 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
               style={{ fontSize: 11 }}
               onClick={() => setPreview(false)}
             >
-              编辑
+              {tr('编辑', 'Edit')}
             </span>
             <span
               className={`chip${preview ? ' on' : ''}`}
               style={{ fontSize: 11 }}
               onClick={() => setPreview(true)}
             >
-              预览
+              {tr('预览', 'Preview')}
             </span>
           </span>
         </div>
@@ -216,7 +215,7 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
               <Markdown source={draft} style={{ fontSize: 12.5 }} />
             ) : (
               <span className="muted" style={{ fontSize: 12 }}>
-                （还没有内容，切换到编辑标签开始写）
+                {tr('（还没有内容，切换到编辑标签开始写）', '(Nothing yet — switch to the edit tab to start writing)')}
               </span>
             )}
           </div>
@@ -224,7 +223,7 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
           <textarea
             className="textarea"
             style={{ width: '100%', minHeight: 88, maxHeight: 180, fontSize: 12.5, resize: 'vertical' }}
-            placeholder="记下想法、疑问或要点，支持 Markdown…"
+            placeholder={tr('记下想法、疑问或要点，支持 Markdown…', 'Jot down ideas, questions or key points — Markdown supported…')}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -240,7 +239,7 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
             ) : (
               <Icon name="pen" size={13} />
             )}
-            发布笔记
+            {tr('发布笔记', 'Publish note')}
           </button>
         </div>
       </div>

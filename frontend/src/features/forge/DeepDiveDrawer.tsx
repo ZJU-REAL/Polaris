@@ -8,6 +8,7 @@ import { FormField } from '../../components/ui/FormField';
 import { KnobRange } from '../../components/ui/KnobRange';
 import { toast } from '../../components/ui/Toast';
 import { api, ApiError, type DeepSeedType } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    深度生成抽屉（Idea 2.0，docs/api-idea2.md §2）：
@@ -16,11 +17,12 @@ import { api, ApiError, type DeepSeedType } from '../../lib/api';
    → POST /projects/{pid}/ideas/deep → 跳转任务详情。
    ============================================================ */
 
-const SEED_TYPES: { v: DeepSeedType; label: string }[] = [
-  { v: 'text', label: '自由文本' },
-  { v: 'concept', label: '概念' },
-  { v: 'paper', label: '论文' },
-  { v: 'idea', label: '从草案深化' },
+/* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
+const SEED_TYPES: { v: DeepSeedType; zh: string; en: string }[] = [
+  { v: 'text', zh: '自由文本', en: 'Free text' },
+  { v: 'concept', zh: '概念', en: 'Concept' },
+  { v: 'paper', zh: '论文', en: 'Paper' },
+  { v: 'idea', zh: '从草案深化', en: 'From sketch' },
 ];
 
 export interface DeepDiveDrawerProps {
@@ -105,7 +107,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
         knobs: { confirm_goal: confirmGoal, external_search: externalSearch, revise_rounds: reviseRounds },
       }),
     onSuccess: (v) => {
-      toast('深度生成已开始，跳转任务详情…', 'ok');
+      toast(tr('深度生成已开始，跳转任务详情…', 'Deep Dive started — opening the task…'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['deep-state', pid] });
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       onClose();
@@ -113,11 +115,11 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
-        toast('已有 AI 想法任务在运行，请等待其完成。', 'error');
+        toast(tr('已有 AI 想法任务在运行，请等待其完成。', 'An AI idea task is already running — wait for it to finish.'), 'error');
         void queryClient.invalidateQueries({ queryKey: ['deep-state', pid] });
         void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       } else {
-        toast(`启动失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('启动失败：', 'Start failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -131,44 +133,57 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       title={
         <>
           <Icon name="sparkle" size={18} style={{ color: 'var(--accent)' }} />
-          <span style={{ fontSize: 15, fontWeight: 680 }}>深度生成</span>
-          <span className="en-label" style={{ fontSize: 11 }}>Deep Dive</span>
+          <span style={{ fontSize: 15, fontWeight: 680 }}>{tr('深度生成', 'Deep Dive')}</span>
         </>
       }
-      sub="AI 检索文献并起草完整研究方案，研究目标可在生成前人工确认。"
+      sub={tr('AI 检索文献并起草完整研究方案，研究目标可在生成前人工确认。', 'The AI searches the literature and drafts a full proposal; the research goal can be confirmed by you first.')}
     >
-      <FormField label="种子" en="seed" hint="给 AI 一个探索起点：一段想法、一个概念、一篇论文，或把已有草案深化成完整研究方案。">
-        <Segmented<DeepSeedType> options={SEED_TYPES} value={seedType} onChange={setSeedType} />
+      <FormField
+        label={tr('种子', 'Seed')}
+        en="seed"
+        hint={tr(
+          '给 AI 一个探索起点：一段想法、一个概念、一篇论文，或把已有草案深化成完整研究方案。',
+          'Give the AI a starting point: a thought, a concept, a paper, or deepen an existing sketch into a full proposal.',
+        )}
+      >
+        <Segmented<DeepSeedType>
+          options={SEED_TYPES.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))}
+          value={seedType}
+          onChange={setSeedType}
+        />
       </FormField>
 
       {seedType === 'text' && (
-        <FormField label="想法描述" en="free text">
+        <FormField label={tr('想法描述', 'Describe your idea')} en="free text">
           <textarea
             className="textarea"
             rows={4}
             value={seedText}
             onChange={(e) => setSeedText(e.target.value)}
-            placeholder="描述你想探索的研究方向、问题或直觉，比如：能不能用课程学习改进小模型的工具调用能力？"
+            placeholder={tr(
+              '描述你想探索的研究方向、问题或直觉，比如：能不能用课程学习改进小模型的工具调用能力？',
+              'Describe the direction, question or hunch you want to explore, e.g. could curriculum learning improve tool use in small models?',
+            )}
           />
         </FormField>
       )}
 
       {seedType === 'concept' && (
-        <FormField label="选择概念" en="concept" hint="从当前方向的概念库中选一个作为探索起点。">
+        <FormField label={tr('选择概念', 'Pick a concept')} en="concept" hint={tr('从当前方向的概念库中选一个作为探索起点。', 'Pick one from this direction’s concept library as the starting point.')}>
           <div className="col gap8">
             <input
               className="input"
               value={conceptQ}
               onChange={(e) => setConceptQ(e.target.value)}
-              placeholder="输入名称过滤概念…"
+              placeholder={tr('输入名称过滤概念…', 'Type a name to filter concepts…')}
             />
             <select className="input" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
               <option value="" disabled>
-                {conceptsQuery.isLoading ? '加载中…' : conceptsQuery.isError ? '（无法加载概念列表）' : concepts.length === 0 ? '（没有匹配的概念）' : '— 选择概念 —'}
+                {conceptsQuery.isLoading ? tr('加载中…', 'Loading…') : conceptsQuery.isError ? tr('（无法加载概念列表）', '(could not load concepts)') : concepts.length === 0 ? tr('（没有匹配的概念）', '(no matching concepts)') : tr('— 选择概念 —', '— pick a concept —')}
               </option>
               {concepts.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name}（{c.paper_count} 篇）
+                  {c.name}{tr(`（${c.paper_count} 篇）`, ` (${c.paper_count} papers)`)}
                 </option>
               ))}
             </select>
@@ -177,21 +192,21 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       {seedType === 'paper' && (
-        <FormField label="选择论文" en="paper" hint="从文献库中选一篇作为探索起点。">
+        <FormField label={tr('选择论文', 'Pick a paper')} en="paper" hint={tr('从文献库中选一篇作为探索起点。', 'Pick one from the library as the starting point.')}>
           <div className="col gap8">
             <input
               className="input"
               value={paperQ}
               onChange={(e) => setPaperQ(e.target.value)}
-              placeholder="输入关键词搜索论文…"
+              placeholder={tr('输入关键词搜索论文…', 'Type keywords to search papers…')}
             />
             <select className="input" value={paperId} onChange={(e) => setPaperId(e.target.value)}>
               <option value="" disabled>
-                {papersQuery.isLoading ? '加载中…' : papersQuery.isError ? '（无法加载论文列表）' : papers.length === 0 ? '（没有匹配的论文）' : '— 选择论文 —'}
+                {papersQuery.isLoading ? tr('加载中…', 'Loading…') : papersQuery.isError ? tr('（无法加载论文列表）', '(could not load papers)') : papers.length === 0 ? tr('（没有匹配的论文）', '(no matching papers)') : tr('— 选择论文 —', '— pick a paper —')}
               </option>
               {papers.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.title}{p.year ? `（${p.year}）` : ''}
+                  {p.title}{p.year ? tr(`（${p.year}）`, ` (${p.year})`) : ''}
                 </option>
               ))}
             </select>
@@ -200,10 +215,10 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       {seedType === 'idea' && (
-        <FormField label="选择草案" en="seed idea" hint="把一份方向草案深化为完整研究方案，AI 会继承草案的依据文献继续探索。">
+        <FormField label={tr('选择草案', 'Pick a sketch')} en="seed idea" hint={tr('把一份方向草案深化为完整研究方案，AI 会继承草案的依据文献继续探索。', 'Deepen a sketch into a full proposal; the AI inherits its evidence papers and keeps exploring.')}>
           <select className="input" value={ideaId} onChange={(e) => setIdeaId(e.target.value)}>
             <option value="" disabled>
-              {sketchesQuery.isLoading ? '加载中…' : sketchesQuery.isError ? '（无法加载草案列表）' : sketches.length === 0 ? '（还没有草案，先运行一次想法生成）' : '— 选择草案 —'}
+              {sketchesQuery.isLoading ? tr('加载中…', 'Loading…') : sketchesQuery.isError ? tr('（无法加载草案列表）', '(could not load sketches)') : sketches.length === 0 ? tr('（还没有草案，先运行一次想法生成）', '(no sketches yet — run idea generation first)') : tr('— 选择草案 —', '— pick a sketch —')}
             </option>
             {initialSeedIdea && !sketches.some((s) => s.id === initialSeedIdea.id) && (
               <option value={initialSeedIdea.id}>{initialSeedIdea.title}</option>
@@ -216,13 +231,16 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       <FormField
-        label="生成前人工确认研究目标"
+        label={tr('生成前人工确认研究目标', 'Confirm the research goal first')}
         en="confirm_goal"
-        hint="AI 构建好研究目标后先暂停等你确认（可附修改意见），确认后才继续起草方案。关闭则全程自动。"
+        hint={tr(
+          'AI 构建好研究目标后先暂停等你确认（可附修改意见），确认后才继续起草方案。关闭则全程自动。',
+          'The AI pauses after building the research goal and waits for your confirmation (with optional feedback) before drafting. Turn off for fully automatic.',
+        )}
       >
         <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
           <input type="checkbox" checked={confirmGoal} onChange={(e) => setConfirmGoal(e.target.checked)} />
-          开启（推荐）
+          {tr('开启（推荐）', 'On (recommended)')}
         </label>
       </FormField>
 
@@ -233,24 +251,27 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
         onClick={() => setShowAdvanced((v) => !v)}
       >
         <Icon name={showAdvanced ? 'chevDown' : 'chevron'} size={13} />
-        高级选项 <span style={{ color: 'var(--text-4)', fontSize: 11 }}>advanced</span>
+        {tr('高级选项', 'Advanced options')}
       </button>
       {showAdvanced && (
         <>
           <FormField
-            label="外部相似检索"
+            label={tr('外部相似检索', 'External similarity search')}
             en="external_search"
-            hint="联网检索 Semantic Scholar / OpenAlex 做相似工作对比，新颖性核查更可靠；关闭则只查库内。"
+            hint={tr(
+              '联网检索 Semantic Scholar / OpenAlex 做相似工作对比，新颖性核查更可靠；关闭则只查库内。',
+              'Searches Semantic Scholar / OpenAlex for similar work, making the novelty check more reliable; off means library-only.',
+            )}
           >
             <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
               <input type="checkbox" checked={externalSearch} onChange={(e) => setExternalSearch(e.target.checked)} />
-              开启外部检索
+              {tr('开启外部检索', 'Enable external search')}
             </label>
           </FormField>
           <KnobRange
-            label="评审修订轮数"
+            label={tr('评审修订轮数', 'Review & revise rounds')}
             en="revise_rounds"
-            hint="自动评审与修订的最大轮数。"
+            hint={tr('自动评审与修订的最大轮数。', 'Max rounds of automatic review and revision.')}
             value={reviseRounds}
             min={0}
             max={4}
@@ -269,18 +290,20 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
         {mutation.isPending ? (
           <>
             <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-            启动中…
+            {tr('启动中…', 'Starting…')}
           </>
         ) : (
           <>
             <Icon name="play" size={14} />
-            开始深度生成
+            {tr('开始深度生成', 'Start Deep Dive')}
           </>
         )}
       </button>
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6, marginTop: 12 }}>
-        全过程：目标构建（AI 带文献工具探索）→ 目标确认（人工）→ 方案起草（相关工作 / 设计 / 实验计划 /
-        新颖性核查 / 风险）→ 多评审员评审与修订 → 入候选池。进度可在任务详情页实时查看。
+        {tr(
+          '全过程：目标构建（AI 带文献工具探索）→ 目标确认（人工）→ 方案起草（相关工作 / 设计 / 实验计划 / 新颖性核查 / 风险）→ 多评审员评审与修订 → 入候选池。进度可在任务详情页实时查看。',
+          'Full flow: goal building (AI explores with literature tools) → goal confirmation (human) → proposal drafting (related work / design / experiment plan / novelty check / risks) → multi-reviewer review & revision → into the candidate pool. Watch progress live on the task page.',
+        )}
       </div>
     </Drawer>
   );

@@ -1,3 +1,4 @@
+import { tr } from './i18n';
 /* ============================================================
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
@@ -250,6 +251,46 @@ export interface VoyageVerdict {
   reason: string;
 }
 
+/** 结构化验收检查项；kind: no_error / exit_code / artifact_exists / schema_valid / metric / min_count / llm_rubric（未知 kind 前端原样展示）。 */
+export interface VoyageAcceptanceCheck {
+  kind: string;
+  /** exit_code / metric / min_count */
+  value?: unknown;
+  /** artifact_exists */
+  key?: string;
+  /** schema_valid / min_count */
+  field?: string;
+  required_keys?: string[];
+  /** metric */
+  name?: string;
+  op?: string;
+  /** llm_rubric */
+  rubric?: string;
+  [extra: string]: unknown;
+}
+
+/** 步骤验收标准：这一步"怎样算通过"（text 为大白话补充说明）。 */
+export interface VoyageAcceptance {
+  text?: string | null;
+  checks?: VoyageAcceptanceCheck[] | null;
+}
+
+/** 单次尝试的归档（attempt 从 1 起）。 */
+export interface VoyageStepAttempt {
+  attempt: number;
+  observation: unknown;
+  verdict: VoyageVerdict | null;
+  tokens: unknown;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** 步骤溯源：第几次计划调整创建了它（0 = 初始计划）。 */
+export interface VoyageStepProvenance {
+  plan_iteration: number;
+  [extra: string]: unknown;
+}
+
 export interface VoyageStepRead {
   id: string;
   /** 创建序（不可变锚点，计划调整后可能不连续） */
@@ -261,11 +302,19 @@ export interface VoyageStepRead {
   title: string;
   action: string;
   params: unknown;
+  /** 验收标准（可能缺失：老数据 / pipeline 简单步骤） */
+  acceptance?: VoyageAcceptance | null;
+  /** 非空 = 该步需人工审批（如 compute_budget） */
+  requires_gate?: string | null;
+  /** 溯源：哪次计划调整创建了它 */
+  provenance?: VoyageStepProvenance | null;
   observation: unknown;
   verdict: VoyageVerdict | null;
   status: string;
   /** 后端为 {prompt_tokens, completion_tokens} 字典（历史数据可能是数字） */
   tokens: { prompt_tokens?: number; completion_tokens?: number } | number | null;
+  /** 每次尝试的归档（>1 条 = 出错后重试过） */
+  attempts?: VoyageStepAttempt[] | null;
   started_at: string | null;
   finished_at: string | null;
 }
@@ -289,10 +338,24 @@ export interface VoyageRead {
   updated_at: string;
 }
 
+/** 一次计划调整的留痕（source: signal=执行结果规则分支 / navigator=AI 调整 / template=模板分支）。 */
+export interface VoyagePlanEvent {
+  iteration: number;
+  source: 'signal' | 'navigator' | 'template' | (string & {});
+  reason: string;
+  added: number;
+  obsoleted: number;
+  /** 触发调整的步骤标题 */
+  trigger_step: string | null;
+  at: string | null;
+}
+
 export interface VoyageDetail extends VoyageRead {
   steps: VoyageStepRead[];
   /** 本次任务快照使用的技能（启动时固定，见 docs/skill-system.md §3.2）。 */
   skills?: { slug: string; name: string; kind: string; version: number; target: string }[];
+  /** 计划调整历史（无调整为 [] / 缺失） */
+  plan_history?: VoyagePlanEvent[] | null;
 }
 
 // ============================================================
@@ -492,6 +555,40 @@ export interface NoteRead {
 
 export interface NoteWithPaper extends NoteRead {
   paper_title: string;
+}
+
+/* —— PDF 划线标注 —— */
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
+
+/** 归一化矩形（相对页面左上角，值域 0..1；每行一个）。 */
+export interface HighlightRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface HighlightRead {
+  id: string;
+  paper_id: string;
+  project_id: string;
+  author_id: string;
+  author_name: string;
+  page: number; // 1-indexed
+  rects: HighlightRect[];
+  selected_text: string;
+  color: HighlightColor;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HighlightCreateInput {
+  page: number;
+  rects: HighlightRect[];
+  selected_text: string;
+  color?: HighlightColor;
+  note?: string | null;
 }
 
 /** 手动添加文献：三选一。 */
@@ -1446,34 +1543,43 @@ export interface SkillTestResult {
   model: string | null;
 }
 
-export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
-  guidance: '指引',
-  rubric: '评分标准',
-  persona: '评审人设',
-  workflow: '流程模板',
+const SKILL_KIND: Record<SkillKind, { zh: string; en: string }> = {
+  guidance: { zh: '指引', en: 'Guidance' },
+  rubric: { zh: '评分标准', en: 'Rubric' },
+  persona: { zh: '评审人设', en: 'Reviewer persona' },
+  workflow: { zh: '流程模板', en: 'Workflow template' },
 };
+
+export function skillKindLabel(kind: SkillKind): string {
+  const m = SKILL_KIND[kind];
+  return m ? tr(m.zh, m.en) : kind;
+}
 
 /** 注入点 → 大白话标签（未收录的原样展示）。 */
-export const SKILL_TARGET_LABEL: Record<string, string> = {
-  'wiki.score_relevance': '文献相关性打分',
-  'wiki.compile': '论文笔记编译',
-  'forge.gap_analysis': '研究空白分析',
-  'forge.generate': '想法生成',
-  'forge.score': '想法打分',
-  'review.debate': '想法辩论',
-  'review.referees': '论文评审员',
-  'review.meta_review': '评审汇总',
-  'experiment.plan': '实验计划',
-  'experiment.setup': '实验搭建',
-  'experiment.iterate': '实验迭代',
-  'experiment.report': '实验报告',
-  'writing.section': '论文分节撰写',
-  'writing.related_work': '相关工作综述',
-  'navigator.free_plan': '自由任务规划',
+const SKILL_TARGET: Record<string, { zh: string; en: string }> = {
+  'wiki.score_relevance': { zh: '文献相关性打分', en: 'Paper relevance scoring' },
+  'wiki.compile': { zh: '论文笔记编译', en: 'Paper note compilation' },
+  'forge.gap_analysis': { zh: '研究空白分析', en: 'Research gap analysis' },
+  'forge.generate': { zh: '想法生成', en: 'Idea generation' },
+  'forge.score': { zh: '想法打分', en: 'Idea scoring' },
+  'review.debate': { zh: '想法辩论', en: 'Idea debate' },
+  'review.referees': { zh: '论文评审员', en: 'Paper referees' },
+  'review.meta_review': { zh: '评审汇总', en: 'Review synthesis' },
+  'experiment.plan': { zh: '实验计划', en: 'Experiment planning' },
+  'experiment.setup': { zh: '实验搭建', en: 'Experiment setup' },
+  'experiment.iterate': { zh: '实验迭代', en: 'Experiment iteration' },
+  'experiment.report': { zh: '实验报告', en: 'Experiment report' },
+  'writing.section': { zh: '论文分节撰写', en: 'Paper section writing' },
+  'writing.related_work': { zh: '相关工作综述', en: 'Related-work survey' },
+  'navigator.free_plan': { zh: '自由任务规划', en: 'Free-form task planning' },
 };
 
+/** 全部注入点 key（选择器用）。 */
+export const SKILL_TARGETS = Object.keys(SKILL_TARGET);
+
 export function skillTargetLabel(target: string): string {
-  return SKILL_TARGET_LABEL[target] ?? target;
+  const m = SKILL_TARGET[target];
+  return m ? tr(m.zh, m.en) : target;
 }
 
 export interface SkillListingRead {
@@ -1797,6 +1903,25 @@ export const api = {
   deleteNote(noteId: string): Promise<void> {
     return request<void>(`/notes/${noteId}`, { method: 'DELETE' });
   },
+  // —— Lit · PDF 划线标注 ——
+  /** 某论文的全部划线（按页码排序）。 */
+  listPaperHighlights(paperId: string): Promise<HighlightRead[]> {
+    return request<HighlightRead[]>(`/papers/${paperId}/highlights`);
+  },
+  createPaperHighlight(paperId: string, input: HighlightCreateInput): Promise<HighlightRead> {
+    return requestJson<HighlightRead>(`/papers/${paperId}/highlights`, 'POST', input);
+  },
+  /** 改颜色 / 批注（字段缺省表示不改；note 传空串清空批注）。 */
+  patchHighlight(
+    highlightId: string,
+    input: { color?: HighlightColor; note?: string | null },
+  ): Promise<HighlightRead> {
+    return requestJson<HighlightRead>(`/highlights/${highlightId}`, 'PATCH', input);
+  },
+  deleteHighlight(highlightId: string): Promise<void> {
+    return request<void>(`/highlights/${highlightId}`, { method: 'DELETE' });
+  },
+
   /** 项目笔记本：全项目笔记分页 + 搜索。 */
   listProjectNotes(
     projectId: string,

@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { toast } from './Toast';
+import { tr } from '../../lib/i18n';
 import { api, ApiError, type FigureInfo, type PaperDetail } from '../../lib/api';
 
 /* ============================================================
@@ -17,19 +18,20 @@ import { api, ApiError, type FigureInfo, type PaperDetail } from '../../lib/api'
    ============================================================ */
 
 function captionOf(fig: FigureInfo): string {
-  return fig.caption?.trim() || `第 ${fig.page} 页的图`;
+  return fig.caption?.trim() || tr(`第 ${fig.page} 页的图`, `Figure on page ${fig.page}`);
 }
 
-/** 图片类型中文标签；无类型返回 null（不显示）。 */
-const FIGURE_KIND_ZH: Record<string, string> = {
-  motivation: '动机图',
-  method: '方法图',
-  architecture: '架构图',
-  experiment: '实验图',
+/** 图片类型标签；无类型返回 null（不显示）。 */
+const FIGURE_KIND: Record<string, { zh: string; en: string }> = {
+  motivation: { zh: '动机图', en: 'Motivation' },
+  method: { zh: '方法图', en: 'Method' },
+  architecture: { zh: '架构图', en: 'Architecture' },
+  experiment: { zh: '实验图', en: 'Experiment' },
 };
 
 function kindLabelOf(fig: FigureInfo): string | null {
-  return fig.kind ? (FIGURE_KIND_ZH[fig.kind] ?? null) : null;
+  const m = fig.kind ? FIGURE_KIND[fig.kind] : undefined;
+  return m ? tr(m.zh, m.en) : null;
 }
 
 /** 图注前的小型类型标签（嵌入图/缩略图/大图共用）。 */
@@ -46,8 +48,8 @@ function KindTag({ fig, light }: { fig: FigureInfo; light?: boolean }) {
         borderRadius: 4,
         fontSize: '0.85em',
         lineHeight: 1.7,
-        background: light ? 'rgba(255,255,255,0.18)' : 'var(--accent-soft)',
-        color: light ? 'rgba(255,255,255,0.92)' : 'var(--accent-text)',
+        background: light ? 'var(--scrim-btn)' : 'var(--accent-soft)',
+        color: light ? 'var(--on-scrim)' : 'var(--accent-text)',
       }}
     >
       {label}
@@ -138,7 +140,7 @@ export function FigureEmbed({
           }}
         >
           <Icon name="file" size={18} style={{ margin: '0 auto 6px' }} />
-          <div style={{ fontSize: 11.5 }}>这张图加载失败了，稍后再试</div>
+          <div style={{ fontSize: 11.5 }}>{tr('这张图加载失败了，稍后再试', 'This figure failed to load, try again later')}</div>
         </div>
       ) : (
         <img
@@ -151,7 +153,7 @@ export function FigureEmbed({
             maxHeight: 420,
             borderRadius: 10,
             border: '0.5px solid var(--border)',
-            background: '#fff',
+            background: 'var(--media-bg)',
             cursor: 'zoom-in',
             objectFit: 'contain',
           }}
@@ -224,14 +226,14 @@ function FigureThumb({
         ) : isError || !url ? (
           <div style={{ textAlign: 'center', color: 'var(--text-4)' }}>
             <Icon name="file" size={16} style={{ margin: '0 auto 4px' }} />
-            <div style={{ fontSize: 10 }}>图片加载失败</div>
+            <div style={{ fontSize: 10 }}>{tr('图片加载失败', 'Failed to load')}</div>
           </div>
         ) : (
           <img
             src={url}
             alt={captionOf(fig)}
             loading="lazy"
-            style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--media-bg)' }}
           />
         )}
       </div>
@@ -294,8 +296,8 @@ function Lightbox({
     height: 38,
     borderRadius: 19,
     border: 'none',
-    background: 'rgba(255,255,255,0.14)',
-    color: '#fff',
+    background: 'var(--scrim-btn)',
+    color: 'var(--on-scrim)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -309,7 +311,7 @@ function Lightbox({
         position: 'fixed',
         inset: 0,
         zIndex: 70,
-        background: 'rgba(10, 22, 44, 0.82)',
+        background: 'var(--scrim)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -320,7 +322,7 @@ function Lightbox({
     >
       {/* 关闭 */}
       <button
-        aria-label="关闭"
+        aria-label={tr('关闭', 'Close')}
         onClick={onClose}
         style={{
           position: 'absolute',
@@ -330,8 +332,8 @@ function Lightbox({
           height: 34,
           borderRadius: 17,
           border: 'none',
-          background: 'rgba(255,255,255,0.14)',
-          color: '#fff',
+          background: 'var(--scrim-btn)',
+          color: 'var(--on-scrim)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -345,7 +347,7 @@ function Lightbox({
       {count > 1 && (
         <>
           <button
-            aria-label="上一张"
+            aria-label={tr('上一张', 'Previous')}
             disabled={index === 0}
             style={{ ...navBtn, left: 18, opacity: index === 0 ? 0.3 : 1 }}
             onClick={(e) => {
@@ -356,7 +358,7 @@ function Lightbox({
             <Icon name="chevron" size={17} style={{ transform: 'rotate(180deg)' }} />
           </button>
           <button
-            aria-label="下一张"
+            aria-label={tr('下一张', 'Next')}
             disabled={index === count - 1}
             style={{ ...navBtn, right: 18, opacity: index === count - 1 ? 0.3 : 1 }}
             onClick={(e) => {
@@ -384,12 +386,12 @@ function Lightbox({
         {isLoading ? (
           <div
             className="pulse"
-            style={{ width: 420, maxWidth: '80vw', height: 300, borderRadius: 10, background: 'rgba(255,255,255,0.14)' }}
+            style={{ width: 420, maxWidth: '80vw', height: 300, borderRadius: 10, background: 'var(--scrim-btn)' }}
           />
         ) : isError || !url ? (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.75)' }}>
+          <div style={{ textAlign: 'center', color: 'var(--on-scrim-2)' }}>
             <Icon name="file" size={26} style={{ margin: '0 auto 8px' }} />
-            <div style={{ fontSize: 13 }}>这张图加载失败了，稍后再试</div>
+            <div style={{ fontSize: 13 }}>{tr('这张图加载失败了，稍后再试', 'This figure failed to load, try again later')}</div>
           </div>
         ) : (
           <img
@@ -401,7 +403,7 @@ function Lightbox({
               maxHeight: '74vh',
               objectFit: 'contain',
               borderRadius: 10,
-              background: '#fff',
+              background: 'var(--media-bg)',
               boxShadow: 'var(--shadow-win)',
             }}
           />
@@ -413,14 +415,14 @@ function Lightbox({
             textAlign: 'center',
             fontSize: 12.5,
             lineHeight: 1.6,
-            color: 'rgba(255,255,255,0.88)',
+            color: 'var(--on-scrim)',
           }}
         >
           <KindTag fig={fig} light />
           {captionOf(fig)}
         </div>
-        <div className="mono" style={{ marginTop: 6, fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
-          {index + 1} / {count} · 第 {fig.page} 页
+        <div className="mono" style={{ marginTop: 6, fontSize: 11, color: 'var(--on-scrim-3)' }}>
+          {index + 1} / {count} · {tr(`第 ${fig.page} 页`, `page ${fig.page}`)}
         </div>
       </div>
     </div>
@@ -465,7 +467,7 @@ export function FigureGallery({ paperId, figures }: { paperId: string; figures: 
           }}
         >
           <Icon name={showAll ? 'chevDown' : 'grid'} size={12} style={showAll ? { transform: 'rotate(180deg)' } : undefined} />
-          {showAll ? '只看重要的' : `显示全部 ${figures.length} 张`}
+          {showAll ? tr('只看重要的', 'Key figures only') : tr(`显示全部 ${figures.length} 张`, `Show all ${figures.length}`)}
         </button>
       )}
       {lightbox !== null && lightboxFig && (
@@ -525,19 +527,19 @@ export function FiguresSection({
         old ? { ...old, figures: res.figures } : old,
       );
       if (res.figures.length > 0) {
-        toast(`提取完成，找到 ${res.figures.length} 张图`, 'ok');
+        toast(tr(`提取完成，找到 ${res.figures.length} 张图`, `Done — found ${res.figures.length} figures`), 'ok');
       } else {
-        toast('这篇 PDF 里没找到合适的图片', 'info');
+        toast(tr('这篇 PDF 里没找到合适的图片', 'No suitable figures found in this PDF'), 'info');
       }
     },
     onError: (e) => {
       const msg =
         e instanceof ApiError && e.message.includes('PDF_NOT_AVAILABLE')
-          ? '这篇论文还没有 PDF，先到阅读页获取 PDF 再试'
+          ? tr('这篇论文还没有 PDF，先到阅读页获取 PDF 再试', 'This paper has no PDF yet — fetch it on the reading page first')
           : e instanceof Error
             ? e.message
             : String(e);
-      toast(`提取图片失败：${msg}`, 'error');
+      toast(tr(`提取图片失败：${msg}`, `Figure extraction failed: ${msg}`), 'error');
     },
   });
 
@@ -554,12 +556,12 @@ export function FiguresSection({
           {extractMutation.isPending ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              提取中，视觉模型筛选约需半分钟…
+              {tr('提取中，视觉模型筛选约需半分钟…', 'Extracting — vision-model filtering takes about half a minute…')}
             </>
           ) : (
             <>
               <Icon name="sparkle" size={13} />
-              提取图片
+              {tr('提取图片', 'Extract figures')}
             </>
           )}
         </button>
@@ -571,7 +573,7 @@ export function FiguresSection({
     <div style={{ marginTop: 18, ...style }}>
       <div className="row gap8" style={{ marginBottom: expanded ? 8 : 0 }}>
         <span style={{ fontSize: 12.5, fontWeight: 650 }}>
-          重要图片 <span className="en-label" style={{ fontSize: 11 }}>Figures</span>
+          {tr('重要图片', 'Figures')}
         </span>
         {defaultCollapsed && (
           <button className="btn btn-ghost sm" onClick={() => setExpanded((e) => !e)}>
@@ -580,7 +582,7 @@ export function FiguresSection({
               size={12}
               style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
             />
-            {expanded ? '收起' : `展开全部图片（${figures.length} 张）`}
+            {expanded ? tr('收起', 'Collapse') : tr(`展开全部图片（${figures.length} 张）`, `Show all figures (${figures.length})`)}
           </button>
         )}
       </div>

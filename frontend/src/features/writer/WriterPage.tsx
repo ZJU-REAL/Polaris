@@ -7,6 +7,7 @@ import { StatusPill } from '../../components/ui/StatusPill';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
 import { fmtRelative } from '../../lib/format';
+import { tr } from '../../lib/i18n';
 import { api, type ManuscriptRead } from '../../lib/api';
 import { NewManuscriptModal } from './NewManuscriptModal';
 
@@ -42,7 +43,7 @@ function ManuscriptCard({
             {m.title}
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
-            {m.id.slice(0, 8)} · 创建 {fmtRelative(m.created_at)}
+            {m.id.slice(0, 8)} · {tr('创建', 'created')} {fmtRelative(m.created_at)}
           </div>
         </div>
         <StatusPill status={m.status} sm />
@@ -55,11 +56,11 @@ function ManuscriptCard({
         {m.status === 'writing' && (
           <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
             <Icon name="sparkle" size={11} />
-            AI 正在写
+            {tr('AI 正在写', 'AI writing')}
           </span>
         )}
         <span className="mono muted" style={{ fontSize: 11, marginLeft: 'auto' }}>
-          更新 {fmtRelative(m.updated_at)}
+          {tr('更新', 'updated')} {fmtRelative(m.updated_at)}
         </span>
       </div>
     </div>
@@ -95,18 +96,18 @@ export function WriterPage() {
       <div className="page fadeup">
         <PageHead
           eyebrow="Stage 04 · Paper Writer"
-          title="论文撰写 Paper Writer"
-          sub="从模板起稿、AI 起草到编译预览与投稿审批。"
+          title={tr('论文撰写', 'Paper Writer')}
+          sub={tr('从模板起稿、AI 起草到编译预览与投稿审批。', 'From template and AI drafting to compile preview and submission approval.')}
         />
         <div className="card">
           <EmptyState
             icon="pen"
-            title="还没有研究方向"
-            desc="先创建研究方向，完成实验后再开始写论文。"
+            title={tr('还没有研究方向', 'No research directions yet')}
+            desc={tr('先创建研究方向，完成实验后再开始写论文。', 'Create a research direction and finish experiments before writing a paper.')}
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
-                新建研究方向 · New direction
+                {tr('新建研究方向', 'New direction')}
               </button>
             }
           />
@@ -119,19 +120,18 @@ export function WriterPage() {
     <div className="page fadeup" style={{ maxWidth: 1180 }}>
       <PageHead
         eyebrow="Stage 04 · Paper Writer"
-        title="论文撰写 Paper Writer"
+        title={tr('论文撰写', 'Paper Writer')}
         sub={
           currentProject
-            ? `当前方向：${currentProject.name}`
+            ? `${tr('当前方向：', 'Current direction: ')}${currentProject.name}`
             : projectsLoading
-              ? '加载研究方向…'
-              : '选择一个研究方向'
+              ? tr('加载研究方向…', 'Loading directions…')
+              : tr('选择一个研究方向', 'Pick a research direction')
         }
-        en="draft · compile · review · submit"
         right={
           <button className="btn btn-primary" disabled={!pid} onClick={() => setModalOpen(true)}>
             <Icon name="plus" size={14} />
-            新建论文草稿
+            {tr('新建论文草稿', 'New manuscript')}
           </button>
         }
       />
@@ -139,33 +139,36 @@ export function WriterPage() {
       {!pid ? (
         <div className="card">
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? '加载研究方向…' : '请先选择研究方向'}
+            {projectsLoading ? tr('加载研究方向…', 'Loading directions…') : tr('请先选择研究方向', 'Pick a research direction first')}
           </div>
         </div>
       ) : isLoading ? (
         <div className="card">
-          <div className="empty" style={{ padding: 60 }}>加载论文列表…</div>
+          <div className="empty" style={{ padding: 60 }}>{tr('加载论文列表…', 'Loading manuscripts…')}</div>
         </div>
       ) : isError ? (
         <div className="card">
           <EmptyState
             compact
             icon="x"
-            title="无法加载论文列表"
-            desc="后端不可用或接口尚未就绪。"
-            action={<button className="btn btn-soft sm" onClick={() => void refetch()}>重试 retry</button>}
+            title={tr('无法加载论文列表', 'Failed to load manuscripts')}
+            desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or API not ready.')}
+            action={<button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>}
           />
         </div>
       ) : manuscripts.length === 0 ? (
         <div className="card">
           <EmptyState
             icon="pen"
-            title="还没有论文草稿"
-            desc="新建一篇：选会议模板、关联已完成的实验，平台会自动组装事实包，AI 就能按真实结果起草。"
+            title={tr('还没有论文草稿', 'No manuscripts yet')}
+            desc={tr(
+              '新建一篇：选会议模板、关联已完成的实验，平台会自动组装事实包，AI 就能按真实结果起草。',
+              'Create one: pick a venue template and link a finished experiment — the platform assembles a fact pack so AI can draft from real results.',
+            )}
             action={
               <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
                 <Icon name="plus" size={14} />
-                新建论文草稿
+                {tr('新建论文草稿', 'New manuscript')}
               </button>
             }
           />
