@@ -31,8 +31,14 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-// 模块级常量，避免每次 render 生成新对象触发 react-pdf 重新加载
-const PDF_OPTIONS = {};
+// 模块级常量，避免每次 render 生成新对象触发 react-pdf 重新加载。
+// cMap / 标准字体数据必须提供，否则 pdf.js 画不出字形、整页空白（资源由 vite
+// copyPdfAssets 插件从 pdfjs-dist 拷到 public/pdfjs 下，见 vite.config.ts）。
+const PDF_OPTIONS = {
+  cMapUrl: '/pdfjs/cmaps/',
+  cMapPacked: true,
+  standardFontDataUrl: '/pdfjs/standard_fonts/',
+};
 
 export interface JumpTarget {
   id: string;
