@@ -510,3 +510,24 @@ async def test_llm_short_stage_not_streamed(app):
         voyage_id=uuid.uuid4(),
     )
     assert not any(e == "llm_delta" for _v, e, _d in bus.voyage_events)
+
+
+async def test_llm_multimodal_stage_also_streams(app):
+    """多模态调用（带图，如 wiki 精读编译 librarian stage）现在也流式广播——
+    图片附在请求上、正文照常逐段吐（终端可实时看到 wiki 生成）。"""
+    from app.core.llm.base import Message
+    from app.core.llm.router import LLMRouter
+
+    bus = RecordingBus()
+    router = LLMRouter()
+    router.event_bus = bus
+    result = await router.complete(
+        "librarian",
+        [Message(role="user", content="请为这篇论文编写中文介绍")],
+        images=[b"\x89PNG\r\n fake image bytes"],
+        voyage_id=uuid.uuid4(),
+    )
+    kinds = [e for _v, e, _d in bus.voyage_events]
+    assert kinds[0] == "llm_start" and kinds[-1] == "llm_end"
+    deltas = [d["delta"] for _v, e, d in bus.voyage_events if e == "llm_delta"]
+    assert deltas and "".join(deltas) == result.content

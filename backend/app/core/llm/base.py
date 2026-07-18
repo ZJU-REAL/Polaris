@@ -62,8 +62,13 @@ class LLMProvider(ABC):
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
     ) -> AsyncIterator[str]:
-        """流式补全，逐段 yield 文本增量（用于 SSE 转发）。"""
+        """流式补全，逐段 yield 文本增量（用于 SSE 转发）。
+
+        ``images``：可选多模态输入（同 complete）；支持多模态流式的 provider 附在
+        最后一条 user 消息上，其余忽略。
+        """
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
         """文本嵌入（语义检索用）。不支持的 provider（如 anthropic）抛 NotImplementedError。"""

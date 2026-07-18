@@ -568,7 +568,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
         )
         total = len(papers)
         for i, paper in enumerate(papers, start=1):
-            await ctx.log(f"精读编译 {i}/{total}：{paper.title[:60]}")
+            await ctx.log(f"📖 精读编译 {i}/{total}：{paper.title}")
             # ① 编译前筛选注释论文图（stage=librarian 多模态）：图文编译要用重要图；
             #    失败仅 log（annotate 内部已带降级），不影响编译
             if paper.figures and not figures_annotated(paper.figures):
@@ -599,6 +599,10 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 raise
             except Exception as e:  # noqa: BLE001 — 单篇失败跳过，下次续跑重试
                 failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
+                await ctx.log(
+                    f"✗ 编译失败 {i}/{total}：{paper.title[:50]} — {type(e).__name__}",
+                    level="error",
+                )
                 continue
             paper.wiki_content = content
             paper.compiled_at = utcnow()
@@ -606,6 +610,9 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             await session.commit()
             compiled += 1
             compiled_papers.append(paper)
+            await ctx.log(
+                f"✓ 完成 {i}/{total}：{paper.title[:50]}（{len(content)} 字）", level="success"
+            )
 
     ctx.checkpoint["compiled_count"] = int(ctx.checkpoint.get("compiled_count") or 0) + compiled
     return {
