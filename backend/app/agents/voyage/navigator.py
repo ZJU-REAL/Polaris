@@ -235,10 +235,12 @@ def proposal_replan(
 
 
 def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """idea_review（辩论锦标赛）固定三步计划（docs/api-m3.md §3）。"""
+    """idea_review（辩论锦标赛）启动计划（docs/api-m3.md §3 + docs/voyage-loop.md §7）：
+    配对 → 汇总；中间的 N 场辩论由 review.pair 的 plan_signal 按对局数展开成
+    N 个 review.match 节点插入两者之间（引擎可逐场查预算，超限走降级收尾）。
+    """
     steps = [
         ("配对（Swiss：按 Elo 相邻配对）", "review.pair", "参与 idea 已配对并置 under_review"),
-        ("科学辩论 + 裁判判定 + Elo 更新", "review.debate", "各场辩论消息与判定已落库"),
         ("锦标赛汇总", "review.summarize", "赛果已汇总并写入活动流"),
     ]
     return [
@@ -249,17 +251,23 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "acceptance": acceptance,
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
+            # 汇总是廉价收尾：预算耗尽也放行，别让辩论白跑（docs/voyage-loop.md §5.4）
+            "wrapup": action == "review.summarize",
         }
         for title, action, acceptance in steps
     ]
 
 
 def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """experiment 启动计划（docs/voyage-loop.md §7）：
+    """experiment 启动计划（docs/voyage-loop.md §7，mode=loop）：
     计划 →（compute_budget 闸门）建环境 → 冒烟 → 第 1 轮运行 → 第 1 轮分析。
     后续轮次由 experiment.analyze 的 plan_signal 走确定性分支表动态追加
     （improve/debug → 下一轮 run+analyze；终止 → figures+report 收尾）。
-    环境/运行步骤 on_failure="fail"：执行异常即 voyage failed（实验由 _guarded 同步 failed）。
+
+    失败语义按节点分派：plan/setup/analyze/figures/report 失败走 loop 回灌
+    （原地重试 → AI 计划调整）；smoke 保留 on_failure="fail"——动作内部已有
+    LLM 修复循环（MAX_SMOKE_FIXES），修完仍失败说明代码根本性不可用，诚实硬停
+    且 max_attempts=1 防引擎级重跑整个修复循环。
     """
     steps = [
         (
@@ -276,8 +284,9 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
         ),
         ("冒烟测试", "experiment.smoke", "run.sh --smoke 退出码为 0", None),
     ]
-    head = [
-        {
+    head = []
+    for title, action, acceptance, gate in steps:
+        node: dict[str, Any] = {
             "title": title,
             "action": action,
             "params": {},
@@ -287,10 +296,11 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
             if action == "experiment.smoke"
             else [{"kind": "no_error"}],
             "requires_gate": gate,
-            "on_failure": "fail",
         }
-        for title, action, acceptance, gate in steps
-    ]
+        if action == "experiment.smoke":
+            node["on_failure"] = "fail"
+            node["budget"] = {"max_attempts": 1}
+        head.append(node)
     return head + experiment_round_nodes(1)
 
 
@@ -372,6 +382,8 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
+            # 终编译把已写的分节变成成稿 PDF：预算耗尽也放行（docs/voyage-loop.md §5.4）
+            "wrapup": True,
         }
     )
     return steps

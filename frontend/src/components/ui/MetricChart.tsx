@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    MetricChart — 轻量 SVG 自绘多序列折线图（零依赖）。
@@ -100,7 +101,7 @@ export function MetricChart({ series, height = 220, baseline }: MetricChartProps
   if (data.length === 0) {
     return (
       <div className="empty" style={{ padding: 30, fontSize: 12.5 }}>
-        暂无指标数据 · 运行日志中的 POLARIS_METRIC 行会被解析到这里
+        {tr('暂无指标数据 · 运行日志中的 POLARIS_METRIC 行会被解析到这里', 'No metric data yet · POLARIS_METRIC lines in run logs are parsed into this chart')}
       </div>
     );
   }

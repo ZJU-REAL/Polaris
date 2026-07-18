@@ -1,3 +1,4 @@
+import { tr } from './i18n';
 /* ============================================================
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
@@ -250,6 +251,46 @@ export interface VoyageVerdict {
   reason: string;
 }
 
+/** 结构化验收检查项；kind: no_error / exit_code / artifact_exists / schema_valid / metric / min_count / llm_rubric（未知 kind 前端原样展示）。 */
+export interface VoyageAcceptanceCheck {
+  kind: string;
+  /** exit_code / metric / min_count */
+  value?: unknown;
+  /** artifact_exists */
+  key?: string;
+  /** schema_valid / min_count */
+  field?: string;
+  required_keys?: string[];
+  /** metric */
+  name?: string;
+  op?: string;
+  /** llm_rubric */
+  rubric?: string;
+  [extra: string]: unknown;
+}
+
+/** 步骤验收标准：这一步"怎样算通过"（text 为大白话补充说明）。 */
+export interface VoyageAcceptance {
+  text?: string | null;
+  checks?: VoyageAcceptanceCheck[] | null;
+}
+
+/** 单次尝试的归档（attempt 从 1 起）。 */
+export interface VoyageStepAttempt {
+  attempt: number;
+  observation: unknown;
+  verdict: VoyageVerdict | null;
+  tokens: unknown;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** 步骤溯源：第几次计划调整创建了它（0 = 初始计划）。 */
+export interface VoyageStepProvenance {
+  plan_iteration: number;
+  [extra: string]: unknown;
+}
+
 export interface VoyageStepRead {
   id: string;
   /** 创建序（不可变锚点，计划调整后可能不连续） */
@@ -261,11 +302,19 @@ export interface VoyageStepRead {
   title: string;
   action: string;
   params: unknown;
+  /** 验收标准（可能缺失：老数据 / pipeline 简单步骤） */
+  acceptance?: VoyageAcceptance | null;
+  /** 非空 = 该步需人工审批（如 compute_budget） */
+  requires_gate?: string | null;
+  /** 溯源：哪次计划调整创建了它 */
+  provenance?: VoyageStepProvenance | null;
   observation: unknown;
   verdict: VoyageVerdict | null;
   status: string;
   /** 后端为 {prompt_tokens, completion_tokens} 字典（历史数据可能是数字） */
   tokens: { prompt_tokens?: number; completion_tokens?: number } | number | null;
+  /** 每次尝试的归档（>1 条 = 出错后重试过） */
+  attempts?: VoyageStepAttempt[] | null;
   started_at: string | null;
   finished_at: string | null;
 }
@@ -289,10 +338,24 @@ export interface VoyageRead {
   updated_at: string;
 }
 
+/** 一次计划调整的留痕（source: signal=执行结果规则分支 / navigator=AI 调整 / template=模板分支）。 */
+export interface VoyagePlanEvent {
+  iteration: number;
+  source: 'signal' | 'navigator' | 'template' | (string & {});
+  reason: string;
+  added: number;
+  obsoleted: number;
+  /** 触发调整的步骤标题 */
+  trigger_step: string | null;
+  at: string | null;
+}
+
 export interface VoyageDetail extends VoyageRead {
   steps: VoyageStepRead[];
   /** 本次任务快照使用的技能（启动时固定，见 docs/skill-system.md §3.2）。 */
   skills?: { slug: string; name: string; kind: string; version: number; target: string }[];
+  /** 计划调整历史（无调整为 [] / 缺失） */
+  plan_history?: VoyagePlanEvent[] | null;
 }
 
 // ============================================================
@@ -1151,13 +1214,28 @@ export interface CreateExperimentInput {
 // M5-B · Manuscripts（论文撰写）— docs/api-m5-b.md
 // ============================================================
 
-/** 会议模板信息（GET /manuscripts/templates）。key 如 neurips2026 / iclr2026 / acl。 */
+/**
+ * 论文模板信息（GET /manuscripts/templates）。
+ * 后端已 DB 化：id 内置=key（neurips2026 等），库内模板=uuid。
+ */
 export interface TemplateInfo {
-  key: string;
+  /** 内置=key（neurips2026 等）；库内模板=uuid。创建稿件时传这个。 */
+  id: string;
   name: string;
+  description: string | null;
+  /** builtin=内置；seeded=官方入库；uploaded=用户自定义上传 */
+  source: 'builtin' | 'seeded' | 'uploaded';
+  scope: 'global' | 'project';
+  project_id: string | null;
+  /** 编译引擎：tectonic|pdflatex|xelatex|lualatex */
+  engine: string;
   page_limit: number | null;
   /** 模板建议的分节顺序（AI 起草可选节来源） */
   sections: string[];
+  unofficial: boolean;
+  /** 库内模板 true（可下载 zip），内置 false */
+  downloadable: boolean;
+  file_count: number;
 }
 
 export type ManuscriptStatus =
@@ -1189,12 +1267,57 @@ export interface ManuscriptFileMeta {
   size: number;
   updated_at: string;
   readonly?: boolean;
+  /** 二进制文件（图片/PDF 等）：不进 CRDT 编辑器，只读预览。 */
+  is_binary?: boolean;
+  /** 文件夹占位记录（树里显示为可折叠目录）。 */
+  is_folder?: boolean;
+}
+
+/** 稿件协作者（owner 高亮，role 决定能否加人/删人）。 */
+export interface CollaboratorRead {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  is_owner: boolean;
+}
+
+/** 协作者搜索结果（GET /collaborators/search）。 */
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  display_name: string;
+}
+
+/** 协同编辑分享链接（完整 URL = origin + join_path）。 */
+export interface ShareLink {
+  token: string;
+  join_path: string;
+  expires_at: string | null;
+  max_uses: number | null;
 }
 
 /** 单文件内容（编辑器初始加载 / readonly 文件查看用；实时同步走 WS CRDT）。 */
 export interface ManuscriptFileRead {
   id: string;
   path: string;
+  content: string;
+}
+
+/** 文件版本快照来源：AI 写入前 / 编译当刻 / 恢复前备份。 */
+export type FileVersionOrigin = 'pre_ai' | 'compile' | 'pre_restore';
+
+export interface FileVersionMeta {
+  id: string;
+  seq: number;
+  origin: FileVersionOrigin;
+  label: string | null;
+  size: number;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface FileVersionContent extends FileVersionMeta {
   content: string;
 }
 
@@ -1467,34 +1590,43 @@ export interface SkillTestResult {
   model: string | null;
 }
 
-export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
-  guidance: '指引',
-  rubric: '评分标准',
-  persona: '评审人设',
-  workflow: '流程模板',
+const SKILL_KIND: Record<SkillKind, { zh: string; en: string }> = {
+  guidance: { zh: '指引', en: 'Guidance' },
+  rubric: { zh: '评分标准', en: 'Rubric' },
+  persona: { zh: '评审人设', en: 'Reviewer persona' },
+  workflow: { zh: '流程模板', en: 'Workflow template' },
 };
+
+export function skillKindLabel(kind: SkillKind): string {
+  const m = SKILL_KIND[kind];
+  return m ? tr(m.zh, m.en) : kind;
+}
 
 /** 注入点 → 大白话标签（未收录的原样展示）。 */
-export const SKILL_TARGET_LABEL: Record<string, string> = {
-  'wiki.score_relevance': '文献相关性打分',
-  'wiki.compile': '论文笔记编译',
-  'forge.gap_analysis': '研究空白分析',
-  'forge.generate': '想法生成',
-  'forge.score': '想法打分',
-  'review.debate': '想法辩论',
-  'review.referees': '论文评审员',
-  'review.meta_review': '评审汇总',
-  'experiment.plan': '实验计划',
-  'experiment.setup': '实验搭建',
-  'experiment.iterate': '实验迭代',
-  'experiment.report': '实验报告',
-  'writing.section': '论文分节撰写',
-  'writing.related_work': '相关工作综述',
-  'navigator.free_plan': '自由任务规划',
+const SKILL_TARGET: Record<string, { zh: string; en: string }> = {
+  'wiki.score_relevance': { zh: '文献相关性打分', en: 'Paper relevance scoring' },
+  'wiki.compile': { zh: '论文笔记编译', en: 'Paper note compilation' },
+  'forge.gap_analysis': { zh: '研究空白分析', en: 'Research gap analysis' },
+  'forge.generate': { zh: '想法生成', en: 'Idea generation' },
+  'forge.score': { zh: '想法打分', en: 'Idea scoring' },
+  'review.debate': { zh: '想法辩论', en: 'Idea debate' },
+  'review.referees': { zh: '论文评审员', en: 'Paper referees' },
+  'review.meta_review': { zh: '评审汇总', en: 'Review synthesis' },
+  'experiment.plan': { zh: '实验计划', en: 'Experiment planning' },
+  'experiment.setup': { zh: '实验搭建', en: 'Experiment setup' },
+  'experiment.iterate': { zh: '实验迭代', en: 'Experiment iteration' },
+  'experiment.report': { zh: '实验报告', en: 'Experiment report' },
+  'writing.section': { zh: '论文分节撰写', en: 'Paper section writing' },
+  'writing.related_work': { zh: '相关工作综述', en: 'Related-work survey' },
+  'navigator.free_plan': { zh: '自由任务规划', en: 'Free-form task planning' },
 };
 
+/** 全部注入点 key（选择器用）。 */
+export const SKILL_TARGETS = Object.keys(SKILL_TARGET);
+
 export function skillTargetLabel(target: string): string {
-  return SKILL_TARGET_LABEL[target] ?? target;
+  const m = SKILL_TARGET[target];
+  return m ? tr(m.zh, m.en) : target;
 }
 
 export interface SkillListingRead {
@@ -2046,8 +2178,36 @@ export const api = {
   },
 
   // —— M5-B · Manuscripts（论文撰写） ——
-  listManuscriptTemplates(): Promise<TemplateInfo[]> {
-    return request<TemplateInfo[]>('/manuscripts/templates');
+  /** 不带 projectId 只返回内置+全平台模板；带上则并入该研究方向私有上传模板。 */
+  listManuscriptTemplates(projectId?: string): Promise<TemplateInfo[]> {
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+    return request<TemplateInfo[]>(`/manuscripts/templates${qs}`);
+  },
+  /** 上传模板 zip。给 project_id=项目私有；不给=全平台（需平台管理员，否则 403 ADMIN_REQUIRED_FOR_GLOBAL）。zip 无 .tex → 422。 */
+  uploadManuscriptTemplate(input: {
+    file: File;
+    name: string;
+    description?: string;
+    engine?: string;
+    page_limit?: number;
+    project_id?: string;
+  }): Promise<TemplateInfo> {
+    const form = new FormData();
+    form.append('file', input.file);
+    form.append('name', input.name);
+    if (input.description) form.append('description', input.description);
+    if (input.engine) form.append('engine', input.engine);
+    if (input.page_limit != null) form.append('page_limit', String(input.page_limit));
+    if (input.project_id) form.append('project_id', input.project_id);
+    return request<TemplateInfo>('/manuscripts/templates', { method: 'POST', body: form });
+  },
+  /** 下载库内模板 zip（downloadable=true 的模板）。 */
+  downloadManuscriptTemplate(id: string): Promise<Blob> {
+    return requestBlob(`/manuscripts/templates/${id}/download`);
+  },
+  /** 删除模板（创建者/项目管理者/平台 admin 可删）。 */
+  deleteManuscriptTemplate(id: string): Promise<void> {
+    return request<void>(`/manuscripts/templates/${id}`, { method: 'DELETE' });
   },
   createManuscript(projectId: string, input: CreateManuscriptInput): Promise<ManuscriptRead> {
     return requestJson<ManuscriptRead>(`/projects/${projectId}/manuscripts`, 'POST', input);
@@ -2079,6 +2239,35 @@ export const api = {
   },
   deleteManuscriptFile(id: string, fid: string): Promise<void> {
     return request<void>(`/manuscripts/${id}/files/${fid}`, { method: 'DELETE' });
+  },
+  /** 新建文件夹（树里作为可折叠目录占位）。 */
+  createManuscriptFolder(id: string, path: string): Promise<ManuscriptFileMeta> {
+    return requestJson<ManuscriptFileMeta>(`/manuscripts/${id}/folders`, 'POST', { path });
+  },
+  /** 上传文件（含二进制）；path 缺省时后端用文件名。 */
+  uploadManuscriptFile(id: string, file: File, path?: string): Promise<ManuscriptFileMeta> {
+    const form = new FormData();
+    form.append('file', file);
+    if (path) form.append('path', path);
+    return request<ManuscriptFileMeta>(`/manuscripts/${id}/files/upload`, { method: 'POST', body: form });
+  },
+  /** 二进制原始字节（图片/PDF 预览）：blob → objectURL 后再喂 <img>/下载。 */
+  fetchManuscriptFileRaw(id: string, fid: string): Promise<Blob> {
+    return requestBlob(`/manuscripts/${id}/files/${fid}/raw`);
+  },
+
+  // —— M5-B · 文件版本历史 ——
+  listFileVersions(id: string, fid: string): Promise<FileVersionMeta[]> {
+    return request<FileVersionMeta[]>(`/manuscripts/${id}/files/${fid}/versions`);
+  },
+  getFileVersion(id: string, fid: string, vid: string): Promise<FileVersionContent> {
+    return request<FileVersionContent>(`/manuscripts/${id}/files/${fid}/versions/${vid}`);
+  },
+  /** 恢复到指定版本（当前内容自动备份为 pre_restore 快照）；readonly 文件 → 409。 */
+  restoreFileVersion(id: string, fid: string, vid: string): Promise<ManuscriptFileRead> {
+    return request<ManuscriptFileRead>(`/manuscripts/${id}/files/${fid}/versions/${vid}/restore`, {
+      method: 'POST',
+    });
   },
 
   // —— M5-B · fact-pack / 编译 / AI 起草 / 投稿 ——
@@ -2114,6 +2303,57 @@ export const api = {
   /** 历史评审轮次列表；单轮详情复用 GET /sessions/{sid}/messages。 */
   listManuscriptReviews(id: string): Promise<ReviewSummary[]> {
     return request<ReviewSummary[]>(`/manuscripts/${id}/reviews`);
+  },
+
+  // —— arXiv 清洁包导出 ——
+  /** 导出 arXiv 投稿清洁包 tar.gz；X-Export-Notes（| 分隔）里可能带提示。 */
+  async exportManuscriptArxiv(id: string): Promise<{ blob: Blob; notes: string[] }> {
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const res = await fetch(`${BASE}/manuscripts/${id}/export/arxiv`, { headers });
+    if (!res.ok) {
+      let detail = res.statusText || `HTTP ${res.status}`;
+      let body: unknown;
+      try {
+        body = await res.json();
+        if (body && typeof body === 'object' && 'detail' in body) {
+          const d = (body as { detail: unknown }).detail;
+          detail = typeof d === 'string' ? d : JSON.stringify(d);
+        }
+      } catch {
+        /* keep statusText */
+      }
+      throw new ApiError(res.status, detail, body);
+    }
+    const raw = res.headers.get('X-Export-Notes');
+    const notes = raw ? raw.split('|').map((s) => s.trim()).filter(Boolean) : [];
+    return { blob: await res.blob(), notes };
+  },
+
+  // —— 协作者 + 共享编辑链接 ——
+  /** 按关键词搜平台用户（加协作者用）。 */
+  searchUsers(q: string): Promise<UserSearchResult[]> {
+    return request<UserSearchResult[]>(`/collaborators/search?q=${encodeURIComponent(q)}`);
+  },
+  listCollaborators(id: string): Promise<CollaboratorRead[]> {
+    return request<CollaboratorRead[]>(`/manuscripts/${id}/collaborators`);
+  },
+  /** 加协作者（需 owner/管理员，否则 403 OWNER_OR_ADMIN_REQUIRED）；返回更新后的数组。 */
+  addCollaborator(id: string, userId: string, role?: string): Promise<CollaboratorRead[]> {
+    return requestJson<CollaboratorRead[]>(
+      `/manuscripts/${id}/collaborators`,
+      'POST',
+      role ? { user_id: userId, role } : { user_id: userId },
+    );
+  },
+  /** 移除协作者（不能删 owner，409 CANNOT_REMOVE_OWNER）。 */
+  removeCollaborator(id: string, userId: string): Promise<void> {
+    return request<void>(`/manuscripts/${id}/collaborators/${userId}`, { method: 'DELETE' });
+  },
+  /** 生成协同编辑分享链接（平台用户登录后即可加入协同）。 */
+  createManuscriptShareLink(id: string, input?: { expires_days?: number; max_uses?: number }): Promise<ShareLink> {
+    return requestJson<ShareLink>(`/manuscripts/${id}/share-link`, 'POST', input ?? {});
   },
 
   // —— Admin · LLM ——

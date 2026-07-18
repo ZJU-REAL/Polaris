@@ -1,5 +1,6 @@
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import type { IdeaDepth, IdeaScores } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    Idea 四维评分共享工具（Forge / Review / Dashboard 共用）：
@@ -17,6 +18,21 @@ export const RESEARCH_TYPE_ZH: Record<string, string> = {
   theory: '理论',
 };
 
+const RESEARCH_TYPE_EN: Record<string, string> = {
+  method: 'Method',
+  benchmark: 'Benchmark',
+  analysis: 'Analysis',
+  survey: 'Survey',
+  application: 'Application',
+  theory: 'Theory',
+};
+
+/** 研究类型标签（按当前语言，渲染处调用）。 */
+export function researchTypeLabel(type: string): string {
+  const zh = RESEARCH_TYPE_ZH[type];
+  return zh ? tr(zh, RESEARCH_TYPE_EN[type]) : type;
+}
+
 /** 深度徽标：草案 / 研究方案。 */
 export function DepthBadge({ depth }: { depth: IdeaDepth | undefined }) {
   if (!depth) return null;
@@ -29,7 +45,7 @@ export function DepthBadge({ depth }: { depth: IdeaDepth | undefined }) {
         color: proposal ? 'var(--violet-tx)' : 'var(--text-2)',
       }}
     >
-      {proposal ? '研究方案' : '草案'}
+      {proposal ? tr('研究方案', 'Proposal') : tr('草案', 'Sketch')}
     </span>
   );
 }
@@ -39,7 +55,7 @@ export function ResearchTypeBadge({ type }: { type: string | null | undefined })
   if (!type) return null;
   return (
     <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-      {RESEARCH_TYPE_ZH[type] ?? type}
+      {researchTypeLabel(type)}
     </span>
   );
 }
@@ -66,14 +82,14 @@ export function compositeOf(scores: IdeaScores | null | undefined): number | nul
 /** 四维 ScoreRing 组（候选卡用）。 */
 export function ScoreRingGroup({ scores, size = 38 }: { scores: IdeaScores | null; size?: number }) {
   if (!scores) {
-    return <span className="muted" style={{ fontSize: 12 }}>尚未打分 · not scored</span>;
+    return <span className="muted" style={{ fontSize: 12 }}>{tr('尚未打分', 'Not scored yet')}</span>;
   }
   return (
     <div className="row gap12 wrap">
       {SCORE_DIMS.map((d) => (
         <div key={d.key} className="col" style={{ alignItems: 'center', gap: 4 }}>
           <ScoreRing value={scores[d.key]} size={size} />
-          <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{d.zh}</span>
+          <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{tr(d.zh, d.en)}</span>
         </div>
       ))}
     </div>
@@ -105,7 +121,7 @@ export function MiniScoreBars({ scores }: { scores: IdeaScores | null }) {
         const v = scores[d.key];
         const color = v >= 7.5 ? 'var(--ok)' : v >= 6 ? 'var(--accent)' : 'var(--warn)';
         return (
-          <div key={d.key} style={{ flex: 1 }} title={`${d.zh} ${d.en}: ${v.toFixed(1)}`}>
+          <div key={d.key} style={{ flex: 1 }} title={`${tr(d.zh, d.en)}: ${v.toFixed(1)}`}>
             <div className="bar" style={{ height: 5 }}>
               <i style={{ width: `${Math.max(0, Math.min(100, v * 10))}%`, background: color }} />
             </div>

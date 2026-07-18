@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Icon } from './Icon';
+import { tr } from '../../lib/i18n';
 
 export interface AccordionSectionProps {
   /** 中文标题 */
@@ -46,9 +47,8 @@ export function AccordionSection({ title, en, open, onToggle, badge, children }:
         />
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={{ fontSize: 13.5, fontWeight: 650, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-            {title}
+            {tr(title, en)}
           </span>
-          {en && <span style={{ fontSize: 11.5, color: 'var(--text-4)', fontWeight: 400, marginLeft: 8 }}>{en}</span>}
         </span>
         {badge && (
           <span

@@ -13,6 +13,7 @@ import {
   type PaperDetail,
   type ReadingStatus,
 } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { NotesPanel } from './NotesPanel';
 import { HighlightsPanel } from './HighlightsPanel';
 import { PdfReader, type JumpTarget } from './PdfReader';
@@ -66,7 +67,7 @@ export function ReadingPage() {
       setPanel('highlights');
       invalidateHighlights();
     },
-    onError: (e) => toast(`划线失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('划线失败：', 'Highlight failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // 星标 / 阅读状态（乐观更新详情缓存，列表页缓存失效）
@@ -78,7 +79,7 @@ export function ReadingPage() {
       );
       if (paper) void queryClient.invalidateQueries({ queryKey: ['papers', paper.project_id] });
     },
-    onError: (e) => toast(`更新失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const onWikiLink = useCallback(
@@ -97,19 +98,19 @@ export function ReadingPage() {
   }, []);
 
   if (paperQuery.isLoading) {
-    return <div className="empty" style={{ marginTop: 120 }}>加载论文…</div>;
+    return <div className="empty" style={{ marginTop: 120 }}>{tr('加载论文…', 'Loading paper…')}</div>;
   }
   if (paperQuery.isError || !paper) {
     return (
       <div style={{ marginTop: 100 }}>
         <EmptyState
           icon="x"
-          title="打不开这篇论文"
-          desc="论文不存在、你不在这个研究方向里，或后端暂时不可用。"
+          title={tr('打不开这篇论文', 'Cannot open this paper')}
+          desc={tr('论文不存在、你不在这个研究方向里，或后端暂时不可用。', 'It does not exist, you are not in this research direction, or the backend is unavailable.')}
           action={
             <button className="btn btn-ghost" onClick={() => navigate('/wiki')}>
               <Icon name="book" size={14} />
-              回文献库
+              {tr('回文献库', 'Back to library')}
             </button>
           }
         />
@@ -126,7 +127,7 @@ export function ReadingPage() {
       <div className="row gap12" style={{ flexShrink: 0, marginBottom: 12 }}>
         <button className="btn btn-ghost sm" onClick={() => navigate(`/wiki?paper=${paper.id}`)}>
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
-          回文献库
+          {tr('回文献库', 'Back to library')}
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
@@ -143,12 +144,12 @@ export function ReadingPage() {
             {paper.title}
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 1 }}>
-            {paper.arxiv_id ?? paper.venue ?? '论文阅读 · Reading'}
+            {paper.arxiv_id ?? paper.venue ?? tr('论文阅读', 'Paper reading')}
           </div>
         </div>
         <button
           className="icon-btn"
-          title={starred ? '取消星标' : '加星标'}
+          title={starred ? tr('取消星标', 'Unstar') : tr('加星标', 'Star')}
           disabled={metaMutation.isPending}
           onClick={() => metaMutation.mutate({ starred: !starred })}
           style={{ color: starred ? 'var(--warn-tx)' : 'var(--text-3)' }}
@@ -156,7 +157,7 @@ export function ReadingPage() {
           <Icon name={starred ? 'starFill' : 'star'} size={17} />
         </button>
         <Segmented<ReadingStatus>
-          options={READING_STATUS.map((m) => ({ v: m.v, label: m.label }))}
+          options={READING_STATUS.map((m) => ({ v: m.v, label: tr(m.label, m.en) }))}
           value={readingStatus}
           onChange={(v) => metaMutation.mutate({ reading_status: v })}
         />
@@ -196,10 +197,10 @@ export function ReadingPage() {
           <div style={{ padding: '10px 14px 0', flexShrink: 0 }}>
             <Segmented<PanelTab>
               options={[
-                { v: 'highlights', label: `标注${highlights.length ? ` · ${highlights.length}` : ''}` },
-                { v: 'notes', label: `笔记${paper.note_count ? ` · ${paper.note_count}` : ''}` },
-                { v: 'chat', label: 'AI 伴读' },
-                { v: 'info', label: '信息' },
+                { v: 'highlights', label: `${tr('标注', 'Highlights')}${highlights.length ? ` · ${highlights.length}` : ''}` },
+                { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` · ${paper.note_count}` : ''}` },
+                { v: 'chat', label: tr('AI 伴读', 'AI chat') },
+                { v: 'info', label: tr('论文信息', 'Paper info') },
               ]}
               value={panel}
               onChange={setPanel}

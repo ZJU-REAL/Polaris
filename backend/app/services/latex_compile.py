@@ -12,10 +12,12 @@
 """
 
 import asyncio
+import io
 import json
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import time
 import uuid
@@ -31,7 +33,8 @@ from app.core.config import get_settings
 from app.models.experiment import Experiment
 from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.paper import Paper
-from app.services import crdt_rooms
+from app.services import crdt_rooms, manuscript_versions
+from app.services import manuscripts as manuscripts_service
 from app.services.citations import build_bibtex_for
 
 COMPILE_TIMEOUT_SECONDS = 120.0
@@ -235,9 +238,18 @@ def _safe_relpath(path: str) -> Path | None:
 
 
 async def assemble_workdir(
-    session: AsyncSession, manuscript: Manuscript, workdir: Path
+    session: AsyncSession,
+    manuscript: Manuscript,
+    workdir: Path,
+    *,
+    snapshot_label: str | None = None,
+    take_snapshots: bool = True,
 ) -> list[dict[str, Any]]:
-    """稿件文件（活跃 CRDT 房间以房间内容为准）+ references.bib + figures/。"""
+    """稿件文件（活跃 CRDT 房间以房间内容为准）+ references.bib + figures/。
+
+    take_snapshots=True 时可写文件同时存一份版本快照（origin=compile），调用方 commit；
+    导出等只读用途传 False，避免产生多余版本。
+    """
     rooms = crdt_rooms.get_crdt_rooms()
     stmt = select(ManuscriptFile).where(ManuscriptFile.manuscript_id == manuscript.id)
     files = (await session.execute(stmt)).scalars().all()
@@ -245,11 +257,26 @@ async def assemble_workdir(
         rel = _safe_relpath(file.path)
         if rel is None:
             continue
+        target = workdir / rel
+        if file.is_folder:
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        if file.is_binary:
+            # 二进制资源（图片/字体/PDF 等）：字节从磁盘拷入编译目录
+            data = manuscripts_service.read_binary_asset(manuscript.id, file.path)
+            if data is not None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+            continue
         await rooms.flush(file.id)  # 有活跃房间：取消防抖并立即快照
         content = rooms.room_content(file.id)
-        target = workdir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content if content is not None else file.content, encoding="utf-8")
+        text = content if content is not None else file.content
+        target.write_text(text, encoding="utf-8")
+        if take_snapshots and not file.readonly:
+            await manuscript_versions.snapshot_file(
+                session, file, origin="compile", label=snapshot_label, content=text
+            )
     (workdir / "references.bib").write_text(
         await build_references_bib(session, manuscript), encoding="utf-8"
     )
@@ -302,7 +329,11 @@ async def compile_manuscript(session: AsyncSession, manuscript: Manuscript) -> d
         out_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="polaris-tex-") as tmp:
             workdir = Path(tmp)
-            diagnostics.extend(await assemble_workdir(session, manuscript, workdir))
+            diagnostics.extend(
+                await assemble_workdir(
+                    session, manuscript, workdir, snapshot_label=f"编译 v{version}"
+                )
+            )
             run = await asyncio.to_thread(_run_tectonic, binary, workdir)
 
             log_file = workdir / "main.log"
@@ -373,3 +404,96 @@ def latest_ok_pdf(manuscript: Manuscript) -> Path | None:
         return None
     path = pdf_path(manuscript.id, int(latest.get("version") or 0))
     return path if path.is_file() else None
+
+
+# ---- arXiv 清洁包导出（源文件 + .bbl，剔除 aux/log/pdf 等编译副产物） ----
+
+# 打包时剔除的编译副产物后缀（.bbl 例外，arXiv 需要它且不一定跑 bibtex）
+_ARXIV_DROP_SUFFIXES = frozenset(
+    {
+        ".aux",
+        ".log",
+        ".out",
+        ".blg",
+        ".fls",
+        ".fdb_latexmk",
+        ".synctex",
+        ".toc",
+        ".lof",
+        ".lot",
+        ".bcf",
+        ".nav",
+        ".snm",
+        ".vrb",
+        ".pdf",
+        ".gz",  # synctex.gz 等
+        ".xml",  # .run.xml（biber）
+    }
+)
+
+
+def _find_workdir_main(workdir: Path) -> str | None:
+    """workdir 里的主 tex 文件名：main.tex 优先，否则含 \\documentclass 的 .tex。"""
+    if (workdir / MAIN_TEX).is_file():
+        return MAIN_TEX
+    for path in sorted(workdir.rglob("*.tex")):
+        try:
+            if "\\documentclass" in path.read_text(encoding="utf-8", errors="ignore"):
+                return path.relative_to(workdir).as_posix()
+        except OSError:
+            continue
+    return None
+
+
+async def build_arxiv_tarball(
+    session: AsyncSession, manuscript: Manuscript
+) -> tuple[bytes, list[str]]:
+    """组装 arXiv 提交用清洁 tar.gz（源文件 + references.bib + figures + .bbl），
+    剔除 aux/log/pdf 等。返回 (tar.gz 字节, 提示信息列表)。
+
+    为保证 .bbl 与当前源一致，导出时**新编一遍**（有 tectonic 时）以生成 .bbl；
+    无编译器则只打包源文件并提示。不产生版本快照、不改稿件状态。
+    """
+    notes: list[str] = []
+    buf = io.BytesIO()
+    with tempfile.TemporaryDirectory(prefix="polaris-arxiv-") as tmp:
+        workdir = Path(tmp)
+        # 只读组装（不打版本快照）
+        await assemble_workdir(session, manuscript, workdir, take_snapshots=False)
+
+        binary = _find_tectonic()
+        main_name = _find_workdir_main(workdir)
+        if binary is None:
+            notes.append(
+                "服务器未装编译器，未能生成 .bbl；如论文有参考文献，"
+                "请本地编译后把 .bbl 一并放入包内再提交 arXiv。"
+            )
+        elif main_name is None:
+            notes.append("未找到主 .tex 文件，未生成 .bbl。")
+        else:
+            run = await asyncio.to_thread(_run_tectonic_on, binary, workdir, main_name)
+            # 无参考文献时本就没有 .bbl（正常）；仅超时时提示
+            if run.timed_out and not (workdir / f"{Path(main_name).stem}.bbl").is_file():
+                notes.append("生成 .bbl 超时；包内可能缺少 .bbl。")
+
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for path in sorted(workdir.rglob("*")):
+                if not path.is_file() or path.suffix.lower() in _ARXIV_DROP_SUFFIXES:
+                    continue
+                tar.add(path, arcname=path.relative_to(workdir).as_posix())
+    return buf.getvalue(), notes
+
+
+def _run_tectonic_on(binary: str, workdir: Path, main_name: str) -> TectonicRun:
+    """对指定主文件跑一遍 tectonic（导出取 .bbl 用）。"""
+    try:
+        proc = subprocess.run(  # noqa: S603 — 固定二进制 + 受控参数
+            [binary, "--keep-logs", "--reruns", "3", main_name],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=COMPILE_TIMEOUT_SECONDS,
+        )
+        return TectonicRun(proc.returncode, proc.stdout, proc.stderr)
+    except subprocess.TimeoutExpired:
+        return TectonicRun(-1, "", "", timed_out=True)

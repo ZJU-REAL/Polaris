@@ -14,7 +14,16 @@ export type NotificationMessage =
   | { type: 'voyage.status'; voyage_id: string; status: string }
   | { type: 'review.message'; session_id: string; project_id?: string; message: ReviewMessageRead }
   | { type: 'idea.status'; idea_id: string; status: string }
-  | { type: 'experiment.status'; experiment_id: string; status: string };
+  | { type: 'experiment.status'; experiment_id: string; status: string }
+  | { type: 'manuscript.status'; manuscript_id: string; status: string }
+  | {
+      type: 'manuscript.ai_writing';
+      manuscript_id: string;
+      file_id: string | null;
+      section: string | null;
+      /** typing=正在撰写；revising=重写/精修；done=本节完成；compiling=编译中 */
+      phase: 'typing' | 'revising' | 'done' | 'compiling';
+    };
 
 const MAX_BACKOFF_MS = 30_000;
 

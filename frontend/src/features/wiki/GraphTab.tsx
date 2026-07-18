@@ -5,6 +5,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Segmented } from '../../components/ui/Segmented';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { api, type GraphData, type GraphEdge, type GraphNode, type GraphNodeType } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 import { categoryMeta, SearchInput } from './shared';
 
 /* ============================================================
@@ -28,10 +29,11 @@ interface SimNode extends GraphNode {
   color: string;
 }
 
-const TYPE_META: { v: GraphNodeType; label: string; cssVar: string }[] = [
-  { v: 'paper', label: '论文', cssVar: '--accent' },
-  { v: 'concept', label: '概念', cssVar: '--ok' },
-  { v: 'author', label: '作者', cssVar: '--warn' },
+// 模块级常量存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
+const TYPE_META: { v: GraphNodeType; zh: string; en: string; cssVar: string }[] = [
+  { v: 'paper', zh: '论文', en: 'Paper', cssVar: '--accent' },
+  { v: 'concept', zh: '概念', en: 'Concept', cssVar: '--ok' },
+  { v: 'author', zh: '作者', en: 'Author', cssVar: '--warn' },
 ];
 
 function cssColor(name: string, fallback: string): string {
@@ -421,7 +423,11 @@ function NetworkView({
                   return next;
                 })
               }
-              title={off ? `显示${t.label}节点` : `隐藏${t.label}节点`}
+              title={
+                off
+                  ? tr(`显示${t.zh}节点`, `Show ${t.en.toLowerCase()} nodes`)
+                  : tr(`隐藏${t.zh}节点`, `Hide ${t.en.toLowerCase()} nodes`)
+              }
             >
               <span
                 style={{
@@ -434,19 +440,23 @@ function NetworkView({
                   opacity: off ? 0.3 : 1,
                 }}
               />
-              {t.label} {counts[t.v]}
+              {tr(t.zh, t.en)} {counts[t.v]}
             </span>
           );
         })}
         <div style={{ width: 190 }}>
-          <SearchInput value={q} onChange={setQ} placeholder="搜索节点名称…" />
+          <SearchInput value={q} onChange={setQ} placeholder={tr('搜索节点名称…', 'Search nodes…')} />
         </div>
-        <button className="btn btn-ghost sm" onClick={() => (alphaRef.current = 1)} title="重新计算布局">
+        <button
+          className="btn btn-ghost sm"
+          onClick={() => (alphaRef.current = 1)}
+          title={tr('重新计算布局', 'Recompute the layout')}
+        >
           <Icon name="refresh" size={13} />
-          重新布局
+          {tr('重新布局', 'Re-layout')}
         </button>
         <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
-          拖拽平移 · 滚轮缩放 · 点节点看关联
+          {tr('拖拽平移 · 滚轮缩放 · 点节点看关联', 'Drag to pan · scroll to zoom · click a node for links')}
         </span>
       </div>
 
@@ -468,9 +478,14 @@ function NetworkView({
           <div className="card" style={{ position: 'absolute', left: 14, bottom: 14, padding: '8px 12px', maxWidth: 380, pointerEvents: 'none' }}>
             <div style={{ fontSize: 12.5, fontWeight: 650, lineHeight: 1.4 }}>{hovered.label}</div>
             <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
-              {TYPE_META.find((t) => t.v === hovered.type)?.label}
+              {(() => {
+                const t = TYPE_META.find((m) => m.v === hovered.type);
+                return t ? tr(t.zh, t.en) : '';
+              })()}
               {hovered.type === 'paper' && hovered.year ? ` · ${hovered.year}` : ''}
-              {hovered.type !== 'paper' ? ` · 关联 ${hovered.count ?? 1} 篇论文` : ''}
+              {hovered.type !== 'paper'
+                ? tr(` · 关联 ${hovered.count ?? 1} 篇论文`, ` · linked to ${hovered.count ?? 1} papers`)
+                : ''}
             </div>
           </div>
         )}
@@ -481,12 +496,17 @@ function NetworkView({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 650, lineHeight: 1.4 }}>{selected.label}</div>
                 <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
-                  {TYPE_META.find((t) => t.v === selected.type)?.label}
+                  {(() => {
+                    const t = TYPE_META.find((m) => m.v === selected.type);
+                    return t ? tr(t.zh, t.en) : '';
+                  })()}
                   {selected.type === 'paper' && selected.year ? ` · ${selected.year}` : ''}
                   {selected.type === 'paper' && typeof selected.relevance === 'number'
-                    ? ` · 相关度 ${(selected.relevance * 10).toFixed(1)}`
+                    ? ` · ${tr('相关度', 'relevance')} ${(selected.relevance * 10).toFixed(1)}`
                     : ''}
-                  {selected.type !== 'paper' ? ` · 关联 ${selected.count ?? 1} 篇论文` : ''}
+                  {selected.type !== 'paper'
+                    ? tr(` · 关联 ${selected.count ?? 1} 篇论文`, ` · linked to ${selected.count ?? 1} papers`)
+                    : ''}
                 </div>
               </div>
               <button className="icon-btn" style={{ width: 22, height: 22, border: 'none', background: 'transparent' }} onClick={() => setSelected(null)}>
@@ -500,13 +520,15 @@ function NetworkView({
                   onClick={() => (selected.type === 'paper' ? onOpenPaper(selected.id) : onOpenConcept(selected.id))}
                 >
                   <Icon name={selected.type === 'paper' ? 'book' : 'layers'} size={12} />
-                  打开{selected.type === 'paper' ? '论文' : '概念'}详情
+                  {selected.type === 'paper'
+                    ? tr('打开论文详情', 'Open paper detail')
+                    : tr('打开概念详情', 'Open concept detail')}
                 </button>
               )}
               {selected.type === 'concept' && (
                 <button className="btn btn-ghost sm" onClick={() => onFocusConcept(selected.id)}>
                   <Icon name="search" size={12} />
-                  只看这个子主题
+                  {tr('只看这个子主题', 'Focus on this subtopic')}
                 </button>
               )}
             </div>
@@ -585,15 +607,15 @@ function TimelineView({ model, onOpenPaper }: { model: GraphModel; onOpenPaper: 
   }, [model, granularity]);
 
   if (columns.length === 0) {
-    return <div className="empty" style={{ margin: 'auto' }}>当前筛选下没有论文</div>;
+    return <div className="empty" style={{ margin: 'auto' }}>{tr('当前筛选下没有论文', 'No papers under the current filter')}</div>;
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <div className="row gap8" style={{ padding: '10px 16px 0', flexShrink: 0 }}>
         <Segmented<TimelineGranularity>
           options={[
-            { v: 'month', label: '按月份' },
-            { v: 'year', label: '按年份' },
+            { v: 'month', label: tr('按月份', 'By month') },
+            { v: 'year', label: tr('按年份', 'By year') },
           ]}
           value={granularity}
           onChange={setGranularity}
@@ -607,8 +629,10 @@ function TimelineView({ model, onOpenPaper }: { model: GraphModel; onOpenPaper: 
               className="row gap8"
               style={{ paddingBottom: 8, marginBottom: 10, borderBottom: '2px solid var(--accent-soft-2)', flexShrink: 0 }}
             >
-              <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-text)' }}>{col.year}</span>
-              <span className="mono muted" style={{ fontSize: 10.5 }}>{col.papers.length} 篇</span>
+              <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent-text)' }}>
+                {col.year === '时间未知' ? tr('时间未知', 'Unknown date') : col.year}
+              </span>
+              <span className="mono muted" style={{ fontSize: 10.5 }}>{col.papers.length} {tr('篇', 'papers')}</span>
             </div>
             <div className="col scroll" style={{ gap: 8, overflowY: 'auto', minHeight: 0, paddingBottom: 8 }}>
               {col.papers.map((p) => (
@@ -851,16 +875,20 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
       <div className="row gap8 wrap" style={{ padding: '10px 16px 6px', flexShrink: 0 }}>
         <Segmented<TimelineGranularity>
           options={[
-            { v: 'month', label: '按月份' },
-            { v: 'year', label: '按年份' },
+            { v: 'month', label: tr('按月份', 'By month') },
+            { v: 'year', label: tr('按年份', 'By year') },
           ]}
           value={granularity}
           onChange={setGranularity}
         />
         <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
-          块高 = 当期关联论文数
-          {rest > 0 ? ` · 只画前 ${bands.length} 个概念（另 ${rest} 个未显示）` : ''}
-          {unknown > 0 ? ` · ${unknown} 篇缺发表时间未计入` : ''}
+          {tr('块高 = 当期关联论文数', 'Block height = papers linked in that period')}
+          {rest > 0
+            ? tr(` · 只画前 ${bands.length} 个概念（另 ${rest} 个未显示）`, ` · top ${bands.length} concepts shown (${rest} more hidden)`)
+            : ''}
+          {unknown > 0
+            ? tr(` · ${unknown} 篇缺发表时间未计入`, ` · ${unknown} papers without a publish date excluded`)
+            : ''}
         </span>
       </div>
       {enough && (
@@ -869,7 +897,7 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
             <span
               key={b.id}
               className="pill sm"
-              title="只看这个子主题"
+              title={tr('只看这个子主题', 'Focus on this subtopic')}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -891,7 +919,10 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
       <div ref={wrapRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         {!enough ? (
           <div className="empty" style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            编译并关联概念的论文还不够，暂时画不出趋势——至少需要覆盖两个时间点
+            {tr(
+              '编译并关联概念的论文还不够，暂时画不出趋势——至少需要覆盖两个时间点',
+              'Not enough compiled papers with concept links to draw trends — at least two time points are needed',
+            )}
           </div>
         ) : (
           geom && (
@@ -971,7 +1002,7 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
                     {truncate(hover.band.label, 26)}
                   </div>
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 2 }}>
-                    {periods[hover.ti]} · {hover.band.values[hover.ti]} 篇
+                    {periods[hover.ti]} · {hover.band.values[hover.ti]} {tr('篇', 'papers')}
                   </div>
                 </div>
               )}
@@ -1012,7 +1043,11 @@ function TopicsView({
   }, [model]);
 
   if (topics.list.length === 0 && topics.uncovered.length === 0) {
-    return <div className="empty" style={{ margin: 'auto' }}>当前筛选下没有可聚类的论文</div>;
+    return (
+      <div className="empty" style={{ margin: 'auto' }}>
+        {tr('当前筛选下没有可聚类的论文', 'No papers to cluster under the current filter')}
+      </div>
+    );
   }
   return (
     <div className="scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '14px 16px' }}>
@@ -1025,16 +1060,16 @@ function TopicsView({
                 <span
                   className="wikilink"
                   style={{ background: meta.bg, color: meta.c, height: 24, cursor: 'pointer' }}
-                  title="打开概念详情"
+                  title={tr('打开概念详情', 'Open concept detail')}
                   onClick={() => onOpenConcept(concept.id)}
                 >
                   {concept.label}
-                  <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{meta.zh}</span>
+                  <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{tr(meta.zh, meta.en)}</span>
                 </span>
-                <span className="mono muted" style={{ fontSize: 10.5 }}>{papers.length} 篇</span>
+                <span className="mono muted" style={{ fontSize: 10.5 }}>{papers.length} {tr('篇', 'papers')}</span>
                 <button className="btn btn-ghost sm" style={{ height: 22, fontSize: 10.5 }} onClick={() => onFocusConcept(concept.id)}>
                   <Icon name="search" size={11} />
-                  只看这个子主题
+                  {tr('只看这个子主题', 'Focus on this subtopic')}
                 </button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
@@ -1048,9 +1083,14 @@ function TopicsView({
         {topics.uncovered.length > 0 && (
           <div>
             <div className="row gap8" style={{ marginBottom: 8 }}>
-              <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>未归类</span>
+              <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                {tr('未归类', 'Uncategorized')}
+              </span>
               <span className="mono muted" style={{ fontSize: 10.5 }}>
-                {topics.uncovered.length} 篇（尚未编译，暂无概念关联）
+                {tr(
+                  `${topics.uncovered.length} 篇（尚未编译，暂无概念关联）`,
+                  `${topics.uncovered.length} papers (not compiled yet, no concept links)`,
+                )}
               </span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
@@ -1098,11 +1138,16 @@ export function GraphTab({ pid, onOpenPaper, onOpenConcept }: GraphTabProps) {
       .slice(0, 60);
   }, [data]);
 
-  if (isLoading) return <div className="empty" style={{ margin: 'auto' }}>正在构建图谱…</div>;
+  if (isLoading) return <div className="empty" style={{ margin: 'auto' }}>{tr('正在构建图谱…', 'Building the graph…')}</div>;
   if (isError || !data) {
     return (
       <div style={{ margin: 'auto' }}>
-        <EmptyState compact icon="x" title="无法加载图谱" desc="后端不可用或接口尚未就绪，稍后重试。" />
+        <EmptyState
+          compact
+          icon="x"
+          title={tr('无法加载图谱', 'Failed to load graph')}
+          desc={tr('后端不可用或接口尚未就绪，稍后重试。', 'Backend unavailable or API not ready — try again later.')}
+        />
       </div>
     );
   }
@@ -1112,8 +1157,11 @@ export function GraphTab({ pid, onOpenPaper, onOpenConcept }: GraphTabProps) {
         <EmptyState
           compact
           icon="layers"
-          title="还没有可展示的网络"
-          desc="先运行初始建库让论文通过筛选并完成编译，图谱会自动把论文、作者、概念连成网络。"
+          title={tr('还没有可展示的网络', 'No network to show yet')}
+          desc={tr(
+            '先运行初始建库让论文通过筛选并完成编译，图谱会自动把论文、作者、概念连成网络。',
+            'Run the initial library build so papers get screened and compiled — the graph then links papers, authors, and concepts automatically.',
+          )}
         />
       </div>
     );
@@ -1127,23 +1175,23 @@ export function GraphTab({ pid, onOpenPaper, onOpenConcept }: GraphTabProps) {
       <div className="row gap8 wrap" style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)' }}>
         <Segmented<GraphView>
           options={[
-            { v: 'network', label: '网络' },
-            { v: 'timeline', label: '时间线' },
-            { v: 'trends', label: '趋势' },
-            { v: 'topics', label: '主题' },
+            { v: 'network', label: tr('网络', 'Network') },
+            { v: 'timeline', label: tr('时间线', 'Timeline') },
+            { v: 'trends', label: tr('趋势', 'Trends') },
+            { v: 'topics', label: tr('主题', 'Topics') },
           ]}
           value={view}
           onChange={setView}
         />
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 6 }}>子主题</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 6 }}>{tr('子主题', 'Subtopic')}</span>
         <select
           className="input"
           style={{ height: 28, fontSize: 12, maxWidth: 220, padding: '0 8px' }}
           value={focusConceptId}
           onChange={(e) => setFocusConceptId(e.target.value)}
-          title="选一个概念，只看它牵出的论文子图"
+          title={tr('选一个概念，只看它牵出的论文子图', 'Pick a concept to see only the papers it links to')}
         >
-          <option value="">全部主题</option>
+          <option value="">{tr('全部主题', 'All topics')}</option>
           {conceptOptions.map((c) => (
             <option key={c.id} value={c.id}>
               {c.label}（{c.count ?? 0}）
@@ -1156,8 +1204,11 @@ export function GraphTab({ pid, onOpenPaper, onOpenConcept }: GraphTabProps) {
           </span>
         )}
         <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
-          {data.truncated ? '论文较多，已按相关度展示前一批 · ' : ''}
-          {model?.papers.length ?? 0} 篇论文 · {model?.concepts.length ?? 0} 个概念
+          {data.truncated ? tr('论文较多，已按相关度展示前一批 · ', 'Large library — showing the top batch by relevance · ') : ''}
+          {tr(
+            `${model?.papers.length ?? 0} 篇论文 · ${model?.concepts.length ?? 0} 个概念`,
+            `${model?.papers.length ?? 0} papers · ${model?.concepts.length ?? 0} concepts`,
+          )}
         </span>
       </div>
 

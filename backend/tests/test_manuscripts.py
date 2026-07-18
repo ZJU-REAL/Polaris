@@ -114,10 +114,13 @@ async def test_templates_endpoint(client):
     _, headers = await _setup_project(client)
     resp = await client.get("/api/manuscripts/templates", headers=headers)
     assert resp.status_code == 200
-    templates = {t["key"]: t for t in resp.json()}
-    assert set(templates) == {"neurips2026", "iclr2026", "acl"}
+    templates = {t["id"]: t for t in resp.json()}
+    # 内置三个（id=key，source=builtin）恒在
+    assert {"neurips2026", "iclr2026", "acl"} <= set(templates)
     assert templates["neurips2026"]["page_limit"] == 9
     assert templates["neurips2026"]["unofficial"] is True
+    assert templates["neurips2026"]["source"] == "builtin"
+    assert templates["neurips2026"]["downloadable"] is False
     assert "introduction" in templates["acl"]["sections"]
 
 

@@ -19,6 +19,13 @@
 - `POST /manuscripts/{id}/files` `{path, content?}` → 201；`DELETE /manuscripts/{id}/files/{fid}`；`PATCH` `{path}` 重命名
 - 模板样式文件（.sty/.cls/.bst）标记只读：`files[].readonly: true`，不可改删
 
+### 2b. 文件版本历史
+
+- 自动打点（同文件与上一份内容相同则跳过；每文件上限 50，删最旧）：AI 分节写入前（origin=`pre_ai`）、每次编译当刻（`compile`，label=`编译 vN`）、恢复前备份（`pre_restore`）
+- `GET /manuscripts/{id}/files/{fid}/versions` → `[{id, seq, origin, label, size, created_by, created_at}]`（新在前）
+- `GET .../versions/{vid}` → 上述元数据 + `content`
+- `POST .../versions/{vid}/restore` → 先把当前内容备份为 pre_restore 快照，再整文件替换（有活跃 CRDT 房间经 Y 事务，协同者实时可见）；readonly 文件 409 `FILE_READONLY`，版本不存在 404 `VERSION_NOT_FOUND`
+
 ## 3. fact-pack（防幻觉事实源）
 
 ```json
@@ -32,7 +39,8 @@
 }
 ```
 
-- `POST /manuscripts/{id}/fact-pack/refresh` → 重新从 experiment+文献库组装（figures 取实验图表；citations 取项目库 status in compiled/included 的全部论文，bibkey 用 citations.py 规则）
+- `POST /manuscripts/{id}/fact-pack/refresh` → 重新从 experiment+文献库组装（figures 取实验图表；citations 取项目库 status in compiled/included 的全部论文，bibkey 用 citations.py 规则）；重建时保留 `revision_notes`（评审修订说明）
+- AI 起草（`POST /draft`）前后端**自动**重建 fact-pack，库/实验更新后无需手动刷新
 - 编译时自动生成 `references.bib`（citations.py build_bibtex）与 `figures/` 目录（实验图 PDF 复制），均为只读虚拟文件
 
 ## 4. 编译
@@ -47,8 +55,22 @@
 - `POST /manuscripts/{id}/draft` `{sections?: null|["introduction",...], notes?: str}` → `VoyageRead`（kind=`paper_writing`，同 manuscript 互斥 409）
 - 管线（stage=writing）：分节固定顺序 Intro→Method→Experimental Setup→Results→Conclusion→Abstract→（编译）→Related Work（检索文献库+S2 命中集内选引）→ 终编译，全文编译 ok 为完成条件
 - 每节输出静态校验（违规重写 ≤2）：`\cite{k}` 必须∈fact_pack.citations；`\includegraphics` 只能引用 fact_pack.figures 的 fig_id；正文数字（\d+\.?\d*% 与小数）必须能在 metrics 表内找到（±0.01 容差）或在白名单（年份/章节号等启发式豁免）
-- 每节一轮 self-reflection 精修；写入对应 ManuscriptFile **经 CRDT 事务**（协同者实时可见），无房间时直接写库
-- status 流转：draft→writing→compiled
+- 重写用尽仍违规**不判整单失败**：降级写入最后一稿并在节顶加 TODO 注释（step 结果含 `needs_review`/`violations`），记 Activity `manuscript.section_needs_review`，继续写后续节
+- 每节一轮 self-reflection 精修；权威落库经 `apply_ai_edit`（worker 无活跃房间直接写库 + 版本快照）
+- status 流转：draft→writing→compiled；流转推 WS `manuscript.status`（前端靠它实时刷新，仅留 30s 慢轮询兜底）
+
+### 5a. 流式直播（AI 光标实时撰写）
+
+- worker 与 API 是独立容器，CRDT 房间只在 API 进程。撰写时 worker 把 LLM 增量按分节发布到 redis `crdt:stream`（`{op: open|delta|replace, file_id, section, text}`）；API 进程的 `CRDTStreamSubscriber`（随 lifespan 启停）订阅后写进**活跃房间**的分节区间 → 连接中的编辑器逐字看到 AI「打字」。无活跃房间时 no-op（worker 的 DB 写为准）
+- 房间写入维持「正文末尾恒有一个换行」不变式：`open` 清空占位、`delta` 插到末换行前、`replace` 整节规范化覆盖（收尾/重写/精修对齐，房间与 DB 收敛到同一节正文）
+- 撰写相位经 `ctx.notify` 推 WS `manuscript.ai_writing {manuscript_id, file_id, section, phase}`，`phase ∈ typing|revising|done|compiling`。前端据此在编辑器画「✨ AI」光标（脉动竖条 + 标签 + 当前小节整行高亮 + 自动滚动跟随），并在顶栏显示状态条；跨文件时给「到 X 看 AI 撰写」跳转。`done` 或 `status!=writing` 时收起
+- 直播为**尽力而为**：redis 不可达或无人观看时静默降级，不影响起草与权威落库
+
+### 5b. 内联 AI 写作辅助（SSE）
+
+- `POST /manuscripts/{id}/assist` `{mode: polish|rewrite|continue, text?, instruction?, before?, after?}` → SSE 流：`delta {text}`* → `warnings {items}`?（越界 \cite/\includegraphics 提示，不阻断）→ `done {usage}`；异常转 `error {detail}` 后关流；15s 心跳注释
+- 校验：polish/rewrite 需 `text`（422 `ASSIST_TEXT_REQUIRED`）；rewrite 需 `instruction`；continue 需 `before`
+- stage=`writing`；prompt 注入事实包速览（citations bibkey / metrics / figures），结果由人审后应用（替换选区或插入光标处），不强制重写
 
 ## 6. 协同编辑（CRDT）
 
@@ -73,3 +95,33 @@
 - 后端：模板展开/fact-pack 组装/编译诊断解析（真实 tectonic 日志 fixture）/静态校验三类违规拒绝/写作 voyage 分节顺序与 Related Work 延后（fake LLM 桩）/CRDT 快照落库（pycrdt 直连房间写入→防抖后库内容一致）/submit 前置
 - tectonic 不可用环境（本地 venv 测试）：编译走 subprocess mock；真实编译在 docker 验证
 - 前端：tsc/build；协同编辑真机双窗口验证
+
+---
+
+## 10. 模板库 / 文件管理器 / arXiv 导出 / 协作者（Overleaf-like 增强，本分支新增）
+
+### 10.1 模板库（DB 化）
+统一 `TemplateInfo{id, name, description, source(builtin|seeded|uploaded), scope(global|project), project_id, engine, page_limit, sections[], unofficial, downloadable, file_count}`；`id` 内置=key、库内=uuid，创建稿件时作为 `template` 传回。
+- `GET /manuscripts/templates?project_id=` — 内置 + 全平台 + 该方向私有上传模板
+- `POST /manuscripts/templates`（multipart：file=zip, name, description?, engine?, page_limit?, project_id?）→ 201 TemplateInfo。给 project_id=项目私有（需成员）；否则全平台（需平台 admin，否则 403 ADMIN_REQUIRED_FOR_GLOBAL）。zip 无 .tex → 422
+- `GET /manuscripts/templates/{id}/download` → zip；`DELETE /manuscripts/templates/{id}`（创建者/项目管理者/admin）
+- `POST /manuscripts/templates/seed`（仅 admin）→ 拉取官方模板（zjuthesis/ACL/ICLR/NeurIPS2026/ICML2026），幂等，返回逐条 seeded|skipped|failed
+- 实现：库内模板文件落 `data_dir/templates/<id>/files/`（二进制安全）；官方模板通常无 `% POLARIS_SECTION` 标记 → AI 分节起草降级（用内联 AI/手写）
+
+### 10.2 文件管理器（文件夹 + 上传 + 二进制）
+`ManuscriptFileBrief` 增 `is_binary`/`is_folder`。二进制字节落 `data_dir/manuscripts/<id>/assets/<path>`，`content` 为空、只读。
+- `POST /manuscripts/{id}/folders` `{path}` → 文件夹占位（删除时级联删该目录下文件）
+- `POST /manuscripts/{id}/files/upload`（multipart：file, path?）→ 文本入 content（可编辑），二进制落盘（只读）
+- `GET /manuscripts/{id}/files/{fid}/raw` → 二进制原始字节（图片/PDF 预览、下载）
+- 编译组装（assemble_workdir）会把二进制资源与文件夹一并写入编译目录；`figures/` 仍为实验图保留前缀
+
+### 10.3 arXiv 清洁包导出
+- `GET /manuscripts/{id}/export/arxiv` → tar.gz（源文件 + references.bib + figures + **.bbl**，剔除 aux/log/pdf/out/blg/synctex）。导出时**重编一遍**以生成与当前源一致的 .bbl；提示放响应头 `X-Export-Notes`
+
+### 10.4 协作者 / 共享编辑链接
+稿件权限 = 所属研究方向成员；协作操作落到项目。
+- `GET /collaborators/search?q=` → `[{id,email,display_name}]`（注意不用 /users/search，会被 fastapi-users /users/{id} 抢占）
+- `GET /manuscripts/{id}/collaborators` → `[{user_id,email,display_name,role,is_owner}]`
+- `POST /manuscripts/{id}/collaborators` `{user_id, role?}` → 更新后列表（需 owner/admin；用户不存在 404）
+- `DELETE /manuscripts/{id}/collaborators/{user_id}`（需 owner/admin；不能删 owner → 409）
+- `POST /manuscripts/{id}/share-link` `{expires_days?=14, max_uses?}` → `{token, join_path:/join/{token}, expires_at, max_uses}`；复用研究方向邀请，平台用户打开 `/join/{token}` 登录加入即获协同编辑权（只读匿名链接暂不支持）

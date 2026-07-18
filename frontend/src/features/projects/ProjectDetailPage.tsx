@@ -9,6 +9,7 @@ import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectDefinition, type ProjectRead } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    /projects/:id — 方向详情：definition 各节卡片化展示 + 就地编辑
@@ -27,7 +28,7 @@ function SectionCard({ icon, zh, en, action, children }: {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <span className="section-h">
           <Icon name={icon} size={15} style={{ color: 'var(--accent)' }} />
-          {zh} <span className="en-label" style={{ fontSize: 11 }}>{en}</span>
+          {tr(zh, en)}
         </span>
         {action}
       </div>
@@ -40,7 +41,7 @@ function EditButton({ editing, onClick }: { editing: boolean; onClick: () => voi
   return (
     <button className="btn btn-soft sm" onClick={onClick}>
       <Icon name={editing ? 'x' : 'pen'} size={12} />
-      {editing ? '取消' : '编辑'}
+      {editing ? tr('取消', 'Cancel') : tr('编辑', 'Edit')}
     </button>
   );
 }
@@ -70,9 +71,9 @@ function EditableText({ value, placeholder, onSave, saving }: {
       <div className="row gap8">
         <button className="btn btn-primary sm" disabled={saving}
           onClick={() => { onSave(draft.trim()); setEditing(false); }}>
-          保存
+          {tr('保存', 'Save')}
         </button>
-        <button className="btn btn-ghost sm" onClick={() => setEditing(false)}>取消</button>
+        <button className="btn btn-ghost sm" onClick={() => setEditing(false)}>{tr('取消', 'Cancel')}</button>
       </div>
     </div>
   );
@@ -108,26 +109,26 @@ function EditableList({ items, placeholder, onSave, saving }: {
   return (
     <div className="col gap8">
       <textarea className="textarea" rows={Math.max(4, items.length + 1)} value={draft}
-        onChange={(e) => setDraft(e.target.value)} placeholder="一行一条" />
-      <div className="field-hint">一行一条</div>
+        onChange={(e) => setDraft(e.target.value)} placeholder={tr('一行一条', 'One item per line')} />
+      <div className="field-hint">{tr('一行一条', 'One item per line')}</div>
       <div className="row gap8">
         <button className="btn btn-primary sm" disabled={saving}
           onClick={() => {
             onSave(draft.split('\n').map((x) => x.trim()).filter(Boolean));
             setEditing(false);
           }}>
-          保存
+          {tr('保存', 'Save')}
         </button>
-        <button className="btn btn-ghost sm" onClick={() => setEditing(false)}>取消</button>
+        <button className="btn btn-ghost sm" onClick={() => setEditing(false)}>{tr('取消', 'Cancel')}</button>
       </div>
     </div>
   );
 }
 
 const CADENCES = [
-  { v: 'daily', label: '每日 daily' },
-  { v: 'weekly', label: '每周 weekly' },
-  { v: 'manual', label: '手动 manual' },
+  { v: 'daily', zh: '每日', en: 'Daily' },
+  { v: 'weekly', zh: '每周', en: 'Weekly' },
+  { v: 'manual', zh: '手动', en: 'Manual' },
 ] as const;
 type Cadence = (typeof CADENCES)[number]['v'];
 
@@ -142,7 +143,7 @@ export function ProjectDetailPage() {
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteProject(id),
     onSuccess: () => {
-      toast('研究方向已删除', 'ok');
+      toast(tr('研究方向已删除', 'Research direction deleted'), 'ok');
       setDeleteOpen(false);
       if (currentProjectId === id) setCurrentProjectId(null);
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -150,7 +151,7 @@ export function ProjectDetailPage() {
     },
     onError: (err) => {
       const forbidden = err instanceof ApiError && err.status === 403;
-      toast(forbidden ? '只有方向创建者或管理员可以删除' : `删除失败：${err instanceof Error ? err.message : String(err)}`, 'error');
+      toast(forbidden ? tr('只有方向创建者或管理员可以删除', 'Only the direction owner or an admin can delete it') : `${tr('删除失败：', 'Delete failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error');
     },
   });
 
@@ -166,9 +167,9 @@ export function ProjectDetailPage() {
     onSuccess: (updated: ProjectRead) => {
       queryClient.setQueryData(['project', id], updated);
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
-      toast('已保存', 'ok');
+      toast(tr('已保存', 'Saved'), 'ok');
     },
-    onError: (err) => toast(`保存失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('保存失败：', 'Save failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   // —— 成员 ——
@@ -177,11 +178,11 @@ export function ProjectDetailPage() {
   const addMemberMutation = useMutation({
     mutationFn: () => api.addProjectMember(id, { email: memberEmail.trim(), role: memberRole }),
     onSuccess: () => {
-      toast('成员已添加', 'ok');
+      toast(tr('成员已添加', 'Member added'), 'ok');
       setMemberEmail('');
       void queryClient.invalidateQueries({ queryKey: ['project', id] });
     },
-    onError: (err) => toast(`添加失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('添加失败：', 'Failed to add: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
   // —— 邀请链接 ——
@@ -193,20 +194,20 @@ export function ProjectDetailPage() {
   const createInviteMutation = useMutation({
     mutationFn: () => api.createInvite(id, { expires_days: 7 }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['invites', id] }),
-    onError: (err) => toast(`生成失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('生成失败：', 'Failed to create: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const revokeInviteMutation = useMutation({
     mutationFn: (inviteId: string) => api.revokeInvite(id, inviteId),
     onSuccess: () => {
-      toast('邀请链接已撤销', 'ok');
+      toast(tr('邀请链接已撤销', 'Invite link revoked'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['invites', id] });
     },
-    onError: (err) => toast(`撤销失败：${err instanceof Error ? err.message : String(err)}`, 'error'),
+    onError: (err) => toast(`${tr('撤销失败：', 'Failed to revoke: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const copyInvite = (token: string) => {
     void navigator.clipboard.writeText(`${window.location.origin}/join/${token}`).then(
-      () => toast('邀请链接已复制', 'ok'),
-      () => toast('复制失败，请手动复制', 'error'),
+      () => toast(tr('邀请链接已复制', 'Invite link copied'), 'ok'),
+      () => toast(tr('复制失败，请手动复制', 'Copy failed — please copy manually'), 'error'),
     );
   };
 
@@ -217,7 +218,7 @@ export function ProjectDetailPage() {
   if (isLoading) {
     return (
       <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>加载中…</div>
+        <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>
       </div>
     );
   }
@@ -227,14 +228,14 @@ export function ProjectDetailPage() {
       <div className="page fadeup">
         <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
           <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
-            {notFound ? '方向不存在' : '无法加载方向详情'}
+            {notFound ? tr('方向不存在', 'Direction not found') : tr('无法加载方向详情', 'Failed to load direction detail')}
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 18 }}>
-            {error instanceof Error ? error.message : '后端不可用，请稍后重试'}
+            {error instanceof Error ? error.message : tr('后端不可用，请稍后重试', 'Backend unavailable — try again later')}
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
-            <button className="btn btn-soft" onClick={() => void refetch()}>重试 retry</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/')}>返回总览</button>
+            <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate('/')}>{tr('返回总览', 'Back to dashboard')}</button>
           </div>
         </div>
       </div>
@@ -265,28 +266,28 @@ export function ProjectDetailPage() {
                   if (nameDraft.trim()) patchMutation.mutate({ name: nameDraft.trim() });
                   setEditingName(false);
                 }}>
-                保存
+                {tr('保存', 'Save')}
               </button>
-              <button className="btn btn-ghost sm" onClick={() => setEditingName(false)}>取消</button>
+              <button className="btn btn-ghost sm" onClick={() => setEditingName(false)}>{tr('取消', 'Cancel')}</button>
             </div>
           ) : (
             <div className="row gap10" style={{ marginTop: 6 }}>
               <h1 className="h-title" style={{ margin: 0 }}>{project.name}</h1>
               <button className="icon-btn" style={{ width: 26, height: 26, border: 'none', background: 'transparent' }}
-                title="编辑名称" onClick={() => { setNameDraft(project.name); setEditingName(true); }}>
+                title={tr('编辑名称', 'Edit name')} onClick={() => { setNameDraft(project.name); setEditingName(true); }}>
                 <Icon name="pen" size={14} />
               </button>
             </div>
           )}
           <div className="row gap8" style={{ marginTop: 10 }}>
             {project.status && <StatusPill status={project.status} sm />}
-            <span className="mono muted" style={{ fontSize: 11 }}>创建于 {fmtTime(project.created_at)}</span>
+            <span className="mono muted" style={{ fontSize: 11 }}>{tr('创建于', 'Created')} {fmtTime(project.created_at)}</span>
           </div>
         </div>
         <div className="row gap8">
           <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
             <Icon name="compass" size={14} />
-            查看任务
+            {tr('查看任务', 'View tasks')}
           </button>
           <button
             className="btn btn-ghost"
@@ -294,7 +295,7 @@ export function ProjectDetailPage() {
             onClick={() => setDeleteOpen(true)}
           >
             <Icon name="x" size={13} />
-            删除方向
+            {tr('删除方向', 'Delete direction')}
           </button>
         </div>
       </div>
@@ -303,13 +304,13 @@ export function ProjectDetailPage() {
       <Modal
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}
-        title="删除研究方向"
+        title={tr('删除研究方向', 'Delete research direction')}
         sub={project.name}
         width={440}
         footer={
           <>
             <button className="btn btn-ghost sm" onClick={() => setDeleteOpen(false)}>
-              取消
+              {tr('取消', 'Cancel')}
             </button>
             <button
               className="btn btn-primary sm"
@@ -317,21 +318,20 @@ export function ProjectDetailPage() {
               disabled={deleteMutation.isPending}
               onClick={() => deleteMutation.mutate()}
             >
-              {deleteMutation.isPending ? '删除中…' : '确认删除'}
+              {deleteMutation.isPending ? tr('删除中…', 'Deleting…') : tr('确认删除', 'Confirm delete')}
             </button>
           </>
         }
       >
         <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-2)' }}>
-          删除后，该方向下的<b>论文库、概念库、笔记、AI 任务记录、想法与实验</b>都会一并删除，
-          且<b>无法恢复</b>。确定要删除 “{project.name}” 吗？
+          {tr('删除后，该方向下的', 'Deleting this direction also removes its ')}<b>{tr('论文库、概念库、笔记、AI 任务记录、想法与实验', 'paper library, concepts, notes, AI task history, ideas and experiments')}</b>{tr('都会一并删除，且', ' — and this ')}<b>{tr('无法恢复', 'cannot be undone')}</b>{tr('。确定要删除 “', '. Delete “')}{project.name}{tr('” 吗？', '”?')}
         </div>
       </Modal>
 
       <div className="col gap16">
         {/* 一句话定义 */}
         <SectionCard icon="sparkle" zh="方向定义" en="Statement">
-          <EditableText value={def.statement ?? ''} placeholder="尚未填写一句话定义"
+          <EditableText value={def.statement ?? ''} placeholder={tr('尚未填写一句话定义', 'No one-line statement yet')}
             onSave={(v) => patchDef({ statement: v })} saving={saving} />
         </SectionCard>
 
@@ -339,17 +339,17 @@ export function ProjectDetailPage() {
         <div className="row gap16" style={{ alignItems: 'stretch' }}>
           <div style={{ flex: 1.2, minWidth: 0 }}>
             <SectionCard icon="chart" zh="研究目标" en="Goals">
-              <EditableList items={def.goals ?? []} placeholder="尚未填写目标"
+              <EditableList items={def.goals ?? []} placeholder={tr('尚未填写目标', 'No goals yet')}
                 onSave={(items) => patchDef({ goals: items })} saving={saving} />
             </SectionCard>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <SectionCard icon="scale" zh="范围" en="Scope">
-              <div className="field-label" style={{ marginBottom: 6 }}>范围内 in-scope</div>
+              <div className="field-label" style={{ marginBottom: 6 }}>{tr('范围内', 'In scope')}</div>
               <EditableList items={def.in_scope ?? []} placeholder="—"
                 onSave={(items) => patchDef({ in_scope: items })} saving={saving} />
               <div className="hr" style={{ margin: '12px 0' }} />
-              <div className="field-label" style={{ marginBottom: 6 }}>范围外 out-of-scope</div>
+              <div className="field-label" style={{ marginBottom: 6 }}>{tr('范围外', 'Out of scope')}</div>
               <EditableList items={def.out_of_scope ?? []} placeholder="—"
                 onSave={(items) => patchDef({ out_of_scope: items })} saving={saving} />
             </SectionCard>
@@ -358,7 +358,7 @@ export function ProjectDetailPage() {
 
         {/* 研究问题 */}
         <SectionCard icon="bulb" zh="研究问题" en="Questions">
-          <EditableList items={def.questions ?? []} placeholder="尚未填写研究问题"
+          <EditableList items={def.questions ?? []} placeholder={tr('尚未填写研究问题', 'No research questions yet')}
             onSave={(items) => patchDef({ questions: items })} saving={saving} />
         </SectionCard>
 
@@ -368,9 +368,9 @@ export function ProjectDetailPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th style={{ width: 140 }}>维度</th>
-                  <th>打分标准</th>
-                  <th style={{ width: 70, textAlign: 'right' }}>权重</th>
+                  <th style={{ width: 140 }}>{tr('维度', 'Dimension')}</th>
+                  <th>{tr('打分标准', 'Criteria')}</th>
+                  <th style={{ width: 70, textAlign: 'right' }}>{tr('权重', 'Weight')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -384,7 +384,7 @@ export function ProjectDetailPage() {
               </tbody>
             </table>
           ) : (
-            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>尚未定义打分维度</div>
+            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>{tr('尚未定义打分维度', 'No scoring dimensions yet')}</div>
           )}
         </SectionCard>
 
@@ -409,7 +409,7 @@ export function ProjectDetailPage() {
               ))}
             </div>
           ) : (
-            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>尚未添加锚点论文</div>
+            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>{tr('尚未添加锚点论文', 'No anchor papers yet')}</div>
           )}
         </SectionCard>
 
@@ -417,7 +417,7 @@ export function ProjectDetailPage() {
         <SectionCard icon="search" zh="关键词" en="Keywords">
           <div className="col gap12">
             <div>
-              <div className="field-label" style={{ marginBottom: 6 }}>arXiv 分类</div>
+              <div className="field-label" style={{ marginBottom: 6 }}>{tr('arXiv 分类', 'arXiv categories')}</div>
               <div className="row gap6 wrap">
                 {kw.arxiv_categories?.length
                   ? kw.arxiv_categories.map((c) => <span key={c} className="tag mono">{c}</span>)
@@ -425,7 +425,7 @@ export function ProjectDetailPage() {
               </div>
             </div>
             <div>
-              <div className="field-label" style={{ marginBottom: 6 }}>include 词</div>
+              <div className="field-label" style={{ marginBottom: 6 }}>{tr('include 词', 'Include terms')}</div>
               <div className="row gap6 wrap">
                 {kw.include?.length
                   ? kw.include.map((c) => <span key={c} className="tag">{c}</span>)
@@ -434,13 +434,13 @@ export function ProjectDetailPage() {
             </div>
             {synonymEntries.length > 0 && (
               <div>
-                <div className="field-label" style={{ marginBottom: 6 }}>同义词映射</div>
+                <div className="field-label" style={{ marginBottom: 6 }}>{tr('同义词映射', 'Synonyms')}</div>
                 <div className="col gap6">
                   {synonymEntries.map(([term, syns]) => (
                     <div key={term} className="row gap8" style={{ fontSize: 12.5 }}>
                       <span className="tag">{term}</span>
                       <span style={{ color: 'var(--text-4)' }}>→</span>
-                      <span style={{ color: 'var(--text-2)' }}>{syns.join('，')}</span>
+                      <span style={{ color: 'var(--text-2)' }}>{syns.join(tr('，', ', '))}</span>
                     </div>
                   ))}
                 </div>
@@ -452,7 +452,7 @@ export function ProjectDetailPage() {
         {/* 节奏 */}
         <SectionCard icon="clock" zh="运行节奏" en="Cadence">
           <Segmented
-            options={CADENCES.map((c) => ({ v: c.v, label: c.label }))}
+            options={CADENCES.map((c) => ({ v: c.v, label: tr(c.zh, c.en) }))}
             value={(CADENCES.some((c) => c.v === def.cadence) ? def.cadence : 'daily') as Cadence}
             onChange={(v) => patchDef({ cadence: v })}
           />
@@ -475,11 +475,11 @@ export function ProjectDetailPage() {
                 </div>
               ))
             ) : (
-              <div style={{ fontSize: 13, color: 'var(--text-4)' }}>暂无成员信息</div>
+              <div style={{ fontSize: 13, color: 'var(--text-4)' }}>{tr('暂无成员信息', 'No member info yet')}</div>
             )}
           </div>
           <div className="row gap8">
-            <input className="input" style={{ flex: 1 }} placeholder="成员邮箱 email" type="email"
+            <input className="input" style={{ flex: 1 }} placeholder={tr('成员邮箱', 'Member email')} type="email"
               value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)} />
             <select className="input" style={{ width: 120 }} value={memberRole}
               onChange={(e) => setMemberRole(e.target.value as 'member' | 'owner')}>
@@ -490,26 +490,26 @@ export function ProjectDetailPage() {
               disabled={!memberEmail.trim() || addMemberMutation.isPending}
               onClick={() => addMemberMutation.mutate()}>
               <Icon name="plus" size={13} />
-              添加成员
+              {tr('添加成员', 'Add member')}
             </button>
           </div>
 
           {/* 邀请链接 */}
           <div style={{ marginTop: 18, borderTop: '0.5px solid var(--border)', paddingTop: 14 }}>
             <div className="row" style={{ marginBottom: 10 }}>
-              <span style={{ fontSize: 12.5, fontWeight: 650 }}>邀请链接</span>
-              <span style={{ fontSize: 11.5, color: 'var(--text-3)', marginLeft: 8 }}>已注册用户打开链接即可加入本方向</span>
+              <span style={{ fontSize: 12.5, fontWeight: 650 }}>{tr('邀请链接', 'Invite links')}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-3)', marginLeft: 8 }}>{tr('已注册用户打开链接即可加入本方向', 'Any registered user can join via the link')}</span>
               <button
                 className="btn btn-soft sm"
                 style={{ marginLeft: 'auto' }}
                 disabled={createInviteMutation.isPending}
                 onClick={() => createInviteMutation.mutate()}
               >
-                生成链接（7 天有效）
+                {tr('生成链接（7 天有效）', 'Create link (valid 7 days)')}
               </button>
             </div>
             {(invites ?? []).length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>还没有有效的邀请链接</div>
+              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{tr('还没有有效的邀请链接', 'No active invite links yet')}</div>
             ) : (
               <div className="col gap6">
                 {invites!.map((inv) => (
@@ -518,11 +518,14 @@ export function ProjectDetailPage() {
                       {`${window.location.origin}/join/${inv.token}`}
                     </span>
                     <span style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
-                      已用 {inv.used_count}{inv.max_uses != null ? `/${inv.max_uses}` : ''} 次
-                      {inv.expires_at ? ` · ${fmtTime(inv.expires_at)} 过期` : ''}
+                      {tr(
+                        `已用 ${inv.used_count}${inv.max_uses != null ? `/${inv.max_uses}` : ''} 次`,
+                        `used ${inv.used_count}${inv.max_uses != null ? `/${inv.max_uses}` : ''} times`,
+                      )}
+                      {inv.expires_at ? tr(` · ${fmtTime(inv.expires_at)} 过期`, ` · expires ${fmtTime(inv.expires_at)}`) : ''}
                     </span>
-                    <button className="btn btn-ghost sm" onClick={() => copyInvite(inv.token)}>复制</button>
-                    <button className="btn btn-ghost sm" onClick={() => revokeInviteMutation.mutate(inv.id)}>撤销</button>
+                    <button className="btn btn-ghost sm" onClick={() => copyInvite(inv.token)}>{tr('复制', 'Copy')}</button>
+                    <button className="btn btn-ghost sm" onClick={() => revokeInviteMutation.mutate(inv.id)}>{tr('撤销', 'Revoke')}</button>
                   </div>
                 ))}
               </div>

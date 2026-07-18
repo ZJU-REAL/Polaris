@@ -5,6 +5,8 @@ import type { EditorView } from '@codemirror/view';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { PromptModal } from '../../components/ui/PromptModal';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
@@ -14,12 +16,17 @@ import {
   type ManuscriptFileMeta,
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
+import { tr } from '../../lib/i18n';
 import type { ProviderStatus } from '../../lib/yjs-provider';
-import { EditorPane, type PeerInfo } from './EditorPane';
+import { EditorPane, BinaryPreview, type PeerInfo } from './EditorPane';
 import { FileTree } from './FileTree';
 import { FactPackDrawer } from './FactPackDrawer';
 import { DraftModal } from './DraftModal';
-import { colorForUser, ruleText } from './shared';
+import { OutlinePanel } from './OutlinePanel';
+import { AssistPanel, type AssistMode } from './AssistPanel';
+import { HistoryModal } from './HistoryModal';
+import { CollaboratorsModal } from './CollaboratorsModal';
+import { colorForUser, ruleText, sectionText, type AiWritingState } from './shared';
 
 /* ============================================================
    /writer/:id — 论文编辑工作台（全屏三栏）：
@@ -63,8 +70,8 @@ function PdfPane({ msId, compile }: { msId: string; compile: CompileResult | nul
         <EmptyState
           compact
           icon="file"
-          title="还没有 PDF"
-          desc="写好后点右上角的编译按钮或按 ⌘S，编译成功的 PDF 会出现在这里。"
+          title={tr('还没有 PDF', 'No PDF yet')}
+          desc={tr('写好后点右上角的编译按钮或按 ⌘S，编译成功的 PDF 会出现在这里。', 'Click compile in the top bar or press ⌘S — a successful compile shows the PDF here.')}
         />
       </div>
     );
@@ -74,7 +81,7 @@ function PdfPane({ msId, compile }: { msId: string; compile: CompileResult | nul
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ textAlign: 'center' }}>
           <div className="pulse" style={{ width: 140, height: 190, margin: '0 auto 12px', borderRadius: 8, background: 'var(--surface-3)' }} />
-          <div className="muted" style={{ fontSize: 12 }}>正在加载 PDF…</div>
+          <div className="muted" style={{ fontSize: 12 }}>{tr('正在加载 PDF…', 'Loading PDF…')}</div>
         </div>
       </div>
     );
@@ -85,13 +92,13 @@ function PdfPane({ msId, compile }: { msId: string; compile: CompileResult | nul
         <EmptyState
           compact
           icon="file"
-          title="还没有编译成功的 PDF"
-          desc="最近一次编译没有产出 PDF，先按下方诊断把错误修掉，再编译一次。"
+          title={tr('还没有编译成功的 PDF', 'No successful PDF yet')}
+          desc={tr('最近一次编译没有产出 PDF，先按下方诊断把错误修掉，再编译一次。', 'The last compile produced no PDF. Fix the errors listed in the diagnostics below, then compile again.')}
         />
       </div>
     );
   }
-  return <iframe src={url} title="论文 PDF 预览" style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }} />;
+  return <iframe src={url} title={tr('论文 PDF 预览', 'Manuscript PDF preview')} style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }} />;
 }
 
 /* ---------------- 诊断面板 ---------------- */
@@ -103,7 +110,7 @@ function DiagRow({ d, onClick }: { d: DiagnosticItem; onClick: () => void }) {
       className="row gap8 writer-diag"
       onClick={onClick}
       style={{ padding: '6px 12px', cursor: 'pointer', alignItems: 'flex-start' }}
-      title="点击跳到对应文件行"
+      title={tr('点击跳到对应文件行', 'Click to jump to the file and line')}
     >
       <span
         style={{
@@ -154,6 +161,7 @@ interface WriterLayout {
   rightOpen: boolean;
   pdfOpen: boolean;
   diagOpen: boolean;
+  outlineOpen: boolean;
 }
 
 const LAYOUT_KEY = 'polaris-writer-layout';
@@ -165,6 +173,7 @@ const DEFAULT_LAYOUT: WriterLayout = {
   rightOpen: true,
   pdfOpen: true,
   diagOpen: true,
+  outlineOpen: true,
 };
 
 function loadLayout(): WriterLayout {
@@ -206,7 +215,7 @@ function Gutter({
       className={`panel-gutter ${horizontal ? 'h' : 'v'}${canDrag ? '' : ' no-drag'}${dragging ? ' dragging' : ''}`}
       onMouseDown={canDrag ? onMouseDown : undefined}
       onDoubleClick={collapsed ? undefined : onReset}
-      title={canDrag ? '拖动调整宽度，双击恢复默认' : undefined}
+      title={canDrag ? tr('拖动调整宽度，双击恢复默认', 'Drag to resize, double-click to reset') : undefined}
     >
       {onToggle && (
         <button
@@ -235,14 +244,22 @@ export function WriterEditorPage() {
     queryFn: () => api.getManuscript(id),
     enabled: !!id,
     retry: false,
-    // AI 起草进行中：10s 轮询状态（正文内容走 CRDT 实时可见）
-    refetchInterval: (q) => (q.state.data?.status === 'writing' ? 10_000 : false),
+    // 状态流转靠 WS manuscript.status 实时 invalidate（AppShell）；
+    // 起草中仅留 30s 慢轮询兜底（WS 断线时不至于卡住）
+    refetchInterval: (q) => (q.state.data?.status === 'writing' ? 30_000 : false),
   });
   const ms = detailQuery.data;
 
+  // AI 起草实时相位（AppShell 从 WS manuscript.ai_writing 写入缓存；无网络请求）
+  const { data: aiWriting } = useQuery<AiWritingState | null>({
+    queryKey: ['ai-writing', id],
+    enabled: false,
+    initialData: null,
+  });
+
   // —— 当前用户（awareness 用户名 + hash 颜色） ——
   const meQuery = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
-  const userName = meQuery.data?.display_name || meQuery.data?.email?.split('@')[0] || '我';
+  const userName = meQuery.data?.display_name || meQuery.data?.email?.split('@')[0] || tr('我', 'Me');
   const user = useMemo(() => ({ name: userName, color: colorForUser(userName) }), [userName]);
 
   // —— 当前文件 ——
@@ -253,42 +270,87 @@ export function WriterEditorPage() {
   useEffect(() => {
     if (!ms || ms.files.length === 0) return;
     if (currentFileId && ms.files.some((f) => f.id === currentFileId)) return;
+    const selectable = ms.files.filter((f) => !f.is_folder);
     const pick =
-      ms.files.find((f) => !f.readonly && /(^|\/)main\.tex$/.test(f.path)) ??
-      ms.files.find((f) => !f.readonly && f.path.endsWith('.tex')) ??
-      ms.files.find((f) => !f.readonly) ??
-      ms.files[0];
+      selectable.find((f) => !f.readonly && /(^|\/)main\.tex$/.test(f.path)) ??
+      selectable.find((f) => !f.readonly && f.path.endsWith('.tex')) ??
+      selectable.find((f) => !f.readonly && !f.is_binary) ??
+      selectable.find((f) => !f.readonly) ??
+      selectable[0];
     setCurrentFileId(pick?.id ?? null);
   }, [ms, currentFileId]);
 
-  // —— 协同连接状态 / 协作者 / 编辑器 view ——
+  // —— 协同连接状态 / 协作者 / 编辑器 view / 当前文件内容（大纲用） ——
   const [wsStatus, setWsStatus] = useState<ProviderStatus>('connecting');
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [view, setView] = useState<EditorView | null>(null);
+  const [docContent, setDocContent] = useState<string | null>(null);
   const handleStatus = useCallback((s: ProviderStatus) => setWsStatus(s), []);
   const handlePeers = useCallback((p: PeerInfo[]) => setPeers(p), []);
   const handleView = useCallback((v: EditorView | null) => setView(v), []);
+  const handleDocChange = useCallback((c: string) => setDocContent(c), []);
   useEffect(() => {
     setWsStatus('connecting');
     setPeers([]);
+    setDocContent(null);
   }, [currentFileId]);
+
+  // —— 事实包引文/图表插入到编辑器光标处 ——
+  const canInsert = !!view && !!currentFile && !currentFile.readonly && !currentFile.is_binary;
+  const insertSnippet = useCallback(
+    (text: string) => {
+      if (!view) return false;
+      const sel = view.state.selection.main;
+      view.dispatch({
+        changes: { from: sel.from, to: sel.to, insert: text },
+        selection: { anchor: sel.from + text.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+      return true;
+    },
+    [view],
+  );
+  function onInsertCite(bibkey: string) {
+    if (insertSnippet(`\\cite{${bibkey}}`)) toast(`已在光标处插入 \\cite{${bibkey}}`, 'ok');
+  }
+  // —— 内联 AI（润色/改写/续写）/ 版本历史 ——
+  const [assistMode, setAssistMode] = useState<AssistMode | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => {
+    setAssistMode(null);
+    setHistoryOpen(false);
+  }, [currentFileId]);
+
+  function onInsertFigure(figId: string, caption?: string | null) {
+    const snippet = [
+      '\\begin{figure}[t]',
+      '  \\centering',
+      `  \\includegraphics[width=\\linewidth]{figures/${figId}.pdf}`,
+      `  \\caption{${caption ?? '（补充图注）'}}`,
+      `  \\label{fig:${figId}}`,
+      '\\end{figure}',
+      '',
+    ].join('\n');
+    if (insertSnippet(snippet)) toast(`已在光标处插入图表 ${figId}`, 'ok');
+  }
 
   // —— 编译 ——
   const compileMutation = useMutation({
     mutationFn: () => api.compileManuscript(id),
     onSuccess: (res) => {
       if (res.status === 'ok') {
-        toast(`编译成功 · ${(res.duration_ms / 1000).toFixed(1)}s`, 'ok');
+        toast(`${tr('编译成功', 'Compile succeeded')} · ${(res.duration_ms / 1000).toFixed(1)}s`, 'ok');
       } else if (res.status === 'timeout') {
-        toast('编译超时（120 秒上限），试着精简文档后重试', 'error');
+        toast(tr('编译超时（120 秒上限），试着精简文档后重试', 'Compile timed out (120 s limit) — trim the document and retry'), 'error');
       } else {
         const errs = res.diagnostics.filter((d) => d.severity === 'error').length;
-        toast(`编译没通过（${errs} 个错误），看右下角诊断`, 'error');
+        toast(tr(`编译没通过（${errs} 个错误），看右下角诊断`, `Compile failed (${errs} errors) — see diagnostics at bottom right`), 'error');
       }
       void queryClient.invalidateQueries({ queryKey: ['manuscript', id] });
       void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
     },
-    onError: (e) => toast(`编译失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('编译失败：', 'Compile failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   // ⌘S 快捷键走 ref，避免编辑器因 mutation 对象变化而重建
   const compileRef = useRef<() => void>(() => {});
@@ -342,7 +404,7 @@ export function WriterEditorPage() {
       setCurrentFileId(target.id);
       setPendingJump({ fileId: target.id, line });
     } else {
-      toast(`稿件里没有找到文件 ${rawFile}`, 'info');
+      toast(tr(`稿件里没有找到文件 ${rawFile}`, `File ${rawFile} not found in this manuscript`), 'info');
     }
     setSearchParams(
       (prev) => {
@@ -361,7 +423,7 @@ export function WriterEditorPage() {
       ms.files.find((f) => norm(f.path) === norm(d.file)) ??
       ms.files.find((f) => norm(f.path).endsWith(`/${norm(d.file)}`));
     if (!target) {
-      toast(`稿件里没有找到文件 ${d.file}`, 'info');
+      toast(tr(`稿件里没有找到文件 ${d.file}`, `File ${d.file} not found in this manuscript`), 'info');
       return;
     }
     if (target.id === currentFileId && view) {
@@ -380,12 +442,12 @@ export function WriterEditorPage() {
       invalidateDetail();
       setCurrentFileId(f.id);
     },
-    onError: (e) => toast(`新建文件失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('新建文件失败：', 'Create file failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const renameFileMutation = useMutation({
     mutationFn: ({ fid, path }: { fid: string; path: string }) => api.renameManuscriptFile(id, fid, path),
     onSuccess: invalidateDetail,
-    onError: (e) => toast(`重命名失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('重命名失败：', 'Rename failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const deleteFileMutation = useMutation({
     mutationFn: (fid: string) => api.deleteManuscriptFile(id, fid),
@@ -393,51 +455,88 @@ export function WriterEditorPage() {
       if (fid === currentFileId) setCurrentFileId(null);
       invalidateDetail();
     },
-    onError: (e) => toast(`删除失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+  const createFolderMutation = useMutation({
+    mutationFn: (path: string) => api.createManuscriptFolder(id, path),
+    onSuccess: invalidateDetail,
+    onError: (e) => toast(`${tr('新建文件夹失败：', 'Create folder failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+  const uploadFileMutation = useMutation({
+    mutationFn: (file: File) => api.uploadManuscriptFile(id, file),
+    onSuccess: (f) => {
+      invalidateDetail();
+      setCurrentFileId(f.id);
+      toast(tr('已上传文件', 'File uploaded'), 'ok');
+    },
+    onError: (e) => toast(`${tr('上传失败：', 'Upload failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const fileOpsBusy =
-    createFileMutation.isPending || renameFileMutation.isPending || deleteFileMutation.isPending;
+    createFileMutation.isPending ||
+    renameFileMutation.isPending ||
+    deleteFileMutation.isPending ||
+    createFolderMutation.isPending ||
+    uploadFileMutation.isPending;
+
+  // —— arXiv 清洁包导出 ——
+  const exportArxivMutation = useMutation({
+    mutationFn: () => api.exportManuscriptArxiv(id),
+    onSuccess: ({ blob, notes }) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(ms?.title || 'manuscript').replace(/[/\\?%*:|"<>]/g, '_')}-arxiv.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      if (notes.length > 0) toast(`${tr('导出提示：', 'Export notes: ')}${notes.join('；')}`, 'info');
+      else toast(tr('已导出 arXiv 投稿包', 'arXiv package exported'), 'ok');
+    },
+    onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
 
   // —— 投稿 ——
   const submitMutation = useMutation({
     mutationFn: () => api.submitManuscript(id),
     onSuccess: () => {
-      toast('已提交投稿审批，批准后标记为已投稿', 'ok');
+      toast(tr('已提交投稿审批，批准后标记为已投稿', 'Submission approval requested — once approved, the manuscript is marked submitted'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['manuscript', id] });
       void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409 && e.message.includes('COMPILE_REQUIRED')) {
-        toast('要先编译成功一次才能投稿', 'error');
+        toast(tr('要先编译成功一次才能投稿', 'You need one successful compile before submitting'), 'error');
       } else {
-        toast(`投稿失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('投稿失败：', 'Submit failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   function onSubmit() {
     if (!compile || compile.status !== 'ok') {
-      toast('要先编译成功一次才能投稿', 'error');
+      toast(tr('要先编译成功一次才能投稿', 'You need one successful compile before submitting'), 'error');
       return;
     }
-    if (window.confirm('确认发起投稿？\n会创建一条论文投稿审批，人工批准后状态变为已投稿。')) {
-      submitMutation.mutate();
-    }
+    setSubmitConfirmOpen(true);
   }
 
   // —— 改标题 ——
+  const [titleEditOpen, setTitleEditOpen] = useState(false);
   const titleMutation = useMutation({
     mutationFn: (title: string) => api.patchManuscript(id, { title }),
     onSuccess: () => {
       invalidateDetail();
       void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
     },
-    onError: (e) => toast(`改标题失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('改标题失败：', 'Rename title failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   // —— 抽屉 / Modal ——
   const [factOpen, setFactOpen] = useState(false);
   const [draftOpen, setDraftOpen] = useState(false);
+  const [collabOpen, setCollabOpen] = useState(false);
 
   // —— 分栏布局：宽度/占比 + 展开状态，持久化到 localStorage ——
   const [layout, setLayout] = useState<WriterLayout>(loadLayout);
@@ -497,19 +596,19 @@ export function WriterEditorPage() {
   /* ---------------- 渲染 ---------------- */
 
   if (detailQuery.isLoading) {
-    return <div className="empty" style={{ marginTop: 120 }}>加载论文草稿…</div>;
+    return <div className="empty" style={{ marginTop: 120 }}>{tr('加载论文草稿…', 'Loading manuscript…')}</div>;
   }
   if (detailQuery.isError || !ms) {
     return (
       <div style={{ marginTop: 100 }}>
         <EmptyState
           icon="x"
-          title="打不开这篇论文草稿"
-          desc="草稿不存在、你不在这个研究方向里，或后端暂时不可用。"
+          title={tr('打不开这篇论文草稿', 'Cannot open this manuscript')}
+          desc={tr('草稿不存在、你不在这个研究方向里，或后端暂时不可用。', 'It does not exist, you are not in this research direction, or the backend is unavailable.')}
           action={
             <button className="btn btn-ghost" onClick={() => navigate('/writer')}>
               <Icon name="pen" size={14} />
-              回论文列表
+              {tr('回论文列表', 'Back to manuscripts')}
             </button>
           }
         />
@@ -518,7 +617,15 @@ export function WriterEditorPage() {
   }
 
   const isWriting = ms.status === 'writing';
-  const showDisconnect = !!currentFile && !currentFile.readonly && wsStatus === 'disconnected';
+  // AI 正在写当前文件的哪一节（给编辑器画光标，仅撰写/修订相位）；跨文件时只在状态条给跳转
+  const aiPenActive =
+    isWriting && (aiWriting?.phase === 'typing' || aiWriting?.phase === 'revising');
+  const aiTarget =
+    aiPenActive && aiWriting!.fileId === currentFileId && aiWriting!.section
+      ? { section: aiWriting!.section, phase: aiWriting!.phase as 'typing' | 'revising' }
+      : null;
+  const aiFile = aiWriting?.fileId ? ms.files.find((f) => f.id === aiWriting.fileId) : null;
+  const showDisconnect = !!currentFile && !currentFile.readonly && !currentFile.is_binary && wsStatus === 'disconnected';
   const errCount = compile?.diagnostics.filter((d) => d.severity === 'error').length ?? 0;
   const warnCount = compile?.diagnostics.filter((d) => d.severity === 'warning').length ?? 0;
 
@@ -536,7 +643,7 @@ export function WriterEditorPage() {
       >
         <button className="btn btn-ghost sm" onClick={() => navigate('/writer')}>
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
-          论文列表
+          {tr('论文列表', 'Manuscripts')}
         </button>
         <div className="row gap8" style={{ flex: 1, minWidth: 0 }}>
           <span
@@ -554,12 +661,9 @@ export function WriterEditorPage() {
           </span>
           <button
             className="writer-mini-btn"
-            title="改标题"
+            title={tr('改标题', 'Edit title')}
             disabled={titleMutation.isPending}
-            onClick={() => {
-              const next = window.prompt('论文标题', ms.title);
-              if (next && next.trim() && next.trim() !== ms.title) titleMutation.mutate(next.trim());
-            }}
+            onClick={() => setTitleEditOpen(true)}
           >
             <Icon name="pen" size={11} />
           </button>
@@ -571,14 +675,14 @@ export function WriterEditorPage() {
               style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', textDecoration: 'none' }}
             >
               <Icon name="sparkle" size={11} />
-              AI 正在写，看任务进度
+              {tr('AI 正在写，看任务进度', 'AI writing — view task progress')}
             </Link>
           )}
         </div>
 
         {/* 协作者在线点 */}
-        {currentFile && !currentFile.readonly && (
-          <div className="row" style={{ flexShrink: 0, marginRight: 2 }} title={peers.length > 0 ? `在线协作者：${peers.map((p) => p.name).join('、')}` : '当前只有你在编辑'}>
+        {currentFile && !currentFile.readonly && !currentFile.is_binary && (
+          <div className="row" style={{ flexShrink: 0, marginRight: 2 }} title={peers.length > 0 ? tr(`在线协作者：${peers.map((p) => p.name).join('、')}`, `Online collaborators: ${peers.map((p) => p.name).join(', ')}`) : tr('当前只有你在编辑', 'You are the only editor right now')}>
             <span
               style={{
                 width: 7,
@@ -617,45 +721,58 @@ export function WriterEditorPage() {
           </div>
         )}
 
+        <button className="btn btn-ghost sm" onClick={() => setCollabOpen(true)} title={tr('管理协作者与分享链接', 'Manage collaborators and share link')}>
+          <Icon name="users" size={13} />
+          {tr('协作者', 'Collaborators')}
+        </button>
         <button className="btn btn-ghost sm" onClick={() => setFactOpen(true)}>
           <Icon name="layers" size={13} />
-          事实包
+          {tr('事实包', 'Fact pack')}
         </button>
         <button
           className="btn btn-ghost sm"
           disabled={isWriting}
-          title={isWriting ? 'AI 正在起草中' : 'AI 按事实包起草各节'}
+          title={isWriting ? tr('AI 正在起草中', 'AI is drafting') : tr('AI 按事实包起草各节', 'AI drafts sections from the fact pack')}
           onClick={() => setDraftOpen(true)}
         >
           <Icon name="sparkle" size={13} />
-          AI 起草
+          {tr('AI 起草', 'AI draft')}
         </button>
         <button
           className="btn btn-primary sm"
           disabled={compileMutation.isPending}
-          title="⌘S 也可触发（tectonic，最长 120 秒）"
+          title={tr('⌘S 也可触发（tectonic，最长 120 秒）', '⌘S also works (tectonic, up to 120 s)')}
           onClick={() => compileMutation.mutate()}
         >
           {compileMutation.isPending ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              编译中…
+              {tr('编译中…', 'Compiling…')}
             </>
           ) : (
             <>
               <Icon name="play" size={13} />
-              编译
+              {tr('编译', 'Compile')}
             </>
           )}
         </button>
         <button
           className="btn btn-ghost sm"
+          disabled={exportArxivMutation.isPending}
+          title={tr('打包 arXiv 投稿清洁包（tar.gz）', 'Build an arXiv-ready package (tar.gz)')}
+          onClick={() => exportArxivMutation.mutate()}
+        >
+          <Icon name="download" size={13} />
+          {exportArxivMutation.isPending ? tr('导出中…', 'Exporting…') : tr('导出 arXiv 包', 'Export arXiv')}
+        </button>
+        <button
+          className="btn btn-ghost sm"
           disabled={submitMutation.isPending || isWriting || ms.status === 'submitted'}
-          title={ms.status === 'submitted' ? '已投稿' : '发起投稿审批'}
+          title={ms.status === 'submitted' ? tr('已投稿', 'Submitted') : tr('发起投稿审批', 'Request submission approval')}
           onClick={onSubmit}
         >
           <Icon name="arrow" size={13} />
-          {submitMutation.isPending ? '提交中…' : '投稿'}
+          {submitMutation.isPending ? tr('提交中…', 'Submitting…') : tr('投稿', 'Submit')}
         </button>
       </div>
 
@@ -672,7 +789,51 @@ export function WriterEditorPage() {
           }}
         >
           <Icon name="bell" size={13} />
-          连接断开，改动已暂存在本地，重连后会自动同步。正在重试…
+          {tr('连接断开，改动已暂存在本地，重连后会自动同步。正在重试…', 'Connection lost — changes are kept locally and will sync after reconnecting. Retrying…')}
+        </div>
+      )}
+
+      {/* —— AI 起草实时状态条 —— */}
+      {isWriting && aiWriting && (
+        <div
+          className="row gap8"
+          style={{
+            background: 'var(--accent-soft)',
+            color: 'var(--accent-text)',
+            fontSize: 12,
+            padding: '6px 16px',
+            flexShrink: 0,
+          }}
+        >
+          <span className="ai-writing-dot" />
+          {aiWriting.phase === 'compiling' ? (
+            <span>AI 正在编译论文…</span>
+          ) : aiWriting.phase === 'done' ? (
+            <span>AI 起草中…</span>
+          ) : (
+            <span>
+              AI 正在{aiWriting.phase === 'revising' ? '修订' : '撰写'}
+              〈{aiWriting.section ? sectionText(aiWriting.section) : '正文'}〉…
+            </span>
+          )}
+          {aiFile && aiWriting.fileId !== currentFileId && (
+            <button
+              className="btn btn-ghost sm"
+              style={{ height: 22, fontSize: 10.5, padding: '0 8px', marginLeft: 4 }}
+              onClick={() => setCurrentFileId(aiFile.id)}
+            >
+              到 {aiFile.path} 看 AI 撰写
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          {ms.writing_voyage_id && (
+            <Link
+              to={`/voyages/${ms.writing_voyage_id}`}
+              style={{ color: 'var(--accent-text)', textDecoration: 'underline', fontSize: 11 }}
+            >
+              看任务进度
+            </Link>
+          )}
         </div>
       )}
 
@@ -688,16 +849,30 @@ export function WriterEditorPage() {
               background: 'var(--sidebar-bg)',
               minHeight: 0,
               overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
-            <FileTree
-              files={ms.files}
-              currentId={currentFileId}
-              busy={fileOpsBusy}
-              onSelect={(f) => setCurrentFileId(f.id)}
-              onCreate={(path) => createFileMutation.mutate(path)}
-              onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
-              onDelete={(f) => deleteFileMutation.mutate(f.id)}
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <FileTree
+                files={ms.files}
+                currentId={currentFileId}
+                busy={fileOpsBusy}
+                onSelect={(f) => setCurrentFileId(f.id)}
+                onCreate={(path) => createFileMutation.mutate(path)}
+                onCreateFolder={(path) => createFolderMutation.mutate(path)}
+                onUpload={(file) => uploadFileMutation.mutate(file)}
+                onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
+                onDelete={(f) => deleteFileMutation.mutate(f.id)}
+              />
+            </div>
+            <OutlinePanel
+              content={docContent}
+              open={layout.outlineOpen}
+              onToggle={() => patchLayout({ outlineOpen: !layout.outlineOpen })}
+              onJump={(line) => {
+                if (view) jumpToLine(view, line);
+              }}
             />
           </div>
         )}
@@ -707,13 +882,25 @@ export function WriterEditorPage() {
           onReset={() => patchLayout({ leftW: DEFAULT_LAYOUT.leftW })}
           collapsed={!layout.leftOpen}
           onToggle={() => patchLayout({ leftOpen: !layout.leftOpen })}
-          toggleTitle={layout.leftOpen ? '收起文件列表' : '展开文件列表'}
+          toggleTitle={layout.leftOpen ? tr('收起文件列表', 'Collapse file list') : tr('展开文件列表', 'Expand file list')}
           chevronDeg={layout.leftOpen ? 180 : 0}
         />
 
         {/* 中：编辑器 */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--surface)' }}>
           {currentFile ? (
+            currentFile.is_binary ? (
+              <>
+                <div
+                  className="row gap8"
+                  style={{ padding: '6px 14px', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}
+                >
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{currentFile.path}</span>
+                  <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>{tr('二进制文件', 'binary')}</span>
+                </div>
+                <BinaryPreview manuscriptId={ms.id} file={currentFile} />
+              </>
+            ) : (
             <>
               <div
                 className="row gap8"
@@ -721,10 +908,41 @@ export function WriterEditorPage() {
               >
                 <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{currentFile.path}</span>
                 {currentFile.readonly && (
-                  <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>只读</span>
+                  <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>{tr('只读', 'read-only')}</span>
                 )}
-                <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
-                  ⌘S 编译
+                {!currentFile.readonly && (
+                  <span className="row gap6" style={{ marginLeft: 4 }}>
+                    {(['polish', 'rewrite', 'continue'] as const).map((m) => (
+                      <button
+                        key={m}
+                        className="btn btn-ghost sm"
+                        style={{ height: 22, fontSize: 10.5, padding: '0 8px' }}
+                        disabled={!view || isWriting}
+                        title={
+                          m === 'continue'
+                            ? tr('AI 从光标处向后续写', 'AI continues from the cursor')
+                            : m === 'polish'
+                              ? tr('选中一段文字后 AI 润色', 'Select text, then AI polishes it')
+                              : tr('选中一段文字后 AI 按要求改写', 'Select text, then AI rewrites it as instructed')
+                        }
+                        onClick={() => setAssistMode((cur) => (cur === m ? null : m))}
+                      >
+                        <Icon name="sparkle" size={11} />
+                        {m === 'polish' ? tr('润色', 'Polish') : m === 'rewrite' ? tr('改写', 'Rewrite') : tr('续写', 'Continue')}
+                      </button>
+                    ))}
+                  </span>
+                )}
+                <button
+                  className="writer-mini-btn"
+                  style={{ marginLeft: 'auto' }}
+                  title={tr('版本历史（AI 写入前 / 每次编译自动存档）', 'Version history (auto-saved before each AI write and on every compile)')}
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  <Icon name="clock" size={11} />
+                </button>
+                <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                  {tr('⌘S 编译', '⌘S to compile')}
                 </span>
               </div>
               <EditorPane
@@ -737,11 +955,23 @@ export function WriterEditorPage() {
                 onStatus={handleStatus}
                 onPeers={handlePeers}
                 onView={handleView}
+                onDocChange={handleDocChange}
+                aiTarget={aiTarget}
               />
+              {assistMode && view && currentFile && !currentFile.readonly && (
+                <AssistPanel
+                  key={`${currentFile.id}-${assistMode}`}
+                  manuscriptId={ms.id}
+                  mode={assistMode}
+                  view={view}
+                  onClose={() => setAssistMode(null)}
+                />
+              )}
             </>
+            )
           ) : (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EmptyState compact icon="file" title="还没有文件" desc="点左侧 + 号新建一个 .tex 文件开始写作。" />
+              <EmptyState compact icon="file" title={tr('还没有文件', 'No files yet')} desc={tr('点左侧 + 号新建一个 .tex 文件开始写作。', 'Click + on the left to create a .tex file and start writing.')} />
             </div>
           )}
         </div>
@@ -752,7 +982,7 @@ export function WriterEditorPage() {
           onReset={() => patchLayout({ rightW: DEFAULT_LAYOUT.rightW })}
           collapsed={!layout.rightOpen}
           onToggle={() => patchLayout({ rightOpen: !layout.rightOpen })}
-          toggleTitle={layout.rightOpen ? '收起预览面板' : '展开预览面板'}
+          toggleTitle={layout.rightOpen ? tr('收起预览面板', 'Collapse preview panel') : tr('展开预览面板', 'Expand preview panel')}
           chevronDeg={layout.rightOpen ? 0 : 180}
         />
 
@@ -783,12 +1013,12 @@ export function WriterEditorPage() {
               <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: layout.pdfOpen ? '0.5px solid var(--border)' : 'none', background: 'var(--surface)' }}>
                 <button
                   className="writer-mini-btn"
-                  title={layout.pdfOpen ? '收起编译预览' : '展开编译预览'}
+                  title={layout.pdfOpen ? tr('收起编译预览', 'Collapse PDF preview') : tr('展开编译预览', 'Expand PDF preview')}
                   onClick={() => patchLayout({ pdfOpen: !layout.pdfOpen })}
                 >
                   <Icon name="chevDown" size={11} style={{ transform: layout.pdfOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
                 </button>
-                <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>编译预览 · PDF</span>
+                <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>{tr('编译预览 · PDF', 'PDF preview')}</span>
                 {compile && (
                   <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
                     v{compile.version} · {fmtRelative(compile.compiled_at)} · {(compile.duration_ms / 1000).toFixed(1)}s
@@ -825,28 +1055,28 @@ export function WriterEditorPage() {
               <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: layout.diagOpen ? '0.5px solid var(--border)' : 'none' }}>
                 <button
                   className="writer-mini-btn"
-                  title={layout.diagOpen ? '收起编译诊断' : '展开编译诊断'}
+                  title={layout.diagOpen ? tr('收起编译诊断', 'Collapse build diagnostics') : tr('展开编译诊断', 'Expand build diagnostics')}
                   onClick={() => patchLayout({ diagOpen: !layout.diagOpen })}
                 >
                   <Icon name="chevDown" size={11} style={{ transform: layout.diagOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
                 </button>
-                <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>编译诊断</span>
+                <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>{tr('编译诊断', 'Build diagnostics')}</span>
                 {compile && (
                   <span className="mono" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
-                    {errCount > 0 && <span style={{ color: 'var(--danger-tx)', fontWeight: 700 }}>{errCount} 错误</span>}
+                    {errCount > 0 && <span style={{ color: 'var(--danger-tx)', fontWeight: 700 }}>{errCount} {tr('错误', 'errors')}</span>}
                     {errCount > 0 && warnCount > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
-                    {warnCount > 0 && <span style={{ color: 'var(--warn-tx)', fontWeight: 700 }}>{warnCount} 警告</span>}
-                    {errCount === 0 && warnCount === 0 && <span style={{ color: 'var(--ok-tx)' }}>没有问题 ✓</span>}
+                    {warnCount > 0 && <span style={{ color: 'var(--warn-tx)', fontWeight: 700 }}>{warnCount} {tr('警告', 'warnings')}</span>}
+                    {errCount === 0 && warnCount === 0 && <span style={{ color: 'var(--ok-tx)' }}>{tr('没有问题 ✓', 'No issues ✓')}</span>}
                   </span>
                 )}
               </div>
               {layout.diagOpen && (
                 <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
                   {!compile ? (
-                    <div className="empty" style={{ padding: 24, fontSize: 12 }}>还没编译过，编译后这里显示错误和警告。</div>
+                    <div className="empty" style={{ padding: 24, fontSize: 12 }}>{tr('还没编译过，编译后这里显示错误和警告。', 'Not compiled yet — errors and warnings will show here after a compile.')}</div>
                   ) : compile.diagnostics.length === 0 ? (
                     <div className="empty" style={{ padding: 24, fontSize: 12 }}>
-                      {compile.status === 'ok' ? '编译干净，没有错误和警告 🎉' : '编译未产出诊断信息。'}
+                      {compile.status === 'ok' ? tr('编译干净，没有错误和警告 🎉', 'Clean compile — no errors or warnings 🎉') : tr('编译未产出诊断信息。', 'The compile produced no diagnostics.')}
                     </div>
                   ) : (
                     compile.diagnostics.map((d, i) => <DiagRow key={i} d={d} onClick={() => onDiagClick(d)} />)
@@ -859,8 +1089,49 @@ export function WriterEditorPage() {
       </div>
 
       {/* —— 抽屉 / Modal —— */}
-      <FactPackDrawer open={factOpen} onClose={() => setFactOpen(false)} manuscript={ms} />
+      <PromptModal
+        open={titleEditOpen}
+        onClose={() => setTitleEditOpen(false)}
+        title="修改论文标题"
+        initial={ms.title}
+        placeholder="论文标题"
+        submitText="保存"
+        busy={titleMutation.isPending}
+        onSubmit={(title) => {
+          if (title !== ms.title) titleMutation.mutate(title);
+          setTitleEditOpen(false);
+        }}
+      />
+      <ConfirmModal
+        open={submitConfirmOpen}
+        onClose={() => setSubmitConfirmOpen(false)}
+        title="发起投稿"
+        message="会创建一条论文投稿审批，人工批准后状态变为已投稿。确认发起？"
+        confirmText="发起投稿"
+        busy={submitMutation.isPending}
+        onConfirm={() => {
+          submitMutation.mutate();
+          setSubmitConfirmOpen(false);
+        }}
+      />
+      {currentFile && (
+        <HistoryModal
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          manuscriptId={ms.id}
+          file={currentFile}
+        />
+      )}
+      <FactPackDrawer
+        open={factOpen}
+        onClose={() => setFactOpen(false)}
+        manuscript={ms}
+        canInsert={canInsert}
+        onInsertCite={onInsertCite}
+        onInsertFigure={onInsertFigure}
+      />
       <DraftModal open={draftOpen} onClose={() => setDraftOpen(false)} manuscript={ms} />
+      <CollaboratorsModal open={collabOpen} onClose={() => setCollabOpen(false)} manuscriptId={ms.id} />
     </div>
   );
 }

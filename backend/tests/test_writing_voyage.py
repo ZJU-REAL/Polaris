@@ -185,6 +185,25 @@ async def test_writing_full_pipeline(client, queue_stub):
     statuses = [m["status"] for _, m in bus.notify if m.get("type") == "manuscript.status"]
     assert "writing" in statuses and statuses[-1] == "compiled"
 
+    # 流式镜像：每节至少 open + delta + 收尾 replace（发布到 crdt:stream）
+    intro_cmds = [c for c in bus.crdt_stream if c["section"] == "introduction"]
+    ops = [c["op"] for c in intro_cmds]
+    assert ops[0] == "open"
+    assert "delta" in ops
+    assert ops[-1] == "replace"
+    assert "".join(c["text"] for c in intro_cmds if c["op"] == "delta")  # 增量非空
+    # 增量拼接 == 收尾 replace 的干净文本
+    joined = "".join(c["text"] for c in intro_cmds if c["op"] == "delta")
+    final_replace = [c for c in intro_cmds if c["op"] == "replace"][-1]["text"]
+    assert final_replace in joined or joined.strip() == final_replace.strip()
+
+    # AI 撰写相位：typing → done（每节），末尾 compiling
+    ai_events = [m for _, m in bus.notify if m.get("type") == "manuscript.ai_writing"]
+    intro_phases = [m["phase"] for m in ai_events if m.get("section") == "introduction"]
+    assert intro_phases[0] == "typing"
+    assert intro_phases[-1] == "done"
+    assert any(m["phase"] == "compiling" for m in ai_events)
+
 
 async def test_writing_selected_sections_only(client, queue_stub):
     _, headers, ms_id, voyage = await _prepare(
@@ -205,7 +224,33 @@ async def test_writing_selected_sections_only(client, queue_stub):
     assert run["steps"][2]["params"]["phase"] == "final"
 
 
-async def test_invalid_cite_rejected_and_voyage_fails(client, queue_stub):
+async def test_draft_auto_refreshes_fact_pack_and_keeps_revision_notes(client, queue_stub):
+    """起草前自动重建 fact-pack：建稿后新增的文献入包，评审修订说明保留。"""
+    from app.core.db import get_sessionmaker
+    from app.models.manuscript import Manuscript
+
+    project_id, headers = await _setup_project(client)
+    resp = await _create_manuscript(client, headers, project_id)
+    ms_id = resp.json()["id"]
+    assert (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()["fact_pack"][
+        "citations"
+    ] == []
+
+    await _seed_paper(project_id, "Late Added Paper", 2025)
+    async with get_sessionmaker()() as session:
+        ms = await session.get(Manuscript, uuid.UUID(ms_id))
+        ms.fact_pack = dict(ms.fact_pack or {}) | {"revision_notes": "改这里"}
+        await session.commit()
+
+    resp = await client.post(f"/api/manuscripts/{ms_id}/draft", json={}, headers=headers)
+    assert resp.status_code == 201
+    pack = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()["fact_pack"]
+    assert {c["bibkey"] for c in pack["citations"]} == {"smith2025late"}
+    assert pack["revision_notes"] == "改这里"
+
+
+async def test_invalid_cite_degrades_with_todo_and_continues(client, queue_stub):
+    """重写用尽仍违规 → 不判整单失败：降级写入 + TODO 标注 + needs_review + Activity。"""
     _, headers, ms_id, voyage = await _prepare(
         client, queue_stub, sections=["introduction"], notes="INVALID_CITE_TEST"
     )
@@ -214,18 +259,40 @@ async def test_invalid_cite_rejected_and_voyage_fails(client, queue_stub):
 
     resp = await client.get(f"/api/voyages/{voyage['id']}", headers=headers)
     run = resp.json()
-    assert run["status"] == "failed"
+    assert run["status"] == "done"
     step = run["steps"][0]
-    assert step["status"] == "failed"
-    assert "静态校验未通过" in step["observation"]["error"]
-    assert "nonexistent_fake_key" in step["observation"]["error"]
+    assert step["status"] == "passed"
+    assert step["observation"]["needs_review"] is True
+    assert any("nonexistent_fake_key" in v for v in step["observation"]["violations"])
 
-    # 稿件回退 draft，可重新起草
+    # 降级稿已写入：TODO 标注在节顶部
     detail = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
-    assert detail["status"] == "draft"
-    assert detail["writing_voyage_id"] is None
-    resp = await client.post(f"/api/manuscripts/{ms_id}/draft", json={}, headers=headers)
-    assert resp.status_code == 201
+    assert detail["status"] == "compiled"  # 终编译（假 tectonic）仍走完
+    main = next(f for f in detail["files"] if f["path"] == "main.tex")
+    content = (
+        await client.get(f"/api/manuscripts/{ms_id}/files/{main['id']}", headers=headers)
+    ).json()["content"]
+    assert "TODO(AI 起草)" in content
+    assert "nonexistent_fake_key" in content
+
+    # Activity 提醒人工核对
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.activity import Activity
+
+    async with get_sessionmaker()() as session:
+        acts = (
+            (
+                await session.execute(
+                    select(Activity).where(Activity.kind == "manuscript.section_needs_review")
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(acts) == 1
+    assert acts[0].payload["section"] == "introduction"
 
 
 async def test_final_compile_failure_fails_voyage(client, queue_stub, monkeypatch):

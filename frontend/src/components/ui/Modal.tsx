@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Icon } from './Icon';
+import { tr } from '../../lib/i18n';
 
 export interface ModalProps {
   open: boolean;
@@ -28,7 +29,7 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 520
             </div>
             {sub && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 3 }}>{sub}</div>}
           </div>
-          <button className="icon-btn" onClick={onClose} aria-label="关闭">
+          <button className="icon-btn" onClick={onClose} aria-label={tr('关闭', 'Close')}>
             <Icon name="x" size={15} />
           </button>
         </div>

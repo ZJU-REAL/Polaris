@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import { Icon, type IconName } from './Icon';
+import { tr } from '../../lib/i18n';
 
 export interface PipelineStage {
   key: string;
@@ -29,15 +30,12 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
         <div className="row gap10">
           <span className="section-h">
             <Icon name="layers" size={16} style={{ color: 'var(--accent)' }} />
-            端到端研究流水线
-          </span>
-          <span className="muted" style={{ fontSize: 12 }}>
-            End-to-end pipeline
+            {tr('端到端研究流水线', 'End-to-end research pipeline')}
           </span>
         </div>
         <span className="pill">
           <span className="dot" style={{ background: 'var(--ok)' }} />
-          当前方向 · {directionLabel}
+          {tr('当前方向', 'Current direction')} · {directionLabel}
         </span>
       </div>
       <div className="row" style={{ alignItems: 'stretch', gap: 0 }}>
@@ -76,8 +74,7 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
               >
                 <Icon name={s.icon} size={19} />
               </div>
-              <div style={{ fontSize: 12.5, fontWeight: 650 }}>{s.zh}</div>
-              <div style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 1 }}>{s.en}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 650 }}>{tr(s.zh, s.en)}</div>
               <div
                 style={{
                   marginTop: 9,
@@ -94,7 +91,7 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
                   className="pulse"
                   style={{ position: 'absolute', bottom: 8, left: 0, right: 0, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 600 }}
                 >
-                  ● 运行中
+                  ● {tr('运行中', 'Running')}
                 </div>
               )}
             </div>

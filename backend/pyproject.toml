@@ -58,7 +58,7 @@ select = ["E", "W", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI 依赖注入惯用法
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.File", "fastapi.Form"]
 
 [tool.ruff.lint.per-file-ignores]
 # alembic autogenerate 产物，不为格式手改

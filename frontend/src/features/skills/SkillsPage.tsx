@@ -8,13 +8,14 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
+import { tr } from '../../lib/i18n';
 import { useProject } from '../../app/project';
 import {
   api,
   isAdmin,
   skillTargetLabel,
-  SKILL_KIND_LABEL,
-  SKILL_TARGET_LABEL,
+  skillKindLabel,
+  SKILL_TARGETS,
   type ProjectSkillRead,
   type SkillDetail,
   type SkillKind,
@@ -46,12 +47,13 @@ function downloadJson(filename: string, data: unknown): void {
 type ScopeFilter = 'all' | 'builtin' | 'mine';
 type KindFilter = 'all' | SkillKind;
 
-const KIND_FILTERS: { v: KindFilter; label: string }[] = [
-  { v: 'all', label: '全部类型' },
-  { v: 'guidance', label: '指引' },
-  { v: 'rubric', label: '评分标准' },
-  { v: 'persona', label: '评审人设' },
-  { v: 'workflow', label: '流程模板' },
+/** 文案在渲染处再 tr（模块级求值不会随语言切换更新）。 */
+const KIND_FILTERS: { v: KindFilter; zh: string; en: string }[] = [
+  { v: 'all', zh: '全部类型', en: 'All kinds' },
+  { v: 'guidance', zh: '指引', en: 'Guidance' },
+  { v: 'rubric', zh: '评分标准', en: 'Rubrics' },
+  { v: 'persona', zh: '评审人设', en: 'Personas' },
+  { v: 'workflow', zh: '流程模板', en: 'Workflows' },
 ];
 
 const KIND_COLOR: Record<SkillKind, { bg: string; tx: string }> = {
@@ -65,7 +67,7 @@ function KindPill({ kind }: { kind: SkillKind }) {
   const c = KIND_COLOR[kind];
   return (
     <span className="pill sm" style={{ background: c.bg, color: c.tx, flexShrink: 0 }}>
-      {SKILL_KIND_LABEL[kind]}
+      {skillKindLabel(kind)}
     </span>
   );
 }
@@ -88,7 +90,7 @@ function SkillCard({ s, onOpen }: { s: SkillRead; onOpen: () => void }) {
         <KindPill kind={s.kind} />
         {s.scope === 'builtin' && (
           <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-            内置
+            {tr('内置', 'Built-in')}
           </span>
         )}
         <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-3)' }}>
@@ -133,61 +135,61 @@ function SkillDetailModal({
   const testMutation = useMutation({
     mutationFn: () => api.testSkill(skillId),
     onSuccess: setTest,
-    onError: (e) => toast(`试运行失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('试运行失败', 'Test run failed')}：${errMsg(e)}`, 'error'),
   });
   const forkMutation = useMutation({
     mutationFn: () => api.forkSkill(skillId),
     onSuccess: (fork) => {
-      toast(`已复制为我的技能：${fork.name}`, 'ok');
+      toast(`${tr('已复制为我的技能', 'Copied to my skills')}：${fork.name}`, 'ok');
       invalidate();
     },
-    onError: (e) => toast(`复制失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('复制失败', 'Copy failed')}：${errMsg(e)}`, 'error'),
   });
   const exportMutation = useMutation({
     mutationFn: () => api.exportSkill(skillId),
     onSuccess: (data) => {
       downloadJson(`${data.slug}.polaris-skill.json`, data);
-      toast('技能包已下载', 'ok');
+      toast(tr('技能包已下载', 'Skill package downloaded'), 'ok');
     },
-    onError: (e) => toast(`导出失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('导出失败', 'Export failed')}：${errMsg(e)}`, 'error'),
   });
   const publishMutation = useMutation({
     mutationFn: () => api.publishSkill(skillId),
     onSuccess: () => {
-      toast('已提交发布，等待管理员审核', 'ok');
+      toast(tr('已提交发布，等待管理员审核', 'Submitted for admin review'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
     },
     onError: (e) =>
-      toast(e instanceof Error && e.message === 'ALREADY_LISTED' ? '该技能已在市场（或待审核中）' : `发布失败：${errMsg(e)}`, 'error'),
+      toast(e instanceof Error && e.message === 'ALREADY_LISTED' ? tr('该技能已在市场（或待审核中）', 'Already on the market (or pending review)') : `${tr('发布失败', 'Publish failed')}：${errMsg(e)}`, 'error'),
   });
   const archiveMutation = useMutation({
     mutationFn: () => api.archiveSkill(skillId),
     onSuccess: () => {
-      toast('技能已删除', 'ok');
+      toast(tr('技能已删除', 'Skill deleted'), 'ok');
       invalidate();
       onClose();
     },
-    onError: (e) => toast(`删除失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败', 'Delete failed')}：${errMsg(e)}`, 'error'),
   });
   const enableMutation = useMutation({
     mutationFn: (target: string) =>
       api.enableProjectSkill(currentProjectId!, { skill_id: skillId, target }),
     onSuccess: (row) => {
-      toast(`已启用到当前方向：${skillTargetLabel(row.target)}`, 'ok');
+      toast(`${tr('已启用到当前方向', 'Enabled for current direction')}：${skillTargetLabel(row.target)}`, 'ok');
       invalidate();
     },
     onError: (e) =>
-      toast(e instanceof Error && e.message === 'SKILL_ALREADY_ENABLED' ? '该环节已启用过此技能' : `启用失败：${errMsg(e)}`, 'error'),
+      toast(e instanceof Error && e.message === 'SKILL_ALREADY_ENABLED' ? tr('该环节已启用过此技能', 'Already enabled for that stage') : `${tr('启用失败', 'Enable failed')}：${errMsg(e)}`, 'error'),
   });
   const runMutation = useMutation({
     mutationFn: () => api.runWorkflowSkill(skillId, { project_id: currentProjectId!, goal: runGoal.trim() }),
     onSuccess: (run) => {
-      toast('AI 任务已创建', 'ok');
+      toast(tr('AI 任务已创建', 'AI task created'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['voyages'] });
       onClose();
       navigate(`/voyages/${run.id}`);
     },
-    onError: (e) => toast(`运行失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('运行失败', 'Run failed')}：${errMsg(e)}`, 'error'),
   });
 
   if (!skill) return null;
@@ -206,7 +208,7 @@ function SkillDetailModal({
           <KindPill kind={skill.kind} />
         </>
       }
-      sub={`${skill.slug} · v${version?.version ?? '—'} · ${skill.scope === 'builtin' ? '内置技能' : '我的技能'}`}
+      sub={`${skill.slug} · v${version?.version ?? '—'} · ${skill.scope === 'builtin' ? tr('内置技能', 'Built-in skill') : tr('我的技能', 'My skill')}`}
       footer={
         <>
           {mine && (
@@ -214,35 +216,35 @@ function SkillDetailModal({
               className="btn btn-ghost"
               style={{ marginRight: 'auto', color: 'var(--danger, #c0392b)' }}
               onClick={() => {
-                if (window.confirm('删除这个技能？已启用的项目会同时失效（进行中的任务不受影响）。')) {
+                if (window.confirm(tr('删除这个技能？已启用的项目会同时失效（进行中的任务不受影响）。', 'Delete this skill? Projects using it will lose it (running tasks are unaffected).'))) {
                   archiveMutation.mutate();
                 }
               }}
             >
-              <Icon name="trash" size={13} /> 删除
+              <Icon name="trash" size={13} /> {tr('删除', 'Delete')}
             </button>
           )}
           <button className="btn btn-ghost" disabled={exportMutation.isPending} onClick={() => exportMutation.mutate()}>
-            导出
+            {tr('导出', 'Export')}
           </button>
           {skill.scope === 'builtin' && (
             <button className="btn btn-soft" disabled={forkMutation.isPending} onClick={() => forkMutation.mutate()}>
-              复制为我的技能
+              {tr('复制为我的技能', 'Copy to my skills')}
             </button>
           )}
           {mine && (
             <button className="btn btn-soft" onClick={() => setEditOpen(true)}>
-              编辑（存为新版本）
+              {tr('编辑（存为新版本）', 'Edit (save as new version)')}
             </button>
           )}
           {mine && (
             <button className="btn btn-soft" disabled={publishMutation.isPending} onClick={() => publishMutation.mutate()}>
-              发布到市场
+              {tr('发布到市场', 'Publish to market')}
             </button>
           )}
           {skill.kind !== 'workflow' && (
             <button className="btn btn-soft" disabled={testMutation.isPending} onClick={() => testMutation.mutate()}>
-              <Icon name="play" size={13} /> {testMutation.isPending ? '运行中…' : '试运行'}
+              <Icon name="play" size={13} /> {testMutation.isPending ? tr('运行中…', 'Running…') : tr('试运行', 'Test run')}
             </button>
           )}
         </>
@@ -252,7 +254,7 @@ function SkillDetailModal({
 
       {/* 适用环节 + 启用 */}
       <div className="row gap8" style={{ flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
-        <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>适用环节：</span>
+        <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr('适用环节：', 'Applies to:')}</span>
         {targets.map((t) => (
           <span key={t} className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
             {skillTargetLabel(t)}
@@ -277,7 +279,7 @@ function SkillDetailModal({
                 if (t) enableMutation.mutate(t);
               }}
             >
-              启用到当前方向
+              {tr('启用到当前方向', 'Enable for current direction')}
             </button>
           </span>
         )}
@@ -286,11 +288,11 @@ function SkillDetailModal({
       {/* workflow：运行此流程 */}
       {skill.kind === 'workflow' && (
         <div className="card" style={{ padding: '12px 14px', marginBottom: 14, background: 'var(--surface-2)' }}>
-          <FormField label="任务目标" en="Goal" hint="流程各步骤可引用 {goal} 模板变量">
+          <FormField label={tr('任务目标', 'Goal')} hint={tr('流程各步骤可引用 {goal} 模板变量', 'Steps can reference the {goal} template variable')}>
             <textarea
               className="textarea"
               rows={2}
-              placeholder="例如：综述 LLM 推理加速的研究现状"
+              placeholder={tr('例如：综述 LLM 推理加速的研究现状', 'e.g. survey the state of LLM inference acceleration')}
               value={runGoal}
               onChange={(e) => setRunGoal(e.target.value)}
             />
@@ -301,7 +303,7 @@ function SkillDetailModal({
               disabled={!currentProjectId || !runGoal.trim() || runMutation.isPending}
               onClick={() => runMutation.mutate()}
             >
-              <Icon name="play" size={13} /> 运行此流程
+              <Icon name="play" size={13} /> {tr('运行此流程', 'Run this workflow')}
             </button>
           </div>
         </div>
@@ -357,7 +359,7 @@ function SkillDetailModal({
       {test && (
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 6 }}>
-            试运行输出{test.model ? `（模型：${test.model}）` : ''}
+            {tr('试运行输出', 'Test output')}{test.model ? tr(`（模型：${test.model}）`, ` (model: ${test.model})`) : ''}
           </div>
           <pre
             style={{
@@ -403,16 +405,16 @@ function SkillEditModal({
       try {
         manifest = JSON.parse(manifestText) as SkillManifest;
       } catch {
-        throw new Error('高级设置不是合法 JSON');
+        throw new Error(tr('高级设置不是合法 JSON', 'Advanced settings is not valid JSON'));
       }
       return api.addSkillVersion(skill.id, { manifest, body, changelog: changelog || undefined });
     },
     onSuccess: (v) => {
-      toast(`已保存为 v${v.version}`, 'ok');
+      toast(tr(`已保存为 v${v.version}`, `Saved as v${v.version}`), 'ok');
       onSaved();
       onClose();
     },
-    onError: (e) => toast(`保存失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${errMsg(e)}`, 'error'),
   });
 
   return (
@@ -420,27 +422,27 @@ function SkillEditModal({
       open
       onClose={onClose}
       width={620}
-      title={`编辑：${skill.name}`}
-      sub="保存后生成新版本；已按旧版本固定的项目不受影响"
+      title={`${tr('编辑', 'Edit')}：${skill.name}`}
+      sub={tr('保存后生成新版本；已按旧版本固定的项目不受影响', 'Saving creates a new version; projects pinned to older versions are unaffected')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            取消
+            {tr('取消', 'Cancel')}
           </button>
           <button className="btn btn-primary" disabled={!body.trim() || saveMutation.isPending} onClick={() => saveMutation.mutate()}>
-            保存为新版本
+            {tr('保存为新版本', 'Save as new version')}
           </button>
         </>
       }
     >
-      <FormField label="技能内容" en="Body" hint="Markdown；这段文字会注入对应环节的 AI 指令">
+      <FormField label={tr('技能内容', 'Body')} hint={tr('Markdown；这段文字会注入对应环节的 AI 指令', 'Markdown; injected into the AI instructions of the target stages')}>
         <textarea className="textarea mono" rows={12} value={body} onChange={(e) => setBody(e.target.value)} />
       </FormField>
-      <FormField label="修改说明" en="Changelog">
-        <input className="input" value={changelog} onChange={(e) => setChangelog(e.target.value)} placeholder="这次改了什么（可选）" />
+      <FormField label={tr('修改说明', 'Changelog')}>
+        <input className="input" value={changelog} onChange={(e) => setChangelog(e.target.value)} placeholder={tr('这次改了什么（可选）', 'What changed (optional)')} />
       </FormField>
       <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowAdvanced((v) => !v)}>
-        {showAdvanced ? '收起高级设置' : '高级设置（适用环节 / 人设 / 步骤，JSON）'}
+        {showAdvanced ? tr('收起高级设置', 'Hide advanced settings') : tr('高级设置（适用环节 / 人设 / 步骤，JSON）', 'Advanced settings (targets / personas / steps, JSON)')}
       </button>
       {showAdvanced && (
         <textarea
@@ -457,9 +459,10 @@ function SkillEditModal({
 
 // ---- 新建技能 ----
 
-const CREATE_KINDS: { v: SkillKind; label: string; hint: string }[] = [
-  { v: 'guidance', label: '指引', hint: '为某个环节追加做事方式与注意点' },
-  { v: 'rubric', label: '评分标准', hint: '为打分/评审环节定义评价细则' },
+/** 文案在渲染处再 tr（模块级求值不会随语言切换更新）。 */
+const CREATE_KINDS: { v: SkillKind; zh: string; en: string; hintZh: string; hintEn: string }[] = [
+  { v: 'guidance', zh: '指引', en: 'Guidance', hintZh: '为某个环节追加做事方式与注意点', hintEn: 'Add working guidelines and caveats for a stage' },
+  { v: 'rubric', zh: '评分标准', en: 'Rubric', hintZh: '为打分/评审环节定义评价细则', hintEn: 'Define scoring criteria for review stages' },
 ];
 
 function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (s: SkillDetail) => void }) {
@@ -481,12 +484,12 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
         body,
       }),
     onSuccess: (s) => {
-      toast(`技能已创建：${s.name}`, 'ok');
+      toast(`${tr('技能已创建', 'Skill created')}：${s.name}`, 'ok');
       onCreated(s);
       onClose();
     },
     onError: (e) =>
-      toast(e instanceof Error && e.message === 'SKILL_SLUG_TAKEN' ? '标识已被占用，换一个吧' : `创建失败：${errMsg(e)}`, 'error'),
+      toast(e instanceof Error && e.message === 'SKILL_SLUG_TAKEN' ? tr('标识已被占用，换一个吧', 'Slug already taken — try another') : `${tr('创建失败', 'Create failed')}：${errMsg(e)}`, 'error'),
   });
 
   const canSubmit = name.trim() && /^[a-z0-9][a-z0-9-]{1,62}$/.test(slug.trim()) && targets.length > 0 && body.trim();
@@ -496,46 +499,46 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
       open
       onClose={onClose}
       width={620}
-      title="新建技能"
-      sub="评审人设与流程模板建议从内置技能复制后修改"
+      title={tr('新建技能', 'New skill')}
+      sub={tr('评审人设与流程模板建议从内置技能复制后修改', 'For personas and workflows, copy a built-in skill and edit it')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
-            取消
+            {tr('取消', 'Cancel')}
           </button>
           <button className="btn btn-primary" disabled={!canSubmit || createMutation.isPending} onClick={() => createMutation.mutate()}>
-            创建
+            {tr('创建', 'Create')}
           </button>
         </>
       }
     >
       <div className="row gap10">
-        <FormField label="名称" en="Name" style={{ flex: 1 }}>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="如：严格的想法打分标准" />
+        <FormField label={tr('名称', 'Name')} style={{ flex: 1 }}>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('如：严格的想法打分标准', 'e.g. strict idea scoring rubric')} />
         </FormField>
-        <FormField label="标识" en="Slug" style={{ flex: 1 }} hint="小写字母/数字/连字符">
+        <FormField label={tr('标识', 'Slug')} style={{ flex: 1 }} hint={tr('小写字母/数字/连字符', 'lowercase letters / digits / hyphens')}>
           <input className="input mono" value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="my-scoring-rubric" />
         </FormField>
       </div>
-      <FormField label="类型" en="Kind">
+      <FormField label={tr('类型', 'Kind')}>
         <div className="row gap8">
           {CREATE_KINDS.map((k) => (
             <button
               key={k.v}
               className={`btn ${kind === k.v ? 'btn-primary' : 'btn-soft'}`}
-              title={k.hint}
+              title={tr(k.hintZh, k.hintEn)}
               onClick={() => setKind(k.v)}
             >
-              {k.label}
+              {tr(k.zh, k.en)}
             </button>
           ))}
         </div>
       </FormField>
-      <FormField label="适用环节" en="Applies to" hint="技能会注入这些环节的 AI 指令（可多选）">
+      <FormField label={tr('适用环节', 'Applies to')} hint={tr('技能会注入这些环节的 AI 指令（可多选）', 'Injected into the AI instructions of these stages (multi-select)')}>
         <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-          {Object.entries(SKILL_TARGET_LABEL)
-            .filter(([t]) => t !== 'navigator.free_plan')
-            .map(([t, label]) => {
+          {SKILL_TARGETS
+            .filter((t) => t !== 'navigator.free_plan')
+            .map((t) => {
               const on = targets.includes(t);
               return (
                 <button
@@ -549,16 +552,16 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
                   }}
                   onClick={() => setTargets((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]))}
                 >
-                  {label}
+                  {skillTargetLabel(t)}
                 </button>
               );
             })}
         </div>
       </FormField>
-      <FormField label="描述" en="Description">
-        <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="一句话说明这个技能做什么（可选）" />
+      <FormField label={tr('描述', 'Description')}>
+        <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr('一句话说明这个技能做什么（可选）', 'One line on what this skill does (optional)')} />
       </FormField>
-      <FormField label="技能内容" en="Body" hint="Markdown；写清楚判断标准/注意点，AI 会照此执行">
+      <FormField label={tr('技能内容', 'Body')} hint={tr('Markdown；写清楚判断标准/注意点，AI 会照此执行', 'Markdown; spell out the criteria — the AI will follow them')}>
         <textarea className="textarea mono" rows={10} value={body} onChange={(e) => setBody(e.target.value)} />
       </FormField>
     </Modal>
@@ -568,11 +571,11 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
 // ---- 技能市场 ----
 
 function Stars({ avg, count }: { avg: number | null; count: number }) {
-  if (!count) return <span style={{ fontSize: 11, color: 'var(--text-3)' }}>暂无评分</span>;
+  if (!count) return <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr('暂无评分', 'No ratings yet')}</span>;
   return (
     <span style={{ fontSize: 11.5, color: 'var(--warn-tx)' }}>
       ★ {avg?.toFixed(1)}
-      <span style={{ color: 'var(--text-3)', marginLeft: 4 }}>（{count} 人）</span>
+      <span style={{ color: 'var(--text-3)', marginLeft: 4 }}>{tr(`（${count} 人）`, `(${count})`)}</span>
     </span>
   );
 }
@@ -585,12 +588,12 @@ function ListingCard({ l, onOpen }: { l: SkillListingRead; onOpen: () => void })
       style={{ display: 'block', width: '100%', textAlign: 'left', padding: '14px 16px', cursor: 'pointer' }}
     >
       <div className="row gap8" style={{ alignItems: 'center' }}>
-        <span style={{ fontSize: 13.5, fontWeight: 650 }}>{l.skill?.name ?? '（技能已删除）'}</span>
+        <span style={{ fontSize: 13.5, fontWeight: 650 }}>{l.skill?.name ?? tr('（技能已删除）', '(skill deleted)')}</span>
         {l.skill && <KindPill kind={l.skill.kind} />}
         <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
           v{l.version ?? '—'}
         </span>
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)' }}>{l.install_count} 次安装</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)' }}>{tr(`${l.install_count} 次安装`, `${l.install_count} installs`)}</span>
       </div>
       {l.summary && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 6, lineHeight: 1.5 }}>{l.summary}</div>}
       <div className="row gap8" style={{ marginTop: 8, alignItems: 'center' }}>
@@ -622,21 +625,21 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string; onClose
   const installMutation = useMutation({
     mutationFn: () => api.installMarketSkill(listingId),
     onSuccess: (skill) => {
-      toast(`已安装到我的技能：${skill.name}`, 'ok');
+      toast(`${tr('已安装到我的技能', 'Installed to my skills')}：${skill.name}`, 'ok');
       void queryClient.invalidateQueries({ queryKey: ['skills'] });
       void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
     },
-    onError: (e) => toast(`安装失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('安装失败', 'Install failed')}：${errMsg(e)}`, 'error'),
   });
   const rateMutation = useMutation({
     mutationFn: () => api.addListingReview(listingId, { rating: myRating, comment: myComment.trim() || undefined }),
     onSuccess: () => {
-      toast('评分已提交', 'ok');
+      toast(tr('评分已提交', 'Rating submitted'), 'ok');
       setMyComment('');
       void queryClient.invalidateQueries({ queryKey: ['market-reviews', listingId] });
       void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
     },
-    onError: (e) => toast(`评分失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('评分失败', 'Rating failed')}：${errMsg(e)}`, 'error'),
   });
 
   if (!listing) return null;
@@ -647,14 +650,14 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string; onClose
       width={640}
       title={
         <>
-          {listing.skill?.name ?? '技能'}
+          {listing.skill?.name ?? tr('技能', 'Skill')}
           {listing.skill && <KindPill kind={listing.skill.kind} />}
         </>
       }
-      sub={`${listing.skill?.slug ?? ''} · 发布版本 v${listing.version ?? '—'} · ${listing.install_count} 次安装`}
+      sub={`${listing.skill?.slug ?? ''} · ${tr(`发布版本 v${listing.version ?? '—'}`, `published v${listing.version ?? '—'}`)} · ${tr(`${listing.install_count} 次安装`, `${listing.install_count} installs`)}`}
       footer={
         <button className="btn btn-primary" disabled={installMutation.isPending} onClick={() => installMutation.mutate()}>
-          <Icon name="download" size={13} /> 安装到我的技能
+          <Icon name="download" size={13} /> {tr('安装到我的技能', 'Install to my skills')}
         </button>
       }
     >
@@ -686,7 +689,7 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string; onClose
             className="icon-btn"
             style={{ width: 26, height: 26, color: n <= myRating ? 'var(--warn-tx)' : 'var(--text-3)', border: 'none', background: 'transparent', fontSize: 16 }}
             onClick={() => setMyRating(n)}
-            aria-label={`${n} 星`}
+            aria-label={tr(`${n} 星`, `${n} stars`)}
           >
             {n <= myRating ? '★' : '☆'}
           </button>
@@ -694,12 +697,12 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string; onClose
         <input
           className="input"
           style={{ flex: 1 }}
-          placeholder="用后感受（可选）"
+          placeholder={tr('用后感受（可选）', 'Your experience (optional)')}
           value={myComment}
           onChange={(e) => setMyComment(e.target.value)}
         />
         <button className="btn btn-soft" disabled={!myRating || rateMutation.isPending} onClick={() => rateMutation.mutate()}>
-          提交评分
+          {tr('提交评分', 'Submit rating')}
         </button>
       </div>
 
@@ -741,10 +744,10 @@ function MarketView() {
   const decideMutation = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: 'approve' | 'reject' }) => api.decideListing(id, decision),
     onSuccess: (listing) => {
-      toast(listing.status === 'approved' ? '已上架' : '已驳回', 'ok');
+      toast(listing.status === 'approved' ? tr('已上架', 'Listed') : tr('已驳回', 'Rejected'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
     },
-    onError: (e) => toast(`审核失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('审核失败', 'Review failed')}：${errMsg(e)}`, 'error'),
   });
 
   return (
@@ -752,18 +755,18 @@ function MarketView() {
       <div className="row gap10" style={{ marginBottom: 16 }}>
         <Segmented
           options={[
-            { v: '-created_at', label: '最新' },
-            { v: 'installs', label: '最多安装' },
+            { v: '-created_at', label: tr('最新', 'Newest') },
+            { v: 'installs', label: tr('最多安装', 'Most installed') },
           ]}
           value={sort}
           onChange={setSort}
         />
-        <input className="input" style={{ width: 200, marginLeft: 'auto' }} placeholder="搜索市场…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="input" style={{ width: 200, marginLeft: 'auto' }} placeholder={tr('搜索市场…', 'Search market…')} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
       {admin && (pending ?? []).length > 0 && (
         <div className="card" style={{ padding: '14px 16px', marginBottom: 14, borderLeft: '3px solid var(--warn-tx)' }}>
-          <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 8 }}>待审核（管理员）</div>
+          <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 8 }}>{tr('待审核（管理员）', 'Pending review (admin)')}</div>
           {pending!.map((l) => (
             <div key={l.id} className="row gap8" style={{ padding: '5px 0', alignItems: 'center' }}>
               <span style={{ fontSize: 12.5, fontWeight: 600 }}>{l.skill?.name}</span>
@@ -771,10 +774,10 @@ function MarketView() {
                 {l.summary}
               </span>
               <button className="btn btn-soft" style={{ fontSize: 11.5, padding: '3px 10px' }} onClick={() => decideMutation.mutate({ id: l.id, decision: 'approve' })}>
-                通过
+                {tr('通过', 'Approve')}
               </button>
               <button className="btn btn-ghost" style={{ fontSize: 11.5, padding: '3px 10px' }} onClick={() => decideMutation.mutate({ id: l.id, decision: 'reject' })}>
-                驳回
+                {tr('驳回', 'Reject')}
               </button>
             </div>
           ))}
@@ -783,9 +786,9 @@ function MarketView() {
 
       <div style={{ display: 'grid', gap: 10 }}>
         {isError ? (
-          <EmptyState icon="sparkle" title="市场加载失败" desc="后端服务未启动或版本过旧" />
+          <EmptyState icon="sparkle" title={tr('市场加载失败', 'Failed to load market')} desc={tr('后端服务未启动或版本过旧', 'Backend not running or too old')} />
         ) : isLoading ? null : (listings ?? []).length === 0 ? (
-          <EmptyState icon="sparkle" title="市场还是空的" desc="在技能库把你的技能发布到市场，审核通过后即可安装" />
+          <EmptyState icon="sparkle" title={tr('市场还是空的', 'The market is empty')} desc={tr('在技能库把你的技能发布到市场，审核通过后即可安装', 'Publish your skills from the library; once approved they can be installed')} />
         ) : (
           listings!.map((l) => <ListingCard key={l.id} l={l} onOpen={() => setOpenListing(l.id)} />)
         )}
@@ -808,15 +811,15 @@ function EnabledPanel({ projectId }: { projectId: string }) {
   const patchMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.patchProjectSkill(id, { enabled }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['project-skills', projectId] }),
-    onError: (e) => toast(`操作失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('操作失败', 'Action failed')}：${errMsg(e)}`, 'error'),
   });
   const removeMutation = useMutation({
     mutationFn: (id: string) => api.removeProjectSkill(id),
     onSuccess: () => {
-      toast('已从当前方向移除', 'ok');
+      toast(tr('已从当前方向移除', 'Removed from current direction'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['project-skills', projectId] });
     },
-    onError: (e) => toast(`移除失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('移除失败', 'Remove failed')}：${errMsg(e)}`, 'error'),
   });
 
   const grouped = useMemo(() => {
@@ -831,12 +834,12 @@ function EnabledPanel({ projectId }: { projectId: string }) {
 
   return (
     <div className="card" style={{ padding: '14px 16px' }}>
-      <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 4 }}>当前方向已启用</div>
+      <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 4 }}>{tr('当前方向已启用', 'Enabled for current direction')}</div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 12 }}>
-        新发起的 AI 任务会按下面的技能执行；进行中的任务不受影响
+        {tr('新发起的 AI 任务会按下面的技能执行；进行中的任务不受影响', 'New AI tasks will use these skills; running tasks are unaffected')}
       </div>
       {isLoading ? null : grouped.length === 0 ? (
-        <EmptyState compact icon="sparkle" title="还没有启用技能" desc="从左侧技能列表点启用到当前方向" />
+        <EmptyState compact icon="sparkle" title={tr('还没有启用技能', 'No skills enabled yet')} desc={tr('从左侧技能列表点启用到当前方向', 'Enable one from the skill list on the left')} />
       ) : (
         grouped.map(([target, list]) => (
           <div key={target} style={{ marginBottom: 12 }}>
@@ -851,7 +854,7 @@ function EnabledPanel({ projectId }: { projectId: string }) {
                     textDecoration: r.enabled ? 'none' : 'line-through',
                   }}
                 >
-                  {r.skill?.name ?? '（技能已删除）'}
+                  {r.skill?.name ?? tr('（技能已删除）', '(skill deleted)')}
                 </span>
                 {r.pinned_version != null && (
                   <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
@@ -864,12 +867,12 @@ function EnabledPanel({ projectId }: { projectId: string }) {
                     style={{ fontSize: 11.5, padding: '3px 8px' }}
                     onClick={() => patchMutation.mutate({ id: r.id, enabled: !r.enabled })}
                   >
-                    {r.enabled ? '停用' : '启用'}
+                    {r.enabled ? tr('停用', 'Disable') : tr('启用', 'Enable')}
                   </button>
                   <button
                     className="icon-btn"
                     style={{ width: 24, height: 24 }}
-                    title="从当前方向移除"
+                    title={tr('从当前方向移除', 'Remove from current direction')}
                     onClick={() => removeMutation.mutate(r.id)}
                   >
                     <Icon name="x" size={12} />
@@ -906,11 +909,11 @@ export function SkillsPage() {
   const importMutation = useMutation({
     mutationFn: (data: SkillExportData) => api.importSkill(data),
     onSuccess: (s) => {
-      toast(`已导入：${s.name}`, 'ok');
+      toast(`${tr('已导入', 'Imported')}：${s.name}`, 'ok');
       void queryClient.invalidateQueries({ queryKey: ['skills'] });
       setOpenId(s.id);
     },
-    onError: (e) => toast(`导入失败：${errMsg(e)}`, 'error'),
+    onError: (e) => toast(`${tr('导入失败', 'Import failed')}：${errMsg(e)}`, 'error'),
   });
 
   async function onImportFile(file: File | undefined): Promise<void> {
@@ -919,7 +922,7 @@ export function SkillsPage() {
       const data = JSON.parse(await file.text()) as SkillExportData;
       importMutation.mutate(data);
     } catch {
-      toast('不是合法的技能包文件（JSON 解析失败）', 'error');
+      toast(tr('不是合法的技能包文件（JSON 解析失败）', 'Not a valid skill package (JSON parse failed)'), 'error');
     }
   }
 
@@ -938,15 +941,14 @@ export function SkillsPage() {
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris"
-        title="技能"
-        sub="为各环节 AI 定制判断标准、评审人设与流程模板"
-        en="Skills"
+        title={tr('技能', 'Skills')}
+        sub={tr('为各环节 AI 定制判断标准、评审人设与流程模板', 'Custom criteria, reviewer personas and workflow templates for each stage')}
         right={
           <>
             <Segmented
               options={[
-                { v: 'library', label: '技能库' },
-                { v: 'market', label: '技能市场' },
+                { v: 'library', label: tr('技能库', 'Library') },
+                { v: 'market', label: tr('技能市场', 'Market') },
               ]}
               value={view}
               onChange={setView}
@@ -964,10 +966,10 @@ export function SkillsPage() {
                   }}
                 />
                 <button className="btn btn-soft" disabled={importMutation.isPending} onClick={() => importInputRef.current?.click()}>
-                  导入
+                  {tr('导入', 'Import')}
                 </button>
                 <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
-                  <Icon name="plus" size={14} /> 新建技能
+                  <Icon name="plus" size={14} /> {tr('新建技能', 'New skill')}
                 </button>
               </>
             )}
@@ -980,18 +982,18 @@ export function SkillsPage() {
       <div className="row gap10" style={{ marginBottom: 16, flexWrap: 'wrap', display: view === 'library' ? undefined : 'none' }}>
         <Segmented
           options={[
-            { v: 'all', label: '全部' },
-            { v: 'builtin', label: '内置' },
-            { v: 'mine', label: '我的' },
+            { v: 'all', label: tr('全部', 'All') },
+            { v: 'builtin', label: tr('内置', 'Built-in') },
+            { v: 'mine', label: tr('我的', 'Mine') },
           ]}
           value={scope}
           onChange={setScope}
         />
-        <Segmented options={KIND_FILTERS} value={kind} onChange={setKind} />
+        <Segmented options={KIND_FILTERS.map((f) => ({ v: f.v, label: tr(f.zh, f.en) }))} value={kind} onChange={setKind} />
         <input
           className="input"
           style={{ width: 200, marginLeft: 'auto' }}
-          placeholder="搜索技能…"
+          placeholder={tr('搜索技能…', 'Search skills…')}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -1007,15 +1009,15 @@ export function SkillsPage() {
       >
         <div style={{ display: 'grid', gap: 10 }}>
           {isError ? (
-            <EmptyState icon="sparkle" title="技能列表加载失败" desc="后端服务未启动或版本过旧" />
+            <EmptyState icon="sparkle" title={tr('技能列表加载失败', 'Failed to load skills')} desc={tr('后端服务未启动或版本过旧', 'Backend not running or too old')} />
           ) : isLoading ? null : filtered.length === 0 ? (
             <EmptyState
               icon="sparkle"
-              title="没有匹配的技能"
-              desc="换个筛选条件，或新建一个技能"
+              title={tr('没有匹配的技能', 'No matching skills')}
+              desc={tr('换个筛选条件，或新建一个技能', 'Adjust the filters or create a new skill')}
               action={
                 <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
-                  新建技能
+                  {tr('新建技能', 'New skill')}
                 </button>
               }
             />
@@ -1028,7 +1030,7 @@ export function SkillsPage() {
           <EnabledPanel projectId={currentProjectId} />
         ) : (
           <div className="card" style={{ padding: '14px 16px' }}>
-            <EmptyState compact icon="compass" title="未选择研究方向" desc="选择研究方向后可把技能启用到该方向" />
+            <EmptyState compact icon="compass" title={tr('未选择研究方向', 'No direction selected')} desc={tr('选择研究方向后可把技能启用到该方向', 'Pick a research direction to enable skills for it')} />
           </div>
         )}
       </div>

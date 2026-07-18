@@ -8,10 +8,15 @@
 约定：
 - 每节 LLM 产出经三类静态校验（\\cite ∈ fact_pack.citations、\\includegraphics 只准
   引 fact_pack.figures 的 fig_id、正文数字须命中 metrics ±0.01 或白名单启发式豁免），
-  违规回 LLM 重写 ≤2 次，仍违规判 voyage failed；
+  违规回 LLM 重写 ≤2 次；仍违规不判整单失败——降级写入最后一稿并加 TODO 注释
+  （needs_review），记 Activity 提醒人工核对，继续写后续节；
 - 每节一轮 self-reflection 精修（精修稿再过校验，不过则保留原稿）；
-- 写入经 crdt_rooms.apply_ai_edit：有活跃协同房间时经 Y 事务区间替换（协同者
-  实时可见），无房间直接写库；
+- **流式直播**：撰写时把 LLM 增量经 redis ``crdt:stream`` 发布，API 进程订阅后
+  写进活跃房间，编辑器实时看到 AI「打字」；相位（typing/revising/done/compiling）
+  经 ``manuscript.ai_writing`` 通知前端画 AI 光标（worker 与 API 独立容器，故经
+  redis 跨进程，见 services/crdt_stream.py）；
+- 权威落库经 crdt_rooms.apply_ai_edit：worker 侧无活跃房间直接写库（+ 版本快照），
+  房间的防抖快照会把并发人工编辑合并落库；
 - Related Work 延后：候选集 = fact_pack.citations 全集 + S2 title 检索 top10，
   只准从候选集内选引；被引用的 S2 命中追加进 fact_pack.citations（source=s2，
   编译时生成 @misc 条目）；S2 不可达时降级为仅库内候选；
@@ -295,6 +300,111 @@ async def _complete_text(ctx: ActionContext, *, system: str, user: str) -> str:
     return result.content.strip()
 
 
+# 流式镜像：攒够约 50 个字符（约一句话）推一次增量，兼顾流畅与消息量
+_STREAM_FLUSH_CHARS = 50
+
+
+async def _ai_stream(
+    ctx: ActionContext, *, file_id: uuid.UUID, section: str, op: str, text: str = ""
+) -> None:
+    """把分节流式命令发布到 redis（API 进程订阅后写活跃房间）；无 bus 时静默。"""
+    if ctx.bus is not None:
+        await ctx.bus.publish_crdt_stream(
+            {"op": op, "file_id": str(file_id), "section": section, "text": text}
+        )
+
+
+async def _ai_phase(
+    ctx: ActionContext, *, manuscript_id: uuid.UUID, file_id: uuid.UUID, section: str, phase: str
+) -> None:
+    """把 AI 撰写相位（typing/revising/done/compiling）推给项目成员的通知 WS，
+    前端据此画 AI 光标与状态条。"""
+    await ctx.notify(
+        {
+            "type": "manuscript.ai_writing",
+            "manuscript_id": str(manuscript_id),
+            "file_id": str(file_id),
+            "section": section,
+            "phase": phase,
+        }
+    )
+
+
+async def _stream_completion(ctx: ActionContext, *, system: str, user: str, sink) -> str:
+    """流式补全：逐块交给 sink（async callable，用于发布 delta），返回完整文本。"""
+    parts: list[str] = []
+    pending: list[str] = []
+    pending_len = 0
+    async for chunk in ctx.llm.stream(
+        "writing",
+        [Message(role="system", content=system), Message(role="user", content=user)],
+        user_id=ctx.run.created_by,
+        project_id=ctx.run.project_id,
+        voyage_id=ctx.run.id,
+    ):
+        if not chunk:
+            continue
+        parts.append(chunk)
+        pending.append(chunk)
+        pending_len += len(chunk)
+        if pending_len >= _STREAM_FLUSH_CHARS:
+            await sink("".join(pending))
+            pending = []
+            pending_len = 0
+    if pending:
+        await sink("".join(pending))
+    return "".join(parts).strip()
+
+
+async def _draft_streaming(
+    ctx: ActionContext,
+    *,
+    manuscript_id: uuid.UUID,
+    file_id: uuid.UUID,
+    section: str,
+    system: str,
+    user: str,
+    fact_pack: dict[str, Any],
+) -> tuple[str, int, list[str]]:
+    """流式撰写 + 静态校验：逐块镜像到活跃房间（编辑器实时可见 AI 打字），
+    校验违规则重写（对观看者呈现为「AI 正在改写」）。返回 (文本, 重写次数, 未解决违规)。
+
+    连续重写仍未通过时不抛错整单失败：返回最后一稿与违规清单，调用方降级处理
+    （加 TODO 标注、记 needs_review、继续写后续节）。
+    """
+    prompt = user
+    text = ""
+    violations: list[str] = []
+    for attempt in range(1 + MAX_SECTION_REWRITES):
+        # 清空占位/上一稿，随后流式追加（重写时呈现为 revising）
+        await _ai_stream(ctx, file_id=file_id, section=section, op="open")
+        await _ai_phase(
+            ctx,
+            manuscript_id=manuscript_id,
+            file_id=file_id,
+            section=section,
+            phase="typing" if attempt == 0 else "revising",
+        )
+
+        async def _sink(delta: str) -> None:
+            await _ai_stream(ctx, file_id=file_id, section=section, op="delta", text=delta)
+
+        raw = await _stream_completion(ctx, system=system, user=prompt, sink=_sink)
+        text = _strip_code_fence(raw)
+        # 用去掉代码围栏后的干净文本对齐房间（流式期可能混入 ``` 围栏）
+        await _ai_stream(ctx, file_id=file_id, section=section, op="replace", text=text)
+        violations = validate_section_text(text, fact_pack)
+        if not violations:
+            return text, attempt, []
+        prompt = (
+            user
+            + "\n\n上一稿静态校验未通过，请修复以下问题后重写（保持其余内容）：\n- "
+            + "\n- ".join(violations)
+            + f"\n\n上一稿：\n{text}"
+        )
+    return text, MAX_SECTION_REWRITES, violations
+
+
 def _strip_code_fence(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -303,29 +413,32 @@ def _strip_code_fence(text: str) -> str:
     return text.strip()
 
 
-async def _draft_with_validation(
-    ctx: ActionContext,
-    *,
-    system: str,
-    user: str,
-    fact_pack: dict[str, Any],
-    label: str,
-) -> tuple[str, int]:
-    """撰写 + 静态校验（违规重写 ≤MAX_SECTION_REWRITES）→ (通过文本, 重写次数)。"""
-    prompt = user
-    violations: list[str] = []
-    for attempt in range(1 + MAX_SECTION_REWRITES):
-        text = _strip_code_fence(await _complete_text(ctx, system=system, user=prompt))
-        violations = validate_section_text(text, fact_pack)
-        if not violations:
-            return text, attempt
-        prompt = (
-            user
-            + "\n\n上一稿静态校验未通过，请修复以下问题后重写（保持其余内容）：\n- "
-            + "\n- ".join(violations)
-            + f"\n\n上一稿：\n{text}"
+def _degraded_text(text: str, violations: list[str]) -> str:
+    """校验未通过的降级稿：顶部加 TODO 注释标出问题，供人工核对。"""
+    header = ["% TODO(AI 起草)：本节自动校验未通过，请人工核对下列问题后删除本注释："]
+    header += [f"% - {v}" for v in violations]
+    return "\n".join(header) + "\n" + text
+
+
+async def _record_needs_review(ctx: ActionContext, *, section: str, violations: list[str]) -> None:
+    """降级写入后记 Activity，让「最近动态」里能看到哪节需要人工核对。"""
+    async with get_sessionmaker()() as session:
+        manuscript = await _get_manuscript(session, ctx)
+        session.add(
+            Activity(
+                project_id=manuscript.project_id,
+                actor="agent:writing",
+                kind="manuscript.section_needs_review",
+                message=f"AI 起草「{SECTION_TITLES.get(section, section)}」未通过自动校验，"
+                "已写入草稿并加 TODO 标注，需人工核对",
+                payload={
+                    "manuscript_id": str(manuscript.id),
+                    "section": section,
+                    "violations": violations[:20],
+                },
+            )
         )
-    raise ValueError(f"{label} 连续 {1 + MAX_SECTION_REWRITES} 稿静态校验未通过：{violations[0]}")
+        await session.commit()
 
 
 async def _reflect(
@@ -376,16 +489,38 @@ async def writing_section(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         f"备注：{notes or '（无）'}\n"
         f"当前文档骨架（节选）：\n{skeleton[:_SKELETON_CHARS]}"
     )
-    text, rewrites = await _draft_with_validation(
+    text, rewrites, violations = await _draft_streaming(
         ctx,
+        manuscript_id=manuscript.id,
+        file_id=file_id,
+        section=section,
         system=SECTION_SYSTEM_PROMPT
         + ctx.skill_guidance("writing.section", f"writing.section({section})"),
         user=user,
         fact_pack=fact_pack,
-        label=section,
     )
-    text, reflected = await _reflect(
-        ctx, text=text, fact_pack=fact_pack, section_title=SECTION_TITLES[section]
+    reflected = False
+    if violations:
+        text = _degraded_text(text, violations)
+        # 降级稿（含 TODO 标注）镜像回房间，让观看者看到最终落稿
+        await _ai_stream(ctx, file_id=file_id, section=section, op="replace", text=text)
+        await _record_needs_review(ctx, section=section, violations=violations)
+    else:
+        refined, reflected = await _reflect(
+            ctx, text=text, fact_pack=fact_pack, section_title=SECTION_TITLES[section]
+        )
+        if reflected:
+            await _ai_phase(
+                ctx,
+                manuscript_id=manuscript.id,
+                file_id=file_id,
+                section=section,
+                phase="revising",
+            )
+            await _ai_stream(ctx, file_id=file_id, section=section, op="replace", text=refined)
+        text = refined
+    await _ai_phase(
+        ctx, manuscript_id=manuscript.id, file_id=file_id, section=section, phase="done"
     )
 
     via_room = await get_crdt_rooms().apply_ai_edit(file_id, section, text)
@@ -395,6 +530,8 @@ async def writing_section(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         "rewrites": rewrites,
         "reflected": reflected,
         "via_room": via_room,
+        "needs_review": bool(violations),
+        "violations": violations[:20],
     }
 
 
@@ -473,6 +610,7 @@ async def writing_related_work(ctx: ActionContext, params: dict[str, Any]) -> di
         fact_pack = _fact_pack_of(manuscript)
         file = await _section_file(session, manuscript, "related_work")
         file_id = file.id
+        manuscript_id = manuscript.id
 
     s2_hits = await _s2_candidates(manuscript.title)
     candidates = build_related_candidates(fact_pack, s2_hits)
@@ -489,16 +627,36 @@ async def writing_related_work(ctx: ActionContext, params: dict[str, Any]) -> di
         f"研究背景（事实包节选）：\n"
         f"{json.dumps(fact_pack.get('idea'), ensure_ascii=False)}"
     )
-    text, rewrites = await _draft_with_validation(
+    text, rewrites, violations = await _draft_streaming(
         ctx,
+        manuscript_id=manuscript_id,
+        file_id=file_id,
+        section="related_work",
         system=RELATED_WORK_SYSTEM_PROMPT + ctx.skill_guidance("writing.related_work"),
         user=user,
         fact_pack=fact_pack_for_validation,
-        label="related_work",
     )
-    text, reflected = await _reflect(
-        ctx, text=text, fact_pack=fact_pack_for_validation, section_title="Related Work"
-    )
+    reflected = False
+    if violations:
+        text = _degraded_text(text, violations)
+        await _ai_stream(ctx, file_id=file_id, section="related_work", op="replace", text=text)
+        await _record_needs_review(ctx, section="related_work", violations=violations)
+    else:
+        refined, reflected = await _reflect(
+            ctx, text=text, fact_pack=fact_pack_for_validation, section_title="Related Work"
+        )
+        if reflected:
+            await _ai_phase(
+                ctx,
+                manuscript_id=manuscript_id,
+                file_id=file_id,
+                section="related_work",
+                phase="revising",
+            )
+            await _ai_stream(
+                ctx, file_id=file_id, section="related_work", op="replace", text=refined
+            )
+        text = refined
 
     # 被引用的 S2 命中追加进 fact_pack.citations（编译生成 @misc 条目）
     cited = {
@@ -521,6 +679,13 @@ async def writing_related_work(ctx: ActionContext, params: dict[str, Any]) -> di
             manuscript.fact_pack = new_pack
             await session.commit()
 
+    await _ai_phase(
+        ctx,
+        manuscript_id=manuscript_id,
+        file_id=file_id,
+        section="related_work",
+        phase="done",
+    )
     via_room = await get_crdt_rooms().apply_ai_edit(file_id, "related_work", text)
     return {
         "section": "related_work",
@@ -543,6 +708,16 @@ async def writing_compile(ctx: ActionContext, params: dict[str, Any]) -> dict[st
     phase = str(params.get("phase") or "final")
     async with get_sessionmaker()() as session:
         manuscript = await _get_manuscript(session, ctx)
+        # 编译期通知前端收起 AI 光标、显示「AI 正在编译」（file/section 留空）
+        await ctx.notify(
+            {
+                "type": "manuscript.ai_writing",
+                "manuscript_id": str(manuscript.id),
+                "file_id": None,
+                "section": None,
+                "phase": "compiling",
+            }
+        )
         result = await latex_compile.compile_manuscript(session, manuscript)
         if result["status"] == "ok":
             # compile_manuscript 已把 writing → compiled；补发状态事件

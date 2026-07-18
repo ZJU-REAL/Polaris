@@ -181,3 +181,20 @@ export function chatLibrarySse(
 ): () => void {
   return postSse(`/projects/${projectId}/chat`, input, handlers);
 }
+
+/** 写作辅助：POST /manuscripts/{id}/assist（delta* → warnings? → done/error）。 */
+export interface AssistInput {
+  mode: 'polish' | 'rewrite' | 'continue';
+  text?: string;
+  instruction?: string;
+  before?: string;
+  after?: string;
+}
+
+export function assistManuscriptSse(
+  manuscriptId: string,
+  input: AssistInput,
+  handlers: PostSseHandlers,
+): () => void {
+  return postSse(`/manuscripts/${manuscriptId}/assist`, input, handlers);
+}

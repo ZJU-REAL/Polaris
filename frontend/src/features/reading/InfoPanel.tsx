@@ -6,7 +6,9 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
+import { clickable } from '../../lib/a11y';
 import type { PaperDetail } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    阅读工作台 · 论文信息面板（PaperDetailPane 的精简版）：
@@ -63,7 +65,7 @@ export function InfoPanel({
         {typeof paper.note_count === 'number' && paper.note_count > 0 && (
           <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
             <Icon name="pen" size={10} />
-            {paper.note_count} 条笔记
+            {paper.note_count} {tr('条笔记', 'notes')}
           </span>
         )}
       </div>
@@ -78,7 +80,7 @@ export function InfoPanel({
           style={{ textDecoration: 'none', marginTop: 10, display: 'inline-flex' }}
         >
           <Icon name="link" size={12} />
-          {arxivUrl ? 'arXiv 原文' : '原文链接'}
+          {arxivUrl ? tr('arXiv 原文', 'View on arXiv') : tr('原文链接', 'Source link')}
         </a>
       )}
 
@@ -97,7 +99,7 @@ export function InfoPanel({
           {paper.relevance_score !== null ? (
             <RelevanceBar value={paper.relevance_score} width={120} />
           ) : (
-            <span className="muted">未打分</span>
+            <span className="muted">{tr('未打分', 'Not scored')}</span>
           )}
         </MetaItem>
         <MetaItem label="ingested">
@@ -120,7 +122,7 @@ export function InfoPanel({
       {paper.concepts.length > 0 && (
         <div className="row gap6 wrap" style={{ marginTop: 12 }}>
           {paper.concepts.map((c) => (
-            <span key={c.id} className="wikilink" style={{ height: 22 }} onClick={() => onWikiLink(c.name)}>
+            <span key={c.id} className="wikilink" style={{ height: 22 }} {...clickable(() => onWikiLink(c.name))}>
               {c.name}
             </span>
           ))}
@@ -136,7 +138,7 @@ export function InfoPanel({
             style={{ padding: '9px 13px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
           >
             <span style={{ fontSize: 12, fontWeight: 650 }}>
-              摘要 <span className="en-label" style={{ fontSize: 10.5 }}>Abstract</span>
+              {tr('摘要', 'Abstract')}
             </span>
             <Icon
               name="chevDown"
@@ -195,8 +197,8 @@ export function InfoPanel({
           <EmptyState
             compact
             icon="pen"
-            title="还没有 AI 精读页"
-            desc="这篇论文还没被 AI 精读整理过（相关度不足，或还没运行初始建库 / 增量同步）。"
+            title={tr('还没有 AI 精读页', 'No AI deep-read page yet')}
+            desc={tr('这篇论文还没被 AI 精读整理过（相关度不足，或还没运行初始建库 / 增量同步）。', 'This paper has not been deep-read by AI yet (relevance too low, or initial library build / incremental sync has not run).')}
           />
         )}
       </div>

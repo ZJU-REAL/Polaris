@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.models.activity import Activity
 from app.models.experiment import Experiment
 from app.models.gate import Gate
@@ -137,6 +138,28 @@ def template_files(key: str, *, title: str) -> list[tuple[str, str, bool]]:
         readonly = path.suffix in READONLY_SUFFIXES
         files.append((path.name, content, readonly))
     return files
+
+
+# ---- 二进制资源（图片/字体/PDF 等）：字节落磁盘，ManuscriptFile 只留元数据 ----
+
+
+def manuscript_assets_dir(manuscript_id: uuid.UUID | str) -> Path:
+    return Path(get_settings().data_dir) / "manuscripts" / str(manuscript_id) / "assets"
+
+
+def asset_path(manuscript_id: uuid.UUID | str, path: str) -> Path:
+    return manuscript_assets_dir(manuscript_id) / path
+
+
+def write_binary_asset(manuscript_id: uuid.UUID | str, path: str, data: bytes) -> None:
+    target = asset_path(manuscript_id, path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+
+
+def read_binary_asset(manuscript_id: uuid.UUID | str, path: str) -> bytes | None:
+    target = asset_path(manuscript_id, path)
+    return target.read_bytes() if target.is_file() else None
 
 
 # ---- fact-pack 组装（docs/api-m5-b.md §3） ----
@@ -261,7 +284,12 @@ async def build_fact_pack(session: AsyncSession, manuscript: Manuscript) -> dict
 
 
 async def refresh_fact_pack(session: AsyncSession, manuscript: Manuscript) -> dict[str, Any]:
-    manuscript.fact_pack = await build_fact_pack(session, manuscript)
+    fresh = await build_fact_pack(session, manuscript)
+    # 评审修订说明不是事实源本身，重建时保留（供下次 AI 起草参考）
+    old = manuscript.fact_pack or {}
+    if old.get("revision_notes"):
+        fresh["revision_notes"] = old["revision_notes"]
+    manuscript.fact_pack = fresh
     await session.commit()
     await session.refresh(manuscript)
     return manuscript.fact_pack
@@ -273,7 +301,10 @@ async def refresh_fact_pack(session: AsyncSession, manuscript: Manuscript) -> di
 async def create_manuscript(
     session: AsyncSession, *, project: Project, data: ManuscriptCreate, user_id: uuid.UUID
 ) -> Manuscript:
-    template_meta(data.template)  # 先校验模板 key（TemplateNotFoundError）
+    from app.services import manuscript_templates  # 延迟导入避免循环
+
+    # 展开模板文件（builtin key 或库内模板 id/key；未知 → TemplateNotFoundError）
+    files = await manuscript_templates.expand_files(session, data.template, title=data.title)
     if data.idea_id is not None:
         idea = await session.get(Idea, data.idea_id)
         if idea is None or idea.project_id != project.id:
@@ -293,16 +324,29 @@ async def create_manuscript(
     )
     session.add(manuscript)
     await session.flush()
-    for path, content, readonly in template_files(data.template, title=data.title):
-        session.add(
-            ManuscriptFile(
-                manuscript_id=manuscript.id,
-                path=path,
-                content=content,
-                readonly=readonly,
-                updated_by=user_id,
+    for path, data_or_text, readonly, is_binary in files:
+        if is_binary:
+            write_binary_asset(manuscript.id, path, data_or_text)
+            session.add(
+                ManuscriptFile(
+                    manuscript_id=manuscript.id,
+                    path=path,
+                    content="",
+                    readonly=True,
+                    is_binary=True,
+                    updated_by=user_id,
+                )
             )
-        )
+        else:
+            session.add(
+                ManuscriptFile(
+                    manuscript_id=manuscript.id,
+                    path=path,
+                    content=data_or_text,
+                    readonly=readonly,
+                    updated_by=user_id,
+                )
+            )
     manuscript.fact_pack = await build_fact_pack(session, manuscript)
     session.add(
         Activity(
@@ -421,6 +465,60 @@ async def create_file(
     return file
 
 
+async def create_folder(
+    session: AsyncSession, *, manuscript: Manuscript, path: str, user_id: uuid.UUID
+) -> ManuscriptFile:
+    """新建文件夹占位（is_folder=True，无内容）；供文件树显示空目录。"""
+    path = _validate_file_path(path).rstrip("/")
+    await _assert_path_free(session, manuscript.id, path)
+    folder = ManuscriptFile(
+        manuscript_id=manuscript.id,
+        path=path,
+        content="",
+        readonly=False,
+        is_folder=True,
+        updated_by=user_id,
+    )
+    session.add(folder)
+    await session.commit()
+    await session.refresh(folder)
+    return folder
+
+
+async def upload_file(
+    session: AsyncSession,
+    *,
+    manuscript: Manuscript,
+    path: str,
+    data: bytes,
+    user_id: uuid.UUID,
+) -> ManuscriptFile:
+    """上传文件：文本入 content（可编辑）；二进制字节落磁盘（is_binary，只读）。"""
+    path = _validate_file_path(path)
+    await _assert_path_free(session, manuscript.id, path)
+    binary = b"\x00" in data
+    text = ""
+    if not binary:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            binary = True
+    if binary:
+        write_binary_asset(manuscript.id, path, data)
+    file = ManuscriptFile(
+        manuscript_id=manuscript.id,
+        path=path,
+        content="" if binary else text,
+        readonly=binary,
+        is_binary=binary,
+        updated_by=user_id,
+    )
+    session.add(file)
+    await session.commit()
+    await session.refresh(file)
+    return file
+
+
 async def rename_file(
     session: AsyncSession, *, file: ManuscriptFile, path: str, user_id: uuid.UUID
 ) -> ManuscriptFile:
@@ -437,8 +535,21 @@ async def rename_file(
 
 
 async def delete_file(session: AsyncSession, *, file: ManuscriptFile) -> None:
-    if file.readonly:
-        raise FileReadonlyError(file.path)
+    if file.readonly and not file.is_binary:
+        raise FileReadonlyError(file.path)  # 模板样式只读文件不可删；上传的二进制可删
+    mid = file.manuscript_id
+    if file.is_binary:
+        asset_path(mid, file.path).unlink(missing_ok=True)
+    if file.is_folder:
+        # 连带删除该目录下的所有文件（含二进制资源）
+        prefix = file.path.rstrip("/") + "/"
+        stmt = select(ManuscriptFile).where(
+            ManuscriptFile.manuscript_id == mid, ManuscriptFile.path.startswith(prefix)
+        )
+        for child in (await session.execute(stmt)).scalars().all():
+            if child.is_binary:
+                asset_path(mid, child.path).unlink(missing_ok=True)
+            await session.delete(child)
     await session.delete(file)
     await session.commit()
 
@@ -446,9 +557,15 @@ async def delete_file(session: AsyncSession, *, file: ManuscriptFile) -> None:
 # ---- 写作 voyage（docs/api-m5-b.md §5） ----
 
 
-def resolve_sections(template: str, requested: list[str] | None) -> tuple[list[str], bool]:
-    """请求节 → (固定顺序正文节列表, 是否写 related_work)。非法节名抛错。"""
-    meta_sections = set(template_meta(template).get("sections") or [])
+def resolve_sections(
+    known_sections: list[str], requested: list[str] | None
+) -> tuple[list[str], bool]:
+    """请求节 → (固定顺序正文节列表, 是否写 related_work)。非法节名抛错。
+
+    known_sections 为模板声明的可写分节（内置模板有值；官方上传模板通常为空，
+    此时全量起草得到空 body、AI 起草降级为只编译，用户改用内联 AI/手写）。
+    """
+    meta_sections = set(known_sections)
     if requested is None:
         selected = meta_sections
     else:
@@ -469,9 +586,14 @@ async def create_writing_voyage(
     notes: str | None,
     created_by: uuid.UUID,
 ) -> VoyageRun:
+    from app.services import manuscript_templates  # 延迟导入避免循环
+
     if await find_active_writing_voyage(session, manuscript) is not None:
         raise WritingInProgressError(str(manuscript.id))
-    body, related = resolve_sections(manuscript.template, sections)
+    known = await manuscript_templates.template_section_keys(session, manuscript.template)
+    body, related = resolve_sections(known, sections)
+    # 起草永远基于最新事实源：先自动重建 fact-pack（库/实验更新后不必手动刷新）
+    await refresh_fact_pack(session, manuscript)
     run = VoyageRun(
         kind=WRITING_VOYAGE_KIND,
         goal=f"论文撰写：{manuscript.title}",

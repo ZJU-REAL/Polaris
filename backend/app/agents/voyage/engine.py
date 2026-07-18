@@ -64,10 +64,14 @@ def _serialize_step(step: VoyageStep) -> dict[str, Any]:
         "title": step.title,
         "action": step.action,
         "params": step.params,
+        "acceptance": step.acceptance,
+        "requires_gate": step.requires_gate,
+        "provenance": step.provenance,
         "observation": step.observation,
         "verdict": step.verdict,
         "status": step.status,
         "attempt": step.attempt,
+        "attempts": step.attempts,
         "tokens": step.tokens,
         "started_at": step.started_at.isoformat() if step.started_at else None,
         "finished_at": step.finished_at.isoformat() if step.finished_at else None,
@@ -91,7 +95,17 @@ def _step_def_from_row(row: VoyageStep, plan: list[Any] | None) -> dict[str, Any
             row.requires_gate if row.requires_gate is not None else fallback.get("requires_gate")
         ),
         "on_failure": provenance.get("on_failure", fallback.get("on_failure")),
+        "wrapup": provenance.get("wrapup", fallback.get("wrapup")),
     }
+
+
+def _is_wrapup(step_def: dict[str, Any]) -> bool:
+    """收尾步骤：把已完成工作变成产出的廉价终步（summarize/report/终编译等）。
+
+    预算耗尽时收尾步骤仍放行、其余未执行步骤作废（docs/voyage-loop.md §5.4 降级收尾），
+    避免昂贵工作已完成却卡在最后一步 paused_error 而白费。
+    """
+    return bool(step_def.get("wrapup"))
 
 
 class VoyageEngine:
@@ -251,6 +265,8 @@ class VoyageEngine:
         provenance: dict[str, Any] = {"plan_iteration": run.plan_iteration}
         if step_def.get("on_failure"):
             provenance["on_failure"] = step_def["on_failure"]
+        if step_def.get("wrapup"):
+            provenance["wrapup"] = True
         return VoyageStep(
             run_id=run.id,
             seq=seq,
@@ -305,13 +321,19 @@ class VoyageEngine:
                 await self._finalize(session, run)
                 return
 
-            # 预算：超限自动暂停
-            if self._budget_exceeded(run):
-                await self._emit_log(run, "预算超限，任务暂停（paused_error）")
-                await self._set_status(session, run, "paused_error")
-                return
-
             step_def = _step_def_from_row(node, run.plan)
+
+            # 预算耗尽：降级收尾（docs/voyage-loop.md §5.4）——收尾步骤放行把已完成
+            # 工作变成产出，其余未执行步骤作废；无收尾步骤可救才 paused_error
+            if self._budget_exceeded(run):
+                if _is_wrapup(step_def):
+                    await self._emit_log(run, "预算已用尽，用已完成的结果收尾")
+                elif await self._budget_wrapup(session, run, rows):
+                    continue
+                else:
+                    await self._emit_log(run, "预算超限，无可收尾步骤，任务暂停（paused_error）")
+                    await self._set_status(session, run, "paused_error")
+                    return
 
             # 复位失败节点（直接 run() 再驱动而未经 resume 复位时）
             if node.status == "failed":
@@ -527,6 +549,34 @@ class VoyageEngine:
             return False
         return int((run.usage or {}).get("total_tokens", 0)) >= int(max_tokens)
 
+    async def _budget_wrapup(
+        self, session: AsyncSession, run: VoyageRun, rows: list[VoyageStep]
+    ) -> bool:
+        """预算耗尽降级收尾（docs/voyage-loop.md §5.4）：作废未执行的非收尾步骤，
+        保留收尾步骤把已完成工作变成产出。有收尾步骤可跑返回 True，否则 False（调用方暂停）。
+        """
+        pending = [r for r in rows if r.status not in ("passed", "obsolete")]
+        wrapup_rows = [r for r in pending if _is_wrapup(_step_def_from_row(r, run.plan))]
+        if not wrapup_rows:
+            return False
+        dropped = [r for r in pending if r not in wrapup_rows]
+        for r in dropped:
+            r.status = "obsolete"
+        if dropped:
+            run.plan_iteration = run.plan_iteration + 1
+            self._record_plan_event(
+                run,
+                source="budget",
+                reason="预算用尽，跳过剩余步骤，用已完成的结果收尾",
+                added=0,
+                obsoleted=len(dropped),
+                trigger_step=None,
+            )
+            await self._regen_plan_snapshot(session, run)
+        await session.commit()
+        await self._emit_log(run, f"预算用尽，作废 {len(dropped)} 个未执行步骤，用已完成的结果收尾")
+        return True
+
     # ---- 失败分派（docs/voyage-loop.md §5.1）----
 
     async def _handle_failure(
@@ -595,6 +645,36 @@ class VoyageEngine:
         rows = await self._active_rows(session, run)
         run.plan = [_step_def_from_row(r, None) for r in rows]
 
+    @staticmethod
+    def _record_plan_event(
+        run: VoyageRun,
+        *,
+        source: str,
+        reason: str,
+        added: int,
+        obsoleted: int,
+        trigger_step: str | None,
+    ) -> None:
+        """计划调整留痕进 checkpoint["plan_history"]（SSE log 不持久，因果叙事必须落库）。
+
+        source: signal（执行结果规则分支）| navigator（AI 调整）| template（模板分支）。
+        """
+        checkpoint = dict(run.checkpoint or {})
+        history = list(checkpoint.get("plan_history") or [])
+        history.append(
+            {
+                "iteration": run.plan_iteration,
+                "source": source,
+                "reason": reason[:500],
+                "added": added,
+                "obsoleted": obsoleted,
+                "trigger_step": trigger_step,
+                "at": utcnow().isoformat(),
+            }
+        )
+        checkpoint["plan_history"] = history
+        run.checkpoint = checkpoint
+
     async def _apply_signal_edits(
         self, session: AsyncSession, run: VoyageRun, node: VoyageStep
     ) -> None:
@@ -613,6 +693,14 @@ class VoyageEngine:
             return
         added = await self._apply_plan_edit(session, run, edit, anchor=node)
         run.plan_iteration = run.plan_iteration + 1
+        self._record_plan_event(
+            run,
+            source="signal",
+            reason=str(edit.get("reason") or ""),
+            added=added,
+            obsoleted=0,
+            trigger_step=node.title,
+        )
         await self._regen_plan_snapshot(session, run)
         await session.commit()
         await self._emit_log(
@@ -747,6 +835,17 @@ class VoyageEngine:
         checkpoint["replans"] = replans + 1
         run.checkpoint = checkpoint
         run.plan_iteration = run.plan_iteration + 1
+        obsoleted = 1 + sum(
+            len(op.get("step_ids") or []) for op in edit["edits"] if op["op"] == "obsolete_nodes"
+        )
+        self._record_plan_event(
+            run,
+            source="navigator",
+            reason=str(edit.get("reason") or "") or diagnosis,
+            added=added,
+            obsoleted=obsoleted,
+            trigger_step=failed_node.title,
+        )
         await self._regen_plan_snapshot(session, run)
         await session.commit()
         await self._emit_log(
@@ -816,6 +915,14 @@ class VoyageEngine:
                     step_def=step_def,
                 )
             )
+        self._record_plan_event(
+            run,
+            source="template",
+            reason=diagnosis or "步骤未通过，按模板分支重排剩余步骤",
+            added=len(new_tail),
+            obsoleted=len(tail),
+            trigger_step=failed_node.title,
+        )
         # run.plan 快照单向派生：已通过前缀 + 新尾部
         passed_defs = [_step_def_from_row(r, run.plan) for r in rows if r.status == "passed"]
         run.plan = passed_defs + list(new_tail)

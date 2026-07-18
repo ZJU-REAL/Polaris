@@ -9,6 +9,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type IngestKnobs, type IngestMode, type IngestState } from '../../lib/api';
+import { tr } from '../../lib/i18n';
 
 /* ============================================================
    冷启动 / 增量同步 Tab：
@@ -24,13 +25,14 @@ export interface IngestTabProps {
   stateLoading: boolean;
 }
 
-const COUNT_ROWS: { key: keyof NonNullable<IngestState['paper_counts']>; zh: string }[] = [
-  { key: 'library', zh: '库内文献' },
-  { key: 'compiled', zh: '已编译' },
-  { key: 'pending_compile', zh: '待编译' },
-  { key: 'included', zh: '人工精选' },
-  { key: 'candidate', zh: '未筛选' },
-  { key: 'excluded', zh: '已删除' },
+// 模块级常量只存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
+const COUNT_ROWS: { key: keyof NonNullable<IngestState['paper_counts']>; zh: string; en: string }[] = [
+  { key: 'library', zh: '库内文献', en: 'In library' },
+  { key: 'compiled', zh: '已编译', en: 'Compiled' },
+  { key: 'pending_compile', zh: '待编译', en: 'To compile' },
+  { key: 'included', zh: '人工精选', en: 'Hand-picked' },
+  { key: 'candidate', zh: '未筛选', en: 'Unscreened' },
+  { key: 'excluded', zh: '已删除', en: 'Deleted' },
 ];
 
 function KnobRange({
@@ -90,16 +92,24 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
   const ingestMutation = useMutation({
     mutationFn: (input: { mode: IngestMode; knobs: IngestKnobs }) => api.startIngest(pid, input),
     onSuccess: (v, input) => {
-      toast(input.mode === 'bootstrap' ? '初始建库已开始，跳转任务详情…' : '增量同步已开始，跳转任务详情…', 'ok');
+      toast(
+        input.mode === 'bootstrap'
+          ? tr('初始建库已开始，跳转任务详情…', 'Initial library build started — opening task detail…')
+          : tr('增量同步已开始，跳转任务详情…', 'Incremental sync started — opening task detail…'),
+        'ok',
+      );
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
       navigate(`/voyages/${v.id}`);
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
-        toast('该项目已有一个文献任务在运行，请等待其完成。', 'error');
+        toast(
+          tr('该项目已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this direction — wait for it to finish.'),
+          'error',
+        );
         void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
       } else {
-        toast(`启动失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('启动失败：', 'Failed to start: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -143,13 +153,16 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
               <div className="row gap10">
                 <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
                   <span className="dot pulse" />
-                  运行中
+                  {tr('运行中', 'Running')}
                 </span>
-                <span style={{ fontSize: 13.5, fontWeight: 650 }}>文献任务进行中</span>
+                <span style={{ fontSize: 13.5, fontWeight: 650 }}>{tr('文献任务进行中', 'Literature task in progress')}</span>
                 <Icon name="arrow" size={14} style={{ marginLeft: 'auto', color: 'var(--accent-text)' }} />
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 8, lineHeight: 1.55 }}>
-                点击查看任务实时进度（SSE 流式）。运行期间无法再次启动 ingest。
+                {tr(
+                  '点击查看任务实时进度（SSE 流式）。运行期间无法再次启动 ingest。',
+                  'Click to watch live progress (SSE stream). Ingest cannot be started again while it runs.',
+                )}
               </div>
               <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 6 }}>
                 voyage {state.running_voyage_id.slice(0, 8)}…
@@ -162,25 +175,32 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             <div className="card-pad row" style={{ paddingBottom: 12, justifyContent: 'space-between' }}>
               <span className="section-h">
                 <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
-                知识库状态 <span className="en-label" style={{ fontSize: 11 }}>Ingest state</span>
+                {tr('知识库状态', 'Ingest state')}
               </span>
             </div>
             {stateLoading ? (
-              <div className="empty" style={{ padding: 24 }}>加载状态…</div>
+              <div className="empty" style={{ padding: 24 }}>{tr('加载状态…', 'Loading state…')}</div>
             ) : stateError ? (
-              <EmptyState compact icon="x" title="无法加载状态" desc="后端不可用或接口尚未就绪。" />
+              <EmptyState
+                compact
+                icon="x"
+                title={tr('无法加载状态', 'Failed to load state')}
+                desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or API not ready.')}
+              />
             ) : (
               <div style={{ padding: '0 22px 20px' }}>
                 <div className="row gap16" style={{ marginBottom: 16 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>上次同步时间 last sync</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>{tr('上次同步时间', 'Last sync')}</div>
                     <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>
                       {state?.watermark ? state.watermark.slice(0, 10) : '—'}
                     </div>
                     {!state?.watermark && (
-                      <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>尚未运行过初始建库</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>
+                        {tr('尚未运行过初始建库', 'Initial library build has not run yet')}
+                      </div>
                     )}
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '10px 0 4px' }}>下次自动同步 next sync</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '10px 0 4px' }}>{tr('下次自动同步', 'Next auto sync')}</div>
                     <div className="mono" style={{ fontSize: 13, fontWeight: 650 }}>
                       {state?.next_sync_at
                         ? new Date(state.next_sync_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -188,12 +208,15 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
                     </div>
                     {!state?.next_sync_at && (
                       <div style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 2 }}>
-                        运行节奏为每日且完成初始建库后，才会自动同步
+                        {tr(
+                          '运行节奏为每日且完成初始建库后，才会自动同步',
+                          'Auto sync starts only after the initial build is done and the schedule is daily',
+                        )}
                       </div>
                     )}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>论文总数 total</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>{tr('论文总数', 'Total papers')}</div>
                     <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>{counts?.total ?? '—'}</div>
                   </div>
                 </div>
@@ -201,14 +224,14 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
                 <div className="row gap8 wrap">
                   {COUNT_ROWS.map((r) => (
                     <span key={String(r.key)} className="pill sm" style={{ background: 'var(--surface-2)' }}>
-                      {r.zh}
+                      {tr(r.zh, r.en)}
                       <span className="mono" style={{ fontWeight: 700 }}>{counts?.[r.key] ?? 0}</span>
                     </span>
                   ))}
                 </div>
 
                 <div className="hr" style={{ margin: '16px 0 12px' }} />
-                <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>上次运行 last run</div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('上次运行', 'Last run')}</div>
                 {state?.last_run ? (
                   <div
                     className="row gap10 hoverable"
@@ -230,7 +253,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
                     <Icon name="chevron" size={13} style={{ color: 'var(--text-4)' }} />
                   </div>
                 ) : (
-                  <span className="muted" style={{ fontSize: 12.5 }}>暂无运行记录</span>
+                  <span className="muted" style={{ fontSize: 12.5 }}>{tr('暂无运行记录', 'No runs yet')}</span>
                 )}
               </div>
             )}
@@ -241,18 +264,23 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             <div className="row gap10" style={{ marginBottom: 8 }}>
               <span className="section-h">
                 <Icon name="refresh" size={15} style={{ color: 'var(--accent)' }} />
-                增量同步 <span className="en-label" style={{ fontSize: 11 }}>Incremental</span>
+                {tr('增量同步', 'Incremental sync')}
               </span>
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 14px' }}>
-              从上次同步时间之后抓取新论文并打分编译；已建库的项目每日也会由定时任务自动增量。
+              {tr(
+                '从上次同步时间之后抓取新论文并打分编译；已建库的项目每日也会由定时任务自动增量。',
+                'Fetch, score, and compile papers published since the last sync; built libraries also sync daily on a schedule.',
+              )}
             </p>
             <button className="btn btn-ghost" disabled={busy || !state?.watermark} onClick={runIncremental}>
               <Icon name="refresh" size={14} />
-              立即增量同步
+              {tr('立即增量同步', 'Sync now')}
             </button>
             {!state?.watermark && !stateError && !stateLoading && (
-              <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 8 }}>需先完成一次初始建库 bootstrap。</div>
+              <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 8 }}>
+                {tr('需先完成一次初始建库。', 'Run the initial library build first.')}
+              </div>
             )}
           </div>
         </div>
@@ -262,18 +290,20 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
           <div className="row gap10" style={{ marginBottom: 6 }}>
             <span className="section-h">
               <Icon name="play" size={15} style={{ color: 'var(--accent)' }} />
-              初始建库 <span className="en-label" style={{ fontSize: 11 }}>Bootstrap</span>
+              {tr('初始建库', 'Initial library build')}
             </span>
           </div>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 18px' }}>
-            初始建库一次性回填近 N 个月文献并做参考文献扩展，
-            AI 打分筛选后精读编译建立知识库。以下选项控制本次开销。
+            {tr(
+              '初始建库一次性回填近 N 个月文献并做参考文献扩展，AI 打分筛选后精读编译建立知识库。以下选项控制本次开销。',
+              'The initial build backfills the last N months of papers with reference expansion, then scores, filters, and compiles them into the library. These knobs control the cost of this run.',
+            )}
           </p>
 
           <KnobRange
-            label="回填月数"
+            label={tr('回填月数', 'Months back')}
             en="months_back"
-            hint="从今天往回抓取候选论文的时间窗口（3-24 个月）。"
+            hint={tr('从今天往回抓取候选论文的时间窗口（3-24 个月）。', 'How far back from today to fetch candidate papers (3-24 months).')}
             value={monthsBack}
             min={3}
             max={24}
@@ -281,9 +311,12 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             onChange={setMonthsBack}
           />
           <KnobRange
-            label="最大检索篇数"
+            label={tr('最大检索篇数', 'Max papers')}
             en="max_papers"
-            hint="本次检索与参考文献扩展最多加入知识库的论文数。"
+            hint={tr(
+              '本次检索与参考文献扩展最多加入知识库的论文数。',
+              'Cap on papers added to the library from search plus reference expansion.',
+            )}
             value={maxPapers}
             min={10}
             max={300}
@@ -291,9 +324,9 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             onChange={setMaxPapers}
           />
           <KnobRange
-            label="相关度阈值"
+            label={tr('相关度阈值', 'Relevance threshold')}
             en="relevance_threshold"
-            hint="LLM 相关性打分低于该阈值的论文将被过滤。"
+            hint={tr('LLM 相关性打分低于该阈值的论文将被过滤。', 'Papers scoring below this relevance threshold are filtered out.')}
             value={threshold}
             min={0}
             max={1}
@@ -301,21 +334,28 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             format={(v) => v.toFixed(2)}
             onChange={setThreshold}
           />
-          <FormField label="参考文献扩展层数" en="snowball_depth" hint="沿引用关系扩展检索的层数；0 为不扩展。">
+          <FormField
+            label={tr('参考文献扩展层数', 'Reference expansion depth')}
+            en="snowball_depth"
+            hint={tr('沿引用关系扩展检索的层数；0 为不扩展。', 'How many hops to expand along citations; 0 disables expansion.')}
+          >
             <Segmented<'0' | '1' | '2'>
               options={[
-                { v: '0', label: '0 · 关' },
-                { v: '1', label: '1 层' },
-                { v: '2', label: '2 层' },
+                { v: '0', label: tr('0 · 关', '0 · off') },
+                { v: '1', label: tr('1 层', '1 hop') },
+                { v: '2', label: tr('2 层', '2 hops') },
               ]}
               value={snowballDepth}
               onChange={setSnowballDepth}
             />
           </FormField>
           <KnobRange
-            label="最大编译篇数"
+            label={tr('最大编译篇数', 'Max compiled papers')}
             en="compile_top_n"
-            hint="打分排序后取前 N 篇下载 PDF 并精读编译，不超过最大检索篇数。"
+            hint={tr(
+              '打分排序后取前 N 篇下载 PDF 并精读编译，不超过最大检索篇数。',
+              'Top N papers by score get their PDFs downloaded and compiled; capped by max papers.',
+            )}
             value={compileTopN}
             min={5}
             max={100}
@@ -328,21 +368,26 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
               {ingestMutation.isPending ? (
                 <>
                   <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                  启动中…
+                  {tr('启动中…', 'Starting…')}
                 </>
               ) : (
                 <>
                   <Icon name="play" size={14} />
-                  运行初始建库 bootstrap
+                  {tr('运行初始建库', 'Run initial library build')}
                 </>
               )}
             </button>
             {running && (
-              <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>已有任务运行中，暂不可启动</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                {tr('已有任务运行中，暂不可启动', 'A task is already running — cannot start another')}
+              </span>
             )}
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 12, lineHeight: 1.6 }}>
-            以 AI 任务呈现进度，支持断点续跑；同一项目同时只允许一个 ingest 任务。
+            {tr(
+              '以 AI 任务呈现进度，支持断点续跑；同一项目同时只允许一个 ingest 任务。',
+              'Progress shows as an AI task and can resume from checkpoints; one ingest task per direction at a time.',
+            )}
           </div>
         </div>
       </div>

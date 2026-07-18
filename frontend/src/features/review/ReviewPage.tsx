@@ -12,6 +12,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
+import { tr } from '../../lib/i18n';
 import {
   api,
   ApiError,
@@ -54,17 +55,20 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
         personas: personas.filter((p) => p.name.trim() !== ''),
       }),
     onSuccess: (v) => {
-      toast('评审锦标赛已开始，跳转任务详情…', 'ok');
+      toast(tr('评审锦标赛已开始，跳转任务详情…', 'Review tournament started — opening task detail…'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       onClose();
       navigate(`/voyages/${v.id}`);
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
-        toast('该项目已有一个 forge/review 任务在运行，请等待其完成。', 'error');
+        toast(
+          tr('该项目已有一个 forge/review 任务在运行，请等待其完成。', 'This project already has a forge/review task running — wait for it to finish.'),
+          'error',
+        );
         void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
       } else {
-        toast(`启动失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+        toast(`${tr('启动失败', 'Failed to start')}：${e instanceof Error ? e.message : String(e)}`, 'error');
       }
     },
   });
@@ -81,23 +85,23 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
       title={
         <>
           <Icon name="scale" size={16} style={{ color: 'var(--accent)' }} />
-          运行评审锦标赛
+          {tr('运行评审锦标赛', 'Run review tournament')}
         </>
       }
-      sub="候选想法两两配对辩论，按胜负更新排名。"
+      sub={tr('候选想法两两配对辩论，按胜负更新排名。', 'Candidate ideas debate in pairs; rankings update by wins and losses.')}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose}>取消</button>
+          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
           <button className="btn btn-primary" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
             {mutation.isPending ? (
               <>
                 <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                启动中…
+                {tr('启动中…', 'Starting…')}
               </>
             ) : (
               <>
                 <Icon name="play" size={14} />
-                开始锦标赛
+                {tr('开始锦标赛', 'Start tournament')}
               </>
             )}
           </button>
@@ -105,9 +109,9 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
       }
     >
       <KnobRange
-        label="辩论轮数"
+        label={tr('辩论轮数', 'Debate rounds')}
         en="rounds"
-        hint="每对想法的正反辩论轮数。"
+        hint={tr('每对想法的正反辩论轮数。', 'Rounds of pro/con debate per pair of ideas.')}
         value={rounds}
         min={1}
         max={5}
@@ -115,9 +119,12 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
         onChange={setRounds}
       />
       <FormField
-        label="评审人设"
+        label={tr('评审人设', 'Reviewer personas')}
         en="personas"
-        hint="每个人设是一个 agent 评审：名字 + 立场（stance）。默认三人设可直接编辑。"
+        hint={tr(
+          '每个人设是一个 agent 评审：名字 + 立场（stance）。默认三人设可直接编辑。',
+          'Each persona is one agent reviewer: a name plus a stance. The three defaults are editable.',
+        )}
       >
         <div className="col gap8">
           {personas.map((p, i) => (
@@ -125,20 +132,20 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
               <input
                 className="input"
                 style={{ width: 150, flexShrink: 0 }}
-                placeholder="名字 name"
+                placeholder={tr('名字', 'Name')}
                 value={p.name}
                 onChange={(e) => setPersona(i, { name: e.target.value })}
               />
               <input
                 className="input"
                 style={{ flex: 1 }}
-                placeholder="立场 stance"
+                placeholder={tr('立场', 'Stance')}
                 value={p.stance}
                 onChange={(e) => setPersona(i, { stance: e.target.value })}
               />
               <button
                 className="icon-btn"
-                title="移除"
+                title={tr('移除', 'Remove')}
                 onClick={() => setPersonas((ps) => ps.filter((_, pi) => pi !== i))}
               >
                 <Icon name="trash" size={14} />
@@ -151,12 +158,15 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
             onClick={() => setPersonas((ps) => [...ps, { name: '', stance: '' }])}
           >
             <Icon name="plus" size={13} />
-            添加人设
+            {tr('添加人设', 'Add persona')}
           </button>
         </div>
       </FormField>
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
-        对全部候选与评审中的想法进行配对辩论；讨论区中的人工评论会提供给相关 AI 评审员参考。
+        {tr(
+          '对全部候选与评审中的想法进行配对辩论；讨论区中的人工评论会提供给相关 AI 评审员参考。',
+          'All candidate and under-review ideas debate in pairs; human comments from the discussion are shared with the relevant AI reviewers.',
+        )}
       </div>
     </Modal>
   );
@@ -191,23 +201,23 @@ function LeaderboardTab({
   const promoteMutation = useMutation({
     mutationFn: (ideaId: string) => api.promoteIdea(ideaId),
     onSuccess: () => {
-      toast('已提交晋级审批，等待人工审批 · promotion approval created', 'ok');
+      toast(tr('已提交晋级审批，等待人工审批', 'Promotion approval created — awaiting human approval'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['gates'] });
       void queryClient.invalidateQueries({ queryKey: ['leaderboard', pid] });
       void queryClient.invalidateQueries({ queryKey: ['ideas'] });
     },
-    onError: (e) => toast(`晋级失败：${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => toast(`${tr('晋级失败', 'Promotion failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  if (loading) return <div className="empty" style={{ padding: 40 }}>加载排行榜…</div>;
+  if (loading) return <div className="empty" style={{ padding: 40 }}>{tr('加载排行榜…', 'Loading leaderboard…')}</div>;
   if (error) {
     return (
       <EmptyState
         compact
         icon="x"
-        title="无法加载排行榜"
-        desc="后端不可用或接口尚未就绪。"
-        action={<button className="btn btn-soft sm" onClick={refetch}>重试 retry</button>}
+        title={tr('无法加载排行榜', 'Failed to load leaderboard')}
+        desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+        action={<button className="btn btn-soft sm" onClick={refetch}>{tr('重试', 'Retry')}</button>}
       />
     );
   }
@@ -215,12 +225,12 @@ function LeaderboardTab({
     return (
       <EmptyState
         icon="chart"
-        title="排行榜为空"
-        desc="先在想法生成页生成候选想法，再运行一次评审。"
+        title={tr('排行榜为空', 'Leaderboard is empty')}
+        desc={tr('先在想法生成页生成候选想法，再运行一次评审。', 'Generate candidate ideas on the Idea Forge page first, then run a review.')}
         action={
           <button className="btn btn-ghost" onClick={() => navigate('/forge')}>
             <Icon name="bulb" size={14} />
-            前往想法生成
+            {tr('前往想法生成', 'Go to Idea Forge')}
           </button>
         }
       />
@@ -245,12 +255,12 @@ function LeaderboardTab({
         }}
       >
         <span>#</span>
-        <span>想法</span>
+        <span>{tr('想法', 'Idea')}</span>
         <span style={{ textAlign: 'right' }}>Elo</span>
-        <span>四维 rubric</span>
-        <span style={{ textAlign: 'right' }}>对局</span>
-        <span style={{ textAlign: 'right' }}>胜场</span>
-        <span>状态</span>
+        <span>{tr('四维 rubric', 'Rubric (4 dims)')}</span>
+        <span style={{ textAlign: 'right' }}>{tr('对局', 'Matches')}</span>
+        <span style={{ textAlign: 'right' }}>{tr('胜场', 'Wins')}</span>
+        <span>{tr('状态', 'Status')}</span>
         <span />
       </div>
       {rows.map((r, i) => {
@@ -310,7 +320,7 @@ function LeaderboardTab({
             <div className="row gap6" style={{ justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
               <button
                 className="icon-btn"
-                title="辩论记录 matches"
+                title={tr('辩论记录', 'Debate history')}
                 onClick={() => onOpenMatches(r.id)}
                 style={{ width: 26, height: 26 }}
               >
@@ -322,17 +332,17 @@ function LeaderboardTab({
                   disabled={running || promoteMutation.isPending}
                   onClick={() => promoteMutation.mutate(r.id)}
                 >
-                  晋级
+                  {tr('晋级', 'Promote')}
                 </button>
               )}
               {r.status === 'promoted' && (
                 <button
                   className="btn btn-soft sm"
-                  title="从该想法发起实验"
+                  title={tr('从该想法发起实验', 'Start an experiment from this idea')}
                   onClick={() => navigate(`/experiment?new=${r.id}`)}
                 >
                   <Icon name="flask" size={12} />
-                  发起实验
+                  {tr('发起实验', 'Start experiment')}
                 </button>
               )}
             </div>
@@ -355,7 +365,7 @@ function matchMeta(s: ReviewSessionRead, ideaId: string, titleOf: (id: string) =
   const won = winnerId !== null && winnerId === ideaId;
   const decided = winnerId !== null && winnerId !== undefined;
   return {
-    oppTitle: oppId ? titleOf(oppId) : '未知对手',
+    oppTitle: oppId ? titleOf(oppId) : tr('未知对手', 'Unknown opponent'),
     won,
     decided,
   };
@@ -399,7 +409,9 @@ function MatchesTab({
     <div style={{ padding: '16px 18px' }}>
       {/* idea 选择 */}
       <div className="row gap10" style={{ marginBottom: 16 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', flexShrink: 0 }}>选择想法</span>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', flexShrink: 0 }}>
+          {tr('选择想法', 'Pick an idea')}
+        </span>
         <select
           className="input"
           style={{ maxWidth: 480 }}
@@ -410,24 +422,42 @@ function MatchesTab({
           }}
         >
           <option value="" disabled>
-            {rowsError ? '（排行榜不可用）' : '— 从排行榜选择 —'}
+            {rowsError ? tr('（排行榜不可用）', '(leaderboard unavailable)') : tr('— 从排行榜选择 —', '— pick from the leaderboard —')}
           </option>
           {rows.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.title}（Elo {Math.round(r.elo_rating)} · {r.matches} 场）
+              {tr(
+                `${r.title}（Elo ${Math.round(r.elo_rating)} · ${r.matches} 场）`,
+                `${r.title} (Elo ${Math.round(r.elo_rating)} · ${r.matches} matches)`,
+              )}
             </option>
           ))}
         </select>
       </div>
 
       {!ideaId ? (
-        <EmptyState compact icon="scale" title="选择一个想法" desc="从上方下拉或排行榜点入，查看其全部辩论场次。" />
+        <EmptyState
+          compact
+          icon="scale"
+          title={tr('选择一个想法', 'Pick an idea')}
+          desc={tr('从上方下拉或排行榜点入，查看其全部辩论场次。', 'Pick from the dropdown above or click through from the leaderboard to see all its debates.')}
+        />
       ) : sessionsQuery.isLoading ? (
-        <div className="empty" style={{ padding: 30 }}>加载场次…</div>
+        <div className="empty" style={{ padding: 30 }}>{tr('加载场次…', 'Loading matches…')}</div>
       ) : sessionsQuery.isError ? (
-        <EmptyState compact icon="x" title="无法加载辩论场次" desc="后端不可用或接口尚未就绪。" />
+        <EmptyState
+          compact
+          icon="x"
+          title={tr('无法加载辩论场次', 'Failed to load debate matches')}
+          desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
+        />
       ) : matches.length === 0 ? (
-        <EmptyState compact icon="scale" title="暂无对局记录" desc="运行一次评审后，这里会出现该想法的每场辩论。" />
+        <EmptyState
+          compact
+          icon="scale"
+          title={tr('暂无对局记录', 'No matches yet')}
+          desc={tr('运行一次评审后，这里会出现该想法的每场辩论。', 'Run a review and every debate for this idea will show up here.')}
+        />
       ) : (
         <div className="row gap16" style={{ alignItems: 'flex-start' }}>
           {/* 场次列表 */}
@@ -478,13 +508,13 @@ function MatchesTab({
           {/* 逐轮记录 */}
           <div style={{ flex: 1, minWidth: 0 }}>
             {!activeSession ? (
-              <EmptyState compact icon="scale" title="选择一场辩论" />
+              <EmptyState compact icon="scale" title={tr('选择一场辩论', 'Pick a debate')} />
             ) : messagesQuery.isLoading ? (
-              <div className="empty" style={{ padding: 30 }}>加载辩论记录…</div>
+              <div className="empty" style={{ padding: 30 }}>{tr('加载辩论记录…', 'Loading debate transcript…')}</div>
             ) : messagesQuery.isError ? (
-              <EmptyState compact icon="x" title="无法加载辩论记录" />
+              <EmptyState compact icon="x" title={tr('无法加载辩论记录', 'Failed to load debate transcript')} />
             ) : messages.length === 0 ? (
-              <EmptyState compact icon="scale" title="该场辩论暂无发言" />
+              <EmptyState compact icon="scale" title={tr('该场辩论暂无发言', 'No messages in this debate yet')} />
             ) : (
               <div>
                 {messages.map((m) =>
@@ -561,18 +591,18 @@ export function ReviewPage() {
       <div className="page fadeup">
         <PageHead
           eyebrow="Stage 02 · Idea Review"
-          title="想法评审 Idea Review"
-          sub="AI 评审员对候选想法辩论排序，晋级需人工审批。"
+          title={tr('想法评审', 'Idea Review')}
+          sub={tr('AI 评审员对候选想法辩论排序，晋级需人工审批。', 'AI reviewers debate and rank candidate ideas; promotion needs human approval.')}
         />
         <div className="card">
           <EmptyState
             icon="scale"
-            title="还没有研究方向"
-            desc="先创建研究方向、生成候选想法，再运行评审。"
+            title={tr('还没有研究方向', 'No research direction yet')}
+            desc={tr('先创建研究方向、生成候选想法，再运行评审。', 'Create a research direction and generate candidate ideas first, then run a review.')}
             action={
               <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
                 <Icon name="plus" size={14} />
-                新建研究方向 · New direction
+                {tr('新建研究方向', 'New research direction')}
               </button>
             }
           />
@@ -585,26 +615,25 @@ export function ReviewPage() {
     <div className="page fadeup" style={{ maxWidth: 1280 }}>
       <PageHead
         eyebrow="Stage 02 · Idea Review"
-        title="想法评审 Idea Review"
+        title={tr('想法评审', 'Idea Review')}
         sub={
           currentProject
-            ? `当前方向：${currentProject.name}`
+            ? `${tr('当前方向', 'Current direction')}：${currentProject.name}`
             : projectsLoading
-              ? '加载研究方向…'
-              : '选择一个研究方向'
+              ? tr('加载研究方向…', 'Loading directions…')
+              : tr('选择一个研究方向', 'Pick a research direction')
         }
-        en="Elo tournament · scientific debate"
         right={
           <button className="btn btn-primary" disabled={!pid || !!runningVoyage} onClick={() => setModalOpen(true)}>
             {runningVoyage ? (
               <>
                 <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                运行中…
+                {tr('运行中…', 'Running…')}
               </>
             ) : (
               <>
                 <Icon name="play" size={14} />
-                运行锦标赛
+                {tr('运行锦标赛', 'Run tournament')}
               </>
             )}
           </button>
@@ -620,9 +649,11 @@ export function ReviewPage() {
           <div className="row gap10">
             <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
               <span className="dot pulse" />
-              运行中
+              {tr('运行中', 'Running')}
             </span>
-            <span style={{ fontSize: 13.5, fontWeight: 650 }}>forge/review 任务进行中 — 点击查看任务实时进度</span>
+            <span style={{ fontSize: 13.5, fontWeight: 650 }}>
+              {tr('forge/review 任务进行中 — 点击查看任务实时进度', 'A forge/review task is running — click to watch live progress')}
+            </span>
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
               voyage {runningVoyage.slice(0, 8)}…
             </span>
@@ -634,8 +665,8 @@ export function ReviewPage() {
       <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <Segmented<ReviewTab>
           options={[
-            { v: 'leaderboard', label: `排行榜 Leaderboard${rows.length ? ` · ${rows.length}` : ''}` },
-            { v: 'matches', label: '辩论记录 Debates' },
+            { v: 'leaderboard', label: `${tr('排行榜', 'Leaderboard')}${rows.length ? ` · ${rows.length}` : ''}` },
+            { v: 'matches', label: tr('辩论记录', 'Debates') },
           ]}
           value={tab}
           onChange={setTab}
@@ -645,7 +676,7 @@ export function ReviewPage() {
       <div className="card" style={{ overflow: 'hidden', minHeight: 320 }}>
         {!pid ? (
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? '加载研究方向…' : '请先选择研究方向'}
+            {projectsLoading ? tr('加载研究方向…', 'Loading directions…') : tr('请先选择研究方向', 'Pick a research direction first')}
           </div>
         ) : tab === 'leaderboard' ? (
           <LeaderboardTab

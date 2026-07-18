@@ -65,11 +65,93 @@ class ManuscriptFile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("manuscripts.id", ondelete="CASCADE"), index=True, nullable=False
     )
     path: Mapped[str] = mapped_column(String(1024), nullable=False)  # e.g. main.tex
-    content: Mapped[str] = mapped_column(Text, default="", nullable=False)  # latex
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)  # latex（二进制时为空）
     # 模板样式文件（.sty/.cls/.bst）只读：不可改删、不开 CRDT 房间
     readonly: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 二进制资源（图片/PDF/字体等）：content 为空，字节落磁盘
+    # data_dir/manuscripts/<id>/assets/<path>；文件夹占位用 is_folder
+    is_binary: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    is_folder: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     updated_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
 
     manuscript: Mapped[Manuscript] = relationship(back_populates="files")
+    versions: Mapped[list["ManuscriptFileVersion"]] = relationship(
+        back_populates="file", cascade="all, delete-orphan"
+    )
+
+
+# 版本快照来源：pre_ai（AI 分节写入前）| compile（编译当刻）| pre_restore（恢复前备份）
+FILE_VERSION_ORIGINS = ("pre_ai", "compile", "pre_restore")
+
+
+class ManuscriptFileVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """稿件文件的版本快照（自动打点，人工可回滚）。"""
+
+    __tablename__ = "manuscript_file_versions"
+
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("manuscript_files.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    seq: Mapped[int] = mapped_column(nullable=False)  # 同文件内递增
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(256))
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    file: Mapped[ManuscriptFile] = relationship(back_populates="versions")
+
+
+# 模板来源：builtin（app/assets 内置简化样式）| seeded（从 git/zip 拉取的官方模板）
+# | uploaded（用户上传 zip）
+TEMPLATE_SOURCES = ("builtin", "seeded", "uploaded")
+# 模板可见范围：global（全平台可选）| project（仅所属研究方向可选）
+TEMPLATE_SCOPES = ("global", "project")
+
+
+class ManuscriptTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """论文模板（DB 元数据 + data_dir/templates/<id>/files 下的文件）。
+
+    内置 3 个简化样式仍从 app/assets/templates 读取、不入库；本表存
+    「上传的 zip 模板」与「从 git/zip 种子拉来的官方模板」。
+    """
+
+    __tablename__ = "manuscript_templates"
+
+    key: Mapped[str] = mapped_column(String(96), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1024))
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # seeded | uploaded
+    scope: Mapped[str] = mapped_column(
+        String(16), default="global", server_default="global", nullable=False
+    )
+    # scope=project 时限定所属研究方向；global 为 null
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    # 主 tex 文件路径（展开/编译入口）；引擎提示 pdflatex|xelatex|lualatex|tectonic
+    main_tex: Mapped[str] = mapped_column(
+        String(512), default="main.tex", server_default="main.tex", nullable=False
+    )
+    engine: Mapped[str] = mapped_column(
+        String(16), default="tectonic", server_default="tectonic", nullable=False
+    )
+    page_limit: Mapped[int | None] = mapped_column()
+    # AI 起草可选分节（无标记的官方模板可为空 → 起草降级为追加）
+    sections: Mapped[list[str] | None] = mapped_column(JSONVariant)
+    unofficial: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    file_count: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    # 额外元数据（bib 风格、来源 URL、种子提交号等）
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
