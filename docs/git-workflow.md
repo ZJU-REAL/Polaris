@@ -30,6 +30,14 @@ gh pr create --draft
 git worktree remove ../wt/feat-x && git branch -d feat/x
 ```
 
+## 提交 / PR / issue 语言规范
+
+- **commit message 用英文** conventional commits：`feat/fix/chore/docs/refactor(scope): ...`。
+- **PR 与 issue 一律用英文**（标题 + 正文）：面向仓库协作者，保持一致、可检索。
+  - issue 先行、PR 用 `Closes #N` 关联；一个功能一条 issue、一个 PR。
+- **不写 AI 编码工具信息**：commit / PR / issue 中都不加 `Co-Authored-By: Claude`、
+  "Generated with Claude Code" 之类的署名或尾注。
+
 ## 同步 main
 
 `main` 只做 fast-forward，落后就拉、领先就是错：
@@ -96,4 +104,5 @@ DEV_SRC=../wt/dev docker compose -f deploy/docker-compose.yml -f deploy/docker-c
 | 追上 main | `git rebase origin/main`（**不是** merge） |
 | 本地预览 | dev worktree 里 `git checkout feat/x` + `DEV_SRC=../wt/dev docker compose … up` |
 | 建迁移 | `alembic revision -m "..."`（随机 id） |
+| commit / PR / issue | 一律英文；PR/issue 正文英文，`Closes #N` 关联；无 AI 署名 |
 | 收尾 | PR 合并 → `git worktree remove` + `git branch -d` |
