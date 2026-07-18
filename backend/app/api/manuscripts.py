@@ -11,11 +11,16 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_paper_review, require_writer
+from app.api.auth import (
+    current_active_user,
+    require_admin,
+    require_paper_review,
+    require_writer,
+)
 from app.core.db import get_session
 from app.core.events import EventBus, get_event_bus
 from app.core.llm.fake import estimate_tokens
@@ -39,10 +44,12 @@ from app.schemas.manuscript import (
     ManuscriptRead,
     ManuscriptUpdate,
     TemplateInfo,
+    TemplateSeedResult,
 )
 from app.schemas.review import PaperReviewRequest, PaperReviewSummary
 from app.schemas.voyage import VoyageRead
 from app.services import latex_compile, writing_assist
+from app.services import manuscript_templates as templates_service
 from app.services import manuscript_versions as manuscript_versions_service
 from app.services import manuscripts as manuscripts_service
 from app.services import paper_review as paper_review_service
@@ -98,8 +105,133 @@ async def _detail(session: AsyncSession, manuscript: Manuscript) -> ManuscriptDe
 
 
 @router.get("/manuscripts/templates", response_model=list[TemplateInfo])
-async def list_templates(user: User = Depends(current_active_user)) -> list[TemplateInfo]:
-    return [TemplateInfo.model_validate(m) for m in manuscripts_service.list_templates()]
+async def list_templates(
+    project_id: uuid.UUID | None = None,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[TemplateInfo]:
+    """内置 + 全平台模板；带 project_id 时并入该研究方向私有的上传模板。"""
+    infos = await templates_service.list_all(session, project_id=project_id)
+    return [TemplateInfo.model_validate(m) for m in infos]
+
+
+@router.post(
+    "/manuscripts/templates",
+    response_model=TemplateInfo,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_template(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    description: str | None = Form(None),
+    engine: str = Form("tectonic"),
+    page_limit: int | None = Form(None),
+    project_id: uuid.UUID | None = Form(None),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> TemplateInfo:
+    """上传 zip 建模板。给 project_id → 该研究方向私有（需成员）；否则全平台（需管理员）。"""
+    if project_id is not None:
+        project = await projects_service.get_project(
+            session, project_id=project_id, user_id=user.id
+        )
+        if project is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+        scope = "project"
+    else:
+        if user.role != "admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="ADMIN_REQUIRED_FOR_GLOBAL")
+        scope = "global"
+    data = await file.read()
+    try:
+        tmpl = await templates_service.create_from_zip(
+            session,
+            name=name,
+            zip_bytes=data,
+            scope=scope,
+            project_id=project_id,
+            created_by=user.id,
+            description=description,
+            engine=engine,
+            page_limit=page_limit,
+        )
+    except templates_service.TemplateError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
+    return TemplateInfo.model_validate(templates_service._db_info(tmpl))
+
+
+@router.get("/manuscripts/templates/{template_id}/download")
+async def download_template(
+    template_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    tmpl = await templates_service.get_db_template(session, str(template_id))
+    if tmpl is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="TEMPLATE_NOT_FOUND")
+    if tmpl.scope == "project" and tmpl.project_id is not None:
+        project = await projects_service.get_project(
+            session, project_id=tmpl.project_id, user_id=user.id
+        )
+        if project is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="TEMPLATE_NOT_FOUND")
+    content = await asyncio.to_thread(templates_service.zip_bytes, tmpl)
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{tmpl.key}.zip"'},
+    )
+
+
+@router.delete("/manuscripts/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_template(
+    template_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    tmpl = await templates_service.get_db_template(session, str(template_id))
+    if tmpl is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="TEMPLATE_NOT_FOUND")
+    allowed = user.role == "admin" or tmpl.created_by == user.id
+    if not allowed and tmpl.project_id is not None:
+        project = await projects_service.get_project(
+            session, project_id=tmpl.project_id, user_id=user.id
+        )
+        allowed = project is not None and projects_service.can_manage_project(project, user)
+    if not allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="NOT_ALLOWED")
+    await templates_service.delete_template(session, tmpl)
+
+
+@router.post("/manuscripts/templates/seed", response_model=list[TemplateSeedResult])
+async def seed_templates(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> list[TemplateSeedResult]:
+    """拉取并入库官方模板（zjuthesis/ACL/ICLR/NeurIPS/ICML），幂等。仅管理员。"""
+    results: list[TemplateSeedResult] = []
+    for entry in templates_service.SEED_MANIFEST:
+        try:
+            tmpl = await templates_service.seed_one(session, entry, created_by=user.id)
+            if tmpl is None:
+                results.append(
+                    TemplateSeedResult(key=entry["key"], name=entry["name"], status="skipped")
+                )
+            else:
+                results.append(
+                    TemplateSeedResult(key=entry["key"], name=entry["name"], status="seeded")
+                )
+        except Exception as e:  # noqa: BLE001 — 单个源失败不影响其余
+            logger.warning("template seed failed: %s", entry["key"], exc_info=True)
+            results.append(
+                TemplateSeedResult(
+                    key=entry["key"],
+                    name=entry["name"],
+                    status="failed",
+                    detail=f"{type(e).__name__}: {e}"[:300],
+                )
+            )
+    return results
 
 
 @router.post(

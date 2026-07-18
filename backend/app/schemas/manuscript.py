@@ -8,16 +8,32 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TemplateInfo(BaseModel):
+    """统一模板信息：builtin（内置简化）/ seeded（官方）/ uploaded（用户上传）。"""
+
+    id: str  # builtin=key；库内模板=uuid 字符串（创建稿件时作为 template 传回）
+    name: str
+    description: str | None = None
+    source: Literal["builtin", "seeded", "uploaded"] = "builtin"
+    scope: Literal["global", "project"] = "global"
+    project_id: str | None = None
+    engine: str = "tectonic"
+    page_limit: int | None = None
+    sections: list[str] = Field(default_factory=list)
+    unofficial: bool = True  # 简化样式（非官方 .sty），投稿前须替换官方版
+    downloadable: bool = False  # 库内模板可下载 zip；内置的不可
+    file_count: int = 0
+
+
+class TemplateSeedResult(BaseModel):
     key: str
     name: str
-    page_limit: int
-    sections: list[str]
-    unofficial: bool = True  # 开发用简化样式（非官方 .sty），投稿前须替换官方版
+    status: Literal["seeded", "skipped", "failed"]
+    detail: str | None = None
 
 
 class ManuscriptCreate(BaseModel):
     title: str = Field(min_length=1, max_length=512)
-    template: str
+    template: str  # builtin key 或库内模板 id/key
     idea_id: uuid.UUID | None = None
     experiment_id: uuid.UUID | None = None
 

@@ -32,6 +32,7 @@ from app.models.experiment import Experiment
 from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.paper import Paper
 from app.services import crdt_rooms, manuscript_versions
+from app.services import manuscripts as manuscripts_service
 from app.services.citations import build_bibtex_for
 
 COMPILE_TIMEOUT_SECONDS = 120.0
@@ -253,9 +254,19 @@ async def assemble_workdir(
         rel = _safe_relpath(file.path)
         if rel is None:
             continue
+        target = workdir / rel
+        if file.is_folder:
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        if file.is_binary:
+            # 二进制资源（图片/字体/PDF 等）：字节从磁盘拷入编译目录
+            data = manuscripts_service.read_binary_asset(manuscript.id, file.path)
+            if data is not None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+            continue
         await rooms.flush(file.id)  # 有活跃房间：取消防抖并立即快照
         content = rooms.room_content(file.id)
-        target = workdir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         text = content if content is not None else file.content
         target.write_text(text, encoding="utf-8")

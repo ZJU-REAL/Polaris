@@ -6,7 +6,12 @@ from app.models.experiment import Experiment, ExperimentRun
 from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
-from app.models.manuscript import Manuscript, ManuscriptFile, ManuscriptFileVersion
+from app.models.manuscript import (
+    Manuscript,
+    ManuscriptFile,
+    ManuscriptFileVersion,
+    ManuscriptTemplate,
+)
 from app.models.paper import (
     Concept,
     Paper,
@@ -37,6 +42,7 @@ __all__ = [
     "Manuscript",
     "ManuscriptFile",
     "ManuscriptFileVersion",
+    "ManuscriptTemplate",
     "ModelRoute",
     "Paper",
     "PaperChunk",
