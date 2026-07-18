@@ -8,6 +8,8 @@ import type { HighlightColor, HighlightStyle, ReadingStatus } from '../../lib/ap
 export interface ReadingStatusMeta {
   v: ReadingStatus;
   label: string;
+  /** 英文副标题（tr(label, en) 单语切换用） */
+  en: string;
   /** 前景色 token */
   c: string;
   /** 背景色 token */
@@ -15,9 +17,9 @@ export interface ReadingStatusMeta {
 }
 
 export const READING_STATUS: readonly ReadingStatusMeta[] = [
-  { v: 'unread', label: '未读', c: 'var(--text-3)', bg: 'var(--surface-3)' },
-  { v: 'reading', label: '在读', c: 'var(--warn-tx)', bg: 'var(--warn-bg)' },
-  { v: 'read', label: '已读', c: 'var(--ok-tx)', bg: 'var(--ok-bg)' },
+  { v: 'unread', label: '未读', en: 'Unread', c: 'var(--text-3)', bg: 'var(--surface-3)' },
+  { v: 'reading', label: '在读', en: 'Reading', c: 'var(--warn-tx)', bg: 'var(--warn-bg)' },
+  { v: 'read', label: '已读', en: 'Read', c: 'var(--ok-tx)', bg: 'var(--ok-bg)' },
 ] as const;
 
 export function readingStatusMeta(s: string | undefined): ReadingStatusMeta {
