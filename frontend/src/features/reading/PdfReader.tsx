@@ -192,6 +192,7 @@ export function PdfReader({
   const [pending, setPending] = useState<Pending | null>(null);
   const [pendingStyle, setPendingStyle] = useState<HighlightStyle>('highlight');
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const wheelAccum = useRef(0); // 捏合/滚轮缩放的手势累积量：攒够一档才缩放，避免频繁重渲染卡顿
 
   // 浮条渲染后按实际位置纠偏：若溢出窗口上/下缘，就把它推回可视区（不依赖坐标系假设）
   useLayoutEffect(() => {
@@ -239,14 +240,21 @@ export function PdfReader({
 
   // 触控板双指捏合 / Ctrl(⌘)+滚轮 缩放：浏览器默认会整页缩放，这里拦下来只缩放 PDF。
   // 捏合手势在浏览器里表现为 ctrlKey=true 的 wheel 事件；必须用 passive:false 才能 preventDefault。
+  // 每个 wheel 事件都改 scale 会让 react-pdf 每秒重渲染整页画布几十次而卡顿——这里改成
+  // 离散步进：攒够一定手势量才跳一档（±ZOOM_STEP），缩放变「一档一档」但不再卡。
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || mode !== 'annotate') return;
+    const WHEEL_THRESHOLD = 45; // 累积 deltaY 达到此值才跳一档
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return; // 普通滚动不拦截，照常翻页
       e.preventDefault();
+      wheelAccum.current += e.deltaY;
+      if (Math.abs(wheelAccum.current) < WHEEL_THRESHOLD) return;
+      const dir = wheelAccum.current > 0 ? -1 : 1; // 上滑放大、下滑缩小
+      wheelAccum.current = 0;
       setScale((s) =>
-        Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((s - e.deltaY * 0.01) * 100) / 100)),
+        Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((s + dir * ZOOM_STEP) * 100) / 100)),
       );
     };
     el.addEventListener('wheel', onWheel, { passive: false });
