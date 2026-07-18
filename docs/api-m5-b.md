@@ -95,3 +95,33 @@
 - 后端：模板展开/fact-pack 组装/编译诊断解析（真实 tectonic 日志 fixture）/静态校验三类违规拒绝/写作 voyage 分节顺序与 Related Work 延后（fake LLM 桩）/CRDT 快照落库（pycrdt 直连房间写入→防抖后库内容一致）/submit 前置
 - tectonic 不可用环境（本地 venv 测试）：编译走 subprocess mock；真实编译在 docker 验证
 - 前端：tsc/build；协同编辑真机双窗口验证
+
+---
+
+## 10. 模板库 / 文件管理器 / arXiv 导出 / 协作者（Overleaf-like 增强，本分支新增）
+
+### 10.1 模板库（DB 化）
+统一 `TemplateInfo{id, name, description, source(builtin|seeded|uploaded), scope(global|project), project_id, engine, page_limit, sections[], unofficial, downloadable, file_count}`；`id` 内置=key、库内=uuid，创建稿件时作为 `template` 传回。
+- `GET /manuscripts/templates?project_id=` — 内置 + 全平台 + 该方向私有上传模板
+- `POST /manuscripts/templates`（multipart：file=zip, name, description?, engine?, page_limit?, project_id?）→ 201 TemplateInfo。给 project_id=项目私有（需成员）；否则全平台（需平台 admin，否则 403 ADMIN_REQUIRED_FOR_GLOBAL）。zip 无 .tex → 422
+- `GET /manuscripts/templates/{id}/download` → zip；`DELETE /manuscripts/templates/{id}`（创建者/项目管理者/admin）
+- `POST /manuscripts/templates/seed`（仅 admin）→ 拉取官方模板（zjuthesis/ACL/ICLR/NeurIPS2026/ICML2026），幂等，返回逐条 seeded|skipped|failed
+- 实现：库内模板文件落 `data_dir/templates/<id>/files/`（二进制安全）；官方模板通常无 `% POLARIS_SECTION` 标记 → AI 分节起草降级（用内联 AI/手写）
+
+### 10.2 文件管理器（文件夹 + 上传 + 二进制）
+`ManuscriptFileBrief` 增 `is_binary`/`is_folder`。二进制字节落 `data_dir/manuscripts/<id>/assets/<path>`，`content` 为空、只读。
+- `POST /manuscripts/{id}/folders` `{path}` → 文件夹占位（删除时级联删该目录下文件）
+- `POST /manuscripts/{id}/files/upload`（multipart：file, path?）→ 文本入 content（可编辑），二进制落盘（只读）
+- `GET /manuscripts/{id}/files/{fid}/raw` → 二进制原始字节（图片/PDF 预览、下载）
+- 编译组装（assemble_workdir）会把二进制资源与文件夹一并写入编译目录；`figures/` 仍为实验图保留前缀
+
+### 10.3 arXiv 清洁包导出
+- `GET /manuscripts/{id}/export/arxiv` → tar.gz（源文件 + references.bib + figures + **.bbl**，剔除 aux/log/pdf/out/blg/synctex）。导出时**重编一遍**以生成与当前源一致的 .bbl；提示放响应头 `X-Export-Notes`
+
+### 10.4 协作者 / 共享编辑链接
+稿件权限 = 所属研究方向成员；协作操作落到项目。
+- `GET /collaborators/search?q=` → `[{id,email,display_name}]`（注意不用 /users/search，会被 fastapi-users /users/{id} 抢占）
+- `GET /manuscripts/{id}/collaborators` → `[{user_id,email,display_name,role,is_owner}]`
+- `POST /manuscripts/{id}/collaborators` `{user_id, role?}` → 更新后列表（需 owner/admin；用户不存在 404）
+- `DELETE /manuscripts/{id}/collaborators/{user_id}`（需 owner/admin；不能删 owner → 409）
+- `POST /manuscripts/{id}/share-link` `{expires_days?=14, max_uses?}` → `{token, join_path:/join/{token}, expires_at, max_uses}`；复用研究方向邀请，平台用户打开 `/join/{token}` 登录加入即获协同编辑权（只读匿名链接暂不支持）
