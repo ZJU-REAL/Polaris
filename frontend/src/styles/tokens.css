@@ -51,6 +51,18 @@
   --on-scrim-2: rgba(255, 255, 255, 0.75); /* 遮罩上的次级文字 */
   --on-scrim-3: rgba(255, 255, 255, 0.55); /* 遮罩上的弱文字 */
 
+  /* — Terminal（运行日志面板：固定深色，独立于浅色主题，供等宽终端使用） — */
+  --terminal-bg:     #0f1729;   /* 面板底色 */
+  --terminal-bg-2:   #172136;   /* 头部 / 大模型输出块底 */
+  --terminal-border: #263349;   /* 面板与分节线 */
+  --terminal-fg:     #cbd5e8;   /* 默认文字 */
+  --terminal-dim:    #6b7896;   /* 时间戳 / 弱文字 */
+  --terminal-accent: #6ea8ff;   /* 步骤 / AI 强调（浅色，深底可读） */
+  --terminal-ok:     #57c98a;   /* 通过 */
+  --terminal-err:    #f0857a;   /* 失败 / 出错 */
+  --terminal-plan:   #b39bf0;   /* 计划调整（紫） */
+  --terminal-warn:   #e3bd63;   /* 预算收尾 / 需审批（黄） */
+
   /* — Avatar — */
   --grad-avatar: linear-gradient(140deg, #4a6fa5, var(--accent));
   --on-accent:   #ffffff;                  /* 深色强调底（accent/渐变）上的文字 */

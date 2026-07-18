@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -872,6 +872,312 @@ function buildTimelineEntries(steps: VoyageStepRead[], events: VoyagePlanEvent[]
   return entries;
 }
 
+// —— 运行日志终端（Terminal）：结构化日志 + 大模型流式输出 ——
+
+const TERMINAL_MAX = 500;
+const LLM_PREVIEW_LINES = 4;
+
+type LogLevel = 'info' | 'step' | 'success' | 'error' | 'plan' | 'budget' | 'gate';
+const LOG_LEVELS = new Set<LogLevel>(['info', 'step', 'success', 'error', 'plan', 'budget', 'gate']);
+
+/** level → 文字颜色（终端专用变量，深底可读）。 */
+const LEVEL_COLOR: Record<LogLevel, string> = {
+  info: 'var(--terminal-fg)',
+  step: 'var(--terminal-accent)',
+  success: 'var(--terminal-ok)',
+  error: 'var(--terminal-err)',
+  plan: 'var(--terminal-plan)',
+  budget: 'var(--terminal-warn)',
+  gate: 'var(--terminal-warn)',
+};
+
+interface LogEntry {
+  kind: 'log';
+  id: number;
+  level: LogLevel;
+  message: string;
+  at: string;
+}
+interface LlmEntry {
+  kind: 'llm';
+  id: number;
+  stage: string;
+  text: string;
+  at: string;
+}
+type TerminalEntry = LogEntry | LlmEntry;
+interface ActiveLlm {
+  id: number;
+  stage: string;
+  text: string;
+  at: string;
+}
+interface TerminalState {
+  entries: TerminalEntry[];
+  active: ActiveLlm | null;
+}
+
+/** stage → 大白话（进行中 / 已完成 两种措辞；模块级常量只存 zh/en，渲染处再 tr）。 */
+const STAGE_INFO: Record<string, { activeZh: string; activeEn: string; doneZh: string; doneEn: string }> = {
+  navigator: { activeZh: 'AI 正在规划任务', activeEn: 'AI is planning the task', doneZh: 'AI 规划任务', doneEn: 'Task planning' },
+  debate: { activeZh: '评审辩论中', activeEn: 'Peer debate in progress', doneZh: '评审辩论', doneEn: 'Peer debate' },
+  review: { activeZh: '评审辩论中', activeEn: 'Peer debate in progress', doneZh: '评审辩论', doneEn: 'Peer debate' },
+  experiment: { activeZh: '实验分析中', activeEn: 'Analyzing the experiment', doneZh: '实验分析', doneEn: 'Experiment analysis' },
+  writing: { activeZh: '论文撰写中', activeEn: 'Drafting the paper', doneZh: '论文撰写', doneEn: 'Paper drafting' },
+  proposal: { activeZh: '方案深耕中', activeEn: 'Refining the proposal', doneZh: '方案深耕', doneEn: 'Proposal refinement' },
+  librarian: { activeZh: '精读编译中', activeEn: 'Reading & compiling papers', doneZh: '精读编译', doneEn: 'Reading & compiling' },
+  present: { activeZh: '生成幻灯片中', activeEn: 'Building the slides', doneZh: '生成幻灯片', doneEn: 'Slide generation' },
+};
+const STAGE_FALLBACK = { activeZh: 'AI 处理中', activeEn: 'AI is working', doneZh: 'AI 处理', doneEn: 'AI processing' };
+function stageInfo(stage: string) {
+  return STAGE_INFO[stage] ?? STAGE_FALLBACK;
+}
+
+function hhmmss(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** 一行结构化日志：时间戳 + 按 level 上色；step 行略微突出成分节。 */
+function LogLine({ entry }: { entry: LogEntry }) {
+  const isStep = entry.level === 'step';
+  return (
+    <div
+      className="row"
+      style={{
+        gap: 8,
+        alignItems: 'flex-start',
+        padding: isStep ? '5px 0 2px' : '1px 0',
+        marginTop: isStep ? 5 : 0,
+        borderTop: isStep ? '0.5px solid var(--terminal-border)' : 'none',
+      }}
+    >
+      <span style={{ color: 'var(--terminal-dim)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+        {hhmmss(entry.at)}
+      </span>
+      <span
+        style={{
+          color: LEVEL_COLOR[entry.level],
+          fontWeight: isStep ? 650 : 400,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          minWidth: 0,
+        }}
+      >
+        {entry.message}
+      </span>
+    </div>
+  );
+}
+
+/** 已完成的大模型输出：定格为一条记录，长文本默认折叠只显示前几行。 */
+function LlmRecord({ entry }: { entry: LlmEntry }) {
+  const [open, setOpen] = useState(false);
+  const info = stageInfo(entry.stage);
+  const lines = entry.text.split('\n');
+  const long = lines.length > LLM_PREVIEW_LINES || entry.text.length > 280;
+  const shown = open || !long ? entry.text : lines.slice(0, LLM_PREVIEW_LINES).join('\n');
+  return (
+    <div
+      style={{
+        margin: '6px 0',
+        padding: '8px 10px',
+        background: 'var(--terminal-bg-2)',
+        border: '0.5px solid var(--terminal-border)',
+        borderRadius: 8,
+      }}
+    >
+      <div className="row" style={{ gap: 6 }}>
+        <Icon name="sparkle" size={12} style={{ color: 'var(--terminal-accent)', flexShrink: 0 }} />
+        <span style={{ color: 'var(--terminal-accent)', fontWeight: 650 }}>
+          {tr(info.doneZh, info.doneEn)}
+        </span>
+        <span style={{ color: 'var(--terminal-dim)' }}>· {tr('输出完成', 'done')}</span>
+        <span style={{ color: 'var(--terminal-dim)', marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+          {hhmmss(entry.at)}
+        </span>
+      </div>
+      {entry.text && (
+        <div
+          style={{
+            marginTop: 5,
+            color: 'var(--terminal-fg)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            opacity: 0.92,
+          }}
+        >
+          {shown}
+          {!open && long ? ' …' : ''}
+        </div>
+      )}
+      {long && (
+        <button
+          onClick={() => setOpen((o) => !o)}
+          style={{
+            marginTop: 4,
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            padding: 0,
+            fontSize: 11,
+            fontFamily: 'var(--mono)',
+            color: 'var(--terminal-accent)',
+          }}
+        >
+          {open ? tr('收起', 'Collapse') : tr('展开', 'Expand')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 正在输出的大模型活动块：打字机式实时增长 + 闪烁光标。 */
+function LlmActive({ active }: { active: ActiveLlm }) {
+  const info = stageInfo(active.stage);
+  return (
+    <div
+      style={{
+        margin: '6px 0',
+        padding: '8px 10px',
+        background: 'var(--terminal-bg-2)',
+        border: '0.5px solid var(--terminal-accent)',
+        borderRadius: 8,
+      }}
+    >
+      <div className="row" style={{ gap: 7 }}>
+        <span className="dot pulse" style={{ background: 'var(--terminal-accent)', flexShrink: 0 }} />
+        <span style={{ color: 'var(--terminal-accent)', fontWeight: 650 }}>
+          {tr(info.activeZh, info.activeEn)} …
+        </span>
+      </div>
+      {active.text && (
+        <div style={{ marginTop: 5, color: 'var(--terminal-fg)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {active.text}
+          <span style={{ color: 'var(--terminal-accent)', animation: 'ai-caret-blink 1s step-end infinite' }}>▋</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 终端面板：深色、等宽、自动滚到底；用户上滑看历史时暂停跟随并给「回到底部」。 */
+function TaskTerminal({ state, live, onClear }: { state: TerminalState; live: boolean; onClear: () => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const followRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+
+  // 跟随时：每次内容变化滚到底。
+  useEffect(() => {
+    if (!followRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [state]);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    followRef.current = nearBottom;
+    setShowJump((s) => (s === !nearBottom ? s : !nearBottom));
+  };
+
+  const jump = () => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    followRef.current = true;
+    setShowJump(false);
+  };
+
+  const empty = state.entries.length === 0 && !state.active;
+
+  return (
+    <>
+      <div className="row" style={{ margin: '20px 0 12px' }}>
+        <span className="section-h">
+          <Icon name="cpu" size={15} style={{ color: 'var(--accent)' }} />
+          {tr('运行日志', 'Terminal')}
+        </span>
+        <div className="row gap8" style={{ marginLeft: 'auto' }}>
+          {live && (
+            <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
+              <span className="dot pulse" />
+              {tr('实时', 'live')}
+            </span>
+          )}
+          <button
+            className="btn btn-ghost sm"
+            onClick={onClear}
+            disabled={empty}
+            title={tr('清空运行日志', 'Clear the terminal')}
+          >
+            <Icon name="trash" size={12} />
+            {tr('清空', 'Clear')}
+          </button>
+        </div>
+      </div>
+      <div style={{ position: 'relative' }}>
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          style={{
+            height: 380,
+            overflowY: 'auto',
+            background: 'var(--terminal-bg)',
+            border: '0.5px solid var(--terminal-border)',
+            borderRadius: 12,
+            padding: '12px 14px',
+            fontFamily: 'var(--mono)',
+            fontSize: 11.5,
+            lineHeight: 1.65,
+            color: 'var(--terminal-fg)',
+          }}
+        >
+          {empty ? (
+            <div style={{ color: 'var(--terminal-dim)', padding: '8px 2px' }}>
+              {live
+                ? tr('等待任务输出…', 'Waiting for task output…')
+                : tr('暂无运行日志', 'No terminal output yet')}
+            </div>
+          ) : (
+            <>
+              {state.entries.map((e) =>
+                e.kind === 'log' ? <LogLine key={e.id} entry={e} /> : <LlmRecord key={e.id} entry={e} />,
+              )}
+              {state.active && <LlmActive active={state.active} />}
+            </>
+          )}
+        </div>
+        {showJump && (
+          <button
+            onClick={jump}
+            className="row gap6"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'var(--terminal-bg-2)',
+              color: 'var(--terminal-fg)',
+              border: '0.5px solid var(--terminal-border)',
+              borderRadius: 999,
+              padding: '4px 12px',
+              fontSize: 11,
+              cursor: 'pointer',
+              boxShadow: 'var(--shadow-pop)',
+            }}
+          >
+            {tr('回到底部', 'Jump to bottom')}
+            <Icon name="chevDown" size={12} />
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
 // —— 页面 ——
 
 export function VoyageDetailPage() {
@@ -879,9 +1185,34 @@ export function VoyageDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openGates } = useShell();
-  const [logs, setLogs] = useState<string[]>([]);
   const [live, setLive] = useState(false);
   const [showObsolete, setShowObsolete] = useState(false);
+
+  // —— 终端状态：ref 累积 + 节流 setState，避免高频 delta / 批处理日志每段一次重渲染 ——
+  const [terminal, setTerminal] = useState<TerminalState>({ entries: [], active: null });
+  const termBufRef = useRef<TerminalState>({ entries: [], active: null });
+  const termIdRef = useRef(0);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushTerminal = useCallback(() => {
+    flushTimerRef.current = null;
+    const buf = termBufRef.current;
+    setTerminal({ entries: buf.entries.slice(), active: buf.active ? { ...buf.active } : null });
+  }, []);
+  const scheduleTermFlush = useCallback(() => {
+    if (flushTimerRef.current != null) return;
+    flushTimerRef.current = setTimeout(flushTerminal, 80);
+  }, [flushTerminal]);
+  const clearTerminal = useCallback(() => {
+    termBufRef.current = { entries: [], active: null };
+    setTerminal({ entries: [], active: null });
+  }, []);
+
+  // 切换到别的任务详情时重置终端（同组件换 id 不会重挂载）。
+  useEffect(() => {
+    termBufRef.current = { entries: [], active: null };
+    setTerminal({ entries: [], active: null });
+  }, [id]);
 
   const { data: voyage, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['voyage', id, showObsolete],
@@ -946,16 +1277,52 @@ export function VoyageDetailPage() {
             return { ...old, steps: next };
           });
         } else if (event === 'log') {
-          const p = payload as { message?: string };
-          if (p.message) setLogs((l) => [...l.slice(-199), p.message as string]);
+          // 向后兼容：老事件可能只有 {message}，level 缺省当 info。
+          const p = payload as { message?: string; level?: string; at?: string };
+          if (!p.message) return;
+          const level = (p.level && LOG_LEVELS.has(p.level as LogLevel) ? p.level : 'info') as LogLevel;
+          const buf = termBufRef.current;
+          buf.entries.push({
+            kind: 'log',
+            id: ++termIdRef.current,
+            level,
+            message: p.message,
+            at: p.at ?? new Date().toISOString(),
+          });
+          if (buf.entries.length > TERMINAL_MAX) buf.entries.splice(0, buf.entries.length - TERMINAL_MAX);
+          scheduleTermFlush();
+        } else if (event === 'llm_start') {
+          const p = payload as { stage?: string };
+          termBufRef.current.active = { id: ++termIdRef.current, stage: p.stage ?? '', text: '', at: new Date().toISOString() };
+          scheduleTermFlush();
+        } else if (event === 'llm_delta') {
+          const p = payload as { stage?: string; delta?: string };
+          if (!p.delta) return;
+          const buf = termBufRef.current;
+          // 可能订阅在流中途接上：没有 active 块时惰性补一个。
+          if (!buf.active) buf.active = { id: ++termIdRef.current, stage: p.stage ?? '', text: '', at: new Date().toISOString() };
+          buf.active.text += p.delta;
+          scheduleTermFlush();
+        } else if (event === 'llm_end') {
+          const buf = termBufRef.current;
+          if (buf.active) {
+            buf.entries.push({ kind: 'llm', id: buf.active.id, stage: buf.active.stage, text: buf.active.text, at: buf.active.at });
+            buf.active = null;
+            if (buf.entries.length > TERMINAL_MAX) buf.entries.splice(0, buf.entries.length - TERMINAL_MAX);
+            scheduleTermFlush();
+          }
         }
       },
     });
     return () => {
       stop();
       setLive(false);
+      if (flushTimerRef.current != null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
     };
-  }, [id, active, queryClient]);
+  }, [id, active, queryClient, scheduleTermFlush]);
 
   if (isLoading) {
     return (
@@ -1127,22 +1494,8 @@ export function VoyageDetailPage() {
         </Timeline>
       )}
 
-      {/* 实时日志 */}
-      {logs.length > 0 && (
-        <>
-          <div className="row" style={{ margin: '20px 0 12px' }}>
-            <span className="section-h">
-              <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
-              {tr('实时日志', 'Live log')}
-            </span>
-          </div>
-          <div className="codeblock scroll" style={{ fontSize: 11, maxHeight: 240, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
-            {logs.map((l, i) => (
-              <div key={i}>{l}</div>
-            ))}
-          </div>
-        </>
-      )}
+      {/* 运行日志终端：结构化日志 + 大模型流式输出，常驻显示 */}
+      <TaskTerminal state={terminal} live={live} onClear={clearTerminal} />
     </div>
   );
 }
