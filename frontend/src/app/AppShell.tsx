@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Avatar } from '../components/ui/Avatar';
 import { Icon, type IconName } from '../components/ui/Icon';
 import { PolarisMark, PolarisWordmark } from '../components/ui/PolarisLogo';
 import { Drawer } from '../components/ui/Drawer';
@@ -10,7 +9,8 @@ import { ToastHost, toast } from '../components/ui/Toast';
 import { useAuth } from './auth';
 import { useProject } from './project';
 import { SearchPalette } from './SearchPalette';
-import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
+import { UserMenu } from './UserMenu';
+import { api, getToken, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
@@ -294,9 +294,7 @@ function NavItem({ n }: { n: NavEntry }) {
 }
 
 export function AppShell() {
-  const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
   const queryClient = useQueryClient();
 
   // —— 审批抽屉 ——
@@ -468,32 +466,7 @@ export function AppShell() {
           ))}
         </div>
         <div className="sb-foot">
-          <Avatar userId={me?.id} hasAvatar={!!me?.has_avatar} name={me?.display_name || me?.email || '研'} size={26} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {me?.display_name ?? me?.email ?? tr('研究员', 'Researcher')}
-            </div>
-            <div style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{isAdmin(me) ? 'Admin' : 'Researcher'}</div>
-          </div>
-          <button
-            className="icon-btn"
-            style={{ width: 28, height: 28, border: 'none', background: 'transparent' }}
-            title={tr('设置', 'Settings')}
-            onClick={() => navigate('/settings')}
-          >
-            <Icon name="settings" size={16} />
-          </button>
-          <button
-            className="icon-btn"
-            style={{ width: 28, height: 28, border: 'none', background: 'transparent' }}
-            title={tr('退出登录', 'Log out')}
-            onClick={() => {
-              logout();
-              navigate('/login');
-            }}
-          >
-            <Icon name="logout" size={15} />
-          </button>
+          <UserMenu me={me} collapsed={navCollapsed} />
         </div>
       </div>
 
