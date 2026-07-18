@@ -50,6 +50,7 @@ async def test_highlight_crud_and_ordering(client):
     hl = resp.json()
     assert hl["paper_id"] == pid and hl["project_id"] == project_id
     assert hl["page"] == 3 and hl["color"] == "green" and hl["note"] is None
+    assert hl["style"] == "highlight"  # 默认样式
     assert hl["author_name"] == "Alice"
     assert hl["rects"] == [RECT]
     hl_id = hl["id"]
@@ -82,6 +83,34 @@ async def test_highlight_crud_and_ordering(client):
     assert resp.status_code == 204
     resp = await client.get(f"/api/papers/{pid}/highlights", headers=alice)
     assert len(resp.json()) == 1
+
+
+async def test_highlight_style(client):
+    _, alice, _, pid = await _setup(client)
+    # 默认样式 highlight
+    resp = await client.post(
+        f"/api/papers/{pid}/highlights",
+        json={"page": 1, "rects": [RECT], "selected_text": "a"},
+        headers=alice,
+    )
+    assert resp.json()["style"] == "highlight"
+    # 建波浪线，再改成下划线
+    resp = await client.post(
+        f"/api/papers/{pid}/highlights",
+        json={"page": 1, "rects": [RECT], "selected_text": "b", "style": "wave"},
+        headers=alice,
+    )
+    assert resp.json()["style"] == "wave"
+    wid = resp.json()["id"]
+    resp = await client.patch(f"/api/highlights/{wid}", json={"style": "underline"}, headers=alice)
+    assert resp.json()["style"] == "underline"
+    # 非法样式规整为 highlight
+    resp = await client.post(
+        f"/api/papers/{pid}/highlights",
+        json={"page": 1, "rects": [RECT], "selected_text": "c", "style": "bogus"},
+        headers=alice,
+    )
+    assert resp.json()["style"] == "highlight"
 
 
 async def test_highlight_color_coerced_and_validation(client):

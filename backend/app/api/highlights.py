@@ -31,6 +31,7 @@ def _hl_read(hl: PaperHighlight, author_name: str) -> HighlightRead:
         rects=hl.rects,
         selected_text=hl.selected_text,
         color=hl.color,
+        style=hl.style,
         note=hl.note,
         created_at=hl.created_at,
         updated_at=hl.updated_at,

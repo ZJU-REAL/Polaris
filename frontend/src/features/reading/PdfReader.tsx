@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -13,9 +13,10 @@ import {
   type HighlightCreateInput,
   type HighlightRead,
   type HighlightRect,
+  type HighlightStyle,
   type PaperDetail,
 } from '../../lib/api';
-import { HIGHLIGHT_COLORS, highlightColorMeta } from './shared';
+import { HIGHLIGHT_COLORS, HIGHLIGHT_STYLES, highlightColorMeta } from './shared';
 
 /* ============================================================
    自建 PDF 阅读器（pdf.js / react-pdf）：
@@ -94,6 +95,58 @@ function collectTextRects(range: Range): DOMRect[] {
   return out;
 }
 
+// 标注渲染几何：高亮块压到行盒约 3/4 并略偏下（贴文字），下划线/波浪线贴文字底部。
+const HL_TOP = 0.2; // 高亮块从行盒顶部裁掉的比例（去掉字上方行距）
+const HL_HEIGHT = 0.68; // 高亮块占行盒高度的比例（≈ 文字高度的 3/4）
+const LINE_BOTTOM = 0.9; // 下划线/波浪线相对行盒的纵向位置
+
+/** 波浪线背景：一段可平铺的 SVG，按颜色着色。 */
+function waveBg(color: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 4 Q2 1 4 4 T8 4' fill='none' stroke='${color}' stroke-width='1.2'/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+/** 单个矩形按样式生成绝对定位样式；active 时只在标注下方加一条 border（不整框描边）。 */
+function annotationRectStyle(
+  r: HighlightRect,
+  color: { solid: string; wash: string },
+  style: HighlightStyle,
+  active: boolean,
+): CSSProperties {
+  const rh = r.y1 - r.y0;
+  const base: CSSProperties = {
+    position: 'absolute',
+    left: `${r.x0 * 100}%`,
+    width: `${(r.x1 - r.x0) * 100}%`,
+    cursor: 'pointer',
+    pointerEvents: 'auto',
+  };
+  if (style === 'highlight') {
+    return {
+      ...base,
+      top: `${(r.y0 + rh * HL_TOP) * 100}%`,
+      height: `${rh * HL_HEIGHT * 100}%`,
+      background: color.wash,
+      mixBlendMode: 'multiply',
+      borderRadius: 1.5,
+      borderBottom: active ? `2px solid ${color.solid}` : undefined,
+    };
+  }
+  // underline / wave：贴文字底部的一条线
+  const isWave = style === 'wave';
+  return {
+    ...base,
+    top: `${(r.y0 + rh * LINE_BOTTOM) * 100}%`,
+    height: isWave ? 5 : active ? 3 : 2,
+    background: isWave ? undefined : color.solid,
+    backgroundImage: isWave ? waveBg(color.solid) : undefined,
+    backgroundRepeat: isWave ? 'repeat-x' : undefined,
+    backgroundSize: isWave ? '8px 5px' : undefined,
+    backgroundPosition: isWave ? 'bottom' : undefined,
+    borderBottom: !isWave && active ? `1px solid ${color.solid}` : undefined,
+  };
+}
+
 export function PdfReader({
   paper,
   highlights,
@@ -110,6 +163,7 @@ export function PdfReader({
   const [pageWidth, setPageWidth] = useState(0);
   const [url, setUrl] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [pendingStyle, setPendingStyle] = useState<HighlightStyle>('highlight');
 
   const pdfQuery = useQuery({
     queryKey: ['paper-pdf', paper.id],
@@ -241,11 +295,12 @@ export function PdfReader({
         rects: pending.rects,
         selected_text: pending.text,
         color,
+        style: pendingStyle,
       });
       window.getSelection()?.removeAllRanges();
       setPending(null);
     },
-    [pending, onCreateHighlight],
+    [pending, pendingStyle, onCreateHighlight],
   );
 
   // —— 跳转：定位到目标页并滚动 ——
@@ -378,7 +433,7 @@ export function PdfReader({
                     />
                   }
                 />
-                {/* 划线覆盖层：容器不吃事件，色块单独可点 */}
+                {/* 标注覆盖层：容器不吃事件，标注单独可点。按样式渲染高亮块/下划线/波浪线 */}
                 <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
                   {pageHls.map((h) => {
                     const meta = highlightColorMeta(h.color);
@@ -391,22 +446,7 @@ export function PdfReader({
                           e.stopPropagation();
                           onHighlightClick(h.id);
                         }}
-                        style={{
-                          position: 'absolute',
-                          left: `${r.x0 * 100}%`,
-                          // 压到文字行高的 3/4（上下各留 1/8），避免高亮条显得过高
-                          top: `${(r.y0 + (r.y1 - r.y0) * 0.125) * 100}%`,
-                          width: `${(r.x1 - r.x0) * 100}%`,
-                          height: `${(r.y1 - r.y0) * 0.75 * 100}%`,
-                          background: meta.wash,
-                          mixBlendMode: 'multiply',
-                          cursor: 'pointer',
-                          pointerEvents: 'auto',
-                          borderRadius: 1.5,
-                          outline: active ? `2px solid ${meta.solid}` : 'none',
-                          outlineOffset: 1,
-                          transition: 'outline-color 0.15s',
-                        }}
+                        style={annotationRectStyle(r, meta, h.style, active)}
                       />
                     ));
                   })}
@@ -422,7 +462,7 @@ export function PdfReader({
           onMouseDown={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
-            left: Math.min(Math.max(pending.x, 10), window.innerWidth - 210),
+            left: Math.min(Math.max(pending.x, 10), window.innerWidth - 280),
             top: Math.min(pending.y + 8, window.innerHeight - 52),
             zIndex: 60,
             display: 'flex',
@@ -435,11 +475,54 @@ export function PdfReader({
             boxShadow: '0 6px 20px rgba(0,0,0,0.22)',
           }}
         >
-          <Icon name="pen" size={12} style={{ color: 'var(--text-4)' }} />
+          {/* 样式选择：高亮 / 下划线 / 波浪线 */}
+          <span
+            className="row"
+            style={{ gap: 3, paddingRight: 5, marginRight: 1, borderRight: '1px solid var(--border-2)' }}
+          >
+            {HIGHLIGHT_STYLES.map((st) => (
+              <button
+                key={st.v}
+                title={st.label}
+                onClick={() => setPendingStyle(st.v)}
+                style={{
+                  width: 24,
+                  height: 22,
+                  borderRadius: 6,
+                  padding: 0,
+                  cursor: 'pointer',
+                  background: pendingStyle === st.v ? 'var(--accent-soft)' : 'transparent',
+                  border:
+                    pendingStyle === st.v ? '1px solid var(--accent)' : '1px solid var(--border-2)',
+                  display: 'flex',
+                  alignItems: 'flex-end',
+                  justifyContent: 'center',
+                }}
+              >
+                <span
+                  style={
+                    st.v === 'highlight'
+                      ? { width: 14, height: 9, background: 'rgba(245,197,24,0.5)', borderRadius: 1, marginBottom: 4 }
+                      : st.v === 'underline'
+                        ? { width: 14, borderBottom: '2px solid var(--text-3)', marginBottom: 5 }
+                        : {
+                            width: 14,
+                            height: 5,
+                            marginBottom: 3,
+                            backgroundImage: waveBg('#888'),
+                            backgroundRepeat: 'repeat-x',
+                            backgroundSize: '8px 5px',
+                            backgroundPosition: 'bottom',
+                          }
+                  }
+                />
+              </button>
+            ))}
+          </span>
           {HIGHLIGHT_COLORS.map((c) => (
             <button
               key={c.v}
-              title={`${c.label}色划线`}
+              title={`${c.label}色`}
               disabled={creating}
               onClick={() => confirmHighlight(c.v)}
               style={{

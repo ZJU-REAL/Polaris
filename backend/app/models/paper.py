@@ -133,6 +133,8 @@ class PaperNote(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 HIGHLIGHT_COLORS = ("yellow", "green", "blue", "pink", "purple")
+# 标注样式：整段高亮 / 下方横线 / 下方波浪线
+HIGHLIGHT_STYLES = ("highlight", "underline", "wave")
 
 
 class PaperHighlight(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -160,6 +162,8 @@ class PaperHighlight(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     rects: Mapped[list[Any]] = mapped_column(JSONVariant, nullable=False)
     selected_text: Mapped[str] = mapped_column(Text, nullable=False)
     color: Mapped[str] = mapped_column(String(16), default="yellow", nullable=False)
+    # 标注样式：highlight（高亮块）| underline（下方横线）| wave（下方波浪线）
+    style: Mapped[str] = mapped_column(String(16), default="highlight", nullable=False)
     note: Mapped[str | None] = mapped_column(Text)  # 挂在划线上的批注，可空
 
 

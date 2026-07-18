@@ -1,4 +1,4 @@
-import type { HighlightColor, ReadingStatus } from '../../lib/api';
+import type { HighlightColor, HighlightStyle, ReadingStatus } from '../../lib/api';
 
 /* ============================================================
    阅读工作台共享：阅读状态元信息（文案 + 配色）。
@@ -48,6 +48,18 @@ export const HIGHLIGHT_COLORS: readonly HighlightColorMeta[] = [
 export function highlightColorMeta(c: string | undefined): HighlightColorMeta {
   return HIGHLIGHT_COLORS.find((m) => m.v === c) ?? HIGHLIGHT_COLORS[0]!;
 }
+
+/* 标注样式：高亮块 / 下方横线 / 下方波浪线。 */
+export interface HighlightStyleMeta {
+  v: HighlightStyle;
+  label: string;
+}
+
+export const HIGHLIGHT_STYLES: readonly HighlightStyleMeta[] = [
+  { v: 'highlight', label: '高亮' },
+  { v: 'underline', label: '下划线' },
+  { v: 'wave', label: '波浪线' },
+] as const;
 
 /** 列表行里的阅读状态小圆点（未读不显示）。 */
 export function ReadingDot({ status }: { status: string | undefined }) {
