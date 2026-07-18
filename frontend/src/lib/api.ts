@@ -1263,6 +1263,34 @@ export interface ManuscriptFileMeta {
   size: number;
   updated_at: string;
   readonly?: boolean;
+  /** 二进制文件（图片/PDF 等）：不进 CRDT 编辑器，只读预览。 */
+  is_binary?: boolean;
+  /** 文件夹占位记录（树里显示为可折叠目录）。 */
+  is_folder?: boolean;
+}
+
+/** 稿件协作者（owner 高亮，role 决定能否加人/删人）。 */
+export interface CollaboratorRead {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  is_owner: boolean;
+}
+
+/** 协作者搜索结果（GET /collaborators/search）。 */
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  display_name: string;
+}
+
+/** 协同编辑分享链接（完整 URL = origin + join_path）。 */
+export interface ShareLink {
+  token: string;
+  join_path: string;
+  expires_at: string | null;
+  max_uses: number | null;
 }
 
 /** 单文件内容（编辑器初始加载 / readonly 文件查看用；实时同步走 WS CRDT）。 */
@@ -2208,6 +2236,21 @@ export const api = {
   deleteManuscriptFile(id: string, fid: string): Promise<void> {
     return request<void>(`/manuscripts/${id}/files/${fid}`, { method: 'DELETE' });
   },
+  /** 新建文件夹（树里作为可折叠目录占位）。 */
+  createManuscriptFolder(id: string, path: string): Promise<ManuscriptFileMeta> {
+    return requestJson<ManuscriptFileMeta>(`/manuscripts/${id}/folders`, 'POST', { path });
+  },
+  /** 上传文件（含二进制）；path 缺省时后端用文件名。 */
+  uploadManuscriptFile(id: string, file: File, path?: string): Promise<ManuscriptFileMeta> {
+    const form = new FormData();
+    form.append('file', file);
+    if (path) form.append('path', path);
+    return request<ManuscriptFileMeta>(`/manuscripts/${id}/files/upload`, { method: 'POST', body: form });
+  },
+  /** 二进制原始字节（图片/PDF 预览）：blob → objectURL 后再喂 <img>/下载。 */
+  fetchManuscriptFileRaw(id: string, fid: string): Promise<Blob> {
+    return requestBlob(`/manuscripts/${id}/files/${fid}/raw`);
+  },
 
   // —— M5-B · 文件版本历史 ——
   listFileVersions(id: string, fid: string): Promise<FileVersionMeta[]> {
@@ -2256,6 +2299,57 @@ export const api = {
   /** 历史评审轮次列表；单轮详情复用 GET /sessions/{sid}/messages。 */
   listManuscriptReviews(id: string): Promise<ReviewSummary[]> {
     return request<ReviewSummary[]>(`/manuscripts/${id}/reviews`);
+  },
+
+  // —— arXiv 清洁包导出 ——
+  /** 导出 arXiv 投稿清洁包 tar.gz；X-Export-Notes（| 分隔）里可能带提示。 */
+  async exportManuscriptArxiv(id: string): Promise<{ blob: Blob; notes: string[] }> {
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const res = await fetch(`${BASE}/manuscripts/${id}/export/arxiv`, { headers });
+    if (!res.ok) {
+      let detail = res.statusText || `HTTP ${res.status}`;
+      let body: unknown;
+      try {
+        body = await res.json();
+        if (body && typeof body === 'object' && 'detail' in body) {
+          const d = (body as { detail: unknown }).detail;
+          detail = typeof d === 'string' ? d : JSON.stringify(d);
+        }
+      } catch {
+        /* keep statusText */
+      }
+      throw new ApiError(res.status, detail, body);
+    }
+    const raw = res.headers.get('X-Export-Notes');
+    const notes = raw ? raw.split('|').map((s) => s.trim()).filter(Boolean) : [];
+    return { blob: await res.blob(), notes };
+  },
+
+  // —— 协作者 + 共享编辑链接 ——
+  /** 按关键词搜平台用户（加协作者用）。 */
+  searchUsers(q: string): Promise<UserSearchResult[]> {
+    return request<UserSearchResult[]>(`/collaborators/search?q=${encodeURIComponent(q)}`);
+  },
+  listCollaborators(id: string): Promise<CollaboratorRead[]> {
+    return request<CollaboratorRead[]>(`/manuscripts/${id}/collaborators`);
+  },
+  /** 加协作者（需 owner/管理员，否则 403 OWNER_OR_ADMIN_REQUIRED）；返回更新后的数组。 */
+  addCollaborator(id: string, userId: string, role?: string): Promise<CollaboratorRead[]> {
+    return requestJson<CollaboratorRead[]>(
+      `/manuscripts/${id}/collaborators`,
+      'POST',
+      role ? { user_id: userId, role } : { user_id: userId },
+    );
+  },
+  /** 移除协作者（不能删 owner，409 CANNOT_REMOVE_OWNER）。 */
+  removeCollaborator(id: string, userId: string): Promise<void> {
+    return request<void>(`/manuscripts/${id}/collaborators/${userId}`, { method: 'DELETE' });
+  },
+  /** 生成协同编辑分享链接（平台用户登录后即可加入协同）。 */
+  createManuscriptShareLink(id: string, input?: { expires_days?: number; max_uses?: number }): Promise<ShareLink> {
+    return requestJson<ShareLink>(`/manuscripts/${id}/share-link`, 'POST', input ?? {});
   },
 
   // —— Admin · LLM ——

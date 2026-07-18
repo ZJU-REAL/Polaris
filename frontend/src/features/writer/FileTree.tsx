@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { PromptModal } from '../../components/ui/PromptModal';
@@ -17,9 +17,13 @@ export interface FileTreeProps {
   busy?: boolean;
   onSelect: (f: ManuscriptFileMeta) => void;
   onCreate: (path: string) => void;
+  onCreateFolder: (path: string) => void;
+  onUpload: (file: File) => void;
   onRename: (f: ManuscriptFileMeta, path: string) => void;
   onDelete: (f: ManuscriptFileMeta) => void;
 }
+
+const IMG_RE = /\.(png|jpe?g|gif|svg|webp|bmp|ico)$/i;
 
 /** 锁图标（Icon 集里没有，就地画一个）。 */
 function LockIcon({ size = 11 }: { size?: number }) {
@@ -45,11 +49,36 @@ function FolderIcon({ size = 12 }: { size?: number }) {
   );
 }
 
-/** 按顶层目录分组：目录组在前（字典序），根文件在后（字典序）。 */
+/** 图片文件图标（Icon 集里没有，就地画一个）。 */
+function ImageIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" style={{ display: 'block', flexShrink: 0 }}>
+      <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="8.5" cy="9" r="1.6" fill="currentColor" />
+      <path d="M4 17l5-5 4 4 3-3 4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** 按顶层目录分组：目录组在前（字典序），根文件在后（字典序）。
+ *  is_folder 占位记录只用来登记目录（含空目录），不作为文件行重复显示。 */
 function groupFiles(files: ManuscriptFileMeta[]) {
   const roots: ManuscriptFileMeta[] = [];
   const dirs = new Map<string, ManuscriptFileMeta[]>();
+  const topSeg = (p: string) => {
+    const norm = p.replace(/\/+$/, '');
+    const slash = norm.indexOf('/');
+    return slash === -1 ? norm : norm.slice(0, slash);
+  };
+  // 先登记文件夹占位（保证空目录也能显示）
   for (const f of files) {
+    if (f.is_folder) {
+      const dir = topSeg(f.path);
+      if (dir && !dirs.has(dir)) dirs.set(dir, []);
+    }
+  }
+  for (const f of files) {
+    if (f.is_folder) continue;
     const slash = f.path.indexOf('/');
     if (slash === -1) {
       roots.push(f);
@@ -68,12 +97,14 @@ function groupFiles(files: ManuscriptFileMeta[]) {
   return { roots, groups };
 }
 
-export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename, onDelete }: FileTreeProps) {
+export function FileTree({ files, currentId, busy, onSelect, onCreate, onCreateFolder, onUpload, onRename, onDelete }: FileTreeProps) {
   const [adding, setAdding] = useState(false);
   const [newPath, setNewPath] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [renameTarget, setRenameTarget] = useState<ManuscriptFileMeta | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ManuscriptFileMeta | null>(null);
+  const [folderPromptOpen, setFolderPromptOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { roots, groups } = useMemo(() => groupFiles(files), [files]);
 
@@ -117,7 +148,7 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
         }}
       >
         <span style={{ color: active ? 'var(--accent)' : 'var(--text-4)', flexShrink: 0, display: 'flex' }}>
-          <Icon name="file" size={12} />
+          {f.is_binary && IMG_RE.test(f.path) ? <ImageIcon /> : <Icon name="file" size={12} />}
         </span>
         <span
           className="mono"
@@ -169,15 +200,45 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
         <span style={{ fontSize: 11, fontWeight: 650, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
           {tr('文件', 'FILES')}
         </span>
-        <button
-          className="icon-btn"
-          style={{ width: 22, height: 22, borderRadius: 6 }}
-          title={tr('新建文件', 'New file')}
-          disabled={busy}
-          onClick={() => setAdding((v) => !v)}
-        >
-          <Icon name="plus" size={12} />
-        </button>
+        <span className="row gap6">
+          <button
+            className="icon-btn"
+            style={{ width: 22, height: 22, borderRadius: 6 }}
+            title={tr('新建文件', 'New file')}
+            disabled={busy}
+            onClick={() => setAdding((v) => !v)}
+          >
+            <Icon name="plus" size={12} />
+          </button>
+          <button
+            className="icon-btn"
+            style={{ width: 22, height: 22, borderRadius: 6 }}
+            title={tr('新建文件夹', 'New folder')}
+            disabled={busy}
+            onClick={() => setFolderPromptOpen(true)}
+          >
+            <FolderIcon size={13} />
+          </button>
+          <button
+            className="icon-btn"
+            style={{ width: 22, height: 22, borderRadius: 6 }}
+            title={tr('上传文件（含图片 / PDF）', 'Upload file (image / PDF)')}
+            disabled={busy}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Icon name="download" size={12} style={{ transform: 'rotate(180deg)' }} />
+          </button>
+        </span>
+        <input
+          ref={fileInputRef}
+          type="file"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onUpload(file);
+            e.target.value = '';
+          }}
+        />
       </div>
 
       {adding && (
@@ -237,7 +298,21 @@ export function FileTree({ files, currentId, busy, onSelect, onCreate, onRename,
         ))}
       </div>
 
-      {/* —— 重命名 / 删除对话框 —— */}
+      {/* —— 新建文件夹 / 重命名 / 删除对话框 —— */}
+      <PromptModal
+        open={folderPromptOpen}
+        onClose={() => setFolderPromptOpen(false)}
+        title={tr('新建文件夹', 'New folder')}
+        label={tr('输入文件夹路径，例如 figures 或 sections/appendix', 'Enter a folder path, e.g. figures or sections/appendix')}
+        placeholder={tr('如 figures', 'e.g. figures')}
+        submitText={tr('创建', 'Create')}
+        mono
+        busy={busy}
+        onSubmit={(path) => {
+          onCreateFolder(path);
+          setFolderPromptOpen(false);
+        }}
+      />
       {renameTarget && (
         <PromptModal
           open

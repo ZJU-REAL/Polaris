@@ -18,13 +18,14 @@ import {
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import type { ProviderStatus } from '../../lib/yjs-provider';
-import { EditorPane, type PeerInfo } from './EditorPane';
+import { EditorPane, BinaryPreview, type PeerInfo } from './EditorPane';
 import { FileTree } from './FileTree';
 import { FactPackDrawer } from './FactPackDrawer';
 import { DraftModal } from './DraftModal';
 import { OutlinePanel } from './OutlinePanel';
 import { AssistPanel, type AssistMode } from './AssistPanel';
 import { HistoryModal } from './HistoryModal';
+import { CollaboratorsModal } from './CollaboratorsModal';
 import { colorForUser, ruleText, sectionText, type AiWritingState } from './shared';
 
 /* ============================================================
@@ -269,11 +270,13 @@ export function WriterEditorPage() {
   useEffect(() => {
     if (!ms || ms.files.length === 0) return;
     if (currentFileId && ms.files.some((f) => f.id === currentFileId)) return;
+    const selectable = ms.files.filter((f) => !f.is_folder);
     const pick =
-      ms.files.find((f) => !f.readonly && /(^|\/)main\.tex$/.test(f.path)) ??
-      ms.files.find((f) => !f.readonly && f.path.endsWith('.tex')) ??
-      ms.files.find((f) => !f.readonly) ??
-      ms.files[0];
+      selectable.find((f) => !f.readonly && /(^|\/)main\.tex$/.test(f.path)) ??
+      selectable.find((f) => !f.readonly && f.path.endsWith('.tex')) ??
+      selectable.find((f) => !f.readonly && !f.is_binary) ??
+      selectable.find((f) => !f.readonly) ??
+      selectable[0];
     setCurrentFileId(pick?.id ?? null);
   }, [ms, currentFileId]);
 
@@ -293,7 +296,7 @@ export function WriterEditorPage() {
   }, [currentFileId]);
 
   // —— 事实包引文/图表插入到编辑器光标处 ——
-  const canInsert = !!view && !!currentFile && !currentFile.readonly;
+  const canInsert = !!view && !!currentFile && !currentFile.readonly && !currentFile.is_binary;
   const insertSnippet = useCallback(
     (text: string) => {
       if (!view) return false;
@@ -454,8 +457,44 @@ export function WriterEditorPage() {
     },
     onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
+  const createFolderMutation = useMutation({
+    mutationFn: (path: string) => api.createManuscriptFolder(id, path),
+    onSuccess: invalidateDetail,
+    onError: (e) => toast(`${tr('新建文件夹失败：', 'Create folder failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+  const uploadFileMutation = useMutation({
+    mutationFn: (file: File) => api.uploadManuscriptFile(id, file),
+    onSuccess: (f) => {
+      invalidateDetail();
+      setCurrentFileId(f.id);
+      toast(tr('已上传文件', 'File uploaded'), 'ok');
+    },
+    onError: (e) => toast(`${tr('上传失败：', 'Upload failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
   const fileOpsBusy =
-    createFileMutation.isPending || renameFileMutation.isPending || deleteFileMutation.isPending;
+    createFileMutation.isPending ||
+    renameFileMutation.isPending ||
+    deleteFileMutation.isPending ||
+    createFolderMutation.isPending ||
+    uploadFileMutation.isPending;
+
+  // —— arXiv 清洁包导出 ——
+  const exportArxivMutation = useMutation({
+    mutationFn: () => api.exportManuscriptArxiv(id),
+    onSuccess: ({ blob, notes }) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(ms?.title || 'manuscript').replace(/[/\\?%*:|"<>]/g, '_')}-arxiv.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      if (notes.length > 0) toast(`${tr('导出提示：', 'Export notes: ')}${notes.join('；')}`, 'info');
+      else toast(tr('已导出 arXiv 投稿包', 'arXiv package exported'), 'ok');
+    },
+    onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
 
   // —— 投稿 ——
   const submitMutation = useMutation({
@@ -497,6 +536,7 @@ export function WriterEditorPage() {
   // —— 抽屉 / Modal ——
   const [factOpen, setFactOpen] = useState(false);
   const [draftOpen, setDraftOpen] = useState(false);
+  const [collabOpen, setCollabOpen] = useState(false);
 
   // —— 分栏布局：宽度/占比 + 展开状态，持久化到 localStorage ——
   const [layout, setLayout] = useState<WriterLayout>(loadLayout);
@@ -585,7 +625,7 @@ export function WriterEditorPage() {
       ? { section: aiWriting!.section, phase: aiWriting!.phase as 'typing' | 'revising' }
       : null;
   const aiFile = aiWriting?.fileId ? ms.files.find((f) => f.id === aiWriting.fileId) : null;
-  const showDisconnect = !!currentFile && !currentFile.readonly && wsStatus === 'disconnected';
+  const showDisconnect = !!currentFile && !currentFile.readonly && !currentFile.is_binary && wsStatus === 'disconnected';
   const errCount = compile?.diagnostics.filter((d) => d.severity === 'error').length ?? 0;
   const warnCount = compile?.diagnostics.filter((d) => d.severity === 'warning').length ?? 0;
 
@@ -641,7 +681,7 @@ export function WriterEditorPage() {
         </div>
 
         {/* 协作者在线点 */}
-        {currentFile && !currentFile.readonly && (
+        {currentFile && !currentFile.readonly && !currentFile.is_binary && (
           <div className="row" style={{ flexShrink: 0, marginRight: 2 }} title={peers.length > 0 ? tr(`在线协作者：${peers.map((p) => p.name).join('、')}`, `Online collaborators: ${peers.map((p) => p.name).join(', ')}`) : tr('当前只有你在编辑', 'You are the only editor right now')}>
             <span
               style={{
@@ -681,6 +721,10 @@ export function WriterEditorPage() {
           </div>
         )}
 
+        <button className="btn btn-ghost sm" onClick={() => setCollabOpen(true)} title={tr('管理协作者与分享链接', 'Manage collaborators and share link')}>
+          <Icon name="users" size={13} />
+          {tr('协作者', 'Collaborators')}
+        </button>
         <button className="btn btn-ghost sm" onClick={() => setFactOpen(true)}>
           <Icon name="layers" size={13} />
           {tr('事实包', 'Fact pack')}
@@ -711,6 +755,15 @@ export function WriterEditorPage() {
               {tr('编译', 'Compile')}
             </>
           )}
+        </button>
+        <button
+          className="btn btn-ghost sm"
+          disabled={exportArxivMutation.isPending}
+          title={tr('打包 arXiv 投稿清洁包（tar.gz）', 'Build an arXiv-ready package (tar.gz)')}
+          onClick={() => exportArxivMutation.mutate()}
+        >
+          <Icon name="download" size={13} />
+          {exportArxivMutation.isPending ? tr('导出中…', 'Exporting…') : tr('导出 arXiv 包', 'Export arXiv')}
         </button>
         <button
           className="btn btn-ghost sm"
@@ -807,6 +860,8 @@ export function WriterEditorPage() {
                 busy={fileOpsBusy}
                 onSelect={(f) => setCurrentFileId(f.id)}
                 onCreate={(path) => createFileMutation.mutate(path)}
+                onCreateFolder={(path) => createFolderMutation.mutate(path)}
+                onUpload={(file) => uploadFileMutation.mutate(file)}
                 onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
                 onDelete={(f) => deleteFileMutation.mutate(f.id)}
               />
@@ -834,6 +889,18 @@ export function WriterEditorPage() {
         {/* 中：编辑器 */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--surface)' }}>
           {currentFile ? (
+            currentFile.is_binary ? (
+              <>
+                <div
+                  className="row gap8"
+                  style={{ padding: '6px 14px', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}
+                >
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{currentFile.path}</span>
+                  <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>{tr('二进制文件', 'binary')}</span>
+                </div>
+                <BinaryPreview manuscriptId={ms.id} file={currentFile} />
+              </>
+            ) : (
             <>
               <div
                 className="row gap8"
@@ -901,6 +968,7 @@ export function WriterEditorPage() {
                 />
               )}
             </>
+            )
           ) : (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <EmptyState compact icon="file" title={tr('还没有文件', 'No files yet')} desc={tr('点左侧 + 号新建一个 .tex 文件开始写作。', 'Click + on the left to create a .tex file and start writing.')} />
@@ -1063,6 +1131,7 @@ export function WriterEditorPage() {
         onInsertFigure={onInsertFigure}
       />
       <DraftModal open={draftOpen} onClose={() => setDraftOpen(false)} manuscript={ms} />
+      <CollaboratorsModal open={collabOpen} onClose={() => setCollabOpen(false)} manuscriptId={ms.id} />
     </div>
   );
 }

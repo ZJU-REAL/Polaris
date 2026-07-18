@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
@@ -7,7 +7,8 @@ import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
-import { api, getToken } from '../../lib/api';
+import { api, getToken, type ManuscriptFileMeta } from '../../lib/api';
+import { Icon } from '../../components/ui/Icon';
 import { tr } from '../../lib/i18n';
 import { ManuscriptProvider, type ProviderStatus } from '../../lib/yjs-provider';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -195,6 +196,88 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
   }, [aiTarget?.section, aiTarget?.phase]);
 
   return <div ref={hostRef} style={{ flex: 1, minHeight: 0, minWidth: 0 }} />;
+}
+
+/* ---------------- 二进制文件只读预览（图片 / PDF / 其它） ---------------- */
+
+const IMG_RE = /\.(png|jpe?g|gif|svg|webp|bmp|ico)$/i;
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** 二进制文件（上传的图片/PDF 等）：不进 CRDT 编辑器，取原始字节做只读预览。 */
+export function BinaryPreview({ manuscriptId, file }: { manuscriptId: string; file: ManuscriptFileMeta }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const rawQuery = useQuery({
+    queryKey: ['manuscript-file-raw', manuscriptId, file.id],
+    queryFn: () => api.fetchManuscriptFileRaw(manuscriptId, file.id),
+    retry: false,
+    staleTime: Infinity,
+  });
+  const blob = rawQuery.data;
+
+  useEffect(() => {
+    if (!blob) {
+      setUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(blob);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [blob]);
+
+  const name = file.path.slice(file.path.lastIndexOf('/') + 1);
+  const isImage = IMG_RE.test(file.path);
+
+  if (rawQuery.isLoading) {
+    return <div className="empty" style={{ flex: 1, paddingTop: 80 }}>{tr('加载文件…', 'Loading file…')}</div>;
+  }
+  if (rawQuery.isError || !url) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <EmptyState
+          compact
+          icon="x"
+          title={tr('读不到这个文件', 'Cannot read this file')}
+          desc={tr('后端不可用或文件已被删除。', 'Backend unavailable or the file was deleted.')}
+          action={
+            <button className="btn btn-soft sm" onClick={() => void rawQuery.refetch()}>
+              {tr('重试', 'Retry')}
+            </button>
+          }
+        />
+      </div>
+    );
+  }
+
+  if (isImage) {
+    return (
+      <div className="scroll" style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'var(--surface-2)' }}>
+        <img src={url} alt={name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 6, boxShadow: '0 1px 8px rgba(0,0,0,0.12)' }} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ textAlign: 'center', maxWidth: 340 }}>
+        <div style={{ color: 'var(--text-4)', display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+          <Icon name="file" size={40} />
+        </div>
+        <div className="mono" style={{ fontSize: 12.5, fontWeight: 600, wordBreak: 'break-all' }}>{name}</div>
+        <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+          {tr('二进制文件，无法在线预览', 'Binary file — no inline preview')} · {fmtBytes(file.size)}
+        </div>
+        <a className="btn btn-primary sm" href={url} download={name} style={{ marginTop: 14, textDecoration: 'none' }}>
+          <Icon name="download" size={13} />
+          {tr('下载', 'Download')}
+        </a>
+      </div>
+    </div>
+  );
 }
 
 /* ---------------- 只读文件查看 ---------------- */
