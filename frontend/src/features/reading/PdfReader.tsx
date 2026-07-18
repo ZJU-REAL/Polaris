@@ -394,9 +394,10 @@ export function PdfReader({
                         style={{
                           position: 'absolute',
                           left: `${r.x0 * 100}%`,
-                          top: `${r.y0 * 100}%`,
+                          // 压到文字行高的 3/4（上下各留 1/8），避免高亮条显得过高
+                          top: `${(r.y0 + (r.y1 - r.y0) * 0.125) * 100}%`,
                           width: `${(r.x1 - r.x0) * 100}%`,
-                          height: `${(r.y1 - r.y0) * 100}%`,
+                          height: `${(r.y1 - r.y0) * 0.75 * 100}%`,
                           background: meta.wash,
                           mixBlendMode: 'multiply',
                           cursor: 'pointer',

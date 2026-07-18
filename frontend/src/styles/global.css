@@ -22,6 +22,13 @@ body {
 
 ::selection { background: var(--accent-soft-2); }
 
+/* pdf.js 文本层：真实文字在下层 canvas，文本层文字透明。全局那条不透明的
+   ::selection 会盖住下面的字，故这里改成半透明选区色，让文字透出来。 */
+.textLayer ::selection,
+.react-pdf__Page__textContent ::selection {
+  background: rgba(90, 150, 240, 0.3);
+}
+
 button { font-family: var(--sans); }
 input {
   font-family: var(--sans);
