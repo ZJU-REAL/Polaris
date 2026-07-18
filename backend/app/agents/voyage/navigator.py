@@ -235,10 +235,12 @@ def proposal_replan(
 
 
 def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """idea_review（辩论锦标赛）固定三步计划（docs/api-m3.md §3）。"""
+    """idea_review（辩论锦标赛）启动计划（docs/api-m3.md §3 + docs/voyage-loop.md §7）：
+    配对 → 汇总；中间的 N 场辩论由 review.pair 的 plan_signal 按对局数展开成
+    N 个 review.match 节点插入两者之间（引擎可逐场查预算，超限走降级收尾）。
+    """
     steps = [
         ("配对（Swiss：按 Elo 相邻配对）", "review.pair", "参与 idea 已配对并置 under_review"),
-        ("科学辩论 + 裁判判定 + Elo 更新", "review.debate", "各场辩论消息与判定已落库"),
         ("锦标赛汇总", "review.summarize", "赛果已汇总并写入活动流"),
     ]
     return [

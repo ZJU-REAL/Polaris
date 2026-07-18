@@ -220,7 +220,20 @@ acceptance 与 done_criteria 即可。
 4. 失败时 verdict.reason 必须 actionable（哪条 check、期望什么、实际什么）——
    好的错误信息就是免费的 rules-based feedback（[Tools]），直接作为重试/计划编辑的诊断输入。
 
-## 7. `experiment.iterate` 拆解
+## 7. 单体动作炸开成节点（experiment / idea_review）
+
+**通用形态**：单体动作把"循环/批处理"埋在 action 内部（引擎看不见、插不进预算与闸门），
+应炸开成节点——一个"发现步"产出 `plan_signal`，kind 的**确定性分支表**据此把后续
+展开成 N 个可见节点。收益：每单元可审计、引擎能在单元之间查预算走降级收尾、断点更细。
+
+- **idea_review**（确定性 fan-out）：`review.pair` 发现对局数 → 信号表展开 N 个
+  `review.match` 节点插在 pair 与 summarize 之间。引擎逐场查预算，超限时未跑的 match
+  作废、summarize（wrapup）收尾——修复了"辩论全跑完却卡在汇总前 paused_error"。
+  单场失败隔离（记 failed，不炸锦标赛）。旧 `review.debate` 单体动作保留仅供在途 run 续跑。
+- **experiment**（决策 fan-out）：见下，`experiment.analyze` 的 reflection decision
+  展开下一轮或收尾。
+
+### experiment.iterate 拆解
 
 现状：六步固定管线，动态循环埋在 `experiment.iterate`（内部多轮 launch → 轮询 →
 reflection → improve/debug/stop）。重构为 `mode=loop`，初始计划：

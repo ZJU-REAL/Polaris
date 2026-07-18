@@ -46,6 +46,32 @@ def _make_engine() -> tuple[VoyageEngine, RecordingBus]:
     return VoyageEngine(event_bus=bus, llm_router=LLMRouter()), bus
 
 
+async def test_tournament_fans_out_per_match_nodes(client, queue_stub):
+    """4 个 idea → 2 场对局：pair 展开 2 个 review.match 节点（每场可见、可逐场查预算），
+    顺序 pair → match×2 → summarize，全部通过（docs/voyage-loop.md §7）。"""
+    project_id, headers = await _setup_project(client)
+    for i in range(4):
+        await _seed_idea(project_id, f"想法{i}：方向 {i}")
+
+    resp = await client.post(
+        f"/api/projects/{project_id}/review/tournament", json={"rounds": 1}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    run_id = resp.json()["id"]
+
+    engine, _bus = _make_engine()
+    await engine.run(uuid.UUID(run_id))
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    actions = [s["action"] for s in detail["steps"]]
+    assert actions == ["review.pair", "review.match", "review.match", "review.summarize"]
+    assert all(s["status"] == "passed" for s in detail["steps"])
+    # 两场对局是相邻两个节点，match_index 递增
+    match_steps = [s for s in detail["steps"] if s["action"] == "review.match"]
+    assert [s["observation"]["match_index"] for s in match_steps] == [0, 1]
+
+
 async def test_tournament_debate_elo_and_leaderboard(client, queue_stub):
     project_id, headers = await _setup_project(client)
     idea_a = await _seed_idea(project_id, "想法甲：agent 规划新范式")
@@ -85,9 +111,17 @@ async def test_tournament_debate_elo_and_leaderboard(client, queue_stub):
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
+    # 配对 → 单场辩论（review.match，由 pair 信号展开）→ 汇总
+    assert [s["action"] for s in detail["steps"]] == [
+        "review.pair",
+        "review.match",
+        "review.summarize",
+    ]
     assert [s["status"] for s in detail["steps"]] == ["passed"] * 3
     assert detail["steps"][0]["observation"]["pairs"] == 1
-    assert detail["steps"][1]["observation"] == {"matches": 1, "completed": 1, "failed": []}
+    assert detail["steps"][1]["observation"]["winner"] in ("a", "b")
+    # 展开留痕：plan_history 记一次 fan-out（source=signal）
+    assert any(e["source"] == "signal" and "辩论" in e["reason"] for e in detail["plan_history"])
 
     async with get_sessionmaker()() as session:
         match = (

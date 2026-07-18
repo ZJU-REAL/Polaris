@@ -199,7 +199,46 @@ def experiment_signal_edits(
     return None
 
 
+def review_match_node(index: int) -> dict[str, Any]:
+    return {
+        "title": f"第 {index + 1} 场辩论",
+        "action": "review.match",
+        "params": {"match_index": index},
+        "acceptance": "本场辩论完成并更新 Elo（单场失败隔离，不影响锦标赛）",
+        "checks": [{"kind": "no_error"}],
+        "requires_gate": None,
+    }
+
+
+def review_signal_edits(signal: dict[str, Any], active_rows: list[Any]) -> dict[str, Any] | None:
+    """review.pair 的 plan_signal → 按对局数展开 N 个 review.match 节点（幂等）。
+
+    确定性 fan-out（对局数由配对结果决定，非 LLM 判断）：插在 pair 与 summarize 之间，
+    引擎逐场执行、逐场可查预算；预算超限时未跑的 match 作废、summarize 收尾。
+    """
+    if str(signal.get("decision")) != "matches":
+        return None
+    pending_actions = {r.action for r in active_rows if r.status != "passed"}
+    if "review.match" in pending_actions:  # 已展开（防 resume 重放）
+        return None
+    count = int(signal.get("count") or 0)
+    if count == 0:  # 无对局（参与者不足配对）：直接让汇总跑
+        return None
+    return {
+        "finish": False,
+        "reason": f"配对完成，展开 {count} 场辩论",
+        "edits": [
+            {
+                "op": "add_nodes",
+                "insert_after": None,
+                "nodes": [review_match_node(i) for i in range(count)],
+            }
+        ],
+    }
+
+
 # kind → plan_signal 分支表（engine 在节点通过后查表应用；返回 None = 无编辑）
 SIGNAL_TABLES: dict[str, Callable[[dict[str, Any], list[Any]], dict[str, Any] | None]] = {
     "experiment": experiment_signal_edits,
+    "idea_review": review_signal_edits,
 }
