@@ -342,15 +342,39 @@ class VoyageEngine:
             step_def = _step_def_from_row(node, run.plan)
 
             # 预算耗尽：降级收尾（docs/voyage-loop.md §5.4）——收尾步骤放行把已完成
-            # 工作变成产出，其余未执行步骤作废；无收尾步骤可救才 paused_error
+            # 工作变成产出，其余未执行步骤作废；确实无产出可收才 paused_error
             if self._budget_exceeded(run):
-                if _is_wrapup(step_def):
+                finishing = self._budget_finishing_steps(run, rows)
+                if node in finishing:
                     await self._emit_log(run, "预算已用尽，用已完成的结果收尾", level="budget")
-                elif await self._budget_wrapup(session, run, rows):
+                elif finishing:
+                    dropped = [
+                        r
+                        for r in rows
+                        if r.status not in ("passed", "obsolete") and r not in finishing
+                    ]
+                    for r in dropped:
+                        r.status = "obsolete"
+                    run.plan_iteration = run.plan_iteration + 1
+                    self._record_plan_event(
+                        run,
+                        source="budget",
+                        reason="预算用尽，跳过剩余步骤，用已完成的结果收尾",
+                        added=0,
+                        obsoleted=len(dropped),
+                        trigger_step=None,
+                    )
+                    await self._regen_plan_snapshot(session, run)
+                    await session.commit()
+                    await self._emit_log(
+                        run,
+                        f"预算用尽，作废 {len(dropped)} 个未执行步骤，用已完成的结果收尾",
+                        level="budget",
+                    )
                     continue
                 else:
                     await self._emit_log(
-                        run, "预算超限，无可收尾步骤，任务暂停（paused_error）", level="error"
+                        run, "预算超限，尚无产出可收尾，任务暂停（paused_error）", level="error"
                     )
                     await self._set_status(session, run, "paused_error")
                     return
@@ -587,35 +611,21 @@ class VoyageEngine:
             return False
         return int((run.usage or {}).get("total_tokens", 0)) >= int(max_tokens)
 
-    async def _budget_wrapup(
-        self, session: AsyncSession, run: VoyageRun, rows: list[VoyageStep]
-    ) -> bool:
-        """预算耗尽降级收尾（docs/voyage-loop.md §5.4）：作废未执行的非收尾步骤，
-        保留收尾步骤把已完成工作变成产出。有收尾步骤可跑返回 True，否则 False（调用方暂停）。
+    @staticmethod
+    def _budget_finishing_steps(run: VoyageRun, rows: list[VoyageStep]) -> list[VoyageStep]:
+        """预算耗尽时应放行的收尾步骤（docs/voyage-loop.md §5.4）：
+        1. 显式 `wrapup=True` 的待办步骤（summarize / report / 终编译）；
+        2. 都没有、但已有步骤完成过 → 最后一个待办步骤作**隐式收尾**（跑完它才有产出，
+           兼容 wrapup 标记出现前创建的旧 run：如 debate 已跑完、summarize 无标记）；
+        3. 什么都没完成 → 空（真暂停，不伪造产出）。
         """
         pending = [r for r in rows if r.status not in ("passed", "obsolete")]
-        wrapup_rows = [r for r in pending if _is_wrapup(_step_def_from_row(r, run.plan))]
-        if not wrapup_rows:
-            return False
-        dropped = [r for r in pending if r not in wrapup_rows]
-        for r in dropped:
-            r.status = "obsolete"
-        if dropped:
-            run.plan_iteration = run.plan_iteration + 1
-            self._record_plan_event(
-                run,
-                source="budget",
-                reason="预算用尽，跳过剩余步骤，用已完成的结果收尾",
-                added=0,
-                obsoleted=len(dropped),
-                trigger_step=None,
-            )
-            await self._regen_plan_snapshot(session, run)
-        await session.commit()
-        await self._emit_log(
-            run, f"预算用尽，作废 {len(dropped)} 个未执行步骤，用已完成的结果收尾", level="budget"
-        )
-        return True
+        explicit = [r for r in pending if _is_wrapup(_step_def_from_row(r, run.plan))]
+        if explicit:
+            return explicit
+        if pending and any(r.status == "passed" for r in rows):
+            return [pending[-1]]
+        return []
 
     # ---- 失败分派（docs/voyage-loop.md §5.1）----
 
