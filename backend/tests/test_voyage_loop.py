@@ -402,6 +402,47 @@ async def test_budget_exhausted_runs_wrapup_step(client, queue_stub):
         assert any(e["source"] == "budget" and e["obsoleted"] == 1 for e in history)
 
 
+async def test_budget_exhausted_last_step_implicit_wrapup(client, queue_stub):
+    """无显式 wrapup 标记但已有步骤完成：最后一个待办步骤作隐式收尾放行，不 paused_error
+    （兼容 wrapup 标记出现前创建的旧 idea_review：debate 已跑完、summarize 无标记）。"""
+    project_id, headers = await _make_project(client)
+    plan = [
+        {
+            "title": "已完成的昂贵步骤（消耗 token）",
+            "action": "llm.complete",
+            "params": {"stage": "navigator", "prompt": "分析：{goal}"},
+            "acceptance": None,
+            "checks": [{"kind": "no_error"}],
+            "requires_gate": None,
+        },
+        {
+            "title": "收尾（无 wrapup 标记）",
+            "action": "sleep",
+            "params": {"seconds": 0},
+            "acceptance": None,
+            "checks": [{"kind": "no_error"}],
+            "requires_gate": None,
+        },
+    ]
+    # 预算 5 token：step1 跑完就超；step2 无标记但作隐式收尾（step1 已完成）
+    run_id = await _manual_run(project_id, kind="idea_review", plan=plan, budget={"max_tokens": 5})
+    await _engine().run(run_id)
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        assert run.status == "done"  # 不是 paused_error
+        rows = (
+            (
+                await session.execute(
+                    select(VoyageStep).where(VoyageStep.run_id == run_id).order_by(VoyageStep.seq)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [r.status for r in rows] == ["passed", "passed"]
+
+
 async def test_budget_exhausted_no_wrapup_pauses(client, queue_stub):
     """预算耗尽且无收尾步骤可救：仍 paused_error（等人工加预算）。"""
     project_id, headers = await _make_project(client)
