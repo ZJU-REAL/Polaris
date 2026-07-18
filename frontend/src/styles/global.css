@@ -122,14 +122,21 @@ input {
 .nav-collapsed .user-trigger { justify-content: center; gap: 0; padding: 8px 0; }
 .nav-collapsed .user-info { display: none; }
 
+/* 挂到 body 的浮层：fixed 定位（left/top 由 JS 按触发器计算），
+   避开侧栏 overflow:hidden 的裁剪，收起态也不会被切掉 */
 .user-menu {
-  position: absolute; bottom: calc(100% + 6px); left: 6px; min-width: 190px; z-index: 30;
+  position: fixed; min-width: 190px; z-index: 60;
   background: var(--surface); border: 0.5px solid var(--border);
   border-radius: 11px; box-shadow: var(--shadow-pop);
   padding: 5px; display: flex; flex-direction: column; gap: 1px;
-  animation: fadeUp 0.14s ease;
+  /* 定位靠内联 transform: translateY(-100%)；入场动画必须保留它，
+     否则动画期间的 transform 会覆盖定位，菜单先落在触发器上再跳回上方 */
+  animation: userMenuIn 0.13s ease;
 }
-.nav-collapsed .user-menu { left: 8px; }
+@keyframes userMenuIn {
+  from { opacity: 0; transform: translateY(calc(-100% + 5px)); }
+  to   { opacity: 1; transform: translateY(-100%); }
+}
 .user-menu-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: 8px; border: none; background: transparent;
