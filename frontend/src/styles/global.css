@@ -70,7 +70,9 @@ input {
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
 .nav-collapsed .sb-brand { justify-content: center; margin: 18px 0 12px; }
 .nav-collapsed .sb-scroll { padding: 4px 8px 14px; }
-.nav-collapsed .sb-section { text-align: center; padding-left: 0; padding-right: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; color: transparent; height: 10px; }
+/* 收起态：保留小标题占位高度（文字隐藏、盒模型与展开态相同），
+   否则流水线一组图标会整体上移、与展开态对不上 */
+.nav-collapsed .sb-section { padding-left: 0; padding-right: 0; overflow: hidden; white-space: nowrap; color: transparent; }
 /* 收起态：整行居中，仅留图标（行高与展开态相同，图标尺寸不变） */
 .nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 8px 0; }
 .nav-collapsed .nav-item .nav-label { display: none; }
