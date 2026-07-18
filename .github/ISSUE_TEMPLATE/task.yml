@@ -1,0 +1,45 @@
+name: Task / chore
+description: An internal work item (refactor, chore, infra, migration) tracked before its PR.
+title: "task: "
+labels: ["task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for internal work that isn't a user-facing bug or feature.
+        Per the workflow, open the task first, then a PR that closes it (`Closes #N`).
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What needs to be done, and why now?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Polaris does this touch?
+      options:
+        - frontend
+        - backend-api
+        - voyage (task loop)
+        - literature / wiki
+        - writer
+        - review
+        - skills
+        - infra / deploy
+        - docs
+        - other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: A checklist of what "done" looks like.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: false

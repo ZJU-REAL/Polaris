@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a new capability or an enhancement.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first, then the proposed solution. Keep it scoped —
+        one feature per issue, one issue per PR (`Closes #N`).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do, and why is it hard or impossible today?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Polaris does this touch?
+      options:
+        - frontend
+        - backend-api
+        - voyage (task loop)
+        - literature / wiki
+        - writer
+        - review
+        - skills
+        - infra / deploy
+        - docs
+        - other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should the behaviour be? Sketch the UX/API if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed and why you set them aside.
+    validations:
+      required: false
