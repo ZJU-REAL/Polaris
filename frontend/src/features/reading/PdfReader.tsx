@@ -237,6 +237,22 @@ export function PdfReader({
     return () => ro.disconnect();
   }, [url, mode]); // 从标准模式切回时容器重新挂载，需重新测量并观察
 
+  // 触控板双指捏合 / Ctrl(⌘)+滚轮 缩放：浏览器默认会整页缩放，这里拦下来只缩放 PDF。
+  // 捏合手势在浏览器里表现为 ctrlKey=true 的 wheel 事件；必须用 passive:false 才能 preventDefault。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || mode !== 'annotate') return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return; // 普通滚动不拦截，照常翻页
+      e.preventDefault();
+      setScale((s) =>
+        Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((s - e.deltaY * 0.01) * 100) / 100)),
+      );
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [url, mode]);
+
   const fetchPdfMutation = useMutation({
     mutationFn: () => api.requestPaperPdf(paper.id),
     onSuccess: () => {
