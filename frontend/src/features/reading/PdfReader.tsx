@@ -63,7 +63,8 @@ interface Pending {
   rects: HighlightRect[];
   text: string;
   x: number;
-  y: number;
+  y: number; // 选区末行底部（视口坐标）——空间够时浮条放其下方
+  yTop: number; // 选区末行顶部——空间不够时翻到其上方
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
@@ -279,6 +280,7 @@ export function PdfReader({
       text,
       x: last.left,
       y: last.bottom,
+      yTop: last.top,
     });
   }, []);
 
@@ -463,7 +465,11 @@ export function PdfReader({
           style={{
             position: 'fixed',
             left: Math.min(Math.max(pending.x, 10), window.innerWidth - 280),
-            top: Math.min(pending.y + 8, window.innerHeight - 52),
+            // 下方空间不够（浮条约 40px 高）时翻到选区上方，避免超出窗口底部
+            top:
+              pending.y + 48 > window.innerHeight
+                ? Math.max(8, pending.yTop - 48)
+                : pending.y + 8,
             zIndex: 60,
             display: 'flex',
             alignItems: 'center',
