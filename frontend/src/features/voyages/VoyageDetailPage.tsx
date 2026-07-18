@@ -874,8 +874,10 @@ function buildTimelineEntries(steps: VoyageStepRead[], events: VoyagePlanEvent[]
 
 // —— 运行日志终端（Terminal）：结构化日志 + 大模型流式输出 ——
 
-const TERMINAL_MAX = 500;
-const LLM_PREVIEW_LINES = 4;
+const TERMINAL_MAX = 2500;
+const LLM_PREVIEW_LINES = 14;
+// 默认直接渲染的最近条目数：超过则把更早的历史折起来（可一键展开），避免长任务几千条 DOM 拖慢渲染。
+const RENDER_WINDOW = 600;
 
 type LogLevel = 'info' | 'step' | 'success' | 'error' | 'plan' | 'budget' | 'gate';
 const LOG_LEVELS = new Set<LogLevel>(['info', 'step', 'success', 'error', 'plan', 'budget', 'gate']);
@@ -977,7 +979,7 @@ function LlmRecord({ entry }: { entry: LlmEntry }) {
   const [open, setOpen] = useState(false);
   const info = stageInfo(entry.stage);
   const lines = entry.text.split('\n');
-  const long = lines.length > LLM_PREVIEW_LINES || entry.text.length > 280;
+  const long = lines.length > LLM_PREVIEW_LINES || entry.text.length > 900;
   const shown = open || !long ? entry.text : lines.slice(0, LLM_PREVIEW_LINES).join('\n');
   return (
     <div
@@ -1068,6 +1070,8 @@ function TaskTerminal({ state, live, onClear }: { state: TerminalState; live: bo
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
+  // 默认只渲染最近 RENDER_WINDOW 条；用户点「显示更早」后渲染全部（能上滑翻完整历史）。
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
   // 跟随时：每次内容变化滚到底。
   useEffect(() => {
@@ -1075,6 +1079,11 @@ function TaskTerminal({ state, live, onClear }: { state: TerminalState; live: bo
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [state]);
+
+  // 清空后（或切任务重置）回到窗口模式，避免下次长任务一上来就渲染全部。
+  useEffect(() => {
+    if (state.entries.length === 0) setShowAllHistory(false);
+  }, [state.entries.length]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -1143,9 +1152,37 @@ function TaskTerminal({ state, live, onClear }: { state: TerminalState; live: bo
             </div>
           ) : (
             <>
-              {state.entries.map((e) =>
-                e.kind === 'log' ? <LogLine key={e.id} entry={e} /> : <LlmRecord key={e.id} entry={e} />,
-              )}
+              {(() => {
+                const hidden = showAllHistory ? 0 : Math.max(0, state.entries.length - RENDER_WINDOW);
+                const visible = hidden > 0 ? state.entries.slice(hidden) : state.entries;
+                return (
+                  <>
+                    {hidden > 0 && (
+                      <button
+                        onClick={() => setShowAllHistory(true)}
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          marginBottom: 6,
+                          padding: '5px 0',
+                          border: '0.5px dashed var(--terminal-border)',
+                          borderRadius: 8,
+                          background: 'transparent',
+                          cursor: 'pointer',
+                          fontSize: 11,
+                          fontFamily: 'var(--mono)',
+                          color: 'var(--terminal-accent)',
+                        }}
+                      >
+                        {tr(`显示更早的 ${hidden} 条日志`, `Show ${hidden} earlier lines`)}
+                      </button>
+                    )}
+                    {visible.map((e) =>
+                      e.kind === 'log' ? <LogLine key={e.id} entry={e} /> : <LlmRecord key={e.id} entry={e} />,
+                    )}
+                  </>
+                );
+              })()}
               {state.active && <LlmActive active={state.active} />}
             </>
           )}

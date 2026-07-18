@@ -142,13 +142,16 @@ class OpenAICompatProvider(LLMProvider):
         model: str,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
     ) -> AsyncIterator[str]:
         # TODO(M2): usage 统计、错误恢复
         async with self._client.stream(
             "POST",
             f"{self._base_url}/chat/completions",
             headers=self._headers(),
-            json=self._payload(messages, model, temperature, max_tokens, stream=True),
+            json=self._payload(
+                messages, model, temperature, max_tokens, stream=True, images=images
+            ),
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():

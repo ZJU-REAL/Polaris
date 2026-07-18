@@ -200,15 +200,11 @@ class LLMRouter:
     ) -> CompletionResult:
         provider, route = await self.resolve(stage)
         temp = route.temperature if temperature is None else temperature
-        # 长文本 stage 且有任务事件频道 + 非多模态：流式并逐段广播（终端实时展示）
-        if (
-            self.event_bus is not None
-            and voyage_id is not None
-            and stage in STREAM_STAGES
-            and not images
-        ):
+        # 长文本 stage 且有任务事件频道：流式并逐段广播（终端实时展示"大模型正在输出什么"）。
+        # 多模态（带图，如 wiki 精读编译）也走流式——图片附在请求上、正文照常逐段吐。
+        if self.event_bus is not None and voyage_id is not None and stage in STREAM_STAGES:
             result = await self._stream_and_broadcast(
-                stage, provider, route, messages, temp, max_tokens, voyage_id
+                stage, provider, route, messages, temp, max_tokens, voyage_id, images
             )
         else:
             # images 仅在提供时透传（兼容未声明该参数的 provider 子类/测试替身）
@@ -236,6 +232,7 @@ class LLMRouter:
         temperature: float,
         max_tokens: int | None,
         voyage_id: uuid.UUID,
+        images: list[bytes] | None = None,
     ) -> CompletionResult:
         """流式补全并把 token 增量节流广播成 llm_delta 事件，返回拼好的完整结果。
 
@@ -261,7 +258,11 @@ class LLMRouter:
         await self.event_bus.publish_voyage_event(voyage_id, "llm_start", {"stage": stage})
         try:
             async for chunk in provider.stream(
-                messages, model=route.model, temperature=temperature, max_tokens=max_tokens
+                messages,
+                model=route.model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                images=images,
             ):
                 collected.append(chunk)
                 buf.append(chunk)

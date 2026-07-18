@@ -89,13 +89,16 @@ class AnthropicProvider(LLMProvider):
         model: str,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
     ) -> AsyncIterator[str]:
         # TODO(M2): 处理 message_delta 中的 usage / stop_reason
         async with self._client.stream(
             "POST",
             _API_URL,
             headers=self._headers(),
-            json=self._payload(messages, model, temperature, max_tokens, stream=True),
+            json=self._payload(
+                messages, model, temperature, max_tokens, stream=True, images=images
+            ),
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():

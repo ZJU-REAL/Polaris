@@ -154,9 +154,12 @@ class FakeProvider(LLMProvider):
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        images: list[bytes] | None = None,
     ) -> AsyncIterator[str]:
+        # images 仅在提供时透传（兼容未声明该参数的测试 provider 替身）
+        extra = {"images": images} if images else {}
         result = await self.complete(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, **extra
         )
         chunk = 64
         for i in range(0, len(result.content), chunk):
