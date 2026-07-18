@@ -134,7 +134,11 @@ def experiment_round_nodes(next_round: int) -> list[dict[str, Any]]:
 
 
 def experiment_wrapup_nodes() -> list[dict[str, Any]]:
-    """收尾 figures + report：失败走 loop 回灌（figures 内部已有降级，极少硬失败）。"""
+    """收尾 figures + report：失败走 loop 回灌（figures 内部已有降级，极少硬失败）。
+
+    标 wrapup=True：预算耗尽时（budget 90%/超限）跳过剩余 run/analyze 直接来这里，
+    把已跑完的轮次变成图表与报告（docs/voyage-loop.md §5.4）。
+    """
     return [
         {
             "title": "实验图表（脚本生成 + 自动质检）",
@@ -143,6 +147,7 @@ def experiment_wrapup_nodes() -> list[dict[str, Any]]:
             "acceptance": "figures 已生成、拉回本地并写入 Experiment.figures",
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
+            "wrapup": True,
         },
         {
             "title": "实验报告（LLM）",
@@ -151,6 +156,7 @@ def experiment_wrapup_nodes() -> list[dict[str, Any]]:
             "acceptance": "markdown 报告已写入 Experiment.report",
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
+            "wrapup": True,
         },
     ]
 

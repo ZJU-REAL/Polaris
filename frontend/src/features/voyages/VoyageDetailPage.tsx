@@ -560,6 +560,7 @@ const PLAN_SOURCE: Record<string, { zh: string; en: string }> = {
   signal: { zh: '按执行结果自动调整', en: 'Auto-adjusted by results' },
   navigator: { zh: 'AI 调整计划', en: 'AI adjusted the plan' },
   template: { zh: '按预设分支调整', en: 'Preset branch adjustment' },
+  budget: { zh: '预算用尽，跳过剩余步骤收尾', en: 'Budget spent — skipped remaining steps to wrap up' },
 };
 
 /** 时间线里的「计划调整」分隔条目：解释为什么多出/作废了步骤。 */

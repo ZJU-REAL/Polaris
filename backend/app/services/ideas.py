@@ -21,8 +21,9 @@ IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 # 预算从 knobs 派生：每个候选 idea 预留的 token 额度（gap 分析+生成+打分+去重）
 _TOKENS_PER_IDEA = 20_000
-# 每场辩论预留：正/反方每轮各一次 + 裁判一次
-_TOKENS_PER_MATCH_CALL = 8_000
+# 每场辩论每次 LLM 调用预留：辩论上下文逐轮累积（双方发言+人设+历史），裁判看全场，
+# 思考型模型下单次可达 15-20k，估低会在汇总前触发预算门（改由 §5.4 降级收尾兜底）
+_TOKENS_PER_MATCH_CALL = 16_000
 # 深耕 voyage 默认预算（目标构建工具循环 + 各节起草 + 评审修订）
 _DEEP_DEFAULT_BUDGET = 400_000
 

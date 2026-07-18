@@ -249,6 +249,8 @@ def review_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "acceptance": acceptance,
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
+            # 汇总是廉价收尾：预算耗尽也放行，别让辩论白跑（docs/voyage-loop.md §5.4）
+            "wrapup": action == "review.summarize",
         }
         for title, action, acceptance in steps
     ]
@@ -378,6 +380,8 @@ def writing_plan(run: VoyageRun) -> list[dict[str, Any]]:
             "checks": [{"kind": "no_error"}],
             "requires_gate": None,
             "on_failure": "fail",
+            # 终编译把已写的分节变成成稿 PDF：预算耗尽也放行（docs/voyage-loop.md §5.4）
+            "wrapup": True,
         }
     )
     return steps

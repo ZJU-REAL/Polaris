@@ -174,8 +174,12 @@ acceptance 与 done_criteria 即可。
 循环终止不再是"列表走完"：
 
 1. `done_criteria` 全部通过 → `done`；
-2. 预算（token / gpu_hours / 时长）到 **90% 触发降级收束**：loop 模式强制切到收尾分支
-   （experiment 即 figures → report），确保烧完预算前有产出；100% 耗尽 → `paused_error`；
+2. 预算耗尽 → **降级收尾（已实现，`_budget_wrapup`）**：步骤可声明 `wrapup=True`（把已完成
+   工作变成产出的廉价终步，如 review.summarize / experiment.figures+report / writing 终编译）；
+   预算超限时收尾步骤仍放行、其余未执行步骤作废并记 `plan_history`（source=budget），
+   确保烧完预算前有产出，不再一刀切 `paused_error` 白费已完成工作；**无收尾步骤可救才
+   `paused_error`**。（注：设计里的"90% 提前触发"未实现,当前是 100% 耗尽才收尾;因 usage
+   仅在每步后累加、单体动作可能已超支，靠此兜底而非提前预判。）
 3. Gate 驳回**按闸门 kind 分派**：入口类（compute_budget 等）驳回 = `failed`（沿用）；
    过程类（experiment_pivot 等）驳回 = 该分支节点 `obsolete` + 驳回意见作为诊断回灌
    Navigator，继续当前路线或收束——**驳回 ≠ 整个任务作废**；

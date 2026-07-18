@@ -191,7 +191,14 @@ async def _make_project(client) -> tuple[str, dict]:
     return resp.json()["id"], headers
 
 
-async def _manual_run(project_id: str, *, kind: str, plan: list[dict]) -> uuid.UUID:
+async def _manual_run(
+    project_id: str,
+    *,
+    kind: str,
+    plan: list[dict],
+    budget: dict | None = None,
+    usage: dict | None = None,
+) -> uuid.UUID:
     async with get_sessionmaker()() as session:
         run = VoyageRun(
             kind=kind,
@@ -199,6 +206,8 @@ async def _manual_run(project_id: str, *, kind: str, plan: list[dict]) -> uuid.U
             status="planning",
             cursor=0,
             plan=plan,
+            budget=budget,
+            usage=usage,
             project_id=uuid.UUID(project_id),
         )
         session.add(run)
@@ -339,3 +348,82 @@ async def test_loop_execution_error_retries_then_replans(client, queue_stub):
     steps = resp.json()["steps"]
     assert any(s["status"] == "obsolete" for s in steps)
     assert all("rank" in s and "attempt" in s for s in steps)
+
+
+async def test_budget_exhausted_runs_wrapup_step(client, queue_stub):
+    """预算耗尽降级收尾（docs/voyage-loop.md §5.4）：昂贵步骤已完成、预算超限时，
+    廉价收尾步骤（wrapup）仍放行把结果落地，未执行的非收尾步骤作废——不再一刀切
+    paused_error 白费已完成的工作（idea_review 汇总被预算门挡死的真实场景）。"""
+    project_id, headers = await _make_project(client)
+    plan = [
+        {
+            "title": "昂贵步骤（已完成）",
+            "action": "sleep",
+            "params": {"seconds": 0},
+            "acceptance": None,
+            "checks": [{"kind": "no_error"}],
+            "requires_gate": None,
+        },
+        {
+            "title": "汇总收尾",
+            "action": "sleep",
+            "params": {"seconds": 0},
+            "acceptance": None,
+            "checks": [{"kind": "no_error"}],
+            "requires_gate": None,
+            "wrapup": True,
+        },
+    ]
+    # 预算 1 token、已用 999999：驱动一开始就超限
+    run_id = await _manual_run(
+        project_id,
+        kind="idea_review",
+        plan=plan,
+        budget={"max_tokens": 1},
+        usage={"total_tokens": 999_999},
+    )
+    await _engine().run(run_id)
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        assert run.status == "done"  # 不是 paused_error
+        rows = (
+            (
+                await session.execute(
+                    select(VoyageStep).where(VoyageStep.run_id == run_id).order_by(VoyageStep.seq)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert rows[0].status == "obsolete"  # 非收尾步骤被作废（预算已耗尽不再执行）
+        assert rows[1].status == "passed"  # 收尾步骤放行跑完
+        history = (run.checkpoint or {}).get("plan_history") or []
+        assert any(e["source"] == "budget" and e["obsoleted"] == 1 for e in history)
+
+
+async def test_budget_exhausted_no_wrapup_pauses(client, queue_stub):
+    """预算耗尽且无收尾步骤可救：仍 paused_error（等人工加预算）。"""
+    project_id, headers = await _make_project(client)
+    plan = [
+        {
+            "title": "普通步骤",
+            "action": "sleep",
+            "params": {"seconds": 0},
+            "acceptance": None,
+            "checks": [{"kind": "no_error"}],
+            "requires_gate": None,
+        }
+    ]
+    run_id = await _manual_run(
+        project_id,
+        kind="idea_review",
+        plan=plan,
+        budget={"max_tokens": 1},
+        usage={"total_tokens": 999_999},
+    )
+    await _engine().run(run_id)
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        assert run.status == "paused_error"
