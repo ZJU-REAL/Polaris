@@ -71,6 +71,31 @@ class FolderCreate(BaseModel):
     path: str = Field(min_length=1, max_length=1024)
 
 
+class CollaboratorRead(BaseModel):
+    user_id: str
+    email: str
+    display_name: str
+    role: str
+    is_owner: bool
+
+
+class AddCollaborator(BaseModel):
+    user_id: uuid.UUID
+    role: Literal["member", "owner"] = "member"
+
+
+class ShareLinkCreate(BaseModel):
+    expires_days: int | None = Field(default=14, ge=1, le=365)
+    max_uses: int | None = Field(default=None, ge=1, le=1000)
+
+
+class ShareLink(BaseModel):
+    token: str
+    join_path: str  # 前端拼域名：/join/{token}
+    expires_at: datetime | None
+    max_uses: int | None
+
+
 class CompileDiagnostic(BaseModel):
     severity: Literal["error", "warning"]
     file: str | None

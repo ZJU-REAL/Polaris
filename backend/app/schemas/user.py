@@ -17,6 +17,14 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     features: dict[str, Any] | None = None
 
 
+class UserSearchResult(BaseModel):
+    """平台用户查找结果（加协作者用，不含敏感字段）。"""
+
+    id: uuid.UUID
+    email: str
+    display_name: str
+
+
 class UserCreate(schemas.BaseUserCreate):
     display_name: str = ""
     invite_code: str  # 与 settings.invite_code 比对，见 api/auth.py

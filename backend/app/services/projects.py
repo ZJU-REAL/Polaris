@@ -127,13 +127,53 @@ async def add_member(
     user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if user is None:
         return False
-    member = await session.get(ProjectMember, (project_id, user.id))
+    return await add_member_by_id(session, project_id, user_id=user.id, role=role)
+
+
+async def add_member_by_id(
+    session: AsyncSession, project_id: uuid.UUID, *, user_id: uuid.UUID, role: str = "member"
+) -> bool:
+    """按 user_id 加入项目（已是成员则更新角色）。用户不存在返回 False。"""
+    user = await session.get(User, user_id)
+    if user is None:
+        return False
+    member = await session.get(ProjectMember, (project_id, user_id))
     if member is None:
-        session.add(ProjectMember(project_id=project_id, user_id=user.id, role=role))
+        session.add(ProjectMember(project_id=project_id, user_id=user_id, role=role))
     else:
         member.role = role
     await session.commit()
     return True
+
+
+async def remove_member(
+    session: AsyncSession, project_id: uuid.UUID, *, user_id: uuid.UUID
+) -> None:
+    member = await session.get(ProjectMember, (project_id, user_id))
+    if member is not None:
+        await session.delete(member)
+        await session.commit()
+
+
+async def list_members_detailed(session: AsyncSession, project: Project) -> list[dict[str, Any]]:
+    """项目成员明细（协作者面板用）：user_id / email / display_name / role / is_owner。"""
+    stmt = (
+        select(ProjectMember, User)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(ProjectMember.project_id == project.id)
+        .order_by(User.display_name, User.email)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        {
+            "user_id": str(u.id),
+            "email": u.email,
+            "display_name": u.display_name,
+            "role": m.role,
+            "is_owner": project.owner_id == u.id,
+        }
+        for m, u in rows
+    ]
 
 
 # ---- LLM 起草研究方向定义（stage=interview） ----
