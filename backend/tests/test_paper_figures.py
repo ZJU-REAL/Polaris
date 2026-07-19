@@ -92,6 +92,30 @@ async def test_extract_figures_drops_near_blank(tmp_path):
     assert figures == [{"index": 0, "page": 1, "width": 400, "height": 300}]
 
 
+async def test_extract_figures_caption_anchored_region(tmp_path):
+    # 有「Figure N」图注时，走图注锚定：渲染图注正上方那块图区域（矢量整块，不碎不空）
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()  # 612x792
+    # 图注正上方一块矢量矩形当作"图"
+    page.draw_rect(
+        pymupdf.Rect(100, 120, 460, 340), color=(0.1, 0.2, 0.6), fill=(0.5, 0.6, 0.85), width=2
+    )
+    page.insert_text((100, 380), "Figure 1: A synthetic vector figure.")
+    pdf_path = tmp_path / "caption.pdf"
+    pdf_path.write_bytes(doc.tobytes())
+    doc.close()
+
+    paper_id = str(uuid.uuid4())
+    figures = await extract_figures(paper_id, pdf_path)
+    assert len(figures) == 1
+    assert figures[0]["page"] == 1
+    # 区域覆盖整块矩形（约 360x220pt @200dpi），远大于图注文字本身
+    assert figures[0]["width"] > 300 and figures[0]["height"] > 200
+    assert figure_path(paper_id, 0).exists()
+
+
 async def test_extract_figures_page_round_robin_cap(tmp_path):
     # 14 页各 1 图 → 上限 12：按页轮转选优，前 12 页各 1 张；编号仍按页码顺序
     pdf_path = tmp_path / "many.pdf"

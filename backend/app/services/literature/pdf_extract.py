@@ -241,6 +241,93 @@ def _vector_figure_pixmaps(page: Any) -> list[Any]:
     return pixmaps
 
 
+# 图注锚定抽图（主路径）：找到「Figure N / 图 N」标题，把它正上方那块图区域（矢量+位图+
+# 标签一起）整块渲染——比按矢量路径聚类更稳，复杂图（小提琴图/流程图）不会被拆成碎片、
+# 空白页不会被误抓。无图注的页才退回嵌入图/矢量簇兜底。
+_FIG_CAPTION_RE = re.compile(r"^\s*(fig(?:ure)?\.?|图)\s*\.?\s*\d", re.IGNORECASE)
+CAPTION_TOP_MARGIN_PT = 36.0  # 无上方屏障时图区上界离页顶的留白
+CAPTION_BARRIER_MIN_CHARS = 140  # 正文段落判定：字数超此值当作图区上界屏障（图内短标签不算）
+CAPTION_REGION_DPI = 200  # 图区渲染 DPI
+
+
+def _block_plain_text(block: dict[str, Any]) -> str:
+    return "".join(
+        span["text"] for line in block.get("lines", []) for span in line.get("spans", [])
+    )
+
+
+def _caption_figure_regions(page: Any) -> list[Any]:
+    """按图注锚点定位每张图的区域：图注正上方、以正文段/上一图注/页顶为上界的图元包围盒。"""
+    import pymupdf
+
+    page_rect = page.rect
+    captions: list[tuple[Any, str]] = []
+    barriers: list[Any] = []  # 正文段落：图区向上生长的屏障，避免吞进标题/摘要/正文
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type") != 0:
+            continue
+        text = _block_plain_text(block).strip()
+        bbox = pymupdf.Rect(block["bbox"])
+        if _FIG_CAPTION_RE.match(text):
+            captions.append((bbox, text))
+        elif len(text) > CAPTION_BARRIER_MIN_CHARS:
+            barriers.append(bbox)
+    captions.sort(key=lambda c: c[0].y0)
+
+    content = [pymupdf.Rect(d["rect"]) for d in page.get_drawings()]
+    try:
+        content += [pymupdf.Rect(info["bbox"]) for info in page.get_image_info()]
+    except Exception:  # noqa: BLE001 — 个别页取图位失败，只用矢量框
+        logger.warning("get_image_info failed on page %d", page.number + 1, exc_info=True)
+    content = [
+        r for r in content if r.width > 2 and r.height > 2 and r.width < page_rect.width * 0.98
+    ]
+
+    regions: list[Any] = []
+    for i, (cap_box, _text) in enumerate(captions):
+        bottom = cap_box.y0
+        top = page_rect.y0 + CAPTION_TOP_MARGIN_PT
+        if i > 0:  # 堆叠图：上界不越过上一张图注
+            top = max(top, captions[i - 1][0].y1)
+        for bar in barriers:  # 上界不越过图注上方的正文段
+            if bar.y1 <= bottom - 2:
+                top = max(top, bar.y1)
+        band = [
+            pymupdf.Rect(r.x0, max(r.y0, top), r.x1, min(r.y1, bottom))
+            for r in content
+            if r.y0 < bottom - 1 and r.y1 > top + 1
+        ]
+        band = [r for r in band if r.width > 2 and r.height > 2]
+        if not band:
+            continue  # 图注上方无图元（可能是被误判的表格题），跳过
+        box = band[0]
+        for r in band[1:]:
+            box |= r
+        box = pymupdf.Rect(
+            max(page_rect.x0, box.x0 - VECTOR_CLIP_MARGIN_PT),
+            max(page_rect.y0, box.y0 - VECTOR_CLIP_MARGIN_PT),
+            min(page_rect.x1, box.x1 + VECTOR_CLIP_MARGIN_PT),
+            min(bottom - 1, box.y1 + VECTOR_CLIP_MARGIN_PT),
+        )
+        if box.height < VECTOR_MIN_H_PT or box.width < VECTOR_MIN_W_PT:
+            continue
+        regions.append(box)
+    return regions
+
+
+def _caption_figure_pixmaps(page: Any) -> list[Any]:
+    """图注锚定区域整块渲染为 Pixmap 列表（主抽图路径）。"""
+    pixmaps: list[Any] = []
+    for rect in _caption_figure_regions(page):
+        try:
+            pixmaps.append(page.get_pixmap(clip=rect, dpi=CAPTION_REGION_DPI))
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "caption region render failed on page %d", page.number + 1, exc_info=True
+            )
+    return pixmaps
+
+
 def _candidate_from_pix(page_no: int, order: int, pix: Any) -> tuple | None:
     """把 Pixmap 铺白编码为 PNG；近空白（白底占比过高）返回 None 丢弃。
 
@@ -261,6 +348,19 @@ def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]
     with pymupdf.open(pdf_path) as doc:
         for page in doc:
             order = 0
+            # 主路径：图注锚定区域整块渲染（矢量+位图一起，不碎不空）
+            cap_pixmaps = _caption_figure_pixmaps(page)
+            if cap_pixmaps:
+                for pix in cap_pixmaps:
+                    if pix.width < FIGURE_MIN_WIDTH or pix.height < FIGURE_MIN_HEIGHT:
+                        continue
+                    cand = _candidate_from_pix(page.number + 1, order, pix)
+                    if cand is None:
+                        continue
+                    candidates.append(cand)
+                    order += 1
+                continue  # 有图注区域即不再走兜底，避免与整块渲染重复
+            # 无图注页兜底：嵌入位图（含 SMask 修复）+ 矢量簇
             for img in page.get_images(full=True):
                 xref, smask = int(img[0]), int(img[1])
                 if xref in seen_xrefs:
@@ -346,9 +446,11 @@ def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]
 
 
 async def extract_figures(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
-    """提取 PDF 嵌入图为 PNG 落盘，返回 [{index, page, width, height}]。
+    """提取 PDF 图为 PNG 落盘，返回 [{index, page, width, height}]。
 
-    过滤：宽 ≥200 且高 ≥150、按 xref 去重、面积降序取前 8（编号按文中页码顺序）；
+    主路径按「Figure N / 图 N」图注锚定，整块渲染图注正上方的图区域（矢量+位图一起，
+    复杂图不碎、空白页不抓）；无图注的页退回嵌入位图（含 SMask 修复）+ 矢量簇兜底。
+    过滤：宽 ≥200 且高 ≥150、近空白丢弃、按页轮转取前 12（编号按页码顺序）。
     PyMuPDF 为同步库，丢线程池跑。
     """
     return await asyncio.to_thread(_extract_figures_sync, paper_id, pdf_path)
