@@ -2,8 +2,11 @@
 
 import uuid
 
+from sqlalchemy import select
+
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
+from app.models.paper import Concept, Paper
+from app.services.concepts import placeholder_definition
 
 from .conftest import register_and_login
 
@@ -64,6 +67,53 @@ async def test_relink_is_idempotent(client):
     body = resp.json()
     assert body["concepts_created"] == 0
     assert body["links_created"] == 0
+
+
+async def test_relink_backfills_placeholder_definitions(client):
+    # 此前批量截断/失败留下的占位概念，手动补建时应重新拿到定义并更正类别
+    project_id, headers = await _setup(client)
+    pid = uuid.UUID(project_id)
+    async with get_sessionmaker()() as session:
+        session.add_all(
+            [
+                Concept(
+                    project_id=pid,
+                    name="旧概念X",
+                    slug="old-x",
+                    definition=placeholder_definition("旧概念X"),
+                    category="other",
+                ),
+                Concept(
+                    project_id=pid,
+                    name="旧概念Y",
+                    slug="old-y",
+                    definition=placeholder_definition("旧概念Y"),
+                    category="other",
+                ),
+            ]
+        )
+        await session.commit()
+
+    resp = await client.post(f"/api/projects/{project_id}/concepts/relink", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["concepts_backfilled"] == 2
+
+    async with get_sessionmaker()() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(Concept).where(
+                        Concept.project_id == pid, Concept.name.in_(["旧概念X", "旧概念Y"])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 2
+        for concept in rows:
+            assert not concept.definition.endswith("（定义待补充）")
+            assert concept.category == "method"  # fake provider 返回 method
 
 
 async def test_relink_requires_membership(client):

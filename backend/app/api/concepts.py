@@ -61,14 +61,14 @@ async def relink_concepts(
 ) -> ConceptRelinkResult:
     """全库概念补建：对已编译论文重抽 [[双链]]、建缺失概念并补齐关联（幂等）。
 
-    面向历史数据（编译过但概念上链步骤没跑到的论文）；
-    新概念定义批量调一次 LLM，失败降级为占位定义，不阻塞。
+    面向历史数据（编译过但概念上链步骤没跑到的论文）；新概念定义分批调 LLM，
+    并回填此前留下的占位概念（「…（定义待补充）」）重新拿定义，失败降级为占位、不阻塞。
     """
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     stats, _papers = await concepts_service.link_all_paper_concepts(
-        session, project_id=project_id, llm=get_llm_router(), user_id=user.id
+        session, project_id=project_id, llm=get_llm_router(), user_id=user.id, backfill=True
     )
     return ConceptRelinkResult(**stats)
 
