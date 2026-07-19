@@ -70,11 +70,21 @@ PLAN_SYSTEM_PROMPT = """\
  "repro_strategy": "基线复现策略（官方代码 > 可信第三方 > 自重写 > 仅引用数字）",
  "steps": ["实验步骤 1", "实验步骤 2"],
  "primary_metric": {"name": "主指标名", "direction": "maximize"},
+ "conditions": [{"name": "baseline", "role": "baseline", "description": "对照组"},
+                {"name": "treatment_a", "role": "treatment", "description": "处理组"}],
+ "eval_protocol": {"dataset": "数据集/来源", "split": "评测划分", "metric": "评测指标",
+                   "n_examples": 100, "n_samples": 1},
+ "datasets": [{"name": "HF数据集名或来源", "purpose": "test|corpus|train", "size_hint": "规模"}],
  "budget_estimate": {"gpu_hours": 2, "runs": 3}}
-约束：hypotheses 1-5 条且必须可被实验证实/证伪；steps 3-8 条；
-primary_metric 必填：name 是训练代码 POLARIS_METRIC 输出的指标名，
-direction 只能取 maximize（越大越好）或 minimize（越小越好）；
-budget_estimate 是对象（至少含 gpu_hours）。
+约束：
+- hypotheses 1-5 条且必须可被实验证实/证伪；steps 3-8 条；
+- primary_metric 必填：name 是评测代码 POLARIS_METRIC 输出的指标名（对照实验里应是主处理组或均值），
+  direction 只能取 maximize / minimize；budget_estimate 是对象（至少含 gpu_hours）；
+- **对照实验（复现论文常见）**：若研究方案对比多个方法/配置（如 baseline vs 改进），
+  必须在 conditions 里列出（恰一个 role=baseline，其余 role=treatment），并把评测协议写进
+  eval_protocol（数据集/划分/指标/样本数）、把要用的真实数据集写进 datasets；
+  代码将对每个 condition 用同一评测集跑并逐条 POLARIS_METRIC 输出，供平台做对照分析。
+- 若是单一配置的调参类实验，conditions/eval_protocol/datasets 可省略。
 """
 
 CODE_SYSTEM_PROMPT = """\
@@ -83,10 +93,18 @@ CODE_SYSTEM_PROMPT = """\
 {"files": {"requirements.txt": "内容", "run.sh": "内容", "train.py": "内容"}}
 硬约束：
 - 必须包含 requirements.txt 与 run.sh；文件路径必须是相对路径（禁止 .. / 绝对路径 / ~）
-- run.sh 必须支持 --smoke 参数（小样本/1 step 快速通过），并使用 .venv/bin/python 运行
-- 训练/评估代码必须用 print('POLARIS_METRIC ' + json.dumps({"name": 指标名, "step": 步数, \
-"value": 数值})) 输出关键指标
-- 数据集只用小型公开数据或程序合成数据；不得读写工作目录以外的任何路径；不得访问网络下载大文件
+- run.sh 必须支持 --smoke 参数：只跑极小样本（如几条数据、1 个模型、去掉耗时条件）快速验证
+  代码可跑通；非 smoke 时跑计划里的真实规模。用 .venv/bin/python 运行
+- 评测/训练代码必须用 print('POLARIS_METRIC ' + json.dumps({"name": 指标名, "step": 步数, \
+"value": 数值})) 输出关键指标；数字必须来自真实计算，严禁硬编码任何结果
+- 数据只读写工作目录之内（可在 workdir 下建 data_cache/ 缓存）；不得读写 workdir 之外的路径
+- **数据集**：评测/复现类实验可以用 HuggingFace `datasets` 下载真实公开数据集
+  （平台已注入 HF 镜像与出网代理，正常 load_dataset 即可），下载到 workdir 内缓存；
+  合成数据仅用于 smoke。规模按计划的 eval_protocol/datasets 控制，避免超大下载
+- **对照实验**：若计划给了 conditions（baseline + treatments），代码必须对每个 condition
+  用同一评测集、同一协议评测，并对每个 condition 单独输出 POLARIS_METRIC（指标名带上
+  condition 与模型，如 "accuracy/<model>/<condition>"），使平台能对照 baseline vs treatment；
+  eval_protocol 里的数据集/划分/指标/样本数要如实落实
 """
 
 FIX_SYSTEM_PROMPT = (
@@ -204,6 +222,8 @@ REFLECTION_SYSTEM_PROMPT = """\
 - hypothesis_updates 的 index 是假设清单下标（从 0 开始），status 只能取 verified/falsified/testing
 - 本轮运行失败（exit_code 非 0）时 decision 用 debug；结果已足以回答全部假设时用 stop
 - decision=stop 时 stop_reason 必填一句话；decision=improve 时 planned_change 必填
+- 对照实验：若给了「对照汇总」，据 baseline vs treatment 的 delta 判断假设成立与否
+  （处理组是否优于 baseline），别只看单个 primary_value；对照结果已清晰时可直接 stop
 """
 
 PLOT_SYSTEM_PROMPT = """\
@@ -230,6 +250,9 @@ REPORT_SYSTEM_PROMPT = """\
 你是 Experiment Lab 的报告撰写人。基于实验计划、迭代过程、指标数据与日志尾部撰写中文 markdown 报告，
 以「## 实验报告」开头，包含：结果概览、指标表现、假设验证结论（逐条 verified/falsified/
 testing）、局限与后续建议。直接输出 markdown，不要输出 JSON。
+若给了「对照汇总」（对照实验）：用一个 markdown 表格列出各 condition（含 baseline）的指标与
+相对 baseline 的 delta，并据此判断处理组是否显著优于 baseline、结论是否复现了预期效应。
+数字一律引用给定的指标数据/对照汇总，不得编造。
 """
 
 
@@ -385,13 +408,34 @@ def validate_plan(data: Any) -> dict[str, Any]:
     budget = data.get("budget_estimate")
     if not isinstance(budget, dict) or not budget:
         raise ValueError('expected object "budget_estimate"')
-    return {
+    out: dict[str, Any] = {
         "hypotheses": hypotheses,
         "repro_strategy": repro.strip(),
         "steps": steps,
         "primary_metric": {"name": pm_name.strip(), "direction": pm_direction},
         "budget_estimate": budget,
     }
+    # 对照实验的可选结构（复现类实验用）：conditions/eval_protocol/datasets 透传，供 setup
+    # 代码生成与 analyze/report 对照分析消费。恰一个 baseline 才算有效对照。
+    conditions = data.get("conditions")
+    if isinstance(conditions, list) and conditions:
+        norm = []
+        for c in conditions:
+            if not isinstance(c, dict) or not str(c.get("name") or "").strip():
+                continue
+            role = c.get("role") if c.get("role") in ("baseline", "treatment") else "treatment"
+            norm.append({
+                "name": str(c["name"]).strip(),
+                "role": role,
+                "description": str(c.get("description") or "").strip(),
+            })
+        if norm:
+            out["conditions"] = norm
+    if isinstance(data.get("eval_protocol"), dict):
+        out["eval_protocol"] = data["eval_protocol"]
+    if isinstance(data.get("datasets"), list):
+        out["datasets"] = data["datasets"]
+    return out
 
 
 def validate_files(data: Any) -> dict[str, str]:
@@ -569,6 +613,93 @@ def _elapsed_hours(started_at: datetime | None) -> float:
     return max(0.0, (utcnow() - started).total_seconds() / 3600.0)
 
 
+def _last_value(series: Any) -> float | None:
+    """从一条 metric 序列取末值（兼容 [{step,value}] 列表或标量）。"""
+    if isinstance(series, list) and series:
+        last = series[-1]
+        v = last.get("value") if isinstance(last, dict) else last
+    else:
+        v = series
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _conditions_delta(experiment: Experiment) -> dict[str, Any] | None:
+    """对照实验的确定性汇总：按 plan.conditions 把 experiment.metrics 里各指标末值归到
+    对应 condition（指标名以 /<condition> 结尾即归属，只聚合主指标族），算每组均值与相对
+    baseline 的 delta。无 conditions 或无可归属指标时返回 None（退化为原单指标分析）。"""
+    plan = experiment.plan or {}
+    conditions = plan.get("conditions")
+    if not isinstance(conditions, list) or not conditions:
+        return None
+    pm_name = str((plan.get("primary_metric") or {}).get("name") or "").strip()
+    pm_root = pm_name.split("/")[0] if pm_name else ""
+    lasts = {name: _last_value(s) for name, s in (experiment.metrics or {}).items()}
+
+    def _belongs(name: str, cond: str) -> bool:
+        if not (name.endswith(f"/{cond}") or name == cond):
+            return False
+        return not pm_root or name.split("/")[0] == pm_root or name == cond
+
+    scores: dict[str, float] = {}
+    for c in conditions:
+        cond = str(c.get("name") or "").strip()
+        if not cond:
+            continue
+        vals = [v for name, v in lasts.items() if v is not None and _belongs(name, cond)]
+        if vals:
+            scores[cond] = round(sum(vals) / len(vals), 3)
+    if not scores:
+        return None
+    baseline = next(
+        (str(c.get("name")).strip() for c in conditions
+         if c.get("role") == "baseline" and str(c.get("name")).strip() in scores),
+        None,
+    )
+    deltas: dict[str, float] = {}
+    if baseline is not None:
+        deltas = {c: round(v - scores[baseline], 3) for c, v in scores.items() if c != baseline}
+    return {"baseline": baseline, "scores": scores, "deltas_vs_baseline": deltas}
+
+
+def _proposal_context(idea: Idea) -> str:
+    """把 idea 2.0 深耕产物（Research Proposal）的结构化研究方案渲染成计划提示上下文。
+
+    深耕 idea（depth=proposal）的 goal 带 objectives/success_criteria/resources_needed 与专为
+    生成实验设计的 smoke_plan（baselines/datasets/metrics/conditions）——把「研究方案」忠实转成
+    「实验计划」的关键输入；sketch 草案回退空串。"""
+    if idea.depth != "proposal" or not isinstance(idea.goal, dict):
+        return ""
+    g = idea.goal
+    parts = ["\n研究方案（Research Proposal，务必据此产出忠实的实验计划）："]
+    if idea.research_type:
+        parts.append(f"- 研究类型：{idea.research_type}")
+    for key, label in (("task", "任务"), ("question", "研究问题"), ("scope", "范围")):
+        if g.get(key):
+            parts.append(f"- {label}：{str(g[key])[:400]}")
+    for key, label in (("objectives", "研究目标"), ("success_criteria", "成功标准")):
+        vals = g.get(key)
+        if isinstance(vals, list) and vals:
+            parts.append(f"- {label}：" + "；".join(str(v)[:120] for v in vals[:6]))
+    res = g.get("resources_needed")
+    if isinstance(res, dict) and res.get("data"):
+        d = res["data"]
+        rendered = "；".join(str(v)[:100] for v in d[:5]) if isinstance(d, list) else str(d)[:300]
+        parts.append(f"- 需要的数据：{rendered}")
+    exp_design = g.get("smoke_plan") or g.get("experiments")
+    if exp_design:
+        design_json = json.dumps(exp_design, ensure_ascii=False)[:1500]
+        parts.append(f"- 论文/方案给出的实验设计：{design_json}")
+    if isinstance(idea.evidence, list) and idea.evidence:
+        grounds = [str(e.get("title") or e.get("why") or "")[:80]
+                   for e in idea.evidence if isinstance(e, dict)][:4]
+        if any(grounds):
+            parts.append("- 依据文献：" + "；".join(x for x in grounds if x))
+    return "\n".join(parts) + "\n"
+
+
 # ---- 1. 计划（stage=experiment） ----
 
 
@@ -608,7 +739,8 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             user_prompt = (
                 f"想法标题：{idea.title}\n"
                 f"想法概述：{idea.summary or '（无）'}\n"
-                f"想法详情：\n{(idea.content or '')[:4000]}\n\n"
+                f"想法详情：\n{(idea.content or '')[:4000]}\n"
+                f"{_proposal_context(idea)}\n"
                 f"相关 wiki 摘要：\n{wiki_context}\n\n"
                 f"预算约束：{json.dumps(experiment.budget or {}, ensure_ascii=False)}\n"
                 f"GPU 提示：{gpu_hint or '（无）'}"
@@ -660,7 +792,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         files = ctx.checkpoint.get("exp_files")
         if not isinstance(files, dict):  # 断点幂等：已生成的代码不重复调 LLM
             user_prompt = (
-                f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:6000]}\n"
+                f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:8000]}\n"
                 f"预算：{json.dumps(experiment.budget or {}, ensure_ascii=False)}"
             )
             files = await _complete_json(
@@ -961,11 +1093,19 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             run.log_path, _LOG_TAIL_FOR_REFLECTION
         )
         hyp_count = len(plan.get("hypotheses", []))
+        cond_delta = _conditions_delta(experiment)
+        cond_line = (
+            f"对照汇总（baseline vs treatment，平台确定性计算）："
+            f"{json.dumps(cond_delta, ensure_ascii=False)}\n" if cond_delta else ""
+        )
+        run_lasts = {k: _last_value(v) for k, v in (run.metrics or {}).items()}
         reflection_user = (
             f"实验计划：{json.dumps(plan, ensure_ascii=False)[:4000]}\n"
             f"主指标：{json.dumps(pm, ensure_ascii=False)}（假设共 {hyp_count} 条）\n"
             f"本轮运行：seq={run.seq} status={run.status} exit_code={run.exit_code} "
             f"primary_value={run.primary_value}\n"
+            f"本轮各指标末值：{json.dumps(run_lasts, ensure_ascii=False)[:1500]}\n"
+            f"{cond_line}"
             f"历史各轮：{json.dumps(history, ensure_ascii=False)}\n"
             f"迭代状态：无提升连续 {state['no_improve_streak']} 轮，"
             f"debug 已用 {state['debug_count']}/{MAX_DEBUG_FIXES} 次\n"
@@ -1362,11 +1502,17 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
             }
             for r in runs
         ]
+        cond_delta = _conditions_delta(experiment)
+        cond_line = (
+            f"对照汇总（baseline vs treatment，平台确定性计算）："
+            f"{json.dumps(cond_delta, ensure_ascii=False)}\n" if cond_delta else ""
+        )
         user_prompt = (
             f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:4000]}\n"
             f"迭代各轮：{json.dumps(runs_brief, ensure_ascii=False)}\n"
             f"迭代状态：{json.dumps(experiment.iteration_state or {}, ensure_ascii=False)}\n"
             f"指标数据：{json.dumps(experiment.metrics or {}, ensure_ascii=False)[:4000]}\n"
+            f"{cond_line}"
             f"日志尾部：\n" + "\n".join(log_lines)
         )
         result = await ctx.llm.complete(
