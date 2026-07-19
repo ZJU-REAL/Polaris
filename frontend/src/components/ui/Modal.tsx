@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { tr } from '../../lib/i18n';
 
@@ -13,8 +13,32 @@ export interface ModalProps {
   width?: number;
 }
 
+// 打开中的弹窗栈：Esc 只关最上面（最后打开）的那个，避免嵌套弹窗被一起关掉
+const openModals: object[] = [];
+
 /** 居中对话框（scrim + panel）。 */
 export function Modal({ open, onClose, title, sub, children, footer, width = 520 }: ModalProps) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) return;
+    const token = {};
+    openModals.push(token);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && openModals[openModals.length - 1] === token) {
+        e.stopPropagation();
+        onCloseRef.current();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      const i = openModals.indexOf(token);
+      if (i >= 0) openModals.splice(i, 1);
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     <div className="modal-scrim" onClick={onClose}>
