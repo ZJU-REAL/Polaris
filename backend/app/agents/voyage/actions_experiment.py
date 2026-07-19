@@ -116,12 +116,20 @@ FIX_SYSTEM_PROMPT = (
 """
 )
 
+# 自动迭代优化：proposer 能读到**全部历史尝试**的源码/得分/执行轨迹（不是压缩后的反馈），据此提出
+# 下一次尝试。通用机制，适用于调参/提示优化/特征/算法/流程等任何「改实现以提升指标」的实验；灵感来自
+# 「richer access to prior experience 优于过度压缩反馈」这一点，非某类实验专属。
 IMPROVE_SYSTEM_PROMPT = (
     CODE_SYSTEM_PROMPT
     + """\
 
-现在进入自动迭代：上一轮运行已结束，请按 reflection 给出的改进计划（planned_change）
-修改代码/超参，输出修改后的完整文件集合（同上 JSON 格式）。只做说明中的修改，不要重写无关部分。
+现在进入自动迭代优化：目标是改进实验代码/配置，让主指标更好。下面给你**全部**历史尝试的源码、得分与
+执行轨迹（不是压缩后的反馈）——请综合所有先验经验，不要只盯着最后一轮：
+- 借鉴高分尝试里有效的做法，避开低分尝试已被证伪的思路；说明你这次改动的假设与依据。
+- 提出一个**有依据的新尝试**（视实验而定，可改：算法/超参/数据处理/提示词/特征/检索/流程等），
+  而不是无谓微调；有把握时可较大重构，也可延续 reflection 的改进方向。
+- **只改被优化的实现，不改评测协议/数据集/主指标口径**（评测本身保持不变，确保各次尝试可比）。
+输出修改后的完整文件集合（同上 JSON 格式）。
 """
 )
 
@@ -132,6 +140,41 @@ DEBUG_SYSTEM_PROMPT = (
 现在自动迭代中的正式运行失败了，请根据错误信息修复代码：输出修复后的完整文件集合（同上 JSON 格式）。
 """
 )
+
+def _render_attempt_archive(
+    archive: list[dict[str, Any]], per_file_cap: int = 2000, best_file_cap: int = 4000
+) -> str:
+    """把历史尝试（源码+得分+轨迹）渲染进迭代 proposer 提示——通用的「先验经验档案」。
+
+    非某类实验专属：渲染每次尝试的**全部**源码文件（不假设入口文件名），最优尝试给更长上下文，
+    其余截断；轨迹给尾部。让 proposer 据全量历史而非最后一轮提出下一次尝试。"""
+    if not archive:
+        return ""
+
+    def _score(c: dict[str, Any]) -> tuple[int, float]:
+        v = c.get("primary_value")
+        return (1, float(v)) if isinstance(v, int | float) else (0, float("-inf"))
+
+    best = max(archive, key=_score)
+    parts = [f"历史尝试档案（共 {len(archive)} 次，含源码/得分/轨迹，据此提出下一次尝试）："]
+    for c in archive:
+        star = " ★迄今最好" if c is best else ""
+        delta = c.get("conditions_delta")
+        delta_s = json.dumps(delta, ensure_ascii=False) if delta else "—"
+        parts.append(
+            f"\n[尝试 seq={c.get('seq')} | 主指标={c.get('primary_value')}{star} | 对照={delta_s}]"
+        )
+        cap = best_file_cap if c is best else per_file_cap
+        # 渲染全部源码文件（跳过 requirements 这类噪音），不假设固定入口名，保证通用
+        for name, code in sorted((c.get("files") or {}).items()):
+            if not code or name == "requirements.txt":
+                continue
+            parts.append(f"源码（{name}，截断 {cap}）：\n{str(code)[:cap]}")
+        trace = c.get("trace") or ""
+        if trace:
+            parts.append(f"执行轨迹尾部：{trace[-600:]}")
+    return "\n".join(parts) + "\n"
+
 
 # ---- 按实验 params 条件追加的 system prompt 段落（plan 与全部 codegen prompt 共用） ----
 
@@ -1133,6 +1176,21 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         )
         run.reflection = reflection
 
+        # 尝试存档（通用先验经验档案）：把本轮实现的源码/得分/轨迹存起来，供后续迭代 proposer 读取
+        # 全量历史（不是只看上一轮）。记录产生本轮 run 的实现（当前 exp_files）。
+        archive = list(ctx.checkpoint.get("attempt_archive") or [])
+        archive.append(
+            {
+                "seq": run.seq,
+                "primary_value": run.primary_value,
+                "conditions_delta": cond_delta,
+                "files": dict(ctx.checkpoint.get("exp_files") or {}),
+                "trace": "\n".join(log_lines[-30:]),
+                "observation": reflection.get("observation"),
+            }
+        )
+        ctx.checkpoint["attempt_archive"] = archive
+
         # 假设回写 + iteration_state 落库
         plan = _apply_hypothesis_updates(plan, reflection["hypothesis_updates"])
         experiment.plan = plan
@@ -1182,19 +1240,29 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             experiment.iteration_state = dict(state)
             await session.commit()
 
-        # improve / debug：LLM 改文件（diff 说明进 prompt）→ SSH 覆写
+        # improve → 迭代优化 proposer（读全量尝试档案提下一候选）；debug → 按报错修当前文件
         files: dict[str, str] = dict(ctx.checkpoint.get("exp_files") or {})
-        system_prompt = _prompt_with_context(
-            DEBUG_SYSTEM_PROMPT if decision == "debug" else IMPROVE_SYSTEM_PROMPT, ctx
-        )
-        fix_user = (
-            f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
-            f"reflection 观察：{reflection['observation']}\n"
-            f"诊断：{reflection['diagnosis']}\n"
-            f"planned_change（修改说明）：{reflection.get('planned_change') or '（无）'}\n"
-            f"本轮 exit_code：{run.exit_code}\n"
-            f"本轮日志尾部：\n" + "\n".join(log_lines[-20:])
-        )
+        if decision == "debug":
+            system_prompt = _prompt_with_context(DEBUG_SYSTEM_PROMPT, ctx)
+            fix_user = (
+                f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
+                f"reflection 观察：{reflection['observation']}\n"
+                f"诊断：{reflection['diagnosis']}\n"
+                f"planned_change（修改说明）：{reflection.get('planned_change') or '（无）'}\n"
+                f"本轮 exit_code：{run.exit_code}\n"
+                f"本轮日志尾部：\n" + "\n".join(log_lines[-20:])
+            )
+        else:
+            system_prompt = _prompt_with_context(IMPROVE_SYSTEM_PROMPT, ctx)
+            fix_user = (
+                _render_attempt_archive(archive)
+                + f"\n主指标：{json.dumps(pm, ensure_ascii=False)}\n"
+                + f"当前尝试 seq={run.seq} 主指标={run.primary_value}；"
+                + f"reflection 诊断：{reflection['diagnosis']}\n"
+                + f"reflection 改进方向（参考）：{reflection.get('planned_change') or '（无）'}\n"
+                + "请综合以上全部尝试的源码/得分/轨迹，提出一个有依据的新尝试，"
+                + "输出修改后的完整文件集合。"
+            )
         files = await _complete_json(
             ctx, system=system_prompt, user=fix_user, validate=validate_files
         )

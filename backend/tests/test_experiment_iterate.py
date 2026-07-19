@@ -509,3 +509,51 @@ async def test_poll_survives_ssh_reconnect(client, queue_stub, fake_ssh, bus_rec
         stmt = select(Activity.kind).where(Activity.kind == "experiment.ssh_reconnect")
         kinds = (await session.execute(stmt)).scalars().all()
     assert kinds, "应记录 experiment.ssh_reconnect 审计活动"
+
+
+def test_render_attempt_archive_unit():
+    """通用「先验经验档案」渲染：列出各尝试的得分/源码/轨迹，标注迄今最好。"""
+    archive = [
+        {"seq": 1, "primary_value": 0.60, "files": {"train.py": "A_CODE"}, "trace": "log-a"},
+        {"seq": 2, "primary_value": 0.72, "files": {"train.py": "B_CODE"}, "trace": "log-b"},
+    ]
+    text = ax._render_attempt_archive(archive)
+    assert "历史尝试档案" in text and "共 2 次" in text
+    assert "seq=1" in text and "seq=2" in text
+    assert "0.6" in text and "0.72" in text
+    assert "A_CODE" in text and "B_CODE" in text  # 全量源码，非压缩反馈
+    assert text.count("★迄今最好") == 1 and "seq=2 | 主指标=0.72 ★迄今最好" in text
+    assert ax._render_attempt_archive([]) == ""  # 空档案不产出
+
+
+class _RecordingImproveProvider(_FixedReflectionProvider):
+    """reflection 恒 improve，并记录喂给迭代 proposer 的（含档案的）改进提示。"""
+
+    def __init__(self) -> None:
+        super().__init__("improve")
+        self.improve_prompts: list[str] = []
+
+    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+        full = "\n".join(m.content for m in messages)
+        if "历史尝试档案" in full:  # 只有迭代优化 proposer 的 user prompt 才带档案
+            self.improve_prompts.append(full)
+        return await super().complete(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
+        )
+
+
+async def test_improve_proposer_gets_full_attempt_archive(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """通用能力：迭代改进的 proposer 拿到的是**全量历史尝试**（源码+得分+轨迹），不是只有上一轮。"""
+    fake_ssh.run_logs = [metric_log(0.7), metric_log(0.8)]
+    provider = _RecordingImproveProvider()
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(
+        client, budget={"max_hours": 2, "max_runs": 2}
+    )
+    await _drive_pipeline(client, headers, project_id, voyage_id, _router_with(provider))
+
+    assert provider.improve_prompts, "迭代改进应把历史尝试档案喂给 proposer"
+    first = provider.improve_prompts[0]
+    assert "历史尝试档案" in first
+    assert "seq=1" in first and "0.7" in first  # 上一轮尝试的得分在档案里
