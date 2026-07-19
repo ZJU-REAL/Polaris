@@ -35,7 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
-from app.agents.voyage.runner import Runner, open_runner
+from app.agents.voyage.runner import Runner, open_runner, parse_container_spec
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
 from app.models.activity import Activity
@@ -78,6 +78,7 @@ PLAN_SYSTEM_PROMPT = """\
  "eval_protocol": {"dataset": "数据集/来源", "split": "评测划分", "metric": "评测指标",
                    "n_examples": 100, "n_samples": 1},
  "datasets": [{"name": "HF数据集名或来源", "purpose": "test|corpus|train", "size_hint": "规模"}],
+ "container": {"image": "预置框架镜像", "gpus": "device=0,1", "shm_size": "16g"},
  "budget_estimate": {"gpu_hours": 2, "runs": 3}}
 约束：
 - **kind 先给实验归类**（决定平台怎么备环境/怎么跑）：
@@ -87,6 +88,14 @@ PLAN_SYSTEM_PROMPT = """\
   analysis=数据分析/消融（处理数据、统计，不训练不评测大模型）；other=以上都不像。
   按研究方案实事求是地分——别默认 training；很多复现是 eval。
 - hypotheses 1-5 条且必须可被实验证实/证伪；steps 3-8 条；
+- **执行环境 container（可选，训练类/需重型框架时用）**：不要重复造轮子——需要训练框架、
+  分布式、vLLM、CUDA 依赖重的实验，优先声明一个**预置 docker 镜像**在容器里跑；镜像已含框架，
+  代码只写「框架配置/入口脚本」而非从零训练循环。常见选型（按需求挑，镜像名要真实存在于目标机）：
+  · 强化学习/on-policy/GRPO/PPO/蒸馏 → trl 或 verl 系镜像
+    （如 `verlai/verl:vllm017.latest`，含 trl/vllm/peft）；
+  · 监督微调/LoRA/SFT → LLaMA-Factory 镜像；· 纯评测/benchmark → 轻量镜像 + lm-eval-harness；
+  gpus 用 "device=0,1"（选卡）/"all"/"2"（计数）；不需要 GPU 或不需要重型框架时
+  **省略 container**（走裸机 venv）。
 - primary_metric 必填：name 是评测代码 POLARIS_METRIC 输出的指标名（对照实验里应是主处理组或均值），
   direction 只能取 maximize / minimize；budget_estimate 是对象（至少含 gpu_hours）；
 - **对照实验（复现论文常见）**：若研究方案对比多个方法/配置（如 baseline vs 改进），
@@ -103,7 +112,10 @@ CODE_SYSTEM_PROMPT = """\
 硬约束：
 - 必须包含 requirements.txt 与 run.sh；文件路径必须是相对路径（禁止 .. / 绝对路径 / ~）
 - run.sh 必须支持 --smoke 参数：只跑极小样本（如几条数据、1 个模型、去掉耗时条件）快速验证
-  代码可跑通；非 smoke 时跑计划里的真实规模。用 .venv/bin/python 运行
+  代码可跑通；非 smoke 时跑计划里的真实规模。默认用 .venv/bin/python 运行
+- **若 plan 声明了 container（在预置镜像里跑）**：镜像已自带框架，run.sh / plot_figures.py
+  直接用镜像的 `python`（不是 .venv/bin/python，也别建 venv）；requirements.txt 只列镜像**缺**的
+  增量小包（能不加就不加）；模型/数据走已挂载的只读卷（如 /hf），别重复下载大模型
 - 评测/训练代码必须用 print('POLARIS_METRIC ' + json.dumps({"name": 指标名, "step": 步数, \
 "value": 数值})) 输出关键指标；数字必须来自真实计算，严禁硬编码任何结果
 - 数据只读写工作目录之内（可在 workdir 下建 data_cache/ 缓存）；不得读写 workdir 之外的路径
@@ -433,12 +445,13 @@ async def _open_executor(
     credential = await session.get(SSHCredential, experiment.credential_id)
     if credential is None:
         raise ValueError("SSH 凭据已删除，无法连接实验服务器")
-    kind = (experiment.plan or {}).get("kind") if isinstance(experiment.plan, dict) else None
+    plan = experiment.plan if isinstance(experiment.plan, dict) else {}
     return await open_runner(
         credential=credential,
         exp_id=str(experiment.id),
         project_id=experiment.project_id,
-        kind=kind,
+        kind=plan.get("kind"),
+        container=plan.get("container"),
     )
 
 
@@ -525,6 +538,16 @@ def validate_plan(data: Any) -> dict[str, Any]:
         out["eval_protocol"] = data["eval_protocol"]
     if isinstance(data.get("datasets"), list):
         out["datasets"] = data["datasets"]
+    # 容器执行规格（训练类/需框架的实验声明预置镜像）：严格校验后存回 plan，
+    # 决定运行时用 ContainerRunner 还是裸机；非法/缺 image → 不存（退回裸机）。
+    spec = parse_container_spec(data.get("container"))
+    if spec is not None:
+        out["container"] = {
+            "image": spec.image,
+            "gpus": spec.gpus,
+            "shm_size": spec.shm_size,
+            "mounts": spec.mounts,
+        }
     return out
 
 

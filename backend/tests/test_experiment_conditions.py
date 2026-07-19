@@ -83,6 +83,34 @@ def test_validate_plan_backward_compatible_without_conditions():
         }
     )
     assert "conditions" not in plan and "eval_protocol" not in plan
+    assert "container" not in plan  # 没声明 container → 走裸机
+
+
+def _min_plan(**extra):
+    return {
+        "hypotheses": [{"text": "h", "status": "testing"}],
+        "repro_strategy": "r",
+        "steps": ["a", "b", "c"],
+        "primary_metric": {"name": "acc", "direction": "maximize"},
+        "budget_estimate": {"gpu_hours": 1},
+        **extra,
+    }
+
+
+def test_validate_plan_stores_valid_container():
+    """训练类实验声明预置镜像 → container 经白名单校验后存回 plan（驱动 ContainerRunner）。"""
+    plan = validate_plan(
+        _min_plan(container={"image": "verlai/verl:vllm017.latest", "gpus": "device=0,1"})
+    )
+    assert plan["container"]["image"] == "verlai/verl:vllm017.latest"
+    assert plan["container"]["gpus"] == "device=0,1"
+    assert plan["container"]["shm_size"] == "16g"  # 默认补齐
+
+
+def test_validate_plan_drops_invalid_container():
+    """无 image / 注入型 image → container 不入 plan（退回裸机，不进 docker 命令）。"""
+    assert "container" not in validate_plan(_min_plan(container={"gpus": "all"}))
+    assert "container" not in validate_plan(_min_plan(container={"image": "evil; rm -rf /"}))
 
 
 def test_conditions_delta_computes_baseline_vs_treatment():
