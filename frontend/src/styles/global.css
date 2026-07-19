@@ -156,6 +156,9 @@ input {
   height: 52px; flex-shrink: 0; border-bottom: 0.5px solid var(--border);
   display: flex; align-items: center; gap: 14px; padding: 0 22px;
   background: rgba(247, 249, 252, 0.85); backdrop-filter: blur(8px);
+  /* backdrop-filter 会新建层叠上下文；顶栏在 .content 之前渲染，
+     不抬 z-index 的话下拉浮层会被下方内容盖住。抬到内容之上（低于弹窗/toast）。 */
+  position: relative; z-index: 20;
 }
 .crumb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-3); }
 .crumb b { color: var(--text); font-weight: 600; }
