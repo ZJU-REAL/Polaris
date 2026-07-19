@@ -557,3 +557,34 @@ async def test_improve_proposer_gets_full_attempt_archive(
     first = provider.improve_prompts[0]
     assert "历史尝试档案" in first
     assert "seq=1" in first and "0.7" in first  # 上一轮尝试的得分在档案里
+
+
+async def test_smoke_timeout_is_recoverable(client, queue_stub, fake_ssh, bus_recorder):
+    """冒烟超时不再硬崩：诊断为『太慢/超时』→ 自动改小重试 → 通过，航程继续。
+
+    回归自适应循环的一类失败：训练类实验冒烟常因规模太大而超时(TimeoutError),
+    以前直接判失败;现在当作可修失败,重连+让 LLM 把冒烟改小再试。"""
+    state = {"raised": 0}
+
+    async def timeout_once(command: str) -> None:
+        if "--smoke" in command and state["raised"] == 0:
+            state["raised"] += 1
+            raise TimeoutError("smoke timed out")
+
+    fake_ssh.on_command = timeout_once
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(
+        client, budget={"max_hours": 2, "max_runs": 1}
+    )
+    await _drive_pipeline(
+        client, headers, project_id, voyage_id, _router_with(_FixedReflectionProvider("improve"))
+    )
+
+    assert state["raised"] == 1  # 确实注入了一次冒烟超时
+    voyage_status, _ = await _iterate_observation(client, headers, voyage_id)
+    assert voyage_status == "done"  # 没在 smoke 硬崩,跑到 analyze 并收尾
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    smoke = next(s for s in resp.json()["steps"] if s["action"] == "experiment.smoke")
+    assert smoke["status"] == "passed"
+    assert (smoke["observation"] or {}).get("fixes", 0) >= 1  # 记录了一次方案级修复
+    assert len(fake_ssh.connects) >= 2  # 超时后重连过

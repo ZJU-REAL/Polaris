@@ -112,7 +112,14 @@ FIX_SYSTEM_PROMPT = (
     CODE_SYSTEM_PROMPT
     + """\
 
-现在冒烟测试失败了，请根据报错修复代码：输出修复后的完整文件集合（同上 JSON 格式）。
+现在冒烟测试失败了。先**诊断失败类别与根因**，再决定怎么修——不局限于「改几行代码」，可做**方案级调整**：
+- 超时/太慢（冒烟就该极快）→ 把冒烟规模改到极小：更小样本、更少步数、更小或更省显存的配置、
+  缩短生成长度、精简耗时依赖；确保 --smoke 很快跑完。
+- 依赖/环境（缺包、版本冲突、CUDA/显存、装不上）→ 改 requirements.txt / run.sh：换/装依赖、
+  选设备、降 batch、必要时换实现方式绕开装不上的包。
+- 模型/框架不兼容（架构不被支持、多模态用于纯文本、加载报错）→ 换兼容的加载方式/框架/模型规格。
+- 代码 bug → 修对应逻辑。
+先一句话点明诊断，再输出修复后的**完整文件集合**（同上 JSON 格式）。别动评测协议/数据集/主指标口径。
 """
 )
 
@@ -919,20 +926,39 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             fixes = 0
             while True:
                 attempts += 1
-                result = await executor.run_smoke()
-                if result.exit_status == 0:
+                # 超时/断连也当作「可修的失败」（多为规模太大/太慢或环境问题），而非硬崩：
+                # 诊断为「太慢/超时」→ 让 LLM 把冒烟改小改快再试，正是自适应循环该自愈的一类。
+                hint = ""
+                try:
+                    result = await executor.run_smoke()
+                    exit_status = result.exit_status
+                    err_text = result.stderr or result.stdout
+                except Exception as e:  # noqa: BLE001 — 超时/断连转成可修失败，其它异常照抛
+                    if not (isinstance(e, TimeoutError) or ssh_exec.is_connection_error(e)):
+                        raise
+                    exit_status = -1
+                    err_text = f"{type(e).__name__}: {e}"
+                    hint = (
+                        "冒烟超时或中断——大概率是模型/数据太大、步数太多、装依赖太慢。请把冒烟规模"
+                        "改到极小：更小样本/更少步数/更小或更省显存的配置/精简依赖/缩短生成长度，"
+                        "让 --smoke 很快跑完。"
+                    )
+                    with contextlib.suppress(Exception):  # 超时后通道可能已坏，重连
+                        await executor.close()
+                    executor = await _open_executor(session, ctx, experiment)
+                if exit_status == 0:
                     return {"exit_code": 0, "attempts": attempts, "fixes": fixes}
                 if fixes >= MAX_SMOKE_FIXES:
                     raise RuntimeError(
-                        f"冒烟测试连续失败（{attempts} 次，exit={result.exit_status}）："
-                        f"{(result.stderr or result.stdout)[-500:]}"
+                        f"冒烟测试连续失败（{attempts} 次，exit={exit_status}）：{err_text[-500:]}"
                     )
-                # 把 stderr 回给 LLM 修文件
+                # 把诊断提示 + stderr 回给 LLM 修文件（方案级修复）
                 fixes += 1
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
-                    f"冒烟测试退出码：{result.exit_status}\n"
-                    f"stderr：\n{(result.stderr or result.stdout)[-_STDERR_CHARS:]}"
+                    f"冒烟测试退出码：{exit_status}\n"
+                    + (f"诊断提示：{hint}\n" if hint else "")
+                    + f"stderr：\n{err_text[-_STDERR_CHARS:]}"
                 )
                 files = await _complete_json(
                     ctx,
