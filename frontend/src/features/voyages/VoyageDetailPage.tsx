@@ -279,8 +279,10 @@ function namesOf(v: unknown): string[] {
 interface WikiStepFriendly {
   /** 一句给用户看的中文小结 */
   text: string;
-  /** 涉及的论文清单（可点击跳文献库） */
+  /** 涉及的论文清单（可点击跳文献库）；后端最多回传 30 篇节选 */
   papers: PaperBrief[];
+  /** 该步骤实际涉及的论文总数（清单可能只是节选） */
+  papersTotal?: number;
   /** 新概念名（wiki.link_concepts） */
   concepts?: string[];
 }
@@ -296,6 +298,7 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
           `Found ${num(obs.found)} papers on arXiv; ${num(obs.inserted)} new after dedup`,
         ),
         papers: briefsOf(obs.new_papers),
+        papersTotal: num(obs.inserted),
       };
     case 'wiki.snowball':
       if (obs.skipped) return { text: tr('已跳过（未开启参考文献扩展）', 'Skipped (reference expansion is off)'), papers: [] };
@@ -307,6 +310,7 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
           ) +
           (failedCount ? tr(`（${failedCount} 篇种子查询失败）`, ` (${failedCount} seed lookups failed)`) : ''),
         papers: briefsOf(obs.new_papers),
+        papersTotal: num(obs.inserted),
       };
     case 'wiki.score_relevance': {
       const passed = num(obs.succeeded) - num(obs.excluded);
@@ -318,6 +322,7 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
           ) +
           (failedCount ? tr(`，${failedCount} 篇打分失败`, `; ${failedCount} failed to score`) : ''),
         papers: briefsOf(obs.scored_papers),
+        papersTotal: num(obs.succeeded),
       };
     }
     case 'wiki.fetch_extract':
@@ -331,6 +336,7 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
             ? tr(`，${num(obs.degraded)} 篇没拿到原文（后续用摘要代替）`, `; ${num(obs.degraded)} had no full text (abstract used instead)`)
             : ''),
         papers: briefsOf(obs.fetched_papers),
+        papersTotal: num(obs.processed),
       };
     case 'wiki.compile':
       return {
@@ -338,6 +344,7 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
           tr(`AI 精读并编译了 ${num(obs.succeeded)} 篇论文介绍`, `AI read and compiled intros for ${num(obs.succeeded)} papers`) +
           (failedCount ? tr(`，${failedCount} 篇失败（下次同步会重试）`, `; ${failedCount} failed (will retry next sync)`) : ''),
         papers: briefsOf(obs.compiled_papers),
+        papersTotal: num(obs.succeeded),
       };
     case 'wiki.link_concepts':
       return {
@@ -365,11 +372,13 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
 
 const PAPER_LIST_PREVIEW = 5;
 
-function StepPaperList({ papers }: { papers: PaperBrief[] }) {
+function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   if (papers.length === 0) return null;
   const shown = open ? papers : papers.slice(0, PAPER_LIST_PREVIEW);
+  // 后端 observation 里的清单最多 30 篇节选，total 才是该步骤实际论文数
+  const truncated = typeof total === 'number' && total > papers.length;
   return (
     <div className="col" style={{ gap: 3, marginTop: 8 }}>
       {shown.map((p) => (
@@ -409,7 +418,11 @@ function StepPaperList({ papers }: { papers: PaperBrief[] }) {
           onClick={() => setOpen(!open)}
           style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11.5, color: 'var(--accent-text)', textAlign: 'left' }}
         >
-          {open ? tr('收起', 'Collapse') : tr(`展开全部 ${papers.length} 篇`, `Show all ${papers.length} papers`)}
+          {open
+            ? tr('收起', 'Collapse')
+            : truncated
+              ? tr(`展开清单（显示前 ${papers.length} 篇，共 ${total} 篇）`, `Show list (first ${papers.length} of ${total} papers)`)
+              : tr(`展开全部 ${papers.length} 篇`, `Show all ${papers.length} papers`)}
         </button>
       )}
     </div>
@@ -430,7 +443,7 @@ function WikiStepSummary({ friendly }: { friendly: WikiStepFriendly }) {
       }}
     >
       {friendly.text}
-      <StepPaperList papers={friendly.papers} />
+      <StepPaperList papers={friendly.papers} total={friendly.papersTotal} />
       {friendly.concepts && friendly.concepts.length > 0 && (
         <div className="row gap6 wrap" style={{ marginTop: 8 }}>
           {friendly.concepts.map((name) => (
