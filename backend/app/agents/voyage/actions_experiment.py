@@ -137,7 +137,16 @@ DEBUG_SYSTEM_PROMPT = (
     CODE_SYSTEM_PROMPT
     + """\
 
-现在自动迭代中的正式运行失败了，请根据错误信息修复代码：输出修复后的完整文件集合（同上 JSON 格式）。
+现在自动迭代中的正式运行失败了。先**诊断失败类别与根因**，再决定怎么修——不要只盯着「改几行代码」，
+可以在文件集合内做**方案级调整**：
+- 依赖/环境（缺包、版本冲突、CUDA/显存不足、装不上）→ 改 requirements.txt / run.sh：换/装依赖、
+  选设备、降 batch、精简依赖、必要时换实现方式绕开装不上的包。
+- 模型/框架不兼容（架构不被支持、多模态模型用于纯文本、tokenizer 不匹配、加载报错）→ 换用兼容的
+  加载方式/框架/模型规格（在你能控制的文件范围内）。
+- 配置（超时、样本过大、路径错、显存 OOM）→ 调小规模、修正路径、减小 batch/长度。
+- 代码 bug → 修对应逻辑。
+先用一句话点明诊断（失败属于上面哪类、根因是什么），再输出修复后的**完整文件集合**
+（同上 JSON 格式）。只在文件集合里改，别动评测协议/数据集/主指标口径（保证可比）。
 """
 )
 
@@ -265,6 +274,8 @@ REFLECTION_SYSTEM_PROMPT = """\
 约束：
 - hypothesis_updates 的 index 是假设清单下标（从 0 开始），status 只能取 verified/falsified/testing
 - 本轮运行失败（exit_code 非 0）时 decision 用 debug；结果已足以回答全部假设时用 stop
+- 本轮失败时，diagnosis 要点明**失败类别**（依赖/环境、模型或框架不兼容、配置/超时/OOM、代码 bug）
+  与根因，并在 planned_change 里给出方案级修法（可换依赖/框架/加载方式，不限于改几行代码）
 - decision=stop 时 stop_reason 必填一句话；decision=improve 时 planned_change 必填
 - 对照实验：若给了「对照汇总」，据 baseline vs treatment 的 delta 判断假设成立与否
   （处理组是否优于 baseline），别只看单个 primary_value；对照结果已清晰时可直接 stop
@@ -1244,13 +1255,19 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         files: dict[str, str] = dict(ctx.checkpoint.get("exp_files") or {})
         if decision == "debug":
             system_prompt = _prompt_with_context(DEBUG_SYSTEM_PROMPT, ctx)
+            # 失败诊断也带上「历史尝试档案」：让 debug 能看见前面试过什么、哪些方案已被证伪，
+            # 从而做方案级调整（换依赖/框架/加载方式）而非反复在同一条死路上改代码。
+            prior = archive[:-1]  # 除当前失败轮外的历史尝试
+            archive_ctx = _render_attempt_archive(prior) if prior else ""
             fix_user = (
-                f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
-                f"reflection 观察：{reflection['observation']}\n"
-                f"诊断：{reflection['diagnosis']}\n"
-                f"planned_change（修改说明）：{reflection.get('planned_change') or '（无）'}\n"
-                f"本轮 exit_code：{run.exit_code}\n"
-                f"本轮日志尾部：\n" + "\n".join(log_lines[-20:])
+                (archive_ctx + "\n" if archive_ctx else "")
+                + f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
+                + f"reflection 观察：{reflection['observation']}\n"
+                + f"诊断：{reflection['diagnosis']}\n"
+                + f"planned_change（修改说明）：{reflection.get('planned_change') or '（无）'}\n"
+                + f"本轮 exit_code：{run.exit_code}\n"
+                + "本轮日志尾部（据此定位失败类别与根因）：\n"
+                + "\n".join(log_lines[-40:])
             )
         else:
             system_prompt = _prompt_with_context(IMPROVE_SYSTEM_PROMPT, ctx)
