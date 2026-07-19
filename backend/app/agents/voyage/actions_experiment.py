@@ -35,6 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
+from app.agents.voyage.runner import Runner, open_runner
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
 from app.models.activity import Activity
@@ -413,14 +414,24 @@ async def _complete_json(ctx: ActionContext, *, system: str, user: str, validate
     raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
 
 
-async def _open_executor(session: AsyncSession, ctx: ActionContext, experiment: Experiment):
+async def _open_executor(
+    session: AsyncSession, ctx: ActionContext, experiment: Experiment
+) -> Runner:
+    """为实验打开执行后端（Runner）。执行细节走 Runner 抽象，实验逻辑不直接依赖 SSH。
+
+    kind 从 plan 里取（预留分派点：以后训练类→ContainerRunner 等），目前所有 kind 都用
+    RemoteHostRunner，行为与之前一致。"""
     if experiment.credential_id is None:
         raise ValueError("实验缺少 SSH 凭据（credential_id 为空）")
     credential = await session.get(SSHCredential, experiment.credential_id)
     if credential is None:
         raise ValueError("SSH 凭据已删除，无法连接实验服务器")
-    return await ssh_exec.open_executor(
-        credential=credential, exp_id=str(experiment.id), project_id=experiment.project_id
+    kind = (experiment.plan or {}).get("kind") if isinstance(experiment.plan, dict) else None
+    return await open_runner(
+        credential=credential,
+        exp_id=str(experiment.id),
+        project_id=experiment.project_id,
+        kind=kind,
     )
 
 
@@ -1335,11 +1346,11 @@ def _reconnect_backoff(streak: int) -> float:
 async def _poll_run(
     ctx: ActionContext,
     session: AsyncSession,
-    executor: ssh_exec.SSHExecutor,
+    executor: Runner,
     experiment: Experiment,
     run: ExperimentRun,
     max_hours: float,
-) -> tuple[dict[str, Any], ssh_exec.SSHExecutor]:
+) -> tuple[dict[str, Any], Runner]:
     """轮询远端运行直到结束。返回 (observation, executor)——executor 可能在轮询中因
     连接断开而重连，调用方须使用返回的（存活）executor 做后续读取与关闭。
 
@@ -1508,7 +1519,7 @@ async def _figure_qc(
 
 
 async def _pull_figures(
-    executor: ssh_exec.SSHExecutor, experiment_id: uuid.UUID, names: list[str]
+    executor: Runner, experiment_id: uuid.UUID, names: list[str]
 ) -> list[str]:
     """把远端 figures/*.png（及同名 .pdf）拉回本地镜像目录，返回有序 PNG 文件名。
 
