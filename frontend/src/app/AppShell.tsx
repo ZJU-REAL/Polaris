@@ -63,6 +63,7 @@ function crumbFor(pathname: string): [string, string] {
     '/experiment': ['Stage 03', tr('实验搭建', 'Experiment Lab')],
     '/writer': ['Stage 04', tr('论文撰写', 'Paper Writer')],
     '/paper-review': ['Stage 05', tr('论文评审', 'Paper Review')],
+    '/mcp-tools': ['Polaris', 'MCP'],
     '/skills': ['Polaris', tr('技能', 'Skills')],
     '/settings': ['Polaris', tr('设置', 'Settings')],
   };
@@ -455,6 +456,7 @@ export function AppShell() {
             <NavItem key={n.to} n={n} />
           ))}
           <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
+          <NavItem n={{ to: '/mcp-tools', icon: 'server', zh: 'MCP', en: 'MCP' }} />
           <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
 
           <div className="sb-section">{tr('研究流水线', 'Pipeline')}</div>

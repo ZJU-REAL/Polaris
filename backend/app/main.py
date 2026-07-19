@@ -12,6 +12,7 @@ from app.api.ws import router as ws_router
 from app.core.config import get_settings
 from app.core.db import create_all, dispose_engine, get_sessionmaker
 from app.core.redis import close_redis
+from app.mcp import mcp_router
 from app.services.crdt_rooms import reset_crdt_rooms
 from app.services.crdt_stream import get_crdt_stream_subscriber, stop_crdt_stream_subscriber
 from app.services.skills import ensure_builtin_skills
@@ -59,6 +60,8 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix="/api")
     # WS 不挂 /api 前缀：nginx 按 /ws 反代（Upgrade），见 docs/architecture.md §7
     app.include_router(ws_router)
+    # MCP 只读工具服务：POST /mcp（Streamable HTTP，JSON-RPC 2.0），见 docs/api-mcp.md
+    app.include_router(mcp_router)
     return app
 
 

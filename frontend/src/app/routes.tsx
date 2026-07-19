@@ -59,6 +59,7 @@ export const router = createBrowserRouter([
       { path: 'writer', element: page(() => import('../features/writer/WriterPage'), 'WriterPage') },
       { path: 'writer/:id', element: page(() => import('../features/writer/WriterEditorPage'), 'WriterEditorPage') },
       { path: 'paper-review', element: page(() => import('../features/paper-review/PaperReviewPage'), 'PaperReviewPage') },
+      { path: 'mcp-tools', element: page(() => import('../features/mcp/McpToolsPage'), 'McpToolsPage') },
       { path: 'skills', element: page(() => import('../features/skills/SkillsPage'), 'SkillsPage') },
       { path: 'settings', element: page(() => import('../features/settings/SettingsPage'), 'SettingsPage') },
     ],

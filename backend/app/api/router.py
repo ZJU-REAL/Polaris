@@ -16,6 +16,7 @@ from app.api import (
     invites,
     manuscripts,
     market,
+    mcp_meta,
     notes,
     papers,
     presentations,
@@ -48,6 +49,7 @@ api_router.include_router(ideas.router)
 api_router.include_router(search.router)
 api_router.include_router(skills.router)
 api_router.include_router(market.router)
+api_router.include_router(mcp_meta.router)
 api_router.include_router(presentations.router)
 api_router.include_router(ssh_credentials.router)
 api_router.include_router(experiments.router)

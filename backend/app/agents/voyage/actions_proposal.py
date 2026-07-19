@@ -27,13 +27,13 @@ from app.agents.voyage.actions import ActionContext, register
 from app.agents.voyage.actions_ideas import (
     SCORE_SYSTEM_PROMPT,
     _complete_json,
-    _extract_json,
     _get_project,
     _params,
     _statement,
     _validate_scores,
     cosine_similarity,
 )
+from app.agents.voyage.tool_loop import run_tool_loop
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
 from app.models.activity import Activity
@@ -53,13 +53,11 @@ DEFAULT_DEEP_KNOBS: dict[str, Any] = {
     "budget_tokens": None,
 }
 
-_TOOL_RESULT_CHARS = 4000  # 单个工具结果注入 prompt 的截断
 _SECTION_CONTEXT_CHARS = 10000  # 各节起草上下文截断
 _PROPOSAL_REVIEW_CHARS = 9000  # 评审时 proposal 全文截断
 _GROUNDING_EXCERPT_CHARS = 700  # grounding 论文 wiki 摘录
 _INTERNAL_SIMILAR_K = 5
 _EXTERNAL_SIMILAR_K = 5
-_FORCE_FINISH_ATTEMPTS = 2  # 轮次耗尽后强制 finish 的补充尝试
 
 # ---- prompts（POLARIS_* 标记与 core/llm/fake.py 对齐） ----
 
@@ -362,93 +360,6 @@ async def _library_index(ctx: ActionContext) -> tuple[set[str], int]:
     return ids, len(ids)
 
 
-# ---- 有界工具循环 ----
-
-
-async def _tool_loop(
-    ctx: ActionContext,
-    *,
-    stage: str,
-    system: str,
-    opening: str,
-    max_calls: int,
-    label: str,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """LLM 决策循环：{"tool":..} 执行工具续跑；{"finish":..} 返回 (finish, trace)。
-
-    轮次耗尽后追加 _FORCE_FINISH_ATTEMPTS 次「立即 finish」请求；仍不 finish 抛 ValueError。
-    """
-    messages: list[Message] = [
-        Message(role="system", content=system),
-        Message(role="user", content=opening),
-    ]
-    trace: list[dict[str, Any]] = []
-
-    async def ask() -> Any:
-        result = await ctx.llm.complete(
-            stage,
-            messages,
-            user_id=ctx.run.created_by,
-            project_id=ctx.run.project_id,
-            voyage_id=ctx.run.id,
-        )
-        messages.append(Message(role="assistant", content=result.content))
-        try:
-            return _extract_json(result.content)
-        except (ValueError, json.JSONDecodeError):
-            return None
-
-    for _round in range(max_calls):
-        decision = await ask()
-        if isinstance(decision, dict) and isinstance(decision.get("finish"), dict):
-            return decision["finish"], trace
-        if isinstance(decision, dict) and decision.get("tool"):
-            tool_name = str(decision["tool"])
-            args = decision.get("args") if isinstance(decision.get("args"), dict) else {}
-            try:
-                result = await lit_tools.run_tool(ctx, tool_name, args)
-                payload = json.dumps(result, ensure_ascii=False, default=str)
-                summary = _tool_summary(tool_name, args, result)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 — 工具错误回给 LLM 继续探索
-                payload = json.dumps({"error": f"{type(e).__name__}: {e}"}, ensure_ascii=False)
-                summary = f"{tool_name} 出错：{e}"
-            trace.append({"tool": tool_name, "args": args, "summary": summary})
-            await _log(ctx, f"{label}：{summary}")
-            messages.append(
-                Message(role="user", content=f"工具结果：\n{payload[:_TOOL_RESULT_CHARS]}")
-            )
-            continue
-        messages.append(
-            Message(role="user", content="上一条输出不合法。只输出 tool 或 finish 的 JSON 对象。")
-        )
-
-    for _attempt in range(_FORCE_FINISH_ATTEMPTS):
-        messages.append(
-            Message(role="user", content="探索轮次已用尽，请立即输出 finish JSON，不要再调用工具。")
-        )
-        decision = await ask()
-        if isinstance(decision, dict) and isinstance(decision.get("finish"), dict):
-            return decision["finish"], trace
-    raise ValueError(f"{label}：LLM 在轮次耗尽后仍未交付 finish")
-
-
-def _tool_summary(tool: str, args: dict[str, Any], result: dict[str, Any]) -> str:
-    if tool == "search_papers":
-        return f"检索「{args.get('query', '')}」→ {len(result.get('results') or [])} 篇"
-    if tool == "read_wiki":
-        return f"阅读 wiki：{result.get('title', args.get('paper_id', ''))}"
-    if tool == "read_fulltext":
-        target = result.get("title", args.get("paper_id", ""))
-        return f"查阅全文：{target}" + (f"（定位「{args['query']}」）" if args.get("query") else "")
-    if tool == "get_concept":
-        return f"查看概念「{args.get('name', '')}」"
-    if tool == "list_concepts":
-        return f"浏览概念清单（{len(result.get('concepts') or [])} 个）"
-    return tool
-
-
 # ---- 阶段 1：目标构建 ----
 
 
@@ -509,11 +420,12 @@ async def goal_explore(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
     system = GOAL_EXPLORE_SYSTEM % {"tools": lit_tools.TOOL_SPECS}
 
     try:
-        finish, trace = await _tool_loop(
+        finish, trace = await run_tool_loop(
             ctx,
             stage="goal_explore",
             system=system,
             opening=opening,
+            tool_names=lit_tools.LIT_TOOL_NAMES,
             max_calls=int(knobs["max_tool_calls"]),
             label="目标构建",
         )
@@ -700,11 +612,12 @@ async def proposal_related_work(ctx: ActionContext, params: dict[str, Any]) -> d
         opening += f"\n上次未通过验收，诊断：{params['diagnosis']}"
 
     try:
-        finish, trace = await _tool_loop(
+        finish, trace = await run_tool_loop(
             ctx,
             stage="proposal",
             system=RELATED_WORK_SYSTEM % {"tools": lit_tools.TOOL_SPECS},
             opening=opening,
+            tool_names=lit_tools.LIT_TOOL_NAMES,
             max_calls=6,
             label="相关工作",
         )

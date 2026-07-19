@@ -1689,6 +1689,27 @@ export interface GlobalSearchResponse {
   hits: GlobalSearchHit[];
 }
 
+export interface McpToolParam {
+  name: string;
+  required: boolean;
+  type: string;
+  enum: string[] | null;
+  description: string | null;
+}
+export interface McpToolInfo {
+  name: string;
+  description: string;
+  network: boolean;
+  read_only: boolean;
+  params: McpToolParam[];
+}
+export interface McpToolsCatalog {
+  server: { name: string; version: string };
+  protocol_version: string;
+  endpoint: string;
+  tools: McpToolInfo[];
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -2382,6 +2403,11 @@ export const api = {
     if (opts.days) params.set('days', String(opts.days));
     const qs = params.toString();
     return request<LlmUsageRow[]>(`/admin/llm/usage${qs ? `?${qs}` : ''}`);
+  },
+
+  // —— MCP 只读工具目录（docs/api-mcp.md） ——
+  listMcpTools(): Promise<McpToolsCatalog> {
+    return request<McpToolsCatalog>('/mcp/tools');
   },
 
   // —— Skills · 技能（docs/skill-system.md §4） ——
