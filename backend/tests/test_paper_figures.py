@@ -71,6 +71,27 @@ async def test_extract_figures_filters_dedupes_and_saves(tmp_path):
     assert not figure_path(paper_id, 1).exists()
 
 
+async def test_extract_figures_drops_near_blank(tmp_path):
+    # 近空白图（铺白后白底占比过高）应被丢弃，只保留有内容的图
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    # 有内容（灰底 value=90）+ 近空白（value=252，几乎全白）
+    page.insert_image(pymupdf.Rect(72, 72, 272, 222), stream=_image_bytes(400, 300, value=90))
+    page.insert_image(
+        pymupdf.Rect(72, 320, 272, 470), stream=_image_bytes(400, 300, value=252)
+    )
+    pdf_path = tmp_path / "blank.pdf"
+    pdf_path.write_bytes(doc.tobytes())
+    doc.close()
+
+    paper_id = str(uuid.uuid4())
+    figures = await extract_figures(paper_id, pdf_path)
+    # 只剩有内容那张；近空白被过滤
+    assert figures == [{"index": 0, "page": 1, "width": 400, "height": 300}]
+
+
 async def test_extract_figures_page_round_robin_cap(tmp_path):
     # 14 页各 1 图 → 上限 12：按页轮转选优，前 12 页各 1 张；编号仍按页码顺序
     pdf_path = tmp_path / "many.pdf"
