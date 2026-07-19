@@ -1236,6 +1236,23 @@ export interface TemplateInfo {
   /** 库内模板 true（可下载 zip），内置 false */
   downloadable: boolean;
   file_count: number;
+  /** false=官方模板伪条目尚未下载，不能直接用它建稿，需先触发下载 */
+  downloaded: boolean;
+  /** 未下载官方模板的 manifest key（触发下载用）；已下载/普通模板为 null */
+  download_key: string | null;
+}
+
+/** 官方模板按需下载进度（POST download / SSE progress）。 */
+export interface TemplateDownloadProgress {
+  key: string;
+  name: string;
+  phase: 'pending' | 'downloading' | 'extracting' | 'done' | 'failed';
+  /** 0-100 */
+  percent: number;
+  detail: string;
+  /** done 后的真实模板 id（用它建稿） */
+  template_id: string | null;
+  error: string | null;
 }
 
 export type ManuscriptStatus =
@@ -1246,6 +1263,9 @@ export type ManuscriptStatus =
   | 'approved'
   | 'submitted';
 
+/** LaTeX 编译引擎（Overleaf 式每稿件可选）。 */
+export type CompileEngine = 'tectonic' | 'pdflatex' | 'xelatex' | 'lualatex';
+
 export interface ManuscriptRead {
   id: string;
   project_id: string;
@@ -1254,6 +1274,10 @@ export interface ManuscriptRead {
   title: string;
   template: string;
   status: ManuscriptStatus;
+  /** 主文件相对路径（编译入口，通常 main.tex），Overleaf 式可切换 */
+  main_tex: string;
+  /** 编译引擎：tectonic|pdflatex|xelatex|lualatex */
+  engine: string;
   /** M5-C：同行评审通过（评分 ≥ 6 且无虚构引用）；后端未升级时缺失 */
   review_passed?: boolean;
   created_at: string;
@@ -1302,6 +1326,7 @@ export interface ManuscriptFileRead {
   id: string;
   path: string;
   content: string;
+  readonly?: boolean;
 }
 
 /** 文件版本快照来源：AI 写入前 / 编译当刻 / 恢复前备份。 */
@@ -2226,6 +2251,12 @@ export const api = {
   downloadManuscriptTemplate(id: string): Promise<Blob> {
     return requestBlob(`/manuscripts/templates/${id}/download`);
   },
+  /** 触发官方模板按需下载（幂等）；已下载则直接返回 phase="done" 带 template_id；未知 key → 404。 */
+  startTemplateDownload(key: string): Promise<TemplateDownloadProgress> {
+    return request<TemplateDownloadProgress>(`/manuscripts/templates/download/${encodeURIComponent(key)}`, {
+      method: 'POST',
+    });
+  },
   /** 删除模板（创建者/项目管理者/平台 admin 可删）。 */
   deleteManuscriptTemplate(id: string): Promise<void> {
     return request<void>(`/manuscripts/templates/${id}`, { method: 'DELETE' });
@@ -2239,12 +2270,23 @@ export const api = {
   getManuscript(id: string): Promise<ManuscriptDetail> {
     return request<ManuscriptDetail>(`/manuscripts/${id}`);
   },
-  patchManuscript(id: string, input: { title?: string }): Promise<ManuscriptRead> {
+  patchManuscript(
+    id: string,
+    input: { title?: string; main_tex?: string; engine?: CompileEngine },
+  ): Promise<ManuscriptRead> {
     return requestJson<ManuscriptRead>(`/manuscripts/${id}`, 'PATCH', input);
   },
   /** 仅 owner/admin。 */
   deleteManuscript(id: string): Promise<void> {
     return request<void>(`/manuscripts/${id}`, { method: 'DELETE' });
+  },
+  /**
+   * 把主文件 \begin{document}…\end{document} 之间的正文重写为
+   * POLARIS_SECTION 标记的结构化骨架（供分节 AI 起草）。
+   * 会存 pre_ai 版本快照。422 MAIN_TEX_NO_DOCUMENT = 主文件没有 document 环境。
+   */
+  initializeManuscriptStructure(id: string): Promise<ManuscriptFileRead> {
+    return request<ManuscriptFileRead>(`/manuscripts/${id}/initialize-structure`, { method: 'POST' });
   },
 
   // —— M5-B · 稿件文件 ——

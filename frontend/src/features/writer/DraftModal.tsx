@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
-import { api, ApiError, type ManuscriptDetail } from '../../lib/api';
+import { api, ApiError, type ManuscriptDetail, type ManuscriptFileRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { DEFAULT_SECTIONS, sectionText } from './shared';
 
@@ -18,13 +19,16 @@ export interface DraftModalProps {
   open: boolean;
   onClose: () => void;
   manuscript: ManuscriptDetail;
+  /** 初始化结构成功后回调：把新生成的 draft.tex 交给编辑器打开。 */
+  onInitialized?: (file: ManuscriptFileRead) => void;
 }
 
-export function DraftModal({ open, onClose, manuscript }: DraftModalProps) {
+export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftModalProps) {
   const queryClient = useQueryClient();
   const [all, setAll] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [notes, setNotes] = useState('');
+  const [initConfirmOpen, setInitConfirmOpen] = useState(false);
 
   // 模板 sections 优先（GET templates），拿不到用固定顺序兜底
   const templatesQuery = useQuery({
@@ -44,7 +48,37 @@ export function DraftModal({ open, onClose, manuscript }: DraftModalProps) {
     setAll(true);
     setSelected(new Set());
     setNotes('');
+    setInitConfirmOpen(false);
   }, [open]);
+
+  // 初始化结构：新建 draft.tex（照抄当前主文件导言区 + 分节骨架），把编译主文件
+  // 切到 draft.tex，原主文件不动。成功后交由父组件在编辑器里打开 draft.tex。
+  const initMutation = useMutation({
+    mutationFn: () => api.initializeManuscriptStructure(manuscript.id),
+    onSuccess: (file) => {
+      toast(tr('已生成结构化的 draft.tex 并切换为编译主文件，原文件保留', 'Created a structured draft.tex and switched compile to it — your original file is kept'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['manuscript-file'] });
+      void queryClient.invalidateQueries({ queryKey: ['manuscript-file-raw'] });
+      void queryClient.invalidateQueries({ queryKey: ['file-versions', manuscript.id] });
+      setInitConfirmOpen(false);
+      onClose();
+      // 父组件负责刷新详情并在编辑器里打开 draft.tex
+      onInitialized?.(file);
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 422 && e.message.includes('MAIN_TEX_NO_DOCUMENT')) {
+        toast(
+          tr(
+            '主文件里没有 \\begin{document}…\\end{document}，请先选择正确的主文件',
+            'The main file has no \\begin{document}…\\end{document} — pick the correct main file first',
+          ),
+          'error',
+        );
+      } else {
+        toast(`${tr('初始化失败：', 'Initialize failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+    },
+  });
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -80,6 +114,7 @@ export function DraftModal({ open, onClose, manuscript }: DraftModalProps) {
   }
 
   return (
+    <>
     <Modal
       open={open}
       onClose={onClose}
@@ -113,6 +148,46 @@ export function DraftModal({ open, onClose, manuscript }: DraftModalProps) {
         </>
       }
     >
+      <div
+        style={{
+          border: '0.5px solid var(--border)',
+          borderRadius: 8,
+          padding: '10px 12px',
+          background: 'var(--surface-2)',
+          marginBottom: 14,
+        }}
+      >
+        <div className="row gap8" style={{ marginBottom: 6 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 650 }}>
+            {tr('第一步 · 初始化结构', 'Step 1 · Initialize structure')}
+          </span>
+          <button
+            className="btn btn-ghost sm"
+            style={{ marginLeft: 'auto' }}
+            disabled={initMutation.isPending}
+            onClick={() => setInitConfirmOpen(true)}
+          >
+            {initMutation.isPending ? (
+              <>
+                <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                {tr('初始化中…', 'Initializing…')}
+              </>
+            ) : (
+              <>
+                <Icon name="layers" size={13} />
+                {tr('初始化结构', 'Initialize structure')}
+              </>
+            )}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
+          {tr(
+            '新建一个 draft.tex：照抄当前主文件的导言区，正文换成分节骨架，供 AI 逐节起草；同时把编译主文件切换成 draft.tex。原主文件保持不变。首次起草前做一次即可。',
+            'Creates a new draft.tex: copies the current main file’s preamble and replaces the body with a section skeleton for the AI to draft into, then switches the compile main file to draft.tex. Your original main file is left untouched. Do this once before the first draft.',
+          )}
+        </div>
+      </div>
+
       <FormField label={tr('写哪些节', 'Sections to write')}>
         <div className="col gap8">
           <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
@@ -167,5 +242,19 @@ export function DraftModal({ open, onClose, manuscript }: DraftModalProps) {
         )}
       </div>
     </Modal>
+
+    <ConfirmModal
+      open={initConfirmOpen}
+      onClose={() => setInitConfirmOpen(false)}
+      title={tr('生成 draft.tex', 'Create draft.tex')}
+      message={tr(
+        '会新建一个 draft.tex（导言区照抄当前主文件，正文是分节骨架），并把编译主文件切换成它，用于分节 AI 起草。原文件不会被改动。继续？',
+        'This creates a new draft.tex (preamble copied from the current main file, body as a section skeleton) and switches the compile main file to it for section-by-section AI drafting. Your original file is left untouched. Continue?',
+      )}
+      confirmText={tr('生成 draft.tex', 'Create draft.tex')}
+      busy={initMutation.isPending}
+      onConfirm={() => initMutation.mutate()}
+    />
+    </>
   );
 }

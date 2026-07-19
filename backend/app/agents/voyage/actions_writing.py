@@ -198,9 +198,11 @@ async def _section_file(
     for file in files:
         if marker in file.content:
             return file
-    main = next((f for f in files if f.path == latex_compile.MAIN_TEX), None)
+    # 回退到稿件的编译入口主文件（官方模板可能不叫 main.tex）
+    main_path = manuscript.main_tex or latex_compile.MAIN_TEX
+    main = next((f for f in files if f.path == main_path), None)
     if main is None:
-        raise ValueError(f"稿件缺少 {latex_compile.MAIN_TEX}，无法写入 {section} 节")
+        raise ValueError(f"稿件缺少主文件 {main_path}，无法写入 {section} 节")
     return main
 
 
@@ -678,6 +680,8 @@ async def writing_related_work(ctx: ActionContext, params: dict[str, Any]) -> di
             new_pack["citations"] = list(new_pack.get("citations") or []) + added
             manuscript.fact_pack = new_pack
             await session.commit()
+            # 新增 S2 引用 → 同步进 references.bib 文件，避免编译时未定义引用
+            await latex_compile.sync_references_bib(session, manuscript)
 
     await _ai_phase(
         ctx,

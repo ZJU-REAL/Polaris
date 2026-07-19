@@ -92,7 +92,7 @@ async def _make_manuscript_with_facts(client):
 
 async def test_compile_without_tectonic(client, monkeypatch):
     _, headers, ms_id, _ = await _make_manuscript_with_facts(client)
-    monkeypatch.setattr(latex_compile, "_find_tectonic", lambda: None)
+    monkeypatch.setattr(latex_compile, "_resolve_engine", lambda requested: None)
 
     resp = await client.post(f"/api/manuscripts/{ms_id}/compile", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -133,7 +133,9 @@ async def test_compile_success_with_stubbed_tectonic(client, monkeypatch, tmp_pa
 
     captured: dict = {}
 
-    def fake_run(binary: str, workdir: Path) -> TectonicRun:
+    def fake_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
+        captured["engine"] = engine
+        captured["main_name"] = main_name
         captured["files"] = sorted(
             str(p.relative_to(workdir)) for p in workdir.rglob("*") if p.is_file()
         )
@@ -146,8 +148,10 @@ async def test_compile_success_with_stubbed_tectonic(client, monkeypatch, tmp_pa
         )
         return TectonicRun(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(latex_compile, "_find_tectonic", lambda: "/usr/bin/tectonic")
-    monkeypatch.setattr(latex_compile, "_run_tectonic", fake_run)
+    monkeypatch.setattr(
+        latex_compile, "_resolve_engine", lambda requested: ("tectonic", "/usr/bin/tectonic")
+    )
+    monkeypatch.setattr(latex_compile, "_run_engine", fake_run)
 
     resp = await client.post(f"/api/manuscripts/{ms_id}/compile", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -189,16 +193,18 @@ async def test_compile_success_with_stubbed_tectonic(client, monkeypatch, tmp_pa
 
 async def test_compile_error_and_timeout_paths(client, monkeypatch):
     _, headers, ms_id, _ = await _make_manuscript_with_facts(client)
-    monkeypatch.setattr(latex_compile, "_find_tectonic", lambda: "/usr/bin/tectonic")
+    monkeypatch.setattr(
+        latex_compile, "_resolve_engine", lambda requested: ("tectonic", "/usr/bin/tectonic")
+    )
 
     # 编译错误：无 pdf，退出码非 0，stderr 转 latex_error 诊断
-    def fail_run(binary: str, workdir: Path) -> TectonicRun:
+    def fail_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
         (workdir / "main.log").write_text(
             "! Undefined control sequence.\nl.7 \\nope\n", encoding="utf-8"
         )
         return TectonicRun(returncode=1, stdout="", stderr="error: main.tex:7: oops\n")
 
-    monkeypatch.setattr(latex_compile, "_run_tectonic", fail_run)
+    monkeypatch.setattr(latex_compile, "_run_engine", fail_run)
     result = (await client.post(f"/api/manuscripts/{ms_id}/compile", headers=headers)).json()
     assert result["status"] == "error" and result["pdf_available"] is False
     rules = {d["rule"] for d in result["diagnostics"]}
@@ -207,10 +213,10 @@ async def test_compile_error_and_timeout_paths(client, monkeypatch):
     assert 7 in lines
 
     # 超时：status=timeout
-    def timeout_run(binary: str, workdir: Path) -> TectonicRun:
+    def timeout_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
         return TectonicRun(returncode=-1, stdout="", stderr="", timed_out=True)
 
-    monkeypatch.setattr(latex_compile, "_run_tectonic", timeout_run)
+    monkeypatch.setattr(latex_compile, "_run_engine", timeout_run)
     result = (await client.post(f"/api/manuscripts/{ms_id}/compile", headers=headers)).json()
     assert result["status"] == "timeout"
     assert any("超时" in d["message"] for d in result["diagnostics"])
@@ -235,16 +241,20 @@ async def test_compile_fact_pack_s2_extras_in_bib(client, monkeypatch):
         ]
         ms.fact_pack = pack
         await session.commit()
+        # 新模型：references.bib 是文件，改动 fact_pack 后需同步（AI 流程会自动做）
+        await latex_compile.sync_references_bib(session, ms)
 
     captured: dict = {}
 
-    def fake_run(binary: str, workdir: Path) -> TectonicRun:
+    def fake_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
         captured["references"] = (workdir / "references.bib").read_text(encoding="utf-8")
         (workdir / "main.pdf").write_bytes(b"%PDF ok")
         return TectonicRun(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(latex_compile, "_find_tectonic", lambda: "/usr/bin/tectonic")
-    monkeypatch.setattr(latex_compile, "_run_tectonic", fake_run)
+    monkeypatch.setattr(
+        latex_compile, "_resolve_engine", lambda requested: ("tectonic", "/usr/bin/tectonic")
+    )
+    monkeypatch.setattr(latex_compile, "_run_engine", fake_run)
     result = (await client.post(f"/api/manuscripts/{ms_id}/compile", headers=headers)).json()
     assert result["status"] == "ok"
     assert "smith2017attention" in captured["references"]

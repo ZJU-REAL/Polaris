@@ -49,6 +49,7 @@ from app.schemas.manuscript import (
     ManuscriptUpdate,
     ShareLink,
     ShareLinkCreate,
+    TemplateDownloadProgress,
     TemplateInfo,
     TemplateSeedResult,
 )
@@ -247,6 +248,74 @@ async def seed_templates(
     return results
 
 
+def _progress_model(key: str) -> TemplateDownloadProgress:
+    p = templates_service.get_progress(key) or {
+        "key": key,
+        "name": templates_service.MANIFEST_BY_KEY.get(key, {}).get("name", key),
+        "phase": "pending",
+        "percent": 0,
+        "detail": "",
+    }
+    return TemplateDownloadProgress.model_validate(p)
+
+
+@router.post("/manuscripts/templates/download/{key}", response_model=TemplateDownloadProgress)
+async def start_template_download(
+    key: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> TemplateDownloadProgress:
+    """按需在后台下载一个官方模板（首次使用自动触发），幂等。进度走 SSE 端点。"""
+    if key not in templates_service.MANIFEST_BY_KEY:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="UNKNOWN_TEMPLATE")
+    # 已下载过：直接回 done（带真实模板 id）
+    existing = await templates_service.get_db_template(session, key)
+    if existing is not None:
+        return TemplateDownloadProgress(
+            key=key, name=existing.name, phase="done", percent=100, template_id=str(existing.id)
+        )
+    try:
+        templates_service.spawn_download(key, created_by=user.id)
+    except templates_service.TemplateError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return _progress_model(key)
+
+
+@router.get("/manuscripts/templates/download/{key}/progress")
+async def template_download_progress(
+    key: str,
+    user: User = Depends(current_active_user),
+) -> StreamingResponse:
+    """SSE 推送某官方模板的下载进度：progress* → done{template_id} / error{detail}。"""
+    if key not in templates_service.MANIFEST_BY_KEY:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="UNKNOWN_TEMPLATE")
+
+    async def event_stream() -> AsyncIterator[str]:
+        last: str | None = None
+        # 最长盯 5 分钟，避免连接悬挂
+        for _ in range(600):
+            p = templates_service.get_progress(key)
+            if p is not None:
+                snapshot = f"{p['phase']}:{p.get('percent', 0)}:{p.get('detail', '')}"
+                if snapshot != last:
+                    last = snapshot
+                    yield _sse_frame("progress", p)
+                if p["phase"] == "done":
+                    yield _sse_frame("done", {"template_id": p.get("template_id")})
+                    return
+                if p["phase"] == "failed":
+                    yield _sse_frame("error", {"detail": p.get("error") or "下载失败"})
+                    return
+            await asyncio.sleep(0.5)
+        yield _sse_frame("error", {"detail": "进度超时"})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post(
     "/projects/{project_id}/manuscripts",
     response_model=ManuscriptRead,
@@ -304,9 +373,24 @@ async def update_manuscript(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ManuscriptRead:
-    manuscript = await _member_manuscript(session, manuscript_id, user)
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    changed = False
     if data.title is not None:
         manuscript.title = data.title
+        changed = True
+    if data.main_tex is not None:
+        tex_files = {f.path for f in manuscript.files if f.path.lower().endswith(".tex")}
+        if data.main_tex not in tex_files:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="MAIN_TEX_NOT_FOUND",
+            )
+        manuscript.main_tex = data.main_tex
+        changed = True
+    if data.engine is not None:
+        manuscript.engine = data.engine
+        changed = True
+    if changed:
         await session.commit()
         await session.refresh(manuscript)
     return ManuscriptRead.model_validate(manuscript)
@@ -789,6 +873,35 @@ async def draft_manuscript(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="INVALID_SECTIONS") from e
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)
+
+
+@router.post(
+    "/manuscripts/{manuscript_id}/initialize-structure",
+    response_model=ManuscriptFileContent,
+)
+async def initialize_structure(
+    manuscript_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_writer),
+) -> ManuscriptFileContent:
+    """AI 起草前置：基于当前编译主文件新建 draft.tex（preamble 保留 + POLARIS_SECTION
+    骨架正文），原主文件不动，并把编译主文件切到 draft.tex。返回新建的 draft.tex。
+    """
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    main_path = manuscript.main_tex or "main.tex"
+    if not any(f.path == main_path for f in manuscript.files):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="MAIN_TEX_NOT_FOUND")
+    try:
+        draft, content = await manuscripts_service.initialize_structure(
+            session, manuscript, user_id=user.id
+        )
+    except manuscripts_service.StructureError as e:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="MAIN_TEX_NO_DOCUMENT"
+        ) from e
+    return ManuscriptFileContent(
+        id=draft.id, path=draft.path, content=content, readonly=draft.readonly
+    )
 
 
 # ---- §6 内联 AI 写作辅助（SSE 流） ----

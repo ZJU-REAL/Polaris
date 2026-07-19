@@ -115,13 +115,14 @@ async def test_templates_endpoint(client):
     resp = await client.get("/api/manuscripts/templates", headers=headers)
     assert resp.status_code == 200
     templates = {t["id"]: t for t in resp.json()}
-    # 内置三个（id=key，source=builtin）恒在
-    assert {"neurips2026", "iclr2026", "acl"} <= set(templates)
-    assert templates["neurips2026"]["page_limit"] == 9
-    assert templates["neurips2026"]["unofficial"] is True
-    assert templates["neurips2026"]["source"] == "builtin"
-    assert templates["neurips2026"]["downloadable"] is False
-    assert "introduction" in templates["acl"]["sections"]
+    # 内置简化模板不再在画廊显示（只列提供官方样式的会议）
+    assert not ({"neurips2026", "iclr2026", "acl"} & set(templates))
+    # 官方 manifest 项以未下载伪条目出现
+    pseudo = templates["seed:neurips2026-official"]
+    assert pseudo["downloaded"] is False
+    assert pseudo["download_key"] == "neurips2026-official"
+    assert pseudo["source"] == "seeded"
+    assert pseudo["page_limit"] == 9
 
 
 async def test_create_manuscript_expands_template_and_fact_pack(client):
@@ -144,9 +145,11 @@ async def test_create_manuscript_expands_template_and_fact_pack(client):
     resp = await client.get(f"/api/manuscripts/{ms['id']}", headers=headers)
     detail = resp.json()
     files = {f["path"]: f for f in detail["files"]}
-    assert set(files) == {"main.tex", "polaris_neurips2026.sty"}
+    # references.bib 现为建稿时生成的可见可编辑文件
+    assert set(files) == {"main.tex", "polaris_neurips2026.sty", "references.bib"}
     assert files["polaris_neurips2026.sty"]["readonly"] is True
     assert files["main.tex"]["readonly"] is False
+    assert files["references.bib"]["readonly"] is False
     assert detail["latest_compile"] is None
     assert detail["writing_voyage_id"] is None
 

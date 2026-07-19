@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { EditorView } from '@codemirror/view';
+import { openSearchPanel } from '@codemirror/search';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -11,9 +12,11 @@ import { toast } from '../../components/ui/Toast';
 import {
   api,
   ApiError,
+  type CompileEngine,
   type CompileResult,
   type DiagnosticItem,
   type ManuscriptFileMeta,
+  type ManuscriptFileRead,
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
@@ -317,6 +320,22 @@ export function WriterEditorPage() {
   // —— 内联 AI（润色/改写/续写）/ 版本历史 ——
   const [assistMode, setAssistMode] = useState<AssistMode | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+
+  // 当前撰写用的模型名（内联 AI 与 AI 起草都跑在 writing 阶段；
+  // 取模型路由表里 writing 阶段的 model，缺省回落到 default 阶段）。
+  // 路由表是 admin 端点，非管理员会取不到 → retry:false + 优雅回落。
+  const routesQuery = useQuery({
+    queryKey: ['llm', 'routes'],
+    queryFn: () => api.getLlmRoutes(),
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const writingModel = useMemo(() => {
+    const routes = routesQuery.data;
+    if (!routes) return null;
+    const r = routes.find((x) => x.stage === 'writing') ?? routes.find((x) => x.stage === 'default');
+    return r?.model?.trim() || null;
+  }, [routesQuery.data]);
   useEffect(() => {
     setAssistMode(null);
     setHistoryOpen(false);
@@ -533,10 +552,40 @@ export function WriterEditorPage() {
     onError: (e) => toast(`${tr('改标题失败：', 'Rename title failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
+  // —— 主文件 / 编译器（Overleaf 式，存在 manuscript 上，编译时后端自取） ——
+  const settingsMutation = useMutation({
+    mutationFn: (input: { main_tex?: string; engine?: CompileEngine }) => api.patchManuscript(id, input),
+    onSuccess: () => {
+      invalidateDetail();
+      void queryClient.invalidateQueries({ queryKey: ['manuscripts'] });
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 422 && e.message.includes('MAIN_TEX_NOT_FOUND')) {
+        toast(tr('选中的主文件不存在，请换一个 .tex 文件', 'That main file does not exist — pick another .tex file'), 'error');
+      } else {
+        toast(`${tr('保存失败：', 'Save failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+    },
+  });
+  const texFiles = useMemo(
+    () => ms?.files.filter((f) => !f.is_folder && f.path.endsWith('.tex')) ?? [],
+    [ms?.files],
+  );
+
   // —— 抽屉 / Modal ——
   const [factOpen, setFactOpen] = useState(false);
   const [draftOpen, setDraftOpen] = useState(false);
   const [collabOpen, setCollabOpen] = useState(false);
+
+  // 「初始化结构」后打开新生成的 draft.tex：先等详情刷新（文件树里出现 draft.tex、
+  // 主文件选择器切到 draft.tex），再选中它，避免自动选主文件的副作用把选区抢回去。
+  const handleInitialized = useCallback(
+    async (file: ManuscriptFileRead) => {
+      await queryClient.invalidateQueries({ queryKey: ['manuscript', id] });
+      setCurrentFileId(file.id);
+    },
+    [id, queryClient],
+  );
 
   // —— 分栏布局：宽度/占比 + 展开状态，持久化到 localStorage ——
   const [layout, setLayout] = useState<WriterLayout>(loadLayout);
@@ -729,19 +778,43 @@ export function WriterEditorPage() {
           <Icon name="layers" size={13} />
           {tr('事实包', 'Fact pack')}
         </button>
-        <button
-          className="btn btn-ghost sm"
-          disabled={isWriting}
-          title={isWriting ? tr('AI 正在起草中', 'AI is drafting') : tr('AI 按事实包起草各节', 'AI drafts sections from the fact pack')}
-          onClick={() => setDraftOpen(true)}
+        {/* 主文件 + 编译器（Overleaf 式；编译时后端按此读取） */}
+        <select
+          className="input"
+          style={{ height: 28, fontSize: 11.5, maxWidth: 150, padding: '0 22px 0 8px' }}
+          title={tr('主文件（编译入口）', 'Main file (compile entry)')}
+          value={ms.main_tex}
+          disabled={settingsMutation.isPending || texFiles.length === 0}
+          onChange={(e) => settingsMutation.mutate({ main_tex: e.target.value })}
         >
-          <Icon name="sparkle" size={13} />
-          {tr('AI 起草', 'AI draft')}
-        </button>
+          {texFiles.every((f) => f.path !== ms.main_tex) && (
+            <option value={ms.main_tex}>{ms.main_tex}</option>
+          )}
+          {texFiles.map((f) => (
+            <option key={f.id} value={f.path}>{f.path}</option>
+          ))}
+        </select>
+        <select
+          className="input"
+          style={{ height: 28, fontSize: 11.5, maxWidth: 120, padding: '0 22px 0 8px' }}
+          title={tr('编译器', 'Compiler')}
+          value={ms.engine}
+          disabled={settingsMutation.isPending}
+          onChange={(e) => settingsMutation.mutate({ engine: e.target.value as CompileEngine })}
+        >
+          {ms.engine !== 'tectonic' &&
+            ms.engine !== 'pdflatex' &&
+            ms.engine !== 'xelatex' &&
+            ms.engine !== 'lualatex' && <option value={ms.engine}>{ms.engine}</option>}
+          <option value="tectonic">tectonic</option>
+          <option value="pdflatex">pdfLaTeX</option>
+          <option value="xelatex">XeLaTeX</option>
+          <option value="lualatex">LuaLaTeX</option>
+        </select>
         <button
           className="btn btn-primary sm"
           disabled={compileMutation.isPending}
-          title={tr('⌘S 也可触发（tectonic，最长 120 秒）', '⌘S also works (tectonic, up to 120 s)')}
+          title={tr('⌘S 也可触发（用所选编译器，最长 120 秒）', '⌘S also works (uses the selected compiler, up to 120 s)')}
           onClick={() => compileMutation.mutate()}
         >
           {compileMutation.isPending ? (
@@ -910,32 +983,17 @@ export function WriterEditorPage() {
                 {currentFile.readonly && (
                   <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>{tr('只读', 'read-only')}</span>
                 )}
-                {!currentFile.readonly && (
-                  <span className="row gap6" style={{ marginLeft: 4 }}>
-                    {(['polish', 'rewrite', 'continue'] as const).map((m) => (
-                      <button
-                        key={m}
-                        className="btn btn-ghost sm"
-                        style={{ height: 22, fontSize: 10.5, padding: '0 8px' }}
-                        disabled={!view || isWriting}
-                        title={
-                          m === 'continue'
-                            ? tr('AI 从光标处向后续写', 'AI continues from the cursor')
-                            : m === 'polish'
-                              ? tr('选中一段文字后 AI 润色', 'Select text, then AI polishes it')
-                              : tr('选中一段文字后 AI 按要求改写', 'Select text, then AI rewrites it as instructed')
-                        }
-                        onClick={() => setAssistMode((cur) => (cur === m ? null : m))}
-                      >
-                        <Icon name="sparkle" size={11} />
-                        {m === 'polish' ? tr('润色', 'Polish') : m === 'rewrite' ? tr('改写', 'Rewrite') : tr('续写', 'Continue')}
-                      </button>
-                    ))}
-                  </span>
-                )}
                 <button
                   className="writer-mini-btn"
                   style={{ marginLeft: 'auto' }}
+                  title={tr('查找 / 替换（⌘F）', 'Find / replace (⌘F)')}
+                  disabled={!view}
+                  onClick={() => view && openSearchPanel(view)}
+                >
+                  <Icon name="search" size={11} />
+                </button>
+                <button
+                  className="writer-mini-btn"
                   title={tr('版本历史（AI 写入前 / 每次编译自动存档）', 'Version history (auto-saved before each AI write and on every compile)')}
                   onClick={() => setHistoryOpen(true)}
                 >
@@ -958,6 +1016,68 @@ export function WriterEditorPage() {
                 onDocChange={handleDocChange}
                 aiTarget={aiTarget}
               />
+              {/* 编辑器下方：内联 AI（润色 / 改写 / 续写）操作条 */}
+              {!currentFile.readonly && (
+                <div
+                  className="row gap6"
+                  style={{
+                    padding: '6px 14px',
+                    borderTop: '0.5px solid var(--border)',
+                    background: 'var(--surface-2)',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    className="mono"
+                    title={writingModel ? tr(`当前撰写模型：${writingModel}`, `Current writing model: ${writingModel}`) : tr('撰写模型（未知）', 'Writing model (unknown)')}
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      color: 'var(--text-3)',
+                      marginRight: 4,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      maxWidth: 200,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <Icon name="sparkle" size={11} style={{ flexShrink: 0, color: 'var(--accent)' }} />
+                    {writingModel ?? (routesQuery.isLoading ? tr('模型加载中…', 'Loading model…') : tr('AI 辅助', 'AI assist'))}
+                  </span>
+                  <button
+                    className="btn btn-ghost sm"
+                    style={{ height: 24, fontSize: 11 }}
+                    disabled={isWriting}
+                    title={isWriting ? tr('AI 正在起草中', 'AI is drafting') : tr('AI 按事实包起草各节', 'AI drafts sections from the fact pack')}
+                    onClick={() => setDraftOpen(true)}
+                  >
+                    <Icon name="sparkle" size={11} />
+                    {isWriting ? tr('AI 起草中…', 'AI drafting…') : tr('AI 起草', 'AI draft')}
+                  </button>
+                  {(['polish', 'rewrite', 'continue'] as const).map((m) => (
+                    <button
+                      key={m}
+                      className={`btn sm ${assistMode === m ? 'btn-soft' : 'btn-ghost'}`}
+                      style={{ height: 24, fontSize: 11 }}
+                      disabled={!view || isWriting}
+                      title={
+                        m === 'continue'
+                          ? tr('AI 从光标处向后续写', 'AI continues from the cursor')
+                          : m === 'polish'
+                            ? tr('选中一段文字后 AI 润色', 'Select text, then AI polishes it')
+                            : tr('选中一段文字后 AI 按要求改写', 'Select text, then AI rewrites it as instructed')
+                      }
+                      onClick={() => setAssistMode((cur) => (cur === m ? null : m))}
+                    >
+                      <Icon name="sparkle" size={11} />
+                      {m === 'polish' ? tr('润色', 'Polish') : m === 'rewrite' ? tr('改写', 'Rewrite') : tr('续写', 'Continue')}
+                    </button>
+                  ))}
+                </div>
+              )}
               {assistMode && view && currentFile && !currentFile.readonly && (
                 <AssistPanel
                   key={`${currentFile.id}-${assistMode}`}
@@ -1130,7 +1250,7 @@ export function WriterEditorPage() {
         onInsertCite={onInsertCite}
         onInsertFigure={onInsertFigure}
       />
-      <DraftModal open={draftOpen} onClose={() => setDraftOpen(false)} manuscript={ms} />
+      <DraftModal open={draftOpen} onClose={() => setDraftOpen(false)} manuscript={ms} onInitialized={handleInitialized} />
       <CollaboratorsModal open={collabOpen} onClose={() => setCollabOpen(false)} manuscriptId={ms.id} />
     </div>
   );

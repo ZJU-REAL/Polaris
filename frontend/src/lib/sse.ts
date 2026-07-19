@@ -5,7 +5,7 @@
    连接断开后指数退避自动重连（成功收到响应后重置退避）。
    ============================================================ */
 
-import { getToken } from './api';
+import { getToken, type TemplateDownloadProgress } from './api';
 
 export interface SseHandlers {
   /** 每收到一个完整事件调用（event 缺省为 "message"，data 为原始字符串）。 */
@@ -197,4 +197,57 @@ export function assistManuscriptSse(
   handlers: PostSseHandlers,
 ): () => void {
   return postSse(`/manuscripts/${manuscriptId}/assist`, input, handlers);
+}
+
+/**
+ * 订阅官方模板按需下载进度：
+ * event=progress → onProgress(整个 progress 对象)；
+ * event=done → onDone(template_id)；event=error → onError(detail)。
+ * 到 done/error 后自动停止订阅。返回取消函数。
+ */
+export function subscribeTemplateDownloadProgress(
+  key: string,
+  handlers: {
+    onProgress: (p: TemplateDownloadProgress) => void;
+    onDone: (templateId: string) => void;
+    onError: (detail: string) => void;
+  },
+): () => void {
+  let cancel: () => void = () => {};
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    cancel();
+  };
+  cancel = subscribeSse(`/manuscripts/templates/download/${encodeURIComponent(key)}/progress`, {
+    onEvent: (event, data) => {
+      if (stopped) return;
+      if (event === 'progress') {
+        try {
+          handlers.onProgress(JSON.parse(data) as TemplateDownloadProgress);
+        } catch {
+          /* 忽略解析失败的片段 */
+        }
+      } else if (event === 'done') {
+        let templateId = '';
+        try {
+          templateId = (JSON.parse(data) as { template_id: string }).template_id;
+        } catch {
+          /* keep empty */
+        }
+        handlers.onDone(templateId);
+        stop();
+      } else if (event === 'error') {
+        let detail = 'download failed';
+        try {
+          detail = (JSON.parse(data) as { detail: string }).detail || detail;
+        } catch {
+          /* keep default */
+        }
+        handlers.onError(detail);
+        stop();
+      }
+    },
+  });
+  return stop;
 }

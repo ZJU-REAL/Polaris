@@ -21,6 +21,8 @@ class TemplateInfo(BaseModel):
     sections: list[str] = Field(default_factory=list)
     unofficial: bool = True  # 简化样式（非官方 .sty），投稿前须替换官方版
     downloadable: bool = False  # 库内模板可下载 zip；内置的不可
+    downloaded: bool = True  # 官方模板未下载时为 false（画廊显示「未下载」）
+    download_key: str | None = None  # 未下载官方模板的 manifest key，触发按需下载用
     file_count: int = 0
 
 
@@ -31,6 +33,18 @@ class TemplateSeedResult(BaseModel):
     detail: str | None = None
 
 
+class TemplateDownloadProgress(BaseModel):
+    """官方模板按需下载进度（进度条 / SSE）。"""
+
+    key: str
+    name: str
+    phase: Literal["pending", "downloading", "extracting", "done", "failed"]
+    percent: int = 0
+    detail: str = ""
+    template_id: str | None = None  # done 后的真实模板 id（用它建稿）
+    error: str | None = None
+
+
 class ManuscriptCreate(BaseModel):
     title: str = Field(min_length=1, max_length=512)
     template: str  # builtin key 或库内模板 id/key
@@ -38,8 +52,14 @@ class ManuscriptCreate(BaseModel):
     experiment_id: uuid.UUID | None = None
 
 
+CompileEngine = Literal["tectonic", "pdflatex", "xelatex", "lualatex"]
+
+
 class ManuscriptUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=512)
+    # Overleaf 式编译设置：入口主文件 + 编译器
+    main_tex: str | None = Field(default=None, min_length=1, max_length=1024)
+    engine: CompileEngine | None = None
 
 
 class ManuscriptRead(BaseModel):
@@ -51,6 +71,8 @@ class ManuscriptRead(BaseModel):
     experiment_id: uuid.UUID | None
     title: str
     template: str
+    main_tex: str  # 编译入口主文件
+    engine: str  # 编译器 tectonic | pdflatex | xelatex | lualatex
     status: str
     review_passed: bool  # M5-C：评审通过标记（submit 前置）
     created_at: datetime

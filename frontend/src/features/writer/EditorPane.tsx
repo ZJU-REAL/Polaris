@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
+import { search } from '@codemirror/search';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import * as Y from 'yjs';
@@ -50,16 +51,122 @@ const cmTheme = EditorView.theme({
     border: 'none',
     borderRight: '0.5px solid var(--border)',
   },
-  '.cm-activeLine': { backgroundColor: 'var(--accent-soft-row)' },
+  // 当前行底色必须半透明：drawSelection 的选区层画在正文下方，不透明底色
+  // 会盖住行内（部分字符）选区的高亮矩形，导致只有整行选区才可见。
+  '.cm-activeLine': { backgroundColor: 'var(--cm-active-line)' },
   '.cm-activeLineGutter': {
     backgroundColor: 'var(--accent-soft)',
     color: 'var(--accent-text)',
   },
-  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'var(--accent-soft-2)',
-  },
+  // drawSelection() 画的选区层（.cm-selectionLayer > .cm-selectionBackground 矩形，
+  // 能正确覆盖行内部分选区）：CodeMirror baseTheme 用更高优先级选择器把 focused
+  // 选区强制成默认淡紫色，这里用 !important 盖回主题选区色，focused / blur 都覆盖。
+  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, & .cm-selectionLayer .cm-selectionBackground':
+    { background: 'var(--cm-selection) !important' },
   '.cm-cursor': { borderLeftColor: 'var(--accent)' },
+
+  /* —— 搜索匹配高亮 —— */
+  '.cm-searchMatch': { backgroundColor: 'var(--cm-search-match)', borderRadius: '2px' },
+  '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'var(--cm-search-current)' },
+  '.cm-selectionMatch': { backgroundColor: 'var(--cm-search-match)', borderRadius: '2px' },
+
+  /* —— 查找/替换面板（@codemirror/search 默认面板 → 贴合应用风格） —— */
+  '.cm-panels': {
+    backgroundColor: 'var(--surface-2)',
+    color: 'var(--text)',
+    border: 'none',
+  },
+  '.cm-panels.cm-panels-top': { borderBottom: '0.5px solid var(--border)' },
+  '.cm-panels.cm-panels-bottom': { borderTop: '0.5px solid var(--border)' },
+  '.cm-panel.cm-search': {
+    padding: '8px 12px',
+    fontFamily: 'var(--sans, inherit)',
+    fontSize: '12px',
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  '.cm-panel.cm-search br': { display: 'none' },
+  '.cm-panel.cm-search label': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '3px',
+    fontSize: '11px',
+    color: 'var(--text-2)',
+    userSelect: 'none',
+  },
+  '.cm-panel.cm-search input[type=checkbox]': { accentColor: 'var(--accent)', margin: 0 },
+  '.cm-panel.cm-search .cm-textfield': {
+    backgroundColor: 'var(--surface)',
+    color: 'var(--text)',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    padding: '4px 8px',
+    fontSize: '12px',
+    minWidth: '160px',
+    outline: 'none',
+  },
+  '.cm-panel.cm-search .cm-textfield:focus': {
+    borderColor: 'var(--accent)',
+    boxShadow: '0 0 0 2px var(--accent-soft)',
+  },
+  '.cm-panel.cm-search .cm-button': {
+    backgroundColor: 'var(--surface-3)',
+    backgroundImage: 'none',
+    color: 'var(--text-2)',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    padding: '4px 9px',
+    fontSize: '11.5px',
+    cursor: 'pointer',
+  },
+  '.cm-panel.cm-search .cm-button:hover': {
+    backgroundColor: 'var(--accent-soft)',
+    color: 'var(--accent-text)',
+    borderColor: 'var(--accent-soft-2)',
+  },
+  '.cm-panel.cm-search [name=close]': {
+    position: 'absolute',
+    top: '4px',
+    right: '8px',
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-3)',
+    cursor: 'pointer',
+    fontSize: '18px',
+    lineHeight: 1,
+    padding: '2px 6px',
+  },
+  '.cm-panel.cm-search [name=close]:hover': { color: 'var(--text)' },
 });
+
+/**
+ * 查找/替换：search 面板置顶 + 面板文案本地化（tr 不能在模块顶层调用，
+ * 因此包成函数，在建编辑器时求值）。搜索键位（⌘F）与命中高亮已含在 basicSetup 里。
+ */
+function searchExtensions() {
+  return [
+    search({ top: true }),
+    EditorState.phrases.of({
+      'Find': tr('查找', 'Find'),
+      'Replace': tr('替换为', 'Replace'),
+      'next': tr('下一个', 'Next'),
+      'previous': tr('上一个', 'Prev'),
+      'all': tr('全选', 'Select all'),
+      'match case': tr('区分大小写', 'match case'),
+      'regexp': tr('正则', 'regexp'),
+      'by word': tr('全词', 'by word'),
+      'replace': tr('替换', 'Replace'),
+      'replace all': tr('全部替换', 'Replace all'),
+      'close': tr('关闭', 'close'),
+      'current match': tr('当前匹配', 'current match'),
+      'on line': tr('位于第', 'on line'),
+      'Go to line': tr('跳转到行', 'Go to line'),
+      'go': tr('跳转', 'go'),
+    }),
+  ];
+}
 
 const baseExtensions = [basicSetup, StreamLanguage.define(stex), EditorView.lineWrapping, cmTheme];
 
@@ -156,6 +263,7 @@ function CollabEditor({ manuscriptId: _mid, fileId, user, onCompile, onStatus, o
         ),
         keymap.of(yUndoManagerKeymap),
         ...baseExtensions,
+        ...searchExtensions(),
         aiCursorExtension,
         yCollab(ytext, provider.awareness, { undoManager }),
         EditorView.updateListener.of((u) => {
@@ -303,7 +411,7 @@ function ReadonlyEditor({ manuscriptId, fileId, onView, onDocChange }: EditorPan
     const view = new EditorView({
       state: EditorState.create({
         doc: content,
-        extensions: [...baseExtensions, EditorState.readOnly.of(true), EditorView.editable.of(false)],
+        extensions: [...baseExtensions, ...searchExtensions(), EditorState.readOnly.of(true), EditorView.editable.of(false)],
       }),
       parent: host,
     });

@@ -24,6 +24,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libreoffice-impress fonts-noto-cjk fonts-dejavu \
     && rm -rf /var/lib/apt/lists/*
 
+# TeX Live + latexmk：worker 侧写作 voyage 结尾也会编译，装齐编译器与 tectonic 保持一致
+# （否则 worker 会回退 tectonic，与 API 触发的编译器选择不一致）。分批安装避免解包 OOM(137)。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      latexmk biber texlive-latex-base texlive-latex-recommended \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-latex-extra texlive-fonts-recommended texlive-plain-generic \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-xetex texlive-luatex texlive-bibtex-extra texlive-science texlive-pictures \
+      texlive-lang-chinese fontconfig \
+    && latexmk --version && pdflatex --version | head -1 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Windows/mac 中文字体名 → Noto CJK 别名（xelatex 编译中文模板按名解析）
+COPY deploy/fontconfig-cjk-aliases.conf /etc/fonts/conf.d/99-cjk-aliases.conf
+RUN fc-cache -f >/dev/null 2>&1 && fc-match FangSong
+
 COPY backend/pyproject.toml ./
 RUN pip install --upgrade pip && pip install -e . || true
 COPY backend/ ./

@@ -101,12 +101,15 @@
 ## 10. 模板库 / 文件管理器 / arXiv 导出 / 协作者（Overleaf-like 增强，本分支新增）
 
 ### 10.1 模板库（DB 化）
-统一 `TemplateInfo{id, name, description, source(builtin|seeded|uploaded), scope(global|project), project_id, engine, page_limit, sections[], unofficial, downloadable, file_count}`；`id` 内置=key、库内=uuid，创建稿件时作为 `template` 传回。
-- `GET /manuscripts/templates?project_id=` — 内置 + 全平台 + 该方向私有上传模板
+统一 `TemplateInfo{id, name, description, source(builtin|seeded|uploaded), scope, project_id, engine, page_limit, sections[], unofficial, downloadable, downloaded, download_key, file_count}`；`id` 内置=key、库内=uuid，创建稿件时作为 `template` 传回。
+- `GET /manuscripts/templates?project_id=` — 内置 + 全平台 + 该方向私有上传模板 + **manifest 里尚未下载的官方模板**（伪条目 `id="seed:<key>"`、`downloaded:false`、`download_key:<key>`、`file_count:0`；不能直接拿它建稿，须先下载）
 - `POST /manuscripts/templates`（multipart：file=zip, name, description?, engine?, page_limit?, project_id?）→ 201 TemplateInfo。给 project_id=项目私有（需成员）；否则全平台（需平台 admin，否则 403 ADMIN_REQUIRED_FOR_GLOBAL）。zip 无 .tex → 422
 - `GET /manuscripts/templates/{id}/download` → zip；`DELETE /manuscripts/templates/{id}`（创建者/项目管理者/admin）
-- `POST /manuscripts/templates/seed`（仅 admin）→ 拉取官方模板（zjuthesis/ACL/ICLR/NeurIPS2026/ICML2026），幂等，返回逐条 seeded|skipped|failed
-- 实现：库内模板文件落 `data_dir/templates/<id>/files/`（二进制安全）；官方模板通常无 `% POLARIS_SECTION` 标记 → AI 分节起草降级（用内联 AI/手写）
+- **按需自动下载官方模板（首次使用触发，带进度条）**：
+  - `POST /manuscripts/templates/download/{key}` → `TemplateDownloadProgress{key,name,phase(pending|downloading|extracting|done|failed),percent,detail,template_id?,error?}`，幂等（已下载直接回 done 带 template_id）；后台任务下载；未知 key → 404
+  - `GET /manuscripts/templates/download/{key}/progress` → SSE：`progress`* → `done{template_id}` / `error{detail}`。zip 走 httpx 流式（content-length 算百分比），git 解析 `Receiving objects: NN%`
+- `POST /manuscripts/templates/seed`（仅 admin）→ 一次性拉取全部官方模板，幂等，返回逐条 seeded|skipped|failed
+- 实现：库内模板文件落 `data_dir/templates/<id>/files/`（二进制安全）；官方模板通常无 `% POLARIS_SECTION` 标记 → AI 分节起草降级（用内联 AI/手写）；下载进度存 API 进程内存（多进程部署需改 redis/worker）
 
 ### 10.2 文件管理器（文件夹 + 上传 + 二进制）
 `ManuscriptFileBrief` 增 `is_binary`/`is_folder`。二进制字节落 `data_dir/manuscripts/<id>/assets/<path>`，`content` 为空、只读。

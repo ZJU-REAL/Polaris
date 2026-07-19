@@ -40,6 +40,15 @@ class Manuscript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(64), default="neurips2026", server_default="neurips2026", nullable=False
     )
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    # 编译入口主文件（Overleaf 式可设置）：编译/导出以此为主 .tex，默认 main.tex，
+    # 从官方模板建稿时取模板检测到的主文件（如 neurips_2026.tex）
+    main_tex: Mapped[str] = mapped_column(
+        String(1024), default="main.tex", server_default="main.tex", nullable=False
+    )
+    # 编译器（Overleaf 式可切换）：tectonic | pdflatex | xelatex | lualatex
+    engine: Mapped[str] = mapped_column(
+        String(32), default="tectonic", server_default="tectonic", nullable=False
+    )
     # 论文评审通过标记（docs/api-m5-c.md §4）：meta.rating ≥ 6 且无 fabricated 引用
     # → true；submit 前置条件（未通过 409 REVIEW_REQUIRED）
     review_passed: Mapped[bool] = mapped_column(

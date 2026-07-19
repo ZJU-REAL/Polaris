@@ -14,6 +14,7 @@
 import asyncio
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -39,8 +40,33 @@ from app.services.citations import build_bibtex_for
 
 COMPILE_TIMEOUT_SECONDS = 120.0
 TECTONIC_BIN = "tectonic"
+LATEXMK_BIN = "latexmk"
 MAIN_TEX = "main.tex"
+# 可选编译器（Overleaf 式）：tectonic 自带 XeTeX（镜像必装）；其余走 latexmk（需 TeX Live）
+ENGINES: tuple[str, ...] = ("tectonic", "pdflatex", "xelatex", "lualatex")
+# latexmk 引擎开关（-pdf=pdflatex / -pdfxe=xelatex / -pdflua=lualatex）
+_LATEXMK_ENGINE_FLAG = {"pdflatex": "-pdf", "xelatex": "-pdfxe", "lualatex": "-pdflua"}
 MISSING_COMPILER_MESSAGE = "编译器未安装（tectonic 不在 PATH，请使用 docker 镜像编译）"
+
+
+def normalize_engine(engine: str | None) -> str:
+    """未知/空 → tectonic（默认，且镜像必装、最稳）。"""
+    return engine if engine in ENGINES else "tectonic"
+
+
+def _resolve_engine(requested: str) -> tuple[str, str] | None:
+    """挑一个真正可用的编译器：请求 latexmk 系（pdf/xe/lua）但 latexmk 缺失时回退 tectonic。
+    返回 (实际引擎, 二进制路径)；都不可用返回 None。"""
+    requested = normalize_engine(requested)
+    if requested != "tectonic":
+        latexmk = shutil.which(LATEXMK_BIN)
+        if latexmk:
+            return requested, latexmk
+    tectonic = shutil.which(TECTONIC_BIN)
+    if tectonic:
+        return "tectonic", tectonic
+    return None
+
 
 _CITATION_RE = re.compile(
     r"(?:LaTeX|Package natbib) Warning: Citation [`']([^`']+)'.*?"
@@ -171,6 +197,30 @@ def _extra_bibtex(entries: list[dict[str, Any]]) -> str:
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
+async def sync_references_bib(session: AsyncSession, manuscript: Manuscript) -> None:
+    """把稿件的 references.bib 文件内容对齐当前 fact_pack（AI 起草改动引用后调用，
+    保证 AI 新增的 \\cite 能在 bib 里找到）。文件不存在则创建。调用方负责 commit 已在内。"""
+    content = await build_references_bib(session, manuscript)
+    stmt = select(ManuscriptFile).where(
+        ManuscriptFile.manuscript_id == manuscript.id,
+        ManuscriptFile.path == "references.bib",
+    )
+    f = (await session.execute(stmt)).scalar_one_or_none()
+    if f is None:
+        session.add(
+            ManuscriptFile(
+                manuscript_id=manuscript.id, path="references.bib", content=content, readonly=False
+            )
+        )
+    elif f.content != content:
+        f.content = content
+    await session.commit()
+    # 有活跃协同房间时同步房间内容（避免房间旧内容回写覆盖）
+    room = crdt_rooms.get_crdt_rooms()
+    if f is not None:
+        await room.set_content(f.id, content)
+
+
 async def build_references_bib(session: AsyncSession, manuscript: Manuscript) -> str:
     """references.bib：库内论文按 fact-pack 固定 bibkey + S2 追加条目（@misc）。"""
     citations = (manuscript.fact_pack or {}).get("citations") or []
@@ -253,6 +303,7 @@ async def assemble_workdir(
     rooms = crdt_rooms.get_crdt_rooms()
     stmt = select(ManuscriptFile).where(ManuscriptFile.manuscript_id == manuscript.id)
     files = (await session.execute(stmt)).scalars().all()
+    has_bib_file = False
     for file in files:
         rel = _safe_relpath(file.path)
         if rel is None:
@@ -273,13 +324,17 @@ async def assemble_workdir(
         target.parent.mkdir(parents=True, exist_ok=True)
         text = content if content is not None else file.content
         target.write_text(text, encoding="utf-8")
+        if file.path == "references.bib":
+            has_bib_file = True
         if take_snapshots and not file.readonly:
             await manuscript_versions.snapshot_file(
                 session, file, origin="compile", label=snapshot_label, content=text
             )
-    (workdir / "references.bib").write_text(
-        await build_references_bib(session, manuscript), encoding="utf-8"
-    )
+    # 稿件自带 references.bib（建稿时生成、用户可编辑）就用它；否则兜底自动生成
+    if not has_bib_file:
+        (workdir / "references.bib").write_text(
+            await build_references_bib(session, manuscript), encoding="utf-8"
+        )
     return await _copy_figures(session, manuscript, workdir)
 
 
@@ -290,18 +345,45 @@ def _find_tectonic() -> str | None:
     return shutil.which(TECTONIC_BIN)
 
 
-def _run_tectonic(binary: str, workdir: Path) -> TectonicRun:
-    """同步跑 tectonic（调用方用 asyncio.to_thread）；120s 硬超时。
+def _find_output(workdir: Path, stem: str, suffix: str) -> Path | None:
+    """定位编译产物（jobname=<主文件名去扩展>）：先看目录根，再全目录兜底搜。"""
+    direct = workdir / f"{stem}{suffix}"
+    if direct.is_file():
+        return direct
+    matches = [p for p in workdir.rglob(f"{stem}{suffix}") if p.is_file()]
+    return matches[0] if matches else None
 
-    tectonic 内部自动多趟重跑（bibtex/交叉引用），此处限制 ≤3 趟。
+
+def _engine_argv(engine: str, binary: str, main_name: str) -> list[str]:
+    """按引擎拼编译命令行（tectonic 直接跑；pdf/xe/lua 走 latexmk 自动多趟 + bibtex）。"""
+    if engine == "tectonic":
+        return [binary, "--keep-logs", "--reruns", "3", main_name]
+    return [
+        binary,
+        _LATEXMK_ENGINE_FLAG[engine],
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        "-file-line-error",
+        main_name,
+    ]
+
+
+def _run_engine(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
+    """同步跑选定编译器（调用方用 asyncio.to_thread）；120s 硬超时。
+
+    tectonic 内部自动多趟重跑；latexmk 亦自动重跑 + 跑 bibtex/biber。
+    TEXINPUTS=.//: 让 kpathsea 递归搜子目录，主文件/样式在子目录时也能找到（如
+    ICLR 模板把各年份样式放在 iclrYYYY/ 子目录）。
     """
+    env = {**os.environ, "TEXINPUTS": ".//:" + os.environ.get("TEXINPUTS", "")}
     try:
         proc = subprocess.run(  # noqa: S603 — 固定二进制 + 固定参数
-            [binary, "--keep-logs", "--reruns", "3", MAIN_TEX],
+            _engine_argv(engine, binary, main_name),
             cwd=workdir,
             capture_output=True,
             text=True,
             timeout=COMPILE_TIMEOUT_SECONDS,
+            env=env,
         )
         return TectonicRun(proc.returncode, proc.stdout, proc.stderr)
     except subprocess.TimeoutExpired as e:
@@ -321,10 +403,12 @@ async def compile_manuscript(session: AsyncSession, manuscript: Manuscript) -> d
     status = "error"
     pdf_available = False
 
-    binary = _find_tectonic()
-    if binary is None:
+    requested_engine = normalize_engine(manuscript.engine)
+    resolved = _resolve_engine(requested_engine)
+    if resolved is None:
         diagnostics.append(_diag("error", "other", MISSING_COMPILER_MESSAGE))
     else:
+        engine, binary = resolved
         out_dir = version_dir(manuscript.id, version)
         out_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="polaris-tex-") as tmp:
@@ -334,16 +418,60 @@ async def compile_manuscript(session: AsyncSession, manuscript: Manuscript) -> d
                     session, manuscript, workdir, snapshot_label=f"编译 v{version}"
                 )
             )
-            run = await asyncio.to_thread(_run_tectonic, binary, workdir)
+            # 入口主文件：优先用稿件设置；不存在则回退到目录里检测到的主 .tex
+            main_name = manuscript.main_tex or MAIN_TEX
+            if not (workdir / main_name).is_file():
+                main_name = _find_workdir_main(workdir) or main_name
+            stem = Path(main_name).stem
 
-            log_file = workdir / "main.log"
-            log_text = (
-                log_file.read_text(encoding="utf-8", errors="replace") if log_file.is_file() else ""
-            )
-            diagnostics.extend(parse_diagnostics(log_text, run.stderr))
+            # 请求的编译器不可用（如未装 TeX Live）→ 已回退 tectonic，提示一下
+            if engine != requested_engine:
+                diagnostics.append(
+                    _diag(
+                        "warning",
+                        "other",
+                        f"编译器 {requested_engine} 不可用，已改用 {engine} 编译",
+                    )
+                )
 
-            built_pdf = workdir / "main.pdf"
-            if built_pdf.is_file():
+            def _attempt(
+                eng: str, bin_: str
+            ) -> tuple[TectonicRun, str, list[dict[str, Any]], Path | None]:
+                run = _run_engine(eng, bin_, workdir, main_name)
+                lf = _find_output(workdir, stem, ".log")
+                lt = lf.read_text(encoding="utf-8", errors="replace") if lf else ""
+                return (
+                    run,
+                    lt,
+                    parse_diagnostics(lt, run.stderr),
+                    _find_output(workdir, stem, ".pdf"),
+                )
+
+            run, log_text, eng_diags, built_pdf = await asyncio.to_thread(_attempt, engine, binary)
+
+            # 所选引擎有问题（缺宏包/字体、未定义引用未被 bibtex 解析、或没编出 PDF）→ 用
+            # tectonic 再试一次：它自带完整宏包库（按需补装“支持安装 package”）且 bibtex
+            # 解析更稳（子目录 .bib 也能找到）。tectonic 结果更好（错误更少 / 补出了 PDF）才采用。
+            chosen_errors = sum(1 for d in eng_diags if d["severity"] == "error")
+            if not run.timed_out and engine != "tectonic" and (chosen_errors or built_pdf is None):
+                tec = shutil.which(TECTONIC_BIN)
+                if tec:
+                    run2, log2, diags2, pdf2 = await asyncio.to_thread(_attempt, "tectonic", tec)
+                    tec_errors = sum(1 for d in diags2 if d["severity"] == "error")
+                    if (pdf2 is not None and built_pdf is None) or tec_errors < chosen_errors:
+                        run, log_text, built_pdf = run2, log2, pdf2
+                        eng_diags = [
+                            _diag(
+                                "warning",
+                                "other",
+                                f"{engine} 编译有问题（缺宏包或引用未解析），"
+                                "已改用 tectonic（自带宏包库、按需补装）重新编译",
+                            )
+                        ] + diags2
+                        engine = "tectonic"
+
+            diagnostics.extend(eng_diags)
+            if built_pdf is not None:
                 shutil.copyfile(built_pdf, out_dir / "main.pdf")
                 pdf_available = True
             (out_dir / "compile.log").write_text(
@@ -369,7 +497,7 @@ async def compile_manuscript(session: AsyncSession, manuscript: Manuscript) -> d
                         _diag(
                             "error",
                             "other",
-                            f"tectonic 退出码 {run.returncode}："
+                            f"{engine} 退出码 {run.returncode}："
                             f"{(run.stderr or run.stdout)[-500:]}",
                         )
                     )
@@ -485,10 +613,14 @@ async def build_arxiv_tarball(
 
 
 def _run_tectonic_on(binary: str, workdir: Path, main_name: str) -> TectonicRun:
-    """对指定主文件跑一遍 tectonic（导出取 .bbl 用）。"""
+    """对指定主文件跑一遍 tectonic（导出取 .bbl 用）。
+
+    关键：加 --keep-intermediates，否则 tectonic 编译后会清掉 .bbl/.aux 等中间产物，
+    arXiv 提交包就拿不到 .bbl。
+    """
     try:
         proc = subprocess.run(  # noqa: S603 — 固定二进制 + 受控参数
-            [binary, "--keep-logs", "--reruns", "3", main_name],
+            [binary, "--keep-intermediates", "--keep-logs", "--reruns", "3", main_name],
             cwd=workdir,
             capture_output=True,
             text=True,

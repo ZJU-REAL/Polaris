@@ -13,11 +13,10 @@
 """
 
 import asyncio
+import contextlib
 import io
 import re
 import shutil
-import subprocess
-import tempfile
 import uuid
 import zipfile
 from pathlib import Path
@@ -122,6 +121,16 @@ def _strip_common_prefix(members: dict[str, bytes]) -> dict[str, bytes]:
         prefix = tops.pop() + "/"
         return {p[len(prefix) :]: b for p, b in members.items()}
     return members
+
+
+def _select_subdir(members: dict[str, bytes], subdir: str) -> dict[str, bytes]:
+    """只保留仓库内某个子目录（并把它拍平到根）。用于「一个仓库塞了多套模板」的情况
+    （如 ICLR Master-Template 把各年份样式放在 iclrYYYY/ 子目录，且重名 .sty 互相干扰）。
+    子目录不存在时退回全量（安全兜底）。"""
+    flat = _strip_common_prefix(members)
+    prefix = subdir.strip("/") + "/"
+    selected = {p[len(prefix) :]: b for p, b in flat.items() if p.startswith(prefix)}
+    return selected or flat
 
 
 async def _persist(
@@ -245,23 +254,6 @@ async def list_db_templates(
     return list(rows.scalars())
 
 
-def _builtin_info(meta: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": meta["key"],
-        "name": meta.get("name", meta["key"]),
-        "description": None,
-        "source": "builtin",
-        "scope": "global",
-        "project_id": None,
-        "engine": "tectonic",
-        "page_limit": meta.get("page_limit"),
-        "sections": meta.get("sections") or [],
-        "unofficial": bool(meta.get("unofficial", True)),
-        "downloadable": False,
-        "file_count": 3,
-    }
-
-
 def _db_info(t: ManuscriptTemplate) -> dict[str, Any]:
     return {
         "id": str(t.id),
@@ -275,13 +267,43 @@ def _db_info(t: ManuscriptTemplate) -> dict[str, Any]:
         "sections": t.sections or [],
         "unofficial": t.unofficial,
         "downloadable": True,
+        "downloaded": True,
+        "download_key": None,
         "file_count": t.file_count,
     }
 
 
+def _manifest_info(entry: dict[str, Any]) -> dict[str, Any]:
+    """尚未下载的官方模板（画廊里显示为「未下载」，选用时按需下载）。"""
+    return {
+        "id": f"seed:{entry['key']}",
+        "name": entry["name"],
+        "description": entry.get("description"),
+        "source": "seeded",
+        "scope": "global",
+        "project_id": None,
+        "engine": entry.get("engine", "tectonic"),
+        "page_limit": entry.get("page_limit"),
+        "sections": entry.get("sections") or [],
+        "unofficial": False,
+        "downloadable": False,
+        "downloaded": False,
+        "download_key": entry["key"],
+        "file_count": 0,
+    }
+
+
 async def list_all(session: AsyncSession, *, project_id: uuid.UUID | None) -> list[dict[str, Any]]:
-    infos = [_builtin_info(m) for m in manuscripts_service.list_templates()]
-    infos += [_db_info(t) for t in await list_db_templates(session, project_id=project_id)]
+    """画廊：只列「提供官方样式项目」的会议模板 + 用户上传。
+
+    内置简化模板（neurips2026/iclr2026/acl）与官方 manifest 项重复且只是占位，
+    不再在画廊显示（create_manuscript 仍接受其 key，供内部/测试使用）。
+    """
+    db_templates = await list_db_templates(session, project_id=project_id)
+    infos = [_db_info(t) for t in db_templates]
+    # manifest 里还没下载的官方模板 → 显示为「未下载」，供按需下载
+    have_keys = {t.key for t in db_templates}
+    infos += [_manifest_info(e) for e in SEED_MANIFEST if e["key"] not in have_keys]
     return infos
 
 
@@ -300,12 +322,28 @@ def is_builtin(ident: str) -> bool:
     return ident in BUILTIN_KEYS
 
 
+# 模板未声明分节时（官方样式模板通常不带 POLARIS_SECTION 标记）的兜底可写分节，
+# 让 AI 起草仍可用（内容以 % POLARIS_SECTION 标记块追加，见 crdt_rooms.replace_section）
+DEFAULT_DRAFT_SECTIONS = [
+    "abstract",
+    "introduction",
+    "related_work",
+    "method",
+    "experimental_setup",
+    "results",
+    "conclusion",
+]
+
+
 async def template_section_keys(session: AsyncSession, ident: str) -> list[str]:
-    """模板声明的可写分节（AI 起草选节用）；官方上传模板通常为空。"""
+    """模板可写分节（AI 起草选节用）。模板未声明（官方样式模板常见）→ 用标准兜底，
+    否则用会议模板起草会因「无合法分节」报 INVALID_SECTIONS。"""
     if is_builtin(ident):
-        return manuscripts_service.template_meta(ident).get("sections") or []
-    tmpl = await get_db_template(session, ident)
-    return (tmpl.sections if tmpl else None) or []
+        declared = manuscripts_service.template_meta(ident).get("sections") or []
+    else:
+        tmpl = await get_db_template(session, ident)
+        declared = (tmpl.sections if tmpl else None) or []
+    return declared or list(DEFAULT_DRAFT_SECTIONS)
 
 
 # ---- 展开为稿件文件 ----
@@ -351,6 +389,18 @@ async def expand_files(
     return _expand_db_files(tmpl, title=title)
 
 
+async def build_config(session: AsyncSession, ident: str) -> tuple[str, str]:
+    """稿件的编译入口与编译器 (main_tex, engine)：builtin 用 main.tex + meta.engine，
+    库内模板用检测到的主文件与其 engine。供 create_manuscript 初始化稿件设置。"""
+    if is_builtin(ident):
+        engine = manuscripts_service.template_meta(ident).get("engine") or "tectonic"
+        return "main.tex", engine
+    tmpl = await get_db_template(session, ident)
+    if tmpl is None:
+        raise manuscripts_service.TemplateNotFoundError(ident)
+    return tmpl.main_tex or "main.tex", tmpl.engine or "tectonic"
+
+
 # ---- 下载（打回 zip） ----
 
 
@@ -377,7 +427,7 @@ async def delete_template(session: AsyncSession, template: ManuscriptTemplate) -
 SEED_MANIFEST: list[dict[str, Any]] = [
     {
         "key": "zjuthesis",
-        "name": "浙江大学学位论文 (zjuthesis)",
+        "name": "浙江大学学位论文",
         "description": "浙江大学本硕博学位论文 LaTeX 模板（XeLaTeX，含中文字体需求）",
         "git": "https://github.com/TheNetAdmin/zjuthesis.git",
         "engine": "xelatex",
@@ -386,7 +436,7 @@ SEED_MANIFEST: list[dict[str, Any]] = [
     },
     {
         "key": "acl-official",
-        "name": "ACL Rolling Review（官方样式）",
+        "name": "ACL Rolling Review",
         "description": "ACL 官方 acl.sty / acl_natbib.bst，附示例 acl_latex.tex",
         "git": "https://github.com/acl-org/acl-style-files.git",
         "engine": "pdflatex",
@@ -395,16 +445,19 @@ SEED_MANIFEST: list[dict[str, Any]] = [
     },
     {
         "key": "iclr-official",
-        "name": "ICLR（官方 Master-Template）",
-        "description": "ICLR 官方投稿样式与示例",
+        "name": "ICLR 2026",
+        "description": "ICLR 2026 官方投稿样式与示例",
         "git": "https://github.com/ICLR/Master-Template.git",
+        # Master-Template 仓库把各年份塞在 iclrYYYY/ 子目录且重名 .sty 互相干扰，
+        # 只取最新一年拍平到根，避免「找不到 iclr2026_conference.sty」类报错
+        "subdir": "iclr2026",
         "engine": "pdflatex",
         "sections": [],
         "page_limit": 10,
     },
     {
         "key": "neurips2026-official",
-        "name": "NeurIPS 2026（官方样式）",
+        "name": "NeurIPS 2026",
         "description": "NeurIPS 2026 官方 neurips_2026.sty 与示例",
         "zip": "https://media.neurips.cc/Conferences/NeurIPS2026/Formatting_Instructions_For_NeurIPS_2026.zip",
         "engine": "pdflatex",
@@ -413,7 +466,7 @@ SEED_MANIFEST: list[dict[str, Any]] = [
     },
     {
         "key": "icml2026-official",
-        "name": "ICML 2026（官方样式）",
+        "name": "ICML 2026",
         "description": "ICML 2026 官方 icml2026.sty 与示例",
         "zip": "https://media.icml.cc/Conferences/ICML2026/Styles/icml2026.zip",
         "engine": "pdflatex",
@@ -423,36 +476,169 @@ SEED_MANIFEST: list[dict[str, Any]] = [
 ]
 
 
-def _git_clone_members(url: str) -> dict[str, bytes]:
-    with tempfile.TemporaryDirectory(prefix="polaris-tmpl-") as tmp:
-        subprocess.run(
-            ["git", "clone", "--depth", "1", url, tmp],
-            check=True,
-            capture_output=True,
-            timeout=180,
+MANIFEST_BY_KEY: dict[str, dict[str, Any]] = {e["key"]: e for e in SEED_MANIFEST}
+
+
+# ---- 下载进度（按需自动下载官方模板，供进度条 SSE 读取） ----
+#
+# 进度在 API 进程内存里（单机 dev 足够）；多进程部署时 SSE 若命中别的 worker
+# 会读不到进度——那种场景应改用 redis/worker，见 TODO。下载本身事务化（末尾
+# 一次性 _persist 入库），进程重启中断只是没建成模板，重试即可。
+
+# key → {key, name, phase, percent, detail, template_id?, error?}
+# phase ∈ pending | downloading | extracting | done | failed
+_download_progress: dict[str, dict[str, Any]] = {}
+_download_locks: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(key: str) -> asyncio.Lock:
+    lock = _download_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _download_locks[key] = lock
+    return lock
+
+
+def _set_progress(key: str, **fields: Any) -> None:
+    cur = _download_progress.setdefault(
+        key,
+        {
+            "key": key,
+            "name": MANIFEST_BY_KEY.get(key, {}).get("name", key),
+            "phase": "pending",
+            "percent": 0,
+            "detail": "",
+        },
+    )
+    cur.update(fields)
+
+
+def get_progress(key: str) -> dict[str, Any] | None:
+    return _download_progress.get(key)
+
+
+_GITHUB_RE = re.compile(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$")
+
+
+def _github_archive_url(git_url: str) -> str:
+    """GitHub 仓库 → 默认分支 zip 归档（api.github.com zipball 302 到 codeload）。
+
+    改用归档 zip 下载而非 git clone：容器无需装 git，且能拿到字节进度。
+    """
+    m = _GITHUB_RE.search(git_url)
+    if m is None:
+        raise TemplateError(f"无法解析 GitHub 仓库地址：{git_url}")
+    return f"https://api.github.com/repos/{m.group(1)}/{m.group(2)}/zipball"
+
+
+def _source_url(entry: dict[str, Any]) -> str:
+    """manifest 条目 → 下载 URL（git 源转成 GitHub 归档 zip）。"""
+    return _github_archive_url(entry["git"]) if entry.get("git") else entry["zip"]
+
+
+async def _fetch_zip_members(url: str, on_percent: Any | None = None) -> dict[str, bytes]:
+    # GitHub API 要求带 User-Agent，否则 403
+    headers = {"User-Agent": "Polaris-Template-Fetch"}
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True, headers=headers) as client:
+        if on_percent is None:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return _read_zip(resp.content)
+        async with client.stream("GET", url) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length") or 0)
+            got = 0
+            chunks: list[bytes] = []
+            async for chunk in resp.aiter_bytes(64 * 1024):
+                chunks.append(chunk)
+                got += len(chunk)
+                if total > 0:
+                    on_percent(min(99, int(got * 100 / total)))
+                else:
+                    # 无 content-length（GitHub 归档 zip 是动态生成的分块响应）：
+                    # 用字节数估一个渐近百分比（永不到 100），让进度条能动起来
+                    on_percent(min(90, int(got / (got + 2 * 1024 * 1024) * 100)))
+        return _read_zip(b"".join(chunks))
+
+
+async def download_template(key: str, *, created_by: uuid.UUID | None) -> ManuscriptTemplate:
+    """按需拉取并入库一个官方模板（幂等，带进度）。已存在同 key 直接返回。
+
+    进度写 _download_progress[key]，供 SSE 端点读取。
+    """
+    from app.core.db import get_sessionmaker
+
+    entry = MANIFEST_BY_KEY.get(key)
+    if entry is None:
+        raise TemplateError(f"未知的官方模板：{key}")
+
+    async with _lock_for(key):
+        async with get_sessionmaker()() as session:
+            existing = await get_db_template(session, key)
+            if existing is not None:
+                _set_progress(key, phase="done", percent=100, template_id=str(existing.id))
+                return existing
+
+        _set_progress(
+            key, name=entry["name"], phase="downloading", percent=0, detail="", error=None
         )
-        root = Path(tmp)
-        members: dict[str, bytes] = {}
-        total = 0
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = _safe_member_path(path.relative_to(root).as_posix())
-            if rel is None or path.stat().st_size > MAX_FILE_BYTES:
-                continue
-            data = path.read_bytes()
-            total += len(data)
-            if total > MAX_TOTAL_BYTES or len(members) >= MAX_FILES:
-                break
-            members[rel] = data
-        return members
+        try:
+            _set_progress(key, detail="下载模板压缩包…")
+
+            def _cb(pct: int) -> None:
+                _set_progress(key, phase="downloading", percent=pct)
+
+            members = await _fetch_zip_members(_source_url(entry), _cb)
+            if entry.get("subdir"):
+                members = _select_subdir(members, entry["subdir"])
+
+            _set_progress(key, phase="extracting", percent=100, detail="解压入库…")
+            async with get_sessionmaker()() as session:
+                tmpl = await _persist(
+                    session,
+                    name=entry["name"],
+                    description=entry.get("description"),
+                    source="seeded",
+                    scope="global",
+                    project_id=None,
+                    created_by=created_by,
+                    members=members,
+                    engine=entry.get("engine", "tectonic"),
+                    sections=entry.get("sections") or [],
+                    page_limit=entry.get("page_limit"),
+                    meta={"origin": entry.get("git") or entry.get("zip")},
+                    key=key,
+                )
+            _set_progress(key, phase="done", percent=100, detail="", template_id=str(tmpl.id))
+            return tmpl
+        except Exception as e:  # noqa: BLE001 — 记进度，供前端提示
+            _set_progress(key, phase="failed", error=f"{type(e).__name__}: {e}"[:300])
+            raise
 
 
-async def _fetch_zip_members(url: str) -> dict[str, bytes]:
-    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return _read_zip(resp.content)
+_download_tasks: set[asyncio.Task] = set()
+
+
+def spawn_download(key: str, *, created_by: uuid.UUID | None) -> dict[str, Any]:
+    """幂等地在后台启动一个官方模板下载；已在下载/已完成则不重复启动。
+    返回当前进度快照供前端立刻显示。"""
+    if key not in MANIFEST_BY_KEY:
+        raise TemplateError(f"未知的官方模板：{key}")
+    prog = get_progress(key)
+    if prog and prog["phase"] in ("downloading", "extracting", "done"):
+        return prog
+    _set_progress(key, name=MANIFEST_BY_KEY[key]["name"], phase="pending", percent=0, error=None)
+
+    task = asyncio.create_task(download_template(key, created_by=created_by))
+    _download_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        _download_tasks.discard(t)
+        with contextlib.suppress(Exception):
+            t.exception()  # 消费异常，避免 "Task exception never retrieved" 警告
+
+    task.add_done_callback(_done)
+    return get_progress(key) or {}
 
 
 async def seed_one(
@@ -462,10 +648,9 @@ async def seed_one(
     existing = await get_db_template(session, entry["key"])
     if existing is not None:
         return None
-    if entry.get("git"):
-        members = await asyncio.to_thread(_git_clone_members, entry["git"])
-    else:
-        members = await _fetch_zip_members(entry["zip"])
+    members = await _fetch_zip_members(_source_url(entry))
+    if entry.get("subdir"):
+        members = _select_subdir(members, entry["subdir"])
     return await _persist(
         session,
         name=entry["name"],

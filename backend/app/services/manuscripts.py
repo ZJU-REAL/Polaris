@@ -11,6 +11,7 @@
 """
 
 import json
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,8 +45,9 @@ SECTION_ORDER = (
     "conclusion",
     "abstract",
 )
-# 编译时自动生成的只读虚拟文件（用户不可占用这些路径）
-RESERVED_PATHS = frozenset({"references.bib"})
+# 编译时自动生成的保留路径前缀（figures/ 为实验图目录，用户不可占用）
+# 注：references.bib 现为可见可编辑的真实文件（建稿时从事实包生成），不再保留
+RESERVED_PATHS = frozenset()
 RESERVED_PREFIXES = ("figures/",)
 READONLY_SUFFIXES = (".sty", ".cls", ".bst")
 
@@ -79,6 +81,10 @@ class WritingInProgressError(Exception):
 
 class InvalidSectionsError(Exception):
     """draft 请求包含模板之外的节名。"""
+
+
+class StructureError(Exception):
+    """主文件缺少 document 环境，无法初始化为结构化文章。"""
 
 
 class CompileRequiredError(Exception):
@@ -305,6 +311,8 @@ async def create_manuscript(
 
     # 展开模板文件（builtin key 或库内模板 id/key；未知 → TemplateNotFoundError）
     files = await manuscript_templates.expand_files(session, data.template, title=data.title)
+    # 编译入口主文件与编译器（Overleaf 式，建稿后用户可改）
+    main_tex, engine = await manuscript_templates.build_config(session, data.template)
     if data.idea_id is not None:
         idea = await session.get(Idea, data.idea_id)
         if idea is None or idea.project_id != project.id:
@@ -320,10 +328,13 @@ async def create_manuscript(
         experiment_id=data.experiment_id,
         title=data.title,
         template=data.template,  # template_files 内部校验 key
+        main_tex=main_tex,
+        engine=engine,
         status="draft",
     )
     session.add(manuscript)
     await session.flush()
+    has_bib = any(p == "references.bib" for p, _, _, _ in files)
     for path, data_or_text, readonly, is_binary in files:
         if is_binary:
             write_binary_asset(manuscript.id, path, data_or_text)
@@ -348,6 +359,19 @@ async def create_manuscript(
                 )
             )
     manuscript.fact_pack = await build_fact_pack(session, manuscript)
+    # 若模板未自带 references.bib，从事实包生成一份可见可编辑的（文件列表里能看到、能改）
+    if not has_bib:
+        from app.services import latex_compile  # 延迟导入避免循环
+
+        session.add(
+            ManuscriptFile(
+                manuscript_id=manuscript.id,
+                path="references.bib",
+                content=await latex_compile.build_references_bib(session, manuscript),
+                readonly=False,
+                updated_by=user_id,
+            )
+        )
     session.add(
         Activity(
             project_id=project.id,
@@ -360,6 +384,112 @@ async def create_manuscript(
     await session.commit()
     await session.refresh(manuscript)
     return manuscript
+
+
+# ---- 结构化初始化（AI 起草前置：把 document 环境内容换成带 POLARIS_SECTION 标记的骨架）----
+
+# (POLARIS_SECTION key, LaTeX 章节标题)；abstract 落在 abstract 环境，其余为 \section
+_STRUCTURE_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("introduction", "Introduction"),
+    ("related_work", "Related Work"),
+    ("method", "Method"),
+    ("experimental_setup", "Experimental Setup"),
+    ("results", "Results"),
+    ("conclusion", "Conclusion"),
+)
+_STRUCTURE_PLACEHOLDER = "To be drafted."
+_BIB_LINE_RE = re.compile(r"^[ \t]*\\bibliography(?:style)?\{[^{}]*\}[ \t]*$", re.MULTILINE)
+
+
+def _section_marker_block(key: str) -> str:
+    return f"% POLARIS_SECTION: {key}\n{_STRUCTURE_PLACEHOLDER}\n% POLARIS_SECTION_END: {key}\n"
+
+
+def build_structured_document(content: str) -> str:
+    """把 \\begin{document}…\\end{document} 之间换成带 POLARIS_SECTION 标记的研究骨架，
+    保留 preamble、\\maketitle（若有标题）与 \\bibliography 声明。
+    缺 document 环境 → StructureError。"""
+    if "\\begin{document}" not in content or "\\end{document}" not in content:
+        raise StructureError("MAIN_TEX_NO_DOCUMENT")
+    preamble, rest = content.split("\\begin{document}", 1)
+    old_body, tail = rest.split("\\end{document}", 1)
+
+    parts: list[str] = []
+    if "\\title" in preamble or "\\maketitle" in old_body:
+        parts.append("\\maketitle\n")
+    parts.append("\n\\begin{abstract}\n" + _section_marker_block("abstract") + "\\end{abstract}\n")
+    for key, heading in _STRUCTURE_SECTIONS:
+        parts.append(f"\n\\section{{{heading}}}\\label{{sec:{key}}}\n" + _section_marker_block(key))
+    # 保留原有的 \bibliographystyle / \bibliography 声明（顺序不变），否则兜底指向 references
+    bib_lines = _BIB_LINE_RE.findall(old_body)
+    if bib_lines:
+        parts.append("\n" + "\n".join(m.strip() for m in bib_lines) + "\n")
+    else:
+        parts.append("\n\\bibliographystyle{plainnat}\n\\bibliography{references}\n")
+    middle = "".join(parts)
+    return f"{preamble}\\begin{{document}}\n{middle}\\end{{document}}{tail}"
+
+
+DRAFT_TEX = "draft.tex"
+
+
+async def initialize_structure(
+    session: AsyncSession, manuscript: Manuscript, *, user_id: uuid.UUID
+) -> tuple[ManuscriptFile, str]:
+    """基于「当前编译主文件」新建/更新 draft.tex：保留其 preamble，把 document 正文换成
+    POLARIS_SECTION 骨架（供 AI 分节起草与编译）。原主文件保持不变，并把编译主文件切到
+    draft.tex。返回 (draft 文件, 内容)。
+    源文件不存在 → FilePathInvalidError；源文件无 document 环境 → StructureError。"""
+    from app.services import crdt_rooms  # 延迟导入避免循环
+
+    src_path = manuscript.main_tex or "main.tex"
+    rows = (
+        (
+            await session.execute(
+                select(ManuscriptFile).where(ManuscriptFile.manuscript_id == manuscript.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_path = {f.path: f for f in rows}
+    src = by_path.get(src_path)
+    if src is None or src.is_binary or src.is_folder:
+        raise FilePathInvalidError(src_path)
+
+    rooms = crdt_rooms.get_crdt_rooms()
+    src_content = rooms.room_content(src.id)
+    if src_content is None:
+        src_content = src.content
+    new_content = build_structured_document(src_content)  # 无 document → StructureError
+
+    draft = by_path.get(DRAFT_TEX)
+    if draft is None:
+        draft = ManuscriptFile(
+            manuscript_id=manuscript.id,
+            path=DRAFT_TEX,
+            content=new_content,
+            readonly=False,
+            updated_by=user_id,
+        )
+        session.add(draft)
+        await session.flush()  # 拿 id
+    else:
+        # 已有 draft.tex：整文件替换（活跃房间实时可见，否则写库 + 存初始化前快照）
+        wrote = await rooms.set_content(draft.id, new_content)
+        if not wrote:
+            from app.services import manuscript_versions  # 延迟导入避免循环
+
+            await manuscript_versions.snapshot_file(
+                session, draft, origin="pre_ai", label="结构化初始化前", content=draft.content
+            )
+            draft.content = new_content
+            draft.updated_by = user_id
+
+    manuscript.main_tex = DRAFT_TEX  # 编译主文件切到草稿
+    await session.commit()
+    await session.refresh(draft)
+    return draft, new_content
 
 
 async def list_manuscripts(session: AsyncSession, *, project_id: uuid.UUID) -> list[Manuscript]:
@@ -594,6 +724,10 @@ async def create_writing_voyage(
     body, related = resolve_sections(known, sections)
     # 起草永远基于最新事实源：先自动重建 fact-pack（库/实验更新后不必手动刷新）
     await refresh_fact_pack(session, manuscript)
+    # 事实包刷新后同步 references.bib 文件，保证 AI 起草的 \cite 能解析
+    from app.services import latex_compile  # 延迟导入避免循环
+
+    await latex_compile.sync_references_bib(session, manuscript)
     run = VoyageRun(
         kind=WRITING_VOYAGE_KIND,
         goal=f"论文撰写：{manuscript.title}",

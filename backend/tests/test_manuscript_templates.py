@@ -3,7 +3,27 @@
 import io
 import zipfile
 
+from app.services import manuscript_templates as templates
 from tests.test_manuscripts import _setup_project
+
+
+def test_select_subdir_flattens_and_filters():
+    """一个仓库塞了多套模板时，只取指定子目录并拍平到根（ICLR 各年份场景）。"""
+    members = {
+        "repo-abc/iclr2026/main.tex": b"x",
+        "repo-abc/iclr2026/style.sty": b"y",
+        "repo-abc/iclr2019/old.tex": b"z",
+        "repo-abc/README.md": b"r",
+    }
+    out = templates._select_subdir(members, "iclr2026")
+    assert set(out) == {"main.tex", "style.sty"}
+
+
+def test_select_subdir_missing_falls_back():
+    """子目录不存在 → 退回全量（剥离顶层包裹目录），不至于清空模板。"""
+    members = {"repo-abc/a.tex": b"x", "repo-abc/b.sty": b"y"}
+    out = templates._select_subdir(members, "nope")
+    assert set(out) == {"a.tex", "b.sty"}
 
 
 def _make_zip(files: dict[str, bytes]) -> bytes:
@@ -47,11 +67,12 @@ async def test_upload_list_download_and_create(client):
     assert tpl["file_count"] == 3
     tpl_id = tpl["id"]
 
-    # 列表：内置 + 该项目私有模板都在（顶层包裹目录 paper/ 已被剥离）
+    # 列表：项目私有模板 + 官方 manifest 伪条目都在（顶层包裹目录 paper/ 已被剥离）
     resp = await client.get(f"/api/manuscripts/templates?project_id={project_id}", headers=headers)
     ids = {t["id"] for t in resp.json()}
     assert tpl_id in ids
-    assert "neurips2026" in ids
+    assert "seed:neurips2026-official" in ids  # 官方未下载伪条目
+    assert "neurips2026" not in ids  # 内置简化模板不再显示
 
     # 不带 project_id：看不到项目私有模板
     resp = await client.get("/api/manuscripts/templates", headers=headers)
@@ -75,7 +96,8 @@ async def test_upload_list_download_and_create(client):
     ms_id = resp.json()["id"]
     detail = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
     files = {f["path"]: f for f in detail["files"]}
-    assert set(files) == {"main.tex", "demo.sty", "logo.png"}
+    # 建稿时自动补一个可见可编辑的 references.bib
+    assert set(files) == {"main.tex", "demo.sty", "logo.png", "references.bib"}
     assert files["logo.png"]["readonly"] is True
     assert files["demo.sty"]["readonly"] is True
     assert files["main.tex"]["readonly"] is False

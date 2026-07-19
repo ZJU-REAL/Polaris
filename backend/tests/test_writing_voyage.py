@@ -55,13 +55,15 @@ async def _clean_crdt():
 def _stub_tectonic(monkeypatch):
     """假 tectonic：直接产出 main.pdf（终编译 ok 路径）。"""
 
-    def ok_run(binary: str, workdir: Path) -> TectonicRun:
+    def ok_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
         (workdir / "main.pdf").write_bytes(b"%PDF stub")
         (workdir / "main.log").write_text("", encoding="utf-8")
         return TectonicRun(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(latex_compile, "_find_tectonic", lambda: "/usr/bin/tectonic")
-    monkeypatch.setattr(latex_compile, "_run_tectonic", ok_run)
+    monkeypatch.setattr(
+        latex_compile, "_resolve_engine", lambda requested: ("tectonic", "/usr/bin/tectonic")
+    )
+    monkeypatch.setattr(latex_compile, "_run_engine", ok_run)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -298,13 +300,13 @@ async def test_invalid_cite_degrades_with_todo_and_continues(client, queue_stub)
 async def test_final_compile_failure_fails_voyage(client, queue_stub, monkeypatch):
     """终编译不 ok → voyage failed（全文编译 ok 为完成条件）。"""
 
-    def bad_run(binary: str, workdir: Path) -> TectonicRun:
+    def bad_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
         (workdir / "main.log").write_text(
             "! Undefined control sequence.\nl.3 \\broken\n", encoding="utf-8"
         )
         return TectonicRun(returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr(latex_compile, "_run_tectonic", bad_run)
+    monkeypatch.setattr(latex_compile, "_run_engine", bad_run)
     _, headers, ms_id, voyage = await _prepare(client, queue_stub, sections=["introduction"])
     engine, _ = _make_engine()
     await engine.run(uuid.UUID(voyage["id"]))

@@ -34,6 +34,13 @@
   /* 列表「执行中」行的极淡蓝底（比 accent-soft 更浅一档） */
   --accent-soft-row:       #f3f7fd;
   --accent-soft-row-hover: #ebf2fb;
+  /* 代码编辑器选区底色：accent 半透明，选中文字仍清晰可读 */
+  --cm-selection:       rgba(0, 63, 136, 0.24);
+  /* 当前行底色：必须半透明——drawSelection 的选区层画在正文下方，
+     若当前行底色不透明会盖住行内（部分）选区的高亮矩形 */
+  --cm-active-line:     rgba(0, 63, 136, 0.05);
+  --cm-search-match:    rgba(180, 137, 47, 0.28);  /* 搜索命中高亮（暖黄） */
+  --cm-search-current:  rgba(180, 137, 47, 0.55);  /* 当前命中 */
 
   /* — Semantic (calibrated to the blue theme, low chroma) — */
   --ok:        #3f8f5f;  --ok-bg:     #e4f1e9;  --ok-tx:     #2f7048;

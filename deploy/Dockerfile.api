@@ -19,6 +19,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && tectonic --version \
     && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
+# TeX Live + latexmk（Overleaf 式多编译器：pdflatex/xelatex/lualatex；tectonic 之外的选择）。
+# 覆盖常见会议模板所需宏包/字体 + 中文（zjuthesis 走 xelatex）。分批安装：一次性解包整套
+# TeX Live 峰值内存过大会在小内存 VM 上被 OOM kill(137)；省略体积巨大且少用的 fonts-extra。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      latexmk biber texlive-latex-base texlive-latex-recommended \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-latex-extra texlive-fonts-recommended texlive-plain-generic \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-xetex texlive-luatex texlive-bibtex-extra texlive-science texlive-pictures \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-lang-chinese fonts-noto-cjk fontconfig \
+    && latexmk --version && pdflatex --version | head -1 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Windows/mac 中文字体名（FangSong/SimSun/SimHei/KaiTi…）→ Noto CJK 别名，供 xelatex
+# 编译中文模板（zjuthesis 等）按名解析字体；装完刷新字体缓存
+COPY deploy/fontconfig-cjk-aliases.conf /etc/fonts/conf.d/99-cjk-aliases.conf
+RUN fc-cache -f >/dev/null 2>&1 && fc-match FangSong
+
 COPY backend/pyproject.toml ./
 # 先装依赖层（利用缓存），再拷源码
 RUN pip install --upgrade pip && pip install -e . || true
