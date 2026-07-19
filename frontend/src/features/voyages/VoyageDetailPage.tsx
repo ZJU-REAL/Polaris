@@ -641,6 +641,198 @@ function planSignalText(sig: Record<string, unknown>): string | null {
   return null;
 }
 
+// —— 实验任务（experiment.*）：observation 的用户可读摘要 ——
+
+/** primary_metric.direction → 大白话方向。 */
+function metricDirection(dir: unknown): { zh: string; en: string } | null {
+  if (dir === 'maximize') return { zh: '越大越好', en: 'higher is better' };
+  if (dir === 'minimize') return { zh: '越小越好', en: 'lower is better' };
+  return null;
+}
+
+interface ExperimentStepFriendly {
+  /** 一句给用户看的中文小结 */
+  text: string;
+  /** 附带的条目（文件名 / 指标名），以 tag 展示 */
+  items?: string[];
+  /** items 前的小标签 */
+  itemsLabel?: string;
+  /** 影响提示色：出错/降级用警示色 */
+  tone?: 'ok' | 'warn';
+}
+
+/** 把 experiment.* 动作的 observation 翻译成用户可读摘要；不认识的动作返回 null（回退原始 JSON）。 */
+function experimentStepFriendly(action: string, obs: Record<string, unknown>): ExperimentStepFriendly | null {
+  // 任何动作失败时 helm 会把错误写进 observation.error（后端 _guarded）
+  if (typeof obs.error === 'string' && obs.error) {
+    return {
+      text: tr(`这一步出错：${obs.error}`, `This step failed: ${obs.error}`),
+      tone: 'warn',
+    };
+  }
+  switch (action) {
+    case 'experiment.plan': {
+      const pm = asObj(obs.primary_metric);
+      const name = pm && typeof pm.name === 'string' ? pm.name : '';
+      const dir = pm ? metricDirection(pm.direction) : null;
+      const metricZh = name ? `主指标 ${name}${dir ? `（${dir.zh}）` : ''}` : '主指标待定';
+      const metricEn = name ? `primary metric ${name}${dir ? ` (${dir.en})` : ''}` : 'primary metric TBD';
+      return {
+        text: tr(
+          `规划完成：${metricZh}，${num(obs.hypotheses)} 条假设，${num(obs.steps)} 个步骤`,
+          `Plan ready: ${metricEn}, ${num(obs.hypotheses)} hypotheses, ${num(obs.steps)} steps`,
+        ),
+      };
+    }
+    case 'experiment.setup': {
+      const files = namesOf(obs.files);
+      return {
+        text: tr(
+          `建好实验环境，生成 ${files.length} 个代码文件`,
+          `Environment ready — generated ${files.length} code files`,
+        ),
+        items: files,
+        itemsLabel: tr('生成文件', 'Files'),
+      };
+    }
+    case 'experiment.smoke': {
+      const fixes = num(obs.fixes);
+      const passed = num(obs.exit_code) === 0;
+      if (!passed) {
+        return {
+          text: tr('代码试跑自检未通过', 'Trial run self-check failed'),
+          tone: 'warn',
+        };
+      }
+      return {
+        text: fixes > 0
+          ? tr(`代码试跑自检通过（自动修正代码 ${fixes} 次）`, `Trial run self-check passed (auto-fixed code ${fixes} times)`)
+          : tr('代码试跑自检通过', 'Trial run self-check passed'),
+      };
+    }
+    case 'experiment.run': {
+      if (obs.skipped) {
+        const reason = typeof obs.stopped_reason === 'string' ? STOPPED_REASON[obs.stopped_reason] : undefined;
+        return {
+          text: tr(
+            `本轮运行跳过：迭代已结束${reason ? `（${reason.zh}）` : ''}`,
+            `Run skipped — iteration already finished${reason ? ` (${reason.en})` : ''}`,
+          ),
+        };
+      }
+      const seq = num(obs.seq);
+      const metrics = namesOf(obs.metric_names);
+      const exit = num(obs.exit_code);
+      const abnormal = exit !== 0 || (typeof obs.run_status === 'string' && obs.run_status !== 'succeeded');
+      const base = abnormal
+        ? tr(`第 ${seq} 轮运行结束（脚本非正常退出，退出码 ${exit}）`, `Round ${seq} finished (script exited abnormally, code ${exit})`)
+        : tr(`第 ${seq} 轮运行成功`, `Round ${seq} ran successfully`);
+      return {
+        text: metrics.length
+          ? base + tr(`，产出 ${metrics.length} 项指标`, `; produced ${metrics.length} metrics`)
+          : base,
+        items: metrics,
+        itemsLabel: tr('指标', 'Metrics'),
+        tone: abnormal ? 'warn' : 'ok',
+      };
+    }
+    case 'experiment.analyze': {
+      const seq = num(obs.seq);
+      const rounds = num(obs.rounds);
+      const roundsZh = rounds > 0 ? `（累计 ${rounds} 轮）` : '';
+      const roundsEn = rounds > 0 ? ` (${rounds} rounds total)` : '';
+      let decisionZh: string;
+      let decisionEn: string;
+      switch (obs.decision) {
+        case 'improve':
+          decisionZh = 'AI 决定继续改进方案';
+          decisionEn = 'AI decided to keep improving the approach';
+          break;
+        case 'debug':
+          decisionZh = 'AI 决定先排查报错再重跑';
+          decisionEn = 'AI decided to debug the errors before rerunning';
+          break;
+        case 'stop':
+          decisionZh = 'AI 决定收尾';
+          decisionEn = 'AI decided to wrap up';
+          break;
+        default:
+          decisionZh = 'AI 已完成本轮分析';
+          decisionEn = 'AI finished analyzing this round';
+      }
+      // 若 observation 带了诊断说明（reflection 字段）则一并展示，读不到就跳过
+      const diag = typeof obs.diagnosis === 'string' ? obs.diagnosis
+        : typeof obs.observation === 'string' ? obs.observation : '';
+      return {
+        text: tr(
+          `第 ${seq} 轮分析${roundsZh}：${decisionZh}${diag ? `。诊断：${diag}` : ''}`,
+          `Round ${seq} analysis${roundsEn}: ${decisionEn}${diag ? `. Diagnosis: ${diag}` : ''}`,
+        ),
+      };
+    }
+    case 'experiment.figures': {
+      const figures = num(obs.figures);
+      const fixes = num(obs.fixes);
+      const qcPassed = obs.qc_passed !== false;
+      const problem = typeof obs.problem === 'string' ? obs.problem : '';
+      const qcZh = qcPassed ? '质检通过' : `质检未通过，已降级出图${problem ? `（${problem}）` : ''}`;
+      const qcEn = qcPassed ? 'quality check passed' : `quality check failed, figures degraded${problem ? ` (${problem})` : ''}`;
+      const fixZh = fixes > 0 ? `，自动修 ${fixes} 次` : '';
+      const fixEn = fixes > 0 ? `, auto-fixed ${fixes} times` : '';
+      return {
+        text: tr(
+          `生成 ${figures} 张图表（${qcZh}${fixZh}）`,
+          `Generated ${figures} figures (${qcEn}${fixEn})`,
+        ),
+        tone: qcPassed ? 'ok' : 'warn',
+      };
+    }
+    case 'experiment.report': {
+      const chars = num(obs.report_chars);
+      return {
+        text: chars > 0
+          ? tr(`实验报告已生成（约 ${chars} 字）`, `Experiment report generated (about ${chars} chars)`)
+          : tr('实验报告已生成', 'Experiment report generated'),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function ExperimentStepSummary({ friendly }: { friendly: ExperimentStepFriendly }) {
+  const warn = friendly.tone === 'warn';
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: '9px 12px',
+        background: 'var(--surface-2)',
+        borderRadius: 9,
+        fontSize: 12.5,
+        lineHeight: 1.6,
+        color: warn ? 'var(--warn-tx)' : 'var(--text)',
+      }}
+    >
+      {friendly.text}
+      {friendly.items && friendly.items.length > 0 && (
+        <div className="col" style={{ gap: 6, marginTop: 8 }}>
+          {friendly.itemsLabel && (
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{friendly.itemsLabel}</span>
+          )}
+          <div className="row gap6 wrap">
+            {friendly.items.map((name) => (
+              <span key={name} className="tag mono" style={{ fontSize: 10.5 }}>
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // —— 尝试记录（attempts 归档）——
 
 function AttemptsBlock({ attempts }: { attempts: VoyageStepAttempt[] }) {
@@ -750,6 +942,7 @@ function ObservationBlock({ observation, compact }: { observation: unknown; comp
 function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvents: VoyagePlanEvent[] }) {
   const obs = asObj(step.observation);
   const friendly = obs ? wikiStepFriendly(step.action, obs) : null;
+  const expFriendly = obs && step.action.startsWith('experiment.') ? experimentStepFriendly(step.action, obs) : null;
   const obsolete = step.status === 'obsolete';
   const planIter = step.provenance?.plan_iteration ?? 0;
   const gateKind = step.requires_gate ? GATE_KIND[step.requires_gate] : null;
@@ -842,9 +1035,10 @@ function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvents: Voya
         </div>
       )}
       {friendly && <WikiStepSummary friendly={friendly} />}
+      {expFriendly && <ExperimentStepSummary friendly={expFriendly} />}
       {step.acceptance && <AcceptanceBlock acceptance={step.acceptance} />}
       {attempts.length > 1 && <AttemptsBlock attempts={attempts} />}
-      <ObservationBlock observation={step.observation} compact={!!friendly} />
+      <ObservationBlock observation={step.observation} compact={!!friendly || !!expFriendly} />
     </div>
   );
 }
