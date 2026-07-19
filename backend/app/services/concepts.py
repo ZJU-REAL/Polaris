@@ -39,6 +39,20 @@ CONCEPT_CATEGORIES = (
 
 _SLUG_STRIP_RE = re.compile(r"[^\w一-鿿]+", re.UNICODE)
 
+# 概念定义按批调用 LLM：一次塞几百个会让响应被 max_tokens 截断 → JSON 解析失败 → 整批占位。
+_DEF_BATCH_SIZE = 40
+_PLACEHOLDER_SUFFIX = "（定义待补充）"
+
+
+def placeholder_definition(name: str) -> str:
+    """新概念还没拿到 LLM 定义时的占位文案。"""
+    return f"{name}{_PLACEHOLDER_SUFFIX}"
+
+
+def is_placeholder_definition(text: str | None) -> bool:
+    """该定义是否仍是占位（批量截断/失败留下的「…（定义待补充）」）。"""
+    return bool(text) and text.endswith(_PLACEHOLDER_SUFFIX)
+
 
 def extract_wikilinks(markdown: str) -> list[str]:
     """解析 [[..]] 双链，返回去重（保序）的概念名列表。
@@ -132,7 +146,30 @@ async def fetch_concept_definitions(
     project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> dict[str, dict[str, str]]:
-    """批量向 LLM 要新概念的一句话定义与类别；失败返回空 dict（调用方用占位定义兜底）。"""
+    """向 LLM 要概念的一句话定义与类别；分批调用避免响应截断，失败的批用占位兜底。"""
+    out: dict[str, dict[str, str]] = {}
+    for i in range(0, len(names), _DEF_BATCH_SIZE):
+        out.update(
+            await _fetch_definitions_batch(
+                llm,
+                names[i : i + _DEF_BATCH_SIZE],
+                user_id=user_id,
+                project_id=project_id,
+                voyage_id=voyage_id,
+            )
+        )
+    return out
+
+
+async def _fetch_definitions_batch(
+    llm: LLMRouter,
+    names: list[str],
+    *,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+) -> dict[str, dict[str, str]]:
+    """单批（≤_DEF_BATCH_SIZE 个）定义调用；失败返回空 dict（调用方用占位定义兜底）。"""
     if not names:
         return {}
     try:
@@ -168,12 +205,16 @@ async def link_all_paper_concepts(
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
+    backfill: bool = False,
 ) -> tuple[dict[str, Any], list[Paper]]:
     """全库概念上链（voyage wiki.link_concepts 步骤与手动补建端点共用）：
 
     对项目内全部已编译论文（compiled/included 且有 wiki_content）抽 [[双链]]，
-    缺失概念建词条（新概念批量调一次 LLM 拿定义，失败占位）、补齐 paper_concepts
+    缺失概念建词条（新概念分批调 LLM 拿定义，失败占位）、补齐 paper_concepts
     关联；已存在的概念与关联跳过，幂等可重跑。
+
+    ``backfill=True`` 时，把此前批量截断/失败留下的占位概念（「…（定义待补充）」）
+    一并重新要定义并更新——仅供手动补建端点使用，voyage 自动步骤不开启以免每次重刷。
     返回 (统计 dict, 涉及的论文列表)；本函数自行 commit。
     """
     papers = (
@@ -200,11 +241,16 @@ async def link_all_paper_concepts(
     by_name = {c.name: c for c in existing}
     slugs = {c.slug for c in existing}
     new_names = [n for n in all_names if n not in by_name]
+    # 回填：此前批量截断/失败留下的占位概念，本次一并重新要定义（仅手动补建时开启）
+    placeholder_concepts = (
+        [c for c in existing if is_placeholder_definition(c.definition)] if backfill else []
+    )
+    names_to_define = new_names + [c.name for c in placeholder_concepts]
 
     definitions: dict[str, dict[str, str]] = {}
-    if new_names and llm is not None:
+    if names_to_define and llm is not None:
         definitions = await fetch_concept_definitions(
-            llm, new_names, user_id=user_id, project_id=project_id, voyage_id=voyage_id
+            llm, names_to_define, user_id=user_id, project_id=project_id, voyage_id=voyage_id
         )
 
     created = 0
@@ -218,12 +264,21 @@ async def link_all_paper_concepts(
             project_id=project_id,
             name=name,
             slug=slug,
-            definition=str(meta.get("definition") or f"{name}（定义待补充）"),
+            definition=str(meta.get("definition") or placeholder_definition(name)),
             category=normalize_category(meta.get("category")),
         )
         session.add(concept)
         by_name[name] = concept
         created += 1
+
+    backfilled = 0
+    for concept in placeholder_concepts:
+        meta = definitions.get(concept.name) or {}
+        definition = str(meta["definition"]) if meta.get("definition") else None
+        if definition and not is_placeholder_definition(definition):
+            concept.definition = definition
+            concept.category = normalize_category(meta.get("category"))
+            backfilled += 1
     await session.flush()
 
     existing_pairs = (
@@ -258,6 +313,7 @@ async def link_all_paper_concepts(
         "concepts_created": created,
         "new_concepts": new_names,
         "links_created": new_links,
+        "concepts_backfilled": backfilled,
     }
     return stats, list(papers)
 
@@ -303,7 +359,7 @@ async def link_paper_concepts(
             project_id=paper.project_id,
             name=name,
             slug=slug,
-            definition=str(meta.get("definition") or f"{name}（定义待补充）"),
+            definition=str(meta.get("definition") or placeholder_definition(name)),
             category=normalize_category(meta.get("category")),
         )
         session.add(concept)

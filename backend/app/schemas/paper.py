@@ -212,6 +212,8 @@ class ConceptRelinkResult(BaseModel):
     concepts_created: int
     links_created: int
     new_concepts: list[str] = []
+    # 回填的占位概念数（此前批量截断/失败留下的「定义待补充」重新拿到定义）
+    concepts_backfilled: int = 0
 
 
 class ScoredPaper(PaperRead):
