@@ -271,7 +271,7 @@ class FakeProvider(LLMProvider):
         if _EXP_REPORT_MARKER in full_text:
             return FakeProvider._respond_exp_report()
         if _EXP_PLAN_MARKER in full_text:
-            return FakeProvider._respond_exp_plan()
+            return FakeProvider._respond_exp_plan(last_user)
         if _PLAN_MARKER in full_text:
             return json.dumps(_FAKE_PLAN, ensure_ascii=False)
         if _INTERVIEW_MARKER in full_text:
@@ -448,21 +448,29 @@ class FakeProvider(LLMProvider):
         )
 
     @staticmethod
-    def _respond_exp_plan() -> str:
-        """experiment 计划：确定性合法 plan JSON（含 M5-A 必填 primary_metric）。"""
-        return json.dumps(
-            {
-                "hypotheses": [
-                    {"text": "假设一：新方法优于基线（fake）", "status": "testing"},
-                    {"text": "假设二：合成数据足以验证趋势（fake）", "status": "testing"},
-                ],
-                "repro_strategy": "用官方基线代码在小型合成数据上复现（fake）",
-                "steps": ["准备合成数据（fake）", "训练基线与新方法（fake）", "对比指标（fake）"],
-                "primary_metric": {"name": "accuracy", "direction": "maximize"},
-                "budget_estimate": {"gpu_hours": 2, "runs": 3},
-            },
-            ensure_ascii=False,
-        )
+    def _respond_exp_plan(last_user: str = "") -> str:
+        """experiment 计划：确定性合法 plan JSON（含 M5-A 必填 primary_metric）。
+        计划 prompt 带研究方案/对照信号时额外产出 conditions/eval_protocol/datasets，
+        覆盖对照实验（复现类）路径。"""
+        plan = {
+            "hypotheses": [
+                {"text": "假设一：新方法优于基线（fake）", "status": "testing"},
+                {"text": "假设二：合成数据足以验证趋势（fake）", "status": "testing"},
+            ],
+            "repro_strategy": "用官方基线代码在小型合成数据上复现（fake）",
+            "steps": ["准备合成数据（fake）", "训练基线与新方法（fake）", "对比指标（fake）"],
+            "primary_metric": {"name": "accuracy", "direction": "maximize"},
+            "budget_estimate": {"gpu_hours": 2, "runs": 3},
+        }
+        if "研究方案" in last_user or "对照" in last_user or "conditions" in last_user:
+            plan["conditions"] = [
+                {"name": "baseline", "role": "baseline", "description": "无处理对照（fake）"},
+                {"name": "treatment_a", "role": "treatment", "description": "处理组（fake）"},
+            ]
+            plan["eval_protocol"] = {"dataset": "fake-bench", "split": "test",
+                                     "metric": "accuracy", "n_examples": 50, "n_samples": 1}
+            plan["datasets"] = [{"name": "fake/bench", "purpose": "test", "size_hint": "50"}]
+        return json.dumps(plan, ensure_ascii=False)
 
     def _respond_plan_edit(self) -> str:
         """计划编辑（navigator.on_result）：确定性替代步骤，engine 会自动作废失败节点。"""

@@ -163,7 +163,11 @@ async def test_command_templates_source_env(client, queue_stub, fake_ssh, bus_re
     smoke = next(c for c in fake_ssh.commands if "--smoke" in c)
     assert smoke == f"cd {workdir} && {{ {ENV_PREFIX} bash run.sh --smoke; }}"
     launch = next(c for c in fake_ssh.commands if "nohup" in c)
-    assert f"nohup bash -c '{ENV_PREFIX} bash run.sh > run.log 2>&1; echo $? > run.exit'" in launch
+    # 前缀先 export PYTHONUNBUFFERED=1、再 source env.sh、stdbuf 行缓冲跑 run.sh（日志实时刷新）
+    assert (
+        f"nohup bash -c 'export PYTHONUNBUFFERED=1; {ENV_PREFIX} "
+        f"stdbuf -oL -eL bash run.sh > run.log 2>&1; echo $? > run.exit'"
+    ) in launch
     plot = next(c for c in fake_ssh.commands if "plot_figures.py" in c and ".venv" in c)
     assert plot == f"cd {workdir} && {{ {ENV_PREFIX} .venv/bin/python plot_figures.py; }}"
 

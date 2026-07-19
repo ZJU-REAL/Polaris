@@ -23,6 +23,7 @@
 """
 
 import asyncio
+import contextlib
 import functools
 import json
 import re
@@ -70,11 +71,21 @@ PLAN_SYSTEM_PROMPT = """\
  "repro_strategy": "基线复现策略（官方代码 > 可信第三方 > 自重写 > 仅引用数字）",
  "steps": ["实验步骤 1", "实验步骤 2"],
  "primary_metric": {"name": "主指标名", "direction": "maximize"},
+ "conditions": [{"name": "baseline", "role": "baseline", "description": "对照组"},
+                {"name": "treatment_a", "role": "treatment", "description": "处理组"}],
+ "eval_protocol": {"dataset": "数据集/来源", "split": "评测划分", "metric": "评测指标",
+                   "n_examples": 100, "n_samples": 1},
+ "datasets": [{"name": "HF数据集名或来源", "purpose": "test|corpus|train", "size_hint": "规模"}],
  "budget_estimate": {"gpu_hours": 2, "runs": 3}}
-约束：hypotheses 1-5 条且必须可被实验证实/证伪；steps 3-8 条；
-primary_metric 必填：name 是训练代码 POLARIS_METRIC 输出的指标名，
-direction 只能取 maximize（越大越好）或 minimize（越小越好）；
-budget_estimate 是对象（至少含 gpu_hours）。
+约束：
+- hypotheses 1-5 条且必须可被实验证实/证伪；steps 3-8 条；
+- primary_metric 必填：name 是评测代码 POLARIS_METRIC 输出的指标名（对照实验里应是主处理组或均值），
+  direction 只能取 maximize / minimize；budget_estimate 是对象（至少含 gpu_hours）；
+- **对照实验（复现论文常见）**：若研究方案对比多个方法/配置（如 baseline vs 改进），
+  必须在 conditions 里列出（恰一个 role=baseline，其余 role=treatment），并把评测协议写进
+  eval_protocol（数据集/划分/指标/样本数）、把要用的真实数据集写进 datasets；
+  代码将对每个 condition 用同一评测集跑并逐条 POLARIS_METRIC 输出，供平台做对照分析。
+- 若是单一配置的调参类实验，conditions/eval_protocol/datasets 可省略。
 """
 
 CODE_SYSTEM_PROMPT = """\
@@ -83,10 +94,18 @@ CODE_SYSTEM_PROMPT = """\
 {"files": {"requirements.txt": "内容", "run.sh": "内容", "train.py": "内容"}}
 硬约束：
 - 必须包含 requirements.txt 与 run.sh；文件路径必须是相对路径（禁止 .. / 绝对路径 / ~）
-- run.sh 必须支持 --smoke 参数（小样本/1 step 快速通过），并使用 .venv/bin/python 运行
-- 训练/评估代码必须用 print('POLARIS_METRIC ' + json.dumps({"name": 指标名, "step": 步数, \
-"value": 数值})) 输出关键指标
-- 数据集只用小型公开数据或程序合成数据；不得读写工作目录以外的任何路径；不得访问网络下载大文件
+- run.sh 必须支持 --smoke 参数：只跑极小样本（如几条数据、1 个模型、去掉耗时条件）快速验证
+  代码可跑通；非 smoke 时跑计划里的真实规模。用 .venv/bin/python 运行
+- 评测/训练代码必须用 print('POLARIS_METRIC ' + json.dumps({"name": 指标名, "step": 步数, \
+"value": 数值})) 输出关键指标；数字必须来自真实计算，严禁硬编码任何结果
+- 数据只读写工作目录之内（可在 workdir 下建 data_cache/ 缓存）；不得读写 workdir 之外的路径
+- **数据集**：评测/复现类实验可以用 HuggingFace `datasets` 下载真实公开数据集
+  （平台已注入 HF 镜像与出网代理，正常 load_dataset 即可），下载到 workdir 内缓存；
+  合成数据仅用于 smoke。规模按计划的 eval_protocol/datasets 控制，避免超大下载
+- **对照实验**：若计划给了 conditions（baseline + treatments），代码必须对每个 condition
+  用同一评测集、同一协议评测，并对每个 condition 单独输出 POLARIS_METRIC（指标名带上
+  condition 与模型，如 "accuracy/<model>/<condition>"），使平台能对照 baseline vs treatment；
+  eval_protocol 里的数据集/划分/指标/样本数要如实落实
 """
 
 FIX_SYSTEM_PROMPT = (
@@ -97,12 +116,20 @@ FIX_SYSTEM_PROMPT = (
 """
 )
 
+# 自动迭代优化：proposer 能读到**全部历史尝试**的源码/得分/执行轨迹（不是压缩后的反馈），据此提出
+# 下一次尝试。通用机制，适用于调参/提示优化/特征/算法/流程等任何「改实现以提升指标」的实验；灵感来自
+# 「richer access to prior experience 优于过度压缩反馈」这一点，非某类实验专属。
 IMPROVE_SYSTEM_PROMPT = (
     CODE_SYSTEM_PROMPT
     + """\
 
-现在进入自动迭代：上一轮运行已结束，请按 reflection 给出的改进计划（planned_change）
-修改代码/超参，输出修改后的完整文件集合（同上 JSON 格式）。只做说明中的修改，不要重写无关部分。
+现在进入自动迭代优化：目标是改进实验代码/配置，让主指标更好。下面给你**全部**历史尝试的源码、得分与
+执行轨迹（不是压缩后的反馈）——请综合所有先验经验，不要只盯着最后一轮：
+- 借鉴高分尝试里有效的做法，避开低分尝试已被证伪的思路；说明你这次改动的假设与依据。
+- 提出一个**有依据的新尝试**（视实验而定，可改：算法/超参/数据处理/提示词/特征/检索/流程等），
+  而不是无谓微调；有把握时可较大重构，也可延续 reflection 的改进方向。
+- **只改被优化的实现，不改评测协议/数据集/主指标口径**（评测本身保持不变，确保各次尝试可比）。
+输出修改后的完整文件集合（同上 JSON 格式）。
 """
 )
 
@@ -110,9 +137,53 @@ DEBUG_SYSTEM_PROMPT = (
     CODE_SYSTEM_PROMPT
     + """\
 
-现在自动迭代中的正式运行失败了，请根据错误信息修复代码：输出修复后的完整文件集合（同上 JSON 格式）。
+现在自动迭代中的正式运行失败了。先**诊断失败类别与根因**，再决定怎么修——不要只盯着「改几行代码」，
+可以在文件集合内做**方案级调整**：
+- 依赖/环境（缺包、版本冲突、CUDA/显存不足、装不上）→ 改 requirements.txt / run.sh：换/装依赖、
+  选设备、降 batch、精简依赖、必要时换实现方式绕开装不上的包。
+- 模型/框架不兼容（架构不被支持、多模态模型用于纯文本、tokenizer 不匹配、加载报错）→ 换用兼容的
+  加载方式/框架/模型规格（在你能控制的文件范围内）。
+- 配置（超时、样本过大、路径错、显存 OOM）→ 调小规模、修正路径、减小 batch/长度。
+- 代码 bug → 修对应逻辑。
+先用一句话点明诊断（失败属于上面哪类、根因是什么），再输出修复后的**完整文件集合**
+（同上 JSON 格式）。只在文件集合里改，别动评测协议/数据集/主指标口径（保证可比）。
 """
 )
+
+def _render_attempt_archive(
+    archive: list[dict[str, Any]], per_file_cap: int = 2000, best_file_cap: int = 4000
+) -> str:
+    """把历史尝试（源码+得分+轨迹）渲染进迭代 proposer 提示——通用的「先验经验档案」。
+
+    非某类实验专属：渲染每次尝试的**全部**源码文件（不假设入口文件名），最优尝试给更长上下文，
+    其余截断；轨迹给尾部。让 proposer 据全量历史而非最后一轮提出下一次尝试。"""
+    if not archive:
+        return ""
+
+    def _score(c: dict[str, Any]) -> tuple[int, float]:
+        v = c.get("primary_value")
+        return (1, float(v)) if isinstance(v, int | float) else (0, float("-inf"))
+
+    best = max(archive, key=_score)
+    parts = [f"历史尝试档案（共 {len(archive)} 次，含源码/得分/轨迹，据此提出下一次尝试）："]
+    for c in archive:
+        star = " ★迄今最好" if c is best else ""
+        delta = c.get("conditions_delta")
+        delta_s = json.dumps(delta, ensure_ascii=False) if delta else "—"
+        parts.append(
+            f"\n[尝试 seq={c.get('seq')} | 主指标={c.get('primary_value')}{star} | 对照={delta_s}]"
+        )
+        cap = best_file_cap if c is best else per_file_cap
+        # 渲染全部源码文件（跳过 requirements 这类噪音），不假设固定入口名，保证通用
+        for name, code in sorted((c.get("files") or {}).items()):
+            if not code or name == "requirements.txt":
+                continue
+            parts.append(f"源码（{name}，截断 {cap}）：\n{str(code)[:cap]}")
+        trace = c.get("trace") or ""
+        if trace:
+            parts.append(f"执行轨迹尾部：{trace[-600:]}")
+    return "\n".join(parts) + "\n"
+
 
 # ---- 按实验 params 条件追加的 system prompt 段落（plan 与全部 codegen prompt 共用） ----
 
@@ -203,7 +274,11 @@ REFLECTION_SYSTEM_PROMPT = """\
 约束：
 - hypothesis_updates 的 index 是假设清单下标（从 0 开始），status 只能取 verified/falsified/testing
 - 本轮运行失败（exit_code 非 0）时 decision 用 debug；结果已足以回答全部假设时用 stop
+- 本轮失败时，diagnosis 要点明**失败类别**（依赖/环境、模型或框架不兼容、配置/超时/OOM、代码 bug）
+  与根因，并在 planned_change 里给出方案级修法（可换依赖/框架/加载方式，不限于改几行代码）
 - decision=stop 时 stop_reason 必填一句话；decision=improve 时 planned_change 必填
+- 对照实验：若给了「对照汇总」，据 baseline vs treatment 的 delta 判断假设成立与否
+  （处理组是否优于 baseline），别只看单个 primary_value；对照结果已清晰时可直接 stop
 """
 
 PLOT_SYSTEM_PROMPT = """\
@@ -230,6 +305,9 @@ REPORT_SYSTEM_PROMPT = """\
 你是 Experiment Lab 的报告撰写人。基于实验计划、迭代过程、指标数据与日志尾部撰写中文 markdown 报告，
 以「## 实验报告」开头，包含：结果概览、指标表现、假设验证结论（逐条 verified/falsified/
 testing）、局限与后续建议。直接输出 markdown，不要输出 JSON。
+若给了「对照汇总」（对照实验）：用一个 markdown 表格列出各 condition（含 baseline）的指标与
+相对 baseline 的 delta，并据此判断处理组是否显著优于 baseline、结论是否复现了预期效应。
+数字一律引用给定的指标数据/对照汇总，不得编造。
 """
 
 
@@ -385,13 +463,36 @@ def validate_plan(data: Any) -> dict[str, Any]:
     budget = data.get("budget_estimate")
     if not isinstance(budget, dict) or not budget:
         raise ValueError('expected object "budget_estimate"')
-    return {
+    out: dict[str, Any] = {
         "hypotheses": hypotheses,
         "repro_strategy": repro.strip(),
         "steps": steps,
         "primary_metric": {"name": pm_name.strip(), "direction": pm_direction},
         "budget_estimate": budget,
     }
+    # 对照实验的可选结构（复现类实验用）：conditions/eval_protocol/datasets 透传，供 setup
+    # 代码生成与 analyze/report 对照分析消费。恰一个 baseline 才算有效对照。
+    conditions = data.get("conditions")
+    if isinstance(conditions, list) and conditions:
+        norm = []
+        for c in conditions:
+            if not isinstance(c, dict) or not str(c.get("name") or "").strip():
+                continue
+            role = c.get("role") if c.get("role") in ("baseline", "treatment") else "treatment"
+            norm.append(
+                {
+                    "name": str(c["name"]).strip(),
+                    "role": role,
+                    "description": str(c.get("description") or "").strip(),
+                }
+            )
+        if norm:
+            out["conditions"] = norm
+    if isinstance(data.get("eval_protocol"), dict):
+        out["eval_protocol"] = data["eval_protocol"]
+    if isinstance(data.get("datasets"), list):
+        out["datasets"] = data["datasets"]
+    return out
 
 
 def validate_files(data: Any) -> dict[str, str]:
@@ -569,6 +670,99 @@ def _elapsed_hours(started_at: datetime | None) -> float:
     return max(0.0, (utcnow() - started).total_seconds() / 3600.0)
 
 
+def _last_value(series: Any) -> float | None:
+    """从一条 metric 序列取末值（兼容 [{step,value}] 列表或标量）。"""
+    if isinstance(series, list) and series:
+        last = series[-1]
+        v = last.get("value") if isinstance(last, dict) else last
+    else:
+        v = series
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _conditions_delta(experiment: Experiment) -> dict[str, Any] | None:
+    """对照实验的确定性汇总：按 plan.conditions 把 experiment.metrics 里各指标末值归到
+    对应 condition（指标名以 /<condition> 结尾即归属，只聚合主指标族），算每组均值与相对
+    baseline 的 delta。无 conditions 或无可归属指标时返回 None（退化为原单指标分析）。"""
+    plan = experiment.plan or {}
+    conditions = plan.get("conditions")
+    if not isinstance(conditions, list) or not conditions:
+        return None
+    pm_name = str((plan.get("primary_metric") or {}).get("name") or "").strip()
+    pm_root = pm_name.split("/")[0] if pm_name else ""
+    lasts = {name: _last_value(s) for name, s in (experiment.metrics or {}).items()}
+
+    def _belongs(name: str, cond: str) -> bool:
+        if not (name.endswith(f"/{cond}") or name == cond):
+            return False
+        return not pm_root or name.split("/")[0] == pm_root or name == cond
+
+    scores: dict[str, float] = {}
+    for c in conditions:
+        cond = str(c.get("name") or "").strip()
+        if not cond:
+            continue
+        vals = [v for name, v in lasts.items() if v is not None and _belongs(name, cond)]
+        if vals:
+            scores[cond] = round(sum(vals) / len(vals), 3)
+    if not scores:
+        return None
+    baseline = next(
+        (
+            str(c.get("name")).strip()
+            for c in conditions
+            if c.get("role") == "baseline" and str(c.get("name")).strip() in scores
+        ),
+        None,
+    )
+    deltas: dict[str, float] = {}
+    if baseline is not None:
+        deltas = {c: round(v - scores[baseline], 3) for c, v in scores.items() if c != baseline}
+    return {"baseline": baseline, "scores": scores, "deltas_vs_baseline": deltas}
+
+
+def _proposal_context(idea: Idea) -> str:
+    """把 idea 2.0 深耕产物（Research Proposal）的结构化研究方案渲染成计划提示上下文。
+
+    深耕 idea（depth=proposal）的 goal 带 objectives/success_criteria/resources_needed 与专为
+    生成实验设计的 smoke_plan（baselines/datasets/metrics/conditions）——把「研究方案」忠实转成
+    「实验计划」的关键输入；sketch 草案回退空串。"""
+    if idea.depth != "proposal" or not isinstance(idea.goal, dict):
+        return ""
+    g = idea.goal
+    parts = ["\n研究方案（Research Proposal，务必据此产出忠实的实验计划）："]
+    if idea.research_type:
+        parts.append(f"- 研究类型：{idea.research_type}")
+    for key, label in (("task", "任务"), ("question", "研究问题"), ("scope", "范围")):
+        if g.get(key):
+            parts.append(f"- {label}：{str(g[key])[:400]}")
+    for key, label in (("objectives", "研究目标"), ("success_criteria", "成功标准")):
+        vals = g.get(key)
+        if isinstance(vals, list) and vals:
+            parts.append(f"- {label}：" + "；".join(str(v)[:120] for v in vals[:6]))
+    res = g.get("resources_needed")
+    if isinstance(res, dict) and res.get("data"):
+        d = res["data"]
+        rendered = "；".join(str(v)[:100] for v in d[:5]) if isinstance(d, list) else str(d)[:300]
+        parts.append(f"- 需要的数据：{rendered}")
+    exp_design = g.get("smoke_plan") or g.get("experiments")
+    if exp_design:
+        design_json = json.dumps(exp_design, ensure_ascii=False)[:1500]
+        parts.append(f"- 论文/方案给出的实验设计：{design_json}")
+    if isinstance(idea.evidence, list) and idea.evidence:
+        grounds = [
+            str(e.get("title") or e.get("why") or "")[:80]
+            for e in idea.evidence
+            if isinstance(e, dict)
+        ][:4]
+        if any(grounds):
+            parts.append("- 依据文献：" + "；".join(x for x in grounds if x))
+    return "\n".join(parts) + "\n"
+
+
 # ---- 1. 计划（stage=experiment） ----
 
 
@@ -608,7 +802,8 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             user_prompt = (
                 f"想法标题：{idea.title}\n"
                 f"想法概述：{idea.summary or '（无）'}\n"
-                f"想法详情：\n{(idea.content or '')[:4000]}\n\n"
+                f"想法详情：\n{(idea.content or '')[:4000]}\n"
+                f"{_proposal_context(idea)}\n"
                 f"相关 wiki 摘要：\n{wiki_context}\n\n"
                 f"预算约束：{json.dumps(experiment.budget or {}, ensure_ascii=False)}\n"
                 f"GPU 提示：{gpu_hint or '（无）'}"
@@ -660,7 +855,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         files = ctx.checkpoint.get("exp_files")
         if not isinstance(files, dict):  # 断点幂等：已生成的代码不重复调 LLM
             user_prompt = (
-                f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:6000]}\n"
+                f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:8000]}\n"
                 f"预算：{json.dumps(experiment.budget or {}, ensure_ascii=False)}"
             )
             files = await _complete_json(
@@ -875,7 +1070,10 @@ async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str
             session.add(run)
             await session.commit()
             await session.refresh(run)
-            observation = await _poll_run(ctx, session, executor, experiment, run, max_hours)
+            # _poll_run 可能因断连重连返回新的 executor，后续读取/关闭都用返回的这个
+            observation, executor = await _poll_run(
+                ctx, session, executor, experiment, run, max_hours
+            )
             if observation.get("cancelled"):
                 return observation  # _poll_run 已 kill 进程并同步实验状态
 
@@ -961,11 +1159,21 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             run.log_path, _LOG_TAIL_FOR_REFLECTION
         )
         hyp_count = len(plan.get("hypotheses", []))
+        cond_delta = _conditions_delta(experiment)
+        cond_line = (
+            f"对照汇总（baseline vs treatment，平台确定性计算）："
+            f"{json.dumps(cond_delta, ensure_ascii=False)}\n"
+            if cond_delta
+            else ""
+        )
+        run_lasts = {k: _last_value(v) for k, v in (run.metrics or {}).items()}
         reflection_user = (
             f"实验计划：{json.dumps(plan, ensure_ascii=False)[:4000]}\n"
             f"主指标：{json.dumps(pm, ensure_ascii=False)}（假设共 {hyp_count} 条）\n"
             f"本轮运行：seq={run.seq} status={run.status} exit_code={run.exit_code} "
             f"primary_value={run.primary_value}\n"
+            f"本轮各指标末值：{json.dumps(run_lasts, ensure_ascii=False)[:1500]}\n"
+            f"{cond_line}"
             f"历史各轮：{json.dumps(history, ensure_ascii=False)}\n"
             f"迭代状态：无提升连续 {state['no_improve_streak']} 轮，"
             f"debug 已用 {state['debug_count']}/{MAX_DEBUG_FIXES} 次\n"
@@ -978,6 +1186,21 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             validate=validate_reflection,
         )
         run.reflection = reflection
+
+        # 尝试存档（通用先验经验档案）：把本轮实现的源码/得分/轨迹存起来，供后续迭代 proposer 读取
+        # 全量历史（不是只看上一轮）。记录产生本轮 run 的实现（当前 exp_files）。
+        archive = list(ctx.checkpoint.get("attempt_archive") or [])
+        archive.append(
+            {
+                "seq": run.seq,
+                "primary_value": run.primary_value,
+                "conditions_delta": cond_delta,
+                "files": dict(ctx.checkpoint.get("exp_files") or {}),
+                "trace": "\n".join(log_lines[-30:]),
+                "observation": reflection.get("observation"),
+            }
+        )
+        ctx.checkpoint["attempt_archive"] = archive
 
         # 假设回写 + iteration_state 落库
         plan = _apply_hypothesis_updates(plan, reflection["hypothesis_updates"])
@@ -1028,19 +1251,35 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             experiment.iteration_state = dict(state)
             await session.commit()
 
-        # improve / debug：LLM 改文件（diff 说明进 prompt）→ SSH 覆写
+        # improve → 迭代优化 proposer（读全量尝试档案提下一候选）；debug → 按报错修当前文件
         files: dict[str, str] = dict(ctx.checkpoint.get("exp_files") or {})
-        system_prompt = _prompt_with_context(
-            DEBUG_SYSTEM_PROMPT if decision == "debug" else IMPROVE_SYSTEM_PROMPT, ctx
-        )
-        fix_user = (
-            f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
-            f"reflection 观察：{reflection['observation']}\n"
-            f"诊断：{reflection['diagnosis']}\n"
-            f"planned_change（修改说明）：{reflection.get('planned_change') or '（无）'}\n"
-            f"本轮 exit_code：{run.exit_code}\n"
-            f"本轮日志尾部：\n" + "\n".join(log_lines[-20:])
-        )
+        if decision == "debug":
+            system_prompt = _prompt_with_context(DEBUG_SYSTEM_PROMPT, ctx)
+            # 失败诊断也带上「历史尝试档案」：让 debug 能看见前面试过什么、哪些方案已被证伪，
+            # 从而做方案级调整（换依赖/框架/加载方式）而非反复在同一条死路上改代码。
+            prior = archive[:-1]  # 除当前失败轮外的历史尝试
+            archive_ctx = _render_attempt_archive(prior) if prior else ""
+            fix_user = (
+                (archive_ctx + "\n" if archive_ctx else "")
+                + f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
+                + f"reflection 观察：{reflection['observation']}\n"
+                + f"诊断：{reflection['diagnosis']}\n"
+                + f"planned_change（修改说明）：{reflection.get('planned_change') or '（无）'}\n"
+                + f"本轮 exit_code：{run.exit_code}\n"
+                + "本轮日志尾部（据此定位失败类别与根因）：\n"
+                + "\n".join(log_lines[-40:])
+            )
+        else:
+            system_prompt = _prompt_with_context(IMPROVE_SYSTEM_PROMPT, ctx)
+            fix_user = (
+                _render_attempt_archive(archive)
+                + f"\n主指标：{json.dumps(pm, ensure_ascii=False)}\n"
+                + f"当前尝试 seq={run.seq} 主指标={run.primary_value}；"
+                + f"reflection 诊断：{reflection['diagnosis']}\n"
+                + f"reflection 改进方向（参考）：{reflection.get('planned_change') or '（无）'}\n"
+                + "请综合以上全部尝试的源码/得分/轨迹，提出一个有依据的新尝试，"
+                + "输出修改后的完整文件集合。"
+            )
         files = await _complete_json(
             ctx, system=system_prompt, user=fix_user, validate=validate_files
         )
@@ -1061,6 +1300,11 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         }
 
 
+def _reconnect_backoff(streak: int) -> float:
+    """轮询断连后的指数退避秒数（上限 30s）。抽成函数便于测试注入零退避。"""
+    return min(30.0, 2.0**streak)
+
+
 async def _poll_run(
     ctx: ActionContext,
     session: AsyncSession,
@@ -1068,8 +1312,17 @@ async def _poll_run(
     experiment: Experiment,
     run: ExperimentRun,
     max_hours: float,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], ssh_exec.SSHExecutor]:
+    """轮询远端运行直到结束。返回 (observation, executor)——executor 可能在轮询中因
+    连接断开而重连，调用方须使用返回的（存活）executor 做后续读取与关闭。
+
+    容错要点：轮询期间底层 SSH 连接可能被服务器 idle 断开或网络抖动切断。远端运行状态
+    （run.exit/run.log/pid）都持久化在服务器上，且进程经 nohup 脱离会话——因此瞬时断连
+    应「重连后继续跟踪」而非让实验失败（历史 bug：一次 ChannelOpenError 即判实验 failed，
+    而进程其实还在跑）。仅在连续多次重连失败后才放弃。"""
     offset = 0
+    conn_fail_streak = 0
+    max_conn_fails = 6  # 连续重连失败上限（配合指数退避≈数分钟）后才判失败
 
     async def ingest_chunk() -> None:
         nonlocal offset
@@ -1084,7 +1337,11 @@ async def _poll_run(
         await session.commit()
 
     async def finish(exit_code: int | None) -> dict[str, Any]:
-        await ingest_chunk()  # 收尾：抓最后一段日志
+        try:
+            await ingest_chunk()  # 收尾：抓最后一段日志
+        except Exception as e:  # noqa: BLE001 — 收尾抓日志断连不该翻盘
+            if not ssh_exec.is_connection_error(e):
+                raise
         run.exit_code = exit_code
         run.status = "succeeded" if exit_code == 0 else "failed"
         run.finished_at = utcnow()
@@ -1097,36 +1354,79 @@ async def _poll_run(
             "metric_names": sorted((run.metrics or {}).keys()),
         }
 
+    async def reconnect() -> None:
+        nonlocal executor
+        with contextlib.suppress(Exception):  # 旧连接已坏，关闭失败无所谓
+            await executor.close()
+        executor = await _open_executor(session, ctx, experiment)
+
     while True:
-        # 协作式取消：每轮查 voyage 状态（cancel API 会把 voyage 置 cancelled）
+        # 协作式取消：每轮查 voyage 状态（仅 DB，不碰 SSH）
         voyage_status = (
             await session.execute(select(VoyageRun.status).where(VoyageRun.id == ctx.run.id))
         ).scalar_one()
         if voyage_status == "cancelled":
-            await executor.kill_pid(int(run.pid or 0))
-            await ingest_chunk()
+            try:
+                await executor.kill_pid(int(run.pid or 0))
+                await ingest_chunk()
+            except Exception as e:  # noqa: BLE001 — 取消收尾尽力而为
+                if not ssh_exec.is_connection_error(e):
+                    raise
             run.status = "failed"
             run.finished_at = utcnow()
             await session.commit()
             await session.refresh(experiment)
             if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
                 await _set_status(ctx, session, experiment, "cancelled")
-            return {"cancelled": True, "run_id": str(run.id), "seq": run.seq}
+            return {"cancelled": True, "run_id": str(run.id), "seq": run.seq}, executor
 
-        await ingest_chunk()
-
-        exit_code = await executor.read_exit_code()
-        if exit_code is not None:
-            return await finish(exit_code)
-
-        alive = await executor.check_pid(int(run.pid or 0))
-        if not alive:
-            # 进程没了但还没读到退出码：再读一次（竞态），仍无则按 failed 收尾
-            return await finish(await executor.read_exit_code())
+        try:
+            await ingest_chunk()
+            exit_code = await executor.read_exit_code()
+            if exit_code is not None:
+                return await finish(exit_code), executor
+            alive = await executor.check_pid(int(run.pid or 0))
+            if not alive:
+                # 进程没了但还没读到退出码：再读一次（竞态），仍无则按 failed 收尾
+                return await finish(await executor.read_exit_code()), executor
+            conn_fail_streak = 0
+        except Exception as e:  # noqa: BLE001 — 瞬时断连：重连续跑；其它异常照常抛
+            if not ssh_exec.is_connection_error(e):
+                raise
+            conn_fail_streak += 1
+            if conn_fail_streak > max_conn_fails:
+                raise RuntimeError(
+                    f"SSH 连接反复断开（连续 {conn_fail_streak} 次），放弃轮询 run={run.seq}：{e}"
+                ) from e
+            session.add(
+                Activity(
+                    project_id=ctx.run.project_id,
+                    actor="system:voyage",
+                    kind="experiment.ssh_reconnect",
+                    message=f"轮询期间 SSH 断开，重连中（第 {conn_fail_streak} 次）：{type(e).__name__}",  # noqa: E501
+                    payload={
+                        "experiment_id": str(experiment.id),
+                        "run_seq": run.seq,
+                        "attempt": conn_fail_streak,
+                    },
+                )
+            )
+            await session.commit()
+            await asyncio.sleep(_reconnect_backoff(conn_fail_streak))
+            try:
+                await reconnect()
+            except Exception as re:  # noqa: BLE001 — 重连本身失败：下轮继续退避重试
+                if not ssh_exec.is_connection_error(re):
+                    raise
+            continue  # 远端状态持久化，重连后下一轮继续跟踪
 
         if max_hours >= 0 and _elapsed_hours(run.started_at) > max_hours:
-            await executor.kill_pid(int(run.pid or 0))
-            await ingest_chunk()
+            try:
+                await executor.kill_pid(int(run.pid or 0))
+                await ingest_chunk()
+            except Exception as e:  # noqa: BLE001
+                if not ssh_exec.is_connection_error(e):
+                    raise
             run.status = "failed"
             run.finished_at = utcnow()
             await session.commit()
@@ -1362,11 +1662,19 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
             }
             for r in runs
         ]
+        cond_delta = _conditions_delta(experiment)
+        cond_line = (
+            f"对照汇总（baseline vs treatment，平台确定性计算）："
+            f"{json.dumps(cond_delta, ensure_ascii=False)}\n"
+            if cond_delta
+            else ""
+        )
         user_prompt = (
             f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:4000]}\n"
             f"迭代各轮：{json.dumps(runs_brief, ensure_ascii=False)}\n"
             f"迭代状态：{json.dumps(experiment.iteration_state or {}, ensure_ascii=False)}\n"
             f"指标数据：{json.dumps(experiment.metrics or {}, ensure_ascii=False)[:4000]}\n"
+            f"{cond_line}"
             f"日志尾部：\n" + "\n".join(log_lines)
         )
         result = await ctx.llm.complete(
