@@ -467,8 +467,13 @@ class FakeProvider(LLMProvider):
                 {"name": "baseline", "role": "baseline", "description": "无处理对照（fake）"},
                 {"name": "treatment_a", "role": "treatment", "description": "处理组（fake）"},
             ]
-            plan["eval_protocol"] = {"dataset": "fake-bench", "split": "test",
-                                     "metric": "accuracy", "n_examples": 50, "n_samples": 1}
+            plan["eval_protocol"] = {
+                "dataset": "fake-bench",
+                "split": "test",
+                "metric": "accuracy",
+                "n_examples": 50,
+                "n_samples": 1,
+            }
             plan["datasets"] = [{"name": "fake/bench", "purpose": "test", "size_hint": "50"}]
         return json.dumps(plan, ensure_ascii=False)
 

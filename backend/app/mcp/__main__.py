@@ -25,9 +25,7 @@ async def _resolve_user_id() -> uuid.UUID:
     if not email:
         raise SystemExit("需设置环境变量 POLARIS_MCP_USER_EMAIL（MCP 请求以该用户身份执行）")
     async with get_sessionmaker()() as session:
-        user = (
-            await session.execute(select(User).where(User.email == email))
-        ).scalar_one_or_none()
+        user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if user is None:
         raise SystemExit(f"用户不存在：{email}")
     return user.id

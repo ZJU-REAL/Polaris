@@ -210,9 +210,7 @@ async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     if not name:
         raise ValueError("get_concept 需要非空 name")
     async with get_sessionmaker()() as session:
-        stmt = select(Concept).where(
-            Concept.project_id == ctx.project_id, Concept.name.ilike(name)
-        )
+        stmt = select(Concept).where(Concept.project_id == ctx.project_id, Concept.name.ilike(name))
         concept = (await session.execute(stmt)).scalars().first()
         if concept is None:  # 精确不中再模糊
             stmt = (

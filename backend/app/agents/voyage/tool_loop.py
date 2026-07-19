@@ -91,9 +91,7 @@ async def run_tool_loop(
                 summary = f"{tool_name} 出错：{e}"
             trace.append({"tool": tool_name, "args": args, "summary": summary})
             await ctx.log(f"{label}：{summary}")
-            messages.append(
-                Message(role="user", content=f"工具结果：\n{payload[:result_chars]}")
-            )
+            messages.append(Message(role="user", content=f"工具结果：\n{payload[:result_chars]}"))
             continue
         messages.append(
             Message(role="user", content="上一条输出不合法。只输出 tool 或 finish 的 JSON 对象。")

@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       texlive-xetex texlive-luatex texlive-bibtex-extra texlive-science texlive-pictures \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      texlive-lang-chinese fonts-noto-cjk fontconfig \
+      texlive-lang-chinese fonts-noto-cjk fonts-liberation2 fontconfig \
     && latexmk --version && pdflatex --version | head -1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 # Windows/mac 中文字体名（FangSong/SimSun/SimHei/KaiTi…）→ Noto CJK 别名，供 xelatex

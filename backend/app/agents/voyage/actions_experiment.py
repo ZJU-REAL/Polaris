@@ -150,6 +150,7 @@ DEBUG_SYSTEM_PROMPT = (
 """
 )
 
+
 def _render_attempt_archive(
     archive: list[dict[str, Any]], per_file_cap: int = 2000, best_file_cap: int = 4000
 ) -> str:

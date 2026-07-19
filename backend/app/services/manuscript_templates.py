@@ -39,7 +39,9 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
 MAX_FILES = 400
 _SKIP_DIRS = {".git", "__MACOSX", ".github", ".vscode", "node_modules"}
-_SKIP_SUFFIXES = {".pdf", ".log", ".aux", ".out", ".synctex", ".gz", ".zip", ".DS_Store"}
+# 注：.pdf 不在此列——很多模板用 PDF 图作 \includegraphics 素材（如 ICML 的
+# icml_numpapers.pdf）。编译产物样例 PDF（与某 .tex 同名）另在 _drop_output_pdfs 里剔除
+_SKIP_SUFFIXES = {".log", ".aux", ".out", ".synctex", ".gz", ".zip", ".DS_Store"}
 
 
 class TemplateError(Exception):
@@ -123,6 +125,68 @@ def _strip_common_prefix(members: dict[str, bytes]) -> dict[str, bytes]:
     return members
 
 
+# Windows/mac 专有中文字体名 → Linux 上可用的自由字体（Noto CJK / Liberation）。
+# 这些字体在编译主机（Linux）上根本不存在，模板（如 zjuthesis）却按名请求，fontspec
+# 会「font cannot be found」直接失败；fontconfig 别名对 fontspec 不稳，故在导入时按名替换。
+_FONT_SUBSTITUTIONS = {
+    # 宋/仿宋/楷（衬线族）
+    "FangSong": "Noto Serif CJK SC",
+    "FangSong_GB2312": "Noto Serif CJK SC",
+    "STFangsong": "Noto Serif CJK SC",
+    "SimSun": "Noto Serif CJK SC",
+    "NSimSun": "Noto Serif CJK SC",
+    "STSong": "Noto Serif CJK SC",
+    "Songti SC": "Noto Serif CJK SC",
+    "Songti SC Light": "Noto Serif CJK SC",
+    "Songti SC Bold": "Noto Serif CJK SC",
+    "KaiTi": "Noto Serif CJK SC",
+    "KaiTi_GB2312": "Noto Serif CJK SC",
+    "STKaiti": "Noto Serif CJK SC",
+    "Kaiti SC": "Noto Serif CJK SC",
+    "Kaiti SC Bold": "Noto Serif CJK SC",
+    # 黑体（无衬线族）
+    "SimHei": "Noto Sans CJK SC",
+    "STHeiti": "Noto Sans CJK SC",
+    "Heiti SC": "Noto Sans CJK SC",
+    "Heiti SC Light": "Noto Sans CJK SC",
+    "Heiti SC Medium": "Noto Sans CJK SC",
+    "Microsoft YaHei": "Noto Sans CJK SC",
+    # 西文
+    "Times New Roman": "Liberation Serif",
+    "Arial": "Liberation Sans",
+}
+# 越长的名字先替换，避免 "Songti SC" 抢先吃掉 "Songti SC Light"
+_FONT_SUB_ORDER = sorted(_FONT_SUBSTITUTIONS, key=len, reverse=True)
+_TEXT_SUFFIXES = (".tex", ".cls", ".sty", ".def", ".ltx", ".cfg")
+
+
+def _drop_output_pdfs(members: dict[str, bytes]) -> dict[str, bytes]:
+    """剔除「编译产物样例」PDF（与某 .tex 同名，如 example_paper.pdf 对 example_paper.tex），
+    但保留作图片素材的 PDF（如 ICML 的 icml_numpapers.pdf，被 \\includegraphics 引用）。"""
+    tex_stems = {p.rsplit(".", 1)[0] for p in members if p.lower().endswith(".tex")}
+    return {
+        p: b
+        for p, b in members.items()
+        if not (p.lower().endswith(".pdf") and p.rsplit(".", 1)[0] in tex_stems)
+    }
+
+
+def _substitute_unavailable_fonts(members: dict[str, bytes]) -> dict[str, bytes]:
+    """把模板文本文件里按名请求的 Windows/mac 中文字体换成 Linux 可用的自由字体，
+    否则 xelatex 会因「font cannot be found」编不过（如 zjuthesis）。只动 {字体名} 花括号
+    包裹处，且这些名字在 Linux 编译主机本就不存在，替换安全。"""
+    out: dict[str, bytes] = {}
+    for path, data in members.items():
+        if path.lower().endswith(_TEXT_SUFFIXES) and not is_binary_bytes(data):
+            text = data.decode("utf-8", "replace")
+            if any(name in text for name in _FONT_SUBSTITUTIONS):
+                for name in _FONT_SUB_ORDER:
+                    text = text.replace("{" + name + "}", "{" + _FONT_SUBSTITUTIONS[name] + "}")
+                data = text.encode("utf-8")
+        out[path] = data
+    return out
+
+
 def _select_subdir(members: dict[str, bytes], subdir: str) -> dict[str, bytes]:
     """只保留仓库内某个子目录（并把它拍平到根）。用于「一个仓库塞了多套模板」的情况
     （如 ICLR Master-Template 把各年份样式放在 iclrYYYY/ 子目录，且重名 .sty 互相干扰）。
@@ -149,7 +213,7 @@ async def _persist(
     meta: dict[str, Any] | None,
     key: str | None = None,
 ) -> ManuscriptTemplate:
-    members = _strip_common_prefix(members)
+    members = _drop_output_pdfs(_substitute_unavailable_fonts(_strip_common_prefix(members)))
     if not members:
         raise TemplateError("压缩包为空或只含被忽略的文件")
     main_tex = _detect_main_tex(list(members), members)

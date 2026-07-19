@@ -4,6 +4,7 @@
 这些是「从研究方案自动构建/分析对照实验」的核心新逻辑，用纯单元测试直接覆盖，
 不依赖 DB/SSH（voyage e2e 由既有 test_experiments 覆盖）。
 """
+
 from types import SimpleNamespace
 
 from app.agents.voyage.actions_experiment import (
@@ -23,8 +24,12 @@ def test_proposal_context_renders_for_proposal_depth():
             "objectives": ["对比无检索与检索 harness"],
             "success_criteria": ["检索组显著优于 baseline"],
             "resources_needed": {"data": ["MATH-500", "NuminaMath 语料"]},
-            "smoke_plan": {"baselines": ["no_retrieval"], "treatments": ["bm25", "dense"],
-                           "datasets": ["MATH-500"], "metrics": ["accuracy"]},
+            "smoke_plan": {
+                "baselines": ["no_retrieval"],
+                "treatments": ["bm25", "dense"],
+                "datasets": ["MATH-500"],
+                "metrics": ["accuracy"],
+            },
         },
         evidence=[{"title": "Meta-Harness", "why": "检索 harness 提升推理"}],
     )
@@ -43,21 +48,23 @@ def test_proposal_context_empty_for_sketch():
 
 
 def test_validate_plan_passes_through_conditions():
-    plan = validate_plan({
-        "hypotheses": [{"text": "检索优于无检索", "status": "testing"}],
-        "repro_strategy": "复现 Table 6",
-        "steps": ["下载数据", "跑三条件", "对比"],
-        "primary_metric": {"name": "accuracy", "direction": "maximize"},
-        "budget_estimate": {"gpu_hours": 1},
-        "conditions": [
-            {"name": "no_retrieval", "role": "baseline", "description": "无检索"},
-            {"name": "bm25", "role": "treatment", "description": "BM25"},
-            {"name": "bad", "description": ""},  # role 缺失 → treatment
-            {"role": "treatment"},  # 无 name → 丢弃
-        ],
-        "eval_protocol": {"dataset": "MATH-500", "metric": "accuracy", "n_examples": 130},
-        "datasets": [{"name": "HuggingFaceH4/MATH-500", "purpose": "test"}],
-    })
+    plan = validate_plan(
+        {
+            "hypotheses": [{"text": "检索优于无检索", "status": "testing"}],
+            "repro_strategy": "复现 Table 6",
+            "steps": ["下载数据", "跑三条件", "对比"],
+            "primary_metric": {"name": "accuracy", "direction": "maximize"},
+            "budget_estimate": {"gpu_hours": 1},
+            "conditions": [
+                {"name": "no_retrieval", "role": "baseline", "description": "无检索"},
+                {"name": "bm25", "role": "treatment", "description": "BM25"},
+                {"name": "bad", "description": ""},  # role 缺失 → treatment
+                {"role": "treatment"},  # 无 name → 丢弃
+            ],
+            "eval_protocol": {"dataset": "MATH-500", "metric": "accuracy", "n_examples": 130},
+            "datasets": [{"name": "HuggingFaceH4/MATH-500", "purpose": "test"}],
+        }
+    )
     conds = plan["conditions"]
     assert [c["name"] for c in conds] == ["no_retrieval", "bm25", "bad"]  # 无 name 的被丢
     assert conds[0]["role"] == "baseline" and conds[2]["role"] == "treatment"
@@ -66,24 +73,28 @@ def test_validate_plan_passes_through_conditions():
 
 
 def test_validate_plan_backward_compatible_without_conditions():
-    plan = validate_plan({
-        "hypotheses": [{"text": "h", "status": "testing"}],
-        "repro_strategy": "r",
-        "steps": ["a", "b", "c"],
-        "primary_metric": {"name": "loss", "direction": "minimize"},
-        "budget_estimate": {"gpu_hours": 1},
-    })
+    plan = validate_plan(
+        {
+            "hypotheses": [{"text": "h", "status": "testing"}],
+            "repro_strategy": "r",
+            "steps": ["a", "b", "c"],
+            "primary_metric": {"name": "loss", "direction": "minimize"},
+            "budget_estimate": {"gpu_hours": 1},
+        }
+    )
     assert "conditions" not in plan and "eval_protocol" not in plan
 
 
 def test_conditions_delta_computes_baseline_vs_treatment():
     exp = SimpleNamespace(
-        plan={"primary_metric": {"name": "accuracy", "direction": "maximize"},
-              "conditions": [
-                  {"name": "no_retrieval", "role": "baseline"},
-                  {"name": "bm25", "role": "treatment"},
-                  {"name": "dense", "role": "treatment"},
-              ]},
+        plan={
+            "primary_metric": {"name": "accuracy", "direction": "maximize"},
+            "conditions": [
+                {"name": "no_retrieval", "role": "baseline"},
+                {"name": "bm25", "role": "treatment"},
+                {"name": "dense", "role": "treatment"},
+            ],
+        },
         # 两个模型 × 三条件的 accuracy 序列（[{step,value}]）
         metrics={
             "accuracy/m1/no_retrieval": [{"step": 0, "value": 30.0}],
