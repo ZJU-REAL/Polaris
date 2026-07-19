@@ -23,6 +23,7 @@
 """
 
 import asyncio
+import contextlib
 import functools
 import json
 import re
@@ -424,11 +425,13 @@ def validate_plan(data: Any) -> dict[str, Any]:
             if not isinstance(c, dict) or not str(c.get("name") or "").strip():
                 continue
             role = c.get("role") if c.get("role") in ("baseline", "treatment") else "treatment"
-            norm.append({
-                "name": str(c["name"]).strip(),
-                "role": role,
-                "description": str(c.get("description") or "").strip(),
-            })
+            norm.append(
+                {
+                    "name": str(c["name"]).strip(),
+                    "role": role,
+                    "description": str(c.get("description") or "").strip(),
+                }
+            )
         if norm:
             out["conditions"] = norm
     if isinstance(data.get("eval_protocol"), dict):
@@ -654,8 +657,11 @@ def _conditions_delta(experiment: Experiment) -> dict[str, Any] | None:
     if not scores:
         return None
     baseline = next(
-        (str(c.get("name")).strip() for c in conditions
-         if c.get("role") == "baseline" and str(c.get("name")).strip() in scores),
+        (
+            str(c.get("name")).strip()
+            for c in conditions
+            if c.get("role") == "baseline" and str(c.get("name")).strip() in scores
+        ),
         None,
     )
     deltas: dict[str, float] = {}
@@ -693,8 +699,11 @@ def _proposal_context(idea: Idea) -> str:
         design_json = json.dumps(exp_design, ensure_ascii=False)[:1500]
         parts.append(f"- 论文/方案给出的实验设计：{design_json}")
     if isinstance(idea.evidence, list) and idea.evidence:
-        grounds = [str(e.get("title") or e.get("why") or "")[:80]
-                   for e in idea.evidence if isinstance(e, dict)][:4]
+        grounds = [
+            str(e.get("title") or e.get("why") or "")[:80]
+            for e in idea.evidence
+            if isinstance(e, dict)
+        ][:4]
         if any(grounds):
             parts.append("- 依据文献：" + "；".join(x for x in grounds if x))
     return "\n".join(parts) + "\n"
@@ -1007,7 +1016,10 @@ async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str
             session.add(run)
             await session.commit()
             await session.refresh(run)
-            observation = await _poll_run(ctx, session, executor, experiment, run, max_hours)
+            # _poll_run 可能因断连重连返回新的 executor，后续读取/关闭都用返回的这个
+            observation, executor = await _poll_run(
+                ctx, session, executor, experiment, run, max_hours
+            )
             if observation.get("cancelled"):
                 return observation  # _poll_run 已 kill 进程并同步实验状态
 
@@ -1096,7 +1108,9 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         cond_delta = _conditions_delta(experiment)
         cond_line = (
             f"对照汇总（baseline vs treatment，平台确定性计算）："
-            f"{json.dumps(cond_delta, ensure_ascii=False)}\n" if cond_delta else ""
+            f"{json.dumps(cond_delta, ensure_ascii=False)}\n"
+            if cond_delta
+            else ""
         )
         run_lasts = {k: _last_value(v) for k, v in (run.metrics or {}).items()}
         reflection_user = (
@@ -1201,6 +1215,11 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         }
 
 
+def _reconnect_backoff(streak: int) -> float:
+    """轮询断连后的指数退避秒数（上限 30s）。抽成函数便于测试注入零退避。"""
+    return min(30.0, 2.0**streak)
+
+
 async def _poll_run(
     ctx: ActionContext,
     session: AsyncSession,
@@ -1208,8 +1227,17 @@ async def _poll_run(
     experiment: Experiment,
     run: ExperimentRun,
     max_hours: float,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], ssh_exec.SSHExecutor]:
+    """轮询远端运行直到结束。返回 (observation, executor)——executor 可能在轮询中因
+    连接断开而重连，调用方须使用返回的（存活）executor 做后续读取与关闭。
+
+    容错要点：轮询期间底层 SSH 连接可能被服务器 idle 断开或网络抖动切断。远端运行状态
+    （run.exit/run.log/pid）都持久化在服务器上，且进程经 nohup 脱离会话——因此瞬时断连
+    应「重连后继续跟踪」而非让实验失败（历史 bug：一次 ChannelOpenError 即判实验 failed，
+    而进程其实还在跑）。仅在连续多次重连失败后才放弃。"""
     offset = 0
+    conn_fail_streak = 0
+    max_conn_fails = 6  # 连续重连失败上限（配合指数退避≈数分钟）后才判失败
 
     async def ingest_chunk() -> None:
         nonlocal offset
@@ -1224,7 +1252,11 @@ async def _poll_run(
         await session.commit()
 
     async def finish(exit_code: int | None) -> dict[str, Any]:
-        await ingest_chunk()  # 收尾：抓最后一段日志
+        try:
+            await ingest_chunk()  # 收尾：抓最后一段日志
+        except Exception as e:  # noqa: BLE001 — 收尾抓日志断连不该翻盘
+            if not ssh_exec.is_connection_error(e):
+                raise
         run.exit_code = exit_code
         run.status = "succeeded" if exit_code == 0 else "failed"
         run.finished_at = utcnow()
@@ -1237,36 +1269,79 @@ async def _poll_run(
             "metric_names": sorted((run.metrics or {}).keys()),
         }
 
+    async def reconnect() -> None:
+        nonlocal executor
+        with contextlib.suppress(Exception):  # 旧连接已坏，关闭失败无所谓
+            await executor.close()
+        executor = await _open_executor(session, ctx, experiment)
+
     while True:
-        # 协作式取消：每轮查 voyage 状态（cancel API 会把 voyage 置 cancelled）
+        # 协作式取消：每轮查 voyage 状态（仅 DB，不碰 SSH）
         voyage_status = (
             await session.execute(select(VoyageRun.status).where(VoyageRun.id == ctx.run.id))
         ).scalar_one()
         if voyage_status == "cancelled":
-            await executor.kill_pid(int(run.pid or 0))
-            await ingest_chunk()
+            try:
+                await executor.kill_pid(int(run.pid or 0))
+                await ingest_chunk()
+            except Exception as e:  # noqa: BLE001 — 取消收尾尽力而为
+                if not ssh_exec.is_connection_error(e):
+                    raise
             run.status = "failed"
             run.finished_at = utcnow()
             await session.commit()
             await session.refresh(experiment)
             if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
                 await _set_status(ctx, session, experiment, "cancelled")
-            return {"cancelled": True, "run_id": str(run.id), "seq": run.seq}
+            return {"cancelled": True, "run_id": str(run.id), "seq": run.seq}, executor
 
-        await ingest_chunk()
-
-        exit_code = await executor.read_exit_code()
-        if exit_code is not None:
-            return await finish(exit_code)
-
-        alive = await executor.check_pid(int(run.pid or 0))
-        if not alive:
-            # 进程没了但还没读到退出码：再读一次（竞态），仍无则按 failed 收尾
-            return await finish(await executor.read_exit_code())
+        try:
+            await ingest_chunk()
+            exit_code = await executor.read_exit_code()
+            if exit_code is not None:
+                return await finish(exit_code), executor
+            alive = await executor.check_pid(int(run.pid or 0))
+            if not alive:
+                # 进程没了但还没读到退出码：再读一次（竞态），仍无则按 failed 收尾
+                return await finish(await executor.read_exit_code()), executor
+            conn_fail_streak = 0
+        except Exception as e:  # noqa: BLE001 — 瞬时断连：重连续跑；其它异常照常抛
+            if not ssh_exec.is_connection_error(e):
+                raise
+            conn_fail_streak += 1
+            if conn_fail_streak > max_conn_fails:
+                raise RuntimeError(
+                    f"SSH 连接反复断开（连续 {conn_fail_streak} 次），放弃轮询 run={run.seq}：{e}"
+                ) from e
+            session.add(
+                Activity(
+                    project_id=ctx.run.project_id,
+                    actor="system:voyage",
+                    kind="experiment.ssh_reconnect",
+                    message=f"轮询期间 SSH 断开，重连中（第 {conn_fail_streak} 次）：{type(e).__name__}",  # noqa: E501
+                    payload={
+                        "experiment_id": str(experiment.id),
+                        "run_seq": run.seq,
+                        "attempt": conn_fail_streak,
+                    },
+                )
+            )
+            await session.commit()
+            await asyncio.sleep(_reconnect_backoff(conn_fail_streak))
+            try:
+                await reconnect()
+            except Exception as re:  # noqa: BLE001 — 重连本身失败：下轮继续退避重试
+                if not ssh_exec.is_connection_error(re):
+                    raise
+            continue  # 远端状态持久化，重连后下一轮继续跟踪
 
         if max_hours >= 0 and _elapsed_hours(run.started_at) > max_hours:
-            await executor.kill_pid(int(run.pid or 0))
-            await ingest_chunk()
+            try:
+                await executor.kill_pid(int(run.pid or 0))
+                await ingest_chunk()
+            except Exception as e:  # noqa: BLE001
+                if not ssh_exec.is_connection_error(e):
+                    raise
             run.status = "failed"
             run.finished_at = utcnow()
             await session.commit()
@@ -1505,7 +1580,9 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
         cond_delta = _conditions_delta(experiment)
         cond_line = (
             f"对照汇总（baseline vs treatment，平台确定性计算）："
-            f"{json.dumps(cond_delta, ensure_ascii=False)}\n" if cond_delta else ""
+            f"{json.dumps(cond_delta, ensure_ascii=False)}\n"
+            if cond_delta
+            else ""
         )
         user_prompt = (
             f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:4000]}\n"

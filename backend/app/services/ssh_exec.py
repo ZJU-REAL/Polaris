@@ -57,6 +57,31 @@ class SSHPathViolationError(SSHExecError):
     """路径越界：目标不在 ~/polaris_runs/<exp_id> 之下。"""
 
 
+def is_connection_error(exc: BaseException) -> bool:
+    """判定异常是否为「SSH 连接/通道断开」这类可重连的瞬时故障。
+
+    长实验轮询期间底层连接可能被服务器 idle 断开或网络抖动切断（asyncssh 抛
+    ChannelOpenError/ConnectionLost 等）。这类故障是瞬时的、可重连的——远端运行状态
+    （run.exit/run.log/pid）都持久化在服务器上，重连后可继续跟踪，不该让整个实验失败。
+    与之相对，命令执行本身的错误（SSHExecError/路径越界）不属于此类。"""
+    if isinstance(exc, SSHExecError):
+        return False
+    if isinstance(exc, (ConnectionError, EOFError, TimeoutError, OSError)):
+        return True
+    try:
+        import asyncssh
+
+        if isinstance(exc, asyncssh.Error):
+            return True
+    except Exception:  # noqa: BLE001 — asyncssh 不可用时退回文本判定
+        pass
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(
+        kw in text
+        for kw in ("connection closed", "connection lost", "channel", "broken pipe", "disconnect")
+    )
+
+
 @dataclass(slots=True)
 class SSHResult:
     exit_status: int
@@ -382,9 +407,12 @@ class SSHExecutor:
 
     async def launch_run(self) -> tuple[int, str]:
         """后台启动正式运行，返回 (PID, 启动命令)。退出码落 run.exit 供轮询读取。"""
+        # PYTHONUNBUFFERED=1 + stdbuf 行缓冲：让 run.log 实时刷新，轮询才能镜像日志/解析指标
+        # （否则 Python 块缓冲 stdout，长实验期间 run.log 长时间为空，无法观测进度）。
         command = (
             f"cd {self.workdir} && rm -f run.exit && "
-            f"nohup bash -c '{ENV_SOURCE_PREFIX} bash run.sh > run.log 2>&1; "
+            f"nohup bash -c 'export PYTHONUNBUFFERED=1; {ENV_SOURCE_PREFIX} "
+            f"stdbuf -oL -eL bash run.sh > run.log 2>&1; "
             "echo $? > run.exit' >/dev/null 2>&1 & echo $!"
         )
         result = await self._run(command)

@@ -468,3 +468,44 @@ def test_primary_value_and_improvement_unit():
     ]
     assert ax.parse_metrics_json("not json") == []
     assert ax.parse_metrics_json('["list"]') == []
+
+
+async def test_poll_survives_ssh_reconnect(client, queue_stub, fake_ssh, bus_recorder, monkeypatch):
+    """轮询期间 SSH 瞬时断开 → 重连后继续跟踪，实验不因单次断连而失败。
+
+    复现并回归线上 bug：一次 ChannelOpenError 曾直接把实验判 failed，而 nohup 脱离
+    会话的远端进程其实还在跑（run.exit/run.log/pid 都持久化在服务器）。"""
+    from app.models.activity import Activity
+
+    monkeypatch.setattr(ax, "_reconnect_backoff", lambda _s: 0.0)  # 零退避，测试不等
+
+    state = {"raised": 0}
+
+    async def drop_once(command: str) -> None:
+        # 第一轮正式运行读取退出码时断连一次（cat run.exit），之后恢复
+        if command.startswith("cat") and "run.exit" in command and state["raised"] == 0:
+            state["raised"] += 1
+            raise ConnectionError("SSH connection closed")
+
+    fake_ssh.on_command = drop_once
+
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(client)
+    await _drive_pipeline(
+        client, headers, project_id, voyage_id, _router_with(_FixedReflectionProvider("improve"))
+    )
+
+    voyage_status, _ = await _iterate_observation(client, headers, voyage_id)
+    assert voyage_status == "done"  # 断连没有毒死航程
+    assert state["raised"] == 1  # 确实注入了一次断连
+
+    detail = await _get_detail(client, headers, exp_id)
+    assert detail["status"] == "done"
+    assert detail["runs"], "应有成功的运行记录"
+    assert all(r["status"] == "succeeded" for r in detail["runs"])  # 断连轮也成功收尾
+
+    # 重连事件被审计；连接器被重新调用（connects ≥ 2）
+    assert len(fake_ssh.connects) >= 2
+    async with get_sessionmaker()() as session:
+        stmt = select(Activity.kind).where(Activity.kind == "experiment.ssh_reconnect")
+        kinds = (await session.execute(stmt)).scalars().all()
+    assert kinds, "应记录 experiment.ssh_reconnect 审计活动"
