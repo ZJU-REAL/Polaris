@@ -68,7 +68,8 @@ _FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")  # 远端文件名
 PLAN_SYSTEM_PROMPT = """\
 你是 Experiment Lab 的实验规划师，基于晋级 idea 与相关 wiki 摘要产出实验计划。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
-{"hypotheses": [{"text": "可检验的假设", "status": "testing"}],
+{"kind": "eval|training|agent|analysis|other",
+ "hypotheses": [{"text": "可检验的假设", "status": "testing"}],
  "repro_strategy": "基线复现策略（官方代码 > 可信第三方 > 自重写 > 仅引用数字）",
  "steps": ["实验步骤 1", "实验步骤 2"],
  "primary_metric": {"name": "主指标名", "direction": "maximize"},
@@ -79,6 +80,12 @@ PLAN_SYSTEM_PROMPT = """\
  "datasets": [{"name": "HF数据集名或来源", "purpose": "test|corpus|train", "size_hint": "规模"}],
  "budget_estimate": {"gpu_hours": 2, "runs": 3}}
 约束：
+- **kind 先给实验归类**（决定平台怎么备环境/怎么跑）：
+  eval=评测/基准（跑固定模型或已有产物，产评测指标，通常无需训练）；
+  training=需要训练的方法（微调/RL/蒸馏等，需 GPU）；
+  agent=智能体任务（跑 agent 策略/工具，看任务成功率/轨迹）；
+  analysis=数据分析/消融（处理数据、统计，不训练不评测大模型）；other=以上都不像。
+  按研究方案实事求是地分——别默认 training；很多复现是 eval。
 - hypotheses 1-5 条且必须可被实验证实/证伪；steps 3-8 条；
 - primary_metric 必填：name 是评测代码 POLARIS_METRIC 输出的指标名（对照实验里应是主处理组或均值），
   direction 只能取 maximize / minimize；budget_estimate 是对象（至少含 gpu_hours）；
@@ -440,6 +447,9 @@ async def _open_executor(
 _HYP_STATUSES = ("testing", "verified", "falsified")
 _PM_DIRECTIONS = ("maximize", "minimize")
 _DECISIONS = ("improve", "debug", "stop")
+# 实验类型：驱动执行后端(Runner)与策略选择——eval 评测 / training 训练 / agent 智能体任务 /
+# analysis 数据分析 / other 其它。plan 归类，向后兼容缺省 other。
+_EXPERIMENT_KINDS = ("eval", "training", "agent", "analysis", "other")
 
 
 def validate_plan(data: Any) -> dict[str, Any]:
@@ -482,7 +492,11 @@ def validate_plan(data: Any) -> dict[str, Any]:
     budget = data.get("budget_estimate")
     if not isinstance(budget, dict) or not budget:
         raise ValueError('expected object "budget_estimate"')
+    # kind 归类：驱动执行后端(Runner)与策略选择；缺失/非法回退 other（不阻断，向后兼容）。
+    kind = data.get("kind")
+    kind = kind if kind in _EXPERIMENT_KINDS else "other"
     out: dict[str, Any] = {
+        "kind": kind,
         "hypotheses": hypotheses,
         "repro_strategy": repro.strip(),
         "steps": steps,

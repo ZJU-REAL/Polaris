@@ -453,6 +453,7 @@ class FakeProvider(LLMProvider):
         计划 prompt 带研究方案/对照信号时额外产出 conditions/eval_protocol/datasets，
         覆盖对照实验（复现类）路径。"""
         plan = {
+            "kind": "training" if ("训练" in last_user or "train" in last_user.lower()) else "eval",
             "hypotheses": [
                 {"text": "假设一：新方法优于基线（fake）", "status": "testing"},
                 {"text": "假设二：合成数据足以验证趋势（fake）", "status": "testing"},

@@ -118,3 +118,19 @@ def test_conditions_delta_computes_baseline_vs_treatment():
 def test_conditions_delta_none_without_conditions():
     exp = SimpleNamespace(plan={}, metrics={"accuracy": [{"step": 0, "value": 50}]})
     assert _conditions_delta(exp) is None
+
+
+def test_validate_plan_kind_classification():
+    """plan 归类 kind：合法值透传，缺失/非法回退 other（向后兼容，不阻断）。"""
+    base = {
+        "hypotheses": [{"text": "h", "status": "testing"}],
+        "repro_strategy": "r",
+        "steps": ["a", "b", "c"],
+        "primary_metric": {"name": "accuracy", "direction": "maximize"},
+        "budget_estimate": {"gpu_hours": 1},
+    }
+    assert validate_plan({**base, "kind": "training"})["kind"] == "training"
+    assert validate_plan({**base, "kind": "eval"})["kind"] == "eval"
+    assert validate_plan({**base, "kind": "agent"})["kind"] == "agent"
+    assert validate_plan({**base, "kind": "nonsense"})["kind"] == "other"  # 非法回退
+    assert validate_plan(base)["kind"] == "other"  # 缺失回退（向后兼容）
