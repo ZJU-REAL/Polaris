@@ -14,18 +14,19 @@ function hashSeed(s: string): number {
   return h >>> 0;
 }
 
-/** 头像统一为 GitHub 式圆角矩形（非圆形）。 */
+/** 头像统一为 GitHub 式圆角矩形（非圆形），圆角适度。 */
 function avatarRadius(size: number): number {
-  return Math.max(4, Math.round(size * 0.25));
+  return Math.max(3, Math.round(size * 0.14));
 }
 
-/** GitHub 式 identicon：5×5 左右对称像素块，浅底 + 单色。 */
+/** GitHub 式 identicon：5×5 左右对称像素块，四周留白（像素块不顶边），浅底 + 单色。 */
 function Identicon({ seed, size }: { seed: string; size: number }) {
   const { color, cell, out } = useMemo(() => {
     const h = hashSeed(seed);
     const hue = Math.floor((((h >>> 24) & 0xff) / 255) * 360); // 高位定色，与图案去相关
     const c = `hsl(${hue} 55% 52%)`;
-    const cw = size / 5;
+    const p = size * 0.14; // 四周留白，像素块更小、更像 GitHub
+    const cw = (size - p * 2) / 5;
     const blocks: { x: number; y: number; key: string }[] = [];
     let bit = 0;
     for (let r = 0; r < 5; r++) {
@@ -34,7 +35,7 @@ function Identicon({ seed, size }: { seed: string; size: number }) {
         bit++;
         if (!on) continue;
         const cols = col === 2 ? [2] : [col, 4 - col];
-        for (const cc of cols) blocks.push({ x: cc * cw, y: r * cw, key: `${r}-${cc}` });
+        for (const cc of cols) blocks.push({ x: p + cc * cw, y: p + r * cw, key: `${r}-${cc}` });
       }
     }
     return { color: c, cell: cw, out: blocks };
