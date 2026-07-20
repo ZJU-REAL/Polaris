@@ -1519,6 +1519,15 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
                 + "请综合以上全部尝试的源码/得分/轨迹，提出一个有依据的新尝试，"
                 + "输出修改后的完整文件集合。"
             )
+            # 反卡死：连续多轮主指标无提升 → 逼 proposer**换根本不同的方法**而非同方向微调
+            # （呼应「让 Agent 不断找到方法，不只写代码」——诊断到瓶颈就换方案，不是原地打磨）。
+            if state["no_improve_streak"] >= 1:
+                fix_user += (
+                    f"\n\n⚠️ 已连续 {state['no_improve_streak']} 轮主指标无提升——"
+                    "**不要再在同一方向上微调**。请换一个**根本不同的方法/思路**"
+                    "（例如：不同的算法/建模方式/训练目标或损失/数据处理/检索或提示策略等），"
+                    "先用一句话说明为什么之前那条路已经到顶、你这次新方向的依据，再给完整文件集合。"
+                )
         files = await _complete_json(
             ctx, system=system_prompt, user=fix_user, validate=validate_files
         )

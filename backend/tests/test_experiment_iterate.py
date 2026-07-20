@@ -559,6 +559,20 @@ async def test_improve_proposer_gets_full_attempt_archive(
     assert "seq=1" in first and "0.7" in first  # 上一轮尝试的得分在档案里
 
 
+async def test_stuck_escalates_to_approach_change(client, queue_stub, fake_ssh, bus_recorder):
+    """反卡死：主指标连续无提升后，improve proposer 被要求**换根本不同的方法**而非微调。
+    （直击「让 Agent 不断找方法」——诊断到瓶颈就换方案。）"""
+    # 主指标恒 0.7：r1 基线(streak 0)、r2 无提升(streak 1) → r3 的 improve 提示应升级为「换方案」
+    provider = _RecordingImproveProvider()
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(client)
+    await _drive_pipeline(client, headers, project_id, voyage_id, _router_with(provider))
+
+    assert len(provider.improve_prompts) >= 2, provider.improve_prompts
+    assert "根本不同的方法" not in provider.improve_prompts[0]  # streak 0：不升级
+    assert "根本不同的方法" in provider.improve_prompts[1]  # streak 1：升级换方案
+    assert "已连续" in provider.improve_prompts[1]
+
+
 async def test_smoke_timeout_is_recoverable(client, queue_stub, fake_ssh, bus_recorder):
     """冒烟超时不再硬崩：诊断为『太慢/超时』→ 自动改小重试 → 通过，航程继续。
 
