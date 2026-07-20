@@ -282,7 +282,12 @@ def _platform_env_files(
     """平台生成的 env.sh（固定内容，非 LLM 产物）：恒定导出 POLARIS_WORKDIR，
     hf_mirror 时追加 HF_ENDPOINT 镜像；服务器配置了出网代理时导出 http(s)_proxy，
     并把内网 LLM 地址列入 no_proxy（评测 API 不走代理）。模板执行前会 source。"""
-    lines = ["export POLARIS_WORKDIR=$(pwd)"]
+    lines = [
+        "export POLARIS_WORKDIR=$(pwd)",
+        # 有 venv 就激活：让 LLM 代码里的裸 `python` 落到 venv（很多主机只有 python3，
+        # 裸机实验实测 LLM 反复写 `python` 且修复循环绕不开 exit 127；容器模式无 .venv 为 no-op）
+        "[ -f .venv/bin/activate ] && . .venv/bin/activate",
+    ]
     if _params(ctx).get("hf_mirror"):
         lines.append(f"export HF_ENDPOINT={HF_MIRROR_ENDPOINT}")
     if proxy_url:

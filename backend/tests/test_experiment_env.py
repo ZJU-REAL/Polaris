@@ -156,7 +156,9 @@ async def test_command_templates_source_env(client, queue_stub, fake_ssh, bus_re
     exp = await _create_with_params(client, headers, project_id, idea_id, cred_id, {})
     await _run_pipeline(client, headers, project_id, exp["voyage_id"])
 
-    assert fake_ssh.files[f"polaris_runs/{exp['id']}/env.sh"] == "export POLARIS_WORKDIR=$(pwd)\n"
+    env_sh = fake_ssh.files[f"polaris_runs/{exp['id']}/env.sh"]
+    assert "export POLARIS_WORKDIR=$(pwd)" in env_sh
+    assert ". .venv/bin/activate" in env_sh  # 裸 python 落到 venv（默认参数也激活）
     assert f"polaris_runs/{exp['id']}/llm_config.json" not in fake_ssh.files
 
     workdir = f"~/polaris_runs/{exp['id']}"
