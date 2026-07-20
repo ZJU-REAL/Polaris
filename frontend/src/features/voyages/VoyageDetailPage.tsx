@@ -1181,13 +1181,24 @@ function LogLine({ entry }: { entry: LogEntry }) {
   );
 }
 
+/** 大模型有时以 JSON 字符串形式吐代码/文本，换行是字面量 \n。终端按人类可读展示，
+ *  把转义的空白还原成真实字符（本就是真实换行的内容里没有反斜杠转义，不受影响）。 */
+function normalizeLlmText(s: string): string {
+  return s
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n')
+    .replace(/\\t/g, '\t');
+}
+
 /** 已完成的大模型输出：定格为一条记录，长文本默认折叠只显示前几行。 */
 function LlmRecord({ entry }: { entry: LlmEntry }) {
   const [open, setOpen] = useState(false);
   const info = stageInfo(entry.stage);
-  const lines = entry.text.split('\n');
-  const long = lines.length > LLM_PREVIEW_LINES || entry.text.length > 900;
-  const shown = open || !long ? entry.text : lines.slice(0, LLM_PREVIEW_LINES).join('\n');
+  const text = normalizeLlmText(entry.text);
+  const lines = text.split('\n');
+  const long = lines.length > LLM_PREVIEW_LINES || text.length > 900;
+  const shown = open || !long ? text : lines.slice(0, LLM_PREVIEW_LINES).join('\n');
   return (
     <div
       style={{
@@ -1264,7 +1275,7 @@ function LlmActive({ active }: { active: ActiveLlm }) {
       </div>
       {active.text && (
         <div style={{ marginTop: 5, color: 'var(--terminal-fg)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-          {active.text}
+          {normalizeLlmText(active.text)}
           <span style={{ color: 'var(--terminal-accent)', animation: 'ai-caret-blink 1s step-end infinite' }}>▋</span>
         </div>
       )}
