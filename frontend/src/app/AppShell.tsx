@@ -449,7 +449,7 @@ export function AppShell() {
         <div className="sb-brand">
           <PolarisMark size={41} />
           {/* 收起后只留左侧图形标：直接不渲染字标，杜绝溢出（不靠 CSS 隐藏） */}
-          {!navCollapsed && <PolarisWordmark height={27} />}
+          {!navCollapsed && <PolarisWordmark height={30} />}
         </div>
         <div className="sb-scroll scroll">
           {NAV_MAIN.map((n) => (
