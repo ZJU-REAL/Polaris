@@ -107,8 +107,8 @@ PLAN_SYSTEM_PROMPT = """\
 - 若是单一配置的调参类实验，conditions/eval_protocol/datasets 可省略。
 - **models（可选但强烈建议）**：把实验要用的模型如实列进 models（ref 用 HF 名如
   `Qwen/Qwen3-1.7B`，或本机绝对/家目录路径如 `~/hf/model/...`；role 标 eval/student/teacher/base）。
-  平台会**预检**这些模型：本机路径不存在会告警；疑似多模态/视觉-语言模型用于纯文本训练也会告警
-  （常踩坑：框架不认 model_type 或加载失败）。选模型时优先纯文本、且框架确实支持的架构。
+  平台会**预检**这些模型并把事实记进面板：本机路径不存在会告警；本机模型的架构信息
+  （model_type/architectures/配置分节）会被读出来供你和诊断参考——据此确认模型与你的框架/任务相容。
 """
 
 CODE_SYSTEM_PROMPT = """\
@@ -934,41 +934,37 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
 # ---- 2. 建环境（闸门后）：mkdir → LLM 代码生成 → 写文件 → venv ----
 
-# 疑似多模态/视觉-语言模型的 config.json 标记（纯文本训练常踩坑，如 qwen3_5 那类：框架不认
-# model_type 或加载失败）。命中任一 key，或 model_type 含明确多模态词，即判为多模态。
-_MULTIMODAL_CONFIG_KEYS = (
-    "vision_config",
-    "video_config",
-    "audio_config",
-    "vision_tower",
-    "mm_vision_tower",
-    "image_token_id",
-    "visual",
-)
-_MULTIMODAL_MODEL_TYPE_RE = re.compile(
-    r"vl$|_vl|vision|video|image|audio|multimodal", re.IGNORECASE
-)
 
-
-def _is_multimodal_config(config_text: str) -> bool:
-    """从模型 config.json 粗判是否多模态/视觉-语言（确定性启发式，宁可少报不误伤纯文本）。"""
+def _summarize_model_config(config_text: str) -> dict[str, Any]:
+    """从模型 config.json 提取**中性事实**（不下兼容性判断）：model_type / architectures /
+    有哪些配置分节（`*_config`）。是否合用（多模态、架构不被框架支持等）交给失败时的诊断 LLM——
+    判断性任务不硬编码特判，预检只把事实摆出来（面板可见 + 供诊断消费）。"""
     try:
         cfg = json.loads(config_text)
     except (ValueError, TypeError):
-        return False
+        return {}
     if not isinstance(cfg, dict):
-        return False
-    if any(k in cfg for k in _MULTIMODAL_CONFIG_KEYS):
-        return True
-    return bool(_MULTIMODAL_MODEL_TYPE_RE.search(str(cfg.get("model_type") or "")))
+        return {}
+    facts: dict[str, Any] = {}
+    if isinstance(cfg.get("model_type"), str):
+        facts["model_type"] = cfg["model_type"]
+    archs = cfg.get("architectures")
+    if isinstance(archs, list):
+        arch_names = [str(a) for a in archs if isinstance(a, str)]
+        if arch_names:
+            facts["architectures"] = arch_names
+    sections = sorted(k for k in cfg if k.endswith("_config") and isinstance(cfg.get(k), dict))
+    if sections:
+        facts["config_sections"] = sections
+    return facts
 
 
 async def _probe_resources(executor: Runner, plan: dict[str, Any]) -> tuple[list[dict], list[str]]:
-    """资源预检：探 plan 声明的模型/数据集。ref 以 ~ 或 / 开头 = 本机路径（查存在/读 config），
-    否则视为 HF id（会下载，跳过）。返回 (resources, warnings)；探测异常不冒泡（不该崩 setup）。"""
+    """资源预检（通用，不针对具体失败模式）：探 plan 声明的模型/数据集，把**事实**记进 resources
+    （本机模型的 model_type/架构/配置分节、存在性），只对**普适**问题告警（声明的本机资源不存在）。
+    ref 以 ~ 或 / 开头 = 本机路径；否则视为 HF id（会下载，跳过）。探测异常不冒泡，不崩 setup。"""
     resources: list[dict] = []
     warnings: list[str] = []
-    kind = plan.get("kind")
     for m in plan.get("models") or []:
         ref = (m.get("ref") if isinstance(m, dict) else str(m)) or ""
         if not ref:
@@ -985,13 +981,10 @@ async def _probe_resources(executor: Runner, plan: dict[str, Any]) -> tuple[list
                 warnings.append(
                     f"资源预检告警：声明的本机模型 {ref} 不存在（找不到 config.json）。"
                 )
-            elif _is_multimodal_config(cfg):
-                entry["multimodal"] = True
-                if kind == "training":
-                    warnings.append(
-                        f"资源预检告警：模型 {ref} 疑似多模态/视觉-语言，用于纯文本训练常踩坑"
-                        "（框架可能不认 model_type 或加载失败）——确认框架支持，或换纯文本模型。"
-                    )
+            else:
+                facts = _summarize_model_config(cfg)
+                if facts:  # 中性事实（model_type/architectures/config_sections），不下判断
+                    entry["config"] = facts
         else:
             entry["remote"] = True  # HF id：会下载，跳过本机存在性
         resources.append(entry)
