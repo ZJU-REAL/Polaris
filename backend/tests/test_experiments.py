@@ -413,6 +413,98 @@ async def test_setup_deps_escalate_not_hard_fail(client, queue_stub, fake_ssh, b
     assert resp.json()["status"] == "done"
 
 
+def test_parse_gpu_csv_unit():
+    """nvidia-smi CSV 解析：正常行解析、非法/短行跳过、空输入 → 空列表。"""
+    text = "0, 49140, 48000\n1, 49140, 12000\nbad line\n2, x, y\n"
+    gpus = ssh_exec.parse_gpu_csv(text)
+    assert gpus == [
+        {"index": 0, "mem_total_mib": 49140, "mem_free_mib": 48000},
+        {"index": 1, "mem_total_mib": 49140, "mem_free_mib": 12000},
+    ]
+    assert ssh_exec.parse_gpu_csv("") == []
+
+
+async def _seed_training_idea(project_id: str) -> str:
+    """播一个「训练类」idea（含「训练」→ FakeProvider 产 kind=training 的 plan）。"""
+    async with get_sessionmaker()() as session:
+        idea = Idea(
+            project_id=uuid.UUID(project_id),
+            title="用 GRPO 训练小模型（test idea）",
+            summary="训练一个 RL 方法提升数学推理",
+            content="## 方法\n\n用强化学习训练模型。",
+            status="promoted",
+        )
+        session.add(idea)
+        await session.commit()
+        return str(idea.id)
+
+
+async def test_setup_gpu_preflight_passes_with_gpu(client, queue_stub, fake_ssh, bus_recorder):
+    """训练类实验 + 本机有卡 → 资源预检通过，setup 观测记录 GPU，实验跑通。"""
+    fake_ssh.gpus = [(0, 49140, 48000)]  # 一张空闲 A6000
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_training_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    voyage = resp.json()
+    assert voyage["status"] == "done", voyage
+    setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
+    assert setup_step["observation"]["gpus"] == [
+        {"index": 0, "mem_total_mib": 49140, "mem_free_mib": 48000}
+    ]
+
+
+async def test_setup_gpu_preflight_warns_without_gpu(client, queue_stub, fake_ssh, bus_recorder):
+    """训练类实验 + 本机探不到卡 → setup 观测里带**早期告警**（面板可见），但不硬停。
+    （无 GPU 是基础设施问题，硬停会触发换方案重规划、抹掉失败步骤；换机拦截留后续一刀。）"""
+    fake_ssh.gpus = []  # 无 GPU/驱动
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_training_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    voyage = resp.json()
+    setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
+    obs = setup_step["observation"]
+    assert obs["gpus"] == []  # 探不到卡如实记录
+    assert "资源预检告警" in obs.get("preflight_warning", "")  # 早期告警已暴露
+
+
+async def test_setup_no_gpu_preflight_silent_for_eval(client, queue_stub, fake_ssh, bus_recorder):
+    """评测类实验不需要 GPU：探不到卡也不告警（needs_gpu=False）。"""
+    fake_ssh.gpus = []
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)  # 默认 idea → kind=eval
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    voyage = resp.json()
+    setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
+    assert "preflight_warning" not in setup_step["observation"]  # 评测类不告警
+
+
 async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_recorder):
     """超 budget.max_hours → kill 远端进程 + run/experiment/voyage 置 failed。"""
     fake_ssh.run_exit = None  # 进程一直不结束

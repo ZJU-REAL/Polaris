@@ -961,6 +961,22 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             await session.commit()
             await executor.write_files(platform_files)  # 平台文件写一次（不随修复变）
 
+            # 资源预检（GPU）：训练类/声明 GPU 的实验先探本机有没有卡，结果记进观测（面板可见）。
+            # 探不到卡 → 给**早期告警**（换有空闲卡的机器 / 改成不吃 GPU），但**只告警不硬停**——
+            # 无 GPU 是基础设施问题，硬停会触发 setup 换方案重规划（把失败步骤从历史抹掉、丢诊断）；
+            # 真正的拦截（换机闸门）留作后续一刀，这刀先把资源可见性 + 早期告警做扎实。
+            gpus = await executor.probe_gpu()
+            plan = experiment.plan if isinstance(experiment.plan, dict) else {}
+            container = plan.get("container") if isinstance(plan.get("container"), dict) else None
+            needs_gpu = plan.get("kind") == "training" or bool(container and container.get("gpus"))
+            preflight_warning = None
+            if needs_gpu and not gpus:
+                preflight_warning = (
+                    f"资源预检告警：{executor.host} 上探测不到可用 GPU（nvidia-smi 无输出），"
+                    "但这是训练类/声明了 GPU 的实验——如后续因显存/设备失败，"
+                    "请换一台有空闲 GPU 的服务器，或把方案改成不需要 GPU 的实现。"
+                )
+
             # 依赖安装自愈（对称 smoke）：装不上/太慢/断连都当「可修的失败」而非硬崩——
             # 超时/断连→重连重试；pip 报错→回 LLM 修 requirements.txt/run.sh 再装（≤2 次）。
             fixes = 0
@@ -987,13 +1003,17 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     executor = await _open_executor(session, ctx, experiment)
                 if exit_status == 0:
                     written = list(files) + list(platform_files)
-                    return {
+                    obs: dict[str, Any] = {
                         "workdir": experiment.workdir,
                         "files": written,
                         "venv_exit": 0,
                         "attempts": attempts,
                         "fixes": fixes,
+                        "gpus": gpus,  # 资源预检探到的 GPU（供面板/后续显存决策）
                     }
+                    if preflight_warning:
+                        obs["preflight_warning"] = preflight_warning
+                    return obs
                 if fixes >= MAX_SETUP_FIXES:
                     detail = err_text or "（无输出，多为连接中断或超时）"
                     raise RuntimeError(

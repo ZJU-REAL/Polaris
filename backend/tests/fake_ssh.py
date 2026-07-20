@@ -24,6 +24,8 @@ class FakeSSHServer:
     connect_error: str | None = None  # 置为字符串则 connect 抛 ConnectionError
     venv_exit: int = 0
     venv_exits: list[int] = field(default_factory=list)  # 逐次弹出；耗尽后回落 venv_exit
+    # probe_gpu 用：每卡 (index, 显存总, 空闲) MiB；空列表 = 本机无 GPU/驱动
+    gpus: list[tuple[int, int, int]] = field(default_factory=list)
     smoke_exits: list[int] = field(default_factory=list)  # 逐次弹出；耗尽后恒 0
     smoke_stderr: str = "Traceback (most recent call last): boom"
     run_log: str = ""
@@ -113,6 +115,11 @@ class FakeSSHSession:
             if m:
                 server.killed.append(int(m.group(1)))
             return SSHResult(0, "", "")
+        if "nvidia-smi" in command:  # probe_gpu：无卡 → 命令失败（模拟无 GPU/驱动）
+            if not server.gpus:
+                return SSHResult(127, "", "nvidia-smi: command not found")
+            rows = "\n".join(f"{i}, {total}, {free}" for i, total, free in server.gpus)
+            return SSHResult(0, rows + "\n", "")
         if "venv" in command or "pip install" in command:
             exit_code = server.venv_exits.pop(0) if server.venv_exits else server.venv_exit
             return SSHResult(exit_code, "", "pip failed" if exit_code else "")

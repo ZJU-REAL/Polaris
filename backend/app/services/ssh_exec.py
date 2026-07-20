@@ -192,6 +192,24 @@ def validate_exp_id(exp_id: str) -> str:
     return str(uuid.UUID(str(exp_id)))
 
 
+def parse_gpu_csv(stdout: str) -> list[dict[str, int]]:
+    """解析 nvidia-smi CSV（index,memory.total,memory.free；noheader,nounits）为每卡 dict。
+
+    非法/不完整行跳过（容错解析），空输入 → 空列表。
+    """
+    gpus: list[dict[str, int]] = []
+    for line in stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            idx, total, free = int(parts[0]), int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        gpus.append({"index": idx, "mem_total_mib": total, "mem_free_mib": free})
+    return gpus
+
+
 def workdir_for(exp_id: str) -> str:
     return f"{WORKDIR_ROOT_SHELL}/{validate_exp_id(exp_id)}"
 
@@ -445,3 +463,17 @@ class SSHExecutor:
 
     async def kill_pid(self, pid: int) -> SSHResult:
         return await self._run(f"kill {int(pid)} 2>/dev/null || true")
+
+    async def probe_gpu(self) -> list[dict[str, int]]:
+        """资源预检：探测本机 GPU（每卡 index/显存总量/空闲，MiB）。
+
+        无 nvidia-smi（无 GPU/驱动）或命令失败 → 返回空列表（= 本机无可用 GPU）。
+        确定性探测（普通命令），不涉及判断，故走这里而非 LLM。
+        """
+        result = await self._run(
+            "nvidia-smi --query-gpu=index,memory.total,memory.free "
+            "--format=csv,noheader,nounits 2>/dev/null"
+        )
+        if result.exit_status != 0:
+            return []
+        return parse_gpu_csv(result.stdout)
