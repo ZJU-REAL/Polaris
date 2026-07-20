@@ -61,7 +61,9 @@ input {
   background: var(--sidebar-bg);
   border-right: 0.5px solid var(--border-2);
   display: flex; flex-direction: column;
-  overflow: hidden;
+  /* 不裁剪：底部用户菜单向上/向右溢出时要能显示（收起态菜单会盖到主列上）。
+     抬到主列之上，浮层无需 portal 即可显示，且不受 html{zoom} 的定位影响。 */
+  position: relative; z-index: 30;
 }
 
 /* —— 收起态：图标轨道（只留图标，隐藏文字） ——
@@ -124,19 +126,20 @@ input {
 
 /* 挂到 body 的浮层：fixed 定位（left/top 由 JS 按触发器计算），
    避开侧栏 overflow:hidden 的裁剪，收起态也不会被切掉 */
+/* 纯 CSS 相对触发器定位（不用 portal / JS 坐标，避免 html{zoom} 下跨屏错位）：
+   在触发器正上方 6px 展开，左对齐。收起态菜单更宽会向右溢出到主列（侧栏已抬 z-index）。 */
 .user-menu {
-  position: fixed; min-width: 190px; z-index: 60;
+  position: absolute; bottom: calc(100% + 6px); left: 6px; min-width: 190px; z-index: 60;
   background: var(--surface); border: 0.5px solid var(--border);
   border-radius: 11px; box-shadow: var(--shadow-pop);
   padding: 5px; display: flex; flex-direction: column; gap: 1px;
-  /* 定位靠内联 transform: translateY(-100%)；入场动画必须保留它，
-     否则动画期间的 transform 会覆盖定位，菜单先落在触发器上再跳回上方 */
   animation: userMenuIn 0.13s ease;
 }
 @keyframes userMenuIn {
-  from { opacity: 0; transform: translateY(calc(-100% + 5px)); }
-  to   { opacity: 1; transform: translateY(-100%); }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
 }
+.nav-collapsed .user-menu { left: 8px; }
 .user-menu-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: 8px; border: none; background: transparent;
