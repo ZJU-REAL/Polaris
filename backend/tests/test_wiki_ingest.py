@@ -85,6 +85,88 @@ ARXIV_FEED = """<?xml version="1.0" encoding="UTF-8"?>
 </feed>
 """
 
+# 分类 RSS「新鲜源」样例（cs.LG /new）：绕开关键词检索索引 3-5 天滞后。
+# include 关键词为 "autonomous research agent"（见 DEFINITION）。
+# - 2607.30001 (new)：连字符变体 "Autonomous-Research Agents" 应被宽松过滤命中 → 入库
+# - 2607.30002 (cross)：cross 也接纳，v2 版本号被 normalize 去掉 → 入库
+# - 2607.30003 (replace) / 2607.30004 (replace-cross)：旧论文更新 → 解析时跳过
+# - 2607.30005 (new)：与关键词无关 → 宽松过滤滤除
+# - 2406.00001 (new)：arxiv_id 与 bootstrap 已入库论文相同 → 三方去重命中，不重插
+ARXIV_RSS = """<?xml version='1.0' encoding='UTF-8'?>
+<rss xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns:dc="http://purl.org/dc/elements/1.1/" \
+xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+  <channel>
+    <title>cs.LG updates on arXiv.org</title>
+    <item>
+      <title>Autonomous-Research Agents: A Fresh Result</title>
+      <link>https://arxiv.org/abs/2607.30001</link>
+      <description>arXiv:2607.30001v1 Announce Type: new
+Abstract: Fresh work on autonomous research agents announced today.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2607.30001v1</guid>
+      <category>cs.LG</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:creator>Alice Fresh</dc:creator>
+    </item>
+    <item>
+      <title>Cross Study of Planning</title>
+      <link>https://arxiv.org/abs/2607.30002</link>
+      <description>arXiv:2607.30002v2 Announce Type: cross
+Abstract: We present autonomous research agent methods, cross-listed.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2607.30002v2</guid>
+      <category>cs.LG</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>cross</arxiv:announce_type>
+      <dc:creator>Bob Cross</dc:creator>
+    </item>
+    <item>
+      <title>Autonomous Research Agents Revisited</title>
+      <link>https://arxiv.org/abs/2607.30003</link>
+      <description>arXiv:2607.30003v3 Announce Type: replace
+Abstract: A revised version about autonomous research agents.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2607.30003v3</guid>
+      <category>cs.LG</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>replace</arxiv:announce_type>
+      <dc:creator>Carol Old</dc:creator>
+    </item>
+    <item>
+      <title>Old Cross About Agents</title>
+      <link>https://arxiv.org/abs/2607.30004</link>
+      <description>arXiv:2607.30004v2 Announce Type: replace-cross
+Abstract: Revised cross-listed autonomous research agent paper.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2607.30004v2</guid>
+      <category>cs.LG</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>replace-cross</arxiv:announce_type>
+      <dc:creator>Dave Old</dc:creator>
+    </item>
+    <item>
+      <title>Basket Weaving Handbook</title>
+      <link>https://arxiv.org/abs/2607.30005</link>
+      <description>arXiv:2607.30005v1 Announce Type: new
+Abstract: Nothing to do with the topic here.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2607.30005v1</guid>
+      <category>cs.LG</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:creator>Eve Weaver</dc:creator>
+    </item>
+    <item>
+      <title>Autonomous Research Agents via Reinforcement Learning</title>
+      <link>https://arxiv.org/abs/2406.00001</link>
+      <description>arXiv:2406.00001v1 Announce Type: new
+Abstract: Duplicate of an already ingested paper (autonomous research agent).</description>
+      <guid isPermaLink="false">oai:arXiv.org:2406.00001v1</guid>
+      <category>cs.LG</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:creator>Alice</dc:creator>
+    </item>
+  </channel>
+</rss>
+"""
+
 S2_ANCHOR_REFERENCES = {
     "data": [
         {
@@ -499,6 +581,87 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
         )
         # 无锚点论文 → 雪球 0 篇；3 候选：2 编译 + 1 排除（无 rubric 时打分只用 statement）
         assert sorted(statuses) == ["compiled", "compiled", "excluded"]
+
+
+def test_rss_loose_keyword_filter():
+    """宽松关键词过滤：连字符变体命中、无关滤除、无关键词全留（确定性单元测试）。"""
+    from app.agents.voyage.actions_wiki import _keyword_match, _normalize_kw
+
+    includes = [_normalize_kw(k) for k in ["Computer Use Agent"]]
+    hit = {"title": "Computer-Use Agents at Scale", "abstract": "results"}
+    miss = {"title": "Basket Weaving", "abstract": "nothing relevant"}
+    assert _keyword_match(hit, includes) is True  # 连字符 vs 空格变体命中
+    assert _keyword_match(miss, includes) is False  # 无关滤除
+    assert _keyword_match(miss, []) is True  # 无关键词 → 全留给 LLM 打分
+
+
+async def test_incremental_rss_fresh_layer(client, queue_stub, wiki_mocks):
+    """增量同步的 RSS 新鲜源：announce_type 过滤、版本号归一化、宽松关键词过滤、三方去重。"""
+    project_id, headers = await _setup_project(client)
+
+    # 先 bootstrap 建立水位线与存量论文（2406.00001 等入库）
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    # 仅本测试给 wiki_mocks 路由追加 RSS 新鲜源（bootstrap 不走 RSS，故此前无需）
+    wiki_mocks.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(
+        return_value=httpx.Response(200, text=ARXIV_RSS)
+    )
+
+    resp2 = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "incremental", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine2, _ = _make_engine()
+    await engine2.run(uuid.UUID(resp2.json()["id"]))
+
+    detail = (await client.get(f"/api/voyages/{resp2.json()['id']}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    obs = detail["steps"][0]["observation"]
+    assert obs["mode"] == "incremental"
+    # API 窗口检索的 3 篇全去重（已在 bootstrap 入库）→ 新增全部来自 RSS
+    assert obs["rss_found"] == 4  # 6 条 item 中 4 条 new/cross（replace/replace-cross 跳过）
+    assert obs["rss_matched"] == 3  # 宽松关键词过滤：篮子编织被滤除
+    assert obs["rss_inserted"] == 2  # 3 命中里 2406.00001 与存量重复被去重
+    assert obs["inserted"] == 2  # 本步入库总数 = RSS 新增
+    assert "cs.LG" in obs["rss_categories"]
+
+    async with get_sessionmaker()() as session:
+        by_aid = {
+            aid: status
+            for aid, status in (
+                await session.execute(
+                    select(Paper.arxiv_id, Paper.status).where(
+                        Paper.project_id == uuid.UUID(project_id)
+                    )
+                )
+            ).all()
+        }
+        # 版本号已归一化（无 v1/v2 后缀），新鲜论文入库
+        assert "2607.30001" in by_aid
+        assert "2607.30002" in by_aid
+        # replace / replace-cross（旧论文更新）与无关论文未入库
+        assert "2607.30003" not in by_aid
+        assert "2607.30004" not in by_aid
+        assert "2607.30005" not in by_aid
+        # 与存量重复的 arxiv_id 未产生第二条记录
+        dup_count = int(
+            (
+                await session.execute(
+                    select(func.count()).where(
+                        Paper.project_id == uuid.UUID(project_id),
+                        Paper.arxiv_id == "2406.00001",
+                    )
+                )
+            ).scalar_one()
+        )
+        assert dup_count == 1
 
 
 async def test_daily_cron_project_selection(client, queue_stub, wiki_mocks):

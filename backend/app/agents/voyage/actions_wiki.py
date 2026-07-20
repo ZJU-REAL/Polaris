@@ -14,6 +14,7 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -173,11 +174,30 @@ async def _existing_keys(
 
 # ---- 1. 检索候选（arXiv） ----
 
+_WS_RE = re.compile(r"\s+")
+
+
+def _normalize_kw(text: str) -> str:
+    """归一化用于宽松子串匹配：小写、连字符→空格、压缩空白。
+
+    这样 "Computer-Use Agents" 与关键词 "Computer Use Agent" 能互相命中。
+    """
+    return _WS_RE.sub(" ", text.lower().replace("-", " ")).strip()
+
+
+def _keyword_match(entry: dict[str, Any], includes_norm: list[str]) -> bool:
+    """标题+摘要归一化后，任一关键词（已归一化）作为子串命中即留；无关键词则全留。"""
+    if not includes_norm:
+        return True
+    hay = _normalize_kw(f"{entry.get('title') or ''} {entry.get('abstract') or ''}")
+    return any(kw in hay for kw in includes_norm)
+
 
 @register("wiki.search_candidates")
 async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     knobs = _knobs(ctx)
     now = utcnow()
+    mode = _mode(ctx)
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
         definition = _definition(project)
@@ -189,7 +209,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         include = list(keywords_def.get("include") or [])
 
         watermark = _parse_iso((project.ingest_state or {}).get("watermark"))
-        if _mode(ctx) == "incremental" and watermark is not None:
+        if mode == "incremental" and watermark is not None:
             # 回看窗口覆盖 arXiv 关键词索引滞后，防止近几天的新论文被漏抓
             since = watermark - timedelta(days=_INCREMENTAL_LOOKBACK_DAYS)
         else:
@@ -202,14 +222,22 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
 
         arxiv_ids, dois, titles = await _existing_keys(session, project.id)
         new_papers: list[Paper] = []
-        for entry in entries:
+
+        def _try_insert(entry: dict[str, Any], source: str) -> bool:
+            """按 arxiv_id/doi/title 三方去重后入库；命中已存量返回 False。
+
+            边插边更新去重键集合——RSS↔API↔存量共用同一套集合，互不重插。
+            """
             aid = entry.get("arxiv_id")
             title = (entry.get("title") or "").strip()
-            if not title or (aid and aid in arxiv_ids) or title.lower() in titles:
-                continue
+            doi = (entry.get("doi") or "").lower() or None
+            if not title:
+                return False
+            if (aid and aid in arxiv_ids) or (doi and doi in dois) or title.lower() in titles:
+                return False
             paper = Paper(
                 project_id=project.id,
-                source="arxiv",
+                source=source,
                 arxiv_id=aid,
                 doi=entry.get("doi"),
                 external_ids=({"arxiv": aid} | ({"doi": entry["doi"]} if entry.get("doi") else {})),
@@ -226,7 +254,33 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             new_papers.append(paper)
             if aid:
                 arxiv_ids.add(aid)
+            if doi:
+                dois.add(doi)
             titles.add(title.lower())
+            return True
+
+        # 补漏层：关键词检索的日期窗口（索引有 3-5 天滞后，故靠 RSS 补新鲜）
+        for entry in entries:
+            _try_insert(entry, "arxiv")
+
+        # 新鲜源：分类 RSS /new 当天公告（即时无滞后），仅增量模式补最新论文
+        rss_found = 0
+        rss_matched = 0
+        rss_inserted = 0
+        rss_categories: list[str] = []
+        if mode == "incremental":
+            includes_norm = [n for k in include if (n := _normalize_kw(k))]
+            for cat in categories:
+                rss_entries = await get_arxiv_client().fetch_new(cat)
+                rss_categories.append(cat)
+                rss_found += len(rss_entries)
+                for entry in rss_entries:
+                    if not _keyword_match(entry, includes_norm):
+                        continue
+                    rss_matched += 1
+                    if _try_insert(entry, "arxiv"):
+                        rss_inserted += 1
+
         await session.flush()  # 拿到新论文 id，供 observation 清单
         brief = _paper_brief(new_papers)
         await session.commit()
@@ -238,7 +292,11 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         "inserted": len(new_papers),
         "new_papers": brief,
         "window_since": since.isoformat(),
-        "mode": _mode(ctx),
+        "mode": mode,
+        "rss_found": rss_found,
+        "rss_matched": rss_matched,
+        "rss_inserted": rss_inserted,
+        "rss_categories": rss_categories,
     }
 
 

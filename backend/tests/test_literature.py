@@ -36,6 +36,61 @@ ARXIV_FEED = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+ARXIV_RSS = """<?xml version='1.0' encoding='UTF-8'?>
+<rss xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns:dc="http://purl.org/dc/elements/1.1/" \
+xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+  <channel>
+    <title>cs.CL updates on arXiv.org</title>
+    <item>
+      <title>Computer-Use Agents at Scale</title>
+      <link>https://arxiv.org/abs/2607.10001</link>
+      <description>arXiv:2607.10001v1 Announce Type: new
+Abstract: We study computer use agents operating at scale with strong results.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2607.10001v1</guid>
+      <category>cs.CL</category>
+      <category>cs.AI</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:creator>Alice Smith, Bob Jones</dc:creator>
+    </item>
+    <item>
+      <title>Cross-Listed Planning Methods</title>
+      <link>https://arxiv.org/abs/2607.10002</link>
+      <description>arXiv:2607.10002v2 Announce Type: cross
+Abstract: Planning methods cross-listed from another category.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2607.10002v2</guid>
+      <category>cs.CL</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>cross</arxiv:announce_type>
+      <dc:creator>Carol Lee</dc:creator>
+    </item>
+    <item>
+      <title>Old Paper Revised</title>
+      <link>https://arxiv.org/abs/2601.09999</link>
+      <description>arXiv:2601.09999v3 Announce Type: replace
+Abstract: A revised version of an older paper.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2601.09999v3</guid>
+      <category>cs.CL</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>replace</arxiv:announce_type>
+      <dc:creator>Dave Kim</dc:creator>
+    </item>
+    <item>
+      <title>Another Old Cross Revision</title>
+      <link>https://arxiv.org/abs/2601.08888</link>
+      <description>arXiv:2601.08888v2 Announce Type: replace-cross
+Abstract: A revised cross-listed older paper.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2601.08888v2</guid>
+      <category>cs.CL</category>
+      <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>replace-cross</arxiv:announce_type>
+      <dc:creator>Eve Wang</dc:creator>
+    </item>
+  </channel>
+</rss>
+"""
+
+
 @pytest_asyncio.fixture
 async def cache_redis():
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
@@ -70,6 +125,49 @@ async def test_arxiv_search_parses_and_caches(cache_redis):
     again = await client.search(categories=["cs.LG"], keywords=["agent"], limit=10)
     assert len(again) == 2
     assert route.call_count == 1
+    await client.aclose()
+
+
+@respx.mock
+async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
+    route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/cs\.CL").mock(
+        return_value=httpx.Response(200, text=ARXIV_RSS)
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0)
+    entries = await client.fetch_new("cs.CL")
+
+    # 只留 announce_type ∈ {new, cross}；replace / replace-cross（旧论文更新）被跳过
+    assert [e["announce_type"] for e in entries] == ["new", "cross"]
+    first = entries[0]
+    assert first["arxiv_id"] == "2607.10001"  # guid 的 v1 版本号被 normalize 去掉
+    assert first["title"] == "Computer-Use Agents at Scale"
+    # description "Abstract:" 之后截取为摘要
+    assert first["abstract"] == (
+        "We study computer use agents operating at scale with strong results."
+    )
+    assert first["authors"] == [{"name": "Alice Smith"}, {"name": "Bob Jones"}]
+    assert first["categories"] == ["cs.CL", "cs.AI"]
+    assert first["primary_category"] == "cs.CL"
+    assert first["year"] == 2026
+    assert first["published"].startswith("2026-07-20")
+    assert first["pdf_url"].endswith("/pdf/2607.10001")
+    assert first["doi"] is None
+    assert entries[1]["arxiv_id"] == "2607.10002"  # v2 也被去版本号
+
+    # 短 TTL 缓存命中：相同分类第二次调用不再发 HTTP
+    again = await client.fetch_new("cs.CL")
+    assert [e["arxiv_id"] for e in again] == ["2607.10001", "2607.10002"]
+    assert route.call_count == 1
+    await client.aclose()
+
+
+@respx.mock
+async def test_arxiv_fetch_new_network_error_returns_empty(cache_redis):
+    respx.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(
+        return_value=httpx.Response(503)
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0)
+    assert await client.fetch_new("cs.CL") == []  # 失败容错，不抛
     await client.aclose()
 
 
