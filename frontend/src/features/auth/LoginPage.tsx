@@ -84,11 +84,11 @@ export function LoginPage() {
         {/* 品牌区 */}
         <div className="col" style={{ alignItems: 'center', marginBottom: 24 }}>
           <div style={{ marginBottom: 14 }}>
-            <PolarisMark size={72} />
+            <PolarisMark size={86} />
           </div>
-          <PolarisWordmark height={28} />
+          <PolarisWordmark height={44} />
           <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>
-            {tr('自动 AI 科研平台', 'Autonomous AI Research Platform')}
+            {tr('北极星 | AI 科研智能体', 'Polaris | AI Research Agent')}
           </div>
         </div>
 
@@ -210,10 +210,6 @@ export function LoginPage() {
             {isRegister ? tr('注册并登录', 'Sign up and log in') : tr('登录', 'Sign in')}
           </button>
         </form>
-
-        <div style={{ fontSize: 11, color: 'var(--text-4)', textAlign: 'center', marginTop: 18, lineHeight: 1.5 }}>
-          {tr('注册需要邀请码 · 如需访问权限请联系管理员', 'Registration requires an invite code · contact the admin for access')}
-        </div>
       </div>
     </div>
   );

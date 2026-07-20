@@ -80,7 +80,9 @@ input {
 .nav-collapsed .nav-item .nav-label { display: none; }
 .nav-toggle { margin-right: 2px; }
 /* 图形标中心对齐图标列中线（12+24/2+... = 33px），与收起态一致 */
-.sb-brand { display: flex; align-items: center; gap: 9px; margin: 18px 16px 12px; }
+/* 左边距使图形标(41px)中心落在 12.5+41/2 = 33px（= 收起态居中于 66px 侧栏的中心，
+   也 = 导航图标列中线），收放切换时 logo 不位移。 */
+.sb-brand { display: flex; align-items: center; gap: 9px; margin: 18px 16px 12px 12.5px; }
 .sb-brand h1 { font-size: 14px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .sb-brand p { font-size: 11px; color: var(--text-3); margin: 1px 0 0; font-family: var(--mono); }
 
@@ -124,8 +126,6 @@ input {
 .nav-collapsed .user-trigger { justify-content: center; gap: 0; padding: 8px 0; }
 .nav-collapsed .user-info { display: none; }
 
-/* 挂到 body 的浮层：fixed 定位（left/top 由 JS 按触发器计算），
-   避开侧栏 overflow:hidden 的裁剪，收起态也不会被切掉 */
 /* 纯 CSS 相对触发器定位（不用 portal / JS 坐标，避免 html{zoom} 下跨屏错位）：
    在触发器正上方 6px 展开，左对齐。收起态菜单更宽会向右溢出到主列（侧栏已抬 z-index）。 */
 .user-menu {
