@@ -6,7 +6,9 @@
 """
 
 import logging
+import shutil
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +183,7 @@ def to_read(experiment: Experiment, idea_title: str) -> ExperimentRead:
         workdir=experiment.workdir,
         server_host=experiment.server_host,
         budget=experiment.budget,
+        trashed_at=experiment.trashed_at,
         created_at=experiment.created_at,
         updated_at=experiment.updated_at,
     )
@@ -201,15 +204,75 @@ def serialize_figures(experiment: Experiment) -> list[ExperimentFigure]:
 
 
 async def list_experiments(
-    session: AsyncSession, *, project_id: uuid.UUID
+    session: AsyncSession, *, project_id: uuid.UUID, trashed: bool = False
 ) -> list[tuple[Experiment, str]]:
+    trash_cond = Experiment.trashed_at.is_not(None) if trashed else Experiment.trashed_at.is_(None)
+    order = Experiment.trashed_at.desc() if trashed else Experiment.created_at.desc()
     stmt = (
         select(Experiment, Idea.title)
         .join(Idea, Idea.id == Experiment.idea_id)
-        .where(Experiment.project_id == project_id)
-        .order_by(Experiment.created_at.desc())
+        .where(Experiment.project_id == project_id, trash_cond)
+        .order_by(order)
     )
     return [(exp, title) for exp, title in (await session.execute(stmt)).all()]
+
+
+async def _owned_experiments(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
+) -> list[Experiment]:
+    if not ids:
+        return []
+    stmt = select(Experiment).where(Experiment.project_id == project_id, Experiment.id.in_(ids))
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def trash_experiments(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
+) -> int:
+    now = datetime.now(UTC)
+    n = 0
+    for exp in await _owned_experiments(session, project_id=project_id, ids=ids):
+        if exp.trashed_at is None:
+            exp.trashed_at = now
+            n += 1
+    await session.commit()
+    return n
+
+
+async def restore_experiments(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
+) -> int:
+    n = 0
+    for exp in await _owned_experiments(session, project_id=project_id, ids=ids):
+        if exp.trashed_at is not None:
+            exp.trashed_at = None
+            n += 1
+    await session.commit()
+    return n
+
+
+async def purge_experiments(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID] | None = None
+) -> int:
+    """永久删除。ids=None → 清空该项目垃圾箱。删本地目录（日志/图）；runs 走 DB 级联。
+    远端 workdir 不动（best-effort，避免误删共享服务器）。返回删除数量。"""
+    if ids is None:
+        rows = [
+            exp for exp, _ in await list_experiments(session, project_id=project_id, trashed=True)
+        ]
+    else:
+        rows = [
+            e
+            for e in await _owned_experiments(session, project_id=project_id, ids=ids)
+            if e.trashed_at is not None
+        ]
+    n = len(rows)
+    for exp in rows:
+        exp_dir = Path(get_settings().data_dir) / "experiments" / str(exp.id)
+        shutil.rmtree(exp_dir, ignore_errors=True)
+        await session.delete(exp)
+    await session.commit()
+    return n
 
 
 async def get_experiment_for_user(

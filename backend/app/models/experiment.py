@@ -45,6 +45,8 @@ class Experiment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # {"hypotheses": [{text, status}], "repro_strategy", "steps", "budget_estimate"}
     plan: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(32), default="planning", nullable=False)
+    # 软删除（垃圾箱）：非空即在垃圾箱，列表默认过滤
+    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     workdir: Mapped[str | None] = mapped_column(String(1024))  # ~/polaris_runs/<exp_id>
     server_host: Mapped[str | None] = mapped_column(String(255))
     budget: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # {max_hours, max_runs}

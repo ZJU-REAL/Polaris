@@ -1006,3 +1006,48 @@ async def test_code_archive_and_single_download(client, queue_stub, fake_ssh, bu
         headers=headers,
     )
     assert resp.status_code == 400
+
+
+async def test_experiment_trash_flow(client):
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    ids = []
+    async with get_sessionmaker()() as session:
+        for _ in range(3):
+            e = Experiment(
+                project_id=uuid.UUID(project_id), idea_id=uuid.UUID(idea_id), status="done"
+            )
+            session.add(e)
+            await session.flush()
+            ids.append(str(e.id))
+        await session.commit()
+
+    async def active():
+        r = await client.get(f"/api/projects/{project_id}/experiments", headers=headers)
+        return {e["id"] for e in r.json()}
+
+    async def trash():
+        r = await client.get(
+            f"/api/projects/{project_id}/experiments?trashed=true", headers=headers
+        )
+        return r.json()
+
+    assert await active() == set(ids)
+    # 批量移入垃圾箱 2 个
+    r = await client.post(
+        f"/api/projects/{project_id}/experiments/batch",
+        json={"action": "trash", "ids": ids[:2]},
+        headers=headers,
+    )
+    assert r.status_code == 200 and r.json()["affected"] == 2
+    assert await active() == {ids[2]}
+    t = await trash()
+    assert {e["id"] for e in t} == set(ids[:2]) and all(e["trashed_at"] for e in t)
+    # 恢复 1 个
+    r = await client.post(f"/api/experiments/{ids[0]}/restore", headers=headers)
+    assert r.status_code == 200 and r.json()["trashed_at"] is None
+    assert ids[0] in await active()
+    # 清空垃圾箱 → 永久删除仍在垃圾箱的 ids[1]
+    r = await client.post(f"/api/projects/{project_id}/experiments/trash/empty", headers=headers)
+    assert r.status_code == 200 and r.json()["affected"] == 1
+    assert (await client.get(f"/api/experiments/{ids[1]}", headers=headers)).status_code == 404

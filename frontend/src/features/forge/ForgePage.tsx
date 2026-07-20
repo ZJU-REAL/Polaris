@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -6,11 +6,12 @@ import { PageHead } from '../../components/ui/PageHead';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
 import { Modal } from '../../components/ui/Modal';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { KnobRange } from '../../components/ui/KnobRange';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
-import { fmtTime } from '../../lib/format';
+import { fmtRelative, fmtTime } from '../../lib/format';
 import { clickable } from '../../lib/a11y';
 import { useShell } from '../../app/AppShell';
 import {
@@ -37,6 +38,39 @@ import { DeepDiveDrawer } from './DeepDiveDrawer';
 type StatusFilter = 'all' | IdeaStatus;
 
 type DepthFilter = 'all' | IdeaDepth;
+
+type ViewMode = 'active' | 'trash';
+
+/** 圆角小勾选框（体系内样式，替代原生 checkbox）。 */
+function CheckBox({ checked, onToggle, title }: { checked: boolean; onToggle: () => void; title?: string }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      style={{
+        width: 18,
+        height: 18,
+        flexShrink: 0,
+        borderRadius: 5,
+        border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
+        background: checked ? 'var(--accent)' : 'transparent',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        padding: 0,
+        color: '#fff',
+        transition: 'all .12s',
+      }}
+    >
+      {checked && <Icon name="check" size={12} sw={2.4} />}
+    </button>
+  );
+}
 
 /* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
 const STATUS_FILTERS: { v: StatusFilter; zh: string; en: string }[] = [
@@ -99,20 +133,53 @@ function FunnelBar({ state }: { state: ForgeState | undefined }) {
 
 /* ---------------- 候选卡 ---------------- */
 
-/* memo：onOpen/onDeepen 只捕获稳定引用与 id；onDeepen 的有无（运行中禁用）参与比较 */
+/* memo：回调只捕获稳定引用与 id；参与比较的是 idea 引用 / 视图模式 / 多选与选中态 / onDeepen 的有无 */
 const CandidateCard = memo(function CandidateCard({
   idea,
+  mode,
+  multiSelect,
+  selected,
+  onToggleSelect,
   onOpen,
   onDeepen,
+  onTrash,
+  onRestore,
+  onDelete,
 }: {
   idea: IdeaRead;
+  mode: ViewMode;
+  multiSelect: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
   onOpen: () => void;
   /** 草案行内「深化为研究方案」入口（进行中任务时不传）。 */
   onDeepen?: () => void;
+  onTrash: () => void;
+  onRestore: () => void;
+  onDelete: () => void;
 }) {
+  const isTrash = mode === 'trash';
+  // 多选：整卡点击 = 切换选择；否则活动卡点击打开详情，垃圾箱卡不可点。
+  const activate = multiSelect ? onToggleSelect : isTrash ? undefined : onOpen;
   return (
-    <div className="card card-pad hoverable" {...clickable(onOpen)} style={{ display: 'flex', flexDirection: 'column' }}>
-      <div className="row gap6" style={{ marginBottom: 10 }}>
+    <div
+      className={`card card-pad ${activate ? 'hoverable' : ''}`}
+      {...(activate ? clickable(activate) : {})}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        cursor: activate ? 'pointer' : 'default',
+        borderColor: selected ? 'var(--accent)' : undefined,
+      }}
+    >
+      <div className="row gap6" style={{ marginBottom: 10, alignItems: 'center' }}>
+        {multiSelect && (
+          <CheckBox
+            checked={selected}
+            onToggle={onToggleSelect}
+            title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
+          />
+        )}
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{idea.id.slice(0, 8)}</span>
         <DepthBadge depth={idea.depth} />
         <ResearchTypeBadge type={idea.research_type} />
@@ -144,22 +211,76 @@ const CandidateCard = memo(function CandidateCard({
           <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-3)' }}>Elo</div>
         </div>
       </div>
-      {idea.depth === 'sketch' && onDeepen && (
-        <button
-          className="btn btn-soft sm"
-          style={{ marginTop: 12, justifyContent: 'center' }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onDeepen();
-          }}
-        >
-          <Icon name="sparkle" size={13} />
-          {tr('深化为研究方案', 'Deepen into proposal')}
-        </button>
+      {isTrash ? (
+        <div className="row gap10" style={{ marginTop: 12, alignItems: 'center' }}>
+          <span className="mono muted" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Icon name="trash" size={11} />
+            {tr('删除于', 'trashed')} {idea.trashed_at ? fmtRelative(idea.trashed_at) : '—'}
+          </span>
+          <div className="row gap8" style={{ marginLeft: 'auto' }}>
+            <button
+              className="btn btn-soft sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRestore();
+              }}
+            >
+              <Icon name="refresh" size={12} />
+              {tr('恢复', 'Restore')}
+            </button>
+            <button
+              className="btn btn-ghost sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              style={{ color: 'var(--danger)' }}
+            >
+              <Icon name="trash" size={12} />
+              {tr('永久删除', 'Delete permanently')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        (idea.depth === 'sketch' && onDeepen) || !multiSelect ? (
+          <div className="row gap8" style={{ marginTop: 12, alignItems: 'center' }}>
+            {idea.depth === 'sketch' && onDeepen && (
+              <button
+                className="btn btn-soft sm"
+                style={{ justifyContent: 'center' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeepen();
+                }}
+              >
+                <Icon name="sparkle" size={13} />
+                {tr('深化为研究方案', 'Deepen into proposal')}
+              </button>
+            )}
+            {!multiSelect && (
+              <button
+                className="btn btn-ghost sm"
+                title={tr('移入垃圾箱', 'Move to trash')}
+                style={{ marginLeft: 'auto', color: 'var(--text-3)', padding: '0 7px' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTrash();
+                }}
+              >
+                <Icon name="trash" size={13} />
+              </button>
+            )}
+          </div>
+        ) : null
       )}
     </div>
   );
-}, (prev, next) => prev.idea === next.idea && (prev.onDeepen === undefined) === (next.onDeepen === undefined));
+}, (prev, next) =>
+  prev.idea === next.idea &&
+  prev.mode === next.mode &&
+  prev.multiSelect === next.multiSelect &&
+  prev.selected === next.selected &&
+  (prev.onDeepen === undefined) === (next.onDeepen === undefined));
 
 /* ---------------- 运行 forge Modal ---------------- */
 
@@ -270,6 +391,7 @@ function RunForgeModal({
 
 export function ForgePage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { openGates } = useShell();
   const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
   const pid = currentProjectId;
@@ -281,6 +403,13 @@ export function ForgePage() {
   const [depthFilter, setDepthFilter] = useState<DepthFilter>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [sort, setSort] = useState<IdeaSort>('elo');
+  const [view, setView] = useState<ViewMode>('active');
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState<
+    | null
+    | { title: string; message: string; confirmText: string; run: () => void }
+  >(null);
 
   const stateQuery = useQuery({
     queryKey: ['forge-state', pid],
@@ -317,7 +446,116 @@ export function ForgePage() {
     enabled: !!pid,
     retry: false,
   });
-  const ideas = ideasQuery.data ?? [];
+
+  const trashQuery = useQuery({
+    queryKey: ['ideas', pid, 'trash'],
+    queryFn: () => api.listIdeas(pid!, { trashed: true }),
+    enabled: !!pid,
+    retry: false,
+  });
+
+  const listQuery = view === 'active' ? ideasQuery : trashQuery;
+  const ideas = listQuery.data ?? [];
+  const trashCount = trashQuery.data?.length ?? 0;
+
+  // 切换视图时清空选择（两个列表的 id 集合不同）。
+  useEffect(() => {
+    setSelected(new Set());
+  }, [view]);
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const clearSelection = () => setSelected(new Set());
+  const toggleMultiSelect = () =>
+    setMultiSelect((on) => {
+      if (on) setSelected(new Set());
+      return !on;
+    });
+  const allSelected = ideas.length > 0 && ideas.every((i) => selected.has(i.id));
+  const toggleSelectAll = () => setSelected(allSelected ? new Set() : new Set(ideas.map((i) => i.id)));
+  const selectedIds = ideas.filter((i) => selected.has(i.id)).map((i) => i.id);
+
+  const invalidateIdeas = () => {
+    void queryClient.invalidateQueries({ queryKey: ['ideas', pid] });
+    void queryClient.invalidateQueries({ queryKey: ['forge-state', pid] });
+  };
+  const onMutError = (e: unknown) => {
+    if (e instanceof ApiError && e.status === 403) {
+      toast(tr('只有项目管理者可删除', 'Only project managers can delete'), 'error');
+    } else {
+      toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+    }
+  };
+
+  const trashOne = useMutation({
+    mutationFn: (id: string) => api.trashIdea(id),
+    onSuccess: () => {
+      invalidateIdeas();
+      toast(tr('已移入垃圾箱', 'Moved to trash'), 'ok');
+    },
+    onError: onMutError,
+  });
+  const restoreOne = useMutation({
+    mutationFn: (id: string) => api.restoreIdea(id),
+    onSuccess: () => {
+      invalidateIdeas();
+      toast(tr('已恢复', 'Restored'), 'ok');
+    },
+    onError: onMutError,
+  });
+  const deleteOne = useMutation({
+    mutationFn: (id: string) => api.deleteIdeaPermanent(id),
+    onSuccess: () => {
+      invalidateIdeas();
+      toast(tr('已永久删除', 'Permanently deleted'), 'ok');
+    },
+    onError: onMutError,
+    onSettled: () => setConfirm(null),
+  });
+  const batchTrash = useMutation({
+    mutationFn: (ids: string[]) => api.batchIdeas(pid!, 'trash', ids),
+    onSuccess: (r) => {
+      invalidateIdeas();
+      clearSelection();
+      toast(`${tr('已移入垃圾箱', 'Moved to trash')} · ${r.affected}`, 'ok');
+    },
+    onError: onMutError,
+  });
+  const batchRestore = useMutation({
+    mutationFn: (ids: string[]) => api.batchIdeas(pid!, 'restore', ids),
+    onSuccess: (r) => {
+      invalidateIdeas();
+      clearSelection();
+      toast(`${tr('已恢复', 'Restored')} · ${r.affected}`, 'ok');
+    },
+    onError: onMutError,
+  });
+  const batchDelete = useMutation({
+    mutationFn: (ids: string[]) => api.batchIdeas(pid!, 'delete', ids),
+    onSuccess: (r) => {
+      invalidateIdeas();
+      clearSelection();
+      toast(`${tr('已永久删除', 'Permanently deleted')} · ${r.affected}`, 'ok');
+    },
+    onError: onMutError,
+    onSettled: () => setConfirm(null),
+  });
+  const emptyTrash = useMutation({
+    mutationFn: () => api.emptyIdeaTrash(pid!),
+    onSuccess: (r) => {
+      invalidateIdeas();
+      clearSelection();
+      toast(`${tr('垃圾箱已清空', 'Trash emptied')} · ${r.affected}`, 'ok');
+    },
+    onError: onMutError,
+    onSettled: () => setConfirm(null),
+  });
+  const confirmBusy = deleteOne.isPending || batchDelete.isPending || emptyTrash.isPending;
 
   function openDeepDrawer(seedIdea?: { id: string; title: string }) {
     setDeepSeedIdea(seedIdea ?? null);
@@ -499,53 +737,109 @@ export function ForgePage() {
       </div>
 
       {/* 候选池 */}
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-        <span className="section-h">
-          <Icon name="bulb" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('候选池', 'Candidate pool')} <span className="en-label" style={{ fontSize: 11 }}>{tr(`${ideas.length} 条`, `${ideas.length} ideas`)}</span>
-        </span>
-        <div className="row gap10 wrap">
-          <select
-            className="input"
-            style={{ height: 32, fontSize: 12.5, padding: '0 8px' }}
-            value={depthFilter}
-            title={tr('按草案 / 研究方案过滤', 'Filter by sketch / proposal')}
-            onChange={(e) => setDepthFilter(e.target.value as DepthFilter)}
-          >
-            <option value="all">{tr('全部深度', 'All depths')}</option>
-            <option value="sketch">{tr('草案', 'Sketch')}</option>
-            <option value="proposal">{tr('研究方案', 'Proposal')}</option>
-          </select>
-          <select
-            className="input"
-            style={{ height: 32, fontSize: 12.5, padding: '0 8px' }}
-            value={typeFilter}
-            title={tr('按研究类型过滤', 'Filter by research type')}
-            onChange={(e) => setTypeFilter(e.target.value)}
-          >
-            <option value="all">{tr('全部类型', 'All types')}</option>
-            {RESEARCH_TYPES.map((t) => (
-              <option key={t} value={t}>{researchTypeLabel(t)}</option>
-            ))}
-          </select>
-          <Segmented<StatusFilter>
-            options={STATUS_FILTERS.map((f) => ({ v: f.v, label: tr(f.zh, f.en) }))}
-            value={statusFilter}
-            onChange={setStatusFilter}
-          />
-          <Segmented<IdeaSort> options={SORTS.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))} value={sort} onChange={setSort} />
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+        <div className="row gap10" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          <span className="section-h">
+            <Icon name="bulb" size={15} style={{ color: 'var(--accent)' }} />
+            {tr('候选池', 'Candidate pool')} <span className="en-label" style={{ fontSize: 11 }}>{tr(`${ideas.length} 条`, `${ideas.length} ideas`)}</span>
+          </span>
+          {pid && (
+            <>
+              <Segmented<ViewMode>
+                value={view}
+                onChange={setView}
+                options={[
+                  { v: 'active', label: tr('想法列表', 'Ideas') },
+                  { v: 'trash', label: `${tr('垃圾箱', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
+                ]}
+              />
+              <button
+                className={`btn sm ${multiSelect ? 'btn-primary' : 'btn-soft'}`}
+                onClick={toggleMultiSelect}
+                title={tr('批量选择', 'Multi-select')}
+              >
+                <Icon name="check" size={13} />
+                {tr('多选', 'Multi-select')}
+              </button>
+              {view === 'trash' && trashCount > 0 && (
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ color: 'var(--danger)' }}
+                  onClick={() =>
+                    setConfirm({
+                      title: tr('清空垃圾箱', 'Empty trash'),
+                      message: tr(
+                        `将永久删除垃圾箱内全部 ${trashCount} 条想法，不可恢复。确定继续？`,
+                        `This permanently deletes all ${trashCount} idea(s) in the trash. This cannot be undone. Continue?`,
+                      ),
+                      confirmText: tr('清空', 'Empty'),
+                      run: () => emptyTrash.mutate(),
+                    })
+                  }
+                >
+                  <Icon name="trash" size={13} />
+                  {tr('清空垃圾箱', 'Empty trash')}
+                </button>
+              )}
+            </>
+          )}
         </div>
+        {view === 'active' && (
+          <div className="row gap10 wrap">
+            <select
+              className="input"
+              style={{ height: 32, fontSize: 12.5, padding: '0 8px' }}
+              value={depthFilter}
+              title={tr('按草案 / 研究方案过滤', 'Filter by sketch / proposal')}
+              onChange={(e) => setDepthFilter(e.target.value as DepthFilter)}
+            >
+              <option value="all">{tr('全部深度', 'All depths')}</option>
+              <option value="sketch">{tr('草案', 'Sketch')}</option>
+              <option value="proposal">{tr('研究方案', 'Proposal')}</option>
+            </select>
+            <select
+              className="input"
+              style={{ height: 32, fontSize: 12.5, padding: '0 8px' }}
+              value={typeFilter}
+              title={tr('按研究类型过滤', 'Filter by research type')}
+              onChange={(e) => setTypeFilter(e.target.value)}
+            >
+              <option value="all">{tr('全部类型', 'All types')}</option>
+              {RESEARCH_TYPES.map((t) => (
+                <option key={t} value={t}>{researchTypeLabel(t)}</option>
+              ))}
+            </select>
+            <Segmented<StatusFilter>
+              options={STATUS_FILTERS.map((f) => ({ v: f.v, label: tr(f.zh, f.en) }))}
+              value={statusFilter}
+              onChange={setStatusFilter}
+            />
+            <Segmented<IdeaSort> options={SORTS.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))} value={sort} onChange={setSort} />
+          </div>
+        )}
       </div>
+
+      {/* 多选：全选行 */}
+      {pid && multiSelect && ideas.length > 0 && (
+        <div className="row gap10" style={{ marginBottom: 10, alignItems: 'center' }}>
+          <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
+          <span className="muted" style={{ fontSize: 12 }}>
+            {selected.size > 0
+              ? tr(`已选 ${selected.size} 条`, `${selected.size} selected`)
+              : tr('全选', 'Select all')}
+          </span>
+        </div>
+      )}
 
       {!pid ? (
         <div className="card">
           <EmptyState compact icon="bulb" title={tr('请先选择研究方向', 'Pick a research direction first')} />
         </div>
-      ) : ideasQuery.isLoading ? (
+      ) : listQuery.isLoading ? (
         <div className="card">
-          <div className="empty">{tr('加载候选池…', 'Loading candidates…')}</div>
+          <div className="empty">{view === 'trash' ? tr('加载垃圾箱…', 'Loading trash…') : tr('加载候选池…', 'Loading candidates…')}</div>
         </div>
-      ) : ideasQuery.isError ? (
+      ) : listQuery.isError ? (
         <div className="card">
           <EmptyState
             compact
@@ -553,7 +847,7 @@ export function ForgePage() {
             title={tr('无法加载候选池', 'Could not load candidates')}
             desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
             action={
-              <button className="btn btn-soft sm" onClick={() => void ideasQuery.refetch()}>
+              <button className="btn btn-soft sm" onClick={() => void listQuery.refetch()}>
                 {tr('重试', 'Retry')}
               </button>
             }
@@ -561,17 +855,26 @@ export function ForgePage() {
         </div>
       ) : ideas.length === 0 ? (
         <div className="card">
-          <EmptyState
-            icon="bulb"
-            title={tr('候选池为空', 'The candidate pool is empty')}
-            desc={tr('运行一次想法生成，从知识库中分析研究空白并生成候选想法。', 'Run idea generation to analyze research gaps in the knowledge base and produce candidates.')}
-            action={
-              <button className="btn btn-primary" disabled={running} onClick={() => setModalOpen(true)}>
-                <Icon name="play" size={14} />
-                {tr('运行 Idea Forge', 'Run Idea Forge')}
-              </button>
-            }
-          />
+          {view === 'trash' ? (
+            <EmptyState
+              compact
+              icon="trash"
+              title={tr('垃圾箱是空的', 'Trash is empty')}
+              desc={tr('删除的想法会先进这里，可恢复或永久删除。', 'Deleted ideas land here first — restore them or delete permanently.')}
+            />
+          ) : (
+            <EmptyState
+              icon="bulb"
+              title={tr('候选池为空', 'The candidate pool is empty')}
+              desc={tr('运行一次想法生成，从知识库中分析研究空白并生成候选想法。', 'Run idea generation to analyze research gaps in the knowledge base and produce candidates.')}
+              action={
+                <button className="btn btn-primary" disabled={running} onClick={() => setModalOpen(true)}>
+                  <Icon name="play" size={14} />
+                  {tr('运行 Idea Forge', 'Run Idea Forge')}
+                </button>
+              }
+            />
+          )}
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
@@ -579,12 +882,104 @@ export function ForgePage() {
             <CandidateCard
               key={idea.id}
               idea={idea}
+              mode={view}
+              multiSelect={multiSelect}
+              selected={selected.has(idea.id)}
+              onToggleSelect={() => toggleSelect(idea.id)}
               onOpen={() => navigate(`/ideas/${idea.id}`)}
-              onDeepen={running ? undefined : () => openDeepDrawer({ id: idea.id, title: idea.title })}
+              onDeepen={view === 'trash' || running ? undefined : () => openDeepDrawer({ id: idea.id, title: idea.title })}
+              onTrash={() => trashOne.mutate(idea.id)}
+              onRestore={() => restoreOne.mutate(idea.id)}
+              onDelete={() =>
+                setConfirm({
+                  title: tr('永久删除想法', 'Delete idea permanently'),
+                  message: tr(
+                    `将永久删除「${idea.title}」，不可恢复。确定继续？`,
+                    `This permanently deletes "${idea.title}". This cannot be undone. Continue?`,
+                  ),
+                  confirmText: tr('永久删除', 'Delete permanently'),
+                  run: () => deleteOne.mutate(idea.id),
+                })
+              }
             />
           ))}
         </div>
       )}
+
+      {/* 批量操作栏（多选模式下有选中时浮出底部） */}
+      {pid && multiSelect && selected.size > 0 && (
+        <div
+          className="card card-pad"
+          style={{
+            position: 'sticky',
+            bottom: 16,
+            marginTop: 16,
+            boxShadow: 'var(--shadow-pop)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+            {tr(`已选 ${selected.size} 条`, `${selected.size} selected`)}
+          </span>
+          <div className="row gap8" style={{ marginLeft: 'auto' }}>
+            {view === 'active' ? (
+              <button
+                className="btn btn-danger sm"
+                disabled={batchTrash.isPending}
+                onClick={() => batchTrash.mutate(selectedIds)}
+              >
+                <Icon name="trash" size={13} />
+                {tr('批量删除', 'Delete selected')}
+              </button>
+            ) : (
+              <>
+                <button
+                  className="btn btn-soft sm"
+                  disabled={batchRestore.isPending}
+                  onClick={() => batchRestore.mutate(selectedIds)}
+                >
+                  <Icon name="refresh" size={13} />
+                  {tr('批量恢复', 'Restore selected')}
+                </button>
+                <button
+                  className="btn btn-danger sm"
+                  disabled={batchDelete.isPending}
+                  onClick={() =>
+                    setConfirm({
+                      title: tr('永久删除所选', 'Delete selected permanently'),
+                      message: tr(
+                        `将永久删除所选 ${selected.size} 条想法，不可恢复。确定继续？`,
+                        `This permanently deletes the ${selected.size} selected idea(s). This cannot be undone. Continue?`,
+                      ),
+                      confirmText: tr('永久删除', 'Delete permanently'),
+                      run: () => batchDelete.mutate(selectedIds),
+                    })
+                  }
+                >
+                  <Icon name="trash" size={13} />
+                  {tr('批量永久删除', 'Delete permanently')}
+                </button>
+              </>
+            )}
+            <button className="btn btn-ghost sm" onClick={clearSelection}>
+              {tr('取消选择', 'Clear')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={!!confirm}
+        onClose={() => setConfirm(null)}
+        title={confirm?.title ?? ''}
+        message={confirm?.message ?? ''}
+        confirmText={confirm?.confirmText}
+        danger
+        busy={confirmBusy}
+        onConfirm={() => confirm?.run()}
+      />
 
       {pid && <RunForgeModal open={modalOpen} onClose={() => setModalOpen(false)} pid={pid} />}
       {pid && (

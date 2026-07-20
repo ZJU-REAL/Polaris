@@ -86,6 +86,7 @@ class IdeaRead(BaseModel):
     status: str  # candidate | under_review | promoted | rejected
     depth: str  # sketch | proposal
     research_type: str | None  # method | benchmark | analysis | survey | application | theory
+    trashed_at: datetime | None = None  # 非空即在垃圾箱
     created_at: datetime
 
 

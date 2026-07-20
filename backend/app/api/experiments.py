@@ -27,6 +27,7 @@ from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment
 from app.models.ssh_credential import SSHCredential
 from app.models.user import User
 from app.models.voyage import VoyageRun
+from app.schemas.common import BatchResult, TrashBatchAction
 from app.schemas.experiment import (
     ExperimentCreate,
     ExperimentDetail,
@@ -87,14 +88,101 @@ async def create_experiment(
 @router.get("/projects/{project_id}/experiments", response_model=list[ExperimentRead])
 async def list_experiments(
     project_id: uuid.UUID,
+    trashed: bool = False,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[ExperimentRead]:
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    rows = await experiments_service.list_experiments(session, project_id=project_id)
+    rows = await experiments_service.list_experiments(
+        session, project_id=project_id, trashed=trashed
+    )
     return [experiments_service.to_read(exp, title) for exp, title in rows]
+
+
+async def _manage_exp_project(session: AsyncSession, project_id: uuid.UUID, user: User):
+    """项目 + 管理权限（垃圾箱/删除用）。"""
+    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    if not projects_service.can_manage_project(project, user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+    return project
+
+
+@router.delete("/experiments/{experiment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_experiment(
+    experiment_id: uuid.UUID,
+    permanent: bool = False,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """默认移入垃圾箱；permanent=true 永久删除（删本地目录，远端 workdir 不动）。仅管理者。"""
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    await _manage_exp_project(session, experiment.project_id, user)
+    if permanent:
+        # 先移入垃圾箱再清空（purge 只删已在垃圾箱的），保证本地目录也被清理
+        if experiment.trashed_at is None:
+            await experiments_service.trash_experiments(
+                session, project_id=experiment.project_id, ids=[experiment.id]
+            )
+        await experiments_service.purge_experiments(
+            session, project_id=experiment.project_id, ids=[experiment.id]
+        )
+    else:
+        await experiments_service.trash_experiments(
+            session, project_id=experiment.project_id, ids=[experiment.id]
+        )
+
+
+@router.post("/experiments/{experiment_id}/restore", response_model=ExperimentRead)
+async def restore_experiment(
+    experiment_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ExperimentRead:
+    experiment, title = await _member_experiment(session, experiment_id, user)
+    await _manage_exp_project(session, experiment.project_id, user)
+    await experiments_service.restore_experiments(
+        session, project_id=experiment.project_id, ids=[experiment.id]
+    )
+    await session.refresh(experiment)
+    return experiments_service.to_read(experiment, title)
+
+
+@router.post("/projects/{project_id}/experiments/batch", response_model=BatchResult)
+async def batch_experiments(
+    project_id: uuid.UUID,
+    data: TrashBatchAction,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> BatchResult:
+    await _manage_exp_project(session, project_id, user)
+    if data.action == "trash":
+        n = await experiments_service.trash_experiments(
+            session, project_id=project_id, ids=data.ids
+        )
+    elif data.action == "restore":
+        n = await experiments_service.restore_experiments(
+            session, project_id=project_id, ids=data.ids
+        )
+    else:
+        n = await experiments_service.purge_experiments(
+            session, project_id=project_id, ids=data.ids
+        )
+    return BatchResult(affected=n)
+
+
+@router.post("/projects/{project_id}/experiments/trash/empty", response_model=BatchResult)
+async def empty_experiment_trash(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> BatchResult:
+    await _manage_exp_project(session, project_id, user)
+    n = await experiments_service.purge_experiments(session, project_id=project_id, ids=None)
+    return BatchResult(affected=n)
 
 
 @router.get("/experiments/{experiment_id}", response_model=ExperimentDetail)

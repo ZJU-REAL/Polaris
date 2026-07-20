@@ -162,6 +162,7 @@ async def test_forge_full_pipeline(client, queue_stub):
         "status",
         "depth",
         "research_type",
+        "trashed_at",
         "created_at",
     }
     assert all(i["depth"] == "sketch" for i in items)
@@ -393,3 +394,45 @@ async def test_collect_signals_concept_holes_and_trends(client, queue_stub):
     # 幂等：重跑不重复采集
     obs2 = await forge_collect_signals(ctx, {})
     assert obs2["skipped"] is True
+
+
+async def test_idea_trash_flow(client):
+    project_id, headers = await _setup_project(client)
+    ids = []
+    async with get_sessionmaker()() as session:
+        for i in range(3):
+            idea = Idea(project_id=uuid.UUID(project_id), title=f"idea {i}", status="candidate")
+            session.add(idea)
+            await session.flush()
+            ids.append(str(idea.id))
+        await session.commit()
+
+    async def active():
+        r = await client.get(f"/api/projects/{project_id}/ideas", headers=headers)
+        return {i["id"] for i in r.json()}
+
+    assert await active() == set(ids)
+    # 单个移入垃圾箱
+    r = await client.delete(f"/api/ideas/{ids[0]}", headers=headers)
+    assert r.status_code == 204
+    assert ids[0] not in await active()
+    trash = (
+        await client.get(f"/api/projects/{project_id}/ideas?trashed=true", headers=headers)
+    ).json()
+    assert {i["id"] for i in trash} == {ids[0]}
+    # 批量移入垃圾箱其余 2 个
+    r = await client.post(
+        f"/api/projects/{project_id}/ideas/batch",
+        json={"action": "trash", "ids": ids[1:]},
+        headers=headers,
+    )
+    assert r.json()["affected"] == 2
+    assert await active() == set()
+    # 恢复 1 个
+    r = await client.post(f"/api/ideas/{ids[0]}/restore", headers=headers)
+    assert r.status_code == 200 and r.json()["trashed_at"] is None
+    assert await active() == {ids[0]}
+    # 清空垃圾箱 → 永久删除仍在垃圾箱的 2 个
+    r = await client.post(f"/api/projects/{project_id}/ideas/trash/empty", headers=headers)
+    assert r.json()["affected"] == 2
+    assert (await client.get(f"/api/ideas/{ids[1]}", headers=headers)).status_code == 404

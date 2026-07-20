@@ -1,9 +1,10 @@
 """研究想法（ideation 产物），带四维评分与 Elo 排位。"""
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -38,6 +39,8 @@ class Idea(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     wins: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # candidate | under_review | promoted | rejected
     status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
+    # 软删除（垃圾箱）：非空即在垃圾箱，列表默认过滤
+    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     parent_paper_ids: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     # 语义去重用：postgres pgvector(1024)，sqlite 回退 JSON（同 papers.embedding）
     embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)

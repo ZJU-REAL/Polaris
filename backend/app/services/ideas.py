@@ -1,6 +1,7 @@
 """Idea Forge / 评审锦标赛业务逻辑（不 import fastapi）。"""
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -339,8 +340,12 @@ async def list_ideas(
     depth: str | None = None,
     research_type: str | None = None,
     sort: str = "-created_at",
+    trashed: bool = False,
 ) -> list[Idea]:
-    stmt = select(Idea).where(Idea.project_id == project_id)
+    trash_cond = Idea.trashed_at.is_not(None) if trashed else Idea.trashed_at.is_(None)
+    stmt = select(Idea).where(Idea.project_id == project_id, trash_cond)
+    if trashed:
+        return list((await session.execute(stmt.order_by(Idea.trashed_at.desc()))).scalars().all())
     if status:
         stmt = stmt.where(Idea.status == status)
     if depth:
@@ -367,6 +372,59 @@ async def get_idea_for_user(
         .where(Idea.id == idea_id, ProjectMember.user_id == user_id)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def _owned_ideas(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
+) -> list[Idea]:
+    if not ids:
+        return []
+    stmt = select(Idea).where(Idea.project_id == project_id, Idea.id.in_(ids))
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def trash_ideas(session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]) -> int:
+    """移入垃圾箱（软删除）；返回受影响数量。"""
+    now = datetime.now(UTC)
+    n = 0
+    for idea in await _owned_ideas(session, project_id=project_id, ids=ids):
+        if idea.trashed_at is None:
+            idea.trashed_at = now
+            n += 1
+    await session.commit()
+    return n
+
+
+async def restore_ideas(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
+) -> int:
+    n = 0
+    for idea in await _owned_ideas(session, project_id=project_id, ids=ids):
+        if idea.trashed_at is not None:
+            idea.trashed_at = None
+            n += 1
+    await session.commit()
+    return n
+
+
+async def purge_ideas(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID] | None = None
+) -> int:
+    """永久删除。ids=None → 清空该项目垃圾箱；否则只删指定 id 中已在垃圾箱的。
+    级联删除其实验（DB FK ondelete=CASCADE）。返回删除数量。"""
+    if ids is None:
+        rows = await list_ideas(session, project_id=project_id, trashed=True)
+    else:
+        rows = [
+            i
+            for i in await _owned_ideas(session, project_id=project_id, ids=ids)
+            if i.trashed_at is not None
+        ]
+    n = len(rows)
+    for idea in rows:
+        await session.delete(idea)
+    await session.commit()
+    return n
 
 
 async def set_idea_status(session: AsyncSession, idea: Idea, status: str) -> Idea:

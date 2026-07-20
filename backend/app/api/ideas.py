@@ -16,6 +16,7 @@ from app.models.idea import Idea
 from app.models.project import Project
 from app.models.review import ReviewSession
 from app.models.user import User
+from app.schemas.common import BatchResult, TrashBatchAction
 from app.schemas.gate import GateRead
 from app.schemas.idea import (
     DeepIdeaRequest,
@@ -154,6 +155,7 @@ async def list_ideas(
     depth: str | None = Query(default=None, pattern="^(sketch|proposal)$"),
     research_type: str | None = Query(default=None),
     sort: str = Query(default="-created_at", pattern="^(elo|-created_at|score)$"),
+    trashed: bool = False,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[IdeaRead]:
@@ -165,8 +167,75 @@ async def list_ideas(
         depth=depth,
         research_type=research_type,
         sort=sort,
+        trashed=trashed,
     )
     return [IdeaRead.model_validate(i) for i in ideas]
+
+
+async def _manage_idea_project(session: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
+    """项目 + 管理权限（垃圾箱/删除用）。"""
+    project = await _member_project(session, project_id, user)
+    if not projects_service.can_manage_project(project, user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+    return project
+
+
+@router.delete("/ideas/{idea_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_idea(
+    idea_id: uuid.UUID,
+    permanent: bool = False,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """默认移入垃圾箱；permanent=true 永久删除（级联其实验）。仅项目管理者。"""
+    idea = await _member_idea(session, idea_id, user)
+    await _manage_idea_project(session, idea.project_id, user)
+    if permanent:
+        await session.delete(idea)
+        await session.commit()
+    else:
+        await ideas_service.trash_ideas(session, project_id=idea.project_id, ids=[idea.id])
+
+
+@router.post("/ideas/{idea_id}/restore", response_model=IdeaRead)
+async def restore_idea(
+    idea_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> IdeaRead:
+    idea = await _member_idea(session, idea_id, user)
+    await _manage_idea_project(session, idea.project_id, user)
+    await ideas_service.restore_ideas(session, project_id=idea.project_id, ids=[idea.id])
+    await session.refresh(idea)
+    return IdeaRead.model_validate(idea)
+
+
+@router.post("/projects/{project_id}/ideas/batch", response_model=BatchResult)
+async def batch_ideas(
+    project_id: uuid.UUID,
+    data: TrashBatchAction,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> BatchResult:
+    await _manage_idea_project(session, project_id, user)
+    if data.action == "trash":
+        n = await ideas_service.trash_ideas(session, project_id=project_id, ids=data.ids)
+    elif data.action == "restore":
+        n = await ideas_service.restore_ideas(session, project_id=project_id, ids=data.ids)
+    else:
+        n = await ideas_service.purge_ideas(session, project_id=project_id, ids=data.ids)
+    return BatchResult(affected=n)
+
+
+@router.post("/projects/{project_id}/ideas/trash/empty", response_model=BatchResult)
+async def empty_idea_trash(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> BatchResult:
+    await _manage_idea_project(session, project_id, user)
+    n = await ideas_service.purge_ideas(session, project_id=project_id, ids=None)
+    return BatchResult(affected=n)
 
 
 @router.get("/ideas/{idea_id}", response_model=IdeaDetail)

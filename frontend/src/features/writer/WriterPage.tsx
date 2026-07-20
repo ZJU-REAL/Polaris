@@ -123,16 +123,16 @@ function ManuscriptCard({
   const isPinned = !!m.pinned_at;
   return (
     <div
-      className={`card card-pad ${isTrash ? '' : 'hoverable'}`}
-      onClick={isTrash ? undefined : onOpen}
+      className={`card card-pad ${multiSelect || !isTrash ? 'hoverable' : ''}`}
+      onClick={multiSelect ? onToggleSelect : isTrash ? undefined : onOpen}
       style={{
-        cursor: isTrash ? 'default' : 'pointer',
+        cursor: multiSelect || !isTrash ? 'pointer' : 'default',
         borderColor: selected ? 'var(--accent)' : undefined,
       }}
     >
       <div className="row gap10" style={{ alignItems: 'flex-start' }}>
         {multiSelect && (
-          <div style={{ paddingTop: 1 }}>
+          <div style={{ paddingTop: 1 }} onClick={(e) => e.stopPropagation()}>
             <CheckBox
               checked={selected}
               onToggle={onToggleSelect}

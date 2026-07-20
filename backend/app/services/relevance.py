@@ -88,9 +88,7 @@ async def score_paper_relevance(
     paper.relevance_score = score
     paper.tldr = str(data.get("tldr") or "") or paper.tldr
     paper.scored_at = utcnow()
-    return RelevanceResult(
-        score=score, reason=str(data.get("reason") or ""), tldr=paper.tldr or ""
-    )
+    return RelevanceResult(score=score, reason=str(data.get("reason") or ""), tldr=paper.tldr or "")
 
 
 async def score_added_paper_best_effort(
@@ -113,7 +111,5 @@ async def score_added_paper_best_effort(
         )
         await session.commit()
     except Exception:  # noqa: BLE001 — 顺带增值，失败不影响添加本身
-        logger.warning(
-            "best-effort relevance scoring failed for paper %s", paper.id, exc_info=True
-        )
+        logger.warning("best-effort relevance scoring failed for paper %s", paper.id, exc_info=True)
         await session.rollback()

@@ -32,12 +32,33 @@ async def _project(client, email="fig@example.com"):
 
 async def _seed_paper_with_figures(project_id: str) -> str:
     figs = [
-        {"index": 0, "page": 1, "width": 80, "height": 60,
-         "caption": "方法总览图", "kind": "method", "important": True},
-        {"index": 1, "page": 3, "width": 80, "height": 60,
-         "caption": "主实验结果", "kind": "experiment", "important": True},
-        {"index": 2, "page": 5, "width": 80, "height": 60,
-         "caption": None, "kind": None, "important": False},
+        {
+            "index": 0,
+            "page": 1,
+            "width": 80,
+            "height": 60,
+            "caption": "方法总览图",
+            "kind": "method",
+            "important": True,
+        },
+        {
+            "index": 1,
+            "page": 3,
+            "width": 80,
+            "height": 60,
+            "caption": "主实验结果",
+            "kind": "experiment",
+            "important": True,
+        },
+        {
+            "index": 2,
+            "page": 5,
+            "width": 80,
+            "height": 60,
+            "caption": None,
+            "kind": None,
+            "important": False,
+        },
     ]
     async with get_sessionmaker()() as session:
         paper = Paper(
@@ -111,10 +132,12 @@ async def test_related_papers_shared_concept(client):
     async with get_sessionmaker()() as session:
         pid = uuid.UUID(project_id)
         concept = Concept(project_id=pid, name="RAG", slug="rag", definition="检索增强")
-        p1 = Paper(project_id=pid, source="manual", title="Paper A", status="compiled",
-                   concepts=[concept])
-        p2 = Paper(project_id=pid, source="manual", title="Paper B", status="compiled",
-                   concepts=[concept])
+        p1 = Paper(
+            project_id=pid, source="manual", title="Paper A", status="compiled", concepts=[concept]
+        )
+        p2 = Paper(
+            project_id=pid, source="manual", title="Paper B", status="compiled", concepts=[concept]
+        )
         session.add_all([p1, p2])
         await session.commit()
         p1_id = str(p1.id)

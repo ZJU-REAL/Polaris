@@ -855,6 +855,8 @@ export interface IdeaRead {
   /** 研究类型（method/benchmark/…）；草案通常为 null */
   research_type: string | null;
   created_at: string;
+  /** 软删除时间戳；null=活动，非 null=在垃圾箱 */
+  trashed_at?: string | null;
 }
 
 export interface IdeaParentPaper {
@@ -1118,6 +1120,8 @@ export interface ExperimentRead {
   budget: ExperimentBudget | null;
   created_at: string;
   updated_at: string;
+  /** 软删除时间戳；null=活动，非 null=在垃圾箱 */
+  trashed_at?: string | null;
 }
 
 export type HypothesisStatus = 'testing' | 'verified' | 'falsified';
@@ -2238,13 +2242,20 @@ export const api = {
   // —— M3 · Ideas ——
   listIdeas(
     projectId: string,
-    opts: { status?: IdeaStatus; sort?: IdeaSort; depth?: IdeaDepth; research_type?: string } = {},
+    opts: {
+      status?: IdeaStatus;
+      sort?: IdeaSort;
+      depth?: IdeaDepth;
+      research_type?: string;
+      trashed?: boolean;
+    } = {},
   ): Promise<IdeaRead[]> {
     const params = new URLSearchParams();
     if (opts.status) params.set('status', opts.status);
     if (opts.sort) params.set('sort', opts.sort);
     if (opts.depth) params.set('depth', opts.depth);
     if (opts.research_type) params.set('research_type', opts.research_type);
+    if (opts.trashed) params.set('trashed', 'true');
     const qs = params.toString();
     return request<IdeaRead[]>(`/projects/${projectId}/ideas${qs ? `?${qs}` : ''}`);
   },
@@ -2258,6 +2269,36 @@ export const api = {
   /** 发起晋级 → 创建 idea_promotion Gate（pending）。 */
   promoteIdea(id: string): Promise<GateRead> {
     return request<GateRead>(`/ideas/${id}/promote`, { method: 'POST' });
+  },
+  /** 软删除：移入垃圾箱（仅 owner/admin，否则 403）。 */
+  trashIdea(id: string): Promise<void> {
+    return request<void>(`/ideas/${id}`, { method: 'DELETE' });
+  },
+  /** 永久删除，不可恢复（仅 owner/admin，否则 403）。 */
+  deleteIdeaPermanent(id: string): Promise<void> {
+    return request<void>(`/ideas/${id}?permanent=true`, { method: 'DELETE' });
+  },
+  /** 从垃圾箱恢复（仅 owner/admin，否则 403）。 */
+  restoreIdea(id: string): Promise<IdeaRead> {
+    return request<IdeaRead>(`/ideas/${id}/restore`, { method: 'POST' });
+  },
+  /** 批量操作想法：trash=移入垃圾箱 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
+  batchIdeas(
+    projectId: string,
+    action: 'trash' | 'restore' | 'delete',
+    ids: string[],
+  ): Promise<{ affected: number }> {
+    return requestJson<{ affected: number }>(
+      `/projects/${projectId}/ideas/batch`,
+      'POST',
+      { action, ids },
+    );
+  },
+  /** 清空垃圾箱：永久删除该研究方向下所有已软删除想法（仅 owner/admin，否则 403）。 */
+  emptyIdeaTrash(projectId: string): Promise<{ affected: number }> {
+    return request<{ affected: number }>(`/projects/${projectId}/ideas/trash/empty`, {
+      method: 'POST',
+    });
   },
 
   // —— M3 · Review 锦标赛 / 排行榜 ——
@@ -2302,11 +2343,43 @@ export const api = {
   createExperiment(projectId: string, input: CreateExperimentInput): Promise<ExperimentRead> {
     return requestJson<ExperimentRead>(`/projects/${projectId}/experiments`, 'POST', input);
   },
-  listExperiments(projectId: string): Promise<ExperimentRead[]> {
-    return request<ExperimentRead[]>(`/projects/${projectId}/experiments`);
+  /** 默认返回活动列表；opts.trashed=true 返回垃圾箱（已软删除的实验）。 */
+  listExperiments(projectId: string, opts?: { trashed?: boolean }): Promise<ExperimentRead[]> {
+    const qs = opts?.trashed ? '?trashed=true' : '';
+    return request<ExperimentRead[]>(`/projects/${projectId}/experiments${qs}`);
   },
   getExperiment(id: string): Promise<ExperimentDetail> {
     return request<ExperimentDetail>(`/experiments/${id}`);
+  },
+  /** 软删除：移入垃圾箱（仅 owner/admin，否则 403）。 */
+  trashExperiment(id: string): Promise<void> {
+    return request<void>(`/experiments/${id}`, { method: 'DELETE' });
+  },
+  /** 永久删除，不可恢复（仅 owner/admin，否则 403）。 */
+  deleteExperimentPermanent(id: string): Promise<void> {
+    return request<void>(`/experiments/${id}?permanent=true`, { method: 'DELETE' });
+  },
+  /** 从垃圾箱恢复（仅 owner/admin，否则 403）。 */
+  restoreExperiment(id: string): Promise<ExperimentRead> {
+    return request<ExperimentRead>(`/experiments/${id}/restore`, { method: 'POST' });
+  },
+  /** 批量操作实验：trash=移入垃圾箱 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
+  batchExperiments(
+    projectId: string,
+    action: 'trash' | 'restore' | 'delete',
+    ids: string[],
+  ): Promise<{ affected: number }> {
+    return requestJson<{ affected: number }>(
+      `/projects/${projectId}/experiments/batch`,
+      'POST',
+      { action, ids },
+    );
+  },
+  /** 清空垃圾箱：永久删除该研究方向下所有已软删除实验（仅 owner/admin，否则 403）。 */
+  emptyExperimentTrash(projectId: string): Promise<{ affected: number }> {
+    return request<{ affected: number }>(`/projects/${projectId}/experiments/trash/empty`, {
+      method: 'POST',
+    });
   },
   /** 取消关联 voyage + 尝试 SSH kill 运行中的进程。 */
   cancelExperiment(id: string): Promise<void> {
