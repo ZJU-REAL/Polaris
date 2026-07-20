@@ -520,14 +520,22 @@ export function FiguresSection({
   }, [paper.id, defaultCollapsed]);
 
   const extractMutation = useMutation({
-    mutationFn: () => api.extractFigures(paper.id),
-    onSuccess: (res) => {
+    mutationFn: (force: boolean) => api.extractFigures(paper.id, force),
+    onSuccess: (res, force) => {
       queryClient.setQueryData<FigureInfo[]>(['paper-figures', paper.id], res.figures);
       queryClient.setQueryData<PaperDetail>(['paper', paper.id], (old) =>
         old ? { ...old, figures: res.figures } : old,
       );
       if (res.figures.length > 0) {
-        toast(tr(`提取完成，找到 ${res.figures.length} 张图`, `Done — found ${res.figures.length} figures`), 'ok');
+        toast(
+          force
+            ? tr(
+                `重新提取完成，找到 ${res.figures.length} 张图；如需更新正文插图请点「重新编译」`,
+                `Re-extracted ${res.figures.length} figures; use “Recompile” to refresh in-text figures`,
+              )
+            : tr(`提取完成，找到 ${res.figures.length} 张图`, `Done — found ${res.figures.length} figures`),
+          'ok',
+        );
       } else {
         toast(tr('这篇 PDF 里没找到合适的图片', 'No suitable figures found in this PDF'), 'info');
       }
@@ -551,7 +559,7 @@ export function FiguresSection({
         <button
           className="btn btn-ghost sm"
           disabled={extractMutation.isPending}
-          onClick={() => extractMutation.mutate()}
+          onClick={() => extractMutation.mutate(false)}
         >
           {extractMutation.isPending ? (
             <>
@@ -583,6 +591,22 @@ export function FiguresSection({
               style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
             />
             {expanded ? tr('收起', 'Collapse') : tr(`展开全部图片（${figures.length} 张）`, `Show all figures (${figures.length})`)}
+          </button>
+        )}
+        {paper.pdf_available && (
+          <button
+            className="btn btn-ghost sm"
+            style={{ marginLeft: 'auto' }}
+            disabled={extractMutation.isPending}
+            title={tr('用最新方法从 PDF 重新抽取图片', 'Re-extract figures from the PDF with the latest method')}
+            onClick={() => extractMutation.mutate(true)}
+          >
+            <Icon
+              name="refresh"
+              size={12}
+              style={extractMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
+            />
+            {extractMutation.isPending ? tr('重新提取中…', 'Re-extracting…') : tr('重新提取配图', 'Re-extract')}
           </button>
         )}
       </div>

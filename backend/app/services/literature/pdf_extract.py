@@ -22,6 +22,9 @@ FIGURE_MIN_HEIGHT = 150
 FIGURE_MAX_COUNT = 12
 # 同一页最多取的候选数：论文页里成组出现的大量嵌入图（如轨迹截图素材）不该霸占全部名额
 FIGURE_MAX_PER_PAGE = 3
+# 近空白过滤：铺白后白底像素占比超过此值视为空白（空矢量簇/白色卡片框/空白页），丢弃。
+# 真实图（含稀疏曲线/小提琴图）实测白底 ≤~0.90；空白矢量簇实测 0.95~0.99。取 0.94 留余量。
+FIGURE_MAX_WHITE_FRAC = 0.94
 
 # 矢量图渲染兜底：学术论文的架构图/流程图/曲线图多为矢量绘图，get_images 抓不到。
 # 用 cluster_drawings 找矢量绘图簇，按区域渲染成 PNG 参与候选。
@@ -93,8 +96,11 @@ async def extract_full_text(paper_id: str, pdf_path: Path) -> Path:
     return txt_path
 
 
-def _flatten_png_white(png_bytes: bytes) -> bytes:
-    """Pillow 归一化：透明区域铺白底（RGBA/LA/P+transparency），CMYK 转 RGB，杜绝黑底图。"""
+def _flatten_to_white_rgb(png_bytes: bytes) -> Any:
+    """Pillow 归一化为 RGB：透明区域铺白底（RGBA/LA/P+transparency），CMYK 转 RGB，杜绝黑底图。
+
+    返回一个独立的 PIL Image（不再绑定已关闭的文件），供落盘与空白检测共用。
+    """
     from PIL import Image  # 延迟导入：仅在真正抽取时需要
 
     with Image.open(io.BytesIO(png_bytes)) as img:
@@ -105,12 +111,36 @@ def _flatten_png_white(png_bytes: bytes) -> bytes:
             rgba = img.convert("RGBA")
             white = Image.new("RGB", rgba.size, (255, 255, 255))
             white.paste(rgba, mask=rgba.getchannel("A"))
-            img = white
-        elif img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        out = io.BytesIO()
-        img.save(out, format="PNG")
-        return out.getvalue()
+            return white
+        return img.convert("RGB")
+
+
+def _png_bytes(img: Any) -> bytes:
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _white_fraction(img: Any) -> float:
+    """铺白 RGB 图里近白像素的占比（降采样到 ≤200px 提速）；用于近空白过滤。"""
+    gray = img.convert("L")
+    w, h = gray.size
+    if w > 200 or h > 200:
+        gray = gray.resize((min(w, 200) or 1, min(h, 200) or 1))
+    pixels = gray.tobytes()  # 模式 L：每像素 1 字节
+    if not pixels:
+        return 1.0
+    return sum(1 for v in pixels if v >= 245) / len(pixels)
+
+
+def _pix_white_fraction(pix: Any) -> float:
+    """Pixmap 铺白后的近白占比（判断 SMask 合并是否把图压成空白 / 候选是否空白）。"""
+    return _white_fraction(_flatten_to_white_rgb(pix.tobytes("png")))
+
+
+def _flatten_png_white(png_bytes: bytes) -> bytes:
+    """透明/CMYK 归一化为白底 RGB PNG，杜绝黑底图。"""
+    return _png_bytes(_flatten_to_white_rgb(png_bytes))
 
 
 def _rect_gap(a: Any, b: Any) -> float:
@@ -211,15 +241,126 @@ def _vector_figure_pixmaps(page: Any) -> list[Any]:
     return pixmaps
 
 
+# 图注锚定抽图（主路径）：找到「Figure N / 图 N」标题，把它正上方那块图区域（矢量+位图+
+# 标签一起）整块渲染——比按矢量路径聚类更稳，复杂图（小提琴图/流程图）不会被拆成碎片、
+# 空白页不会被误抓。无图注的页才退回嵌入图/矢量簇兜底。
+_FIG_CAPTION_RE = re.compile(r"^\s*(fig(?:ure)?\.?|图)\s*\.?\s*\d", re.IGNORECASE)
+CAPTION_TOP_MARGIN_PT = 36.0  # 无上方屏障时图区上界离页顶的留白
+CAPTION_BARRIER_MIN_CHARS = 140  # 正文段落判定：字数超此值当作图区上界屏障（图内短标签不算）
+CAPTION_REGION_DPI = 200  # 图区渲染 DPI
+
+
+def _block_plain_text(block: dict[str, Any]) -> str:
+    return "".join(
+        span["text"] for line in block.get("lines", []) for span in line.get("spans", [])
+    )
+
+
+def _caption_figure_regions(page: Any) -> list[Any]:
+    """按图注锚点定位每张图的区域：图注正上方、以正文段/上一图注/页顶为上界的图元包围盒。"""
+    import pymupdf
+
+    page_rect = page.rect
+    captions: list[tuple[Any, str]] = []
+    barriers: list[Any] = []  # 正文段落：图区向上生长的屏障，避免吞进标题/摘要/正文
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type") != 0:
+            continue
+        text = _block_plain_text(block).strip()
+        bbox = pymupdf.Rect(block["bbox"])
+        if _FIG_CAPTION_RE.match(text):
+            captions.append((bbox, text))
+        elif len(text) > CAPTION_BARRIER_MIN_CHARS:
+            barriers.append(bbox)
+    captions.sort(key=lambda c: c[0].y0)
+
+    content = [pymupdf.Rect(d["rect"]) for d in page.get_drawings()]
+    try:
+        content += [pymupdf.Rect(info["bbox"]) for info in page.get_image_info()]
+    except Exception:  # noqa: BLE001 — 个别页取图位失败，只用矢量框
+        logger.warning("get_image_info failed on page %d", page.number + 1, exc_info=True)
+    content = [
+        r for r in content if r.width > 2 and r.height > 2 and r.width < page_rect.width * 0.98
+    ]
+
+    regions: list[Any] = []
+    for i, (cap_box, _text) in enumerate(captions):
+        bottom = cap_box.y0
+        top = page_rect.y0 + CAPTION_TOP_MARGIN_PT
+        if i > 0:  # 堆叠图：上界不越过上一张图注
+            top = max(top, captions[i - 1][0].y1)
+        for bar in barriers:  # 上界不越过图注上方的正文段
+            if bar.y1 <= bottom - 2:
+                top = max(top, bar.y1)
+        band = [
+            pymupdf.Rect(r.x0, max(r.y0, top), r.x1, min(r.y1, bottom))
+            for r in content
+            if r.y0 < bottom - 1 and r.y1 > top + 1
+        ]
+        band = [r for r in band if r.width > 2 and r.height > 2]
+        if not band:
+            continue  # 图注上方无图元（可能是被误判的表格题），跳过
+        box = band[0]
+        for r in band[1:]:
+            box |= r
+        box = pymupdf.Rect(
+            max(page_rect.x0, box.x0 - VECTOR_CLIP_MARGIN_PT),
+            max(page_rect.y0, box.y0 - VECTOR_CLIP_MARGIN_PT),
+            min(page_rect.x1, box.x1 + VECTOR_CLIP_MARGIN_PT),
+            min(bottom - 1, box.y1 + VECTOR_CLIP_MARGIN_PT),
+        )
+        if box.height < VECTOR_MIN_H_PT or box.width < VECTOR_MIN_W_PT:
+            continue
+        regions.append(box)
+    return regions
+
+
+def _caption_figure_pixmaps(page: Any) -> list[Any]:
+    """图注锚定区域整块渲染为 Pixmap 列表（主抽图路径）。"""
+    pixmaps: list[Any] = []
+    for rect in _caption_figure_regions(page):
+        try:
+            pixmaps.append(page.get_pixmap(clip=rect, dpi=CAPTION_REGION_DPI))
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "caption region render failed on page %d", page.number + 1, exc_info=True
+            )
+    return pixmaps
+
+
+def _candidate_from_pix(page_no: int, order: int, pix: Any) -> tuple | None:
+    """把 Pixmap 铺白编码为 PNG；近空白（白底占比过高）返回 None 丢弃。
+
+    返回 (页码, 页内序号, 宽, 高, PNG bytes)——预编码好落盘用的字节，避免二次编码。
+    """
+    flat = _flatten_to_white_rgb(pix.tobytes("png"))
+    if _white_fraction(flat) > FIGURE_MAX_WHITE_FRAC:
+        return None  # 空矢量簇 / 白色卡片框 / 空白页
+    return (page_no, order, pix.width, pix.height, _png_bytes(flat))
+
+
 def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
     import pymupdf  # 延迟导入：仅在真正抽取时需要
 
-    # (页码, 页内序号, Pixmap)：嵌入图按 xref 去重（跨页复用只取首次出现）+ 矢量簇渲染
-    candidates: list[tuple[int, int, Any]] = []
+    # (页码, 页内序号, 宽, 高, PNG bytes)：嵌入图按 xref 去重 + 矢量簇渲染；近空白已过滤
+    candidates: list[tuple[int, int, int, int, bytes]] = []
     seen_xrefs: set[int] = set()
     with pymupdf.open(pdf_path) as doc:
         for page in doc:
             order = 0
+            # 主路径：图注锚定区域整块渲染（矢量+位图一起，不碎不空）
+            cap_pixmaps = _caption_figure_pixmaps(page)
+            if cap_pixmaps:
+                for pix in cap_pixmaps:
+                    if pix.width < FIGURE_MIN_WIDTH or pix.height < FIGURE_MIN_HEIGHT:
+                        continue
+                    cand = _candidate_from_pix(page.number + 1, order, pix)
+                    if cand is None:
+                        continue
+                    candidates.append(cand)
+                    order += 1
+                continue  # 有图注区域即不再走兜底，避免与整块渲染重复
+            # 无图注页兜底：嵌入位图（含 SMask 修复）+ 矢量簇
             for img in page.get_images(full=True):
                 xref, smask = int(img[0]), int(img[1])
                 if xref in seen_xrefs:
@@ -233,31 +374,52 @@ def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]
                 if smask > 0 and pix.alpha == 0:
                     # 合并 SMask 软蒙版为 alpha 通道；失败退回原图（后续仍铺白）
                     try:
-                        pix = pymupdf.Pixmap(pix, pymupdf.Pixmap(doc, smask))
+                        merged = pymupdf.Pixmap(pix, pymupdf.Pixmap(doc, smask))
                     except Exception:  # noqa: BLE001 — 蒙版损坏等，保底用无 alpha 原图
                         logger.warning(
                             "smask merge failed for paper %s xref %d", paper_id, xref, exc_info=True
                         )
+                        merged = None
+                    # 个别论文 SMask 语义异常（镂空/反转掩膜），合并会把有内容的图压成近空白。
+                    # 合并后近空白但原图不空 → 判为异常，保留未合并原图（宁可白底也不丢真图）。
+                    if merged is not None:
+                        if (
+                            _pix_white_fraction(merged) > FIGURE_MAX_WHITE_FRAC
+                            and _pix_white_fraction(pix) <= FIGURE_MAX_WHITE_FRAC
+                        ):
+                            logger.warning(
+                                "smask merge blanked image, keeping raw for paper %s xref %d",
+                                paper_id,
+                                xref,
+                            )
+                        else:
+                            pix = merged
                 if pix.n - pix.alpha >= 4:  # CMYK 等 → RGB（保留 alpha）
                     pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-                candidates.append((page.number + 1, order, pix))
+                cand = _candidate_from_pix(page.number + 1, order, pix)
+                if cand is None:
+                    continue  # 近空白，丢弃
+                candidates.append(cand)
                 order += 1
             # 矢量图兜底（尺寸下限与嵌入图一致，按渲染后像素判）
             for pix in _vector_figure_pixmaps(page):
                 if pix.width < FIGURE_MIN_WIDTH or pix.height < FIGURE_MIN_HEIGHT:
                     continue
-                candidates.append((page.number + 1, order, pix))
+                cand = _candidate_from_pix(page.number + 1, order, pix)
+                if cand is None:
+                    continue  # 空矢量簇（如整块白色卡片框），丢弃
+                candidates.append(cand)
                 order += 1
 
         # 按页轮转选优：每页先取面积最大的一张，轮完所有页再取第二张……
         # 保证动机图（前几页）/实验图（中后页）都有名额，不被单页大图或附录霸占；
         # 最终按 (页码, 页内序号) 恢复文中出现顺序编号
-        by_page: dict[int, list[tuple[int, int, Any]]] = {}
+        by_page: dict[int, list[tuple[int, int, int, int, bytes]]] = {}
         for cand in candidates:
             by_page.setdefault(cand[0], []).append(cand)
         for lst in by_page.values():
-            lst.sort(key=lambda c: (-(c[2].width * c[2].height), c[1]))
-        picked: list[tuple[int, int, Any]] = []
+            lst.sort(key=lambda c: (-(c[2] * c[3]), c[1]))
+        picked: list[tuple[int, int, int, int, bytes]] = []
         rank = 0
         while len(picked) < FIGURE_MAX_COUNT and rank < FIGURE_MAX_PER_PAGE:
             advanced = False
@@ -277,18 +439,18 @@ def _extract_figures_sync(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]
         for old in out_dir.glob("fig_*.png"):
             old.unlink()
         figures: list[dict[str, Any]] = []
-        for index, (page_no, _order, pix) in enumerate(selected):
-            (out_dir / f"fig_{index}.png").write_bytes(_flatten_png_white(pix.tobytes("png")))
-            figures.append(
-                {"index": index, "page": page_no, "width": pix.width, "height": pix.height}
-            )
+        for index, (page_no, _order, width, height, png) in enumerate(selected):
+            (out_dir / f"fig_{index}.png").write_bytes(png)
+            figures.append({"index": index, "page": page_no, "width": width, "height": height})
     return figures
 
 
 async def extract_figures(paper_id: str, pdf_path: Path) -> list[dict[str, Any]]:
-    """提取 PDF 嵌入图为 PNG 落盘，返回 [{index, page, width, height}]。
+    """提取 PDF 图为 PNG 落盘，返回 [{index, page, width, height}]。
 
-    过滤：宽 ≥200 且高 ≥150、按 xref 去重、面积降序取前 8（编号按文中页码顺序）；
+    主路径按「Figure N / 图 N」图注锚定，整块渲染图注正上方的图区域（矢量+位图一起，
+    复杂图不碎、空白页不抓）；无图注的页退回嵌入位图（含 SMask 修复）+ 矢量簇兜底。
+    过滤：宽 ≥200 且高 ≥150、近空白丢弃、按页轮转取前 12（编号按页码顺序）。
     PyMuPDF 为同步库，丢线程池跑。
     """
     return await asyncio.to_thread(_extract_figures_sync, paper_id, pdf_path)
