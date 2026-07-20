@@ -220,3 +220,40 @@ async def test_relink_requires_membership(client):
         headers={"Authorization": f"Bearer {other}"},
     )
     assert resp.status_code == 404
+
+
+async def test_auto_sweep_backfills_placeholders_capped(client):
+    # voyage 自动上链（backfill=False）也应做有上限的占位回填（偶发失败自愈）
+    from app.core.llm.router import LLMRouter
+    from app.services.concepts import link_all_paper_concepts, placeholder_definition
+
+    project_id, headers = await _setup(client)
+    pid = uuid.UUID(project_id)
+    # 现实场景：占位概念被论文正文引用（「强化学习」在 _setup 两篇论文的 wiki 里）。
+    # 无引用的占位会被 #65 的孤儿清理直接删除，不走回填。
+    async with get_sessionmaker()() as session:
+        session.add(
+            Concept(
+                project_id=pid,
+                name="强化学习",
+                slug="ph-rl",
+                definition=placeholder_definition("强化学习"),
+                category="other",
+            )
+        )
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        stats, _ = await link_all_paper_concepts(
+            session, project_id=pid, llm=LLMRouter(), backfill=False
+        )
+    assert stats["concepts_backfilled"] == 1
+
+    async with get_sessionmaker()() as session:
+        row = (
+            await session.execute(
+                select(Concept).where(Concept.project_id == pid, Concept.name == "强化学习")
+            )
+        ).scalar_one()
+        assert not row.definition.endswith("（定义待补充）")
+        assert row.category == "method"  # fake provider 返回 method

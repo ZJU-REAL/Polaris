@@ -41,6 +41,8 @@ _SLUG_STRIP_RE = re.compile(r"[^\w一-鿿]+", re.UNICODE)
 
 # 概念定义按批调用 LLM：一次塞几百个会让响应被 max_tokens 截断 → JSON 解析失败 → 整批占位。
 _DEF_BATCH_SIZE = 40
+# 自动上链步骤每次最多回填的占位概念数（手动补建端点不设上限）
+_AUTO_BACKFILL_CAP = 60
 _PLACEHOLDER_SUFFIX = "（定义待补充）"
 
 
@@ -146,18 +148,19 @@ async def fetch_concept_definitions(
     project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> dict[str, dict[str, str]]:
-    """向 LLM 要概念的一句话定义与类别；分批调用避免响应截断，失败的批用占位兜底。"""
+    """向 LLM 要概念的一句话定义与类别；分批调用避免响应截断，失败的批重试一次后用占位兜底。"""
     out: dict[str, dict[str, str]] = {}
     for i in range(0, len(names), _DEF_BATCH_SIZE):
-        out.update(
-            await _fetch_definitions_batch(
-                llm,
-                names[i : i + _DEF_BATCH_SIZE],
-                user_id=user_id,
-                project_id=project_id,
-                voyage_id=voyage_id,
-            )
+        chunk = names[i : i + _DEF_BATCH_SIZE]
+        got = await _fetch_definitions_batch(
+            llm, chunk, user_id=user_id, project_id=project_id, voyage_id=voyage_id
         )
+        if not got:
+            # 高负载下的偶发超时/限流：整批失败会让本批全落占位，重试一次能救回大多数
+            got = await _fetch_definitions_batch(
+                llm, chunk, user_id=user_id, project_id=project_id, voyage_id=voyage_id
+            )
+        out.update(got)
     return out
 
 
@@ -263,8 +266,10 @@ async def link_all_paper_concepts(
     （正文为空的论文跳过，不误删）；②删除项目内所有零引用概念（引用计数不分
     论文 status，回收站论文的引用也算）。
 
-    ``backfill=True`` 时，把此前批量截断/失败留下的占位概念（「…（定义待补充）」）
-    一并重新要定义并更新——仅供手动补建端点使用，voyage 自动步骤不开启以免每次重刷。
+    占位概念回填：``backfill=True``（手动补建端点）回填全部占位概念；
+    ``backfill=False``（voyage 自动步骤）也做**有上限**的回填——每次最多取
+    ``_AUTO_BACKFILL_CAP`` 个最老的占位重新要定义，让偶发失败随每日同步自愈,
+    又不至于在占位堆积时每天重刷几百个。
     返回 (统计 dict, 涉及的论文列表)；本函数自行 commit。
     """
     papers = (
@@ -291,10 +296,13 @@ async def link_all_paper_concepts(
     by_name = {c.name: c for c in existing}
     slugs = {c.slug for c in existing}
     new_names = [n for n in all_names if n not in by_name]
-    # 回填：此前批量截断/失败留下的占位概念，本次一并重新要定义（仅手动补建时开启）
-    placeholder_concepts = (
-        [c for c in existing if is_placeholder_definition(c.definition)] if backfill else []
+    # 回填：定义调用失败留下的占位概念重新要定义。手动补建全量;自动步骤取最老的一批
+    # (上限 _AUTO_BACKFILL_CAP),让偶发失败随每日同步自愈而不至于每天重刷几百个。
+    all_placeholders = sorted(
+        (c for c in existing if is_placeholder_definition(c.definition)),
+        key=lambda c: (c.created_at is None, c.created_at or c.name),
     )
+    placeholder_concepts = all_placeholders if backfill else all_placeholders[:_AUTO_BACKFILL_CAP]
     names_to_define = new_names + [c.name for c in placeholder_concepts]
 
     definitions: dict[str, dict[str, str]] = {}
