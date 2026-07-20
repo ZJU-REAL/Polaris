@@ -44,9 +44,64 @@ async def test_tags_put_overwrite_and_project_tags(client):
     tags = {t["name"]: t["paper_count"] for t in resp.json()}
     assert tags == {"方法": 1, "评测": 1}
 
-    # 清空
+    # 清空：p1 摘掉「评测」后它零引用，自动清理；「方法」仍挂 p2 保留
     resp = await client.put(f"/api/papers/{ids['p1']}/tags", json={"names": []}, headers=headers)
     assert resp.json()["tags"] == []
+    resp = await client.get(f"/api/projects/{project_id}/tags", headers=headers)
+    tags = {t["name"]: t["paper_count"] for t in resp.json()}
+    assert tags == {"方法": 1}
+
+
+async def test_orphan_tags_pruned_on_hard_delete_and_empty_trash(client):
+    project_id, headers, ids = await _setup(client)
+    await client.put(
+        f"/api/papers/{ids['p1']}/tags", json={"names": ["独占", "共享"]}, headers=headers
+    )
+    await client.put(f"/api/papers/{ids['p2']}/tags", json={"names": ["共享"]}, headers=headers)
+
+    async def tag_counts():
+        resp = await client.get(f"/api/projects/{project_id}/tags", headers=headers)
+        return {t["name"]: t["paper_count"] for t in resp.json()}
+
+    # 软删（进回收站）不清理：回收站论文的引用也算数
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers/batch-delete",
+        json={"paper_ids": [ids["p1"]]},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert await tag_counts() == {"共享": 2, "独占": 1}
+
+    # 硬删 p1：「独占」失去全部引用被清理，「共享」还挂 p2 保留
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers/batch-delete",
+        json={"paper_ids": [ids["p1"]], "hard": True},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert await tag_counts() == {"共享": 1}
+
+    # p2 进回收站后清空回收站：「共享」也失去全部引用，一并清理
+    await client.post(
+        f"/api/projects/{project_id}/papers/batch-delete",
+        json={"paper_ids": [ids["p2"]]},
+        headers=headers,
+    )
+    assert await tag_counts() == {"共享": 1}
+    resp = await client.post(f"/api/projects/{project_id}/trash/empty", headers=headers)
+    assert resp.status_code == 200
+    assert await tag_counts() == {}
+
+
+async def test_orphan_tags_pruned_on_single_hard_delete(client):
+    _project_id, headers, ids = await _setup(client)
+    await client.put(f"/api/papers/{ids['p1']}/tags", json={"names": ["仅此一篇"]}, headers=headers)
+
+    resp = await client.delete(f"/api/papers/{ids['p1']}", headers=headers)
+    assert resp.status_code == 204
+
+    resp = await client.get(f"/api/projects/{_project_id}/tags", headers=headers)
+    assert resp.json() == []
 
 
 async def test_my_meta_upsert_and_per_user_view(client):

@@ -214,6 +214,9 @@ class ConceptRelinkResult(BaseModel):
     new_concepts: list[str] = []
     # 回填的占位概念数（此前批量截断/失败留下的「定义待补充」重新拿到定义）
     concepts_backfilled: int = 0
+    # 同步清理：删除的陈旧关联数 / 删除的零引用概念数（引用计数含回收站论文）
+    links_removed: int = 0
+    concepts_removed: int = 0
 
 
 class ScoredPaper(PaperRead):
