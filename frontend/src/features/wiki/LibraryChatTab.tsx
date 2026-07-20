@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
@@ -31,6 +31,57 @@ const SUGGESTIONS: { zh: string; en: string }[] = [
     en: 'Compare the benchmarks and metrics used by the methods in the library.',
   },
 ];
+
+/** 回答里 [[fig:论文id:图号]] 标记 → 内联配图（blob→objectURL，点击开论文）。 */
+function ChatFigure({
+  paperId,
+  index,
+  onOpenPaper,
+}: {
+  paperId: string;
+  index: number;
+  onOpenPaper: (id: string) => void;
+}) {
+  const query = useQuery({
+    queryKey: ['figure-image', paperId, index],
+    queryFn: () => api.fetchFigureImage(paperId, index),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const blob = query.data;
+    if (!blob) {
+      setUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(blob);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [query.data]);
+
+  if (query.isError) return null; // 图缺失静默跳过
+  if (!url) {
+    return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{tr('配图加载中…', 'loading figure…')}</span>;
+  }
+  return (
+    <img
+      src={url}
+      alt={tr('论文配图', 'paper figure')}
+      title={tr('点击打开论文', 'click to open paper')}
+      onClick={() => onOpenPaper(paperId)}
+      style={{
+        display: 'block',
+        maxWidth: '100%',
+        maxHeight: 260,
+        margin: '8px 0',
+        borderRadius: 8,
+        border: '0.5px solid var(--border)',
+        cursor: 'pointer',
+      }}
+    />
+  );
+}
 
 function SourceCard({
   s,
@@ -288,6 +339,9 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
           style={{ fontSize: 12.5 }}
           onWikiLink={onWikiLink}
           renderCitation={citationRenderer(m.sources)}
+          renderLibraryFigure={(paperId, index) => (
+            <ChatFigure paperId={paperId} index={index} onOpenPaper={onOpenPaper} />
+          )}
         />
       )}
       assistantExtras={(m: ChatMsg) =>
