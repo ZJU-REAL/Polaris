@@ -364,6 +364,55 @@ async def test_smoke_exhausted_fails_experiment(client, queue_stub, fake_ssh, bu
     assert resp.json()["status"] == "failed"
 
 
+async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus_recorder):
+    """依赖安装第一次失败 → 报错回 LLM 修 requirements/run.sh → 重装通过（对称 smoke 自愈）。"""
+    fake_ssh.venv_exits = [1, 0]
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    voyage = resp.json()
+    assert voyage["status"] == "done", voyage
+    setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
+    obs = setup_step["observation"]
+    assert obs["venv_exit"] == 0 and obs["attempts"] == 2 and obs["fixes"] == 1
+    assert "\n".join(fake_ssh.commands).count("pip install") == 2  # 首次 + 修复后重试
+
+    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
+    assert resp.json()["status"] == "done"
+
+
+async def test_setup_deps_escalate_not_hard_fail(client, queue_stub, fake_ssh, bus_recorder):
+    """依赖装不上、内部修复用尽 → setup 不像 smoke 那样硬停：它是「可换方案」节点，
+    升级到引擎级重试/AI 计划调整（navigator：setup 走 loop 回灌）。本例重试后恢复 → voyage done。"""
+    fake_ssh.venv_exits = [1, 1, 1]  # 够耗尽一轮内部修复（1 次 + 2 次 fixes）后升级
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    voyage = resp.json()
+    # 关键区别：内部修复用尽后 setup 不硬停，升级重试后恢复完成（对比 smoke 用尽即 failed）
+    assert voyage["status"] == "done", voyage
+    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
+    assert resp.json()["status"] == "done"
+
+
 async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_recorder):
     """超 budget.max_hours → kill 远端进程 + run/experiment/voyage 置 failed。"""
     fake_ssh.run_exit = None  # 进程一直不结束

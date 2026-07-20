@@ -23,6 +23,7 @@ class FakeSSHServer:
 
     connect_error: str | None = None  # 置为字符串则 connect 抛 ConnectionError
     venv_exit: int = 0
+    venv_exits: list[int] = field(default_factory=list)  # 逐次弹出；耗尽后回落 venv_exit
     smoke_exits: list[int] = field(default_factory=list)  # 逐次弹出；耗尽后恒 0
     smoke_stderr: str = "Traceback (most recent call last): boom"
     run_log: str = ""
@@ -113,7 +114,8 @@ class FakeSSHSession:
                 server.killed.append(int(m.group(1)))
             return SSHResult(0, "", "")
         if "venv" in command or "pip install" in command:
-            return SSHResult(server.venv_exit, "", "pip failed" if server.venv_exit else "")
+            exit_code = server.venv_exits.pop(0) if server.venv_exits else server.venv_exit
+            return SSHResult(exit_code, "", "pip failed" if exit_code else "")
         if command.startswith("mkdir -p"):
             return SSHResult(0, "", "")
         if "echo ok" in command:

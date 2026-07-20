@@ -50,6 +50,7 @@ from app.services import ssh_exec
 from app.services.figure_annotate import prepare_image_for_llm
 
 RUN_POLL_SECONDS = 30.0  # 正式运行轮询间隔（测试 monkeypatch 为 0）
+MAX_SETUP_FIXES = 2  # 依赖安装失败回 LLM 修 requirements/run.sh 的次数上限
 MAX_SMOKE_FIXES = 2  # 冒烟失败回 LLM 修代码的次数上限
 MAX_DEBUG_FIXES = 3  # 迭代内 debug 分支独立限额（docs/api-m5-a.md §1）
 MAX_FIGURE_FIXES = 2  # 绘图脚本执行失败 / VLM 质检不合格的修复次数上限
@@ -139,6 +140,21 @@ FIX_SYSTEM_PROMPT = (
   选设备、降 batch、必要时换实现方式绕开装不上的包。
 - 模型/框架不兼容（架构不被支持、多模态用于纯文本、加载报错）→ 换兼容的加载方式/框架/模型规格。
 - 代码 bug → 修对应逻辑。
+先一句话点明诊断，再输出修复后的**完整文件集合**（同上 JSON 格式）。别动评测协议/数据集/主指标口径。
+"""
+)
+
+# 依赖安装（setup）失败时的方案级修复：和 smoke 的自愈对称——装不上/太慢不该硬崩，而是回 LLM
+# 修 requirements.txt / run.sh。聚焦「环境/依赖」这一类，别去改评测规模（那是 smoke 的事）。
+SETUP_FIX_SYSTEM_PROMPT = (
+    CODE_SYSTEM_PROMPT
+    + """\
+
+现在**依赖安装失败**了（venv/pip 或容器内装包）。先**诊断根因**，再修 requirements.txt / run.sh：
+- 缺包/装不上 → 换包名或来源、加缺的系统/编译依赖、必要时换实现方式绕开装不上的包。
+- 版本冲突 → 放宽/钉住到相容版本，去掉不必要的强约束。
+- 太重/太慢/编译超时 → 精简依赖、用更轻的包或预编译 wheel、去掉可选依赖。
+- 若用容器（预置镜像已含框架）→ requirements.txt 只留镜像**缺**的增量小包，能不加就不加。
 先一句话点明诊断，再输出修复后的**完整文件集合**（同上 JSON 格式）。别动评测协议/数据集/主指标口径。
 """
 )
@@ -943,19 +959,63 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             experiment.workdir = executor.workdir
             experiment.server_host = executor.host
             await session.commit()
-            written = await executor.write_files(files)
-            written += await executor.write_files(platform_files)
-            venv = await executor.setup_venv()
+            await executor.write_files(platform_files)  # 平台文件写一次（不随修复变）
+
+            # 依赖安装自愈（对称 smoke）：装不上/太慢/断连都当「可修的失败」而非硬崩——
+            # 超时/断连→重连重试；pip 报错→回 LLM 修 requirements.txt/run.sh 再装（≤2 次）。
+            fixes = 0
+            attempts = 0
+            while True:
+                attempts += 1
+                await executor.write_files(files)  # 每次（修复后）重写 LLM 产出文件
+                hint = ""
+                try:
+                    venv = await executor.setup_venv()
+                    exit_status = venv.exit_status
+                    err_text = (venv.stderr.strip() or venv.stdout.strip())[-_STDERR_CHARS:]
+                except Exception as e:  # noqa: BLE001 — 超时/断连转成可修失败，其它异常照抛
+                    if not (isinstance(e, TimeoutError) or ssh_exec.is_connection_error(e)):
+                        raise
+                    exit_status = -1
+                    err_text = f"{type(e).__name__}: {e}"
+                    hint = (
+                        "依赖安装超时或中断——大概率是依赖太重/编译太慢/下载太慢或连接断开。"
+                        "请精简依赖、用更轻的包或预编译 wheel、去掉可选依赖，让安装更快更稳。"
+                    )
+                    with contextlib.suppress(Exception):  # 超时后通道可能已坏，重连
+                        await executor.close()
+                    executor = await _open_executor(session, ctx, experiment)
+                if exit_status == 0:
+                    written = list(files) + list(platform_files)
+                    return {
+                        "workdir": experiment.workdir,
+                        "files": written,
+                        "venv_exit": 0,
+                        "attempts": attempts,
+                        "fixes": fixes,
+                    }
+                if fixes >= MAX_SETUP_FIXES:
+                    detail = err_text or "（无输出，多为连接中断或超时）"
+                    raise RuntimeError(
+                        f"依赖安装失败（exit={exit_status}，{attempts} 次）：{detail}"
+                    )
+                # 把诊断 + 报错回给 LLM 修 requirements.txt/run.sh（方案级修复）
+                fixes += 1
+                user_prompt = (
+                    f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
+                    f"依赖安装退出码：{exit_status}\n"
+                    + (f"诊断提示：{hint}\n" if hint else "")
+                    + f"报错：\n{err_text}"
+                )
+                files = await _complete_json(
+                    ctx,
+                    system=_prompt_with_context(SETUP_FIX_SYSTEM_PROMPT, ctx),
+                    user=user_prompt,
+                    validate=validate_files,
+                )
+                ctx.checkpoint["exp_files"] = files
         finally:
             await executor.close()
-        if venv.exit_status != 0:
-            # pip/venv 的报错可能走 stdout 或 stderr，两路都带上便于定位
-            detail = (venv.stderr.strip() or venv.stdout.strip())[-600:]
-            if not detail:
-                detail = "（无输出，多为连接中断或超时）"
-            raise RuntimeError(f"依赖安装失败（exit={venv.exit_status}）：{detail}")
-
-    return {"workdir": experiment.workdir, "files": written, "venv_exit": venv.exit_status}
 
 
 # ---- 3. 冒烟测试：exit 0 通过；失败回 LLM 修文件（≤2 次） ----
