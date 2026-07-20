@@ -17,8 +17,38 @@ from typing import Any
 
 from app.tools.context import ToolContext
 
-ToolHandler = Callable[[ToolContext, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+@dataclass(slots=True, frozen=True)
+class ToolImage:
+    """工具返回的一张图片（原始字节 + mime）。MCP 层转成 image content block。"""
+
+    data: bytes
+    mime: str = "image/png"
+    label: str | None = None  # 图注 / alt（可选）
+
+
+@dataclass(slots=True, frozen=True)
+class ToolResult:
+    """富返回：文本 payload + 若干图片。纯文本工具直接返回 dict 即可（向后兼容）。"""
+
+    payload: dict[str, Any]
+    images: tuple[ToolImage, ...] = ()
+
+
+# handler 可返回纯 dict（文本）或 ToolResult（文本 + 图片）
+ToolReturn = dict[str, Any] | ToolResult
+ToolHandler = Callable[[ToolContext, dict[str, Any]], Awaitable[ToolReturn]]
 Summarizer = Callable[[dict[str, Any], dict[str, Any]], str]
+
+
+def result_payload(result: ToolReturn) -> dict[str, Any]:
+    """取工具结果的文本 payload（ToolResult → .payload；dict → 原样）。"""
+    return result.payload if isinstance(result, ToolResult) else result
+
+
+def result_images(result: ToolReturn) -> tuple[ToolImage, ...]:
+    """取工具结果携带的图片（纯 dict 无图 → 空）。"""
+    return result.images if isinstance(result, ToolResult) else ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -93,8 +123,8 @@ def known_tools() -> frozenset[str]:
     return frozenset(_REGISTRY)
 
 
-async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """执行单个工具；未知工具 / 非法参数抛 ``ValueError``。"""
+async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> ToolReturn:
+    """执行单个工具；未知工具 / 非法参数抛 ``ValueError``。返回 dict 或 ToolResult。"""
     spec = _REGISTRY.get(name)
     if spec is None:
         raise ValueError(f"未知工具：{name}（可用：{', '.join(sorted(_REGISTRY))}）")

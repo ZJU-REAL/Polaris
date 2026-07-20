@@ -7,6 +7,7 @@ HTTP 与 stdio 两种传输共用这里的 ``handle_rpc``。工具全部只读�
 
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from typing import Any
@@ -15,7 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.router import get_llm_router
 from app.services import projects as projects_service
-from app.tools import ToolContext, get_tool, list_tools, run_tool
+from app.tools import (
+    ToolContext,
+    get_tool,
+    list_tools,
+    result_images,
+    result_payload,
+    run_tool,
+)
 
 # 我们支持的 MCP 协议版本（initialize 时按客户端请求回显，否则用这个）。
 PROTOCOL_VERSION = "2025-06-18"
@@ -55,6 +63,23 @@ def _text_result(payload: Any, *, is_error: bool = False) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
+def _content_blocks(result: Any) -> dict[str, Any]:
+    """把工具返回（dict 或 ToolResult）转成 MCP content：文本块 + 若干图片块。"""
+    payload = result_payload(result)
+    blocks: list[dict[str, Any]] = [
+        {"type": "text", "text": json.dumps(payload, ensure_ascii=False, default=str)}
+    ]
+    for img in result_images(result):
+        blocks.append(
+            {
+                "type": "image",
+                "data": base64.b64encode(img.data).decode("ascii"),
+                "mimeType": img.mime,
+            }
+        )
+    return {"content": blocks, "isError": False}
+
+
 async def call_tool(
     session: AsyncSession,
     *,
@@ -82,7 +107,7 @@ async def call_tool(
         result = await run_tool(ctx, name, args)
     except ValueError as e:
         return _text_result(str(e), is_error=True)
-    return _text_result(result)
+    return _content_blocks(result)
 
 
 def _rpc_ok(msg_id: Any, result: dict[str, Any]) -> dict[str, Any]:

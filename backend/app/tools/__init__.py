@@ -7,28 +7,37 @@
 
 from app.tools import (
     external,  # noqa: F401 — 导入即注册工具
+    figures,  # noqa: F401
     knowledge,  # noqa: F401
     literature,  # noqa: F401
     project_state,  # noqa: F401
 )
 from app.tools.context import ToolContext
 from app.tools.registry import (
+    ToolImage,
+    ToolResult,
     ToolSpec,
     get_tool,
     known_tools,
     list_tools,
     render_tool_specs,
+    result_images,
+    result_payload,
     run_tool,
     tool,
 )
 
 __all__ = [
     "ToolContext",
+    "ToolImage",
+    "ToolResult",
     "ToolSpec",
     "get_tool",
     "known_tools",
     "list_tools",
     "render_tool_specs",
+    "result_images",
+    "result_payload",
     "run_tool",
     "tool",
 ]
