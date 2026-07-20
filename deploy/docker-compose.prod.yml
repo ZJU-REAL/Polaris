@@ -6,10 +6,11 @@
 # 相对路径以本文件所在目录（app/deploy/）为基准，../../data 即 ~/polaris/data。
 #
 # 用法（在 ~/polaris/app 下）：
-#   GITHUB_PROXY=https://gh-proxy.com/ docker compose \
-#     -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple GITHUB_PROXY=https://gh-proxy.com/ \
+#     docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
 #
 # GITHUB_PROXY：内网直连不了 GitHub 时给 tectonic 下载加速前缀，能直连则留空。
+# PIP_INDEX_URL：内网访问官方 PyPI 慢/不稳时传国内 pip 源（如清华），能直连则留空用官方。
 
 name: polaris
 
@@ -26,6 +27,7 @@ services:
     build:
       args:
         GITHUB_PROXY: ${GITHUB_PROXY:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     volumes:
       - ../../data/appdata:/srv/data
       - ../../data/tectonic-cache:/root/.cache/Tectonic
@@ -34,6 +36,7 @@ services:
     build:
       args:
         GITHUB_PROXY: ${GITHUB_PROXY:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     volumes:
       - ../../data/appdata:/srv/data
       - ../../data/tectonic-cache:/root/.cache/Tectonic

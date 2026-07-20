@@ -40,11 +40,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY deploy/fontconfig-cjk-aliases.conf /etc/fonts/conf.d/99-cjk-aliases.conf
 RUN fc-cache -f >/dev/null 2>&1 && fc-match FangSong
 
+# pip 索引镜像：内网访问官方 PyPI 慢/不稳时传国内源（如清华），默认空=官方源
+ARG PIP_INDEX_URL=""
 COPY backend/pyproject.toml ./
 # 先装依赖层（利用缓存），再拷源码
-RUN pip install --upgrade pip && pip install -e . || true
+RUN pip install ${PIP_INDEX_URL:+-i $PIP_INDEX_URL} --upgrade pip \
+    && pip install ${PIP_INDEX_URL:+-i $PIP_INDEX_URL} -e . || true
 COPY backend/ ./
-RUN pip install -e .
+RUN pip install ${PIP_INDEX_URL:+-i $PIP_INDEX_URL} -e .
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
