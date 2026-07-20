@@ -53,6 +53,34 @@ _MAX_CANDIDATES_CAP = 200
 # observation 里给用户看的论文/概念清单上限（避免 observation JSON 过大）
 _OBS_LIST_CAP = 30
 
+# 打分/编译的逐篇 LLM 调用有界并发上限：底层走 LiteLLM（有速率限制），保守取 5。
+# 每个并发任务用自己独立的 AsyncSession（见 _gather_bounded 调用点），逐篇 commit，
+# 断点续跑语义（按 Paper.status 幂等）保持不变。
+_LLM_CONCURRENCY = 5
+
+
+async def _gather_bounded(limit: int, coros: list[Any]) -> list[Any]:
+    """信号量限流地并发跑一批协程，返回结果列表（异常以对象形式就地保留）。
+
+    - 单篇失败被 ``return_exceptions=True`` 捕获为结果项，不打断其他并发任务；
+    - CancelledError（worker 被杀）也会被捕获为结果项——调用方需在汇总前检测并原样
+      上抛，才能触发引擎的断点续跑（否则会被误当作单篇失败吞掉）。
+    """
+    sem = asyncio.Semaphore(limit)
+
+    async def run(coro: Any) -> Any:
+        async with sem:
+            return await coro
+
+    return await asyncio.gather(*(run(c) for c in coros), return_exceptions=True)
+
+
+def _reraise_if_cancelled(results: list[Any]) -> None:
+    """并发结果里若含 CancelledError（worker 被杀），原样上抛以触发断点续跑。"""
+    for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+
 
 def _paper_brief(papers: list[Paper]) -> list[dict[str, str]]:
     return [{"id": str(p.id), "title": p.title} for p in papers[:_OBS_LIST_CAP]]
@@ -337,11 +365,6 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
 async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     knobs = _knobs(ctx)
     threshold = float(knobs["relevance_threshold"])
-    succeeded = 0
-    excluded = 0
-    failed: list[dict[str, str]] = []
-    scored_ids: list[str] = []
-    scored_brief: list[dict[str, Any]] = []
 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
@@ -357,65 +380,81 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             context_lines.append(f"研究问题：{json.dumps(questions, ensure_ascii=False)}")
         context_text = "\n".join(context_lines)
 
-        # 幂等断点：只取仍是 candidate 的论文（已打分的不重复调 LLM）
-        papers = (
+        # 幂等断点：只取仍是 candidate 的论文 id（已打分的不重复调 LLM）。外层只查 id，
+        # 每篇打分在各自独立 session 内重新加载论文，避免多任务共享一个 AsyncSession。
+        paper_ids = list(
             (
                 await session.execute(
-                    select(Paper)
+                    select(Paper.id)
                     .where(Paper.project_id == project.id, Paper.status == "candidate")
                     .order_by(Paper.published_at.desc().nulls_last(), Paper.created_at)
                     .limit(_MAX_CANDIDATES_CAP)
                 )
-            )
-            .scalars()
-            .all()
+            ).scalars()
         )
 
-        system_prompt = RELEVANCE_SYSTEM_PROMPT + ctx.skill_guidance("wiki.score_relevance")
-        total = len(papers)
-        for i, paper in enumerate(papers, start=1):
-            await ctx.log(f"相关性打分 {i}/{total}：{paper.title[:60]}")
+    system_prompt = RELEVANCE_SYSTEM_PROMPT + ctx.skill_guidance("wiki.score_relevance")
+    total = len(paper_ids)
+    progress = {"n": 0}
+
+    async def score_one(paper_id: uuid.UUID) -> dict[str, Any] | None:
+        """单篇打分：独立 session 重新加载 → 调 relevance LLM → 写字段 → 自行 commit。"""
+        async with get_sessionmaker()() as session:
+            paper = await session.get(Paper, paper_id)
+            if paper is None or paper.status != "candidate":
+                return None  # 竞态/已处理：幂等跳过（正常流不会命中）
+            progress["n"] += 1
+            await ctx.log(f"相关性打分 {progress['n']}/{total}：{paper.title[:60]}")
             user_prompt = (
                 f"{context_text}\n标题：{paper.title}\n摘要：{paper.abstract or '（无摘要）'}"
             )
-            try:
-                result = await ctx.llm.complete(
-                    "relevance",
-                    [
-                        Message(role="system", content=system_prompt),
-                        Message(role="user", content=user_prompt),
-                    ],
-                    user_id=ctx.run.created_by,
-                    project_id=ctx.run.project_id,
-                    voyage_id=ctx.run.id,
-                )
-                data = _extract_json(result.content)
-                score = min(1.0, max(0.0, float(data["score"])))
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 — 单篇失败跳过
-                failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
-                continue
+            result = await ctx.llm.complete(
+                "relevance",
+                [
+                    Message(role="system", content=system_prompt),
+                    Message(role="user", content=user_prompt),
+                ],
+                user_id=ctx.run.created_by,
+                project_id=ctx.run.project_id,
+                voyage_id=ctx.run.id,
+            )
+            data = _extract_json(result.content)
+            score = min(1.0, max(0.0, float(data["score"])))
             paper.relevance_score = score
             paper.tldr = str(data.get("tldr") or "") or paper.tldr
             paper.scored_at = utcnow()
             paper.status = "scored" if score >= threshold else "excluded"
             paper.trash_reason = None if paper.status == "scored" else "irrelevant"
-            if paper.status == "excluded":
-                excluded += 1
             # 逐篇 commit：worker 中途被杀后按 status 断点续跑，不重复打分
             await session.commit()
-            succeeded += 1
-            scored_ids.append(str(paper.id))
-            if len(scored_brief) < _OBS_LIST_CAP:
-                scored_brief.append(
-                    {
-                        "id": str(paper.id),
-                        "title": paper.title,
-                        "score": score,
-                        "passed": paper.status == "scored",
-                    }
-                )
+            return {
+                "id": str(paper.id),
+                "title": paper.title,
+                "score": score,
+                "passed": paper.status == "scored",
+            }
+
+    results = await _gather_bounded(_LLM_CONCURRENCY, [score_one(pid) for pid in paper_ids])
+    _reraise_if_cancelled(results)  # worker 被杀须上抛，不当作单篇失败
+
+    # gather 后统一汇总（顺序按查询顺序，稳定；不在并发任务里改 ctx.checkpoint）
+    succeeded = 0
+    excluded = 0
+    failed: list[dict[str, str]] = []
+    scored_ids: list[str] = []
+    scored_brief: list[dict[str, Any]] = []
+    for paper_id, result in zip(paper_ids, results, strict=True):
+        if isinstance(result, BaseException):
+            failed.append({"id": str(paper_id), "error": f"{type(result).__name__}: {result}"})
+            continue
+        if result is None:
+            continue
+        succeeded += 1
+        scored_ids.append(result["id"])
+        if not result["passed"]:
+            excluded += 1
+        if len(scored_brief) < _OBS_LIST_CAP:
+            scored_brief.append(result)
 
     # 步内进度记入 checkpoint（审计用；幂等本身靠 Paper.status）
     ctx.checkpoint["scored_ids"] = list(ctx.checkpoint.get("scored_ids") or []) + scored_ids
@@ -546,31 +585,38 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
 async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     knobs = _knobs(ctx)
     top_n = _compile_limit(knobs)
-    compiled = 0
-    compiled_papers: list[Paper] = []
-    failed: list[dict[str, str]] = []
 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
         statement = _definition(project).get("statement") or project.name
-        # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）
-        papers = (
+        # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）。外层只查 id，每篇
+        # 编译在各自独立 session 内重新加载论文，避免多任务共享一个 AsyncSession。
+        paper_ids = list(
             (
                 await session.execute(
-                    select(Paper)
+                    select(Paper.id)
                     .where(Paper.project_id == project.id, Paper.status == "fetched")
                     .order_by(Paper.relevance_score.desc().nulls_last())
                     .limit(top_n)
                 )
-            )
-            .scalars()
-            .all()
+            ).scalars()
         )
-        total = len(papers)
-        for i, paper in enumerate(papers, start=1):
-            await ctx.log(f"📖 精读编译 {i}/{total}：{paper.title}")
+
+    guidance = ctx.skill_guidance("wiki.compile")
+    total = len(paper_ids)
+    progress = {"n": 0}
+
+    async def compile_one(paper_id: uuid.UUID) -> dict[str, Any] | None:
+        """单篇编译：独立 session 重新加载 → 挑图注释 → 图文编译 → 自行 commit。"""
+        async with get_sessionmaker()() as session:
+            paper = await session.get(Paper, paper_id)
+            if paper is None or paper.status != "fetched":
+                return None  # 竞态/已处理：幂等跳过（正常流不会命中）
+            progress["n"] += 1
+            await ctx.log(f"📖 精读编译 {progress['n']}/{total}：{paper.title}")
             # ① 编译前筛选注释论文图（stage=librarian 多模态）：图文编译要用重要图；
-            #    失败仅 log（annotate 内部已带降级），不影响编译
+            #    失败仅 log（annotate 内部已带降级），不影响编译。annotate 只改内存对象，
+            #    由本任务的 session commit。
             if paper.figures and not figures_annotated(paper.figures):
                 try:
                     await annotate_figures(
@@ -586,39 +632,49 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 except Exception:  # noqa: BLE001
                     logger.warning("figure annotation failed for paper %s", paper.id, exc_info=True)
             # ② 图文编译（重要图 ≤4 张随 prompt 送入）+ ③ 无效 ![[fig:N]] 标记剥除
-            try:
-                content = await compile_paper(
-                    paper,
-                    statement=statement,
-                    llm=ctx.llm,
-                    user_id=ctx.run.created_by,
-                    voyage_id=ctx.run.id,
-                    extra_guidance=ctx.skill_guidance("wiki.compile"),
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 — 单篇失败跳过，下次续跑重试
-                failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
-                await ctx.log(
-                    f"✗ 编译失败 {i}/{total}：{paper.title[:50]} — {type(e).__name__}",
-                    level="error",
-                )
-                continue
+            content = await compile_paper(
+                paper,
+                statement=statement,
+                llm=ctx.llm,
+                user_id=ctx.run.created_by,
+                voyage_id=ctx.run.id,
+                extra_guidance=guidance,
+            )
             paper.wiki_content = content
             paper.compiled_at = utcnow()
             paper.status = "compiled"
             await session.commit()
-            compiled += 1
-            compiled_papers.append(paper)
             await ctx.log(
-                f"✓ 完成 {i}/{total}：{paper.title[:50]}（{len(content)} 字）", level="success"
+                f"✓ 完成 {progress['n']}/{total}：{paper.title[:50]}（{len(content)} 字）",
+                level="success",
             )
+            return {"id": str(paper.id), "title": paper.title}
+
+    results = await _gather_bounded(_LLM_CONCURRENCY, [compile_one(pid) for pid in paper_ids])
+    _reraise_if_cancelled(results)  # worker 被杀须上抛，不当作单篇失败
+
+    # gather 后统一汇总（顺序按查询顺序=相关度降序，稳定）
+    compiled = 0
+    compiled_brief: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = []
+    for paper_id, result in zip(paper_ids, results, strict=True):
+        if isinstance(result, BaseException):
+            failed.append({"id": str(paper_id), "error": f"{type(result).__name__}: {result}"})
+            await ctx.log(
+                f"✗ 编译失败：{paper_id} — {type(result).__name__}", level="error"
+            )
+            continue
+        if result is None:
+            continue
+        compiled += 1
+        if len(compiled_brief) < _OBS_LIST_CAP:
+            compiled_brief.append(result)
 
     ctx.checkpoint["compiled_count"] = int(ctx.checkpoint.get("compiled_count") or 0) + compiled
     return {
-        "processed": len(papers),
+        "processed": len(paper_ids),
         "succeeded": compiled,
-        "compiled_papers": _paper_brief(compiled_papers),
+        "compiled_papers": compiled_brief,
         "failed": failed,
     }
 
