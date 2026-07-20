@@ -10,6 +10,7 @@ import logging
 import mimetypes
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -394,6 +395,9 @@ async def update_manuscript(
         changed = True
     if data.engine is not None:
         manuscript.engine = data.engine
+        changed = True
+    if data.pinned is not None:
+        manuscript.pinned_at = datetime.now(UTC) if data.pinned else None
         changed = True
     if changed:
         await session.commit()

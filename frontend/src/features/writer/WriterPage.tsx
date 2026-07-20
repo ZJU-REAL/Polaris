@@ -13,6 +13,8 @@ import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { api, ApiError, type ManuscriptRead } from '../../lib/api';
 import { NewManuscriptModal } from './NewManuscriptModal';
+import { CollaboratorsModal } from './CollaboratorsModal';
+import { saveBlob } from '../wiki/shared';
 
 /* ============================================================
    /writer — Stage 04 · Paper Writer（M5-B）列表视图。
@@ -53,13 +55,51 @@ function CheckBox({ checked, onToggle, title }: { checked: boolean; onToggle: ()
   );
 }
 
+/** 卡片底部的图标动作按钮（幽灵样式，纯图标 + title）。 */
+function CardAction({
+  icon,
+  title,
+  onClick,
+  active,
+  danger,
+  disabled,
+}: {
+  icon: 'pin' | 'share' | 'download' | 'trash';
+  title: string;
+  onClick: () => void;
+  active?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+}) {
+  const color = active ? 'var(--accent)' : danger ? 'var(--danger)' : 'var(--text-3)';
+  return (
+    <button
+      className="btn btn-ghost sm"
+      title={title}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      style={{ color, padding: '0 7px' }}
+    >
+      <Icon name={icon} size={13} />
+    </button>
+  );
+}
+
 function ManuscriptCard({
   m,
   templateName,
   mode,
+  multiSelect,
   selected,
+  exporting,
   onToggleSelect,
   onOpen,
+  onPin,
+  onShare,
+  onExport,
   onTrash,
   onRestore,
   onDelete,
@@ -67,14 +107,20 @@ function ManuscriptCard({
   m: ManuscriptRead;
   templateName: string;
   mode: ViewMode;
+  multiSelect: boolean;
   selected: boolean;
+  exporting: boolean;
   onToggleSelect: () => void;
   onOpen: () => void;
+  onPin: () => void;
+  onShare: () => void;
+  onExport: () => void;
   onTrash: () => void;
   onRestore: () => void;
   onDelete: () => void;
 }) {
   const isTrash = mode === 'trash';
+  const isPinned = !!m.pinned_at;
   return (
     <div
       className={`card card-pad ${isTrash ? '' : 'hoverable'}`}
@@ -85,29 +131,37 @@ function ManuscriptCard({
       }}
     >
       <div className="row gap10" style={{ alignItems: 'flex-start' }}>
-        <div style={{ paddingTop: 1 }}>
-          <CheckBox
-            checked={selected}
-            onToggle={onToggleSelect}
-            title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
-          />
-        </div>
+        {multiSelect && (
+          <div style={{ paddingTop: 1 }}>
+            <CheckBox
+              checked={selected}
+              onToggle={onToggleSelect}
+              title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
+            />
+          </div>
+        )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 13.5,
-              fontWeight: 650,
-              lineHeight: 1.4,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-            title={m.title}
-          >
-            {m.title}
+          <div className="row gap6" style={{ minWidth: 0 }}>
+            {isPinned && !isTrash && (
+              <Icon name="pin" size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+            )}
+            <div
+              style={{
+                fontSize: 13.5,
+                fontWeight: 650,
+                lineHeight: 1.4,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+              title={m.title}
+            >
+              {m.title}
+            </div>
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
-            {m.id.slice(0, 8)} · {tr('创建', 'created')} {fmtRelative(m.created_at)}
+            {m.id.slice(0, 8)} · {tr('更新', 'updated')} {fmtRelative(m.updated_at)}
           </div>
         </div>
         <StatusPill status={m.status} sm />
@@ -144,7 +198,7 @@ function ManuscriptCard({
           </div>
         </div>
       ) : (
-        <div className="row gap10" style={{ marginTop: 12 }}>
+        <div className="row gap8" style={{ marginTop: 12, alignItems: 'center' }}>
           <span className="pill sm">
             <Icon name="file" size={11} />
             {templateName}
@@ -155,20 +209,22 @@ function ManuscriptCard({
               {tr('AI 正在写', 'AI writing')}
             </span>
           )}
-          <button
-            className="btn btn-ghost sm"
-            title={tr('移入垃圾箱', 'Move to trash')}
-            onClick={(e) => {
-              e.stopPropagation();
-              onTrash();
-            }}
-            style={{ marginLeft: 'auto', color: 'var(--text-3)' }}
-          >
-            <Icon name="trash" size={12} />
-          </button>
-          <span className="mono muted" style={{ fontSize: 11 }}>
-            {tr('更新', 'updated')} {fmtRelative(m.updated_at)}
-          </span>
+          <div className="row gap2" style={{ marginLeft: 'auto' }}>
+            <CardAction
+              icon="pin"
+              active={isPinned}
+              title={isPinned ? tr('取消置顶', 'Unpin') : tr('置顶', 'Pin to top')}
+              onClick={onPin}
+            />
+            <CardAction icon="share" title={tr('分享', 'Share')} onClick={onShare} />
+            <CardAction
+              icon="download"
+              title={tr('导出 arXiv 投稿包', 'Export arXiv package')}
+              onClick={onExport}
+              disabled={exporting}
+            />
+            <CardAction icon="trash" title={tr('移入垃圾箱', 'Move to trash')} onClick={onTrash} />
+          </div>
         </div>
       )}
     </div>
@@ -182,7 +238,9 @@ export function WriterPage() {
   const pid = currentProjectId;
   const [modalOpen, setModalOpen] = useState(false);
   const [view, setView] = useState<ViewMode>('active');
+  const [multiSelect, setMultiSelect] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [shareId, setShareId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<
     | null
     | { title: string; message: string; confirmText: string; run: () => void }
@@ -229,6 +287,11 @@ export function WriterPage() {
       return next;
     });
   const clearSelection = () => setSelected(new Set());
+  const toggleMultiSelect = () =>
+    setMultiSelect((on) => {
+      if (on) setSelected(new Set()); // 关闭多选时清空已选
+      return !on;
+    });
   const allSelected = manuscripts.length > 0 && manuscripts.every((m) => selected.has(m.id));
   const toggleSelectAll = () =>
     setSelected(allSelected ? new Set() : new Set(manuscripts.map((m) => m.id)));
@@ -267,6 +330,24 @@ export function WriterPage() {
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
+  });
+  const pinOne = useMutation({
+    mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) => api.patchManuscript(id, { pinned }),
+    onSuccess: (_r, v) => {
+      invalidateAll();
+      toast(v.pinned ? tr('已置顶', 'Pinned to top') : tr('已取消置顶', 'Unpinned'), 'ok');
+    },
+    onError: onMutError,
+  });
+  const exportOne = useMutation({
+    mutationFn: (m: ManuscriptRead) => api.exportManuscriptArxiv(m.id).then((r) => ({ ...r, m })),
+    onSuccess: ({ blob, notes, m }) => {
+      const safe = (m.title || 'manuscript').replace(/[/\\?%*:|"<>]/g, '_');
+      saveBlob(blob, `${safe}-arxiv.tar.gz`);
+      if (notes.length > 0) toast(`${tr('导出提示：', 'Export notes: ')}${notes.join('；')}`, 'info');
+      else toast(tr('已导出 arXiv 投稿包', 'arXiv package exported'), 'ok');
+    },
+    onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
   const batchTrash = useMutation({
     mutationFn: (ids: string[]) => api.batchManuscripts(pid!, 'trash', ids),
@@ -364,6 +445,14 @@ export function WriterPage() {
               { v: 'trash', label: `${tr('垃圾箱', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
             ]}
           />
+          <button
+            className={`btn sm ${multiSelect ? 'btn-primary' : 'btn-soft'}`}
+            onClick={toggleMultiSelect}
+            title={tr('批量选择', 'Multi-select')}
+          >
+            <Icon name="check" size={13} />
+            {tr('多选', 'Multi-select')}
+          </button>
           {view === 'trash' && trashCount > 0 && (
             <button
               className="btn btn-ghost sm"
@@ -435,14 +524,16 @@ export function WriterPage() {
         </div>
       ) : (
         <>
-          <div className="row gap10" style={{ marginBottom: 10, alignItems: 'center' }}>
-            <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
-            <span className="muted" style={{ fontSize: 12 }}>
-              {selected.size > 0
-                ? tr(`已选 ${selected.size} 篇`, `${selected.size} selected`)
-                : tr('全选', 'Select all')}
-            </span>
-          </div>
+          {multiSelect && (
+            <div className="row gap10" style={{ marginBottom: 10, alignItems: 'center' }}>
+              <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
+              <span className="muted" style={{ fontSize: 12 }}>
+                {selected.size > 0
+                  ? tr(`已选 ${selected.size} 篇`, `${selected.size} selected`)
+                  : tr('全选', 'Select all')}
+              </span>
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
             {manuscripts.map((m) => (
@@ -451,9 +542,14 @@ export function WriterPage() {
                 m={m}
                 templateName={templateName(m.template)}
                 mode={view}
+                multiSelect={multiSelect}
                 selected={selected.has(m.id)}
+                exporting={exportOne.isPending && exportOne.variables?.id === m.id}
                 onToggleSelect={() => toggleSelect(m.id)}
                 onOpen={() => navigate(`/writer/${m.id}`)}
+                onPin={() => pinOne.mutate({ id: m.id, pinned: !m.pinned_at })}
+                onShare={() => setShareId(m.id)}
+                onExport={() => exportOne.mutate(m)}
                 onTrash={() => trashOne.mutate(m.id)}
                 onRestore={() => restoreOne.mutate(m.id)}
                 onDelete={() =>
@@ -473,8 +569,8 @@ export function WriterPage() {
         </>
       )}
 
-      {/* 批量操作栏（有选中时浮出底部） */}
-      {pid && selected.size > 0 && (
+      {/* 批量操作栏（多选模式下有选中时浮出底部） */}
+      {pid && multiSelect && selected.size > 0 && (
         <div
           className="card card-pad"
           style={{
@@ -538,6 +634,8 @@ export function WriterPage() {
       )}
 
       {pid && <NewManuscriptModal open={modalOpen} onClose={() => setModalOpen(false)} pid={pid} />}
+
+      <CollaboratorsModal open={!!shareId} manuscriptId={shareId ?? ''} onClose={() => setShareId(null)} />
 
       <ConfirmModal
         open={!!confirm}

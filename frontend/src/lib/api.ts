@@ -1374,6 +1374,8 @@ export interface ManuscriptRead {
   updated_at: string;
   /** 移入垃圾箱的时间；null / 缺失表示未删除（仍在活动列表）。 */
   trashed_at?: string | null;
+  /** 置顶时间；非空即置顶（活动列表里置顶项排在最前）。 */
+  pinned_at?: string | null;
 }
 
 /** 稿件文件元数据（详情内 files[]）。模板样式文件 readonly=true 不可改删。 */
@@ -2395,7 +2397,7 @@ export const api = {
   },
   patchManuscript(
     id: string,
-    input: { title?: string; main_tex?: string; engine?: CompileEngine },
+    input: { title?: string; main_tex?: string; engine?: CompileEngine; pinned?: boolean },
   ): Promise<ManuscriptRead> {
     return requestJson<ManuscriptRead>(`/manuscripts/${id}`, 'PATCH', input);
   },

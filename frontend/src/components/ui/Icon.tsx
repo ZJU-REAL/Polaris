@@ -6,7 +6,8 @@ export type IconName =
   | 'link' | 'check' | 'x' | 'play' | 'pause' | 'clock' | 'cpu' | 'server'
   | 'file' | 'git' | 'chart' | 'grid' | 'layers' | 'sparkle' | 'refresh'
   | 'logout' | 'dot' | 'compass' | 'users' | 'trash'
-  | 'star' | 'starFill' | 'chat' | 'download' | 'sliders' | 'sidebar' | 'minus';
+  | 'star' | 'starFill' | 'chat' | 'download' | 'sliders' | 'sidebar' | 'minus'
+  | 'pin' | 'share';
 
 export interface IconProps {
   name: IconName;
@@ -38,6 +39,8 @@ export function Icon({ name, size = 17, sw = 1.6, style }: IconProps) {
     settings: <><path d="M21.88 10.44A10.0 10.0 0 0 1 21.88 13.56L18.79 14.08A7.1 7.1 0 0 1 18.27 15.33L20.09 17.88A10.0 10.0 0 0 1 17.88 20.09L15.33 18.27A7.1 7.1 0 0 1 14.08 18.79L13.56 21.88A10.0 10.0 0 0 1 10.44 21.88L9.92 18.79A7.1 7.1 0 0 1 8.67 18.27L6.12 20.09A10.0 10.0 0 0 1 3.91 17.88L5.73 15.33A7.1 7.1 0 0 1 5.21 14.08L2.12 13.56A10.0 10.0 0 0 1 2.12 10.44L5.21 9.92A7.1 7.1 0 0 1 5.73 8.67L3.91 6.12A10.0 10.0 0 0 1 6.12 3.91L8.67 5.73A7.1 7.1 0 0 1 9.92 5.21L10.44 2.12A10.0 10.0 0 0 1 13.56 2.12L14.08 5.21A7.1 7.1 0 0 1 15.33 5.73L17.88 3.91A10.0 10.0 0 0 1 20.09 6.12L18.27 8.67A7.1 7.1 0 0 1 18.79 9.92L21.88 10.44Z" {...p} /><circle cx="12" cy="12" r="3.4" {...p} /></>,
     plus: <><path d="M12 5v14M5 12h14" {...p} /></>,
     minus: <><path d="M5 12h14" {...p} /></>,
+    pin: <><path d="M9.5 3h5l-.6 5.2 2.6 2.8H7.5l2.6-2.8z" {...p} /><path d="M12 11v9" {...p} /></>,
+    share: <><circle cx="6" cy="12" r="2.4" {...p} /><circle cx="17" cy="6" r="2.4" {...p} /><circle cx="17" cy="18" r="2.4" {...p} /><path d="M8.2 10.9 14.8 7.1M8.2 13.1 14.8 16.9" {...p} /></>,
     sidebar: <><rect x="3" y="4" width="18" height="16" rx="2" {...p} /><path d="M9 4v16" {...p} /></>,
     chevron: <><path d="M9 6l6 6-6 6" {...p} /></>,
     chevDown: <><path d="M6 9l6 6 6-6" {...p} /></>,

@@ -495,10 +495,14 @@ async def initialize_structure(
 async def list_manuscripts(
     session: AsyncSession, *, project_id: uuid.UUID, trashed: bool = False
 ) -> list[Manuscript]:
-    """项目下的稿件；trashed=False 只列未删除，True 只列垃圾箱。"""
+    """项目下的稿件；trashed=False 只列未删除（置顶优先），True 只列垃圾箱。"""
     cond = Manuscript.trashed_at.is_not(None) if trashed else Manuscript.trashed_at.is_(None)
-    order = Manuscript.trashed_at.desc() if trashed else Manuscript.created_at.desc()
-    stmt = select(Manuscript).where(Manuscript.project_id == project_id, cond).order_by(order)
+    stmt = select(Manuscript).where(Manuscript.project_id == project_id, cond)
+    if trashed:
+        stmt = stmt.order_by(Manuscript.trashed_at.desc())
+    else:
+        # 置顶（pinned_at 非空）排前面，其次按创建时间倒序
+        stmt = stmt.order_by(Manuscript.pinned_at.desc().nulls_last(), Manuscript.created_at.desc())
     return list((await session.execute(stmt)).scalars().all())
 
 

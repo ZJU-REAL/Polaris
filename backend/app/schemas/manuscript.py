@@ -71,6 +71,7 @@ class ManuscriptUpdate(BaseModel):
     # Overleaf 式编译设置：入口主文件 + 编译器
     main_tex: str | None = Field(default=None, min_length=1, max_length=1024)
     engine: CompileEngine | None = None
+    pinned: bool | None = None  # 置顶/取消置顶
 
 
 class ManuscriptRead(BaseModel):
@@ -87,6 +88,7 @@ class ManuscriptRead(BaseModel):
     status: str
     review_passed: bool  # M5-C：评审通过标记（submit 前置）
     trashed_at: datetime | None = None  # 非空即在垃圾箱
+    pinned_at: datetime | None = None  # 非空即置顶
     created_at: datetime
     updated_at: datetime
 

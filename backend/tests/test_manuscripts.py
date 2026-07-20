@@ -287,6 +287,26 @@ async def test_manuscript_permissions_and_delete(client):
     assert resp.status_code == 404
 
 
+async def test_manuscript_pin_orders_first(client):
+    project_id, headers = await _setup_project(client)
+    a = (await _create_manuscript(client, headers, project_id, title="A")).json()["id"]
+    b = (await _create_manuscript(client, headers, project_id, title="B")).json()["id"]
+
+    async def ids():
+        r = await client.get(f"/api/projects/{project_id}/manuscripts", headers=headers)
+        return [m["id"] for m in r.json()]
+
+    assert await ids() == [b, a]  # 默认：新的在前
+    # 置顶 a → 排最前
+    r = await client.patch(f"/api/manuscripts/{a}", json={"pinned": True}, headers=headers)
+    assert r.status_code == 200 and r.json()["pinned_at"] is not None
+    assert (await ids())[0] == a
+    # 取消置顶 → 恢复默认顺序
+    r = await client.patch(f"/api/manuscripts/{a}", json={"pinned": False}, headers=headers)
+    assert r.json()["pinned_at"] is None
+    assert await ids() == [b, a]
+
+
 async def test_manuscript_batch_trash_restore_empty(client):
     project_id, headers = await _setup_project(client)
     ids = [
