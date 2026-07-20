@@ -55,6 +55,11 @@ class Runner(Protocol):
     # —— 备环境（裸机=venv+pip；容器实现里=拉镜像/准备镜像内环境）——
     async def setup_venv(self, timeout: float = SETUP_TIMEOUT_SECONDS) -> RunResult: ...
 
+    # —— 备环境（后台脱离版：断连可重连接续跟踪同一安装进程）——
+    async def launch_setup(self) -> tuple[int, str]: ...
+    async def read_setup_exit(self) -> int | None: ...
+    async def read_setup_log(self, tail_chars: int = 2000) -> str: ...
+
     # —— 跑实验入口（前台，冒烟/绘图用）——
     async def run_smoke(self, timeout: float = SMOKE_TIMEOUT_SECONDS) -> RunResult: ...
     async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> RunResult: ...
@@ -232,6 +237,35 @@ class ContainerRunner(SSHExecutor):
             "else echo 'no requirements.txt: using image base'; fi"
         )
         return await self._run(self._dexec_workdir(inner), timeout=timeout)
+
+    async def launch_setup(self) -> tuple[int, str]:
+        """容器内后台装依赖（镜像已含框架，仅增量装 requirements）：setup.exit/setup.log 落 /work
+        （=host workdir，read_setup_exit/read_setup_log 走 host 侧继承即可）。"""
+        from app.core.config import get_settings
+
+        await self._ensure_container()
+        wd = self._spec.workdir_mount
+        index = get_settings().pip_index_url
+        index_arg = f" -i {index}" if index else ""
+        # 启动脚本落 host workdir（=/work），内容无引号，避开 docker exec 引号嵌套。
+        launcher = (
+            f"cd {wd}\n"
+            "rm -f setup.exit\n"
+            f"{self._proxy_prefix()}\n"
+            f"{{ if [ -f requirements.txt ]; then pip install{index_arg} -r requirements.txt; "
+            "else echo 'no requirements.txt: using image base'; fi; } > setup.log 2>&1\n"
+            "echo $? > setup.exit\n"
+        )
+        await self._session.write_file(f"{self._sftp_dir}/_setup_container.sh", launcher)
+        command = self._dexec(
+            f"cd {wd} && nohup bash _setup_container.sh >/dev/null 2>&1 & echo $!"
+        )
+        result = await self._run(command)
+        try:
+            pid = int(result.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError) as e:
+            raise SSHExecError(f"launch_setup 未返回 PID：{result.stdout!r}") from e
+        return pid, command
 
     async def run_smoke(self, timeout: float = SMOKE_TIMEOUT_SECONDS) -> SSHResult:
         await self._ensure_container()

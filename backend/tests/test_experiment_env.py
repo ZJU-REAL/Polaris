@@ -162,7 +162,7 @@ async def test_command_templates_source_env(client, queue_stub, fake_ssh, bus_re
     workdir = f"~/polaris_runs/{exp['id']}"
     smoke = next(c for c in fake_ssh.commands if "--smoke" in c)
     assert smoke == f"cd {workdir} && {{ {ENV_PREFIX} bash run.sh --smoke; }}"
-    launch = next(c for c in fake_ssh.commands if "nohup" in c)
+    launch = next(c for c in fake_ssh.commands if "nohup" in c and "run.sh" in c)  # run launch
     # 前缀先 export PYTHONUNBUFFERED=1、再 source env.sh、stdbuf 行缓冲跑 run.sh（日志实时刷新）
     assert (
         f"nohup bash -c 'export PYTHONUNBUFFERED=1; {ENV_PREFIX} "

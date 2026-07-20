@@ -24,6 +24,14 @@ class FakeSSHServer:
     connect_error: str | None = None  # 置为字符串则 connect 抛 ConnectionError
     venv_exit: int = 0
     venv_exits: list[int] = field(default_factory=list)  # 逐次弹出；耗尽后回落 venv_exit
+    # launch_setup（后台脱离装依赖）用：setup.exit 内容 / 逐次弹出序列 / 日志 / 已启动标记
+    setup_pid: int = 5252
+    setup_exit: int | None = 0  # None = 安装进行中（setup.exit 尚未落盘）
+    setup_exits: list[int | None] = field(
+        default_factory=list
+    )  # 逐次弹出（每次 launch_setup 生效）
+    setup_log: str = "pip install log (fake)"
+    setup_launched: bool = False
     # probe_gpu 用：每卡 (index, 显存总, 空闲) MiB；空列表 = 本机无 GPU/驱动
     gpus: list[tuple[int, int, int]] = field(default_factory=list)
     # 资源预检用：本机文件内容（cat <path> → 内容，如模型 config.json）；未登记 = 缺失
@@ -61,6 +69,19 @@ class FakeSSHSession:
         if server.on_command is not None:
             await server.on_command(command)
 
+        # —— 后台脱离装依赖（launch_setup + setup.exit/setup.log 轮询）；须在通用 launch/cat 之前 ——
+        if ("setup.exit" in command or "_setup_container.sh" in command) and "echo $!" in command:
+            server.setup_launched = True
+            if server.setup_exits:
+                server.setup_exit = server.setup_exits.pop(0)
+            return SSHResult(0, f"{server.setup_pid}\n", "")
+        if command.startswith("cat") and "setup.exit" in command:  # read_setup_exit
+            if server.setup_launched and server.setup_exit is not None:
+                return SSHResult(0, f"{server.setup_exit}\n", "")
+            return SSHResult(1, "", "")  # 安装未完成 → 尚无退出码
+        if "setup.log" in command:  # read_setup_log（tail -c N）
+            return SSHResult(0, server.setup_log, "")
+
         if "--smoke" in command:
             exit_code = server.smoke_exits.pop(0) if server.smoke_exits else 0
             if exit_code == 0:
@@ -95,8 +116,13 @@ class FakeSSHSession:
             if server.run_exits:
                 server.run_exit = server.run_exits.pop(0)
             return SSHResult(0, f"{server.pid}\n", "")
-        if "kill -0" in command:  # check_pid：run_exit 已就绪则进程视为已退出
-            alive = server.launched and server.run_exit is None
+        if "kill -0" in command:  # check_pid：exit 已就绪则进程视为已退出
+            m = re.search(r"kill -0 (\d+)", command)
+            q = int(m.group(1)) if m else -1
+            if q == server.setup_pid:
+                alive = server.setup_launched and server.setup_exit is None
+            else:
+                alive = server.launched and server.run_exit is None
             return SSHResult(0, "alive\n" if alive else "dead\n", "")
         if "tail -c" in command:
             if not server.launched:

@@ -318,7 +318,9 @@ async def test_cancel_at_round_start(client, queue_stub, fake_ssh, bus_recorder)
     assert detail["runs"][0]["status"] == "succeeded"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["status"] == "cancelled"
-    assert "\n".join(fake_ssh.commands).count("nohup") == 1
+    assert (
+        "\n".join(fake_ssh.commands).count("run.sh > run.log") == 1
+    )  # 只数 run 启动（setup 也 nohup）
 
 
 # ---- figures 步骤 ----
@@ -509,6 +511,37 @@ async def test_poll_survives_ssh_reconnect(client, queue_stub, fake_ssh, bus_rec
         stmt = select(Activity.kind).where(Activity.kind == "experiment.ssh_reconnect")
         kinds = (await session.execute(stmt)).scalars().all()
     assert kinds, "应记录 experiment.ssh_reconnect 审计活动"
+
+
+async def test_setup_survives_ssh_reconnect(
+    client, queue_stub, fake_ssh, bus_recorder, monkeypatch
+):
+    """依赖安装轮询期间 SSH 瞬时断开 → 重连后**接着跟同一安装进程**（不从头重装），
+    setup 不因单次断连而失败。这正是把装依赖改成后台脱离+轮询的价值。"""
+    monkeypatch.setattr(ax, "_reconnect_backoff", lambda _s: 0.0)  # 零退避，测试不等
+    state = {"raised": 0}
+
+    async def drop_once(command: str) -> None:
+        # 首次读 setup.exit（轮询依赖安装进度）时断连一次，之后恢复
+        if command.startswith("cat") and "setup.exit" in command and state["raised"] == 0:
+            state["raised"] += 1
+            raise ConnectionError("SSH connection closed")
+
+    fake_ssh.on_command = drop_once
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(client)
+    await _drive_pipeline(
+        client, headers, project_id, voyage_id, _router_with(_FixedReflectionProvider("improve"))
+    )
+
+    voyage_status, _ = await _iterate_observation(client, headers, voyage_id)
+    assert voyage_status == "done"  # 断连没毒死航程
+    assert state["raised"] == 1  # 确实注入了一次断连
+    # 只启动了**一次**安装——断连是「重连接着轮询」而非「从头重装」
+    assert "\n".join(fake_ssh.commands).count("rm -f setup.exit") == 1
+    assert len(fake_ssh.connects) >= 2  # 重连过
+
+    detail = await _get_detail(client, headers, exp_id)
+    assert detail["status"] == "done"
 
 
 def test_render_attempt_archive_unit():

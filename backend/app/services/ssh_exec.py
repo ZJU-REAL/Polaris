@@ -476,6 +476,50 @@ class SSHExecutor:
     async def kill_pid(self, pid: int) -> SSHResult:
         return await self._run(f"kill {int(pid)} 2>/dev/null || true")
 
+    def _install_script(self) -> str:
+        """依赖安装脚本正文（venv + pip install）——launch_setup 后台执行这段，逻辑同 setup_venv。"""
+        from app.core.config import get_settings
+
+        index = get_settings().pip_index_url
+        index_arg = f" -i {index}" if index else ""
+        return (
+            f"{self._proxy_prefix()}"
+            "{ python3 -m venv .venv 2>/dev/null && test -x .venv/bin/pip; } || "
+            f"{{ rm -rf .venv && pip3 install --user -q virtualenv{index_arg} && "
+            "python3 -m virtualenv -q .venv; } && "
+            f". .venv/bin/activate && pip install{index_arg} -r requirements.txt"
+        )
+
+    async def launch_setup(self) -> tuple[int, str]:
+        """后台启动依赖安装：退出码落 setup.exit、日志落 setup.log，返回 (PID, 命令)。
+        经 nohup 脱离会话——轮询期间 SSH 瞬时断连可**重连后接着跟同一安装进程**，而非从头重装。"""
+        command = (
+            f"cd {self.workdir} && rm -f setup.exit && "
+            f"nohup bash -c 'export PYTHONUNBUFFERED=1; {{ {self._install_script()} ; }} "
+            "> setup.log 2>&1; echo $? > setup.exit' >/dev/null 2>&1 & echo $!"
+        )
+        result = await self._run(command)
+        try:
+            pid = int(result.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError) as e:
+            raise SSHExecError(f"launch_setup 未返回 PID：{result.stdout!r}") from e
+        return pid, command
+
+    async def read_setup_exit(self) -> int | None:
+        result = await self._run(f"cat {self.workdir}/setup.exit 2>/dev/null")
+        text = result.stdout.strip()
+        if result.exit_status != 0 or not text:
+            return None
+        try:
+            return int(text.splitlines()[-1])
+        except ValueError:
+            return None
+
+    async def read_setup_log(self, tail_chars: int = 2000) -> str:
+        """读依赖安装日志尾部（失败时把报错回给 LLM 修 requirements/run.sh）。"""
+        result = await self._run(f"tail -c {int(tail_chars)} {self.workdir}/setup.log 2>/dev/null")
+        return result.stdout if result.exit_status == 0 else ""
+
     async def probe_gpu(self) -> list[dict[str, int]]:
         """资源预检：探测本机 GPU（每卡 index/显存总量/空闲，MiB）。
 

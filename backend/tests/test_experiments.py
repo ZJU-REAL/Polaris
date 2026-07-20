@@ -259,7 +259,7 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     assert f"mkdir -p ~/polaris_runs/{exp_id}" in joined
     assert "pip install -r requirements.txt" in joined
     assert "bash run.sh --smoke" in joined
-    assert joined.count("nohup") == 3  # 3 轮 launch
+    assert joined.count("run.sh > run.log") == 3  # 3 轮 run launch（setup 也 nohup，按 run 标记数）
     assert ".venv/bin/python plot_figures.py" in joined
 
     # 审计：每条远程命令都有 Activity(kind=ssh.exec)
@@ -366,7 +366,7 @@ async def test_smoke_exhausted_fails_experiment(client, queue_stub, fake_ssh, bu
 
 async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus_recorder):
     """依赖安装第一次失败 → 报错回 LLM 修 requirements/run.sh → 重装通过（对称 smoke 自愈）。"""
-    fake_ssh.venv_exits = [1, 0]
+    fake_ssh.setup_exits = [1, 0]
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
@@ -393,7 +393,7 @@ async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh,
 async def test_setup_deps_escalate_not_hard_fail(client, queue_stub, fake_ssh, bus_recorder):
     """依赖装不上、内部修复用尽 → setup 不像 smoke 那样硬停：它是「可换方案」节点，
     升级到引擎级重试/AI 计划调整（navigator：setup 走 loop 回灌）。本例重试后恢复 → voyage done。"""
-    fake_ssh.venv_exits = [1, 1, 1]  # 够耗尽一轮内部修复（1 次 + 2 次 fixes）后升级
+    fake_ssh.setup_exits = [1, 1, 1]  # 够耗尽一轮内部修复（1 次 + 2 次 fixes）后升级
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
