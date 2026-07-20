@@ -948,3 +948,20 @@ async def test_code_browser_falls_back_to_checkpoint(client, queue_stub, fake_ss
     assert resp.status_code == 200
     assert resp.json()["source"] == "checkpoint"
     assert "--smoke" in resp.json()["content"]
+
+
+async def test_experiment_sysinfo(client, queue_stub, fake_ssh, bus_recorder):
+    """实验页系统状态：项目成员经实验拿所在服务器的 CPU/内存/磁盘/GPU（实时探测）。"""
+    fake_ssh.gpus = [(0, 81920, 56000)]
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id = resp.json()["id"]
+
+    resp = await client.get(f"/api/experiments/{exp_id}/sysinfo", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["cpu"]["cores"] == 64
+    assert body["gpus"][0]["mem_total_mib"] == 81920

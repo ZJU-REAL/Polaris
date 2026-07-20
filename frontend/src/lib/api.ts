@@ -2323,6 +2323,10 @@ export const api = {
   getExperimentCode(id: string): Promise<ExperimentCodeListing> {
     return request<ExperimentCodeListing>(`/experiments/${id}/code`);
   },
+  /** 实验所在服务器的系统状态（实验搭建/运行期间实时查看）。 */
+  getExperimentSysinfo(id: string): Promise<SshSysinfo> {
+    return request<SshSysinfo>(`/experiments/${id}/sysinfo`);
+  },
   /** 读实验代码单文件内容（workdir 内相对路径）。 */
   getExperimentCodeFile(id: string, path: string): Promise<ExperimentCodeFile> {
     return request<ExperimentCodeFile>(

@@ -160,6 +160,25 @@ async def _checkpoint_files(session: AsyncSession, experiment: Experiment) -> di
     return {str(k): str(v) for k, v in files.items()} if isinstance(files, dict) else {}
 
 
+@router.get("/experiments/{experiment_id}/sysinfo")
+async def experiment_sysinfo(
+    experiment_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """实验所在服务器的系统状态（CPU/内存/磁盘/GPU）——实验搭建/运行期间实时查看。
+
+    项目成员可见（只读探测）；凭据缺失/已删 404；连不上 ok=false 而非 500。
+    """
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    if experiment.credential_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CREDENTIAL_NOT_FOUND")
+    credential = await session.get(SSHCredential, experiment.credential_id)
+    if credential is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CREDENTIAL_NOT_FOUND")
+    return await ssh_exec.probe_sysinfo(credential)
+
+
 @router.get("/experiments/{experiment_id}/code")
 async def list_experiment_code(
     experiment_id: uuid.UUID,
