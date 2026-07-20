@@ -63,6 +63,7 @@ class Runner(Protocol):
     # —— 跑实验入口（前台，冒烟/绘图用）——
     async def run_smoke(self, timeout: float = SMOKE_TIMEOUT_SECONDS) -> RunResult: ...
     async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> RunResult: ...
+    async def ensure_plot_deps(self, timeout: float = SETUP_TIMEOUT_SECONDS) -> RunResult: ...
 
     # —— 资源预检（确定性探测；本机无 GPU/驱动 → 空列表）——
     async def probe_gpu(self) -> list[dict[str, int]]: ...
@@ -280,6 +281,19 @@ class ContainerRunner(SSHExecutor):
             self._dexec_workdir(f"{{ {ENV_SOURCE_PREFIX} python plot_figures.py; }}"),
             timeout=timeout,
         )
+
+    async def ensure_plot_deps(self, timeout: float = SETUP_TIMEOUT_SECONDS) -> SSHResult:
+        """容器版：镜像 python 缺 matplotlib 时增量装（幂等）。"""
+        from app.core.config import get_settings
+
+        await self._ensure_container()
+        index = get_settings().pip_index_url
+        index_arg = f" -i {index}" if index else ""
+        inner = (
+            f'{self._proxy_prefix()}python -c "import matplotlib" 2>/dev/null || '
+            f"pip install{index_arg} matplotlib"
+        )
+        return await self._run(self._dexec_workdir(inner), timeout=timeout)
 
     async def launch_run(self) -> tuple[int, str]:
         """容器内后台启动正式运行。为避免 docker exec 的引号嵌套，把启动脚本落盘再 nohup 执行；

@@ -675,3 +675,22 @@ async def test_run_reattaches_after_worker_restart(client, queue_stub, fake_ssh,
     assert detail["runs"][0]["status"] == "succeeded"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["status"] == "done", resp.json()
+
+
+async def test_figures_ensures_matplotlib_before_plot(client, queue_stub, fake_ssh, bus_recorder):
+    """绘图前平台确定性保证 matplotlib（缺包不再指望修复循环——它装不了包）。"""
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(
+        client, budget={"max_hours": 2, "max_runs": 1}
+    )
+    await _drive_pipeline(
+        client, headers, project_id, voyage_id, _router_with(_FixedReflectionProvider("improve"))
+    )
+    joined = "\n".join(fake_ssh.commands)
+    ensure_at = joined.find("import matplotlib")
+    plot_at = (
+        joined.find("plot_figures.py\n")
+        if "plot_figures.py\n" in joined
+        else joined.find("python plot_figures.py")
+    )
+    assert ensure_at != -1, "应在绘图前探测/安装 matplotlib"
+    assert plot_at != -1 and ensure_at < plot_at  # 保证发生在执行绘图之前

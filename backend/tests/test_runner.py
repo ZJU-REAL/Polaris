@@ -24,6 +24,7 @@ _PRIMITIVES = (
     "read_setup_log",
     "run_smoke",
     "run_plot",
+    "ensure_plot_deps",
     "launch_run",
     "check_pid",
     "read_exit_code",

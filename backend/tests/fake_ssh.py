@@ -194,6 +194,8 @@ class FakeSSHSession:
                 if path in server.host_files:
                     return SSHResult(0, server.host_files[path], "")
                 return SSHResult(1, "", "")  # 未登记 = 缺失
+        if "import matplotlib" in command:  # ensure_plot_deps：默认依赖就绪
+            return SSHResult(0, "", "")
         if "venv" in command or "pip install" in command:
             exit_code = server.venv_exits.pop(0) if server.venv_exits else server.venv_exit
             return SSHResult(exit_code, "", "pip failed" if exit_code else "")

@@ -384,7 +384,7 @@ async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh,
     setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
     obs = setup_step["observation"]
     assert obs["venv_exit"] == 0 and obs["attempts"] == 2 and obs["fixes"] == 1
-    assert "\n".join(fake_ssh.commands).count("pip install") == 2  # 首次 + 修复后重试
+    assert "\n".join(fake_ssh.commands).count("-r requirements.txt") == 2  # 首次 + 修复后重试
 
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.json()["status"] == "done"

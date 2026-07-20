@@ -1888,6 +1888,9 @@ async def experiment_figures(ctx: ActionContext, params: dict[str, Any]) -> dict
                     ctx.checkpoint["plot_files"] = plot_files
                 await executor.write_files(plot_files)
 
+                # 绘图依赖确定性保证（幂等；失败不阻断——真实错误由 run_plot 暴露）
+                with contextlib.suppress(Exception):
+                    await executor.ensure_plot_deps()
                 result = await executor.run_plot()
                 if result.exit_status != 0:
                     entries = []

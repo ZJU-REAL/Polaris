@@ -523,6 +523,23 @@ class SSHExecutor:
             timeout=timeout,
         )
 
+    async def ensure_plot_deps(self, timeout: float = SETUP_TIMEOUT_SECONDS) -> SSHResult:
+        """绘图前确定性保证 matplotlib 可用（幂等，已装秒过）。
+
+        绘图是平台自己的模板（plot_figures.py→PNG），依赖属平台责任——缺包不该指望
+        figures 修复循环（它只能重写脚本、装不了包，实测缺 matplotlib 时修 N 次必降级 0 图）。
+        env.sh 会激活 venv（裸机），故裸 python/pip 即目标环境。"""
+        from app.core.config import get_settings
+
+        index = get_settings().pip_index_url
+        index_arg = f" -i {index}" if index else ""
+        return await self._run(
+            f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} "
+            f'python -c "import matplotlib" 2>/dev/null || '
+            f"{{ {self._proxy_prefix()}pip install{index_arg} matplotlib; }}; }}",
+            timeout=timeout,
+        )
+
     async def list_dir(self, subdir: str) -> list[str]:
         """列 workdir 子目录内文件名（相对路径过白名单校验；目录缺失返回空）。"""
         rel = _validate_relpath(subdir)
