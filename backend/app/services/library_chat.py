@@ -34,6 +34,8 @@ LIBRARY_CHAT_SYSTEM_TEMPLATE = """\
 - 引用某篇论文的内容时，在句末标注对应编号，如 [1] 或 [1][3]；
 - 提到资料「概念」清单里列出的概念时，用双链 [[概念名]] 标注（只用清单里出现过的概念名，
   别的词不要加双链）；
+- 当某篇论文的「配图」能直观说明你的观点时，在合适位置插入该图标记 [[fig:论文id:图号]]
+  （只用资料里给出的标记，别自己编图号），插图后配一句说明它画了什么、支撑了什么结论；
 - 涉及多篇论文时主动做对比与归纳（共识、分歧、演进脉络），不要逐篇罗列了事；
 - 用中文回答，讲清楚、说人话。
 
@@ -91,6 +93,18 @@ async def _retrieve_chunks(
         logger.warning("chunk keyword search failed; falling back to summaries", exc_info=True)
         await session.rollback()
         return []
+
+
+def _figure_hints(paper: Paper) -> str:
+    """把某论文的重要配图列成「标记 + 图注」，供 AI 在回答里插图（[[fig:id:idx]]）。"""
+    figs = [f for f in (paper.figures or []) if f.get("important") and f.get("caption")]
+    if not figs:
+        return ""
+    lines = [
+        f"  [[fig:{paper.id}:{f['index']}]] {f.get('kind') or '图'}：{f['caption']}"
+        for f in figs[:4]
+    ]
+    return "\n配图（可插入标记引用）：\n" + "\n".join(lines)
 
 
 def _group_by_paper(
@@ -179,7 +193,10 @@ async def build_library_messages(
     for i, (paper, body) in enumerate(entries, start=1):
         names = concepts_by_paper.get(paper.id, [])[:10]
         concept_line = f"\n概念：{'、'.join(names)}" if names else ""
-        blocks.append(f"[{i}] {paper.title}（{paper.year or '年份未知'}）{concept_line}\n{body}")
+        fig_line = _figure_hints(paper)
+        blocks.append(
+            f"[{i}] {paper.title}（{paper.year or '年份未知'}）{concept_line}{fig_line}\n{body}"
+        )
         sources.append(
             ChatSource(
                 index=i,
