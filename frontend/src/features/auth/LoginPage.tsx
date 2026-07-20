@@ -84,9 +84,9 @@ export function LoginPage() {
         {/* 品牌区 */}
         <div className="col" style={{ alignItems: 'center', marginBottom: 24 }}>
           <div style={{ marginBottom: 14 }}>
-            <PolarisMark size={72} />
+            <PolarisMark size={86} />
           </div>
-          <PolarisWordmark height={28} />
+          <PolarisWordmark height={38} />
           <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>
             {tr('自动 AI 科研平台', 'Autonomous AI Research Platform')}
           </div>

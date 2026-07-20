@@ -66,7 +66,7 @@ export function PolarisWordmark({ height = 16, title = 'Polaris' }: { height?: n
       aria-label={title}
       style={{ display: 'block', flexShrink: 0 }}
     >
-      <g stroke={POLARIS_BLUE} strokeWidth="4">
+      <g stroke={POLARIS_BLUE} strokeWidth="5" strokeLinejoin="round">
         {/* P：一笔连画 —— 竖干直上、左上角平滑大圆角转入碗顶 */}
         <path d="M4.95 31.7 V10.95 A7 7 0 0 1 11.95 3.95 H16.65 A7 7 0 0 1 23.65 10.95 V13.55 A7 7 0 0 1 16.65 20.55 H4.95" />
         {/* o */}
@@ -80,16 +80,18 @@ export function PolarisWordmark({ height = 16, title = 'Polaris' }: { height?: n
         {/* s：上下平直横笔 + 斜向中段（端头斜切见下方三角补片） */}
         <path d="M126.0 15.35 H119.2 Q113.9 15.35 113.9 18.3 C113.9 20.6 115.9 21.7 119.2 22.25 C123.2 22.95 126.7 24.0 126.7 26.8 Q126.7 29.7 121.7 29.7 H114.4" />
       </g>
-      {/* s 端头斜切补片：右上端与左下端 */}
-      <path d="M126.0 13.35 L128.7 17.35 H126.0 Z" fill={POLARIS_BLUE} />
-      <path d="M114.4 31.7 L111.9 27.7 H114.4 Z" fill={POLARIS_BLUE} />
-      {/* l：顶部斜切竖干 */}
-      <path d="M52.9 5.6 L56.9 3.0 V31.7 H52.9 Z" fill={POLARIS_BLUE} />
-      {/* a 上横臂 + 右干（填充轮廓：左端斜切、右下端斜切） */}
-      <path d="M63.0 11.7 H74.9 C79.2 11.7 80.6 13.9 80.6 19.2 V31.7 H76.6 V18.8 C76.6 16.4 75.4 15.7 73.4 15.7 H65.4 Z" fill={POLARIS_BLUE} />
-      {/* 青绿细节：P/a 碗内短横 + i 点 */}
-      <rect x="10.6" y="12.4" width="6.8" height="1.9" rx="0.95" fill={POLARIS_TEAL} />
-      <rect x="68.1" y="25.3" width="5.1" height="1.5" rx="0.75" fill={POLARIS_TEAL} />
+      {/* 填充轮廓另描 1px 同色边，配合加粗字重 */}
+      <g fill={POLARIS_BLUE} stroke={POLARIS_BLUE} strokeWidth="1" strokeLinejoin="round">
+        {/* s 端头斜切补片：右上端与左下端 */}
+        <path d="M126.0 13.35 L128.7 17.35 H126.0 Z" />
+        <path d="M114.4 31.7 L111.9 27.7 H114.4 Z" />
+        {/* l：顶部斜切竖干 */}
+        <path d="M52.9 5.6 L56.9 3.0 V31.7 H52.9 Z" />
+        {/* a 上横臂 + 右干（填充轮廓：左端斜切、右下端斜切） */}
+        <path d="M63.0 11.7 H74.9 C79.2 11.7 80.6 13.9 80.6 19.2 V31.7 H76.6 V18.8 C76.6 16.4 75.4 15.7 73.4 15.7 H65.4 Z" />
+      </g>
+      {/* 青绿细节：P 碗内短横 + i 点 */}
+      <rect x="9.9" y="11.4" width="9" height="2.4" rx="1.2" fill={POLARIS_TEAL} />
       <circle cx="105.4" cy="5.2" r="2.6" fill={POLARIS_TEAL} />
     </svg>
   );
