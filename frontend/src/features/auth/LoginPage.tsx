@@ -88,7 +88,7 @@ export function LoginPage() {
           </div>
           <PolarisWordmark height={44} />
           <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>
-            {tr('北极星 | 自动 AI 科研平台', 'Polaris | Autonomous AI Research Platform')}
+            {tr('北极星 | AI 科研智能体', 'Polaris | AI Research Agent')}
           </div>
         </div>
 

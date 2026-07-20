@@ -126,8 +126,6 @@ input {
 .nav-collapsed .user-trigger { justify-content: center; gap: 0; padding: 8px 0; }
 .nav-collapsed .user-info { display: none; }
 
-/* 挂到 body 的浮层：fixed 定位（left/top 由 JS 按触发器计算），
-   避开侧栏 overflow:hidden 的裁剪，收起态也不会被切掉 */
 /* 纯 CSS 相对触发器定位（不用 portal / JS 坐标，避免 html{zoom} 下跨屏错位）：
    在触发器正上方 6px 展开，左对齐。收起态菜单更宽会向右溢出到主列（侧栏已抬 z-index）。 */
 .user-menu {
