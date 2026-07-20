@@ -492,13 +492,75 @@ async def initialize_structure(
     return draft, new_content
 
 
-async def list_manuscripts(session: AsyncSession, *, project_id: uuid.UUID) -> list[Manuscript]:
-    stmt = (
-        select(Manuscript)
-        .where(Manuscript.project_id == project_id)
-        .order_by(Manuscript.created_at.desc())
-    )
+async def list_manuscripts(
+    session: AsyncSession, *, project_id: uuid.UUID, trashed: bool = False
+) -> list[Manuscript]:
+    """项目下的稿件；trashed=False 只列未删除，True 只列垃圾箱。"""
+    cond = Manuscript.trashed_at.is_not(None) if trashed else Manuscript.trashed_at.is_(None)
+    order = Manuscript.trashed_at.desc() if trashed else Manuscript.created_at.desc()
+    stmt = select(Manuscript).where(Manuscript.project_id == project_id, cond).order_by(order)
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def _owned_manuscripts(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
+) -> list[Manuscript]:
+    if not ids:
+        return []
+    stmt = select(Manuscript).where(Manuscript.project_id == project_id, Manuscript.id.in_(ids))
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def trash_manuscripts(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
+) -> int:
+    """移入垃圾箱（软删除）；返回受影响数量。"""
+    rows = await _owned_manuscripts(session, project_id=project_id, ids=ids)
+    now = datetime.now(UTC)
+    n = 0
+    for m in rows:
+        if m.trashed_at is None:
+            m.trashed_at = now
+            n += 1
+    await session.commit()
+    return n
+
+
+async def restore_manuscripts(
+    session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
+) -> int:
+    """从垃圾箱恢复；返回受影响数量。"""
+    rows = await _owned_manuscripts(session, project_id=project_id, ids=ids)
+    n = 0
+    for m in rows:
+        if m.trashed_at is not None:
+            m.trashed_at = None
+            n += 1
+    await session.commit()
+    return n
+
+
+async def purge_manuscripts(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    ids: list[uuid.UUID] | None = None,
+) -> int:
+    """永久删除。ids=None → 清空该项目垃圾箱（删所有已在垃圾箱的稿件）；
+    否则只永久删除指定 id 中已在垃圾箱的稿件（避免误删未删除的）。返回删除数量。"""
+    if ids is None:
+        rows = await list_manuscripts(session, project_id=project_id, trashed=True)
+    else:
+        rows = [
+            m
+            for m in await _owned_manuscripts(session, project_id=project_id, ids=ids)
+            if m.trashed_at is not None
+        ]
+    n = len(rows)
+    for m in rows:
+        await session.delete(m)
+    await session.commit()
+    return n
 
 
 async def get_manuscript_for_user(

@@ -33,12 +33,14 @@ from app.schemas.gate import GateRead
 from app.schemas.manuscript import (
     AddCollaborator,
     AssistRequest,
+    BatchResult,
     CollaboratorRead,
     CompileResult,
     DraftRequest,
     FileVersionContent,
     FileVersionMeta,
     FolderCreate,
+    ManuscriptBatchAction,
     ManuscriptCreate,
     ManuscriptDetail,
     ManuscriptFileBrief,
@@ -346,13 +348,16 @@ async def create_manuscript(
 @router.get("/projects/{project_id}/manuscripts", response_model=list[ManuscriptRead])
 async def list_manuscripts(
     project_id: uuid.UUID,
+    trashed: bool = False,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[ManuscriptRead]:
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    rows = await manuscripts_service.list_manuscripts(session, project_id=project_id)
+    rows = await manuscripts_service.list_manuscripts(
+        session, project_id=project_id, trashed=trashed
+    )
     return [ManuscriptRead.model_validate(m) for m in rows]
 
 
@@ -396,20 +401,93 @@ async def update_manuscript(
     return ManuscriptRead.model_validate(manuscript)
 
 
-@router.delete("/manuscripts/{manuscript_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_manuscript(
-    manuscript_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> None:
-    manuscript = await _member_manuscript(session, manuscript_id, user)
+async def _manage_manuscript_project(session: AsyncSession, manuscript: Manuscript, user: User):
+    """稿件所属项目 + 管理权限校验（垃圾箱/删除用）。"""
     project = await projects_service.get_project(
         session, project_id=manuscript.project_id, user_id=user.id
     )
     if project is None or not projects_service.can_manage_project(project, user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
-    await session.delete(manuscript)
-    await session.commit()
+    return project
+
+
+@router.delete("/manuscripts/{manuscript_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_manuscript(
+    manuscript_id: uuid.UUID,
+    permanent: bool = False,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """默认移入垃圾箱（软删除）；permanent=true 永久删除。"""
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    await _manage_manuscript_project(session, manuscript, user)
+    if permanent:
+        await session.delete(manuscript)
+        await session.commit()
+    else:
+        await manuscripts_service.trash_manuscripts(
+            session, project_id=manuscript.project_id, ids=[manuscript.id]
+        )
+
+
+@router.post("/manuscripts/{manuscript_id}/restore", response_model=ManuscriptRead)
+async def restore_manuscript(
+    manuscript_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ManuscriptRead:
+    """从垃圾箱恢复。"""
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    await _manage_manuscript_project(session, manuscript, user)
+    await manuscripts_service.restore_manuscripts(
+        session, project_id=manuscript.project_id, ids=[manuscript.id]
+    )
+    await session.refresh(manuscript)
+    return ManuscriptRead.model_validate(manuscript)
+
+
+@router.post("/projects/{project_id}/manuscripts/batch", response_model=BatchResult)
+async def batch_manuscripts(
+    project_id: uuid.UUID,
+    data: ManuscriptBatchAction,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> BatchResult:
+    """批量：trash 移入垃圾箱 / restore 恢复 / delete 永久删除。仅项目管理者可操作。"""
+    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    if not projects_service.can_manage_project(project, user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+    if data.action == "trash":
+        n = await manuscripts_service.trash_manuscripts(
+            session, project_id=project_id, ids=data.ids
+        )
+    elif data.action == "restore":
+        n = await manuscripts_service.restore_manuscripts(
+            session, project_id=project_id, ids=data.ids
+        )
+    else:  # delete（永久）
+        n = await manuscripts_service.purge_manuscripts(
+            session, project_id=project_id, ids=data.ids
+        )
+    return BatchResult(affected=n)
+
+
+@router.post("/projects/{project_id}/manuscripts/trash/empty", response_model=BatchResult)
+async def empty_manuscript_trash(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> BatchResult:
+    """清空垃圾箱：永久删除该项目所有已在垃圾箱的稿件。"""
+    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    if not projects_service.can_manage_project(project, user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
+    n = await manuscripts_service.purge_manuscripts(session, project_id=project_id, ids=None)
+    return BatchResult(affected=n)
 
 
 # ---- §1b 协作者 / 分享（稿件权限=项目成员，操作落到所属研究方向） ----

@@ -264,10 +264,65 @@ async def test_manuscript_permissions_and_delete(client):
         f"/api/manuscripts/{ms_id}", json={"title": "New Title"}, headers=member_headers
     )
     assert resp.status_code == 200 and resp.json()["title"] == "New Title"
+    # owner 删除 → 移入垃圾箱（软删除）：不在活跃列表，在垃圾箱列表
     resp = await client.delete(f"/api/manuscripts/{ms_id}", headers=headers)
+    assert resp.status_code == 204
+    active = (await client.get(f"/api/projects/{project_id}/manuscripts", headers=headers)).json()
+    assert ms_id not in [m["id"] for m in active]
+    trashed = (
+        await client.get(f"/api/projects/{project_id}/manuscripts?trashed=true", headers=headers)
+    ).json()
+    assert ms_id in [m["id"] for m in trashed]
+
+    # 恢复 → 回到活跃列表
+    resp = await client.post(f"/api/manuscripts/{ms_id}/restore", headers=headers)
+    assert resp.status_code == 200 and resp.json()["trashed_at"] is None
+    active = (await client.get(f"/api/projects/{project_id}/manuscripts", headers=headers)).json()
+    assert ms_id in [m["id"] for m in active]
+
+    # 永久删除（permanent）→ 彻底没了
+    resp = await client.delete(f"/api/manuscripts/{ms_id}?permanent=true", headers=headers)
     assert resp.status_code == 204
     resp = await client.get(f"/api/manuscripts/{ms_id}", headers=headers)
     assert resp.status_code == 404
+
+
+async def test_manuscript_batch_trash_restore_empty(client):
+    project_id, headers = await _setup_project(client)
+    ids = [
+        (await _create_manuscript(client, headers, project_id, title=f"M{i}")).json()["id"]
+        for i in range(3)
+    ]
+
+    def active():
+        return client.get(f"/api/projects/{project_id}/manuscripts", headers=headers)
+
+    def trash():
+        return client.get(f"/api/projects/{project_id}/manuscripts?trashed=true", headers=headers)
+
+    # 批量移入垃圾箱 2 个
+    r = await client.post(
+        f"/api/projects/{project_id}/manuscripts/batch",
+        json={"action": "trash", "ids": ids[:2]},
+        headers=headers,
+    )
+    assert r.status_code == 200 and r.json()["affected"] == 2
+    assert {m["id"] for m in (await active()).json()} == {ids[2]}
+    assert {m["id"] for m in (await trash()).json()} == set(ids[:2])
+
+    # 批量恢复 1 个
+    r = await client.post(
+        f"/api/projects/{project_id}/manuscripts/batch",
+        json={"action": "restore", "ids": [ids[0]]},
+        headers=headers,
+    )
+    assert r.json()["affected"] == 1
+
+    # 清空垃圾箱 → 只永久删除仍在垃圾箱的 ids[1]
+    r = await client.post(f"/api/projects/{project_id}/manuscripts/trash/empty", headers=headers)
+    assert r.status_code == 200 and r.json()["affected"] == 1
+    assert (await client.get(f"/api/manuscripts/{ids[1]}", headers=headers)).status_code == 404
+    assert {m["id"] for m in (await active()).json()} == {ids[0], ids[2]}
 
 
 async def test_submit_requires_ok_compile_then_gate_flow(client, bus_recorder, queue_stub):

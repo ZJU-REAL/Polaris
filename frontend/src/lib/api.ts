@@ -1372,6 +1372,8 @@ export interface ManuscriptRead {
   review_passed?: boolean;
   created_at: string;
   updated_at: string;
+  /** 移入垃圾箱的时间；null / 缺失表示未删除（仍在活动列表）。 */
+  trashed_at?: string | null;
 }
 
 /** 稿件文件元数据（详情内 files[]）。模板样式文件 readonly=true 不可改删。 */
@@ -2383,8 +2385,10 @@ export const api = {
   createManuscript(projectId: string, input: CreateManuscriptInput): Promise<ManuscriptRead> {
     return requestJson<ManuscriptRead>(`/projects/${projectId}/manuscripts`, 'POST', input);
   },
-  listManuscripts(projectId: string): Promise<ManuscriptRead[]> {
-    return request<ManuscriptRead[]>(`/projects/${projectId}/manuscripts`);
+  /** 默认返回活动列表；opts.trashed=true 返回垃圾箱（已软删除的稿件）。 */
+  listManuscripts(projectId: string, opts?: { trashed?: boolean }): Promise<ManuscriptRead[]> {
+    const qs = opts?.trashed ? '?trashed=true' : '';
+    return request<ManuscriptRead[]>(`/projects/${projectId}/manuscripts${qs}`);
   },
   getManuscript(id: string): Promise<ManuscriptDetail> {
     return request<ManuscriptDetail>(`/manuscripts/${id}`);
@@ -2398,6 +2402,36 @@ export const api = {
   /** 仅 owner/admin。 */
   deleteManuscript(id: string): Promise<void> {
     return request<void>(`/manuscripts/${id}`, { method: 'DELETE' });
+  },
+  /** 软删除：移入垃圾箱（仅 owner/admin，否则 403）。 */
+  trashManuscript(id: string): Promise<void> {
+    return request<void>(`/manuscripts/${id}`, { method: 'DELETE' });
+  },
+  /** 永久删除，不可恢复（仅 owner/admin，否则 403）。 */
+  deleteManuscriptPermanent(id: string): Promise<void> {
+    return request<void>(`/manuscripts/${id}?permanent=true`, { method: 'DELETE' });
+  },
+  /** 从垃圾箱恢复（仅 owner/admin，否则 403）。 */
+  restoreManuscript(id: string): Promise<ManuscriptRead> {
+    return request<ManuscriptRead>(`/manuscripts/${id}/restore`, { method: 'POST' });
+  },
+  /** 批量操作稿件：trash=移入垃圾箱 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
+  batchManuscripts(
+    projectId: string,
+    action: 'trash' | 'restore' | 'delete',
+    ids: string[],
+  ): Promise<{ affected: number }> {
+    return requestJson<{ affected: number }>(
+      `/projects/${projectId}/manuscripts/batch`,
+      'POST',
+      { action, ids },
+    );
+  },
+  /** 清空垃圾箱：永久删除该研究方向下所有已软删除稿件（仅 owner/admin，否则 403）。 */
+  emptyManuscriptTrash(projectId: string): Promise<{ affected: number }> {
+    return request<{ affected: number }>(`/projects/${projectId}/manuscripts/trash/empty`, {
+      method: 'POST',
+    });
   },
   /**
    * 把主文件 \begin{document}…\end{document} 之间的正文重写为

@@ -1,6 +1,7 @@
 """论文稿件与其 LaTeX 文件（docs/api-m5-b.md §1/§2）。"""
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Boolean, ForeignKey, String, Text
@@ -54,6 +55,8 @@ class Manuscript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     review_passed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    # 软删除（垃圾箱）：非空即在垃圾箱，列表默认过滤掉；清空垃圾箱才真正删除
+    trashed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     # 防幻觉事实源（docs/api-m5-b.md §3）：{idea, hypotheses, metrics, figures,
     # citations, generated_at}；M5-C 评审不通过时追加 revision_notes（修订说明）；
     # citations 条目附内部 paper_id / source 供编译生成 bib
