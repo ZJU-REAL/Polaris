@@ -5,6 +5,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ from app.schemas.paper import (
     TagRead,
 )
 from app.services import figure_annotate as figure_service
+from app.services import library_chat as library_chat_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
 from app.services import projects as projects_service
@@ -373,19 +375,36 @@ async def chat_with_paper(
 ) -> StreamingResponse:
     """AI 伴读：stage=reading 流式回答；事件 delta/done/error + 15s 心跳注释。"""
     paper = await _get_member_paper(session, paper_id, user)
-    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
-    messages = papers_service.build_chat_messages(paper, question=data.question, history=history)
     project_id = paper.project_id
+    user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
+    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
     llm = get_llm_router()
 
+    # 用户选中的其他文献：检索相关片段作为对比/参考上下文（跨项目引用被过滤）
+    references, sources = "", []
+    if data.context_paper_ids:
+        references, sources = await library_chat_service.build_reference_context(
+            session,
+            project_id=project_id,
+            question=data.question,
+            paper_ids=data.context_paper_ids,
+            llm=llm,
+            user_id=user_id,
+        )
+    messages = papers_service.build_chat_messages(
+        paper, question=data.question, history=history, references=references
+    )
+
     async def event_stream() -> AsyncIterator[str]:
+        if sources:
+            yield _sse_frame("sources", {"items": [asdict(s) for s in sources]})
         queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
 
         async def pump() -> None:
             try:
                 # router.stream 结束时自动写 LLMUsage 记账（归属 user + project）
                 async for chunk in llm.stream(
-                    "reading", messages, user_id=user.id, project_id=project_id
+                    "reading", messages, user_id=user_id, project_id=project_id
                 ):
                     await queue.put(("delta", chunk))
                 await queue.put(("done", None))

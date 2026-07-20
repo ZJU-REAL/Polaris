@@ -64,17 +64,23 @@ async def _retrieve_chunks(
     question: str,
     llm: LLMRouter,
     user_id: uuid.UUID | None,
+    paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
     """向量检索优先（postgres + embedding 可用），否则关键词降级；任何失败都不上抛。
 
     典型失败：paper_chunks 表未迁移、embedding provider 挂了、向量维度不匹配——
     统一 rollback 后逐级降级（向量 → 关键词 → 空，空由调用方走论文摘要兜底）。
+    传 paper_ids 时把检索限制在这些论文内（伴读引用指定文献用）。
     """
     if chunks_service.chunk_vector_search_supported(session):
         try:
             vectors = await llm.embed([question], user_id=user_id, project_id=project_id)
             rows = await chunks_service.semantic_search_chunks(
-                session, project_id=project_id, query_vector=vectors[0], limit=MAX_CHUNKS
+                session,
+                project_id=project_id,
+                query_vector=vectors[0],
+                limit=MAX_CHUNKS,
+                paper_ids=paper_ids,
             )
             if rows:
                 return rows
@@ -85,7 +91,7 @@ async def _retrieve_chunks(
             await session.rollback()  # postgres 报错后事务已中止，先回滚
     try:
         return await chunks_service.keyword_search_chunks(
-            session, project_id=project_id, q=question, limit=MAX_CHUNKS
+            session, project_id=project_id, q=question, limit=MAX_CHUNKS, paper_ids=paper_ids
         )
     except Exception:  # noqa: BLE001
         logger.warning("chunk keyword search failed; falling back to summaries", exc_info=True)
@@ -202,3 +208,69 @@ async def build_library_messages(
     messages += [Message(role=role, content=content) for role, content in history]
     messages.append(Message(role="user", content=question))
     return messages, sources
+
+
+async def build_reference_context(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    question: str,
+    paper_ids: list[uuid.UUID],
+    llm: LLMRouter,
+    user_id: uuid.UUID | None = None,
+) -> tuple[str, list[ChatSource]]:
+    """阅读伴读用：给「用户额外选中的其他文献」拼参考上下文，返回 (编号上下文, 来源列表)。
+
+    对选中论文按问题检索相关片段（向量→关键词→空，同库对话的降级路径），
+    某篇没检索到片段时回退到它的 TL;DR/摘要——保证每篇选中的文献都出现在上下文里。
+    只纳入属于本项目的论文（跨项目引用被过滤）。返回空串表示没有可用的参考文献。
+    """
+    if not paper_ids:
+        return "", []
+    found = (
+        (
+            await session.execute(
+                select(Paper).where(Paper.id.in_(paper_ids), Paper.project_id == project_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    papers = {p.id: p for p in found}
+    # 保留用户的选择顺序，并滤掉不属于本项目的
+    ordered = [papers[pid] for pid in paper_ids if pid in papers]
+    if not ordered:
+        return "", []
+
+    rows = await _retrieve_chunks(
+        session,
+        project_id=project_id,
+        question=question,
+        llm=llm,
+        user_id=user_id,
+        paper_ids=[p.id for p in ordered],
+    )
+    grouped: dict[uuid.UUID, list[PaperChunk]] = {}
+    if rows:
+        grouped = {paper.id: cl for paper, cl in _group_by_paper(rows, papers)}
+
+    sources: list[ChatSource] = []
+    blocks: list[str] = []
+    for i, paper in enumerate(ordered, start=1):
+        chunk_list = grouped.get(paper.id)
+        if chunk_list:
+            body = ("\n…\n".join(c.text for c in chunk_list))[:SNIPPET_CHARS]
+        else:
+            body = paper.tldr or (paper.abstract or "")[:400] or "（无摘要）"
+        blocks.append(f"[{i}] {paper.title}（{paper.year or '年份未知'}）\n{body}")
+        sources.append(
+            ChatSource(
+                index=i,
+                paper_id=str(paper.id),
+                title=paper.title,
+                year=paper.year,
+                status=paper.status,
+                relevance=paper.relevance_score,
+            )
+        )
+    return "\n\n".join(blocks), sources

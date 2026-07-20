@@ -171,6 +171,8 @@ class PaperChatRequest(BaseModel):
 
     question: str = Field(min_length=1)
     history: list[ChatTurn] = []
+    # 用户在 / 选择器里挑中的「其他文献」：伴读会检索这些论文的相关片段作为对比/参考上下文。
+    context_paper_ids: list[uuid.UUID] = []
 
 
 class ConceptRead(BaseModel):
