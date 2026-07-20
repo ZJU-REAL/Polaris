@@ -163,9 +163,7 @@ async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
 
 @respx.mock
 async def test_arxiv_fetch_new_network_error_returns_empty(cache_redis):
-    respx.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(
-        return_value=httpx.Response(503)
-    )
+    respx.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(return_value=httpx.Response(503))
     client = ArxivClient(redis=cache_redis, min_interval=0)
     assert await client.fetch_new("cs.CL") == []  # 失败容错，不抛
     await client.aclose()

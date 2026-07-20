@@ -724,9 +724,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
     for paper_id, result in zip(paper_ids, results, strict=True):
         if isinstance(result, BaseException):
             failed.append({"id": str(paper_id), "error": f"{type(result).__name__}: {result}"})
-            await ctx.log(
-                f"✗ 编译失败：{paper_id} — {type(result).__name__}", level="error"
-            )
+            await ctx.log(f"✗ 编译失败：{paper_id} — {type(result).__name__}", level="error")
             continue
         if result is None:
             continue

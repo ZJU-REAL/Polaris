@@ -16,9 +16,7 @@ async def _register(client, **over):
 
 
 async def _login(client, ident: str, password: str = "str0ng-password"):
-    return await client.post(
-        "/api/auth/jwt/login", data={"username": ident, "password": password}
-    )
+    return await client.post("/api/auth/jwt/login", data={"username": ident, "password": password})
 
 
 async def test_register_requires_name_and_username(client):

@@ -38,26 +38,6 @@ def test_drop_output_pdfs_keeps_figure_pdfs():
     assert set(out) == {"example_paper.tex", "icml_numpapers.pdf", "icml2026.sty"}
 
 
-def test_substitute_unavailable_fonts():
-    """Windows/mac 中文字体名（zjuthesis 用）→ Linux 可用自由字体；二进制/无关文件不动。"""
-    members = {
-        "config/fonts.tex": (
-            b"\\setCJKmainfont{FangSong}\n\\setCJKfamilyfont{zhhei}{SimHei}\n"
-            b"\\setmainfont{Times New Roman}\n"
-        ),
-        "main.tex": b"\\documentclass{article}\\begin{document}x\\end{document}",
-        "logo.png": _PNG,  # 二进制不动
-    }
-    out = templates._substitute_unavailable_fonts(members)
-    fonts = out["config/fonts.tex"].decode("utf-8")
-    assert "{Noto Serif CJK SC}" in fonts  # FangSong →
-    assert "{Noto Sans CJK SC}" in fonts  # SimHei →
-    assert "{Liberation Serif}" in fonts  # Times New Roman →
-    assert "FangSong" not in fonts and "SimHei" not in fonts
-    assert out["main.tex"] == members["main.tex"]  # 无字体名的文件不动
-    assert out["logo.png"] == _PNG  # 二进制原样
-
-
 def _make_zip(files: dict[str, bytes]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

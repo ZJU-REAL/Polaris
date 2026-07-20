@@ -79,9 +79,7 @@ async def test_extract_figures_drops_near_blank(tmp_path):
     page = doc.new_page()
     # 有内容（灰底 value=90）+ 近空白（value=252，几乎全白）
     page.insert_image(pymupdf.Rect(72, 72, 272, 222), stream=_image_bytes(400, 300, value=90))
-    page.insert_image(
-        pymupdf.Rect(72, 320, 272, 470), stream=_image_bytes(400, 300, value=252)
-    )
+    page.insert_image(pymupdf.Rect(72, 320, 272, 470), stream=_image_bytes(400, 300, value=252))
     pdf_path = tmp_path / "blank.pdf"
     pdf_path.write_bytes(doc.tobytes())
     doc.close()
