@@ -356,14 +356,16 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
     )
     run_id = uuid.UUID(resp.json()["id"])
 
-    # 第 1 次打分成功、第 2 次 "被杀"
+    # 第 2 次打分 "被杀"。打分是有界并发（_LLM_CONCURRENCY=5 ≥ 4 篇候选），4 个任务
+    # 并发各自打分：其中 1 个（第 2 次 LLM 调用）抛 CancelledError，其余 3 个照常完成并
+    # 逐篇 commit。故崩溃后恰好 3 篇落库、1 篇仍是 candidate（下次续跑补打这 1 篇）。
     crashing_router = LLMRouter()
     crashing_router._providers[("fake", None, "")] = _CrashOnNthRelevance(crash_at=2)
     engine = VoyageEngine(event_bus=RecordingBus(), llm_router=crashing_router)
     with pytest.raises(asyncio.CancelledError):
         await engine.run(run_id)
 
-    assert await _relevance_call_count() == 1  # 崩溃前只记了 1 次
+    assert await _relevance_call_count() == 3  # 崩溃前 3 篇成功打分（并发，非串行的 1）
     async with get_sessionmaker()() as session:
         scored = (
             await session.execute(
@@ -373,7 +375,7 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
                 )
             )
         ).scalar_one()
-        assert int(scored) == 1  # 逐篇 commit：崩溃前的进度已落库
+        assert int(scored) == 3  # 逐篇 commit：崩溃前的进度已落库
 
     # resume：从断点续跑到 done，总打分调用数 == 论文数（无重复）
     engine2, _ = _make_engine()
@@ -393,6 +395,67 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
             .all()
         )
         assert sorted(statuses) == ["compiled", "compiled", "compiled", "excluded"]
+
+
+class _BreakOneRelevance(FakeProvider):
+    """让某一篇（标题含 marker）的相关性打分返回坏 JSON：验证并发下单篇失败被隔离，
+    其余并发任务照常打分（failed 结构不变、最终计数与串行一致）。"""
+
+    def __init__(self, break_marker: str) -> None:
+        self.break_marker = break_marker
+
+    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+        full = "\n".join(m.content for m in messages)
+        if '"score"' in full and self.break_marker in full:
+            from app.core.llm.base import CompletionResult
+
+            return CompletionResult(content="(not json)", model=model, finish_reason="stop")
+        return await super().complete(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
+        )
+
+
+async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_mocks):
+    """并发打分中一篇解析失败进 failed，不拖累其余；全程走完到 done。"""
+    project_id, headers = await _setup_project(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    run_id = uuid.UUID(resp.json()["id"])
+
+    router = LLMRouter()
+    # "Benchmark" 命中「LLM Scientist Benchmark Suite」这一篇 → 该篇打分返回坏 JSON
+    router._providers[("fake", None, "")] = _BreakOneRelevance(break_marker="Benchmark")
+    engine = VoyageEngine(event_bus=RecordingBus(), llm_router=router)
+    await engine.run(run_id)
+
+    resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
+    detail = resp.json()
+    assert detail["status"] == "done", detail
+    score_obs = detail["steps"][2]["observation"]  # 0 检索 / 1 雪球 / 2 打分
+    assert len(score_obs["failed"]) == 1  # 恰好坏掉的那一篇进 failed
+    assert score_obs["failed"][0]["error"].startswith("ValueError")
+    assert score_obs["succeeded"] == 3  # 其余 3 篇并发打分照常完成（4 候选 − 1 失败）
+    assert score_obs["processed"] == 4
+
+    async with get_sessionmaker()() as session:
+        by_status: dict[str, int] = {}
+        for status in (
+            (
+                await session.execute(
+                    select(Paper.status).where(Paper.project_id == uuid.UUID(project_id))
+                )
+            )
+            .scalars()
+            .all()
+        ):
+            by_status[status] = by_status.get(status, 0) + 1
+        # 失败打分的那篇仍是 candidate（下次续跑会重试），其余照常推进
+        assert by_status.get("candidate", 0) == 1
+        assert by_status.get("excluded", 0) == 1  # irrelevant 篮子编织论文
+        assert by_status.get("compiled", 0) == 2  # 两篇通过阈值的论文成功编译
 
 
 async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks):
