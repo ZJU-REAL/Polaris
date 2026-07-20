@@ -35,12 +35,38 @@ function PersonalTab() {
   const { data: me, isLoading, isError } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   const { data: usage } = useQuery({ queryKey: ['my-usage'], queryFn: () => api.myUsage(), retry: false });
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
   const [avatarVersion, setAvatarVersion] = useState(0);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (me) setName(me.display_name ?? '');
+    if (me) {
+      setName(me.display_name ?? '');
+      setUsername(me.username ?? '');
+    }
   }, [me]);
+
+  const usernameValid = /^[a-z0-9_]{3,32}$/.test(username);
+  const usernameLocked = !!me?.username_locked;
+
+  const usernameMutation = useMutation({
+    mutationFn: () => api.setUsername(username),
+    onSuccess: () => {
+      toast(tr('用户名已设置', 'Username set'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast(
+        msg === 'USERNAME_TAKEN'
+          ? tr('用户名已被占用，换一个吧', 'Username already taken')
+          : msg === 'USERNAME_LOCKED'
+            ? tr('用户名已锁定，不能再改', 'Username is locked')
+            : `${tr('设置失败', 'Failed')}：${msg}`,
+        'error',
+      );
+    },
+  });
 
   const saveMutation = useMutation({
     mutationFn: () => api.updateMe({ display_name: name.trim() }),
@@ -89,8 +115,40 @@ function PersonalTab() {
           <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 6 }}>{tr('PNG / JPEG / WebP，2MB 以内', 'PNG / JPEG / WebP, up to 2MB')}</div>
         </div>
       </div>
-      <FormField label={tr('显示名', 'Display name')}>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('如：王小明', 'e.g. Alice Wang')} />
+      <FormField label={tr('姓名', 'Name')}>
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('你的真实姓名', 'Your name')} />
+      </FormField>
+      <FormField label={tr('用户名', 'Username')}>
+        {usernameLocked ? (
+          <div className="row gap8" style={{ alignItems: 'center' }}>
+            <input className="input mono" value={me.username ?? ''} disabled style={{ flex: 1 }} />
+            <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+              {tr('已锁定', 'Locked')}
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="row gap8" style={{ alignItems: 'center' }}>
+              <input
+                className="input mono"
+                value={username}
+                onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                placeholder="e.g. zhang_san"
+                style={{ flex: 1 }}
+              />
+              <button
+                className="btn btn-soft"
+                disabled={!usernameValid || usernameMutation.isPending || username === (me.username ?? '')}
+                onClick={() => usernameMutation.mutate()}
+              >
+                {tr('保存', 'Save')}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: username && !usernameValid ? 'var(--danger-tx)' : 'var(--text-4)', marginTop: 4 }}>
+              {tr('小写字母、数字、下划线 3-32 位；全局唯一。只能设置/修改一次', 'lowercase letters, digits, underscore; 3-32 chars; unique. Can only be set once')}
+            </div>
+          </>
+        )}
       </FormField>
       <FormField label={tr('邮箱', 'Email')}>
         <input className="input" value={me.email} disabled />
@@ -1032,7 +1090,10 @@ function UsersTab() {
                   <div className="row gap10">
                     <Avatar userId={u.id} hasAvatar={u.has_avatar} name={u.display_name || u.email} size={26} />
                     <div>
-                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{u.display_name || '—'}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+                        {u.display_name || '—'}
+                        {u.username && <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', fontWeight: 400, marginLeft: 6 }}>@{u.username}</span>}
+                      </div>
                       <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{u.email}</div>
                     </div>
                   </div>

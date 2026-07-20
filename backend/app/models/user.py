@@ -3,7 +3,7 @@
 from typing import Any
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import BigInteger, String
+from sqlalchemy import BigInteger, Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -17,6 +17,11 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     __tablename__ = "users"
 
     display_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # 用户名：小写字母/数字/下划线 3-32 位，全局唯一；可登录（邮箱或用户名二选一）。
+    # 可空——老用户没有用户名（不强制回填），新注册必填。
+    username: Mapped[str | None] = mapped_column(String(32), unique=True, index=True)
+    # 用户名只能在个人设置里改一次：改过一次后锁定（admin 预设即锁定）。
+    username_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     role: Mapped[str] = mapped_column(String(32), default="member", nullable=False)  # admin|member
     # 大模型使用权限：full=不限 | chat_only=仅文献对话与 AI 伴读 | blocked=锁定
     llm_access: Mapped[str] = mapped_column(String(16), default="full", nullable=False)

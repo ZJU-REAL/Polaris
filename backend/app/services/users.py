@@ -57,6 +57,7 @@ async def list_users_with_usage(session: AsyncSession) -> list[dict[str, Any]]:
             "id": u.id,
             "email": u.email,
             "display_name": u.display_name,
+            "username": u.username,
             "role": u.role,
             "is_active": u.is_active,
             "has_avatar": u.has_avatar,
