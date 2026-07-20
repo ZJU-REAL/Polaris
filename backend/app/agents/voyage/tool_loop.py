@@ -18,7 +18,7 @@ from typing import Any
 from app.agents.voyage.actions import ActionContext
 from app.agents.voyage.actions_ideas import _extract_json
 from app.core.llm.base import Message
-from app.tools import ToolContext, get_tool, run_tool
+from app.tools import ToolContext, get_tool, result_payload, run_tool
 
 _TOOL_RESULT_CHARS = 4000  # 单个工具结果注入 prompt 的截断
 _FORCE_FINISH_ATTEMPTS = 2  # 轮次耗尽后强制 finish 的补充尝试
@@ -81,9 +81,10 @@ async def run_tool_loop(
                         f"未授权工具：{tool_name}（本环节可用：{', '.join(sorted(allowed))}）"
                     )
                 result = await run_tool(tctx, tool_name, args)
-                payload = json.dumps(result, ensure_ascii=False, default=str)
+                data = result_payload(result)  # 内部循环只用文本 payload，忽略图片
+                payload = json.dumps(data, ensure_ascii=False, default=str)
                 spec = get_tool(tool_name)
-                summary = spec.summary(args, result) if spec else tool_name
+                summary = spec.summary(args, data) if spec else tool_name
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 — 工具错误回给 LLM 继续探索

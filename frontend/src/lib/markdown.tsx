@@ -56,6 +56,12 @@ export type FigureRenderer = (index: number) => ReactNode;
 export type PaperRefRenderer = (paperId: string) => ReactNode;
 
 /**
+ * 行内 `[[fig:论文uuid:图号]]` 跨论文配图渲染回调（文献库对话用）；
+ * 返回 null 时回退为普通 [[双链]] chip 行为。
+ */
+export type LibraryFigureRenderer = (paperId: string, index: number) => ReactNode;
+
+/**
  * `[n]`（1-2 位数字）引用角标渲染回调（文献库对话用，编号对应来源清单）；
  * 返回 null 时按普通文本渲染。未提供回调时 `[n]` 不做任何解析。
  */
@@ -68,6 +74,8 @@ export interface MarkdownProps {
   renderFigure?: FigureRenderer;
   /** 渲染行内 `[[paper:uuid]]` 库内论文引用 */
   renderPaperRef?: PaperRefRenderer;
+  /** 渲染行内 `[[fig:论文uuid:图号]]` 跨论文配图（文献库对话） */
+  renderLibraryFigure?: LibraryFigureRenderer;
   /** 渲染行内 `[n]` 引用角标（文献库对话） */
   renderCitation?: CitationRenderer;
   className?: string;
@@ -84,6 +92,7 @@ function renderInline(
   onWikiLink?: WikiLinkHandler,
   renderPaperRef?: PaperRefRenderer,
   renderCitation?: CitationRenderer,
+  renderLibraryFigure?: LibraryFigureRenderer,
 ): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
@@ -107,6 +116,20 @@ function renderInline(
     } else if (m[3] !== undefined) {
       const target = (m[4] ?? '').trim();
       const label = (m[5] ?? target).trim();
+      // [[fig:论文uuid:图号]] 跨论文配图：交给 renderLibraryFigure；返回 null 时回退普通双链
+      if (renderLibraryFigure && target.toLowerCase().startsWith('fig:')) {
+        const rest = target.slice('fig:'.length);
+        const ci = rest.lastIndexOf(':');
+        const idx = ci > 0 ? Number(rest.slice(ci + 1)) : NaN;
+        if (ci > 0 && Number.isInteger(idx)) {
+          const node = renderLibraryFigure(rest.slice(0, ci).trim(), idx);
+          if (node !== null && node !== undefined && node !== false) {
+            out.push(<span key={k++}>{node}</span>);
+            last = re.lastIndex;
+            continue;
+          }
+        }
+      }
       // [[paper:uuid]] 库内论文引用：交给 renderPaperRef；无回调 / 返回 null 时回退普通双链
       if (renderPaperRef && target.toLowerCase().startsWith('paper:')) {
         const node = renderPaperRef(target.slice('paper:'.length).trim());
@@ -138,9 +161,9 @@ function renderInline(
         </a>,
       );
     } else if (m[9] !== undefined) {
-      out.push(<strong key={k++}>{renderInline(m[10] ?? '', onWikiLink, renderPaperRef, renderCitation)}</strong>);
+      out.push(<strong key={k++}>{renderInline(m[10] ?? '', onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)}</strong>);
     } else if (m[11] !== undefined) {
-      out.push(<em key={k++}>{renderInline(m[12] ?? '', onWikiLink, renderPaperRef, renderCitation)}</em>);
+      out.push(<em key={k++}>{renderInline(m[12] ?? '', onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)}</em>);
     } else if (m[13] !== undefined) {
       out.push(<del key={k++}>{m[14] ?? ''}</del>);
     } else if (m[17] !== undefined) {
@@ -190,6 +213,7 @@ function parseBlocks(
   renderFigure?: FigureRenderer,
   renderPaperRef?: PaperRefRenderer,
   renderCitation?: CitationRenderer,
+  renderLibraryFigure?: LibraryFigureRenderer,
 ): ReactNode[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n');
   const out: ReactNode[] = [];
@@ -267,7 +291,7 @@ function parseBlocks(
     const h = RE_HEADING.exec(line);
     if (h) {
       const lvl = (h[1] ?? '#').length;
-      out.push(createElement(`h${lvl}`, { key: key++ }, renderInline(h[2] ?? '', onWikiLink, renderPaperRef, renderCitation)));
+      out.push(createElement(`h${lvl}`, { key: key++ }, renderInline(h[2] ?? '', onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)));
       i++;
       continue;
     }
@@ -294,7 +318,7 @@ function parseBlocks(
             <thead>
               <tr>
                 {header.map((c, ci) => (
-                  <th key={ci}>{renderInline(c, onWikiLink, renderPaperRef, renderCitation)}</th>
+                  <th key={ci}>{renderInline(c, onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)}</th>
                 ))}
               </tr>
             </thead>
@@ -302,7 +326,7 @@ function parseBlocks(
               {rows.map((r, ri) => (
                 <tr key={ri}>
                   {header.map((_, ci) => (
-                    <td key={ci}>{renderInline(r[ci] ?? '', onWikiLink, renderPaperRef, renderCitation)}</td>
+                    <td key={ci}>{renderInline(r[ci] ?? '', onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)}</td>
                   ))}
                 </tr>
               ))}
@@ -322,7 +346,7 @@ function parseBlocks(
         buf.push(q[1] ?? '');
         i++;
       }
-      out.push(<blockquote key={key++}>{parseBlocks(buf.join('\n'), onWikiLink, renderFigure, renderPaperRef, renderCitation)}</blockquote>);
+      out.push(<blockquote key={key++}>{parseBlocks(buf.join('\n'), onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure)}</blockquote>);
       continue;
     }
 
@@ -337,7 +361,7 @@ function parseBlocks(
         items.push(it[1] ?? '');
         i++;
       }
-      const children = items.map((it, ii) => <li key={ii}>{renderInline(it, onWikiLink, renderPaperRef, renderCitation)}</li>);
+      const children = items.map((it, ii) => <li key={ii}>{renderInline(it, onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)}</li>);
       out.push(ordered ? <ol key={key++}>{children}</ol> : <ul key={key++}>{children}</ul>);
       continue;
     }
@@ -357,7 +381,7 @@ function parseBlocks(
         {buf.map((l, li) => (
           <span key={li}>
             {li > 0 && <br />}
-            {renderInline(l, onWikiLink, renderPaperRef, renderCitation)}
+            {renderInline(l, onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)}
           </span>
         ))}
       </p>,
@@ -367,10 +391,19 @@ function parseBlocks(
 }
 
 /** 安全 markdown 渲染（含 [[概念]] 双链与 ![[fig:N]] 嵌入图）。 */
-export function Markdown({ source, onWikiLink, renderFigure, renderPaperRef, renderCitation, className, style }: MarkdownProps) {
+export function Markdown({
+  source,
+  onWikiLink,
+  renderFigure,
+  renderPaperRef,
+  renderLibraryFigure,
+  renderCitation,
+  className,
+  style,
+}: MarkdownProps) {
   const nodes = useMemo(
-    () => parseBlocks(source, onWikiLink, renderFigure, renderPaperRef, renderCitation),
-    [source, onWikiLink, renderFigure, renderPaperRef, renderCitation],
+    () => parseBlocks(source, onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure),
+    [source, onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure],
   );
   return (
     <div className={`md${className ? ` ${className}` : ''}`} style={style}>

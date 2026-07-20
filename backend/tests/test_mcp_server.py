@@ -141,7 +141,8 @@ async def test_catalog_endpoint(client):
     assert body["server"]["name"] == "polaris"
     assert body["endpoint"] == "/mcp"
     names = {t["name"] for t in body["tools"]}
-    assert len(names) == 18
+    assert len(names) >= 18
+    assert {"get_paper_figure", "list_paper_figures", "find_figures"} <= names
     search = next(t for t in body["tools"] if t["name"] == "search_papers")
     assert any(p["name"] == "query" and p["required"] for p in search["params"])
     # 需登录
