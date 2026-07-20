@@ -30,10 +30,23 @@ app/tools/                     统一只读工具注册表（ToolSpec：name + d
 `ToolContext`（`app/tools/context.py`）把工具从 voyage 的 `ActionContext` 解耦，只带
 `project_id / user_id / voyage_id / llm`，因此内部和外部两条路径都能构造。
 
-## 工具目录（18 个，全部只读）
+## 工具目录（26 个，全部只读）
+
+图片类工具（`get_paper_figure` / `get_paper_figures`）返回 **MCP image content block**
+（inline base64 PNG，按 `max_dim` 缩放，默认单边 1600px）——外部客户端可直接拿到「方法图 /
+实验图」做 PPT；图片已在建库时抽取、按 `kind`（motivation/method/architecture/experiment/other）
+分类、配好中文图注。
 
 | 工具 | 来源 | 参数（**必填**） | 说明 |
 |---|---|---|---|
+| `list_paper_figures` | 库内 | **paper_id** | 列出某论文所有图的元数据（不含图片） |
+| `get_paper_figure` | 库内(图) | **paper_id**, **index**, max_dim | 取某张图的图片(PNG)+图注 |
+| `get_paper_figures` | 库内(图) | **paper_id**, kind, only_important, max_dim | 批量取图片（默认只重要图） |
+| `find_figures` | 库内 | **query**, kind, k | 跨库按主题/类型找图（返回元数据） |
+| `get_paper_citation` | 库内 | **paper_id**, format | 引用条目（bibtex/csl） |
+| `get_paper_notes` | 库内 | **paper_id** | 项目笔记（团队共享） |
+| `get_paper_highlights` | 库内 | **paper_id** | 划线/高亮（含页码与选中文本） |
+| `related_papers` | 库内 | **paper_id**, k | 共享概念最多的近邻论文 |
 | `search_papers` | 库内 | **query**, mode, k | 库内检索论文（语义，pgvector 不可用时降级关键词） |
 | `search_chunks` | 库内 | **query**, k | 全文段落级语义检索（比 search_papers 更细） |
 | `read_wiki` | 库内 | **paper_id** | 读某论文的 wiki 综述页 |
@@ -55,6 +68,14 @@ app/tools/                     统一只读工具注册表（ToolSpec：name + d
 
 > `get_references / get_citations` 接受外部 id（`paper_ref`：`arXiv:xxx` / `DOI:xxx` / S2 id）
 > 或库内 `paper_id`（自动解析成外部 id）。
+
+**图片传输**：工具可返回富内容 `ToolResult{payload, images}`（`app/tools/registry.py`）；
+MCP 层（`app/mcp/dispatch.py`）把 `payload` 转文本块、每张图转 `image` content block
+（`{"type":"image","data":<base64>,"mimeType":"image/png"}`）。纯文本工具照旧返回 dict。
+
+**平台内对话**：文献库对话（`library_chat`）会把命中论文的重要图元数据+图注带进上下文，
+让 AI 在回答里插入 `[[fig:论文id:图号]]` 标记，前端渲染成内联配图（复用
+`GET /papers/{id}/figures/{index}/image`）——AI 找到相关论文的图并就地说明。
 
 ## 传输一：Streamable HTTP（`POST /mcp`）
 
