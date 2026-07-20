@@ -73,6 +73,8 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   const [drawerOpen, setDrawerOpen] = useState(cfg.defaultDrawerOpen ?? true);
   const stopRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // 是否「贴着底部」：用户往上滚离底部后暂停自动跟随，滚回底部再恢复
+  const stickBottomRef = useRef(true);
   // 提交后待发的分享目标（回答完成时触发桩投递提示）
   const pendingShareRef = useRef<MentionTarget | null>(null);
 
@@ -90,10 +92,17 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   activeMsgsRef.current = activeMsgs;
 
   useEffect(() => () => stopRef.current?.(), []);
+  // 只有用户仍贴在底部时才自动跟随到底；往上滚阅读时不打断
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [activeMsgs]);
+
+  const onMsgsScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
 
   const finishStream = (failed: boolean, fallbackText?: string) => {
     setStreaming(false);
@@ -144,6 +153,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     };
     const base = [...activeMsgsRef.current, userMsg, { role: 'assistant' as const, content: '' }];
     activeMsgsRef.current = base;
+    stickBottomRef.current = true; // 新一轮提问：跟随到底，把这轮滚进视野
     commit(base);
     setStreaming(true);
     pendingShareRef.current = payload.shareTo;
@@ -268,7 +278,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
 
         <div className="chat-hint">{cfg.hint}</div>
 
-        <div ref={scrollRef} className="chat-msgs scroll">
+        <div ref={scrollRef} className="chat-msgs scroll" onScroll={onMsgsScroll}>
           {activeMsgs.length === 0 ? (
             <div className="chat-empty-wrap">
               <EmptyState compact icon={cfg.emptyIcon} title={cfg.emptyTitle} desc={cfg.emptyDesc} />
