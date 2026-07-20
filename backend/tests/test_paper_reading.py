@@ -184,3 +184,63 @@ async def test_chat_sse_stream_and_usage(client):
         headers={"Authorization": f"Bearer {other}"},
     )
     assert resp.status_code == 404
+
+
+async def test_chat_with_referenced_papers(client):
+    """/ 选中的其他文献作为参考上下文：emit sources 帧；跨项目引用被过滤；不选则无 sources。"""
+    project_id, headers, paper_id = await _setup(client)
+    # 另建一个项目放一篇「外部」论文——跨项目引用必须被过滤掉
+    resp = await client.post("/api/projects", json={"name": "other-proj"}, headers=headers)
+    foreign_pid = resp.json()["id"]
+
+    async with get_sessionmaker()() as session:
+        referenced = Paper(
+            project_id=uuid.UUID(project_id),
+            source="manual",
+            title="Fara-1.5 Learning Environments",
+            abstract="Fara-1.5 scalable environments for computer use agents.",
+            tldr="Fara-1.5 一句话总结：可扩展的 CUA 学习环境。",
+            status="included",
+        )
+        foreign = Paper(
+            project_id=uuid.UUID(foreign_pid),
+            source="manual",
+            title="Foreign Paper",
+            abstract="unrelated",
+            status="included",
+        )
+        session.add_all([referenced, foreign])
+        await session.commit()
+        referenced_id, foreign_id = str(referenced.id), str(foreign.id)
+
+    async with client.stream(
+        "POST",
+        f"/api/papers/{paper_id}/chat",
+        json={
+            "question": "和 Fara-1.5 比较一下",
+            "history": [],
+            "context_paper_ids": [referenced_id, foreign_id],
+        },
+        headers=headers,
+    ) as resp:
+        assert resp.status_code == 200
+        body = (await resp.aread()).decode("utf-8")
+
+    events = _parse_sse(body)
+    kinds = [e for e, _ in events]
+    assert kinds[0] == "sources" and kinds[-1] == "done" and "error" not in kinds
+    items = events[0][1]["items"]
+    ids = {it["paper_id"] for it in items}
+    assert referenced_id in ids  # 同项目被引用的论文进入来源
+    assert foreign_id not in ids  # 跨项目的被过滤
+    assert items[0]["title"] == "Fara-1.5 Learning Environments"
+
+    # 不传 context_paper_ids 时向后兼容：不发 sources 帧
+    async with client.stream(
+        "POST",
+        f"/api/papers/{paper_id}/chat",
+        json={"question": "这篇讲什么", "history": []},
+        headers=headers,
+    ) as resp:
+        body2 = (await resp.aread()).decode("utf-8")
+    assert "event: sources" not in body2

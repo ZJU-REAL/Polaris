@@ -466,8 +466,8 @@ def build_chat_context(paper: Paper) -> str:
 
 CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 你是论文阅读助手，帮用户读懂下面这篇论文。回答要求：
-- 只依据下面给出的论文内容回答，不要编造论文里没有的信息；
-- 论文内容里没有提到或你不确定的，直接说明「论文中未提及」或「不确定」；
+- 只依据下面给出的资料回答，不要编造资料里没有的信息；
+- 资料里没有提到或你不确定的，直接说明「论文中未提及」或「不确定」；
 - 用中文回答，讲清楚、说人话。
 
 论文标题：{title}
@@ -476,19 +476,31 @@ CHAT_SYSTEM_PROMPT_TEMPLATE = """\
 {context}
 """
 
+# 用户在 / 选择器里额外挑中的其他文献：拼在 system 末尾作为对比/参考资料。
+CHAT_REFERENCES_SUFFIX = """
+
+————
+用户还选了下面这些【其他文献】作为对比/参考资料（编号 = 论文，仅为检索到的相关片段或摘要，非全文）。
+需要对比或引用它们时依据这里的内容，并在句末用 [n] 标注来源；
+这些资料没覆盖的细节，请说明「参考文献中未提及」：
+{references}
+"""
+
 
 def build_chat_messages(
-    paper: Paper, *, question: str, history: Sequence[tuple[str, str]] = ()
+    paper: Paper,
+    *,
+    question: str,
+    history: Sequence[tuple[str, str]] = (),
+    references: str = "",
 ) -> list[Message]:
-    """组装伴读消息：system（论文上下文）+ 历史对话（前端携带）+ 当前问题。"""
-    messages = [
-        Message(
-            role="system",
-            content=CHAT_SYSTEM_PROMPT_TEMPLATE.format(
-                title=paper.title, context=build_chat_context(paper)
-            ),
-        )
-    ]
+    """组装伴读消息：system（论文上下文 + 可选参考文献）+ 历史对话（前端携带）+ 当前问题。"""
+    system = CHAT_SYSTEM_PROMPT_TEMPLATE.format(
+        title=paper.title, context=build_chat_context(paper)
+    )
+    if references:
+        system += CHAT_REFERENCES_SUFFIX.format(references=references)
+    messages = [Message(role="system", content=system)]
     messages += [Message(role=role, content=content) for role, content in history]
     messages.append(Message(role="user", content=question))
     return messages

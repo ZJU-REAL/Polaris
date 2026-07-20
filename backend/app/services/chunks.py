@@ -140,19 +140,29 @@ async def semantic_search_chunks(
     project_id: uuid.UUID,
     query_vector: list[float],
     limit: int,
+    paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
-    """pgvector 余弦检索（仅 postgres；调用方需先判 chunk_vector_search_supported）。"""
+    """pgvector 余弦检索（仅 postgres；调用方需先判 chunk_vector_search_supported）。
+
+    传 paper_ids 时把检索限制在这些论文内（伴读引用指定文献用）。
+    """
     qv = json.dumps(query_vector)
+    params: dict[str, object] = {"qv": qv, "pid": str(project_id), "k": limit}
+    paper_filter = ""
+    if paper_ids:
+        paper_filter = "AND paper_id = ANY(CAST(:pids AS uuid[])) "
+        params["pids"] = [str(p) for p in paper_ids]
     rows = (
         await session.execute(
             sa_text(
                 "SELECT id, 1 - (embedding <=> CAST(:qv AS vector)) AS score "
                 "FROM paper_chunks "
                 "WHERE project_id = :pid AND embedding IS NOT NULL "
+                f"{paper_filter}"
                 "ORDER BY embedding <=> CAST(:qv AS vector) "
                 "LIMIT :k"
             ),
-            {"qv": qv, "pid": str(project_id), "k": limit},
+            params,
         )
     ).all()
     if not rows:
@@ -173,8 +183,12 @@ async def keyword_search_chunks(
     project_id: uuid.UUID,
     q: str,
     limit: int,
+    paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
-    """关键词降级检索：问题分词后 ilike 命中任一词，按命中词数粗排。"""
+    """关键词降级检索：问题分词后 ilike 命中任一词，按命中词数粗排。
+
+    传 paper_ids 时把检索限制在这些论文内。
+    """
     terms = [t for t in _WORD_RE.findall(q.lower()) if len(t) >= 2][:8]
     if not terms:
         return []
@@ -182,15 +196,10 @@ async def keyword_search_chunks(
     for term in terms:
         clause = PaperChunk.text.ilike(f"%{term}%")
         cond = clause if cond is None else cond | clause
-    candidates = (
-        (
-            await session.execute(
-                select(PaperChunk).where(PaperChunk.project_id == project_id, cond).limit(limit * 5)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    stmt = select(PaperChunk).where(PaperChunk.project_id == project_id, cond)
+    if paper_ids:
+        stmt = stmt.where(PaperChunk.paper_id.in_(paper_ids))
+    candidates = (await session.execute(stmt.limit(limit * 5))).scalars().all()
 
     def score_of(chunk: PaperChunk) -> float:
         lowered = chunk.text.lower()

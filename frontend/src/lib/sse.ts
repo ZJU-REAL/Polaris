@@ -167,7 +167,12 @@ export function postSse(path: string, body: unknown, handlers: PostSseHandlers):
 /** AI 伴读：POST /papers/{id}/chat 流式问答（delta 增量 → done/error 结束）。 */
 export function chatPaperSse(
   paperId: string,
-  input: { question: string; history: { role: 'user' | 'assistant'; content: string }[] },
+  input: {
+    question: string;
+    history: { role: 'user' | 'assistant'; content: string }[];
+    /** 用户在 / 选择器里挑中的其他文献 id：伴读会检索它们作为对比/参考上下文 */
+    context_paper_ids?: string[];
+  },
   handlers: PostSseHandlers,
 ): () => void {
   return postSse(`/papers/${paperId}/chat`, input, handlers);
