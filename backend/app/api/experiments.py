@@ -5,15 +5,18 @@
 """
 
 import asyncio
+import io
 import json
+import posixpath
 import time
 import uuid
+import zipfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_experiment
@@ -251,6 +254,102 @@ async def read_experiment_code_file(
         "size": len(data),
         "content": "" if binary else data.decode("utf-8", errors="replace"),
     }
+
+
+_ARCHIVE_FILE_MAX_BYTES = 1_000_000  # 打包时单文件上限（大产物跳过）
+_ARCHIVE_TOTAL_MAX_BYTES = 30_000_000  # 打包总量上限
+_ARCHIVE_MAX_FILES = 200
+
+
+async def _collect_code_files(session: AsyncSession, experiment: Experiment) -> dict[str, bytes]:
+    """收集实验代码文件内容（优先 SSH 实时；失败回退 checkpoint 快照），供打包下载。"""
+    files: dict[str, bytes] = {}
+    try:
+        executor = await _open_exp_executor(session, experiment)
+        try:
+            entries = await executor.list_tree()
+            total = 0
+            for entry in entries[:_ARCHIVE_MAX_FILES]:
+                size = int(entry.get("size") or 0)
+                if size > _ARCHIVE_FILE_MAX_BYTES:
+                    continue  # 大产物（模型权重等）不入包
+                try:
+                    data = await executor.read_file(str(entry["path"]))
+                except Exception:  # noqa: BLE001 — 单文件读失败跳过
+                    continue
+                total += len(data)
+                if total > _ARCHIVE_TOTAL_MAX_BYTES:
+                    break
+                files[str(entry["path"])] = data
+        finally:
+            await executor.close()
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 — 服务器不可达 → 回退快照
+        pass
+    if not files:
+        snapshot = await _checkpoint_files(session, experiment)
+        files = {p: c.encode("utf-8") for p, c in snapshot.items()}
+    return files
+
+
+@router.get("/experiments/{experiment_id}/code/archive")
+async def download_experiment_code_archive(
+    experiment_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """实验代码打包下载（zip；SSH 实时收集，不可达回退快照）。"""
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    files = await _collect_code_files(session, experiment)
+    if not files:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="NO_CODE_FILES")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path, data in sorted(files.items()):
+            zf.writestr(path, data)
+    name = f"experiment-{str(experiment.id)[:8]}-code.zip"
+    return Response(
+        buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.get("/experiments/{experiment_id}/code/file/download")
+async def download_experiment_code_file(
+    experiment_id: uuid.UUID,
+    path: str = Query(..., description="workdir 内相对路径"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """单个代码文件原样下载（含二进制；SSH 实时，回退快照）。"""
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    try:
+        rel = ssh_exec._validate_relpath(path)
+    except ssh_exec.SSHExecError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="BAD_PATH") from e
+    data: bytes | None = None
+    try:
+        executor = await _open_exp_executor(session, experiment)
+        try:
+            data = await executor.read_file(rel)
+        finally:
+            await executor.close()
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 — 缺失/不可达 → 回退快照
+        data = None
+    if data is None:
+        snapshot = await _checkpoint_files(session, experiment)
+        if rel not in snapshot:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FILE_NOT_FOUND")
+        data = snapshot[rel].encode("utf-8")
+    return Response(
+        data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{posixpath.basename(rel)}"'},
+    )
 
 
 @router.post("/experiments/{experiment_id}/cancel", response_model=ExperimentRead)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -11,6 +11,7 @@ import { yaml } from '@codemirror/legacy-modes/mode/yaml';
 import { api, type ExperimentCodeEntry, type ExperimentDetail } from '../../lib/api';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { toast } from '../../components/ui/Toast';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
@@ -24,6 +25,16 @@ function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 触发浏览器保存（blob → 临时 objectURL → <a download>）。 */
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /** 按扩展名挑语法高亮（legacy-modes 流式语法，包体已有依赖）。 */
@@ -191,6 +202,55 @@ function TreeLevel({
 export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [zipping, setZipping] = useState(false);
+  // 文件树宽度：可拖拽调整并记住（localStorage）
+  const [treeW, setTreeW] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('polaris.codeTreeW'));
+    return Number.isFinite(saved) && saved >= 160 && saved <= 520 ? saved : 240;
+  });
+  const dragState = useRef<{ startX: number; startW: number } | null>(null);
+  const onDividerDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragState.current = { startX: e.clientX, startW: treeW };
+    const onMove = (ev: MouseEvent) => {
+      const st = dragState.current;
+      if (!st) return;
+      const w = Math.min(520, Math.max(160, st.startW + (ev.clientX - st.startX)));
+      setTreeW(w);
+    };
+    const onUp = () => {
+      dragState.current = null;
+      setTreeW((w) => {
+        localStorage.setItem('polaris.codeTreeW', String(w));
+        return w;
+      });
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [treeW]);
+
+  const downloadZip = useCallback(async () => {
+    setZipping(true);
+    try {
+      const blob = await api.fetchExperimentCodeArchive(exp.id);
+      saveBlob(blob, `experiment-${exp.id.slice(0, 8)}-code.zip`);
+    } catch {
+      toast(tr('打包下载失败', 'Archive download failed'), 'error');
+    } finally {
+      setZipping(false);
+    }
+  }, [exp.id]);
+
+  const downloadFile = useCallback(async (path: string) => {
+    try {
+      const blob = await api.fetchExperimentCodeFileRaw(exp.id, path);
+      saveBlob(blob, path.split('/').pop() ?? path);
+    } catch {
+      toast(tr('文件下载失败', 'File download failed'), 'error');
+    }
+  }, [exp.id]);
   const listing = useQuery({
     queryKey: ['experiment', exp.id, 'code'],
     queryFn: () => api.getExperimentCode(exp.id),
@@ -245,8 +305,15 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
         )}
         <button
           className="btn btn-soft sm"
-          onClick={() => { void listing.refetch(); void file.refetch(); }}
+          disabled={zipping}
+          onClick={() => void downloadZip()}
           style={{ marginLeft: 'auto' }}
+        >
+          <Icon name="download" size={12} /> {zipping ? tr('打包中…', 'Zipping…') : tr('打包下载', 'Download zip')}
+        </button>
+        <button
+          className="btn btn-soft sm"
+          onClick={() => { void listing.refetch(); void file.refetch(); }}
         >
           <Icon name="refresh" size={12} /> {tr('刷新', 'Refresh')}
         </button>
@@ -257,7 +324,7 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
         className="card"
         style={{
           display: 'grid',
-          gridTemplateColumns: '240px 1fr',
+          gridTemplateColumns: `${treeW}px 5px 1fr`,
           overflow: 'hidden',
           height: 'calc(100vh - 290px)',
           minHeight: 420,
@@ -280,6 +347,12 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
             onSelect={setSelected}
           />
         </div>
+        {/* 拖拽分隔条：调整文件树宽度 */}
+        <div
+          onMouseDown={onDividerDown}
+          title={tr('拖拽调整宽度', 'Drag to resize')}
+          style={{ cursor: 'col-resize', background: 'var(--border)', width: 5, opacity: 0.6 }}
+        />
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* 当前文件“标签页” */}
           <div
@@ -298,6 +371,16 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
               <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)', marginLeft: 8 }}>
                 {tr('仅前 200KB', 'first 200KB')}
               </span>
+            )}
+            {selected && (
+              <button
+                className="icon-btn"
+                style={{ width: 24, height: 24, marginLeft: 'auto' }}
+                title={tr('下载此文件', 'Download this file')}
+                onClick={() => void downloadFile(selected)}
+              >
+                <Icon name="download" size={12} />
+              </button>
             )}
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>

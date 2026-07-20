@@ -965,3 +965,44 @@ async def test_experiment_sysinfo(client, queue_stub, fake_ssh, bus_recorder):
     assert body["ok"] is True
     assert body["cpu"]["cores"] == 64
     assert body["gpus"][0]["mem_total_mib"] == 81920
+
+
+async def test_code_archive_and_single_download(client, queue_stub, fake_ssh, bus_recorder):
+    """代码打包下载（zip 含全部文件）+ 单文件原样下载（attachment）。"""
+    import io
+    import zipfile
+
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/experiments/{exp_id}/code/archive", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/zip"
+    assert "attachment" in resp.headers["content-disposition"]
+    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    names = zf.namelist()
+    assert "run.sh" in names and "train.py" in names
+    assert "--smoke" in zf.read("run.sh").decode()
+
+    resp = await client.get(
+        f"/api/experiments/{exp_id}/code/file/download",
+        params={"path": "run.sh"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert 'filename="run.sh"' in resp.headers["content-disposition"]
+    assert b"--smoke" in resp.content
+
+    resp = await client.get(
+        f"/api/experiments/{exp_id}/code/file/download",
+        params={"path": "../evil"},
+        headers=headers,
+    )
+    assert resp.status_code == 400

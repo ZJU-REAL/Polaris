@@ -2327,6 +2327,14 @@ export const api = {
   getExperimentSysinfo(id: string): Promise<SshSysinfo> {
     return request<SshSysinfo>(`/experiments/${id}/sysinfo`);
   },
+  /** 实验代码打包下载（zip）。 */
+  fetchExperimentCodeArchive(id: string): Promise<Blob> {
+    return requestBlob(`/experiments/${id}/code/archive`);
+  },
+  /** 单个代码文件原样下载（blob，含二进制）。 */
+  fetchExperimentCodeFileRaw(id: string, path: string): Promise<Blob> {
+    return requestBlob(`/experiments/${id}/code/file/download?path=${encodeURIComponent(path)}`);
+  },
   /** 读实验代码单文件内容（workdir 内相对路径）。 */
   getExperimentCodeFile(id: string, path: string): Promise<ExperimentCodeFile> {
     return request<ExperimentCodeFile>(
