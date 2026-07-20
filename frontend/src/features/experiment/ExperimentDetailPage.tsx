@@ -13,6 +13,10 @@ import {
   api,
   ApiError,
   EXPERIMENT_TERMINAL,
+  type EvalProtocol,
+  type ExperimentCondition,
+  type ExperimentContainer,
+  type ExperimentDataset,
   type ExperimentDetail,
   type ExperimentPlan,
   type VoyageStepRead,
@@ -43,6 +47,234 @@ const TABS: { k: TabKey; zh: string; en: string }[] = [
 function planStepText(s: NonNullable<ExperimentPlan['steps']>[number]): string {
   if (typeof s === 'string') return s;
   return s.title ?? s.desc ?? s.description ?? JSON.stringify(s);
+}
+
+/* 实验类型 / 对照角色 → 大白话（模块级常量只存 zh/en，渲染处再 tr） */
+const EXP_KIND_INFO: Record<string, { zh: string; en: string }> = {
+  eval: { zh: '评测', en: 'Evaluation' },
+  training: { zh: '训练', en: 'Training' },
+  agent: { zh: 'Agent', en: 'Agent' },
+  analysis: { zh: '分析', en: 'Analysis' },
+  other: { zh: '其他', en: 'Other' },
+};
+
+const CONDITION_ROLE: Record<string, { zh: string; en: string }> = {
+  baseline: { zh: '对照组', en: 'Baseline' },
+  treatment: { zh: '处理组', en: 'Treatment' },
+};
+
+/** 归一化 container：有镜像名 → 容器运行，返回镜像/GPU/共享内存；无 → null（本机运行）。 */
+function containerInfo(
+  container: ExperimentContainer | null | undefined,
+): { image: string; gpus: string; shm: string } | null {
+  if (!container || typeof container !== 'object') return null;
+  const image = typeof container.image === 'string' ? container.image.trim() : '';
+  if (!image) return null;
+  const rawGpus = container.gpus;
+  const gpus =
+    typeof rawGpus === 'string'
+      ? rawGpus.trim()
+      : typeof rawGpus === 'number' && Number.isFinite(rawGpus)
+        ? String(rawGpus)
+        : '';
+  const shm = typeof container.shm_size === 'string' ? container.shm_size.trim() : '';
+  return { image, gpus, shm };
+}
+
+/** 实验类型徽标（plan 缺省时显示「未分类」）。 */
+function KindBadge({ kind }: { kind: string | undefined }) {
+  const m = kind ? EXP_KIND_INFO[kind] : undefined;
+  return (
+    <span
+      className="pill sm"
+      style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}
+      title={tr('实验类型', 'Experiment type')}
+    >
+      <Icon name="flask" size={11} />
+      {m ? tr(m.zh, m.en) : kind || tr('未分类', 'Uncategorized')}
+    </span>
+  );
+}
+
+/** 运行环境徽标（页头用，紧凑）：容器运行 / 本机环境。 */
+function EnvBadge({ container }: { container: ExperimentContainer | null | undefined }) {
+  const info = containerInfo(container);
+  return (
+    <span
+      className="pill sm"
+      style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}
+      title={
+        info
+          ? tr(`在预置容器镜像里运行：${info.image}`, `Runs inside a preset container image: ${info.image}`)
+          : tr('直接在本机环境运行（裸机）', 'Runs directly on the host environment (bare metal)')
+      }
+    >
+      <Icon name="cpu" size={11} />
+      {info ? tr('容器运行', 'Container') : tr('本机环境', 'Host env')}
+    </span>
+  );
+}
+
+/** 运行环境明细（Plan 页用）：容器镜像 + GPU + 共享内存，或本机环境。 */
+function RunEnvironmentRow({ container }: { container: ExperimentContainer | null | undefined }) {
+  const info = containerInfo(container);
+  return (
+    <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
+      <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0 }}>{tr('运行环境', 'Environment')}</span>
+      {info ? (
+        <>
+          <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)', flexShrink: 0 }}>
+            <Icon name="cpu" size={11} />
+            {tr('预置容器', 'Container')}
+          </span>
+          <span className="tag mono" style={{ fontSize: 11, minWidth: 0, wordBreak: 'break-all' }}>{info.image}</span>
+          {info.gpus && (
+            <span className="pill sm mono" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', flexShrink: 0 }}>
+              GPU {info.gpus}
+            </span>
+          )}
+          {info.shm && (
+            <span className="mono muted" style={{ fontSize: 10.5, flexShrink: 0 }}>shm {info.shm}</span>
+          )}
+        </>
+      ) : (
+        <span className="pill sm" style={{ background: 'var(--surface-2)', color: 'var(--text-2)', flexShrink: 0 }}>
+          <Icon name="server" size={11} />
+          {tr('本机环境（裸机运行）', 'Host environment (bare metal)')}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** 主指标方向 → 大白话。 */
+function metricDirectionText(direction: string | undefined): string {
+  if (direction === 'minimize') return tr('越低越好', 'lower is better');
+  if (direction === 'maximize') return tr('越高越好', 'higher is better');
+  return '';
+}
+
+/** 计划概览：实验类型 + 主指标 + 运行环境（缺字段防御式跳过）。 */
+function PlanOverview({ exp }: { exp: ExperimentDetail }) {
+  const plan = exp.plan!;
+  const pm = plan.primary_metric;
+  return (
+    <div className="card card-pad" style={{ marginBottom: 22 }}>
+      <div className="col gap10">
+        <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0 }}>{tr('实验类型', 'Type')}</span>
+          <KindBadge kind={plan.kind} />
+          {pm?.name && (
+            <>
+              <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0, marginLeft: 6 }}>{tr('主指标', 'Primary metric')}</span>
+              <span className="pill sm mono" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+                <Icon name="chart" size={11} />
+                {pm.name}
+                {metricDirectionText(pm.direction) && (
+                  <span style={{ opacity: 0.8 }}> · {metricDirectionText(pm.direction)}</span>
+                )}
+              </span>
+            </>
+          )}
+        </div>
+        <RunEnvironmentRow container={plan.container} />
+      </div>
+    </div>
+  );
+}
+
+/** 对照设置：baseline 对照组 vs 各 treatment 处理组。 */
+function ConditionsBlock({ conditions }: { conditions: ExperimentCondition[] }) {
+  return (
+    <div className="col gap8" style={{ marginBottom: 22 }}>
+      {conditions.map((c, i) => {
+        const roleKey = c.role === 'baseline' ? 'baseline' : 'treatment';
+        const roleInfo = CONDITION_ROLE[roleKey]!;
+        const isBaseline = roleKey === 'baseline';
+        return (
+          <div key={`${c.name}-${i}`} className="card" style={{ padding: '12px 16px' }}>
+            <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+              <span
+                className="pill sm"
+                style={
+                  isBaseline
+                    ? { background: 'var(--surface-3)', color: 'var(--text-2)', flexShrink: 0 }
+                    : { background: 'var(--accent-soft)', color: 'var(--accent-text)', flexShrink: 0 }
+                }
+              >
+                {tr(roleInfo.zh, roleInfo.en)}
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 650, minWidth: 0 }}>{c.name}</span>
+            </div>
+            {c.description && c.description.trim() !== '' && (
+              <div style={{ marginTop: 7, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                {c.description}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 评测协议：数据集 / 划分 / 指标 / 样本数（只渲染存在的字段）。 */
+function EvalProtocolBlock({ protocol }: { protocol: EvalProtocol }) {
+  const rows: { label: string; value: string }[] = [];
+  if (typeof protocol.dataset === 'string' && protocol.dataset.trim())
+    rows.push({ label: tr('数据集', 'Dataset'), value: protocol.dataset.trim() });
+  if (typeof protocol.split === 'string' && protocol.split.trim())
+    rows.push({ label: tr('评测划分', 'Split'), value: protocol.split.trim() });
+  if (typeof protocol.metric === 'string' && protocol.metric.trim())
+    rows.push({ label: tr('评测指标', 'Metric'), value: protocol.metric.trim() });
+  if (typeof protocol.n_examples === 'number' && Number.isFinite(protocol.n_examples))
+    rows.push({ label: tr('样本数', 'Examples'), value: String(protocol.n_examples) });
+  if (typeof protocol.n_samples === 'number' && Number.isFinite(protocol.n_samples))
+    rows.push({ label: tr('采样次数', 'Samples'), value: String(protocol.n_samples) });
+  if (rows.length === 0) return null;
+  return (
+    <div
+      className="card card-pad"
+      style={{ marginBottom: 22, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 16 }}
+    >
+      {rows.map((r) => (
+        <div key={r.label} style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>{r.label}</div>
+          <div className="mono" style={{ fontSize: 12.5, color: 'var(--text)', fontWeight: 600, wordBreak: 'break-word' }}>{r.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 数据集清单。 */
+function DatasetsBlock({ datasets }: { datasets: ExperimentDataset[] }) {
+  return (
+    <div className="card" style={{ overflow: 'hidden', marginBottom: 22 }}>
+      {datasets.map((d, i) => (
+        <div
+          key={`${d.name}-${i}`}
+          className="row gap12"
+          style={{
+            padding: '11px 18px',
+            borderBottom: i < datasets.length - 1 ? '0.5px solid var(--border)' : 'none',
+            alignItems: 'flex-start',
+          }}
+        >
+          <Icon name="grid" size={14} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 2 }} />
+          <div style={{ minWidth: 0 }}>
+            <span className="mono" style={{ fontSize: 12.5, fontWeight: 650 }}>{d.name}</span>
+            {d.size_hint && d.size_hint.trim() !== '' && (
+              <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 8 }}>{d.size_hint}</span>
+            )}
+            {d.purpose && d.purpose.trim() !== '' && (
+              <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, marginTop: 3 }}>{d.purpose}</div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** 假设判定依据：plan 回写的 evidence 优先，缺失时从各轮 reflection 的
@@ -161,6 +393,9 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
         </div>
       ) : (
         <>
+          {/* 概览：实验类型 + 主指标 + 运行环境 */}
+          <PlanOverview exp={exp} />
+
           {/* 假设清单 */}
           <span className="section-h" style={{ marginBottom: 12 }}>
             <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
@@ -174,6 +409,39 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
                 <HypRow key={i} hyp={h} index={i} evidence={evidence.get(i)} />
               ))}
             </div>
+          )}
+
+          {/* 对照设置：baseline vs treatment（单一配置实验无此块） */}
+          {(plan.conditions ?? []).length > 0 && (
+            <>
+              <span className="section-h" style={{ marginBottom: 12 }}>
+                <Icon name="scale" size={15} style={{ color: 'var(--accent)' }} />
+                {tr('对照设置', 'Conditions')}
+              </span>
+              <ConditionsBlock conditions={plan.conditions ?? []} />
+            </>
+          )}
+
+          {/* 评测协议：数据集 / 划分 / 指标 / 样本数 */}
+          {plan.eval_protocol && (
+            <>
+              <span className="section-h" style={{ marginBottom: 12 }}>
+                <Icon name="sliders" size={15} style={{ color: 'var(--accent)' }} />
+                {tr('评测协议', 'Eval protocol')}
+              </span>
+              <EvalProtocolBlock protocol={plan.eval_protocol} />
+            </>
+          )}
+
+          {/* 数据集 */}
+          {(plan.datasets ?? []).length > 0 && (
+            <>
+              <span className="section-h" style={{ marginBottom: 12 }}>
+                <Icon name="grid" size={15} style={{ color: 'var(--accent)' }} />
+                {tr('数据集', 'Datasets')}
+              </span>
+              <DatasetsBlock datasets={plan.datasets ?? []} />
+            </>
           )}
 
           {/* 复现策略 */}
@@ -551,6 +819,8 @@ export function ExperimentDetailPage() {
           <h1 className="h-title" style={{ fontSize: 20 }}>{exp.idea_title}</h1>
           <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
             <StatusPill status={exp.status} sm />
+            {exp.plan && <KindBadge kind={exp.plan.kind} />}
+            {exp.plan && <EnvBadge container={exp.plan.container} />}
             <span className="pill sm">
               <Icon name="server" size={11} />
               {exp.server_host ?? tr('未分配', 'Unassigned')}

@@ -1112,9 +1112,54 @@ export interface PrimaryMetric {
   direction: 'maximize' | 'minimize';
 }
 
+/** 实验类型（harness 通用化后 plan 回写；老实验可能缺省 → 前端按「未分类」处理）。 */
+export type ExperimentKind = 'eval' | 'training' | 'agent' | 'analysis' | 'other';
+
+/** 运行环境：有此字段 = 在预置 docker 镜像里跑；无 = 裸机运行。 */
+export interface ExperimentContainer {
+  image?: string;
+  /** GPU 选择，如 "device=0,1"；也可能是数量（数字） */
+  gpus?: string | number;
+  shm_size?: string;
+  mounts?: unknown;
+}
+
+/** 对照实验的一个条件：baseline 对照组 / treatment 处理组。 */
+export interface ExperimentCondition {
+  name: string;
+  role?: 'baseline' | 'treatment';
+  description?: string;
+}
+
+/** 评测协议：数据集 / 划分 / 指标 / 样本数（复现类实验用；内层宽松）。 */
+export interface EvalProtocol {
+  dataset?: string;
+  split?: string;
+  metric?: string;
+  n_examples?: number;
+  n_samples?: number;
+}
+
+/** 计划里用到的数据集。 */
+export interface ExperimentDataset {
+  name: string;
+  purpose?: string;
+  size_hint?: string;
+}
+
 /** plan JSON（契约只列字段名，内层结构宽松处理）。 */
 export interface ExperimentPlan {
+  /** 实验类型（缺省 → 未分类） */
+  kind?: ExperimentKind | string;
+  /** 运行环境（有镜像 = 容器运行；无 = 本机） */
+  container?: ExperimentContainer | null;
   hypotheses?: ExperimentHypothesis[];
+  /** 对照实验的对照组/处理组（单一配置实验可省略） */
+  conditions?: ExperimentCondition[];
+  /** 评测协议（复现类实验用） */
+  eval_protocol?: EvalProtocol;
+  /** 计划用到的数据集 */
+  datasets?: ExperimentDataset[];
   repro_strategy?: string;
   steps?: (string | { title?: string; desc?: string; description?: string })[];
   budget_estimate?: string | Record<string, unknown>;
