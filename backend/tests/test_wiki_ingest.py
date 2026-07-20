@@ -312,6 +312,12 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert detail2["status"] == "done"
     assert detail2["steps"][0]["observation"]["mode"] == "incremental"
     assert detail2["steps"][0]["observation"]["inserted"] == 0  # 去重
+    # 增量回看窗口 = 水位线 − 14 天（覆盖 arXiv 关键词索引滞后，防漏抓近几天新论文）
+    from datetime import datetime, timedelta
+
+    watermark_dt = datetime.fromisoformat(state["watermark"])
+    since_dt = datetime.fromisoformat(detail2["steps"][0]["observation"]["window_since"])
+    assert watermark_dt - since_dt == timedelta(days=14)
     async with get_sessionmaker()() as session:
         total = int(
             (

@@ -50,6 +50,11 @@ DEFAULT_KNOBS: dict[str, Any] = {
 
 _MAX_CANDIDATES_CAP = 200
 
+# 增量同步回看窗口：arXiv 关键词检索索引对新论文有约 3-5 天滞后（近 2 天窗口常搜到 0），
+# 只回看 1 天会永远漏掉「延迟才被索引」的论文。放宽到 14 天，去重（arxiv_id/doi/title）
+# 会跳过已入库的，故重叠扫描几乎零成本。
+_INCREMENTAL_LOOKBACK_DAYS = 14
+
 # observation 里给用户看的论文/概念清单上限（避免 observation JSON 过大）
 _OBS_LIST_CAP = 30
 
@@ -157,7 +162,8 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
 
         watermark = _parse_iso((project.ingest_state or {}).get("watermark"))
         if _mode(ctx) == "incremental" and watermark is not None:
-            since = watermark - timedelta(days=1)  # 1 天重叠窗口，防边界漏抓
+            # 回看窗口覆盖 arXiv 关键词索引滞后，防止近几天的新论文被漏抓
+            since = watermark - timedelta(days=_INCREMENTAL_LOOKBACK_DAYS)
         else:
             since = now - timedelta(days=30 * int(knobs["months_back"]))
 
