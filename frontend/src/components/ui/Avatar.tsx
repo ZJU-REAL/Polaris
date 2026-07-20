@@ -14,6 +14,11 @@ function hashSeed(s: string): number {
   return h >>> 0;
 }
 
+/** 头像统一为 GitHub 式圆角矩形（非圆形）。 */
+function avatarRadius(size: number): number {
+  return Math.max(4, Math.round(size * 0.25));
+}
+
 /** GitHub 式 identicon：5×5 左右对称像素块，浅底 + 单色。 */
 function Identicon({ seed, size }: { seed: string; size: number }) {
   const { color, cell, out } = useMemo(() => {
@@ -40,7 +45,7 @@ function Identicon({ seed, size }: { seed: string; size: number }) {
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
-      style={{ borderRadius: '50%', flexShrink: 0, display: 'block', background: '#edeef1' }}
+      style={{ borderRadius: avatarRadius(size), flexShrink: 0, display: 'block', background: '#edeef1' }}
       aria-hidden
     >
       {out.map((c) => (
@@ -87,7 +92,7 @@ export function Avatar({
       <img
         src={url}
         alt={name}
-        style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, display: 'block' }}
+        style={{ width: size, height: size, borderRadius: avatarRadius(size), objectFit: 'cover', flexShrink: 0, display: 'block' }}
       />
     );
   }
