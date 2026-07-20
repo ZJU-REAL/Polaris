@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -31,6 +31,13 @@ import { READING_STATUS } from './shared';
 
 type PanelTab = 'highlights' | 'notes' | 'chat' | 'info';
 
+// 右侧面板宽度约束（px）与存储键：拖拽调宽 / 收起状态持久化到 localStorage。
+const RIGHT_MIN = 280;
+const RIGHT_DEFAULT = 420;
+const LEFT_MIN = 360; // 左侧阅读器至少保留的宽度，拖拽时据此算右侧上限
+const LS_WIDTH = 'polaris.reading.rightWidth';
+const LS_COLLAPSED = 'polaris.reading.rightCollapsed';
+
 export function ReadingPage() {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -38,6 +45,48 @@ export function ReadingPage() {
   const [panel, setPanel] = useState<PanelTab>('highlights');
   const [activeHl, setActiveHl] = useState<string | null>(null);
   const [jump, setJump] = useState<JumpTarget | null>(null);
+
+  // 右侧面板：可拖拽宽度 + 可收起，均从 localStorage 恢复。
+  const splitRef = useRef<HTMLDivElement>(null);
+  const [rightWidth, setRightWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem(LS_WIDTH));
+    return v >= RIGHT_MIN ? v : RIGHT_DEFAULT;
+  });
+  const [rightCollapsed, setRightCollapsed] = useState<boolean>(
+    () => localStorage.getItem(LS_COLLAPSED) === '1',
+  );
+  useEffect(() => {
+    localStorage.setItem(LS_WIDTH, String(Math.round(rightWidth)));
+  }, [rightWidth]);
+  useEffect(() => {
+    localStorage.setItem(LS_COLLAPSED, rightCollapsed ? '1' : '0');
+  }, [rightCollapsed]);
+
+  // 拖拽分隔条调整右侧宽度：往左拖变宽，往右拖变窄；上限受左侧最小宽度约束。
+  const onDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = rightWidth;
+      const container = splitRef.current;
+      const onMove = (ev: MouseEvent) => {
+        const maxW = container ? Math.max(RIGHT_MIN, container.clientWidth - LEFT_MIN) : 720;
+        const next = Math.max(RIGHT_MIN, Math.min(startW - (ev.clientX - startX), maxW));
+        setRightWidth(next);
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [rightWidth],
+  );
 
   const paperQuery = useQuery({
     queryKey: ['paper', id],
@@ -161,22 +210,22 @@ export function ReadingPage() {
           value={readingStatus}
           onChange={(v) => metaMutation.mutate({ reading_status: v })}
         />
+        <button
+          className="icon-btn"
+          title={rightCollapsed ? tr('展开侧栏', 'Expand panel') : tr('收起侧栏', 'Collapse panel')}
+          onClick={() => setRightCollapsed((c) => !c)}
+          style={{ color: rightCollapsed ? 'var(--text-3)' : 'var(--accent)' }}
+        >
+          <Icon name="sidebar" size={17} />
+        </button>
       </div>
 
-      {/* —— 左右分栏 —— */}
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'grid',
-          gridTemplateColumns: '68fr 32fr',
-          gap: 14,
-        }}
-      >
+      {/* —— 左右分栏：右侧可拖拽调宽 / 收起 —— */}
+      <div ref={splitRef} style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         {/* 左：PDF 阅读器（可划线） */}
         <div
           className="card"
-          style={{ minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
         >
           <PdfReader
             paper={paper}
@@ -189,13 +238,32 @@ export function ReadingPage() {
           />
         </div>
 
-        {/* 右：四面板 */}
-        <div
-          className="card"
-          style={{ minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-        >
-          <div style={{ padding: '10px 14px 0', flexShrink: 0 }}>
-            <Segmented<PanelTab>
+        {!rightCollapsed && (
+          <>
+            {/* 拖拽分隔条：拖动调宽，双击复位 */}
+            <div
+              onMouseDown={onDragStart}
+              onDoubleClick={() => setRightWidth(RIGHT_DEFAULT)}
+              title={tr('拖动调整宽度 · 双击复位', 'Drag to resize · double-click to reset')}
+              style={{
+                width: 12,
+                flexShrink: 0,
+                cursor: 'col-resize',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <div style={{ width: 3, height: 42, borderRadius: 3, background: 'var(--border-2)' }} />
+            </div>
+
+            {/* 右：四面板 */}
+            <div
+              className="card"
+              style={{ width: rightWidth, flexShrink: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+            >
+              <div style={{ padding: '10px 14px 0', flexShrink: 0 }}>
+                <Segmented<PanelTab>
               options={[
                 { v: 'highlights', label: `${tr('标注', 'Highlights')}${highlights.length ? ` · ${highlights.length}` : ''}` },
                 { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` · ${paper.note_count}` : ''}` },
@@ -224,7 +292,9 @@ export function ReadingPage() {
           ) : (
             <InfoPanel paper={paper} onWikiLink={onWikiLink} />
           )}
-        </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
