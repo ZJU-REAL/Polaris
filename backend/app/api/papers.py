@@ -38,6 +38,7 @@ from app.services import figure_annotate as figure_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
 from app.services import projects as projects_service
+from app.services import relevance as relevance_service
 from app.services import wiki_compile as wiki_compile_service
 from app.services.literature.pdf_extract import figure_path
 
@@ -163,11 +164,15 @@ async def add_paper_manually(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"PARSE_FAILED: {e}"
         ) from e
+    # 打分失败会 rollback 并使本 session 的 ORM 对象过期，先留住要用的 id
+    paper_id, user_id = paper.id, user.id
+    # 顺带相关性打分（best-effort）：失败只记日志，不影响 201；不改 status（人工纳入）
+    await relevance_service.score_added_paper_best_effort(session, paper, project, user_id=user_id)
     # 重新加载（带 concepts eager load），避免序列化时触发 async lazy load
     paper = await papers_service.get_paper_for_user(
-        session, paper_id=paper.id, user_id=user.id, with_concepts=True
+        session, paper_id=paper_id, user_id=user_id, with_concepts=True
     )
-    return await _paper_detail(session, paper, user.id)
+    return await _paper_detail(session, paper, user_id)
 
 
 @router.get("/papers/{paper_id}", response_model=PaperDetail)

@@ -170,6 +170,72 @@ async def test_add_parse_failures_422(client, lit_clients):
     assert resp.json()["detail"].startswith("PARSE_FAILED")
 
 
+async def test_add_scores_relevance_best_effort(client):
+    """手动添加成功后顺带打相关性分（fake LLM）：分数/tldr/scored_at 落库，status 保持 included。"""
+    project_id, headers = await _setup(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers", json={"bibtex": BIBTEX_ENTRY}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["relevance_score"] is not None and body["relevance_score"] > 0.6
+    assert body["tldr"]
+    assert body["status"] == "included"
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(body["id"]))
+        assert paper.relevance_score == body["relevance_score"]
+        assert paper.tldr == body["tldr"]
+        assert paper.scored_at is not None
+        assert paper.status == "included"  # 人工纳入，打分不改状态
+
+
+async def test_add_low_score_keeps_included(client):
+    """分低绝不改状态：fake LLM 对含 irrelevant 的标题给低分，论文仍 included。"""
+    project_id, headers = await _setup(client)
+    bibtex = (
+        "@article{doe2024irr,\n"
+        "  title = {An Irrelevant Study of Something Else},\n"
+        "  author = {Doe, John},\n"
+        "  year = {2024},\n"
+        "}\n"
+    )
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers", json={"bibtex": bibtex}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["relevance_score"] is not None and body["relevance_score"] < 0.6
+    assert body["status"] == "included"
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(body["id"]))
+        assert paper.status == "included" and paper.trash_reason is None
+
+
+async def test_add_llm_failure_still_201(client, monkeypatch):
+    """打分是顺带增值：LLM 挂了照样 201，论文落库、分数留空。"""
+
+    class BoomRouter:
+        async def complete(self, *args, **kwargs):
+            raise RuntimeError("llm down")
+
+    monkeypatch.setattr("app.services.relevance.get_llm_router", lambda: BoomRouter())
+    project_id, headers = await _setup(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers", json={"bibtex": BIBTEX_ENTRY}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["relevance_score"] is None
+    assert body["status"] == "included"
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(body["id"]))
+        assert paper.relevance_score is None and paper.scored_at is None
+        assert paper.status == "included"
+
+
 async def test_add_mutual_exclusion_422(client):
     project_id, headers = await _setup(client)
     for payload in ({}, {"arxiv_id": "2406.00001", "doi": "10.1/x"}):

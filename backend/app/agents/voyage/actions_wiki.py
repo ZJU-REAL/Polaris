@@ -12,7 +12,6 @@
 """
 
 import asyncio
-import json
 import logging
 import re
 import uuid
@@ -25,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
-from app.core.llm.base import Message
 from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.paper import Paper
@@ -37,6 +35,7 @@ from app.services.literature import get_arxiv_client, get_openalex_client, get_s
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
+from app.services.relevance import build_relevance_context, score_paper_relevance
 from app.services.wiki_compile import compile_paper
 
 logger = logging.getLogger(__name__)
@@ -92,12 +91,6 @@ def _paper_brief(papers: list[Paper]) -> list[dict[str, str]]:
     return [{"id": str(p.id), "title": p.title} for p in papers[:_OBS_LIST_CAP]]
 
 
-RELEVANCE_SYSTEM_PROMPT = """\
-你是文献相关性评审，对照研究方向定义评估一篇论文（只看标题与摘要）。
-只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
-{"score": 0 到 1 之间的小数, "reason": "简要理由", "tldr": "一句话中文总结"}
-"""
-
 # ---- 公共小件 ----
 
 
@@ -137,14 +130,6 @@ async def _get_project(session: AsyncSession, ctx: ActionContext) -> Project:
 
 def _definition(project: Project) -> dict[str, Any]:
     return project.definition if isinstance(project.definition, dict) else {}
-
-
-def _extract_json(content: str) -> Any:
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("no JSON object found")
-    return json.loads(content[start : end + 1])
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -432,17 +417,8 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
-        definition = _definition(project)
         # 稀疏 definition 容忍：rubric / questions 缺失时 prompt 只用 statement
-        rubric = definition.get("rubric") or []
-        questions = definition.get("questions") or []
-        statement = definition.get("statement") or project.name
-        context_lines = [f"研究方向：{statement}"]
-        if rubric:
-            context_lines.append(f"评分标准（rubric）：{json.dumps(rubric, ensure_ascii=False)}")
-        if questions:
-            context_lines.append(f"研究问题：{json.dumps(questions, ensure_ascii=False)}")
-        context_text = "\n".join(context_lines)
+        context_text = build_relevance_context(project)
 
         # 幂等断点：只取仍是 candidate 的论文 id（已打分的不重复调 LLM）。外层只查 id，
         # 每篇打分在各自独立 session 内重新加载论文，避免多任务共享一个 AsyncSession。
@@ -457,36 +433,27 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             ).scalars()
         )
 
-    system_prompt = RELEVANCE_SYSTEM_PROMPT + ctx.skill_guidance("wiki.score_relevance")
+    guidance = ctx.skill_guidance("wiki.score_relevance")
     total = len(paper_ids)
     progress = {"n": 0}
 
     async def score_one(paper_id: uuid.UUID) -> dict[str, Any] | None:
-        """单篇打分：独立 session 重新加载 → 调 relevance LLM → 写字段 → 自行 commit。"""
+        """单篇打分：独立 session 重新加载 → 共享打分服务写字段 → 状态转移 → 自行 commit。"""
         async with get_sessionmaker()() as session:
             paper = await session.get(Paper, paper_id)
             if paper is None or paper.status != "candidate":
                 return None  # 竞态/已处理：幂等跳过（正常流不会命中）
             progress["n"] += 1
             await ctx.log(f"相关性打分 {progress['n']}/{total}：{paper.title[:60]}")
-            user_prompt = (
-                f"{context_text}\n标题：{paper.title}\n摘要：{paper.abstract or '（无摘要）'}"
-            )
-            result = await ctx.llm.complete(
-                "relevance",
-                [
-                    Message(role="system", content=system_prompt),
-                    Message(role="user", content=user_prompt),
-                ],
+            scored = await score_paper_relevance(
+                paper,
+                context_text=context_text,
+                llm=ctx.llm,
+                extra_guidance=guidance,
                 user_id=ctx.run.created_by,
-                project_id=ctx.run.project_id,
                 voyage_id=ctx.run.id,
             )
-            data = _extract_json(result.content)
-            score = min(1.0, max(0.0, float(data["score"])))
-            paper.relevance_score = score
-            paper.tldr = str(data.get("tldr") or "") or paper.tldr
-            paper.scored_at = utcnow()
+            score = scored.score
             paper.status = "scored" if score >= threshold else "excluded"
             paper.trash_reason = None if paper.status == "scored" else "irrelevant"
             # 逐篇 commit：worker 中途被杀后按 status 断点续跑，不重复打分
