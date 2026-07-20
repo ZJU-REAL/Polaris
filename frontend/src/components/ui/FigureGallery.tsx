@@ -526,6 +526,9 @@ export function FiguresSection({
       queryClient.setQueryData<PaperDetail>(['paper', paper.id], (old) =>
         old ? { ...old, figures: res.figures } : old,
       );
+      // 重抽会重写磁盘上的 fig_*.png，但图片 blob 缓存键（figure-image, staleTime Infinity）
+      // 不含内容版本——不清掉会一直回放旧图（如旧版空白图）。按前缀移除该论文全部图片缓存。
+      queryClient.removeQueries({ queryKey: ['figure-image', paper.id] });
       if (res.figures.length > 0) {
         toast(
           force
