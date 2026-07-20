@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../components/ui/Avatar';
@@ -19,30 +18,13 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
   const { logout } = useAuth();
   const [open, setOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
-  // 菜单经 portal 挂到 body（避开侧栏 overflow:hidden 裁剪），按触发器位置定位
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  // 打开时按触发器矩形定位：左对齐触发器、底边在其上方 6px。
-  // 全站 html{zoom:1.1}：getBoundingClientRect 返回缩放后坐标，而 fixed 元素的
-  // left/top 又会再乘一次 zoom，故按实际缩放（rect 宽 / offset 宽）折算回去。
-  useLayoutEffect(() => {
-    if (!open || !triggerRef.current) return;
-    const el = triggerRef.current;
-    const r = el.getBoundingClientRect();
-    const z = r.width && el.offsetWidth ? r.width / el.offsetWidth : 1;
-    setPos({ left: r.left / z, top: (r.top - 6) / z });
-  }, [open]);
-
-  // 点击菜单外部 / Esc 关闭（菜单在 portal 里，需同时排除 menuRef）
+  // 点击菜单外部 / Esc 关闭（菜单是 rootRef 的子元素，contains 即可覆盖）
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (rootRef.current?.contains(t) || menuRef.current?.contains(t)) return;
-      setOpen(false);
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -60,7 +42,6 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
   return (
     <div className="user-menu-root" ref={rootRef}>
       <button
-        ref={triggerRef}
         className={'user-trigger' + (open ? ' open' : '')}
         onClick={() => setOpen((o) => !o)}
         title={collapsed ? name : undefined}
@@ -81,52 +62,45 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
         )}
       </button>
 
-      {open && pos &&
-        createPortal(
-          <div
-            className="user-menu"
-            role="menu"
-            ref={menuRef}
-            style={{ left: pos.left, top: pos.top, transform: 'translateY(-100%)' }}
+      {open && (
+        <div className="user-menu" role="menu">
+          <button
+            className="user-menu-item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              navigate('/settings');
+            }}
           >
-            <button
-              className="user-menu-item"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                navigate('/settings');
-              }}
-            >
-              <Icon name="settings" size={15} />
-              {tr('设置', 'Settings')}
-            </button>
-            <button
-              className="user-menu-item"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                setInviteOpen(true);
-              }}
-            >
-              <Icon name="users" size={15} />
-              {tr('邀请协作者', 'Invite collaborator')}
-            </button>
-            <div className="user-menu-sep" />
-            <button
-              className="user-menu-item danger"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                logout();
-                navigate('/login');
-              }}
-            >
-              <Icon name="logout" size={15} />
-              {tr('退出登录', 'Log out')}
-            </button>
-          </div>,
-          document.body,
-        )}
+            <Icon name="settings" size={15} />
+            {tr('设置', 'Settings')}
+          </button>
+          <button
+            className="user-menu-item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              setInviteOpen(true);
+            }}
+          >
+            <Icon name="users" size={15} />
+            {tr('邀请协作者', 'Invite collaborator')}
+          </button>
+          <div className="user-menu-sep" />
+          <button
+            className="user-menu-item danger"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              logout();
+              navigate('/login');
+            }}
+          >
+            <Icon name="logout" size={15} />
+            {tr('退出登录', 'Log out')}
+          </button>
+        </div>
+      )}
 
       {inviteOpen && <InviteDialog onClose={() => setInviteOpen(false)} />}
     </div>
