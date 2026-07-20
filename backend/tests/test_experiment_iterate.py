@@ -635,3 +635,43 @@ async def test_smoke_timeout_is_recoverable(client, queue_stub, fake_ssh, bus_re
     assert smoke["status"] == "passed"
     assert (smoke["observation"] or {}).get("fixes", 0) >= 1  # 记录了一次方案级修复
     assert len(fake_ssh.connects) >= 2  # 超时后重连过
+
+
+async def test_run_reattaches_after_worker_restart(client, queue_stub, fake_ssh, bus_recorder):
+    """worker 重启（resume 被打断后重跑）→ run 步骤**重挂**上一轮仍在跑的远端进程，
+    不再起第二轮（回归：新旧进程树共写 run.log/run.exit，每次部署重启孤儿一轮）。"""
+    import asyncio
+
+    fake_ssh.run_exit = None  # 阶段一：远端进程一直不结束（轮询自旋）
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(
+        client, budget={"max_hours": 2, "max_runs": 1}
+    )
+    engine, _ = _make_engine(_router_with(_FixedReflectionProvider("improve")))
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+
+    # 模拟 worker 重启：resume 跑到 run 轮询中被打断（任务取消）
+    task = asyncio.ensure_future(engine.resume(uuid.UUID(voyage_id)))
+    for _ in range(200):  # 等 run 真正启动（出现 launch 命令）
+        await asyncio.sleep(0.02)
+        if any("rm -f run.exit &&" in c for c in fake_ssh.commands):
+            break
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    launches_before = "\n".join(fake_ssh.commands).count("rm -f run.exit &&")
+    assert launches_before == 1  # 第一次 launch 已发生
+
+    # 阶段二：远端进程已结束（run.exit=0 落盘），新 worker 重跑 resume → 应重挂而非再 launch
+    fake_ssh.run_exit = 0
+    engine2, _ = _make_engine(_router_with(_FixedReflectionProvider("improve")))
+    await engine2.resume(uuid.UUID(voyage_id))
+
+    assert "\n".join(fake_ssh.commands).count("rm -f run.exit &&") == 1  # 没有第二次 launch
+    detail = await _get_detail(client, headers, exp_id)
+    assert len(detail["runs"]) == 1  # 没孤儿轮
+    assert detail["runs"][0]["status"] == "succeeded"
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "done", resp.json()

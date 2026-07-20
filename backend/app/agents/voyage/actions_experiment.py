@@ -1279,10 +1279,21 @@ async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str
             .all()
         )
         seq = (prior_runs[-1].seq + 1) if prior_runs else 1
+        # 重启重挂：上一轮还挂着 running（worker 重启/任务被打断），远端 nohup 进程仍在跑
+        # （或已留下 run.exit）——**重挂轮询同一进程**而不是再起一轮。否则新旧两棵进程树
+        # 共写同一 workdir 的 run.log/run.exit（旧 launcher 晚到覆写 run.exit → 新轮读到假
+        # 退出码；实测每次部署重启都会孤儿一轮训练）。_poll_run 天然处理三种情况：还活着
+        # →继续跟；已结束→读 run.exit 收尾；死了没退出码→判 failed 交 analyze 诊断。
+        stale = (
+            prior_runs[-1]
+            if prior_runs and prior_runs[-1].status == "running" and prior_runs[-1].pid
+            else None
+        )
 
-        # 恢复现场护栏：预算已满就不再启动（正常路径由 analyze 的终止判定拦截）
+        # 恢复现场护栏：预算已满就不再启动（正常路径由 analyze 的终止判定拦截；
+        # 重挂不是新一轮，不受 max_runs 拦截）
         for reason, exhausted in (
-            ("max_runs", bool(max_runs and seq > max_runs)),
+            ("max_runs", bool(stale is None and max_runs and seq > max_runs)),
             (
                 "max_hours",
                 bool(prior_runs and max_hours and _elapsed_hours(iterate_started) > max_hours),
@@ -1302,20 +1313,27 @@ async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str
 
         executor = await _open_executor(session, ctx, experiment)
         try:
-            pid, command = await executor.launch_run()
-            log_path = experiments_service.append_local_log(experiment.id, seq, "")
-            run = ExperimentRun(
-                experiment_id=experiment.id,
-                seq=seq,
-                command=command,
-                status="running",
-                pid=pid,
-                log_path=str(log_path),
-                started_at=utcnow(),
-            )
-            session.add(run)
-            await session.commit()
-            await session.refresh(run)
+            if stale is not None:
+                run = stale
+                seq = run.seq
+                # 重挂从日志头重放：清掉该轮已存的 metrics 避免重复合并（本地日志允许少量重复行）
+                run.metrics = None
+                await session.commit()
+            else:
+                pid, command = await executor.launch_run()
+                log_path = experiments_service.append_local_log(experiment.id, seq, "")
+                run = ExperimentRun(
+                    experiment_id=experiment.id,
+                    seq=seq,
+                    command=command,
+                    status="running",
+                    pid=pid,
+                    log_path=str(log_path),
+                    started_at=utcnow(),
+                )
+                session.add(run)
+                await session.commit()
+                await session.refresh(run)
             # _poll_run 可能因断连重连返回新的 executor，后续读取/关闭都用返回的这个
             observation, executor = await _poll_run(
                 ctx, session, executor, experiment, run, max_hours
