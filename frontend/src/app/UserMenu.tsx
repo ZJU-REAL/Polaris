@@ -48,7 +48,7 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <Avatar userId={me?.id} hasAvatar={!!me?.has_avatar} name={name} size={26} />
+        <Avatar userId={me?.id} hasAvatar={!!me?.has_avatar} name={name} size={34} />
         <span className="user-info">
           <span className="user-name">{name}</span>
           <span className="user-role">{isAdmin(me) ? tr('管理员', 'Admin') : tr('研究员', 'Researcher')}</span>
