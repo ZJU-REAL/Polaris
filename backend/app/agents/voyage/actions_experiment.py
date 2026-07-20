@@ -79,6 +79,7 @@ PLAN_SYSTEM_PROMPT = """\
  "eval_protocol": {"dataset": "数据集/来源", "split": "评测划分", "metric": "评测指标",
                    "n_examples": 100, "n_samples": 1},
  "datasets": [{"name": "HF数据集名或来源", "purpose": "test|corpus|train", "size_hint": "规模"}],
+ "models": [{"ref": "HF模型名或本机绝对路径", "role": "eval|student|teacher|base"}],
  "container": {"image": "预置框架镜像", "gpus": "device=0,1", "shm_size": "16g"},
  "budget_estimate": {"gpu_hours": 2, "runs": 3}}
 约束：
@@ -104,6 +105,10 @@ PLAN_SYSTEM_PROMPT = """\
   eval_protocol（数据集/划分/指标/样本数）、把要用的真实数据集写进 datasets；
   代码将对每个 condition 用同一评测集跑并逐条 POLARIS_METRIC 输出，供平台做对照分析。
 - 若是单一配置的调参类实验，conditions/eval_protocol/datasets 可省略。
+- **models（可选但强烈建议）**：把实验要用的模型如实列进 models（ref 用 HF 名如
+  `Qwen/Qwen3-1.7B`，或本机绝对/家目录路径如 `~/hf/model/...`；role 标 eval/student/teacher/base）。
+  平台会**预检**这些模型：本机路径不存在会告警；疑似多模态/视觉-语言模型用于纯文本训练也会告警
+  （常踩坑：框架不认 model_type 或加载失败）。选模型时优先纯文本、且框架确实支持的架构。
 """
 
 CODE_SYSTEM_PROMPT = """\
@@ -554,6 +559,19 @@ def validate_plan(data: Any) -> dict[str, Any]:
         out["eval_protocol"] = data["eval_protocol"]
     if isinstance(data.get("datasets"), list):
         out["datasets"] = data["datasets"]
+    # 模型清单（资源预检消费）：规范成 [{ref, role}]，ref 非空才留；ref 过主机路径白名单
+    # （本机路径要能安全拼进 cat/test；HF id 也走同一白名单，均无 shell 元字符）。
+    raw_models = data.get("models")
+    if isinstance(raw_models, list):
+        models = []
+        for m in raw_models:
+            ref = str(m.get("ref") or "").strip() if isinstance(m, dict) else str(m or "").strip()
+            if not ref or not ssh_exec._HOST_PATH_RE.match(ref) or ".." in ref:
+                continue
+            role = m.get("role") if isinstance(m, dict) else None
+            models.append({"ref": ref, "role": str(role).strip() if role else ""})
+        if models:
+            out["models"] = models
     # 容器执行规格（训练类/需框架的实验声明预置镜像）：严格校验后存回 plan，
     # 决定运行时用 ContainerRunner 还是裸机；非法/缺 image → 不存（退回裸机）。
     spec = parse_container_spec(data.get("container"))
@@ -916,6 +934,79 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
 # ---- 2. 建环境（闸门后）：mkdir → LLM 代码生成 → 写文件 → venv ----
 
+# 疑似多模态/视觉-语言模型的 config.json 标记（纯文本训练常踩坑，如 qwen3_5 那类：框架不认
+# model_type 或加载失败）。命中任一 key，或 model_type 含明确多模态词，即判为多模态。
+_MULTIMODAL_CONFIG_KEYS = (
+    "vision_config",
+    "video_config",
+    "audio_config",
+    "vision_tower",
+    "mm_vision_tower",
+    "image_token_id",
+    "visual",
+)
+_MULTIMODAL_MODEL_TYPE_RE = re.compile(
+    r"vl$|_vl|vision|video|image|audio|multimodal", re.IGNORECASE
+)
+
+
+def _is_multimodal_config(config_text: str) -> bool:
+    """从模型 config.json 粗判是否多模态/视觉-语言（确定性启发式，宁可少报不误伤纯文本）。"""
+    try:
+        cfg = json.loads(config_text)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(cfg, dict):
+        return False
+    if any(k in cfg for k in _MULTIMODAL_CONFIG_KEYS):
+        return True
+    return bool(_MULTIMODAL_MODEL_TYPE_RE.search(str(cfg.get("model_type") or "")))
+
+
+async def _probe_resources(executor: Runner, plan: dict[str, Any]) -> tuple[list[dict], list[str]]:
+    """资源预检：探 plan 声明的模型/数据集。ref 以 ~ 或 / 开头 = 本机路径（查存在/读 config），
+    否则视为 HF id（会下载，跳过）。返回 (resources, warnings)；探测异常不冒泡（不该崩 setup）。"""
+    resources: list[dict] = []
+    warnings: list[str] = []
+    kind = plan.get("kind")
+    for m in plan.get("models") or []:
+        ref = (m.get("ref") if isinstance(m, dict) else str(m)) or ""
+        if not ref:
+            continue
+        role = m.get("role") if isinstance(m, dict) else ""
+        entry: dict[str, Any] = {"kind": "model", "ref": ref, "role": role}
+        if ref.startswith(("~", "/")):  # 本机模型
+            try:
+                cfg = await executor.read_host_file(f"{ref}/config.json")
+            except Exception:  # noqa: BLE001 — 预检探测失败不阻断 setup
+                cfg = None
+            entry["found"] = cfg is not None
+            if cfg is None:
+                warnings.append(
+                    f"资源预检告警：声明的本机模型 {ref} 不存在（找不到 config.json）。"
+                )
+            elif _is_multimodal_config(cfg):
+                entry["multimodal"] = True
+                if kind == "training":
+                    warnings.append(
+                        f"资源预检告警：模型 {ref} 疑似多模态/视觉-语言，用于纯文本训练常踩坑"
+                        "（框架可能不认 model_type 或加载失败）——确认框架支持，或换纯文本模型。"
+                    )
+        else:
+            entry["remote"] = True  # HF id：会下载，跳过本机存在性
+        resources.append(entry)
+    for d in plan.get("datasets") or []:
+        name = (d.get("name") if isinstance(d, dict) else str(d)) or ""
+        if name and str(name).startswith(("~", "/")):  # 只查本机路径数据集；HF 名会下载
+            try:
+                exists = await executor.host_path_exists(str(name))
+            except Exception:  # noqa: BLE001
+                continue
+            resources.append({"kind": "dataset", "ref": name, "found": exists})
+            if not exists:
+                warnings.append(f"资源预检告警：声明的本机数据集 {name} 不存在。")
+    return resources, warnings
+
 
 @register("experiment.setup")
 @_guarded
@@ -961,17 +1052,16 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             await session.commit()
             await executor.write_files(platform_files)  # 平台文件写一次（不随修复变）
 
-            # 资源预检（GPU）：训练类/声明 GPU 的实验先探本机有没有卡，结果记进观测（面板可见）。
-            # 探不到卡 → 给**早期告警**（换有空闲卡的机器 / 改成不吃 GPU），但**只告警不硬停**——
-            # 无 GPU 是基础设施问题，硬停会触发 setup 换方案重规划（把失败步骤从历史抹掉、丢诊断）；
-            # 真正的拦截（换机闸门）留作后续一刀，这刀先把资源可见性 + 早期告警做扎实。
-            gpus = await executor.probe_gpu()
+            # 资源预检（GPU + 模型/数据集）：确定性探测，记进观测（面板可见），有问题给早期告警。
+            # **只告警不硬停**——资源问题硬停会触发 setup 换方案重规划（抹掉失败步骤、丢诊断）；
+            # 真正的拦截（换机闸门）留后续，这刀先把资源可见性 + 早期告警做扎实。
             plan = experiment.plan if isinstance(experiment.plan, dict) else {}
             container = plan.get("container") if isinstance(plan.get("container"), dict) else None
+            gpus = await executor.probe_gpu()
+            resources, preflight_warnings = await _probe_resources(executor, plan)
             needs_gpu = plan.get("kind") == "training" or bool(container and container.get("gpus"))
-            preflight_warning = None
             if needs_gpu and not gpus:
-                preflight_warning = (
+                preflight_warnings.append(
                     f"资源预检告警：{executor.host} 上探测不到可用 GPU（nvidia-smi 无输出），"
                     "但这是训练类/声明了 GPU 的实验——如后续因显存/设备失败，"
                     "请换一台有空闲 GPU 的服务器，或把方案改成不需要 GPU 的实现。"
@@ -1010,9 +1100,10 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                         "attempts": attempts,
                         "fixes": fixes,
                         "gpus": gpus,  # 资源预检探到的 GPU（供面板/后续显存决策）
+                        "resources": resources,  # 模型/数据集探测结果（存在性/多模态）
                     }
-                    if preflight_warning:
-                        obs["preflight_warning"] = preflight_warning
+                    if preflight_warnings:
+                        obs["preflight_warnings"] = preflight_warnings
                     return obs
                 if fixes >= MAX_SETUP_FIXES:
                     detail = err_text or "（无输出，多为连接中断或超时）"
@@ -1635,9 +1726,7 @@ async def _figure_qc(
     return {"passed": True, "captions": {}, "issues": [], "degraded": True}
 
 
-async def _pull_figures(
-    executor: Runner, experiment_id: uuid.UUID, names: list[str]
-) -> list[str]:
+async def _pull_figures(executor: Runner, experiment_id: uuid.UUID, names: list[str]) -> list[str]:
     """把远端 figures/*.png（及同名 .pdf）拉回本地镜像目录，返回有序 PNG 文件名。
 
     远端文件名过白名单正则（防 ls 输出注入目录穿越），非法名跳过。

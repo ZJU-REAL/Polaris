@@ -26,7 +26,7 @@ from app.models.idea import Idea
 from app.models.voyage import VoyageRun
 from app.services import ssh_exec
 from tests.conftest import RecordingBus, register_and_login
-from tests.fake_ssh import FakeSSHConnector, FakeSSHServer
+from tests.fake_ssh import FakeSSHConnector, FakeSSHServer, FakeSSHSession
 from tests.test_ssh_credentials import PAYLOAD as CRED_PAYLOAD
 
 RUN_LOG = (
@@ -482,7 +482,7 @@ async def test_setup_gpu_preflight_warns_without_gpu(client, queue_stub, fake_ss
     setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
     obs = setup_step["observation"]
     assert obs["gpus"] == []  # 探不到卡如实记录
-    assert "资源预检告警" in obs.get("preflight_warning", "")  # 早期告警已暴露
+    assert any("资源预检告警" in w for w in obs.get("preflight_warnings", []))  # 早期告警已暴露
 
 
 async def test_setup_no_gpu_preflight_silent_for_eval(client, queue_stub, fake_ssh, bus_recorder):
@@ -502,7 +502,86 @@ async def test_setup_no_gpu_preflight_silent_for_eval(client, queue_stub, fake_s
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
     setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
-    assert "preflight_warning" not in setup_step["observation"]  # 评测类不告警
+    assert "preflight_warnings" not in setup_step["observation"]  # 评测类不告警
+
+
+def test_is_multimodal_config_unit():
+    """多模态 config 粗判：视觉/视频 key 或 model_type 含多模态词 → True；纯文本/非法 → False。"""
+    assert ax._is_multimodal_config(json.dumps({"model_type": "qwen3_5", "vision_config": {}}))
+    assert ax._is_multimodal_config(json.dumps({"model_type": "qwen2_vl"}))
+    assert ax._is_multimodal_config(json.dumps({"model_type": "llava", "mm_vision_tower": "x"}))
+    assert not ax._is_multimodal_config(json.dumps({"model_type": "qwen3"}))
+    assert not ax._is_multimodal_config(json.dumps({"model_type": "llama"}))
+    assert not ax._is_multimodal_config("not json at all")
+
+
+def test_validate_plan_models_normalization():
+    """models 规范成 [{ref, role}]；注入型/空 ref 丢弃；非 list → 无 models。"""
+    plan = ax.validate_plan(
+        {
+            "hypotheses": [{"text": "h", "status": "testing"}],
+            "repro_strategy": "r",
+            "steps": ["a", "b", "c"],
+            "primary_metric": {"name": "acc", "direction": "maximize"},
+            "budget_estimate": {"gpu_hours": 1},
+            "models": [
+                {"ref": "Qwen/Qwen3-1.7B", "role": "student"},
+                {"ref": "~/hf/model/x", "role": "teacher"},
+                {"ref": "evil; rm -rf /"},  # 注入 → 丢
+                {"ref": "../escape"},  # .. → 丢
+                {"role": "base"},  # 无 ref → 丢
+            ],
+        }
+    )
+    assert plan["models"] == [
+        {"ref": "Qwen/Qwen3-1.7B", "role": "student"},
+        {"ref": "~/hf/model/x", "role": "teacher"},
+    ]
+
+
+async def test_probe_resources_flags_multimodal_and_missing(client, fake_ssh, bus_recorder):
+    """_probe_resources：本机多模态模型（训练）→ 告警；本机模型缺失 → 告警；HF id → remote 跳过。"""
+    project_id, _ = await _setup_project(client)
+    fake_ssh.host_files["~/hf/model/mm/config.json"] = json.dumps(
+        {"model_type": "qwen3_5", "vision_config": {"depth": 32}}
+    )
+    executor = ssh_exec.SSHExecutor(
+        FakeSSHSession(fake_ssh),
+        exp_id=str(uuid.uuid4()),
+        host="h",
+        project_id=uuid.UUID(project_id),
+    )
+    plan = {
+        "kind": "training",
+        "models": [
+            {"ref": "~/hf/model/mm", "role": "student"},  # 本机多模态 → 训练告警
+            {"ref": "~/hf/model/missing", "role": "base"},  # 本机缺失 → 告警
+            {"ref": "Qwen/Qwen3-1.7B", "role": "teacher"},  # HF id → remote
+        ],
+    }
+    resources, warnings = await ax._probe_resources(executor, plan)
+    by_ref = {r["ref"]: r for r in resources}
+    assert by_ref["~/hf/model/mm"]["multimodal"] is True
+    assert by_ref["~/hf/model/missing"]["found"] is False
+    assert by_ref["Qwen/Qwen3-1.7B"]["remote"] is True
+    assert any("多模态" in w and "~/hf/model/mm" in w for w in warnings)
+    assert any("不存在" in w and "~/hf/model/missing" in w for w in warnings)
+
+
+async def test_probe_resources_multimodal_silent_for_eval(client, fake_ssh, bus_recorder):
+    """同一多模态模型用于**评测**（非训练）→ 记录 multimodal 但不告警（告警只针对训练）。"""
+    project_id, _ = await _setup_project(client)
+    fake_ssh.host_files["~/hf/model/mm/config.json"] = json.dumps({"vision_config": {}})
+    executor = ssh_exec.SSHExecutor(
+        FakeSSHSession(fake_ssh),
+        exp_id=str(uuid.uuid4()),
+        host="h",
+        project_id=uuid.UUID(project_id),
+    )
+    plan = {"kind": "eval", "models": [{"ref": "~/hf/model/mm", "role": "eval"}]}
+    resources, warnings = await ax._probe_resources(executor, plan)
+    assert resources[0]["multimodal"] is True
+    assert warnings == []  # 评测用多模态模型不算问题
 
 
 async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_recorder):

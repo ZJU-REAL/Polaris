@@ -26,6 +26,9 @@ class FakeSSHServer:
     venv_exits: list[int] = field(default_factory=list)  # 逐次弹出；耗尽后回落 venv_exit
     # probe_gpu 用：每卡 (index, 显存总, 空闲) MiB；空列表 = 本机无 GPU/驱动
     gpus: list[tuple[int, int, int]] = field(default_factory=list)
+    # 资源预检用：本机文件内容（cat <path> → 内容，如模型 config.json）；未登记 = 缺失
+    host_files: dict[str, str] = field(default_factory=dict)
+    host_paths: set[str] = field(default_factory=set)  # test -e <path> 存在的路径（数据集目录等）
     smoke_exits: list[int] = field(default_factory=list)  # 逐次弹出；耗尽后恒 0
     smoke_stderr: str = "Traceback (most recent call last): boom"
     run_log: str = ""
@@ -120,6 +123,18 @@ class FakeSSHSession:
                 return SSHResult(127, "", "nvidia-smi: command not found")
             rows = "\n".join(f"{i}, {total}, {free}" for i, total, free in server.gpus)
             return SSHResult(0, rows + "\n", "")
+        if command.startswith("test -e "):  # host_path_exists（资源预检数据集等）
+            m = re.search(r"test -e (\S+)", command)
+            path = m.group(1) if m else ""
+            exists = path in server.host_paths or path in server.host_files
+            return SSHResult(0, "yes\n" if exists else "no\n", "")
+        if command.startswith("cat "):  # read_host_file（本机模型 config 等，非 workdir 文件）
+            m = re.search(r"cat (\S+)", command)
+            path = m.group(1) if m else ""
+            if path and "polaris_runs" not in path:  # workdir 内 run.exit/metrics.json 交给下面处理
+                if path in server.host_files:
+                    return SSHResult(0, server.host_files[path], "")
+                return SSHResult(1, "", "")  # 未登记 = 缺失
         if "venv" in command or "pip install" in command:
             exit_code = server.venv_exits.pop(0) if server.venv_exits else server.venv_exit
             return SSHResult(exit_code, "", "pip failed" if exit_code else "")

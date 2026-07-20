@@ -192,6 +192,18 @@ def validate_exp_id(exp_id: str) -> str:
     return str(uuid.UUID(str(exp_id)))
 
 
+# 主机绝对/家目录路径白名单（资源预检 cat/test 模型或数据集路径，值来自 plan=LLM，须防注入）。
+_HOST_PATH_RE = re.compile(r"^[A-Za-z0-9~/][A-Za-z0-9._/~@-]*$")
+
+
+def validate_host_path(path: str) -> str:
+    """校验主机路径（禁 shell 元字符与 ..，允许前导 ~ // 与 HF id 风格的 /）。"""
+    p = str(path).strip()
+    if not p or ".." in p or not _HOST_PATH_RE.match(p):
+        raise SSHExecError(f"非法主机路径：{path!r}")
+    return p
+
+
 def parse_gpu_csv(stdout: str) -> list[dict[str, int]]:
     """解析 nvidia-smi CSV（index,memory.total,memory.free；noheader,nounits）为每卡 dict。
 
@@ -477,3 +489,17 @@ class SSHExecutor:
         if result.exit_status != 0:
             return []
         return parse_gpu_csv(result.stdout)
+
+    async def host_path_exists(self, path: str) -> bool:
+        """资源预检：主机上某绝对/家目录路径是否存在（模型目录/数据集文件等）。"""
+        safe = validate_host_path(path)
+        result = await self._run(f"test -e {safe} && echo yes || echo no")
+        return "yes" in result.stdout
+
+    async def read_host_file(self, path: str) -> str | None:
+        """资源预检：读主机上某文件内容（如模型 config.json），缺失/失败 → None。"""
+        safe = validate_host_path(path)
+        result = await self._run(f"cat {safe} 2>/dev/null")
+        if result.exit_status != 0:
+            return None
+        return result.stdout
