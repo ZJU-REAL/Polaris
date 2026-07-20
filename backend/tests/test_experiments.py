@@ -880,3 +880,71 @@ async def test_experiment_member_permissions(client, queue_stub, fake_ssh):
             kwargs["json"] = {"idea_id": idea_id, "credential_id": cred_id}
         resp = await getattr(client, method)(url, **kwargs)
         assert resp.status_code == 404, (method, url, resp.status_code)
+
+
+async def test_code_browser_live_listing_and_read(client, queue_stub, fake_ssh, bus_recorder):
+    """代码浏览：SSH 实时列 workdir 文件清单 + 读单文件内容；非法路径 400。"""
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/experiments/{exp_id}/code", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "ssh"
+    paths = [f["path"] for f in body["files"]]
+    assert "run.sh" in paths and "train.py" in paths and "requirements.txt" in paths
+    assert all(isinstance(f["size"], int) for f in body["files"])
+
+    resp = await client.get(
+        f"/api/experiments/{exp_id}/code/file", params={"path": "run.sh"}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "ssh" and not body["binary"] and not body["truncated"]
+    assert "--smoke" in body["content"]
+
+    resp = await client.get(
+        f"/api/experiments/{exp_id}/code/file", params={"path": "../evil"}, headers=headers
+    )
+    assert resp.status_code == 400
+    resp = await client.get(
+        f"/api/experiments/{exp_id}/code/file", params={"path": "nope.txt"}, headers=headers
+    )
+    assert resp.status_code == 404
+
+
+async def test_code_browser_falls_back_to_checkpoint(client, queue_stub, fake_ssh, bus_recorder):
+    """服务器不可达 → 代码浏览回退 voyage checkpoint 的 exp_files 快照。"""
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    fake_ssh.connect_error = "host unreachable"  # 之后的连接全部失败
+    resp = await client.get(f"/api/experiments/{exp_id}/code", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "checkpoint"
+    paths = [f["path"] for f in body["files"]]
+    assert "run.sh" in paths  # LLM 产出文件在快照里（平台注入文件不在，属预期）
+
+    resp = await client.get(
+        f"/api/experiments/{exp_id}/code/file", params={"path": "run.sh"}, headers=headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["source"] == "checkpoint"
+    assert "--smoke" in resp.json()["content"]

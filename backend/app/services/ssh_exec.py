@@ -421,6 +421,27 @@ class SSHExecutor:
             return []
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
+    async def list_tree(self, max_files: int = 300) -> list[dict[str, Any]]:
+        """列 workdir 内全部代码/产物文件（相对路径 + 字节大小），供前端代码浏览。
+
+        固定模板命令：剪掉 .venv/__pycache__/data_cache/.git 等重目录，限深限量。
+        失败/空 → 空列表（上层回退 checkpoint 快照）。ContainerRunner 继承（host 侧读）。
+        """
+        result = await self._run(
+            f"cd {self.workdir} && find . -maxdepth 4 "
+            "\\( -name .venv -o -name __pycache__ -o -name data_cache -o -name .git \\) "
+            f"-prune -o -type f -printf '%s %P\\n' 2>/dev/null | head -{int(max_files)}"
+        )
+        if result.exit_status != 0:
+            return []
+        files: list[dict[str, Any]] = []
+        for line in result.stdout.splitlines():
+            size_s, _, path = line.strip().partition(" ")
+            if not path or not size_s.isdigit():
+                continue
+            files.append({"path": path, "size": int(size_s)})
+        return sorted(files, key=lambda f: str(f["path"]))
+
     async def read_file(self, relpath: str) -> bytes:
         """SFTP 读回 workdir 内文件（figures 拉回本地镜像用）。"""
         rel = _validate_relpath(relpath)

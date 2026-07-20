@@ -1252,6 +1252,28 @@ export interface ExperimentLogs {
   truncated: boolean;
 }
 
+/** 代码浏览：workdir 内一个文件（相对路径 + 字节大小）。 */
+export interface ExperimentCodeEntry {
+  path: string;
+  size: number;
+}
+
+/** 代码清单：source=ssh 为服务器实时读取；checkpoint 为离线快照回退。 */
+export interface ExperimentCodeListing {
+  source: 'ssh' | 'checkpoint';
+  workdir?: string | null;
+  files: ExperimentCodeEntry[];
+}
+
+export interface ExperimentCodeFile {
+  path: string;
+  source: string;
+  binary: boolean;
+  truncated: boolean;
+  size: number;
+  content: string;
+}
+
 export interface CreateExperimentInput {
   idea_id: string;
   credential_id: string;
@@ -2281,6 +2303,16 @@ export const api = {
   /** 单张实验图表 PNG（blob → objectURL 显示，模式同论文 figures）。 */
   fetchExperimentFigureImage(id: string, index: number): Promise<Blob> {
     return requestBlob(`/experiments/${id}/figures/${index}/image`);
+  },
+  /** 实验代码文件清单（优先 SSH 实时读 workdir；服务器不可达回退快照）。 */
+  getExperimentCode(id: string): Promise<ExperimentCodeListing> {
+    return request<ExperimentCodeListing>(`/experiments/${id}/code`);
+  },
+  /** 读实验代码单文件内容（workdir 内相对路径）。 */
+  getExperimentCodeFile(id: string, path: string): Promise<ExperimentCodeFile> {
+    return request<ExperimentCodeFile>(
+      `/experiments/${id}/code/file?path=${encodeURIComponent(path)}`,
+    );
   },
 
   // —— M5-B · Manuscripts（论文撰写） ——

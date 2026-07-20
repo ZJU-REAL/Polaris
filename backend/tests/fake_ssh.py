@@ -96,6 +96,22 @@ class FakeSSHSession:
                 for rel, content in server.plot_outputs.items():
                     server.files[f"{sftp_dir}/{rel}"] = content
             return SSHResult(0, "", "")
+        if "find ." in command and "-printf" in command:  # list_tree（代码浏览）
+            sftp_dir = self._sftp_dir(command)
+            if not sftp_dir:
+                return SSHResult(1, "", "")
+            prefix = f"{sftp_dir}/"
+            pruned = (".venv", "__pycache__", "data_cache", ".git")
+            lines = []
+            for path, content in sorted(server.files.items()):
+                if not path.startswith(prefix):
+                    continue
+                rel = path[len(prefix) :]
+                if any(seg in pruned for seg in rel.split("/")):
+                    continue
+                size = len(content) if isinstance(content, bytes) else len(content.encode())
+                lines.append(f"{size} {rel}")
+            return SSHResult(0, "\n".join(lines) + ("\n" if lines else ""), "")
         if command.startswith("ls -1"):  # list_dir
             m = re.search(r"ls -1 ~/(\S+)", command)
             prefix = f"{m.group(1)}/" if m else None

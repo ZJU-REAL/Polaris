@@ -21,7 +21,9 @@ from app.core.db import get_session, get_sessionmaker
 from app.core.events import EventBus, get_event_bus
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment
+from app.models.ssh_credential import SSHCredential
 from app.models.user import User
+from app.models.voyage import VoyageRun
 from app.schemas.experiment import (
     ExperimentCreate,
     ExperimentDetail,
@@ -30,6 +32,7 @@ from app.schemas.experiment import (
 )
 from app.services import experiments as experiments_service
 from app.services import projects as projects_service
+from app.services import ssh_exec
 
 router = APIRouter(tags=["experiments"])
 
@@ -129,6 +132,106 @@ async def get_experiment_figure_image(
         filename=str(figure.get("name") or f"fig_{index}.png"),
         content_disposition_type="inline",
     )
+
+
+# ---- 代码浏览：实验工作目录 = 项目的「代码仓库」，前端实时查看 ----
+
+_CODE_FILE_MAX_BYTES = 200_000  # 单文件内容上限（超出截断，防大产物拖垮接口）
+
+
+async def _open_exp_executor(session: AsyncSession, experiment: Experiment):
+    """为 API 读操作打开实验的 SSH 执行器（凭据缺失/已删则抛 404）。"""
+    if experiment.credential_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CREDENTIAL_NOT_FOUND")
+    credential = await session.get(SSHCredential, experiment.credential_id)
+    if credential is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CREDENTIAL_NOT_FOUND")
+    return await ssh_exec.open_executor(
+        credential=credential, exp_id=str(experiment.id), project_id=experiment.project_id
+    )
+
+
+async def _checkpoint_files(session: AsyncSession, experiment: Experiment) -> dict[str, str]:
+    """voyage checkpoint 里的 exp_files 快照（服务器不可达时的回退来源）。"""
+    if experiment.voyage_id is None:
+        return {}
+    voyage = await session.get(VoyageRun, experiment.voyage_id)
+    files = (voyage.checkpoint or {}).get("exp_files") if voyage is not None else None
+    return {str(k): str(v) for k, v in files.items()} if isinstance(files, dict) else {}
+
+
+@router.get("/experiments/{experiment_id}/code")
+async def list_experiment_code(
+    experiment_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """实验代码文件清单：优先 SSH 实时列 workdir；连不上回退 checkpoint 快照。"""
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    try:
+        executor = await _open_exp_executor(session, experiment)
+        try:
+            files = await executor.list_tree()
+        finally:
+            await executor.close()
+        if files:
+            return {"source": "ssh", "workdir": experiment.workdir, "files": files}
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 — 服务器不可达/超时 → 回退快照
+        pass
+    snapshot = await _checkpoint_files(session, experiment)
+    return {
+        "source": "checkpoint",
+        "workdir": experiment.workdir,
+        "files": [{"path": p, "size": len(c.encode("utf-8"))} for p, c in sorted(snapshot.items())],
+    }
+
+
+@router.get("/experiments/{experiment_id}/code/file")
+async def read_experiment_code_file(
+    experiment_id: uuid.UUID,
+    path: str = Query(..., description="workdir 内相对路径"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """读实验代码文件内容（相对路径过白名单校验；优先 SSH 实时，回退 checkpoint）。"""
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    try:
+        rel = ssh_exec._validate_relpath(path)
+    except ssh_exec.SSHExecError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="BAD_PATH") from e
+    data: bytes | None = None
+    source = "ssh"
+    try:
+        executor = await _open_exp_executor(session, experiment)
+        try:
+            data = await executor.read_file(rel)
+        finally:
+            await executor.close()
+    except HTTPException:
+        raise
+    except FileNotFoundError:
+        data = None
+    except Exception:  # noqa: BLE001 — 连接失败 → 回退快照
+        data = None
+    if data is None:
+        snapshot = await _checkpoint_files(session, experiment)
+        if rel not in snapshot:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FILE_NOT_FOUND")
+        data = snapshot[rel].encode("utf-8")
+        source = "checkpoint"
+    truncated = len(data) > _CODE_FILE_MAX_BYTES
+    data = data[:_CODE_FILE_MAX_BYTES]
+    binary = b"\x00" in data
+    return {
+        "path": rel,
+        "source": source,
+        "binary": binary,
+        "truncated": truncated,
+        "size": len(data),
+        "content": "" if binary else data.decode("utf-8", errors="replace"),
+    }
 
 
 @router.post("/experiments/{experiment_id}/cancel", response_model=ExperimentRead)

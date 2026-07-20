@@ -32,13 +32,14 @@ import { ExperimentFigures } from './ExperimentFigures';
    Setup 复用关联 voyage 的 steps，Run 内嵌 SSE 日志与指标图。
    ============================================================ */
 
-type TabKey = 'plan' | 'setup' | 'run' | 'report';
+type TabKey = 'plan' | 'setup' | 'run' | 'code' | 'report';
 
 /* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
 const TABS: { k: TabKey; zh: string; en: string }[] = [
   { k: 'plan', zh: '计划', en: 'Plan' },
   { k: 'setup', zh: '环境', en: 'Setup' },
   { k: 'run', zh: '运行与迭代', en: 'Run & iterate' },
+  { k: 'code', zh: '代码', en: 'Code' },
   { k: 'report', zh: '报告', en: 'Report' },
 ];
 
@@ -695,6 +696,144 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
   );
 }
 
+/* ---------------- Code（代码浏览：实验工作目录 = 项目代码仓库） ---------------- */
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolean }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const listing = useQuery({
+    queryKey: ['experiment', exp.id, 'code'],
+    queryFn: () => api.getExperimentCode(exp.id),
+    refetchInterval: active ? 15_000 : false,
+  });
+  const file = useQuery({
+    queryKey: ['experiment', exp.id, 'code-file', selected],
+    queryFn: () => api.getExperimentCodeFile(exp.id, selected!),
+    enabled: selected != null,
+    refetchInterval: active && selected != null ? 15_000 : false,
+  });
+  const files = listing.data?.files ?? [];
+
+  // 首次加载后默认选中入口文件
+  useEffect(() => {
+    if (selected != null || files.length === 0) return;
+    const prefer = ['run.sh', 'train.py', 'requirements.txt'];
+    setSelected(prefer.find((p) => files.some((f) => f.path === p)) ?? files[0]!.path);
+  }, [files, selected]);
+
+  if (listing.isLoading) {
+    return <div className="muted" style={{ padding: 40 }}>{tr('加载中…', 'Loading…')}</div>;
+  }
+  if (files.length === 0) {
+    return (
+      <EmptyState
+        icon="git"
+        title={tr('还没有代码', 'No code yet')}
+        desc={tr('建环境步骤会生成实验代码并写入服务器工作目录。', 'The setup step generates experiment code into the remote workdir.')}
+      />
+    );
+  }
+  const live = listing.data?.source === 'ssh';
+  return (
+    <div className="fadeup">
+      {/* 来源与工作目录 */}
+      <div className="row gap8" style={{ alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+        <span
+          className="pill sm"
+          style={
+            live
+              ? { background: 'var(--ok-soft, var(--accent-soft))', color: 'var(--accent-text)' }
+              : { background: 'var(--surface-3)', color: 'var(--text-2)' }
+          }
+        >
+          <Icon name={live ? 'play' : 'clock'} size={11} />
+          {live ? tr('服务器实时', 'Live from server') : tr('离线快照', 'Offline snapshot')}
+        </span>
+        {listing.data?.workdir && (
+          <span className="mono muted" style={{ fontSize: 11, wordBreak: 'break-all' }}>{listing.data.workdir}</span>
+        )}
+        <button
+          className="btn ghost sm"
+          onClick={() => { void listing.refetch(); void file.refetch(); }}
+          style={{ marginLeft: 'auto' }}
+        >
+          <Icon name="refresh" size={12} /> {tr('刷新', 'Refresh')}
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: 14, alignItems: 'start' }}>
+        {/* 文件清单 */}
+        <div className="card" style={{ overflow: 'hidden', maxHeight: 560, overflowY: 'auto' }}>
+          {files.map((f) => (
+            <button
+              key={f.path}
+              onClick={() => setSelected(f.path)}
+              className="row gap8"
+              style={{
+                width: '100%',
+                textAlign: 'left',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '8px 12px',
+                background: selected === f.path ? 'var(--accent-soft)' : 'transparent',
+                color: selected === f.path ? 'var(--accent-text)' : 'var(--text-2)',
+                alignItems: 'center',
+              }}
+            >
+              <Icon name="file" size={12} style={{ flexShrink: 0 }} />
+              <span className="mono" style={{ fontSize: 12, minWidth: 0, overflowWrap: 'anywhere' }}>{f.path}</span>
+              <span className="mono muted" style={{ fontSize: 10, marginLeft: 'auto', flexShrink: 0 }}>{fmtBytes(f.size)}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* 文件内容 */}
+        <div className="card" style={{ overflow: 'hidden' }}>
+          {file.isLoading ? (
+            <div className="muted" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
+          ) : file.data ? (
+            file.data.binary ? (
+              <div className="muted" style={{ padding: 24, fontSize: 12.5 }}>
+                {tr('二进制文件，不支持预览', 'Binary file, preview unavailable')} · {fmtBytes(file.data.size)}
+              </div>
+            ) : (
+              <>
+                <pre
+                  className="mono"
+                  style={{
+                    margin: 0,
+                    padding: '14px 16px',
+                    fontSize: 12,
+                    lineHeight: 1.65,
+                    maxHeight: 560,
+                    overflow: 'auto',
+                    whiteSpace: 'pre',
+                    color: 'var(--text)',
+                  }}
+                >
+                  {file.data.content}
+                </pre>
+                {file.data.truncated && (
+                  <div className="muted" style={{ padding: '6px 16px', fontSize: 11, borderTop: '0.5px solid var(--border)' }}>
+                    {tr('文件过大，仅显示前 200KB', 'File too large; showing first 200KB')}
+                  </div>
+                )}
+              </>
+            )
+          ) : (
+            <div className="muted" style={{ padding: 24 }}>{tr('选择左侧文件查看内容', 'Select a file to view')}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- Report ---------------- */
 
 function ReportTab({ exp }: { exp: ExperimentDetail }) {
@@ -887,6 +1026,7 @@ export function ExperimentDetailPage() {
       {tab === 'plan' && <PlanTab exp={exp} onOpenGates={() => openGates(null)} />}
       {tab === 'setup' && <SetupTab exp={exp} />}
       {tab === 'run' && <RunTab exp={exp} active={active} />}
+      {tab === 'code' && <CodeTab exp={exp} active={active} />}
       {tab === 'report' && <ReportTab exp={exp} />}
     </div>
   );
