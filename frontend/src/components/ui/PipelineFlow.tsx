@@ -89,7 +89,7 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
               {s.running && (
                 <div
                   className="pulse"
-                  style={{ position: 'absolute', bottom: 8, left: 0, right: 0, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 600 }}
+                  style={{ marginTop: 6, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 600 }}
                 >
                   ● {tr('运行中', 'Running')}
                 </div>
