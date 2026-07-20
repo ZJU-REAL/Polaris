@@ -263,8 +263,22 @@ async def set_paper_tags(session: AsyncSession, paper: Paper, names: list[str]) 
                 [{"paper_id": paper.id, "tag_id": by_name[n].id} for n in cleaned]
             )
         )
+    await prune_orphan_tags(session, project_id=paper.project_id)
     await session.commit()
     return sorted(cleaned)
+
+
+async def prune_orphan_tags(session: AsyncSession, *, project_id: uuid.UUID) -> int:
+    """删除项目内零引用标签（以 paper_tag_links 计数，回收站论文的引用也算），返回删除数。
+
+    不 commit，由调用方在收尾时提交；触发点：整组覆盖标签、硬删论文、清空回收站。
+    """
+    stmt = delete(PaperTag).where(
+        PaperTag.project_id == project_id,
+        ~exists().where(paper_tag_links.c.tag_id == PaperTag.id),
+    )
+    result = await session.execute(stmt.execution_options(synchronize_session="fetch"))
+    return int(result.rowcount or 0)
 
 
 async def list_project_tags(
@@ -334,9 +348,15 @@ def _remove_paper_files(paper: Paper) -> None:
 
 
 async def delete_paper(session: AsyncSession, paper: Paper) -> None:
-    """删除一篇论文：清理落盘文件 + 删行（分段/笔记/标签/概念关联 FK 级联）。"""
+    """删除一篇论文：清理落盘文件 + 删行（分段/笔记/标签/概念关联 FK 级联）。
+
+    收尾清理项目内零引用标签（失去最后一篇论文的标签不残留）。
+    """
+    project_id = paper.project_id
     _remove_paper_files(paper)
     await session.delete(paper)
+    await session.flush()
+    await prune_orphan_tags(session, project_id=project_id)
     await session.commit()
 
 
@@ -367,6 +387,10 @@ async def delete_papers(
         else:
             paper.status = "excluded"
             paper.trash_reason = "manual"
+    if hard and papers:
+        # 硬删后收尾：paper_tag_links 已随外键级联删除，清掉失去全部引用的标签
+        await session.flush()
+        await prune_orphan_tags(session, project_id=project_id)
     await session.commit()
     return len(papers)
 
@@ -403,6 +427,9 @@ async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
     for paper in papers:
         _remove_paper_files(paper)
         await session.delete(paper)
+    if papers:
+        await session.flush()
+        await prune_orphan_tags(session, project_id=project_id)
     await session.commit()
     return len(papers)
 
