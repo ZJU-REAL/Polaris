@@ -90,7 +90,7 @@ export function SysinfoPanel({
   const disks = info.disks ?? [];
   return (
     <div className="col gap10">
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
         {/* 处理器 */}
         <GroupCard icon="cpu" title={tr('处理器', 'CPU')}>
           <div className="row gap8" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>

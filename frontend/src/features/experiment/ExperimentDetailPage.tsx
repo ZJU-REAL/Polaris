@@ -511,31 +511,6 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
 
 /* ---------------- Setup ---------------- */
 
-interface GeneratedFile {
-  name: string;
-  content: string;
-}
-
-/** 从 voyage step 的 observation.files 里提取生成的代码文件（同名取最新）。 */
-function extractFiles(steps: VoyageStepRead[]): GeneratedFile[] {
-  const byName = new Map<string, string>();
-  for (const s of steps) {
-    const obs = s.observation;
-    if (!obs || typeof obs !== 'object') continue;
-    const files = (obs as { files?: unknown }).files;
-    if (!Array.isArray(files)) continue;
-    for (const f of files) {
-      if (!f || typeof f !== 'object') continue;
-      const rec = f as Record<string, unknown>;
-      const name =
-        typeof rec.name === 'string' ? rec.name : typeof rec.path === 'string' ? rec.path : null;
-      if (!name) continue;
-      byName.set(name, typeof rec.content === 'string' ? rec.content : '');
-    }
-  }
-  return [...byName.entries()].map(([name, content]) => ({ name, content }));
-}
-
 const SETUP_STEP_RE = /setup|env|smoke|ssh|code|file|install|provision|venv|环境|冒烟|代码|连接/i;
 
 function stepMarker(step: VoyageStepRead): { bg: string; color: string } {
@@ -550,39 +525,6 @@ function stepMarker(step: VoyageStepRead): { bg: string; color: string } {
     default:
       return { bg: 'var(--surface-2)', color: 'var(--text-3)' };
   }
-}
-
-function FileCard({ file }: { file: GeneratedFile }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <button
-        className="row gap8"
-        onClick={() => setOpen(!open)}
-        style={{
-          width: '100%',
-          border: 'none',
-          background: 'transparent',
-          cursor: 'pointer',
-          padding: '11px 16px',
-          textAlign: 'left',
-        }}
-      >
-        <Icon name="file" size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-        <span className="mono" style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>{file.name}</span>
-        <span className="mono muted" style={{ fontSize: 10.5 }}>{file.content.length.toLocaleString()} chars</span>
-        <Icon name="chevDown" size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s', color: 'var(--text-3)' }} />
-      </button>
-      {open && (
-        <pre
-          className="codeblock scroll"
-          style={{ margin: 0, borderRadius: 0, borderTop: '0.5px solid var(--border)', fontSize: 11, maxHeight: 360, overflow: 'auto' }}
-        >
-          {file.content || tr('（空文件）', '(empty file)')}
-        </pre>
-      )}
-    </div>
-  );
 }
 
 function SetupTab({ exp }: { exp: ExperimentDetail }) {
@@ -647,7 +589,6 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
   const all = [...(voyage.steps ?? [])].sort((a, b) => a.seq - b.seq);
   const matched = all.filter((s) => SETUP_STEP_RE.test(`${s.action} ${s.title}`));
   const steps = matched.length > 0 ? matched : all;
-  const files = extractFiles(all);
 
   return (
     <div className="fadeup" style={{ maxWidth: 860 }}>
@@ -700,24 +641,6 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
         </div>
       )}
 
-      <span className="section-h" style={{ marginBottom: 12 }}>
-        <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('生成的代码文件', 'Generated code files')} <span className="en-label" style={{ fontSize: 11 }}>{files.length}</span>
-      </span>
-      {files.length === 0 ? (
-        <div className="card empty" style={{ padding: 28 }}>
-          {tr(
-            '暂无生成文件（建环境阶段 LLM 生成 train.py / eval.py / requirements.txt / run.sh 后显示在这里）',
-            'No generated files yet (train.py / eval.py / requirements.txt / run.sh written during setup will show up here)',
-          )}
-        </div>
-      ) : (
-        <div className="col gap8">
-          {files.map((f) => (
-            <FileCard key={f.name} file={f} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }

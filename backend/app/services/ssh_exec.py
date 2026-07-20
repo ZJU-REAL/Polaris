@@ -383,10 +383,12 @@ async def probe_sysinfo(credential: SSHCredential) -> dict[str, Any]:
     info: dict[str, Any] = {"ok": True, "host": credential.host}
     probes = (
         ("cpu", "nproc 2>/dev/null; cat /proc/loadavg 2>/dev/null", parse_loadavg_block),
-        ("mem", "free -m 2>/dev/null", parse_free_mem),
+        # LC_ALL=C：中文 locale 的 free/df 表头本地化（「内存：」），解析不到
+        ("mem", "LC_ALL=C free -m 2>/dev/null", parse_free_mem),
         (
             "disks",
-            "df -PB1M -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null | tail -n +2",
+            "LC_ALL=C df -PB1M -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null"
+            " | tail -n +2",
             parse_df,
         ),
         (

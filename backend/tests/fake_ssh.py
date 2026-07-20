@@ -162,7 +162,7 @@ class FakeSSHSession:
             return SSHResult(0, "", "")
         if "nproc" in command:  # probe_sysinfo CPU（nproc + /proc/loadavg 合并输出）
             return SSHResult(0, "64\n1.25 0.80 0.50 2/2000 12345\n", "")
-        if command.startswith("free -m"):  # probe_sysinfo 内存
+        if "free -m" in command:  # probe_sysinfo 内存
             return SSHResult(
                 0,
                 "              total        used        free      shared  buff/cache   available\n"
@@ -170,7 +170,7 @@ class FakeSSHSession:
                 "Swap:          8191           0        8191\n",
                 "",
             )
-        if command.startswith("df -P"):  # probe_sysinfo 磁盘（-PB1M 无表头行）
+        if "df -P" in command:  # probe_sysinfo 磁盘（-PB1M 无表头行）
             return SSHResult(
                 0,
                 "/dev/nvme0n1p2 1920000M 810000M 1010000M 45% /\n"
