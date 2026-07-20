@@ -1032,7 +1032,10 @@ function UsersTab() {
                   <div className="row gap10">
                     <Avatar userId={u.id} hasAvatar={u.has_avatar} name={u.display_name || u.email} size={26} />
                     <div>
-                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{u.display_name || '—'}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+                        {u.display_name || '—'}
+                        {u.username && <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', fontWeight: 400, marginLeft: 6 }}>@{u.username}</span>}
+                      </div>
                       <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{u.email}</div>
                     </div>
                   </div>

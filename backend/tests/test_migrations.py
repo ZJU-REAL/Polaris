@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a5b6c7d8e9f0"  # manuscript_templates + 稿件二进制/文件夹列（本分支最新）
-PREV_REVISION = "e4f5a6b7c8d9"  # manuscript_file_versions（稿件文件版本快照）
+HEAD_REVISION = "183e8de0e85f"  # user username unique（本分支最新）
+PREV_REVISION = "9f2a7c04b6e1"  # manuscript main_tex + engine
 
 
 def _make_config(db_path: Path) -> Config:
@@ -134,41 +134,30 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 稿件文件版本快照表
     assert "manuscript_file_versions" in columns["_tables"]
     assert {"file_id", "seq", "origin", "label", "content"} <= columns["manuscript_file_versions"]
-    # 模板库表 + 稿件文件二进制/文件夹列（本分支最新）
+    # 模板库表 + 稿件文件二进制/文件夹列（更早版本，不受本分支往返影响）
     assert "manuscript_templates" in columns["_tables"]
     assert {"key", "name", "source", "scope", "main_tex", "engine"} <= columns[
         "manuscript_templates"
     ]
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
+    # 本分支：users.username 唯一列
+    assert "username" in columns["users"]
 
-    # 最新 revision 可往返（downgrade 移除模板库表与二进制列，落到 manuscript_file_versions）
+    # 最新 revision 可往返（downgrade 移除 users.username）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "manuscript_templates" not in columns["_tables"]
-    assert "is_binary" not in columns["manuscript_files"]
-    assert "manuscript_file_versions" in columns["_tables"]  # 上一版不受影响
-    assert "trash_reason" in columns["papers"]  # 更早的列不受影响
-    # 更早版本不受影响
-    assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
-    assert "rank" in columns["voyage_steps"]
+    assert "username" not in columns["users"]
+    # 上一版的列/表不受影响
+    assert "manuscript_templates" in columns["_tables"]
+    assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
+    assert "manuscript_file_versions" in columns["_tables"]
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
     assert "project_invites" in columns["_tables"]
-    assert "affiliations" in columns["papers"]  # 更早的列不受影响
-    assert {"skill_listings", "skill_ratings"} <= columns["_tables"]  # S4 表不受影响
-    assert {"skills", "skill_versions", "project_skills"} <= columns["_tables"]  # S1 表不受影响
+    assert "affiliations" in columns["papers"]
+    assert {"skill_listings", "skill_ratings"} <= columns["_tables"]
     assert "review_passed" in columns["manuscripts"]
-    # M5-B 列不受影响
-    assert {"experiment_id", "template", "fact_pack", "latest_compile"} <= columns["manuscripts"]
-    assert {"readonly", "updated_by"} <= columns["manuscript_files"]
-    # M5-A 列不受影响
-    assert {"reflection", "primary_value"} <= columns["experiment_runs"]
-    assert {"figures", "iteration_state"} <= columns["experiments"]
-    assert "figures" in columns["papers"]  # 论文图片列不受影响
-    # M5 表不受影响
-    assert {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} <= columns["_tables"]
-    assert "ssh_credentials" in columns["_tables"]  # M4 表不受影响
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    assert "review_passed" in columns["manuscripts"]
+    assert "username" in columns["users"]

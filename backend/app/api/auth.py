@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
@@ -31,6 +32,32 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         total = (await session.execute(select(func.count(User.id)))).scalar_one()
         if total == 1 and user.role != "admin":
             await self.user_db.update(user, {"role": "admin"})
+
+    async def authenticate(self, credentials: OAuth2PasswordRequestForm) -> User | None:
+        """登录支持「邮箱或用户名」+ 密码：先按邮箱查，查不到再按用户名查。"""
+        ident = credentials.username.strip()
+        user: User | None = None
+        try:
+            user = await self.get_by_email(ident)
+        except exceptions.UserNotExists:
+            user = None
+        if user is None and ident:
+            session: AsyncSession = self.user_db.session  # type: ignore[attr-defined]
+            user = (
+                await session.execute(select(User).where(User.username == ident.lower()))
+            ).scalar_one_or_none()
+        if user is None:
+            # 用户不存在也跑一次哈希，缓解时序攻击（对齐 fastapi-users 默认行为）
+            self.password_helper.hash(credentials.password)
+            return None
+        verified, updated_hash = self.password_helper.verify_and_update(
+            credentials.password, user.hashed_password
+        )
+        if not verified:
+            return None
+        if updated_hash is not None:
+            await self.user_db.update(user, {"hashed_password": updated_hash})
+        return user
 
 
 async def get_user_db(
@@ -149,10 +176,17 @@ async def register(
     request: Request,
     user_create: UserCreate,
     user_manager: UserManager = Depends(get_user_manager),
+    session: AsyncSession = Depends(get_session),
 ) -> User:
     """注册（实验室邀请制）：body 里的 invite_code 必须与 settings.INVITE_CODE 一致。"""
     if user_create.invite_code != get_settings().invite_code:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="INVALID_INVITE_CODE")
+    # 用户名全局唯一（DB 也有唯一索引兜底，这里给出友好错误）
+    taken = (
+        await session.execute(select(User.id).where(User.username == user_create.username))
+    ).first()
+    if taken is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="USERNAME_TAKEN")
     try:
         return await user_manager.create(user_create, safe=True, request=request)
     except exceptions.UserAlreadyExists as e:

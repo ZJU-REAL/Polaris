@@ -51,6 +51,7 @@ async def update_user(
         id=target.id,
         email=target.email,
         display_name=target.display_name,
+        username=target.username,
         role=target.role,
         is_active=target.is_active,
         has_avatar=target.has_avatar,

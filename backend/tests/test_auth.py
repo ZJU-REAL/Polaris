@@ -1,11 +1,16 @@
+import re
+
 from tests.conftest import INVITE_CODE, register_and_login
 
 
 def _register_body(**overrides):
+    email = overrides.get("email", "bob@example.com")
+    username = re.sub(r"[^a-z0-9_]", "_", email.split("@", 1)[0].lower())
     body = {
         "email": "bob@example.com",
         "password": "str0ng-password",
         "display_name": "Bob",
+        "username": username,
         "invite_code": INVITE_CODE,
     }
     body.update(overrides)
@@ -31,6 +36,7 @@ async def test_register_login_me_flow(client):
     body = resp.json()
     assert body["email"] == "bob@example.com"
     assert body["display_name"] == "Bob"
+    assert body["username"] == "bob"
     assert body["role"] == "admin"  # 首个注册用户自动 admin（M1）
     assert "invite_code" not in body
 

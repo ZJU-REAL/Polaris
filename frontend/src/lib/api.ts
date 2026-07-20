@@ -44,6 +44,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set('Authorization', `Bearer ${token}`);
   }
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  if (res.status === 401 && token && !path.startsWith('/auth/')) {
+    // 会话过期/失效：清 token 并跳登录（避免在登录/注册接口上误触发）
+    setToken(null);
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.assign('/login');
+    }
+  }
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`;
     let body: unknown;
@@ -107,6 +114,7 @@ export interface UserRead {
   is_verified: boolean;
   /** Polaris 扩展字段（后端可能暂未返回，均可选） */
   display_name?: string | null;
+  username?: string | null;
   role?: string;
   llm_access?: 'full' | 'chat_only' | 'blocked';
   has_avatar?: boolean;
@@ -123,6 +131,7 @@ export interface AdminUserRead {
   id: string;
   email: string;
   display_name: string;
+  username: string | null;
   role: string;
   is_active: boolean;
   has_avatar: boolean;
@@ -155,6 +164,8 @@ export interface InviteInfo {
 export interface RegisterInput {
   email: string;
   password: string;
+  display_name: string;
+  username: string;
   invite_code: string;
 }
 

@@ -7,9 +7,12 @@ from typing import Any
 from fastapi_users import schemas
 from pydantic import BaseModel, Field
 
+USERNAME_PATTERN = r"^[a-z0-9_]{3,32}$"
+
 
 class UserRead(schemas.BaseUser[uuid.UUID]):
     display_name: str
+    username: str | None = None
     role: str
     llm_access: str = "full"
     has_avatar: bool = False
@@ -26,7 +29,9 @@ class UserSearchResult(BaseModel):
 
 
 class UserCreate(schemas.BaseUserCreate):
-    display_name: str = ""
+    # 姓名与用户名注册时必填；用户名小写字母/数字/下划线 3-32 位、全局唯一
+    display_name: str = Field(min_length=1, max_length=255)
+    username: str = Field(pattern=USERNAME_PATTERN)
     invite_code: str  # 与 settings.invite_code 比对，见 api/auth.py
 
     def create_update_dict(self) -> dict[str, Any]:
@@ -51,6 +56,7 @@ class AdminUserRead(BaseModel):
     id: uuid.UUID
     email: str
     display_name: str
+    username: str | None
     role: str
     is_active: bool
     has_avatar: bool

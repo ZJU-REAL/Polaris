@@ -11,13 +11,21 @@ import { tr } from '../../lib/i18n';
 
 type Mode = 'login' | 'register';
 
+const USERNAME_RE = /^[a-z0-9_]{3,32}$/;
+
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 400 && err.message.includes('LOGIN_BAD_CREDENTIALS')) {
-      return tr('邮箱或密码错误', 'Invalid email or password');
+      return tr('账号或密码错误', 'Invalid account or password');
     }
     if (err.status === 400 && err.message.includes('REGISTER_USER_ALREADY_EXISTS')) {
       return tr('该邮箱已注册', 'Email already registered');
+    }
+    if (err.status === 400 && err.message.includes('USERNAME_TAKEN')) {
+      return tr('用户名已被占用，换一个吧', 'Username already taken');
+    }
+    if (err.status === 403 && err.message.includes('INVALID_INVITE_CODE')) {
+      return tr('邀请码无效', 'Invalid invite code');
     }
     return `${tr('请求失败', 'Request failed')}（${err.status}）：${err.message}`;
   }
@@ -31,16 +39,26 @@ export function LoginPage() {
   const navigate = useNavigate();
   const { isAuthenticated, login, register } = useAuth();
   const [mode, setMode] = useState<Mode>('login');
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState(''); // 登录：邮箱或用户名；注册：邮箱
+  const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
+
+  const usernameValid = USERNAME_RE.test(username);
 
   const mutation = useMutation({
     mutationFn: async () => {
       if (mode === 'login') {
-        await login(email, password);
+        await login(identifier, password);
       } else {
-        await register({ email, password, invite_code: inviteCode });
+        await register({
+          email: identifier,
+          password,
+          display_name: displayName.trim(),
+          username,
+          invite_code: inviteCode,
+        });
       }
     },
     onSuccess: () => navigate('/', { replace: true }),
@@ -54,6 +72,8 @@ export function LoginPage() {
     e.preventDefault();
     mutation.mutate();
   }
+
+  const isRegister = mode === 'register';
 
   return (
     <div className="auth-page">
@@ -90,18 +110,62 @@ export function LoginPage() {
 
         <form onSubmit={onSubmit}>
           <div className="auth-field">
-            <label htmlFor="email">{tr('邮箱', 'Email')}</label>
+            <label htmlFor="identifier">
+              {isRegister ? tr('邮箱', 'Email') : tr('邮箱或用户名', 'Email or username')}
+            </label>
             <input
-              id="email"
+              id="identifier"
               className="auth-input"
-              type="email"
+              type={isRegister ? 'email' : 'text'}
               required
-              autoComplete="email"
-              placeholder="you@zju.edu.cn"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              autoComplete={isRegister ? 'email' : 'username'}
+              placeholder={isRegister ? 'you@zju.edu.cn' : tr('邮箱或用户名', 'Email or username')}
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
             />
           </div>
+
+          {isRegister && (
+            <>
+              <div className="auth-field">
+                <label htmlFor="displayName">{tr('姓名', 'Name')}</label>
+                <input
+                  id="displayName"
+                  className="auth-input"
+                  type="text"
+                  required
+                  maxLength={255}
+                  autoComplete="name"
+                  placeholder={tr('你的真实姓名', 'Your name')}
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                />
+              </div>
+              <div className="auth-field">
+                <label htmlFor="username">{tr('用户名', 'Username')}</label>
+                <input
+                  id="username"
+                  className="auth-input"
+                  type="text"
+                  required
+                  autoComplete="username"
+                  placeholder="e.g. zhang_san"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                />
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: username && !usernameValid ? 'var(--danger-tx)' : 'var(--text-4)',
+                    marginTop: 4,
+                  }}
+                >
+                  {tr('小写字母、数字、下划线，3-32 位；全局唯一', 'lowercase letters, digits, underscore; 3-32 chars; unique')}
+                </div>
+              </div>
+            </>
+          )}
+
           <div className="auth-field">
             <label htmlFor="password">{tr('密码', 'Password')}</label>
             <input
@@ -110,13 +174,14 @@ export function LoginPage() {
               type="password"
               required
               minLength={8}
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              autoComplete={isRegister ? 'new-password' : 'current-password'}
               placeholder={tr('至少 8 位', 'At least 8 characters')}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
-          {mode === 'register' && (
+
+          {isRegister && (
             <div className="auth-field">
               <label htmlFor="invite">{tr('邀请码', 'Invite code')}</label>
               <input
@@ -130,18 +195,19 @@ export function LoginPage() {
               />
             </div>
           )}
+
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={mutation.isPending}
+            disabled={mutation.isPending || (isRegister && !usernameValid)}
             style={{ width: '100%', justifyContent: 'center', height: 38, marginTop: 6 }}
           >
             {mutation.isPending ? (
               <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
             ) : (
-              <Icon name={mode === 'login' ? 'arrow' : 'plus'} size={14} />
+              <Icon name={isRegister ? 'plus' : 'arrow'} size={14} />
             )}
-            {mode === 'login' ? tr('登录', 'Sign in') : tr('注册并登录', 'Sign up and log in')}
+            {isRegister ? tr('注册并登录', 'Sign up and log in') : tr('登录', 'Sign in')}
           </button>
         </form>
 

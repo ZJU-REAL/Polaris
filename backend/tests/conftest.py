@@ -4,6 +4,7 @@
 """
 
 import os
+import re
 import tempfile
 
 import pytest_asyncio
@@ -100,7 +101,16 @@ async def fake_redis(app):
 INVITE_CODE = "test-invite"
 
 
-async def register_and_login(client: AsyncClient, email: str = "alice@example.com") -> str:
+def _username_from_email(email: str) -> str:
+    """从 email 派生一个合法用户名（小写字母/数字/下划线 3-32 位）。"""
+    local = email.split("@", 1)[0].lower()
+    uname = re.sub(r"[^a-z0-9_]", "_", local)
+    return (uname + "_u")[:32] if len(uname) < 3 else uname[:32]
+
+
+async def register_and_login(
+    client: AsyncClient, email: str = "alice@example.com", username: str | None = None
+) -> str:
     """注册 + 登录，返回 Bearer token。"""
     resp = await client.post(
         "/api/auth/register",
@@ -108,6 +118,7 @@ async def register_and_login(client: AsyncClient, email: str = "alice@example.co
             "email": email,
             "password": "str0ng-password",
             "display_name": "Alice",
+            "username": username or _username_from_email(email),
             "invite_code": INVITE_CODE,
         },
     )
