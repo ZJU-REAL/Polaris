@@ -41,6 +41,29 @@ async def resume_voyage(ctx: dict[str, Any], run_id: str) -> None:
     await _make_engine().resume(uuid.UUID(run_id))
 
 
+async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
+    """worker 启动对账：认领无人执行的 executing 航程。
+
+    被 SIGTERM/超时打断的 ARQ 任务按任务年龄指数延迟重试，长航程会被晾数小时
+    （实测：远端 run.sh 已 exit=0，平台侧 50 分钟无人收尾）。启动时把 executing
+    状态的 voyage 重新入队 resume——引擎幂等（setup/run 都会重挂在跑的远端进程，
+    checkpoint 断点恢复），``_job_id`` 去重避免同一 voyage 重复入队。"""
+    from sqlalchemy import select
+
+    from app.models.voyage import VoyageRun
+
+    async with get_sessionmaker()() as session:
+        ids = (
+            (await session.execute(select(VoyageRun.id).where(VoyageRun.status == "executing")))
+            .scalars()
+            .all()
+        )
+    for vid in ids:
+        await ctx["redis"].enqueue_job(
+            "resume_voyage", str(vid), _job_id=f"reconcile-resume-{vid}"
+        )
+
+
 async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
     """每日 03:00 cron：对 cadence=daily 且已 bootstrap（有水位线）的项目入队增量 ingest。
 
