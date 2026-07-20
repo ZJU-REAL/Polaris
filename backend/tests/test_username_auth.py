@@ -82,3 +82,38 @@ async def test_me_exposes_username(client):
     me = await client.get("/api/users/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["username"] == "neo"
+
+
+async def test_username_change_once_then_locked(client):
+    # 首个用户注册即拿到用户名，未锁定
+    resp = await _register(client)
+    assert resp.status_code == 201
+    assert resp.json()["username_locked"] is False
+    token = (await _login(client, "neo")).json()["access_token"]
+    h = {"Authorization": f"Bearer {token}"}
+
+    # 改一次成功并锁定
+    resp = await client.patch("/api/users/me/username", json={"username": "trinity"}, headers=h)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["username"] == "trinity"
+    assert resp.json()["username_locked"] is True
+    # 用新用户名可登录
+    assert (await _login(client, "trinity")).status_code == 200
+
+    # 第二次修改被拒
+    resp = await client.patch("/api/users/me/username", json={"username": "morpheus"}, headers=h)
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "USERNAME_LOCKED"
+
+
+async def test_username_change_rejects_taken_and_bad_format(client):
+    await _register(client)  # neo
+    await _register(client, email="t@example.com", username="tank")
+    token = (await _login(client, "tank")).json()["access_token"]
+    h = {"Authorization": f"Bearer {token}"}
+    # 撞到别人的用户名
+    resp = await client.patch("/api/users/me/username", json={"username": "neo"}, headers=h)
+    assert resp.status_code == 400 and resp.json()["detail"] == "USERNAME_TAKEN"
+    # 格式非法
+    resp = await client.patch("/api/users/me/username", json={"username": "AB"}, headers=h)
+    assert resp.status_code == 422

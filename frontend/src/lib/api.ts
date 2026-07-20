@@ -115,6 +115,7 @@ export interface UserRead {
   /** Polaris 扩展字段（后端可能暂未返回，均可选） */
   display_name?: string | null;
   username?: string | null;
+  username_locked?: boolean;
   role?: string;
   llm_access?: 'full' | 'chat_only' | 'blocked';
   has_avatar?: boolean;
@@ -1814,6 +1815,9 @@ export const api = {
   },
   updateMe(input: { display_name?: string }): Promise<UserRead> {
     return requestJson<UserRead>('/users/me', 'PATCH', input);
+  },
+  setUsername(username: string): Promise<UserRead> {
+    return requestJson<UserRead>('/users/me/username', 'PATCH', { username });
   },
   uploadAvatar(file: File): Promise<UserRead> {
     const form = new FormData();

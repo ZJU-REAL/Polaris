@@ -7,17 +7,40 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from PIL import Image
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
-from app.schemas.user import UsageSummary, UserRead, UserSearchResult
+from app.schemas.user import UsageSummary, UsernameUpdate, UserRead, UserSearchResult
 from app.services import users as users_service
 from app.services.users import tokens_used_by_user
 
 router = APIRouter(tags=["users"])
+
+
+@router.patch("/users/me/username", response_model=UserRead)
+async def set_my_username(
+    body: UsernameUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> User:
+    """本人设置用户名：只能改一次（改后锁定），全局唯一。"""
+    if user.username_locked:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="USERNAME_LOCKED")
+    uname = body.username.lower()
+    taken = (
+        await session.execute(select(User.id).where(User.username == uname, User.id != user.id))
+    ).first()
+    if taken is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="USERNAME_TAKEN")
+    user.username = uname
+    user.username_locked = True
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
 # 注意：不能用 /users/search —— 会被 fastapi-users 的 /users/{id}（超管）路由抢占

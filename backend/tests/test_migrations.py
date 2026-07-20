@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "183e8de0e85f"  # user username unique（本分支最新）
-PREV_REVISION = "9f2a7c04b6e1"  # manuscript main_tex + engine
+HEAD_REVISION = "26dfa5fd661e"  # username_locked + 重置用户名（本分支最新）
+PREV_REVISION = "183e8de0e85f"  # user username unique
 
 
 def _make_config(db_path: Path) -> Config:
@@ -140,15 +140,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "manuscript_templates"
     ]
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
-    # 本分支：users.username 唯一列
-    assert "username" in columns["users"]
+    # 本分支：users.username / username_locked 列
+    assert {"username", "username_locked"} <= columns["users"]
 
-    # 最新 revision 可往返（downgrade 移除 users.username）
+    # 最新 revision 可往返（downgrade 移除 users.username_locked，username 仍在）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "username" not in columns["users"]
-    # 上一版的列/表不受影响
+    assert "username_locked" not in columns["users"]
+    assert "username" in columns["users"]  # 上一版仍有用户名列
+    # 更早的列/表不受影响
     assert "manuscript_templates" in columns["_tables"]
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
     assert "manuscript_file_versions" in columns["_tables"]
@@ -160,4 +161,4 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    assert "username" in columns["users"]
+    assert {"username", "username_locked"} <= columns["users"]

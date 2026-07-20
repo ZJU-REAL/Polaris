@@ -13,6 +13,7 @@ USERNAME_PATTERN = r"^[a-z0-9_]{3,32}$"
 class UserRead(schemas.BaseUser[uuid.UUID]):
     display_name: str
     username: str | None = None
+    username_locked: bool = False
     role: str
     llm_access: str = "full"
     has_avatar: bool = False
@@ -47,6 +48,12 @@ class UserCreate(schemas.BaseUserCreate):
 
 class UserUpdate(schemas.BaseUserUpdate):
     display_name: str | None = None
+
+
+class UsernameUpdate(BaseModel):
+    """本人设置用户名（只能改一次）。"""
+
+    username: str = Field(pattern=USERNAME_PATTERN)
 
 
 # ---- 管理端（/admin/users） ----

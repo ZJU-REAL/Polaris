@@ -1,8 +1,54 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 
-/* 用户头像：有上传头像时经带鉴权的 blob 加载；否则显示名字首字母。 */
+/* 用户头像：有上传头像时经带鉴权的 blob 加载；否则用 GitHub 式 identicon（据 seed 确定生成）。 */
+
+/** FNV-1a 32 位哈希，稳定生成 identicon 图案与颜色。 */
+function hashSeed(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** GitHub 式 identicon：5×5 左右对称像素块，浅底 + 单色。 */
+function Identicon({ seed, size }: { seed: string; size: number }) {
+  const { color, cell, out } = useMemo(() => {
+    const h = hashSeed(seed);
+    const hue = Math.floor((((h >>> 24) & 0xff) / 255) * 360); // 高位定色，与图案去相关
+    const c = `hsl(${hue} 55% 52%)`;
+    const cw = size / 5;
+    const blocks: { x: number; y: number; key: string }[] = [];
+    let bit = 0;
+    for (let r = 0; r < 5; r++) {
+      for (let col = 0; col < 3; col++) {
+        const on = (h >> bit) & 1;
+        bit++;
+        if (!on) continue;
+        const cols = col === 2 ? [2] : [col, 4 - col];
+        for (const cc of cols) blocks.push({ x: cc * cw, y: r * cw, key: `${r}-${cc}` });
+      }
+    }
+    return { color: c, cell: cw, out: blocks };
+  }, [seed, size]);
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      style={{ borderRadius: '50%', flexShrink: 0, display: 'block', background: '#edeef1' }}
+      aria-hidden
+    >
+      {out.map((c) => (
+        <rect key={c.key} x={c.x} y={c.y} width={cell + 0.5} height={cell + 0.5} fill={color} />
+      ))}
+    </svg>
+  );
+}
 
 export function Avatar({
   userId,
@@ -36,7 +82,6 @@ export function Avatar({
     return () => URL.revokeObjectURL(u);
   }, [blob]);
 
-  const initial = (name || '?').trim().charAt(0).toUpperCase();
   if (url) {
     return (
       <img
@@ -46,23 +91,5 @@ export function Avatar({
       />
     );
   }
-  return (
-    <span
-      style={{
-        width: size,
-        height: size,
-        borderRadius: '50%',
-        background: 'var(--grad-avatar)',
-        color: 'var(--on-accent)',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: Math.max(10, size * 0.42),
-        fontWeight: 600,
-        flexShrink: 0,
-      }}
-    >
-      {initial}
-    </span>
-  );
+  return <Identicon seed={userId || name || '?'} size={size} />;
 }
