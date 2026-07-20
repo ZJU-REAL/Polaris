@@ -299,6 +299,116 @@ async def test_credential(credential: SSHCredential) -> tuple[bool, str]:
         await session.close()
 
 
+def parse_loadavg_block(stdout: str) -> dict[str, Any]:
+    """解析 `nproc; cat /proc/loadavg` 的合并输出 → {cores, load_1m/5m/15m}。容错，缺项跳过。"""
+    cpu: dict[str, Any] = {}
+    lines = [ln.strip() for ln in stdout.splitlines() if ln.strip()]
+    for ln in lines:
+        if ln.isdigit() and "cores" not in cpu:
+            cpu["cores"] = int(ln)
+            continue
+        parts = ln.split()
+        if len(parts) >= 3 and "load_1m" not in cpu:
+            try:
+                cpu["load_1m"], cpu["load_5m"], cpu["load_15m"] = (
+                    float(parts[0]),
+                    float(parts[1]),
+                    float(parts[2]),
+                )
+            except ValueError:
+                continue
+    return cpu
+
+
+def parse_free_mem(stdout: str) -> dict[str, int]:
+    """解析 `free -m` 的 Mem 行 → {total_mib, used_mib, available_mib}。容错。"""
+    for ln in stdout.splitlines():
+        parts = ln.split()
+        if len(parts) >= 3 and parts[0].rstrip(":").lower() == "mem":
+            try:
+                mem = {"total_mib": int(parts[1]), "used_mib": int(parts[2])}
+                if len(parts) >= 7:
+                    mem["available_mib"] = int(parts[6])
+                return mem
+            except ValueError:
+                return {}
+    return {}
+
+
+def parse_df(stdout: str, max_mounts: int = 8) -> list[dict[str, Any]]:
+    """解析 `df -PB1M`（无表头）行 → [{mount, total_mib, used_mib, avail_mib}]。容错。"""
+    disks: list[dict[str, Any]] = []
+    for ln in stdout.splitlines():
+        parts = ln.split()
+        if len(parts) < 6:
+            continue
+        try:
+            disks.append(
+                {
+                    "mount": parts[5],
+                    "total_mib": int(parts[1].rstrip("M")),
+                    "used_mib": int(parts[2].rstrip("M")),
+                    "avail_mib": int(parts[3].rstrip("M")),
+                }
+            )
+        except ValueError:
+            continue
+        if len(disks) >= max_mounts:
+            break
+    return disks
+
+
+async def probe_sysinfo(credential: SSHCredential) -> dict[str, Any]:
+    """服务器系统状态一览（CPU/内存/磁盘/GPU），设置页展示用。
+
+    固定模板命令 + 容错解析（确定性探测，非 LLM）；连接失败 → {ok: False, detail}；
+    单项探测失败该项缺省（尽力而为，不因一项失败整体报错）。
+    """
+    try:
+        private_key = decrypt_secret(credential.private_key_encrypted)
+        passphrase = (
+            decrypt_secret(credential.passphrase_encrypted)
+            if credential.passphrase_encrypted
+            else None
+        )
+        session = await get_connector().connect(
+            host=credential.host,
+            port=credential.port,
+            username=credential.username,
+            private_key=private_key,
+            passphrase=passphrase,
+        )
+    except Exception as e:  # noqa: BLE001 — 连接失败转 {ok: false} 而非 500
+        return {"ok": False, "detail": f"{type(e).__name__}: {e}"}
+    info: dict[str, Any] = {"ok": True, "host": credential.host}
+    probes = (
+        ("cpu", "nproc 2>/dev/null; cat /proc/loadavg 2>/dev/null", parse_loadavg_block),
+        ("mem", "free -m 2>/dev/null", parse_free_mem),
+        (
+            "disks",
+            "df -PB1M -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null | tail -n +2",
+            parse_df,
+        ),
+        (
+            "gpus",
+            "nvidia-smi --query-gpu=index,memory.total,memory.free "
+            "--format=csv,noheader,nounits 2>/dev/null",
+            parse_gpu_csv,
+        ),
+    )
+    try:
+        for key, command, parse in probes:
+            try:
+                result = await session.run(command, timeout=DEFAULT_CMD_TIMEOUT_SECONDS)
+            except Exception:  # noqa: BLE001 — 单项失败跳过
+                continue
+            if result.exit_status == 0:
+                info[key] = parse(result.stdout)
+    finally:
+        await session.close()
+    return info
+
+
 class SSHExecutor:
     """绑定单个实验工作目录的白名单命令执行器（全部远程命令过审计）。"""
 

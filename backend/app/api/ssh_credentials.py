@@ -70,3 +70,14 @@ async def test_credential(
     if ok:
         await credentials_service.mark_verified(session, credential)
     return SSHTestResult(ok=ok, detail=detail)
+
+
+@router.get("/{credential_id}/sysinfo")
+async def credential_sysinfo(
+    credential_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict:
+    """服务器系统状态一览（CPU/内存/磁盘/GPU；固定模板探测，连接失败 ok=false）。"""
+    credential = await _get_owned(session, credential_id, user)
+    return await ssh_exec.probe_sysinfo(credential)

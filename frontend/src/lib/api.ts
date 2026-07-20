@@ -1071,6 +1071,17 @@ export interface SshTestResult {
   detail: string;
 }
 
+/** 服务器系统状态（固定模板探测；连接失败 ok=false 只带 detail）。 */
+export interface SshSysinfo {
+  ok: boolean;
+  detail?: string;
+  host?: string;
+  cpu?: { cores?: number; load_1m?: number; load_5m?: number; load_15m?: number };
+  mem?: { total_mib?: number; used_mib?: number; available_mib?: number };
+  disks?: { mount: string; total_mib: number; used_mib: number; avail_mib: number }[];
+  gpus?: { index: number; mem_total_mib: number; mem_free_mib: number }[];
+}
+
 // ============================================================
 // M4 · Experiments（实验，与 kind=experiment 的 voyage 1:1）
 // ============================================================
@@ -2277,6 +2288,10 @@ export const api = {
   /** asyncssh 真连一次 + echo ok；成功则后端更新 last_verified_at。 */
   testSshCredential(id: string): Promise<SshTestResult> {
     return request<SshTestResult>(`/ssh-credentials/${id}/test`, { method: 'POST' });
+  },
+  /** 服务器系统状态一览（CPU/内存/磁盘/GPU；连接失败 ok=false）。 */
+  getSshCredentialSysinfo(id: string): Promise<SshSysinfo> {
+    return request<SshSysinfo>(`/ssh-credentials/${id}/sysinfo`);
   },
 
   // —— M4 · Experiments ——

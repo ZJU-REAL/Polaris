@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
@@ -19,6 +19,7 @@ import {
   type LlmProviderRead,
   type LlmRoute,
   type SshCredentialInput,
+  type SshSysinfo,
 } from '../../lib/api';
 
 /* ============================================================
@@ -205,6 +206,91 @@ function LanguageCard() {
 
 // ---------------- SSH 凭据（M4） ----------------
 
+/** MiB → 人话（GB 保留 1 位；小于 1GB 用 MB）。 */
+function fmtMib(mib: number | undefined): string {
+  if (mib == null || !Number.isFinite(mib)) return '—';
+  if (mib < 1024) return `${mib} MB`;
+  return `${(mib / 1024).toFixed(1)} GB`;
+}
+
+/** 服务器系统状态面板：CPU / 内存 / GPU / 磁盘（连接失败给明确提示）。 */
+function SysinfoPanel({
+  loading,
+  error,
+  info,
+  onRefresh,
+}: {
+  loading: boolean;
+  error: boolean;
+  info: SshSysinfo | undefined;
+  onRefresh: () => void;
+}) {
+  if (loading) return <div className="muted" style={{ fontSize: 12 }}>{tr('正在探测服务器…', 'Probing server…')}</div>;
+  if (error || !info) {
+    return (
+      <div className="row gap8" style={{ alignItems: 'center' }}>
+        <span className="muted" style={{ fontSize: 12 }}>{tr('获取失败', 'Failed to fetch')}</span>
+        <button className="btn btn-soft sm" onClick={onRefresh}>{tr('重试', 'Retry')}</button>
+      </div>
+    );
+  }
+  if (!info.ok) {
+    return (
+      <div className="row gap8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+          {tr('连接失败', 'Unreachable')}
+        </span>
+        <span className="mono muted" style={{ fontSize: 11, wordBreak: 'break-all' }}>{info.detail}</span>
+        <button className="btn btn-soft sm" onClick={onRefresh}>{tr('重试', 'Retry')}</button>
+      </div>
+    );
+  }
+  const cpu = info.cpu ?? {};
+  const mem = info.mem ?? {};
+  const gpus = info.gpus ?? [];
+  const disks = info.disks ?? [];
+  return (
+    <div className="col gap8">
+      <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+        {cpu.cores != null && (
+          <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+            <Icon name="cpu" size={11} /> CPU {cpu.cores} {tr('核', 'cores')}
+            {cpu.load_1m != null && <span style={{ opacity: 0.75 }}> · {tr('负载', 'load')} {cpu.load_1m}</span>}
+          </span>
+        )}
+        {mem.total_mib != null && (
+          <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+            <Icon name="layers" size={11} /> {tr('内存', 'Mem')} {fmtMib(mem.used_mib)} / {fmtMib(mem.total_mib)}
+            {mem.available_mib != null && <span style={{ opacity: 0.75 }}> · {tr('可用', 'avail')} {fmtMib(mem.available_mib)}</span>}
+          </span>
+        )}
+        {gpus.map((g) => (
+          <span key={g.index} className="pill sm mono" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+            GPU{g.index} {tr('空闲', 'free')} {fmtMib(g.mem_free_mib)} / {fmtMib(g.mem_total_mib)}
+          </span>
+        ))}
+        {gpus.length === 0 && (
+          <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-4)' }}>
+            {tr('无 GPU', 'No GPU')}
+          </span>
+        )}
+        <button className="btn btn-soft sm" style={{ marginLeft: 'auto' }} onClick={onRefresh}>
+          <Icon name="refresh" size={11} /> {tr('刷新', 'Refresh')}
+        </button>
+      </div>
+      {disks.length > 0 && (
+        <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+          {disks.map((d) => (
+            <span key={d.mount} className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+              <Icon name="server" size={11} /> {d.mount} {tr('已用', 'used')} {fmtMib(d.used_mib)} / {fmtMib(d.total_mib)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface SshDraft {
   name: string;
   host: string;
@@ -243,6 +329,16 @@ function SshTab() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [draft, setDraft] = useState<SshDraft>(emptySshDraft());
+  const [sysinfoId, setSysinfoId] = useState<string | null>(null);
+
+  // 服务器系统状态（展开时拉取，30s 自动刷新）
+  const sysinfoQuery = useQuery({
+    queryKey: ['ssh-credentials', sysinfoId, 'sysinfo'],
+    queryFn: () => api.getSshCredentialSysinfo(sysinfoId!),
+    enabled: sysinfoId != null,
+    retry: false,
+    refetchInterval: sysinfoId != null ? 30_000 : false,
+  });
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['ssh-credentials'] });
 
@@ -325,39 +421,60 @@ function SshTab() {
           </thead>
           <tbody>
             {creds.map((c) => (
-              <tr key={c.id}>
-                <td style={{ fontWeight: 600 }}>{c.name}</td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{c.host}</td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{c.port}</td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{c.username}</td>
-                <td className="mono" style={{ fontSize: 11, color: c.last_verified_at ? 'var(--ok-tx)' : 'var(--text-4)' }}>
-                  {c.last_verified_at ? fmtTime(c.last_verified_at) : tr('从未验证', 'Never verified')}
-                </td>
-                <td>
-                  <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
-                    <button
-                      className="btn btn-soft sm"
-                      disabled={testMutation.isPending}
-                      onClick={() => testMutation.mutate(c.id)}
-                    >
-                      {testMutation.isPending && testMutation.variables === c.id ? tr('连接中…', 'Connecting…') : tr('测试连接', 'Test connection')}
-                    </button>
-                    <button
-                      className="icon-btn"
-                      style={{ width: 26, height: 26 }}
-                      title={tr('删除', 'Delete')}
-                      disabled={deleteMutation.isPending}
-                      onClick={() => {
-                        if (window.confirm(`${tr('确定删除凭据', 'Delete credential')} “${c.name}”？${tr('使用中的实验将无法再连接该服务器。', 'Experiments using it will no longer be able to reach this server.')}`)) {
-                          deleteMutation.mutate(c.id);
-                        }
-                      }}
-                    >
-                      <Icon name="trash" size={13} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
+              <Fragment key={c.id}>
+                <tr>
+                  <td style={{ fontWeight: 600 }}>{c.name}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{c.host}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{c.port}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{c.username}</td>
+                  <td className="mono" style={{ fontSize: 11, color: c.last_verified_at ? 'var(--ok-tx)' : 'var(--text-4)' }}>
+                    {c.last_verified_at ? fmtTime(c.last_verified_at) : tr('从未验证', 'Never verified')}
+                  </td>
+                  <td>
+                    <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
+                      <button
+                        className="btn btn-soft sm"
+                        onClick={() => setSysinfoId(sysinfoId === c.id ? null : c.id)}
+                      >
+                        <Icon name="cpu" size={12} />
+                        {sysinfoId === c.id ? tr('收起状态', 'Hide status') : tr('系统状态', 'System status')}
+                      </button>
+                      <button
+                        className="btn btn-soft sm"
+                        disabled={testMutation.isPending}
+                        onClick={() => testMutation.mutate(c.id)}
+                      >
+                        {testMutation.isPending && testMutation.variables === c.id ? tr('连接中…', 'Connecting…') : tr('测试连接', 'Test connection')}
+                      </button>
+                      <button
+                        className="icon-btn"
+                        style={{ width: 26, height: 26 }}
+                        title={tr('删除', 'Delete')}
+                        disabled={deleteMutation.isPending}
+                        onClick={() => {
+                          if (window.confirm(`${tr('确定删除凭据', 'Delete credential')} “${c.name}”？${tr('使用中的实验将无法再连接该服务器。', 'Experiments using it will no longer be able to reach this server.')}`)) {
+                            deleteMutation.mutate(c.id);
+                          }
+                        }}
+                      >
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {sysinfoId === c.id && (
+                  <tr>
+                    <td colSpan={6} style={{ background: 'var(--surface-2)', padding: '12px 16px' }}>
+                      <SysinfoPanel
+                        loading={sysinfoQuery.isLoading}
+                        error={sysinfoQuery.isError}
+                        info={sysinfoQuery.data}
+                        onRefresh={() => void sysinfoQuery.refetch()}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

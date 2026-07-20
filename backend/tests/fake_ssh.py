@@ -160,6 +160,23 @@ class FakeSSHSession:
             if m:
                 server.killed.append(int(m.group(1)))
             return SSHResult(0, "", "")
+        if "nproc" in command:  # probe_sysinfo CPU（nproc + /proc/loadavg 合并输出）
+            return SSHResult(0, "64\n1.25 0.80 0.50 2/2000 12345\n", "")
+        if command.startswith("free -m"):  # probe_sysinfo 内存
+            return SSHResult(
+                0,
+                "              total        used        free      shared  buff/cache   available\n"
+                "Mem:         515711       88320      120000        1024      307391      420000\n"
+                "Swap:          8191           0        8191\n",
+                "",
+            )
+        if command.startswith("df -P"):  # probe_sysinfo 磁盘（-PB1M 无表头行）
+            return SSHResult(
+                0,
+                "/dev/nvme0n1p2 1920000M 810000M 1010000M 45% /\n"
+                "nfs:/data 9600000M 7200000M 2400000M 75% /data\n",
+                "",
+            )
         if "nvidia-smi" in command:  # probe_gpu：无卡 → 命令失败（模拟无 GPU/驱动）
             if not server.gpus:
                 return SSHResult(127, "", "nvidia-smi: command not found")

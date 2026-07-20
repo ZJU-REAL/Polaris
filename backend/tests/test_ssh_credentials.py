@@ -130,3 +130,63 @@ async def test_credential_test_endpoint_failure(client, fake_ssh):
     assert "connection refused" in body["detail"]
     resp = await client.get("/api/ssh-credentials", headers=headers)
     assert resp.json()[0]["last_verified_at"] is None
+
+
+async def test_credential_sysinfo(client, fake_ssh):
+    """系统状态：CPU/内存/磁盘/GPU 一次探测返回（固定模板 + 容错解析）。"""
+    headers = await _auth(client)
+    resp = await client.post("/api/ssh-credentials", json=PAYLOAD, headers=headers)
+    cred_id = resp.json()["id"]
+
+    fake_ssh.gpus = [(0, 81920, 56000), (1, 49140, 12000)]
+    resp = await client.get(f"/api/ssh-credentials/{cred_id}/sysinfo", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True and body["host"] == "gpu1.lab.internal"
+    assert body["cpu"] == {"cores": 64, "load_1m": 1.25, "load_5m": 0.8, "load_15m": 0.5}
+    assert body["mem"]["total_mib"] == 515711 and body["mem"]["available_mib"] == 420000
+    assert [d["mount"] for d in body["disks"]] == ["/", "/data"]
+    assert body["disks"][0]["total_mib"] == 1920000
+    assert [g["index"] for g in body["gpus"]] == [0, 1]
+    assert body["gpus"][0]["mem_total_mib"] == 81920
+
+
+async def test_credential_sysinfo_unreachable(client, fake_ssh):
+    """连不上 → ok=false + detail，而非 500。"""
+    headers = await _auth(client)
+    resp = await client.post("/api/ssh-credentials", json=PAYLOAD, headers=headers)
+    cred_id = resp.json()["id"]
+
+    fake_ssh.connect_error = "no route to host"
+    resp = await client.get(f"/api/ssh-credentials/{cred_id}/sysinfo", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False and "no route to host" in body["detail"]
+
+
+async def test_credential_sysinfo_not_owned_404(client, fake_ssh):
+    """他人凭据 404（不泄露存在性），与其余端点一致。"""
+    headers_a = await _auth(client, "alice@example.com")
+    resp = await client.post("/api/ssh-credentials", json=PAYLOAD, headers=headers_a)
+    cred_id = resp.json()["id"]
+    headers_b = await _auth(client, "bob@example.com")
+    resp = await client.get(f"/api/ssh-credentials/{cred_id}/sysinfo", headers=headers_b)
+    assert resp.status_code == 404
+
+
+def test_sysinfo_parsers_unit():
+    """容错解析单元：非法输入 → 空/跳过。"""
+    from app.services import ssh_exec
+
+    assert ssh_exec.parse_loadavg_block("64\n1.5 1.0 0.5 1/2 3\n") == {
+        "cores": 64,
+        "load_1m": 1.5,
+        "load_5m": 1.0,
+        "load_15m": 0.5,
+    }
+    assert ssh_exec.parse_loadavg_block("garbage") == {}
+    assert ssh_exec.parse_free_mem("Mem: 100 50 25 0 25 60\n")["available_mib"] == 60
+    assert ssh_exec.parse_free_mem("nothing here") == {}
+    assert ssh_exec.parse_df("/dev/x 100M 50M 50M 50% /\nbad line\n") == [
+        {"mount": "/", "total_mib": 100, "used_mib": 50, "avail_mib": 50}
+    ]
