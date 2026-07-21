@@ -100,10 +100,8 @@ export function FeedbackWidget() {
     setBody('');
   };
 
-  const close = () => {
-    setOpen(false);
-    reset();
-  };
+  // 关闭只收起弹窗、保留草稿（误点外部/Esc 不丢内容）；提交成功后才清空
+  const close = () => setOpen(false);
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -143,6 +141,7 @@ export function FeedbackWidget() {
       void queryClient.invalidateQueries({ queryKey: ['admin-feedback'] });
       void queryClient.invalidateQueries({ queryKey: ['my-feedback'] });
       close();
+      reset();
     },
     onError: (e) => toast(`${tr('提交失败', 'Submit failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
