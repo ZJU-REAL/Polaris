@@ -13,6 +13,9 @@ class IngestKnobs(BaseModel):
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     snowball_depth: int = Field(default=1, ge=0, le=2)  # 引文雪球层数
     compile_top_n: int = Field(default=20, ge=1, le=200)  # 打分后精读编译前 N 篇
+    # 最大化模式：True 时检索/打分/抽取/编译不设篇数上限（max_papers/compile_top_n 被忽略，
+    # 仅保留极高安全哨兵防失控），token 预算也不设限。默认 False，向后兼容。
+    unlimited: bool = False
 
 
 class IngestRequest(BaseModel):

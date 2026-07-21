@@ -23,6 +23,10 @@ class IngestConflictError(Exception):
 
 
 def derive_budget(knobs: IngestKnobs) -> dict[str, Any]:
+    # 最大化模式不设 token 预算：引擎 _budget_exceeded 对 falsy 的 max_tokens（None/缺失）
+    # 直接跳过预算检查（engine.py），任务不会因预算暂停/降级收尾。
+    if knobs.unlimited:
+        return {"max_tokens": None}
     return {"max_tokens": int(knobs.max_papers) * _TOKENS_PER_PAPER}
 
 

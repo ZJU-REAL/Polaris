@@ -856,6 +856,8 @@ export interface IngestKnobs {
   snowball_depth?: number;
   /** 打分后精读编译前 N 篇 */
   compile_top_n?: number;
+  /** 最大化模式：检索/编译不设篇数上限（忽略 max_papers/compile_top_n），预算不设限 */
+  unlimited?: boolean;
 }
 
 export interface IngestLastRun {
