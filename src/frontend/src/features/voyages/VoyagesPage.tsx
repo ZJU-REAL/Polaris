@@ -9,6 +9,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { useProject } from '../../app/project';
 import { api, VOYAGE_TERMINAL, type VoyageRead } from '../../lib/api';
 import { fmtDuration, fmtFullTime, fmtRelative } from '../../lib/format';
@@ -343,11 +344,11 @@ export function VoyagesPage() {
         }
       >
         <FormField label={tr('所属方向', 'Direction')}>
-          <select className="input" value={effectiveProjectId} onChange={(e) => setCreateProjectId(e.target.value)}>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          <SelectMenu
+            value={effectiveProjectId}
+            options={projects.map((p) => ({ value: p.id, label: p.name }))}
+            onChange={setCreateProjectId}
+          />
         </FormField>
         <FormField label={tr('目标', 'Goal')} hint={tr('系统将围绕该目标自动生成三步计划', 'A three-step plan will be generated around this goal')}>
           <textarea className="textarea" rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />

@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { tr } from '../../lib/i18n';
 import { useProject } from '../../app/project';
 import {
@@ -263,13 +264,12 @@ function SkillDetailModal({
         {skill.kind !== 'workflow' && currentProjectId && targets.length > 0 && (
           <span className="row gap8" style={{ marginLeft: 'auto' }}>
             {targets.length > 1 && (
-              <select className="input" style={{ width: 160 }} value={enableTarget} onChange={(e) => setEnableTarget(e.target.value)}>
-                {targets.map((t) => (
-                  <option key={t} value={t}>
-                    {skillTargetLabel(t)}
-                  </option>
-                ))}
-              </select>
+              <SelectMenu
+                wrapStyle={{ width: 160 }}
+                value={enableTarget || targets[0] || ''}
+                options={targets.map((t) => ({ value: t, label: skillTargetLabel(t) }))}
+                onChange={setEnableTarget}
+              />
             )}
             <button
               className="btn btn-primary"

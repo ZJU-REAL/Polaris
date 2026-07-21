@@ -4,6 +4,7 @@ import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api, ApiError, type TemplateInfo } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
@@ -158,11 +159,11 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
 
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
         <FormField label={tr('编译引擎', 'Engine')} style={{ flex: 1 }}>
-          <select className="input" value={engine} onChange={(e) => setEngine(e.target.value)}>
-            {ENGINES.map((en) => (
-              <option key={en} value={en}>{en}</option>
-            ))}
-          </select>
+          <SelectMenu
+            value={engine}
+            options={ENGINES.map((en) => ({ value: en, label: en }))}
+            onChange={setEngine}
+          />
         </FormField>
         <FormField
           label={tr('正文页数上限（可选）', 'Body page limit (optional)')}

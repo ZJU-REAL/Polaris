@@ -5,6 +5,7 @@ import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
@@ -145,14 +146,13 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         hint={noIdeas ? undefined : tr('仅列出已晋级的想法。', 'Only promoted ideas are listed.')}
         error={noIdeas ? tr('当前方向还没有已晋级的想法，先在想法评审页晋级一个。', 'No promoted ideas in this direction yet — promote one in Idea Review first.') : null}
       >
-        <select className="input" value={ideaId} onChange={(e) => setIdeaId(e.target.value)} disabled={noIdeas}>
-          <option value="" disabled>
-            {ideasQuery.isLoading ? tr('加载中…', 'Loading…') : ideasQuery.isError ? tr('（无法加载想法列表）', '(could not load ideas)') : tr('— 选择已晋级的想法 —', '— pick a promoted idea —')}
-          </option>
-          {ideas.map((i) => (
-            <option key={i.id} value={i.id}>{i.title}</option>
-          ))}
-        </select>
+        <SelectMenu
+          value={ideaId}
+          disabled={noIdeas}
+          placeholder={ideasQuery.isLoading ? tr('加载中…', 'Loading…') : ideasQuery.isError ? tr('（无法加载想法列表）', '(could not load ideas)') : tr('— 选择已晋级的想法 —', '— pick a promoted idea —')}
+          options={ideas.map((i) => ({ value: i.id, label: i.title }))}
+          onChange={setIdeaId}
+        />
       </FormField>
       {noIdeas && (
         <div style={{ marginTop: -6, marginBottom: 14 }}>
@@ -169,16 +169,13 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         hint={noCreds ? undefined : tr('实验将在该服务器的 ~/polaris_runs/ 下建隔离环境运行。', 'The experiment runs in an isolated environment under ~/polaris_runs/ on that server.')}
         error={noCreds ? tr('还没有 SSH 凭据，请先到设置页添加。', 'No SSH credentials yet — add one in Settings first.') : null}
       >
-        <select className="input" value={credentialId} onChange={(e) => setCredentialId(e.target.value)} disabled={noCreds}>
-          <option value="" disabled>
-            {credsQuery.isLoading ? tr('加载中…', 'Loading…') : credsQuery.isError ? tr('（无法加载凭据列表）', '(could not load credentials)') : tr('— 选择凭据 —', '— pick a credential —')}
-          </option>
-          {creds.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}（{c.username}@{c.host}:{c.port}）
-            </option>
-          ))}
-        </select>
+        <SelectMenu
+          value={credentialId}
+          disabled={noCreds}
+          placeholder={credsQuery.isLoading ? tr('加载中…', 'Loading…') : credsQuery.isError ? tr('（无法加载凭据列表）', '(could not load credentials)') : tr('— 选择凭据 —', '— pick a credential —')}
+          options={creds.map((c) => ({ value: c.id, label: `${c.name}（${c.username}@${c.host}:${c.port}）` }))}
+          onChange={setCredentialId}
+        />
       </FormField>
       {noCreds && (
         <div style={{ marginTop: -6, marginBottom: 14 }}>

@@ -7,6 +7,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { FormField } from '../../components/ui/FormField';
 import { KnobRange } from '../../components/ui/KnobRange';
 import { toast } from '../../components/ui/Toast';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api, ApiError, type DeepSeedType } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
@@ -177,16 +178,15 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
               onChange={(e) => setConceptQ(e.target.value)}
               placeholder={tr('输入名称过滤概念…', 'Type a name to filter concepts…')}
             />
-            <select className="input" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
-              <option value="" disabled>
-                {conceptsQuery.isLoading ? tr('加载中…', 'Loading…') : conceptsQuery.isError ? tr('（无法加载概念列表）', '(could not load concepts)') : concepts.length === 0 ? tr('（没有匹配的概念）', '(no matching concepts)') : tr('— 选择概念 —', '— pick a concept —')}
-              </option>
-              {concepts.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}{tr(`（${c.paper_count} 篇）`, ` (${c.paper_count} papers)`)}
-                </option>
-              ))}
-            </select>
+            <SelectMenu
+              value={conceptId}
+              placeholder={conceptsQuery.isLoading ? tr('加载中…', 'Loading…') : conceptsQuery.isError ? tr('（无法加载概念列表）', '(could not load concepts)') : concepts.length === 0 ? tr('（没有匹配的概念）', '(no matching concepts)') : tr('— 选择概念 —', '— pick a concept —')}
+              options={concepts.map((c) => ({
+                value: c.id,
+                label: `${c.name}${tr(`（${c.paper_count} 篇）`, ` (${c.paper_count} papers)`)}`,
+              }))}
+              onChange={setConceptId}
+            />
           </div>
         </FormField>
       )}
@@ -200,33 +200,32 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
               onChange={(e) => setPaperQ(e.target.value)}
               placeholder={tr('输入关键词搜索论文…', 'Type keywords to search papers…')}
             />
-            <select className="input" value={paperId} onChange={(e) => setPaperId(e.target.value)}>
-              <option value="" disabled>
-                {papersQuery.isLoading ? tr('加载中…', 'Loading…') : papersQuery.isError ? tr('（无法加载论文列表）', '(could not load papers)') : papers.length === 0 ? tr('（没有匹配的论文）', '(no matching papers)') : tr('— 选择论文 —', '— pick a paper —')}
-              </option>
-              {papers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.title}{p.year ? tr(`（${p.year}）`, ` (${p.year})`) : ''}
-                </option>
-              ))}
-            </select>
+            <SelectMenu
+              value={paperId}
+              placeholder={papersQuery.isLoading ? tr('加载中…', 'Loading…') : papersQuery.isError ? tr('（无法加载论文列表）', '(could not load papers)') : papers.length === 0 ? tr('（没有匹配的论文）', '(no matching papers)') : tr('— 选择论文 —', '— pick a paper —')}
+              options={papers.map((p) => ({
+                value: p.id,
+                label: `${p.title}${p.year ? tr(`（${p.year}）`, ` (${p.year})`) : ''}`,
+              }))}
+              onChange={setPaperId}
+            />
           </div>
         </FormField>
       )}
 
       {seedType === 'idea' && (
         <FormField label={tr('选择草案', 'Pick a sketch')} en="seed idea" hint={tr('把一份方向草案深化为完整研究方案，AI 会继承草案的依据文献继续探索。', 'Deepen a sketch into a full proposal; the AI inherits its evidence papers and keeps exploring.')}>
-          <select className="input" value={ideaId} onChange={(e) => setIdeaId(e.target.value)}>
-            <option value="" disabled>
-              {sketchesQuery.isLoading ? tr('加载中…', 'Loading…') : sketchesQuery.isError ? tr('（无法加载草案列表）', '(could not load sketches)') : sketches.length === 0 ? tr('（还没有草案，先运行一次想法生成）', '(no sketches yet — run idea generation first)') : tr('— 选择草案 —', '— pick a sketch —')}
-            </option>
-            {initialSeedIdea && !sketches.some((s) => s.id === initialSeedIdea.id) && (
-              <option value={initialSeedIdea.id}>{initialSeedIdea.title}</option>
-            )}
-            {sketches.map((s) => (
-              <option key={s.id} value={s.id}>{s.title}</option>
-            ))}
-          </select>
+          <SelectMenu
+            value={ideaId}
+            placeholder={sketchesQuery.isLoading ? tr('加载中…', 'Loading…') : sketchesQuery.isError ? tr('（无法加载草案列表）', '(could not load sketches)') : sketches.length === 0 ? tr('（还没有草案，先运行一次想法生成）', '(no sketches yet — run idea generation first)') : tr('— 选择草案 —', '— pick a sketch —')}
+            options={[
+              ...(initialSeedIdea && !sketches.some((s) => s.id === initialSeedIdea.id)
+                ? [{ value: initialSeedIdea.id, label: initialSeedIdea.title }]
+                : []),
+              ...sketches.map((s) => ({ value: s.id, label: s.title })),
+            ]}
+            onChange={setIdeaId}
+          />
         </FormField>
       )}
 

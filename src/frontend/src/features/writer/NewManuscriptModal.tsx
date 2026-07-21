@@ -5,6 +5,7 @@ import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api, type TemplateInfo, type TemplateDownloadProgress } from '../../lib/api';
 import { subscribeTemplateDownloadProgress } from '../../lib/sse';
 import { tr } from '../../lib/i18n';
@@ -351,28 +352,28 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
           style={{ flex: 1, minWidth: 0 }}
           hint={tr('论文事实包中研究想法分区的来源；仅列出已晋级的想法。', 'Source for the idea section of the fact pack; only promoted ideas are listed.')}
         >
-          <select className="input" style={{ width: '100%' }} value={ideaId} onChange={(e) => setIdeaId(e.target.value)}>
-            <option value="">
-              {ideasQuery.isLoading ? tr('加载中…', 'Loading…') : tr('— 不关联 —', '— none —')}
-            </option>
-            {ideas.map((i) => (
-              <option key={i.id} value={i.id}>{i.title}</option>
-            ))}
-          </select>
+          <SelectMenu
+            value={ideaId}
+            options={[
+              { value: '', label: ideasQuery.isLoading ? tr('加载中…', 'Loading…') : tr('— 不关联 —', '— none —') },
+              ...ideas.map((i) => ({ value: i.id, label: i.title })),
+            ]}
+            onChange={setIdeaId}
+          />
         </FormField>
         <FormField
           label={tr('关联实验（可选）', 'Linked experiment (optional)')}
           style={{ flex: 1, minWidth: 0 }}
           hint={tr('事实包的指标 / 图表 / 假设来源；仅列已完成实验。', 'Source of fact-pack metrics / figures / hypotheses; only finished experiments are listed.')}
         >
-          <select className="input" style={{ width: '100%' }} value={experimentId} onChange={(e) => setExperimentId(e.target.value)}>
-            <option value="">
-              {expsQuery.isLoading ? tr('加载中…', 'Loading…') : tr('— 不关联 —', '— none —')}
-            </option>
-            {doneExps.map((x) => (
-              <option key={x.id} value={x.id}>{x.idea_title}</option>
-            ))}
-          </select>
+          <SelectMenu
+            value={experimentId}
+            options={[
+              { value: '', label: expsQuery.isLoading ? tr('加载中…', 'Loading…') : tr('— 不关联 —', '— none —') },
+              ...doneExps.map((x) => ({ value: x.id, label: x.idea_title })),
+            ]}
+            onChange={setExperimentId}
+          />
         </FormField>
       </div>
 
