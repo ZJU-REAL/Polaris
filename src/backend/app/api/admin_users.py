@@ -56,6 +56,7 @@ async def update_user(
         is_active=target.is_active,
         has_avatar=target.has_avatar,
         llm_access=target.llm_access,
+        llm_self_managed=target.llm_self_managed,
         token_quota=target.token_quota,
         features=target.features,
         tokens_used=tokens_used,

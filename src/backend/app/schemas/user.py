@@ -16,6 +16,7 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     username_locked: bool = False
     role: str
     llm_access: str = "full"
+    llm_self_managed: bool = False
     has_avatar: bool = False
     token_quota: int | None = None
     features: dict[str, Any] | None = None
@@ -68,6 +69,7 @@ class AdminUserRead(BaseModel):
     is_active: bool
     has_avatar: bool
     llm_access: str
+    llm_self_managed: bool
     token_quota: int | None
     features: dict[str, Any] | None
     tokens_used: int
@@ -82,6 +84,8 @@ class AdminUserUpdate(BaseModel):
     token_quota: int | None = Field(default=None, ge=-1)
     features: dict[str, bool] | None = None
     llm_access: str | None = Field(default=None, pattern="^(full|chat_only|blocked)$")
+    # 接管/释放：False=接管（用全局配置）| True=释放（用户自管）
+    llm_self_managed: bool | None = None
 
 
 class BatchAssignRequest(BaseModel):

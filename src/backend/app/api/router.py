@@ -20,6 +20,7 @@ from app.api import (
     manuscripts,
     market,
     mcp_meta,
+    me_llm,
     notes,
     papers,
     presentations,
@@ -45,6 +46,7 @@ api_router.include_router(projects.router)
 api_router.include_router(gates.router)
 api_router.include_router(voyages.router)
 api_router.include_router(admin_llm.router)
+api_router.include_router(me_llm.router)
 api_router.include_router(papers.router)
 api_router.include_router(library.router)
 api_router.include_router(publications.router)
