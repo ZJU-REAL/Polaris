@@ -10,6 +10,7 @@ import { useAuth } from './auth';
 import { useProject } from './project';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
+import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
 import { api, getToken, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
@@ -575,6 +576,9 @@ export function AppShell() {
 
       {/* —— 全局搜索面板 —— */}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+
+      {/* —— 全局反馈入口（右下角悬浮气泡） —— */}
+      <FeedbackWidget />
 
       <ToastHost />
     </div>

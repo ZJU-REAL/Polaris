@@ -9,6 +9,7 @@ from app.api import (
     auth,
     concepts,
     experiments,
+    feedback,
     gates,
     health,
     highlights,
@@ -37,6 +38,7 @@ api_router.include_router(users_profile.router)
 api_router.include_router(invites.router)
 api_router.include_router(admin_users.router)
 api_router.include_router(admin_codes.router)
+api_router.include_router(feedback.router)
 api_router.include_router(projects.router)
 api_router.include_router(gates.router)
 api_router.include_router(voyages.router)

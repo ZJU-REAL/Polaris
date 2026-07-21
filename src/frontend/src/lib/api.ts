@@ -1928,6 +1928,84 @@ export interface McpToolsCatalog {
   tools: McpToolInfo[];
 }
 
+// ============================================================
+// 健康检查（版本号等，反馈上下文用）
+// ============================================================
+
+export interface HealthInfo {
+  status: string;
+  version: string;
+}
+
+// ============================================================
+// 用户反馈（bug / 功能建议 / 界面体验…）+ 管理端 triage
+// ============================================================
+
+export type FeedbackType = 'bug' | 'feature' | 'ui' | 'question' | 'perf' | 'task' | 'other';
+export type FeedbackSeverity = 'blocker' | 'high' | 'normal' | 'low';
+export type FeedbackStatus =
+  | 'new'
+  | 'triaged'
+  | 'in_progress'
+  | 'resolved'
+  | 'closed'
+  | 'wontfix';
+
+export interface FeedbackImageRead {
+  id: string;
+  seq: number;
+}
+
+/** LLM 生成的 GitHub issue 草稿（可编辑后提交建 issue）。 */
+export interface IssueDraft {
+  title: string;
+  body: string;
+  labels: string[];
+}
+
+export interface FeedbackAuthor {
+  id: string;
+  display_name: string;
+  username: string | null;
+}
+
+export interface FeedbackRead {
+  id: string;
+  type: FeedbackType;
+  severity: FeedbackSeverity;
+  title: string;
+  body: string;
+  route: string | null;
+  module: string | null;
+  context: Record<string, unknown> | null;
+  status: FeedbackStatus;
+  admin_note: string | null;
+  issue_draft: IssueDraft | null;
+  github_issue_number: number | null;
+  github_issue_url: string | null;
+  created_at: string;
+  images: FeedbackImageRead[];
+  author: FeedbackAuthor | null;
+}
+
+/** 提交反馈入参（上下文由前端自动组装，用户不填）。 */
+export interface FeedbackSubmitInput {
+  type: FeedbackType;
+  severity: FeedbackSeverity;
+  title: string;
+  body: string;
+  route?: string | null;
+  context?: Record<string, unknown> | null;
+}
+
+/** 管理端 triage 补丁（部分更新）。 */
+export interface FeedbackPatch {
+  status?: FeedbackStatus;
+  severity?: FeedbackSeverity;
+  type?: FeedbackType;
+  admin_note?: string;
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -1943,6 +2021,11 @@ export const api = {
   /** fastapi-users register — JSON body, invite_code is a Polaris extension. */
   register(input: RegisterInput): Promise<UserRead> {
     return requestJson<UserRead>('/auth/register', 'POST', input);
+  },
+
+  /** 健康检查：{status, version}（反馈上下文里带版本号用）。 */
+  health(): Promise<HealthInfo> {
+    return request<HealthInfo>('/health');
   },
 
   /** Current user. */
@@ -2019,6 +2102,39 @@ export const api = {
   },
   adminRevokeRegistrationCode(codeId: string): Promise<void> {
     return request<void>(`/admin/registration-codes/${codeId}`, { method: 'DELETE' });
+  },
+
+  // —— 用户反馈（提交入口 + 我的反馈） ——
+  submitFeedback(input: FeedbackSubmitInput): Promise<FeedbackRead> {
+    return requestJson<FeedbackRead>('/feedback', 'POST', input);
+  },
+  uploadFeedbackImage(id: string, file: File): Promise<FeedbackImageRead> {
+    const form = new FormData();
+    form.append('file', file);
+    return request<FeedbackImageRead>(`/feedback/${id}/images`, { method: 'POST', body: form });
+  },
+  myFeedback(): Promise<FeedbackRead[]> {
+    return request<FeedbackRead[]>('/feedback/mine');
+  },
+  feedbackImageBlob(id: string, seq: number): Promise<Blob> {
+    return requestBlob(`/feedback/${id}/images/${seq}`);
+  },
+
+  // —— 管理员：反馈 triage + 建 issue ——
+  adminListFeedback(): Promise<FeedbackRead[]> {
+    return request<FeedbackRead[]>('/admin/feedback');
+  },
+  adminFeedbackGithubStatus(): Promise<{ enabled: boolean }> {
+    return request<{ enabled: boolean }>('/admin/feedback/github-status');
+  },
+  adminUpdateFeedback(id: string, patch: FeedbackPatch): Promise<FeedbackRead> {
+    return requestJson<FeedbackRead>(`/admin/feedback/${id}`, 'PATCH', patch);
+  },
+  adminGenerateIssueDraft(id: string): Promise<IssueDraft> {
+    return request<IssueDraft>(`/admin/feedback/${id}/draft`, { method: 'POST' });
+  },
+  adminCreateIssue(id: string, draft: IssueDraft): Promise<{ number: number; url: string }> {
+    return requestJson<{ number: number; url: string }>(`/admin/feedback/${id}/issue`, 'POST', draft);
   },
 
   // —— Projects ——

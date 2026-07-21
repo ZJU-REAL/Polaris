@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     encryption_key: str = ""  # Fernet key；为空时 security.py 会从 secret_key 派生（仅限 dev）
     invite_code: str = "polaris-lab"  # 注册邀请码（实验室内部制）
 
+    # ---- GitHub（用户反馈 → issue）----
+    github_token: str = ""  # PAT（repo scope）；为空时禁用「建 issue」，仅出草稿
+    github_repo: str = "ZJU-REAL/Polaris"  # owner/name，issue 创建目标仓库
+
     # ---- Database / Cache ----
     # 默认回退 sqlite+aiosqlite，便于无 docker 的本地开发与测试；生产用 postgresql+asyncpg
     database_url: str = "sqlite+aiosqlite:///./polaris_dev.db"
@@ -47,7 +51,12 @@ class Settings(BaseSettings):
     pip_index_url: str = ""
 
     @field_validator(
-        "s2_api_key", "openai_compat_api_key", "anthropic_api_key", "outbound_proxy", mode="before"
+        "s2_api_key",
+        "openai_compat_api_key",
+        "anthropic_api_key",
+        "github_token",
+        "outbound_proxy",
+        mode="before",
     )
     @classmethod
     def _sanitize_token(cls, v: object) -> object:
