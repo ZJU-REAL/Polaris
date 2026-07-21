@@ -72,10 +72,33 @@ async def list_users_with_usage(session: AsyncSession) -> list[dict[str, Any]]:
     ]
 
 
+class UsernameTakenError(Exception):
+    """用户名已被占用。"""
+
+
+async def username_taken(
+    session: AsyncSession, username: str, *, exclude_id: uuid.UUID | None = None
+) -> bool:
+    stmt = select(User.id).where(User.username == username)
+    if exclude_id is not None:
+        stmt = stmt.where(User.id != exclude_id)
+    return (await session.execute(stmt)).first() is not None
+
+
 async def admin_update_user(session: AsyncSession, user: User, data: dict[str, Any]) -> User:
-    """应用管理员编辑；features 只保留已知功能键；token_quota=-1 清除配额。"""
+    """应用管理员编辑；features 只保留已知功能键；token_quota=-1 清除配额。
+
+    data 里的 username 会做全局唯一校验（占用则抛 UsernameTakenError）；password 需
+    调用方（API 层，持 password_helper）预先 hash 后放入 data["hashed_password"]。
+    """
     if (v := data.get("display_name")) is not None:
         user.display_name = v
+    if (v := data.get("username")) is not None and v != user.username:
+        if await username_taken(session, v, exclude_id=user.id):
+            raise UsernameTakenError(v)
+        user.username = v
+    if (v := data.get("hashed_password")) is not None:
+        user.hashed_password = v
     if (v := data.get("role")) is not None:
         user.role = v
     if (v := data.get("is_active")) is not None:
@@ -96,6 +119,31 @@ async def admin_update_user(session: AsyncSession, user: User, data: dict[str, A
 
         get_llm_router().invalidate_cache()
     return user
+
+
+async def delete_user(session: AsyncSession, user: User) -> None:
+    """删除用户（其自管 provider/路由等按 FK CASCADE 清理，反馈/注册码等 SET NULL）。"""
+    await session.delete(user)
+    await session.commit()
+
+
+async def batch_delete_users(
+    session: AsyncSession, *, user_ids: list[uuid.UUID], exclude_id: uuid.UUID
+) -> int:
+    """批量删除用户（跳过 exclude_id，即不删自己），返回实际删除数。"""
+    targets = (
+        (
+            await session.execute(
+                select(User).where(User.id.in_(user_ids), User.id != exclude_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for u in targets:
+        await session.delete(u)
+    await session.commit()
+    return len(targets)
 
 
 async def batch_assign(
