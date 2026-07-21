@@ -9,7 +9,7 @@ import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { ExportMenu, PapersTab } from './PapersTab';
+import { ExportMenu, PapersTab, type AdvSearchSeed } from './PapersTab';
 import { ConceptsTab } from './ConceptsTab';
 import { LibraryChatTab } from './LibraryChatTab';
 import { IngestTab } from './IngestTab';
@@ -40,6 +40,8 @@ export function WikiPage() {
   const [conceptId, setConceptId] = useState<string | null>(null);
   /** [[概念名]] 双链点击后待解析的概念名 */
   const [pendingConceptName, setPendingConceptName] = useState<string | null>(null);
+  /** 深链带入的作者/机构筛选（seq 递增，PapersTab 据此重新应用） */
+  const [advSeed, setAdvSeed] = useState<AdvSearchSeed | null>(null);
 
   // 切换项目时重置选中态
   useEffect(() => {
@@ -48,18 +50,28 @@ export function WikiPage() {
     setPendingConceptName(null);
   }, [pid]);
 
-  // 深链 /wiki?paper=<id>（idea 详情 / 阅读页返回）与 /wiki?concept=<名称>
-  // （阅读页双链跳转，按名称解析）：处理后清掉参数
+  // 深链 /wiki?paper=<id>（idea 详情 / 阅读页返回）、/wiki?concept=<名称>
+  // （阅读页双链跳转，按名称解析）与 /wiki?author= / ?affiliation=
+  // （阅读页作者/机构点击 → 论文库按其过滤）：处理后清掉参数
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const p = searchParams.get('paper');
     const c = searchParams.get('concept');
-    if (!p && !c) return;
+    const author = searchParams.get('author');
+    const affiliation = searchParams.get('affiliation');
+    if (!p && !c && !author && !affiliation) return;
     if (p) {
       setPaperId(p);
       setTab('papers');
     } else if (c) {
       setPendingConceptName(c);
+    } else {
+      setAdvSeed((old) => ({
+        author: author ?? undefined,
+        affiliation: affiliation ?? undefined,
+        seq: (old?.seq ?? 0) + 1,
+      }));
+      setTab('papers');
     }
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams]);
@@ -231,6 +243,7 @@ export function WikiPage() {
             onSelect={setPaperId}
             onOpenConcept={goConcept}
             onWikiLink={onWikiLink}
+            advSeed={advSeed}
           />
         ) : tab === 'concepts' ? (
           <ConceptsTab
