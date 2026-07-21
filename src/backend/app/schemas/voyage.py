@@ -84,6 +84,19 @@ class VoyagePlanEvent(BaseModel):
     at: datetime | None = None
 
 
+class VoyageTerminalLogRead(BaseModel):
+    """任务终端历史日志的一条：结构化日志行（event=log）或大模型完整输出（event=llm）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int  # 自增即时间序，前端据此排序 / 去重
+    event: Literal["log", "llm"]
+    level: str | None = None  # log 上色 level（info/step/success/error/plan/budget/gate）
+    stage: str | None = None  # llm 环节（navigator/librarian/...）
+    message: str
+    at: datetime
+
+
 class VoyageDetailRead(VoyageRead):
     steps: list[VoyageStepRead]
     # checkpoint["skills"] 快照摘要（路由填充；无快照为 []）

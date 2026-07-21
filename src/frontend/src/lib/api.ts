@@ -382,6 +382,16 @@ export interface VoyageDetail extends VoyageRead {
   plan_history?: VoyagePlanEvent[] | null;
 }
 
+/** 任务终端历史日志的一条：结构化日志行（log）或大模型完整输出（llm）。 */
+export interface VoyageTerminalLogRead {
+  id: number; // 自增即时间序，前端据此排序
+  event: 'log' | 'llm';
+  level?: string | null; // log 上色 level
+  stage?: string | null; // llm 环节
+  message: string;
+  at: string;
+}
+
 // ============================================================
 // Gates（人在环闸门）
 // ============================================================
@@ -2061,6 +2071,10 @@ export const api = {
   /** 重试 paused_error 的航程，从断点续跑。 */
   resumeVoyage(id: string): Promise<VoyageRead> {
     return request<VoyageRead>(`/voyages/${id}/resume`, { method: 'POST' });
+  },
+  /** 任务终端历史日志（结构化日志 + 大模型完整输出），供刷新后 / 事后回看。 */
+  getVoyageLogs(id: string): Promise<VoyageTerminalLogRead[]> {
+    return request<VoyageTerminalLogRead[]>(`/voyages/${id}/logs`);
   },
 
   // —— Gates ——

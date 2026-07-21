@@ -35,6 +35,16 @@ class EventBus:
     ) -> None:
         payload = json.dumps({"event": event, "data": data}, ensure_ascii=False, default=str)
         await self._redis.publish(voyage_channel(voyage_id), payload)
+        # 结构化日志行落库，供刷新后 / 事后回看（大模型完整输出在 llm_end 处单独落库）。
+        if event == "log" and data.get("message"):
+            from app.services.voyage_logs import record_terminal_log
+
+            await record_terminal_log(
+                voyage_id,
+                "log",
+                message=str(data["message"]),
+                level=data.get("level"),
+            )
 
     async def publish_notify(self, project_id: uuid.UUID | str, message: dict[str, Any]) -> None:
         payload = json.dumps(message, ensure_ascii=False, default=str)
