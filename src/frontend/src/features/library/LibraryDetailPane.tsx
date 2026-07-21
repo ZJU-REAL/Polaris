@@ -1,0 +1,267 @@
+import { useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Icon } from '../../components/ui/Icon';
+import { CompileBadge } from '../../components/ui/CompileBadge';
+import { FigureEmbed, usePaperFigures } from '../../components/ui/FigureGallery';
+import { Markdown } from '../../lib/markdown';
+import { api, type LibraryEntry, type PaperAuthor, type Publication } from '../../lib/api';
+import { tr } from '../../lib/i18n';
+
+/* ============================================================
+   我的文献库 · 右栏详情（三个 tab 共用）：
+   - 活体论文（paperId 非 null）→ 拉论文详情；有 wiki 用文献追踪
+     同款 markdown 渲染（含 ![[fig:N]] 嵌入图与 [[概念]] 双链，
+     双链跳转对齐阅读页：/wiki?concept=名称）；
+   - 活体但没有 wiki → 元数据 + 摘要/TL;DR + 一句提示；
+   - 快照条目（论文已删）→ 快照元数据 + 摘要 + 外链按钮。
+   ============================================================ */
+
+/** 右栏展示用的条目快照：库条目 / 发表条目统一成这一个形状。 */
+export interface DetailSnapshot {
+  title: string;
+  authors: PaperAuthor[];
+  year: number | null;
+  venue: string | null;
+  arxivId: string | null;
+  doi: string | null;
+  url: string | null;
+  abstract?: string | null;
+  tldr?: string | null;
+  citedByCount?: number;
+}
+
+export function entrySnapshot(e: LibraryEntry): DetailSnapshot {
+  return {
+    title: e.title,
+    authors: e.authors,
+    year: e.year,
+    venue: e.venue,
+    arxivId: e.arxiv_id,
+    doi: e.doi,
+    url: e.url,
+    abstract: e.abstract,
+    tldr: e.tldr,
+  };
+}
+
+export function pubSnapshot(p: Publication): DetailSnapshot {
+  return {
+    title: p.title,
+    authors: p.authors,
+    year: p.year,
+    venue: p.venue,
+    arxivId: p.arxiv_id,
+    doi: p.doi,
+    url: p.url,
+    citedByCount: p.cited_by_count,
+  };
+}
+
+/** frontmatter 风格元数据行（同文献追踪详情面板版式）。 */
+function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="row" style={{ gap: 12, padding: '4px 0', alignItems: 'flex-start' }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', width: 88, flexShrink: 0 }}>
+        {label}
+      </span>
+      <span style={{ fontSize: 12.5, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
+        {children}
+      </span>
+    </div>
+  );
+}
+
+export function LibraryDetailPane({
+  paperId,
+  snapshot,
+}: {
+  /** 活体论文 id；null = 快照条目（论文已删，只展示快照元数据）。 */
+  paperId: string | null;
+  snapshot: DetailSnapshot;
+}) {
+  const navigate = useNavigate();
+
+  // 与文献追踪详情面板同一个 queryKey（['paper', id]），缓存互通
+  const paperQuery = useQuery({
+    queryKey: ['paper', paperId],
+    queryFn: () => api.getPaper(paperId ?? ''),
+    enabled: paperId !== null,
+    retry: false,
+  });
+  const paper = paperId !== null && paperQuery.isSuccess ? paperQuery.data : undefined;
+
+  // 正文 ![[fig:N]] 嵌入图（同文献追踪）
+  const figures = usePaperFigures(paper);
+  const renderFigure = useCallback(
+    (n: number) => {
+      const fig = figures.find((f) => f.index === n);
+      return fig && paper ? <FigureEmbed paperId={paper.id} fig={fig} /> : null;
+    },
+    [figures, paper],
+  );
+
+  // [[概念]] 双链 → 方向的 wiki（对齐阅读页的处理）
+  const onWikiLink = useCallback(
+    (name: string) => navigate(`/wiki?concept=${encodeURIComponent(name)}`),
+    [navigate],
+  );
+
+  if (paperId !== null && paperQuery.isLoading) {
+    return <div className="empty" style={{ margin: 'auto' }}>{tr('加载论文详情…', 'Loading paper…')}</div>;
+  }
+
+  // 详情拉不到（比如论文刚被删）时退回快照展示
+  const alive = paper !== undefined;
+  const title = paper?.title ?? snapshot.title;
+  const authors = (paper?.authors ?? snapshot.authors).map((a) => a.name).join(', ');
+  const year = paper?.year ?? snapshot.year;
+  const venue = paper?.venue ?? snapshot.venue;
+  const arxivId = paper?.arxiv_id ?? snapshot.arxivId;
+  const doi = paper?.doi ?? snapshot.doi;
+  const url = paper?.url ?? snapshot.url;
+  const abstract = paper?.abstract ?? snapshot.abstract ?? null;
+  const tldr = paper?.tldr ?? snapshot.tldr ?? null;
+  const arxivUrl = arxivId ? `https://arxiv.org/abs/${arxivId}` : null;
+
+  return (
+    <div
+      className="scroll fadeup"
+      key={paperId ?? snapshot.title}
+      style={{ overflowY: 'auto', flex: 1, padding: '26px 32px 60px' }}
+    >
+      {/* —— pills 行 —— */}
+      <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
+        {venue && (
+          <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
+            {venue}
+          </span>
+        )}
+        {alive && paper.has_wiki && (
+          <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+            <Icon name="sparkle" size={11} />
+            wiki
+          </span>
+        )}
+        {!alive && (
+          <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+            {tr('源方向已删除，仅保留快照', 'Source direction deleted — snapshot only')}
+          </span>
+        )}
+      </div>
+
+      {/* —— 标题 + 作者 —— */}
+      <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
+        {title}
+      </h1>
+      {authors && (
+        <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>{authors}</div>
+      )}
+
+      {/* —— 操作：打开阅读页（仅活体论文）+ 外链 —— */}
+      <div className="row gap8 wrap" style={{ marginTop: 14 }}>
+        {alive && (
+          <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`)}>
+            <Icon name="file" size={13} />
+            {tr('打开阅读页', 'Open reader')}
+          </button>
+        )}
+        {arxivUrl && (
+          <a
+            className="btn btn-ghost sm"
+            href={arxivUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            style={{ textDecoration: 'none' }}
+          >
+            <Icon name="link" size={13} />
+            arXiv
+          </a>
+        )}
+        {url && !arxivUrl && (
+          <a
+            className="btn btn-ghost sm"
+            href={url}
+            target="_blank"
+            rel="noreferrer noopener"
+            style={{ textDecoration: 'none' }}
+          >
+            <Icon name="link" size={13} />
+            {tr('原文链接', 'Source link')}
+          </a>
+        )}
+      </div>
+
+      {/* —— frontmatter 风格元数据卡 —— */}
+      <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
+        <MetaItem label="arxiv_id">
+          {arxivId ? <span className="mono">{arxivId}</span> : <span className="muted">—</span>}
+        </MetaItem>
+        <MetaItem label="doi">{doi ? <span className="mono">{doi}</span> : <span className="muted">—</span>}</MetaItem>
+        <MetaItem label={tr('年份', 'year')}>
+          {year !== null ? <span className="mono">{year}</span> : <span className="muted">—</span>}
+        </MetaItem>
+        <MetaItem label={tr('发表于', 'venue')}>{venue ?? <span className="muted">—</span>}</MetaItem>
+        {snapshot.citedByCount !== undefined && (
+          <MetaItem label={tr('被引', 'cited by')}>
+            <span className="mono">{snapshot.citedByCount}</span>
+          </MetaItem>
+        )}
+      </div>
+
+      {/* —— TL;DR —— */}
+      {tldr && (
+        <div
+          style={{
+            marginTop: 18,
+            padding: '12px 16px',
+            borderRadius: 10,
+            background: 'var(--accent-soft)',
+            fontSize: 13,
+            lineHeight: 1.65,
+            color: 'var(--text)',
+          }}
+        >
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
+            TL;DR
+          </span>
+          {tldr}
+        </div>
+      )}
+
+      {/* —— 摘要 —— */}
+      {abstract && (
+        <div style={{ marginTop: 18 }}>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em', marginBottom: 6 }}>
+            {tr('摘要', 'Abstract')}
+          </div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-2)' }}>{abstract}</div>
+        </div>
+      )}
+
+      {/* —— Wiki 正文（文献追踪同款 markdown 渲染） —— */}
+      {alive && (
+        <div style={{ marginTop: 22 }}>
+          {paper.wiki_content ? (
+            <>
+              <div
+                className="row gap8"
+                style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
+              >
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+                  {tr('AI 图文介绍', 'AI intro')}
+                </span>
+                <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
+              </div>
+              <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
+            </>
+          ) : (
+            <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+              {tr('该论文还没有生成 wiki', 'No wiki generated for this paper yet')}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
