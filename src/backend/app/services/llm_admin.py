@@ -55,6 +55,7 @@ async def create_provider(session: AsyncSession, data: ProviderCreate) -> LLMPro
         base_url=data.base_url,
         api_key_encrypted=encrypt_secret(data.api_key) if data.api_key else None,
         enabled=data.enabled,
+        models=data.models,
     )
     session.add(provider)
     await session.commit()
@@ -76,6 +77,8 @@ async def update_provider(
         provider.api_key_encrypted = encrypt_secret(data.api_key)
     if data.enabled is not None:
         provider.enabled = data.enabled
+    if data.models is not None:  # 整体替换；清空传 []
+        provider.models = data.models
     await session.commit()
     await session.refresh(provider)
     get_llm_router().invalidate_cache()

@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -18,6 +18,8 @@ class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 明文 key 不落库：core/security.py Fernet 加密后存这里
     api_key_encrypted: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # 该 provider 可用的模型 id 列表（字符串数组；None = 未配置，前端不给候选）
+    models: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     routes: Mapped[list["ModelRoute"]] = relationship(
         back_populates="provider", cascade="all, delete-orphan"

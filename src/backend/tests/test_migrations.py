@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "26dfa5fd661e"  # username_locked + 重置用户名（本分支最新）
-PREV_REVISION = "183e8de0e85f"  # user username unique
+HEAD_REVISION = "b627c7e22dc8"  # provider models list（本分支最新）
+PREV_REVISION = "7a2c9e4f16b3"  # idea/exp trash + tz
 
 
 def _make_config(db_path: Path) -> Config:
@@ -48,6 +48,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "users",
                     "voyage_runs",
                     "voyage_steps",
+                    "llm_providers",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -140,15 +141,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "manuscript_templates"
     ]
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
-    # 本分支：users.username / username_locked 列
+    # 用户名列（更早版本）
     assert {"username", "username_locked"} <= columns["users"]
+    # 本分支：llm_providers.models 列（可用模型列表）
+    assert "models" in columns["llm_providers"]
 
-    # 最新 revision 可往返（downgrade 移除 users.username_locked，username 仍在）
+    # 最新 revision 可往返（downgrade 移除 llm_providers.models）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "username_locked" not in columns["users"]
-    assert "username" in columns["users"]  # 上一版仍有用户名列
+    assert "models" not in columns["llm_providers"]
+    assert {"username", "username_locked"} <= columns["users"]  # 上一版仍有用户名列
     # 更早的列/表不受影响
     assert "manuscript_templates" in columns["_tables"]
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
@@ -161,4 +164,4 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    assert {"username", "username_locked"} <= columns["users"]
+    assert "models" in columns["llm_providers"]

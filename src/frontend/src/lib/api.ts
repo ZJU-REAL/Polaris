@@ -424,6 +424,8 @@ export interface LlmProviderRead {
   base_url: string | null;
   api_key_masked: string | null;
   enabled: boolean;
+  /** 可用模型 id 列表（null = 未配置） */
+  models: string[] | null;
 }
 
 export interface LlmProviderInput {
@@ -433,6 +435,8 @@ export interface LlmProviderInput {
   /** 空字符串 = 不变（PATCH 时） */
   api_key?: string;
   enabled: boolean;
+  /** 可用模型 id 列表；整体替换（清空传 []） */
+  models?: string[];
 }
 
 export interface LlmRoute {

@@ -29,6 +29,7 @@ def _provider_read(provider: LLMProviderConfig) -> ProviderRead:
         base_url=provider.base_url,
         api_key_masked=llm_admin_service.masked_key_of(provider),
         enabled=provider.enabled,
+        models=provider.models,
     )
 
 
