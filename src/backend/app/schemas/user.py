@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi_users import schemas
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 USERNAME_PATTERN = r"^[a-z0-9_]{3,32}$"
 
@@ -76,8 +76,23 @@ class AdminUserRead(BaseModel):
     created_at: datetime
 
 
+class AdminUserCreate(BaseModel):
+    """管理员直接建号（免邀请码）。"""
+
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    display_name: str = Field(min_length=1, max_length=255)
+    username: str = Field(pattern=USERNAME_PATTERN)
+    role: str = Field(default="member", pattern="^(admin|member)$")
+    llm_access: str = Field(default="full", pattern="^(full|chat_only|blocked)$")
+    token_quota: int | None = Field(default=None, ge=0)
+
+
 class AdminUserUpdate(BaseModel):
-    display_name: str | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    username: str | None = Field(default=None, pattern=USERNAME_PATTERN)
+    # 重置密码（≥8 位）；不传 = 不变
+    password: str | None = Field(default=None, min_length=8, max_length=128)
     role: str | None = Field(default=None, pattern="^(admin|member)$")
     is_active: bool | None = None
     # token_quota：传 -1 表示清除配额（恢复不限）
@@ -96,6 +111,14 @@ class BatchAssignRequest(BaseModel):
 
 class BatchAssignResult(BaseModel):
     added: int  # 新增成员数（已是成员的跳过）
+
+
+class BatchDeleteRequest(BaseModel):
+    user_ids: list[uuid.UUID] = Field(min_length=1)
+
+
+class BatchDeleteResult(BaseModel):
+    deleted: int
 
 
 class UsageSummary(BaseModel):

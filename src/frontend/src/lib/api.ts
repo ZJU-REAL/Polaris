@@ -2184,10 +2184,26 @@ export const api = {
   adminListUsers(): Promise<AdminUserRead[]> {
     return request<AdminUserRead[]>('/admin/users');
   },
+  adminCreateUser(input: {
+    email: string;
+    /** 明文初始密码，至少 8 位 */
+    password: string;
+    display_name: string;
+    username: string;
+    role: 'member' | 'admin';
+    llm_access: 'full' | 'chat_only' | 'blocked';
+    /** 留空 = 不限 */
+    token_quota?: number | null;
+  }): Promise<AdminUserRead> {
+    return requestJson<AdminUserRead>('/admin/users', 'POST', input);
+  },
   adminUpdateUser(
     userId: string,
     input: {
       display_name?: string;
+      username?: string;
+      /** 重置密码，至少 8 位；留空即不改 */
+      password?: string;
       role?: string;
       is_active?: boolean;
       token_quota?: number;
@@ -2198,6 +2214,12 @@ export const api = {
     },
   ): Promise<AdminUserRead> {
     return requestJson<AdminUserRead>(`/admin/users/${userId}`, 'PATCH', input);
+  },
+  adminDeleteUser(userId: string): Promise<void> {
+    return request<void>(`/admin/users/${userId}`, { method: 'DELETE' });
+  },
+  adminBatchDeleteUsers(userIds: string[]): Promise<{ deleted: number }> {
+    return requestJson<{ deleted: number }>('/admin/users/batch-delete', 'POST', { user_ids: userIds });
   },
   adminListProjects(): Promise<ProjectRead[]> {
     return request<ProjectRead[]>('/admin/projects');

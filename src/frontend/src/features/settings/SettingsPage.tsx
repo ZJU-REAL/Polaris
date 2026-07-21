@@ -16,6 +16,7 @@ import { AcademicIdentitySection } from './AcademicIdentitySection';
 import { tr } from '../../lib/i18n';
 import { setTaskLogHistory, useTaskLogHistory } from '../../lib/prefs';
 import {
+  ApiError,
   LLM_STAGES,
   api,
   isAdmin,
@@ -2147,8 +2148,225 @@ const FEATURE_LABELS: [string, string, string][] = [
   ['paper_review', '论文评审', 'Paper review'],
 ];
 
+const USERNAME_RE = /^[a-z0-9_]{3,32}$/;
+
+/** 把后端用户 CRUD 的错误码翻成友好文案。 */
+function userCrudErrorMessage(e: unknown): string {
+  let code = '';
+  let reason = '';
+  if (e instanceof ApiError) {
+    const detail = (e.body as { detail?: unknown } | undefined)?.detail;
+    if (typeof detail === 'string') {
+      code = detail;
+    } else if (detail && typeof detail === 'object') {
+      const d = detail as { code?: unknown; reason?: unknown };
+      code = typeof d.code === 'string' ? d.code : '';
+      reason = typeof d.reason === 'string' ? d.reason : '';
+    } else {
+      code = e.message;
+    }
+  } else if (e instanceof Error) {
+    code = e.message;
+  } else {
+    code = String(e);
+  }
+  switch (code) {
+    case 'USERNAME_TAKEN':
+      return tr('用户名已被占用，请换一个', 'Username already taken');
+    case 'EMAIL_TAKEN':
+      return tr('该邮箱已注册', 'Email already registered');
+    case 'INVALID_PASSWORD':
+      return reason
+        ? `${tr('密码不符合要求', 'Password does not meet requirements')}：${reason}`
+        : tr('密码不符合要求（至少 8 位）', 'Password does not meet requirements (at least 8 characters)');
+    case 'CANNOT_DELETE_SELF':
+      return tr('不能删除自己的账号', 'You cannot delete your own account');
+    case 'USER_NOT_FOUND':
+      return tr('用户不存在（可能已被删除）', 'User not found (may already be deleted)');
+    case 'CANNOT_MODIFY_SELF_ROLE':
+      return tr('不能修改自己的角色或停用自己', 'You cannot change your own role or deactivate yourself');
+    default:
+      return `${tr('操作失败', 'Failed')}：${code || tr('未知错误', 'unknown error')}`;
+  }
+}
+
+function CreateUserModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [email, setEmail] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<'member' | 'admin'>('member');
+  const [llmAccess, setLlmAccess] = useState<'full' | 'chat_only' | 'blocked'>('full');
+  const [quota, setQuota] = useState('');
+
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const usernameOk = USERNAME_RE.test(username.trim());
+  const passwordOk = password.length >= 8;
+  const quotaInvalid = quota.trim() !== '' && (!Number.isFinite(Number(quota)) || Number(quota) < 0);
+  const canSubmit = emailOk && usernameOk && passwordOk && displayName.trim() !== '' && !quotaInvalid;
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      api.adminCreateUser({
+        email: email.trim(),
+        password,
+        display_name: displayName.trim(),
+        username: username.trim(),
+        role,
+        llm_access: llmAccess,
+        token_quota: quota.trim() === '' ? null : Math.max(0, Number(quota)),
+      }),
+    onSuccess: () => {
+      toast(tr('已添加用户', 'User created'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      onClose();
+    },
+    onError: (e) => toast(userCrudErrorMessage(e), 'error'),
+  });
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={520}
+      title={tr('添加用户', 'Add user')}
+      sub={tr('创建一个新账号并设定初始密码', 'Create a new account with an initial password')}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
+          <button className="btn btn-primary" disabled={!canSubmit || createMutation.isPending} onClick={() => createMutation.mutate()}>
+            {tr('创建', 'Create')}
+          </button>
+        </>
+      }
+    >
+      <FormField label={tr('邮箱', 'Email')} error={email.trim() !== '' && !emailOk ? tr('邮箱格式不正确', 'Invalid email format') : null}>
+        <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" autoComplete="off" />
+      </FormField>
+      <FormField label={tr('姓名', 'Name')}>
+        <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={tr('显示名称', 'Display name')} autoComplete="off" />
+      </FormField>
+      <FormField
+        label={tr('用户名', 'Username')}
+        hint={tr('3–32 位小写字母、数字或下划线', '3–32 lowercase letters, digits or underscores')}
+        error={username.trim() !== '' && !usernameOk ? tr('只能用小写字母、数字、下划线，长度 3–32', 'Only lowercase letters, digits, underscores; length 3–32') : null}
+      >
+        <input className="input mono" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} placeholder="e.g. li_ming" autoComplete="off" />
+      </FormField>
+      <FormField
+        label={tr('初始密码', 'Initial password')}
+        hint={tr('至少 8 位；用户登录后可自行修改', 'At least 8 characters; the user can change it after signing in')}
+        error={password !== '' && !passwordOk ? tr('密码至少 8 位', 'Password must be at least 8 characters') : null}
+      >
+        <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+      </FormField>
+      <div className="row gap10" style={{ marginBottom: 16 }}>
+        <FormField label={tr('角色', 'Role')} style={{ flex: 1, marginBottom: 0 }}>
+          <SelectMenu
+            value={role}
+            options={[
+              { value: 'member', label: tr('成员', 'Member') },
+              { value: 'admin', label: tr('管理员', 'Admin') },
+            ]}
+            onChange={(v) => setRole(v as 'member' | 'admin')}
+          />
+        </FormField>
+        <FormField label={tr('大模型使用', 'LLM access')} style={{ flex: 1, marginBottom: 0 }}>
+          <SelectMenu
+            value={llmAccess}
+            options={[
+              { value: 'full', label: tr('不限', 'Unrestricted') },
+              { value: 'chat_only', label: tr('仅对话', 'Chat only') },
+              { value: 'blocked', label: tr('锁定', 'Blocked') },
+            ]}
+            onChange={(v) => setLlmAccess(v as 'full' | 'chat_only' | 'blocked')}
+          />
+        </FormField>
+      </div>
+      <FormField
+        label={tr('AI token 配额', 'Token quota')}
+        hint={tr('留空 = 不限。达到配额后不能再发起 AI 任务', 'Empty = unlimited. Once reached, no new AI tasks can start')}
+        error={quotaInvalid ? tr('请输入非负整数', 'Enter a non-negative number') : null}
+      >
+        <input className="input mono" value={quota} onChange={(e) => setQuota(e.target.value)} placeholder={tr('不限', 'Unlimited')} />
+      </FormField>
+    </Modal>
+  );
+}
+
+function DeleteUserModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const deleteMutation = useMutation({
+    mutationFn: () => api.adminDeleteUser(u.id),
+    onSuccess: () => {
+      toast(tr('已删除用户', 'User deleted'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      onClose();
+    },
+    onError: (e) => toast(userCrudErrorMessage(e), 'error'),
+  });
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={440}
+      title={tr('删除用户', 'Delete user')}
+      sub={u.display_name || u.email}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
+          <button className="btn btn-danger" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}>
+            {tr('删除', 'Delete')}
+          </button>
+        </>
+      }
+    >
+      <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>
+        {tr('确定要删除该用户吗？此操作不可恢复，该用户的账号将被永久移除。', 'Delete this user? This cannot be undone — the account will be permanently removed.')}
+      </div>
+    </Modal>
+  );
+}
+
+function BatchDeleteUsersModal({ userIds, onClose, onDone }: { userIds: string[]; onClose: () => void; onDone: () => void }) {
+  const deleteMutation = useMutation({
+    mutationFn: () => api.adminBatchDeleteUsers(userIds),
+    onSuccess: (r) => {
+      toast(tr(`已删除 ${r.deleted} 个用户`, `Deleted ${r.deleted} users`), 'ok');
+      onDone();
+      onClose();
+    },
+    onError: (e) => toast(userCrudErrorMessage(e), 'error'),
+  });
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={440}
+      title={tr('批量删除用户', 'Delete users in bulk')}
+      sub={tr(`已选 ${userIds.length} 个用户`, `${userIds.length} users selected`)}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
+          <button className="btn btn-danger" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}>
+            {tr('删除', 'Delete')}
+          </button>
+        </>
+      }
+    >
+      <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>
+        {tr('确定要删除选中的用户吗？此操作不可恢复。如果其中包含你自己的账号，会自动跳过。', 'Delete the selected users? This cannot be undone. Your own account, if selected, will be skipped automatically.')}
+      </div>
+    </Modal>
+  );
+}
+
 function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const [displayName, setDisplayName] = useState(u.display_name || '');
+  const [username, setUsername] = useState(u.username || '');
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState(u.role);
   const [active, setActive] = useState(u.is_active);
   const [quota, setQuota] = useState(u.token_quota != null ? String(u.token_quota) : '');
@@ -2159,9 +2377,15 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
     return f;
   });
 
+  const usernameOk = username.trim() === '' || USERNAME_RE.test(username.trim());
+  const passwordOk = password === '' || password.length >= 8;
+
   const saveMutation = useMutation({
     mutationFn: () =>
       api.adminUpdateUser(u.id, {
+        display_name: displayName.trim(),
+        username: username.trim(),
+        ...(password !== '' ? { password } : {}),
         role,
         is_active: active,
         token_quota: quota.trim() === '' ? -1 : Math.max(0, Number(quota)),
@@ -2173,10 +2397,7 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
       void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       onClose();
     },
-    onError: (e) => {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast(msg === 'CANNOT_MODIFY_SELF_ROLE' ? tr('不能修改自己的角色或停用自己', 'You cannot change your own role or deactivate yourself') : `${tr('保存失败', 'Save failed')}：${msg}`, 'error');
-    },
+    onError: (e) => toast(userCrudErrorMessage(e), 'error'),
   });
 
   const quotaInvalid = quota.trim() !== '' && (!Number.isFinite(Number(quota)) || Number(quota) < 0);
@@ -2191,12 +2412,31 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
-          <button className="btn btn-primary" disabled={saveMutation.isPending || quotaInvalid} onClick={() => saveMutation.mutate()}>
+          <button className="btn btn-primary" disabled={saveMutation.isPending || quotaInvalid || !usernameOk || !passwordOk} onClick={() => saveMutation.mutate()}>
             {tr('保存', 'Save')}
           </button>
         </>
       }
     >
+      <div className="row gap10" style={{ marginBottom: 16 }}>
+        <FormField label={tr('姓名', 'Name')} style={{ flex: 1, marginBottom: 0 }}>
+          <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={tr('显示名称', 'Display name')} />
+        </FormField>
+        <FormField
+          label={tr('用户名', 'Username')}
+          style={{ flex: 1, marginBottom: 0 }}
+          error={!usernameOk ? tr('只能用小写字母、数字、下划线，长度 3–32', 'Only lowercase letters, digits, underscores; length 3–32') : null}
+        >
+          <input className="input mono" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} placeholder="—" />
+        </FormField>
+      </div>
+      <FormField
+        label={tr('重置密码', 'Reset password')}
+        hint={tr('留空则不修改；填写则至少 8 位', 'Leave blank to keep unchanged; at least 8 characters if set')}
+        error={!passwordOk ? tr('密码至少 8 位', 'Password must be at least 8 characters') : null}
+      >
+        <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={tr('不修改', 'Unchanged')} autoComplete="new-password" />
+      </FormField>
       <div className="row gap10" style={{ marginBottom: 16 }}>
         <FormField label={tr('角色', 'Role')} style={{ flex: 1, marginBottom: 0 }}>
           <SelectMenu
@@ -2321,7 +2561,11 @@ function BatchAssignModal({ userIds, onClose, onDone }: { userIds: string[]; onC
 function UsersTab() {
   const queryClient = useQueryClient();
   const { data: users, isLoading, isError } = useQuery({ queryKey: ['admin-users'], queryFn: () => api.adminListUsers(), retry: false });
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   const [editing, setEditing] = useState<AdminUserRead | null>(null);
+  const [deleting, setDeleting] = useState<AdminUserRead | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [assignOpen, setAssignOpen] = useState(false);
 
@@ -2355,9 +2599,20 @@ function UsersTab() {
     <div>
       <div className="row gap10" style={{ marginBottom: 14 }}>
         <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{tr(`${users.length} 个用户`, `${users.length} users`)}</span>
-        <button className="btn btn-soft" style={{ marginLeft: 'auto' }} disabled={checked.size === 0} onClick={() => setAssignOpen(true)}>
-          {tr('批量分配方向', 'Assign directions')}{checked.size > 0 ? `（${checked.size}）` : ''}
-        </button>
+        <div className="row gap8" style={{ marginLeft: 'auto' }}>
+          {checked.size > 0 && (
+            <button className="btn btn-danger" onClick={() => setBatchDeleteOpen(true)}>
+              {tr('删除选中', 'Delete selected')}（{checked.size}）
+            </button>
+          )}
+          <button className="btn btn-soft" disabled={checked.size === 0} onClick={() => setAssignOpen(true)}>
+            {tr('批量分配方向', 'Assign directions')}{checked.size > 0 ? `（${checked.size}）` : ''}
+          </button>
+          <button className="btn btn-primary row gap6" onClick={() => setCreateOpen(true)}>
+            <Icon name="plus" size={14} />
+            {tr('添加用户', 'Add user')}
+          </button>
+        </div>
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="table">
@@ -2377,7 +2632,7 @@ function UsersTab() {
               <th>{tr('大模型', 'LLM')}</th>
               <th>{tr('LLM 接管', 'LLM takeover')}</th>
               <th>{tr('功能权限', 'Features')}</th>
-              <th style={{ width: 70 }}></th>
+              <th style={{ width: 108 }}></th>
             </tr>
           </thead>
           <tbody>
@@ -2435,7 +2690,18 @@ function UsersTab() {
                 </td>
                 <td style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{featureSummary(u)}</td>
                 <td>
-                  <button className="btn btn-ghost sm" onClick={() => setEditing(u)}>{tr('编辑', 'Edit')}</button>
+                  <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
+                    <button className="btn btn-ghost sm" onClick={() => setEditing(u)}>{tr('编辑', 'Edit')}</button>
+                    {me?.id === u.id ? (
+                      <button className="icon-btn" disabled title={tr('不能删除自己的账号', 'You cannot delete your own account')} style={{ opacity: 0.4 }}>
+                        <Icon name="trash" size={15} />
+                      </button>
+                    ) : (
+                      <button className="icon-btn" title={tr('删除用户', 'Delete user')} style={{ color: 'var(--danger-tx)' }} onClick={() => setDeleting(u)}>
+                        <Icon name="trash" size={15} />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -2443,6 +2709,18 @@ function UsersTab() {
         </table>
       </div>
       {editing && <UserEditModal u={editing} onClose={() => setEditing(null)} />}
+      {deleting && <DeleteUserModal u={deleting} onClose={() => setDeleting(null)} />}
+      {createOpen && <CreateUserModal onClose={() => setCreateOpen(false)} />}
+      {batchDeleteOpen && (
+        <BatchDeleteUsersModal
+          userIds={[...checked]}
+          onClose={() => setBatchDeleteOpen(false)}
+          onDone={() => {
+            setChecked(new Set());
+            void queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+          }}
+        />
+      )}
       {assignOpen && (
         <BatchAssignModal
           userIds={[...checked]}
