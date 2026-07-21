@@ -423,13 +423,24 @@ export function PublicationsTab() {
         }}
       >
         <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 650 }}>
-            {profile.name_variants.join(' / ') || '—'}
-            {profile.affiliations.length > 0 && (
-              <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>
-                {` · ${profile.affiliations.join(' · ')}`}
-              </span>
-            )}
+          <div className="row" style={{ gap: 6, fontSize: 13.5, fontWeight: 650 }}>
+            <span>
+              {profile.name_variants.join(' / ') || '—'}
+              {profile.affiliations.length > 0 && (
+                <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>
+                  {` · ${profile.affiliations.join(' · ')}`}
+                </span>
+              )}
+            </span>
+            <button
+              className="icon-btn"
+              style={{ width: 22, height: 22, flexShrink: 0 }}
+              title={tr('修改署名信息', 'Edit author info')}
+              aria-label={tr('修改署名信息', 'Edit author info')}
+              onClick={() => setEditing(true)}
+            >
+              <Icon name="pen" size={12} />
+            </button>
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
             {profile.last_synced_at
@@ -437,13 +448,10 @@ export function PublicationsTab() {
               : tr('还没匹配过', 'Not matched yet')}
           </div>
         </div>
-        <div className="row gap8" style={{ flexShrink: 0 }}>
+        <div className="row gap8" style={{ flexShrink: 0, flexWrap: 'nowrap' }}>
           <button className="btn btn-soft sm" disabled={syncBusy} onClick={() => syncMutation.mutate()}>
             <Icon name="refresh" size={13} style={syncBusy ? { animation: 'spin 1s linear infinite' } : undefined} />
             {syncBusy ? tr('扫描中…', 'Scanning…') : tr('立即扫描文献库', 'Scan library now')}
-          </button>
-          <button className="btn btn-ghost sm" onClick={() => setEditing(true)}>
-            {tr('修改署名信息', 'Edit author info')}
           </button>
           <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
             <Icon name="plus" size={13} />
