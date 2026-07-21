@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
@@ -9,7 +9,7 @@ import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
 import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
-import { setLang, tr, useLang } from '../../lib/i18n';
+import { tr } from '../../lib/i18n';
 import {
   LLM_STAGES,
   api,
@@ -20,6 +20,8 @@ import {
   type LlmProviderKind,
   type LlmProviderRead,
   type LlmRoute,
+  type LlmTestCapability,
+  type LlmTestModelInput,
   type SshCredentialInput,
 } from '../../lib/api';
 
@@ -174,32 +176,6 @@ function PersonalTab() {
         >
           {tr('保存', 'Save')}
         </button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------- 界面语言 ----------------
-
-function LanguageCard() {
-  const lang = useLang();
-  return (
-    <div className="card card-pad" style={{ maxWidth: 560, marginTop: 16 }}>
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 650 }}>{tr('界面语言', 'Language')}</div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4 }}>
-            {tr('只影响界面文字，不影响 AI 生成内容的语言', 'Only affects the UI, not AI-generated content')}
-          </div>
-        </div>
-        <Segmented
-          options={[
-            { v: 'zh' as const, label: '中文' },
-            { v: 'en' as const, label: 'English' },
-          ]}
-          value={lang}
-          onChange={setLang}
-        />
       </div>
     </div>
   );
@@ -705,12 +681,198 @@ const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   experiment: { zh: '实验', en: 'Experiments' },
   writing: { zh: '论文撰写', en: 'Paper writing' },
   review: { zh: '论文评审', en: 'Paper review' },
+  rerank: { zh: '重排序', en: 'Reranking' },
 };
+
+/** 收起时只展示的两行；其余环节未显式设置时跟随「默认」。 */
+const PRIMARY_STAGES: string[] = ['default', 'embedding'];
+
+/** 按环节推断测试能力：embedding → embedding，rerank → rerank，其余 chat。 */
+function capabilityOf(stage: string): LlmTestCapability {
+  if (stage === 'embedding') return 'embedding';
+  if (stage === 'rerank') return 'rerank';
+  return 'chat';
+}
 
 interface RouteDraft {
   provider_id: string;
   model: string;
   temperature: string;
+}
+
+type TestState =
+  | { status: 'idle' }
+  | { status: 'testing' }
+  | { status: 'ok'; latencyMs: number }
+  | { status: 'error'; error: string };
+
+/** 测试结果按 provider+model+capability 去重共享（跟随默认的行直接复用 default 的结果）。 */
+const testKeyOf = (providerId: string, model: string, capability: LlmTestCapability) =>
+  `${providerId}|${model}|${capability}`;
+
+// ---- 模型组合框：自由输入 + 候选下拉（可视高度最多 5 项，超出内部滚动） ----
+
+const COMBO_ITEM_H = 30;
+const COMBO_VISIBLE = 5;
+
+function ModelCombobox({ value, options, placeholder, muted, onChange }: {
+  value: string;
+  options: string[];
+  placeholder?: string;
+  /** 「跟随默认」行的弱化样式 */
+  muted?: boolean;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const query = value.trim().toLowerCase();
+  // 输入值精确等于某候选（刚点选完）时展示全部候选，否则按输入过滤
+  const filtered = useMemo(() => {
+    if (!query || options.some((m) => m.toLowerCase() === query)) return options;
+    return options.filter((m) => m.toLowerCase().includes(query));
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [open]);
+
+  useEffect(() => {
+    listRef.current?.children[hi]?.scrollIntoView({ block: 'nearest' });
+  }, [hi]);
+
+  const pick = (m: string) => {
+    onChange(m);
+    setOpen(false);
+  };
+  const openList = () => {
+    if (options.length > 0) {
+      setOpen(true);
+      setHi(0);
+    }
+  };
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!open) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        openList();
+        e.preventDefault();
+      }
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      setHi((h) => Math.min(h + 1, filtered.length - 1));
+      e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+      setHi((h) => Math.max(h - 1, 0));
+      e.preventDefault();
+    } else if (e.key === 'Enter') {
+      if (filtered[hi] !== undefined) {
+        pick(filtered[hi]);
+        e.preventDefault();
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <input
+        className="input mono"
+        style={{ height: 32, width: '100%', fontSize: 12, ...(muted ? { color: 'var(--text-3)' } : {}) }}
+        value={value}
+        placeholder={placeholder}
+        onFocus={openList}
+        onClick={openList}
+        onChange={(e) => {
+          onChange(e.target.value);
+          if (options.length > 0) {
+            setOpen(true);
+            setHi(0);
+          }
+        }}
+        onKeyDown={onKeyDown}
+      />
+      {open && filtered.length > 0 && (
+        <div
+          ref={listRef}
+          role="listbox"
+          style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
+            maxHeight: COMBO_ITEM_H * COMBO_VISIBLE, overflowY: 'auto',
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-pop)',
+          }}
+        >
+          {filtered.map((m, i) => (
+            <div
+              key={m}
+              role="option"
+              aria-selected={i === hi}
+              className="mono"
+              style={{
+                height: COMBO_ITEM_H, lineHeight: `${COMBO_ITEM_H}px`, padding: '0 10px', fontSize: 12,
+                cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                background: i === hi ? 'var(--accent-soft)' : 'transparent',
+                color: i === hi ? 'var(--accent-text)' : 'var(--text)',
+              }}
+              onMouseEnter={() => setHi(i)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(m);
+              }}
+            >
+              {m}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModelStatusBadge({ state, onTest }: { state: TestState; onTest?: () => void }) {
+  const clickable = onTest !== undefined && state.status !== 'testing';
+  const base: CSSProperties = clickable ? { cursor: 'pointer' } : {};
+  if (state.status === 'testing') {
+    return (
+      <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+        <Icon name="refresh" size={11} style={{ animation: 'spin 1s linear infinite' }} />
+        {tr('测试中…', 'Testing…')}
+      </span>
+    );
+  }
+  if (state.status === 'ok') {
+    return (
+      <span className="pill sm" style={{ ...base, background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
+        title={tr('点击重新测试', 'Click to retest')} onClick={onTest}>
+        <Icon name="check" size={11} />
+        {tr('正常', 'OK')} · {state.latencyMs.toLocaleString()}ms
+      </span>
+    );
+  }
+  if (state.status === 'error') {
+    return (
+      <span className="pill sm" style={{ ...base, background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}
+        title={state.error} onClick={onTest}>
+        <Icon name="x" size={11} />
+        {tr('失败', 'Failed')}
+      </span>
+    );
+  }
+  return (
+    <span className="pill sm" style={{ ...base, background: 'var(--surface-3)', color: 'var(--text-3)' }}
+      title={onTest ? tr('点击测试该模型', 'Click to test this model') : undefined} onClick={onTest}>
+      {tr('未测试', 'Untested')}
+    </span>
+  );
 }
 
 function RoutesSection() {
@@ -719,7 +881,12 @@ function RoutesSection() {
   const routesQuery = useQuery({ queryKey: ['llm', 'routes'], queryFn: () => api.getLlmRoutes(), retry: false });
   const providers = providersQuery.data ?? [];
 
+  // 只有显式设置过的 stage 才有行；其余环节运行时回退 default 路由
   const [rows, setRows] = useState<Record<string, RouteDraft>>({});
+  const [showAll, setShowAll] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, TestState>>({});
+  const [batchTesting, setBatchTesting] = useState(false);
+
   useEffect(() => {
     if (!routesQuery.data) return;
     const next: Record<string, RouteDraft> = {};
@@ -756,23 +923,98 @@ function RoutesSection() {
     onError: (err) => toast(`${tr('保存失败', 'Save failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
+  const defaultRow = rows['default'];
+  const emptyDraftRow: RouteDraft = { provider_id: '', model: '', temperature: '' };
+
+  // 编辑「跟随默认」的行时，以 default 的值为底稿转成显式设置
   const setRow = (stage: string, patch: Partial<RouteDraft>) =>
-    setRows((prev) => ({
-      ...prev,
-      [stage]: { provider_id: '', model: '', temperature: '', ...prev[stage], ...patch },
-    }));
+    setRows((prev) => {
+      const seed = prev[stage]
+        ?? (stage !== 'default' && prev['default'] ? { ...prev['default'] } : emptyDraftRow);
+      return { ...prev, [stage]: { ...seed, ...patch } };
+    });
+  const clearRow = (stage: string) =>
+    setRows((prev) => {
+      const next = { ...prev };
+      delete next[stage];
+      return next;
+    });
+
+  /** 行的生效路由：显式设置优先，否则跟随 default（不完整则 null）。 */
+  const effectiveOf = (stage: string): RouteDraft | null => {
+    const r = rows[stage] ?? (stage !== 'default' ? defaultRow : undefined);
+    if (r && r.provider_id && r.model.trim()) return r;
+    return null;
+  };
+
+  const setTestState = (key: string, state: TestState) =>
+    setTestResults((prev) => ({ ...prev, [key]: state }));
+
+  /** 测试一组 stage；相同 provider+model+capability 只实测一次，结果共享。 */
+  const runTests = async (stages: string[]) => {
+    const combos = new Map<string, LlmTestModelInput>();
+    for (const stage of stages) {
+      const eff = effectiveOf(stage);
+      if (!eff) continue;
+      const capability = capabilityOf(stage);
+      const key = testKeyOf(eff.provider_id, eff.model.trim(), capability);
+      if (!combos.has(key)) combos.set(key, { provider_id: eff.provider_id, model: eff.model.trim(), capability });
+    }
+    if (combos.size === 0) {
+      toast(tr('没有可测试的行，先配置 provider 和模型', 'Nothing to test — set a provider and model first'), 'error');
+      return;
+    }
+    setBatchTesting(true);
+    setTestResults((prev) => {
+      const next = { ...prev };
+      for (const key of combos.keys()) next[key] = { status: 'testing' };
+      return next;
+    });
+    try {
+      await Promise.all(
+        [...combos.entries()].map(async ([key, input]) => {
+          try {
+            const r = await api.testLlmModel(input);
+            setTestState(
+              key,
+              r.ok
+                ? { status: 'ok', latencyMs: r.latency_ms }
+                : { status: 'error', error: r.error || tr('测试失败', 'Test failed') },
+            );
+          } catch (e) {
+            setTestState(key, { status: 'error', error: e instanceof Error ? e.message : String(e) });
+          }
+        }),
+      );
+    } finally {
+      setBatchTesting(false);
+    }
+  };
+
+  const visibleStages: string[] = showAll ? [...LLM_STAGES] : PRIMARY_STAGES;
+  // 收起态下有显式设置的隐藏行数（提示用）
+  const hiddenExplicitCount = LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s) && rows[s]).length;
 
   return (
     <div className="card card-pad">
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <span className="section-h">
           <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('模型路由表', 'Model routing')} <span className="en-label" style={{ fontSize: 11 }}>{tr('整表保存', 'saved as one table')}</span>
+          {tr('模型路由表', 'Model routing')}{' '}
+          <span className="en-label" style={{ fontSize: 11 }}>
+            {tr('未单独设置的环节自动跟随「默认」', 'stages without their own row follow "Default"')}
+          </span>
         </span>
-        <button className="btn btn-primary sm" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
-          <Icon name="check" size={13} />
-          {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存路由表', 'Save routing')}
-        </button>
+        <div className="row gap8">
+          <button className="btn btn-soft sm" disabled={batchTesting} onClick={() => void runTests(visibleStages)}>
+            <Icon name="play" size={12} />
+            {batchTesting ? tr('测试中…', 'Testing…') : tr('批量测试', 'Test all')}
+          </button>
+          <button className="btn btn-primary sm" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+            <Icon name="check" size={13} />
+            {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存路由表', 'Save routing')}
+          </button>
+        </div>
       </div>
       {routesQuery.isError && (
         <div className="field-hint" style={{ marginBottom: 10, color: 'var(--warn-tx)' }}>
@@ -782,25 +1024,55 @@ function RoutesSection() {
       <table className="table">
         <thead>
           <tr>
-            <th style={{ width: 130 }}>stage</th>
-            <th style={{ width: 180 }}>provider</th>
+            <th style={{ width: 150 }}>{tr('环节', 'Stage')}</th>
+            <th style={{ width: 170 }}>provider</th>
             <th>model</th>
-            <th style={{ width: 110 }}>temperature</th>
+            <th style={{ width: 90 }}>temperature</th>
+            <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
           </tr>
         </thead>
         <tbody>
-          {LLM_STAGES.map((stage) => {
-            const r = rows[stage] ?? { provider_id: '', model: '', temperature: '' };
+          {visibleStages.map((stage) => {
+            const explicit = rows[stage] !== undefined;
+            const follows = !explicit && stage !== 'default';
+            // 展示值：显式行用自己的；跟随默认的行弱化展示 default 的 provider/模型
+            const shown = rows[stage] ?? (follows ? defaultRow : undefined) ?? emptyDraftRow;
             const label = STAGE_LABELS[stage];
+            const eff = effectiveOf(stage);
+            const state: TestState = eff
+              ? testResults[testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))] ?? { status: 'idle' }
+              : { status: 'idle' };
+            const providerModels = providers.find((p) => p.id === shown.provider_id)?.models ?? [];
             return (
               <tr key={stage}>
                 <td>
-                  <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : stage}</div>
+                  <div className="row gap6" style={{ alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : stage}</span>
+                    {follows && (
+                      <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                        {tr('跟随默认', 'Follows default')}
+                      </span>
+                    )}
+                    {explicit && stage !== 'default' && (
+                      <button
+                        className="icon-btn"
+                        style={{ width: 20, height: 20 }}
+                        title={tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
+                        onClick={() => clearRow(stage)}
+                      >
+                        <Icon name="x" size={11} />
+                      </button>
+                    )}
+                  </div>
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{stage}</div>
                 </td>
                 <td>
-                  <select className="input" style={{ height: 32, width: '100%' }} value={r.provider_id}
-                    onChange={(e) => setRow(stage, { provider_id: e.target.value })}>
+                  <select
+                    className="input"
+                    style={{ height: 32, width: '100%', ...(follows ? { color: 'var(--text-3)' } : {}) }}
+                    value={shown.provider_id}
+                    onChange={(e) => setRow(stage, { provider_id: e.target.value, model: '' })}
+                  >
                     <option value="">{tr('（未配置）', '(not set)')}</option>
                     {providers.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
@@ -808,27 +1080,43 @@ function RoutesSection() {
                   </select>
                 </td>
                 <td>
-                  <input className="input mono" style={{ height: 32, width: '100%', fontSize: 12 }} value={r.model}
-                    list={r.provider_id ? `provider-models-${r.provider_id}` : undefined}
-                    placeholder={tr('如 deepseek-chat', 'e.g. deepseek-chat')} onChange={(e) => setRow(stage, { model: e.target.value })} />
+                  <ModelCombobox
+                    value={shown.model}
+                    options={providerModels}
+                    muted={follows}
+                    placeholder={tr('如 deepseek-chat', 'e.g. deepseek-chat')}
+                    onChange={(v) => setRow(stage, { model: v })}
+                  />
                 </td>
                 <td>
-                  <input className="input mono" style={{ height: 32, width: '100%', fontSize: 12 }} value={r.temperature}
-                    placeholder={tr('默认', 'default')} inputMode="decimal" onChange={(e) => setRow(stage, { temperature: e.target.value })} />
+                  <input
+                    className="input mono"
+                    style={{ height: 32, width: '100%', fontSize: 12, ...(follows ? { color: 'var(--text-3)' } : {}) }}
+                    value={shown.temperature}
+                    placeholder={tr('默认', 'default')}
+                    inputMode="decimal"
+                    onChange={(e) => setRow(stage, { temperature: e.target.value })}
+                  />
+                </td>
+                <td>
+                  <ModelStatusBadge state={state} onTest={eff ? () => void runTests([stage]) : undefined} />
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      {/* 各 provider 可用模型 → model 输入框候选（datalist） */}
-      {providers.map((p) => (
-        <datalist key={p.id} id={`provider-models-${p.id}`}>
-          {(p.models ?? []).map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-      ))}
+      <div className="row" style={{ justifyContent: 'center', marginTop: 10 }}>
+        <button className="btn btn-ghost sm" onClick={() => setShowAll((v) => !v)}>
+          <Icon name="chevDown" size={12} style={showAll ? { transform: 'rotate(180deg)' } : undefined} />
+          {showAll
+            ? tr('收起，只看默认与向量嵌入', 'Collapse to Default and Embeddings')
+            : tr(
+                `查看所有环节设置（共 ${LLM_STAGES.length} 个${hiddenExplicitCount > 0 ? `，${hiddenExplicitCount} 个已单独设置` : ''}）`,
+                `Show all stages (${LLM_STAGES.length}${hiddenExplicitCount > 0 ? `, ${hiddenExplicitCount} overridden` : ''})`,
+              )}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1458,17 +1746,12 @@ export function SettingsPage() {
       <PageHead
         eyebrow="Polaris · Settings"
         title={tr('设置', 'Settings')}
-        sub={tr('个人资料、界面语言、SSH 凭据、LLM 服务与模型路由、用量统计、用户管理。', 'Profile, language, SSH credentials, LLM providers and model routing, usage stats, user management.')}
+        sub={tr('个人资料、SSH 凭据、LLM 服务与模型路由、用量统计、用户管理。', 'Profile, SSH credentials, LLM providers and model routing, usage stats, user management.')}
       />
       <div style={{ marginBottom: 20 }}>
         <Segmented options={tabs} value={effectiveTab} onChange={setTab} />
       </div>
-      {effectiveTab === 'personal' && (
-        <>
-          <PersonalTab />
-          <LanguageCard />
-        </>
-      )}
+      {effectiveTab === 'personal' && <PersonalTab />}
       {effectiveTab === 'ssh' && <SshTab />}
       {effectiveTab === 'llm' && admin && <LlmTab />}
       {effectiveTab === 'usage' && admin && <UsageTab />}

@@ -76,7 +76,7 @@ _FALLBACK_ROUTE = ResolvedRoute(
 # llm_delta（任务详情页 terminal 实时展示"大模型正在输出什么"）。短 JSON 调用
 # （relevance 打分 / sextant 判定等）不流式，避免噪声。
 STREAM_STAGES = frozenset(
-    {"navigator", "debate", "experiment", "writing", "proposal", "review", "librarian", "present"}
+    {"navigator", "debate", "experiment", "writing", "proposal", "review", "librarian"}
 )
 _STREAM_FLUSH_CHARS = 80  # token 增量攒到此长度再广播一段（节流，防刷爆 pub/sub）
 
