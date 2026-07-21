@@ -3,13 +3,19 @@ COMPOSE_DEV  = docker compose -f docker/docker-compose.yml -f docker/docker-comp
 BACKEND_PY   = src/backend/.venv/bin/python
 BACKEND_PIP  = src/backend/.venv/bin/pip
 
-.PHONY: dev up down logs backend-dev frontend-dev venv migrate test lint build
+.PHONY: dev up down logs backend-dev frontend-dev venv migrate test lint build texbase
 
 ## ---- Docker ----
-dev:            ## Full stack for development (hot reload)
+texbase:        ## Build the shared TeX base image (api/worker FROM it; cached unless Dockerfile.texbase changed)
+	docker build -f docker/Dockerfile.texbase \
+	  --build-arg GITHUB_PROXY="$${GITHUB_PROXY:-}" \
+	  --build-arg APT_MIRROR="$${APT_MIRROR:-}" \
+	  -t polaris-texbase:latest docker/
+
+dev: texbase    ## Full stack for development (hot reload)
 	$(COMPOSE_DEV) up --build
 
-up:             ## Production mode
+up: texbase     ## Production mode
 	$(COMPOSE) up -d --build
 
 down:
@@ -41,5 +47,5 @@ lint:
 	cd src/backend && .venv/bin/ruff check app worker tests
 	cd src/frontend && npx tsc --noEmit
 
-build:          ## Build production images
+build: texbase  ## Build production images
 	$(COMPOSE) build

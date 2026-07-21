@@ -1,16 +1,18 @@
-# 生产部署覆盖（zju-54）：数据持久化到用户目录（bind mount，不用匿名卷）
+# 生产部署覆盖：数据持久化到用户目录（bind mount，不用匿名卷）
 #
 # 服务器目录约定：
-#   ~/polaris/app   代码（rsync 同步）
+#   ~/polaris/app   代码（git pull 或 rsync 同步）
 #   ~/polaris/data  持久化数据（pgdata / redisdata / appdata / tectonic-cache）
 # 相对路径以本文件所在目录（app/docker/）为基准，../../data 即 ~/polaris/data。
 #
 # 用法（在 ~/polaris/app 下）：
-#   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple GITHUB_PROXY=https://gh-proxy.com/ \
-#     docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
+#   1) 先构建共享 TeX 基础镜像（只在 Dockerfile.texbase 变更后才需要重跑，缓存命中时秒过）：
+#      make texbase   # 可带 GITHUB_PROXY / APT_MIRROR，见 Dockerfile.texbase 头部说明
+#   2) PIP_INDEX_URL=... \
+#      docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
 #
-# GITHUB_PROXY：内网直连不了 GitHub 时给 tectonic 下载加速前缀，能直连则留空。
 # PIP_INDEX_URL：内网访问官方 PyPI 慢/不稳时传国内 pip 源（如清华），能直连则留空用官方。
+# GITHUB_PROXY / APT_MIRROR 只影响基础镜像构建，不再出现在 api/worker 的构建参数里。
 
 name: polaris
 
@@ -26,7 +28,6 @@ services:
   api:
     build:
       args:
-        GITHUB_PROXY: ${GITHUB_PROXY:-}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     volumes:
       - ../../data/appdata:/srv/data
@@ -35,7 +36,6 @@ services:
   worker:
     build:
       args:
-        GITHUB_PROXY: ${GITHUB_PROXY:-}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
     volumes:
       - ../../data/appdata:/srv/data

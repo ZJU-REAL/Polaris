@@ -1,46 +1,17 @@
-FROM python:3.12-slim
+# worker 镜像：基于共享 TeX 基础镜像（tectonic + TeX Live + 中文字体，见 Dockerfile.texbase），
+# 额外装 LibreOffice（PPT 生成/格式转换，headless 调用），再做 pip 依赖 + 源码拷贝。
+# 先构建基础镜像：make texbase
+ARG TEXBASE_IMAGE=polaris-texbase:latest
+FROM ${TEXBASE_IMAGE}
 
 WORKDIR /srv/backend
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
-# tectonic（LaTeX 编译器，docs/api-m5-b.md §4）：GitHub release 官方静态二进制，
-# TARGETARCH 适配 amd64/arm64；包缓存挂 tectonic-cache 卷（/root/.cache/Tectonic）
-ARG TARGETARCH
-ARG TECTONIC_VERSION=0.15.0
-# GITHUB_PROXY：内网无法直连 GitHub 时传加速前缀（如 https://gh-proxy.com/），默认直连
-ARG GITHUB_PROXY=""
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
-         arm64) TECTONIC_TRIPLE="aarch64-unknown-linux-musl" ;; \
-         *)     TECTONIC_TRIPLE="x86_64-unknown-linux-musl" ;; \
-       esac \
-    && curl -fsSL "${GITHUB_PROXY}https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-${TECTONIC_TRIPLE}.tar.gz" \
-       | tar -xz -C /usr/local/bin tectonic \
-    && tectonic --version \
-    && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-
-# LibreOffice（PPT 生成/格式转换，headless 调用）：只装 impress + 中文字体，避免整套 libreoffice
+# LibreOffice：只装 impress + 西文字体，避免整套 libreoffice；中文字体基础镜像已带。
+# 注意：apt 源沿用基础镜像的 APT_MIRROR 设置（如有）。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libreoffice-impress fonts-noto-cjk fonts-dejavu \
+      libreoffice-impress fonts-dejavu \
     && rm -rf /var/lib/apt/lists/*
-
-# TeX Live + latexmk：worker 侧写作 voyage 结尾也会编译，装齐编译器与 tectonic 保持一致
-# （否则 worker 会回退 tectonic，与 API 触发的编译器选择不一致）。分批安装避免解包 OOM(137)。
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      latexmk biber texlive-latex-base texlive-latex-recommended \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      texlive-latex-extra texlive-fonts-recommended texlive-plain-generic \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      texlive-xetex texlive-luatex texlive-bibtex-extra texlive-science texlive-pictures \
-      texlive-lang-chinese fonts-noto-cjk fontconfig \
-    && latexmk --version && pdflatex --version | head -1 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-# 真·中文字体（同 zjuthesis 官方 devcontainer：Haixing-Hu/latex-chinese-fonts），
-# 让 \setCJKmainfont{FangSong} 等按名解析到真实仿宋/宋/黑/楷
-RUN python3 -c "import io,os,zipfile,urllib.request as u; url='${GITHUB_PROXY}https://github.com/Haixing-Hu/latex-chinese-fonts/archive/refs/heads/master.zip'; d=u.urlopen(u.Request(url,headers={'User-Agent':'polaris'}),timeout=300).read(); dst='/usr/share/fonts/latex-chinese-fonts'; os.makedirs(dst,exist_ok=True); [open(os.path.join(dst,os.path.basename(n)),'wb').write(z.read(n)) for z in [zipfile.ZipFile(io.BytesIO(d))] for n in z.namelist() if n.lower().endswith(('.ttf','.ttc','.otf'))]" \
-    && fc-cache -f >/dev/null 2>&1 && fc-match FangSong | grep -qi fangsong
 
 # pip 索引镜像：内网访问官方 PyPI 慢/不稳时传国内源（如清华），默认空=官方源
 ARG PIP_INDEX_URL=""
