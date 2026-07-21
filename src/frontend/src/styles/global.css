@@ -119,8 +119,8 @@ input {
 }
 .user-trigger:hover, .user-trigger.open { background: var(--surface-2); border-color: var(--border-2); }
 .user-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.user-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.user-role { font-size: 10.5px; color: var(--text-3); }
+.user-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-role { font-size: 12px; color: var(--text-3); }
 /* 收起态：仅头像，居中；隐藏名字/角色/箭头 */
 .nav-collapsed .sb-foot { padding: 8px 0; }
 .nav-collapsed .user-trigger { justify-content: center; gap: 0; padding: 8px 0; }
