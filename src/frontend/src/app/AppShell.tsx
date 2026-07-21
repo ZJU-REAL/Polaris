@@ -458,9 +458,9 @@ export function AppShell() {
             <NavItem key={n.to} n={n} />
           ))}
           <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
-          <NavItem n={{ to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' }} />
           <NavItem n={{ to: '/mcp-tools', icon: 'server', zh: 'MCP', en: 'MCP' }} />
           <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
+          <NavItem n={{ to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' }} />
 
           <div className="sb-section">{tr('研究流水线', 'Pipeline')}</div>
           {NAV_PIPE.filter((n) => {
