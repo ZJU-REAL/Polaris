@@ -4,7 +4,7 @@ import io
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from PIL import Image
 from sqlalchemy import select
@@ -14,7 +14,9 @@ from app.api.auth import current_active_user
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
+from app.schemas.llm_admin import UsageRow
 from app.schemas.user import UsageSummary, UsernameUpdate, UserRead, UserSearchResult
+from app.services import llm_admin as llm_admin_service
 from app.services import users as users_service
 from app.services.users import tokens_used_by_user
 
@@ -113,3 +115,14 @@ async def my_usage(
 ) -> UsageSummary:
     used = await tokens_used_by_user(session, user.id)
     return UsageSummary(tokens_used=used, token_quota=user.token_quota)
+
+
+@router.get("/users/me/usage/history", response_model=list[UsageRow])
+async def my_usage_history(
+    days: int = Query(default=30, ge=1, le=365),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[UsageRow]:
+    """本人最近 N 天的用量（按 日期 × stage × model 聚合），供个人用量视图用。"""
+    rows = await llm_admin_service.usage_report(session, user_id=user.id, days=days)
+    return [UsageRow(**row) for row in rows]

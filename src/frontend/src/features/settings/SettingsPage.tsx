@@ -20,6 +20,7 @@ import {
   api,
   isAdmin,
   type AdminUserRead,
+  type EffectiveTestResult,
   type LlmCallLogRow,
   type LlmProviderInput,
   type LlmProviderKind,
@@ -1667,6 +1668,149 @@ function ManagedEffectiveView({ effective }: { effective: LlmSelfConfig }) {
   );
 }
 
+// ---- 生效模型状态测试（被接管 / 自管两种状态都用） ----
+
+type EffState =
+  | { status: 'idle' }
+  | { status: 'testing' }
+  | { status: 'done'; result: EffectiveTestResult };
+
+/**
+ * 「模型状态」区：列出当前**生效**的每条 stage 路由，逐条测试。
+ * 测的是用户实际生效的配置（被接管测全局、自管测自己），与是否自管无关，
+ * 因此两种状态下都展示。
+ */
+function MyModelStatusSection({ config }: { config: LlmSelfConfig }) {
+  const [results, setResults] = useState<Record<string, EffState>>({});
+  const [testingAll, setTestingAll] = useState(false);
+
+  const providerName = (id: string) => config.providers.find((p) => p.id === id)?.name ?? id;
+  const routes = config.routes;
+
+  const testOne = async (stage: string) => {
+    setResults((prev) => ({ ...prev, [stage]: { status: 'testing' } }));
+    try {
+      const result = await api.testMyLlmEffective({ stage });
+      setResults((prev) => ({ ...prev, [stage]: { status: 'done', result } }));
+    } catch (e) {
+      setResults((prev) => ({
+        ...prev,
+        [stage]: {
+          status: 'done',
+          result: {
+            ok: false,
+            latency_ms: 0,
+            error: e instanceof Error ? e.message : String(e),
+            model: '',
+            provider_name: '',
+            is_fake: false,
+          },
+        },
+      }));
+    }
+  };
+
+  const testAll = async () => {
+    setTestingAll(true);
+    try {
+      for (const r of routes) await testOne(r.stage);
+    } finally {
+      setTestingAll(false);
+    }
+  };
+
+  const renderResult = (state: EffState | undefined) => {
+    if (!state || state.status === 'idle') return null;
+    if (state.status === 'testing') {
+      return (
+        <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+          <Icon name="refresh" size={11} style={{ animation: 'spin 1s linear infinite' }} />
+          {tr('测试中…', 'Testing…')}
+        </span>
+      );
+    }
+    const r = state.result;
+    if (r.is_fake) {
+      return <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>{tr('未配置真实模型', 'No real model configured')}</span>;
+    }
+    if (r.ok) {
+      return (
+        <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
+          <Icon name="check" size={11} />
+          {r.latency_ms.toLocaleString()}ms
+        </span>
+      );
+    }
+    return (
+      <span className="pill sm" style={{ background: 'var(--danger-bg)', color: 'var(--danger-tx)' }} title={r.error ?? undefined}>
+        <Icon name="x" size={11} />
+        {r.error || tr('失败', 'Failed')}
+      </span>
+    );
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
+        <span className="section-h">
+          <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
+          {tr('模型状态', 'Model status')}{' '}
+          <span className="en-label" style={{ fontSize: 11 }}>
+            {tr('测试你当前生效的每条路由', 'test each route currently in effect for you')}
+          </span>
+        </span>
+        <button className="btn btn-soft sm" disabled={testingAll || routes.length === 0} onClick={() => void testAll()}>
+          <Icon name="play" size={12} />
+          {testingAll ? tr('测试中…', 'Testing…') : tr('测试全部', 'Test all')}
+        </button>
+      </div>
+      {routes.length === 0 ? (
+        <div className="empty" style={{ padding: 24 }}>{tr('还没有生效的模型路由', 'No routes in effect yet')}</div>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{ width: 180 }}>{tr('环节', 'Stage')}</th>
+              <th>provider · model</th>
+              <th style={{ width: 220 }}>{tr('状态', 'Status')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {routes.map((r) => {
+              const label = STAGE_LABELS[r.stage];
+              const state = results[r.stage];
+              return (
+                <tr key={r.stage}>
+                  <td>
+                    <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : r.stage}</div>
+                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{r.stage}</div>
+                  </td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>
+                    {providerName(r.provider_id)}
+                    <span style={{ color: 'var(--text-3)' }}> · {r.model}</span>
+                  </td>
+                  <td>
+                    <div className="row gap8" style={{ alignItems: 'center' }}>
+                      <button
+                        className="btn btn-soft sm"
+                        disabled={testingAll || state?.status === 'testing'}
+                        onClick={() => void testOne(r.stage)}
+                      >
+                        {tr('测试', 'Test')}
+                      </button>
+                      {renderResult(state)}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function MyLlmTab() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError, refetch } = useQuery({
@@ -1737,6 +1881,8 @@ function MyLlmTab() {
           </div>
         </div>
 
+        <MyModelStatusSection config={data} />
+
         <ManagedEffectiveView effective={data} />
 
         <Modal
@@ -1786,6 +1932,8 @@ function MyLlmTab() {
           </button>
         </div>
       </div>
+
+      <MyModelStatusSection config={data} />
 
       <ProvidersSection adapter={myLlmAdapter} />
       <RoutesSection adapter={myLlmAdapter} />
@@ -1873,9 +2021,120 @@ function UsageTab() {
   );
 }
 
+// ---------------- 我的用量（个人） ----------------
+
+function MyUsageTab() {
+  const [days, setDays] = useState<'7' | '30' | '90'>('30');
+  const { data: summary } = useQuery({ queryKey: ['my-usage'], queryFn: () => api.myUsage(), retry: false });
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['my-usage-history', days],
+    queryFn: () => api.myUsageHistory({ days: Number(days) }),
+    retry: false,
+  });
+  const rows = useMemo(() => data ?? [], [data]);
+  const totals = useMemo(
+    () =>
+      rows.reduce(
+        (acc, r) => ({
+          prompt: acc.prompt + r.prompt_tokens,
+          completion: acc.completion + r.completion_tokens,
+          calls: acc.calls + r.calls,
+        }),
+        { prompt: 0, completion: 0, calls: 0 },
+      ),
+    [rows],
+  );
+
+  const used = summary?.tokens_used ?? 0;
+  const quota = summary?.token_quota ?? null;
+  const pct = quota != null && quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : null;
+
+  return (
+    <>
+      <div className="card card-pad" style={{ marginBottom: 20, maxWidth: 560 }}>
+        <div className="section-h" style={{ marginBottom: 12 }}>
+          <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
+          {tr('我的 AI 用量', 'My AI usage')}{' '}
+          <span className="en-label" style={{ fontSize: 11 }}>{tr('累计消耗', 'total consumed')}</span>
+        </div>
+        <div className="row gap12" style={{ alignItems: 'baseline' }}>
+          <span className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{used.toLocaleString()}</span>
+          <span style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
+            tokens{quota != null ? ` / ${tr('配额', 'quota')} ${quota.toLocaleString()}` : ` · ${tr('不限配额', 'unlimited quota')}`}
+          </span>
+        </div>
+        {pct != null && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ height: 8, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: pct >= 100 ? 'var(--danger-tx)' : 'var(--accent)' }} />
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4 }}>
+              {tr(`已用 ${pct}%`, `${pct}% used`)}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="card card-pad">
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
+          <span className="section-h">
+            <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
+            {tr('用量明细', 'Usage details')} <span className="en-label" style={{ fontSize: 11 }}>{tr('按天 × stage', 'per day × stage')}</span>
+          </span>
+          <Segmented options={[{ v: '7' as const, label: tr('7 天', '7 days') }, { v: '30' as const, label: tr('30 天', '30 days') }, { v: '90' as const, label: tr('90 天', '90 days') }]}
+            value={days} onChange={setDays} />
+        </div>
+        {isLoading ? (
+          <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
+        ) : isError ? (
+          <div className="empty" style={{ padding: 24 }}>
+            {tr('无法加载用量数据（后端不可用）', 'Failed to load usage data (backend unavailable)')}
+            <div style={{ marginTop: 10 }}>
+              <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+            </div>
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="empty" style={{ padding: 24 }}>{tr(`近 ${days} 天暂无用量记录`, `No usage records in the last ${days} days`)}</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{tr('日期', 'Date')}</th>
+                <th>stage</th>
+                <th>model</th>
+                <th style={{ textAlign: 'right' }}>prompt tok</th>
+                <th style={{ textAlign: 'right' }}>completion tok</th>
+                <th style={{ textAlign: 'right' }}>calls</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{r.date}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{r.stage}</td>
+                  <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{r.model}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.prompt_tokens.toLocaleString()}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.completion_tokens.toLocaleString()}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
+                </tr>
+              ))}
+              <tr>
+                <td colSpan={3} style={{ fontWeight: 650 }}>{tr('合计', 'Total')}</td>
+                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.prompt.toLocaleString()}</td>
+                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.completion.toLocaleString()}</td>
+                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.calls.toLocaleString()}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ---------------- 页面 ----------------
 
-type Tab = 'personal' | 'ssh' | 'mymodels' | 'llm' | 'usage' | 'users' | 'codes' | 'feedback';
+type Tab = 'personal' | 'ssh' | 'mymodels' | 'myusage' | 'llm' | 'usage' | 'users' | 'codes' | 'feedback';
 
 
 // ---------------- 用户管理（admin） ----------------
@@ -2384,39 +2643,59 @@ function CodesTab() {
   );
 }
 
+const PERSONAL_TABS: Tab[] = ['personal', 'ssh', 'mymodels', 'myusage'];
+
 export function SettingsPage() {
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   const admin = isAdmin(me);
   const [tab, setTab] = useState<Tab>('personal');
 
-  const tabs: { v: Tab; label: string }[] = [
-    { v: 'personal', label: tr('个人', 'Profile') },
+  const personalItems: { v: Tab; label: string }[] = [
+    { v: 'personal', label: tr('个人信息', 'Profile') },
     { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
     { v: 'mymodels', label: tr('我的模型', 'My LLM') },
-    ...(admin
-      ? [
-          { v: 'llm' as Tab, label: tr('LLM 管理', 'LLM admin') },
-          { v: 'usage' as Tab, label: tr('用量', 'Usage') },
-          { v: 'users' as Tab, label: tr('用户管理', 'Users') },
-          { v: 'codes' as Tab, label: tr('注册码', 'Codes') },
-          { v: 'feedback' as Tab, label: tr('反馈', 'Feedback') },
-        ]
-      : []),
+    { v: 'myusage', label: tr('用量', 'Usage') },
   ];
-  const effectiveTab: Tab =
-    !admin && (tab === 'llm' || tab === 'usage' || tab === 'users' || tab === 'codes' || tab === 'feedback')
-      ? 'personal'
-      : tab;
+  const adminItems: { v: Tab; label: string }[] = [
+    { v: 'llm', label: tr('LLM 管理', 'LLM admin') },
+    { v: 'users', label: tr('用户管理', 'Users') },
+    { v: 'codes', label: tr('注册码', 'Codes') },
+    { v: 'feedback', label: tr('反馈', 'Feedback') },
+    { v: 'usage', label: tr('用量总览', 'Usage overview') },
+  ];
+
+  // 非 admin 只能停留在个人设置组
+  const effectiveTab: Tab = !admin && !PERSONAL_TABS.includes(tab) ? 'personal' : tab;
 
   return (
     <div className="page fadeup">
       <PageHead eyebrow="Polaris · Settings" title={tr('设置', 'Settings')} />
-      <div style={{ marginBottom: 20 }}>
-        <Segmented options={tabs} value={effectiveTab} onChange={setTab} />
+      {/* 个人 tab 一块；管理员 tab 紧随其后另成一块，前面标「管理员设置」 */}
+      <div className="row" style={{ gap: 12, marginBottom: 22, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Segmented options={personalItems} value={effectiveTab} onChange={setTab} />
+        {admin && (
+          <>
+            <span
+              style={{
+                marginLeft: 8,
+                fontSize: 10.5,
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: 'var(--text-3)',
+                flexShrink: 0,
+              }}
+            >
+              {tr('管理员设置', 'Admin')}
+            </span>
+            <Segmented options={adminItems} value={effectiveTab} onChange={setTab} />
+          </>
+        )}
       </div>
       {effectiveTab === 'personal' && <PersonalTab />}
       {effectiveTab === 'ssh' && <SshTab />}
       {effectiveTab === 'mymodels' && <MyLlmTab />}
+      {effectiveTab === 'myusage' && <MyUsageTab />}
       {effectiveTab === 'llm' && admin && <LlmTab />}
       {effectiveTab === 'usage' && admin && <UsageTab />}
       {effectiveTab === 'users' && admin && <UsersTab />}
