@@ -521,6 +521,110 @@ function ProviderForm({ draft, setDraft, isNew }: {
   );
 }
 
+// ---- 模型连通性测试（Provider 区与路由表共用） ----
+
+type TestState =
+  | { status: 'idle' }
+  | { status: 'testing' }
+  | { status: 'ok'; latencyMs: number }
+  | { status: 'error'; error: string };
+
+/** 测试结果按 provider+model+capability 去重共享（跟随默认的行直接复用 default 的结果）。 */
+const testKeyOf = (providerId: string, model: string, capability: LlmTestCapability) =>
+  `${providerId}|${model}|${capability}`;
+
+/** 模型连通性测试：相同 provider+model+capability 只实测一次，结果共享。 */
+function useModelTests() {
+  const [results, setResults] = useState<Record<string, TestState>>({});
+  const [testing, setTesting] = useState(false);
+
+  const setOne = (key: string, state: TestState) =>
+    setResults((prev) => ({ ...prev, [key]: state }));
+
+  /** 返回 false 表示没有可测试的组合（由调用方决定提示文案）。 */
+  const run = async (inputs: LlmTestModelInput[]): Promise<boolean> => {
+    const combos = new Map<string, LlmTestModelInput>();
+    for (const input of inputs) {
+      const key = testKeyOf(input.provider_id, input.model, input.capability);
+      if (!combos.has(key)) combos.set(key, input);
+    }
+    if (combos.size === 0) return false;
+    setTesting(true);
+    setResults((prev) => {
+      const next = { ...prev };
+      for (const key of combos.keys()) next[key] = { status: 'testing' };
+      return next;
+    });
+    try {
+      await Promise.all(
+        [...combos.entries()].map(async ([key, input]) => {
+          try {
+            const r = await api.testLlmModel(input);
+            setOne(
+              key,
+              r.ok
+                ? { status: 'ok', latencyMs: r.latency_ms }
+                : { status: 'error', error: r.error || tr('测试失败', 'Test failed') },
+            );
+          } catch (e) {
+            setOne(key, { status: 'error', error: e instanceof Error ? e.message : String(e) });
+          }
+        }),
+      );
+    } finally {
+      setTesting(false);
+    }
+    return true;
+  };
+
+  return { results, testing, run };
+}
+
+function ModelStatusBadge({ state, onTest, idleHint }: {
+  state: TestState;
+  onTest?: () => void;
+  /** 不可测试（onTest 未提供）时 idle 徽标的提示文案 */
+  idleHint?: string;
+}) {
+  const clickable = onTest !== undefined && state.status !== 'testing';
+  const base: CSSProperties = clickable ? { cursor: 'pointer' } : {};
+  if (state.status === 'testing') {
+    return (
+      <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+        <Icon name="refresh" size={11} style={{ animation: 'spin 1s linear infinite' }} />
+        {tr('测试中…', 'Testing…')}
+      </span>
+    );
+  }
+  if (state.status === 'ok') {
+    return (
+      <span className="pill sm" style={{ ...base, background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
+        title={tr('点击重新测试', 'Click to retest')} onClick={onTest}>
+        <Icon name="check" size={11} />
+        {tr('正常', 'OK')} · {state.latencyMs.toLocaleString()}ms
+      </span>
+    );
+  }
+  if (state.status === 'error') {
+    return (
+      <span className="pill sm" style={{ ...base, background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}
+        title={state.error} onClick={onTest}>
+        <Icon name="x" size={11} />
+        {tr('失败', 'Failed')}
+      </span>
+    );
+  }
+  return (
+    <span className="pill sm" style={{ ...base, background: 'var(--surface-3)', color: 'var(--text-3)' }}
+      title={onTest ? tr('点击测试该模型', 'Click to test this model') : idleHint} onClick={onTest}>
+      {tr('未测试', 'Untested')}
+    </span>
+  );
+}
+
+/** 「可用模型」列收起时最多展示的 chips 数。 */
+const MODELS_COLLAPSED = 3;
+
 function ProvidersSection() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError, refetch } = useQuery({
@@ -532,6 +636,8 @@ function ProvidersSection() {
 
   const [modal, setModal] = useState<'closed' | 'create' | string>('closed'); // string = 编辑中的 provider id
   const [draft, setDraft] = useState<ProviderDraft>(emptyDraft());
+  const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
+  const tests = useModelTests();
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['llm'] });
 
@@ -561,6 +667,35 @@ function ProvidersSection() {
     },
     onError: (err) => toast(`${tr('删除失败', 'Delete failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
+  const toggleMutation = useMutation({
+    mutationFn: (p: LlmProviderRead) => api.patchLlmProvider(p.id, { enabled: !p.enabled }),
+    onSuccess: (p) => {
+      toast(p.enabled ? tr('Provider 已启用', 'Provider enabled') : tr('Provider 已停用', 'Provider disabled'), 'ok');
+      invalidate();
+    },
+    onError: (err) => toast(`${tr('操作失败', 'Failed')}：${err instanceof Error ? err.message : String(err)}`, 'error'),
+  });
+
+  /** 每个 provider 用其 models 的第一个模型测 chat 连通性。 */
+  const firstModelOf = (p: LlmProviderRead): string | null => (p.models ?? [])[0]?.trim() || null;
+  const runProviderTests = async (list: LlmProviderRead[]) => {
+    const inputs: LlmTestModelInput[] = [];
+    for (const p of list) {
+      const model = firstModelOf(p);
+      if (model) inputs.push({ provider_id: p.id, model, capability: 'chat' });
+    }
+    if (!(await tests.run(inputs))) {
+      toast(tr('没有可测试的 provider — 先在编辑里填写可用模型', 'Nothing to test — add models to a provider first'), 'error');
+    }
+  };
+
+  const toggleModelsExpanded = (id: string) =>
+    setExpandedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const isNew = modal === 'create';
   const busy = createMutation.isPending || patchMutation.isPending;
@@ -570,12 +705,22 @@ function ProvidersSection() {
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <span className="section-h">
           <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('LLM 供应商', 'Providers')}
+          {tr('LLM 供应商', 'Providers')}{' '}
+          <span className="en-label" style={{ fontSize: 11 }}>
+            {tr('测试用各 provider 的第一个可用模型', "tests use each provider's first model")}
+          </span>
         </span>
-        <button className="btn btn-primary sm" onClick={() => { setDraft(emptyDraft()); setModal('create'); }}>
-          <Icon name="plus" size={13} />
-          {tr('新增 Provider', 'Add provider')}
-        </button>
+        <div className="row gap8">
+          <button className="btn btn-soft sm" disabled={tests.testing || providers.length === 0}
+            onClick={() => void runProviderTests(providers)}>
+            <Icon name="play" size={12} />
+            {tests.testing ? tr('测试中…', 'Testing…') : tr('批量测试', 'Test all')}
+          </button>
+          <button className="btn btn-primary sm" onClick={() => { setDraft(emptyDraft()); setModal('create'); }}>
+            <Icon name="plus" size={13} />
+            {tr('新增 Provider', 'Add provider')}
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -593,48 +738,107 @@ function ProvidersSection() {
         <table className="table">
           <thead>
             <tr>
-              <th>{tr('名称', 'Name')}</th>
-              <th>kind</th>
-              <th>base_url</th>
-              <th>api_key</th>
+              <th style={{ width: 230 }}>{tr('名称', 'Name')}</th>
+              <th style={{ width: 130 }}>api_key</th>
               <th>{tr('可用模型', 'Models')}</th>
-              <th style={{ width: 60 }}>{tr('状态', 'Status')}</th>
-              <th style={{ width: 90 }} />
+              <th style={{ width: 80 }}>{tr('状态', 'Status')}</th>
+              <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
+              <th style={{ width: 70 }} />
             </tr>
           </thead>
           <tbody>
-            {providers.map((p) => (
-              <tr key={p.id}>
-                <td style={{ fontWeight: 600 }}>{p.name}</td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{p.kind}</td>
-                <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {p.base_url ?? '—'}
-                </td>
-                <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
-                <td className="mono" title={(p.models ?? []).join(', ')}
-                  style={{ fontSize: 11.5, color: 'var(--text-3)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {p.models && p.models.length > 0 ? p.models.join(', ') : '—'}
-                </td>
-                <td>
-                  <span className="pill sm" style={p.enabled ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' } : {}}>
-                    {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
-                  </span>
-                </td>
-                <td>
-                  <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
-                    <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('编辑', 'Edit')}
-                      onClick={() => { setDraft(draftFrom(p)); setModal(p.id); }}>
-                      <Icon name="pen" size={13} />
-                    </button>
-                    <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('删除', 'Delete')}
-                      disabled={deleteMutation.isPending}
-                      onClick={() => deleteMutation.mutate(p.id)}>
-                      <Icon name="trash" size={13} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {providers.map((p) => {
+              const models = p.models ?? [];
+              const firstModel = firstModelOf(p);
+              const expanded = expandedModels.has(p.id);
+              const shownModels = expanded ? models : models.slice(0, MODELS_COLLAPSED);
+              const hiddenCount = models.length - shownModels.length;
+              const state: TestState = firstModel
+                ? tests.results[testKeyOf(p.id, firstModel, 'chat')] ?? { status: 'idle' }
+                : { status: 'idle' };
+              return (
+                <tr key={p.id}>
+                  <td>
+                    <div className="row gap6" style={{ alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, fontWeight: 650 }}>{p.name}</span>
+                      <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                        {p.kind}
+                      </span>
+                    </div>
+                    <div className="mono" title={p.base_url ?? undefined}
+                      style={{ fontSize: 10.5, color: 'var(--text-3)', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p.base_url ?? '—'}
+                    </div>
+                  </td>
+                  <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
+                  <td>
+                    {models.length === 0 ? (
+                      <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('（未填写）', '(none)')}</span>
+                    ) : (
+                      <div className="row gap6" style={{ flexWrap: 'wrap' }}>
+                        {shownModels.map((m) => (
+                          <span key={m} className="tag mono" style={{ fontSize: 10.5 }}>{m}</span>
+                        ))}
+                        {hiddenCount > 0 && (
+                          <span className="tag mono" role="button" title={models.join(', ')}
+                            style={{ fontSize: 10.5, cursor: 'pointer', color: 'var(--accent-text)' }}
+                            onClick={() => toggleModelsExpanded(p.id)}>
+                            +{hiddenCount}
+                          </span>
+                        )}
+                        {expanded && models.length > MODELS_COLLAPSED && (
+                          <span className="tag" role="button"
+                            style={{ fontSize: 10.5, cursor: 'pointer', color: 'var(--text-3)' }}
+                            onClick={() => toggleModelsExpanded(p.id)}>
+                            {tr('收起', 'Collapse')}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <span
+                      className="pill sm"
+                      role="button"
+                      title={p.enabled ? tr('点击停用', 'Click to disable') : tr('点击启用', 'Click to enable')}
+                      style={{
+                        cursor: toggleMutation.isPending ? 'default' : 'pointer',
+                        ...(p.enabled
+                          ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
+                          : { background: 'var(--surface-3)', color: 'var(--text-3)' }),
+                      }}
+                      onClick={() => { if (!toggleMutation.isPending) toggleMutation.mutate(p); }}
+                    >
+                      {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
+                    </span>
+                  </td>
+                  <td>
+                    <ModelStatusBadge
+                      state={state}
+                      onTest={firstModel ? () => void runProviderTests([p]) : undefined}
+                      idleHint={firstModel ? undefined : tr('先填写可用模型才能测试', 'Add models first to enable testing')}
+                    />
+                  </td>
+                  <td>
+                    <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
+                      <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('编辑', 'Edit')}
+                        onClick={() => { setDraft(draftFrom(p)); setModal(p.id); }}>
+                        <Icon name="pen" size={13} />
+                      </button>
+                      <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('删除', 'Delete')}
+                        disabled={deleteMutation.isPending}
+                        onClick={() => {
+                          if (window.confirm(`${tr('确定删除 Provider', 'Delete provider')} “${p.name}”？${tr('模型路由表里引用它的环节将失效。', 'Routing rows that reference it will stop working.')}`)) {
+                            deleteMutation.mutate(p.id);
+                          }
+                        }}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -699,16 +903,6 @@ interface RouteDraft {
   model: string;
   temperature: string;
 }
-
-type TestState =
-  | { status: 'idle' }
-  | { status: 'testing' }
-  | { status: 'ok'; latencyMs: number }
-  | { status: 'error'; error: string };
-
-/** 测试结果按 provider+model+capability 去重共享（跟随默认的行直接复用 default 的结果）。 */
-const testKeyOf = (providerId: string, model: string, capability: LlmTestCapability) =>
-  `${providerId}|${model}|${capability}`;
 
 // ---- 模型组合框：自由输入 + 候选下拉（可视高度最多 5 项，超出内部滚动） ----
 
@@ -838,43 +1032,6 @@ function ModelCombobox({ value, options, placeholder, muted, onChange }: {
   );
 }
 
-function ModelStatusBadge({ state, onTest }: { state: TestState; onTest?: () => void }) {
-  const clickable = onTest !== undefined && state.status !== 'testing';
-  const base: CSSProperties = clickable ? { cursor: 'pointer' } : {};
-  if (state.status === 'testing') {
-    return (
-      <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
-        <Icon name="refresh" size={11} style={{ animation: 'spin 1s linear infinite' }} />
-        {tr('测试中…', 'Testing…')}
-      </span>
-    );
-  }
-  if (state.status === 'ok') {
-    return (
-      <span className="pill sm" style={{ ...base, background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
-        title={tr('点击重新测试', 'Click to retest')} onClick={onTest}>
-        <Icon name="check" size={11} />
-        {tr('正常', 'OK')} · {state.latencyMs.toLocaleString()}ms
-      </span>
-    );
-  }
-  if (state.status === 'error') {
-    return (
-      <span className="pill sm" style={{ ...base, background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}
-        title={state.error} onClick={onTest}>
-        <Icon name="x" size={11} />
-        {tr('失败', 'Failed')}
-      </span>
-    );
-  }
-  return (
-    <span className="pill sm" style={{ ...base, background: 'var(--surface-3)', color: 'var(--text-3)' }}
-      title={onTest ? tr('点击测试该模型', 'Click to test this model') : undefined} onClick={onTest}>
-      {tr('未测试', 'Untested')}
-    </span>
-  );
-}
-
 function RoutesSection() {
   const queryClient = useQueryClient();
   const providersQuery = useQuery({ queryKey: ['llm', 'providers'], queryFn: () => api.listLlmProviders(), retry: false });
@@ -884,8 +1041,7 @@ function RoutesSection() {
   // 只有显式设置过的 stage 才有行；其余环节运行时回退 default 路由
   const [rows, setRows] = useState<Record<string, RouteDraft>>({});
   const [showAll, setShowAll] = useState(false);
-  const [testResults, setTestResults] = useState<Record<string, TestState>>({});
-  const [batchTesting, setBatchTesting] = useState(false);
+  const tests = useModelTests();
 
   useEffect(() => {
     if (!routesQuery.data) return;
@@ -947,47 +1103,16 @@ function RoutesSection() {
     return null;
   };
 
-  const setTestState = (key: string, state: TestState) =>
-    setTestResults((prev) => ({ ...prev, [key]: state }));
-
-  /** 测试一组 stage；相同 provider+model+capability 只实测一次，结果共享。 */
+  /** 测试一组 stage；去重与结果共享由 useModelTests 处理。 */
   const runTests = async (stages: string[]) => {
-    const combos = new Map<string, LlmTestModelInput>();
+    const inputs: LlmTestModelInput[] = [];
     for (const stage of stages) {
       const eff = effectiveOf(stage);
       if (!eff) continue;
-      const capability = capabilityOf(stage);
-      const key = testKeyOf(eff.provider_id, eff.model.trim(), capability);
-      if (!combos.has(key)) combos.set(key, { provider_id: eff.provider_id, model: eff.model.trim(), capability });
+      inputs.push({ provider_id: eff.provider_id, model: eff.model.trim(), capability: capabilityOf(stage) });
     }
-    if (combos.size === 0) {
+    if (!(await tests.run(inputs))) {
       toast(tr('没有可测试的行，先配置 provider 和模型', 'Nothing to test — set a provider and model first'), 'error');
-      return;
-    }
-    setBatchTesting(true);
-    setTestResults((prev) => {
-      const next = { ...prev };
-      for (const key of combos.keys()) next[key] = { status: 'testing' };
-      return next;
-    });
-    try {
-      await Promise.all(
-        [...combos.entries()].map(async ([key, input]) => {
-          try {
-            const r = await api.testLlmModel(input);
-            setTestState(
-              key,
-              r.ok
-                ? { status: 'ok', latencyMs: r.latency_ms }
-                : { status: 'error', error: r.error || tr('测试失败', 'Test failed') },
-            );
-          } catch (e) {
-            setTestState(key, { status: 'error', error: e instanceof Error ? e.message : String(e) });
-          }
-        }),
-      );
-    } finally {
-      setBatchTesting(false);
     }
   };
 
@@ -1006,9 +1131,9 @@ function RoutesSection() {
           </span>
         </span>
         <div className="row gap8">
-          <button className="btn btn-soft sm" disabled={batchTesting} onClick={() => void runTests(visibleStages)}>
+          <button className="btn btn-soft sm" disabled={tests.testing} onClick={() => void runTests(visibleStages)}>
             <Icon name="play" size={12} />
-            {batchTesting ? tr('测试中…', 'Testing…') : tr('批量测试', 'Test all')}
+            {tests.testing ? tr('测试中…', 'Testing…') : tr('批量测试', 'Test all')}
           </button>
           <button className="btn btn-primary sm" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
             <Icon name="check" size={13} />
@@ -1040,7 +1165,7 @@ function RoutesSection() {
             const label = STAGE_LABELS[stage];
             const eff = effectiveOf(stage);
             const state: TestState = eff
-              ? testResults[testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))] ?? { status: 'idle' }
+              ? tests.results[testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))] ?? { status: 'idle' }
               : { status: 'idle' };
             const providerModels = providers.find((p) => p.id === shown.provider_id)?.models ?? [];
             return (
