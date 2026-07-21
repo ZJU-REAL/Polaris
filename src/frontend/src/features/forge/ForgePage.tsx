@@ -173,13 +173,14 @@ const CandidateCard = memo(function CandidateCard({
       }}
     >
       <div className="row gap6" style={{ marginBottom: 10, alignItems: 'center' }}>
-        {multiSelect && (
+        {/* 占位常驻：切换多选时卡片尺寸/位置不变（#132） */}
+        <span style={{ display: 'inline-flex', flexShrink: 0, visibility: multiSelect ? 'visible' : 'hidden' }}>
           <CheckBox
             checked={selected}
             onToggle={onToggleSelect}
             title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
           />
-        )}
+        </span>
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{idea.id.slice(0, 8)}</span>
         <DepthBadge depth={idea.depth} />
         <ResearchTypeBadge type={idea.research_type} />
@@ -242,36 +243,32 @@ const CandidateCard = memo(function CandidateCard({
           </div>
         </div>
       ) : (
-        (idea.depth === 'sketch' && onDeepen) || !multiSelect ? (
-          <div className="row gap8" style={{ marginTop: 12, alignItems: 'center' }}>
-            {idea.depth === 'sketch' && onDeepen && (
-              <button
-                className="btn btn-soft sm"
-                style={{ justifyContent: 'center' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeepen();
-                }}
-              >
-                <Icon name="sparkle" size={13} />
-                {tr('深化为研究方案', 'Deepen into proposal')}
-              </button>
-            )}
-            {!multiSelect && (
-              <button
-                className="btn btn-ghost sm"
-                title={tr('移入垃圾箱', 'Move to trash')}
-                style={{ marginLeft: 'auto', color: 'var(--text-3)', padding: '0 7px' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onTrash();
-                }}
-              >
-                <Icon name="trash" size={13} />
-              </button>
-            )}
-          </div>
-        ) : null
+        <div className="row gap8" style={{ marginTop: 12, alignItems: 'center' }}>
+          {idea.depth === 'sketch' && onDeepen && (
+            <button
+              className="btn btn-soft sm"
+              style={{ justifyContent: 'center' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeepen();
+              }}
+            >
+              <Icon name="sparkle" size={13} />
+              {tr('深化为研究方案', 'Deepen into proposal')}
+            </button>
+          )}
+          <button
+            className="btn btn-ghost sm"
+            title={tr('移入垃圾箱', 'Move to trash')}
+            style={{ marginLeft: 'auto', color: 'var(--text-3)', padding: '0 7px', visibility: multiSelect ? 'hidden' : 'visible' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onTrash();
+            }}
+          >
+            <Icon name="trash" size={13} />
+          </button>
+        </div>
       )}
     </div>
   );
@@ -761,6 +758,17 @@ export function ForgePage() {
                 <Icon name="check" size={13} />
                 {tr('多选', 'Multi-select')}
               </button>
+              {/* 全选放工具栏：不再插入额外行导致卡片下移（#132） */}
+              {multiSelect && ideas.length > 0 && (
+                <>
+                  <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {selected.size > 0
+                      ? tr(`已选 ${selected.size} 条`, `${selected.size} selected`)
+                      : tr('全选', 'Select all')}
+                  </span>
+                </>
+              )}
               {view === 'trash' && trashCount > 0 && (
                 <button
                   className="btn btn-ghost sm"
@@ -818,18 +826,6 @@ export function ForgePage() {
           </div>
         )}
       </div>
-
-      {/* 多选：全选行 */}
-      {pid && multiSelect && ideas.length > 0 && (
-        <div className="row gap10" style={{ marginBottom: 10, alignItems: 'center' }}>
-          <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
-          <span className="muted" style={{ fontSize: 12 }}>
-            {selected.size > 0
-              ? tr(`已选 ${selected.size} 条`, `${selected.size} selected`)
-              : tr('全选', 'Select all')}
-          </span>
-        </div>
-      )}
 
       {!pid ? (
         <div className="card">

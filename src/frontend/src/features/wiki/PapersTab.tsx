@@ -702,16 +702,15 @@ const PaperRow = memo(function PaperRow({
       }}
     >
       <div className="row gap8" style={{ marginBottom: 5 }}>
-        {selectMode && (
-          <input
-            type="checkbox"
-            checked={checked}
-            onClick={(e) => e.stopPropagation()}
-            onChange={onToggleCheck}
-            title={tr('选中后可批量删除 / 导出', 'Select for bulk delete / export')}
-            style={{ width: 13, height: 13, margin: 0, flexShrink: 0, accentColor: 'var(--accent)', cursor: 'pointer' }}
-          />
-        )}
+        {/* 占位常驻：切换多选时行内容不左右跳（#132） */}
+        <input
+          type="checkbox"
+          checked={checked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={onToggleCheck}
+          title={tr('选中后可批量删除 / 导出', 'Select for bulk delete / export')}
+          style={{ width: 13, height: 13, margin: 0, flexShrink: 0, accentColor: 'var(--accent)', cursor: 'pointer', visibility: selectMode ? 'visible' : 'hidden' }}
+        />
         {p.starred && <Icon name="starFill" size={11} style={{ color: 'var(--warn-tx)', flexShrink: 0 }} />}
         <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
           {p.arxiv_id ?? p.venue ?? '—'}
