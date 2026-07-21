@@ -19,13 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && tectonic --version \
     && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
-# LibreOffice（PPT 生成/格式转换，headless 调用）：只装 impress + 中文字体，避免整套 libreoffice
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      libreoffice-impress fonts-noto-cjk fonts-dejavu \
-    && rm -rf /var/lib/apt/lists/*
-
-# TeX Live + latexmk：worker 侧写作 voyage 结尾也会编译，装齐编译器与 tectonic 保持一致
-# （否则 worker 会回退 tectonic，与 API 触发的编译器选择不一致）。分批安装避免解包 OOM(137)。
+# TeX Live + latexmk（Overleaf 式多编译器：pdflatex/xelatex/lualatex；tectonic 之外的选择）。
+# 覆盖常见会议模板所需宏包/字体 + 中文（zjuthesis 走 xelatex）。分批安装：一次性解包整套
+# TeX Live 峰值内存过大会在小内存 VM 上被 OOM kill(137)；省略体积巨大且少用的 fonts-extra。
 RUN apt-get update && apt-get install -y --no-install-recommends \
       latexmk biber texlive-latex-base texlive-latex-recommended \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -34,20 +30,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y --no-install-recommends \
       texlive-xetex texlive-luatex texlive-bibtex-extra texlive-science texlive-pictures \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
       texlive-lang-chinese fonts-noto-cjk fontconfig \
     && latexmk --version && pdflatex --version | head -1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
-# 真·中文字体（同 zjuthesis 官方 devcontainer：Haixing-Hu/latex-chinese-fonts），
-# 让 \setCJKmainfont{FangSong} 等按名解析到真实仿宋/宋/黑/楷
+# 真·中文字体（FangSong/SimSun/SimHei/KaiTi + Times New Roman/Arial…）按名装进系统，
+# 让 zjuthesis 等模板的原生 \setCJKmainfont{FangSong} 解析到真实字体（正确的仿宋/宋/黑/楷）。
+# 同 zjuthesis 官方 devcontainer 的做法（Haixing-Hu/latex-chinese-fonts）；GITHUB_PROXY 供内网绕行。
 RUN python3 -c "import io,os,zipfile,urllib.request as u; url='${GITHUB_PROXY}https://github.com/Haixing-Hu/latex-chinese-fonts/archive/refs/heads/master.zip'; d=u.urlopen(u.Request(url,headers={'User-Agent':'polaris'}),timeout=300).read(); dst='/usr/share/fonts/latex-chinese-fonts'; os.makedirs(dst,exist_ok=True); [open(os.path.join(dst,os.path.basename(n)),'wb').write(z.read(n)) for z in [zipfile.ZipFile(io.BytesIO(d))] for n in z.namelist() if n.lower().endswith(('.ttf','.ttc','.otf'))]" \
     && fc-cache -f >/dev/null 2>&1 && fc-match FangSong | grep -qi fangsong
 
 # pip 索引镜像：内网访问官方 PyPI 慢/不稳时传国内源（如清华），默认空=官方源
 ARG PIP_INDEX_URL=""
-COPY backend/pyproject.toml ./
+COPY src/backend/pyproject.toml ./
+# Install the dependency layer first (cache-friendly), then copy the source
 RUN pip install ${PIP_INDEX_URL:+-i $PIP_INDEX_URL} --upgrade pip \
     && pip install ${PIP_INDEX_URL:+-i $PIP_INDEX_URL} -e . || true
-COPY backend/ ./
+COPY src/backend/ ./
 RUN pip install ${PIP_INDEX_URL:+-i $PIP_INDEX_URL} -e .
 
-CMD ["arq", "worker.settings.WorkerSettings"]
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

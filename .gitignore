@@ -34,6 +34,9 @@ logs/
 .vscode/
 *.swp
 
+# --- Internal working docs (kept locally, not tracked) ---
+docs-dev/
+
 # --- 本地 AI 助手配置（不入库） ---
 CLAUDE.md
 .claude/

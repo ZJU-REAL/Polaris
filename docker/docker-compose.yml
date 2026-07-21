@@ -27,7 +27,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.api
+      dockerfile: docker/Dockerfile.api
     restart: unless-stopped
     env_file: ../.env
     environment:
@@ -46,7 +46,7 @@ services:
   worker:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.worker
+      dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
     env_file: ../.env
     environment:
@@ -63,7 +63,7 @@ services:
   frontend:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.frontend
+      dockerfile: docker/Dockerfile.frontend
     restart: unless-stopped
     depends_on:
       - api

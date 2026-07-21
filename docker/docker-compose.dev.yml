@@ -1,0 +1,39 @@
+# Development override: hot reload, source bind-mounts, vite dev server for the frontend.
+# Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up --build
+#
+# DEV_SRC (defaults to the repo root, ..): to preview a branch without touching main,
+# use a dedicated dev worktree (git worktree add ../wt/dev origin/main), check out the
+# target branch inside it, then start the stack with `DEV_SRC=../wt/dev docker compose ... up`.
+services:
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ${DEV_SRC:-..}/src/backend:/srv/backend
+      - appdata:/srv/data
+
+  worker:
+    # Note: `arq --watch` only reloads the settings module; modules already imported under
+    # app/ are not refreshed, so run `docker compose restart worker` after editing worker code.
+    command: arq worker.settings.WorkerSettings --watch .
+    volumes:
+      - ${DEV_SRC:-..}/src/backend:/srv/backend
+      - appdata:/srv/data
+
+  frontend:
+    # Note: under colima/VM mounts vite may miss file-change events and serve stale code;
+    # run `docker compose restart frontend` if the page and source disagree.
+    # Note: after adding a dependency in package.json you must recreate with
+    # `up -d --build --force-recreate --renew-anon-volumes frontend` — node_modules is an
+    # anonymous volume that a plain recreate would reuse.
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      target: build                 # node stage only
+    command: npm run dev -- --host 0.0.0.0
+    environment:
+      VITE_PROXY_TARGET: http://api:8000
+    volumes:
+      - ${DEV_SRC:-..}/src/frontend:/srv/frontend
+      - /srv/frontend/node_modules  # container-owned node_modules
+    ports:
+      - "5173:5173"

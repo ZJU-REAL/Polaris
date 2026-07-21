@@ -1,144 +1,137 @@
-# Polaris 架构文档
+# Architecture
 
-> 面向大模型/智能体领域的实验室级自动 AI 科研平台。多用户、Docker 部署。
-> 流程：文献调研 → Idea 生成 → Idea 评审 → 实验搭建 → 论文撰写 → 论文评审。
+This is a conceptual overview of how Polaris is put together. For the concepts a user works with
+(the pipeline stages, Voyages, skills, tools), see [Core Concepts](concepts.md). For running the
+system, see [Getting Started](getting-started.md) and [Deployment](deployment.md).
 
-## 1. 总体架构
+## The big picture
 
-```text
-┌─────────────────────────────────────────────────────┐
-│  frontend  React 18 + TS + Vite + TanStack Query    │
-│  浙大蓝设计系统 · CodeMirror6(LaTeX/MD) · 图表        │
-└──────────────┬──────────────────────────────────────┘
-        REST(OpenAPI) + SSE(agent流式) + WebSocket(讨论/审批)
-┌──────────────┴──────────────────────────────────────┐
-│  backend  FastAPI (async) · SQLAlchemy 2 + Alembic  │
-│  ├─ auth: fastapi-users (JWT) + RBAC + 邀请码注册    │
-│  ├─ api → services → models 三层                     │
-│  └─ core: llm 抽象层 · gate 闸门 · security(Fernet)  │
-├─────────────────────────────────────────────────────┤
-│  worker  ARQ (asyncio 任务队列, Redis broker)        │
-│  ├─ Voyage agent 核心（见 §3）                       │
-│  ├─ pipelines: 文献 ingest · idea forge · 评审辩论   │
-│  ├─ executor: asyncssh → 实验室 GPU 服务器           │
-│  └─ latex: tectonic 编译                             │
-├─────────────────────────────────────────────────────┤
-│  PostgreSQL(+pgvector) · Redis · 文件卷(PDF/产物)    │
-└─────────────────────────────────────────────────────┘
-外部: arXiv · Semantic Scholar · OpenAlex · LLM APIs · GPU服务器(SSH)
+Polaris is a monorepo with three parts:
+
+- A React + Vite frontend that talks to the backend over REST (OpenAPI), Server-Sent Events (SSE),
+  and WebSocket.
+- A fully async FastAPI backend organized in strict layers, plus an ARQ worker that runs every long
+  task off the request thread.
+- PostgreSQL (with the pgvector extension) as the system of record, and Redis as the task broker and
+  cache.
+
+```mermaid
+flowchart TB
+    subgraph client["Frontend (React 18 + TypeScript + Vite)"]
+      UI["TanStack Query for all server state\nCodeMirror 6, Yjs (CRDT), react-pdf, KaTeX"]
+    end
+
+    UI -- "REST (OpenAPI)" --> API
+    UI -- "SSE (agent streaming, Voyage progress)" --> API
+    UI -- "WebSocket (discussion, approvals, logs, co-editing)" --> API
+
+    subgraph backend["Backend (FastAPI, fully async)"]
+      API["api/  thin routers"]
+      SVC["services/  business logic"]
+      MODELS["models/  SQLAlchemy 2"]
+      CORE["core/  config, db, redis, queue, events, security, llm/"]
+      TOOLS["tools/  read-only tool registry"]
+      MCP["mcp/  external MCP server"]
+      API --> SVC --> MODELS
+      SVC --> CORE
+      SVC --> TOOLS
+      TOOLS --> MCP
+    end
+
+    subgraph worker["ARQ Worker (Redis broker)"]
+      VOY["Voyage engine\nNavigator / Helm / Sextant"]
+      PIPE["Pipelines: literature ingest,\nidea forge, review debate,\nLaTeX compile"]
+    end
+
+    API -- "enqueue long tasks" --> REDIS[("Redis 7")]
+    REDIS --> worker
+    SVC --> PG[("PostgreSQL 16\n+ pgvector")]
+    worker --> PG
+    worker --> CORE
+
+    CORE -- "core/llm abstraction" --> LLM["LLM providers\n(OpenAI-compatible, Anthropic)"]
+    PIPE -- "asyncssh (gated writes)" --> GPU["Lab GPU servers"]
+    PIPE -- "httpx" --> LIT["arXiv, Semantic Scholar, OpenAlex"]
+    MCP -- "Streamable HTTP / stdio" --> EXT["Claude Desktop, Cursor"]
 ```
 
-分层铁律（见 CLAUDE.md）：路由薄；业务在 services；LLM 只经 `core/llm` 抽象层；
-确定性逻辑（抓取/解析/去重/水位线）用代码，判断性任务（打分/综合/生成）才交给 LLM。
+## Layered backend
 
-## 2. LLM 抽象层
+The backend follows one strict rule: `api/` (thin routers) then `services/` (business logic) then
+`models/` (SQLAlchemy). Routers hold no business logic, and services never import FastAPI. This keeps
+the HTTP surface thin and makes the business logic reusable from both request handlers and worker
+tasks.
 
-`app/core/llm/`：
+- `api/` exposes REST endpoints (all under `/api`), authenticated with JWT via fastapi-users, with
+  RBAC and invite-code registration. Project-scoped endpoints verify membership.
+- `services/` holds the actual work: literature ingest, wiki compilation, idea forge, review, SSH
+  experiment execution, manuscript editing and compilation, skills, and so on.
+- `models/` holds the SQLAlchemy 2 models. Migrations are managed with Alembic.
+- `core/` holds cross-cutting infrastructure: configuration, the database and Redis clients, the ARQ
+  queue, the SSE event bus, Fernet-based security, and the LLM abstraction layer.
 
-- `base.py`：`LLMProvider.complete()/stream()` 统一接口
-- Provider 实现：`openai_compat`（DeepSeek/Qwen/GPT 等）、`anthropic`
-- `router.py`：**模型路由表**（科研环节 → provider+model），存 DB、管理端可改。
-  例：文献打分用便宜模型，idea 辩论/论文起草用强模型
-- 用量与成本记账：每次调用记录 tokens/费用，归属到 user + project + voyage
+## The ARQ worker and long tasks
 
-## 3. Voyage — 长时程 Agent 核心（平台创新点）
+Research tasks are long-running by nature: a cold-start literature backfill takes hours, an experiment
+runs for days. Nothing long happens in the request thread. Instead the API enqueues work onto ARQ
+(with Redis as the broker) and the worker process runs it. The worker hosts:
 
-科研任务天然是 long-running（冷启动回填数小时、实验跑数天）。Polaris 的核心创新是：
-**每个复杂任务是一次可恢复、可审计的"航程"（Voyage），由三元组闭环驱动，全程状态持久化**。
+- The Voyage engine (Navigator / Helm / Sextant), described in [Core Concepts](concepts.md).
+- Deterministic pipelines: literature ingest, idea forge, review debate, and LaTeX compilation.
+- The SSH executor that reaches the lab's GPU servers via asyncssh.
 
-命名沿用北极星导航隐喻：
+Because Voyages persist their state, a worker that restarts mid-run resumes from its last checkpoint
+after a health check rather than starting over.
 
-| 组件 | 职责 |
-| --- | --- |
-| **Navigator**（领航 · planning） | 把目标分解为步骤图（子目标/依赖/预算），执行中依据 Sextant 反馈**动态重规划** |
-| **Helm**（掌舵 · executor） | 执行单个步骤：LLM 调用、工具调用、SSH 远程操作、文献 API……产出 observation |
-| **Sextant**（六分仪 · self-verification） | 每步完成后对照目标"对星定位"：产出是否满足验收标准？未通过 → 带诊断回传 Navigator 重规划；连续失败 → 暂停并升级为人工闸门 |
+## The LLM abstraction and model routing
 
-### 状态机
+All model calls go through a single boundary, `app/core/llm/`, which exposes a uniform
+`complete()` / `stream()` interface over multiple providers (OpenAI-compatible endpoints such as
+DeepSeek or Qwen, and Anthropic). Business code never imports a provider SDK directly.
 
-```text
-planning → executing → verifying ─┬→ (下一步) executing
-   ↑            │                 ├→ replanning → planning
-   │            ▼                 ├→ paused_gate（人在环审批，批准后恢复）
-   └──── paused_error ←───────────┤
-                                  └→ done / failed
-```
+Model choice is not hard-coded. A DB-backed routing table maps each research stage to a provider and
+model, so cheap models can score literature while strong models handle idea debate and paper
+drafting. The routing table is editable from the admin panel. Every call is metered: tokens and cost
+are attributed to the user, project, and Voyage.
 
-### 持久化（M1 落库）
+## Deterministic vs. judgemental split
 
-- `VoyageRun`：goal、kind（ingest/forge/experiment/writing…）、plan JSON、当前 step 游标、
-  status、checkpoint JSON、budget/usage、project_id、created_by
-- `VoyageStep`：run_id、序号、action 类型与输入、observation、Sextant 判定（pass/fail + 理由）、tokens/耗时
+This is the principle that keeps runs cheap, reproducible, and auditable. Deterministic work
+(crawling, parsing, deduplication, watermark-based incremental sync, metric parsing, citation
+matching) is written as ordinary code or worker tasks. Only the judgement calls (relevance scoring,
+synthesis, drafting, review) reach an LLM. Guardrails such as "experiment numbers may only come from
+real run metrics" and "citations must map to real knowledge-base entries" live in code and cannot be
+overridden by prompts or skills.
 
-价值：
+## Data stores
 
-1. **断点恢复**——worker 重启/崩溃后从 checkpoint 续跑（水位线思想的泛化）
-2. **人在环**——步骤可声明需要闸门（算力预算/远程写/晋级），状态机原生支持暂停/恢复
-3. **可审计**——每一步的计划、动作、验证结论全留痕，UI 上可回放
-4. **成本可控**——预算挂在 Run 上，超限自动暂停
+- **PostgreSQL 16 with pgvector** is the system of record: users, projects, papers and concepts,
+  ideas, review sessions, experiments and runs, manuscripts, gates, activity, and Voyage runs and
+  steps. pgvector powers semantic search over papers and full-text chunks.
+- **Redis 7** is the ARQ broker and a cache.
+- A **file volume** holds PDFs and generated artifacts (mounted at `/srv/data` in containers), kept
+  out of the code tree so it does not trigger reloads.
 
-## 4. 数据模型（核心实体）
+## Real-time channels
 
-```text
-User ─┬─ ProjectMember ─ Project(研究方向, 含结构化访谈定义)
-      │                    ├─ Paper ─ PaperConcept ─ Concept   （知识库，wiki markdown + 双链）
-      │                    ├─ Idea（四维打分 + Elo + 状态机）
-      │                    ├─ ReviewSession ─ ReviewMessage    （agent/human 同场讨论）
-      │                    ├─ Experiment ─ ExperimentRun       （SSH 实验）
-      │                    ├─ Manuscript ─ ManuscriptFile      （LaTeX 多文件）
-      │                    ├─ Gate（人在环闸门）
-      │                    ├─ Activity（活动流）
-      │                    └─ VoyageRun ─ VoyageStep           （agent 核心, M1）
-```
+- **SSE** carries one-way streams: agent token output and Voyage progress. A periodic heartbeat keeps
+  proxies from dropping the connection.
+- **WebSocket** carries bidirectional traffic: review discussions (where human comments enter the
+  agent context as first-class input), approval notifications, live experiment log tracking, and
+  CRDT-based collaborative editing of manuscripts.
 
-## 5. 各环节模块设计（里程碑 M2–M5）
+## The Voyage agent core
 
-### 文献调研 Research Wiki（M2）
+The central abstraction is that every complex task is a **Voyage**: a resumable, auditable run backed
+by a persistent state machine. A shared runtime shell (state machine, checkpointing, gates, budget,
+cancellation, event streaming) serves all task kinds, while the full plan-execute-verify brain
+(Navigator plans, Helm executes, Sextant verifies) activates only for open-ended kinds such as
+experiments. Predictable pipelines (wiki compile, idea review, paper drafting) run on fixed templates
+instead of being over-orchestrated. See [Core Concepts](concepts.md#the-voyage-long-running-agent)
+for the full explanation.
 
-- 检索源：OpenAlex（引用图谱/批量元数据，免 key）+ Semantic Scholar（语义检索/TLDR，服务端缓存+令牌桶）+ arXiv（最新预印本+PDF）
-- 冷启动：锚点论文引文雪球 → LLM 相关性打分（rubric 来自项目访谈）→ PDF 全文抽取（PyMuPDF）→ Librarian agent 编译中文 wiki 页（TL;DR/方法/可借鉴点/概念双链）
-- 增量：每日定时 ingest，水位线断点续跑，成本旋钮（阈值/top-N/模型档位）
-- pgvector 语义检索；Obsidian 导出（zip / Git 同步，`[[wikilink]]` + frontmatter）
+## Deployment shape
 
-### Idea 生成与评审（M3）
-
-- Forge：知识库 gap 分析 + 检索规划式生成 → 四维打分（新颖/可行/可操作/影响力）→ 语义去重 → 漏斗收敛
-- Review：N 个可配置人设的评审 agent 两两辩论 + 裁判 → Elo 排行；
-  **人类评论通过 WebSocket 实时进入讨论，并作为一等输入注入 agent 上下文**；晋级走闸门
-
-### 实验搭建 Experiment Lab（M4）
-
-- 每用户 SSH 凭据（Fernet 加密入库），asyncssh 连接
-- 实验 Voyage：读入晋级 idea + wiki 上下文 → Navigator 出实验计划（假设/复现策略/预算）→
-  闸门审批 → Helm 建 `~/polaris_runs/<exp_id>/` 写代码 → 冒烟测试（Sextant 验证）→ 提交运行 →
-  日志流式回传 + 指标曲线 → 报告
-- 安全：远程写操作过闸门、命令黑白名单、全程审计、预算三重上限（总额/单次/并发）
-
-### 论文撰写与评审（M5）
-
-- Writer：LaTeX 多文件项目 + CodeMirror6 + tectonic 服务端编译 → PDF 预览；
-  agent 分节起草，硬约束：实验数字只能来自 ExperimentRun.metrics，引用必须对应知识库真实条目
-- Review 两阶段：①形式检查 + 逐条引用核验（存在性/正确性）；②多视角顶会评审 agent + 多人讨论 → 投稿闸门
-
-## 6. 实时通信
-
-- **SSE**：agent 流式输出、Voyage 进度（单向，15s 心跳防代理断流）
-- **WebSocket**：评审讨论、审批通知、实验日志跟踪（双向）
-
-## 7. 部署
-
-`deploy/docker-compose.yml`：postgres(pgvector) + redis + api + worker + frontend(nginx)。
-开发用 `docker-compose.dev.yml` 覆盖（源码挂载 + uvicorn --reload + vite dev）。
-nginx 反代 `/api`（SSE 关缓冲）与 `/ws`（Upgrade）。
-
-## 8. 里程碑
-
-| 里程碑 | 内容 |
-| --- | --- |
-| M0 | monorepo 骨架、auth、浙大蓝 App shell、Docker（已完成） |
-| M1 | 项目管理（结构化访谈）、LLM 抽象层+路由表、Voyage 核心落库、SSE/WS、闸门机制 |
-| M2 | 文献调研全流程 + Obsidian 导出 |
-| M3 | Idea Forge + 多agent/多人评审 |
-| M4 | Experiment Lab（SSH） |
-| M5 | Paper Writer + Paper Review |
-| M6 | 管理端、通知、备份、上线试用 |
+Production runs as Docker Compose services: `postgres`, `redis`, `api`, `worker`, and `frontend`
+(served by nginx, which reverse-proxies `/api` with SSE buffering disabled and `/ws` with the
+WebSocket upgrade). See [Deployment](deployment.md) for the full procedure.

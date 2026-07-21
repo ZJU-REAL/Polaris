@@ -141,7 +141,9 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
 ## Quick start
 
 > [!TIP]
-> The Docker path needs only Docker and Docker Compose installed; no local Python, Node, or database.
+> Docker Compose is the recommended way to run Polaris, in development and in production. It needs only
+> Docker and Docker Compose installed, with no local Python, Node, or database. See
+> [docs/deployment.md](docs/deployment.md) for production deployment.
 
 ```bash
 cp .env.example .env        # set provider keys and secrets
@@ -166,55 +168,51 @@ make test                   # backend pytest + frontend build
 make lint                   # ruff check + tsc --noEmit
 ```
 
-> [!WARNING]
-> The Experiment Lab connects to real GPU servers over SSH and runs generated code there. Remote writes
-> pass through human approval gates and command allow/deny lists, but you should still point Polaris only
-> at machines you control and review the audit log.
+## Documentation
+
+Full documentation lives in [docs/](docs/):
+
+- [Getting started](docs/getting-started.md): install, configure, and run Polaris
+- [Architecture](docs/architecture.md): system design and the Voyage agent core
+- [Concepts](docs/concepts.md): the research pipeline, Voyage, skills, and MCP tools
+- [Deployment](docs/deployment.md): production deployment with Docker Compose
+- [Configuration](docs/configuration.md): environment variables and settings
+- [Development](docs/development.md): local workflow and conventions
 
 ## Repository layout
 
 ```text
-backend/
-  app/
-    api/         thin FastAPI routers (no business logic)
-    services/    business logic (ingest, wiki, ideas, review, experiments, manuscripts, ...)
-    models/      SQLAlchemy models
-    agents/
-      voyage/    the Voyage engine: navigator, helm, sextant, checks, tool_loop, per-domain actions
-    core/        config, db, redis, queue (ARQ), events (SSE), security (Fernet), llm/ abstraction
-    tools/       MCP-shared read-only tool registry
-    mcp/         external MCP server (Streamable HTTP and stdio)
-  worker/        ARQ worker
-  tests/
-frontend/
-  src/features/  one folder per product area: wiki, reading, forge, review,
-                 experiment, writer, paper-review, voyages, skills, mcp, settings, ...
-deploy/          Dockerfiles and compose (dev override and prod)
-docs/            architecture, per-module API contracts, design docs
+src/
+  backend/       FastAPI app (package: app) and ARQ worker (package: worker)
+    app/
+      api/         thin routers
+      services/    business logic (ingest, wiki, ideas, review, experiments, manuscripts, ...)
+      models/      SQLAlchemy models
+      agents/voyage/  the Voyage engine (navigator, helm, sextant, tool loop, per-domain actions)
+      core/        config, db, queue (ARQ), events (SSE), llm/ abstraction
+      tools/, mcp/ read-only tool registry and the external MCP server
+  frontend/      React + Vite (src/features/ has one folder per product area)
+docker/          Dockerfiles and compose (base, dev override, prod overlay)
+docs/            English project documentation
 ```
 
-Start with [docs/architecture.md](docs/architecture.md) for the full design, and the `docs/api-*.md`
-files for per-module API contracts.
+## Design principles
 
-## Architecture principles
+- **Strict layering.** Thin routers call services; services hold the business logic and never import the
+  web framework; models sit underneath.
+- **Deterministic vs. judgemental split.** Deterministic work (crawling, parsing, dedup) is plain code or
+  worker tasks; only judgement calls reach an LLM.
+- **One LLM boundary.** All model calls go through a single abstraction layer, and model choice comes from
+  a database routing table rather than being hard-coded.
 
-- **Strict layering.** `api/` (thin routers) then `services/` (business logic) then `models/`. Routers
-  hold no business logic; services never import FastAPI.
-- **Deterministic vs. judgemental split.** Deterministic work is plain code or worker tasks; only
-  judgement calls reach an LLM.
-- **One LLM boundary.** All model calls go through `app/core/llm/`; no direct SDK imports in business
-  code; model choice comes from the DB routing table.
-- **Async all the way down.** asyncpg, httpx.AsyncClient, asyncssh throughout.
-- **Secrets encrypted at rest** with Fernet; no secrets in logs; every remote write is gated.
+See [docs/architecture.md](docs/architecture.md) for the full design.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). In short: one feature = one branch = one worktree = one pull
-request, branched from the latest `origin/main`; English conventional-commit messages; `main` stays a
-read-only fast-forward mirror of `origin/main`. Conventions for code, i18n, and design tokens live in
-[CLAUDE.md](CLAUDE.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). In short: one feature is one branch is one pull request, branched
+from the latest `origin/main`, with English conventional-commit messages, and `main` stays a read-only
+fast-forward mirror of `origin/main`.
 
 ## License
 
-This is an internal research project of the ZJU REAL Lab and is not yet released under a public license.
-Please contact the maintainers before reuse.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full text.
