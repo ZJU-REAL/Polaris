@@ -51,7 +51,8 @@ Set these when invoking Docker Compose (not in `.env`); see [Deployment](deploym
 
 | Variable | Purpose | Default / example |
 | --- | --- | --- |
-| `GITHUB_PROXY` | Build arg: prefix to accelerate tectonic's GitHub downloads on networks that cannot reach GitHub directly. | (empty), e.g. `https://gh-proxy.com/` |
+| `GITHUB_PROXY` | Build arg (`make texbase` only): prefix to accelerate the TeX base image's GitHub downloads (tectonic binary, CJK font pack) on networks that cannot reach GitHub directly. | (empty), e.g. `https://gh-proxy.com/` |
+| `APT_MIRROR` | Build arg (`make texbase` only): Debian mirror hostname for the TeX base image's apt installs. | (empty), e.g. `repo.huaweicloud.com` |
 | `PIP_INDEX_URL` | Build arg: alternate PyPI mirror for the image build. | (empty), e.g. `https://pypi.tuna.tsinghua.edu.cn/simple` |
 | `DEV_SRC` | Dev overlay only: source directory to bind-mount, so you can preview a branch from a dedicated worktree without touching `main`. | `..` (repo root) |
 

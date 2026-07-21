@@ -14,13 +14,22 @@ Polaris ships three compose files in `docker/`:
 - `docker-compose.prod.yml`: the production overlay (persistent bind-mounts and restricted-network
   build args).
 
-Production is the base file plus the prod overlay:
+The `api` and `worker` images build on a shared TeX base image (`docker/Dockerfile.texbase`:
+tectonic + TeX Live + CJK fonts). Build it once before the first compose build — it is fully cached
+afterwards and only rebuilds when `Dockerfile.texbase` changes:
+
+```bash
+make texbase
+```
+
+Production is then the base file plus the prod overlay:
 
 ```bash
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
 ```
 
-This builds the images, starts everything detached, and restarts services unless stopped.
+This builds the images, starts everything detached, and restarts services unless stopped. Routine
+updates only rebuild the pip/source layers of `api`/`worker`, which takes minutes.
 
 ## Data directory convention
 
@@ -60,16 +69,28 @@ provider key. See [Configuration](configuration.md) for the full table.
 
 ### Restricted networks
 
-Two build-time arguments help on networks that cannot reach the public internet directly. They are
-passed as environment variables when you invoke compose, not stored in `.env`:
+Three build-time arguments help on networks that cannot reach the public internet directly (or
+reach it slowly). They are passed as environment variables, not stored in `.env`.
+
+For the TeX base image (GitHub asset downloads and the big apt install happen here):
 
 ```bash
-PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple GITHUB_PROXY=https://gh-proxy.com/ \
+GITHUB_PROXY=https://gh-proxy.com/ APT_MIRROR=repo.huaweicloud.com make texbase
+```
+
+For the compose build (pip layer of `api`/`worker`):
+
+```bash
+PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
 ```
 
-- `GITHUB_PROXY`: a prefix that accelerates tectonic's GitHub downloads when GitHub is not directly
-  reachable. Leave empty if you have direct access.
+- `GITHUB_PROXY`: a prefix for the base image's GitHub downloads (tectonic binary, CJK font pack)
+  when GitHub is not directly reachable. Changing it only re-runs the small download stage, not the
+  TeX Live layers. Leave empty if you have direct access.
+- `APT_MIRROR`: a Debian mirror hostname (e.g. `repo.huaweicloud.com`,
+  `mirrors.tuna.tsinghua.edu.cn`) used for the base image's apt installs. The substitution persists
+  into the image, so images derived from the base (the worker's LibreOffice layer) use it too.
 - `PIP_INDEX_URL`: an alternate PyPI mirror for the image build when the official index is slow or
   blocked. Leave empty to use the official index.
 

@@ -1,0 +1,31 @@
+# Build-check for the docker image stack (no publishing): catches Dockerfile
+# regressions on PRs. The texbase image is large (TeX Live), so this only runs
+# when docker/ or the backend dependency manifest changes.
+name: docker-build
+
+on:
+  pull_request:
+    paths:
+      - "docker/**"
+      - "src/backend/pyproject.toml"
+      - ".github/workflows/docker-build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build frontend image
+        run: docker build -f docker/Dockerfile.frontend -t polaris-frontend .
+
+      - name: Build texbase image
+        run: docker build -f docker/Dockerfile.texbase -t polaris-texbase:latest docker/
+
+      - name: Build api image
+        run: docker build -f docker/Dockerfile.api -t polaris-api .
+
+      - name: Build worker image
+        run: docker build -f docker/Dockerfile.worker -t polaris-worker .

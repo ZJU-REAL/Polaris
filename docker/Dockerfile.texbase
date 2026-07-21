@@ -1,0 +1,64 @@
+# 共享 TeX 基础镜像（polaris-texbase）：python:3.12-slim + tectonic + TeX Live + 中文字体。
+# api / worker 均 FROM 本镜像，TeX 栈只装一次；本镜像仅在本文件变更时重建。
+#
+# 构建（在仓库任意位置）：make texbase
+# 等价于：docker build -f docker/Dockerfile.texbase -t polaris-texbase:latest docker/
+#
+# 构建参数（均默认空 = 直连官方源）：
+#   GITHUB_PROXY  GitHub 下载加速前缀（如 https://gh-proxy.com/ 或指向本地镜像的
+#                 http://172.17.0.1:8899/），只作用于 assets 阶段，改动不会炸掉 TeX 层缓存
+#   APT_MIRROR    Debian 镜像主机名（如 repo.huaweicloud.com / mirrors.tuna.tsinghua.edu.cn）；
+#                 注意：替换会保留在镜像内，派生镜像（worker 的 LibreOffice 层）同样走该源
+
+# ---- assets：远程资产下载（tectonic 二进制 + 中文字体包），与 apt 层隔离 ----
+FROM python:3.12-slim AS assets
+ARG TARGETARCH
+ARG TECTONIC_VERSION=0.15.0
+ARG GITHUB_PROXY=""
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# --speed-limit/--speed-time：低于 10KB/s 持续 60s 即断开重试，避免 codeload 类僵死连接挂满超时
+RUN mkdir -p /out \
+    && case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+         arm64) TECTONIC_TRIPLE="aarch64-unknown-linux-musl" ;; \
+         *)     TECTONIC_TRIPLE="x86_64-unknown-linux-musl" ;; \
+       esac \
+    && curl -fSL --retry 8 --retry-all-errors --connect-timeout 20 \
+         --speed-limit 10240 --speed-time 60 \
+         -o /tmp/tectonic.tar.gz \
+         "${GITHUB_PROXY}https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-${TECTONIC_TRIPLE}.tar.gz" \
+    && tar -xzf /tmp/tectonic.tar.gz -C /out tectonic
+# 真·中文字体（FangSong/SimSun/SimHei/KaiTi + Times New Roman/Arial…），同 zjuthesis
+# 官方 devcontainer 的做法（Haixing-Hu/latex-chinese-fonts）
+RUN curl -fSL --retry 8 --retry-all-errors --connect-timeout 20 \
+      --speed-limit 10240 --speed-time 60 \
+      -o /tmp/fonts.zip \
+      "${GITHUB_PROXY}https://github.com/Haixing-Hu/latex-chinese-fonts/archive/refs/heads/master.zip" \
+    && python3 -c "import os,zipfile; z=zipfile.ZipFile('/tmp/fonts.zip'); dst='/out/fonts'; os.makedirs(dst,exist_ok=True); [open(os.path.join(dst,os.path.basename(n)),'wb').write(z.read(n)) for n in z.namelist() if n.lower().endswith(('.ttf','.ttc','.otf'))]" \
+    && ls /out/fonts | head -1 >/dev/null
+
+# ---- base：TeX Live + latexmk + 字体 ----
+FROM python:3.12-slim
+ARG APT_MIRROR=""
+RUN if [ -n "${APT_MIRROR}" ]; then \
+      sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi
+COPY --from=assets /out/tectonic /usr/local/bin/tectonic
+# TeX Live 分批安装：一次性解包整套峰值内存过大，会在小内存 VM 上被 OOM kill(137)；
+# 省略体积巨大且少用的 fonts-extra。覆盖常见会议模板宏包/字体 + 中文（zjuthesis 走 xelatex）。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      latexmk biber texlive-latex-base texlive-latex-recommended \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-latex-extra texlive-fonts-recommended texlive-plain-generic \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-xetex texlive-luatex texlive-bibtex-extra texlive-science texlive-pictures \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-lang-chinese fonts-noto-cjk fontconfig \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=assets /out/fonts /usr/share/fonts/latex-chinese-fonts
+# 验证：编译器齐全 + \setCJKmainfont{FangSong} 等能按名解析到真实字体
+RUN fc-cache -f >/dev/null 2>&1 && fc-match FangSong | grep -qi fangsong \
+    && tectonic --version && latexmk --version && pdflatex --version | head -1
