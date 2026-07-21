@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { FormField } from '../../components/ui/FormField';
+import { Switch } from '../../components/ui/Switch';
 import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
@@ -110,23 +111,20 @@ export function AcademicIdentitySection() {
           )}
 
           {/* —— 每日自动匹配 + 保存 —— */}
-          <label className="row" style={{ gap: 10, cursor: 'pointer', alignItems: 'flex-start', marginTop: 14 }}>
-            <input
-              type="checkbox"
-              checked={autoSync}
-              onChange={(e) => setAutoSync(e.target.checked)}
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              <span style={{ fontWeight: 600 }}>{tr('每天自动从文献库匹配', 'Match from the library daily')}</span>
-              <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-3)', marginTop: 2 }}>
+          <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 14 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div id="academic-auto-sync" style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>
+                {tr('每天自动从文献库匹配', 'Match from the library daily')}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
                 {tr(
                   '命中的论文会进「我发表的」待确认列表，由你确认是不是你的。',
                   'Matched papers land in the to-confirm list under My publications for you to review.',
                 )}
-              </span>
-            </span>
-          </label>
+              </div>
+            </div>
+            <Switch checked={autoSync} onChange={setAutoSync} aria-labelledby="academic-auto-sync" />
+          </div>
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
             <button
               className="btn btn-primary"
