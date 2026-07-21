@@ -20,6 +20,7 @@ _PLAN_EDIT_MARKER = "POLARIS_PLAN_EDIT"  # 计划编辑（loop 失败回灌，na
 _VERDICT_MARKER = '"passed"'
 _RELEVANCE_MARKER = '"score"'
 _CONCEPTS_MARKER = "概念列表："
+_AFFILIATIONS_MARKER = "POLARIS_AFFILIATIONS"  # 发表机构解析（services/affiliations.py）
 _LIBRARIAN_MARKER = "TL;DR"
 _INTERVIEW_MARKER = '"out_of_scope"'
 _GAPS_MARKER = '"gaps"'  # forge gap 分析
@@ -245,6 +246,10 @@ class FakeProvider(LLMProvider):
                 },
                 ensure_ascii=False,
             )
+        # 发表机构解析：user prompt 内嵌论文标题页文本（可能含 TL;DR 等其他 marker），
+        # 须先于通用 marker 判断；返回确定性机构数组
+        if _AFFILIATIONS_MARKER in full_text:
+            return json.dumps(["Zhejiang University", "Google DeepMind"], ensure_ascii=False)
         # 伴读/文献库对话 system prompt 会内嵌论文全文/wiki（可能含 TL;DR 等其他
         # marker），须最先判断
         if _LIBRARY_MARKER in full_text:

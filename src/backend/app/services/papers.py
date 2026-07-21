@@ -437,7 +437,9 @@ async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
 # ---- PDF 按需补下（docs/api-lit.md §1） ----
 
 
-async def fetch_pdf(session: AsyncSession, paper: Paper) -> Paper:
+async def fetch_pdf(
+    session: AsyncSession, paper: Paper, *, user_id: uuid.UUID | None = None
+) -> Paper:
     """按需补下 PDF + 抽全文；已有 PDF 文件时幂等直接返回。
 
     - 无 arxiv_id → PdfSourceUnsupportedError（路由映射 400）
@@ -472,6 +474,14 @@ async def fetch_pdf(session: AsyncSession, paper: Paper) -> Paper:
             await index_paper_fulltext(session, paper)
         except Exception:  # noqa: BLE001
             logger.warning("chunk indexing failed for paper %s", paper.id, exc_info=True)
+    # 发表机构：全文到手后 LLM 从标题页解析（此路径原先不补机构）；失败不影响主流程
+    if not paper.affiliations and paper.full_text_path:
+        from app.core.llm.router import get_llm_router
+        from app.services.affiliations import extract_affiliations_llm
+
+        affs = await extract_affiliations_llm(paper, llm=get_llm_router(), user_id=user_id)
+        if affs:
+            paper.affiliations = affs
     await session.commit()
     await session.refresh(paper)
     return paper

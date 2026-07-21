@@ -208,6 +208,16 @@ async def add_manual_paper(
         except Exception:  # noqa: BLE001
             logger.warning("auto PDF fetch failed for paper %s", paper.id, exc_info=True)
 
+    # 发表机构：全文到手后 LLM 从标题页解析（DOI 路径已有 OpenAlex 机构时不覆盖）；
+    # 失败不影响创建
+    if not paper.affiliations and paper.full_text_path:
+        from app.core.llm.router import get_llm_router
+        from app.services.affiliations import extract_affiliations_llm
+
+        affs = await extract_affiliations_llm(paper, llm=get_llm_router())
+        if affs:
+            paper.affiliations = affs
+
     await session.commit()
     await session.refresh(paper)
     return paper
