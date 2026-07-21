@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
+import { CompileBadge } from '../../components/ui/CompileBadge';
 import { PaperStatusPill } from '../../components/ui/StatusPill';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -187,12 +188,23 @@ export function InfoPanel({
       {/* —— Wiki 正文（含 ![[fig:N]] 嵌入图） —— */}
       <div style={{ marginTop: 18 }}>
         {paper.wiki_content ? (
-          <Markdown
-            source={paper.wiki_content}
-            onWikiLink={onWikiLink}
-            renderFigure={renderFigure}
-            style={{ fontSize: 12.5 }}
-          />
+          <>
+            <div
+              className="row gap8"
+              style={{ paddingBottom: 8, marginBottom: 12, borderBottom: '0.5px solid var(--border)' }}
+            >
+              <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+                {tr('AI 图文介绍', 'AI intro')}
+              </span>
+              <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
+            </div>
+            <Markdown
+              source={paper.wiki_content}
+              onWikiLink={onWikiLink}
+              renderFigure={renderFigure}
+              style={{ fontSize: 12.5 }}
+            />
+          </>
         ) : (
           <EmptyState
             compact

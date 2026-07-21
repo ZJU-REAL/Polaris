@@ -663,7 +663,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 except Exception:  # noqa: BLE001
                     logger.warning("figure annotation failed for paper %s", paper.id, exc_info=True)
             # ② 图文编译（重要图 ≤4 张随 prompt 送入）+ ③ 无效 ![[fig:N]] 标记剥除
-            content = await compile_paper(
+            compiled = await compile_paper(
                 paper,
                 statement=statement,
                 llm=ctx.llm,
@@ -671,12 +671,13 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 voyage_id=ctx.run.id,
                 extra_guidance=guidance,
             )
-            paper.wiki_content = content
+            paper.wiki_content = compiled.content
             paper.compiled_at = utcnow()
+            paper.compiled_model = compiled.model or None
             paper.status = "compiled"
             await session.commit()
             await ctx.log(
-                f"✓ 完成 {progress['n']}/{total}：{paper.title[:50]}（{len(content)} 字）",
+                f"✓ 完成 {progress['n']}/{total}：{paper.title[:50]}（{len(compiled.content)} 字）",
                 level="success",
             )
             return {"id": str(paper.id), "title": paper.title}

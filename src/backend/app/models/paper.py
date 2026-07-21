@@ -70,6 +70,8 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     trash_reason: Mapped[str | None] = mapped_column(String(16))
     scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     compiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 编译 wiki_content 实际用到的模型名（取自 LLM 返回结果）；存量数据为 null
+    compiled_model: Mapped[str | None] = mapped_column(String(255))
 
     concepts: Mapped[list["Concept"]] = relationship(
         secondary=paper_concepts, back_populates="papers"

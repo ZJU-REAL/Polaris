@@ -9,6 +9,7 @@ import { ScoreRing } from '../../components/ui/ScoreRing';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
+import { CompileBadge } from '../../components/ui/CompileBadge';
 import { PaperReader } from './PaperReader';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
@@ -1234,9 +1235,12 @@ function PaperDetailPane({
                 borderBottom: '0.5px solid var(--border)',
               }}
             >
-              <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-                {tr('AI 图文介绍', 'AI intro')}
-              </span>
+              <div className="row gap8">
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+                  {tr('AI 图文介绍', 'AI intro')}
+                </span>
+                <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
+              </div>
               <div className="row gap6">
                 <button
                   className="btn btn-soft sm"
