@@ -23,6 +23,7 @@ import {
   type LlmRoute,
   type LlmTestCapability,
   type LlmTestModelInput,
+  type RegistrationCodeRead,
   type SshCredentialInput,
 } from '../../lib/api';
 
@@ -1555,7 +1556,7 @@ function UsageTab() {
 
 // ---------------- 页面 ----------------
 
-type Tab = 'personal' | 'ssh' | 'llm' | 'usage' | 'users';
+type Tab = 'personal' | 'ssh' | 'llm' | 'usage' | 'users' | 'codes';
 
 
 // ---------------- 用户管理（admin） ----------------
@@ -1850,6 +1851,192 @@ function UsersTab() {
   );
 }
 
+// ---------------- 注册码管理（admin） ----------------
+
+const CODE_STATUS_LABEL: Record<string, [string, string, string]> = {
+  active: ['有效', 'Active', 'var(--ok)'],
+  exhausted: ['已用尽', 'Used up', 'var(--text-3)'],
+  expired: ['已过期', 'Expired', 'var(--text-3)'],
+  revoked: ['已停用', 'Revoked', 'var(--danger-tx)'],
+};
+
+function CreateCodeModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [note, setNote] = useState('');
+  const [expiresDays, setExpiresDays] = useState<string>(''); // '' = 永久
+  const [maxUses, setMaxUses] = useState<string>(''); // '' = 不限
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      api.adminCreateRegistrationCode({
+        note: note.trim(),
+        expires_days: expiresDays ? Number(expiresDays) : null,
+        max_uses: maxUses ? Number(maxUses) : null,
+      }),
+    onSuccess: (rc) => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-reg-codes'] });
+      void navigator.clipboard?.writeText(rc.code).catch(() => {});
+      toast(tr(`已生成 ${rc.code}，已复制到剪贴板`, `Created ${rc.code} — copied to clipboard`), 'ok');
+      onClose();
+    },
+    onError: (e) => toast(`${tr('生成失败', 'Create failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={440}
+      title={tr('生成注册码', 'Generate registration code')}
+      sub={tr('把生成的码发给需要注册的人。可设置有效期与使用次数上限。', 'Share the code with people who need to register. You can cap its lifetime and number of uses.')}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
+          <button className="btn btn-primary" disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>
+            {tr('生成', 'Generate')}
+          </button>
+        </>
+      }
+    >
+      <FormField label={tr('备注', 'Note')} hint={tr('可选，例如「2026 级新生」', 'Optional, e.g. "2026 cohort"')}>
+        <input className="input" value={note} maxLength={255} onChange={(e) => setNote(e.target.value)} placeholder={tr('这批码发给谁 / 什么用途', 'Who / what it is for')} />
+      </FormField>
+      <FormField label={tr('有效期', 'Expiry')} hint={tr('过期后自动失效', 'Auto-expires when reached')}>
+        <SelectMenu
+          value={expiresDays}
+          options={[
+            { value: '', label: tr('永久', 'Never') },
+            { value: '7', label: tr('7 天', '7 days') },
+            { value: '30', label: tr('30 天', '30 days') },
+            { value: '90', label: tr('90 天', '90 days') },
+            { value: '180', label: tr('180 天', '180 days') },
+          ]}
+          onChange={setExpiresDays}
+        />
+      </FormField>
+      <FormField label={tr('使用次数上限', 'Max uses')} hint={tr('留空 = 不限。达到次数后自动失效', 'Empty = unlimited. Auto-expires once reached')}>
+        <input
+          className="input"
+          type="number"
+          min={1}
+          max={10000}
+          value={maxUses}
+          onChange={(e) => setMaxUses(e.target.value)}
+          placeholder={tr('不限', 'unlimited')}
+        />
+      </FormField>
+    </Modal>
+  );
+}
+
+function CodesTab() {
+  const queryClient = useQueryClient();
+  const { data: codes, isLoading, isError } = useQuery({ queryKey: ['admin-reg-codes'], queryFn: () => api.adminListRegistrationCodes(), retry: false });
+  const [createOpen, setCreateOpen] = useState(false);
+
+  const revokeMutation = useMutation({
+    mutationFn: (id: string) => api.adminRevokeRegistrationCode(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-reg-codes'] });
+      toast(tr('已停用', 'Revoked'), 'ok');
+    },
+    onError: (e) => toast(`${tr('停用失败', 'Revoke failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const copy = (code: string) => {
+    void navigator.clipboard?.writeText(code).catch(() => {});
+    toast(tr(`已复制 ${code}`, `Copied ${code}`), 'ok');
+  };
+
+  return (
+    <div className="card card-pad">
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
+        <div>
+          <div className="section-h">{tr('注册码', 'Registration codes')}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>
+            {tr('注册时填对任一有效注册码即可加入。用尽 / 过期 / 停用即失效。', 'Anyone with a valid code can register. Codes stop working once used up, expired, or revoked.')}
+          </div>
+        </div>
+        <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
+          <Icon name="plus" size={14} />
+          {tr('生成注册码', 'Generate code')}
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="empty">{tr('加载中…', 'Loading…')}</div>
+      ) : isError || !codes ? (
+        <div className="empty">{tr('无法加载注册码', 'Failed to load codes')}</div>
+      ) : codes.length === 0 ? (
+        <div className="empty">{tr('还没有注册码，点右上角生成一个', 'No codes yet — generate one from the top right')}</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{tr('注册码', 'Code')}</th>
+                <th>{tr('备注', 'Note')}</th>
+                <th>{tr('使用', 'Uses')}</th>
+                <th>{tr('有效期', 'Expiry')}</th>
+                <th>{tr('状态', 'Status')}</th>
+                <th style={{ textAlign: 'right' }}>{tr('操作', 'Actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {codes.map((c: RegistrationCodeRead) => {
+                const [zh, en, color] = CODE_STATUS_LABEL[c.status] ?? [c.status, c.status, 'var(--text-3)'];
+                return (
+                  <tr key={c.id}>
+                    <td>
+                      <button
+                        className="btn btn-ghost sm"
+                        style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}
+                        title={tr('点击复制', 'Click to copy')}
+                        onClick={() => copy(c.code)}
+                      >
+                        {c.code} <Icon name="link" size={12} style={{ opacity: 0.6 }} />
+                      </button>
+                    </td>
+                    <td style={{ color: c.note ? 'var(--text)' : 'var(--text-4)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.note || '—'}
+                    </td>
+                    <td style={{ fontFamily: 'var(--mono)' }}>
+                      {c.used_count}
+                      {c.max_uses != null ? ` / ${c.max_uses}` : tr(' / 不限', ' / ∞')}
+                    </td>
+                    <td style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                      {c.expires_at ? fmtTime(c.expires_at) : tr('永久', 'Never')}
+                    </td>
+                    <td>
+                      <span className="pill" style={{ color, borderColor: 'var(--border)' }}>
+                        <span className="dot" style={{ background: color }} />
+                        {tr(zh, en)}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {!c.revoked && (
+                        <button
+                          className="btn btn-ghost sm"
+                          disabled={revokeMutation.isPending}
+                          onClick={() => revokeMutation.mutate(c.id)}
+                        >
+                          {tr('停用', 'Revoke')}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {createOpen && <CreateCodeModal onClose={() => setCreateOpen(false)} />}
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   const admin = isAdmin(me);
@@ -1863,10 +2050,14 @@ export function SettingsPage() {
           { v: 'llm' as Tab, label: tr('LLM 管理', 'LLM admin') },
           { v: 'usage' as Tab, label: tr('用量', 'Usage') },
           { v: 'users' as Tab, label: tr('用户管理', 'Users') },
+          { v: 'codes' as Tab, label: tr('注册码', 'Codes') },
         ]
       : []),
   ];
-  const effectiveTab: Tab = !admin && (tab === 'llm' || tab === 'usage' || tab === 'users') ? 'personal' : tab;
+  const effectiveTab: Tab =
+    !admin && (tab === 'llm' || tab === 'usage' || tab === 'users' || tab === 'codes')
+      ? 'personal'
+      : tab;
 
   return (
     <div className="page fadeup">
@@ -1883,6 +2074,7 @@ export function SettingsPage() {
       {effectiveTab === 'llm' && admin && <LlmTab />}
       {effectiveTab === 'usage' && admin && <UsageTab />}
       {effectiveTab === 'users' && admin && <UsersTab />}
+      {effectiveTab === 'codes' && admin && <CodesTab />}
     </div>
   );
 }

@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    admin_codes,
     admin_llm,
     admin_users,
     auth,
@@ -35,6 +36,7 @@ api_router.include_router(auth.router)
 api_router.include_router(users_profile.router)
 api_router.include_router(invites.router)
 api_router.include_router(admin_users.router)
+api_router.include_router(admin_codes.router)
 api_router.include_router(projects.router)
 api_router.include_router(gates.router)
 api_router.include_router(voyages.router)

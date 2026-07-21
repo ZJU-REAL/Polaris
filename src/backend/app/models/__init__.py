@@ -24,6 +24,7 @@ from app.models.paper import (
     paper_tag_links,
 )
 from app.models.project import Project, ProjectInvite, ProjectMember
+from app.models.registration_code import RegistrationCode
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.skill import ProjectSkill, Skill, SkillListing, SkillRating, SkillVersion
 from app.models.ssh_credential import SSHCredential
@@ -56,6 +57,7 @@ __all__ = [
     "ProjectInvite",
     "ProjectMember",
     "ProjectSkill",
+    "RegistrationCode",
     "ReviewMessage",
     "ReviewSession",
     "SSHCredential",

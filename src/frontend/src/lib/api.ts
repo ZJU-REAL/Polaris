@@ -143,6 +143,18 @@ export interface AdminUserRead {
   created_at: string;
 }
 
+export interface RegistrationCodeRead {
+  id: string;
+  code: string;
+  note: string;
+  expires_at: string | null;
+  max_uses: number | null;
+  used_count: number;
+  revoked: boolean;
+  status: string; // active | revoked | expired | exhausted
+  created_at: string;
+}
+
 export interface InviteRead {
   id: string;
   project_id: string;
@@ -1984,6 +1996,19 @@ export const api = {
   },
   adminBatchAssign(input: { user_ids: string[]; project_ids: string[]; role?: string }): Promise<{ added: number }> {
     return requestJson<{ added: number }>('/admin/users/batch-assign', 'POST', input);
+  },
+  adminListRegistrationCodes(): Promise<RegistrationCodeRead[]> {
+    return request<RegistrationCodeRead[]>('/admin/registration-codes');
+  },
+  adminCreateRegistrationCode(input: {
+    note?: string;
+    expires_days?: number | null;
+    max_uses?: number | null;
+  }): Promise<RegistrationCodeRead> {
+    return requestJson<RegistrationCodeRead>('/admin/registration-codes', 'POST', input);
+  },
+  adminRevokeRegistrationCode(codeId: string): Promise<void> {
+    return request<void>(`/admin/registration-codes/${codeId}`, { method: 'DELETE' });
   },
 
   // —— Projects ——

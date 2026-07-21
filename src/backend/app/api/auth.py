@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
 from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.services import registration_codes as codes_service
 
 JWT_LIFETIME_SECONDS = 60 * 60 * 24  # 24h
 
@@ -178,8 +179,13 @@ async def register(
     user_manager: UserManager = Depends(get_user_manager),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    """注册（实验室邀请制）：body 里的 invite_code 必须与 settings.INVITE_CODE 一致。"""
-    if user_create.invite_code != get_settings().invite_code:
+    """注册（实验室邀请制）：body 里的 invite_code 需命中一个可用注册码。
+
+    优先核销数据库里的管理注册码（可设过期 / 次数 / 停用）；未命中时回退到
+    settings.invite_code 静态码（兜底，避免没建过码时无人能注册 / 把管理员锁死）。
+    """
+    redeemed = await codes_service.redeem_code(session, user_create.invite_code)
+    if not redeemed and user_create.invite_code != get_settings().invite_code:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="INVALID_INVITE_CODE")
     # 用户名全局唯一（DB 也有唯一索引兜底，这里给出友好错误）
     taken = (
