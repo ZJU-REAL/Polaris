@@ -50,6 +50,11 @@ STAGES = (
 
 _ROUTE_CACHE_TTL = 60.0
 
+# 能力型环节：需要专用模型（嵌入/重排），对话模型不具备该能力，
+# 因此不回退 default 路由——未配置时抛 NotImplementedError，由调用方降级
+# （关键词检索/向量分兜底等既有路径）。
+_CAPABILITY_STAGES = frozenset({"embedding", "rerank"})
+
 
 @dataclass(slots=True, frozen=True)
 class ResolvedRoute:
@@ -148,9 +153,23 @@ class LLMRouter:
         return self._providers[key]
 
     async def resolve(self, stage: str) -> tuple[LLMProvider, ResolvedRoute]:
-        """先查 DB 路由表（缓存 60s），无则回退 default 路由，再回退 fake。"""
+        """先查 DB 路由表（缓存 60s），无则回退 default 路由，再回退 fake。
+
+        能力型环节（``_CAPABILITY_STAGES``）不回退 default：对话模型没有
+        embedding/rerank 能力，回退只会产生无意义调用；未显式配置时抛
+        NotImplementedError，调用方按既有降级路径处理。仅当路由表整体为空
+        （未初始化的本地/测试环境）时仍回退确定性 fake provider，保证无任何
+        DB 配置也能跑通。
+        """
         routes = await self._get_routes()
-        route = routes.get(stage) or routes.get("default") or _FALLBACK_ROUTE
+        route = routes.get(stage)
+        if route is None:
+            if stage in _CAPABILITY_STAGES:
+                if routes:
+                    raise NotImplementedError(f"no route configured for stage '{stage}'")
+                route = _FALLBACK_ROUTE
+            else:
+                route = routes.get("default") or _FALLBACK_ROUTE
         return self._provider_for(route), route
 
     async def _record_usage(
