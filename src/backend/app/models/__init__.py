@@ -26,6 +26,7 @@ from app.models.paper import (
     paper_tag_links,
 )
 from app.models.project import Project, ProjectInvite, ProjectMember
+from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.registration_code import RegistrationCode
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.skill import ProjectSkill, Skill, SkillListing, SkillRating, SkillVersion
@@ -72,7 +73,9 @@ __all__ = [
     "SystemSetting",
     "TimestampMixin",
     "User",
+    "UserAuthorProfile",
     "UserLibraryEntry",
+    "UserPublication",
     "UUIDPrimaryKeyMixin",
     "VoyageRun",
     "VoyageStep",

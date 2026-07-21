@@ -24,6 +24,7 @@ from app.api import (
     papers,
     presentations,
     projects,
+    publications,
     search,
     skills,
     ssh_credentials,
@@ -46,6 +47,7 @@ api_router.include_router(voyages.router)
 api_router.include_router(admin_llm.router)
 api_router.include_router(papers.router)
 api_router.include_router(library.router)
+api_router.include_router(publications.router)
 api_router.include_router(notes.router)
 api_router.include_router(highlights.router)
 api_router.include_router(concepts.router)

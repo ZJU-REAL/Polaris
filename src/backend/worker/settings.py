@@ -11,6 +11,7 @@ from worker.tasks import (
     reconcile_stuck_voyages,
     resume_voyage,
     run_voyage,
+    sync_user_publications,
 )
 
 # 航程任务超时：GPU 训练轮合法地跑数小时；1h 的默认会把轮询任务掐死→ARQ 按任务
@@ -23,6 +24,7 @@ class WorkerSettings:
         ping_task,
         func(run_voyage, timeout=VOYAGE_JOB_TIMEOUT_SECONDS),
         func(resume_voyage, timeout=VOYAGE_JOB_TIMEOUT_SECONDS),
+        sync_user_publications,
     ]
     # 每日 03:00 对 cadence=daily 且已 bootstrap 的项目触发增量 ingest（docs/api-m2.md §4）
     cron_jobs = [cron(daily_wiki_ingest, hour=DAILY_SYNC_UTC_HOUR, minute=DAILY_SYNC_UTC_MINUTE)]

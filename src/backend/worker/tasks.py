@@ -20,6 +20,7 @@ from app.core.events import EventBus
 from app.core.redis import get_redis
 from app.schemas.ingest import IngestKnobs
 from app.services import ingest as ingest_service
+from app.services import publications as publications_service
 
 
 async def ping_task(ctx: dict[str, Any], message: str = "ping") -> str:
@@ -59,9 +60,7 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
             .all()
         )
     for vid in ids:
-        await ctx["redis"].enqueue_job(
-            "resume_voyage", str(vid), _job_id=f"reconcile-resume-{vid}"
-        )
+        await ctx["redis"].enqueue_job("resume_voyage", str(vid), _job_id=f"reconcile-resume-{vid}")
 
 
 async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
@@ -86,3 +85,9 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
             await ctx["redis"].enqueue_job("run_voyage", str(run.id))
             enqueued.append(str(run.id))
     return enqueued
+
+
+async def sync_user_publications(ctx: dict[str, Any], user_id: str) -> int:
+    """同步某用户的发表记录（OpenAlex 作者实体 → pending 候选）；返回新增数。"""
+    async with get_sessionmaker()() as session:
+        return await publications_service.sync_publications(session, user_id=uuid.UUID(user_id))

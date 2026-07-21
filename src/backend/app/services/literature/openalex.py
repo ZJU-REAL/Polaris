@@ -48,6 +48,28 @@ def _simplify(work: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _simplify_author(author: dict[str, Any]) -> dict[str, Any]:
+    """作者实体候选卡片：显示名 / 别名 / 机构历史 / 论文与被引数 / 外部 id。"""
+    institutions = list(
+        dict.fromkeys(
+            inst.get("display_name")
+            for aff in (author.get("affiliations") or [])
+            for inst in [aff.get("institution") or {}]
+            if isinstance(inst, dict) and inst.get("display_name")
+        )
+    )
+    ids = author.get("ids") or {}
+    return {
+        "openalex_author_id": (author.get("id") or "").rsplit("/", 1)[-1] or None,
+        "display_name": author.get("display_name"),
+        "alternate_names": author.get("display_name_alternatives") or [],
+        "affiliations": institutions,
+        "works_count": author.get("works_count", 0),
+        "cited_by_count": author.get("cited_by_count", 0),
+        "orcid": (ids.get("orcid") or "").rsplit("/", 1)[-1] or None,
+    }
+
+
 class OpenAlexClient:
     def __init__(
         self,
@@ -94,6 +116,35 @@ class OpenAlexClient:
         data = await self._get("/works", {"search": query, "per-page": limit})
         results = (data or {}).get("results") or []
         return [_simplify(w) for w in results if isinstance(w, dict)]
+
+    async def search_authors(self, name: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        """按姓名检索作者实体（OpenAlex 已做同名消歧；绑定「我发表的论文」用）。"""
+        data = await self._get("/authors", {"search": name, "per-page": limit})
+        results = (data or {}).get("results") or []
+        return [_simplify_author(a) for a in results if isinstance(a, dict)]
+
+    async def works_by_author(
+        self, author_id: str, *, max_works: int = 1000
+    ) -> list[dict[str, Any]]:
+        """拉取某作者实体的全部 works（cursor 翻页，按被引数降序，封顶 max_works）。"""
+        short_id = author_id.rsplit("/", 1)[-1]  # 兼容完整 URL 形式的 id
+        works: list[dict[str, Any]] = []
+        cursor = "*"
+        while cursor and len(works) < max_works:
+            data = await self._get(
+                "/works",
+                {
+                    "filter": f"author.id:{short_id}",
+                    "per-page": 200,
+                    "cursor": cursor,
+                    "sort": "cited_by_count:desc",
+                },
+            )
+            if not data:
+                break
+            works.extend(_simplify(w) for w in data.get("results") or [] if isinstance(w, dict))
+            cursor = (data.get("meta") or {}).get("next_cursor")
+        return works[:max_works]
 
     async def aclose(self) -> None:
         await self._client.aclose()

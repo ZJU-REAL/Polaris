@@ -12,14 +12,19 @@ import { api, type LibraryEntry, type LibrarySort, type LibraryTab } from '../..
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { SearchInput, useDebounced } from '../wiki/shared';
+import { PublicationsTab, PUBLICATIONS_PAGE_SIZE } from './PublicationsTab';
 
 /* ============================================================
    /library — 我的文献库（跨研究方向的个人空间）：
-   「我的收藏」+「浏览记录」两个 tab，搜索 / 排序 / 分页；
-   行点击回到源方向的阅读页（源方向已删除时走外链）。
+   「我的收藏」+「浏览记录」+「我发表的」三个 tab；
+   收藏/记录带搜索、排序、分页，行点击回到源方向的阅读页
+   （源方向已删除时走外链）；「我发表的」见 PublicationsTab。
    ============================================================ */
 
 const PAGE_SIZE = 20;
+
+/** 页面级 tab：库内两个 tab + 「我发表的」。 */
+type PageTab = LibraryTab | 'publications';
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SORTS: { v: LibrarySort; zh: string; en: string }[] = [
@@ -168,7 +173,7 @@ export function LibraryPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [tab, setTab] = useState<LibraryTab>('saved');
+  const [tab, setTab] = useState<PageTab>('saved');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
   const [sort, setSort] = useState<LibrarySort>('recent');
@@ -180,12 +185,24 @@ export function LibraryPage() {
     setPage(1);
   }, [tab, q, sort]);
 
+  const onLibraryTab = tab !== 'publications';
   const listQuery = useQuery({
     queryKey: ['library', tab, q, sort, page],
-    queryFn: () => api.listLibrary({ tab, q: q || undefined, sort, page, size: PAGE_SIZE }),
+    queryFn: () =>
+      api.listLibrary({ tab: tab as LibraryTab, q: q || undefined, sort, page, size: PAGE_SIZE }),
+    enabled: onLibraryTab,
     retry: false,
     placeholderData: keepPreviousData,
   });
+
+  // 「我发表的」待确认数：给 tab 标签上的数量徽标用（与 PublicationsTab 内的
+  // pending 列表共用同一个 queryKey，切进去时直接复用缓存）
+  const pendingBadgeQuery = useQuery({
+    queryKey: ['publications', 'pending', 1],
+    queryFn: () => api.listPublications({ status: 'pending', page: 1, size: PUBLICATIONS_PAGE_SIZE }),
+    retry: false,
+  });
+  const pendingCount = pendingBadgeQuery.data?.counts.pending ?? 0;
   const data = listQuery.data;
   const entries = data?.items ?? [];
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.size)) : 1;
@@ -243,52 +260,87 @@ export function LibraryPage() {
         eyebrow="Polaris · My Library"
         title={tr('我的文献库', 'My Library')}
         sub={tr(
-          '跨研究方向的个人空间：收藏的文献和看过的论文都在这里。',
-          'Your personal space across research directions: saved papers and reading history.',
+          '跨研究方向的个人空间：收藏的文献、看过的论文和你自己发表的论文都在这里。',
+          'Your personal space across research directions: saved papers, reading history, and your own publications.',
         )}
       />
 
       {/* —— tab + 工具行 —— */}
       <div className="row gap12 wrap" style={{ marginBottom: 14 }}>
-        <Segmented<LibraryTab>
+        <Segmented<PageTab>
           options={[
             { v: 'saved', label: tr('我的收藏', 'Saved') },
             { v: 'history', label: tr('浏览记录', 'History') },
+            {
+              v: 'publications',
+              label: (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {tr('我发表的', 'My Publications')}
+                  {pendingCount > 0 && (
+                    <span
+                      className="mono"
+                      style={{
+                        minWidth: 16,
+                        height: 16,
+                        padding: '0 4px',
+                        borderRadius: 8,
+                        background: 'var(--accent)',
+                        color: '#fff',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {pendingCount}
+                    </span>
+                  )}
+                </span>
+              ),
+            },
           ]}
           value={tab}
           onChange={setTab}
         />
-        <div style={{ maxWidth: 340, flex: 1, minWidth: 180 }}>
-          <SearchInput
-            value={qInput}
-            onChange={setQInput}
-            placeholder={tr('搜索标题 / 作者…', 'Search title / authors…')}
-          />
-        </div>
-        <SelectMenu
-          value={sort}
-          options={SORTS.map((s) => ({ value: s.v, label: tr(s.zh, s.en) }))}
-          onChange={(v) => setSort(v as LibrarySort)}
-          wrapStyle={{ width: 140 }}
-          style={{ height: 32, fontSize: 12.5 }}
-        />
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
-          {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
-        </span>
-        {tab === 'history' && (
-          <button
-            className="btn btn-ghost sm"
-            disabled={clearMutation.isPending || (data !== undefined && data.total === 0)}
-            onClick={() => setClearOpen(true)}
-          >
-            <Icon name="trash" size={13} />
-            {tr('清空记录', 'Clear history')}
-          </button>
+        {onLibraryTab && (
+          <>
+            <div style={{ maxWidth: 340, flex: 1, minWidth: 180 }}>
+              <SearchInput
+                value={qInput}
+                onChange={setQInput}
+                placeholder={tr('搜索标题 / 作者…', 'Search title / authors…')}
+              />
+            </div>
+            <SelectMenu
+              value={sort}
+              options={SORTS.map((s) => ({ value: s.v, label: tr(s.zh, s.en) }))}
+              onChange={(v) => setSort(v as LibrarySort)}
+              wrapStyle={{ width: 140 }}
+              style={{ height: 32, fontSize: 12.5 }}
+            />
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
+              {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
+            </span>
+            {tab === 'history' && (
+              <button
+                className="btn btn-ghost sm"
+                disabled={clearMutation.isPending || (data !== undefined && data.total === 0)}
+                onClick={() => setClearOpen(true)}
+              >
+                <Icon name="trash" size={13} />
+                {tr('清空记录', 'Clear history')}
+              </button>
+            )}
+          </>
         )}
       </div>
 
-      {/* —— 列表 —— */}
-      {listQuery.isLoading ? (
+      {/* —— 我发表的 —— */}
+      {tab === 'publications' && <PublicationsTab />}
+
+      {/* —— 收藏 / 浏览记录列表 —— */}
+      {tab === 'publications' ? null : listQuery.isLoading ? (
         <div className="empty">{tr('加载中…', 'Loading…')}</div>
       ) : listQuery.isError ? (
         <EmptyState
@@ -343,8 +395,8 @@ export function LibraryPage() {
         </div>
       )}
 
-      {/* —— 分页 —— */}
-      {data && data.total > PAGE_SIZE && (
+      {/* —— 分页（收藏 / 浏览记录） —— */}
+      {onLibraryTab && data && data.total > PAGE_SIZE && (
         <div className="row gap12" style={{ justifyContent: 'center', marginTop: 16 }}>
           <button className="btn btn-ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             <Icon name="chevron" size={12} style={{ transform: 'rotate(180deg)' }} />
