@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
@@ -7,6 +7,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
+import { DropdownList, SelectMenu, useClickOutside } from '../../components/ui/SelectMenu';
 import { fmtTime } from '../../lib/format';
 import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
 import { tr } from '../../lib/i18n';
@@ -906,155 +907,7 @@ interface RouteDraft {
   temperature: string;
 }
 
-// ---- 下拉控件（ModelCombobox / SelectMenu 共用的面板视觉） ----
-
-const COMBO_ITEM_H = 30;
-const COMBO_VISIBLE = 5;
-
-/** 打开状态下点击组件外部时收起。 */
-function useClickOutside(ref: RefObject<HTMLElement | null>, active: boolean, onAway: () => void) {
-  useEffect(() => {
-    if (!active) return;
-    const onDocDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onAway();
-    };
-    document.addEventListener('mousedown', onDocDown);
-    return () => document.removeEventListener('mousedown', onDocDown);
-  }, [ref, active, onAway]);
-}
-
-/** 候选面板：最多可视 5 项、超出内部滚动；高亮项随键盘滚动到可见。 */
-function DropdownList({ items, hi, mono, onHover, onPick }: {
-  items: { key: string; label: string }[];
-  hi: number;
-  /** 候选用等宽字体（模型名等代码标识符） */
-  mono?: boolean;
-  onHover: (i: number) => void;
-  onPick: (i: number) => void;
-}) {
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    listRef.current?.children[hi]?.scrollIntoView({ block: 'nearest' });
-  }, [hi]);
-  return (
-    <div
-      ref={listRef}
-      role="listbox"
-      style={{
-        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
-        maxHeight: COMBO_ITEM_H * COMBO_VISIBLE, overflowY: 'auto',
-        background: 'var(--surface)', border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-pop)',
-      }}
-    >
-      {items.map((it, i) => (
-        <div
-          key={it.key}
-          role="option"
-          aria-selected={i === hi}
-          className={mono ? 'mono' : undefined}
-          style={{
-            height: COMBO_ITEM_H, lineHeight: `${COMBO_ITEM_H}px`, padding: '0 10px', fontSize: 12,
-            cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            background: i === hi ? 'var(--accent-soft)' : 'transparent',
-            color: i === hi ? 'var(--accent-text)' : 'var(--text)',
-          }}
-          onMouseEnter={() => onHover(i)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            onPick(i);
-          }}
-        >
-          {it.label}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** 纯下拉选择器（固定候选，不自由输入）：与 ModelCombobox 同一套面板视觉。 */
-function SelectMenu({ value, options, muted, style, onChange }: {
-  value: string;
-  options: { value: string; label: string }[];
-  /** 「跟随默认」行的弱化样式 */
-  muted?: boolean;
-  /** 覆盖触发按钮样式（如表格行内 height: 32） */
-  style?: CSSProperties;
-  onChange: (v: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [hi, setHi] = useState(0);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  useClickOutside(wrapRef, open, () => setOpen(false));
-
-  const selectedIdx = options.findIndex((o) => o.value === value);
-  const selected = selectedIdx >= 0 ? options[selectedIdx] : undefined;
-
-  const openList = () => {
-    if (options.length === 0) return;
-    setOpen(true);
-    setHi(Math.max(selectedIdx, 0));
-  };
-  const pick = (i: number) => {
-    const o = options[i];
-    if (o === undefined) return;
-    // 与原生 select 一致：重选当前值不触发 onChange（路由表里避免误清空 model）
-    if (o.value !== value) onChange(o.value);
-    setOpen(false);
-  };
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      if (open) pick(hi);
-      else openList();
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (open) setHi((h) => Math.min(h + 1, options.length - 1));
-      else openList();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (open) setHi((h) => Math.max(h - 1, 0));
-      else openList();
-    } else if (e.key === 'Escape') {
-      setOpen(false);
-    }
-  };
-
-  return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        className="input"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        style={{
-          width: '100%', textAlign: 'left', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', gap: 6,
-          color: muted || !selected || selected.value === '' ? 'var(--text-3)' : 'var(--text)',
-          ...style,
-        }}
-        onClick={() => (open ? setOpen(false) : openList())}
-        onKeyDown={onKeyDown}
-      >
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {selected?.label ?? value}
-        </span>
-        <Icon name="chevDown" size={12}
-          style={{ color: 'var(--text-3)', flexShrink: 0, ...(open ? { transform: 'rotate(180deg)' } : {}) }} />
-      </button>
-      {open && (
-        <DropdownList
-          items={options.map((o) => ({ key: o.value, label: o.label }))}
-          hi={hi}
-          onHover={setHi}
-          onPick={pick}
-        />
-      )}
-    </div>
-  );
-}
-
-// ---- 模型组合框：自由输入 + 候选下拉 ----
+// ---- 模型组合框：自由输入 + 候选下拉（面板视觉复用 components/ui/SelectMenu） ----
 
 function ModelCombobox({ value, options, placeholder, muted, onChange }: {
   value: string;
@@ -1767,24 +1620,36 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
     >
       <div className="row gap10" style={{ marginBottom: 16 }}>
         <FormField label={tr('角色', 'Role')} style={{ flex: 1, marginBottom: 0 }}>
-          <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="member">{tr('成员', 'Member')}</option>
-            <option value="admin">{tr('管理员', 'Admin')}</option>
-          </select>
+          <SelectMenu
+            value={role}
+            options={[
+              { value: 'member', label: tr('成员', 'Member') },
+              { value: 'admin', label: tr('管理员', 'Admin') },
+            ]}
+            onChange={setRole}
+          />
         </FormField>
         <FormField label={tr('状态', 'Status')} style={{ flex: 1, marginBottom: 0 }}>
-          <select className="input" value={active ? '1' : '0'} onChange={(e) => setActive(e.target.value === '1')}>
-            <option value="1">{tr('启用', 'Active')}</option>
-            <option value="0">{tr('停用', 'Disabled')}</option>
-          </select>
+          <SelectMenu
+            value={active ? '1' : '0'}
+            options={[
+              { value: '1', label: tr('启用', 'Active') },
+              { value: '0', label: tr('停用', 'Disabled') },
+            ]}
+            onChange={(v) => setActive(v === '1')}
+          />
         </FormField>
       </div>
       <FormField label={tr('大模型使用', 'LLM access')} hint={tr('限制该用户能否调用大模型', 'Controls whether this user can call LLMs')}>
-        <select className="input" value={llmAccess} onChange={(e) => setLlmAccess(e.target.value)}>
-          <option value="full">{tr('不限（全部功能）', 'Unrestricted (all features)')}</option>
-          <option value="chat_only">{tr('仅文献对话与 AI 伴读', 'Paper chat and reading assistant only')}</option>
-          <option value="blocked">{tr('锁定（禁止使用大模型）', 'Blocked (no LLM use)')}</option>
-        </select>
+        <SelectMenu
+          value={llmAccess}
+          options={[
+            { value: 'full', label: tr('不限（全部功能）', 'Unrestricted (all features)') },
+            { value: 'chat_only', label: tr('仅文献对话与 AI 伴读', 'Paper chat and reading assistant only') },
+            { value: 'blocked', label: tr('锁定（禁止使用大模型）', 'Blocked (no LLM use)') },
+          ]}
+          onChange={setLlmAccess}
+        />
       </FormField>
       <FormField label={tr('AI token 配额', 'Token quota')} hint={`${tr('已用', 'Used')} ${u.tokens_used.toLocaleString()} tokens${tr('；留空 = 不限。达到配额后不能再发起 AI 任务', '; empty = unlimited. Once the quota is reached, no new AI tasks can start')}`}>
         <input className="input mono" value={quota} onChange={(e) => setQuota(e.target.value)} placeholder={tr('不限', 'Unlimited')} />

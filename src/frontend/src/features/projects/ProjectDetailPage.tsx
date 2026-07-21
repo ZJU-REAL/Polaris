@@ -6,6 +6,7 @@ import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
 import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/Toast';
+import { SelectMenu } from '../../components/ui/SelectMenu';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectDefinition, type ProjectRead } from '../../lib/api';
@@ -481,11 +482,15 @@ export function ProjectDetailPage() {
           <div className="row gap8">
             <input className="input" style={{ flex: 1 }} placeholder={tr('成员邮箱', 'Member email')} type="email"
               value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)} />
-            <select className="input" style={{ width: 120 }} value={memberRole}
-              onChange={(e) => setMemberRole(e.target.value as 'member' | 'owner')}>
-              <option value="member">member</option>
-              <option value="owner">owner</option>
-            </select>
+            <SelectMenu
+              wrapStyle={{ width: 120 }}
+              value={memberRole}
+              options={[
+                { value: 'member', label: 'member' },
+                { value: 'owner', label: 'owner' },
+              ]}
+              onChange={(v) => setMemberRole(v as 'member' | 'owner')}
+            />
             <button className="btn btn-primary" style={{ height: 38 }}
               disabled={!memberEmail.trim() || addMemberMutation.isPending}
               onClick={() => addMemberMutation.mutate()}>
