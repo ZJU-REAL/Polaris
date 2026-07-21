@@ -11,6 +11,7 @@ import { DropdownList, SelectMenu, useClickOutside } from '../../components/ui/S
 import { fmtTime } from '../../lib/format';
 import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
 import { FeedbackTab } from '../feedback/FeedbackTab';
+import { AcademicIdentitySection } from './AcademicIdentitySection';
 import { tr } from '../../lib/i18n';
 import { setTaskLogHistory, useTaskLogHistory } from '../../lib/prefs';
 import {
@@ -183,6 +184,7 @@ function PersonalTab() {
         </button>
       </div>
       </div>
+      <AcademicIdentitySection />
       <PreferencesSection />
     </>
   );
