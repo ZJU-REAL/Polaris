@@ -46,9 +46,24 @@ DEFAULT_KNOBS: dict[str, Any] = {
     "relevance_threshold": 0.6,
     "snowball_depth": 1,
     "compile_top_n": 20,
+    "unlimited": False,
 }
 
 _MAX_CANDIDATES_CAP = 200
+
+# 最大化模式（knobs.unlimited=True）的安全哨兵：检索/打分/抽取/编译均按「窗口内全量」
+# 处理，不再受 max_papers/compile_top_n/_MAX_CANDIDATES_CAP 截断；此哨兵只防真正失控
+# （查询发散/外部 API 异常返回海量条目），正常调研窗口远达不到。
+_UNLIMITED_SENTINEL = 10_000
+
+# 最大化模式下单次运行补齐 chunk embedding 的哨兵上限（全量论文 × 每篇 ≤120 段）；
+# 默认模式沿用 services/chunks.py 的 2000/次（剩余随每日同步补齐）。
+_UNLIMITED_CHUNK_SENTINEL = 1_000_000
+
+
+def _unlimited(knobs: dict[str, Any]) -> bool:
+    return bool(knobs.get("unlimited"))
+
 
 # 增量同步回看窗口：arXiv 关键词检索索引对新论文有约 3-5 天滞后（近 2 天窗口常搜到 0），
 # 只回看 1 天会永远漏掉「延迟才被索引」的论文。放宽到 14 天，去重（arxiv_id/doi/title）
@@ -200,7 +215,10 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         else:
             since = now - timedelta(days=30 * int(knobs["months_back"]))
 
-        limit = min(_MAX_CANDIDATES_CAP, max(int(knobs["max_papers"]) * 3, 10))
+        if _unlimited(knobs):
+            limit = _UNLIMITED_SENTINEL  # 窗口内全量抓取（哨兵防失控）
+        else:
+            limit = min(_MAX_CANDIDATES_CAP, max(int(knobs["max_papers"]) * 3, 10))
         entries = await get_arxiv_client().search(
             categories=categories, keywords=include, since=since, until=now, limit=limit
         )
@@ -299,7 +317,9 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
     failed: list[dict[str, str]] = []
     new_papers: list[Paper] = []
     inserted = 0
-    max_new = int(knobs["max_papers"]) * 2
+    # 最大化模式：扩展新增篇数同样放开（哨兵防失控）；种子广度（锚点+最新 10 篇候选、
+    # 下一层 frontier 取 10）仍为固定设计常量，控制的是 S2 API 调用量而非入库篇数
+    max_new = _UNLIMITED_SENTINEL if _unlimited(knobs) else int(knobs["max_papers"]) * 2
 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
@@ -428,7 +448,8 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                     select(Paper.id)
                     .where(Paper.project_id == project.id, Paper.status == "candidate")
                     .order_by(Paper.published_at.desc().nulls_last(), Paper.created_at)
-                    .limit(_MAX_CANDIDATES_CAP)
+                    # 最大化模式打分不截断（全部 candidate 逐篇打分，哨兵防失控）
+                    .limit(_UNLIMITED_SENTINEL if _unlimited(knobs) else _MAX_CANDIDATES_CAP)
                 )
             ).scalars()
         )
@@ -503,6 +524,9 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
 
 def _compile_limit(knobs: dict[str, Any]) -> int:
+    # 最大化模式：全部达标论文进入抽取/编译（compile_top_n/max_papers 被忽略，哨兵防失控）
+    if _unlimited(knobs):
+        return _UNLIMITED_SENTINEL
     return max(1, min(int(knobs["compile_top_n"]), int(knobs["max_papers"])))
 
 
@@ -532,7 +556,13 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         need_dates = [p for p in papers if p.published_at is None and p.arxiv_id]
         if need_dates:
             try:
-                entries = await arxiv.fetch_by_ids([p.arxiv_id for p in need_dates])
+                # 分批查（每批 100）：最大化模式下待回填论文可达数百上千，单次 id_list
+                # 会超 URL 长度/arXiv 单请求上限
+                entries = []
+                for i in range(0, len(need_dates), 100):
+                    entries.extend(
+                        await arxiv.fetch_by_ids([p.arxiv_id for p in need_dates[i : i + 100]])
+                    )
                 by_aid = {e.get("arxiv_id"): e for e in entries if e.get("arxiv_id")}
                 for p in need_dates:
                     entry = by_aid.get(p.arxiv_id)
@@ -752,13 +782,18 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             except Exception as e:  # noqa: BLE001 — 嵌入失败不影响上链结果
                 embed_error = f"{type(e).__name__}: {e}"
 
-        # 全文分段向量：补齐缺失的 chunk embedding（文献问答检索底座）
+        # 全文分段向量：补齐缺失的 chunk embedding（文献问答检索底座）。
+        # 最大化模式放开单次 2000 段的默认上限（否则大批量编译后向量长期欠账）
+        embed_kwargs: dict[str, Any] = (
+            {"limit": _UNLIMITED_CHUNK_SENTINEL} if _unlimited(_knobs(ctx)) else {}
+        )
         chunks_embedded, chunk_embed_error = await embed_pending_chunks(
             session,
             project_id=project.id,
             llm=ctx.llm,
             user_id=ctx.run.created_by,
             voyage_id=ctx.run.id,
+            **embed_kwargs,
         )
 
     return {

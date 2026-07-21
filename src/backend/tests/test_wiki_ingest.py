@@ -665,6 +665,159 @@ async def test_incremental_rss_fresh_layer(client, queue_stub, wiki_mocks):
         assert dup_count == 1
 
 
+# ---- 最大化模式（knobs.unlimited）：不限篇数 + 不限预算 ----
+
+# 故意保留很小的 max_papers/compile_top_n：unlimited=True 时它们必须被忽略
+UNLIMITED_KNOBS = {**KNOBS, "unlimited": True}
+
+# 候选数 > _MAX_CANDIDATES_CAP=200，同时远超 compile 限 min(compile_top_n=5, max_papers=10)，
+# 三处旧截断任一残留都会让断言失败
+_BIG_N = 210
+
+
+def _atom_feed(entries_xml: list[str]) -> str:
+    body = "".join(entries_xml)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<feed xmlns="http://www.w3.org/2005/Atom" '
+        f'xmlns:arxiv="http://arxiv.org/schemas/atom">{body}</feed>'
+    )
+
+
+def _big_entry(i: int) -> str:
+    day = (i % 27) + 1
+    return f"""
+  <entry>
+    <id>http://arxiv.org/abs/2606.{10000 + i}v1</id>
+    <title>Autonomous Research Agent Study {i}</title>
+    <summary>Deterministic study {i} of autonomous research agents.</summary>
+    <published>2026-06-{day:02d}T00:00:00Z</published>
+    <updated>2026-06-{day:02d}T00:00:00Z</updated>
+    <author><name>Author {i}</name></author>
+    <category term="cs.LG"/>
+  </entry>"""
+
+
+_BIG_ENTRIES = [_big_entry(i) for i in range(_BIG_N)]
+
+
+@pytest_asyncio.fixture
+async def wiki_mocks_big(app):
+    """同 wiki_mocks，但 arXiv 检索按 start/max_results 分页返回 210 条候选（验证
+    unlimited 模式下自动翻页抓全量、各步不被 200/top_n 截断）。"""
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    set_clients(
+        arxiv=ArxivClient(redis=redis, min_interval=0),
+        s2=SemanticScholarClient(redis=redis, api_key="", rate=10_000, backoff_base=0.0),
+        openalex=OpenAlexClient(redis=redis, mailto="test@example.org"),
+    )
+    pdf_bytes = _make_pdf_bytes()
+
+    def _paged_arxiv(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        if params.get("id_list"):  # fetch_by_ids（日期回填）：返回空 feed
+            return httpx.Response(200, text=_atom_feed([]))
+        start = int(params.get("start") or 0)
+        max_results = int(params.get("max_results") or 100)
+        return httpx.Response(200, text=_atom_feed(_BIG_ENTRIES[start : start + max_results]))
+
+    with respx.mock(assert_all_called=False) as router:
+        router.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
+            side_effect=_paged_arxiv
+        )
+        router.get(
+            url__regex=r".*semanticscholar\.org/graph/v1/paper/arXiv:2404\.11111/references.*"
+        ).mock(return_value=httpx.Response(200, json=S2_ANCHOR_REFERENCES))
+        router.get(url__regex=r".*semanticscholar\.org/graph/v1/paper/.*").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+        router.get(url__regex=r"https://arxiv\.org/pdf/.*").mock(
+            return_value=httpx.Response(200, content=pdf_bytes)
+        )
+        yield router
+    reset_clients()
+    await redis.aclose()
+
+
+def test_unlimited_knobs_and_budget_semantics():
+    """unlimited 缺省 False、可与显式篇数共存；预算给 None（引擎对 falsy 跳过检查）。"""
+    from app.agents.voyage.actions_wiki import resolve_knobs
+    from app.agents.voyage.engine import VoyageEngine
+    from app.models.voyage import VoyageRun
+    from app.schemas.ingest import IngestKnobs
+
+    assert IngestKnobs().unlimited is False  # 向后兼容缺省
+    knobs = IngestKnobs(unlimited=True, max_papers=10, compile_top_n=5)
+    assert knobs.unlimited is True and knobs.max_papers == 10 and knobs.compile_top_n == 5
+
+    # 预算：unlimited → max_tokens=None；默认模式派生公式不变
+    assert ingest_service.derive_budget(knobs) == {"max_tokens": None}
+    assert ingest_service.derive_budget(IngestKnobs()) == {"max_tokens": 50 * 20_000}
+
+    # 引擎语义：max_tokens 为 None（falsy）不触发预算暂停，用量再大也不算超限
+    run = VoyageRun(
+        kind="wiki_bootstrap",
+        goal="g",
+        budget={"max_tokens": None},
+        usage={"total_tokens": 10**9},
+    )
+    assert VoyageEngine._budget_exceeded(run) is False
+
+    # resolve_knobs 透传 unlimited（缺省补 False）
+    assert resolve_knobs({"unlimited": True})["unlimited"] is True
+    assert resolve_knobs({})["unlimited"] is False
+    assert resolve_knobs(None)["unlimited"] is False
+
+
+async def test_unlimited_bootstrap_uncapped(client, queue_stub, wiki_mocks_big):
+    """unlimited 全链路：210 候选（>200 硬顶）全量入库→全量打分→全量抽取编译，
+    不被 max_papers/compile_top_n 截断，预算不触发暂停，任务跑到 done。"""
+    project_id, headers = await _setup_project(client)
+
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": UNLIMITED_KNOBS},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    voyage = resp.json()
+    assert voyage["budget"]["max_tokens"] is None  # 不限预算
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage["id"]))
+
+    detail = (await client.get(f"/api/voyages/{voyage['id']}", headers=headers)).json()
+    assert detail["status"] == "done", detail  # 未因预算暂停
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
+
+    # 检索：分页抓到全部 210 条（旧逻辑 limit=min(200, 10*3)=30）
+    obs0 = detail["steps"][0]["observation"]
+    assert obs0["found"] == _BIG_N and obs0["inserted"] == _BIG_N
+    # 雪球：锚点扩展 1 篇（上限放开后不受 max_papers*2 影响）
+    assert detail["steps"][1]["observation"]["inserted"] == 1
+    total = _BIG_N + 1
+    # 打分：211 篇全部处理（旧逻辑截 200）
+    score_obs = detail["steps"][2]["observation"]
+    assert score_obs["processed"] == total and score_obs["succeeded"] == total
+    assert score_obs["excluded"] == 0  # 全部相关（fake 打 0.88 ≥ 0.6）
+    # 抽取/编译：211 篇全部进入（旧逻辑截 min(compile_top_n=5, max_papers=10)=5）
+    assert detail["steps"][3]["observation"]["processed"] == total
+    compile_obs = detail["steps"][4]["observation"]
+    assert compile_obs["processed"] == total and compile_obs["succeeded"] == total
+
+    async with get_sessionmaker()() as session:
+        compiled = int(
+            (
+                await session.execute(
+                    select(func.count()).where(
+                        Paper.project_id == uuid.UUID(project_id), Paper.status == "compiled"
+                    )
+                )
+            ).scalar_one()
+        )
+        assert compiled == total  # 全部编译落库，无一截断
+
+
 async def test_daily_cron_project_selection(client, queue_stub, wiki_mocks):
     """cadence=daily 且已 bootstrap（有水位线）的项目才进入每日增量。"""
     project_id, headers = await _setup_project(client)

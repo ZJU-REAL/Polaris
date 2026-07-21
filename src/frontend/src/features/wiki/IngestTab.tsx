@@ -45,6 +45,8 @@ function KnobRange({
   step,
   format,
   onChange,
+  disabled,
+  disabledText,
 }: {
   label: string;
   en: string;
@@ -55,21 +57,27 @@ function KnobRange({
   step: number;
   format?: (v: number) => string;
   onChange: (v: number) => void;
+  disabled?: boolean;
+  disabledText?: string;
 }) {
   return (
     <FormField label={label} en={en} hint={hint}>
-      <div className="row gap12">
+      <div className="row gap12" style={disabled ? { opacity: 0.45 } : undefined}>
         <input
           type="range"
           min={min}
           max={max}
           step={step}
           value={value}
+          disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))}
           style={{ flex: 1 }}
         />
-        <span className="mono" style={{ fontSize: 12.5, fontWeight: 650, width: 44, textAlign: 'right' }}>
-          {format ? format(value) : value}
+        <span
+          className="mono"
+          style={{ fontSize: 12.5, fontWeight: 650, minWidth: 44, textAlign: 'right', whiteSpace: 'nowrap' }}
+        >
+          {disabled && disabledText ? disabledText : format ? format(value) : value}
         </span>
       </div>
     </FormField>
@@ -86,6 +94,8 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
   const [threshold, setThreshold] = useState(0.6);
   const [snowballDepth, setSnowballDepth] = useState<'0' | '1' | '2'>('1');
   const [compileTopN, setCompileTopN] = useState(20);
+  // 最大化模式：不限检索/编译篇数（仅 bootstrap 表单，增量同步不受影响）
+  const [unlimited, setUnlimited] = useState(false);
 
   const running = !!state?.running_voyage_id;
 
@@ -125,6 +135,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
         relevance_threshold: threshold,
         snowball_depth: Number(snowballDepth),
         compile_top_n: compileTopN,
+        unlimited,
       },
     });
   }
@@ -310,6 +321,45 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             step={1}
             onChange={setMonthsBack}
           />
+          <FormField
+            label={tr('最大化（不限篇数）', 'Maximize (no paper cap)')}
+            en="unlimited"
+            hint={tr(
+              '开启后检索篇数与编译篇数不设上限，抓取时间窗口内的全部相关论文。',
+              'When on, search and compile have no paper caps: every relevant paper in the window is processed.',
+            )}
+          >
+            <label className="row gap10" style={{ cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={unlimited}
+                onChange={(e) => setUnlimited(e.target.checked)}
+                style={{ width: 15, height: 15, accentColor: 'var(--accent)' }}
+              />
+              <span style={{ fontSize: 12.5, fontWeight: 650 }}>
+                {unlimited ? tr('已开启：不限篇数', 'On: no cap') : tr('未开启', 'Off')}
+              </span>
+            </label>
+            {unlimited && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '8px 10px',
+                  borderRadius: 8,
+                  background: 'var(--warn-bg)',
+                  color: 'var(--warn-tx)',
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  lineHeight: 1.55,
+                }}
+              >
+                {tr(
+                  '注意：将抓取时间窗口内全部相关论文并全部精读编译，耗时与 LLM 费用可能显著增加，且不再受预算限制自动停止。',
+                  'Note: every relevant paper in the window will be fetched and compiled. Time and LLM cost may increase substantially, and the run will not stop on a budget limit.',
+                )}
+              </div>
+            )}
+          </FormField>
           <KnobRange
             label={tr('最大检索篇数', 'Max papers')}
             en="max_papers"
@@ -322,6 +372,8 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             max={300}
             step={10}
             onChange={setMaxPapers}
+            disabled={unlimited}
+            disabledText={tr('无上限', 'No cap')}
           />
           <KnobRange
             label={tr('相关度阈值', 'Relevance threshold')}
@@ -361,6 +413,8 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             max={100}
             step={5}
             onChange={setCompileTopN}
+            disabled={unlimited}
+            disabledText={tr('无上限', 'No cap')}
           />
 
           <div className="row gap10" style={{ marginTop: 6 }}>
