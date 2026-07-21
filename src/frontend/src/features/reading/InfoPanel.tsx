@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import { PaperStatusPill } from '../../components/ui/StatusPill';
@@ -37,8 +38,8 @@ export function InfoPanel({
   /** [[概念]] 双链与概念 chips 点击 → 按名称跳 wiki 概念库 */
   onWikiLink: WikiLinkHandler;
 }) {
+  const navigate = useNavigate();
   const [abstractOpen, setAbstractOpen] = useState(false);
-  const authors = paper.authors.map((a) => a.name).join(' · ');
   const arxivUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null;
   const extUrl = arxivUrl ?? paper.url;
 
@@ -71,7 +72,38 @@ export function InfoPanel({
         )}
       </div>
       <div style={{ fontSize: 14.5, fontWeight: 660, lineHeight: 1.4, marginBottom: 5 }}>{paper.title}</div>
-      {authors && <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5 }}>{authors}</div>}
+      {paper.authors.length > 0 && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
+          {paper.authors.map((a, i) => (
+            <span key={`${a.name}-${i}`}>
+              {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
+              <span
+                className="author-link"
+                title={tr(`回文献库只看 ${a.name} 的论文`, `Back to the library, showing only ${a.name}'s papers`)}
+                {...clickable(() => navigate(`/wiki?author=${encodeURIComponent(a.name)}`))}
+              >
+                {a.name}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+      {(paper.affiliations?.length ?? 0) > 0 && (
+        <div className="row gap6 wrap" style={{ marginTop: 8 }}>
+          <Icon name="pin" size={10} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
+          {paper.affiliations!.map((name) => (
+            <span
+              key={name}
+              className="chip"
+              style={{ fontSize: 10.5, height: 20 }}
+              title={tr(`回文献库只看 ${name} 的论文`, `Back to the library, showing only papers from ${name}`)}
+              {...clickable(() => navigate(`/wiki?affiliation=${encodeURIComponent(name)}`))}
+            >
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
       {extUrl && (
         <a
           className="btn btn-ghost sm"

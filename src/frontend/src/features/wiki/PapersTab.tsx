@@ -28,6 +28,7 @@ import {
   type SearchMode,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { clickable } from '../../lib/a11y';
 import { categoryMeta, saveBlob, SearchInput, useDebounced } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
 
@@ -57,6 +58,13 @@ function viewQuery(view: ViewFilter): { status: PaperStatusFilter; starred?: boo
   return { status: 'library' };
 }
 
+/** 深链 /wiki?author= / ?affiliation= 带进来的高级检索条件；seq 递增触发重新应用 */
+export interface AdvSearchSeed {
+  author?: string;
+  affiliation?: string;
+  seq: number;
+}
+
 export interface PapersTabProps {
   pid: string;
   selectedId: string | null;
@@ -64,6 +72,8 @@ export interface PapersTabProps {
   onOpenConcept: (id: string) => void;
   /** wiki 双链 [[概念名]] 点击 → 按名称跳概念 */
   onWikiLink: WikiLinkHandler;
+  /** 深链带入的作者/机构筛选（阅读页跳回文献库用） */
+  advSeed?: AdvSearchSeed | null;
 }
 
 /* ---------------- 添加文献 Modal ---------------- */
@@ -858,12 +868,16 @@ function MetaItem({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
+/** 机构 chips 默认最多展示数，超出折叠 */
+const AFFIL_CHIP_LIMIT = 6;
+
 function PaperDetailPane({
   paperId,
   pid,
   onOpenConcept,
   onWikiLink,
   onFilterAuthor,
+  onFilterAffiliation,
   onDeleted,
 }: {
   paperId: string;
@@ -872,6 +886,8 @@ function PaperDetailPane({
   onWikiLink: WikiLinkHandler;
   /** 点击作者名 → 论文库按该作者过滤 */
   onFilterAuthor: (name: string) => void;
+  /** 点击机构 → 论文库按该机构过滤 */
+  onFilterAffiliation: (name: string) => void;
   /** 删除成功后回调（父组件清空选中，自动跳到列表第一篇） */
   onDeleted: () => void;
 }) {
@@ -879,6 +895,7 @@ function PaperDetailPane({
   const queryClient = useQueryClient();
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [conceptsOpen, setConceptsOpen] = useState(false);
+  const [affilsOpen, setAffilsOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
 
@@ -1011,6 +1028,29 @@ function PaperDetailPane({
                   </span>
                 </span>
               ))}
+            </div>
+          )}
+          {(paper.affiliations?.length ?? 0) > 0 && (
+            <div className="row gap6 wrap" style={{ marginTop: 8 }}>
+              <Icon name="pin" size={11} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
+              {(affilsOpen ? paper.affiliations! : paper.affiliations!.slice(0, AFFIL_CHIP_LIMIT)).map((name) => (
+                <span
+                  key={name}
+                  className="chip"
+                  style={{ fontSize: 11 }}
+                  title={tr(`只看 ${name} 的论文`, `Show only papers from ${name}`)}
+                  {...clickable(() => onFilterAffiliation(name))}
+                >
+                  {name}
+                </span>
+              ))}
+              {paper.affiliations!.length > AFFIL_CHIP_LIMIT && (
+                <span className="chip" style={{ fontSize: 11 }} onClick={() => setAffilsOpen((o) => !o)}>
+                  {affilsOpen
+                    ? tr('收起', 'Collapse')
+                    : `+${paper.affiliations!.length - AFFIL_CHIP_LIMIT}`}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -1300,7 +1340,7 @@ function PaperDetailPane({
 
 /* ---------------- Tab 主体 ---------------- */
 
-export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink }: PapersTabProps) {
+export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed }: PapersTabProps) {
   const [view, setView] = useState<ViewFilter>('all');
   const [sort, setSort] = useState<PaperSort>('relevance');
   const [mode, setMode] = useState<SearchMode>('keyword');
@@ -1323,20 +1363,36 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
   const affiliation = useDebounced(advAffiliation.trim());
   const advActive = !!(author || affiliation || advPubFrom || advPubTo || advCreatedFrom || advCreatedTo);
 
-  // 点击作者名 → 论文库只留该作者的论文（走已有的高级检索作者过滤）
-  const filterByAuthor = useCallback((name: string) => {
+  // 点击作者/机构 → 论文库只留匹配的论文（走已有的高级检索过滤）；
+  // 其余高级条件重置，面板展开让用户看到生效的条件
+  const applyAdvFilter = useCallback((patch: { author?: string; affiliation?: string }) => {
     setMode('keyword');
     setQInput('');
-    setAdvAuthor(name);
-    setAdvAffiliation('');
+    setAdvAuthor(patch.author ?? '');
+    setAdvAffiliation(patch.affiliation ?? '');
     setAdvPubFrom('');
     setAdvPubTo('');
     setAdvCreatedFrom('');
     setAdvCreatedTo('');
     setAdvOpen(true);
     onSelect('');
-    toast(tr(`已筛选作者：${name}`, `Filtered by author: ${name}`), 'info');
+    if (patch.author) {
+      toast(tr(`已筛选作者：${patch.author}`, `Filtered by author: ${patch.author}`), 'info');
+    } else if (patch.affiliation) {
+      toast(tr(`已筛选机构：${patch.affiliation}`, `Filtered by affiliation: ${patch.affiliation}`), 'info');
+    }
   }, [onSelect]);
+
+  const filterByAuthor = useCallback((name: string) => applyAdvFilter({ author: name }), [applyAdvFilter]);
+  const filterByAffiliation = useCallback((name: string) => applyAdvFilter({ affiliation: name }), [applyAdvFilter]);
+
+  // 深链 /wiki?author= / ?affiliation=（阅读页信息面板跳回）：进入后自动填入高级检索并应用
+  const seedSeq = advSeed?.seq ?? 0;
+  useEffect(() => {
+    if (!advSeed || advSeed.seq === 0) return;
+    applyAdvFilter({ author: advSeed.author, affiliation: advSeed.affiliation });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedSeq]);
 
   // 多选（批量删除/导出）：默认关闭，底部「多选」按钮开启后行首出现复选框
   const [selectMode, setSelectMode] = useState(false);
@@ -1755,6 +1811,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
             onOpenConcept={onOpenConcept}
             onWikiLink={onWikiLink}
             onFilterAuthor={filterByAuthor}
+            onFilterAffiliation={filterByAffiliation}
             onDeleted={() => onSelect('')}
           />
         ) : (
