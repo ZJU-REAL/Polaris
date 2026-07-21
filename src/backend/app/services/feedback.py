@@ -3,6 +3,7 @@
 import io
 import json
 import re
+import time
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -189,6 +190,46 @@ async def admin_update(
     await session.commit()
     await session.refresh(feedback)
     return feedback
+
+
+# ---- GitHub issue 状态回同步 ----
+
+# 已建 issue 但仍未终结的反馈状态：这些才需要去 GitHub 查最新 state
+_SYNCABLE_STATUSES = ("new", "triaged", "in_progress")
+# 每条反馈两次查询之间的最短间隔（秒）：列表页高频刷新时不反复打 GitHub
+_SYNC_TTL_SECONDS = 300.0
+_last_synced: dict[uuid.UUID, float] = {}
+
+
+async def sync_issue_statuses(session: AsyncSession, rows: Sequence[Feedback]) -> None:
+    """把已关联 GitHub issue 的反馈状态与 issue state 对齐（closed → resolved）。
+
+    best-effort：GitHub 未配置 / 网络失败都静默跳过，不影响列表返回。
+    带 TTL 节流，同一条反馈 5 分钟内只查一次。
+    """
+    now = time.monotonic()
+    pending = [
+        fb
+        for fb in rows
+        if fb.github_issue_number is not None
+        and fb.status in _SYNCABLE_STATUSES
+        and now - _last_synced.get(fb.id, -_SYNC_TTL_SECONDS) >= _SYNC_TTL_SECONDS
+    ]
+    if not pending:
+        return
+    numbers = [fb.github_issue_number for fb in pending if fb.github_issue_number is not None]
+    states = await github.fetch_issue_states(numbers)
+    changed = False
+    for fb in pending:
+        state = states.get(fb.github_issue_number)
+        if state is None:
+            continue  # 单条查询失败：不刷新节流时间，下次再试
+        _last_synced[fb.id] = now
+        if state == "closed":
+            fb.status = "resolved"
+            changed = True
+    if changed:
+        await session.commit()
 
 
 # ---- LLM issue 草稿 ----

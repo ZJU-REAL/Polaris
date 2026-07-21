@@ -1,5 +1,6 @@
 """用户反馈：提交（含截图）/ 查看自己的；管理员 triage / LLM 草稿 / 建 GitHub issue。"""
 
+import contextlib
 import uuid
 from pathlib import Path
 
@@ -97,6 +98,8 @@ async def my_feedback(
     user: User = Depends(current_active_user),
 ) -> list[FeedbackRead]:
     rows = await svc.list_feedback(session, user_id=user.id)
+    with contextlib.suppress(Exception):  # 状态同步失败不影响列表
+        await svc.sync_issue_statuses(session, rows)
     return [await _to_read(session, fb) for fb in rows]
 
 
@@ -126,6 +129,8 @@ async def admin_list_feedback(
     _: User = Depends(require_admin),
 ) -> list[FeedbackRead]:
     rows = await svc.list_feedback(session)
+    with contextlib.suppress(Exception):  # 状态同步失败不影响列表
+        await svc.sync_issue_statuses(session, rows)
     return [await _to_read(session, fb) for fb in rows]
 
 
