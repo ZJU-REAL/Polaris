@@ -2104,11 +2104,7 @@ export function SettingsPage() {
 
   return (
     <div className="page fadeup">
-      <PageHead
-        eyebrow="Polaris · Settings"
-        title={tr('设置', 'Settings')}
-        sub={tr('个人资料、SSH 凭据、LLM 服务与模型路由、用量统计、用户管理。', 'Profile, SSH credentials, LLM providers and model routing, usage stats, user management.')}
-      />
+      <PageHead eyebrow="Polaris · Settings" title={tr('设置', 'Settings')} />
       <div style={{ marginBottom: 20 }}>
         <Segmented options={tabs} value={effectiveTab} onChange={setTab} />
       </div>
