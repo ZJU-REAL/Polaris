@@ -18,6 +18,8 @@ from app.schemas.llm_admin import (
     ProviderRead,
     ProviderUpdate,
     RouteItem,
+    TestModelRequest,
+    TestModelResult,
     UsageRow,
 )
 from app.services import llm_admin as llm_admin_service
@@ -100,6 +102,19 @@ async def replace_routes(
     except llm_admin_service.InvalidRouteError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return [RouteItem.model_validate(r, from_attributes=True) for r in routes]
+
+
+@router.post("/test-model", response_model=TestModelResult)
+async def test_model(
+    data: TestModelRequest,
+    session: AsyncSession = Depends(get_session),
+) -> TestModelResult:
+    """最小化探测 provider+model 连通性（不经过路由表，不记账、不写调用日志）。"""
+    provider = await _get_provider_or_404(session, data.provider_id)
+    ok, latency_ms, error = await llm_admin_service.test_model(
+        provider, data.model, data.capability
+    )
+    return TestModelResult(ok=ok, latency_ms=latency_ms, error=error)
 
 
 @router.get("/usage", response_model=list[UsageRow])

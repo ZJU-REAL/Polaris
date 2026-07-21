@@ -404,6 +404,7 @@ export const LLM_STAGES = [
   'librarian',
   'reading',
   'embedding',
+  'rerank',
   'forge',
   'forge_signal',
   'goal_explore',
@@ -444,6 +445,20 @@ export interface LlmRoute {
   provider_id: string;
   model: string;
   temperature?: number | null;
+}
+
+export type LlmTestCapability = 'chat' | 'embedding' | 'rerank';
+
+export interface LlmTestModelInput {
+  provider_id: string;
+  model: string;
+  capability: LlmTestCapability;
+}
+
+export interface LlmTestResult {
+  ok: boolean;
+  latency_ms: number;
+  error?: string | null;
 }
 
 export interface LlmUsageRow {
@@ -2721,6 +2736,9 @@ export const api = {
   },
   putLlmRoutes(routes: LlmRoute[]): Promise<LlmRoute[]> {
     return requestJson<LlmRoute[]>('/admin/llm/routes', 'PUT', routes);
+  },
+  testLlmModel(input: LlmTestModelInput): Promise<LlmTestResult> {
+    return requestJson<LlmTestResult>('/admin/llm/test-model', 'POST', input);
   },
   getLlmUsage(opts: { projectId?: string; userId?: string; days?: number } = {}): Promise<LlmUsageRow[]> {
     const params = new URLSearchParams();

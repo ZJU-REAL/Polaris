@@ -47,6 +47,20 @@ async def test_db_route_takes_precedence(app):
     assert result.model == "fake-default"
 
 
+async def test_unset_stage_falls_back_to_default_route(app):
+    """未显式设置路由行的 stage 用 default 行（有 default 时不落到 fake）。"""
+    async with get_sessionmaker()() as session:
+        provider = LLMProviderConfig(name="fake-db", kind="fake", enabled=True)
+        session.add(provider)
+        await session.flush()
+        session.add(ModelRoute(stage="default", provider_id=provider.id, model="fake-db-default"))
+        await session.commit()
+
+    router = LLMRouter()
+    result = await router.complete("writing", [Message(role="user", content="draft")])
+    assert result.model == "fake-db-default"
+
+
 async def test_stream_records_usage(app):
     router = LLMRouter()
     chunks = [c async for c in router.stream("default", [Message(role="user", content="流式")])]

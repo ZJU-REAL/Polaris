@@ -46,6 +46,23 @@ class RouteItem(BaseModel):
     temperature: float | None = None  # None = 用 provider 默认
 
 
+TestCapability = Literal["chat", "embedding", "rerank"]
+
+
+class TestModelRequest(BaseModel):
+    """模型连通性测试：按 provider 直连探测（不经过路由表，不记账、不写调用日志）。"""
+
+    provider_id: uuid.UUID
+    model: str = Field(min_length=1, max_length=255)
+    capability: TestCapability = "chat"
+
+
+class TestModelResult(BaseModel):
+    ok: bool
+    latency_ms: int
+    error: str | None = None
+
+
 class UsageRow(BaseModel):
     date: str
     stage: str
