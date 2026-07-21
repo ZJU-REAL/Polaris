@@ -182,15 +182,13 @@ def _build_provider(provider: LLMProviderConfig) -> LLMProvider:
     return FakeProvider()
 
 
-async def test_model(
-    provider: LLMProviderConfig, model: str, capability: str
+async def probe_model(
+    llm: LLMProvider, model: str, capability: str
 ) -> tuple[bool, int, str | None]:
-    """按 capability 最小化探测一个 provider+model 组合。
+    """用一个已构建的 provider 实例最小化探测 model，返回 (ok, latency_ms, error)。
 
-    直连 provider（绕过 LLMRouter），因此不写 LLMUsage 记账、不写调用日志。
-    返回 (ok, latency_ms, error)。
+    不 aclose（可能是路由器缓存的共享实例）；一次性 provider 的清理由调用方负责。
     """
-    llm = _build_provider(provider)
     started = time.monotonic()
     ok, error = False, None
     try:
@@ -205,15 +203,24 @@ async def test_model(
         ok = True
     except TimeoutError:
         error = f"timeout after {_TEST_TIMEOUT_S:.0f}s"
-    except Exception as e:  # noqa: BLE001 — 探测失败原因原样返回给管理端
+    except Exception as e:  # noqa: BLE001 — 探测失败原因原样返回
         error = f"{type(e).__name__}: {e}"
+    latency_ms = max(1, int((time.monotonic() - started) * 1000))
+    return ok, latency_ms, error
+
+
+async def test_model(
+    provider: LLMProviderConfig, model: str, capability: str
+) -> tuple[bool, int, str | None]:
+    """按 capability 最小化探测一个 provider+model 组合（直连，绕过路由/记账）。"""
+    llm = _build_provider(provider)
+    try:
+        return await probe_model(llm, model, capability)
     finally:
         aclose = getattr(llm, "aclose", None)
         if aclose is not None:
             with contextlib.suppress(Exception):  # 清理失败不影响探测结果
                 await aclose()
-    latency_ms = max(1, int((time.monotonic() - started) * 1000))
-    return ok, latency_ms, error
 
 
 # ---- usage ----

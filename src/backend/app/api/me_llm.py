@@ -12,10 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
-from app.core.llm.router import get_llm_router
+from app.core.llm.router import _FALLBACK_ROUTE, get_llm_router
 from app.models.llm_config import LLMProviderConfig
 from app.models.user import User
 from app.schemas.llm_admin import (
+    EffectiveTestRequest,
+    EffectiveTestResult,
     LlmManagedStatus,
     LlmSelfConfig,
     ProviderCreate,
@@ -26,6 +28,8 @@ from app.schemas.llm_admin import (
     TestModelResult,
 )
 from app.services import llm_admin as svc
+
+_CAPABILITY_BY_STAGE = {"embedding": "embedding", "rerank": "rerank"}
 
 router = APIRouter(prefix="/me/llm", tags=["me-llm"])
 
@@ -179,3 +183,32 @@ async def test_own_model(
     provider = await _own_provider_or_404(session, data.provider_id, user)
     ok, latency_ms, error = await svc.test_model(provider, data.model, data.capability)
     return TestModelResult(ok=ok, latency_ms=latency_ms, error=error)
+
+
+@router.post("/test-effective", response_model=EffectiveTestResult)
+async def test_effective(
+    data: EffectiveTestRequest,
+    user: User = Depends(current_active_user),
+) -> EffectiveTestResult:
+    """测试当前生效配置：按 stage 探测用户实际会用到的 provider+model（含被接管的全局配置）。"""
+    router_ = get_llm_router()
+    llm, route = await router_.resolve(data.stage, user_id=user.id)
+    if route is _FALLBACK_ROUTE:
+        # 未配置真实模型（自管但没配好 / 全局也空）→ 回退到内置 fake
+        return EffectiveTestResult(
+            ok=False,
+            latency_ms=0,
+            error="NO_REAL_MODEL",
+            model=route.model,
+            provider_name=route.provider_name,
+            is_fake=True,
+        )
+    capability = _CAPABILITY_BY_STAGE.get(data.stage, "chat")
+    ok, latency_ms, error = await svc.probe_model(llm, route.model, capability)
+    return EffectiveTestResult(
+        ok=ok,
+        latency_ms=latency_ms,
+        error=error,
+        model=route.model,
+        provider_name=route.provider_name,
+    )

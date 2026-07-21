@@ -136,3 +136,19 @@ class LlmSelfConfig(BaseModel):
     self_managed: bool
     providers: list[ProviderRead]
     routes: list[RouteItem]
+
+
+class EffectiveTestRequest(BaseModel):
+    """测试当前生效路由：按 stage 探测用户实际会用到的 provider+model。"""
+
+    stage: str
+
+
+class EffectiveTestResult(BaseModel):
+    ok: bool
+    latency_ms: int
+    error: str | None
+    model: str
+    provider_name: str
+    # 生效 provider 是内置 fake（未配置真实模型时的回退）
+    is_fake: bool = False

@@ -499,6 +499,16 @@ export interface LlmSelfConfig {
   routes: LlmRoute[];
 }
 
+/** 测试当前用户在某 stage 上**实际生效**的那条路由的结果。 */
+export interface EffectiveTestResult {
+  ok: boolean;
+  latency_ms: number;
+  error: string | null;
+  model: string;
+  provider_name: string;
+  is_fake: boolean;
+}
+
 export interface LlmUsageRow {
   date: string;
   stage: string;
@@ -2146,6 +2156,9 @@ export const api = {
   myUsage(): Promise<UsageSummary> {
     return request<UsageSummary>('/users/me/usage');
   },
+  myUsageHistory(input: { days: number }): Promise<LlmUsageRow[]> {
+    return request<LlmUsageRow[]>(`/users/me/usage/history?days=${input.days}`);
+  },
 
   // —— 邀请链接 ——
   createInvite(projectId: string, input: { expires_days?: number | null; max_uses?: number | null }): Promise<InviteRead> {
@@ -3058,6 +3071,9 @@ export const api = {
   },
   testMyLlmModel(input: LlmTestModelInput): Promise<LlmTestResult> {
     return requestJson<LlmTestResult>('/me/llm/test-model', 'POST', input);
+  },
+  testMyLlmEffective(input: { stage: string }): Promise<EffectiveTestResult> {
+    return requestJson<EffectiveTestResult>('/me/llm/test-effective', 'POST', input);
   },
 
   // —— MCP 只读工具目录（docs/api-mcp.md） ——
