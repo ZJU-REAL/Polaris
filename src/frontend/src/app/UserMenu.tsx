@@ -1,23 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../components/ui/Avatar';
 import { Icon } from '../components/ui/Icon';
-import { Modal } from '../components/ui/Modal';
-import { toast } from '../components/ui/Toast';
 import { useAuth } from './auth';
-import { useProject } from './project';
-import { api, isAdmin, type UserRead } from '../lib/api';
-import { fmtTime } from '../lib/format';
+import { isAdmin, type UserRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 
-/* 侧栏底部用户区：点头像弹出菜单（设置 / 邀请协作者 / 退出登录）。 */
+/* 侧栏底部用户区：点头像弹出菜单（设置 / 退出登录）。邀请协作者入口在研究方向详情页。 */
 
 export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapsed: boolean }) {
   const navigate = useNavigate();
   const { logout } = useAuth();
   const [open, setOpen] = useState(false);
-  const [inviteOpen, setInviteOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // 点击菜单外部 / Esc 关闭（菜单是 rootRef 的子元素，contains 即可覆盖）
@@ -75,17 +69,6 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
             <Icon name="settings" size={15} />
             {tr('设置', 'Settings')}
           </button>
-          <button
-            className="user-menu-item"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              setInviteOpen(true);
-            }}
-          >
-            <Icon name="users" size={15} />
-            {tr('邀请协作者', 'Invite collaborator')}
-          </button>
           <div className="user-menu-sep" />
           <button
             className="user-menu-item danger"
@@ -101,98 +84,6 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
           </button>
         </div>
       )}
-
-      {inviteOpen && <InviteDialog onClose={() => setInviteOpen(false)} />}
     </div>
-  );
-}
-
-/** 邀请协作者：为当前研究方向生成/管理邀请链接。 */
-function InviteDialog({ onClose }: { onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const { currentProjectId, currentProject } = useProject();
-
-  const { data: invites } = useQuery({
-    queryKey: ['invites', currentProjectId],
-    queryFn: () => api.listInvites(currentProjectId!),
-    enabled: !!currentProjectId,
-    retry: false,
-  });
-
-  const createMutation = useMutation({
-    mutationFn: () => api.createInvite(currentProjectId!, { expires_days: 7 }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['invites', currentProjectId] }),
-    onError: (e) => toast(`${tr('生成失败', 'Failed to create')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-  const revokeMutation = useMutation({
-    mutationFn: (id: string) => api.revokeInvite(currentProjectId!, id),
-    onSuccess: () => {
-      toast(tr('邀请链接已撤销', 'Invite link revoked'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['invites', currentProjectId] });
-    },
-    onError: (e) => toast(`${tr('撤销失败', 'Failed to revoke')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
-  const copy = (token: string) => {
-    void navigator.clipboard.writeText(`${window.location.origin}/join/${token}`).then(
-      () => toast(tr('邀请链接已复制', 'Invite link copied'), 'ok'),
-      () => toast(tr('复制失败，请手动复制', 'Copy failed, copy it manually'), 'error'),
-    );
-  };
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      width={520}
-      title={tr('邀请协作者', 'Invite collaborator')}
-      sub={
-        currentProject
-          ? tr(`加入研究方向：${currentProject.name}`, `Join direction: ${currentProject.name}`)
-          : tr('已注册用户打开链接即可加入当前研究方向', 'Registered users open the link to join')
-      }
-    >
-      {!currentProjectId ? (
-        <div className="empty" style={{ padding: 24 }}>
-          {tr('请先在顶部选择一个研究方向，再生成邀请链接。', 'Select a research direction first, then create an invite link.')}
-        </div>
-      ) : (
-        <>
-          <div className="row" style={{ marginBottom: 12 }}>
-            <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}>
-              {tr('生成一条链接，发给同学即可加入本方向协作。', 'Create a link and share it to invite collaborators.')}
-            </span>
-            <button
-              className="btn btn-primary sm"
-              style={{ marginLeft: 'auto' }}
-              disabled={createMutation.isPending}
-              onClick={() => createMutation.mutate()}
-            >
-              <Icon name="plus" size={13} />
-              {tr('生成链接（7 天有效）', 'Create link (7 days)')}
-            </button>
-          </div>
-          {(invites ?? []).length === 0 ? (
-            <div className="empty" style={{ padding: 20 }}>{tr('还没有有效的邀请链接', 'No active invite links yet')}</div>
-          ) : (
-            <div className="col gap6">
-              {invites!.map((inv) => (
-                <div key={inv.id} className="row gap8" style={{ padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 9 }}>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {`${window.location.origin}/join/${inv.token}`}
-                  </span>
-                  <span style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
-                    {tr(`已用 ${inv.used_count} 次`, `${inv.used_count} used`)}
-                    {inv.expires_at ? ` · ${fmtTime(inv.expires_at)}` : ''}
-                  </span>
-                  <button className="btn btn-ghost sm" onClick={() => copy(inv.token)}>{tr('复制', 'Copy')}</button>
-                  <button className="btn btn-ghost sm" onClick={() => revokeMutation.mutate(inv.id)}>{tr('撤销', 'Revoke')}</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-    </Modal>
   );
 }
