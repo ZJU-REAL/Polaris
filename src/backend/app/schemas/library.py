@@ -34,6 +34,12 @@ class LibraryEntryRead(BaseModel):
         return v or []
 
 
+class LibraryEntryDetail(LibraryEntryRead):
+    """单条详情：多带 wiki 快照（列表响应不含，避免撑爆）。"""
+
+    wiki_content: str | None
+
+
 class LibraryPage(BaseModel):
     items: list[LibraryEntryRead]
     total: int

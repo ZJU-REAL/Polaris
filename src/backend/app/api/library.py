@@ -10,6 +10,7 @@ from app.core.db import get_session
 from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.library import (
+    LibraryEntryDetail,
     LibraryEntryRead,
     LibraryNoteUpdate,
     LibraryPage,
@@ -110,6 +111,17 @@ async def save_entry(
         entry = await _get_own_entry(session, body.entry_id, user)  # type: ignore[arg-type]
         entry = await library_service.set_saved(session, entry=entry, saved=True)
     return LibraryEntryRead.model_validate(entry)
+
+
+@router.get("/me/library/{entry_id}", response_model=LibraryEntryDetail)
+async def get_entry_detail(
+    entry_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LibraryEntryDetail:
+    """单条详情（含 wiki 快照）：源论文删除后前端右栏回退用。"""
+    entry = await _get_own_entry(session, entry_id, user)
+    return LibraryEntryDetail.model_validate(entry)
 
 
 @router.patch("/me/library/{entry_id}", response_model=LibraryEntryRead)

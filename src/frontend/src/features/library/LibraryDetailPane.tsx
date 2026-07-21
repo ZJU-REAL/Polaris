@@ -14,7 +14,9 @@ import { tr } from '../../lib/i18n';
      同款 markdown 渲染（含 ![[fig:N]] 嵌入图与 [[概念]] 双链，
      双链跳转对齐阅读页：/wiki?concept=名称）；
    - 活体但没有 wiki → 元数据 + 摘要/TL;DR + 一句提示；
-   - 快照条目（论文已删）→ 快照元数据 + 摘要 + 外链按钮。
+   - 快照条目（论文已删）→ 拉单条详情取 wiki 快照正文；有则渲染
+     markdown（图片已随论文删除，![[fig:N]] 用灰字占位），
+     无则退回快照元数据 + 摘要 + 外链按钮。
    ============================================================ */
 
 /** 右栏展示用的条目快照：库条目 / 发表条目统一成这一个形状。 */
@@ -75,10 +77,13 @@ function MetaItem({ label, children }: { label: string; children: React.ReactNod
 export function LibraryDetailPane({
   paperId,
   snapshot,
+  entryId,
 }: {
   /** 活体论文 id；null = 快照条目（论文已删，只展示快照元数据）。 */
   paperId: string | null;
   snapshot: DetailSnapshot;
+  /** 收藏/浏览记录条目 id；提供后论文已删时可回退到条目的 wiki 快照（发表 tab 不传）。 */
+  entryId?: string;
 }) {
   const navigate = useNavigate();
 
@@ -91,6 +96,17 @@ export function LibraryDetailPane({
   });
   const paper = paperId !== null && paperQuery.isSuccess ? paperQuery.data : undefined;
 
+  // 论文已删（last_paper_id 为 null，或详情拉取失败）→ 拉条目详情取 wiki 快照
+  const wantSnapshotWiki = entryId !== undefined && (paperId === null || paperQuery.isError);
+  const entryQuery = useQuery({
+    queryKey: ['library-entry', entryId],
+    queryFn: () => api.getLibraryEntry(entryId ?? ''),
+    enabled: wantSnapshotWiki,
+    retry: false,
+  });
+  const snapshotWiki =
+    wantSnapshotWiki && entryQuery.isSuccess ? entryQuery.data.wiki_content : null;
+
   // 正文 ![[fig:N]] 嵌入图（同文献追踪）
   const figures = usePaperFigures(paper);
   const renderFigure = useCallback(
@@ -99,6 +115,16 @@ export function LibraryDetailPane({
       return fig && paper ? <FigureEmbed paperId={paper.id} fig={fig} /> : null;
     },
     [figures, paper],
+  );
+
+  // 快照 wiki 里的 ![[fig:N]]：图片文件已随论文删除，渲染成灰字占位
+  const renderSnapshotFigure = useCallback(
+    () => (
+      <span className="muted" style={{ fontSize: 12 }}>
+        {tr('（图片已随源论文删除）', '(figure removed with the source paper)')}
+      </span>
+    ),
+    [],
   );
 
   // [[概念]] 双链 → 方向的 wiki（对齐阅读页的处理）
@@ -260,6 +286,21 @@ export function LibraryDetailPane({
               {tr('该论文还没有生成 wiki', 'No wiki generated for this paper yet')}
             </div>
           )}
+        </div>
+      )}
+
+      {/* —— Wiki 快照正文（源论文已删，条目里留存的快照） —— */}
+      {!alive && snapshotWiki && (
+        <div style={{ marginTop: 22 }}>
+          <div
+            className="row gap8"
+            style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
+          >
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+              {tr('AI 图文介绍（快照）', 'AI intro (snapshot)')}
+            </span>
+          </div>
+          <Markdown source={snapshotWiki} onWikiLink={onWikiLink} renderFigure={renderSnapshotFigure} />
         </div>
       )}
     </div>

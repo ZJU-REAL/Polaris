@@ -43,6 +43,7 @@ def _snapshot_fields(paper: Paper) -> dict:
         "abstract": paper.abstract,
         "url": paper.url,
         "tldr": paper.tldr,
+        "wiki_content": paper.wiki_content,
         "last_paper_id": paper.id,
     }
 

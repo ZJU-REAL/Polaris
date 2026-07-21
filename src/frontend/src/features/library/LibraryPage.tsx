@@ -524,6 +524,7 @@ export function LibraryPage() {
                   key={shownEntry.id}
                   paperId={shownEntry.last_paper_id}
                   snapshot={entrySnapshot(shownEntry)}
+                  entryId={shownEntry.id}
                 />
               ) : (
                 <PickHint />
