@@ -2006,6 +2006,39 @@ export interface FeedbackPatch {
   admin_note?: string;
 }
 
+// ============================================================
+// 我的文献库（跨研究方向的个人收藏 + 浏览记录）— issue #108
+// ============================================================
+
+export type LibraryTab = 'saved' | 'history';
+export type LibrarySort = 'recent' | 'title' | 'visits';
+
+export interface LibraryEntry {
+  id: string;
+  arxiv_id: string | null;
+  doi: string | null;
+  title: string;
+  authors: PaperAuthor[];
+  year: number | null;
+  venue: string | null;
+  abstract: string | null;
+  url: string | null;
+  tldr: string | null;
+  saved: boolean;
+  saved_at: string | null;
+  note: string | null;
+  visit_count: number;
+  last_visited_at: string | null;
+  /** 最近一次浏览对应的论文 id；为 null 表示源方向已删除，只能走外链 url。 */
+  last_paper_id: string | null;
+  created_at: string;
+}
+
+export interface LibraryState {
+  entry_id: string | null;
+  saved: boolean;
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -3055,5 +3088,38 @@ export const api = {
   },
   addListingReview(listingId: string, input: { rating: number; comment?: string }): Promise<SkillRatingRead> {
     return requestJson<SkillRatingRead>(`/market/skills/${listingId}/reviews`, 'POST', input);
+  },
+
+  // —— 我的文献库（跨研究方向的个人收藏 + 浏览记录，issue #108） ——
+  listLibrary(
+    opts: { tab: LibraryTab; q?: string; sort?: LibrarySort; page?: number; size?: number },
+  ): Promise<PageOf<LibraryEntry>> {
+    const params = new URLSearchParams();
+    params.set('tab', opts.tab);
+    if (opts.q) params.set('q', opts.q);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    return request<PageOf<LibraryEntry>>(`/me/library?${params.toString()}`);
+  },
+  /** 打开阅读页时上报一次浏览（自动建/更新浏览记录条目）。 */
+  recordLibraryVisit(paperId: string): Promise<LibraryEntry> {
+    return requestJson<LibraryEntry>('/me/library/visits', 'POST', { paper_id: paperId });
+  },
+  /** 清空浏览记录（已收藏的条目保留）。 */
+  clearLibraryVisits(): Promise<void> {
+    return request<void>('/me/library/visits', { method: 'DELETE' });
+  },
+  /** 某论文在我的文献库里的状态（是否已收藏 + 条目 id）。 */
+  getLibraryState(paperId: string): Promise<LibraryState> {
+    return request<LibraryState>(`/me/library/state?paper_id=${encodeURIComponent(paperId)}`);
+  },
+  /** 收藏进我的文献库（按论文 id 或已有条目 id）。 */
+  saveToLibrary(input: { paper_id: string } | { entry_id: string }): Promise<LibraryEntry> {
+    return requestJson<LibraryEntry>('/me/library', 'POST', input);
+  },
+  /** 移除条目：unsave=取消收藏但保留浏览记录；purge=彻底删除。 */
+  removeLibraryEntry(entryId: string, mode: 'unsave' | 'purge'): Promise<void> {
+    return request<void>(`/me/library/${entryId}?mode=${mode}`, { method: 'DELETE' });
   },
 };
