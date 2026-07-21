@@ -25,6 +25,9 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     role: Mapped[str] = mapped_column(String(32), default="member", nullable=False)  # admin|member
     # 大模型使用权限：full=不限 | chat_only=仅文献对话与 AI 伴读 | blocked=锁定
     llm_access: Mapped[str] = mapped_column(String(16), default="full", nullable=False)
+    # LLM 配置归属：False=被管理员接管（用全局 provider/路由）| True=自管（用自己的）。
+    # 见 core/llm/router.py resolve()：self-managed 用 owner=user 的配置，admin 的对他失效。
+    llm_self_managed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # 头像文件（<data_dir>/avatars/<user_id>.<ext>），None = 未上传
     avatar_path: Mapped[str | None] = mapped_column(String(1024))
     # LLM token 配额（prompt+completion 累计）；None = 不限

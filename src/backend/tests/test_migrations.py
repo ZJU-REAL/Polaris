@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "257c979a4b99"  # user_publications.paper_id 软链（本分支最新）
-PREV_REVISION = "c98c3216fc0a"  # user_author_profiles + user_publications（我发表的）
+HEAD_REVISION = "a1c7e93f5b02"  # per-user LLM config: owner_id + llm_self_managed（本分支最新）
+PREV_REVISION = "257c979a4b99"  # user_publications.paper_id 软链
 
 
 def _make_config(db_path: Path) -> Config:
@@ -46,6 +46,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "manuscript_file_versions",
                     "manuscript_templates",
                     "users",
+                    "model_routes",
                     "voyage_runs",
                     "voyage_steps",
                     "llm_providers",
@@ -184,13 +185,21 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"feedback_id", "path", "seq"} <= columns["feedback_images"]
     # 个人文献库表（上一版）
     assert "user_library_entries" in columns["_tables"]
-    # 作者身份绑定 + 发表记录表（上一版）+ 本分支新增的 paper_id 软链列
+    # 作者身份绑定 + 发表记录表（上一版）
     assert {"user_author_profiles", "user_publications"} <= columns["_tables"]
+    # 本分支新增：per-user LLM 配置归属 + 接管标志
+    assert "owner_id" in columns["llm_providers"]
+    assert "owner_id" in columns["model_routes"]
+    assert "llm_self_managed" in columns["users"]
 
-    # 最新 revision 可往返（downgrade 移除 user_publications.paper_id 列）
+    # 最新 revision 可往返（downgrade 移除 owner_id / llm_self_managed）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
+    assert "owner_id" not in columns["llm_providers"]
+    assert "owner_id" not in columns["model_routes"]
+    assert "llm_self_managed" not in columns["users"]
+    # 上一版仍有的表/列不受影响
     assert {"user_author_profiles", "user_publications"} <= columns["_tables"]
     # 上一版仍有的表/列不受影响
     assert "user_library_entries" in columns["_tables"]
@@ -213,5 +222,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
     assert "models" in columns["llm_providers"]
+    assert "owner_id" in columns["llm_providers"]
+    assert "llm_self_managed" in columns["users"]
     assert "registration_codes" in columns["_tables"]
     assert {"feedback", "feedback_images"} <= columns["_tables"]

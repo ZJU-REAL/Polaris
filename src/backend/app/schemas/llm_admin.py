@@ -122,3 +122,17 @@ class CallLogDetail(BaseModel):
     voyage_id: uuid.UUID | None
     request: Any | None  # {"messages": [{role, content}], "images": ["[image ~N KB]"]} 或摘要
     response: str | None
+
+
+class LlmManagedStatus(BaseModel):
+    """用户 LLM 接管状态：True=自管，False=被管理员接管。"""
+
+    self_managed: bool
+
+
+class LlmSelfConfig(BaseModel):
+    """当前生效的 LLM 配置（provider key 掩码），供用户端只读展示。"""
+
+    self_managed: bool
+    providers: list[ProviderRead]
+    routes: list[RouteItem]

@@ -118,6 +118,8 @@ export interface UserRead {
   username_locked?: boolean;
   role?: string;
   llm_access?: 'full' | 'chat_only' | 'blocked';
+  /** true = 用户自管 LLM 配置；false = 由管理员统一接管（用全局配置） */
+  llm_self_managed?: boolean;
   has_avatar?: boolean;
   token_quota?: number | null;
   features?: Record<string, boolean> | null;
@@ -137,6 +139,8 @@ export interface AdminUserRead {
   is_active: boolean;
   has_avatar: boolean;
   llm_access: string;
+  /** true = 用户自管 LLM；false = 管理员接管 */
+  llm_self_managed: boolean;
   token_quota: number | null;
   features: Record<string, boolean> | null;
   tokens_used: number;
@@ -481,6 +485,18 @@ export interface LlmTestResult {
   ok: boolean;
   latency_ms: number;
   error?: string | null;
+}
+
+/** 用户 LLM 接管状态：self_managed=true 为自管，false 为管理员接管。 */
+export interface LlmManagedStatus {
+  self_managed: boolean;
+}
+
+/** 当前**生效**的 LLM 配置（key 已掩码，只读展示用）。 */
+export interface LlmSelfConfig {
+  self_managed: boolean;
+  providers: LlmProviderRead[];
+  routes: LlmRoute[];
 }
 
 export interface LlmUsageRow {
@@ -2161,6 +2177,8 @@ export const api = {
       token_quota?: number;
       features?: Record<string, boolean>;
       llm_access?: string;
+      /** false = 管理员接管，true = 释放给用户自管 */
+      llm_self_managed?: boolean;
     },
   ): Promise<AdminUserRead> {
     return requestJson<AdminUserRead>(`/admin/users/${userId}`, 'PATCH', input);
@@ -3005,6 +3023,41 @@ export const api = {
   },
   clearLlmCallLogs(): Promise<{ deleted: number }> {
     return request<{ deleted: number }>('/admin/llm/call-logs', { method: 'DELETE' });
+  },
+
+  // —— 我的 LLM（每个用户自管那一层，/me/llm） ——
+  myLlmStatus(): Promise<LlmManagedStatus> {
+    return request<LlmManagedStatus>('/me/llm/status');
+  },
+  llmSelfManage(): Promise<LlmManagedStatus> {
+    return request<LlmManagedStatus>('/me/llm/self-manage', { method: 'POST' });
+  },
+  llmManaged(): Promise<LlmManagedStatus> {
+    return request<LlmManagedStatus>('/me/llm/managed', { method: 'POST' });
+  },
+  myLlmEffective(): Promise<LlmSelfConfig> {
+    return request<LlmSelfConfig>('/me/llm/effective');
+  },
+  myLlmProviders(): Promise<LlmProviderRead[]> {
+    return request<LlmProviderRead[]>('/me/llm/providers');
+  },
+  createMyLlmProvider(input: LlmProviderInput): Promise<LlmProviderRead> {
+    return requestJson<LlmProviderRead>('/me/llm/providers', 'POST', input);
+  },
+  updateMyLlmProvider(id: string, input: Partial<LlmProviderInput>): Promise<LlmProviderRead> {
+    return requestJson<LlmProviderRead>(`/me/llm/providers/${id}`, 'PATCH', input);
+  },
+  deleteMyLlmProvider(id: string): Promise<void> {
+    return request<void>(`/me/llm/providers/${id}`, { method: 'DELETE' });
+  },
+  myLlmRoutes(): Promise<LlmRoute[]> {
+    return request<LlmRoute[]>('/me/llm/routes');
+  },
+  replaceMyLlmRoutes(items: LlmRoute[]): Promise<LlmRoute[]> {
+    return requestJson<LlmRoute[]>('/me/llm/routes', 'PUT', items);
+  },
+  testMyLlmModel(input: LlmTestModelInput): Promise<LlmTestResult> {
+    return requestJson<LlmTestResult>('/me/llm/test-model', 'POST', input);
   },
 
   // —— MCP 只读工具目录（docs/api-mcp.md） ——

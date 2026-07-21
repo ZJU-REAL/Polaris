@@ -95,16 +95,20 @@ class LLMRouter:
     """
 
     def __init__(self) -> None:
-        self._routes: dict[str, ResolvedRoute] = {}
-        self._routes_loaded_at: float = 0.0
+        # 路由表按 owner 分别缓存：None=全局(admin)，<user>=该用户自管
+        self._routes_by_owner: dict[uuid.UUID | None, dict[str, ResolvedRoute]] = {}
+        self._routes_loaded_at: dict[uuid.UUID | None, float] = {}
+        # 用户 llm_self_managed 标志缓存（(flag, loaded_at)）
+        self._self_managed: dict[uuid.UUID, tuple[bool, float]] = {}
         self._providers: dict[tuple[str, str | None, str], LLMProvider] = {}
         self.event_bus: Any | None = None
 
     def invalidate_cache(self) -> None:
-        """管理端改动 providers/routes 后调用。"""
-        self._routes_loaded_at = 0.0
+        """管理端 / 用户改动 providers/routes/接管状态后调用（清所有 owner）。"""
+        self._routes_loaded_at.clear()
+        self._self_managed.clear()
 
-    async def _load_routes(self) -> dict[str, ResolvedRoute]:
+    async def _load_routes(self, owner_id: uuid.UUID | None) -> dict[str, ResolvedRoute]:
         from app.models.llm_config import LLMProviderConfig, ModelRoute
 
         routes: dict[str, ResolvedRoute] = {}
@@ -112,7 +116,12 @@ class LLMRouter:
             stmt = (
                 select(ModelRoute, LLMProviderConfig)
                 .join(LLMProviderConfig, ModelRoute.provider_id == LLMProviderConfig.id)
-                .where(LLMProviderConfig.enabled.is_(True))
+                .where(
+                    LLMProviderConfig.enabled.is_(True),
+                    ModelRoute.owner_id == owner_id
+                    if owner_id is not None
+                    else ModelRoute.owner_id.is_(None),
+                )
             )
             for route, provider in (await session.execute(stmt)).all():
                 api_key = (
@@ -128,12 +137,31 @@ class LLMRouter:
                 )
         return routes
 
-    async def _get_routes(self) -> dict[str, ResolvedRoute]:
+    async def _get_routes(self, owner_id: uuid.UUID | None) -> dict[str, ResolvedRoute]:
         now = time.monotonic()
-        if now - self._routes_loaded_at > _ROUTE_CACHE_TTL:
-            self._routes = await self._load_routes()
-            self._routes_loaded_at = now
-        return self._routes
+        if now - self._routes_loaded_at.get(owner_id, 0.0) > _ROUTE_CACHE_TTL:
+            self._routes_by_owner[owner_id] = await self._load_routes(owner_id)
+            self._routes_loaded_at[owner_id] = now
+        return self._routes_by_owner.get(owner_id, {})
+
+    async def _is_self_managed(self, user_id: uuid.UUID) -> bool:
+        now = time.monotonic()
+        cached = self._self_managed.get(user_id)
+        if cached is not None and now - cached[1] < _ROUTE_CACHE_TTL:
+            return cached[0]
+        from app.models.user import User
+
+        async with get_sessionmaker()() as session:
+            user = await session.get(User, user_id)
+            flag = bool(user and user.llm_self_managed)
+        self._self_managed[user_id] = (flag, now)
+        return flag
+
+    async def _effective_owner(self, user_id: uuid.UUID | None) -> uuid.UUID | None:
+        """自管用户 → 用自己的配置；否则（含无 user_id 的系统调用）→ 全局(admin)。"""
+        if user_id is None:
+            return None
+        return user_id if await self._is_self_managed(user_id) else None
 
     def _provider_for(self, route: ResolvedRoute) -> LLMProvider:
         key = (route.provider_kind, route.base_url, route.api_key)
@@ -153,8 +181,14 @@ class LLMRouter:
                 raise ValueError(f"unknown LLM provider kind: {route.provider_kind}")
         return self._providers[key]
 
-    async def resolve(self, stage: str) -> tuple[LLMProvider, ResolvedRoute]:
-        """先查 DB 路由表（缓存 60s），无则回退 default 路由，再回退 fake。
+    async def resolve(
+        self, stage: str, user_id: uuid.UUID | None = None
+    ) -> tuple[LLMProvider, ResolvedRoute]:
+        """按有效 owner 查路由表（缓存 60s），无则回退 default 路由，再回退 fake。
+
+        owner 由 user 的接管状态决定：自管用户用自己的 owner=user 配置（admin 的
+        对他失效，缺路由则回退 fake——即"配好前不可用"）；被接管用户及无 user_id
+        的系统调用用全局(owner=NULL, admin)配置。
 
         能力型环节（``_CAPABILITY_STAGES``）不回退 default：对话模型没有
         embedding/rerank 能力，回退只会产生无意义调用；未显式配置时抛
@@ -162,7 +196,8 @@ class LLMRouter:
         （未初始化的本地/测试环境）时仍回退确定性 fake provider，保证无任何
         DB 配置也能跑通。
         """
-        routes = await self._get_routes()
+        owner_id = await self._effective_owner(user_id)
+        routes = await self._get_routes(owner_id)
         route = routes.get(stage)
         if route is None:
             if stage in _CAPABILITY_STAGES:
@@ -263,7 +298,7 @@ class LLMRouter:
         project_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> CompletionResult:
-        provider, route = await self.resolve(stage)
+        provider, route = await self.resolve(stage, user_id)
         temp = route.temperature if temperature is None else temperature
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
@@ -390,7 +425,7 @@ class LLMRouter:
         voyage_id: uuid.UUID | None = None,
     ) -> list[list[float]]:
         """文本嵌入（stage 默认 embedding）。provider 不支持时抛 NotImplementedError。"""
-        provider, route = await self.resolve(stage)
+        provider, route = await self.resolve(stage, user_id)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         # 调用日志只记摘要（输入条数 + 首条截断），不存向量
@@ -462,7 +497,7 @@ class LLMRouter:
         provider 不支持时抛 NotImplementedError；记账优先用响应的
         billed_units.total_tokens，拿不到则按 len/4 估算。
         """
-        provider, route = await self.resolve(stage)
+        provider, route = await self.resolve(stage, user_id)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         # 调用日志只记摘要（query + 文档条数 + 首条截断），不存全部文档
@@ -531,7 +566,7 @@ class LLMRouter:
         project_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> AsyncIterator[str]:
-        provider, route = await self.resolve(stage)
+        provider, route = await self.resolve(stage, user_id)
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         collected: list[str] = []

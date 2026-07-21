@@ -3,7 +3,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -12,8 +12,31 @@ from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
 class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "llm_providers"
+    # name 按 owner 分别唯一（全局 owner NULL 与每个用户各自唯一）
+    __table_args__ = (
+        Index(
+            "uq_providers_global_name",
+            "name",
+            unique=True,
+            sqlite_where=text("owner_id IS NULL"),
+            postgresql_where=text("owner_id IS NULL"),
+        ),
+        Index(
+            "uq_providers_owner_name",
+            "owner_id",
+            "name",
+            unique=True,
+            sqlite_where=text("owner_id IS NOT NULL"),
+            postgresql_where=text("owner_id IS NOT NULL"),
+        ),
+    )
 
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # 归属：NULL = 平台全局（管理员管）；<user> = 该用户自管的私有 provider。
+    # 唯一性按 owner 分别约束（见迁移的两条部分唯一索引），不再全局唯一。
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)  # openai_compat|anthropic|fake
     base_url: Mapped[str | None] = mapped_column(String(1024))
     # 明文 key 不落库：core/security.py Fernet 加密后存这里
@@ -29,9 +52,31 @@ class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "model_routes"
+    # stage 按 owner 分别唯一
+    __table_args__ = (
+        Index(
+            "uq_routes_global_stage",
+            "stage",
+            unique=True,
+            sqlite_where=text("owner_id IS NULL"),
+            postgresql_where=text("owner_id IS NULL"),
+        ),
+        Index(
+            "uq_routes_owner_stage",
+            "owner_id",
+            "stage",
+            unique=True,
+            sqlite_where=text("owner_id IS NOT NULL"),
+            postgresql_where=text("owner_id IS NOT NULL"),
+        ),
+    )
 
-    # 科研环节，见 core/llm/router.py STAGES；每个 stage 至多一条路由
-    stage: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    # 归属：NULL = 全局（管理员）；<user> = 该用户自管。每个 owner 的每个 stage 至多一条。
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    # 科研环节，见 core/llm/router.py STAGES
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
     provider_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=False
     )

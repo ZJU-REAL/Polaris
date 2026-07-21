@@ -64,6 +64,7 @@ async def list_users_with_usage(session: AsyncSession) -> list[dict[str, Any]]:
             "token_quota": u.token_quota,
             "features": u.features,
             "llm_access": u.llm_access,
+            "llm_self_managed": u.llm_self_managed,
             "tokens_used": int(tokens),
             "created_at": u.created_at,
         }
@@ -83,10 +84,17 @@ async def admin_update_user(session: AsyncSession, user: User, data: dict[str, A
         user.token_quota = None if v == -1 else v
     if (v := data.get("llm_access")) is not None:
         user.llm_access = v
+    if (v := data.get("llm_self_managed")) is not None:
+        user.llm_self_managed = v
     if (v := data.get("features")) is not None:
         user.features = {k: bool(v[k]) for k in v if k in FEATURE_KEYS} or None
     await session.commit()
     await session.refresh(user)
+    # 接管状态改变需让路由器缓存失效（否则最长 60s 内旧配置仍生效）
+    if "llm_self_managed" in data:
+        from app.core.llm.router import get_llm_router
+
+        get_llm_router().invalidate_cache()
     return user
 
 

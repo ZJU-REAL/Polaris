@@ -48,17 +48,37 @@ def masked_key_of(provider: LLMProviderConfig) -> str:
 # ---- providers ----
 
 
-async def list_providers(session: AsyncSession) -> Sequence[LLMProviderConfig]:
-    stmt = select(LLMProviderConfig).order_by(LLMProviderConfig.created_at)
+def _owner_clause(column, owner_id: uuid.UUID | None):
+    """owner 过滤：None → 全局(IS NULL)；<user> → 该用户。"""
+    return column.is_(None) if owner_id is None else column == owner_id
+
+
+async def list_providers(
+    session: AsyncSession, owner_id: uuid.UUID | None = None
+) -> Sequence[LLMProviderConfig]:
+    stmt = (
+        select(LLMProviderConfig)
+        .where(_owner_clause(LLMProviderConfig.owner_id, owner_id))
+        .order_by(LLMProviderConfig.created_at)
+    )
     return (await session.execute(stmt)).scalars().all()
 
 
-async def get_provider(session: AsyncSession, provider_id: uuid.UUID) -> LLMProviderConfig | None:
-    return await session.get(LLMProviderConfig, provider_id)
+async def get_provider(
+    session: AsyncSession, provider_id: uuid.UUID, owner_id: uuid.UUID | None = None
+) -> LLMProviderConfig | None:
+    """按 owner 取 provider：owner 不匹配返回 None（防跨 owner 改别人配置）。"""
+    provider = await session.get(LLMProviderConfig, provider_id)
+    if provider is None or provider.owner_id != owner_id:
+        return None
+    return provider
 
 
-async def create_provider(session: AsyncSession, data: ProviderCreate) -> LLMProviderConfig:
+async def create_provider(
+    session: AsyncSession, data: ProviderCreate, owner_id: uuid.UUID | None = None
+) -> LLMProviderConfig:
     provider = LLMProviderConfig(
+        owner_id=owner_id,
         name=data.name,
         kind=data.kind,
         base_url=data.base_url,
@@ -103,13 +123,21 @@ async def delete_provider(session: AsyncSession, provider: LLMProviderConfig) ->
 # ---- routes ----
 
 
-async def list_routes(session: AsyncSession) -> Sequence[ModelRoute]:
-    stmt = select(ModelRoute).order_by(ModelRoute.stage)
+async def list_routes(
+    session: AsyncSession, owner_id: uuid.UUID | None = None
+) -> Sequence[ModelRoute]:
+    stmt = (
+        select(ModelRoute)
+        .where(_owner_clause(ModelRoute.owner_id, owner_id))
+        .order_by(ModelRoute.stage)
+    )
     return (await session.execute(stmt)).scalars().all()
 
 
-async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> Sequence[ModelRoute]:
-    """整表覆盖路由。stage 必须合法且不重复，provider 必须存在。"""
+async def replace_routes(
+    session: AsyncSession, items: Sequence[RouteItem], owner_id: uuid.UUID | None = None
+) -> Sequence[ModelRoute]:
+    """整表覆盖某 owner 的路由。stage 必须合法且不重复，provider 必须属于同一 owner。"""
     seen: set[str] = set()
     for item in items:
         if item.stage not in STAGES:
@@ -117,12 +145,14 @@ async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> S
         if item.stage in seen:
             raise InvalidRouteError(f"duplicate stage: {item.stage}")
         seen.add(item.stage)
-        if await session.get(LLMProviderConfig, item.provider_id) is None:
+        provider = await session.get(LLMProviderConfig, item.provider_id)
+        if provider is None or provider.owner_id != owner_id:
             raise InvalidRouteError(f"provider not found: {item.provider_id}")
-    await session.execute(delete(ModelRoute))
+    await session.execute(delete(ModelRoute).where(_owner_clause(ModelRoute.owner_id, owner_id)))
     for item in items:
         session.add(
             ModelRoute(
+                owner_id=owner_id,
                 stage=item.stage,
                 provider_id=item.provider_id,
                 model=item.model,
@@ -131,7 +161,7 @@ async def replace_routes(session: AsyncSession, items: Sequence[RouteItem]) -> S
         )
     await session.commit()
     get_llm_router().invalidate_cache()
-    return await list_routes(session)
+    return await list_routes(session, owner_id)
 
 
 # ---- 模型连通性测试 ----
