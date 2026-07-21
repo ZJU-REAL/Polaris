@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
@@ -489,12 +489,11 @@ function ProviderForm({ draft, setDraft, isNew }: {
       </FormField>
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
         <FormField label={tr('类型', 'Kind')} style={{ width: 180 }}>
-          <select className="input" value={draft.kind}
-            onChange={(e) => setDraft({ ...draft, kind: e.target.value as LlmProviderKind })}>
-            {KINDS.map((k) => (
-              <option key={k} value={k}>{k}</option>
-            ))}
-          </select>
+          <SelectMenu
+            value={draft.kind}
+            options={KINDS.map((k) => ({ value: k, label: k }))}
+            onChange={(v) => setDraft({ ...draft, kind: v as LlmProviderKind })}
+          />
         </FormField>
         <FormField label="Base URL" style={{ flex: 1 }}>
           <input className="input mono" value={draft.base_url} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })}
@@ -907,10 +906,155 @@ interface RouteDraft {
   temperature: string;
 }
 
-// ---- 模型组合框：自由输入 + 候选下拉（可视高度最多 5 项，超出内部滚动） ----
+// ---- 下拉控件（ModelCombobox / SelectMenu 共用的面板视觉） ----
 
 const COMBO_ITEM_H = 30;
 const COMBO_VISIBLE = 5;
+
+/** 打开状态下点击组件外部时收起。 */
+function useClickOutside(ref: RefObject<HTMLElement | null>, active: boolean, onAway: () => void) {
+  useEffect(() => {
+    if (!active) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onAway();
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [ref, active, onAway]);
+}
+
+/** 候选面板：最多可视 5 项、超出内部滚动；高亮项随键盘滚动到可见。 */
+function DropdownList({ items, hi, mono, onHover, onPick }: {
+  items: { key: string; label: string }[];
+  hi: number;
+  /** 候选用等宽字体（模型名等代码标识符） */
+  mono?: boolean;
+  onHover: (i: number) => void;
+  onPick: (i: number) => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    listRef.current?.children[hi]?.scrollIntoView({ block: 'nearest' });
+  }, [hi]);
+  return (
+    <div
+      ref={listRef}
+      role="listbox"
+      style={{
+        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
+        maxHeight: COMBO_ITEM_H * COMBO_VISIBLE, overflowY: 'auto',
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-pop)',
+      }}
+    >
+      {items.map((it, i) => (
+        <div
+          key={it.key}
+          role="option"
+          aria-selected={i === hi}
+          className={mono ? 'mono' : undefined}
+          style={{
+            height: COMBO_ITEM_H, lineHeight: `${COMBO_ITEM_H}px`, padding: '0 10px', fontSize: 12,
+            cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            background: i === hi ? 'var(--accent-soft)' : 'transparent',
+            color: i === hi ? 'var(--accent-text)' : 'var(--text)',
+          }}
+          onMouseEnter={() => onHover(i)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onPick(i);
+          }}
+        >
+          {it.label}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 纯下拉选择器（固定候选，不自由输入）：与 ModelCombobox 同一套面板视觉。 */
+function SelectMenu({ value, options, muted, style, onChange }: {
+  value: string;
+  options: { value: string; label: string }[];
+  /** 「跟随默认」行的弱化样式 */
+  muted?: boolean;
+  /** 覆盖触发按钮样式（如表格行内 height: 32） */
+  style?: CSSProperties;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useClickOutside(wrapRef, open, () => setOpen(false));
+
+  const selectedIdx = options.findIndex((o) => o.value === value);
+  const selected = selectedIdx >= 0 ? options[selectedIdx] : undefined;
+
+  const openList = () => {
+    if (options.length === 0) return;
+    setOpen(true);
+    setHi(Math.max(selectedIdx, 0));
+  };
+  const pick = (i: number) => {
+    const o = options[i];
+    if (o === undefined) return;
+    // 与原生 select 一致：重选当前值不触发 onChange（路由表里避免误清空 model）
+    if (o.value !== value) onChange(o.value);
+    setOpen(false);
+  };
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (open) pick(hi);
+      else openList();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (open) setHi((h) => Math.min(h + 1, options.length - 1));
+      else openList();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (open) setHi((h) => Math.max(h - 1, 0));
+      else openList();
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        className="input"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        style={{
+          width: '100%', textAlign: 'left', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 6,
+          color: muted || !selected || selected.value === '' ? 'var(--text-3)' : 'var(--text)',
+          ...style,
+        }}
+        onClick={() => (open ? setOpen(false) : openList())}
+        onKeyDown={onKeyDown}
+      >
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? value}
+        </span>
+        <Icon name="chevDown" size={12}
+          style={{ color: 'var(--text-3)', flexShrink: 0, ...(open ? { transform: 'rotate(180deg)' } : {}) }} />
+      </button>
+      {open && (
+        <DropdownList
+          items={options.map((o) => ({ key: o.value, label: o.label }))}
+          hi={hi}
+          onHover={setHi}
+          onPick={pick}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---- 模型组合框：自由输入 + 候选下拉 ----
 
 function ModelCombobox({ value, options, placeholder, muted, onChange }: {
   value: string;
@@ -923,7 +1067,7 @@ function ModelCombobox({ value, options, placeholder, muted, onChange }: {
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  useClickOutside(wrapRef, open, () => setOpen(false));
 
   const query = value.trim().toLowerCase();
   // 输入值精确等于某候选（刚点选完）时展示全部候选，否则按输入过滤
@@ -931,19 +1075,6 @@ function ModelCombobox({ value, options, placeholder, muted, onChange }: {
     if (!query || options.some((m) => m.toLowerCase() === query)) return options;
     return options.filter((m) => m.toLowerCase().includes(query));
   }, [options, query]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDocDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDocDown);
-    return () => document.removeEventListener('mousedown', onDocDown);
-  }, [open]);
-
-  useEffect(() => {
-    listRef.current?.children[hi]?.scrollIntoView({ block: 'nearest' });
-  }, [hi]);
 
   const pick = (m: string) => {
     onChange(m);
@@ -998,38 +1129,16 @@ function ModelCombobox({ value, options, placeholder, muted, onChange }: {
         onKeyDown={onKeyDown}
       />
       {open && filtered.length > 0 && (
-        <div
-          ref={listRef}
-          role="listbox"
-          style={{
-            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
-            maxHeight: COMBO_ITEM_H * COMBO_VISIBLE, overflowY: 'auto',
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-pop)',
+        <DropdownList
+          items={filtered.map((m) => ({ key: m, label: m }))}
+          hi={hi}
+          mono
+          onHover={setHi}
+          onPick={(i) => {
+            const m = filtered[i];
+            if (m !== undefined) pick(m);
           }}
-        >
-          {filtered.map((m, i) => (
-            <div
-              key={m}
-              role="option"
-              aria-selected={i === hi}
-              className="mono"
-              style={{
-                height: COMBO_ITEM_H, lineHeight: `${COMBO_ITEM_H}px`, padding: '0 10px', fontSize: 12,
-                cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                background: i === hi ? 'var(--accent-soft)' : 'transparent',
-                color: i === hi ? 'var(--accent-text)' : 'var(--text)',
-              }}
-              onMouseEnter={() => setHi(i)}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                pick(m);
-              }}
-            >
-              {m}
-            </div>
-          ))}
-        </div>
+        />
       )}
     </div>
   );
@@ -1215,17 +1324,16 @@ function RoutesSection() {
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{stage}</div>
                 </td>
                 <td>
-                  <select
-                    className="input"
-                    style={{ height: 32, width: '100%', ...(follows ? { color: 'var(--text-3)' } : {}) }}
+                  <SelectMenu
+                    style={{ height: 32 }}
+                    muted={follows}
                     value={shown.provider_id}
-                    onChange={(e) => setRow(stage, { provider_id: e.target.value, model: '' })}
-                  >
-                    <option value="">{tr('（未配置）', '(not set)')}</option>
-                    {providers.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: '', label: tr('（未配置）', '(not set)') },
+                      ...providers.map((p) => ({ value: p.id, label: p.name })),
+                    ]}
+                    onChange={(v) => setRow(stage, { provider_id: v, model: '' })}
+                  />
                 </td>
                 <td>
                   <ModelCombobox
