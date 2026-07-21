@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -12,15 +13,17 @@ import { AuthorBindWizard, errText } from './AuthorBindWizard';
 
 /* ============================================================
    「我发表的」tab（issue #109）：
-   未绑定作者信息 → 绑定向导（姓名/机构 → OpenAlex 候选 → 这是我 / 跳过）；
-   已绑定 → 绑定摘要 + 立即同步 + 待确认（是我的 / 不是我的）+ 已确认列表 + 手动添加。
+   未填署名信息 → 表单（多个姓名写法 + 机构，保存即完成）；
+   已填 → 署名摘要 + 立即扫描文献库 + 待确认（是我的 / 不是我的）
+   + 已确认列表 + 手动添加；行样式对齐文献追踪的论文列表。
    ============================================================ */
 
 export const PUBLICATIONS_PAGE_SIZE = 20;
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SOURCE_LABELS: Record<string, { zh: string; en: string }> = {
-  openalex: { zh: '自动同步', en: 'Auto sync' },
+  openalex: { zh: '自动匹配', en: 'Auto matched' },
+  library: { zh: '自动匹配', en: 'Auto matched' },
   manual: { zh: '手动添加', en: 'Manual' },
 };
 
@@ -78,17 +81,110 @@ function AuthorsLine({ authors, variants }: { authors: PaperAuthor[]; variants: 
   );
 }
 
-/** venue · 年份 · 被引 · 来源 的元信息行。 */
-function MetaLine({ pub, withSource }: { pub: Publication; withSource?: boolean }) {
-  const bits = [
-    [pub.venue, pub.year].filter(Boolean).join(' · '),
-    pub.cited_by_count > 0 ? tr(`被引 ${pub.cited_by_count} 次`, `${pub.cited_by_count} citations`) : '',
-    withSource ? sourceLabel(pub.source) : '',
-  ].filter(Boolean);
-  if (bits.length === 0) return null;
+/* ============================================================
+   发表行：与文献追踪论文列表同款版式（顶部 mono 元信息行 +
+   标题 + 作者行 + 底部标签行），右侧放操作按钮。
+   ============================================================ */
+
+function PubRow({
+  pub,
+  variants,
+  last,
+  withSource,
+  actions,
+}: {
+  pub: Publication;
+  variants: string[];
+  last: boolean;
+  /** 底部标签行是否带来源（自动匹配 / 手动添加）。 */
+  withSource?: boolean;
+  actions: ReactNode;
+}) {
+  const navigate = useNavigate();
+  // paper_id 非 null → 跳文献库阅读页；否则退回外链
+  const openable = pub.paper_id !== null || !!pub.url;
+  const open = () => {
+    if (pub.paper_id) navigate(`/papers/${pub.paper_id}/read`);
+    else if (pub.url) window.open(pub.url, '_blank', 'noopener');
+  };
   return (
-    <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
-      {bits.join(' · ')}
+    <div
+      className={openable ? 'list-hover' : undefined}
+      role={openable ? 'button' : undefined}
+      tabIndex={openable ? 0 : undefined}
+      onClick={openable ? open : undefined}
+      onKeyDown={(e) => {
+        if (openable && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          open();
+        }
+      }}
+      style={{
+        padding: '12px 16px',
+        borderBottom: last ? 'none' : '0.5px solid var(--border)',
+        display: 'flex',
+        gap: 12,
+        alignItems: 'flex-start',
+        cursor: openable ? 'pointer' : 'default',
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="row gap8" style={{ marginBottom: 5 }}>
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+            {pub.arxiv_id ?? pub.venue ?? '—'}
+          </span>
+          {pub.year !== null && (
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+              {pub.year}
+            </span>
+          )}
+          {pub.paper_id === null && pub.url && (
+            <Icon name="link" size={11} style={{ color: 'var(--text-4)' }} />
+          )}
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>
+          {pub.title}
+        </div>
+        <AuthorsLine authors={pub.authors} variants={variants} />
+        <div className="row gap8" style={{ marginTop: 6 }}>
+          {withSource && (
+            <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
+              {sourceLabel(pub.source)}
+            </span>
+          )}
+          {pub.venue && pub.arxiv_id && (
+            <span
+              style={{
+                fontSize: 11.5,
+                color: 'var(--text-3)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                minWidth: 0,
+              }}
+            >
+              {pub.venue}
+            </span>
+          )}
+          {pub.cited_by_count > 0 && (
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
+              {tr(`被引 ${pub.cited_by_count} 次`, `${pub.cited_by_count} citations`)}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="row gap6" style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+        {actions}
+      </div>
+    </div>
+  );
+}
+
+/** 发表列表的包裹容器：圆角描边，内部行用分隔线（同垃圾桶列表）。 */
+function PubList({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ border: '0.5px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+      {children}
     </div>
   );
 }
@@ -200,7 +296,7 @@ export function PublicationsTab() {
   const [editing, setEditing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [confirmedPage, setConfirmedPage] = useState(1);
-  // 同步是后台任务：202 后按钮保持短暂 loading，几秒后 invalidate 刷新列表
+  // 扫描是后台任务：202 后按钮保持短暂 loading，几秒后 invalidate 刷新列表
   const [syncing, setSyncing] = useState(false);
   const timersRef = useRef<number[]>([]);
   useEffect(
@@ -249,7 +345,7 @@ export function PublicationsTab() {
     mutationFn: () => api.syncPublications(),
     onSuccess: () => {
       setSyncing(true);
-      toast(tr('同步已开始，稍后自动刷新列表', 'Sync started — the list will refresh shortly'), 'ok');
+      toast(tr('扫描已开始，稍后自动刷新列表', 'Scan started — the list will refresh shortly'), 'ok');
       timersRef.current.push(
         window.setTimeout(() => {
           invalidatePubs();
@@ -262,13 +358,7 @@ export function PublicationsTab() {
         }, 12000),
       );
     },
-    onError: (e) => {
-      if (e instanceof ApiError && e.status === 400) {
-        toast(tr('还没关联到作者，请先在「修改绑定」里选中你的作者信息', 'No author linked yet — pick your author entry via Edit binding first'), 'error');
-      } else {
-        toast(`${tr('同步失败：', 'Sync failed: ')}${errText(e)}`, 'error');
-      }
-    },
+    onError: (e) => toast(`${tr('扫描失败：', 'Scan failed: ')}${errText(e)}`, 'error'),
   });
 
   const decideMutation = useMutation({
@@ -293,7 +383,7 @@ export function PublicationsTab() {
       <EmptyState
         compact
         icon="x"
-        title={tr('绑定信息暂时加载不出来', 'Failed to load your author info')}
+        title={tr('署名信息暂时加载不出来', 'Failed to load your author info')}
         desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
         action={
           <button className="btn btn-soft sm" onClick={() => void profileQuery.refetch()}>
@@ -304,7 +394,7 @@ export function PublicationsTab() {
     );
   }
 
-  /* —— 未绑定 / 修改绑定 → 向导 —— */
+  /* —— 未填署名信息 / 修改 → 表单 —— */
   if (!bound || editing) {
     return (
       <AuthorBindWizard
@@ -320,39 +410,48 @@ export function PublicationsTab() {
 
   return (
     <div className="col" style={{ gap: 18 }}>
-      {/* —— 绑定摘要 + 操作 —— */}
+      {/* —— 署名摘要 + 操作 —— */}
       <div
         className="card"
-        style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
+        style={{
+          padding: '12px 16px',
+          background: 'var(--surface-2)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
       >
         <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ fontSize: 13.5, fontWeight: 650 }}>
-            {profile.name_variants[0] ?? '—'}
-            {profile.affiliations[0] && (
-              <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>{` · ${profile.affiliations[0]}`}</span>
+            {profile.name_variants.join(' / ') || '—'}
+            {profile.affiliations.length > 0 && (
+              <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>
+                {` · ${profile.affiliations.join(' · ')}`}
+              </span>
             )}
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
             {profile.last_synced_at
-              ? tr(`上次同步：${fmtRelative(profile.last_synced_at)}`, `Last synced: ${fmtRelative(profile.last_synced_at)}`)
-              : tr('尚未同步', 'Not synced yet')}
-            {!profile.openalex_author_id && ` · ${tr('未关联作者，无法自动同步', 'No author linked — auto sync unavailable')}`}
+              ? tr(`上次匹配：${fmtRelative(profile.last_synced_at)}`, `Last matched: ${fmtRelative(profile.last_synced_at)}`)
+              : tr('还没匹配过', 'Not matched yet')}
           </div>
         </div>
         <div className="row gap8" style={{ flexShrink: 0 }}>
-          {profile.openalex_author_id && (
-            <button className="btn btn-soft sm" disabled={syncBusy} onClick={() => syncMutation.mutate()}>
-              <Icon name="refresh" size={13} />
-              {syncBusy ? tr('同步中…', 'Syncing…') : tr('立即同步', 'Sync now')}
-            </button>
-          )}
+          <button className="btn btn-soft sm" disabled={syncBusy} onClick={() => syncMutation.mutate()}>
+            <Icon name="refresh" size={13} style={syncBusy ? { animation: 'spin 1s linear infinite' } : undefined} />
+            {syncBusy ? tr('扫描中…', 'Scanning…') : tr('立即扫描文献库', 'Scan library now')}
+          </button>
           <button className="btn btn-ghost sm" onClick={() => setEditing(true)}>
-            {tr('修改绑定', 'Edit binding')}
+            {tr('修改署名信息', 'Edit author info')}
           </button>
           <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
             <Icon name="plus" size={13} />
             {tr('手动添加', 'Add manually')}
           </button>
+        </div>
+        <div style={{ width: '100%', fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5 }}>
+          {tr('每天会自动匹配一次，命中的进入待确认', 'Runs automatically once a day; matches land in the pending list')}
         </div>
       </div>
 
@@ -362,54 +461,41 @@ export function PublicationsTab() {
           <div className="section-h">{tr(`待确认（${pendingCount}）`, `To confirm (${pendingCount})`)}</div>
           <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '4px 0 10px', lineHeight: 1.5 }}>
             {tr(
-              '自动同步找到的、可能是你发表的论文，确认后会进入下面的列表。',
-              'Papers found by sync that may be yours — confirm to add them to your list.',
+              '自动匹配到的、可能是你发表的论文，确认后会进入下面的列表。',
+              'Papers matched automatically that may be yours — confirm to add them to your list.',
             )}
           </p>
-          <div className="col" style={{ gap: 8 }}>
-            {pending.map((pub) => (
-              <div
+          <PubList>
+            {pending.map((pub, i) => (
+              <PubRow
                 key={pub.id}
-                className="card"
-                style={{ padding: '10px 14px', display: 'flex', gap: 12, alignItems: 'flex-start' }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    title={pub.title}
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 650,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {pub.title}
-                  </div>
-                  <AuthorsLine authors={pub.authors} variants={variants} />
-                  <MetaLine pub={pub} withSource />
-                </div>
-                <div className="row gap8" style={{ flexShrink: 0 }}>
-                  <button
-                    className="btn btn-primary sm"
-                    disabled={decideMutation.isPending}
-                    onClick={() => decideMutation.mutate({ id: pub.id, action: 'confirm' })}
-                  >
-                    <Icon name="check" size={13} />
-                    {tr('是我的', 'Mine')}
-                  </button>
-                  <button
-                    className="btn btn-ghost sm"
-                    disabled={decideMutation.isPending}
-                    onClick={() => decideMutation.mutate({ id: pub.id, action: 'reject' })}
-                  >
-                    <Icon name="x" size={13} />
-                    {tr('不是我的', 'Not mine')}
-                  </button>
-                </div>
-              </div>
+                pub={pub}
+                variants={variants}
+                last={i === pending.length - 1}
+                withSource
+                actions={
+                  <>
+                    <button
+                      className="btn btn-primary sm"
+                      disabled={decideMutation.isPending}
+                      onClick={() => decideMutation.mutate({ id: pub.id, action: 'confirm' })}
+                    >
+                      <Icon name="check" size={13} />
+                      {tr('是我的', 'Mine')}
+                    </button>
+                    <button
+                      className="btn btn-ghost sm"
+                      disabled={decideMutation.isPending}
+                      onClick={() => decideMutation.mutate({ id: pub.id, action: 'reject' })}
+                    >
+                      <Icon name="x" size={13} />
+                      {tr('不是我的', 'Not mine')}
+                    </button>
+                  </>
+                }
+              />
             ))}
-          </div>
+          </PubList>
         </section>
       )}
 
@@ -437,80 +523,32 @@ export function PublicationsTab() {
               compact
               icon="file"
               title={tr('还没有已确认的发表', 'No confirmed publications yet')}
-              desc={
-                profile.openalex_author_id
-                  ? tr(
-                      '点「立即同步」拉取你的发表，或用「手动添加」补充。',
-                      'Tap Sync now to fetch your publications, or add them manually.',
-                    )
-                  : tr('用「手动添加」把你的论文加进来。', 'Use Add manually to add your papers.')
-              }
+              desc={tr(
+                '点「立即扫描文献库」找找你的论文，或用「手动添加」补充。',
+                'Tap Scan library now to look for your papers, or add them manually.',
+              )}
             />
           ) : (
-            <div className="col" style={{ gap: 8 }}>
-              {confirmed.map((pub) => {
-                const openable = !!pub.url;
-                return (
-                  <div
-                    key={pub.id}
-                    className={`card${openable ? ' hoverable' : ''}`}
-                    role={openable ? 'button' : undefined}
-                    tabIndex={openable ? 0 : undefined}
-                    onClick={() => {
-                      if (pub.url) window.open(pub.url, '_blank', 'noopener');
-                    }}
-                    onKeyDown={(e) => {
-                      if (openable && (e.key === 'Enter' || e.key === ' ')) {
-                        e.preventDefault();
-                        window.open(pub.url!, '_blank', 'noopener');
-                      }
-                    }}
-                    style={{
-                      padding: '10px 14px',
-                      display: 'flex',
-                      gap: 12,
-                      alignItems: 'flex-start',
-                      cursor: openable ? 'pointer' : 'default',
-                    }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="row gap8" style={{ minWidth: 0 }}>
-                        <span
-                          title={pub.title}
-                          style={{
-                            fontSize: 13,
-                            fontWeight: 650,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            minWidth: 0,
-                          }}
-                        >
-                          {pub.title}
-                        </span>
-                        {openable && (
-                          <Icon name="link" size={12} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
-                        )}
-                      </div>
-                      <AuthorsLine authors={pub.authors} variants={variants} />
-                      <MetaLine pub={pub} />
-                    </div>
+            <PubList>
+              {confirmed.map((pub, i) => (
+                <PubRow
+                  key={pub.id}
+                  pub={pub}
+                  variants={variants}
+                  last={i === confirmed.length - 1}
+                  actions={
                     <button
                       className="btn btn-ghost sm"
-                      style={{ flexShrink: 0 }}
                       disabled={decideMutation.isPending}
                       title={tr('从我的发表里拿掉', 'Remove from my publications')}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        decideMutation.mutate({ id: pub.id, action: 'reject' });
-                      }}
+                      onClick={() => decideMutation.mutate({ id: pub.id, action: 'reject' })}
                     >
                       {tr('移除', 'Remove')}
                     </button>
-                  </div>
-                );
-              })}
-            </div>
+                  }
+                />
+              ))}
+            </PubList>
           )}
         </div>
 

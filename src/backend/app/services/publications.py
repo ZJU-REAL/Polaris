@@ -1,4 +1,9 @@
-"""我发表的论文：作者身份绑定、OpenAlex 同步产候选、确认/驳回、手动补录。"""
+"""我发表的论文：作者身份绑定、文献库「姓名+机构」匹配产候选、确认/驳回、手动补录。
+
+不从外部学术库自动拉取（不可靠）；候选只来自两处——手动补录，以及平台文献库
+（每日 ingest 入库 + 手动扫描）里作者姓名与绑定变体命中、机构不冲突的论文。
+所有库内候选都要经用户确认（pending → confirmed | rejected）。
+"""
 
 import hashlib
 import logging
@@ -10,8 +15,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
+from app.models.paper import Paper
+from app.models.project import ProjectMember
 from app.models.publication import UserAuthorProfile, UserPublication
-from app.services.literature import get_openalex_client
 from app.services.paper_import import (
     ParseFailedError,
     _fields_from_arxiv,
@@ -21,22 +27,17 @@ from app.services.paper_import import (
 
 logger = logging.getLogger(__name__)
 
-_ARXIV_DOI_RE = re.compile(r"^10\.48550/arxiv\.(.+)$", re.IGNORECASE)
-
 
 def _normalize_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 
 
-def _arxiv_id_from_doi(doi: str | None) -> str | None:
-    if not doi:
-        return None
-    match = _ARXIV_DOI_RE.match(doi.strip())
-    return match.group(1) if match else None
+def _normalize_name(name: str) -> str:
+    return re.sub(r"[^a-z一-鿿0-9]+", " ", name.lower()).strip()
 
 
 def dedup_key_for(*, doi: str | None, arxiv_id: str | None, title: str) -> str:
-    """去重键：doi → arxiv → 规范化标题 sha1（arXiv 的 DataCite DOI 归一到 doi 档）。"""
+    """去重键：doi → arxiv → 规范化标题 sha1（优先级递减）。"""
     if doi:
         return f"doi:{doi.lower()}"
     if arxiv_id:
@@ -76,18 +77,56 @@ async def upsert_profile(
     return profile
 
 
-async def author_candidates(name: str, affiliation: str | None) -> list[dict[str, Any]]:
-    """OpenAlex 作者实体候选；给了机构时把机构命中的排前面（实体选择由用户完成）。"""
-    candidates = await get_openalex_client().search_authors(name)
-    if affiliation:
-        needle = affiliation.lower()
-        candidates.sort(
-            key=lambda c: not any(needle in (a or "").lower() for a in c["affiliations"])
-        )
-    return candidates
+# ---- 文献库匹配 ----
 
 
-# ---- 发表记录 ----
+def _name_matches(author_name: str, variants: set[str]) -> bool:
+    """规范化后精确匹配；兼容「姓 名」与「名 姓」两种词序。"""
+    norm = _normalize_name(author_name)
+    if not norm:
+        return False
+    reversed_norm = " ".join(reversed(norm.split()))
+    return norm in variants or reversed_norm in variants
+
+
+def _affiliation_compatible(paper_affils: list[Any] | None, profile_affils: list[str]) -> bool:
+    """机构门槛：论文带机构信息时须与绑定机构有交集（包含匹配，双向）；
+
+    论文没有机构信息（未 enrich）或绑定未填机构时不设门槛——反正候选都要人工确认。
+    """
+    papers = [a.lower() for a in (paper_affils or []) if isinstance(a, str) and a.strip()]
+    mine = [a.lower() for a in profile_affils if a.strip()]
+    if not papers or not mine:
+        return True
+    return any(m in p or p in m for p in papers for m in mine)
+
+
+def paper_matches_profile(paper: Paper, profile: UserAuthorProfile) -> bool:
+    variants = {_normalize_name(v) for v in profile.name_variants if _normalize_name(v)}
+    if not variants:
+        return False
+    authors = paper.authors or []
+    names = [a.get("name") for a in authors if isinstance(a, dict) and a.get("name")]
+    if not any(_name_matches(n, variants) for n in names):
+        return False
+    return _affiliation_compatible(paper.affiliations, profile.affiliations)
+
+
+def _publication_from_paper(user_id: uuid.UUID, paper: Paper) -> UserPublication:
+    return UserPublication(
+        user_id=user_id,
+        dedup_key=dedup_key_for(doi=paper.doi, arxiv_id=paper.arxiv_id, title=paper.title),
+        arxiv_id=paper.arxiv_id,
+        doi=paper.doi,
+        title=paper.title,
+        authors=paper.authors,
+        year=paper.year,
+        venue=paper.venue,
+        url=paper.url,
+        paper_id=paper.id,
+        source="library",
+        status="pending",
+    )
 
 
 async def _existing_dedup_keys(session: AsyncSession, user_id: uuid.UUID) -> set[str]:
@@ -95,41 +134,27 @@ async def _existing_dedup_keys(session: AsyncSession, user_id: uuid.UUID) -> set
     return set((await session.execute(stmt)).scalars().all())
 
 
-def _publication_from_work(user_id: uuid.UUID, work: dict[str, Any]) -> UserPublication:
-    doi = work.get("doi")
-    arxiv_id = _arxiv_id_from_doi(doi)
-    return UserPublication(
-        user_id=user_id,
-        dedup_key=dedup_key_for(doi=doi, arxiv_id=arxiv_id, title=work["title"]),
-        openalex_id=(work.get("openalex_id") or "").rsplit("/", 1)[-1] or None,
-        arxiv_id=arxiv_id,
-        doi=doi,
-        title=work["title"],
-        authors=work.get("authors"),
-        year=work.get("year"),
-        venue=work.get("venue"),
-        url=work.get("url"),
-        cited_by_count=work.get("cited_by_count"),
-        source="openalex",
-        status="pending",
-    )
-
-
-async def sync_publications(session: AsyncSession, *, user_id: uuid.UUID) -> int:
-    """按绑定的 OpenAlex 作者实体拉全部 works，新论文入 pending 候选。
+async def match_from_library(session: AsyncSession, *, user_id: uuid.UUID) -> int:
+    """扫描该用户所在方向的文献库，姓名+机构命中的论文入 pending 候选。
 
     已存在的条目（含 rejected）一律跳过——驳回过的不再打扰；返回新增候选数。
+    每日 cron 与手动触发共用；全量扫描 + 去重键幂等，重复跑无副作用。
     """
     profile = await get_profile(session, user_id=user_id)
-    if profile is None or not profile.openalex_author_id:
+    if profile is None:
         return 0
-    works = await get_openalex_client().works_by_author(profile.openalex_author_id)
+    stmt = (
+        select(Paper)
+        .join(ProjectMember, ProjectMember.project_id == Paper.project_id)
+        .where(ProjectMember.user_id == user_id, Paper.status != "excluded")
+    )
+    papers = (await session.execute(stmt)).scalars().all()
     seen = await _existing_dedup_keys(session, user_id)
     added = 0
-    for work in works:
-        if not work.get("title"):
+    for paper in papers:
+        if not paper_matches_profile(paper, profile):
             continue
-        pub = _publication_from_work(user_id, work)
+        pub = _publication_from_paper(user_id, paper)
         if pub.dedup_key in seen:
             continue
         seen.add(pub.dedup_key)
@@ -138,6 +163,15 @@ async def sync_publications(session: AsyncSession, *, user_id: uuid.UUID) -> int
     profile.last_synced_at = utcnow()
     await session.commit()
     return added
+
+
+async def profiles_for_daily_match(session: AsyncSession) -> list[uuid.UUID]:
+    """每日自动匹配的对象：开了 auto_sync 的绑定用户。"""
+    stmt = select(UserAuthorProfile.user_id).where(UserAuthorProfile.auto_sync.is_(True))
+    return list((await session.execute(stmt)).scalars().all())
+
+
+# ---- 发表记录 ----
 
 
 async def add_manual_publication(
@@ -216,10 +250,10 @@ async def list_publications(
     stmt = select(UserPublication).where(
         UserPublication.user_id == user_id, UserPublication.status == status
     )
-    # 确认列表按年份/被引数展示；待确认队列按新发现在前
+    # 确认列表按年份展示；待确认队列按新发现在前
     if status == "confirmed":
         stmt = stmt.order_by(
-            UserPublication.year.desc().nulls_last(), UserPublication.cited_by_count.desc()
+            UserPublication.year.desc().nulls_last(), UserPublication.created_at.desc()
         )
     else:
         stmt = stmt.order_by(UserPublication.created_at.desc())

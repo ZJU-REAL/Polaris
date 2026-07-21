@@ -1,64 +1,43 @@
-"""我发表的论文（issue #109）：绑定/候选、同步产候选与去重、确认流、手动补录，全离线。"""
+"""我发表的论文（issue #109）：绑定、文献库姓名+机构匹配、确认流、手动补录，全离线。"""
 
 import uuid
 
-import fakeredis.aioredis
-import httpx
-import pytest_asyncio
-import respx
-
 from app.core.db import get_sessionmaker
+from app.models.paper import Paper
 from app.services import publications as publications_service
-from app.services.literature import reset_clients, set_clients
-from app.services.literature.openalex import OpenAlexClient
 from tests.conftest import register_and_login
 
 
-@pytest_asyncio.fixture
-async def lit_clients():
-    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    set_clients(openalex=OpenAlexClient(redis=redis, mailto="test@example.org"))
-    yield
-    reset_clients()
-    await redis.aclose()
-
-
-def _author(idx: int, name: str, inst: str) -> dict:
-    return {
-        "id": f"https://openalex.org/A{idx}",
-        "display_name": name,
-        "display_name_alternatives": [f"{name[0]}. {name.split()[-1]}"],
-        "works_count": 40 + idx,
-        "cited_by_count": 1000 + idx,
-        "affiliations": [{"institution": {"display_name": inst}, "years": [2024]}],
-        "ids": {"openalex": f"https://openalex.org/A{idx}", "orcid": None},
-    }
-
-
-def _work(idx: int, title: str, *, doi: str | None = None, cites: int = 10) -> dict:
-    return {
-        "id": f"https://openalex.org/W{idx}",
-        "title": title,
-        "doi": f"https://doi.org/{doi}" if doi else None,
-        "publication_year": 2024,
-        "publication_date": "2024-05-01",
-        "cited_by_count": cites,
-        "primary_location": {
-            "landing_page_url": f"https://example.org/{idx}",
-            "source": {"display_name": "NeurIPS"},
-        },
-        "authorships": [
-            {
-                "author": {"display_name": "Wei Zhang"},
-                "institutions": [{"display_name": "Zhejiang University"}],
-            }
-        ],
-    }
-
-
-async def _login(client):
-    token = await register_and_login(client)
+async def _login(client, email="alice@example.com"):
+    token = await register_and_login(client, email=email)
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _make_project(client, headers, name="pub-proj"):
+    resp = await client.post("/api/projects", json={"name": name}, headers=headers)
+    return resp.json()["id"]
+
+
+async def _make_paper(project_id: str, **kwargs) -> str:
+    async with get_sessionmaker()() as session:
+        paper = Paper(project_id=uuid.UUID(project_id), **kwargs)
+        session.add(paper)
+        await session.commit()
+        return str(paper.id)
+
+
+async def _bind(client, headers, *, names=None, affils=None):
+    resp = await client.put(
+        "/api/me/author-profile",
+        json={"name_variants": names or ["Wei Zhang"], "affiliations": affils or []},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _my_id(client, headers) -> uuid.UUID:
+    return uuid.UUID((await client.get("/api/users/me", headers=headers)).json()["id"])
 
 
 async def test_profile_bind_roundtrip(client):
@@ -66,19 +45,13 @@ async def test_profile_bind_roundtrip(client):
     resp = await client.get("/api/me/author-profile", headers=headers)
     assert resp.status_code == 404
 
-    resp = await client.put(
-        "/api/me/author-profile",
-        json={
-            "name_variants": ["Wei Zhang", "W. Zhang", "Wei Zhang", " "],
-            "affiliations": ["Zhejiang University"],
-            "openalex_author_id": "A123",
-        },
-        headers=headers,
+    body = await _bind(
+        client,
+        headers,
+        names=["Wei Zhang", "W. Zhang", "Wei Zhang", " "],
+        affils=["Zhejiang University"],
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
     assert body["name_variants"] == ["Wei Zhang", "W. Zhang"]  # 去重去空
-    assert body["openalex_author_id"] == "A123"
     assert body["auto_sync"] is True
 
     resp = await client.get("/api/me/author-profile", headers=headers)
@@ -86,74 +59,115 @@ async def test_profile_bind_roundtrip(client):
     assert resp.json()["affiliations"] == ["Zhejiang University"]
 
 
-@respx.mock
-async def test_author_candidates_affiliation_ranking(client, lit_clients):
+async def test_library_match_name_and_affiliation(client):
     headers = await _login(client)
-    respx.get(url__regex=r"https://api\.openalex\.org/authors.*").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "results": [
-                    _author(1, "Wei Zhang", "MIT"),
-                    _author(2, "Wei Zhang", "Zhejiang University"),
-                ]
-            },
-        )
+    project_id = await _make_project(client, headers)
+    # 命中：姓名词序颠倒 + 机构包含匹配
+    hit = await _make_paper(
+        project_id,
+        title="Hit Paper",
+        arxiv_id="2401.00001",
+        authors=[{"name": "Zhang Wei"}, {"name": "Alice Smith"}],
+        affiliations=["College of CS, Zhejiang University", "MIT"],
+        status="included",
     )
-    resp = await client.get(
-        "/api/me/author-profile/candidates?name=Wei+Zhang&affiliation=zhejiang",
-        headers=headers,
+    # 不命中：姓名不匹配
+    await _make_paper(
+        project_id, title="Other Author", authors=[{"name": "Bob Jones"}], status="included"
     )
-    assert resp.status_code == 200, resp.text
-    cands = resp.json()
-    assert [c["openalex_author_id"] for c in cands] == ["A2", "A1"]  # 机构命中的排前
-    assert cands[0]["affiliations"] == ["Zhejiang University"]
-    assert cands[0]["works_count"] == 42
+    # 不命中：姓名命中但机构冲突（论文有机构信息且无交集）
+    await _make_paper(
+        project_id,
+        title="Wrong Affiliation",
+        authors=[{"name": "Wei Zhang"}],
+        affiliations=["Stanford University"],
+        status="included",
+    )
+    # 命中：姓名命中、论文无机构信息（未 enrich 不设门槛，交给人工确认）
+    await _make_paper(
+        project_id, title="No Affiliation Info", authors=[{"name": "Wei Zhang"}], status="scored"
+    )
+    # 不命中：回收站论文
+    await _make_paper(
+        project_id, title="Trashed", authors=[{"name": "Wei Zhang"}], status="excluded"
+    )
+    await _bind(client, headers, names=["Wei Zhang"], affils=["Zhejiang University"])
 
-
-@respx.mock
-async def test_sync_creates_pending_and_skips_seen(client, lit_clients):
-    headers = await _login(client)
-    await client.put(
-        "/api/me/author-profile",
-        json={"name_variants": ["Wei Zhang"], "affiliations": [], "openalex_author_id": "A2"},
-        headers=headers,
-    )
-    works_route = respx.get(url__regex=r"https://api\.openalex\.org/works.*").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "results": [
-                    _work(1, "Paper One", doi="10.1/one", cites=50),
-                    _work(2, "Paper Two", doi="10.48550/arXiv.2401.00002"),
-                ],
-                "meta": {"next_cursor": None},
-            },
-        )
-    )
-    me = (await client.get("/api/users/me", headers=headers)).json()
     async with get_sessionmaker()() as session:
-        added = await publications_service.sync_publications(session, user_id=uuid.UUID(me["id"]))
+        added = await publications_service.match_from_library(
+            session, user_id=await _my_id(client, headers)
+        )
     assert added == 2
-    assert works_route.called
 
     resp = await client.get("/api/me/publications?status=pending", headers=headers)
     body = resp.json()
-    assert body["total"] == 2
-    assert body["counts"] == {"pending": 2, "confirmed": 0, "rejected": 0}
+    titles = {p["title"] for p in body["items"]}
+    assert titles == {"Hit Paper", "No Affiliation Info"}
     by_title = {p["title"]: p for p in body["items"]}
-    assert by_title["Paper Two"]["arxiv_id"] == "2401.00002"  # DataCite DOI 反推 arxiv id
-    assert by_title["Paper One"]["cited_by_count"] == 50
+    assert by_title["Hit Paper"]["paper_id"] == hit  # 可跳回文献库论文
+    assert by_title["Hit Paper"]["source"] == "library"
 
-    # 驳回一篇后再次同步：不重复产候选
-    reject_id = by_title["Paper One"]["id"]
-    resp = await client.post(f"/api/me/publications/{reject_id}/reject", headers=headers)
+
+async def test_match_idempotent_and_respects_rejected(client):
+    headers = await _login(client)
+    project_id = await _make_project(client, headers)
+    await _make_paper(
+        project_id,
+        title="Same Paper",
+        arxiv_id="2402.11111",
+        authors=[{"name": "Wei Zhang"}],
+        status="included",
+    )
+    await _bind(client, headers)
+    uid = await _my_id(client, headers)
+
+    async with get_sessionmaker()() as session:
+        assert await publications_service.match_from_library(session, user_id=uid) == 1
+    # 重复跑：去重键幂等
+    async with get_sessionmaker()() as session:
+        assert await publications_service.match_from_library(session, user_id=uid) == 0
+
+    # 驳回后再跑：不再打扰
+    resp = await client.get("/api/me/publications?status=pending", headers=headers)
+    pub_id = resp.json()["items"][0]["id"]
+    resp = await client.post(f"/api/me/publications/{pub_id}/reject", headers=headers)
     assert resp.json()["status"] == "rejected"
     async with get_sessionmaker()() as session:
-        added = await publications_service.sync_publications(session, user_id=uuid.UUID(me["id"]))
-    assert added == 0
+        assert await publications_service.match_from_library(session, user_id=uid) == 0
     resp = await client.get("/api/me/publications?status=pending", headers=headers)
-    assert resp.json()["total"] == 1
+    assert resp.json()["total"] == 0
+
+
+async def test_match_only_scans_member_projects(client):
+    headers_a = await _login(client, email="owner@example.com")
+    project_a = await _make_project(client, headers_a, "theirs")
+    await _make_paper(
+        project_a, title="Their Paper", authors=[{"name": "Wei Zhang"}], status="included"
+    )
+
+    headers_b = await _login(client, email="me@example.com")
+    await _bind(client, headers_b)
+    uid = await _my_id(client, headers_b)
+    async with get_sessionmaker()() as session:
+        assert await publications_service.match_from_library(session, user_id=uid) == 0
+
+
+async def test_daily_match_targets_auto_sync_profiles(client):
+    headers = await _login(client)
+    await _bind(client, headers)
+    uid = await _my_id(client, headers)
+    async with get_sessionmaker()() as session:
+        assert await publications_service.profiles_for_daily_match(session) == [uid]
+
+    # 关掉自动匹配后不在每日名单里
+    resp = await client.put(
+        "/api/me/author-profile",
+        json={"name_variants": ["Wei Zhang"], "affiliations": [], "auto_sync": False},
+        headers=headers,
+    )
+    assert resp.json()["auto_sync"] is False
+    async with get_sessionmaker()() as session:
+        assert await publications_service.profiles_for_daily_match(session) == []
 
 
 async def test_confirm_flow_and_permissions(client):
@@ -185,26 +199,20 @@ async def test_confirm_flow_and_permissions(client):
     assert resp.status_code == 422
 
     # 别人看不到、也改不动我的记录
-    other = {
-        "Authorization": f"Bearer {await register_and_login(client, email='other@example.com')}"
-    }
+    other = await _login(client, email="other@example.com")
     resp = await client.get("/api/me/publications?status=confirmed", headers=other)
     assert resp.json()["total"] == 0
     resp = await client.post(f"/api/me/publications/{pub['id']}/confirm", headers=other)
     assert resp.status_code == 404
 
 
-async def test_sync_endpoint_requires_binding_and_enqueues(client, queue_stub):
+async def test_scan_endpoint_requires_binding_and_enqueues(client, queue_stub):
     headers = await _login(client)
     resp = await client.post("/api/me/publications/sync", headers=headers)
     assert resp.status_code == 400
     assert resp.json()["detail"] == "AUTHOR_NOT_BOUND"
 
-    await client.put(
-        "/api/me/author-profile",
-        json={"name_variants": ["Wei Zhang"], "affiliations": [], "openalex_author_id": "A2"},
-        headers=headers,
-    )
+    await _bind(client, headers)
     resp = await client.post("/api/me/publications/sync", headers=headers)
     assert resp.status_code == 202
-    assert queue_stub.jobs and queue_stub.jobs[0][0] == "sync_user_publications"
+    assert queue_stub.jobs and queue_stub.jobs[0][0] == "match_user_publications"

@@ -20,6 +20,7 @@ def _sse(chunks: list[dict]) -> bytes:
     lines.append("data: [DONE]\n\n")
     return "".join(lines).encode()
 
+
 STREAM_CHUNKS = [
     {
         "id": "c1",
@@ -129,8 +130,7 @@ async def test_stream_still_yields_deltas():
     respx.post(CHAT_URL).mock(return_value=_stream_response())
     provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
     got = [
-        c
-        async for c in provider.stream([Message(role="user", content="hi")], model="gpt-5.6-sol")
+        c async for c in provider.stream([Message(role="user", content="hi")], model="gpt-5.6-sol")
     ]
     assert "".join(got) == "Hello world"
     await provider.aclose()

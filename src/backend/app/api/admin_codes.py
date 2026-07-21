@@ -57,9 +57,7 @@ async def list_registration_codes(
     return [_to_read(rc) for rc in rows]
 
 
-@router.delete(
-    "/registration-codes/{code_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/registration-codes/{code_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_registration_code(
     code_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),

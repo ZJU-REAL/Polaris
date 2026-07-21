@@ -2061,17 +2061,6 @@ export interface AuthorProfileInput {
   auto_sync?: boolean;
 }
 
-/** OpenAlex 作者实体候选（绑定向导用）。 */
-export interface AuthorCandidate {
-  openalex_author_id: string;
-  display_name: string;
-  alternate_names: string[];
-  affiliations: string[];
-  works_count: number;
-  cited_by_count: number;
-  orcid: string | null;
-}
-
 export type PublicationStatus = 'pending' | 'confirmed' | 'rejected';
 
 export interface Publication {
@@ -2083,6 +2072,8 @@ export interface Publication {
   year: number | null;
   venue: string | null;
   url: string | null;
+  /** 文献库中匹配到的论文 id；非 null 时可直接跳阅读页。 */
+  paper_id: string | null;
   cited_by_count: number;
   source: string;
   status: PublicationStatus;
@@ -3191,13 +3182,7 @@ export const api = {
   saveAuthorProfile(input: AuthorProfileInput): Promise<AuthorProfile> {
     return requestJson<AuthorProfile>('/me/author-profile', 'PUT', input);
   },
-  /** 按姓名（+可选机构）查 OpenAlex 作者实体候选。 */
-  listAuthorCandidates(name: string, affiliation?: string): Promise<AuthorCandidate[]> {
-    const params = new URLSearchParams({ name });
-    if (affiliation) params.set('affiliation', affiliation);
-    return request<AuthorCandidate[]>(`/me/author-profile/candidates?${params.toString()}`);
-  },
-  /** 触发一次发表同步（后台任务，202）；未绑定实体时 400 AUTHOR_NOT_BOUND。 */
+  /** 触发一次文献库扫描匹配（后台任务，202）。 */
   syncPublications(): Promise<{ queued: boolean }> {
     return request<{ queued: boolean }>('/me/publications/sync', { method: 'POST' });
   },

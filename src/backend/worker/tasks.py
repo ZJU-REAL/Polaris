@@ -87,7 +87,18 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
     return enqueued
 
 
-async def sync_user_publications(ctx: dict[str, Any], user_id: str) -> int:
-    """同步某用户的发表记录（OpenAlex 作者实体 → pending 候选）；返回新增数。"""
+async def match_user_publications(ctx: dict[str, Any], user_id: str) -> int:
+    """扫描文献库为某用户匹配发表候选（姓名+机构命中 → pending）；返回新增数。"""
     async with get_sessionmaker()() as session:
-        return await publications_service.sync_publications(session, user_id=uuid.UUID(user_id))
+        return await publications_service.match_from_library(session, user_id=uuid.UUID(user_id))
+
+
+async def daily_publication_match(ctx: dict[str, Any]) -> int:
+    """每日 04:00 cron（每日 ingest 之后）：对开了自动匹配的绑定用户逐个跑库内匹配。"""
+    async with get_sessionmaker()() as session:
+        user_ids = await publications_service.profiles_for_daily_match(session)
+    total = 0
+    for uid in user_ids:
+        async with get_sessionmaker()() as session:
+            total += await publications_service.match_from_library(session, user_id=uid)
+    return total

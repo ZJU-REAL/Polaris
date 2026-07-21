@@ -10,7 +10,6 @@ from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.user import User
 from app.schemas.publication import (
-    AuthorCandidate,
     AuthorProfileRead,
     AuthorProfileUpdate,
     ManualPublicationCreate,
@@ -53,29 +52,19 @@ async def put_author_profile(
     return AuthorProfileRead.model_validate(profile)
 
 
-@router.get("/me/author-profile/candidates", response_model=list[AuthorCandidate])
-async def author_profile_candidates(
-    name: str = Query(min_length=2),
-    affiliation: str | None = Query(default=None),
-    _: User = Depends(current_active_user),
-) -> list[AuthorCandidate]:
-    """OpenAlex 作者实体候选（绑定向导「这是我」选择用）。"""
-    candidates = await publications_service.author_candidates(name, affiliation)
-    return [AuthorCandidate(**c) for c in candidates]
-
-
 @router.post(
     "/me/publications/sync", response_model=SyncEnqueued, status_code=status.HTTP_202_ACCEPTED
 )
-async def trigger_sync(
+async def trigger_library_match(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> SyncEnqueued:
+    """手动触发一次文献库扫描匹配（平时每日 cron 自动跑）。"""
     profile = await publications_service.get_profile(session, user_id=user.id)
-    if profile is None or not profile.openalex_author_id:
+    if profile is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="AUTHOR_NOT_BOUND")
-    await queue.enqueue("sync_user_publications", str(user.id))
+    await queue.enqueue("match_user_publications", str(user.id))
     return SyncEnqueued(queued=True)
 
 

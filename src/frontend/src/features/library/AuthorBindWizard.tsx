@@ -1,248 +1,184 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
-import { api, type AuthorCandidate, type AuthorProfile } from '../../lib/api';
+import { api, type AuthorProfile } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
-   作者绑定向导（PublicationsTab 与设置页「学术身份」共用）：
-   姓名+机构 → OpenAlex 候选实体 → 这是我 / 都不是跳过
+   署名信息表单（PublicationsTab 与设置页「学术身份」共用）：
+   多个姓名写法 + 多个机构，保存即完成；
+   之后每天自动从文献库匹配你发表的论文。
    ============================================================ */
 
 export function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** 去重合并（大小写不敏感，保留首次出现的写法，去空）。 */
-function dedupe(list: (string | null | undefined)[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of list) {
-    const s = (raw ?? '').trim();
-    if (!s) continue;
-    const key = s.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(s);
-  }
-  return out;
+/** 小巧的多值输入：已有值显示为可删除的 chip，输入后回车 / 逗号 / 失焦追加。 */
+export function MultiValueInput({
+  values,
+  onChange,
+  placeholder,
+  autoFocus,
+}: {
+  values: string[];
+  onChange: (values: string[]) => void;
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const commit = () => {
+    const v = draft.trim();
+    setDraft('');
+    if (!v) return;
+    if (values.some((x) => x.toLowerCase() === v.toLowerCase())) return;
+    onChange([...values, v]);
+  };
+
+  return (
+    <div
+      className="input"
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 5,
+        height: 'auto',
+        minHeight: 32,
+        padding: '4px 8px',
+        cursor: 'text',
+      }}
+    >
+      {values.map((v) => (
+        <span
+          key={v}
+          className="tag"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span>
+          <span
+            title={tr('移除', 'Remove')}
+            style={{ cursor: 'pointer', display: 'inline-flex', opacity: 0.6, flexShrink: 0 }}
+            onClick={() => onChange(values.filter((x) => x !== v))}
+          >
+            <Icon name="x" size={9} />
+          </span>
+        </span>
+      ))}
+      <input
+        value={draft}
+        autoFocus={autoFocus}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ',') && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            commit();
+          }
+          if (e.key === 'Backspace' && !draft && values.length > 0) {
+            onChange(values.slice(0, -1));
+          }
+        }}
+        placeholder={values.length === 0 ? placeholder : undefined}
+        style={{
+          flex: 1,
+          minWidth: 90,
+          border: 'none',
+          outline: 'none',
+          background: 'transparent',
+          font: 'inherit',
+          fontSize: 12.5,
+          color: 'var(--text)',
+          padding: '2px 0',
+        }}
+      />
+    </div>
+  );
 }
 
 export function AuthorBindWizard({
   profile,
   onDone,
   onCancel,
-  syncOnLink = true,
   embedded = false,
 }: {
   /** 已有绑定时用于预填（修改绑定入口）；未绑定时为 null。 */
   profile: AuthorProfile | null;
   onDone: () => void;
   onCancel?: () => void;
-  /** 关联到作者实体后是否立即触发一次发表同步（「我发表的」tab 用 true，设置页只保存不同步）。 */
-  syncOnLink?: boolean;
   /** 内嵌进别的卡片时不再套自己的卡片外壳。 */
   embedded?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState(profile?.name_variants[0] ?? '');
-  const [affiliation, setAffiliation] = useState(profile?.affiliations[0] ?? '');
-  const [search, setSearch] = useState<{ name: string; affiliation: string } | null>(null);
-
-  const candQuery = useQuery({
-    queryKey: ['author-candidates', search],
-    queryFn: () => api.listAuthorCandidates(search!.name, search!.affiliation || undefined),
-    enabled: search !== null,
-    retry: false,
-  });
-  const candidates = candQuery.data ?? [];
+  const [names, setNames] = useState<string[]>(profile?.name_variants ?? []);
+  const [affiliations, setAffiliations] = useState<string[]>(profile?.affiliations ?? []);
 
   const saveMutation = useMutation({
-    mutationFn: async (cand: AuthorCandidate | null) => {
-      const saved = await api.saveAuthorProfile({
-        name_variants: cand ? dedupe([name, cand.display_name, ...cand.alternate_names]) : dedupe([name]),
-        affiliations: cand
-          ? dedupe([affiliation, ...cand.affiliations.slice(0, 3)])
-          : dedupe([affiliation]),
-        openalex_author_id: cand ? cand.openalex_author_id : null,
-        orcid: cand?.orcid ?? profile?.orcid ?? null,
+    mutationFn: () =>
+      api.saveAuthorProfile({
+        name_variants: names,
+        affiliations,
+        openalex_author_id: null,
+        orcid: profile?.orcid ?? null,
         auto_sync: profile?.auto_sync ?? true,
-      });
-      // 绑定到实体后立即触发一次同步；同步失败不阻断绑定本身
-      let synced = false;
-      if (syncOnLink && saved.openalex_author_id) {
-        try {
-          await api.syncPublications();
-          synced = true;
-        } catch {
-          /* 列表视图里还有「立即同步」可以重试 */
-        }
-      }
-      return { saved, synced };
-    },
-    onSuccess: ({ saved, synced }) => {
+      }),
+    onSuccess: (saved) => {
       queryClient.setQueryData(['author-profile'], saved);
       void queryClient.invalidateQueries({ queryKey: ['author-profile'] });
       void queryClient.invalidateQueries({ queryKey: ['publications'] });
-      toast(
-        synced
-          ? tr('绑定成功，正在同步你的发表…', 'Linked — syncing your publications…')
-          : tr('绑定信息已保存', 'Author info saved'),
-        'ok',
-      );
+      toast(tr('署名信息已保存', 'Author info saved'), 'ok');
       onDone();
     },
     onError: (e) => toast(`${tr('保存失败：', 'Save failed: ')}${errText(e)}`, 'error'),
   });
 
-  const searching = candQuery.isFetching;
-
   const body = (
     <>
       <div className="section-h">
         <Icon name="users" size={15} />
-        {tr('先告诉我们你是谁', 'First, tell us who you are')}
+        {tr('你的署名信息', 'Your author info')}
       </div>
       <p style={{ fontSize: 12.5, color: 'var(--text-2)', margin: '8px 0 16px', lineHeight: 1.6 }}>
         {tr(
-          '填写论文署名用的姓名（和机构），我们会到 OpenAlex 找到对应的作者，之后就能自动同步你发表的论文。',
-          'Enter the name (and affiliation) you publish under. We will match it to an OpenAlex author so your publications can be synced automatically.',
+          '填写论文署名可能用到的姓名写法和机构，保存后每天会自动从文献库里匹配你发表的论文。',
+          'List the name spellings and affiliations you publish under. Once saved, we match your publications from the library daily.',
         )}
       </p>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const n = name.trim();
-          if (n) setSearch({ name: n, affiliation: affiliation.trim() });
-        }}
+      <FormField
+        label="姓名写法"
+        en="Name variants"
+        hint={tr('可以填多个，如 San Zhang、Zhang San；回车添加', 'Add as many as you use, e.g. San Zhang, Zhang San — Enter to add')}
       >
-        <FormField label="姓名" en="Name" hint={tr('论文署名用的英文名，如 San Zhang', 'The name on your papers, e.g. San Zhang')}>
-          <input
-            className="input"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. San Zhang"
-            autoFocus
-          />
-        </FormField>
-        <FormField label="机构（选填）" en="Affiliation (optional)" style={{ marginTop: 12 }}>
-          <input
-            className="input"
-            value={affiliation}
-            onChange={(e) => setAffiliation(e.target.value)}
-            placeholder="e.g. Zhejiang University"
-          />
-        </FormField>
-        <div className="row gap8" style={{ marginTop: 14 }}>
-          <button className="btn btn-primary sm" type="submit" disabled={!name.trim() || searching}>
-            <Icon name="search" size={13} />
-            {searching ? tr('查找中…', 'Searching…') : tr('查找我的作者信息', 'Find my author entry')}
-          </button>
-          {onCancel && (
-            <button type="button" className="btn btn-ghost sm" onClick={onCancel}>
-              {tr('取消', 'Cancel')}
-            </button>
-          )}
-        </div>
-      </form>
+        <MultiValueInput values={names} onChange={setNames} placeholder="e.g. San Zhang" autoFocus />
+      </FormField>
+      <FormField
+        label="机构（选填）"
+        en="Affiliations (optional)"
+        style={{ marginTop: 12 }}
+        hint={tr('回车添加，可以填多个', 'Enter to add; multiple allowed')}
+      >
+        <MultiValueInput values={affiliations} onChange={setAffiliations} placeholder="e.g. Zhejiang University" />
+      </FormField>
 
-      {/* —— 候选实体 —— */}
-      {search && !searching && (
-        <div style={{ marginTop: 20 }}>
-          {candQuery.isError ? (
-            <div className="field-error">{`${tr('查找失败：', 'Search failed: ')}${errText(candQuery.error)}`}</div>
-          ) : (
-            <>
-              <div style={{ fontSize: 12.5, fontWeight: 650, color: 'var(--text-2)', marginBottom: 8 }}>
-                {candidates.length > 0
-                  ? tr(`找到 ${candidates.length} 个可能是你的作者，选一个：`, `Found ${candidates.length} possible matches — pick yours:`)
-                  : tr('没找到匹配的作者。', 'No matching authors found.')}
-              </div>
-              <div className="col" style={{ gap: 8 }}>
-                {candidates.map((c) => (
-                  <div
-                    key={c.openalex_author_id}
-                    className="card"
-                    style={{ padding: '10px 14px', display: 'flex', gap: 12, alignItems: 'center' }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="row gap8" style={{ minWidth: 0 }}>
-                        <span style={{ fontSize: 13, fontWeight: 650 }}>{c.display_name}</span>
-                        {c.orcid && (
-                          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-                            {c.orcid}
-                          </span>
-                        )}
-                      </div>
-                      {c.alternate_names.length > 0 && (
-                        <div
-                          title={c.alternate_names.join(' / ')}
-                          style={{
-                            fontSize: 11,
-                            color: 'var(--text-4)',
-                            marginTop: 2,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
-                          {c.alternate_names.join(' / ')}
-                        </div>
-                      )}
-                      {c.affiliations.length > 0 && (
-                        <div
-                          title={c.affiliations.join(' · ')}
-                          style={{
-                            fontSize: 11.5,
-                            color: 'var(--text-3)',
-                            marginTop: 2,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
-                          {c.affiliations.join(' · ')}
-                        </div>
-                      )}
-                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 3 }}>
-                        {tr(`论文 ${c.works_count} 篇 · 被引 ${c.cited_by_count} 次`, `${c.works_count} works · ${c.cited_by_count} citations`)}
-                      </div>
-                    </div>
-                    <button
-                      className="btn btn-primary sm"
-                      style={{ flexShrink: 0 }}
-                      disabled={saveMutation.isPending}
-                      onClick={() => saveMutation.mutate(c)}
-                    >
-                      <Icon name="check" size={13} />
-                      {tr('这是我', 'This is me')}
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <button
-                className="btn btn-ghost sm"
-                style={{ marginTop: 12 }}
-                disabled={saveMutation.isPending}
-                onClick={() => saveMutation.mutate(null)}
-              >
-                {candidates.length > 0
-                  ? tr('都不是 / 跳过，只按姓名保存', 'None of these — save name only')
-                  : tr('跳过，只按姓名保存', 'Skip — save name only')}
-              </button>
-              <div className="field-hint" style={{ marginTop: 6 }}>
-                {tr(
-                  '只按姓名保存时无法自动同步发表，之后可以用「手动添加」补充。',
-                  'Saving name only disables auto sync; you can still add publications manually.',
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
+      <div className="row gap8" style={{ marginTop: 14 }}>
+        <button
+          className="btn btn-primary sm"
+          disabled={names.length === 0 || saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          <Icon name="check" size={13} />
+          {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+        </button>
+        {onCancel && (
+          <button type="button" className="btn btn-ghost sm" onClick={onCancel}>
+            {tr('取消', 'Cancel')}
+          </button>
+        )}
+      </div>
     </>
   );
 

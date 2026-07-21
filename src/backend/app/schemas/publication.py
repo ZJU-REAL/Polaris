@@ -32,18 +32,6 @@ class AuthorProfileUpdate(BaseModel):
         return list(dict.fromkeys(cleaned))  # 去重保序
 
 
-class AuthorCandidate(BaseModel):
-    """OpenAlex 作者实体候选卡片（用户从中选「这是我」）。"""
-
-    openalex_author_id: str | None
-    display_name: str | None
-    alternate_names: list[str] = []
-    affiliations: list[str] = []
-    works_count: int = 0
-    cited_by_count: int = 0
-    orcid: str | None = None
-
-
 class PublicationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -56,6 +44,7 @@ class PublicationRead(BaseModel):
     venue: str | None
     url: str | None
     cited_by_count: int | None
+    paper_id: uuid.UUID | None  # 库内匹配来源的活体论文软引用；论文删除后为 null
     source: str
     status: str
     confirmed_at: datetime | None

@@ -49,9 +49,10 @@ async def test_admin_create_list_and_use_code(client):
     assert r3.json()["detail"] == "INVALID_INVITE_CODE"
 
     # 用尽后状态变 exhausted，used_count=2
-    listed = {c["code"]: c for c in (await client.get(
-        "/api/admin/registration-codes", headers=headers
-    )).json()}
+    listed = {
+        c["code"]: c
+        for c in (await client.get("/api/admin/registration-codes", headers=headers)).json()
+    }
     assert listed[code]["used_count"] == 2
     assert listed[code]["status"] == "exhausted"
 
@@ -59,9 +60,7 @@ async def test_admin_create_list_and_use_code(client):
 async def test_revoked_code_rejected(client):
     token = await _admin_token(client)
     headers = {"Authorization": f"Bearer {token}"}
-    created = (await client.post(
-        "/api/admin/registration-codes", json={}, headers=headers
-    )).json()
+    created = (await client.post("/api/admin/registration-codes", json={}, headers=headers)).json()
     code, code_id = created["code"], created["id"]
 
     resp = await client.delete(f"/api/admin/registration-codes/{code_id}", headers=headers)
@@ -81,9 +80,7 @@ async def test_non_admin_cannot_manage_codes(client):
     await _admin_token(client)  # 首个用户占掉 admin
     member = await register_and_login(client, email="member@example.com")
     headers = {"Authorization": f"Bearer {member}"}
-    assert (await client.post(
-        "/api/admin/registration-codes", json={}, headers=headers
-    )).status_code == 403
-    assert (await client.get(
-        "/api/admin/registration-codes", headers=headers
-    )).status_code == 403
+    assert (
+        await client.post("/api/admin/registration-codes", json={}, headers=headers)
+    ).status_code == 403
+    assert (await client.get("/api/admin/registration-codes", headers=headers)).status_code == 403

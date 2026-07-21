@@ -57,6 +57,8 @@ class UserPublication(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     venue: Mapped[str | None] = mapped_column(String(255))
     url: Mapped[str | None] = mapped_column(String(1024))
     cited_by_count: Mapped[int | None]
+    # 库内匹配来源的活体论文软引用（跳转阅读页用）；论文/方向删除后置空
+    paper_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("papers.id", ondelete="SET NULL"))
     source: Mapped[str] = mapped_column(String(16), nullable=False)  # openalex | manual | library
     status: Mapped[str] = mapped_column(  # pending | confirmed | rejected
         String(16), default="pending", nullable=False, index=True
