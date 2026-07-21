@@ -1,7 +1,8 @@
 """管理端 LLM 配置 schema（docs/api-m1.md §2）。"""
 
 import uuid
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -52,3 +53,55 @@ class UsageRow(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     calls: int
+
+
+# ---- 调用日志 ----
+
+
+class CallLogSettings(BaseModel):
+    """调用日志开关（系统级，默认关）。"""
+
+    enabled: bool
+
+
+class CallLogRow(BaseModel):
+    """列表行：request/response 只给截断预览，全文走详情端点。"""
+
+    id: uuid.UUID
+    created_at: datetime
+    stage: str
+    provider_name: str
+    model: str
+    duration_ms: int
+    status: str  # ok|error
+    error: str | None
+    prompt_tokens: int
+    completion_tokens: int
+    user_id: uuid.UUID | None
+    project_id: uuid.UUID | None
+    voyage_id: uuid.UUID | None
+    request_preview: str
+    response_preview: str
+
+
+class CallLogPage(BaseModel):
+    total: int
+    items: list[CallLogRow]
+
+
+class CallLogDetail(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    stage: str
+    provider_name: str
+    model: str
+    duration_ms: int
+    status: str
+    error: str | None
+    prompt_tokens: int
+    completion_tokens: int
+    user_id: uuid.UUID | None
+    project_id: uuid.UUID | None
+    voyage_id: uuid.UUID | None
+    request: Any | None  # {"messages": [{role, content}], "images": ["[image ~N KB]"]} 或摘要
+    response: str | None

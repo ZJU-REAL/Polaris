@@ -5,7 +5,7 @@ from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.experiment import Experiment, ExperimentRun
 from app.models.gate import Gate
 from app.models.idea import Idea
-from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
+from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
 from app.models.manuscript import (
     Manuscript,
     ManuscriptFile,
@@ -27,6 +27,7 @@ from app.models.project import Project, ProjectInvite, ProjectMember
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.skill import ProjectSkill, Skill, SkillListing, SkillRating, SkillVersion
 from app.models.ssh_credential import SSHCredential
+from app.models.system_setting import SystemSetting
 from app.models.user import User
 from app.models.voyage import VoyageRun, VoyageStep
 
@@ -37,6 +38,7 @@ __all__ = [
     "ExperimentRun",
     "Gate",
     "Idea",
+    "LLMCallLog",
     "LLMProviderConfig",
     "LLMUsage",
     "Manuscript",
@@ -61,6 +63,7 @@ __all__ = [
     "SkillListing",
     "SkillRating",
     "SkillVersion",
+    "SystemSetting",
     "TimestampMixin",
     "User",
     "UUIDPrimaryKeyMixin",

@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
+from app.core.llm import call_log
 from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.base import CompletionResult, LLMProvider, Message
 from app.core.llm.fake import FakeProvider, estimate_tokens
@@ -57,11 +58,17 @@ class ResolvedRoute:
     api_key: str
     model: str
     temperature: float | None
+    provider_name: str = "fake"  # 管理端 provider 名称（调用日志用）
 
 
 # 无 DB 路由时的兜底：确定性 fake provider
 _FALLBACK_ROUTE = ResolvedRoute(
-    provider_kind="fake", base_url=None, api_key="", model="fake-default", temperature=0.0
+    provider_kind="fake",
+    base_url=None,
+    api_key="",
+    model="fake-default",
+    temperature=0.0,
+    provider_name="fake",
 )
 
 
@@ -111,6 +118,7 @@ class LLMRouter:
                     api_key=api_key,
                     model=route.model,
                     temperature=route.temperature,
+                    provider_name=provider.name,
                 )
         return routes
 
@@ -174,6 +182,43 @@ class LLMRouter:
         except Exception:  # noqa: BLE001 — 记账尽力而为，失败不打断 LLM 主流程
             logger.warning("llm usage accounting failed (stage=%s)", stage, exc_info=True)
 
+    async def _log_call(
+        self,
+        *,
+        stage: str,
+        route: ResolvedRoute,
+        model: str,
+        started_at: float,
+        status: str,
+        error: str | None,
+        request: Any | None,
+        response: str | None,
+        usage: dict[str, int],
+        user_id: uuid.UUID | None,
+        project_id: uuid.UUID | None,
+        voyage_id: uuid.UUID | None,
+    ) -> None:
+        """写一条调用日志（开关打开时才被调用）。任何失败只 warning，不影响主流程。"""
+        try:
+            await call_log.record_call(
+                stage=stage,
+                provider_name=route.provider_name,
+                model=model,
+                # monotonic 计时；快到 1ms 内的调用向上取整，保证时延恒为正
+                duration_ms=max(1, int((time.monotonic() - started_at) * 1000)),
+                status=status,
+                error=error,
+                request=request,
+                response=response,
+                prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                completion_tokens=int(usage.get("completion_tokens", 0)),
+                user_id=user_id,
+                project_id=project_id,
+                voyage_id=voyage_id,
+            )
+        except Exception:  # noqa: BLE001 — 日志记录绝不影响业务调用
+            logger.warning("llm call logging failed (stage=%s)", stage, exc_info=True)
+
     @staticmethod
     def _ensure_usage(
         messages: Sequence[Message], content: str, usage: dict[str, int] | None
@@ -200,18 +245,38 @@ class LLMRouter:
     ) -> CompletionResult:
         provider, route = await self.resolve(stage)
         temp = route.temperature if temperature is None else temperature
-        # 长文本 stage 且有任务事件频道：流式并逐段广播（终端实时展示"大模型正在输出什么"）。
-        # 多模态（带图，如 wiki 精读编译）也走流式——图片附在请求上、正文照常逐段吐。
-        if self.event_bus is not None and voyage_id is not None and stage in STREAM_STAGES:
-            result = await self._stream_and_broadcast(
-                stage, provider, route, messages, temp, max_tokens, voyage_id, images
-            )
-        else:
-            # images 仅在提供时透传（兼容未声明该参数的 provider 子类/测试替身）
-            extra: dict[str, Any] = {"images": images} if images else {}
-            result = await provider.complete(
-                messages, model=route.model, temperature=temp, max_tokens=max_tokens, **extra
-            )
+        log_enabled = await call_log.logging_enabled()
+        started_at = time.monotonic()
+        try:
+            # 长文本 stage 且有任务事件频道：流式并逐段广播（终端实时展示"大模型正在输出什么"）。
+            # 多模态（带图，如 wiki 精读编译）也走流式——图片附在请求上、正文照常逐段吐。
+            if self.event_bus is not None and voyage_id is not None and stage in STREAM_STAGES:
+                result = await self._stream_and_broadcast(
+                    stage, provider, route, messages, temp, max_tokens, voyage_id, images
+                )
+            else:
+                # images 仅在提供时透传（兼容未声明该参数的 provider 子类/测试替身）
+                extra: dict[str, Any] = {"images": images} if images else {}
+                result = await provider.complete(
+                    messages, model=route.model, temperature=temp, max_tokens=max_tokens, **extra
+                )
+        except Exception as e:
+            if log_enabled:
+                await self._log_call(
+                    stage=stage,
+                    route=route,
+                    model=route.model,
+                    started_at=started_at,
+                    status="error",
+                    error=f"{type(e).__name__}: {e}",
+                    request=call_log.sanitize_request(messages, images),
+                    response=None,
+                    usage={},
+                    user_id=user_id,
+                    project_id=project_id,
+                    voyage_id=voyage_id,
+                )
+            raise
         result.usage = self._ensure_usage(messages, result.content, result.usage)
         await self._record_usage(
             stage=stage,
@@ -221,6 +286,21 @@ class LLMRouter:
             project_id=project_id,
             voyage_id=voyage_id,
         )
+        if log_enabled:
+            await self._log_call(
+                stage=stage,
+                route=route,
+                model=result.model or route.model,
+                started_at=started_at,
+                status="ok",
+                error=None,
+                request=call_log.sanitize_request(messages, images),
+                response=result.content,
+                usage=result.usage,
+                user_id=user_id,
+                project_id=project_id,
+                voyage_id=voyage_id,
+            )
         return result
 
     async def _stream_and_broadcast(
@@ -285,15 +365,59 @@ class LLMRouter:
     ) -> list[list[float]]:
         """文本嵌入（stage 默认 embedding）。provider 不支持时抛 NotImplementedError。"""
         provider, route = await self.resolve(stage)
-        vectors = await provider.embed(texts, model=route.model)
+        log_enabled = await call_log.logging_enabled()
+        started_at = time.monotonic()
+        # 调用日志只记摘要（输入条数 + 首条截断），不存向量
+        request_summary = {
+            "texts_count": len(texts),
+            "first_text": call_log.truncate_text(texts[0], call_log.SUMMARY_MAX_CHARS)
+            if texts
+            else "",
+        }
+        try:
+            vectors = await provider.embed(texts, model=route.model)
+        except Exception as e:
+            if log_enabled:
+                await self._log_call(
+                    stage=stage,
+                    route=route,
+                    model=route.model,
+                    started_at=started_at,
+                    status="error",
+                    error=f"{type(e).__name__}: {e}",
+                    request=request_summary,
+                    response=None,
+                    usage={},
+                    user_id=user_id,
+                    project_id=project_id,
+                    voyage_id=voyage_id,
+                )
+            raise
+        usage = {"prompt_tokens": sum(estimate_tokens(t) for t in texts)}
         await self._record_usage(
             stage=stage,
             model=route.model,
-            usage={"prompt_tokens": sum(estimate_tokens(t) for t in texts)},
+            usage=usage,
             user_id=user_id,
             project_id=project_id,
             voyage_id=voyage_id,
         )
+        if log_enabled:
+            dim = len(vectors[0]) if vectors else 0
+            await self._log_call(
+                stage=stage,
+                route=route,
+                model=route.model,
+                started_at=started_at,
+                status="ok",
+                error=None,
+                request=request_summary,
+                response=f"[{len(vectors)} embeddings, dim={dim}]",
+                usage=usage,
+                user_id=user_id,
+                project_id=project_id,
+                voyage_id=voyage_id,
+            )
         return vectors
 
     async def rerank(
@@ -313,7 +437,35 @@ class LLMRouter:
         billed_units.total_tokens，拿不到则按 len/4 估算。
         """
         provider, route = await self.resolve(stage)
-        result = await provider.rerank(query, documents, model=route.model, top_n=top_n)
+        log_enabled = await call_log.logging_enabled()
+        started_at = time.monotonic()
+        # 调用日志只记摘要（query + 文档条数 + 首条截断），不存全部文档
+        request_summary = {
+            "query": call_log.truncate_text(query, call_log.SUMMARY_MAX_CHARS),
+            "documents_count": len(documents),
+            "first_document": call_log.truncate_text(documents[0], call_log.SUMMARY_MAX_CHARS)
+            if documents
+            else "",
+        }
+        try:
+            result = await provider.rerank(query, documents, model=route.model, top_n=top_n)
+        except Exception as e:
+            if log_enabled:
+                await self._log_call(
+                    stage=stage,
+                    route=route,
+                    model=route.model,
+                    started_at=started_at,
+                    status="error",
+                    error=f"{type(e).__name__}: {e}",
+                    request=request_summary,
+                    response=None,
+                    usage={},
+                    user_id=user_id,
+                    project_id=project_id,
+                    voyage_id=voyage_id,
+                )
+            raise
         total_tokens = int(result.usage.get("total_tokens", 0)) or (
             estimate_tokens(query) + sum(estimate_tokens(d) for d in documents)
         )
@@ -325,6 +477,21 @@ class LLMRouter:
             project_id=project_id,
             voyage_id=voyage_id,
         )
+        if log_enabled:
+            await self._log_call(
+                stage=stage,
+                route=route,
+                model=route.model,
+                started_at=started_at,
+                status="ok",
+                error=None,
+                request=request_summary,
+                response=f"[{len(result.results)} rerank results]",
+                usage={"prompt_tokens": total_tokens},
+                user_id=user_id,
+                project_id=project_id,
+                voyage_id=voyage_id,
+            )
         return result.results
 
     async def stream(
@@ -339,24 +506,61 @@ class LLMRouter:
         voyage_id: uuid.UUID | None = None,
     ) -> AsyncIterator[str]:
         provider, route = await self.resolve(stage)
+        log_enabled = await call_log.logging_enabled()
+        started_at = time.monotonic()
         collected: list[str] = []
-        async for chunk in provider.stream(
-            messages,
-            model=route.model,
-            temperature=route.temperature if temperature is None else temperature,
-            max_tokens=max_tokens,
-        ):
-            collected.append(chunk)
-            yield chunk
+        try:
+            async for chunk in provider.stream(
+                messages,
+                model=route.model,
+                temperature=route.temperature if temperature is None else temperature,
+                max_tokens=max_tokens,
+            ):
+                collected.append(chunk)
+                yield chunk
+        except Exception as e:
+            if log_enabled:
+                await self._log_call(
+                    stage=stage,
+                    route=route,
+                    model=route.model,
+                    started_at=started_at,
+                    status="error",
+                    error=f"{type(e).__name__}: {e}",
+                    request=call_log.sanitize_request(messages),
+                    response="".join(collected) or None,  # 已收到的部分输出
+                    usage={},
+                    user_id=user_id,
+                    project_id=project_id,
+                    voyage_id=voyage_id,
+                )
+            raise
         content = "".join(collected)
+        usage = self._ensure_usage(messages, content, None)
         await self._record_usage(
             stage=stage,
             model=route.model,
-            usage=self._ensure_usage(messages, content, None),
+            usage=usage,
             user_id=user_id,
             project_id=project_id,
             voyage_id=voyage_id,
         )
+        # 时延 = 到流结束的完整耗时；response 聚合完整输出
+        if log_enabled:
+            await self._log_call(
+                stage=stage,
+                route=route,
+                model=route.model,
+                started_at=started_at,
+                status="ok",
+                error=None,
+                request=call_log.sanitize_request(messages),
+                response=content,
+                usage=usage,
+                user_id=user_id,
+                project_id=project_id,
+                voyage_id=voyage_id,
+            )
 
 
 _router: LLMRouter | None = None
@@ -370,6 +574,7 @@ def get_llm_router() -> LLMRouter:
 
 
 def reset_llm_router() -> None:
-    """测试用：丢弃单例（清空缓存与 provider 实例）。"""
+    """测试用：丢弃单例（清空缓存与 provider 实例），并重置调用日志开关缓存。"""
     global _router
     _router = None
+    call_log.reset_state()

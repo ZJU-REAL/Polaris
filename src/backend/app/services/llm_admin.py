@@ -11,10 +11,12 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.llm import call_log
 from app.core.llm.router import STAGES, get_llm_router
 from app.core.security import decrypt_secret, encrypt_secret
 from app.models.base import utcnow
-from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
+from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
+from app.models.system_setting import SystemSetting
 from app.schemas.llm_admin import ProviderCreate, ProviderUpdate, RouteItem
 
 
@@ -167,3 +169,56 @@ async def usage_report(
         }
         for row in rows
     ]
+
+
+# ---- 调用日志 ----
+
+
+async def get_call_logging_enabled(session: AsyncSession) -> bool:
+    """调用日志开关（system_settings 表，默认关）。"""
+    row = await session.get(SystemSetting, call_log.LLM_CALL_LOGGING_KEY)
+    return bool(row.value) if row is not None else False
+
+
+async def set_call_logging_enabled(session: AsyncSession, enabled: bool) -> bool:
+    row = await session.get(SystemSetting, call_log.LLM_CALL_LOGGING_KEY)
+    if row is None:
+        session.add(SystemSetting(key=call_log.LLM_CALL_LOGGING_KEY, value=enabled))
+    else:
+        row.value = enabled
+    await session.commit()
+    call_log.invalidate_flag_cache()  # 免重启即生效
+    return enabled
+
+
+async def list_call_logs(
+    session: AsyncSession,
+    *,
+    stage: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[int, Sequence[LLMCallLog]]:
+    """时间倒序分页；返回 (总数, 当页行)。"""
+    where = [LLMCallLog.stage == stage] if stage else []
+    total = (
+        await session.execute(select(func.count()).select_from(LLMCallLog).where(*where))
+    ).scalar_one()
+    stmt = (
+        select(LLMCallLog)
+        .where(*where)
+        .order_by(LLMCallLog.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return int(total), rows
+
+
+async def get_call_log(session: AsyncSession, log_id: uuid.UUID) -> LLMCallLog | None:
+    return await session.get(LLMCallLog, log_id)
+
+
+async def clear_call_logs(session: AsyncSession) -> int:
+    result = await session.execute(delete(LLMCallLog))
+    await session.commit()
+    return int(result.rowcount or 0)

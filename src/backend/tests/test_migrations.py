@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b627c7e22dc8"  # provider models list（本分支最新）
-PREV_REVISION = "7a2c9e4f16b3"  # idea/exp trash + tz
+HEAD_REVISION = "09533b866a6d"  # llm call logs + system settings（本分支最新）
+PREV_REVISION = "b627c7e22dc8"  # provider models list
 
 
 def _make_config(db_path: Path) -> Config:
@@ -49,6 +49,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "voyage_runs",
                     "voyage_steps",
                     "llm_providers",
+                    "llm_call_logs",
+                    "system_settings",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -143,14 +145,34 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
     # 用户名列（更早版本）
     assert {"username", "username_locked"} <= columns["users"]
-    # 本分支：llm_providers.models 列（可用模型列表）
+    # llm_providers.models 列（可用模型列表，上一版）
     assert "models" in columns["llm_providers"]
+    # 本分支：llm_call_logs / system_settings 表
+    assert {"llm_call_logs", "system_settings"} <= columns["_tables"]
+    assert {
+        "stage",
+        "provider_name",
+        "model",
+        "duration_ms",
+        "status",
+        "error",
+        "request",
+        "response",
+        "prompt_tokens",
+        "completion_tokens",
+        "user_id",
+        "project_id",
+        "voyage_id",
+    } <= columns["llm_call_logs"]
+    assert {"key", "value"} <= columns["system_settings"]
 
-    # 最新 revision 可往返（downgrade 移除 llm_providers.models）
+    # 最新 revision 可往返（downgrade 移除 llm_call_logs / system_settings）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "models" not in columns["llm_providers"]
+    assert "llm_call_logs" not in columns["_tables"]
+    assert "system_settings" not in columns["_tables"]
+    assert "models" in columns["llm_providers"]  # 上一版仍有 models 列
     assert {"username", "username_locked"} <= columns["users"]  # 上一版仍有用户名列
     # 更早的列/表不受影响
     assert "manuscript_templates" in columns["_tables"]
