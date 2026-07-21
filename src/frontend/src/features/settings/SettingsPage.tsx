@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
@@ -15,6 +15,7 @@ import {
   api,
   isAdmin,
   type AdminUserRead,
+  type LlmCallLogRow,
   type LlmProviderInput,
   type LlmProviderKind,
   type LlmProviderRead,
@@ -832,11 +833,239 @@ function RoutesSection() {
   );
 }
 
+// ---------------- 调用日志 ----------------
+
+const CALL_LOG_PAGE_SIZE = 50;
+
+/** 单条日志的展开详情：request messages 逐条 + response 全文。 */
+function CallLogDetailPanel({ id }: { id: string }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['llm', 'call-logs', 'detail', id],
+    queryFn: () => api.getLlmCallLog(id),
+    retry: false,
+  });
+  if (isLoading) return <div className="empty" style={{ padding: 16 }}>{tr('加载中…', 'Loading…')}</div>;
+  if (isError || !data) return <div className="empty" style={{ padding: 16 }}>{tr('无法加载详情', 'Failed to load detail')}</div>;
+
+  const messages = data.request?.messages;
+  const images = data.request?.images;
+  const preStyle: CSSProperties = {
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    fontSize: 11.5,
+    lineHeight: 1.55,
+    maxHeight: 260,
+    overflow: 'auto',
+    margin: 0,
+    padding: '8px 10px',
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 6 }}>{tr('输入', 'Request')}</div>
+        {messages && messages.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {messages.map((m, i) => (
+              <div key={i}>
+                <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginBottom: 3 }}>{m.role}</div>
+                <pre className="mono" style={preStyle}>{m.content}</pre>
+              </div>
+            ))}
+            {images && images.length > 0 && (
+              <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                {tr('图片（不存原图）', 'Images (originals not stored)')}：{images.join(' ')}
+              </div>
+            )}
+          </div>
+        ) : data.request ? (
+          <pre className="mono" style={preStyle}>{JSON.stringify(data.request, null, 2)}</pre>
+        ) : (
+          <div className="muted" style={{ fontSize: 11.5 }}>—</div>
+        )}
+      </div>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 6 }}>{tr('输出', 'Response')}</div>
+        {data.response != null && data.response !== '' ? (
+          <pre className="mono" style={preStyle}>{data.response}</pre>
+        ) : (
+          <div className="muted" style={{ fontSize: 11.5 }}>—</div>
+        )}
+        {data.error && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 6, color: 'var(--danger-tx)' }}>{tr('错误', 'Error')}</div>
+            <pre className="mono" style={{ ...preStyle, color: 'var(--danger-tx)' }}>{data.error}</pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CallLogsSection() {
+  const queryClient = useQueryClient();
+  const [page, setPage] = useState(0);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const settingsQuery = useQuery({
+    queryKey: ['llm', 'call-log-settings'],
+    queryFn: () => api.getLlmCallLogSettings(),
+    retry: false,
+  });
+  const enabled = settingsQuery.data?.enabled ?? false;
+
+  const logsQuery = useQuery({
+    queryKey: ['llm', 'call-logs', page],
+    queryFn: () => api.listLlmCallLogs({ limit: CALL_LOG_PAGE_SIZE, offset: page * CALL_LOG_PAGE_SIZE }),
+    retry: false,
+  });
+  const total = logsQuery.data?.total ?? 0;
+  const items = logsQuery.data?.items ?? [];
+  const pageCount = Math.max(1, Math.ceil(total / CALL_LOG_PAGE_SIZE));
+
+  const toggleMutation = useMutation({
+    mutationFn: (next: boolean) => api.putLlmCallLogSettings(next),
+    onSuccess: (r) => {
+      toast(r.enabled ? tr('调用日志已开启', 'Call logging enabled') : tr('调用日志已关闭', 'Call logging disabled'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['llm', 'call-log-settings'] });
+    },
+    onError: (e) => toast(`${tr('设置失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+  const clearMutation = useMutation({
+    mutationFn: () => api.clearLlmCallLogs(),
+    onSuccess: (r) => {
+      toast(tr(`已清空 ${r.deleted} 条日志`, `Cleared ${r.deleted} log entries`), 'ok');
+      setExpandedId(null);
+      setPage(0);
+      void queryClient.invalidateQueries({ queryKey: ['llm', 'call-logs'] });
+    },
+    onError: (e) => toast(`${tr('清空失败', 'Clear failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const statusPill = (row: LlmCallLogRow) =>
+    row.status === 'ok'
+      ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
+      : { background: 'var(--danger-bg)', color: 'var(--danger-tx)' };
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 20 }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+        <span className="section-h">
+          <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
+          {tr('调用日志', 'Call logs')} <span className="en-label" style={{ fontSize: 11 }}>{tr('每次 LLM API 调用的输入/输出', 'full input/output of each LLM API call')}</span>
+        </span>
+        <div className="row gap8">
+          <button
+            className="btn btn-soft sm"
+            disabled={clearMutation.isPending || total === 0}
+            onClick={() => {
+              if (window.confirm(tr('确定清空全部调用日志？此操作不可恢复。', 'Clear all call logs? This cannot be undone.'))) {
+                clearMutation.mutate();
+              }
+            }}
+          >
+            <Icon name="trash" size={12} />
+            {tr('清空日志', 'Clear logs')}
+          </button>
+          <button
+            className={`btn sm ${enabled ? 'btn-primary' : 'btn-soft'}`}
+            disabled={settingsQuery.isLoading || toggleMutation.isPending}
+            onClick={() => toggleMutation.mutate(!enabled)}
+          >
+            {enabled ? tr('已开启 — 点击关闭', 'On — click to disable') : tr('已关闭 — 点击开启', 'Off — click to enable')}
+          </button>
+        </div>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
+        {tr(
+          '开启后会记录每次 LLM API 调用的完整输入与输出（图片只存大小占位，不存原图），用于排查问题；注意存储占用，日志只保留最近 7 天。',
+          'When enabled, the full input and output of every LLM API call is recorded (images are stored as size placeholders only) for debugging. Mind the storage cost; logs are kept for 7 days only.',
+        )}
+      </div>
+
+      {logsQuery.isLoading ? (
+        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
+      ) : logsQuery.isError ? (
+        <div className="empty" style={{ padding: 24 }}>
+          {tr('无法加载日志（后端不可用或无权限）', 'Failed to load logs (backend unavailable or no permission)')}
+          <div style={{ marginTop: 10 }}>
+            <button className="btn btn-soft sm" onClick={() => void logsQuery.refetch()}>{tr('重试', 'Retry')}</button>
+          </div>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="empty" style={{ padding: 24 }}>
+          {enabled
+            ? tr('还没有日志记录 — 发起一次 AI 任务后这里会出现记录', 'No log entries yet — run an AI task and entries will appear here')
+            : tr('日志已关闭 — 打开开关后开始记录', 'Logging is off — turn it on to start recording')}
+        </div>
+      ) : (
+        <>
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 140 }}>{tr('时间', 'Time')}</th>
+                <th style={{ width: 110 }}>{tr('环节', 'Stage')}</th>
+                <th>{tr('模型', 'Model')}</th>
+                <th style={{ width: 90, textAlign: 'right' }}>{tr('时延', 'Latency')} (ms)</th>
+                <th style={{ width: 120, textAlign: 'right' }}>tokens</th>
+                <th style={{ width: 70 }}>{tr('状态', 'Status')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row) => (
+                <Fragment key={row.id}>
+                  <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === row.id ? null : row.id)}>
+                    <td className="mono" style={{ fontSize: 11 }}>{fmtTime(row.created_at)}</td>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{row.stage}</td>
+                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                      {row.model}
+                      <span style={{ color: 'var(--text-4)' }}> · {row.provider_name}</span>
+                    </td>
+                    <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{row.duration_ms.toLocaleString()}</td>
+                    <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>
+                      {row.prompt_tokens.toLocaleString()} + {row.completion_tokens.toLocaleString()}
+                    </td>
+                    <td>
+                      <span className="pill sm" style={statusPill(row)}>{row.status === 'ok' ? 'ok' : tr('出错', 'error')}</span>
+                    </td>
+                  </tr>
+                  {expandedId === row.id && (
+                    <tr>
+                      <td colSpan={6} style={{ background: 'var(--surface-2)', padding: '12px 16px' }}>
+                        <CallLogDetailPanel id={row.id} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+          <div className="row gap8" style={{ justifyContent: 'flex-end', marginTop: 12, alignItems: 'center' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+              {tr(`共 ${total} 条 · 第 ${page + 1} / ${pageCount} 页`, `${total} entries · page ${page + 1} / ${pageCount}`)}
+            </span>
+            <button className="btn btn-soft sm" disabled={page === 0} onClick={() => { setExpandedId(null); setPage(page - 1); }}>
+              {tr('上一页', 'Prev')}
+            </button>
+            <button className="btn btn-soft sm" disabled={page + 1 >= pageCount} onClick={() => { setExpandedId(null); setPage(page + 1); }}>
+              {tr('下一页', 'Next')}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LlmTab() {
   return (
     <>
       <ProvidersSection />
       <RoutesSection />
+      <CallLogsSection />
     </>
   );
 }

@@ -455,6 +455,58 @@ export interface LlmUsageRow {
   calls: number;
 }
 
+export interface LlmCallLogSettings {
+  enabled: boolean;
+}
+
+export interface LlmCallLogRow {
+  id: string;
+  created_at: string;
+  stage: string;
+  provider_name: string;
+  model: string;
+  duration_ms: number;
+  status: 'ok' | 'error';
+  error: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  user_id: string | null;
+  project_id: string | null;
+  voyage_id: string | null;
+  request_preview: string;
+  response_preview: string;
+}
+
+export interface LlmCallLogPage {
+  total: number;
+  items: LlmCallLogRow[];
+}
+
+export interface LlmCallLogMessage {
+  role: string;
+  content: string;
+}
+
+/** 详情端点的 request：complete/stream 为 messages（图片只留占位符）；
+    embed/rerank 为摘要字段（texts_count/first_text/query…）。 */
+export interface LlmCallLogDetail {
+  id: string;
+  created_at: string;
+  stage: string;
+  provider_name: string;
+  model: string;
+  duration_ms: number;
+  status: 'ok' | 'error';
+  error: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  user_id: string | null;
+  project_id: string | null;
+  voyage_id: string | null;
+  request: { messages?: LlmCallLogMessage[]; images?: string[]; [k: string]: unknown } | null;
+  response: string | null;
+}
+
 // ============================================================
 // M2 · Papers（论文库）— docs/api-m2.md
 // ============================================================
@@ -2677,6 +2729,26 @@ export const api = {
     if (opts.days) params.set('days', String(opts.days));
     const qs = params.toString();
     return request<LlmUsageRow[]>(`/admin/llm/usage${qs ? `?${qs}` : ''}`);
+  },
+  getLlmCallLogSettings(): Promise<LlmCallLogSettings> {
+    return request<LlmCallLogSettings>('/admin/llm/call-logs/settings');
+  },
+  putLlmCallLogSettings(enabled: boolean): Promise<LlmCallLogSettings> {
+    return requestJson<LlmCallLogSettings>('/admin/llm/call-logs/settings', 'PUT', { enabled });
+  },
+  listLlmCallLogs(opts: { limit?: number; offset?: number; stage?: string } = {}): Promise<LlmCallLogPage> {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.offset) params.set('offset', String(opts.offset));
+    if (opts.stage) params.set('stage', opts.stage);
+    const qs = params.toString();
+    return request<LlmCallLogPage>(`/admin/llm/call-logs${qs ? `?${qs}` : ''}`);
+  },
+  getLlmCallLog(id: string): Promise<LlmCallLogDetail> {
+    return request<LlmCallLogDetail>(`/admin/llm/call-logs/${id}`);
+  },
+  clearLlmCallLogs(): Promise<{ deleted: number }> {
+    return request<{ deleted: number }>('/admin/llm/call-logs', { method: 'DELETE' });
   },
 
   // —— MCP 只读工具目录（docs/api-mcp.md） ——

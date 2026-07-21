@@ -1,12 +1,13 @@
-"""LLM 配置与记账：provider 凭据（Fernet 加密）、环节路由表、用量流水。"""
+"""LLM 配置与记账：provider 凭据（Fernet 加密）、环节路由表、用量流水、调用日志。"""
 
 import uuid
+from typing import Any
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -54,3 +55,32 @@ class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class LLMCallLog(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """LLM 调用日志（管理端开关打开时记录；仅保留最近 7 天）。
+
+    request 为脱敏后的 JSON：messages 数组（超长内容截断），图片绝不存 base64，
+    只留 "[image ~N KB]" 占位；response 为完整输出文本（超长截断）。
+    """
+
+    __tablename__ = "llm_call_logs"
+    __table_args__ = (Index("ix_llm_call_logs_created_at", "created_at"),)
+
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="ok", nullable=False)  # ok|error
+    error: Mapped[str | None] = mapped_column(Text)
+    request: Mapped[Any | None] = mapped_column(JSONVariant, nullable=True)
+    response: Mapped[str | None] = mapped_column(Text)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL")
+    )
+    voyage_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("voyage_runs.id", ondelete="SET NULL")
+    )
