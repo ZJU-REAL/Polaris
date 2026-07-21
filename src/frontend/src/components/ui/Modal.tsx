@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 import { tr } from '../../lib/i18n';
 
@@ -40,7 +41,9 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 520
   }, [open]);
 
   if (!open) return null;
-  return (
+  // 通过 portal 挂到 body：避免祖先的 transform / backdrop-filter（如 .topbar）
+  // 成为 fixed 定位的包含块，导致 scrim 不再相对视口居中。
+  return createPortal(
     <div className="modal-scrim" onClick={onClose}>
       <div className="modal" style={{ width: `min(${width}px, 92vw)` }} onClick={(e) => e.stopPropagation()}>
         <div
@@ -66,6 +69,7 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 520
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
