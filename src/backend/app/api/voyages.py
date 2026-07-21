@@ -25,6 +25,7 @@ from app.schemas.voyage import (
     VoyagePlanEvent,
     VoyageRead,
     VoyageSkillUse,
+    VoyageTerminalLogRead,
 )
 from app.services import projects as projects_service
 from app.services import voyages as voyages_service
@@ -115,6 +116,20 @@ async def get_voyage(
             VoyagePlanEvent.model_validate(e) for e in history if isinstance(e, dict)
         ]
     return detail
+
+
+@router.get("/{voyage_id}/logs", response_model=list[VoyageTerminalLogRead])
+async def get_voyage_logs(
+    voyage_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[VoyageTerminalLogRead]:
+    """任务终端历史日志（结构化日志行 + 大模型完整输出），供刷新后 / 事后回看。"""
+    await _get_owned_voyage(session, voyage_id, user)
+    from app.services.voyage_logs import fetch_terminal_logs
+
+    rows = await fetch_terminal_logs(session, voyage_id)
+    return [VoyageTerminalLogRead.model_validate(r) for r in rows]
 
 
 @router.post("/{voyage_id}/cancel", response_model=VoyageRead)

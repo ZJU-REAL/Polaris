@@ -21,6 +21,7 @@ import {
   type VoyageStepAttempt,
   type VoyageStepRead,
 } from '../../lib/api';
+import { useTaskLogHistory } from '../../lib/prefs';
 
 /* ============================================================
    /voyages/:id — 任务详情：循环感知的活动状态 + 步骤时间线 + SSE 实时。
@@ -1468,6 +1469,40 @@ export function VoyageDetailPage() {
     termBufRef.current = { entries: [], active: null };
     setTerminal({ entries: [], active: null });
   }, [id]);
+
+  // —— 历史日志回放：刷新后 / 打开已结束任务时，从后端拉持久化日志回填终端 ——
+  const showHistory = useTaskLogHistory();
+  const { data: logHistory } = useQuery({
+    queryKey: ['voyage-logs', id],
+    queryFn: () => api.getVoyageLogs(id),
+    enabled: !!id && showHistory,
+    staleTime: Infinity, // 历史只在挂载 / 切任务时拉一次，实时增量走 SSE
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const historyLoadedRef = useRef<string | null>(null);
+  useEffect(() => {
+    // 每个任务只回填一次；query 按 id 分键，切任务时数据先变 undefined，不会串味。
+    if (!logHistory || historyLoadedRef.current === id) return;
+    historyLoadedRef.current = id;
+    const hist: TerminalEntry[] = logHistory.map((r) =>
+      r.event === 'llm'
+        ? { kind: 'llm', id: r.id, stage: r.stage ?? '', text: r.message, at: r.at }
+        : {
+            kind: 'log',
+            id: r.id,
+            level: (r.level && LOG_LEVELS.has(r.level as LogLevel) ? r.level : 'info') as LogLevel,
+            message: r.message,
+            at: r.at,
+          },
+    );
+    // 历史在前、已到的实时事件在后；本地 id 计数跳到历史最大 id 之上，避免 React key 撞车。
+    const buf = termBufRef.current;
+    buf.entries = [...hist, ...buf.entries];
+    if (buf.entries.length > TERMINAL_MAX) buf.entries.splice(0, buf.entries.length - TERMINAL_MAX);
+    termIdRef.current = logHistory.reduce((m, r) => Math.max(m, r.id), termIdRef.current);
+    scheduleTermFlush();
+  }, [logHistory, id, scheduleTermFlush]);
 
   const { data: voyage, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['voyage', id, showObsolete],

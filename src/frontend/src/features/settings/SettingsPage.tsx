@@ -11,6 +11,7 @@ import { DropdownList, SelectMenu, useClickOutside } from '../../components/ui/S
 import { fmtTime } from '../../lib/format';
 import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
 import { tr } from '../../lib/i18n';
+import { setTaskLogHistory, useTaskLogHistory } from '../../lib/prefs';
 import {
   LLM_STAGES,
   api,
@@ -99,6 +100,7 @@ function PersonalTab() {
   if (isError || !me) return <div className="empty">{tr('无法加载用户信息（后端不可用）', 'Failed to load user info (backend unavailable)')}</div>;
 
   return (
+    <>
     <div className="card card-pad" style={{ maxWidth: 560 }}>
       <div className="row gap16" style={{ marginBottom: 20 }}>
         <Avatar userId={me.id} hasAvatar={!!me.has_avatar} name={me.display_name || me.email} size={64} version={avatarVersion} />
@@ -178,6 +180,43 @@ function PersonalTab() {
           {tr('保存', 'Save')}
         </button>
       </div>
+      </div>
+      <PreferencesSection />
+    </>
+  );
+}
+
+// ---------------- 界面偏好（本地，存 localStorage） ----------------
+
+function PreferencesSection() {
+  const showHistory = useTaskLogHistory();
+  return (
+    <div className="card card-pad" style={{ maxWidth: 560, marginTop: 20 }}>
+      <div className="section-h" style={{ marginBottom: 4 }}>
+        {tr('界面偏好', 'Interface preferences')}
+      </div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 14 }}>
+        {tr('只保存在本浏览器。', 'Saved in this browser only.')}
+      </div>
+      <label className="row" style={{ gap: 10, cursor: 'pointer', alignItems: 'flex-start' }}>
+        <input
+          type="checkbox"
+          checked={showHistory}
+          onChange={(e) => setTaskLogHistory(e.target.checked)}
+          style={{ marginTop: 2 }}
+        />
+        <span>
+          <span style={{ fontWeight: 600 }}>
+            {tr('任务终端展示历史日志', 'Show past logs in the task terminal')}
+          </span>
+          <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-3)', marginTop: 2 }}>
+            {tr(
+              '打开任务详情时加载已保存的日志与大模型输出，刷新页面或任务结束后仍可回看。',
+              'Loads saved logs and model output when you open a task, so they survive a refresh or task completion.',
+            )}
+          </span>
+        </span>
+      </label>
     </div>
   );
 }

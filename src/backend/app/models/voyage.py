@@ -8,11 +8,20 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin, utcnow
 
 # 状态机：planning → executing → verifying → (next|replanning|paused_gate|paused_error)
 #         → done / failed / cancelled
@@ -128,3 +137,26 @@ class VoyageStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     run: Mapped[VoyageRun] = relationship(back_populates="steps")
+
+
+class VoyageTerminalLog(Base):
+    """任务终端日志的持久化：结构化日志行 + 大模型完整输出，供刷新后 / 事后回看。
+
+    只落 ``log`` 事件与 ``llm`` 完整输出（不落高频 llm_delta，实时增量仍走 SSE）；
+    自增 id 即时间序，按 id 升序还原终端。尽力而为写入，绝不影响任务主流程。
+    """
+
+    __tablename__ = "voyage_terminal_logs"
+
+    # BigInteger 在 postgres 为 BIGSERIAL/identity；sqlite 仅 INTEGER 主键才自增（回退 Integer）。
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("voyage_runs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    event: Mapped[str] = mapped_column(String(16), nullable=False)  # 'log' | 'llm'
+    level: Mapped[str | None] = mapped_column(String(16))  # log 上色 level
+    stage: Mapped[str | None] = mapped_column(String(32))  # llm 环节
+    message: Mapped[str] = mapped_column(Text, nullable=False)  # 日志文本 / 大模型输出全文
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

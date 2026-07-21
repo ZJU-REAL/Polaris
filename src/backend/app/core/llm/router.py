@@ -371,7 +371,13 @@ class LLMRouter:
             await flush()
         finally:
             await self.event_bus.publish_voyage_event(voyage_id, "llm_end", {"stage": stage})
-        return CompletionResult(content="".join(collected), model=route.model)
+        full_text = "".join(collected)
+        # 大模型完整输出落库，供刷新后 / 事后回放（实时增量已通过 llm_delta 走 SSE）。
+        if full_text:
+            from app.services.voyage_logs import record_terminal_log
+
+            await record_terminal_log(voyage_id, "llm", message=full_text, stage=stage)
+        return CompletionResult(content=full_text, model=route.model)
 
     async def embed(
         self,
