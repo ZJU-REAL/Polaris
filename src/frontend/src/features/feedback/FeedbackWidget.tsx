@@ -12,9 +12,9 @@ import { useProject } from '../../app/project';
 import { SEVERITIES, WIDGET_TYPES, severityLabel, typeLabel } from './labels';
 
 /* ============================================================
-   全局反馈入口：右下角悬浮气泡 + 提交 Modal。
+   全局反馈入口：顶栏右上角按钮 + 提交 Modal。
    支持图片粘贴 / 拖拽 / 选择，提交时自动带运行上下文（版本、路由等）。
-   仅在登录后的外壳里挂载（见 AppShell）。
+   挂在顶栏（见 AppShell）。
    ============================================================ */
 
 const MAX_IMAGES = 8;
@@ -151,30 +151,14 @@ export function FeedbackWidget() {
 
   return (
     <>
-      {/* 悬浮气泡 */}
+      {/* 顶栏入口 */}
       <button
+        className="icon-btn"
         onClick={() => setOpen(true)}
         title={tr('反馈', 'Feedback')}
         aria-label={tr('反馈', 'Feedback')}
-        style={{
-          position: 'fixed',
-          right: 22,
-          bottom: 22,
-          zIndex: 35,
-          width: 46,
-          height: 46,
-          borderRadius: '50%',
-          border: '0.5px solid var(--border-2)',
-          background: 'var(--accent)',
-          color: '#fff',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: 'var(--shadow-pop)',
-        }}
       >
-        <Icon name="chat" size={20} />
+        <Icon name="chat" size={16} />
       </button>
 
       <Modal

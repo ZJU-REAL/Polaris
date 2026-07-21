@@ -499,6 +499,7 @@ export function AppShell() {
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
           </div>
           <LangToggle />
+          <FeedbackWidget />
           <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
             <Icon name="bell" size={16} />
             {pending.length > 0 && <span className="badge">{pending.length}</span>}
@@ -576,9 +577,6 @@ export function AppShell() {
 
       {/* —— 全局搜索面板 —— */}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
-
-      {/* —— 全局反馈入口（右下角悬浮气泡） —— */}
-      <FeedbackWidget />
 
       <ToastHost />
     </div>
