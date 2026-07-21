@@ -181,6 +181,54 @@ async def test_create_issue_without_token_400(client):
     ] is False
 
 
+async def test_issue_close_syncs_status_to_resolved(client, monkeypatch):
+    # issue 关闭后，列表接口应把 in_progress 的反馈同步成 resolved（issue #117）
+    admin = await register_and_login(client, email="admin@example.com")
+    aheaders = {"Authorization": f"Bearer {admin}"}
+    fb = (
+        await client.post(
+            "/api/feedback", json={"title": "同步测试", "type": "bug"}, headers=aheaders
+        )
+    ).json()
+
+    async def fake_create_issue(*, title, body, labels=None):
+        return 456, "https://github.com/ZJU-REAL/Polaris/issues/456"
+
+    monkeypatch.setattr(github, "create_issue", fake_create_issue)
+    draft = {"title": "bug: 同步测试", "body": "### Summary\n...", "labels": ["bug"]}
+    assert (
+        await client.post(f"/api/admin/feedback/{fb['id']}/issue", json=draft, headers=aheaders)
+    ).status_code == 200
+
+    # issue 仍 open：状态保持 in_progress
+    async def states_open(numbers):
+        return {n: "open" for n in numbers}
+
+    monkeypatch.setattr(github, "fetch_issue_states", states_open)
+    mine = (await client.get("/api/feedback/mine", headers=aheaders)).json()
+    assert [f for f in mine if f["id"] == fb["id"]][0]["status"] == "in_progress"
+
+    # issue 关闭：TTL 内不重查，绕过节流后应变 resolved
+    from app.services import feedback as svc
+
+    svc._last_synced.clear()
+
+    async def states_closed(numbers):
+        return {n: "closed" for n in numbers}
+
+    monkeypatch.setattr(github, "fetch_issue_states", states_closed)
+    mine = (await client.get("/api/feedback/mine", headers=aheaders)).json()
+    assert [f for f in mine if f["id"] == fb["id"]][0]["status"] == "resolved"
+
+    # resolved 属终态：后续列表不再触发查询
+    async def states_boom(numbers):
+        raise AssertionError("should not query terminal feedback")
+
+    monkeypatch.setattr(github, "fetch_issue_states", states_boom)
+    resp = await client.get("/api/feedback/mine", headers=aheaders)
+    assert resp.status_code == 200
+
+
 async def test_non_admin_cannot_triage(client):
     member = await _member(client)
     mheaders = {"Authorization": f"Bearer {member}"}
