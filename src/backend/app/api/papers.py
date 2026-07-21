@@ -283,7 +283,7 @@ async def fetch_paper_pdf(
     """按需补下 PDF + 抽全文；已有 PDF 时幂等直接返回。"""
     paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
     try:
-        paper = await papers_service.fetch_pdf(session, paper)
+        paper = await papers_service.fetch_pdf(session, paper, user_id=user.id)
     except papers_service.PdfSourceUnsupportedError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="PDF_SOURCE_UNSUPPORTED") from e
     except papers_service.PdfFetchFailedError as e:

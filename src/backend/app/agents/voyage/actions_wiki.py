@@ -28,6 +28,7 @@ from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.paper import Paper
 from app.models.project import Project
+from app.services.affiliations import extract_affiliations_llm
 from app.services.chunks import embed_pending_chunks, index_paper_fulltext
 from app.services.concepts import link_all_paper_concepts
 from app.services.figure_annotate import annotate_figures, figures_annotated
@@ -585,16 +586,26 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             except Exception as e:  # noqa: BLE001 — 下载/抽取失败降级用 abstract
                 degraded += 1
                 failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
-            # 发表机构补充（OpenAlex 反查，高级检索用）；失败不影响主流程
-            if paper.affiliations is None and (paper.arxiv_id or paper.doi):
+            # 发表机构补充（高级检索用）：优先 LLM 从全文标题页解析（extract 内部已带
+            # 失败兜底，返回 None 不写入）；失败不影响主流程
+            if not paper.affiliations and paper.full_text_path:
+                affs = await extract_affiliations_llm(
+                    paper, llm=ctx.llm, user_id=ctx.run.created_by, voyage_id=ctx.run.id
+                )
+                if affs:
+                    paper.affiliations = affs
+            # OpenAlex 反查兜底（无全文 / LLM 解析失败）；DOI 论文发表日期缺失时也要
+            # 反查一次（走不了上面的 arXiv 回填，与机构是否已解析无关）
+            need_date = paper.published_at is None and not paper.arxiv_id
+            if (not paper.affiliations or need_date) and (paper.arxiv_id or paper.doi):
                 try:
                     meta = (
                         await get_openalex_client().get_by_arxiv(paper.arxiv_id)
                         if paper.arxiv_id
                         else await get_openalex_client().get_by_doi(paper.doi)
                     )
-                    paper.affiliations = (meta or {}).get("affiliations") or []
-                    # 顺带补发表日期（无 arxiv_id 的 DOI 论文走不了上面的 arXiv 回填）
+                    if not paper.affiliations:
+                        paper.affiliations = (meta or {}).get("affiliations") or []
                     if paper.published_at is None:
                         paper.published_at = _parse_iso((meta or {}).get("published"))
                 except asyncio.CancelledError:

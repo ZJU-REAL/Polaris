@@ -31,7 +31,7 @@ class PaperRead(BaseModel):
     project_id: uuid.UUID
     title: str
     authors: list[AuthorRead] = []
-    affiliations: list[str] = []  # 发表机构（OpenAlex 补充；可能为空）
+    affiliations: list[str] = []  # 发表机构（LLM 从全文解析，OpenAlex 兜底；可能为空）
     year: int | None
     venue: str | None
     arxiv_id: str | None
