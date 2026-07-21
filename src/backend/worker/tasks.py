@@ -20,6 +20,7 @@ from app.core.events import EventBus
 from app.core.redis import get_redis
 from app.schemas.ingest import IngestKnobs
 from app.services import ingest as ingest_service
+from app.services import publications as publications_service
 
 
 async def ping_task(ctx: dict[str, Any], message: str = "ping") -> str:
@@ -59,9 +60,7 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
             .all()
         )
     for vid in ids:
-        await ctx["redis"].enqueue_job(
-            "resume_voyage", str(vid), _job_id=f"reconcile-resume-{vid}"
-        )
+        await ctx["redis"].enqueue_job("resume_voyage", str(vid), _job_id=f"reconcile-resume-{vid}")
 
 
 async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
@@ -86,3 +85,20 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
             await ctx["redis"].enqueue_job("run_voyage", str(run.id))
             enqueued.append(str(run.id))
     return enqueued
+
+
+async def match_user_publications(ctx: dict[str, Any], user_id: str) -> int:
+    """扫描文献库为某用户匹配发表候选（姓名+机构命中 → pending）；返回新增数。"""
+    async with get_sessionmaker()() as session:
+        return await publications_service.match_from_library(session, user_id=uuid.UUID(user_id))
+
+
+async def daily_publication_match(ctx: dict[str, Any]) -> int:
+    """每日 04:00 cron（每日 ingest 之后）：对开了自动匹配的绑定用户逐个跑库内匹配。"""
+    async with get_sessionmaker()() as session:
+        user_ids = await publications_service.profiles_for_daily_match(session)
+    total = 0
+    for uid in user_ids:
+        async with get_sessionmaker()() as session:
+            total += await publications_service.match_from_library(session, user_id=uid)
+    return total

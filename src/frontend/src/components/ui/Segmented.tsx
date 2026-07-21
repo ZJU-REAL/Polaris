@@ -1,6 +1,8 @@
+import type { ReactNode } from 'react';
+
 export interface SegmentedOption<V extends string> {
   v: V;
-  label: string;
+  label: ReactNode;
 }
 
 export interface SegmentedProps<V extends string> {

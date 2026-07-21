@@ -2041,6 +2041,52 @@ export interface LibraryState {
   saved: boolean;
 }
 
+// ============================================================
+// 我发表的（作者信息绑定 + 发表同步）— issue #109
+// ============================================================
+
+export interface AuthorProfile {
+  name_variants: string[];
+  affiliations: string[];
+  openalex_author_id: string | null;
+  orcid: string | null;
+  auto_sync: boolean;
+  last_synced_at: string | null;
+}
+
+/** PUT upsert 的输入（orcid / auto_sync 可省略走后端默认）。 */
+export interface AuthorProfileInput {
+  name_variants: string[];
+  affiliations: string[];
+  openalex_author_id: string | null;
+  orcid?: string | null;
+  auto_sync?: boolean;
+}
+
+export type PublicationStatus = 'pending' | 'confirmed' | 'rejected';
+
+export interface Publication {
+  id: string;
+  arxiv_id: string | null;
+  doi: string | null;
+  title: string;
+  authors: PaperAuthor[];
+  year: number | null;
+  venue: string | null;
+  url: string | null;
+  /** 文献库中匹配到的论文 id；非 null 时可直接跳阅读页。 */
+  paper_id: string | null;
+  cited_by_count: number;
+  source: string;
+  status: PublicationStatus;
+  confirmed_at: string | null;
+  created_at: string;
+}
+
+export interface PublicationPage extends PageOf<Publication> {
+  counts: { pending: number; confirmed: number; rejected: number };
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -3123,5 +3169,41 @@ export const api = {
   /** 移除条目：unsave=取消收藏但保留浏览记录；purge=彻底删除。 */
   removeLibraryEntry(entryId: string, mode: 'unsave' | 'purge'): Promise<void> {
     return request<void>(`/me/library/${entryId}?mode=${mode}`, { method: 'DELETE' });
+  },
+
+  // —— 我发表的（作者信息绑定 + 发表同步，issue #109） ——
+  /** 我的作者绑定信息；未绑定（404 PROFILE_NOT_FOUND）时返回 null，不视为错误。 */
+  async getAuthorProfile(): Promise<AuthorProfile | null> {
+    try {
+      return await request<AuthorProfile>('/me/author-profile');
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  saveAuthorProfile(input: AuthorProfileInput): Promise<AuthorProfile> {
+    return requestJson<AuthorProfile>('/me/author-profile', 'PUT', input);
+  },
+  /** 触发一次文献库扫描匹配（后台任务，202）。 */
+  syncPublications(): Promise<{ queued: boolean }> {
+    return request<{ queued: boolean }>('/me/publications/sync', { method: 'POST' });
+  },
+  listPublications(
+    opts: { status: PublicationStatus; page?: number; size?: number },
+  ): Promise<PublicationPage> {
+    const params = new URLSearchParams({ status: opts.status });
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    return request<PublicationPage>(`/me/publications?${params.toString()}`);
+  },
+  confirmPublication(id: string): Promise<Publication> {
+    return request<Publication>(`/me/publications/${id}/confirm`, { method: 'POST' });
+  },
+  rejectPublication(id: string): Promise<Publication> {
+    return request<Publication>(`/me/publications/${id}/reject`, { method: 'POST' });
+  },
+  /** 手动添加发表（arxiv_id / doi / bibtex 三选一）；解析失败 422。 */
+  addPublication(input: { arxiv_id: string } | { doi: string } | { bibtex: string }): Promise<Publication> {
+    return requestJson<Publication>('/me/publications', 'POST', input);
   },
 };

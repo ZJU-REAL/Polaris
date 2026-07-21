@@ -211,6 +211,9 @@ input {
 .card-pad { padding: 20px 22px; }
 .hoverable { transition: box-shadow 0.14s, border-color 0.14s, transform 0.14s; cursor: pointer; }
 .hoverable:hover { box-shadow: var(--shadow-pop); border-color: var(--border-2); }
+/* 列表行 hover（分隔线式列表，如文献追踪论文库 / 我的文献库） */
+.list-hover { transition: background 0.12s; }
+.list-hover:hover { background: var(--surface-2); }
 
 /* pills / badges */
 .pill {
