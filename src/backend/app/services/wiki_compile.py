@@ -9,6 +9,7 @@
 
 import re
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +120,14 @@ def build_compile_prompt(paper: Paper, *, statement: str) -> tuple[str, list[byt
     return prompt, [data for _, data in selected]
 
 
+@dataclass(slots=True)
+class CompiledWiki:
+    """compile_paper 结果：校验过标记的 wiki markdown + 实际使用的模型名。"""
+
+    content: str
+    model: str
+
+
 async def compile_paper(
     paper: Paper,
     *,
@@ -127,9 +136,11 @@ async def compile_paper(
     user_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
     extra_guidance: str = "",
-) -> str:
-    """图文编译一篇论文，返回校验过标记的 wiki markdown（调用方负责落库）。
+) -> CompiledWiki:
+    """图文编译一篇论文，返回校验过标记的 wiki markdown 与所用模型（调用方负责落库）。
 
+    模型名取自 LLM 实际返回结果（CompletionResult.model），而非路由表配置，
+    避免路由中途被改导致记录偏差。
     extra_guidance：追加到 system prompt 的补充指引（wiki.compile 注入点的项目技能）。
     """
     llm = llm or get_llm_router()
@@ -137,6 +148,7 @@ async def compile_paper(
     valid = {int(f["index"]) for f in (paper.figures or [])}
 
     content = ""
+    model = ""
     for attempt in range(2):
         prompt = user_prompt
         if attempt == 1:
@@ -159,10 +171,11 @@ async def compile_paper(
         if not result.content.strip():
             raise ValueError("librarian returned empty content")
         content = strip_invalid_figure_markers(result.content, valid)
+        model = result.model
         # 有配图但一张都没插 → 带强指令重写一次；仍失败则接受纯文字稿（图库里还能看图）
         if not images or FIGURE_MARKER_RE.search(content):
             break
-    return content
+    return CompiledWiki(content=content, model=model)
 
 
 async def recompile_paper(
@@ -191,9 +204,10 @@ async def recompile_paper(
             await annotate_figures(paper, paper.figures, llm=llm, user_id=user_id)
         await session.commit()
 
-    content = await compile_paper(paper, statement=statement, llm=llm, user_id=user_id)
-    paper.wiki_content = content
+    compiled = await compile_paper(paper, statement=statement, llm=llm, user_id=user_id)
+    paper.wiki_content = compiled.content
     paper.compiled_at = utcnow()
+    paper.compiled_model = compiled.model or None
     if paper.status in ("scored", "fetched"):
         paper.status = "compiled"
     await session.commit()

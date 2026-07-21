@@ -567,6 +567,8 @@ export interface PaperRead {
   created_at: string;
   /** wiki 编译时间；未编译为 null（旧后端可能缺失） */
   compiled_at?: string | null;
+  /** 编译所用模型名；未编译/存量数据为 null（旧后端可能缺失） */
+  compiled_model?: string | null;
   /* —— 文献管理增强字段（docs/api-lit.md §5，后端未就绪时可能缺失，均可选容错） —— */
   /** 项目级标签 */
   tags?: string[];

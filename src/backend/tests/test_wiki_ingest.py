@@ -311,6 +311,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
         for p in compiled:
             assert p.relevance_score is not None and p.relevance_score >= 0.6
             assert p.scored_at is not None and p.compiled_at is not None
+            assert p.compiled_model == "fake-default"  # 编译所用模型落库（voyage 路径）
             assert p.tldr
             assert "[[Agent]]" in p.wiki_content  # 双链
             assert p.full_text_path and p.pdf_path  # PDF 已抽全文
