@@ -400,6 +400,26 @@ select.input { padding-right: 8px; cursor: pointer; }
   border: 0.5px solid var(--border);
 }
 
+/* small pill switch (components/ui/Switch.tsx) */
+.switch {
+  position: relative; flex-shrink: 0; width: 32px; height: 18px; padding: 0;
+  border-radius: 999px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-3); cursor: pointer; outline: none;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.12s;
+}
+.switch:hover { background: var(--border-2); }
+.switch.on { background: var(--accent); border-color: var(--accent); }
+.switch.on:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.switch:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft-2); }
+.switch:disabled { opacity: 0.5; cursor: not-allowed; }
+.switch-thumb {
+  position: absolute; top: 1.5px; left: 1.5px; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--surface);
+  box-shadow: 0 1px 2px rgba(10, 30, 66, 0.25);
+  transition: transform 0.15s ease;
+}
+.switch.on .switch-thumb { transform: translateX(14px); }
+
 /* clickable chip (multi-select) */
 .chip {
   display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 7px;

@@ -4,6 +4,7 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
+import { Switch } from '../../components/ui/Switch';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
@@ -193,32 +194,31 @@ function PersonalTab() {
 function PreferencesSection() {
   const showHistory = useTaskLogHistory();
   return (
-    <div className="card card-pad" style={{ maxWidth: 560, marginTop: 20 }}>
-      <div className="section-h" style={{ marginBottom: 4 }}>
+    <div className="card" style={{ maxWidth: 560, marginTop: 16, padding: '14px 18px' }}>
+      <div className="section-h">
         {tr('界面偏好', 'Interface preferences')}
+        <span style={{ fontSize: 11.5, fontWeight: 400, color: 'var(--text-4)' }}>
+          {tr('只保存在本浏览器。', 'Saved in this browser only.')}
+        </span>
       </div>
-      <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 14 }}>
-        {tr('只保存在本浏览器。', 'Saved in this browser only.')}
-      </div>
-      <label className="row" style={{ gap: 10, cursor: 'pointer', alignItems: 'flex-start' }}>
-        <input
-          type="checkbox"
-          checked={showHistory}
-          onChange={(e) => setTaskLogHistory(e.target.checked)}
-          style={{ marginTop: 2 }}
-        />
-        <span>
-          <span style={{ fontWeight: 600 }}>
+      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div id="pref-task-log-history" style={{ fontSize: 13, lineHeight: 1.4 }}>
             {tr('任务终端展示历史日志', 'Show past logs in the task terminal')}
-          </span>
-          <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-3)', marginTop: 2 }}>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
             {tr(
               '打开任务详情时加载已保存的日志与大模型输出，刷新页面或任务结束后仍可回看。',
               'Loads saved logs and model output when you open a task, so they survive a refresh or task completion.',
             )}
-          </span>
-        </span>
-      </label>
+          </div>
+        </div>
+        <Switch
+          checked={showHistory}
+          onChange={setTaskLogHistory}
+          aria-labelledby="pref-task-log-history"
+        />
+      </div>
     </div>
   );
 }
