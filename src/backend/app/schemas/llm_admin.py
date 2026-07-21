@@ -14,6 +14,7 @@ class ProviderCreate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None  # 只写不读；入库前 Fernet 加密
     enabled: bool = True
+    models: list[str] | None = None  # 可用模型 id 列表（None = 未配置）
 
 
 class ProviderUpdate(BaseModel):
@@ -22,6 +23,7 @@ class ProviderUpdate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None  # 空字符串 = 不变
     enabled: bool | None = None
+    models: list[str] | None = None  # 整体替换；None = 不变（清空传 []）
 
 
 class ProviderRead(BaseModel):
@@ -33,6 +35,7 @@ class ProviderRead(BaseModel):
     base_url: str | None
     api_key_masked: str
     enabled: bool
+    models: list[str] | None = None
 
 
 class RouteItem(BaseModel):

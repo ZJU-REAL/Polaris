@@ -82,6 +82,54 @@ async def test_provider_crud_and_key_masking(client):
     assert resp.json() == []
 
 
+async def test_provider_models_list_roundtrip(client):
+    admin, _ = await _admin_and_member(client)
+
+    # 创建时不带 models → None
+    resp = await client.post(
+        "/api/admin/llm/providers",
+        json={"name": "relay", "kind": "openai_compat", "base_url": "http://relay.test/api/v1"},
+        headers=admin,
+    )
+    assert resp.status_code == 201, resp.text
+    provider = resp.json()
+    assert provider["models"] is None
+    provider_id = provider["id"]
+
+    # PATCH 设置 models
+    models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]
+    resp = await client.patch(
+        f"/api/admin/llm/providers/{provider_id}", json={"models": models}, headers=admin
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["models"] == models
+
+    # 不带 models 的 PATCH 不改动
+    resp = await client.patch(
+        f"/api/admin/llm/providers/{provider_id}", json={"enabled": False}, headers=admin
+    )
+    assert resp.json()["models"] == models
+
+    # PATCH 整体替换
+    resp = await client.patch(
+        f"/api/admin/llm/providers/{provider_id}", json={"models": ["gpt-5.5"]}, headers=admin
+    )
+    assert resp.json()["models"] == ["gpt-5.5"]
+
+    # 创建时带 models；列表接口也返回
+    resp = await client.post(
+        "/api/admin/llm/providers",
+        json={"name": "relay2", "kind": "openai_compat", "models": ["m-a", "m-b"]},
+        headers=admin,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["models"] == ["m-a", "m-b"]
+    resp = await client.get("/api/admin/llm/providers", headers=admin)
+    by_name = {p["name"]: p for p in resp.json()}
+    assert by_name["relay"]["models"] == ["gpt-5.5"]
+    assert by_name["relay2"]["models"] == ["m-a", "m-b"]
+
+
 async def test_routes_put_get_and_validation(client):
     admin, _ = await _admin_and_member(client)
     resp = await client.post(

@@ -464,14 +464,28 @@ interface ProviderDraft {
   base_url: string;
   api_key: string;
   enabled: boolean;
+  /** 可用模型列表原始输入（逗号/换行分隔），保存时解析为数组 */
+  models: string;
+}
+
+/** 逗号/换行分隔的模型输入 → 去空白、去重后的数组。 */
+function parseModels(raw: string): string[] {
+  return [...new Set(raw.split(/[\n,，]/).map((s) => s.trim()).filter(Boolean))];
 }
 
 function emptyDraft(): ProviderDraft {
-  return { name: '', kind: 'openai_compat', base_url: '', api_key: '', enabled: true };
+  return { name: '', kind: 'openai_compat', base_url: '', api_key: '', enabled: true, models: '' };
 }
 
 function draftFrom(p: LlmProviderRead): ProviderDraft {
-  return { name: p.name, kind: p.kind, base_url: p.base_url ?? '', api_key: '', enabled: p.enabled };
+  return {
+    name: p.name,
+    kind: p.kind,
+    base_url: p.base_url ?? '',
+    api_key: '',
+    enabled: p.enabled,
+    models: (p.models ?? []).join('\n'),
+  };
 }
 
 function toInput(d: ProviderDraft): LlmProviderInput {
@@ -481,6 +495,7 @@ function toInput(d: ProviderDraft): LlmProviderInput {
     base_url: d.base_url.trim() || undefined,
     api_key: d.api_key, // 空字符串 = 不变（PATCH）；POST 时后端忽略空 key
     enabled: d.enabled,
+    models: parseModels(d.models), // 整体替换（清空 = []）
   };
 }
 
@@ -514,6 +529,12 @@ function ProviderForm({ draft, setDraft, isNew }: {
         <input className="input mono" type="password" autoComplete="new-password" value={draft.api_key}
           onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
           placeholder={isNew ? 'sk-…' : tr('••••••（留空不变）', '•••••• (empty = unchanged)')} disabled={draft.kind === 'fake'} />
+      </FormField>
+      <FormField label={tr('可用模型', 'Available models')}
+        hint={tr('逗号或换行分隔；作为路由表 model 输入框的候选', 'Comma or newline separated; used as suggestions in the routing table model field')}>
+        <textarea className="input mono" rows={3} style={{ resize: 'vertical', fontSize: 12 }}
+          value={draft.models} onChange={(e) => setDraft({ ...draft, models: e.target.value })}
+          placeholder={tr('如 gpt-5.6-sol, gpt-5.5（可留空）', 'e.g. gpt-5.6-sol, gpt-5.5 (optional)')} />
       </FormField>
       <label className="row gap8" style={{ fontSize: 13, cursor: 'pointer', userSelect: 'none' }}>
         <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
@@ -599,6 +620,7 @@ function ProvidersSection() {
               <th>kind</th>
               <th>base_url</th>
               <th>api_key</th>
+              <th>{tr('可用模型', 'Models')}</th>
               <th style={{ width: 60 }}>{tr('状态', 'Status')}</th>
               <th style={{ width: 90 }} />
             </tr>
@@ -612,6 +634,10 @@ function ProvidersSection() {
                   {p.base_url ?? '—'}
                 </td>
                 <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
+                <td className="mono" title={(p.models ?? []).join(', ')}
+                  style={{ fontSize: 11.5, color: 'var(--text-3)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p.models && p.models.length > 0 ? p.models.join(', ') : '—'}
+                </td>
                 <td>
                   <span className="pill sm" style={p.enabled ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' } : {}}>
                     {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
@@ -782,6 +808,7 @@ function RoutesSection() {
                 </td>
                 <td>
                   <input className="input mono" style={{ height: 32, width: '100%', fontSize: 12 }} value={r.model}
+                    list={r.provider_id ? `provider-models-${r.provider_id}` : undefined}
                     placeholder={tr('如 deepseek-chat', 'e.g. deepseek-chat')} onChange={(e) => setRow(stage, { model: e.target.value })} />
                 </td>
                 <td>
@@ -793,6 +820,14 @@ function RoutesSection() {
           })}
         </tbody>
       </table>
+      {/* 各 provider 可用模型 → model 输入框候选（datalist） */}
+      {providers.map((p) => (
+        <datalist key={p.id} id={`provider-models-${p.id}`}>
+          {(p.models ?? []).map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+      ))}
     </div>
   );
 }

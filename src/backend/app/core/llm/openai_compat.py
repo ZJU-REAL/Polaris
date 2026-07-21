@@ -19,6 +19,8 @@ logger = logging.getLogger("polaris.llm")
 _MAX_ATTEMPTS = 4
 _BACKOFF_BASE_SECONDS = 3.0
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+# 部分中转强制流式：非流式请求返回 400 + 该提示，此时自动改走流式并聚合
+_FORCE_STREAM_MARKER = "stream must be set to true"
 
 
 def _retry_delay(resp: httpx.Response, attempt: int) -> float:
@@ -119,12 +121,18 @@ class OpenAICompatProvider(LLMProvider):
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
     ) -> CompletionResult:
-        resp = await self._post_with_retry(
-            f"{self._base_url}/chat/completions",
-            self._payload(messages, model, temperature, max_tokens, stream=False, images=images),
+        payload = self._payload(
+            messages, model, temperature, max_tokens, stream=False, images=images
         )
+        resp = await self._post_with_retry(f"{self._base_url}/chat/completions", payload)
         if resp.status_code >= 400:
             body = resp.text[:500]
+            if resp.status_code == 400 and _FORCE_STREAM_MARKER in body.lower():
+                # 强制流式的中转：自动改用流式请求并聚合成非流式结果
+                logger.info(
+                    "openai_compat %s 仅支持流式，自动改用流式聚合：%s", self._base_url, model
+                )
+                return await self._complete_via_stream({**payload, "stream": True})
             raise RuntimeError(f"openai_compat {resp.status_code} from {self._base_url}: {body}")
         data = resp.json()
         choice = data["choices"][0]
@@ -133,6 +141,50 @@ class OpenAICompatProvider(LLMProvider):
             model=data.get("model", model),
             finish_reason=choice.get("finish_reason"),
             usage=data.get("usage") or {},
+        )
+
+    async def _stream_chunks(self, payload: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        """流式请求 chat/completions，逐个 yield 解析后的 SSE chunk（dict）。
+
+        stream() 与强制流式回退（_complete_via_stream）共用这一份 SSE 解析。
+        """
+        async with self._client.stream(
+            "POST",
+            f"{self._base_url}/chat/completions",
+            headers=self._headers(),
+            json=payload,
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                chunk = line[len("data:") :].strip()
+                if chunk == "[DONE]":
+                    break
+                yield json.loads(chunk)
+
+    async def _complete_via_stream(self, payload: dict[str, Any]) -> CompletionResult:
+        """流式聚合：拼接所有 delta.content；usage 取带 usage 的 chunk（通常最后一个）。"""
+        parts: list[str] = []
+        usage: dict[str, int] = {}
+        model_name: str = payload["model"]
+        finish_reason: str | None = None
+        async for data in self._stream_chunks(payload):
+            if data.get("model"):
+                model_name = data["model"]
+            choices = data.get("choices") or []
+            if choices:
+                if content := (choices[0].get("delta") or {}).get("content"):
+                    parts.append(content)
+                if reason := choices[0].get("finish_reason"):
+                    finish_reason = reason
+            if data.get("usage"):
+                usage = data["usage"]
+        return CompletionResult(
+            content="".join(parts),
+            model=model_name,
+            finish_reason=finish_reason,
+            usage=usage,
         )
 
     async def stream(
@@ -145,24 +197,16 @@ class OpenAICompatProvider(LLMProvider):
         images: list[bytes] | None = None,
     ) -> AsyncIterator[str]:
         # TODO(M2): usage 统计、错误恢复
-        async with self._client.stream(
-            "POST",
-            f"{self._base_url}/chat/completions",
-            headers=self._headers(),
-            json=self._payload(
-                messages, model, temperature, max_tokens, stream=True, images=images
-            ),
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                chunk = line[len("data:") :].strip()
-                if chunk == "[DONE]":
-                    break
-                delta = json.loads(chunk)["choices"][0].get("delta", {})
-                if content := delta.get("content"):
-                    yield content
+        payload = self._payload(
+            messages, model, temperature, max_tokens, stream=True, images=images
+        )
+        async for data in self._stream_chunks(payload):
+            choices = data.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            if content := delta.get("content"):
+                yield content
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
         resp = await self._post_with_retry(
