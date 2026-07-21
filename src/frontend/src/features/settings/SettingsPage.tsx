@@ -10,6 +10,7 @@ import { toast } from '../../components/ui/Toast';
 import { DropdownList, SelectMenu, useClickOutside } from '../../components/ui/SelectMenu';
 import { fmtTime } from '../../lib/format';
 import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
+import { FeedbackTab } from '../feedback/FeedbackTab';
 import { tr } from '../../lib/i18n';
 import { setTaskLogHistory, useTaskLogHistory } from '../../lib/prefs';
 import {
@@ -1595,7 +1596,7 @@ function UsageTab() {
 
 // ---------------- 页面 ----------------
 
-type Tab = 'personal' | 'ssh' | 'llm' | 'usage' | 'users' | 'codes';
+type Tab = 'personal' | 'ssh' | 'llm' | 'usage' | 'users' | 'codes' | 'feedback';
 
 
 // ---------------- 用户管理（admin） ----------------
@@ -2090,11 +2091,12 @@ export function SettingsPage() {
           { v: 'usage' as Tab, label: tr('用量', 'Usage') },
           { v: 'users' as Tab, label: tr('用户管理', 'Users') },
           { v: 'codes' as Tab, label: tr('注册码', 'Codes') },
+          { v: 'feedback' as Tab, label: tr('反馈', 'Feedback') },
         ]
       : []),
   ];
   const effectiveTab: Tab =
-    !admin && (tab === 'llm' || tab === 'usage' || tab === 'users' || tab === 'codes')
+    !admin && (tab === 'llm' || tab === 'usage' || tab === 'users' || tab === 'codes' || tab === 'feedback')
       ? 'personal'
       : tab;
 
@@ -2114,6 +2116,7 @@ export function SettingsPage() {
       {effectiveTab === 'usage' && admin && <UsageTab />}
       {effectiveTab === 'users' && admin && <UsersTab />}
       {effectiveTab === 'codes' && admin && <CodesTab />}
+      {effectiveTab === 'feedback' && admin && <FeedbackTab />}
     </div>
   );
 }

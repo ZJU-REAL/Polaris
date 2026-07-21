@@ -10,6 +10,7 @@ import { useAuth } from './auth';
 import { useProject } from './project';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
+import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
 import { api, getToken, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
@@ -498,6 +499,7 @@ export function AppShell() {
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
           </div>
           <LangToggle />
+          <FeedbackWidget />
           <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
             <Icon name="bell" size={16} />
             {pending.length > 0 && <span className="badge">{pending.length}</span>}

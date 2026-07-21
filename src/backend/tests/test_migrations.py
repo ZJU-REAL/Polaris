@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "f7a1c3e59d24"  # registration_codes 注册码表（本分支最新）
-PREV_REVISION = "877da11ed6b4"  # papers.compiled_model（上一版 head）
+HEAD_REVISION = "b3f1a7c92e5d"  # feedback + feedback_images 表（本分支最新）
+PREV_REVISION = "c01ea43927b8"  # merge heads（registration_codes + task-log 汇合）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -52,6 +52,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "llm_call_logs",
                     "system_settings",
                     "registration_codes",
+                    "feedback",
+                    "feedback_images",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -166,16 +168,29 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "voyage_id",
     } <= columns["llm_call_logs"]
     assert {"key", "value"} <= columns["system_settings"]
-    # 本分支新增：注册码表
+    # 注册码表（更早版本）
     assert "registration_codes" in columns["_tables"]
     assert {"code", "note", "max_uses", "used_count", "revoked"} <= columns["registration_codes"]
+    # 本分支新增：反馈表
+    assert {"feedback", "feedback_images"} <= columns["_tables"]
+    assert {
+        "type",
+        "severity",
+        "status",
+        "module",
+        "issue_draft",
+        "github_issue_number",
+    } <= columns["feedback"]
+    assert {"feedback_id", "path", "seq"} <= columns["feedback_images"]
 
-    # 最新 revision 可往返（downgrade 移除 registration_codes 表）
+    # 最新 revision 可往返（downgrade 移除 feedback / feedback_images 表）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "registration_codes" not in columns["_tables"]
+    assert "feedback" not in columns["_tables"]
+    assert "feedback_images" not in columns["_tables"]
     # 上一版仍有的表/列不受影响
+    assert "registration_codes" in columns["_tables"]
     assert {"llm_call_logs", "system_settings"} <= columns["_tables"]
     assert "models" in columns["llm_providers"]
     assert {"username", "username_locked"} <= columns["users"]
@@ -194,3 +209,4 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert version == HEAD_REVISION
     assert "models" in columns["llm_providers"]
     assert "registration_codes" in columns["_tables"]
+    assert {"feedback", "feedback_images"} <= columns["_tables"]

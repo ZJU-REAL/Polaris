@@ -46,6 +46,7 @@ STAGES = (
     "writing",
     "review",
     "reading",
+    "feedback_issue",
 )
 
 _ROUTE_CACHE_TTL = 60.0

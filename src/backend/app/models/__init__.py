@@ -3,6 +3,7 @@
 from app.models.activity import Activity
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.experiment import Experiment, ExperimentRun
+from app.models.feedback import Feedback, FeedbackImage
 from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
@@ -37,6 +38,8 @@ __all__ = [
     "Concept",
     "Experiment",
     "ExperimentRun",
+    "Feedback",
+    "FeedbackImage",
     "Gate",
     "Idea",
     "LLMCallLog",
