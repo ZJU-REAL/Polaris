@@ -91,15 +91,14 @@ const ExperimentCard = memo(function ExperimentCard({
       style={{ cursor: activate ? 'pointer' : 'default', borderColor: selected ? 'var(--accent)' : undefined }}
     >
       <div className="row gap10" style={{ alignItems: 'flex-start' }}>
-        {multiSelect && (
-          <div style={{ paddingTop: 1 }}>
-            <CheckBox
-              checked={selected}
-              onToggle={onToggleSelect}
-              title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
-            />
-          </div>
-        )}
+        {/* 占位常驻：切换多选时卡片尺寸/位置不变（#132） */}
+        <div style={{ paddingTop: 1, visibility: multiSelect ? 'visible' : 'hidden' }}>
+          <CheckBox
+            checked={selected}
+            onToggle={onToggleSelect}
+            title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
+          />
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 650, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {exp.idea_title}
@@ -156,21 +155,19 @@ const ExperimentCard = memo(function ExperimentCard({
           <div className="bar" style={{ marginTop: 12 }}>
             <i style={{ width: `${pct}%`, background: barColor }} />
           </div>
-          {!multiSelect && (
-            <div className="row" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
-              <button
-                className="btn btn-ghost sm"
-                title={tr('移入垃圾箱', 'Move to trash')}
-                style={{ color: 'var(--text-3)', padding: '0 7px' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onTrash();
-                }}
-              >
-                <Icon name="trash" size={13} />
-              </button>
-            </div>
-          )}
+          <div className="row" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
+            <button
+              className="btn btn-ghost sm"
+              title={tr('移入垃圾箱', 'Move to trash')}
+              style={{ color: 'var(--text-3)', padding: '0 7px', visibility: multiSelect ? 'hidden' : 'visible' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onTrash();
+              }}
+            >
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
         </>
       )}
     </div>
@@ -397,6 +394,17 @@ export function ExperimentPage() {
             <Icon name="check" size={13} />
             {tr('多选', 'Multi-select')}
           </button>
+          {/* 全选放工具栏：不再插入额外行导致卡片下移（#132） */}
+          {multiSelect && experiments.length > 0 && (
+            <>
+              <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
+              <span className="muted" style={{ fontSize: 12 }}>
+                {selected.size > 0
+                  ? tr(`已选 ${selected.size} 个`, `${selected.size} selected`)
+                  : tr('全选', 'Select all')}
+              </span>
+            </>
+          )}
           {view === 'trash' && trashCount > 0 && (
             <button
               className="btn btn-ghost sm"
@@ -471,16 +479,6 @@ export function ExperimentPage() {
         </div>
       ) : (
         <>
-          {multiSelect && (
-            <div className="row gap10" style={{ marginBottom: 10, alignItems: 'center' }}>
-              <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
-              <span className="muted" style={{ fontSize: 12 }}>
-                {selected.size > 0
-                  ? tr(`已选 ${selected.size} 个`, `${selected.size} selected`)
-                  : tr('全选', 'Select all')}
-              </span>
-            </div>
-          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
             {experiments.map((e) => (
               <ExperimentCard
