@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a1c7e93f5b02"  # per-user LLM config: owner_id + llm_self_managed（本分支最新）
-PREV_REVISION = "257c979a4b99"  # user_publications.paper_id 软链
+HEAD_REVISION = "8b3b904e7588"  # user_library_entries.wiki_content 快照（本分支最新）
+PREV_REVISION = "a1c7e93f5b02"  # per-user LLM config: owner_id + llm_self_managed
 
 
 def _make_config(db_path: Path) -> Config:
@@ -55,6 +55,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "registration_codes",
                     "feedback",
                     "feedback_images",
+                    "user_library_entries",
+                    "user_publications",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -185,22 +187,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"feedback_id", "path", "seq"} <= columns["feedback_images"]
     # 个人文献库表（上一版）
     assert "user_library_entries" in columns["_tables"]
-    # 作者身份绑定 + 发表记录表（上一版）
+    # 作者身份绑定 + 发表记录表 + paper_id 软链列 + per-user LLM 列（上一版）
     assert {"user_author_profiles", "user_publications"} <= columns["_tables"]
-    # 本分支新增：per-user LLM 配置归属 + 接管标志
+    assert "paper_id" in columns["user_publications"]
     assert "owner_id" in columns["llm_providers"]
     assert "owner_id" in columns["model_routes"]
     assert "llm_self_managed" in columns["users"]
+    # 本分支新增：个人库 wiki 快照列
+    assert "wiki_content" in columns["user_library_entries"]
 
-    # 最新 revision 可往返（downgrade 移除 owner_id / llm_self_managed）
+    # 最新 revision 可往返（downgrade 移除 user_library_entries.wiki_content 列）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "owner_id" not in columns["llm_providers"]
-    assert "owner_id" not in columns["model_routes"]
-    assert "llm_self_managed" not in columns["users"]
-    # 上一版仍有的表/列不受影响
-    assert {"user_author_profiles", "user_publications"} <= columns["_tables"]
+    assert "wiki_content" not in columns["user_library_entries"]
+    assert "paper_id" in columns["user_publications"]
+    assert "owner_id" in columns["llm_providers"]
     # 上一版仍有的表/列不受影响
     assert "user_library_entries" in columns["_tables"]
     assert {"feedback", "feedback_images"} <= columns["_tables"]

@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
@@ -7,18 +6,21 @@ import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/Toast';
-import { api, type LibraryEntry, type LibrarySort, type LibraryTab } from '../../lib/api';
+import { api, type LibraryEntry, type LibrarySort, type LibraryTab, type Publication } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { SearchInput, useDebounced } from '../wiki/shared';
 import { PublicationsTab, PUBLICATIONS_PAGE_SIZE } from './PublicationsTab';
+import { AuthorBindWizard } from './AuthorBindWizard';
+import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPane';
 
 /* ============================================================
    /library — 我的文献库：
    「我的收藏」+「浏览记录」+「我发表的」三个 tab；
-   页面骨架与列表行版式对齐文献追踪（Stage 00）的论文库：
-   卡片容器 + 工具栏 + 分隔线行 + 底部分页。
-   收藏/记录行点击回到源方向的阅读页（源方向已删除时走外链）。
+   双栏主从布局对齐文献追踪（Stage 00）的论文库：
+   左栏列表（搜索/排序/分页/行操作），右栏选中条目的详情
+   （活体论文展示 wiki，快照条目展示元数据 + 外链）。
+   「我发表的」未填署名信息时表单占满整卡，填好后同样双栏。
    ============================================================ */
 
 const PAGE_SIZE = 20;
@@ -37,53 +39,54 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/* ---------------- 列表行（同文献追踪 PaperRow 版式） ---------------- */
+/* ---------------- 列表行（同文献追踪 PaperRow 版式 + active 选中态） ---------------- */
 
 function EntryRow({
   entry,
   tab,
-  last,
+  active,
   busy,
-  onOpen,
+  onSelect,
   onToggleSave,
   onPurge,
 }: {
   entry: LibraryEntry;
   tab: LibraryTab;
-  last: boolean;
+  active: boolean;
   busy: boolean;
-  onOpen: () => void;
+  onSelect: () => void;
   onToggleSave: () => void;
   onPurge: () => void;
 }) {
   const authors = entry.authors.map((a) => a.name).join(', ');
-  const openable = entry.last_paper_id !== null || !!entry.url;
   const summary = entry.tldr ?? entry.abstract;
   return (
     <div
-      className={openable ? 'list-hover' : undefined}
-      role={openable ? 'button' : undefined}
-      tabIndex={openable ? 0 : undefined}
-      onClick={openable ? onOpen : undefined}
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
       onKeyDown={(e) => {
-        if (openable && (e.key === 'Enter' || e.key === ' ')) {
+        if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen();
+          onSelect();
         }
       }}
       style={{
         padding: '12px 16px',
-        borderBottom: last ? 'none' : '0.5px solid var(--border)',
+        borderBottom: '0.5px solid var(--border)',
         display: 'flex',
         gap: 12,
         alignItems: 'flex-start',
-        cursor: openable ? 'pointer' : 'default',
+        cursor: 'pointer',
+        background: active ? 'var(--accent-soft)' : 'transparent',
+        borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+        transition: 'background 0.12s',
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* 顶部 mono 元信息行：编号/venue + 年份 + 源方向状态；右侧浏览信息 */}
         <div className="row gap8" style={{ marginBottom: 5 }}>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+          <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
             {entry.arxiv_id ?? entry.venue ?? '—'}
           </span>
           {entry.year !== null && (
@@ -174,8 +177,16 @@ function EntryRow({
   );
 }
 
+/** 右栏未选中时的轻量空态。 */
+function PickHint() {
+  return (
+    <div className="empty" style={{ margin: 'auto' }}>
+      {tr('选择左侧论文查看详情', 'Select a paper to view details')}
+    </div>
+  );
+}
+
 export function LibraryPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<PageTab>('saved');
@@ -184,6 +195,14 @@ export function LibraryPage() {
   const [sort, setSort] = useState<LibrarySort>('recent');
   const [page, setPage] = useState(1);
   const [clearOpen, setClearOpen] = useState(false);
+
+  // 双栏选中态：收藏/记录共用一份（同一种条目），「我发表的」单独一份。
+  // 翻页/搜索/切 tab 都不清空——右栏基于选中时的快照继续展示，
+  // 当前页里若还有同 id 条目则换用最新数据。
+  const [selEntry, setSelEntry] = useState<LibraryEntry | null>(null);
+  const [selPub, setSelPub] = useState<Publication | null>(null);
+  // 「我发表的」：修改署名信息时整卡显示表单
+  const [editingAuthor, setEditingAuthor] = useState(false);
 
   // tab / 搜索词 / 排序变化时回到第一页
   useEffect(() => {
@@ -208,9 +227,23 @@ export function LibraryPage() {
     retry: false,
   });
   const pendingCount = pendingBadgeQuery.data?.counts.pending ?? 0;
+
+  // 「我发表的」署名信息（与 PublicationsTab 原查询同 key，缓存互通）：
+  // 未填 → 表单占满整卡；已填 → 双栏
+  const profileQuery = useQuery({
+    queryKey: ['author-profile'],
+    queryFn: () => api.getAuthorProfile(),
+    enabled: tab === 'publications',
+    retry: false,
+  });
+  const profile = profileQuery.data ?? null;
+
   const data = listQuery.data;
   const entries = data?.items ?? [];
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.size)) : 1;
+
+  // 选中条目若还在当前页，用列表里的最新数据（收藏态等会实时变化）
+  const shownEntry = selEntry ? (entries.find((e) => e.id === selEntry.id) ?? selEntry) : null;
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['library'] });
@@ -225,6 +258,8 @@ export function LibraryPage() {
         : api.saveToLibrary({ entry_id: entry.id }).then(() => undefined),
     onSuccess: (_d, entry) => {
       toast(entry.saved ? tr('已取消收藏', 'Unsaved') : tr('已收藏', 'Saved'), 'ok');
+      // 选中的就是这条时同步右栏快照里的收藏态
+      setSelEntry((old) => (old && old.id === entry.id ? { ...old, saved: !entry.saved } : old));
       invalidate();
     },
     onError: (e) => toast(`${tr('操作失败：', 'Action failed: ')}${errText(e)}`, 'error'),
@@ -232,8 +267,10 @@ export function LibraryPage() {
 
   const purgeMutation = useMutation({
     mutationFn: (entry: LibraryEntry) => api.removeLibraryEntry(entry.id, 'purge'),
-    onSuccess: () => {
+    onSuccess: (_d, entry) => {
       toast(tr('已删除这条记录', 'Record deleted'), 'ok');
+      // 删除的是当前选中项 → 清空右栏
+      setSelEntry((old) => (old && old.id === entry.id ? null : old));
       invalidate();
     },
     onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
@@ -243,6 +280,7 @@ export function LibraryPage() {
     mutationFn: () => api.clearLibraryVisits(),
     onSuccess: () => {
       setClearOpen(false);
+      setSelEntry(null);
       toast(tr('浏览记录已清空', 'History cleared'), 'ok');
       invalidate();
     },
@@ -251,18 +289,10 @@ export function LibraryPage() {
 
   const busy = toggleMutation.isPending || purgeMutation.isPending;
 
-  const openEntry = (entry: LibraryEntry) => {
-    if (entry.last_paper_id) {
-      navigate(`/papers/${entry.last_paper_id}/read`);
-    } else if (entry.url) {
-      window.open(entry.url, '_blank', 'noopener');
-    }
-  };
-
   return (
     <div
       className="page fadeup"
-      style={{ maxWidth: 1100, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}
+      style={{ maxWidth: 1360, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}
     >
       <PageHead eyebrow="Polaris · My Library" title={tr('我的文献库', 'My Library')} dense />
 
@@ -312,129 +342,195 @@ export function LibraryPage() {
         style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 480 }}
       >
         {tab === 'publications' ? (
-          <div className="scroll" style={{ overflowY: 'auto', flex: 1, padding: '18px 20px 28px' }}>
-            <PublicationsTab />
-          </div>
+          /* ======== 我发表的 ======== */
+          profileQuery.isLoading ? (
+            <div className="empty" style={{ margin: 'auto' }}>{tr('加载中…', 'Loading…')}</div>
+          ) : profileQuery.isError ? (
+            <div className="scroll" style={{ overflowY: 'auto', flex: 1, padding: '18px 20px 28px' }}>
+              <EmptyState
+                compact
+                icon="x"
+                title={tr('署名信息暂时加载不出来', 'Failed to load your author info')}
+                desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+                action={
+                  <button className="btn btn-soft sm" onClick={() => void profileQuery.refetch()}>
+                    {tr('重试', 'Retry')}
+                  </button>
+                }
+              />
+            </div>
+          ) : !profile || editingAuthor ? (
+            /* 未填署名信息 / 修改中 → 表单占满整卡（不用双栏） */
+            <div className="scroll" style={{ overflowY: 'auto', flex: 1, padding: '18px 20px 28px' }}>
+              <AuthorBindWizard
+                profile={profile}
+                onDone={() => setEditingAuthor(false)}
+                onCancel={profile ? () => setEditingAuthor(false) : undefined}
+              />
+            </div>
+          ) : (
+            /* 已填 → 左栏列表 + 待确认，右栏详情 */
+            <div className="split">
+              <div className="split-list">
+                <div className="scroll" style={{ overflowY: 'auto', flex: 1, padding: '14px 14px 24px' }}>
+                  <PublicationsTab
+                    profile={profile}
+                    selectedId={selPub?.id ?? null}
+                    onSelect={setSelPub}
+                    onEditProfile={() => setEditingAuthor(true)}
+                  />
+                </div>
+              </div>
+              <div className="split-detail">
+                {selPub ? (
+                  <LibraryDetailPane key={selPub.id} paperId={selPub.paper_id} snapshot={pubSnapshot(selPub)} />
+                ) : (
+                  <PickHint />
+                )}
+              </div>
+            </div>
+          )
         ) : (
-          <>
-            {/* —— 工具栏：搜索 + 排序 + 计数 + 清空记录 —— */}
-            <div style={{ padding: '12px 14px 10px', borderBottom: '0.5px solid var(--border)' }}>
-              <div className="row gap8">
+          /* ======== 我的收藏 / 浏览记录 ======== */
+          <div className="split">
+            {/* —— 左：列表 —— */}
+            <div className="split-list">
+              {/* 工具栏：搜索 + 排序 + 计数 + 清空记录 */}
+              <div style={{ padding: '12px 14px 10px', borderBottom: '0.5px solid var(--border)' }}>
                 <SearchInput
                   value={qInput}
                   onChange={setQInput}
                   placeholder={tr('搜索标题 / 作者…', 'Search title / authors…')}
                 />
-                <Segmented<LibrarySort>
-                  options={SORTS.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))}
-                  value={sort}
-                  onChange={setSort}
-                />
-              </div>
-              <div className="row gap8" style={{ marginTop: 10 }}>
-                <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-                  {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
-                </span>
-                {tab === 'history' && (
-                  <button
-                    className="btn btn-ghost sm"
-                    style={{ marginLeft: 'auto', height: 26 }}
-                    disabled={clearMutation.isPending || (data !== undefined && data.total === 0)}
-                    onClick={() => setClearOpen(true)}
+                <div className="row gap8" style={{ marginTop: 10 }}>
+                  <Segmented<LibrarySort>
+                    options={SORTS.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))}
+                    value={sort}
+                    onChange={setSort}
+                  />
+                  <span
+                    className="mono"
+                    style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}
                   >
-                    <Icon name="trash" size={13} />
-                    {tr('清空记录', 'Clear history')}
-                  </button>
+                    {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
+                  </span>
+                </div>
+                {tab === 'history' && (
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <button
+                      className="btn btn-ghost sm"
+                      style={{ marginLeft: 'auto', height: 26 }}
+                      disabled={clearMutation.isPending || (data !== undefined && data.total === 0)}
+                      onClick={() => setClearOpen(true)}
+                    >
+                      <Icon name="trash" size={13} />
+                      {tr('清空记录', 'Clear history')}
+                    </button>
+                  </div>
                 )}
               </div>
-            </div>
 
-            {/* —— 列表 —— */}
-            <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
-              {listQuery.isLoading ? (
-                <div className="empty">{tr('加载中…', 'Loading…')}</div>
-              ) : listQuery.isError ? (
-                <EmptyState
-                  compact
-                  icon="x"
-                  title={tr('文献库暂时加载不出来', 'Failed to load your library')}
-                  desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
-                  action={
-                    <button className="btn btn-soft sm" onClick={() => void listQuery.refetch()}>
-                      {tr('重试', 'Retry')}
-                    </button>
-                  }
-                />
-              ) : entries.length === 0 ? (
-                <EmptyState
-                  compact
-                  icon="bookmark"
-                  title={
-                    q
-                      ? tr('没有匹配的文献', 'No matching papers')
-                      : tab === 'saved'
-                        ? tr('还没有收藏的文献', 'Nothing saved yet')
-                        : tr('还没有浏览记录', 'No reading history yet')
-                  }
-                  desc={
-                    q
-                      ? tr('换个关键词试试。', 'Try a different keyword.')
-                      : tab === 'saved'
-                        ? tr(
-                            '在论文阅读页点右上角的书签按钮，就能把它收进这里。',
-                            'Tap the bookmark button on any paper reading page to save it here.',
-                          )
-                        : tr(
-                            '打开任意论文的阅读页后，会自动记录在这里。',
-                            'Papers you open in the reader will show up here automatically.',
-                          )
-                  }
-                />
-              ) : (
-                entries.map((entry, i) => (
-                  <EntryRow
-                    key={entry.id}
-                    entry={entry}
-                    tab={tab}
-                    last={i === entries.length - 1}
-                    busy={busy}
-                    onOpen={() => openEntry(entry)}
-                    onToggleSave={() => toggleMutation.mutate(entry)}
-                    onPurge={() => purgeMutation.mutate(entry)}
+              {/* 列表（自滚动） */}
+              <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
+                {listQuery.isLoading ? (
+                  <div className="empty">{tr('加载中…', 'Loading…')}</div>
+                ) : listQuery.isError ? (
+                  <EmptyState
+                    compact
+                    icon="x"
+                    title={tr('文献库暂时加载不出来', 'Failed to load your library')}
+                    desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+                    action={
+                      <button className="btn btn-soft sm" onClick={() => void listQuery.refetch()}>
+                        {tr('重试', 'Retry')}
+                      </button>
+                    }
                   />
-                ))
+                ) : entries.length === 0 ? (
+                  <EmptyState
+                    compact
+                    icon="bookmark"
+                    title={
+                      q
+                        ? tr('没有匹配的文献', 'No matching papers')
+                        : tab === 'saved'
+                          ? tr('还没有收藏的文献', 'Nothing saved yet')
+                          : tr('还没有浏览记录', 'No reading history yet')
+                    }
+                    desc={
+                      q
+                        ? tr('换个关键词试试。', 'Try a different keyword.')
+                        : tab === 'saved'
+                          ? tr(
+                              '在论文阅读页点右上角的书签按钮，就能把它收进这里。',
+                              'Tap the bookmark button on any paper reading page to save it here.',
+                            )
+                          : tr(
+                              '打开任意论文的阅读页后，会自动记录在这里。',
+                              'Papers you open in the reader will show up here automatically.',
+                            )
+                    }
+                  />
+                ) : (
+                  entries.map((entry) => (
+                    <EntryRow
+                      key={entry.id}
+                      entry={entry}
+                      tab={tab}
+                      active={entry.id === selEntry?.id}
+                      busy={busy}
+                      onSelect={() => setSelEntry(entry)}
+                      onToggleSave={() => toggleMutation.mutate(entry)}
+                      onPurge={() => purgeMutation.mutate(entry)}
+                    />
+                  ))
+                )}
+              </div>
+
+              {/* 底部分页栏 */}
+              {data && data.total > PAGE_SIZE && (
+                <div
+                  className="row gap12"
+                  style={{
+                    padding: '9px 14px',
+                    borderTop: '0.5px solid var(--border)',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <button className="btn btn-ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                    <Icon name="chevron" size={12} style={{ transform: 'rotate(180deg)' }} />
+                    {tr('上一页', 'Prev')}
+                  </button>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                    {tr(`第 ${page} / ${totalPages} 页`, `Page ${page} / ${totalPages}`)}
+                  </span>
+                  <button
+                    className="btn btn-ghost sm"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    {tr('下一页', 'Next')}
+                    <Icon name="chevron" size={12} />
+                  </button>
+                </div>
               )}
             </div>
 
-            {/* —— 底部分页栏 —— */}
-            {data && data.total > PAGE_SIZE && (
-              <div
-                className="row gap12"
-                style={{
-                  padding: '9px 14px',
-                  borderTop: '0.5px solid var(--border)',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                <button className="btn btn-ghost sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  <Icon name="chevron" size={12} style={{ transform: 'rotate(180deg)' }} />
-                  {tr('上一页', 'Prev')}
-                </button>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                  {tr(`第 ${page} / ${totalPages} 页`, `Page ${page} / ${totalPages}`)}
-                </span>
-                <button
-                  className="btn btn-ghost sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  {tr('下一页', 'Next')}
-                  <Icon name="chevron" size={12} />
-                </button>
-              </div>
-            )}
-          </>
+            {/* —— 右：详情 —— */}
+            <div className="split-detail">
+              {shownEntry ? (
+                <LibraryDetailPane
+                  key={shownEntry.id}
+                  paperId={shownEntry.last_paper_id}
+                  snapshot={entrySnapshot(shownEntry)}
+                  entryId={shownEntry.id}
+                />
+              ) : (
+                <PickHint />
+              )}
+            </div>
+          </div>
         )}
       </div>
 

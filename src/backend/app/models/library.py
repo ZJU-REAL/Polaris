@@ -36,6 +36,8 @@ class UserLibraryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     abstract: Mapped[str | None] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(String(1024))
     tldr: Mapped[str | None] = mapped_column(Text)
+    # wiki 快照：随每次浏览/收藏刷新；论文活着时前端展示实时 wiki，删除后回退到这里
+    wiki_content: Mapped[str | None] = mapped_column(Text)
     saved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     note: Mapped[str | None] = mapped_column(Text)

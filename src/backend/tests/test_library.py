@@ -160,3 +160,32 @@ async def test_visit_requires_project_membership(client):
     assert resp.status_code == 404
     resp = await client.post("/api/me/library", json={"paper_id": paper_id}, headers=headers_b)
     assert resp.status_code == 404
+
+
+async def test_wiki_snapshot_and_detail_endpoint(client):
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id = await _make_project(client, headers)
+    paper_id = await _make_paper(
+        project_id, title="Wiki Paper", wiki_content="# 摘要\n这是 wiki。", status="compiled"
+    )
+
+    resp = await client.post("/api/me/library/visits", json={"paper_id": paper_id}, headers=headers)
+    entry = resp.json()
+    assert "wiki_content" not in entry  # 列表/浏览响应不带 wiki，防撑爆
+
+    resp = await client.get("/api/me/library?tab=history", headers=headers)
+    assert "wiki_content" not in resp.json()["items"][0]
+
+    # 详情端点带 wiki 快照；源论文删除后快照仍在
+    resp = await client.get(f"/api/me/library/{entry['id']}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["wiki_content"] == "# 摘要\n这是 wiki。"
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(paper_id))
+        await session.delete(paper)
+        await session.commit()
+    resp = await client.get(f"/api/me/library/{entry['id']}", headers=headers)
+    assert resp.json()["last_paper_id"] is None
+    assert resp.json()["wiki_content"] == "# 摘要\n这是 wiki。"

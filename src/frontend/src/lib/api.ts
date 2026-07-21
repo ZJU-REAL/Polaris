@@ -2067,6 +2067,9 @@ export interface LibraryState {
   saved: boolean;
 }
 
+/** 单条详情 = 列表条目字段 + wiki 快照正文（列表响应不含 wiki）。 */
+export type LibraryEntryDetail = LibraryEntry & { wiki_content: string | null };
+
 // ============================================================
 // 我发表的（作者信息绑定 + 发表同步）— issue #109
 // ============================================================
@@ -3226,6 +3229,10 @@ export const api = {
   /** 清空浏览记录（已收藏的条目保留）。 */
   clearLibraryVisits(): Promise<void> {
     return request<void>('/me/library/visits', { method: 'DELETE' });
+  },
+  /** 单条详情（含 wiki 快照正文，用于源论文已删时的回退展示）。 */
+  getLibraryEntry(entryId: string): Promise<LibraryEntryDetail> {
+    return request<LibraryEntryDetail>(`/me/library/${entryId}`);
   },
   /** 某论文在我的文献库里的状态（是否已收藏 + 条目 id）。 */
   getLibraryState(paperId: string): Promise<LibraryState> {

@@ -1,21 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
-import { api, ApiError, type PaperAuthor, type Publication } from '../../lib/api';
+import { api, ApiError, type AuthorProfile, type PaperAuthor, type Publication } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
-import { AuthorBindWizard, errText } from './AuthorBindWizard';
+import { errText } from './AuthorBindWizard';
 
 /* ============================================================
-   「我发表的」tab（issue #109）：
-   未填署名信息 → 表单（多个姓名写法 + 机构，保存即完成）；
-   已填 → 署名摘要 + 立即扫描文献库 + 待确认（是我的 / 不是我的）
-   + 已确认列表 + 手动添加；行样式对齐文献追踪的论文列表。
+   「我发表的」tab（issue #109）— 双栏布局的左栏：
+   署名摘要 + 立即扫描文献库 + 待确认（是我的 / 不是我的）
+   + 已确认列表 + 手动添加；行样式对齐文献追踪的论文列表，
+   行点击 = 选中（右栏详情由 LibraryPage 渲染）。
+   未填署名信息的表单流程由 LibraryPage 整卡展示，不在这里。
    ============================================================ */
 
 export const PUBLICATIONS_PAGE_SIZE = 20;
@@ -83,54 +83,54 @@ function AuthorsLine({ authors, variants }: { authors: PaperAuthor[]; variants: 
 
 /* ============================================================
    发表行：与文献追踪论文列表同款版式（顶部 mono 元信息行 +
-   标题 + 作者行 + 底部标签行），右侧放操作按钮。
+   标题 + 作者行 + 底部标签行），右侧放操作按钮；
+   行点击 = 选中，active 态对齐 PaperRow。
    ============================================================ */
 
 function PubRow({
   pub,
   variants,
   last,
+  active,
   withSource,
+  onSelect,
   actions,
 }: {
   pub: Publication;
   variants: string[];
   last: boolean;
+  active: boolean;
   /** 底部标签行是否带来源（自动匹配 / 手动添加）。 */
   withSource?: boolean;
+  onSelect: () => void;
   actions: ReactNode;
 }) {
-  const navigate = useNavigate();
-  // paper_id 非 null → 跳文献库阅读页；否则退回外链
-  const openable = pub.paper_id !== null || !!pub.url;
-  const open = () => {
-    if (pub.paper_id) navigate(`/papers/${pub.paper_id}/read`);
-    else if (pub.url) window.open(pub.url, '_blank', 'noopener');
-  };
   return (
     <div
-      className={openable ? 'list-hover' : undefined}
-      role={openable ? 'button' : undefined}
-      tabIndex={openable ? 0 : undefined}
-      onClick={openable ? open : undefined}
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
       onKeyDown={(e) => {
-        if (openable && (e.key === 'Enter' || e.key === ' ')) {
+        if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          open();
+          onSelect();
         }
       }}
       style={{
-        padding: '12px 16px',
+        padding: '12px 14px',
         borderBottom: last ? 'none' : '0.5px solid var(--border)',
         display: 'flex',
-        gap: 12,
+        gap: 10,
         alignItems: 'flex-start',
-        cursor: openable ? 'pointer' : 'default',
+        cursor: 'pointer',
+        background: active ? 'var(--accent-soft)' : 'transparent',
+        borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+        transition: 'background 0.12s',
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="row gap8" style={{ marginBottom: 5 }}>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+          <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--accent-text)' : 'var(--text-3)' }}>
             {pub.arxiv_id ?? pub.venue ?? '—'}
           </span>
           {pub.year !== null && (
@@ -173,7 +173,8 @@ function PubRow({
           )}
         </div>
       </div>
-      <div className="row gap6" style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+      {/* 操作竖排：左栏窄，横排放不下两个按钮 */}
+      <div className="col" style={{ gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
         {actions}
       </div>
     </div>
@@ -288,12 +289,23 @@ function AddPublicationModal({ open, onClose }: { open: boolean; onClose: () => 
 }
 
 /* ============================================================
-   主体
+   主体（已填署名信息后的左栏内容）
    ============================================================ */
 
-export function PublicationsTab() {
+export function PublicationsTab({
+  profile,
+  selectedId,
+  onSelect,
+  onEditProfile,
+}: {
+  profile: AuthorProfile;
+  /** 当前选中的发表条目 id（右栏详情），null = 未选中。 */
+  selectedId: string | null;
+  onSelect: (pub: Publication) => void;
+  /** 「修改署名信息」→ LibraryPage 整卡切到表单。 */
+  onEditProfile: () => void;
+}) {
   const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [confirmedPage, setConfirmedPage] = useState(1);
   // 扫描是后台任务：202 后按钮保持短暂 loading，几秒后 invalidate 刷新列表
@@ -306,25 +318,15 @@ export function PublicationsTab() {
     [],
   );
 
-  const profileQuery = useQuery({
-    queryKey: ['author-profile'],
-    queryFn: () => api.getAuthorProfile(),
-    retry: false,
-  });
-  const profile = profileQuery.data ?? null;
-  const bound = profile !== null;
-
   const pendingQuery = useQuery({
     queryKey: ['publications', 'pending', 1],
     queryFn: () => api.listPublications({ status: 'pending', page: 1, size: PUBLICATIONS_PAGE_SIZE }),
-    enabled: bound,
     retry: false,
   });
   const confirmedQuery = useQuery({
     queryKey: ['publications', 'confirmed', confirmedPage],
     queryFn: () =>
       api.listPublications({ status: 'confirmed', page: confirmedPage, size: PUBLICATIONS_PAGE_SIZE }),
-    enabled: bound,
     retry: false,
     placeholderData: keepPreviousData,
   });
@@ -374,56 +376,24 @@ export function PublicationsTab() {
     onError: (e) => toast(`${tr('操作失败：', 'Action failed: ')}${errText(e)}`, 'error'),
   });
 
-  /* —— 加载 / 出错 —— */
-  if (profileQuery.isLoading) {
-    return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
-  }
-  if (profileQuery.isError) {
-    return (
-      <EmptyState
-        compact
-        icon="x"
-        title={tr('署名信息暂时加载不出来', 'Failed to load your author info')}
-        desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
-        action={
-          <button className="btn btn-soft sm" onClick={() => void profileQuery.refetch()}>
-            {tr('重试', 'Retry')}
-          </button>
-        }
-      />
-    );
-  }
-
-  /* —— 未填署名信息 / 修改 → 表单 —— */
-  if (!bound || editing) {
-    return (
-      <AuthorBindWizard
-        profile={profile}
-        onDone={() => setEditing(false)}
-        onCancel={bound ? () => setEditing(false) : undefined}
-      />
-    );
-  }
-
   const variants = profile.name_variants;
   const syncBusy = syncMutation.isPending || syncing;
 
   return (
-    <div className="col" style={{ gap: 18 }}>
+    <div className="col" style={{ gap: 16 }}>
       {/* —— 署名摘要 + 操作 —— */}
       <div
         className="card"
         style={{
-          padding: '12px 16px',
+          padding: '12px 14px',
           background: 'var(--surface-2)',
           display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          flexWrap: 'wrap',
+          flexDirection: 'column',
+          gap: 8,
         }}
       >
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div className="row" style={{ gap: 6, fontSize: 13.5, fontWeight: 650 }}>
+        <div>
+          <div className="row" style={{ gap: 6, fontSize: 13, fontWeight: 650, lineHeight: 1.4 }}>
             <span>
               {profile.name_variants.join(' / ') || '—'}
               {profile.affiliations.length > 0 && (
@@ -437,7 +407,7 @@ export function PublicationsTab() {
               style={{ width: 22, height: 22, flexShrink: 0 }}
               title={tr('修改署名信息', 'Edit author info')}
               aria-label={tr('修改署名信息', 'Edit author info')}
-              onClick={() => setEditing(true)}
+              onClick={onEditProfile}
             >
               <Icon name="pen" size={12} />
             </button>
@@ -448,7 +418,7 @@ export function PublicationsTab() {
               : tr('还没匹配过', 'Not matched yet')}
           </div>
         </div>
-        <div className="row gap8" style={{ flexShrink: 0, flexWrap: 'nowrap' }}>
+        <div className="row gap6 wrap">
           <button className="btn btn-soft sm" disabled={syncBusy} onClick={() => syncMutation.mutate()}>
             <Icon name="refresh" size={13} style={syncBusy ? { animation: 'spin 1s linear infinite' } : undefined} />
             {syncBusy ? tr('扫描中…', 'Scanning…') : tr('立即扫描文献库', 'Scan library now')}
@@ -458,7 +428,7 @@ export function PublicationsTab() {
             {tr('手动添加', 'Add manually')}
           </button>
         </div>
-        <div style={{ width: '100%', fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5 }}>
           {tr('每天会自动匹配一次，命中的进入待确认', 'Runs automatically once a day; matches land in the pending list')}
         </div>
       </div>
@@ -480,7 +450,9 @@ export function PublicationsTab() {
                 pub={pub}
                 variants={variants}
                 last={i === pending.length - 1}
+                active={pub.id === selectedId}
                 withSource
+                onSelect={() => onSelect(pub)}
                 actions={
                   <>
                     <button
@@ -544,6 +516,8 @@ export function PublicationsTab() {
                   pub={pub}
                   variants={variants}
                   last={i === confirmed.length - 1}
+                  active={pub.id === selectedId}
+                  onSelect={() => onSelect(pub)}
                   actions={
                     <button
                       className="btn btn-ghost sm"
