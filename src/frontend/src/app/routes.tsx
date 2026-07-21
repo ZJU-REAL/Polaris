@@ -49,6 +49,7 @@ export const router = createBrowserRouter([
       { path: 'join/:token', element: page(() => import('../features/projects/JoinPage'), 'JoinPage') },
       { path: 'voyages', element: page(() => import('../features/voyages/VoyagesPage'), 'VoyagesPage') },
       { path: 'voyages/:id', element: page(() => import('../features/voyages/VoyageDetailPage'), 'VoyageDetailPage') },
+      { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
       { path: 'wiki', element: page(() => import('../features/wiki/WikiPage'), 'WikiPage') },
       { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
       { path: 'forge', element: page(() => import('../features/forge/ForgePage'), 'ForgePage') },

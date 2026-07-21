@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b3f1a7c92e5d"  # feedback + feedback_images 表（本分支最新）
-PREV_REVISION = "c01ea43927b8"  # merge heads（registration_codes + task-log 汇合）
+HEAD_REVISION = "57e55702bcca"  # user_library_entries 表（个人文献库，本分支最新）
+PREV_REVISION = "b3f1a7c92e5d"  # feedback + feedback_images 表
 
 
 def _make_config(db_path: Path) -> Config:
@@ -182,14 +182,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "github_issue_number",
     } <= columns["feedback"]
     assert {"feedback_id", "path", "seq"} <= columns["feedback_images"]
+    # 本分支新增：个人文献库表
+    assert "user_library_entries" in columns["_tables"]
 
-    # 最新 revision 可往返（downgrade 移除 feedback / feedback_images 表）
+    # 最新 revision 可往返（downgrade 移除 user_library_entries 表）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "feedback" not in columns["_tables"]
-    assert "feedback_images" not in columns["_tables"]
+    assert "user_library_entries" not in columns["_tables"]
     # 上一版仍有的表/列不受影响
+    assert {"feedback", "feedback_images"} <= columns["_tables"]
     assert "registration_codes" in columns["_tables"]
     assert {"llm_call_logs", "system_settings"} <= columns["_tables"]
     assert "models" in columns["llm_providers"]

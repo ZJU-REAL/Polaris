@@ -6,6 +6,7 @@ from app.models.experiment import Experiment, ExperimentRun
 from app.models.feedback import Feedback, FeedbackImage
 from app.models.gate import Gate
 from app.models.idea import Idea
+from app.models.library import UserLibraryEntry
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
 from app.models.manuscript import (
     Manuscript,
@@ -71,6 +72,7 @@ __all__ = [
     "SystemSetting",
     "TimestampMixin",
     "User",
+    "UserLibraryEntry",
     "UUIDPrimaryKeyMixin",
     "VoyageRun",
     "VoyageStep",

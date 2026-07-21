@@ -104,6 +104,48 @@ export function ReadingPage() {
   });
   const highlights = highlightsQuery.data ?? [];
 
+  // —— 我的文献库：打开阅读页成功拿到论文后上报一次浏览（失败静默） ——
+  const visitedRef = useRef<string | null>(null);
+  const paperId = paperQuery.data?.id;
+  useEffect(() => {
+    if (!paperId || visitedRef.current === paperId) return;
+    visitedRef.current = paperId;
+    api
+      .recordLibraryVisit(paperId)
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ['library-state', paperId] });
+        void queryClient.invalidateQueries({ queryKey: ['library'] });
+      })
+      .catch(() => {
+        /* 浏览埋点失败不打扰阅读 */
+      });
+  }, [paperId, queryClient]);
+
+  // —— 我的文献库：收藏状态 + 书签 toggle ——
+  const libStateQuery = useQuery({
+    queryKey: ['library-state', id],
+    queryFn: () => api.getLibraryState(id),
+    enabled: !!id,
+    retry: false,
+  });
+  const libState = libStateQuery.data;
+  const libSaveMutation = useMutation({
+    mutationFn: () =>
+      libState?.saved && libState.entry_id
+        ? api.removeLibraryEntry(libState.entry_id, 'unsave')
+        : api.saveToLibrary({ paper_id: id }).then(() => undefined),
+    onSuccess: () => {
+      toast(
+        libState?.saved ? tr('已从文献库移除', 'Removed from my library') : tr('已加入文献库', 'Added to my library'),
+        'ok',
+      );
+      void queryClient.invalidateQueries({ queryKey: ['library-state', id] });
+      void queryClient.invalidateQueries({ queryKey: ['library'] });
+    },
+    onError: (e) =>
+      toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
   const invalidateHighlights = useCallback(
     () => void queryClient.invalidateQueries({ queryKey: ['paper-highlights', id] }),
     [queryClient, id],
@@ -169,6 +211,7 @@ export function ReadingPage() {
 
   const starred = paper.starred ?? false;
   const readingStatus: ReadingStatus = paper.reading_status ?? 'unread';
+  const libSaved = libState?.saved ?? false;
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 18px 16px' }}>
@@ -196,6 +239,15 @@ export function ReadingPage() {
             {paper.arxiv_id ?? paper.venue ?? tr('论文阅读', 'Paper reading')}
           </div>
         </div>
+        <button
+          className="icon-btn"
+          title={libSaved ? tr('从文献库移除', 'Remove from my library') : tr('加入文献库', 'Add to my library')}
+          disabled={libSaveMutation.isPending || libStateQuery.isLoading}
+          onClick={() => libSaveMutation.mutate()}
+          style={{ color: libSaved ? 'var(--accent)' : 'var(--text-3)' }}
+        >
+          <Icon name={libSaved ? 'bookmarkFill' : 'bookmark'} size={17} />
+        </button>
         <button
           className="icon-btn"
           title={starred ? tr('取消星标', 'Unstar') : tr('加星标', 'Star')}
