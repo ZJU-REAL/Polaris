@@ -1,5 +1,6 @@
-"""LLM 路由器测试：DB 路由优先、fake 回退、用量记账。"""
+"""LLM 路由器测试：DB 路由优先、fake 回退、能力型环节不回退 default、用量记账。"""
 
+import pytest
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
@@ -59,6 +60,50 @@ async def test_unset_stage_falls_back_to_default_route(app):
     router = LLMRouter()
     result = await router.complete("writing", [Message(role="user", content="draft")])
     assert result.model == "fake-db-default"
+
+
+async def test_capability_stage_does_not_fall_back_to_default(app):
+    """embedding/rerank 是能力型环节：配了 default 也不回退，未配置即抛 NotImplementedError。"""
+    async with get_sessionmaker()() as session:
+        provider = LLMProviderConfig(name="fake-db", kind="fake", enabled=True)
+        session.add(provider)
+        await session.flush()
+        session.add(ModelRoute(stage="default", provider_id=provider.id, model="fake-db-default"))
+        await session.commit()
+
+    router = LLMRouter()
+    with pytest.raises(NotImplementedError, match="embedding"):
+        await router.embed(["some text"])
+    with pytest.raises(NotImplementedError, match="rerank"):
+        await router.rerank("q", ["doc"])
+    # 普通 stage 回退 default 不受影响
+    result = await router.complete("writing", [Message(role="user", content="draft")])
+    assert result.model == "fake-db-default"
+
+
+async def test_capability_stage_explicit_route_works(app):
+    """显式配置 embedding/rerank 路由后正常解析。"""
+    async with get_sessionmaker()() as session:
+        provider = LLMProviderConfig(name="fake-db", kind="fake", enabled=True)
+        session.add(provider)
+        await session.flush()
+        session.add(ModelRoute(stage="default", provider_id=provider.id, model="fake-db-default"))
+        session.add(ModelRoute(stage="embedding", provider_id=provider.id, model="fake-embed"))
+        session.add(ModelRoute(stage="rerank", provider_id=provider.id, model="fake-rerank"))
+        await session.commit()
+
+    router = LLMRouter()
+    vectors = await router.embed(["some text"])
+    assert len(vectors) == 1 and len(vectors[0]) > 0
+    ranked = await router.rerank("q", ["doc a", "doc b"])
+    assert len(ranked) == 2
+
+
+async def test_capability_stage_fake_fallback_when_routes_empty(app):
+    """路由表整体为空（未初始化环境/测试）→ 能力型环节仍回退确定性 fake。"""
+    router = LLMRouter()
+    vectors = await router.embed(["some text"])
+    assert len(vectors) == 1 and len(vectors[0]) > 0
 
 
 async def test_stream_records_usage(app):

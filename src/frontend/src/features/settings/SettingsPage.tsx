@@ -888,8 +888,11 @@ const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   rerank: { zh: '重排序', en: 'Reranking' },
 };
 
-/** 收起时只展示的两行；其余环节未显式设置时跟随「默认」。 */
-const PRIMARY_STAGES: string[] = ['default', 'embedding'];
+/** 常驻顶层的行：默认 + 两个能力型环节；其余环节收进展开区。 */
+const PRIMARY_STAGES: string[] = ['default', 'embedding', 'rerank'];
+
+/** 能力型环节：不跟随「默认」（对话模型没有嵌入/重排能力），未设置即为「未设置」。 */
+const CAPABILITY_STAGES = new Set(['embedding', 'rerank']);
 
 /** 按环节推断测试能力：embedding → embedding，rerank → rerank，其余 chat。 */
 function capabilityOf(stage: string): LlmTestCapability {
@@ -1082,11 +1085,14 @@ function RoutesSection() {
   const defaultRow = rows['default'];
   const emptyDraftRow: RouteDraft = { provider_id: '', model: '', temperature: '' };
 
-  // 编辑「跟随默认」的行时，以 default 的值为底稿转成显式设置
+  // 编辑「跟随默认」的行时，以 default 的值为底稿转成显式设置；
+  // 能力型环节不跟随默认，底稿从空开始
   const setRow = (stage: string, patch: Partial<RouteDraft>) =>
     setRows((prev) => {
       const seed = prev[stage]
-        ?? (stage !== 'default' && prev['default'] ? { ...prev['default'] } : emptyDraftRow);
+        ?? (stage !== 'default' && !CAPABILITY_STAGES.has(stage) && prev['default']
+          ? { ...prev['default'] }
+          : emptyDraftRow);
       return { ...prev, [stage]: { ...seed, ...patch } };
     });
   const clearRow = (stage: string) =>
@@ -1096,9 +1102,10 @@ function RoutesSection() {
       return next;
     });
 
-  /** 行的生效路由：显式设置优先，否则跟随 default（不完整则 null）。 */
+  /** 行的生效路由：显式设置优先，否则跟随 default（能力型环节不跟随；不完整则 null）。 */
   const effectiveOf = (stage: string): RouteDraft | null => {
-    const r = rows[stage] ?? (stage !== 'default' ? defaultRow : undefined);
+    const r = rows[stage]
+      ?? (stage !== 'default' && !CAPABILITY_STAGES.has(stage) ? defaultRow : undefined);
     if (r && r.provider_id && r.model.trim()) return r;
     return null;
   };
@@ -1116,7 +1123,10 @@ function RoutesSection() {
     }
   };
 
-  const visibleStages: string[] = showAll ? [...LLM_STAGES] : PRIMARY_STAGES;
+  // 常驻行固定在顶部；展开区只包含其余环节（embedding/rerank 不重复出现）
+  const visibleStages: string[] = showAll
+    ? [...PRIMARY_STAGES, ...LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s))]
+    : PRIMARY_STAGES;
   // 收起态下有显式设置的隐藏行数（提示用）
   const hiddenExplicitCount = LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s) && rows[s]).length;
 
@@ -1127,7 +1137,7 @@ function RoutesSection() {
           <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
           {tr('模型路由表', 'Model routing')}{' '}
           <span className="en-label" style={{ fontSize: 11 }}>
-            {tr('未单独设置的环节自动跟随「默认」', 'stages without their own row follow "Default"')}
+            {tr('未单独设置的环节自动跟随「默认」；向量嵌入/重排序需单独配置', 'stages without their own row follow "Default"; embeddings/reranking need their own config')}
           </span>
         </span>
         <div className="row gap8">
@@ -1159,7 +1169,9 @@ function RoutesSection() {
         <tbody>
           {visibleStages.map((stage) => {
             const explicit = rows[stage] !== undefined;
-            const follows = !explicit && stage !== 'default';
+            const capability = CAPABILITY_STAGES.has(stage);
+            const follows = !explicit && stage !== 'default' && !capability;
+            const unset = capability && !explicit; // 能力型环节未设置：不跟随默认，运行时降级
             // 展示值：显式行用自己的；跟随默认的行弱化展示 default 的 provider/模型
             const shown = rows[stage] ?? (follows ? defaultRow : undefined) ?? emptyDraftRow;
             const label = STAGE_LABELS[stage];
@@ -1178,11 +1190,22 @@ function RoutesSection() {
                         {tr('跟随默认', 'Follows default')}
                       </span>
                     )}
+                    {unset && (
+                      <span
+                        className="pill sm"
+                        style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}
+                        title={tr('该环节需要专用模型，不跟随默认；未配置时相关功能自动降级', 'This stage needs a dedicated model and never follows Default; features degrade while unset')}
+                      >
+                        {tr('未设置', 'Not set')}
+                      </span>
+                    )}
                     {explicit && stage !== 'default' && (
                       <button
                         className="icon-btn"
                         style={{ width: 20, height: 20 }}
-                        title={tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
+                        title={capability
+                          ? tr('清除设置，恢复「未设置」', 'Clear — back to "Not set"')
+                          : tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
                         onClick={() => clearRow(stage)}
                       >
                         <Icon name="x" size={11} />
@@ -1209,7 +1232,9 @@ function RoutesSection() {
                     value={shown.model}
                     options={providerModels}
                     muted={follows}
-                    placeholder={tr('如 deepseek-chat', 'e.g. deepseek-chat')}
+                    placeholder={unset
+                      ? tr('未配置，相关功能将降级', 'Not set — related features degrade')
+                      : tr('如 deepseek-chat', 'e.g. deepseek-chat')}
                     onChange={(v) => setRow(stage, { model: v })}
                   />
                 </td>
@@ -1224,7 +1249,11 @@ function RoutesSection() {
                   />
                 </td>
                 <td>
-                  <ModelStatusBadge state={state} onTest={eff ? () => void runTests([stage]) : undefined} />
+                  <ModelStatusBadge
+                    state={state}
+                    onTest={eff ? () => void runTests([stage]) : undefined}
+                    idleHint={unset ? tr('未配置，批量测试将跳过该环节', 'Not set; batch tests skip this stage') : undefined}
+                  />
                 </td>
               </tr>
             );
@@ -1235,7 +1264,7 @@ function RoutesSection() {
         <button className="btn btn-ghost sm" onClick={() => setShowAll((v) => !v)}>
           <Icon name="chevDown" size={12} style={showAll ? { transform: 'rotate(180deg)' } : undefined} />
           {showAll
-            ? tr('收起，只看默认与向量嵌入', 'Collapse to Default and Embeddings')
+            ? tr('收起，只看默认、向量嵌入与重排序', 'Collapse to Default, Embeddings and Reranking')
             : tr(
                 `查看所有环节设置（共 ${LLM_STAGES.length} 个${hiddenExplicitCount > 0 ? `，${hiddenExplicitCount} 个已单独设置` : ''}）`,
                 `Show all stages (${LLM_STAGES.length}${hiddenExplicitCount > 0 ? `, ${hiddenExplicitCount} overridden` : ''})`,
