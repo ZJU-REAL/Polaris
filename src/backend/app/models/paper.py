@@ -44,6 +44,8 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    # 全局去重键：arxiv:<id> | doi:<小写doi> | title:<标题+年份+首作者sha1>（services/dedup.py）
+    dedup_key: Mapped[str | None] = mapped_column(String(512), unique=True, index=True)
     source: Mapped[str | None] = mapped_column(String(32))  # arxiv | semantic_scholar | manual
     arxiv_id: Mapped[str | None] = mapped_column(String(64), index=True)
     doi: Mapped[str | None] = mapped_column(String(255), index=True)

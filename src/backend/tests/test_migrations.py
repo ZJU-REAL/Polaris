@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "94e6bc81c510"  # registration_codes.preset_directions（本分支最新）
-PREV_REVISION = "8b3b904e7588"  # user_library_entries.wiki_content 快照
+HEAD_REVISION = "f7c2abfe8aeb"  # 方向文献库 + 论文内容池（P4 迁移 A，本分支最新）
+PREV_REVISION = "94e6bc81c510"  # registration_codes.preset_directions
 
 
 def _make_config(db_path: Path) -> Config:
@@ -195,14 +195,24 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "llm_self_managed" in columns["users"]
     # 个人库 wiki 快照列（上一版）
     assert "wiki_content" in columns["user_library_entries"]
-    # 本分支新增：注册码预设研究方向列
+    # 注册码预设研究方向列（上一版）
     assert "preset_directions" in columns["registration_codes"]
+    # 本分支新增：方向文献库三表 + papers.dedup_key（P4 迁移 A）
+    assert {
+        "direction_libraries",
+        "direction_library_curators",
+        "library_papers",
+    } <= columns["_tables"]
+    assert "dedup_key" in columns["papers"]
 
-    # 最新 revision 可往返（downgrade 移除 registration_codes.preset_directions 列）
+    # 最新 revision 可往返（downgrade 移除方向文献库三表与 papers.dedup_key）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "preset_directions" not in columns["registration_codes"]
+    assert "direction_libraries" not in columns["_tables"]
+    assert "library_papers" not in columns["_tables"]
+    assert "dedup_key" not in columns["papers"]
+    assert "preset_directions" in columns["registration_codes"]
     assert "wiki_content" in columns["user_library_entries"]
     assert "paper_id" in columns["user_publications"]
     assert "owner_id" in columns["llm_providers"]

@@ -1,7 +1,5 @@
 """个人文献库：浏览记录 upsert、收藏、列表检索（用户级，方向无关）。"""
 
-import hashlib
-import re
 import uuid
 from typing import cast
 
@@ -13,23 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.base import utcnow
 from app.models.library import UserLibraryEntry
 from app.models.paper import Paper
+from app.services.dedup import dedup_key_for
 
 LIBRARY_SORTS = ("recent", "title", "visits")
 LIBRARY_TABS = ("saved", "history")
 
 
-def _normalize_title(title: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
-
-
 def dedup_key_for_paper(paper: Paper) -> str:
-    """跨方向去重键：arxiv → doi → 规范化标题 sha1（优先级递减）。"""
-    if paper.arxiv_id:
-        return f"arxiv:{paper.arxiv_id.lower()}"
-    if paper.doi:
-        return f"doi:{paper.doi.lower()}"
-    digest = hashlib.sha1(_normalize_title(paper.title).encode()).hexdigest()
-    return f"title:{digest}"
+    """跨方向去重键：arxiv → doi → 规范化标题 sha1（优先级递减，纯标题口径兼容存量键）。"""
+    key = dedup_key_for(arxiv_id=paper.arxiv_id, doi=paper.doi, title=paper.title)
+    assert key is not None  # Paper.title 非空
+    return key
 
 
 def _snapshot_fields(paper: Paper) -> dict:
