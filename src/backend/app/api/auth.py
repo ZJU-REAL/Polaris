@@ -1,5 +1,6 @@
 """fastapi-users 装配：JWT 登录 + 邀请码注册 + /users/me。"""
 
+import logging
 import uuid
 from collections.abc import AsyncIterator
 
@@ -14,8 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
+from app.schemas.project import ProjectCreate
 from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.services import projects as projects_service
 from app.services import registration_codes as codes_service
+
+logger = logging.getLogger(__name__)
 
 JWT_LIFETIME_SECONDS = 60 * 60 * 24  # 24h
 
@@ -183,10 +188,14 @@ async def register(
 
     优先核销数据库里的管理注册码（可设过期 / 次数 / 停用）；未命中时回退到
     settings.invite_code 静态码（兜底，避免没建过码时无人能注册 / 把管理员锁死）。
+    注册码带预设研究方向时，注册成功后自动为新用户建好对应方向的项目。
     """
     redeemed = await codes_service.redeem_code(session, user_create.invite_code)
-    if not redeemed and user_create.invite_code != get_settings().invite_code:
+    if redeemed is None and user_create.invite_code != get_settings().invite_code:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="INVALID_INVITE_CODE")
+    preset_directions = [
+        d for d in (redeemed.preset_directions or []) if isinstance(d, str) and d.strip()
+    ] if redeemed else []
     # 用户名全局唯一（DB 也有唯一索引兜底，这里给出友好错误）
     taken = (
         await session.execute(select(User.id).where(User.username == user_create.username))
@@ -194,7 +203,7 @@ async def register(
     if taken is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="USERNAME_TAKEN")
     try:
-        return await user_manager.create(user_create, safe=True, request=request)
+        user = await user_manager.create(user_create, safe=True, request=request)
     except exceptions.UserAlreadyExists as e:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="REGISTER_USER_ALREADY_EXISTS"
@@ -204,6 +213,20 @@ async def register(
             status.HTTP_400_BAD_REQUEST,
             detail={"code": "REGISTER_INVALID_PASSWORD", "reason": e.reason},
         ) from e
+    # 邀请码预设的研究方向 → 自动建项目（稀疏 definition，后续访谈可补全）。
+    # 建项目失败不影响注册结果。
+    for direction in preset_directions:
+        try:
+            await projects_service.create_project(
+                session,
+                owner_id=user.id,
+                data=ProjectCreate(
+                    name=direction[:255], definition={"statement": direction}
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("preset direction project creation failed: %s", direction)
+    return user
 
 
 router.include_router(

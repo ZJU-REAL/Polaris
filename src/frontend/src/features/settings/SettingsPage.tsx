@@ -2749,6 +2749,7 @@ function CreateCodeModal({ onClose }: { onClose: () => void }) {
   const [note, setNote] = useState('');
   const [expiresDays, setExpiresDays] = useState<string>(''); // '' = 永久
   const [maxUses, setMaxUses] = useState<string>(''); // '' = 不限
+  const [directionsText, setDirectionsText] = useState('');
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -2756,6 +2757,11 @@ function CreateCodeModal({ onClose }: { onClose: () => void }) {
         note: note.trim(),
         expires_days: expiresDays ? Number(expiresDays) : null,
         max_uses: maxUses ? Number(maxUses) : null,
+        preset_directions: directionsText
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 10),
       }),
     onSuccess: (rc) => {
       void queryClient.invalidateQueries({ queryKey: ['admin-reg-codes'] });
@@ -2809,6 +2815,18 @@ function CreateCodeModal({ onClose }: { onClose: () => void }) {
           placeholder={tr('不限', 'unlimited')}
         />
       </FormField>
+      <FormField
+        label={tr('预设研究方向', 'Preset research directions')}
+        hint={tr('可选，每行一个（最多 10 个）。用此码注册的同学会自动获得这些方向的项目', 'Optional, one per line (max 10). New users registering with this code automatically get a project for each direction')}
+      >
+        <textarea
+          className="input"
+          rows={3}
+          value={directionsText}
+          onChange={(e) => setDirectionsText(e.target.value)}
+          placeholder={tr('例如：大模型智能体的长程规划', 'e.g. Long-horizon planning for LLM agents')}
+        />
+      </FormField>
     </Modal>
   );
 }
@@ -2860,6 +2878,7 @@ function CodesTab() {
               <tr>
                 <th>{tr('注册码', 'Code')}</th>
                 <th>{tr('备注', 'Note')}</th>
+                <th>{tr('预设方向', 'Directions')}</th>
                 <th>{tr('使用', 'Uses')}</th>
                 <th>{tr('有效期', 'Expiry')}</th>
                 <th>{tr('状态', 'Status')}</th>
@@ -2883,6 +2902,12 @@ function CodesTab() {
                     </td>
                     <td style={{ color: c.note ? 'var(--text)' : 'var(--text-4)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {c.note || '—'}
+                    </td>
+                    <td
+                      style={{ color: c.preset_directions.length ? 'var(--text)' : 'var(--text-4)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={c.preset_directions.join('\n')}
+                    >
+                      {c.preset_directions.length ? c.preset_directions.join('；') : '—'}
                     </td>
                     <td style={{ fontFamily: 'var(--mono)' }}>
                       {c.used_count}
