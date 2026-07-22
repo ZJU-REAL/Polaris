@@ -1,7 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
@@ -102,7 +101,8 @@ function ToolCard({ t }: { t: McpToolInfo }) {
   );
 }
 
-export function McpToolsPage() {
+/** MCP 接入说明主体（无页头），由设置页的「MCP 接入」页签复用。 */
+export function McpToolsContent() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['mcp-tools'],
     queryFn: () => api.listMcpTools(),
@@ -134,15 +134,13 @@ export function McpToolsPage() {
   );
 
   return (
-    <div className="page fadeup">
-      <PageHead
-        eyebrow="Polaris"
-        title={tr('MCP 工具', 'MCP Tools')}
-        sub={tr(
-          '把平台的只读检索能力（文献 / 概念 / 知识 / 项目状态）暴露为 MCP 工具，供 Claude Desktop、Cursor 等外部客户端调用。',
-          'Expose the platform’s read-only retrieval (papers / concepts / knowledge / project state) as MCP tools for external clients like Claude Desktop and Cursor.',
+    <div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55, marginBottom: 14, maxWidth: 720 }}>
+        {tr(
+          '把平台的只读检索能力（文献 / 概念 / 知识 / 课题状态）暴露为 MCP 工具，供 Claude Desktop、Cursor 等外部客户端调用。',
+          'Expose the platform’s read-only retrieval (papers / concepts / knowledge / topic state) as MCP tools for external clients like Claude Desktop and Cursor.',
         )}
-      />
+      </div>
 
       {/* 接入信息 */}
       <div
@@ -188,8 +186,8 @@ export function McpToolsPage() {
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>
           {tr(
-            '调用工具时需在参数里带 project_id（目标项目 uuid），服务端会校验你是否为该项目成员。本地桌面客户端也可用 stdio：python -m app.mcp（详见 docs/api-mcp.md）。',
-            'Each tool call takes a project_id (target project uuid); the server verifies your membership. Local desktop clients can also use stdio: python -m app.mcp (see docs/api-mcp.md).',
+            '调用工具时需在参数里带 project_id（目标课题 uuid），服务端会校验你是否为该课题成员。本地桌面客户端也可用 stdio：python -m app.mcp（详见 docs/api-mcp.md）。',
+            'Each tool call takes a project_id (target topic uuid); the server verifies your membership. Local desktop clients can also use stdio: python -m app.mcp (see docs/api-mcp.md).',
           )}
         </div>
       </div>

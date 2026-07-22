@@ -171,7 +171,7 @@ export function LibraryDetailPane({
         )}
         {!alive && (
           <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-            {tr('源方向已删除，仅保留快照', 'Source direction deleted — snapshot only')}
+            {tr('源课题已删除，仅保留快照', 'Source topic deleted — snapshot only')}
           </span>
         )}
       </div>

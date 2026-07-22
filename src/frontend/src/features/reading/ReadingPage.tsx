@@ -197,7 +197,7 @@ export function ReadingPage() {
         <EmptyState
           icon="x"
           title={tr('打不开这篇论文', 'Cannot open this paper')}
-          desc={tr('论文不存在、你不在这个研究方向里，或后端暂时不可用。', 'It does not exist, you are not in this research direction, or the backend is unavailable.')}
+          desc={tr('论文不存在、你不在这个课题里，或后端暂时不可用。', 'It does not exist, you are not in this topic, or the backend is unavailable.')}
           action={
             <button className="btn btn-ghost" onClick={() => navigate('/wiki')}>
               <Icon name="book" size={14} />

@@ -25,7 +25,7 @@ interface NavEntry {
 }
 
 const NAV_MAIN: NavEntry[] = [
-  { to: '/', icon: 'dashboard', zh: '总览', en: 'Dashboard' },
+  { to: '/', icon: 'dashboard', zh: '工作台', en: 'Workbench' },
 ];
 
 const NAV_PIPE: NavEntry[] = [
@@ -47,14 +47,15 @@ const FEATURE_BY_PATH: Record<string, string> = {
 };
 
 function crumbFor(pathname: string): [string, string] {
-  if (pathname === '/') return ['Polaris', tr('总览', 'Dashboard')];
-  if (pathname === '/projects/new') return [tr('研究方向', 'Directions'), tr('新建方向', 'New direction')];
-  if (pathname.startsWith('/projects/')) return [tr('研究方向', 'Directions'), tr('方向详情', 'Direction detail')];
+  if (pathname === '/') return ['Polaris', tr('工作台', 'Workbench')];
+  if (pathname === '/start') return ['Polaris', tr('选择课题', 'Pick a topic')];
+  if (pathname === '/projects/new') return [tr('课题', 'Topics'), tr('新建课题', 'New topic')];
+  if (pathname.startsWith('/projects/')) return [tr('课题', 'Topics'), tr('课题设置', 'Topic settings')];
   if (pathname === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
   if (pathname.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
   if (pathname.startsWith('/papers/')) return [tr('文献追踪', 'Research Wiki'), tr('论文阅读', 'Paper reading')];
   if (pathname.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
-  if (pathname.startsWith('/join/')) return [tr('研究方向', 'Directions'), tr('接受邀请', 'Accept invite')];
+  if (pathname.startsWith('/join/')) return [tr('课题', 'Topics'), tr('接受邀请', 'Accept invite')];
   if (pathname.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
   if (pathname.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
   const table: Record<string, [string, string]> = {
@@ -65,7 +66,6 @@ function crumbFor(pathname: string): [string, string] {
     '/writer': ['Stage 04', tr('论文撰写', 'Paper Writer')],
     '/paper-review': ['Stage 05', tr('论文评审', 'Paper Review')],
     '/library': ['Polaris', tr('我的文献库', 'My Library')],
-    '/mcp-tools': ['Polaris', 'MCP'],
     '/skills': ['Polaris', tr('技能', 'Skills')],
     '/settings': ['Polaris', tr('设置', 'Settings')],
   };
@@ -87,10 +87,11 @@ export function useShell(): ShellContext {
 }
 
 /* ============================================================
-   顶栏研究方向切换器：胶囊触发器 + 卡片式下拉菜单。
-   菜单含方向列表（当前项打勾 + 蓝点）、新建方向、方向详情入口。
+   侧边栏课题切换器（课题区区头）：触发器 + 卡片式下拉菜单。
+   菜单含课题列表（当前项打勾 + 蓝点）、新建课题、课题设置入口。
+   折叠态只留图标按钮，菜单向右侧弹出（侧栏 z-index 已抬高，不会被主列裁剪）。
    ============================================================ */
-function DirectionSwitcher() {
+function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { projects, isLoading, currentProjectId, currentProject, setCurrentProjectId } = useProject();
@@ -114,7 +115,7 @@ function DirectionSwitcher() {
     };
   }, [open]);
 
-  const triggerLabel = currentProject?.name ?? (isLoading ? tr('加载中…', 'Loading…') : tr('选择研究方向', 'Pick a direction'));
+  const triggerLabel = currentProject?.name ?? (isLoading ? tr('加载中…', 'Loading…') : tr('选择课题', 'Pick a topic'));
 
   const itemStyle: React.CSSProperties = {
     display: 'flex',
@@ -133,19 +134,20 @@ function DirectionSwitcher() {
   };
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', marginLeft: 18 }}>
-      {/* 触发器：胶囊（图标 + 当前方向名 + 折叠箭头） */}
+    <div ref={wrapRef} style={{ position: 'relative', padding: collapsed ? '0 8px 6px' : '0 12px 6px' }}>
+      {/* 触发器：侧栏区头（图标 + 当前课题名 + 折叠箭头）；折叠态只留图标 */}
       <button
         onClick={() => setOpen((o) => !o)}
-        title={tr('切换研究方向', 'Switch research direction')}
+        title={currentProject ? `${tr('切换课题', 'Switch topic')} · ${currentProject.name}` : tr('切换课题', 'Switch topic')}
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 7,
-          height: 32,
-          maxWidth: 280,
-          padding: '0 10px 0 11px',
-          borderRadius: 16,
+          justifyContent: collapsed ? 'center' : 'flex-start',
+          gap: collapsed ? 0 : 8,
+          width: '100%',
+          height: 34,
+          padding: collapsed ? 0 : '0 8px 0 9px',
+          borderRadius: 9,
           border: `0.5px solid ${open ? 'var(--accent)' : 'var(--border-2)'}`,
           background: open ? 'var(--accent-soft)' : 'var(--surface)',
           cursor: 'pointer',
@@ -153,49 +155,56 @@ function DirectionSwitcher() {
           transition: 'border-color .12s, background .12s',
         }}
       >
-        <Icon name="layers" size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-        <span
-          style={{
-            fontSize: 12.5,
-            fontWeight: 620,
-            color: currentProject ? 'var(--text)' : 'var(--text-3)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            minWidth: 0,
-          }}
-        >
-          {triggerLabel}
-        </span>
-        <Icon
-          name="chevDown"
-          size={12}
-          style={{ color: 'var(--text-3)', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
-        />
+        <Icon name="layers" size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+        {!collapsed && (
+          <>
+            <span
+              style={{
+                flex: 1,
+                fontSize: 12.5,
+                fontWeight: 620,
+                textAlign: 'left',
+                color: currentProject ? 'var(--text)' : 'var(--text-3)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+            >
+              {triggerLabel}
+            </span>
+            <Icon
+              name="chevDown"
+              size={12}
+              style={{ color: 'var(--text-3)', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+            />
+          </>
+        )}
       </button>
 
-      {/* 下拉菜单 */}
+      {/* 下拉菜单：展开态在触发器正下方；折叠态向右侧弹出盖在主列上 */}
       {open && (
         <div
           className="card"
           style={{
             position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
+            ...(collapsed
+              ? { top: 0, left: 'calc(100% + 6px)' }
+              : { top: 'calc(100% + 4px)', left: 12 }),
             zIndex: 40,
-            width: 300,
+            width: 280,
             padding: 6,
             boxShadow: 'var(--shadow-pop)',
             animation: 'fadeUp 0.12s ease',
           }}
         >
           <div className="mono" style={{ fontSize: 10, color: 'var(--text-4)', padding: '4px 12px 6px', letterSpacing: '0.06em' }}>
-            {tr('研究方向', 'DIRECTIONS')}
+            {tr('课题', 'TOPICS')}
           </div>
           <div className="scroll" style={{ maxHeight: 320, overflowY: 'auto' }}>
             {projects.length === 0 && (
               <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-4)' }}>
-                {isLoading ? tr('加载中…', 'Loading…') : tr('还没有研究方向，先新建一个', 'No directions yet — create one first')}
+                {isLoading ? tr('加载中…', 'Loading…') : tr('还没有课题，先创建一个', 'No topics yet — create one first')}
               </div>
             )}
             {projects.map((p) => {
@@ -258,7 +267,7 @@ function DirectionSwitcher() {
             }}
           >
             <Icon name="plus" size={13} style={{ color: 'var(--text-3)' }} />
-            {tr('新建方向', 'New direction')}
+            {tr('新建课题', 'New topic')}
           </button>
           {currentProjectId && (
             <button
@@ -271,7 +280,7 @@ function DirectionSwitcher() {
               }}
             >
               <Icon name="settings" size={13} style={{ color: 'var(--text-3)' }} />
-              {tr('当前方向详情与设置', 'Current direction detail & settings')}
+              {tr('课题设置', 'Topic settings')}
             </button>
           )}
         </div>
@@ -299,6 +308,7 @@ function NavItem({ n }: { n: NavEntry }) {
 export function AppShell() {
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { currentProjectId } = useProject();
 
   // —— 审批抽屉 ——
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -453,22 +463,29 @@ export function AppShell() {
           {/* 收起后只留左侧图形标：直接不渲染字标，杜绝溢出（不靠 CSS 隐藏） */}
           {!navCollapsed && <PolarisWordmark height={30} />}
         </div>
+        {/* —— 课题区区头：课题切换器（只统辖下方课题作用域的导航） —— */}
+        <TopicSwitcher collapsed={navCollapsed} />
         <div className="sb-scroll scroll">
+          {/* —— 课题区：工作台 + 流水线 + 任务 + 课题设置 —— */}
           {NAV_MAIN.map((n) => (
             <NavItem key={n.to} n={n} />
           ))}
-          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
-          <NavItem n={{ to: '/mcp-tools', icon: 'server', zh: 'MCP', en: 'MCP' }} />
-          <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
-          <NavItem n={{ to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' }} />
-
-          <div className="sb-section">{tr('研究流水线', 'Pipeline')}</div>
           {NAV_PIPE.filter((n) => {
             const key = FEATURE_BY_PATH[n.to];
             return key == null || me?.features?.[key] !== false;
           }).map((n) => (
             <NavItem key={n.to} n={n} />
           ))}
+          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
+          {currentProjectId && (
+            <NavItem n={{ to: `/projects/${currentProjectId}`, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
+          )}
+
+          {/* —— 个人区：跨课题的个人页面 —— */}
+          <div className="sb-section">{tr('个人', 'Personal')}</div>
+          <NavItem n={{ to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' }} />
+          <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
+          <NavItem n={{ to: '/settings', icon: 'settings', zh: '设置', en: 'Settings' }} />
         </div>
         <div className="sb-foot">
           <UserMenu me={me} collapsed={navCollapsed} />
@@ -491,8 +508,6 @@ export function AppShell() {
             <span className="sep">›</span>
             <b>{c2}</b>
           </div>
-          {/* —— 研究方向选择器 —— */}
-          <DirectionSwitcher />
           <div className="spacer" />
           <div className="searchbox" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSearchOpen(true); }}>

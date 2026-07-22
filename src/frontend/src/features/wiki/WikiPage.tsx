@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
-import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { api } from '../../lib/api';
@@ -31,7 +30,7 @@ type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes';
 
 export function WikiPage() {
   const navigate = useNavigate();
-  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
   const pid = currentProjectId;
 
   const [tab, setTab] = useState<WikiTab>('papers');
@@ -127,38 +126,6 @@ export function WikiPage() {
     setPendingConceptName(name);
   }, []);
 
-  // —— 无项目：引导创建 ——
-  if (!projectsLoading && projects.length === 0) {
-    return (
-      <div className="page fadeup">
-        <PageHead
-          eyebrow="Stage 00 · Research Wiki"
-          title={tr('文献调研', 'Research Wiki')}
-          sub={tr(
-            '每日自动抓取、打分、精读编译前沿文献，知识库复利增长。',
-            'Fetch, score, and compile new papers daily — the library compounds over time.',
-          )}
-        />
-        <div className="card">
-          <EmptyState
-            icon="book"
-            title={tr('还没有研究方向', 'No research directions yet')}
-            desc={tr(
-              'Research Wiki 按研究方向组织：先通过结构化访谈创建一个方向，再运行初始建库回填文献。',
-              'The Research Wiki is organized by direction: create one via the structured interview, then run the initial library build.',
-            )}
-            action={
-              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-                <Icon name="plus" size={14} />
-                {tr('新建研究方向', 'New direction')}
-              </button>
-            }
-          />
-        </div>
-      </div>
-    );
-  }
-
   // 论文库计数口径 = 库内（相关性达标）；旧后端无 library 字段时退回 total
   const total = ingestQuery.data?.paper_counts?.library ?? ingestQuery.data?.paper_counts?.total;
 
@@ -172,8 +139,8 @@ export function WikiPage() {
           currentProject
             ? undefined
             : projectsLoading
-              ? tr('加载研究方向…', 'Loading directions…')
-              : tr('选择一个研究方向', 'Pick a direction')
+              ? tr('加载课题…', 'Loading topics…')
+              : tr('选择一个课题', 'Pick a topic')
         }
         right={
           <>
@@ -183,7 +150,7 @@ export function WikiPage() {
                 onClick={() => navigate(`/projects/${currentProject.id}`)}
               >
                 <Icon name="compass" size={14} />
-                {tr('方向详情', 'Direction detail')}
+                {tr('课题设置', 'Topic settings')}
               </button>
             )}
             <button className="btn btn-ghost" disabled={!pid} onClick={() => setPresentOpen(true)}>
@@ -233,8 +200,8 @@ export function WikiPage() {
         {!pid ? (
           <div className="empty" style={{ margin: 'auto' }}>
             {projectsLoading
-              ? tr('加载研究方向…', 'Loading directions…')
-              : tr('请先选择研究方向', 'Pick a direction first')}
+              ? tr('加载课题…', 'Loading topics…')
+              : tr('请先选择课题', 'Pick a topic first')}
           </div>
         ) : tab === 'papers' ? (
           <PapersTab

@@ -24,7 +24,7 @@ export function JoinPage() {
   const acceptMutation = useMutation({
     mutationFn: () => api.acceptInvite(token),
     onSuccess: (project) => {
-      toast(`${tr('已加入研究方向：', 'Joined research direction: ')}${project.name}`, 'ok');
+      toast(`${tr('已加入课题：', 'Joined topic: ')}${project.name}`, 'ok');
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
       setCurrentProjectId(project.id);
       navigate(`/projects/${project.id}`);
@@ -57,9 +57,9 @@ export function JoinPage() {
           </>
         ) : info.already_member ? (
           <>
-            <div style={{ fontSize: 16, fontWeight: 680, marginBottom: 8 }}>{tr('你已是该方向成员', 'You are already a member')}</div>
+            <div style={{ fontSize: 16, fontWeight: 680, marginBottom: 8 }}>{tr('你已是该课题成员', 'You are already a member')}</div>
             <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 20 }}>{info.project_name}</div>
-            <button className="btn btn-primary" onClick={() => navigate(`/projects/${info.project_id}`)}>{tr('进入方向', 'Open direction')}</button>
+            <button className="btn btn-primary" onClick={() => navigate(`/projects/${info.project_id}`)}>{tr('进入课题', 'Open topic')}</button>
           </>
         ) : !info.valid ? (
           <>
@@ -69,7 +69,7 @@ export function JoinPage() {
           </>
         ) : (
           <>
-            <div style={{ fontSize: 16, fontWeight: 680, marginBottom: 8 }}>{tr('邀请你加入研究方向', 'You are invited to join a research direction')}</div>
+            <div style={{ fontSize: 16, fontWeight: 680, marginBottom: 8 }}>{tr('邀请你加入课题', 'You are invited to join a topic')}</div>
             <div style={{ fontSize: 14, color: 'var(--text)', marginBottom: 4 }}>{info.project_name}</div>
             {info.inviter_name && (
               <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 20 }}>{tr('邀请人：', 'Invited by: ')}{info.inviter_name}</div>
@@ -79,7 +79,7 @@ export function JoinPage() {
               disabled={acceptMutation.isPending}
               onClick={() => acceptMutation.mutate()}
             >
-              {acceptMutation.isPending ? tr('加入中…', 'Joining…') : tr('加入该方向', 'Join this direction')}
+              {acceptMutation.isPending ? tr('加入中…', 'Joining…') : tr('加入该课题', 'Join this topic')}
             </button>
           </>
         )}

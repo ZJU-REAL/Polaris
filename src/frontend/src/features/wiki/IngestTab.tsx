@@ -114,7 +114,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
         toast(
-          tr('该项目已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this direction — wait for it to finish.'),
+          tr('该课题已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this topic — wait for it to finish.'),
           'error',
         );
         void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });

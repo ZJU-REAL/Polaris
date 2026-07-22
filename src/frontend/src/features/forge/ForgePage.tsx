@@ -390,7 +390,7 @@ export function ForgePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openGates } = useShell();
-  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
   const pid = currentProjectId;
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -559,32 +559,6 @@ export function ForgePage() {
     setDeepOpen(true);
   }
 
-  // —— 无项目：引导创建 ——
-  if (!projectsLoading && projects.length === 0) {
-    return (
-      <div className="page fadeup">
-        <PageHead
-          eyebrow="Stage 01 · Idea Forge"
-          title={tr('想法生成', 'Idea Forge')}
-          sub={tr('从知识库分析研究空白，生成候选想法。', 'Analyze research gaps in the knowledge base and generate candidate ideas.')}
-        />
-        <div className="card">
-          <EmptyState
-            icon="bulb"
-            title={tr('还没有研究方向', 'No research direction yet')}
-            desc={tr('想法生成需要一个研究方向和它的知识库：先创建方向并运行文献初始建库。', 'Idea Forge needs a direction and its knowledge base: create one and run the initial literature build first.')}
-            action={
-              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-                <Icon name="plus" size={14} />
-                {tr('新建研究方向', 'New direction')}
-              </button>
-            }
-          />
-        </div>
-      </div>
-    );
-  }
-
   const counts = state?.idea_counts;
 
   return (
@@ -594,10 +568,10 @@ export function ForgePage() {
         title={tr('想法生成', 'Idea Forge')}
         sub={
           currentProject
-            ? tr(`当前方向：${currentProject.name}`, `Current direction: ${currentProject.name}`)
+            ? tr(`当前课题：${currentProject.name}`, `Current topic: ${currentProject.name}`)
             : projectsLoading
-              ? tr('加载研究方向…', 'Loading directions…')
-              : tr('选择一个研究方向', 'Pick a research direction')
+              ? tr('加载课题…', 'Loading topics…')
+              : tr('选择一个课题', 'Pick a topic')
         }
         right={
           <div className="row gap8">
@@ -829,7 +803,7 @@ export function ForgePage() {
 
       {!pid ? (
         <div className="card">
-          <EmptyState compact icon="bulb" title={tr('请先选择研究方向', 'Pick a research direction first')} />
+          <EmptyState compact icon="bulb" title={tr('请先选择课题', 'Pick a topic first')} />
         </div>
       ) : listQuery.isLoading ? (
         <div className="card">

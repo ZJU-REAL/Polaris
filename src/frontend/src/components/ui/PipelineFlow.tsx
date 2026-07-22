@@ -35,7 +35,7 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
         </div>
         <span className="pill">
           <span className="dot" style={{ background: 'var(--ok)' }} />
-          {tr('当前方向', 'Current direction')} · {directionLabel}
+          {tr('当前课题', 'Current topic')} · {directionLabel}
         </span>
       </div>
       <div className="row" style={{ alignItems: 'stretch', gap: 0 }}>

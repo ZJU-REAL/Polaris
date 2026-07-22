@@ -1,8 +1,8 @@
 import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { Navigate, Outlet, createBrowserRouter, useOutletContext } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { RequireAuth } from './auth';
-import { ProjectProvider } from './project';
+import { ProjectProvider, useProject } from './project';
 
 // 路由级代码分割：每个页面独立 chunk，首屏只加载壳层与当前页
 function page<K extends string>(
@@ -31,6 +31,20 @@ function PageFallback() {
   );
 }
 
+/**
+ * 课题作用域路由守卫：确认没有任何课题时统一重定向到 /start，
+ * 替代各页面重复的「还没有课题」空态。加载中渲染骨架（不闪跳）；
+ * 加载失败（后端不可用）放行，由页面自身优雅降级。
+ * 透传 AppShell 的 Outlet context，子页面 useShell() 不受影响。
+ */
+function RequireTopic() {
+  const { projects, isLoading, isError } = useProject();
+  const ctx = useOutletContext();
+  if (isLoading) return <PageFallback />;
+  if (!isError && projects.length === 0) return <Navigate to="/start" replace />;
+  return <Outlet context={ctx} />;
+}
+
 export const router = createBrowserRouter([
   { path: '/login', element: page(() => import('../features/auth/LoginPage'), 'LoginPage') },
   {
@@ -43,24 +57,33 @@ export const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      { index: true, element: page(() => import('../features/dashboard/DashboardPage'), 'DashboardPage') },
+      // —— 课题作用域路由：没有任何课题时统一重定向到 /start ——
+      {
+        element: <RequireTopic />,
+        children: [
+          { index: true, element: page(() => import('../features/dashboard/DashboardPage'), 'DashboardPage') },
+          { path: 'voyages', element: page(() => import('../features/voyages/VoyagesPage'), 'VoyagesPage') },
+          { path: 'voyages/:id', element: page(() => import('../features/voyages/VoyageDetailPage'), 'VoyageDetailPage') },
+          { path: 'wiki', element: page(() => import('../features/wiki/WikiPage'), 'WikiPage') },
+          { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
+          { path: 'forge', element: page(() => import('../features/forge/ForgePage'), 'ForgePage') },
+          { path: 'ideas/:id', element: page(() => import('../features/forge/IdeaDetailPage'), 'IdeaDetailPage') },
+          { path: 'review', element: page(() => import('../features/review/ReviewPage'), 'ReviewPage') },
+          { path: 'experiment', element: page(() => import('../features/experiment/ExperimentPage'), 'ExperimentPage') },
+          { path: 'experiment/:id', element: page(() => import('../features/experiment/ExperimentDetailPage'), 'ExperimentDetailPage') },
+          { path: 'writer', element: page(() => import('../features/writer/WriterPage'), 'WriterPage') },
+          { path: 'writer/:id', element: page(() => import('../features/writer/WriterEditorPage'), 'WriterEditorPage') },
+          { path: 'paper-review', element: page(() => import('../features/paper-review/PaperReviewPage'), 'PaperReviewPage') },
+        ],
+      },
+      // —— 非课题作用域 ——
+      { path: 'start', element: page(() => import('../features/start/StartPage'), 'StartPage') },
       { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
       { path: 'projects/:id', element: page(() => import('../features/projects/ProjectDetailPage'), 'ProjectDetailPage') },
       { path: 'join/:token', element: page(() => import('../features/projects/JoinPage'), 'JoinPage') },
-      { path: 'voyages', element: page(() => import('../features/voyages/VoyagesPage'), 'VoyagesPage') },
-      { path: 'voyages/:id', element: page(() => import('../features/voyages/VoyageDetailPage'), 'VoyageDetailPage') },
       { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
-      { path: 'wiki', element: page(() => import('../features/wiki/WikiPage'), 'WikiPage') },
-      { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
-      { path: 'forge', element: page(() => import('../features/forge/ForgePage'), 'ForgePage') },
-      { path: 'ideas/:id', element: page(() => import('../features/forge/IdeaDetailPage'), 'IdeaDetailPage') },
-      { path: 'review', element: page(() => import('../features/review/ReviewPage'), 'ReviewPage') },
-      { path: 'experiment', element: page(() => import('../features/experiment/ExperimentPage'), 'ExperimentPage') },
-      { path: 'experiment/:id', element: page(() => import('../features/experiment/ExperimentDetailPage'), 'ExperimentDetailPage') },
-      { path: 'writer', element: page(() => import('../features/writer/WriterPage'), 'WriterPage') },
-      { path: 'writer/:id', element: page(() => import('../features/writer/WriterEditorPage'), 'WriterEditorPage') },
-      { path: 'paper-review', element: page(() => import('../features/paper-review/PaperReviewPage'), 'PaperReviewPage') },
-      { path: 'mcp-tools', element: page(() => import('../features/mcp/McpToolsPage'), 'McpToolsPage') },
+      // MCP 说明已并入设置页签，旧链接重定向
+      { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },
       { path: 'skills', element: page(() => import('../features/skills/SkillsPage'), 'SkillsPage') },
       { path: 'settings', element: page(() => import('../features/settings/SettingsPage'), 'SettingsPage') },
     ],

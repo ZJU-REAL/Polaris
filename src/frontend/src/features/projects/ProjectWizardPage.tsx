@@ -204,8 +204,8 @@ export function ProjectWizardPage() {
   }
 
   function validateBasics(): string | null {
-    if (!name.trim()) return tr('请填写方向名称', 'Please enter a direction name');
-    if (!statement.trim()) return tr('请用一句话定义这个研究方向', 'Please define this research direction in one sentence');
+    if (!name.trim()) return tr('请填写课题名称', 'Please enter a topic name');
+    if (!statement.trim()) return tr('请用一句话定义这个课题', 'Please define this topic in one sentence');
     if (includeTerms.length === 0) return tr('至少添加 1 个 include 关键词（标题/摘要命中才进入相关性判定）', 'Add at least 1 include term (papers must match it in title/abstract to be scored)');
     return null;
   }
@@ -345,7 +345,7 @@ export function ProjectWizardPage() {
       const created = await api.createProject({ name: name.trim(), definition: buildDefinition() });
       await queryClient.invalidateQueries({ queryKey: ['projects'] });
       setCurrentProjectId(created.id);
-      toast(tr('研究方向已创建', 'Research direction created'), 'ok');
+      toast(tr('课题已创建', 'Topic created'), 'ok');
       navigate(`/projects/${created.id}`);
     } catch (e) {
       toast(`${tr('创建失败：', 'Create failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
@@ -359,8 +359,8 @@ export function ProjectWizardPage() {
   return (
     <div className="page fadeup" style={{ maxWidth: 860 }}>
       <PageHead
-        eyebrow="Polaris · Directions"
-        title={tr('新建研究方向', 'New research direction')}
+        eyebrow="Polaris · Topics"
+        title={tr('新建课题', 'New topic')}
         sub={tr('填三项必填信息即可创建；高级设置可交给 AI 草拟后再微调。', 'Fill in three required fields to create; let AI draft the advanced settings, then tweak.')}
       />
 
@@ -382,11 +382,11 @@ export function ProjectWizardPage() {
       {tab === 0 && (
         <>
           <div className="card card-pad">
-            <FormField label={tr('方向名称', 'Name')} hint={tr('将显示在侧栏与项目列表中', 'Shown in the sidebar and project list')}>
+            <FormField label={tr('课题名称', 'Name')} hint={tr('将显示在侧栏与课题列表中', 'Shown in the sidebar and topic list')}>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)}
                 placeholder={tr('如：LLM 自主科研智能体', 'e.g. LLM autonomous research agents')} />
             </FormField>
-            <FormField label={tr('一句话定义', 'Statement')} hint={tr('用一句话说清这个方向研究什么、为什么重要', 'One sentence on what this direction studies and why it matters')}>
+            <FormField label={tr('一句话定义', 'Statement')} hint={tr('用一句话说清这个课题研究什么、为什么重要', 'One sentence on what this topic studies and why it matters')}>
               <textarea className="textarea" rows={3} value={statement} onChange={(e) => setStatement(e.target.value)}
                 placeholder={tr('如：让 LLM agent 端到端完成从文献调研到论文的研究方法与系统', 'e.g. Methods and systems for LLM agents to go end-to-end from literature survey to paper')} />
             </FormField>
@@ -416,7 +416,7 @@ export function ProjectWizardPage() {
       {tab === 1 && (
         <>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', margin: '0 2px 12px', lineHeight: 1.6 }}>
-            {tr('以下内容全部可选，可直接创建方向。', 'Everything below is optional — you can create the direction right away.')}
+            {tr('以下内容全部可选，可直接创建课题。', 'Everything below is optional — you can create the topic right away.')}
             {aiFilled.size > 0 && tr(' AI 已预填部分分区，请确认或微调。', ' AI pre-filled some sections; review or tweak them.')}
           </div>
           <div className="col gap10">
@@ -426,7 +426,7 @@ export function ProjectWizardPage() {
                 badge={aiFilled.has(s.key) ? tr('AI 草稿', 'AI draft') : undefined}>
                 {s.key === 'goals' && (
                   <>
-                    <FormField label={tr('研究目标', 'Goals')} hint={tr('这个方向希望达成什么', 'What this direction aims to achieve')}>
+                    <FormField label={tr('研究目标', 'Goals')} hint={tr('这个课题希望达成什么', 'What this topic aims to achieve')}>
                       <ListEditor items={goals} onChange={setGoals} placeholder={tr('输入一个目标后回车', 'Type a goal, then press Enter')} />
                     </FormField>
                     <div className="row gap16" style={{ alignItems: 'flex-start' }}>
@@ -481,7 +481,7 @@ export function ProjectWizardPage() {
                 {s.key === 'anchors' && (
                   <>
                     <div className="field-hint" style={{ marginBottom: 10 }}>
-                      {tr('体现方向研究品味的代表作（可留空）', 'Representative papers that capture the taste of this direction (optional)')}
+                      {tr('体现课题研究品味的代表作（可留空）', 'Representative papers that capture the taste of this topic (optional)')}
                     </div>
                     <div className="col gap12">
                       {anchors.map((a, i) => (
@@ -503,7 +503,7 @@ export function ProjectWizardPage() {
                               value={a.url ?? ''}
                               onChange={(e) => setAnchors(anchors.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))} />
                           </div>
-                          <input className="input" style={{ width: '100%' }} placeholder={tr('为什么它是这个方向的锚点', 'Why this paper anchors the direction')}
+                          <input className="input" style={{ width: '100%' }} placeholder={tr('为什么它是这个课题的锚点', 'Why this paper anchors the topic')}
                             value={a.reason ?? ''}
                             onChange={(e) => setAnchors(anchors.map((x, j) => (j === i ? { ...x, reason: e.target.value } : x)))} />
                         </div>
@@ -575,7 +575,7 @@ export function ProjectWizardPage() {
         </button>
         <button className="btn btn-primary" onClick={() => void create()} disabled={busy}>
           <Icon name="check" size={14} />
-          {submitting ? tr('创建中…', 'Creating…') : tr('创建方向', 'Create direction')}
+          {submitting ? tr('创建中…', 'Creating…') : tr('创建课题', 'Create topic')}
         </button>
       </div>
     </div>

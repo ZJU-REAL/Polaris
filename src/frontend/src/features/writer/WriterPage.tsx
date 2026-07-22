@@ -236,7 +236,7 @@ function ManuscriptCard({
 export function WriterPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
   const pid = currentProjectId;
   const [modalOpen, setModalOpen] = useState(false);
   const [view, setView] = useState<ViewMode>('active');
@@ -392,31 +392,6 @@ export function WriterPage() {
 
   const confirmBusy = deleteOne.isPending || batchDelete.isPending || emptyTrash.isPending;
 
-  if (!projectsLoading && projects.length === 0) {
-    return (
-      <div className="page fadeup">
-        <PageHead
-          eyebrow="Stage 04 · Paper Writer"
-          title={tr('论文撰写', 'Paper Writer')}
-          sub={tr('从模板起稿、AI 起草到编译预览与投稿审批。', 'From template and AI drafting to compile preview and submission approval.')}
-        />
-        <div className="card">
-          <EmptyState
-            icon="pen"
-            title={tr('还没有研究方向', 'No research directions yet')}
-            desc={tr('先创建研究方向，完成实验后再开始写论文。', 'Create a research direction and finish experiments before writing a paper.')}
-            action={
-              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-                <Icon name="plus" size={14} />
-                {tr('新建研究方向', 'New direction')}
-              </button>
-            }
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="page fadeup" style={{ maxWidth: 1180 }}>
       <PageHead
@@ -424,10 +399,10 @@ export function WriterPage() {
         title={tr('论文撰写', 'Paper Writer')}
         sub={
           currentProject
-            ? `${tr('当前方向：', 'Current direction: ')}${currentProject.name}`
+            ? `${tr('当前课题：', 'Current topic: ')}${currentProject.name}`
             : projectsLoading
-              ? tr('加载研究方向…', 'Loading directions…')
-              : tr('选择一个研究方向', 'Pick a research direction')
+              ? tr('加载课题…', 'Loading topics…')
+              : tr('选择一个课题', 'Pick a topic')
         }
         right={
           <button className="btn btn-primary" disabled={!pid} onClick={() => setModalOpen(true)}>
@@ -492,7 +467,7 @@ export function WriterPage() {
       {!pid ? (
         <div className="card">
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? tr('加载研究方向…', 'Loading directions…') : tr('请先选择研究方向', 'Pick a research direction first')}
+            {projectsLoading ? tr('加载课题…', 'Loading topics…') : tr('请先选择课题', 'Pick a topic first')}
           </div>
         </div>
       ) : activeQ.isLoading ? (

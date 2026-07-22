@@ -151,7 +151,7 @@ function AddPaperModal({
       open={open}
       onClose={onClose}
       title={tr('添加文献', 'Add paper')}
-      sub={tr('手动把一篇论文加进当前研究方向的论文库', 'Manually add a paper to this direction’s library')}
+      sub={tr('手动把一篇论文加进当前课题的论文库', 'Manually add a paper to this topic’s library')}
       width={520}
       footer={
         <>

@@ -74,7 +74,7 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
       toast(tr('已添加协作者', 'Collaborator added'), 'ok');
     },
     onError: (e) => {
-      if (isForbidden(e)) toast(tr('需要研究方向 owner 或管理员权限', 'Requires research-direction owner or admin permission'), 'error');
+      if (isForbidden(e)) toast(tr('需要课题 owner 或管理员权限', 'Requires topic owner or admin permission'), 'error');
       else toast(`${tr('添加失败：', 'Add failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
     },
   });
@@ -86,7 +86,7 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
       toast(tr('已移除协作者', 'Collaborator removed'), 'ok');
     },
     onError: (e) => {
-      if (isForbidden(e)) toast(tr('需要研究方向 owner 或管理员权限', 'Requires research-direction owner or admin permission'), 'error');
+      if (isForbidden(e)) toast(tr('需要课题 owner 或管理员权限', 'Requires topic owner or admin permission'), 'error');
       else if (e instanceof ApiError && e.status === 409) toast(tr('不能移除 owner', 'Cannot remove the owner'), 'error');
       else toast(`${tr('移除失败：', 'Remove failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
     },
@@ -98,7 +98,7 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
       setShareUrl(`${window.location.origin}${link.join_path}`);
     },
     onError: (e) => {
-      if (isForbidden(e)) toast(tr('需要研究方向 owner 或管理员权限', 'Requires research-direction owner or admin permission'), 'error');
+      if (isForbidden(e)) toast(tr('需要课题 owner 或管理员权限', 'Requires topic owner or admin permission'), 'error');
       else toast(`${tr('生成链接失败：', 'Create link failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
     },
   });

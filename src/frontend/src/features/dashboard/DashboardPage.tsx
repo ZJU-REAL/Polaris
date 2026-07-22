@@ -262,41 +262,6 @@ function GatePreview({ gates, gatesError, openGates }: {
   );
 }
 
-/** 无研究方向时的引导空状态。 */
-function OnboardingEmpty() {
-  const navigate = useNavigate();
-  return (
-    <div className="card card-pad" style={{ textAlign: 'center', padding: '72px 40px' }}>
-      <div
-        style={{
-          width: 52,
-          height: 52,
-          borderRadius: 14,
-          margin: '0 auto 18px',
-          background: 'var(--accent-soft)',
-          color: 'var(--accent)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Icon name="sparkle" size={24} />
-      </div>
-      <div style={{ fontSize: 17, fontWeight: 680, marginBottom: 8 }}>{tr('从一个研究方向开始', 'Start with a research direction')}</div>
-      <div style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 460, margin: '0 auto 22px', lineHeight: 1.6 }}>
-        {tr(
-          'Polaris 的一切都围绕研究方向展开：文献追踪、想法生成、实验与论文。通过一次结构化访谈，把你的兴趣固化为可执行的方向定义。',
-          'Everything in Polaris revolves around a research direction: literature tracking, idea generation, experiments and papers. A structured interview turns your interests into an actionable direction definition.',
-        )}
-      </div>
-      <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-        <Icon name="plus" size={14} />
-        {tr('新建研究方向', 'New research direction')}
-      </button>
-    </div>
-  );
-}
-
 /** GET /projects/{pid}/stats → 4 张指标卡（后端不可用时显示 —）。 */
 function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number): StatCardProps[] {
   return [
@@ -335,7 +300,7 @@ function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number)
 export function DashboardPage() {
   const navigate = useNavigate();
   const { pendingGates, gatesError, openGates } = useShell();
-  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { currentProject, currentProjectId } = useProject();
 
   const statsQuery = useQuery({
     queryKey: ['stats', currentProjectId],
@@ -345,19 +310,6 @@ export function DashboardPage() {
     refetchInterval: 60_000,
   });
 
-  // 无项目：引导创建方向
-  if (!projectsLoading && projects.length === 0) {
-    return (
-      <div className="page fadeup">
-        <PageHead
-          eyebrow="Polaris · Autonomous Research"
-          title={tr('总览', 'Dashboard')}
-        />
-        <OnboardingEmpty />
-      </div>
-    );
-  }
-
   const statCards = buildStatCards(statsQuery.data, pendingGates.length);
   const stages = buildPipelineStages(statsQuery.data);
 
@@ -365,7 +317,7 @@ export function DashboardPage() {
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Autonomous Research"
-        title={tr('总览', 'Dashboard')}
+        title={tr('工作台', 'Workbench')}
         right={
           <>
             <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>

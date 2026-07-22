@@ -96,7 +96,7 @@ function EntryRow({
           )}
           {entry.last_paper_id === null && (
             <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-              {tr('源方向已删除', 'Source direction deleted')}
+              {tr('源课题已删除', 'Source topic deleted')}
             </span>
           )}
           {entry.visit_count > 0 && (
