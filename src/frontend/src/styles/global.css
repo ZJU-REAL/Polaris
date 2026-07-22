@@ -71,13 +71,19 @@ input {
 .nav-collapsed .sidebar { width: 66px; }
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
 .nav-collapsed .sb-brand { justify-content: center; margin: 18px 0 12px; }
-.nav-collapsed .sb-scroll { padding: 4px 8px 14px; }
+.nav-collapsed .sb-scroll { padding: 0 8px 14px; }
 /* 收起态：保留小标题占位高度（文字隐藏、盒模型与展开态相同），
    否则流水线一组图标会整体上移、与展开态对不上 */
 .nav-collapsed .sb-section { padding-left: 0; padding-right: 0; overflow: hidden; white-space: nowrap; color: transparent; }
 /* 收起态：整行居中，仅留图标（行高与展开态相同，图标尺寸不变） */
-.nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 8px 0; }
+.nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 9px 0; }
 .nav-collapsed .nav-item .nav-label { display: none; }
+/* 收起态：课题容器优雅降级——icon-only、保留容器底色与边框，切换器按钮在容器顶部 */
+.nav-collapsed .sb-topic-wrap { margin: 6px 8px 4px; }
+.nav-collapsed .topic-zone { padding: 4px; }
+.nav-collapsed .topic-zone-hr { margin: 4px -4px 5px; }
+.nav-collapsed .topic-zone-hr.inset { margin: 4px 2px 5px; }
+.nav-collapsed .topic-switch { justify-content: center; gap: 0; padding: 0; }
 .nav-toggle { margin-right: 2px; }
 /* 图形标中心对齐图标列中线（12+24/2+... = 33px），与收起态一致 */
 /* 左边距使图形标(41px)中心落在 12.5+41/2 = 33px（= 收起态居中于 66px 侧栏的中心，
@@ -86,26 +92,61 @@ input {
 .sb-brand h1 { font-size: 14px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .sb-brand p { font-size: 11px; color: var(--text-3); margin: 1px 0 0; font-family: var(--mono); }
 
-.sb-scroll { flex: 1; overflow-y: auto; padding: 4px 12px 14px; }
+.sb-scroll { flex: 1; overflow-y: auto; padding: 0 12px 14px; }
 .sb-section {
   font-size: 11px; font-weight: 600; color: var(--text-4);
-  letter-spacing: 0.04em; text-transform: uppercase; padding: 14px 10px 6px;
+  letter-spacing: 0.04em; text-transform: uppercase; padding: 16px 10px 6px;
 }
+
+/* —— 课题区：eyebrow + 圆角视觉容器（切换器为容器头部，导航在容器内略有内缩） ——
+   容器与侧栏均不裁剪 overflow：切换器下拉菜单要能向右溢出到主列上（侧栏 z-index 已抬高）。 */
+.sb-topic-wrap { margin: 6px 12px 4px; flex-shrink: 0; }
+.sb-section.sb-topic-eyebrow { padding: 4px 10px 6px; }
+.topic-zone {
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  padding: 6px;
+  box-shadow: var(--shadow-card);
+}
+.topic-zone .nav-item:last-child { margin-bottom: 0; }
+/* 容器内 hairline：切换器头部下方全出血；「课题设置」上方内缩一档 */
+.topic-zone-hr { height: 1px; background: var(--border); margin: 5px -6px 6px; }
+.topic-zone-hr.inset { margin: 5px 6px 6px; }
+
+/* —— 课题切换器（容器头部）：全宽、hover 浅底、打开态浅蓝底 —— */
+.topic-switch {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; height: 38px; padding: 0 9px;
+  border: none; border-radius: 8px;
+  background: transparent; cursor: pointer;
+  font-family: var(--sans);
+  transition: background 0.12s;
+}
+.topic-switch:hover { background: var(--nav-hover); }
+.topic-switch.open { background: var(--accent-soft); }
+.topic-switch-label {
+  flex: 1; min-width: 0; text-align: left;
+  font-size: 12.5px; font-weight: 620; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topic-switch-label.placeholder { color: var(--text-3); }
 
 .nav-item {
   display: flex; align-items: center; gap: 11px;
-  padding: 8px 9px; border-radius: 9px; cursor: pointer;
+  padding: 9px 9px; border-radius: 9px; cursor: pointer;
   font-size: 13.5px; color: var(--text-2); font-weight: 500;
-  position: relative; user-select: none; margin-bottom: 1px;
+  position: relative; user-select: none; margin-bottom: 4px;
   text-decoration: none;
   transition: background 0.12s, color 0.12s;
 }
-.nav-item:hover { background: rgba(10, 30, 66, 0.04); color: var(--text); }
-.nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
+.nav-item:hover { background: var(--nav-hover); color: var(--text); }
+/* 选中态：浙大蓝浅底 + 蓝色图标文字（弃用白色胶囊，明度对白色容器与灰蓝侧栏底都成立） */
+.nav-item.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .nav-item.active .nav-ic { color: var(--accent); }
-/* 24px 图标框、图标居中：展开态 icon 中心 = 12(scroll)+9(item)+12 = 33px；
-   收起态 icon 居中于 50px 轨道 = 8+13+12 = 33px，两态完全对齐 */
-.nav-ic { width: 24px; height: 19px; flex-shrink: 0; color: var(--text-3); display: flex; align-items: center; justify-content: center; }
+/* 24px 图标框、图标居中：个人区展开态 icon 中心 = 12(scroll)+9(item)+12 = 33px；
+   收起态 icon 居中于图标轨道 = 33px；课题容器内因内缩整体右移 6px，属有意为之 */
+.nav-ic { width: 24px; height: 20px; flex-shrink: 0; color: var(--text-3); display: flex; align-items: center; justify-content: center; }
 
 .sb-foot { padding: 8px 10px; border-top: 0.5px solid var(--border-2); }
 

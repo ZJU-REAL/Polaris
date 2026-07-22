@@ -134,45 +134,17 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
   };
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', padding: collapsed ? '0 8px 6px' : '0 12px 6px' }}>
-      {/* 触发器：侧栏区头（图标 + 当前课题名 + 折叠箭头）；折叠态只留图标 */}
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      {/* 触发器：课题容器头部（图标 + 当前课题名 + 折叠箭头）；折叠态只留图标 */}
       <button
         onClick={() => setOpen((o) => !o)}
+        className={'topic-switch' + (open ? ' open' : '')}
         title={currentProject ? `${tr('切换课题', 'Switch topic')} · ${currentProject.name}` : tr('切换课题', 'Switch topic')}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'flex-start',
-          gap: collapsed ? 0 : 8,
-          width: '100%',
-          height: 34,
-          padding: collapsed ? 0 : '0 8px 0 9px',
-          borderRadius: 9,
-          border: `0.5px solid ${open ? 'var(--accent)' : 'var(--border-2)'}`,
-          background: open ? 'var(--accent-soft)' : 'var(--surface)',
-          cursor: 'pointer',
-          fontFamily: 'var(--sans)',
-          transition: 'border-color .12s, background .12s',
-        }}
       >
-        <Icon name="layers" size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+        <Icon name="layers" size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
         {!collapsed && (
           <>
-            <span
-              style={{
-                flex: 1,
-                fontSize: 12.5,
-                fontWeight: 620,
-                textAlign: 'left',
-                color: currentProject ? 'var(--text)' : 'var(--text-3)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                minWidth: 0,
-              }}
-            >
-              {triggerLabel}
-            </span>
+            <span className={'topic-switch-label' + (currentProject ? '' : ' placeholder')}>{triggerLabel}</span>
             <Icon
               name="chevDown"
               size={12}
@@ -189,8 +161,8 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
           style={{
             position: 'absolute',
             ...(collapsed
-              ? { top: 0, left: 'calc(100% + 6px)' }
-              : { top: 'calc(100% + 4px)', left: 12 }),
+              ? { top: 0, left: 'calc(100% + 18px)' }
+              : { top: 'calc(100% + 8px)', left: 0 }),
             zIndex: 40,
             width: 280,
             padding: 6,
@@ -463,29 +435,37 @@ export function AppShell() {
           {/* 收起后只留左侧图形标：直接不渲染字标，杜绝溢出（不靠 CSS 隐藏） */}
           {!navCollapsed && <PolarisWordmark height={30} />}
         </div>
-        {/* —— 课题区区头：课题切换器（只统辖下方课题作用域的导航） —— */}
-        <TopicSwitcher collapsed={navCollapsed} />
-        <div className="sb-scroll scroll">
-          {/* —— 课题区：工作台 + 流水线 + 任务 + 课题设置 —— */}
-          {NAV_MAIN.map((n) => (
-            <NavItem key={n.to} n={n} />
-          ))}
-          {NAV_PIPE.filter((n) => {
-            const key = FEATURE_BY_PATH[n.to];
-            return key == null || me?.features?.[key] !== false;
-          }).map((n) => (
-            <NavItem key={n.to} n={n} />
-          ))}
-          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
-          {currentProjectId && (
-            <NavItem n={{ to: `/projects/${currentProjectId}`, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
-          )}
+        {/* —— 课题区：eyebrow + 圆角视觉容器。切换器是容器头部，
+            容器内是课题作用域导航（工作台 + 流水线 + 任务 + 课题设置） —— */}
+        <div className="sb-topic-wrap">
+          <div className="sb-section sb-topic-eyebrow">{tr('课题', 'Topic')}</div>
+          <div className="topic-zone">
+            <TopicSwitcher collapsed={navCollapsed} />
+            <div className="topic-zone-hr" />
+            {NAV_MAIN.map((n) => (
+              <NavItem key={n.to} n={n} />
+            ))}
+            {NAV_PIPE.filter((n) => {
+              const key = FEATURE_BY_PATH[n.to];
+              return key == null || me?.features?.[key] !== false;
+            }).map((n) => (
+              <NavItem key={n.to} n={n} />
+            ))}
+            <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
+            {currentProjectId && (
+              <>
+                <div className="topic-zone-hr inset" />
+                <NavItem n={{ to: `/projects/${currentProjectId}`, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
+              </>
+            )}
+          </div>
+        </div>
 
-          {/* —— 个人区：跨课题的个人页面 —— */}
+        {/* —— 个人区：跨课题的个人页面（设置入口在底部头像菜单里，不重复占位） —— */}
+        <div className="sb-scroll scroll">
           <div className="sb-section">{tr('个人', 'Personal')}</div>
           <NavItem n={{ to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' }} />
           <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
-          <NavItem n={{ to: '/settings', icon: 'settings', zh: '设置', en: 'Settings' }} />
         </div>
         <div className="sb-foot">
           <UserMenu me={me} collapsed={navCollapsed} />

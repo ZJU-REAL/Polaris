@@ -12,6 +12,8 @@
   --surface:       #ffffff;   /* cards */
   --surface-2:     #f2f5f9;   /* inset / hover */
   --surface-3:     #e8edf4;   /* deeper inset / code blocks */
+  /* 导航 hover 浅底：半透明墨蓝，在白色容器与灰蓝侧栏底上都成立 */
+  --nav-hover:     rgba(10, 30, 66, 0.05);
 
   /* — Lines — */
   --border:        #e2e7ee;
