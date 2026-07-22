@@ -10,7 +10,7 @@ import { KnobRange } from '../../components/ui/KnobRange';
 import { FormField } from '../../components/ui/FormField';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import {
@@ -231,7 +231,7 @@ function LeaderboardTab({
         title={tr('排行榜为空', 'Leaderboard is empty')}
         desc={tr('先在想法生成页生成候选想法，再运行一次评审。', 'Generate candidate ideas on the Idea Forge page first, then run a review.')}
         action={
-          <button className="btn btn-ghost" onClick={() => navigate('/forge')}>
+          <button className="btn btn-ghost" onClick={() => navigate(topicPath(pid, 'forge'))}>
             <Icon name="bulb" size={14} />
             {tr('前往想法生成', 'Go to Idea Forge')}
           </button>
@@ -342,7 +342,7 @@ function LeaderboardTab({
                 <button
                   className="btn btn-soft sm"
                   title={tr('从该想法发起实验', 'Start an experiment from this idea')}
-                  onClick={() => navigate(`/experiment?new=${r.id}`)}
+                  onClick={() => navigate(topicPath(pid, `experiment?new=${r.id}`))}
                 >
                   <Icon name="flask" size={12} />
                   {tr('发起实验', 'Start experiment')}
@@ -541,7 +541,7 @@ function MatchesTab({
 export function ReviewPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
   const pid = currentProjectId;
 
   const tab: ReviewTab = searchParams.get('tab') === 'matches' ? 'matches' : 'leaderboard';
@@ -589,31 +589,6 @@ export function ReviewPage() {
     !members ||
     members.some((m) => m.role === 'owner' && ((me?.id && m.user_id === me.id) || (me?.email && m.email === me.email)));
 
-  if (!projectsLoading && projects.length === 0) {
-    return (
-      <div className="page fadeup">
-        <PageHead
-          eyebrow="Stage 02 · Idea Review"
-          title={tr('想法评审', 'Idea Review')}
-          sub={tr('AI 评审员对候选想法辩论排序，晋级需人工审批。', 'AI reviewers debate and rank candidate ideas; promotion needs human approval.')}
-        />
-        <div className="card">
-          <EmptyState
-            icon="scale"
-            title={tr('还没有研究方向', 'No research direction yet')}
-            desc={tr('先创建研究方向、生成候选想法，再运行评审。', 'Create a research direction and generate candidate ideas first, then run a review.')}
-            action={
-              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-                <Icon name="plus" size={14} />
-                {tr('新建研究方向', 'New research direction')}
-              </button>
-            }
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="page fadeup" style={{ maxWidth: 1280 }}>
       <PageHead
@@ -621,10 +596,10 @@ export function ReviewPage() {
         title={tr('想法评审', 'Idea Review')}
         sub={
           currentProject
-            ? `${tr('当前方向', 'Current direction')}：${currentProject.name}`
+            ? `${tr('当前课题', 'Current topic')}：${currentProject.name}`
             : projectsLoading
-              ? tr('加载研究方向…', 'Loading directions…')
-              : tr('选择一个研究方向', 'Pick a research direction')
+              ? tr('加载课题…', 'Loading topics…')
+              : tr('选择一个课题', 'Pick a topic')
         }
         right={
           <button className="btn btn-primary" disabled={!pid || !!runningVoyage} onClick={() => setModalOpen(true)}>
@@ -679,7 +654,7 @@ export function ReviewPage() {
       <div className="card" style={{ overflow: 'hidden', minHeight: 320 }}>
         {!pid ? (
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? tr('加载研究方向…', 'Loading directions…') : tr('请先选择研究方向', 'Pick a research direction first')}
+            {projectsLoading ? tr('加载课题…', 'Loading topics…') : tr('请先选择课题', 'Pick a topic first')}
           </div>
         ) : tab === 'leaderboard' ? (
           <LeaderboardTab

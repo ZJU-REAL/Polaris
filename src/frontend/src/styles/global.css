@@ -71,13 +71,25 @@ input {
 .nav-collapsed .sidebar { width: 66px; }
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
 .nav-collapsed .sb-brand { justify-content: center; margin: 18px 0 12px; }
-.nav-collapsed .sb-scroll { padding: 4px 8px 14px; }
-/* 收起态：保留小标题占位高度（文字隐藏、盒模型与展开态相同），
-   否则流水线一组图标会整体上移、与展开态对不上 */
-.nav-collapsed .sb-section { padding-left: 0; padding-right: 0; overflow: hidden; white-space: nowrap; color: transparent; }
+.nav-collapsed .sb-scroll { padding: 0 8px 14px; }
+/* 收起态：eyebrow 盒子与展开态逐像素等高——不改 padding/行高/高度，只把文字弄透明
+   （nowrap + overflow hidden 防止窄栏下换行改变高度），下方所有条目纵向零位移。
+   只作用于侧栏，别误伤审批抽屉里复用 .sb-section 的标签。
+   分割线画在同一盒子内居中，水平中心 = 33px 图标轨道中线。 */
+.nav-collapsed .sidebar .sb-section { position: relative; overflow: hidden; white-space: nowrap; color: transparent; }
+.nav-collapsed .sidebar .sb-section::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 24px; height: 1px; transform: translate(-50%, -50%);
+  background: var(--border);
+}
+/* 第一组（实验室）上方贴着 logo，不画线 */
+.nav-collapsed .sb-nav-static > .sb-section:first-child::after { content: none; }
 /* 收起态：整行居中，仅留图标（行高与展开态相同，图标尺寸不变） */
-.nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 8px 0; }
+.nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 9px 0; }
 .nav-collapsed .nav-item .nav-label { display: none; }
+/* 收起态：非滚动导航区收窄；切换器 icon-only、保留描边 */
+.nav-collapsed .sb-nav-static { padding: 0 8px; }
+.nav-collapsed .topic-switch { justify-content: center; gap: 0; padding: 0; }
 .nav-toggle { margin-right: 2px; }
 /* 图形标中心对齐图标列中线（12+24/2+... = 33px），与收起态一致 */
 /* 左边距使图形标(41px)中心落在 12.5+41/2 = 33px（= 收起态居中于 66px 侧栏的中心，
@@ -86,28 +98,64 @@ input {
 .sb-brand h1 { font-size: 14px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .sb-brand p { font-size: 11px; color: var(--text-3); margin: 1px 0 0; font-family: var(--mono); }
 
-.sb-scroll { flex: 1; overflow-y: auto; padding: 4px 12px 14px; }
+.sb-scroll { flex: 1; overflow-y: auto; padding: 0 12px 14px; }
+/* 分组 eyebrow：三组（实验室/课题研究/个人）样式完全一致；
+   上 padding 20 + 上一条目 margin 4 ≈ 24px 分组间距，展开态只靠间距区分、不加分隔线。
+   line-height 定死 14px → 盒子总高 = 20+14+6 = 40px（first-child 特例 12+14+6 = 32px），
+   收起态沿用同一盒模型（只隐藏文字），保证收放时下方条目纵向不跳。 */
 .sb-section {
-  font-size: 11px; font-weight: 600; color: var(--text-4);
-  letter-spacing: 0.04em; text-transform: uppercase; padding: 14px 10px 6px;
+  font-size: 11px; font-weight: 600; color: var(--text-4); line-height: 14px;
+  letter-spacing: 0.04em; text-transform: uppercase; padding: 20px 10px 6px;
 }
+
+/* —— 非滚动导航区（实验室 + 课题研究两组）——
+   放在 sb-scroll 之外：课题切换器的下拉菜单要能向右溢出到主列上，
+   不能被滚动容器的 overflow 裁剪（侧栏本身 z-index 已抬高、不裁剪）。 */
+.sb-nav-static { padding: 0 12px; flex-shrink: 0; }
+/* 第一组（实验室）标签与 logo 间距 ≈ 24px（brand margin 12 + 这里 12） */
+.sb-nav-static > .sb-section:first-child { padding-top: 12px; }
+
+/* —— 课题切换器：课题研究组内的一个「特殊条目」——
+   与普通条目同高（38px），常驻 1px 描边表达「可点切换」，打开态浅蓝底；
+   与下方「工作台」之间留 8px。
+   图标走统一轨道：内 padding 8 + 描边 1 = nav-item 的 9，nav-ic 中心同为 33px；
+   gap 11 与 nav-item 一致，标签起点也对齐（56px）。 —— */
+.topic-switch {
+  display: flex; align-items: center; gap: 11px;
+  width: 100%; height: 38px; padding: 0 8px;
+  border: 1px solid var(--border-2); border-radius: 9px;
+  background: transparent; cursor: pointer;
+  font-family: var(--sans);
+  margin-bottom: 8px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.topic-switch:hover { background: var(--nav-hover); border-color: var(--border-strong); }
+.topic-switch.open { background: var(--accent-soft); border-color: var(--accent-soft-2); }
+.topic-switch-label {
+  flex: 1; min-width: 0; text-align: left;
+  font-size: 12.5px; font-weight: 620; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topic-switch-label.placeholder { color: var(--text-3); }
 
 .nav-item {
   display: flex; align-items: center; gap: 11px;
-  padding: 8px 9px; border-radius: 9px; cursor: pointer;
+  padding: 9px 9px; border-radius: 9px; cursor: pointer;
   font-size: 13.5px; color: var(--text-2); font-weight: 500;
-  position: relative; user-select: none; margin-bottom: 1px;
+  position: relative; user-select: none; margin-bottom: 4px;
   text-decoration: none;
   transition: background 0.12s, color 0.12s;
 }
-.nav-item:hover { background: rgba(10, 30, 66, 0.04); color: var(--text); }
-.nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
+.nav-item:hover { background: var(--nav-hover); color: var(--text); }
+/* 选中态：浙大蓝浅底 + 蓝色图标文字（弃用白色胶囊） */
+.nav-item.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .nav-item.active .nav-ic { color: var(--accent); }
-/* 24px 图标框、图标居中：展开态 icon 中心 = 12(scroll)+9(item)+12 = 33px；
-   收起态 icon 居中于 50px 轨道 = 8+13+12 = 33px，两态完全对齐 */
-.nav-ic { width: 24px; height: 19px; flex-shrink: 0; color: var(--text-3); display: flex; align-items: center; justify-content: center; }
+/* 24px 图标框、图标居中：展开态 icon 中心 = 12(区 padding)+9(item)+12 = 33px；
+   收起态 icon 居中于图标轨道 = 33px，两态对齐 */
+.nav-ic { width: 24px; height: 20px; flex-shrink: 0; color: var(--text-3); display: flex; align-items: center; justify-content: center; }
 
-.sb-foot { padding: 8px 10px; border-top: 0.5px solid var(--border-2); }
+/* 头像中心对齐图标轨道：7.5(这里) + 0.5(trigger 边框) + 8(trigger padding) + 17(头像半径) = 33px */
+.sb-foot { padding: 8px 7.5px; border-top: 0.5px solid var(--border-2); }
 
 /* —— 用户菜单（点头像弹出 设置 / 邀请 / 退出） —— */
 .user-menu-root { position: relative; }
@@ -121,8 +169,8 @@ input {
 .user-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .user-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-role { font-size: 12px; color: var(--text-3); }
-/* 收起态：仅头像，居中；隐藏名字/角色/箭头 */
-.nav-collapsed .sb-foot { padding: 8px 0; }
+/* 收起态：仅头像，居中（8px 侧距与导航区一致 → 头像中心同在 33px 轨道）；隐藏名字/角色/箭头 */
+.nav-collapsed .sb-foot { padding: 8px; }
 .nav-collapsed .user-trigger { justify-content: center; gap: 0; padding: 8px 0; }
 .nav-collapsed .user-info { display: none; }
 

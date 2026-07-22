@@ -7,7 +7,7 @@ import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
@@ -862,7 +862,7 @@ function ReviewDiscussion({ sessionId }: { sessionId: string }) {
 export function PaperReviewPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
   const pid = currentProjectId;
 
   const [msId, setMsId] = useState<string | null>(null);
@@ -1001,37 +1001,6 @@ export function PaperReviewPage() {
 
   /* ---------------- 渲染 ---------------- */
 
-  if (!projectsLoading && projects.length === 0) {
-    return (
-      <div className="page fadeup">
-        <PageHead
-          eyebrow="Stage 05 · Paper Review"
-          title={tr('论文评审', 'Paper Review')}
-          sub={tr(
-            '先核验引用、逐条查错，再由三位 AI 评审员打分，汇总出接收/拒稿建议。',
-            'Citations and facts are checked first, then three AI reviewers score the paper, aggregated into an accept/reject recommendation.',
-          )}
-        />
-        <div className="card">
-          <EmptyState
-            icon="shield"
-            title={tr('还没有研究方向', 'No research direction yet')}
-            desc={tr(
-              '先创建研究方向，写出论文稿件并编译成功后，才能发起同行评审。',
-              'Create a research direction, write a manuscript, and compile it successfully before starting peer review.',
-            )}
-            action={
-              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-                <Icon name="plus" size={14} />
-                {tr('新建研究方向', 'New research direction')}
-              </button>
-            }
-          />
-        </div>
-      </div>
-    );
-  }
-
   const noManuscripts = !manuscriptsQuery.isLoading && !manuscriptsQuery.isError && reviewable.length === 0;
 
   return (
@@ -1041,10 +1010,10 @@ export function PaperReviewPage() {
         title={tr('论文评审', 'Paper Review')}
         sub={
           currentProject
-            ? `${tr('当前方向', 'Current direction')}：${currentProject.name}`
+            ? `${tr('当前课题', 'Current topic')}：${currentProject.name}`
             : projectsLoading
-              ? tr('加载研究方向…', 'Loading directions…')
-              : tr('选择一个研究方向', 'Pick a research direction')
+              ? tr('加载课题…', 'Loading topics…')
+              : tr('选择一个课题', 'Pick a topic')
         }
         right={
           <button
@@ -1160,7 +1129,7 @@ export function PaperReviewPage() {
       {!pid ? (
         <div className="card">
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? tr('加载研究方向…', 'Loading directions…') : tr('请先选择研究方向', 'Pick a research direction first')}
+            {projectsLoading ? tr('加载课题…', 'Loading topics…') : tr('请先选择课题', 'Pick a topic first')}
           </div>
         </div>
       ) : noManuscripts ? (
@@ -1173,7 +1142,7 @@ export function PaperReviewPage() {
               'Peer review only works on successfully compiled manuscripts. Compile on the Paper Writer page first, then come back.',
             )}
             action={
-              <button className="btn btn-ghost" onClick={() => navigate('/writer')}>
+              <button className="btn btn-ghost" onClick={() => navigate(topicPath(pid, 'writer'))}>
                 <Icon name="pen" size={14} />
                 {tr('去写论文', 'Go write the paper')}
               </button>

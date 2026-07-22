@@ -11,6 +11,7 @@ import { fmtTime } from '../../lib/format';
 import { clickable } from '../../lib/a11y';
 import type { PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { topicPath } from '../../app/project';
 
 /* ============================================================
    阅读工作台 · 论文信息面板（PaperDetailPane 的精简版）：
@@ -80,7 +81,7 @@ export function InfoPanel({
               <span
                 className="author-link"
                 title={tr(`回文献库只看 ${a.name} 的论文`, `Back to the library, showing only ${a.name}'s papers`)}
-                {...clickable(() => navigate(`/wiki?author=${encodeURIComponent(a.name)}`))}
+                {...clickable(() => navigate(topicPath(paper.project_id, `wiki?author=${encodeURIComponent(a.name)}`)))}
               >
                 {a.name}
               </span>
@@ -97,7 +98,7 @@ export function InfoPanel({
               className="chip"
               style={{ fontSize: 10.5, height: 20 }}
               title={tr(`回文献库只看 ${name} 的论文`, `Back to the library, showing only papers from ${name}`)}
-              {...clickable(() => navigate(`/wiki?affiliation=${encodeURIComponent(name)}`))}
+              {...clickable(() => navigate(topicPath(paper.project_id, `wiki?affiliation=${encodeURIComponent(name)}`)))}
             >
               {name}
             </span>

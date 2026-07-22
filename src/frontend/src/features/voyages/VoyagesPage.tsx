@@ -145,7 +145,7 @@ function SkeletonRows() {
 export function VoyagesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { projects, currentProjectId, isLoading: projectsLoading } = useProject();
+  const { projects, currentProjectId } = useProject();
 
   const [filter, setFilter] = useState<Filter>('all');
   const [kindFilter, setKindFilter] = useState<string>('all');
@@ -180,8 +180,6 @@ export function VoyagesPage() {
     onError: (err) => toast(`${tr('创建失败：', 'Create failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
-  const noProjects = !projectsLoading && projects.length === 0;
-
   return (
     <div className="page fadeup">
       <PageHead
@@ -189,29 +187,14 @@ export function VoyagesPage() {
         title={tr('任务', 'Tasks')}
         sub={tr('需要人工审批时任务会自动暂停，审批通过后继续执行。', 'Tasks pause automatically when they need approval, then resume once approved.')}
         right={
-          <button className="btn btn-primary" disabled={noProjects} onClick={() => setCreateOpen(true)}>
+          <button className="btn btn-primary" disabled={projects.length === 0} onClick={() => setCreateOpen(true)}>
             <Icon name="play" size={14} />
             {tr('新建演示任务', 'New demo task')}
           </button>
         }
       />
 
-      {noProjects ? (
-        <div className="card">
-          <EmptyState
-            icon="compass"
-            title={tr('还没有研究方向', 'No research directions yet')}
-            desc={tr('任务隶属于研究方向。先创建一个方向，再启动演示任务。', 'Tasks belong to a research direction. Create one first, then start a demo task.')}
-            action={
-              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-                <Icon name="plus" size={14} />
-                {tr('新建研究方向', 'New research direction')}
-              </button>
-            }
-          />
-        </div>
-      ) : (
-        <>
+      <>
           <div className="row gap10" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
             <Segmented options={FILTERS.map((f) => ({ v: f.v, label: tr(f.zh, f.en) }))} value={filter} onChange={setFilter} />
             <select
@@ -229,8 +212,8 @@ export function VoyagesPage() {
             <div style={{ flex: 1 }} />
             <Segmented
               options={[
-                { v: 'current' as const, label: tr('当前方向', 'Current direction') },
-                { v: 'all' as const, label: tr('全部方向', 'All directions') },
+                { v: 'current' as const, label: tr('当前课题', 'Current topic') },
+                { v: 'all' as const, label: tr('全部课题', 'All topics') },
               ]}
               value={scope}
               onChange={setScope}
@@ -316,8 +299,7 @@ export function VoyagesPage() {
               })}
             </div>
           )}
-        </>
-      )}
+      </>
 
       {/* 新建演示航程 */}
       <Modal
@@ -343,7 +325,7 @@ export function VoyagesPage() {
           </>
         }
       >
-        <FormField label={tr('所属方向', 'Direction')}>
+        <FormField label={tr('所属课题', 'Topic')}>
           <SelectMenu
             value={effectiveProjectId}
             options={projects.map((p) => ({ value: p.id, label: p.name }))}

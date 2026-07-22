@@ -18,6 +18,7 @@ import {
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useShell } from '../../app/AppShell';
+import { topicPath, useProject } from '../../app/project';
 import { DiscussionPanel } from '../review/DiscussionPanel';
 import { DiscussionBubble } from '../review/messages';
 import { compositeOf, DepthBadge, ResearchTypeBadge, RubricBar, SCORE_DIMS } from './ideaShared';
@@ -190,7 +191,7 @@ function EvidenceCard({ idea }: { idea: IdeaDetail }) {
             <div
               key={i}
               className={`row gap8${clickable ? ' hoverable' : ''}`}
-              onClick={clickable ? () => navigate(`/wiki?paper=${ev.paper_id}`) : undefined}
+              onClick={clickable ? () => navigate(topicPath(idea.project_id, `wiki?paper=${ev.paper_id}`)) : undefined}
               style={{
                 border: '0.5px solid var(--border)',
                 borderRadius: 9,
@@ -416,6 +417,7 @@ export function IdeaDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openGates } = useShell();
+  const { currentProjectId } = useProject();
 
   const ideaQuery = useQuery({
     queryKey: ['idea', id],
@@ -468,15 +470,15 @@ export function IdeaDetailPage() {
         role="link"
         tabIndex={0}
         title={tr('打开库内论文', 'Open the paper in the library')}
-        onClick={() => navigate(`/wiki?paper=${paperId}`)}
+        onClick={() => navigate(topicPath(idea?.project_id, `wiki?paper=${paperId}`))}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') navigate(`/wiki?paper=${paperId}`);
+          if (e.key === 'Enter') navigate(topicPath(idea?.project_id, `wiki?paper=${paperId}`));
         }}
       >
         {paperTitles.get(paperId) ?? tr(`论文 ${paperId.slice(0, 8)}`, `Paper ${paperId.slice(0, 8)}`)}
       </span>
     ),
-    [paperTitles, navigate],
+    [paperTitles, navigate, idea?.project_id],
   );
 
   if (ideaQuery.isLoading) {
@@ -495,7 +497,7 @@ export function IdeaDetailPage() {
             title={tr('无法加载 idea', 'Could not load the idea')}
             desc={tr('后端不可用、接口未就绪，或该 idea 不存在。', 'Backend unavailable, API not ready, or the idea does not exist.')}
             action={
-              <button className="btn btn-ghost" onClick={() => navigate('/forge')}>
+              <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'forge'))}>
                 <Icon name="arrow" size={14} style={{ transform: 'rotate(180deg)' }} />
                 {tr('返回候选池', 'Back to candidates')}
               </button>
@@ -511,7 +513,7 @@ export function IdeaDetailPage() {
   return (
     <div className="page fadeup">
       {/* 头部 */}
-      <button className="btn btn-soft sm" onClick={() => navigate('/forge')} style={{ marginBottom: 16 }}>
+      <button className="btn btn-soft sm" onClick={() => navigate(topicPath(idea.project_id, 'forge'))} style={{ marginBottom: 16 }}>
         <Icon name="arrow" size={13} style={{ transform: 'rotate(180deg)' }} />
         {tr('返回候选池', 'Back to candidates')}
       </button>
@@ -592,7 +594,7 @@ export function IdeaDetailPage() {
                   <div
                     key={p.id}
                     className="row gap8 hoverable"
-                    onClick={() => navigate(`/wiki?paper=${p.id}`)}
+                    onClick={() => navigate(topicPath(idea.project_id, `wiki?paper=${p.id}`))}
                     style={{
                       border: '0.5px solid var(--border)',
                       borderRadius: 9,
@@ -646,7 +648,7 @@ export function IdeaDetailPage() {
           {/* 辩论记录入口 */}
           <button
             className="btn btn-ghost"
-            onClick={() => navigate(`/review?tab=matches&idea=${idea.id}`)}
+            onClick={() => navigate(topicPath(idea.project_id, `review?tab=matches&idea=${idea.id}`))}
             style={{ justifyContent: 'center' }}
           >
             <Icon name="scale" size={14} />

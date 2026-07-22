@@ -186,8 +186,8 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
       </label>
       <div className="field-hint" style={{ marginTop: 4 }}>
         {global
-          ? tr('全平台模板对所有研究方向可见，仅平台管理员可创建。', 'Platform-wide templates are visible to every project; only platform admins can create them.')
-          : tr('默认仅当前研究方向可用。', 'By default only the current project can use it.')}
+          ? tr('全平台模板对所有课题可见，仅平台管理员可创建。', 'Platform-wide templates are visible to every topic; only platform admins can create them.')
+          : tr('默认仅当前课题可用。', 'By default only the current topic can use it.')}
       </div>
     </Modal>
   );

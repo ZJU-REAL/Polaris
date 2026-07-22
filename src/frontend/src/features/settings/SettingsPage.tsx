@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
@@ -12,6 +13,7 @@ import { DropdownList, SelectMenu, useClickOutside } from '../../components/ui/S
 import { fmtTime } from '../../lib/format';
 import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
 import { FeedbackTab } from '../feedback/FeedbackTab';
+import { McpToolsContent } from '../mcp/McpToolsPage';
 import { AcademicIdentitySection } from './AcademicIdentitySection';
 import { tr } from '../../lib/i18n';
 import { setTaskLogHistory, useTaskLogHistory } from '../../lib/prefs';
@@ -957,7 +959,7 @@ const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   default: { zh: '默认', en: 'Default' },
   navigator: { zh: '任务规划', en: 'Task planning' },
   sextant: { zh: '自动校验', en: 'Auto verification' },
-  interview: { zh: '方向访谈', en: 'Direction interview' },
+  interview: { zh: '课题访谈', en: 'Topic interview' },
   relevance: { zh: '相关度打分', en: 'Relevance scoring' },
   librarian: { zh: '文献抓取', en: 'Paper fetching' },
   reading: { zh: '精读编译', en: 'Deep reading' },
@@ -2135,7 +2137,7 @@ function MyUsageTab() {
 
 // ---------------- 页面 ----------------
 
-type Tab = 'personal' | 'ssh' | 'mymodels' | 'myusage' | 'llm' | 'usage' | 'users' | 'codes' | 'feedback';
+type Tab = 'personal' | 'ssh' | 'mymodels' | 'myusage' | 'mcp' | 'llm' | 'usage' | 'users' | 'codes' | 'feedback';
 
 
 // ---------------- 用户管理（admin） ----------------
@@ -2515,8 +2517,8 @@ function BatchAssignModal({ userIds, onClose, onDone }: { userIds: string[]; onC
       open
       onClose={onClose}
       width={480}
-      title={tr('批量分配研究方向', 'Assign directions in bulk')}
-      sub={tr(`已选 ${userIds.length} 个用户，将以成员身份加入所选方向`, `${userIds.length} users selected; they will join the chosen directions as members`)}
+      title={tr('批量分配课题', 'Assign topics in bulk')}
+      sub={tr(`已选 ${userIds.length} 个用户，将以成员身份加入所选课题`, `${userIds.length} users selected; they will join the chosen topics as members`)}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
@@ -2527,9 +2529,9 @@ function BatchAssignModal({ userIds, onClose, onDone }: { userIds: string[]; onC
       }
     >
       {!projects ? (
-        <div className="empty">{tr('加载方向列表…', 'Loading directions…')}</div>
+        <div className="empty">{tr('加载课题列表…', 'Loading topics…')}</div>
       ) : projects.length === 0 ? (
-        <div className="empty">{tr('还没有研究方向', 'No research directions yet')}</div>
+        <div className="empty">{tr('还没有课题', 'No topics yet')}</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {projects.map((p) => {
@@ -2606,7 +2608,7 @@ function UsersTab() {
             </button>
           )}
           <button className="btn btn-soft" disabled={checked.size === 0} onClick={() => setAssignOpen(true)}>
-            {tr('批量分配方向', 'Assign directions')}{checked.size > 0 ? `（${checked.size}）` : ''}
+            {tr('批量分配课题', 'Assign topics')}{checked.size > 0 ? `（${checked.size}）` : ''}
           </button>
           <button className="btn btn-primary row gap6" onClick={() => setCreateOpen(true)}>
             <Icon name="plus" size={14} />
@@ -2816,8 +2818,8 @@ function CreateCodeModal({ onClose }: { onClose: () => void }) {
         />
       </FormField>
       <FormField
-        label={tr('预设研究方向', 'Preset research directions')}
-        hint={tr('可选，每行一个（最多 10 个）。用此码注册的同学会自动获得这些方向的项目', 'Optional, one per line (max 10). New users registering with this code automatically get a project for each direction')}
+        label={tr('预设课题', 'Preset topics')}
+        hint={tr('可选，每行一个（最多 10 个）。用此码注册的同学会自动获得这些课题', 'Optional, one per line (max 10). New users registering with this code automatically get a topic for each line')}
       >
         <textarea
           className="input"
@@ -2878,7 +2880,7 @@ function CodesTab() {
               <tr>
                 <th>{tr('注册码', 'Code')}</th>
                 <th>{tr('备注', 'Note')}</th>
-                <th>{tr('预设方向', 'Directions')}</th>
+                <th>{tr('预设课题', 'Topics')}</th>
                 <th>{tr('使用', 'Uses')}</th>
                 <th>{tr('有效期', 'Expiry')}</th>
                 <th>{tr('状态', 'Status')}</th>
@@ -2946,18 +2948,25 @@ function CodesTab() {
   );
 }
 
-const PERSONAL_TABS: Tab[] = ['personal', 'ssh', 'mymodels', 'myusage'];
+const PERSONAL_TABS: Tab[] = ['personal', 'ssh', 'mymodels', 'myusage', 'mcp'];
+const ALL_TABS: Tab[] = [...PERSONAL_TABS, 'llm', 'usage', 'users', 'codes', 'feedback'];
 
 export function SettingsPage() {
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   const admin = isAdmin(me);
-  const [tab, setTab] = useState<Tab>('personal');
+  // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = searchParams.get('tab');
+    return t !== null && ALL_TABS.includes(t as Tab) ? (t as Tab) : 'personal';
+  });
 
   const personalItems: { v: Tab; label: string }[] = [
     { v: 'personal', label: tr('个人信息', 'Profile') },
     { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
     { v: 'mymodels', label: tr('我的模型', 'My LLM') },
     { v: 'myusage', label: tr('用量', 'Usage') },
+    { v: 'mcp', label: tr('MCP 接入', 'MCP access') },
   ];
   const adminItems: { v: Tab; label: string }[] = [
     { v: 'llm', label: tr('LLM 管理', 'LLM admin') },
@@ -2999,6 +3008,7 @@ export function SettingsPage() {
       {effectiveTab === 'ssh' && <SshTab />}
       {effectiveTab === 'mymodels' && <MyLlmTab />}
       {effectiveTab === 'myusage' && <MyUsageTab />}
+      {effectiveTab === 'mcp' && <McpToolsContent />}
       {effectiveTab === 'llm' && admin && <LlmTab />}
       {effectiveTab === 'usage' && admin && <UsageTab />}
       {effectiveTab === 'users' && admin && <UsersTab />}

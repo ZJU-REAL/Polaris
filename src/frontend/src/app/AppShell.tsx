@@ -7,7 +7,7 @@ import { Drawer } from '../components/ui/Drawer';
 import { GateCard, gateTitle } from '../components/ui/GateCard';
 import { ToastHost, toast } from '../components/ui/Toast';
 import { useAuth } from './auth';
-import { useProject } from './project';
+import { topicPath, useProject } from './project';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
@@ -17,59 +17,69 @@ import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
 
 interface NavEntry {
-  to: string;
+  /** 非课题作用域页面的绝对路径（与 sub 二选一）。 */
+  to?: string;
+  /** 课题作用域子路径（渲染时经 topicPath 拼 /t/<id> 前缀）；to 与 sub 都缺省 = 工作台。 */
+  sub?: string;
   no?: string;
   icon: IconName;
   zh: string;
   en: string;
 }
 
+// 实验室级导航：跨课题的公共资产（文献追踪未来升级为实验室级文献库，导航先归位）
+const NAV_LAB: NavEntry[] = [
+  { sub: 'wiki', icon: 'book', zh: '文献追踪', en: 'Research Wiki' },
+];
+
 const NAV_MAIN: NavEntry[] = [
-  { to: '/', icon: 'dashboard', zh: '总览', en: 'Dashboard' },
+  { icon: 'dashboard', zh: '工作台', en: 'Workbench' },
 ];
 
 const NAV_PIPE: NavEntry[] = [
-  { to: '/wiki', no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki' },
-  { to: '/forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge' },
-  { to: '/review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review' },
-  { to: '/experiment', no: '03', icon: 'flask', zh: '实验搭建', en: 'Experiment Lab' },
-  { to: '/writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer' },
-  { to: '/paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review' },
+  { sub: 'forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge' },
+  { sub: 'review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review' },
+  { sub: 'experiment', no: '03', icon: 'flask', zh: '实验搭建', en: 'Experiment Lab' },
+  { sub: 'writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer' },
+  { sub: 'paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review' },
 ];
 
-// 阶段路径 → 功能权限键（管理员在设置里可禁用；被禁用的阶段从导航隐藏）
-const FEATURE_BY_PATH: Record<string, string> = {
-  '/forge': 'forge',
-  '/review': 'review',
-  '/experiment': 'experiment',
-  '/writer': 'writer',
-  '/paper-review': 'paper_review',
+// 阶段子路径 → 功能权限键（管理员在设置里可禁用；被禁用的阶段从导航隐藏）
+const FEATURE_BY_SUB: Record<string, string> = {
+  forge: 'forge',
+  review: 'review',
+  experiment: 'experiment',
+  writer: 'writer',
+  'paper-review': 'paper_review',
 };
 
 function crumbFor(pathname: string): [string, string] {
-  if (pathname === '/') return ['Polaris', tr('总览', 'Dashboard')];
-  if (pathname === '/projects/new') return [tr('研究方向', 'Directions'), tr('新建方向', 'New direction')];
-  if (pathname.startsWith('/projects/')) return [tr('研究方向', 'Directions'), tr('方向详情', 'Direction detail')];
-  if (pathname === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
-  if (pathname.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
-  if (pathname.startsWith('/papers/')) return [tr('文献追踪', 'Research Wiki'), tr('论文阅读', 'Paper reading')];
-  if (pathname.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
-  if (pathname.startsWith('/join/')) return [tr('研究方向', 'Directions'), tr('接受邀请', 'Accept invite')];
-  if (pathname.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
-  if (pathname.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
+  // 课题作用域路径统一去掉 /t/<topicId> 前缀后按旧表匹配
+  const scoped = /^\/t\/[^/]+(\/.*)?$/.exec(pathname);
+  const p = scoped ? (scoped[1] ?? '/') : pathname;
+  if (p === '/') return ['Polaris', tr('工作台', 'Workbench')];
+  if (p === '/start') return ['Polaris', tr('选择课题', 'Pick a topic')];
+  if (p === '/projects/new') return [tr('课题', 'Topics'), tr('新建课题', 'New topic')];
+  if (p.startsWith('/projects/')) return [tr('课题', 'Topics'), tr('课题设置', 'Topic settings')];
+  if (p === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
+  if (p.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
+  if (p.startsWith('/papers/')) return [tr('文献追踪', 'Research Wiki'), tr('论文阅读', 'Paper reading')];
+  if (p.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
+  if (p.startsWith('/join/')) return [tr('课题', 'Topics'), tr('接受邀请', 'Accept invite')];
+  if (p.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
+  if (p.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
   const table: Record<string, [string, string]> = {
-    '/wiki': ['Stage 00', tr('文献追踪', 'Research Wiki')],
+    '/wiki': [tr('实验室', 'Lab'), tr('文献追踪', 'Research Wiki')],
     '/forge': ['Stage 01', tr('想法生成', 'Idea Forge')],
     '/review': ['Stage 02', tr('想法评审', 'Idea Review')],
     '/experiment': ['Stage 03', tr('实验搭建', 'Experiment Lab')],
     '/writer': ['Stage 04', tr('论文撰写', 'Paper Writer')],
     '/paper-review': ['Stage 05', tr('论文评审', 'Paper Review')],
     '/library': ['Polaris', tr('我的文献库', 'My Library')],
-    '/mcp-tools': ['Polaris', 'MCP'],
     '/skills': ['Polaris', tr('技能', 'Skills')],
     '/settings': ['Polaris', tr('设置', 'Settings')],
   };
-  return table[pathname] ?? ['Polaris', '—'];
+  return table[p] ?? ['Polaris', '—'];
 }
 
 /** AppShell 通过 Outlet context 暴露给子页面的能力。 */
@@ -87,10 +97,11 @@ export function useShell(): ShellContext {
 }
 
 /* ============================================================
-   顶栏研究方向切换器：胶囊触发器 + 卡片式下拉菜单。
-   菜单含方向列表（当前项打勾 + 蓝点）、新建方向、方向详情入口。
+   侧边栏课题切换器（课题研究组内的特殊条目）：触发器 + 卡片式下拉菜单。
+   菜单含课题列表（当前项打勾 + 蓝点）、新建课题、课题设置入口。
+   折叠态只留图标按钮，菜单向右侧弹出（侧栏 z-index 已抬高，不会被主列裁剪）。
    ============================================================ */
-function DirectionSwitcher() {
+function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { projects, isLoading, currentProjectId, currentProject, setCurrentProjectId } = useProject();
@@ -114,7 +125,7 @@ function DirectionSwitcher() {
     };
   }, [open]);
 
-  const triggerLabel = currentProject?.name ?? (isLoading ? tr('加载中…', 'Loading…') : tr('选择研究方向', 'Pick a direction'));
+  const triggerLabel = currentProject?.name ?? (isLoading ? tr('加载中…', 'Loading…') : tr('选择课题', 'Pick a topic'));
 
   const itemStyle: React.CSSProperties = {
     display: 'flex',
@@ -133,69 +144,52 @@ function DirectionSwitcher() {
   };
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', marginLeft: 18 }}>
-      {/* 触发器：胶囊（图标 + 当前方向名 + 折叠箭头） */}
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      {/* 触发器：与普通导航条目同高的描边条目（图标 + 当前课题名 + 折叠箭头）；折叠态只留图标 */}
       <button
         onClick={() => setOpen((o) => !o)}
-        title={tr('切换研究方向', 'Switch research direction')}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 7,
-          height: 32,
-          maxWidth: 280,
-          padding: '0 10px 0 11px',
-          borderRadius: 16,
-          border: `0.5px solid ${open ? 'var(--accent)' : 'var(--border-2)'}`,
-          background: open ? 'var(--accent-soft)' : 'var(--surface)',
-          cursor: 'pointer',
-          fontFamily: 'var(--sans)',
-          transition: 'border-color .12s, background .12s',
-        }}
+        className={'topic-switch' + (open ? ' open' : '')}
+        title={currentProject ? `${tr('切换课题', 'Switch topic')} · ${currentProject.name}` : tr('切换课题', 'Switch topic')}
       >
-        <Icon name="layers" size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-        <span
-          style={{
-            fontSize: 12.5,
-            fontWeight: 620,
-            color: currentProject ? 'var(--text)' : 'var(--text-3)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            minWidth: 0,
-          }}
-        >
-          {triggerLabel}
+        {/* 图标放进 24px 轨道框（nav-ic）：中心与普通条目图标同在 33px 轨道，展开/折叠不位移 */}
+        <span className="nav-ic">
+          <Icon name="layers" size={18} style={{ color: 'var(--accent)' }} />
         </span>
-        <Icon
-          name="chevDown"
-          size={12}
-          style={{ color: 'var(--text-3)', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
-        />
+        {!collapsed && (
+          <>
+            <span className={'topic-switch-label' + (currentProject ? '' : ' placeholder')}>{triggerLabel}</span>
+            <Icon
+              name="chevDown"
+              size={12}
+              style={{ color: 'var(--text-3)', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+            />
+          </>
+        )}
       </button>
 
-      {/* 下拉菜单 */}
+      {/* 下拉菜单：展开态在触发器正下方；折叠态向右侧弹出盖在主列上 */}
       {open && (
         <div
           className="card"
           style={{
             position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
+            ...(collapsed
+              ? { top: 0, left: 'calc(100% + 18px)' }
+              : { top: 'calc(100% + 8px)', left: 0 }),
             zIndex: 40,
-            width: 300,
+            width: 280,
             padding: 6,
             boxShadow: 'var(--shadow-pop)',
             animation: 'fadeUp 0.12s ease',
           }}
         >
           <div className="mono" style={{ fontSize: 10, color: 'var(--text-4)', padding: '4px 12px 6px', letterSpacing: '0.06em' }}>
-            {tr('研究方向', 'DIRECTIONS')}
+            {tr('课题', 'TOPICS')}
           </div>
           <div className="scroll" style={{ maxHeight: 320, overflowY: 'auto' }}>
             {projects.length === 0 && (
               <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-4)' }}>
-                {isLoading ? tr('加载中…', 'Loading…') : tr('还没有研究方向，先新建一个', 'No directions yet — create one first')}
+                {isLoading ? tr('加载中…', 'Loading…') : tr('还没有课题，先创建一个', 'No topics yet — create one first')}
               </div>
             )}
             {projects.map((p) => {
@@ -213,9 +207,16 @@ function DirectionSwitcher() {
                   onClick={() => {
                     setCurrentProjectId(p.id);
                     setOpen(false);
-                    // 正在看某个方向的详情页时，切换方向同步跳到新方向的详情（URL 驱动的页面）
-                    if (/^\/projects\/(?!new)/.test(location.pathname)) {
+                    const scoped = /^\/t\/[^/]+(?:\/(.*))?$/.exec(location.pathname);
+                    if (scoped) {
+                      // 课题作用域页面：切课题保持当前子页面（如 /t/a/forge → /t/b/forge）
+                      navigate(topicPath(p.id, scoped[1] || undefined));
+                    } else if (/^\/projects\/(?!new)/.test(location.pathname)) {
+                      // 课题设置页：跳到新课题的设置
                       navigate(`/projects/${p.id}`);
+                    } else {
+                      // 实体详情页或非课题域页面：回到新课题的工作台
+                      navigate(topicPath(p.id));
                     }
                   }}
                 >
@@ -258,7 +259,7 @@ function DirectionSwitcher() {
             }}
           >
             <Icon name="plus" size={13} style={{ color: 'var(--text-3)' }} />
-            {tr('新建方向', 'New direction')}
+            {tr('新建课题', 'New topic')}
           </button>
           {currentProjectId && (
             <button
@@ -271,7 +272,7 @@ function DirectionSwitcher() {
               }}
             >
               <Icon name="settings" size={13} style={{ color: 'var(--text-3)' }} />
-              {tr('当前方向详情与设置', 'Current direction detail & settings')}
+              {tr('课题设置', 'Topic settings')}
             </button>
           )}
         </div>
@@ -281,10 +282,15 @@ function DirectionSwitcher() {
 }
 
 function NavItem({ n }: { n: NavEntry }) {
+  const { currentProjectId } = useProject();
+  // 课题作用域条目带 /t/<id> 前缀；无当前课题时退回旧路径，由重定向兜底
+  const to = n.to ?? topicPath(currentProjectId, n.sub);
+  // 工作台（课题根路径）只在精确匹配时高亮，避免盖住全部子页面
+  const end = n.to == null && n.sub == null;
   return (
     <NavLink
-      to={n.to}
-      end={n.to === '/'}
+      to={to}
+      end={end}
       className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
       title={tr(n.zh, n.en)}
     >
@@ -299,6 +305,7 @@ function NavItem({ n }: { n: NavEntry }) {
 export function AppShell() {
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { currentProjectId } = useProject();
 
   // —— 审批抽屉 ——
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -453,22 +460,36 @@ export function AppShell() {
           {/* 收起后只留左侧图形标：直接不渲染字标，杜绝溢出（不靠 CSS 隐藏） */}
           {!navCollapsed && <PolarisWordmark height={30} />}
         </div>
-        <div className="sb-scroll scroll">
-          {NAV_MAIN.map((n) => (
-            <NavItem key={n.to} n={n} />
+        {/* —— 实验室 + 课题研究两组（平面分组，只靠 eyebrow + 间距区分，不加分隔线）。
+            放在滚动区之外：课题切换器的下拉菜单要能向右溢出到主列上 —— */}
+        <div className="sb-nav-static">
+          <div className="sb-section">{tr('实验室', 'Lab')}</div>
+          {NAV_LAB.map((n) => (
+            <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
-          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
-          <NavItem n={{ to: '/mcp-tools', icon: 'server', zh: 'MCP', en: 'MCP' }} />
-          <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
-          <NavItem n={{ to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' }} />
 
-          <div className="sb-section">{tr('研究流水线', 'Pipeline')}</div>
+          <div className="sb-section">{tr('课题研究', 'Topic')}</div>
+          <TopicSwitcher collapsed={navCollapsed} />
+          {NAV_MAIN.map((n) => (
+            <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
+          ))}
           {NAV_PIPE.filter((n) => {
-            const key = FEATURE_BY_PATH[n.to];
+            const key = n.sub != null ? FEATURE_BY_SUB[n.sub] : undefined;
             return key == null || me?.features?.[key] !== false;
           }).map((n) => (
-            <NavItem key={n.to} n={n} />
+            <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
+          <NavItem n={{ sub: 'voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
+          {currentProjectId && (
+            <NavItem n={{ to: `/projects/${currentProjectId}`, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
+          )}
+        </div>
+
+        {/* —— 个人区：跨课题的个人页面（设置入口在底部头像菜单里，不重复占位） —— */}
+        <div className="sb-scroll scroll">
+          <div className="sb-section">{tr('个人', 'Personal')}</div>
+          <NavItem n={{ to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' }} />
+          <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
         </div>
         <div className="sb-foot">
           <UserMenu me={me} collapsed={navCollapsed} />
@@ -491,8 +512,6 @@ export function AppShell() {
             <span className="sep">›</span>
             <b>{c2}</b>
           </div>
-          {/* —— 研究方向选择器 —— */}
-          <DirectionSwitcher />
           <div className="spacer" />
           <div className="searchbox" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSearchOpen(true); }}>

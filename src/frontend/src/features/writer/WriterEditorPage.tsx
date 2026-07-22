@@ -20,6 +20,7 @@ import {
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { topicPath, useProject } from '../../app/project';
 import type { ProviderStatus } from '../../lib/yjs-provider';
 import { EditorPane, BinaryPreview, type PeerInfo } from './EditorPane';
 import { FileTree } from './FileTree';
@@ -241,6 +242,7 @@ export function WriterEditorPage() {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { currentProjectId } = useProject();
 
   const detailQuery = useQuery({
     queryKey: ['manuscript', id],
@@ -653,9 +655,9 @@ export function WriterEditorPage() {
         <EmptyState
           icon="x"
           title={tr('打不开这篇论文草稿', 'Cannot open this manuscript')}
-          desc={tr('草稿不存在、你不在这个研究方向里，或后端暂时不可用。', 'It does not exist, you are not in this research direction, or the backend is unavailable.')}
+          desc={tr('草稿不存在、你不在这个课题里，或后端暂时不可用。', 'It does not exist, you are not in this topic, or the backend is unavailable.')}
           action={
-            <button className="btn btn-ghost" onClick={() => navigate('/writer')}>
+            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'writer'))}>
               <Icon name="pen" size={14} />
               {tr('回论文列表', 'Back to manuscripts')}
             </button>
@@ -690,7 +692,7 @@ export function WriterEditorPage() {
           flexShrink: 0,
         }}
       >
-        <button className="btn btn-ghost sm" onClick={() => navigate('/writer')}>
+        <button className="btn btn-ghost sm" onClick={() => navigate(topicPath(ms.project_id, 'writer'))}>
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
           {tr('论文列表', 'Manuscripts')}
         </button>

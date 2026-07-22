@@ -8,7 +8,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/Toast';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { fmtDuration, fmtRelative, fmtTime } from '../../lib/format';
 import { api, ApiError, EXPERIMENT_TERMINAL, type ExperimentRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
@@ -182,7 +182,7 @@ export function ExperimentPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
   const pid = currentProjectId;
 
   const newIdeaId = searchParams.get('new');
@@ -331,31 +331,6 @@ export function ExperimentPage() {
   });
   const confirmBusy = deleteOne.isPending || batchDelete.isPending || emptyTrash.isPending;
 
-  if (!projectsLoading && projects.length === 0) {
-    return (
-      <div className="page fadeup">
-        <PageHead
-          eyebrow="Stage 03 · Experiment Lab"
-          title={tr('实验搭建', 'Experiment Lab')}
-          sub={tr('从计划、审批、建环境到运行与报告。', 'From plan, approval and environment setup to runs and report.')}
-        />
-        <div className="card">
-          <EmptyState
-            icon="flask"
-            title={tr('还没有研究方向', 'No research direction yet')}
-            desc={tr('先创建研究方向、生成并晋级想法，再发起实验。', 'Create a direction, generate and promote an idea, then start an experiment.')}
-            action={
-              <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-                <Icon name="plus" size={14} />
-                {tr('新建研究方向', 'New direction')}
-              </button>
-            }
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="page fadeup" style={{ maxWidth: 1180 }}>
       <PageHead
@@ -363,10 +338,10 @@ export function ExperimentPage() {
         title={tr('实验搭建', 'Experiment Lab')}
         sub={
           currentProject
-            ? tr(`当前方向：${currentProject.name}`, `Current direction: ${currentProject.name}`)
+            ? tr(`当前课题：${currentProject.name}`, `Current topic: ${currentProject.name}`)
             : projectsLoading
-              ? tr('加载研究方向…', 'Loading directions…')
-              : tr('选择一个研究方向', 'Pick a research direction')
+              ? tr('加载课题…', 'Loading topics…')
+              : tr('选择一个课题', 'Pick a topic')
         }
         right={
           <button className="btn btn-primary" disabled={!pid} onClick={() => setModalOpen(true)}>
@@ -431,7 +406,7 @@ export function ExperimentPage() {
       {!pid ? (
         <div className="card">
           <div className="empty" style={{ padding: 60 }}>
-            {projectsLoading ? tr('加载研究方向…', 'Loading directions…') : tr('请先选择研究方向', 'Pick a research direction first')}
+            {projectsLoading ? tr('加载课题…', 'Loading topics…') : tr('请先选择课题', 'Pick a topic first')}
           </div>
         </div>
       ) : isLoading ? (
@@ -464,7 +439,7 @@ export function ExperimentPage() {
               desc={tr('先在想法评审页晋级一个想法，再回到这里发起实验。', 'Promote an idea in Idea Review first, then come back to start an experiment.')}
               action={
                 <div className="row gap8">
-                  <button className="btn btn-ghost" onClick={() => navigate('/review')}>
+                  <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'review'))}>
                     <Icon name="scale" size={14} />
                     {tr('前往想法评审', 'Go to Idea Review')}
                   </button>

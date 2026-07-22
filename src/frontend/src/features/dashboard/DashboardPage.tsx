@@ -9,21 +9,22 @@ import { ScoreRing } from '../../components/ui/ScoreRing';
 import { Delta } from '../../components/ui/Delta';
 import { gateTitle, gateDesc, gateKindLabel } from '../../components/ui/GateCard';
 import { useShell } from '../../app/AppShell';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, type ActivityRead, type GateRead, type StatsRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { compositeOf } from '../forge/ideaShared';
 
-/** 端到端流水线各阶段的真实计数（stats 未就绪时显示 —）。 */
-function buildPipelineStages(stats: StatsRead | undefined): PipelineStage[] {
-  return [
-    { key: 'wiki', path: '/wiki', no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki', count: stats?.papers_total ?? null },
-    { key: 'forge', path: '/forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge', count: stats?.ideas_candidate ?? null },
-    { key: 'review', path: '/review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review', count: stats?.ideas_under_review ?? null },
+/** 端到端流水线各阶段的真实计数（stats 未就绪时显示 —）；path 带当前课题前缀；
+    stuckKey = 当前卡住（还没有产出）的阶段，进度漏斗高亮它。 */
+function buildPipelineStages(stats: StatsRead | undefined, pid: string | null, stuckKey: string | null): PipelineStage[] {
+  const stages: PipelineStage[] = [
+    { key: 'wiki', path: topicPath(pid, 'wiki'), no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki', count: stats?.papers_total ?? null },
+    { key: 'forge', path: topicPath(pid, 'forge'), no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge', count: stats?.ideas_candidate ?? null },
+    { key: 'review', path: topicPath(pid, 'review'), no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review', count: stats?.ideas_under_review ?? null },
     {
       key: 'experiment',
-      path: '/experiment',
+      path: topicPath(pid, 'experiment'),
       no: '03',
       icon: 'flask',
       zh: '实验搭建',
@@ -31,9 +32,147 @@ function buildPipelineStages(stats: StatsRead | undefined): PipelineStage[] {
       count: stats?.experiments_active ?? null,
       running: (stats?.experiments_running ?? 0) > 0,
     },
-    { key: 'writer', path: '/writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer', count: stats?.manuscripts_total ?? null },
-    { key: 'paper-review', path: '/paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review', count: stats?.manuscripts_under_review ?? null },
+    { key: 'writer', path: topicPath(pid, 'writer'), no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer', count: stats?.manuscripts_total ?? null },
+    { key: 'paper-review', path: topicPath(pid, 'paper-review'), no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review', count: stats?.manuscripts_under_review ?? null },
   ];
+  return stages.map((s) => (s.key === stuckKey ? { ...s, stuck: true } : s));
+}
+
+// ============================================================
+// 「下一步」checklist：纯前端按产出计数推导（不加后端端点）。
+// 各阶段完成度做级联兜底：晚期产物存在即视为前置步骤已完成
+// （如实验只能由晋级想法而来），避免 stats 只统计部分状态时误判。
+// ============================================================
+
+interface NextStep {
+  key: string;
+  done: boolean;
+  /** 一句话说明（zh/en 在渲染处 tr） */
+  zh: string;
+  en: string;
+  /** 跳转按钮文案 */
+  actionZh: string;
+  actionEn: string;
+  path: string;
+}
+
+interface PipelineProgress {
+  hasPapers: boolean;
+  hasIdeas: boolean;
+  hasExperiments: boolean;
+  hasManuscripts: boolean;
+}
+
+function buildNextSteps(progress: PipelineProgress, pid: string | null, hasKeywords: boolean): NextStep[] {
+  const { hasPapers, hasIdeas, hasExperiments, hasManuscripts } = progress;
+  return [
+    {
+      key: 'papers',
+      done: hasPapers,
+      zh: '配置文献追踪并启动初始建库，建立课题知识库',
+      en: 'Set up literature tracking and run the initial library build',
+      actionZh: hasKeywords ? '去启动初始建库' : '先去课题设置里配置关键词',
+      actionEn: hasKeywords ? 'Run the initial build' : 'Configure terms in topic settings first',
+      path: hasKeywords ? topicPath(pid, 'wiki?tab=ingest') : `/projects/${pid ?? ''}`,
+    },
+    {
+      key: 'ideas',
+      done: hasIdeas,
+      zh: '基于知识库生成第一批研究想法',
+      en: 'Generate your first batch of research ideas from the library',
+      actionZh: '去生成想法',
+      actionEn: 'Generate ideas',
+      path: topicPath(pid, 'forge'),
+    },
+    {
+      key: 'experiments',
+      done: hasExperiments,
+      zh: '评审想法，把优胜者晋级为实验',
+      en: 'Review ideas and promote the winners to experiments',
+      actionZh: '去评审想法',
+      actionEn: 'Review ideas',
+      path: topicPath(pid, 'review'),
+    },
+    {
+      key: 'manuscripts',
+      done: hasManuscripts,
+      zh: '根据实验结果开始撰写论文',
+      en: 'Start writing the paper from your experiment results',
+      actionZh: '去写论文',
+      actionEn: 'Start writing',
+      path: topicPath(pid, 'writer'),
+    },
+  ];
+}
+
+/** 新课题引导卡：全部完成时整卡隐藏（由调用方判断）。 */
+function NextStepsCard({ steps, onNavigate }: { steps: NextStep[]; onNavigate: (path: string) => void }) {
+  const currentKey = steps.find((s) => !s.done)?.key ?? null;
+  const doneCount = steps.filter((s) => s.done).length;
+  return (
+    <div className="card card-pad" style={{ marginBottom: 24, borderColor: 'var(--accent-soft-2)' }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
+        <span className="section-h">
+          <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
+          {tr('下一步', 'Next steps')}
+        </span>
+        <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+          {doneCount}/{steps.length} {tr('已完成', 'done')}
+        </span>
+      </div>
+      <div className="col gap8">
+        {steps.map((s) => {
+          const isCurrent = s.key === currentKey;
+          return (
+            <div
+              key={s.key}
+              className="row gap10"
+              style={{
+                padding: '9px 12px',
+                borderRadius: 10,
+                background: isCurrent ? 'var(--accent-soft)' : 'transparent',
+                alignItems: 'center',
+              }}
+            >
+              <span
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: s.done ? 'var(--ok-bg)' : isCurrent ? 'var(--accent)' : 'var(--surface-2)',
+                  color: s.done ? 'var(--ok-tx)' : isCurrent ? '#fff' : 'var(--text-4)',
+                  border: s.done || isCurrent ? 'none' : '1px solid var(--border-strong)',
+                }}
+              >
+                {s.done ? <Icon name="check" size={12} /> : isCurrent ? <Icon name="arrow" size={11} /> : null}
+              </span>
+              <span
+                style={{
+                  flex: 1,
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  color: s.done ? 'var(--text-3)' : isCurrent ? 'var(--text)' : 'var(--text-3)',
+                  fontWeight: isCurrent ? 650 : 450,
+                }}
+              >
+                {tr(s.zh, s.en)}
+              </span>
+              {isCurrent && (
+                <button className="btn btn-primary sm" style={{ flexShrink: 0 }} onClick={() => onNavigate(s.path)}>
+                  {tr(s.actionZh, s.actionEn)}
+                  <Icon name="arrow" size={12} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /** 当前重点想法：取 leaderboard 第一名（真实数据）；无则空状态引导。 */
@@ -64,7 +203,7 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
               : tr('候选池还是空的，先运行一次想法生成。', 'The candidate pool is empty — run idea generation first.')}
         </div>
         {!leaderboardQuery.isLoading && (
-          <button className="btn btn-ghost sm" style={{ marginTop: 14 }} onClick={() => navigate('/forge')}>
+          <button className="btn btn-ghost sm" style={{ marginTop: 14 }} onClick={() => navigate(topicPath(pid, 'forge'))}>
             <Icon name="bulb" size={13} />
             {tr('前往想法生成', 'Go to Idea Forge')}
           </button>
@@ -262,41 +401,6 @@ function GatePreview({ gates, gatesError, openGates }: {
   );
 }
 
-/** 无研究方向时的引导空状态。 */
-function OnboardingEmpty() {
-  const navigate = useNavigate();
-  return (
-    <div className="card card-pad" style={{ textAlign: 'center', padding: '72px 40px' }}>
-      <div
-        style={{
-          width: 52,
-          height: 52,
-          borderRadius: 14,
-          margin: '0 auto 18px',
-          background: 'var(--accent-soft)',
-          color: 'var(--accent)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Icon name="sparkle" size={24} />
-      </div>
-      <div style={{ fontSize: 17, fontWeight: 680, marginBottom: 8 }}>{tr('从一个研究方向开始', 'Start with a research direction')}</div>
-      <div style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 460, margin: '0 auto 22px', lineHeight: 1.6 }}>
-        {tr(
-          'Polaris 的一切都围绕研究方向展开：文献追踪、想法生成、实验与论文。通过一次结构化访谈，把你的兴趣固化为可执行的方向定义。',
-          'Everything in Polaris revolves around a research direction: literature tracking, idea generation, experiments and papers. A structured interview turns your interests into an actionable direction definition.',
-        )}
-      </div>
-      <button className="btn btn-primary" onClick={() => navigate('/projects/new')}>
-        <Icon name="plus" size={14} />
-        {tr('新建研究方向', 'New research direction')}
-      </button>
-    </div>
-  );
-}
-
 /** GET /projects/{pid}/stats → 4 张指标卡（后端不可用时显示 —）。 */
 function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number): StatCardProps[] {
   return [
@@ -335,7 +439,7 @@ function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number)
 export function DashboardPage() {
   const navigate = useNavigate();
   const { pendingGates, gatesError, openGates } = useShell();
-  const { projects, isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { currentProject, currentProjectId } = useProject();
 
   const statsQuery = useQuery({
     queryKey: ['stats', currentProjectId],
@@ -345,40 +449,79 @@ export function DashboardPage() {
     refetchInterval: 60_000,
   });
 
-  // 无项目：引导创建方向
-  if (!projectsLoading && projects.length === 0) {
-    return (
-      <div className="page fadeup">
-        <PageHead
-          eyebrow="Polaris · Autonomous Research"
-          title={tr('总览', 'Dashboard')}
-        />
-        <OnboardingEmpty />
-      </div>
-    );
-  }
+  // stats 只统计部分状态（想法只算 candidate/under_review、实验只算未终态），
+  // checklist 需要「有没有任何产出」——用既有列表接口补齐口径（缓存与各阶段页共享）
+  const ideasQuery = useQuery({
+    queryKey: ['ideas', currentProjectId, 'all'],
+    queryFn: () => api.listIdeas(currentProjectId!),
+    enabled: !!currentProjectId,
+    retry: false,
+  });
+  const experimentsQuery = useQuery({
+    queryKey: ['experiments', currentProjectId],
+    queryFn: () => api.listExperiments(currentProjectId!),
+    enabled: !!currentProjectId,
+    retry: false,
+  });
 
-  const statCards = buildStatCards(statsQuery.data, pendingGates.length);
-  const stages = buildPipelineStages(statsQuery.data);
+  const stats = statsQuery.data;
+  // 级联兜底：晚期产物存在 ⇒ 前置阶段必然完成（实验只能由晋级想法而来）
+  const hasManuscripts = (stats?.manuscripts_total ?? 0) > 0;
+  const hasExperiments =
+    (experimentsQuery.data?.length ?? 0) > 0 || (stats?.experiments_active ?? 0) > 0 || hasManuscripts;
+  const hasIdeas =
+    (ideasQuery.data?.length ?? 0) > 0 ||
+    (stats ? stats.ideas_candidate + stats.ideas_under_review > 0 : false) ||
+    hasExperiments;
+  const hasPapers = (stats?.papers_total ?? 0) > 0;
+  const progress: PipelineProgress = { hasPapers, hasIdeas, hasExperiments, hasManuscripts };
+
+  // stats/列表还没就绪时不渲染 checklist、不高亮漏斗（避免误判闪烁）
+  const checklistReady = !!stats && !ideasQuery.isLoading && !experimentsQuery.isLoading;
+
+  // 流水线漏斗高亮：第一个还没有产出的阶段（全流程有产出但暂无稿件送审时提示论文评审）
+  const stuckKey = !checklistReady || !stats
+    ? null
+    : !hasPapers
+      ? 'wiki'
+      : !hasIdeas
+        ? 'forge'
+        : !hasExperiments
+          ? 'review'
+          : !hasManuscripts
+            ? 'writer'
+            : stats.manuscripts_under_review === 0
+              ? 'paper-review'
+              : null;
+
+  const includeTerms = currentProject?.definition?.keywords?.include ?? [];
+  const nextSteps = buildNextSteps(progress, currentProjectId, includeTerms.length > 0);
+  // 全流程都有产出 → 整卡隐藏
+  const showChecklist = checklistReady && nextSteps.some((s) => !s.done);
+
+  const statCards = buildStatCards(stats, pendingGates.length);
+  const stages = buildPipelineStages(stats, currentProjectId, stuckKey);
 
   return (
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Autonomous Research"
-        title={tr('总览', 'Dashboard')}
+        title={tr('工作台', 'Workbench')}
         right={
           <>
-            <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
+            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>
               <Icon name="compass" size={15} />
               {tr('任务', 'Tasks')}
             </button>
-            <button className="btn btn-primary" onClick={() => navigate('/voyages')}>
+            <button className="btn btn-primary" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>
               <Icon name="play" size={14} />
               {tr('运行今日循环', "Run today's loop")}
             </button>
           </>
         }
       />
+
+      {showChecklist && <NextStepsCard steps={nextSteps} onNavigate={navigate} />}
 
       <PipelineFlow
         stages={stages}

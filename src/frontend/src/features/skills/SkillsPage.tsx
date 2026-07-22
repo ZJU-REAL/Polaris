@@ -176,7 +176,7 @@ function SkillDetailModal({
     mutationFn: (target: string) =>
       api.enableProjectSkill(currentProjectId!, { skill_id: skillId, target }),
     onSuccess: (row) => {
-      toast(`${tr('已启用到当前方向', 'Enabled for current direction')}：${skillTargetLabel(row.target)}`, 'ok');
+      toast(`${tr('已启用到当前课题', 'Enabled for current topic')}：${skillTargetLabel(row.target)}`, 'ok');
       invalidate();
     },
     onError: (e) =>
@@ -279,7 +279,7 @@ function SkillDetailModal({
                 if (t) enableMutation.mutate(t);
               }}
             >
-              {tr('启用到当前方向', 'Enable for current direction')}
+              {tr('启用到当前课题', 'Enable for current topic')}
             </button>
           </span>
         )}
@@ -816,7 +816,7 @@ function EnabledPanel({ projectId }: { projectId: string }) {
   const removeMutation = useMutation({
     mutationFn: (id: string) => api.removeProjectSkill(id),
     onSuccess: () => {
-      toast(tr('已从当前方向移除', 'Removed from current direction'), 'ok');
+      toast(tr('已从当前课题移除', 'Removed from current topic'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['project-skills', projectId] });
     },
     onError: (e) => toast(`${tr('移除失败', 'Remove failed')}：${errMsg(e)}`, 'error'),
@@ -834,12 +834,12 @@ function EnabledPanel({ projectId }: { projectId: string }) {
 
   return (
     <div className="card" style={{ padding: '14px 16px' }}>
-      <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 4 }}>{tr('当前方向已启用', 'Enabled for current direction')}</div>
+      <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 4 }}>{tr('当前课题已启用', 'Enabled for current topic')}</div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 12 }}>
         {tr('新发起的 AI 任务会按下面的技能执行；进行中的任务不受影响', 'New AI tasks will use these skills; running tasks are unaffected')}
       </div>
       {isLoading ? null : grouped.length === 0 ? (
-        <EmptyState compact icon="sparkle" title={tr('还没有启用技能', 'No skills enabled yet')} desc={tr('从左侧技能列表点启用到当前方向', 'Enable one from the skill list on the left')} />
+        <EmptyState compact icon="sparkle" title={tr('还没有启用技能', 'No skills enabled yet')} desc={tr('从左侧技能列表点启用到当前课题', 'Enable one from the skill list on the left')} />
       ) : (
         grouped.map(([target, list]) => (
           <div key={target} style={{ marginBottom: 12 }}>
@@ -872,7 +872,7 @@ function EnabledPanel({ projectId }: { projectId: string }) {
                   <button
                     className="icon-btn"
                     style={{ width: 24, height: 24 }}
-                    title={tr('从当前方向移除', 'Remove from current direction')}
+                    title={tr('从当前课题移除', 'Remove from current topic')}
                     onClick={() => removeMutation.mutate(r.id)}
                   >
                     <Icon name="x" size={12} />
@@ -1030,7 +1030,7 @@ export function SkillsPage() {
           <EnabledPanel projectId={currentProjectId} />
         ) : (
           <div className="card" style={{ padding: '14px 16px' }}>
-            <EmptyState compact icon="compass" title={tr('未选择研究方向', 'No direction selected')} desc={tr('选择研究方向后可把技能启用到该方向', 'Pick a research direction to enable skills for it')} />
+            <EmptyState compact icon="compass" title={tr('未选择课题', 'No topic selected')} desc={tr('选择课题后可把技能启用到该课题', 'Pick a topic to enable skills for it')} />
           </div>
         )}
       </div>

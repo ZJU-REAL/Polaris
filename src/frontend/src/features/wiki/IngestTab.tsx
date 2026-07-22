@@ -7,6 +7,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { FormField } from '../../components/ui/FormField';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
+import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type IngestKnobs, type IngestMode, type IngestState } from '../../lib/api';
 import { tr } from '../../lib/i18n';
@@ -88,6 +89,11 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  // 无 include 关键词时 arXiv 检索会退化成无差别抓取（空转烧钱），前端禁止启动
+  const { projects } = useProject();
+  const project = projects.find((p) => p.id === pid);
+  const noKeywords = !!project && (project.definition?.keywords?.include ?? []).length === 0;
+
   // —— 成本旋钮（bootstrap） ——
   const [monthsBack, setMonthsBack] = useState(6);
   const [maxPapers, setMaxPapers] = useState(50);
@@ -114,7 +120,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
         toast(
-          tr('该项目已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this direction — wait for it to finish.'),
+          tr('该课题已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this topic — wait for it to finish.'),
           'error',
         );
         void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
@@ -124,7 +130,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
     },
   });
 
-  const busy = running || ingestMutation.isPending;
+  const busy = running || ingestMutation.isPending || noKeywords;
 
   function runBootstrap() {
     ingestMutation.mutate({
@@ -417,6 +423,33 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
             disabledText={tr('无上限', 'No cap')}
           />
 
+          {noKeywords && (
+            <div
+              style={{
+                margin: '0 0 12px',
+                padding: '10px 12px',
+                borderRadius: 8,
+                background: 'var(--warn-bg)',
+                color: 'var(--warn-tx)',
+                fontSize: 12,
+                fontWeight: 600,
+                lineHeight: 1.55,
+              }}
+            >
+              {tr(
+                '这个课题还没有配置 include 关键词，无法启动文献追踪——先在课题设置里配置关键词。',
+                'This topic has no include terms yet, so literature tracking cannot start — add them in topic settings first.',
+              )}
+              <button
+                className="btn btn-soft sm"
+                style={{ marginTop: 8, display: 'flex' }}
+                onClick={() => navigate(`/projects/${pid}`)}
+              >
+                <Icon name="sliders" size={13} />
+                {tr('去课题设置配置关键词', 'Configure terms in topic settings')}
+              </button>
+            </div>
+          )}
           <div className="row gap10" style={{ marginTop: 6 }}>
             <button className="btn btn-primary" disabled={busy} onClick={runBootstrap}>
               {ingestMutation.isPending ? (

@@ -8,6 +8,7 @@ import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { topicPath } from '../../app/project';
 
 /* ============================================================
    新建实验 Modal：选 promoted idea + SSH 凭据 + 预算 →
@@ -144,7 +145,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         label={tr('想法', 'Idea')}
         en="promoted idea"
         hint={noIdeas ? undefined : tr('仅列出已晋级的想法。', 'Only promoted ideas are listed.')}
-        error={noIdeas ? tr('当前方向还没有已晋级的想法，先在想法评审页晋级一个。', 'No promoted ideas in this direction yet — promote one in Idea Review first.') : null}
+        error={noIdeas ? tr('当前课题还没有已晋级的想法，先在想法评审页晋级一个。', 'No promoted ideas in this topic yet — promote one in Idea Review first.') : null}
       >
         <SelectMenu
           value={ideaId}
@@ -156,7 +157,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       </FormField>
       {noIdeas && (
         <div style={{ marginTop: -6, marginBottom: 14 }}>
-          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate('/review'); }}>
+          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate(topicPath(pid, 'review')); }}>
             <Icon name="scale" size={13} />
             {tr('前往想法评审', 'Go to Idea Review')}
           </button>

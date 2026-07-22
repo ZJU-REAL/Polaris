@@ -170,7 +170,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       {seedType === 'concept' && (
-        <FormField label={tr('选择概念', 'Pick a concept')} en="concept" hint={tr('从当前方向的概念库中选一个作为探索起点。', 'Pick one from this direction’s concept library as the starting point.')}>
+        <FormField label={tr('选择概念', 'Pick a concept')} en="concept" hint={tr('从当前课题的概念库中选一个作为探索起点。', 'Pick one from this topic’s concept library as the starting point.')}>
           <div className="col gap8">
             <input
               className="input"
