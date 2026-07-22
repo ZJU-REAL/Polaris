@@ -34,6 +34,7 @@ const NAV_LAB: NavEntry[] = [
 
 const NAV_MAIN: NavEntry[] = [
   { icon: 'dashboard', zh: '工作台', en: 'Workbench' },
+  { sub: 'research', icon: 'pin', zh: '相关研究', en: 'Related Work' },
 ];
 
 const NAV_PIPE: NavEntry[] = [
@@ -70,6 +71,7 @@ function crumbFor(pathname: string): [string, string] {
   if (p.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
   const table: Record<string, [string, string]> = {
     '/wiki': [tr('实验室', 'Lab'), tr('文献追踪', 'Research Wiki')],
+    '/research': [tr('课题研究', 'Topic'), tr('相关研究', 'Related Work')],
     '/forge': ['Stage 01', tr('想法生成', 'Idea Forge')],
     '/review': ['Stage 02', tr('想法评审', 'Idea Review')],
     '/experiment': ['Stage 03', tr('实验搭建', 'Experiment Lab')],

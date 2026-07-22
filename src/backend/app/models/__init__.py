@@ -33,6 +33,7 @@ from app.models.review import ReviewMessage, ReviewSession
 from app.models.skill import ProjectSkill, Skill, SkillListing, SkillRating, SkillVersion
 from app.models.ssh_credential import SSHCredential
 from app.models.system_setting import SystemSetting
+from app.models.topic_shelf import TopicPaper
 from app.models.user import User
 from app.models.voyage import VoyageRun, VoyageStep
 
@@ -76,6 +77,7 @@ __all__ = [
     "SkillVersion",
     "SystemSetting",
     "TimestampMixin",
+    "TopicPaper",
     "User",
     "UserAuthorProfile",
     "UserLibraryEntry",

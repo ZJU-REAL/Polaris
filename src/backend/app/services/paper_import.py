@@ -134,6 +134,90 @@ async def _fields_from_doi(doi: str) -> dict[str, Any]:
     }
 
 
+async def resolve_fields(
+    *,
+    arxiv_id: str | None = None,
+    doi: str | None = None,
+    bibtex: str | None = None,
+) -> dict[str, Any]:
+    """按来源解析论文字段（arxiv > doi > bibtex）；失败抛 ParseFailedError。"""
+    if arxiv_id:
+        return await _fields_from_arxiv(arxiv_id)
+    if doi:
+        return await _fields_from_doi(doi)
+    return parse_bibtex_entry(bibtex or "")
+
+
+async def create_pool_paper(
+    session: AsyncSession,
+    *,
+    fields: dict[str, Any],
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+) -> Paper:
+    """按解析字段建内容池 Paper（source=manual，**不建任何成员行**；flush 不 commit）。
+
+    调用方负责先查池去重（find_pool_paper）与收尾 commit。有 arxiv_id 的尽力而为
+    补下 PDF + 抽全文；全文到手且无机构时 LLM 补机构（计费按传入的 user/project 归因）。
+    """
+    external_ids: dict[str, str] = {}
+    if fields.get("arxiv_id"):
+        external_ids["arxiv"] = fields["arxiv_id"]
+    if fields.get("doi"):
+        external_ids["doi"] = fields["doi"]
+    paper = Paper(
+        source="manual",
+        dedup_key=pool_dedup_key(
+            arxiv_id=fields.get("arxiv_id"),
+            doi=fields.get("doi"),
+            title=fields["title"],
+            year=fields.get("year"),
+            authors=fields.get("authors"),
+        ),
+        arxiv_id=fields.get("arxiv_id"),
+        doi=fields.get("doi"),
+        external_ids=external_ids or None,
+        title=fields["title"],
+        authors=fields.get("authors"),
+        affiliations=fields.get("affiliations"),
+        abstract=fields.get("abstract"),
+        year=fields.get("year"),
+        venue=fields.get("venue"),
+        url=fields.get("url"),
+        published_at=fields.get("published_at"),
+    )
+    session.add(paper)
+    await session.flush()
+
+    if paper.arxiv_id:
+        # 尽力而为补下 PDF + 抽全文；失败只记日志，不阻塞创建
+        from app.services.literature.pdf_extract import extract_full_text, save_pdf
+
+        try:
+            content = await get_arxiv_client().download_pdf(paper.arxiv_id)
+            pdf_path = save_pdf(str(paper.id), content)
+            paper.pdf_path = str(pdf_path)
+            txt_path = await extract_full_text(str(paper.id), pdf_path)
+            paper.full_text_path = str(txt_path)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.warning("auto PDF fetch failed for paper %s", paper.id, exc_info=True)
+
+    # 发表机构：全文到手后 LLM 从标题页解析（DOI 路径已有 OpenAlex 机构时不覆盖）；
+    # 失败不影响创建
+    if not paper.affiliations and paper.full_text_path:
+        from app.core.llm.router import get_llm_router
+        from app.services.affiliations import extract_affiliations_llm
+
+        affs = await extract_affiliations_llm(
+            paper, llm=get_llm_router(), user_id=user_id, project_id=project_id
+        )
+        if affs:
+            paper.affiliations = affs
+    return paper
+
+
 async def add_manual_paper(
     session: AsyncSession,
     *,
@@ -149,12 +233,7 @@ async def add_manual_paper(
     - 解析失败 → ParseFailedError（路由映射 422）
     - 新论文有 arxiv_id 的自动尝试补下 PDF，失败只记日志不阻塞
     """
-    if arxiv_id:
-        fields = await _fields_from_arxiv(arxiv_id)
-    elif doi:
-        fields = await _fields_from_doi(doi)
-    else:
-        fields = parse_bibtex_entry(bibtex or "")
+    fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, bibtex=bibtex)
 
     library = await get_library_for_project(session, project_id)
     dedup_key = pool_dedup_key(
@@ -178,55 +257,8 @@ async def add_manual_paper(
         await session.refresh(pooled)
         return pooled
 
-    external_ids: dict[str, str] = {}
-    if fields.get("arxiv_id"):
-        external_ids["arxiv"] = fields["arxiv_id"]
-    if fields.get("doi"):
-        external_ids["doi"] = fields["doi"]
-    paper = Paper(
-        source="manual",
-        dedup_key=dedup_key,
-        arxiv_id=fields.get("arxiv_id"),
-        doi=fields.get("doi"),
-        external_ids=external_ids or None,
-        title=fields["title"],
-        authors=fields.get("authors"),
-        affiliations=fields.get("affiliations"),
-        abstract=fields.get("abstract"),
-        year=fields.get("year"),
-        venue=fields.get("venue"),
-        url=fields.get("url"),
-        published_at=fields.get("published_at"),
-    )
-    session.add(paper)
-    await session.flush()
+    paper = await create_pool_paper(session, fields=fields, project_id=project_id)
     await ensure_membership(session, library_id=library.id, paper_id=paper.id, status="included")
-
-    if paper.arxiv_id:
-        # 尽力而为补下 PDF + 抽全文；失败只记日志，不阻塞创建
-        from app.services.literature.pdf_extract import extract_full_text, save_pdf
-
-        try:
-            content = await get_arxiv_client().download_pdf(paper.arxiv_id)
-            pdf_path = save_pdf(str(paper.id), content)
-            paper.pdf_path = str(pdf_path)
-            txt_path = await extract_full_text(str(paper.id), pdf_path)
-            paper.full_text_path = str(txt_path)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001
-            logger.warning("auto PDF fetch failed for paper %s", paper.id, exc_info=True)
-
-    # 发表机构：全文到手后 LLM 从标题页解析（DOI 路径已有 OpenAlex 机构时不覆盖）；
-    # 失败不影响创建
-    if not paper.affiliations and paper.full_text_path:
-        from app.core.llm.router import get_llm_router
-        from app.services.affiliations import extract_affiliations_llm
-
-        affs = await extract_affiliations_llm(paper, llm=get_llm_router(), project_id=project_id)
-        if affs:
-            paper.affiliations = affs
-
     await session.commit()
     await session.refresh(paper)
     return paper
