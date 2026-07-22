@@ -12,7 +12,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.library_direction import DirectionLibrary, LibraryPaper
-from app.models.paper import Paper
+from app.models.paper import Concept, Paper
 from app.models.project import Project, ProjectMember
 
 
@@ -126,4 +126,125 @@ def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
         .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
         .join(ProjectMember, ProjectMember.project_id == DirectionLibrary.project_id)
         .where(ProjectMember.user_id == user_id)
+    )
+
+
+# ---- 共享方向库读视图（P5c：全实验室可读，docs-dev/workspace-ia-redesign.md §2/§5） ----
+
+
+def _last_synced_of(ingest_state: Any) -> Any:
+    """从 ingest_state 提取「上次同步时间」：优先 last_run.finished_at，退回 watermark。"""
+    if not isinstance(ingest_state, dict):
+        return None
+    last_run = ingest_state.get("last_run")
+    if isinstance(last_run, dict) and last_run.get("finished_at"):
+        return last_run["finished_at"]
+    return ingest_state.get("watermark")
+
+
+async def get_library(session: AsyncSession, library_id: uuid.UUID) -> DirectionLibrary | None:
+    return await session.get(DirectionLibrary, library_id)
+
+
+async def _library_stats(
+    session: AsyncSession, library_ids: list[uuid.UUID]
+) -> tuple[dict[uuid.UUID, int], dict[uuid.UUID, Any], dict[uuid.UUID, int]]:
+    """批量聚合库统计：(库内论文数, 最近编译时间, 概念数)。
+
+    论文数口径 = 相关性达标及之后（与论文列表的 library 组别名一致）。
+    """
+    from app.services.papers import PAPER_STATUS_GROUPS  # 延迟导入避免循环依赖
+
+    if not library_ids:
+        return {}, {}, {}
+    paper_rows = await session.execute(
+        select(LibraryPaper.library_id, func.count(), func.max(LibraryPaper.compiled_at))
+        .where(
+            LibraryPaper.library_id.in_(library_ids),
+            LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+        )
+        .group_by(LibraryPaper.library_id)
+    )
+    paper_counts: dict[uuid.UUID, int] = {}
+    last_compiled: dict[uuid.UUID, Any] = {}
+    for lib_id, count, compiled_at in paper_rows.all():
+        paper_counts[lib_id] = int(count)
+        last_compiled[lib_id] = compiled_at
+    concept_rows = await session.execute(
+        select(Concept.library_id, func.count())
+        .where(Concept.library_id.in_(library_ids))
+        .group_by(Concept.library_id)
+    )
+    concept_counts = {lib_id: int(count) for lib_id, count in concept_rows.all()}
+    return paper_counts, last_compiled, concept_counts
+
+
+async def _my_project_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
+    rows = await session.execute(
+        select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+    )
+    return set(rows.scalars().all())
+
+
+def _overview_dict(
+    library: DirectionLibrary,
+    *,
+    my_projects: set[uuid.UUID],
+    paper_count: int,
+    concept_count: int,
+    last_compiled_at: Any,
+) -> dict[str, Any]:
+    return {
+        "id": library.id,
+        "name": library.name,
+        "statement": library.statement,
+        "cadence": library.cadence,
+        "project_id": library.project_id,
+        "is_mine": library.project_id is not None and library.project_id in my_projects,
+        "paper_count": paper_count,
+        "concept_count": concept_count,
+        "last_compiled_at": last_compiled_at,
+        "last_synced_at": _last_synced_of(library.ingest_state),
+        "created_at": library.created_at,
+        "updated_at": library.updated_at,
+    }
+
+
+async def list_libraries_overview(
+    session: AsyncSession, *, user_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """全部方向库 + 概要统计（读操作对所有登录用户开放，不做成员校验）。"""
+    libraries = (
+        (await session.execute(select(DirectionLibrary).order_by(DirectionLibrary.created_at)))
+        .scalars()
+        .all()
+    )
+    paper_counts, last_compiled, concept_counts = await _library_stats(
+        session, [lib.id for lib in libraries]
+    )
+    my_projects = await _my_project_ids(session, user_id)
+    return [
+        _overview_dict(
+            lib,
+            my_projects=my_projects,
+            paper_count=paper_counts.get(lib.id, 0),
+            concept_count=concept_counts.get(lib.id, 0),
+            last_compiled_at=last_compiled.get(lib.id),
+        )
+        for lib in libraries
+    ]
+
+
+async def library_overview(
+    session: AsyncSession, *, library: DirectionLibrary, user_id: uuid.UUID
+) -> dict[str, Any]:
+    """单库详情概要（同列表口径）。"""
+    paper_counts, last_compiled, concept_counts = await _library_stats(session, [library.id])
+    my_projects = await _my_project_ids(session, user_id)
+    return _overview_dict(
+        library,
+        my_projects=my_projects,
+        paper_count=paper_counts.get(library.id, 0),
+        concept_count=concept_counts.get(library.id, 0),
+        last_compiled_at=last_compiled.get(library.id),
     )

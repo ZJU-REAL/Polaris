@@ -78,12 +78,13 @@ async def test_get_pdf_404_then_serves_file(client):
     assert resp.headers["content-type"] == "application/pdf"
     assert resp.content == content
 
-    # 非项目成员 404
+    # 非项目成员也可读（P5c：方向库全实验室可读，PDF 原文免费共享）
     other = await register_and_login(client, email="outsider@example.com")
     resp = await client.get(
         f"/api/papers/{paper_id}/pdf", headers={"Authorization": f"Bearer {other}"}
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.content == content
 
 
 @respx.mock
@@ -176,14 +177,14 @@ async def test_chat_sse_stream_and_usage(client):
         assert str(rows[0].project_id) == project_id
         assert rows[0].completion_tokens > 0
 
-    # 非项目成员 404
+    # 非项目成员也可伴读（P5c：库成员论文全员可读；费用记个人、无课题上下文）
     other = await register_and_login(client, email="chat-outsider@example.com")
     resp = await client.post(
         f"/api/papers/{paper_id}/chat",
         json={"question": "hi"},
         headers={"Authorization": f"Bearer {other}"},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 200
 
 
 async def test_chat_with_referenced_papers(client):

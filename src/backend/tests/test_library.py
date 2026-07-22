@@ -146,19 +146,32 @@ async def test_clear_history_keeps_saved(client):
     assert resp.json()["items"][0]["visit_count"] == 0
 
 
-async def test_visit_requires_project_membership(client):
+async def test_visit_requires_paper_visibility(client):
+    """P5c 起库成员论文全员可读：他人也能浏览/收藏；
+    完全不可见的论文（不在任何库、未入架未收藏）仍 404。"""
     token_a = await register_and_login(client, email="owner@example.com")
     headers_a = {"Authorization": f"Bearer {token_a}"}
     project_id = await _make_project(client, headers_a)
-    paper_id = await _make_paper(project_id, title="Private Paper", status="included")
+    paper_id = await _make_paper(project_id, title="Shared Paper", status="included")
 
     token_b = await register_and_login(client, email="intruder@example.com")
     headers_b = {"Authorization": f"Bearer {token_b}"}
     resp = await client.post(
         "/api/me/library/visits", json={"paper_id": paper_id}, headers=headers_b
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 201
     resp = await client.post("/api/me/library", json={"paper_id": paper_id}, headers=headers_b)
+    assert resp.status_code == 201
+
+    # 池级论文（零库成员行、与 b 无个人链路）仍不可见
+    async with get_sessionmaker()() as session:
+        pool_paper = Paper(title="Invisible Pool Paper", source="manual")
+        session.add(pool_paper)
+        await session.commit()
+        pool_id = str(pool_paper.id)
+    resp = await client.post(
+        "/api/me/library/visits", json={"paper_id": pool_id}, headers=headers_b
+    )
     assert resp.status_code == 404
 
 

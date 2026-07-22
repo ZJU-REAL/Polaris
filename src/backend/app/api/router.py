@@ -16,6 +16,7 @@ from app.api import (
     ideas,
     ingest,
     invites,
+    libraries,
     library,
     manuscripts,
     market,
@@ -50,6 +51,7 @@ api_router.include_router(admin_llm.router)
 api_router.include_router(me_llm.router)
 api_router.include_router(papers.router)
 api_router.include_router(library.router)
+api_router.include_router(libraries.router)
 api_router.include_router(publications.router)
 api_router.include_router(notes.router)
 api_router.include_router(highlights.router)

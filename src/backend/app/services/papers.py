@@ -131,7 +131,7 @@ class PaperView:
 def apply_paper_filters(
     stmt: Select,
     *,
-    project_id: uuid.UUID,
+    project_id: uuid.UUID | None,
     status: str | None = None,
     q: str | None = None,
     tag: str | None = None,
@@ -180,7 +180,7 @@ def apply_paper_filters(
         stmt = stmt.where(LibraryPaper.created_at >= created_from)
     if created_to:
         stmt = stmt.where(LibraryPaper.created_at <= created_to)
-    if tag:
+    if tag and project_id is not None:
         stmt = stmt.where(
             Paper.id.in_(
                 select(paper_tag_links.c.paper_id)
@@ -208,7 +208,8 @@ def apply_paper_filters(
 async def list_papers(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
     status: str | None = None,
     q: str | None = None,
     tag: str | None = None,
@@ -225,9 +226,13 @@ async def list_papers(
     created_from: datetime | None = None,
     created_to: datetime | None = None,
 ) -> tuple[Sequence[PaperView], int]:
-    library = await get_library_for_project(session, project_id)
+    """库内论文列表。入口二选一：project_id（成员视角，解析隐式库）或
+    library_id（共享库读视角，P5c；project_id 仅作 PaperView 的课题上下文回填）。"""
+    if library_id is None:
+        assert project_id is not None
+        library_id = (await get_library_for_project(session, project_id)).id
     stmt = apply_paper_filters(
-        member_paper_stmt(library.id),
+        member_paper_stmt(library_id),
         project_id=project_id,
         status=status,
         q=q,
@@ -271,6 +276,18 @@ async def _pool_paper_view(
     paper = await session.get(Paper, paper_id, options=options)
     if paper is None:
         return None
+    # P5c 方向库全实验室可读：论文只要在任一方向库有成员行，任何登录用户可读。
+    # 视角取确定性成员行（优先有 wiki 解读的，其次最早入库的）；无课题上下文
+    # （project_id=None：伴读不带参考检索、LLM 记账归个人）。
+    shared_stmt = (
+        select(LibraryPaper)
+        .where(LibraryPaper.paper_id == paper_id)
+        .order_by(LibraryPaper.wiki_content.is_(None), LibraryPaper.created_at)
+        .limit(1)
+    )
+    shared = (await session.execute(shared_stmt)).scalars().first()
+    if shared is not None:
+        return PaperView(paper, shared, None)
     stmt = (
         select(TopicPaper.topic_id)
         .join(ProjectMember, ProjectMember.project_id == TopicPaper.topic_id)
@@ -697,7 +714,8 @@ def build_chat_messages(
 async def keyword_search_papers(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
     q: str,
     limit: int,
     user_id: uuid.UUID | None = None,
@@ -706,9 +724,11 @@ async def keyword_search_papers(
 
     只检索库内文献（相关性达标）：已删除（excluded）/未筛选（candidate）不出现。
     笔记仅作者本人可见（P5b），故只有传 user_id（用户检索入口）才并入笔记命中；
-    agent 调用（无用户语境）不搜笔记。
+    agent 调用（无用户语境）不搜笔记。入口同 list_papers：project_id 或 library_id。
     """
-    library = await get_library_for_project(session, project_id)
+    if library_id is None:
+        assert project_id is not None
+        library_id = (await get_library_for_project(session, project_id)).id
     pattern = f"%{q}%"
     hits = [
         Paper.title.ilike(pattern),
@@ -724,7 +744,7 @@ async def keyword_search_papers(
             )
         )
     stmt = (
-        member_paper_stmt(library.id)
+        member_paper_stmt(library_id)
         .where(LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]), or_(*hits))
         .limit(limit * 3)
     )
@@ -746,12 +766,19 @@ async def keyword_search_papers(
 
 
 async def keyword_search_concepts(
-    session: AsyncSession, *, project_id: uuid.UUID, q: str, limit: int
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
+    q: str,
+    limit: int,
 ) -> list[tuple[Concept, float]]:
-    library = await get_library_for_project(session, project_id)
+    if library_id is None:
+        assert project_id is not None
+        library_id = (await get_library_for_project(session, project_id)).id
     stmt = (
         select(Concept)
-        .where(Concept.library_id == library.id, Concept.name.ilike(f"%{q}%"))
+        .where(Concept.library_id == library_id, Concept.name.ilike(f"%{q}%"))
         .order_by(Concept.name)
         .limit(limit)
     )
@@ -763,10 +790,17 @@ def semantic_search_supported(session: AsyncSession) -> bool:
 
 
 async def semantic_search_papers(
-    session: AsyncSession, *, project_id: uuid.UUID, query_vector: list[float], limit: int
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
+    query_vector: list[float],
+    limit: int,
 ) -> list[tuple[PaperView, float]]:
     """pgvector 余弦检索（仅 postgres；调用方需先判 semantic_search_supported）。"""
-    library = await get_library_for_project(session, project_id)
+    if library_id is None:
+        assert project_id is not None
+        library_id = (await get_library_for_project(session, project_id)).id
     qv = json.dumps(query_vector)
     rows = (
         await session.execute(
@@ -778,16 +812,14 @@ async def semantic_search_papers(
                 "ORDER BY p.embedding <=> CAST(:qv AS vector) "
                 "LIMIT :k"
             ),
-            {"qv": qv, "lib": str(library.id), "k": limit},
+            {"qv": qv, "lib": str(library_id), "k": limit},
         )
     ).all()
     if not rows:
         return []
     scores = {row.id: float(row.score) for row in rows}
     pairs = (
-        await session.execute(
-            member_paper_stmt(library.id).where(Paper.id.in_(list(scores)))
-        )
+        await session.execute(member_paper_stmt(library_id).where(Paper.id.in_(list(scores))))
     ).all()
     by_id = {p.id: PaperView(p, m, project_id) for p, m in pairs}
     return [(by_id[pid], scores[pid]) for pid in (r.id for r in rows) if pid in by_id]

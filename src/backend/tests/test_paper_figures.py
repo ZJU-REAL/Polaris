@@ -222,7 +222,7 @@ async def test_figures_api_extract_annotate_idempotent_force(client):
     assert resp.status_code == 200 and resp.json()["figures"] == figures
     assert await _librarian_usage_count() == 2
 
-    # 非项目成员 404
+    # 非项目成员也可读（P5c：库成员论文全员可读；extract 已有 figures 幂等直返）
     other = await register_and_login(client, email="fig-outsider@example.com")
     other_headers = {"Authorization": f"Bearer {other}"}
     for method, url in (
@@ -231,7 +231,7 @@ async def test_figures_api_extract_annotate_idempotent_force(client):
         ("POST", f"/api/papers/{paper_id}/extract-figures"),
     ):
         resp = await client.request(method, url, headers=other_headers)
-        assert resp.status_code == 404, url
+        assert resp.status_code == 200, url
 
 
 # ---- annotate_figures：fake 路径 + 失败降级 ----

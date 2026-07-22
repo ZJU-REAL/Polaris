@@ -142,11 +142,12 @@ async def test_notes_permissions(client):
     resp = await client.delete(f"/api/notes/{note_id}", headers=bob)
     assert resp.status_code == 404
 
-    # 非项目成员 → 404（笔记与论文都视为不存在）
+    # 非项目成员：论文可读（P5c 库成员论文全员可读）→ 笔记列表 200 但只见本人（空）；
+    # 他人笔记仍不可见不可改
     mallory = await register_and_login(client, email="mallory@example.com")
     outsider = {"Authorization": f"Bearer {mallory}"}
     resp = await client.get(f"/api/papers/{ids['p1']}/notes", headers=outsider)
-    assert resp.status_code == 404
+    assert resp.status_code == 200 and resp.json() == []
     resp = await client.patch(f"/api/notes/{note_id}", json={"content": "x"}, headers=outsider)
     assert resp.status_code == 404
 
