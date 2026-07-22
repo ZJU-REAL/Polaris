@@ -145,7 +145,10 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
         className={'topic-switch' + (open ? ' open' : '')}
         title={currentProject ? `${tr('切换课题', 'Switch topic')} · ${currentProject.name}` : tr('切换课题', 'Switch topic')}
       >
-        <Icon name="layers" size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+        {/* 图标放进 24px 轨道框（nav-ic）：中心与普通条目图标同在 33px 轨道，展开/折叠不位移 */}
+        <span className="nav-ic">
+          <Icon name="layers" size={18} style={{ color: 'var(--accent)' }} />
+        </span>
         {!collapsed && (
           <>
             <span className={'topic-switch-label' + (currentProject ? '' : ' placeholder')}>{triggerLabel}</span>
