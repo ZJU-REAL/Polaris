@@ -70,6 +70,53 @@ async def test_revoked_code_rejected(client):
     assert r.status_code == 403
 
 
+async def test_preset_directions_create_projects(client):
+    token = await _admin_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = await client.post(
+        "/api/admin/registration-codes",
+        json={"preset_directions": ["  LLM 长程规划  ", "多模态检索", "LLM 长程规划", ""]},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    # 去空白 / 去空项 / 去重（保序）
+    assert resp.json()["preset_directions"] == ["LLM 长程规划", "多模态检索"]
+    code = resp.json()["code"]
+
+    r = await _register(client, code, "invited@example.com", "invited_user")
+    assert r.status_code == 201, r.text
+
+    login = await client.post(
+        "/api/auth/jwt/login",
+        data={"username": "invited@example.com", "password": "str0ng-password"},
+    )
+    assert login.status_code == 200
+    invited_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    projects = (await client.get("/api/projects", headers=invited_headers)).json()
+    by_name = {p["name"]: p for p in projects}
+    assert set(by_name) == {"LLM 长程规划", "多模态检索"}
+    assert by_name["LLM 长程规划"]["definition"] == {"statement": "LLM 长程规划"}
+
+
+async def test_code_without_directions_creates_no_projects(client):
+    token = await _admin_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    code = (
+        await client.post("/api/admin/registration-codes", json={}, headers=headers)
+    ).json()["code"]
+
+    r = await _register(client, code, "plain@example.com", "plain_user")
+    assert r.status_code == 201
+
+    login = await client.post(
+        "/api/auth/jwt/login",
+        data={"username": "plain@example.com", "password": "str0ng-password"},
+    )
+    plain_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert (await client.get("/api/projects", headers=plain_headers)).json() == []
+
+
 async def test_static_fallback_code_still_works(client):
     # 没建过任何 DB 码时，settings.invite_code（测试里 = test-invite）仍可注册（兜底）
     r = await _register(client, "test-invite", "fallback@example.com", "fallback_user")

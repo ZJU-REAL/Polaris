@@ -23,6 +23,7 @@ def _to_read(rc) -> RegistrationCodeRead:
         max_uses=rc.max_uses,
         used_count=rc.used_count,
         revoked=rc.revoked,
+        preset_directions=list(rc.preset_directions or []),
         status=codes_service.code_status(rc),
         created_at=rc.created_at,
     )
@@ -44,6 +45,7 @@ async def create_registration_code(
         note=data.note,
         expires_days=data.expires_days,
         max_uses=data.max_uses,
+        preset_directions=data.preset_directions,
     )
     return _to_read(rc)
 

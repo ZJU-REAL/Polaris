@@ -2,12 +2,13 @@
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class RegistrationCode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -27,3 +28,5 @@ class RegistrationCode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     max_uses: Mapped[int | None] = mapped_column(Integer)
     used_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 邀请人预设的研究方向（字符串列表）；用此码注册的新用户自动获得这些方向的项目
+    preset_directions: Mapped[list[Any] | None] = mapped_column(JSONVariant)

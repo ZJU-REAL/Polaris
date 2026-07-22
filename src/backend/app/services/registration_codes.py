@@ -26,6 +26,7 @@ async def create_code(
     note: str = "",
     expires_days: int | None = None,
     max_uses: int | None = None,
+    preset_directions: list[str] | None = None,
 ) -> RegistrationCode:
     # 极小概率撞码，重试几次
     for _ in range(5):
@@ -41,6 +42,7 @@ async def create_code(
         created_by=created_by,
         expires_at=(datetime.now(UTC) + timedelta(days=expires_days)) if expires_days else None,
         max_uses=max_uses,
+        preset_directions=preset_directions or None,
     )
     session.add(rc)
     await session.commit()
@@ -77,8 +79,8 @@ async def revoke_code(session: AsyncSession, code_id: uuid.UUID) -> bool:
     return True
 
 
-async def redeem_code(session: AsyncSession, code: str) -> bool:
-    """注册时核销：命中一个可用注册码并原子自增 used_count 则返回 True。
+async def redeem_code(session: AsyncSession, code: str) -> RegistrationCode | None:
+    """注册时核销：命中一个可用注册码并原子自增 used_count 则返回该码，否则 None。
 
     用带条件的 UPDATE 保证并发下不会超过 max_uses。不 commit（交给注册事务）。
     """
@@ -95,4 +97,8 @@ async def redeem_code(session: AsyncSession, code: str) -> bool:
         .values(used_count=RegistrationCode.used_count + 1)
     )
     result = await session.execute(stmt)
-    return (result.rowcount or 0) > 0
+    if (result.rowcount or 0) == 0:
+        return None
+    return (
+        await session.execute(select(RegistrationCode).where(RegistrationCode.code == code))
+    ).scalar_one()

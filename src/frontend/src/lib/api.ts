@@ -155,6 +155,7 @@ export interface RegistrationCodeRead {
   max_uses: number | null;
   used_count: number;
   revoked: boolean;
+  preset_directions: string[];
   status: string; // active | revoked | expired | exhausted
   created_at: string;
 }
@@ -2234,6 +2235,7 @@ export const api = {
     note?: string;
     expires_days?: number | null;
     max_uses?: number | null;
+    preset_directions?: string[];
   }): Promise<RegistrationCodeRead> {
     return requestJson<RegistrationCodeRead>('/admin/registration-codes', 'POST', input);
   },
