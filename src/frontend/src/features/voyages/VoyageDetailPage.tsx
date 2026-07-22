@@ -6,6 +6,7 @@ import { StatusPill } from '../../components/ui/StatusPill';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
 import { useShell } from '../../app/AppShell';
+import { topicPath, useProject } from '../../app/project';
 import { subscribeSse } from '../../lib/sse';
 import { fmtDuration, fmtTime, fmtTokens } from '../../lib/format';
 import { tr } from '../../lib/i18n';
@@ -375,6 +376,7 @@ const PAPER_LIST_PREVIEW = 5;
 
 function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number }) {
   const navigate = useNavigate();
+  const { currentProjectId } = useProject();
   const [open, setOpen] = useState(false);
   if (papers.length === 0) return null;
   const shown = open ? papers : papers.slice(0, PAPER_LIST_PREVIEW);
@@ -400,7 +402,7 @@ function StepPaperList({ papers, total }: { papers: PaperBrief[]; total?: number
               minWidth: 0,
             }}
             title={p.title}
-            onClick={() => navigate(`/wiki?paper=${p.id}`)}
+            onClick={() => navigate(topicPath(currentProjectId, `wiki?paper=${p.id}`))}
           >
             {p.title}
           </span>
@@ -1441,6 +1443,7 @@ export function VoyageDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openGates } = useShell();
+  const { currentProjectId } = useProject();
   const [live, setLive] = useState(false);
   const [showObsolete, setShowObsolete] = useState(false);
 
@@ -1634,7 +1637,7 @@ export function VoyageDetailPage() {
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
             <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>{tr('返回列表', 'Back to list')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>{tr('返回列表', 'Back to list')}</button>
           </div>
         </div>
       </div>
@@ -1656,7 +1659,7 @@ export function VoyageDetailPage() {
             <span
               className="row gap6"
               style={{ cursor: 'pointer' }}
-              onClick={() => navigate('/voyages')}
+              onClick={() => navigate(topicPath(voyage.project_id, 'voyages'))}
             >
               ← Voyages
             </span>

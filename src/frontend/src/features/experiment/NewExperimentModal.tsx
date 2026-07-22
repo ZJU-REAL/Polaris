@@ -8,6 +8,7 @@ import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { topicPath } from '../../app/project';
 
 /* ============================================================
    新建实验 Modal：选 promoted idea + SSH 凭据 + 预算 →
@@ -156,7 +157,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       </FormField>
       {noIdeas && (
         <div style={{ marginTop: -6, marginBottom: 14 }}>
-          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate('/review'); }}>
+          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate(topicPath(pid, 'review')); }}>
             <Icon name="scale" size={13} />
             {tr('前往想法评审', 'Go to Idea Review')}
           </button>

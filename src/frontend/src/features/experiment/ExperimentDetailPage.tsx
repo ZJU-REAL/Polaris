@@ -8,6 +8,7 @@ import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import { useShell } from '../../app/AppShell';
+import { topicPath, useProject } from '../../app/project';
 import { fmtDuration, fmtTime } from '../../lib/format';
 import {
   api,
@@ -693,6 +694,7 @@ export function ExperimentDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openGates } = useShell();
+  const { currentProjectId } = useProject();
   const [tab, setTab] = useState<TabKey>('plan');
   const defaultedRef = useRef(false);
 
@@ -746,7 +748,7 @@ export function ExperimentDetailPage() {
           </div>
           <div className="row gap8" style={{ justifyContent: 'center' }}>
             <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
-            <button className="btn btn-ghost" onClick={() => navigate('/experiment')}>{tr('返回列表', 'Back to list')}</button>
+            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'experiment'))}>{tr('返回列表', 'Back to list')}</button>
           </div>
         </div>
       </div>
@@ -761,7 +763,7 @@ export function ExperimentDetailPage() {
       <div className="row" style={{ alignItems: 'flex-start', marginBottom: 4 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="h-eyebrow row gap8">
-            <span className="row gap6" style={{ cursor: 'pointer' }} onClick={() => navigate('/experiment')}>
+            <span className="row gap6" style={{ cursor: 'pointer' }} onClick={() => navigate(topicPath(exp.project_id, 'experiment'))}>
               ← Experiment Lab
             </span>
             <span className="mono" style={{ textTransform: 'none', color: 'var(--text-4)' }}>{exp.id.slice(0, 8)}</span>

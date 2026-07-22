@@ -9,21 +9,21 @@ import { ScoreRing } from '../../components/ui/ScoreRing';
 import { Delta } from '../../components/ui/Delta';
 import { gateTitle, gateDesc, gateKindLabel } from '../../components/ui/GateCard';
 import { useShell } from '../../app/AppShell';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, type ActivityRead, type GateRead, type StatsRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { compositeOf } from '../forge/ideaShared';
 
-/** 端到端流水线各阶段的真实计数（stats 未就绪时显示 —）。 */
-function buildPipelineStages(stats: StatsRead | undefined): PipelineStage[] {
+/** 端到端流水线各阶段的真实计数（stats 未就绪时显示 —）；path 带当前课题前缀。 */
+function buildPipelineStages(stats: StatsRead | undefined, pid: string | null): PipelineStage[] {
   return [
-    { key: 'wiki', path: '/wiki', no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki', count: stats?.papers_total ?? null },
-    { key: 'forge', path: '/forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge', count: stats?.ideas_candidate ?? null },
-    { key: 'review', path: '/review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review', count: stats?.ideas_under_review ?? null },
+    { key: 'wiki', path: topicPath(pid, 'wiki'), no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki', count: stats?.papers_total ?? null },
+    { key: 'forge', path: topicPath(pid, 'forge'), no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge', count: stats?.ideas_candidate ?? null },
+    { key: 'review', path: topicPath(pid, 'review'), no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review', count: stats?.ideas_under_review ?? null },
     {
       key: 'experiment',
-      path: '/experiment',
+      path: topicPath(pid, 'experiment'),
       no: '03',
       icon: 'flask',
       zh: '实验搭建',
@@ -31,8 +31,8 @@ function buildPipelineStages(stats: StatsRead | undefined): PipelineStage[] {
       count: stats?.experiments_active ?? null,
       running: (stats?.experiments_running ?? 0) > 0,
     },
-    { key: 'writer', path: '/writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer', count: stats?.manuscripts_total ?? null },
-    { key: 'paper-review', path: '/paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review', count: stats?.manuscripts_under_review ?? null },
+    { key: 'writer', path: topicPath(pid, 'writer'), no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer', count: stats?.manuscripts_total ?? null },
+    { key: 'paper-review', path: topicPath(pid, 'paper-review'), no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review', count: stats?.manuscripts_under_review ?? null },
   ];
 }
 
@@ -64,7 +64,7 @@ function FeaturedIdeaCard({ pid }: { pid: string | null }) {
               : tr('候选池还是空的，先运行一次想法生成。', 'The candidate pool is empty — run idea generation first.')}
         </div>
         {!leaderboardQuery.isLoading && (
-          <button className="btn btn-ghost sm" style={{ marginTop: 14 }} onClick={() => navigate('/forge')}>
+          <button className="btn btn-ghost sm" style={{ marginTop: 14 }} onClick={() => navigate(topicPath(pid, 'forge'))}>
             <Icon name="bulb" size={13} />
             {tr('前往想法生成', 'Go to Idea Forge')}
           </button>
@@ -311,7 +311,7 @@ export function DashboardPage() {
   });
 
   const statCards = buildStatCards(statsQuery.data, pendingGates.length);
-  const stages = buildPipelineStages(statsQuery.data);
+  const stages = buildPipelineStages(statsQuery.data, currentProjectId);
 
   return (
     <div className="page fadeup">
@@ -320,11 +320,11 @@ export function DashboardPage() {
         title={tr('工作台', 'Workbench')}
         right={
           <>
-            <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
+            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>
               <Icon name="compass" size={15} />
               {tr('任务', 'Tasks')}
             </button>
-            <button className="btn btn-primary" onClick={() => navigate('/voyages')}>
+            <button className="btn btn-primary" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>
               <Icon name="play" size={14} />
               {tr('运行今日循环', "Run today's loop")}
             </button>

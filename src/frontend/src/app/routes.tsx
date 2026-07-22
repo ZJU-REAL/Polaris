@@ -1,8 +1,8 @@
-import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
-import { Navigate, Outlet, createBrowserRouter, useOutletContext } from 'react-router-dom';
+import { Suspense, lazy, useEffect, type ComponentType, type ReactNode } from 'react';
+import { Navigate, Outlet, createBrowserRouter, useLocation, useOutletContext, useParams } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { RequireAuth } from './auth';
-import { ProjectProvider, useProject } from './project';
+import { ProjectProvider, topicPath, useProject } from './project';
 
 // 路由级代码分割：每个页面独立 chunk，首屏只加载壳层与当前页
 function page<K extends string>(
@@ -45,6 +45,46 @@ function RequireTopic() {
   return <Outlet context={ctx} />;
 }
 
+/**
+ * /t/:topicId 布局路由：URL 是课题作用域的事实源。
+ * - URL 中的课题在列表里 → 同步给 ProjectProvider（含写 localStorage），子页面照常用
+ *   useProject().currentProjectId 拉数据；
+ * - 列表加载完但 URL 课题不存在 → 重定向 /start；
+ * - 列表加载中 / context 尚未同步 → 渲染骨架（不闪现上一个课题的数据）；
+ * - 列表加载失败（后端不可用）→ 信任 URL 放行，页面自身降级。
+ */
+function TopicScope() {
+  const { topicId = '' } = useParams();
+  const { projects, isLoading, isError, currentProjectId, setCurrentProjectId } = useProject();
+  const ctx = useOutletContext();
+  const known = projects.some((p) => p.id === topicId);
+
+  useEffect(() => {
+    if (topicId && (known || isError) && topicId !== currentProjectId) setCurrentProjectId(topicId);
+  }, [topicId, known, isError, currentProjectId, setCurrentProjectId]);
+
+  if (isLoading) return <PageFallback />;
+  if (!known && !isError) return <Navigate to="/start" replace />;
+  if (topicId !== currentProjectId) return <PageFallback />;
+  return <Outlet context={ctx} />;
+}
+
+/**
+ * 旧课题域路径（/、/wiki、/forge…）重定向：收藏夹 / 刷新兼容。
+ * localStorage 记住的课题（仍在列表中）优先，否则列表第一个；都没有 → /start。
+ * 列表加载失败时信任 localStorage 里的 id（页面自身降级）。
+ */
+function LegacyTopicRedirect({ sub }: { sub?: string }) {
+  const { projects, isLoading, isError, currentProjectId } = useProject();
+  const location = useLocation();
+  if (isLoading) return <PageFallback />;
+  const remembered = currentProjectId && projects.some((p) => p.id === currentProjectId) ? currentProjectId : null;
+  const id = remembered ?? projects[0]?.id ?? (isError ? currentProjectId : null);
+  if (!id) return <Navigate to="/start" replace />;
+  // 保留查询串与锚点（如 /wiki?paper=xxx）
+  return <Navigate to={topicPath(id, sub) + location.search + location.hash} replace />;
+}
+
 export const router = createBrowserRouter([
   { path: '/login', element: page(() => import('../features/auth/LoginPage'), 'LoginPage') },
   {
@@ -61,19 +101,36 @@ export const router = createBrowserRouter([
       {
         element: <RequireTopic />,
         children: [
-          { index: true, element: page(() => import('../features/dashboard/DashboardPage'), 'DashboardPage') },
-          { path: 'voyages', element: page(() => import('../features/voyages/VoyagesPage'), 'VoyagesPage') },
+          // 课题域列表页：/t/:topicId 前缀，URL 即作用域
+          {
+            path: 't/:topicId',
+            element: <TopicScope />,
+            children: [
+              { index: true, element: page(() => import('../features/dashboard/DashboardPage'), 'DashboardPage') },
+              { path: 'wiki', element: page(() => import('../features/wiki/WikiPage'), 'WikiPage') },
+              { path: 'forge', element: page(() => import('../features/forge/ForgePage'), 'ForgePage') },
+              { path: 'review', element: page(() => import('../features/review/ReviewPage'), 'ReviewPage') },
+              { path: 'experiment', element: page(() => import('../features/experiment/ExperimentPage'), 'ExperimentPage') },
+              { path: 'writer', element: page(() => import('../features/writer/WriterPage'), 'WriterPage') },
+              { path: 'paper-review', element: page(() => import('../features/paper-review/PaperReviewPage'), 'PaperReviewPage') },
+              { path: 'voyages', element: page(() => import('../features/voyages/VoyagesPage'), 'VoyagesPage') },
+            ],
+          },
+          // 实体详情页：按实体 id 拉数据，保持顶层路径（分享/收藏链接稳定）
           { path: 'voyages/:id', element: page(() => import('../features/voyages/VoyageDetailPage'), 'VoyageDetailPage') },
-          { path: 'wiki', element: page(() => import('../features/wiki/WikiPage'), 'WikiPage') },
           { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
-          { path: 'forge', element: page(() => import('../features/forge/ForgePage'), 'ForgePage') },
           { path: 'ideas/:id', element: page(() => import('../features/forge/IdeaDetailPage'), 'IdeaDetailPage') },
-          { path: 'review', element: page(() => import('../features/review/ReviewPage'), 'ReviewPage') },
-          { path: 'experiment', element: page(() => import('../features/experiment/ExperimentPage'), 'ExperimentPage') },
           { path: 'experiment/:id', element: page(() => import('../features/experiment/ExperimentDetailPage'), 'ExperimentDetailPage') },
-          { path: 'writer', element: page(() => import('../features/writer/WriterPage'), 'WriterPage') },
           { path: 'writer/:id', element: page(() => import('../features/writer/WriterEditorPage'), 'WriterEditorPage') },
-          { path: 'paper-review', element: page(() => import('../features/paper-review/PaperReviewPage'), 'PaperReviewPage') },
+          // 旧路径重定向：跳到当前课题下的同名子页面
+          { index: true, element: <LegacyTopicRedirect /> },
+          { path: 'wiki', element: <LegacyTopicRedirect sub="wiki" /> },
+          { path: 'forge', element: <LegacyTopicRedirect sub="forge" /> },
+          { path: 'review', element: <LegacyTopicRedirect sub="review" /> },
+          { path: 'experiment', element: <LegacyTopicRedirect sub="experiment" /> },
+          { path: 'writer', element: <LegacyTopicRedirect sub="writer" /> },
+          { path: 'paper-review', element: <LegacyTopicRedirect sub="paper-review" /> },
+          { path: 'voyages', element: <LegacyTopicRedirect sub="voyages" /> },
         ],
       },
       // —— 非课题作用域 ——

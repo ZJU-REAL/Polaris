@@ -8,7 +8,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/Toast';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { fmtDuration, fmtRelative, fmtTime } from '../../lib/format';
 import { api, ApiError, EXPERIMENT_TERMINAL, type ExperimentRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
@@ -439,7 +439,7 @@ export function ExperimentPage() {
               desc={tr('先在想法评审页晋级一个想法，再回到这里发起实验。', 'Promote an idea in Idea Review first, then come back to start an experiment.')}
               action={
                 <div className="row gap8">
-                  <button className="btn btn-ghost" onClick={() => navigate('/review')}>
+                  <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'review'))}>
                     <Icon name="scale" size={14} />
                     {tr('前往想法评审', 'Go to Idea Review')}
                   </button>

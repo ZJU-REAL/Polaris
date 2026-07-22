@@ -10,7 +10,7 @@ import { KnobRange } from '../../components/ui/KnobRange';
 import { FormField } from '../../components/ui/FormField';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import {
@@ -231,7 +231,7 @@ function LeaderboardTab({
         title={tr('排行榜为空', 'Leaderboard is empty')}
         desc={tr('先在想法生成页生成候选想法，再运行一次评审。', 'Generate candidate ideas on the Idea Forge page first, then run a review.')}
         action={
-          <button className="btn btn-ghost" onClick={() => navigate('/forge')}>
+          <button className="btn btn-ghost" onClick={() => navigate(topicPath(pid, 'forge'))}>
             <Icon name="bulb" size={14} />
             {tr('前往想法生成', 'Go to Idea Forge')}
           </button>
@@ -342,7 +342,7 @@ function LeaderboardTab({
                 <button
                   className="btn btn-soft sm"
                   title={tr('从该想法发起实验', 'Start an experiment from this idea')}
-                  onClick={() => navigate(`/experiment?new=${r.id}`)}
+                  onClick={() => navigate(topicPath(pid, `experiment?new=${r.id}`))}
                 >
                   <Icon name="flask" size={12} />
                   {tr('发起实验', 'Start experiment')}

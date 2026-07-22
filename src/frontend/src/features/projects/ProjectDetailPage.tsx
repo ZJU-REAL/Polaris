@@ -7,7 +7,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectDefinition, type ProjectRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
@@ -286,7 +286,7 @@ export function ProjectDetailPage() {
           </div>
         </div>
         <div className="row gap8">
-          <button className="btn btn-ghost" onClick={() => navigate('/voyages')}>
+          <button className="btn btn-ghost" onClick={() => navigate(topicPath(id, 'voyages'))}>
             <Icon name="compass" size={14} />
             {tr('查看任务', 'View tasks')}
           </button>

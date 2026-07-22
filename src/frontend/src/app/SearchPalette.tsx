@@ -5,12 +5,15 @@ import { Icon, type IconName } from '../components/ui/Icon';
 import { PaperStatusPill, StatusPill } from '../components/ui/StatusPill';
 import { api, type GlobalSearchHit, type GlobalSearchHitType } from '../lib/api';
 import { tr } from '../lib/i18n';
-import { useProject } from './project';
+import { topicPath, useProject } from './project';
 
-/** 各实体类型的展示顺序 / 文案 / 图标 / 跳转目标。 */
-const TYPE_META: Record<GlobalSearchHitType, { zh: string; en: string; icon: IconName; to: (h: GlobalSearchHit) => string }> = {
+/** 各实体类型的展示顺序 / 文案 / 图标 / 跳转目标（pid = 当前课题，课题域列表页需要拼前缀）。 */
+const TYPE_META: Record<
+  GlobalSearchHitType,
+  { zh: string; en: string; icon: IconName; to: (h: GlobalSearchHit, pid: string | null) => string }
+> = {
   paper: { zh: '论文', en: 'Papers', icon: 'book', to: (h) => `/papers/${h.id}/read` },
-  concept: { zh: '概念', en: 'Concepts', icon: 'sparkle', to: (h) => `/wiki?concept=${encodeURIComponent(h.title)}` },
+  concept: { zh: '概念', en: 'Concepts', icon: 'sparkle', to: (h, pid) => topicPath(pid, `wiki?concept=${encodeURIComponent(h.title)}`) },
   idea: { zh: '想法', en: 'Ideas', icon: 'bulb', to: (h) => `/ideas/${h.id}` },
   experiment: { zh: '实验', en: 'Experiments', icon: 'flask', to: (h) => `/experiment/${h.id}` },
   voyage: { zh: 'AI 任务', en: 'Tasks', icon: 'compass', to: (h) => `/voyages/${h.id}` },
@@ -66,7 +69,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
 
   function go(hit: GlobalSearchHit) {
     onClose();
-    navigate(TYPE_META[hit.type].to(hit));
+    navigate(TYPE_META[hit.type].to(hit, currentProjectId));
   }
 
   function onKeyDown(e: React.KeyboardEvent) {

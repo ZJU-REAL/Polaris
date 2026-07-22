@@ -2,7 +2,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
@@ -27,7 +27,7 @@ export function JoinPage() {
       toast(`${tr('已加入课题：', 'Joined topic: ')}${project.name}`, 'ok');
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
       setCurrentProjectId(project.id);
-      navigate(`/projects/${project.id}`);
+      navigate(topicPath(project.id));
     },
     onError: (e) => {
       const msg = e instanceof Error ? e.message : String(e);
@@ -59,7 +59,7 @@ export function JoinPage() {
           <>
             <div style={{ fontSize: 16, fontWeight: 680, marginBottom: 8 }}>{tr('你已是该课题成员', 'You are already a member')}</div>
             <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 20 }}>{info.project_name}</div>
-            <button className="btn btn-primary" onClick={() => navigate(`/projects/${info.project_id}`)}>{tr('进入课题', 'Open topic')}</button>
+            <button className="btn btn-primary" onClick={() => navigate(topicPath(info.project_id))}>{tr('进入课题', 'Open topic')}</button>
           </>
         ) : !info.valid ? (
           <>

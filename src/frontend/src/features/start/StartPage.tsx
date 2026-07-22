@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 
@@ -66,7 +66,7 @@ export function StartPage() {
               }}
               onClick={() => {
                 setCurrentProjectId(p.id);
-                navigate('/');
+                navigate(topicPath(p.id));
               }}
             >
               <span

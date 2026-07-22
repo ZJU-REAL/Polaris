@@ -7,7 +7,7 @@ import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
-import { useProject } from '../../app/project';
+import { topicPath, useProject } from '../../app/project';
 import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
@@ -1142,7 +1142,7 @@ export function PaperReviewPage() {
               'Peer review only works on successfully compiled manuscripts. Compile on the Paper Writer page first, then come back.',
             )}
             action={
-              <button className="btn btn-ghost" onClick={() => navigate('/writer')}>
+              <button className="btn btn-ghost" onClick={() => navigate(topicPath(pid, 'writer'))}>
                 <Icon name="pen" size={14} />
                 {tr('去写论文', 'Go write the paper')}
               </button>

@@ -7,6 +7,7 @@ import { FigureEmbed, usePaperFigures } from '../../components/ui/FigureGallery'
 import { Markdown } from '../../lib/markdown';
 import { api, type LibraryEntry, type PaperAuthor, type Publication } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { topicPath } from '../../app/project';
 
 /* ============================================================
    我的文献库 · 右栏详情（三个 tab 共用）：
@@ -127,10 +128,10 @@ export function LibraryDetailPane({
     [],
   );
 
-  // [[概念]] 双链 → 方向的 wiki（对齐阅读页的处理）
+  // [[概念]] 双链 → 论文所属课题的 wiki（对齐阅读页的处理）
   const onWikiLink = useCallback(
-    (name: string) => navigate(`/wiki?concept=${encodeURIComponent(name)}`),
-    [navigate],
+    (name: string) => navigate(topicPath(paper?.project_id, `wiki?concept=${encodeURIComponent(name)}`)),
+    [navigate, paper?.project_id],
   );
 
   if (paperId !== null && paperQuery.isLoading) {

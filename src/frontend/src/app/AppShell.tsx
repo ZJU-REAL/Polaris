@@ -7,7 +7,7 @@ import { Drawer } from '../components/ui/Drawer';
 import { GateCard, gateTitle } from '../components/ui/GateCard';
 import { ToastHost, toast } from '../components/ui/Toast';
 import { useAuth } from './auth';
-import { useProject } from './project';
+import { topicPath, useProject } from './project';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
@@ -17,7 +17,10 @@ import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
 
 interface NavEntry {
-  to: string;
+  /** 非课题作用域页面的绝对路径（与 sub 二选一）。 */
+  to?: string;
+  /** 课题作用域子路径（渲染时经 topicPath 拼 /t/<id> 前缀）；to 与 sub 都缺省 = 工作台。 */
+  sub?: string;
   no?: string;
   icon: IconName;
   zh: string;
@@ -26,42 +29,45 @@ interface NavEntry {
 
 // 实验室级导航：跨课题的公共资产（文献追踪未来升级为实验室级文献库，导航先归位）
 const NAV_LAB: NavEntry[] = [
-  { to: '/wiki', icon: 'book', zh: '文献追踪', en: 'Research Wiki' },
+  { sub: 'wiki', icon: 'book', zh: '文献追踪', en: 'Research Wiki' },
 ];
 
 const NAV_MAIN: NavEntry[] = [
-  { to: '/', icon: 'dashboard', zh: '工作台', en: 'Workbench' },
+  { icon: 'dashboard', zh: '工作台', en: 'Workbench' },
 ];
 
 const NAV_PIPE: NavEntry[] = [
-  { to: '/forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge' },
-  { to: '/review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review' },
-  { to: '/experiment', no: '03', icon: 'flask', zh: '实验搭建', en: 'Experiment Lab' },
-  { to: '/writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer' },
-  { to: '/paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review' },
+  { sub: 'forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge' },
+  { sub: 'review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review' },
+  { sub: 'experiment', no: '03', icon: 'flask', zh: '实验搭建', en: 'Experiment Lab' },
+  { sub: 'writer', no: '04', icon: 'pen', zh: '论文撰写', en: 'Paper Writer' },
+  { sub: 'paper-review', no: '05', icon: 'shield', zh: '论文评审', en: 'Paper Review' },
 ];
 
-// 阶段路径 → 功能权限键（管理员在设置里可禁用；被禁用的阶段从导航隐藏）
-const FEATURE_BY_PATH: Record<string, string> = {
-  '/forge': 'forge',
-  '/review': 'review',
-  '/experiment': 'experiment',
-  '/writer': 'writer',
-  '/paper-review': 'paper_review',
+// 阶段子路径 → 功能权限键（管理员在设置里可禁用；被禁用的阶段从导航隐藏）
+const FEATURE_BY_SUB: Record<string, string> = {
+  forge: 'forge',
+  review: 'review',
+  experiment: 'experiment',
+  writer: 'writer',
+  'paper-review': 'paper_review',
 };
 
 function crumbFor(pathname: string): [string, string] {
-  if (pathname === '/') return ['Polaris', tr('工作台', 'Workbench')];
-  if (pathname === '/start') return ['Polaris', tr('选择课题', 'Pick a topic')];
-  if (pathname === '/projects/new') return [tr('课题', 'Topics'), tr('新建课题', 'New topic')];
-  if (pathname.startsWith('/projects/')) return [tr('课题', 'Topics'), tr('课题设置', 'Topic settings')];
-  if (pathname === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
-  if (pathname.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
-  if (pathname.startsWith('/papers/')) return [tr('文献追踪', 'Research Wiki'), tr('论文阅读', 'Paper reading')];
-  if (pathname.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
-  if (pathname.startsWith('/join/')) return [tr('课题', 'Topics'), tr('接受邀请', 'Accept invite')];
-  if (pathname.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
-  if (pathname.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
+  // 课题作用域路径统一去掉 /t/<topicId> 前缀后按旧表匹配
+  const scoped = /^\/t\/[^/]+(\/.*)?$/.exec(pathname);
+  const p = scoped ? (scoped[1] ?? '/') : pathname;
+  if (p === '/') return ['Polaris', tr('工作台', 'Workbench')];
+  if (p === '/start') return ['Polaris', tr('选择课题', 'Pick a topic')];
+  if (p === '/projects/new') return [tr('课题', 'Topics'), tr('新建课题', 'New topic')];
+  if (p.startsWith('/projects/')) return [tr('课题', 'Topics'), tr('课题设置', 'Topic settings')];
+  if (p === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
+  if (p.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
+  if (p.startsWith('/papers/')) return [tr('文献追踪', 'Research Wiki'), tr('论文阅读', 'Paper reading')];
+  if (p.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
+  if (p.startsWith('/join/')) return [tr('课题', 'Topics'), tr('接受邀请', 'Accept invite')];
+  if (p.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
+  if (p.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
   const table: Record<string, [string, string]> = {
     '/wiki': [tr('实验室', 'Lab'), tr('文献追踪', 'Research Wiki')],
     '/forge': ['Stage 01', tr('想法生成', 'Idea Forge')],
@@ -73,7 +79,7 @@ function crumbFor(pathname: string): [string, string] {
     '/skills': ['Polaris', tr('技能', 'Skills')],
     '/settings': ['Polaris', tr('设置', 'Settings')],
   };
-  return table[pathname] ?? ['Polaris', '—'];
+  return table[p] ?? ['Polaris', '—'];
 }
 
 /** AppShell 通过 Outlet context 暴露给子页面的能力。 */
@@ -201,9 +207,16 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
                   onClick={() => {
                     setCurrentProjectId(p.id);
                     setOpen(false);
-                    // 正在看某个方向的详情页时，切换方向同步跳到新方向的详情（URL 驱动的页面）
-                    if (/^\/projects\/(?!new)/.test(location.pathname)) {
+                    const scoped = /^\/t\/[^/]+(?:\/(.*))?$/.exec(location.pathname);
+                    if (scoped) {
+                      // 课题作用域页面：切课题保持当前子页面（如 /t/a/forge → /t/b/forge）
+                      navigate(topicPath(p.id, scoped[1] || undefined));
+                    } else if (/^\/projects\/(?!new)/.test(location.pathname)) {
+                      // 课题设置页：跳到新课题的设置
                       navigate(`/projects/${p.id}`);
+                    } else {
+                      // 实体详情页或非课题域页面：回到新课题的工作台
+                      navigate(topicPath(p.id));
                     }
                   }}
                 >
@@ -269,10 +282,15 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
 }
 
 function NavItem({ n }: { n: NavEntry }) {
+  const { currentProjectId } = useProject();
+  // 课题作用域条目带 /t/<id> 前缀；无当前课题时退回旧路径，由重定向兜底
+  const to = n.to ?? topicPath(currentProjectId, n.sub);
+  // 工作台（课题根路径）只在精确匹配时高亮，避免盖住全部子页面
+  const end = n.to == null && n.sub == null;
   return (
     <NavLink
-      to={n.to}
-      end={n.to === '/'}
+      to={to}
+      end={end}
       className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
       title={tr(n.zh, n.en)}
     >
@@ -447,21 +465,21 @@ export function AppShell() {
         <div className="sb-nav-static">
           <div className="sb-section">{tr('实验室', 'Lab')}</div>
           {NAV_LAB.map((n) => (
-            <NavItem key={n.to} n={n} />
+            <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
 
           <div className="sb-section">{tr('课题研究', 'Topic')}</div>
           <TopicSwitcher collapsed={navCollapsed} />
           {NAV_MAIN.map((n) => (
-            <NavItem key={n.to} n={n} />
+            <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
           {NAV_PIPE.filter((n) => {
-            const key = FEATURE_BY_PATH[n.to];
+            const key = n.sub != null ? FEATURE_BY_SUB[n.sub] : undefined;
             return key == null || me?.features?.[key] !== false;
           }).map((n) => (
-            <NavItem key={n.to} n={n} />
+            <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
-          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
+          <NavItem n={{ sub: 'voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
           {currentProjectId && (
             <NavItem n={{ to: `/projects/${currentProjectId}`, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
           )}

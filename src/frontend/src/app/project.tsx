@@ -10,6 +10,16 @@ import { api, type ProjectRead } from '../lib/api';
 
 const CURRENT_KEY = 'polaris.project';
 
+/**
+ * 生成课题作用域路径：`/t/<topicId>` 或 `/t/<topicId>/<sub>`（sub 可带查询串）。
+ * 全站拼课题域链接统一走这里；topicId 为空时退回旧路径（如 `/wiki`），
+ * 由路由层的旧路径重定向兜底跳到当前课题。
+ */
+export function topicPath(topicId: string | null | undefined, sub?: string): string {
+  if (!topicId) return sub ? `/${sub}` : '/';
+  return sub ? `/t/${topicId}/${sub}` : `/t/${topicId}`;
+}
+
 export interface ProjectContextValue {
   /** 本人是成员的项目列表（后端不可用时为 []）。 */
   projects: ProjectRead[];

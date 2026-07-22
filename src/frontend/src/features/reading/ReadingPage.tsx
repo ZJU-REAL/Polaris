@@ -14,6 +14,7 @@ import {
   type ReadingStatus,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { topicPath } from '../../app/project';
 import { NotesPanel } from './NotesPanel';
 import { HighlightsPanel } from './HighlightsPanel';
 import { PdfReader, type JumpTarget } from './PdfReader';
@@ -174,8 +175,8 @@ export function ReadingPage() {
   });
 
   const onWikiLink = useCallback(
-    (name: string) => navigate(`/wiki?concept=${encodeURIComponent(name)}`),
-    [navigate],
+    (name: string) => navigate(topicPath(paper?.project_id, `wiki?concept=${encodeURIComponent(name)}`)),
+    [navigate, paper?.project_id],
   );
 
   const onHighlightClick = useCallback((hlId: string) => {
@@ -217,7 +218,7 @@ export function ReadingPage() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 18px 16px' }}>
       {/* —— 顶栏 —— */}
       <div className="row gap12" style={{ flexShrink: 0, marginBottom: 12 }}>
-        <button className="btn btn-ghost sm" onClick={() => navigate(`/wiki?paper=${paper.id}`)}>
+        <button className="btn btn-ghost sm" onClick={() => navigate(topicPath(paper.project_id, `wiki?paper=${paper.id}`))}>
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
           {tr('回文献库', 'Back to library')}
         </button>
