@@ -408,18 +408,23 @@ export function LibraryPage() {
                     value={sort}
                     onChange={setSort}
                   />
-                  <span
-                    className="mono"
-                    style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}
-                  >
-                    {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
-                  </span>
+                  {tab === 'saved' && (
+                    <span
+                      className="mono"
+                      style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}
+                    >
+                      {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
+                    </span>
+                  )}
                 </div>
                 {tab === 'history' && (
-                  <div className="row" style={{ marginTop: 8 }}>
+                  <div className="row gap8" style={{ marginTop: 8, alignItems: 'center' }}>
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
+                      {data ? tr(`共 ${data.total} 条记录`, `Total: ${data.total} records`) : ''}
+                    </span>
                     <button
                       className="btn btn-ghost sm"
-                      style={{ marginLeft: 'auto', height: 26 }}
+                      style={{ marginLeft: 'auto', height: 26, flexShrink: 0 }}
                       disabled={clearMutation.isPending || (data !== undefined && data.total === 0)}
                       onClick={() => setClearOpen(true)}
                     >
