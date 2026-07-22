@@ -235,3 +235,15 @@ class SearchResponse(BaseModel):
     concepts: list[ScoredConcept]
     mode_used: Literal["keyword", "semantic"]
     reranked: bool = False  # semantic 模式下 rerank 是否成功（失败降级为纯向量分）
+
+
+class PersonalWikiRequest(BaseModel):
+    """个人版 wiki 按需编译（P5b）：可选带课题，statement 作为侧重提示 + 用量归因。"""
+
+    topic_id: uuid.UUID | None = None
+
+
+class PersonalWikiRead(BaseModel):
+    paper_id: uuid.UUID
+    wiki_content: str
+    model: str | None = None

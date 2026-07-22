@@ -18,6 +18,7 @@ from app.api.auth import current_active_user, require_llm_chat, require_llm_task
 from app.core.db import get_session
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
+from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.paper import (
     PaperBatchIds,
@@ -32,6 +33,8 @@ from app.schemas.paper import (
     PaperRead,
     PaperTagsUpdate,
     PaperUpdate,
+    PersonalWikiRead,
+    PersonalWikiRequest,
     TagRead,
 )
 from app.services import figure_annotate as figure_service
@@ -39,6 +42,7 @@ from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
+from app.services import personal_wiki as personal_wiki_service
 from app.services import projects as projects_service
 from app.services import relevance as relevance_service
 from app.services import wiki_compile as wiki_compile_service
@@ -370,6 +374,51 @@ async def recompile_paper(
         logger.warning("recompile failed for paper %s", paper_id, exc_info=True)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="COMPILE_FAILED") from e
     return await _paper_detail(session, paper, user.id)
+
+
+# ---- 个人版 wiki 按需编译（P5b，docs-dev/workspace-ia-redesign.md §3.3/§4） ----
+
+
+@router.post("/papers/{paper_id}/personal-wiki", response_model=PersonalWikiRead)
+async def compile_personal_wiki(
+    paper_id: uuid.UUID,
+    data: PersonalWikiRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_task),
+) -> PersonalWikiRead:
+    """给没有库版 wiki 的池内论文（典型：个人补充入库）编译个人版 wiki。
+
+    通用模板（无 rubric），可选 topic_id 把课题 statement 当侧重提示；
+    结果写进本人个人库条目（user_library_entries.wiki_content），费用归个人。
+    已有库版 wiki → 409 LIBRARY_WIKI_EXISTS；同一 paper × user 编译进行中 →
+    409 COMPILE_IN_PROGRESS。内容池全平台可读，故不要求论文在本人方向库内。
+    """
+    paper = await session.get(Paper, paper_id)
+    if paper is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+    if data.topic_id is not None:
+        # 课题归因/侧重提示：必须是自己所在课题
+        await _get_member_project(session, data.topic_id, user)
+    try:
+        compiled = await personal_wiki_service.compile_personal_wiki(
+            session, paper=paper, user_id=user.id, topic_id=data.topic_id
+        )
+    except personal_wiki_service.LibraryWikiExistsError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="LIBRARY_WIKI_EXISTS"
+        ) from None
+    except personal_wiki_service.CompileInProgressError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="COMPILE_IN_PROGRESS"
+        ) from None
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 — LLM 空响应/调用失败等 → 502
+        logger.warning("personal wiki compile failed for paper %s", paper_id, exc_info=True)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="COMPILE_FAILED") from e
+    return PersonalWikiRead(
+        paper_id=paper_id, wiki_content=compiled.content, model=compiled.model or None
+    )
 
 
 # ---- AI 伴读（docs/api-lit.md §3，SSE 流） ----
