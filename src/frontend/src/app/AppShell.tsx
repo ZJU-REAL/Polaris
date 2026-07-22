@@ -24,12 +24,16 @@ interface NavEntry {
   en: string;
 }
 
+// 实验室级导航：跨课题的公共资产（文献追踪未来升级为实验室级文献库，导航先归位）
+const NAV_LAB: NavEntry[] = [
+  { to: '/wiki', icon: 'book', zh: '文献追踪', en: 'Research Wiki' },
+];
+
 const NAV_MAIN: NavEntry[] = [
   { to: '/', icon: 'dashboard', zh: '工作台', en: 'Workbench' },
 ];
 
 const NAV_PIPE: NavEntry[] = [
-  { to: '/wiki', no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki' },
   { to: '/forge', no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge' },
   { to: '/review', no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review' },
   { to: '/experiment', no: '03', icon: 'flask', zh: '实验搭建', en: 'Experiment Lab' },
@@ -59,7 +63,7 @@ function crumbFor(pathname: string): [string, string] {
   if (pathname.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
   if (pathname.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
   const table: Record<string, [string, string]> = {
-    '/wiki': ['Stage 00', tr('文献追踪', 'Research Wiki')],
+    '/wiki': [tr('实验室', 'Lab'), tr('文献追踪', 'Research Wiki')],
     '/forge': ['Stage 01', tr('想法生成', 'Idea Forge')],
     '/review': ['Stage 02', tr('想法评审', 'Idea Review')],
     '/experiment': ['Stage 03', tr('实验搭建', 'Experiment Lab')],
@@ -87,7 +91,7 @@ export function useShell(): ShellContext {
 }
 
 /* ============================================================
-   侧边栏课题切换器（课题区区头）：触发器 + 卡片式下拉菜单。
+   侧边栏课题切换器（课题研究组内的特殊条目）：触发器 + 卡片式下拉菜单。
    菜单含课题列表（当前项打勾 + 蓝点）、新建课题、课题设置入口。
    折叠态只留图标按钮，菜单向右侧弹出（侧栏 z-index 已抬高，不会被主列裁剪）。
    ============================================================ */
@@ -135,7 +139,7 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      {/* 触发器：课题容器头部（图标 + 当前课题名 + 折叠箭头）；折叠态只留图标 */}
+      {/* 触发器：与普通导航条目同高的描边条目（图标 + 当前课题名 + 折叠箭头）；折叠态只留图标 */}
       <button
         onClick={() => setOpen((o) => !o)}
         className={'topic-switch' + (open ? ' open' : '')}
@@ -435,30 +439,29 @@ export function AppShell() {
           {/* 收起后只留左侧图形标：直接不渲染字标，杜绝溢出（不靠 CSS 隐藏） */}
           {!navCollapsed && <PolarisWordmark height={30} />}
         </div>
-        {/* —— 课题区：eyebrow + 圆角视觉容器。切换器是容器头部，
-            容器内是课题作用域导航（工作台 + 流水线 + 任务 + 课题设置） —— */}
-        <div className="sb-topic-wrap">
-          <div className="sb-section sb-topic-eyebrow">{tr('课题', 'Topic')}</div>
-          <div className="topic-zone">
-            <TopicSwitcher collapsed={navCollapsed} />
-            <div className="topic-zone-hr" />
-            {NAV_MAIN.map((n) => (
-              <NavItem key={n.to} n={n} />
-            ))}
-            {NAV_PIPE.filter((n) => {
-              const key = FEATURE_BY_PATH[n.to];
-              return key == null || me?.features?.[key] !== false;
-            }).map((n) => (
-              <NavItem key={n.to} n={n} />
-            ))}
-            <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
-            {currentProjectId && (
-              <>
-                <div className="topic-zone-hr inset" />
-                <NavItem n={{ to: `/projects/${currentProjectId}`, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
-              </>
-            )}
-          </div>
+        {/* —— 实验室 + 课题研究两组（平面分组，只靠 eyebrow + 间距区分，不加分隔线）。
+            放在滚动区之外：课题切换器的下拉菜单要能向右溢出到主列上 —— */}
+        <div className="sb-nav-static">
+          <div className="sb-section">{tr('实验室', 'Lab')}</div>
+          {NAV_LAB.map((n) => (
+            <NavItem key={n.to} n={n} />
+          ))}
+
+          <div className="sb-section">{tr('课题研究', 'Topic')}</div>
+          <TopicSwitcher collapsed={navCollapsed} />
+          {NAV_MAIN.map((n) => (
+            <NavItem key={n.to} n={n} />
+          ))}
+          {NAV_PIPE.filter((n) => {
+            const key = FEATURE_BY_PATH[n.to];
+            return key == null || me?.features?.[key] !== false;
+          }).map((n) => (
+            <NavItem key={n.to} n={n} />
+          ))}
+          <NavItem n={{ to: '/voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
+          {currentProjectId && (
+            <NavItem n={{ to: `/projects/${currentProjectId}`, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
+          )}
         </div>
 
         {/* —— 个人区：跨课题的个人页面（设置入口在底部头像菜单里，不重复占位） —— */}
