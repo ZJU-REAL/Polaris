@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
-from app.core.llm.router import _FALLBACK_ROUTE, get_llm_router
+from app.core.llm.router import _FALLBACK_ROUTE, LLMNotConfiguredError, get_llm_router
 from app.models.llm_config import LLMProviderConfig
 from app.models.user import User
 from app.schemas.llm_admin import (
@@ -68,7 +68,7 @@ async def switch_self_managed(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> LlmManagedStatus:
-    """取消接管：改用自己的配置（初始为空，需自行设置，配好前回退 fake）。"""
+    """取消接管：改用自己的配置（初始为空，需自行设置，配好前 AI 功能不可用）。"""
     user.llm_self_managed = True
     await session.commit()
     get_llm_router().invalidate_cache()
@@ -192,9 +192,15 @@ async def test_effective(
 ) -> EffectiveTestResult:
     """测试当前生效配置：按 stage 探测用户实际会用到的 provider+model（含被接管的全局配置）。"""
     router_ = get_llm_router()
-    llm, route = await router_.resolve(data.stage, user_id=user.id)
+    try:
+        llm, route = await router_.resolve(data.stage, user_id=user.id)
+    except (LLMNotConfiguredError, NotImplementedError):
+        # 未配置真实模型（自管但没配好 / 全局也空，且未开 fake 回退）
+        return EffectiveTestResult(
+            ok=False, latency_ms=0, error="NO_REAL_MODEL", model="", provider_name="", is_fake=True
+        )
     if route is _FALLBACK_ROUTE:
-        # 未配置真实模型（自管但没配好 / 全局也空）→ 回退到内置 fake
+        # 开了 fake 回退（测试/演示）且未配置真实模型
         return EffectiveTestResult(
             ok=False,
             latency_ms=0,
