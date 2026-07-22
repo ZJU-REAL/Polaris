@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "fe8a86942dc7"  # 论文内容池收尾（P4 迁移 B，本分支最新）
-PREV_REVISION = "f7c2abfe8aeb"  # 方向文献库 + 论文内容池（P4 迁移 A）
+HEAD_REVISION = "0775b55c26e4"  # 课题「相关研究」书架（P5a，本分支最新）
+PREV_REVISION = "fe8a86942dc7"  # 论文内容池收尾（P4 迁移 B）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -57,6 +57,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "feedback_images",
                     "user_library_entries",
                     "user_publications",
+                    "topic_papers",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -208,13 +209,27 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "library_papers",
     } <= columns["_tables"]
     assert "dedup_key" in columns["papers"]
+    # 本分支新增：课题「相关研究」书架表（P5a）
+    assert "topic_papers" in columns["_tables"]
+    assert {
+        "topic_id",
+        "paper_id",
+        "source_library_id",
+        "wiki_snapshot",
+        "snapshot_at",
+        "note",
+        "added_by",
+    } <= columns["topic_papers"]
 
-    # 最新 revision 可往返（downgrade 还原 papers/concepts/paper_chunks 的旧列结构）
+    # 最新 revision 可往返（downgrade 只删 topic_papers，其余结构不动）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert {"project_id", "status", "relevance_score", "wiki_content"} <= columns["papers"]
-    assert "dedup_key" in columns["papers"]  # 迁移 A 的列仍在
+    assert "topic_papers" not in columns["_tables"]
+    # P4 收尾后的内容池结构不受影响：判断列仍只在 library_papers 上
+    assert "project_id" not in columns["papers"]
+    assert "wiki_content" not in columns["papers"]
+    assert "dedup_key" in columns["papers"]
     assert "library_papers" in columns["_tables"]
     assert "preset_directions" in columns["registration_codes"]
     assert "wiki_content" in columns["user_library_entries"]

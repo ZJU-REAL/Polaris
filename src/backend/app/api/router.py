@@ -27,6 +27,7 @@ from app.api import (
     projects,
     publications,
     search,
+    shelf,
     skills,
     ssh_credentials,
     users_profile,
@@ -57,6 +58,7 @@ api_router.include_router(ingest.router)
 api_router.include_router(wiki.router)
 api_router.include_router(ideas.router)
 api_router.include_router(search.router)
+api_router.include_router(shelf.router)
 api_router.include_router(skills.router)
 api_router.include_router(market.router)
 api_router.include_router(mcp_meta.router)
