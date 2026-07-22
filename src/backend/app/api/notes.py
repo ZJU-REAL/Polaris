@@ -1,4 +1,8 @@
-"""论文笔记路由（docs/api-lit.md §2）：论文级 CRUD + 项目笔记本聚合。"""
+"""论文笔记路由（docs/api-lit.md §2）：论文级 CRUD + 课题笔记本聚合。
+
+P5b 起笔记挂 paper × author（跨课题共享）：列表只返回请求者本人的笔记，
+非作者访问单条一律 404（平台 admin 例外，可管理他人笔记）。
+"""
 
 import uuid
 
@@ -21,7 +25,6 @@ def _note_read(note: PaperNote, author_name: str) -> NoteRead:
     return NoteRead(
         id=note.id,
         paper_id=note.paper_id,
-        project_id=note.project_id,
         author_id=note.author_id,
         author_name=author_name,
         content=note.content,
@@ -33,14 +36,11 @@ def _note_read(note: PaperNote, author_name: str) -> NoteRead:
 async def _get_modifiable_note(
     session: AsyncSession, note_id: uuid.UUID, user: User
 ) -> tuple[PaperNote, str]:
-    """取笔记：非项目成员 404；非作者且非平台 admin 403。"""
-    row = await notes_service.get_note_for_member(session, note_id=note_id, user_id=user.id)
+    """取笔记：非作者（且非平台 admin）视为不存在 → 404。"""
+    row = await notes_service.get_own_note(session, note_id=note_id, user=user)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="NOTE_NOT_FOUND")
-    note, author_name = row
-    if not notes_service.can_modify_note(note, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="NOTE_FORBIDDEN")
-    return note, author_name
+    return row
 
 
 @router.get("/papers/{paper_id}/notes", response_model=list[NoteRead])
@@ -52,7 +52,7 @@ async def list_paper_notes(
     paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
-    rows = await notes_service.list_paper_notes(session, paper_id=paper_id)
+    rows = await notes_service.list_paper_notes(session, paper_id=paper_id, author_id=user.id)
     return [_note_read(note, author_name) for note, author_name in rows]
 
 
@@ -69,11 +69,7 @@ async def create_paper_note(
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
     note = await notes_service.create_note(
-        session,
-        paper_id=paper.id,
-        project_id=paper.project_id,
-        author=user,
-        content=data.content,
+        session, paper_id=paper.id, author=user, content=data.content
     )
     return _note_read(note, notes_service.author_name_of(user.display_name, user.email))
 
@@ -110,12 +106,18 @@ async def project_notebook(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> NotebookPage:
-    """项目笔记本：全部论文笔记的聚合视图（搜索 + 分页 + 按论文过滤）。"""
+    """课题笔记本：我的论文笔记在本课题范围内的聚合视图（搜索 + 分页 + 按论文过滤）。"""
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     rows, total = await notes_service.list_project_notes(
-        session, project_id=project_id, q=q, paper_id=paper_id, page=page, size=size
+        session,
+        project_id=project_id,
+        author_id=user.id,
+        q=q,
+        paper_id=paper_id,
+        page=page,
+        size=size,
     )
     items = [
         NoteWithPaper(**_note_read(note, author_name).model_dump(), paper_title=paper_title)

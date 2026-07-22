@@ -100,7 +100,10 @@ def _inline_paper_figures(
     return body, extra_lines
 
 
-async def build_obsidian_zip(session: AsyncSession, project: Project) -> bytes:
+async def build_obsidian_zip(
+    session: AsyncSession, project: Project, *, user_id: uuid.UUID
+) -> bytes:
+    """构建 vault zip；笔记只导出请求者本人的（P5b 笔记 paper × author，仅作者可见）。"""
     library = await get_library_for_project(session, project.id)
     paper_rows = (
         await session.execute(
@@ -129,11 +132,14 @@ async def build_obsidian_zip(session: AsyncSession, project: Project) -> bytes:
         .all()
     )
 
-    # 论文笔记（有笔记的论文页追加「## 笔记」小节）
+    # 论文笔记（有笔记的论文页追加「## 笔记」小节）：只带请求者自己的笔记
     note_rows = await session.execute(
         select(PaperNote, User.display_name, User.email)
         .join(User, User.id == PaperNote.author_id)
-        .where(PaperNote.project_id == project.id)
+        .where(
+            PaperNote.author_id == user_id,
+            PaperNote.paper_id.in_([p.id for p in papers]),
+        )
         .order_by(PaperNote.created_at)
     )
     notes_by_paper: dict[uuid.UUID, list[tuple[PaperNote, str]]] = defaultdict(list)

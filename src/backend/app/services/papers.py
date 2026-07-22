@@ -25,7 +25,6 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import (
     Concept,
     Paper,
-    PaperHighlight,
     PaperNote,
     PaperTag,
     PaperUserMeta,
@@ -290,7 +289,9 @@ async def set_paper_status(session: AsyncSession, view: PaperView, status: str) 
 async def paper_extras_map(
     session: AsyncSession, *, paper_ids: Sequence[uuid.UUID], user_id: uuid.UUID
 ) -> dict[uuid.UUID, dict[str, Any]]:
-    """批量取论文的 tags / starred / reading_status / note_count（3 条聚合查询，避免 N+1）。"""
+    """批量取论文的 tags / starred / reading_status / note_count（3 条聚合查询，避免 N+1）。
+
+    note_count 是请求者本人的笔记数（P5b 起笔记 paper × author，仅作者可见）。"""
     extras: dict[uuid.UUID, dict[str, Any]] = {
         pid: {"tags": [], "starred": False, "reading_status": "unread", "note_count": 0}
         for pid in paper_ids
@@ -308,7 +309,7 @@ async def paper_extras_map(
         extras[pid]["tags"].append(name)
     note_rows = await session.execute(
         select(PaperNote.paper_id, func.count())
-        .where(PaperNote.paper_id.in_(ids))
+        .where(PaperNote.paper_id.in_(ids), PaperNote.author_id == user_id)
         .group_by(PaperNote.paper_id)
     )
     for pid, count in note_rows.all():
@@ -416,8 +417,9 @@ async def upsert_paper_user_meta(
 
 # ---- 从方向库移除论文（docs/api-lit.md §8.6） ----
 #
-# P4 全局内容池语义：删除 = 删本方向的成员行与项目侧挂件（笔记/划线/标签关联）；
-# 内容池 Paper 行与磁盘文件（PDF/全文/图）永不删除（可能被其他方向复用）。
+# P4 全局内容池语义：删除 = 删本方向的成员行与项目侧标签关联；内容池 Paper 行与
+# 磁盘文件（PDF/全文/图）永不删除（可能被其他方向复用）。个人笔记/划线（P5b 起
+# paper × author 跨课题共享）不随库剔除删除，只随内容池 Paper 级联。
 
 
 async def _delete_membership_rows(
@@ -426,20 +428,10 @@ async def _delete_membership_rows(
     project_id: uuid.UUID,
     memberships: Sequence[LibraryPaper],
 ) -> None:
-    """硬删成员行 + 本项目挂在这些论文上的笔记/划线/标签关联（不 commit）。"""
+    """硬删成员行 + 本项目挂在这些论文上的标签关联（不 commit）。"""
     paper_ids = [m.paper_id for m in memberships]
     if not paper_ids:
         return
-    await session.execute(
-        delete(PaperNote).where(
-            PaperNote.paper_id.in_(paper_ids), PaperNote.project_id == project_id
-        )
-    )
-    await session.execute(
-        delete(PaperHighlight).where(
-            PaperHighlight.paper_id.in_(paper_ids), PaperHighlight.project_id == project_id
-        )
-    )
     project_tag_ids = select(PaperTag.id).where(PaperTag.project_id == project_id)
     await session.execute(
         delete(paper_tag_links).where(
@@ -455,8 +447,8 @@ async def _delete_membership_rows(
 async def delete_paper(session: AsyncSession, view: PaperView) -> None:
     """从当前方向库彻底移除一篇论文（垃圾桶里的「彻底删除」）。
 
-    删成员行与本项目的笔记/划线/标签关联；收尾清理项目内零引用标签。
-    内容池行与落盘文件保留（其他方向可复用）。
+    删成员行与本项目的标签关联；收尾清理项目内零引用标签。
+    内容池行、落盘文件与个人笔记/划线保留（其他方向可复用）。
     """
     project_id = view.project_id
     await _delete_membership_rows(session, project_id=project_id, memberships=[view.membership])
@@ -656,30 +648,37 @@ def build_chat_messages(
 
 
 async def keyword_search_papers(
-    session: AsyncSession, *, project_id: uuid.UUID, q: str, limit: int
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    q: str,
+    limit: int,
+    user_id: uuid.UUID | None = None,
 ) -> list[tuple[PaperView, float]]:
-    """关键词检索：title/abstract/库版 wiki/笔记内容 ilike，按命中位置给启发式分。
+    """关键词检索：title/abstract/库版 wiki/我的笔记内容 ilike，按命中位置给启发式分。
 
     只检索库内文献（相关性达标）：已删除（excluded）/未筛选（candidate）不出现。
+    笔记仅作者本人可见（P5b），故只有传 user_id（用户检索入口）才并入笔记命中；
+    agent 调用（无用户语境）不搜笔记。
     """
     library = await get_library_for_project(session, project_id)
     pattern = f"%{q}%"
-    note_hit = Paper.id.in_(
-        select(PaperNote.paper_id).where(
-            PaperNote.project_id == project_id, PaperNote.content.ilike(pattern)
+    hits = [
+        Paper.title.ilike(pattern),
+        Paper.abstract.ilike(pattern),
+        LibraryPaper.wiki_content.ilike(pattern),
+    ]
+    if user_id is not None:
+        hits.append(
+            Paper.id.in_(
+                select(PaperNote.paper_id).where(
+                    PaperNote.author_id == user_id, PaperNote.content.ilike(pattern)
+                )
+            )
         )
-    )
     stmt = (
         member_paper_stmt(library.id)
-        .where(
-            LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
-            or_(
-                Paper.title.ilike(pattern),
-                Paper.abstract.ilike(pattern),
-                LibraryPaper.wiki_content.ilike(pattern),
-                note_hit,
-            ),
-        )
+        .where(LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]), or_(*hits))
         .limit(limit * 3)
     )
     rows = (await session.execute(stmt)).all()

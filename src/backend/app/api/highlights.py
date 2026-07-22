@@ -1,6 +1,7 @@
 """PDF 划线标注路由：论文级 CRUD（阅读器用）。
 
-权限同论文笔记：项目成员可读，作者 / 平台 admin 可改删。
+归属与权限同论文笔记（P5b）：划线挂 paper × author 跨课题共享，
+列表只返回请求者本人的划线，非作者访问单条一律 404（平台 admin 例外）。
 """
 
 import uuid
@@ -24,7 +25,6 @@ def _hl_read(hl: PaperHighlight, author_name: str) -> HighlightRead:
     return HighlightRead(
         id=hl.id,
         paper_id=hl.paper_id,
-        project_id=hl.project_id,
         author_id=hl.author_id,
         author_name=author_name,
         page=hl.page,
@@ -41,16 +41,11 @@ def _hl_read(hl: PaperHighlight, author_name: str) -> HighlightRead:
 async def _get_modifiable_highlight(
     session: AsyncSession, highlight_id: uuid.UUID, user: User
 ) -> tuple[PaperHighlight, str]:
-    """取划线：非项目成员 404；非作者且非平台 admin 403。"""
-    row = await hl_service.get_highlight_for_member(
-        session, highlight_id=highlight_id, user_id=user.id
-    )
+    """取划线：非作者（且非平台 admin）视为不存在 → 404。"""
+    row = await hl_service.get_own_highlight(session, highlight_id=highlight_id, user=user)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="HIGHLIGHT_NOT_FOUND")
-    hl, author_name = row
-    if not hl_service.can_modify_highlight(hl, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="HIGHLIGHT_FORBIDDEN")
-    return hl, author_name
+    return row
 
 
 @router.get("/papers/{paper_id}/highlights", response_model=list[HighlightRead])
@@ -62,7 +57,7 @@ async def list_paper_highlights(
     paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
-    rows = await hl_service.list_paper_highlights(session, paper_id=paper_id)
+    rows = await hl_service.list_paper_highlights(session, paper_id=paper_id, author_id=user.id)
     return [_hl_read(hl, author_name) for hl, author_name in rows]
 
 
@@ -80,9 +75,7 @@ async def create_paper_highlight(
     paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
-    hl = await hl_service.create_highlight(
-        session, paper_id=paper.id, project_id=paper.project_id, author=user, data=data
-    )
+    hl = await hl_service.create_highlight(session, paper_id=paper.id, author=user, data=data)
     return _hl_read(hl, author_name_of(user.display_name, user.email))
 
 
