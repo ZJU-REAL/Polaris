@@ -37,8 +37,8 @@ export function StartPage() {
         </h1>
         <div style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 460, margin: '0 auto', lineHeight: 1.6 }}>
           {tr(
-            '课题是你的个人研究空间：文献追踪、想法、实验和论文都在课题里进行。',
-            'A topic is your personal research space — literature tracking, ideas, experiments and papers all live inside one.',
+            '课题是你的个人研究空间：文献追踪、想法、实验和论文都在课题里进行。创建只需名称和一句话描述。',
+            'A topic is your personal research space — literature tracking, ideas, experiments and papers all live inside one. Creating one takes just a name and one sentence.',
           )}
         </div>
       </div>
@@ -105,7 +105,7 @@ export function StartPage() {
       ) : (
         <div className="card" style={{ padding: '28px 24px', textAlign: 'center', marginBottom: 20 }}>
           <div style={{ fontSize: 13, color: 'var(--text-3)', lineHeight: 1.6 }}>
-            {tr('你还没有课题。创建第一个课题，从文献追踪开始你的研究。', 'You have no topics yet. Create your first one and start with literature tracking.')}
+            {tr('你还没有课题。只需名称和一句话描述，30 秒创建第一个课题。', 'You have no topics yet. With just a name and one sentence, your first topic is 30 seconds away.')}
           </div>
         </div>
       )}

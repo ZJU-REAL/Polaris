@@ -50,27 +50,31 @@ export function WikiPage() {
   }, [pid]);
 
   // 深链 /wiki?paper=<id>（idea 详情 / 阅读页返回）、/wiki?concept=<名称>
-  // （阅读页双链跳转，按名称解析）与 /wiki?author= / ?affiliation=
-  // （阅读页作者/机构点击 → 论文库按其过滤）：处理后清掉参数
+  // （阅读页双链跳转，按名称解析）、/wiki?author= / ?affiliation=
+  // （阅读页作者/机构点击 → 论文库按其过滤）与 /wiki?tab=<tab>
+  // （工作台「下一步」直达建库面板）：处理后清掉参数
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const p = searchParams.get('paper');
     const c = searchParams.get('concept');
     const author = searchParams.get('author');
     const affiliation = searchParams.get('affiliation');
-    if (!p && !c && !author && !affiliation) return;
+    const tabParam = searchParams.get('tab');
+    if (!p && !c && !author && !affiliation && !tabParam) return;
     if (p) {
       setPaperId(p);
       setTab('papers');
     } else if (c) {
       setPendingConceptName(c);
-    } else {
+    } else if (author || affiliation) {
       setAdvSeed((old) => ({
         author: author ?? undefined,
         affiliation: affiliation ?? undefined,
         seq: (old?.seq ?? 0) + 1,
       }));
       setTab('papers');
+    } else if (tabParam && ['papers', 'concepts', 'graph', 'chat', 'ingest', 'notes'].includes(tabParam)) {
+      setTab(tabParam as WikiTab);
     }
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams]);

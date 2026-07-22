@@ -13,6 +13,8 @@ export interface PipelineStage {
   count: number | null;
   /** 当前有任务运行中的阶段 */
   running?: boolean;
+  /** 流水线当前卡住的阶段（第一个还没有产出的阶段），高亮提示下一步 */
+  stuck?: boolean;
 }
 
 export interface PipelineFlowProps {
@@ -49,7 +51,7 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
                 borderRadius: 12,
                 padding: '16px 12px 14px',
                 textAlign: 'center',
-                border: '0.5px solid var(--border)',
+                border: s.stuck ? '1px solid var(--accent)' : '0.5px solid var(--border)',
                 background: s.running ? 'var(--accent-soft)' : 'var(--surface-2)',
                 position: 'relative',
                 cursor: 'pointer',
@@ -92,6 +94,11 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
                   style={{ marginTop: 6, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 600 }}
                 >
                   ● {tr('运行中', 'Running')}
+                </div>
+              )}
+              {s.stuck && !s.running && (
+                <div style={{ marginTop: 6, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 650 }}>
+                  ▸ {tr('下一步从这里继续', 'Next step starts here')}
                 </div>
               )}
             </div>
