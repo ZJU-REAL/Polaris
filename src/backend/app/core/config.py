@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     openai_compat_base_url: str = "https://api.deepseek.com/v1"
     openai_compat_api_key: str = ""
     anthropic_api_key: str = ""
+    # 未配置任何 LLM 路由时是否回退内置 fake provider（仅测试/无 key 演示用）。
+    # 默认关闭：未配置时 AI 功能返回 LLM_NOT_CONFIGURED，而不是产出演示假内容。
+    llm_fake_fallback: bool = False
 
     # ---- 文献 API ----
     s2_api_key: str = ""  # Semantic Scholar（可空，限流更严）

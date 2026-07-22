@@ -3,14 +3,16 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api.router import api_router
 from app.api.ws import router as ws_router
 from app.core.config import get_settings
 from app.core.db import create_all, dispose_engine, get_sessionmaker
+from app.core.llm.router import LLMNotConfiguredError
 from app.core.redis import close_redis
 from app.mcp import mcp_router
 from app.services.crdt_rooms import reset_crdt_rooms
@@ -57,6 +59,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(LLMNotConfiguredError)
+    async def _llm_not_configured(_request: Request, _exc: LLMNotConfiguredError) -> JSONResponse:
+        # 未配置大模型：统一 503，前端提示到设置页配置，而不是 500 堆栈
+        return JSONResponse(status_code=503, content={"detail": "LLM_NOT_CONFIGURED"})
+
     app.include_router(api_router, prefix="/api")
     # WS 不挂 /api 前缀：nginx 按 /ws 反代（Upgrade），见 docs/architecture.md §7
     app.include_router(ws_router)

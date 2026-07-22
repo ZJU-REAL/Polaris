@@ -40,7 +40,7 @@ import {
    ③LLM 管理（admin）④用量（admin）
    ============================================================ */
 
-const KINDS: LlmProviderKind[] = ['openai_compat', 'anthropic', 'fake'];
+const KINDS: LlmProviderKind[] = ['openai_compat', 'anthropic'];
 
 // ---------------- 个人 ----------------
 
@@ -533,7 +533,7 @@ function ProviderForm({ draft, setDraft, isNew }: {
     <>
       <FormField label={tr('名称', 'Name')}>
         <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-          placeholder={tr('如 deepseek / claude / local-fake', 'e.g. deepseek / claude / local-fake')} />
+          placeholder={tr('如 deepseek / claude', 'e.g. deepseek / claude')} />
       </FormField>
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
         <FormField label={tr('类型', 'Kind')} style={{ width: 180 }}>
@@ -549,7 +549,7 @@ function ProviderForm({ draft, setDraft, isNew }: {
         </FormField>
       </div>
       <FormField label="API Key"
-        hint={isNew ? tr('fake provider 无需 key', 'fake providers need no key') : tr('留空 = 保持不变；后端只写不读，展示为 masked', 'Leave empty to keep unchanged; write-only on the backend, shown masked')}>
+        hint={isNew ? undefined : tr('留空 = 保持不变；后端只写不读，展示为 masked', 'Leave empty to keep unchanged; write-only on the backend, shown masked')}>
         <input className="input mono" type="password" autoComplete="new-password" value={draft.api_key}
           onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
           placeholder={isNew ? 'sk-…' : tr('••••••（留空不变）', '•••••• (empty = unchanged)')} disabled={draft.kind === 'fake'} />
@@ -819,7 +819,7 @@ function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
           </div>
         </div>
       ) : providers.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('还没有 provider，先添加一个（kind=fake 可无 key 演示）', 'No providers yet — add one (kind=fake works without a key for demos)')}</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('还没有 provider，先添加一个；配置好前 AI 功能不可用', 'No providers yet — add one; AI features stay unavailable until configured')}</div>
       ) : (
         <table className="table">
           <thead>
@@ -933,7 +933,7 @@ function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
         open={modal !== 'closed'}
         onClose={() => setModal('closed')}
         title={isNew ? tr('新增 Provider', 'Add provider') : tr('编辑 Provider', 'Edit provider')}
-        sub={tr('api_key 后端只写不读；kind=fake 用于测试与无 key 演示', 'api_key is write-only on the backend; kind=fake is for tests and keyless demos')}
+        sub={tr('api_key 后端只写不读，展示为 masked', 'api_key is write-only on the backend and shown masked')}
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setModal('closed')}>{tr('取消', 'Cancel')}</button>

@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.llm import call_log
 from app.core.llm.anthropic import AnthropicProvider
@@ -24,6 +25,14 @@ from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.security import decrypt_secret
 
 logger = logging.getLogger(__name__)
+
+
+class LLMNotConfiguredError(RuntimeError):
+    """没有配置任何可用的 LLM 路由（且未开启 fake 回退）。
+
+    main.py 的异常处理器把它映射为 503 LLM_NOT_CONFIGURED，
+    前端据此提示「请先在设置里配置大模型」。
+    """
 
 # 科研环节枚举（docs/api-m1.md §2；M2 新增 embedding，见 docs/api-m2.md §7；
 # 文献管理增强新增 reading（AI 伴读），见 docs/api-lit.md §3）
@@ -167,8 +176,6 @@ class LLMRouter:
         key = (route.provider_kind, route.base_url, route.api_key)
         if key not in self._providers:
             if route.provider_kind == "openai_compat":
-                from app.core.config import get_settings
-
                 base_url = route.base_url or get_settings().openai_compat_base_url
                 self._providers[key] = OpenAICompatProvider(
                     base_url=base_url, api_key=route.api_key
@@ -184,28 +191,37 @@ class LLMRouter:
     async def resolve(
         self, stage: str, user_id: uuid.UUID | None = None
     ) -> tuple[LLMProvider, ResolvedRoute]:
-        """按有效 owner 查路由表（缓存 60s），无则回退 default 路由，再回退 fake。
+        """按有效 owner 查路由表（缓存 60s），无则回退 default 路由。
 
         owner 由 user 的接管状态决定：自管用户用自己的 owner=user 配置（admin 的
-        对他失效，缺路由则回退 fake——即"配好前不可用"）；被接管用户及无 user_id
-        的系统调用用全局(owner=NULL, admin)配置。
+        对他失效——即"配好前不可用"）；被接管用户及无 user_id 的系统调用用
+        全局(owner=NULL, admin)配置。
 
         能力型环节（``_CAPABILITY_STAGES``）不回退 default：对话模型没有
         embedding/rerank 能力，回退只会产生无意义调用；未显式配置时抛
-        NotImplementedError，调用方按既有降级路径处理。仅当路由表整体为空
-        （未初始化的本地/测试环境）时仍回退确定性 fake provider，保证无任何
-        DB 配置也能跑通。
+        NotImplementedError，调用方按既有降级路径处理。
+
+        对话环节连 default 也没有时抛 LLMNotConfiguredError（503），不再
+        静默回退演示用 fake provider；仅当显式开启
+        ``settings.llm_fake_fallback``（测试套件 / 无 key 演示）才回退 fake。
         """
         owner_id = await self._effective_owner(user_id)
         routes = await self._get_routes(owner_id)
         route = routes.get(stage)
         if route is None:
             if stage in _CAPABILITY_STAGES:
-                if routes:
+                if not routes and get_settings().llm_fake_fallback:
+                    route = _FALLBACK_ROUTE
+                else:
                     raise NotImplementedError(f"no route configured for stage '{stage}'")
-                route = _FALLBACK_ROUTE
             else:
-                route = routes.get("default") or _FALLBACK_ROUTE
+                route = routes.get("default")
+                if route is None:
+                    if not get_settings().llm_fake_fallback:
+                        raise LLMNotConfiguredError(
+                            "no LLM provider configured — add a provider and routes in settings"
+                        )
+                    route = _FALLBACK_ROUTE
         return self._provider_for(route), route
 
     async def _record_usage(
