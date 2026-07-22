@@ -72,9 +72,11 @@ input {
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
 .nav-collapsed .sb-brand { justify-content: center; margin: 18px 0 12px; }
 .nav-collapsed .sb-scroll { padding: 0 8px 14px; }
-/* 收起态：eyebrow 文字隐藏（只作用于侧栏，别误伤审批抽屉里的同类标签），
-   组间 16px 间距 + 极短居中细线表达分组（中心对齐图标轨道中线 33px） */
-.nav-collapsed .sidebar .sb-section { position: relative; height: 16px; padding: 0; overflow: hidden; white-space: nowrap; color: transparent; }
+/* 收起态：eyebrow 盒子与展开态逐像素等高——不改 padding/行高/高度，只把文字弄透明
+   （nowrap + overflow hidden 防止窄栏下换行改变高度），下方所有条目纵向零位移。
+   只作用于侧栏，别误伤审批抽屉里复用 .sb-section 的标签。
+   分割线画在同一盒子内居中，水平中心 = 33px 图标轨道中线。 */
+.nav-collapsed .sidebar .sb-section { position: relative; overflow: hidden; white-space: nowrap; color: transparent; }
 .nav-collapsed .sidebar .sb-section::after {
   content: ''; position: absolute; left: 50%; top: 50%;
   width: 24px; height: 1px; transform: translate(-50%, -50%);
@@ -98,9 +100,11 @@ input {
 
 .sb-scroll { flex: 1; overflow-y: auto; padding: 0 12px 14px; }
 /* 分组 eyebrow：三组（实验室/课题研究/个人）样式完全一致；
-   上 padding 20 + 上一条目 margin 4 ≈ 24px 分组间距，只靠间距区分、不加分隔线 */
+   上 padding 20 + 上一条目 margin 4 ≈ 24px 分组间距，展开态只靠间距区分、不加分隔线。
+   line-height 定死 14px → 盒子总高 = 20+14+6 = 40px（first-child 特例 12+14+6 = 32px），
+   收起态沿用同一盒模型（只隐藏文字），保证收放时下方条目纵向不跳。 */
 .sb-section {
-  font-size: 11px; font-weight: 600; color: var(--text-4);
+  font-size: 11px; font-weight: 600; color: var(--text-4); line-height: 14px;
   letter-spacing: 0.04em; text-transform: uppercase; padding: 20px 10px 6px;
 }
 
