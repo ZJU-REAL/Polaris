@@ -54,7 +54,9 @@ async def list_paper_highlights(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[HighlightRead]:
-    paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
+    paper = await papers_service.get_paper_for_user(
+        session, paper_id=paper_id, user_id=user.id, include_pool=True
+    )
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
     rows = await hl_service.list_paper_highlights(session, paper_id=paper_id, author_id=user.id)
@@ -72,7 +74,9 @@ async def create_paper_highlight(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> HighlightRead:
-    paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
+    paper = await papers_service.get_paper_for_user(
+        session, paper_id=paper_id, user_id=user.id, include_pool=True
+    )
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
     hl = await hl_service.create_highlight(session, paper_id=paper.id, author=user, data=data)

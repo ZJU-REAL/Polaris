@@ -85,10 +85,21 @@ async def _get_member_project(session: AsyncSession, project_id: uuid.UUID, user
 
 
 async def _get_member_paper(
-    session: AsyncSession, paper_id: uuid.UUID, user: User, *, with_concepts: bool = False
+    session: AsyncSession,
+    paper_id: uuid.UUID,
+    user: User,
+    *,
+    with_concepts: bool = False,
+    include_pool: bool = False,
 ) -> papers_service.PaperView:
+    """include_pool 只给读路径开：书架/个人库可达的无库论文可读（P5b），
+    写成员行的端点（状态/删除/召回/重编译/标签）维持库可见性。"""
     paper = await papers_service.get_paper_for_user(
-        session, paper_id=paper_id, user_id=user.id, with_concepts=with_concepts
+        session,
+        paper_id=paper_id,
+        user_id=user.id,
+        with_concepts=with_concepts,
+        include_pool=include_pool,
     )
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
@@ -195,7 +206,7 @@ async def get_paper(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
-    paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
+    paper = await _get_member_paper(session, paper_id, user, with_concepts=True, include_pool=True)
     return await _paper_detail(session, paper, user.id)
 
 
@@ -275,7 +286,7 @@ async def get_paper_pdf(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> FileResponse:
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     if not paper.pdf_path or not Path(paper.pdf_path).exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PDF_NOT_AVAILABLE")
     return FileResponse(
@@ -293,7 +304,7 @@ async def fetch_paper_pdf(
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
     """按需补下 PDF + 抽全文；已有 PDF 时幂等直接返回。"""
-    view = await _get_member_paper(session, paper_id, user, with_concepts=True)
+    view = await _get_member_paper(session, paper_id, user, with_concepts=True, include_pool=True)
     try:
         await papers_service.fetch_pdf(
             session, view.paper, user_id=user.id, project_id=view.project_id
@@ -314,7 +325,7 @@ async def list_paper_figures(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[PaperFigure]:
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     return [PaperFigure(**f) for f in (paper.figures or [])]
 
 
@@ -325,7 +336,7 @@ async def get_paper_figure_image(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> FileResponse:
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     known = {int(f["index"]) for f in (paper.figures or [])}
     path = figure_path(str(paper_id), index)
     if index not in known or not path.exists():
@@ -343,7 +354,7 @@ async def extract_paper_figures(
     user: User = Depends(current_active_user),
 ) -> PaperFiguresResponse:
     """提取嵌入图 + LLM 筛选注释；已有 figures 且非 force 时幂等直返。"""
-    view = await _get_member_paper(session, paper_id, user)
+    view = await _get_member_paper(session, paper_id, user, include_pool=True)
     paper = view.paper
     if paper.figures is not None and not force:
         return PaperFiguresResponse(figures=[PaperFigure(**f) for f in paper.figures])
@@ -436,15 +447,16 @@ async def chat_with_paper(
     user: User = Depends(require_llm_chat),
 ) -> StreamingResponse:
     """AI 伴读：stage=reading 流式回答；事件 delta/done/error + 15s 心跳注释。"""
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     project_id = paper.project_id
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
     history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
     llm = get_llm_router()
 
-    # 用户选中的其他文献：检索相关片段作为对比/参考上下文（跨项目引用被过滤）
+    # 用户选中的其他文献：检索相关片段作为对比/参考上下文（跨项目引用被过滤）；
+    # 池级可达的无库论文没有课题上下文（project_id 为空）→ 跳过参考文献检索
     references, sources = "", []
-    if data.context_paper_ids:
+    if data.context_paper_ids and project_id is not None:
         references, sources = await library_chat_service.build_reference_context(
             session,
             project_id=project_id,
@@ -550,7 +562,7 @@ async def set_paper_my_meta(
     user: User = Depends(current_active_user),
 ) -> PaperMyMetaRead:
     """个人星标 / 阅读状态 upsert。"""
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     meta = await papers_service.upsert_paper_user_meta(
         session,
         paper=paper,

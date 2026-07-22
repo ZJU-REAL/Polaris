@@ -30,6 +30,7 @@ from app.models.paper import (
     PaperUserMeta,
     paper_tag_links,
 )
+from app.models.project import ProjectMember
 from app.services.libraries import (
     get_library_for_project,
     member_paper_stmt,
@@ -253,13 +254,55 @@ async def list_papers(
     return [PaperView(paper, membership, project_id) for paper, membership in rows], int(total)
 
 
+async def _pool_paper_view(
+    session: AsyncSession, *, paper_id: uuid.UUID, user_id: uuid.UUID, with_concepts: bool
+) -> PaperView | None:
+    """池级可见性兜底（P5b）：论文不在任何可见方向库，但个人链路可达时仍可读。
+
+    可达条件：该论文在请求者任一课题的相关研究书架上，或在其个人库条目里
+    （dedup 匹配）。返回的视角带**临时成员行**（不入 session、永不落库）：
+    status=included、无判断字段；``project_id`` 取最早入架的课题（仅个人库
+    可达时为 None）。只用于读路径——写成员行的端点不开启池级兜底。
+    """
+    from app.models.topic_shelf import TopicPaper
+    from app.services import user_library
+
+    options = (selectinload(Paper.concepts),) if with_concepts else ()
+    paper = await session.get(Paper, paper_id, options=options)
+    if paper is None:
+        return None
+    stmt = (
+        select(TopicPaper.topic_id)
+        .join(ProjectMember, ProjectMember.project_id == TopicPaper.topic_id)
+        .where(TopicPaper.paper_id == paper_id, ProjectMember.user_id == user_id)
+        .order_by(TopicPaper.created_at)
+        .limit(1)
+    )
+    topic_id = (await session.execute(stmt)).scalar_one_or_none()
+    if topic_id is None:
+        entry = await user_library.entry_for_paper(session, user_id=user_id, paper=paper)
+        if entry is None:
+            return None
+    membership = LibraryPaper(
+        status="included", created_at=paper.created_at, updated_at=paper.updated_at
+    )
+    return PaperView(paper, membership, topic_id)
+
+
 async def get_paper_for_user(
-    session: AsyncSession, *, paper_id: uuid.UUID, user_id: uuid.UUID, with_concepts: bool = False
+    session: AsyncSession,
+    *,
+    paper_id: uuid.UUID,
+    user_id: uuid.UUID,
+    with_concepts: bool = False,
+    include_pool: bool = False,
 ) -> PaperView | None:
     """取论文（含成员行视角）；用户任一所属方向的库里都没有时视为不存在。
 
     论文同时在多个可见方向库时取一个确定性视角：优先有 wiki 解读的成员行，
     其次最早加入的（跨方向复用的论文以先入库方向的解读为主视角）。
+    include_pool=True（只给读路径用）时再走池级兜底：书架 / 个人库可达的
+    无库论文也可读（见 :func:`_pool_paper_view`）。
     """
     stmt = (
         user_visible_paper_stmt(user_id)
@@ -270,10 +313,14 @@ async def get_paper_for_user(
     if with_concepts:
         stmt = stmt.options(selectinload(Paper.concepts))
     row = (await session.execute(stmt)).first()
-    if row is None:
+    if row is not None:
+        paper, membership, project_id = row
+        return PaperView(paper, membership, project_id)
+    if not include_pool:
         return None
-    paper, membership, project_id = row
-    return PaperView(paper, membership, project_id)
+    return await _pool_paper_view(
+        session, paper_id=paper_id, user_id=user_id, with_concepts=with_concepts
+    )
 
 
 async def set_paper_status(session: AsyncSession, view: PaperView, status: str) -> PaperView:

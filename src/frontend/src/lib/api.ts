@@ -594,7 +594,8 @@ export interface PaperAuthor {
 
 export interface PaperRead {
   id: string;
-  project_id: string;
+  /** 本次访问解析出的课题上下文；书架/个人库可达的无库论文（个人补充）为 null */
+  project_id: string | null;
   title: string;
   authors: PaperAuthor[];
   /** 发表机构（OpenAlex 补充；可能为空） */

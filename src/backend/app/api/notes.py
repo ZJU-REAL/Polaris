@@ -49,7 +49,9 @@ async def list_paper_notes(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[NoteRead]:
-    paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
+    paper = await papers_service.get_paper_for_user(
+        session, paper_id=paper_id, user_id=user.id, include_pool=True
+    )
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
     rows = await notes_service.list_paper_notes(session, paper_id=paper_id, author_id=user.id)
@@ -65,7 +67,9 @@ async def create_paper_note(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> NoteRead:
-    paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
+    paper = await papers_service.get_paper_for_user(
+        session, paper_id=paper_id, user_id=user.id, include_pool=True
+    )
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
     note = await notes_service.create_note(

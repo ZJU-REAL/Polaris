@@ -28,7 +28,8 @@ class PaperRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    project_id: uuid.UUID
+    # 本次访问解析出的课题上下文；池级可达（书架/个人库）的无库论文可为 null
+    project_id: uuid.UUID | None
     title: str
     authors: list[AuthorRead] = []
     affiliations: list[str] = []  # 发表机构（LLM 从全文解析，OpenAlex 兜底；可能为空）
