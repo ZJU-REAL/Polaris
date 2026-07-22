@@ -808,6 +808,42 @@ export interface SearchResult {
 }
 
 // ============================================================
+// P5a · 课题「相关研究」书架 — /projects/{pid}/shelf
+// ============================================================
+
+/** 书架条目 wiki 来源：live=库版实时可得 | snapshot=只剩入架快照 | none=没有解读。 */
+export type ShelfWikiSource = 'live' | 'snapshot' | 'none';
+
+export interface ShelfItemRead {
+  paper_id: string;
+  title: string;
+  authors: PaperAuthor[];
+  year: number | null;
+  venue: string | null;
+  arxiv_id: string | null;
+  doi: string | null;
+  url: string | null;
+  tldr: string | null;
+  /** 课题语境的「为什么相关」备注 */
+  note: string | null;
+  wiki_source: ShelfWikiSource;
+  /** 解析后的 wiki：库版实时 > 快照；none 时为 null */
+  wiki_content: string | null;
+  /** 入架落快照的时间；没快照为 null */
+  snapshot_at: string | null;
+  /** 来源方向库（个人补充为 null） */
+  source_library_id: string | null;
+  added_at: string;
+}
+
+/** 个人补充入库：arXiv 编号 / DOI / 标题至少给一个。 */
+export interface ShelfImportInput {
+  arxiv_id?: string;
+  doi?: string;
+  title?: string;
+}
+
+// ============================================================
 // 文献知识底座：全文分段索引 + 文献库对话（docs/api-lit.md §8）
 // ============================================================
 
@@ -2559,6 +2595,34 @@ export const api = {
     if (opts.mode) params.set('mode', opts.mode);
     if (opts.limit) params.set('limit', String(opts.limit));
     return request<SearchResult>(`/projects/${projectId}/search?${params.toString()}`);
+  },
+
+  // —— P5a · 课题「相关研究」书架 ——
+  listShelf(projectId: string, opts: { page?: number; size?: number } = {}): Promise<PageOf<ShelfItemRead>> {
+    const params = new URLSearchParams();
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    const qs = params.toString();
+    return request<PageOf<ShelfItemRead>>(`/projects/${projectId}/shelf${qs ? `?${qs}` : ''}`);
+  },
+  /** 书架全部 paper_id（「已入架」勾选态用）。 */
+  listShelfIds(projectId: string): Promise<{ paper_ids: string[] }> {
+    return request<{ paper_ids: string[] }>(`/projects/${projectId}/shelf/ids`);
+  },
+  /** 入架（重复入架幂等更新备注）；后端同步收藏进个人库。 */
+  addToShelf(projectId: string, input: { paper_id: string; note?: string }): Promise<ShelfItemRead> {
+    return requestJson<ShelfItemRead>(`/projects/${projectId}/shelf`, 'POST', input);
+  },
+  /** 个人补充入库：查池命中直接入架，未命中抓取解析；422 → PARSE_FAILED。 */
+  importToShelf(projectId: string, input: ShelfImportInput): Promise<ShelfItemRead> {
+    return requestJson<ShelfItemRead>(`/projects/${projectId}/shelf/import`, 'POST', input);
+  },
+  updateShelfNote(projectId: string, paperId: string, note: string | null): Promise<ShelfItemRead> {
+    return requestJson<ShelfItemRead>(`/projects/${projectId}/shelf/${paperId}`, 'PATCH', { note });
+  },
+  /** 移出书架：只删书架行，个人库收藏不动。 */
+  removeFromShelf(projectId: string, paperId: string): Promise<void> {
+    return request<void>(`/projects/${projectId}/shelf/${paperId}`, { method: 'DELETE' });
   },
 
   // —— M2 · Ingest ——

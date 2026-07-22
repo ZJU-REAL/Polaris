@@ -108,6 +108,7 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: page(() => import('../features/dashboard/DashboardPage'), 'DashboardPage') },
               { path: 'wiki', element: page(() => import('../features/wiki/WikiPage'), 'WikiPage') },
+              { path: 'research', element: page(() => import('../features/research/ResearchPage'), 'ResearchPage') },
               { path: 'forge', element: page(() => import('../features/forge/ForgePage'), 'ForgePage') },
               { path: 'review', element: page(() => import('../features/review/ReviewPage'), 'ReviewPage') },
               { path: 'experiment', element: page(() => import('../features/experiment/ExperimentPage'), 'ExperimentPage') },
@@ -125,6 +126,7 @@ export const router = createBrowserRouter([
           // 旧路径重定向：跳到当前课题下的同名子页面
           { index: true, element: <LegacyTopicRedirect /> },
           { path: 'wiki', element: <LegacyTopicRedirect sub="wiki" /> },
+          { path: 'research', element: <LegacyTopicRedirect sub="research" /> },
           { path: 'forge', element: <LegacyTopicRedirect sub="forge" /> },
           { path: 'review', element: <LegacyTopicRedirect sub="review" /> },
           { path: 'experiment', element: <LegacyTopicRedirect sub="experiment" /> },

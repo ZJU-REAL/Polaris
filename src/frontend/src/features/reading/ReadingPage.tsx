@@ -147,6 +147,37 @@ export function ReadingPage() {
       toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
+  // —— 课题「相关研究」书架：入架状态 + 加入/移出（P5a） ——
+  const projectId = paper?.project_id;
+  const shelfIdsQuery = useQuery({
+    queryKey: ['shelf-ids', projectId],
+    queryFn: () => api.listShelfIds(projectId!),
+    enabled: !!projectId,
+    retry: false,
+  });
+  const shelved = !!paperId && (shelfIdsQuery.data?.paper_ids ?? []).includes(paperId);
+  const shelfMutation = useMutation({
+    mutationFn: () =>
+      shelved
+        ? api.removeFromShelf(projectId!, paperId!)
+        : api.addToShelf(projectId!, { paper_id: paperId! }).then(() => undefined),
+    onSuccess: () => {
+      toast(
+        shelved
+          ? tr('已移出相关研究（个人库收藏保留）', 'Removed from related work (kept in my library)')
+          : tr('已加入相关研究', 'Added to related work'),
+        'ok',
+      );
+      void queryClient.invalidateQueries({ queryKey: ['shelf-ids', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['shelf', projectId] });
+      // 入架同步收藏进个人库
+      void queryClient.invalidateQueries({ queryKey: ['library-state', id] });
+      void queryClient.invalidateQueries({ queryKey: ['library'] });
+    },
+    onError: (e) =>
+      toast(`${tr('操作失败：', 'Action failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
   const invalidateHighlights = useCallback(
     () => void queryClient.invalidateQueries({ queryKey: ['paper-highlights', id] }),
     [queryClient, id],
@@ -240,6 +271,15 @@ export function ReadingPage() {
             {paper.arxiv_id ?? paper.venue ?? tr('论文阅读', 'Paper reading')}
           </div>
         </div>
+        <button
+          className="icon-btn"
+          title={shelved ? tr('已在相关研究 · 点击移出', 'In related work · click to remove') : tr('加入相关研究', 'Add to related work')}
+          disabled={shelfMutation.isPending || shelfIdsQuery.isLoading}
+          onClick={() => shelfMutation.mutate()}
+          style={{ color: shelved ? 'var(--accent)' : 'var(--text-3)' }}
+        >
+          <Icon name="pin" size={17} />
+        </button>
         <button
           className="icon-btn"
           title={libSaved ? tr('从文献库移除', 'Remove from my library') : tr('加入文献库', 'Add to my library')}
