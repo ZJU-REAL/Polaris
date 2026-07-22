@@ -67,6 +67,27 @@ function WikiBadge({ item }: { item: ShelfItemRead }) {
       </span>
     );
   }
+  if (item.wiki_source === 'personal') {
+    return (
+      <span
+        className="mono"
+        title={tr(
+          '这篇论文没有公共库版解读，下面显示的是你自己生成的个人版。',
+          'No shared library wiki for this paper; showing the personal version you generated.',
+        )}
+        style={{
+          fontSize: 10,
+          color: 'var(--accent-text)',
+          background: 'var(--accent-soft)',
+          padding: '1px 7px',
+          borderRadius: 999,
+          flexShrink: 0,
+        }}
+      >
+        {tr('个人版解读', 'Personal wiki')}
+      </span>
+    );
+  }
   if (item.wiki_source === 'snapshot') {
     return (
       <span
@@ -99,15 +120,25 @@ function WikiBadge({ item }: { item: ShelfItemRead }) {
 function ShelfCard({
   item,
   busy,
+  generating,
+  refreshing,
   onOpen,
   onSaveNote,
   onRemove,
+  onGenerateWiki,
+  onRefreshSnapshot,
 }: {
   item: ShelfItemRead;
   busy: boolean;
+  /** 本卡的个人版 wiki 正在生成 */
+  generating: boolean;
+  /** 本卡的快照正在刷新 */
+  refreshing: boolean;
   onOpen: () => void;
   onSaveNote: (note: string | null) => void;
   onRemove: () => void;
+  onGenerateWiki: () => void;
+  onRefreshSnapshot: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.note ?? '');
@@ -129,6 +160,32 @@ function ShelfCard({
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>{item.year}</span>
         )}
         <WikiBadge item={item} />
+        {item.wiki_source === 'snapshot' && (
+          <button
+            className="icon-btn"
+            title={tr(
+              '刷新快照：重新拷一份当前可得的最新解读（库版优先，其次个人版）',
+              'Refresh snapshot: re-copy the latest available wiki (library first, then personal)',
+            )}
+            disabled={refreshing}
+            onClick={onRefreshSnapshot}
+            style={{ width: 22, height: 22 }}
+          >
+            <Icon name="refresh" size={12} />
+          </button>
+        )}
+        {item.wiki_source === 'none' && (
+          <button
+            className="btn btn-soft sm"
+            title={tr('用 AI 生成这篇论文的个人版解读（将使用你的模型额度）', 'Generate a personal wiki with AI (uses your model quota)')}
+            disabled={generating}
+            onClick={onGenerateWiki}
+            style={{ height: 22, fontSize: 10.5, padding: '0 8px' }}
+          >
+            <Icon name="sparkle" size={11} />
+            {generating ? tr('生成中…', 'Generating…') : tr('生成 wiki', 'Generate wiki')}
+          </button>
+        )}
         <span style={{ marginLeft: 'auto' }} />
         <button
           className="icon-btn"
@@ -307,6 +364,25 @@ export function ResearchPage() {
       invalidate();
     },
     onError: (e) => toast(`${tr('移除失败：', 'Failed to remove: ')}${errText(e)}`, 'error'),
+  });
+
+  // 个人版 wiki 按需生成（wiki_source=none 的论文；费用记个人额度）
+  const generateMutation = useMutation({
+    mutationFn: (paperId: string) => api.compilePersonalWiki(paperId, pid),
+    onSuccess: () => {
+      toast(tr('个人版解读已生成', 'Personal wiki generated'), 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`${tr('生成失败：', 'Failed to generate: ')}${errText(e)}`, 'error'),
+  });
+
+  const refreshSnapshotMutation = useMutation({
+    mutationFn: (paperId: string) => api.refreshShelfSnapshot(pid, paperId),
+    onSuccess: () => {
+      toast(tr('快照已刷新', 'Snapshot refreshed'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['shelf', pid] });
+    },
+    onError: (e) => toast(`${tr('刷新失败：', 'Failed to refresh: ')}${errText(e)}`, 'error'),
   });
 
   const submitImport = () => {
@@ -503,9 +579,15 @@ export function ResearchPage() {
               key={item.paper_id}
               item={item}
               busy={busy}
+              generating={generateMutation.isPending && generateMutation.variables === item.paper_id}
+              refreshing={
+                refreshSnapshotMutation.isPending && refreshSnapshotMutation.variables === item.paper_id
+              }
               onOpen={() => navigate(`/papers/${item.paper_id}/read`)}
               onSaveNote={(note) => noteMutation.mutate({ paperId: item.paper_id, note })}
               onRemove={() => removeMutation.mutate(item.paper_id)}
+              onGenerateWiki={() => generateMutation.mutate(item.paper_id)}
+              onRefreshSnapshot={() => refreshSnapshotMutation.mutate(item.paper_id)}
             />
           ))}
           {totalPages > 1 && (
