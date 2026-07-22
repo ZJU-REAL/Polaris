@@ -2,10 +2,8 @@ import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
-import { useProject } from '../../app/project';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { ExportMenu, PapersTab, type AdvSearchSeed } from './PapersTab';
@@ -21,17 +19,15 @@ const PresentationModal = lazy(() =>
 );
 
 /* ============================================================
-   /wiki — Research Wiki 文献调研页（M2 + 文献管理增强）
-   四个 Tab：论文库 / 概念库 / 建库与同步 / 笔记本；
-   顶部当前研究方向 + Obsidian 导出。
+   文献库工作台（P5c 起挂在 /libraries/:id 的成员视图；原 /wiki 页面主体）
+   六个 Tab：论文库 / 概念库 / 图谱 / 文献对话 / 建库与同步 / 笔记；
+   pid = 库背后课题 id（成员视角，数据仍走 project 作用域端点）。
    ============================================================ */
 
 type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes';
 
-export function WikiPage() {
+export function WikiWorkbench({ pid }: { pid: string }) {
   const navigate = useNavigate();
-  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
-  const pid = currentProjectId;
 
   const [tab, setTab] = useState<WikiTab>('papers');
   const [presentOpen, setPresentOpen] = useState(false);
@@ -42,16 +38,16 @@ export function WikiPage() {
   /** 深链带入的作者/机构筛选（seq 递增，PapersTab 据此重新应用） */
   const [advSeed, setAdvSeed] = useState<AdvSearchSeed | null>(null);
 
-  // 切换项目时重置选中态
+  // 切换课题/库时重置选中态
   useEffect(() => {
     setPaperId(null);
     setConceptId(null);
     setPendingConceptName(null);
   }, [pid]);
 
-  // 深链 /wiki?paper=<id>（idea 详情 / 阅读页返回）、/wiki?concept=<名称>
-  // （阅读页双链跳转，按名称解析）、/wiki?author= / ?affiliation=
-  // （阅读页作者/机构点击 → 论文库按其过滤）与 /wiki?tab=<tab>
+  // 深链 ?paper=<id>（idea 详情 / 阅读页返回）、?concept=<名称>
+  // （阅读页双链跳转，按名称解析）、?author= / ?affiliation=
+  // （阅读页作者/机构点击 → 论文库按其过滤）与 ?tab=<tab>
   // （工作台「下一步」直达建库面板）：处理后清掉参数
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -82,8 +78,7 @@ export function WikiPage() {
   // —— ingest 状态（tab 计数 + Ingest 面板共用） ——
   const ingestQuery = useQuery({
     queryKey: ['ingest-state', pid],
-    queryFn: () => api.getIngestState(pid!),
-    enabled: !!pid,
+    queryFn: () => api.getIngestState(pid),
     retry: false,
     refetchInterval: (q) => (q.state.data?.running_voyage_id ? 5_000 : 60_000),
   });
@@ -91,8 +86,8 @@ export function WikiPage() {
   // —— [[概念名]] → 概念 id 解析 ——
   const resolveQuery = useQuery({
     queryKey: ['concept-resolve', pid, pendingConceptName],
-    queryFn: () => api.listConcepts(pid!, { q: pendingConceptName ?? '' }),
-    enabled: !!pid && !!pendingConceptName,
+    queryFn: () => api.listConcepts(pid, { q: pendingConceptName ?? '' }),
+    enabled: !!pendingConceptName,
     retry: false,
   });
   useEffect(() => {
@@ -134,38 +129,7 @@ export function WikiPage() {
   const total = ingestQuery.data?.paper_counts?.library ?? ingestQuery.data?.paper_counts?.total;
 
   return (
-    <div className="page fadeup" style={{ maxWidth: 1360, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}>
-      <PageHead
-        eyebrow="Stage 00 · Research Wiki"
-        title={tr('文献调研', 'Research Wiki')}
-        dense
-        sub={
-          currentProject
-            ? undefined
-            : projectsLoading
-              ? tr('加载课题…', 'Loading topics…')
-              : tr('选择一个课题', 'Pick a topic')
-        }
-        right={
-          <>
-            {currentProject && (
-              <button
-                className="btn btn-ghost"
-                onClick={() => navigate(`/projects/${currentProject.id}`)}
-              >
-                <Icon name="compass" size={14} />
-                {tr('课题设置', 'Topic settings')}
-              </button>
-            )}
-            <button className="btn btn-ghost" disabled={!pid} onClick={() => setPresentOpen(true)}>
-              <Icon name="chart" size={14} />
-              {tr('论文分享 PPT', 'Paper sharing PPT')}
-            </button>
-            {pid && <ExportMenu pid={pid} />}
-          </>
-        }
-      />
-
+    <>
       <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <Segmented<WikiTab>
           options={[
@@ -179,16 +143,23 @@ export function WikiPage() {
           value={tab}
           onChange={setTab}
         />
-        {ingestQuery.data?.running_voyage_id && tab !== 'ingest' && (
-          <span
-            className="pill hoverable"
-            style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
-            onClick={() => navigate(`/voyages/${ingestQuery.data?.running_voyage_id ?? ''}`)}
-          >
-            <span className="dot pulse" />
-            {tr('文献任务运行中 →', 'Literature task running →')}
-          </span>
-        )}
+        <div className="row gap8">
+          {ingestQuery.data?.running_voyage_id && tab !== 'ingest' && (
+            <span
+              className="pill hoverable"
+              style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
+              onClick={() => navigate(`/voyages/${ingestQuery.data?.running_voyage_id ?? ''}`)}
+            >
+              <span className="dot pulse" />
+              {tr('文献任务运行中 →', 'Literature task running →')}
+            </span>
+          )}
+          <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>
+            <Icon name="chart" size={13} />
+            {tr('论文分享 PPT', 'Paper sharing PPT')}
+          </button>
+          <ExportMenu pid={pid} />
+        </div>
       </div>
 
       <div
@@ -201,13 +172,7 @@ export function WikiPage() {
           minHeight: 480,
         }}
       >
-        {!pid ? (
-          <div className="empty" style={{ margin: 'auto' }}>
-            {projectsLoading
-              ? tr('加载课题…', 'Loading topics…')
-              : tr('请先选择课题', 'Pick a topic first')}
-          </div>
-        ) : tab === 'papers' ? (
+        {tab === 'papers' ? (
           <PapersTab
             pid={pid}
             selectedId={paperId}
@@ -242,7 +207,7 @@ export function WikiPage() {
         )}
       </div>
 
-      {presentOpen && pid && (
+      {presentOpen && (
         <Suspense fallback={null}>
           <PresentationModal
             projectId={pid}
@@ -251,6 +216,6 @@ export function WikiPage() {
           />
         </Suspense>
       )}
-    </div>
+    </>
   );
 }

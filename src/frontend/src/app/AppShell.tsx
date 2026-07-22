@@ -27,9 +27,9 @@ interface NavEntry {
   en: string;
 }
 
-// 实验室级导航：跨课题的公共资产（文献追踪未来升级为实验室级文献库，导航先归位）
+// 实验室级导航：跨课题的公共资产（P5c 起为共享方向文献库列表）
 const NAV_LAB: NavEntry[] = [
-  { sub: 'wiki', icon: 'book', zh: '文献追踪', en: 'Research Wiki' },
+  { to: '/libraries', icon: 'book', zh: '文献库', en: 'Libraries' },
 ];
 
 const NAV_MAIN: NavEntry[] = [
@@ -64,13 +64,15 @@ function crumbFor(pathname: string): [string, string] {
   if (p.startsWith('/projects/')) return [tr('课题', 'Topics'), tr('课题设置', 'Topic settings')];
   if (p === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
   if (p.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
-  if (p.startsWith('/papers/')) return [tr('文献追踪', 'Research Wiki'), tr('论文阅读', 'Paper reading')];
+  if (p.startsWith('/papers/')) return [tr('文献库', 'Libraries'), tr('论文阅读', 'Paper reading')];
+  if (p === '/libraries') return [tr('实验室', 'Lab'), tr('文献库', 'Libraries')];
+  if (p.startsWith('/libraries/')) return [tr('文献库', 'Libraries'), tr('库详情', 'Library detail')];
   if (p.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
   if (p.startsWith('/join/')) return [tr('课题', 'Topics'), tr('接受邀请', 'Accept invite')];
   if (p.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
   if (p.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
   const table: Record<string, [string, string]> = {
-    '/wiki': [tr('实验室', 'Lab'), tr('文献追踪', 'Research Wiki')],
+    '/wiki': [tr('实验室', 'Lab'), tr('文献库', 'Libraries')],
     '/research': [tr('课题研究', 'Topic'), tr('相关研究', 'Related Work')],
     '/forge': ['Stage 01', tr('想法生成', 'Idea Forge')],
     '/review': ['Stage 02', tr('想法评审', 'Idea Review')],

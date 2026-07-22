@@ -9,6 +9,7 @@ import { api, type ShelfImportInput, type ShelfItemRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { topicPath, useProject } from '../../app/project';
 import { SearchInput, useDebounced } from '../wiki/shared';
+import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 
 /* ============================================================
    /t/:topicId/research — 课题「相关研究」书架：
@@ -289,6 +290,9 @@ export function ResearchPage() {
   const queryClient = useQueryClient();
   const { currentProjectId } = useProject();
   const pid = currentProjectId ?? '';
+  // 文献库入口：课题隐式库详情页（列表未就绪时退回旧 /wiki 路径由重定向兜底）
+  const topicLib = useTopicLibrary(pid || null);
+  const wikiHref = topicLib ? libraryPath(topicLib.id) : topicPath(pid, 'wiki');
 
   const [page, setPage] = useState(1);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -443,8 +447,8 @@ export function ResearchPage() {
               onChange={setQInput}
               placeholder={tr('搜文献库：标题 / 摘要 / 解读…', 'Search the library: title / abstract / wiki…')}
             />
-            <button className="btn btn-ghost sm" onClick={() => navigate(topicPath(pid, 'wiki'))}>
-              {tr('去文献追踪', 'Open Research Wiki')}
+            <button className="btn btn-ghost sm" onClick={() => navigate(wikiHref)}>
+              {tr('去文献库', 'Open the library')}
             </button>
           </div>
           {q.length > 0 && (
@@ -546,14 +550,14 @@ export function ResearchPage() {
           icon="pin"
           title={tr('书架还空着', 'The shelf is empty')}
           desc={tr(
-            '去文献追踪逛逛，把相关论文加进来；或直接输入 arXiv 编号添加。',
-            'Browse the Research Wiki and shelve relevant papers, or add one by arXiv ID.',
+            '去文献库逛逛，把相关论文加进来；或直接输入 arXiv 编号添加。',
+            'Browse the library and shelve relevant papers, or add one by arXiv ID.',
           )}
           action={
             <div className="row gap10">
-              <button className="btn btn-primary sm" onClick={() => navigate(topicPath(pid, 'wiki'))}>
+              <button className="btn btn-primary sm" onClick={() => navigate(wikiHref)}>
                 <Icon name="book" size={13} />
-                {tr('去文献追踪', 'Open Research Wiki')}
+                {tr('去文献库', 'Open the library')}
               </button>
               <button
                 className="btn btn-soft sm"
