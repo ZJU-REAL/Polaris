@@ -49,8 +49,14 @@ async def create_presentation(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     if data.mode == "single" and len(data.paper_ids) != 1:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SINGLE_NEEDS_ONE_PAPER")
-    stmt = select(Paper.id, Paper.title).where(
-        Paper.id.in_(data.paper_ids), Paper.project_id == project_id
+    from app.models.library_direction import LibraryPaper
+    from app.services.libraries import get_library_for_project
+
+    library = await get_library_for_project(session, project_id)
+    stmt = (
+        select(Paper.id, Paper.title)
+        .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+        .where(Paper.id.in_(data.paper_ids), LibraryPaper.library_id == library.id)
     )
     rows = {pid: title for pid, title in (await session.execute(stmt)).all()}
     missing = [str(i) for i in data.paper_ids if i not in rows]

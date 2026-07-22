@@ -9,9 +9,9 @@ from PIL import Image
 import app.tools as tools
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
-from app.models.paper import Concept, Paper
 from app.services.literature.pdf_extract import figure_path
 from app.tools import ToolContext, ToolResult
+from tests.conftest import add_concept, add_paper
 
 from .conftest import register_and_login
 
@@ -61,7 +61,7 @@ async def _seed_paper_with_figures(project_id: str) -> str:
         },
     ]
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=uuid.UUID(project_id),
             source="manual",
             title="Retrieval Augmented Generation",
@@ -131,11 +131,17 @@ async def test_related_papers_shared_concept(client):
     project_id, _ = await _project(client, email="fig3@example.com")
     async with get_sessionmaker()() as session:
         pid = uuid.UUID(project_id)
-        concept = Concept(project_id=pid, name="RAG", slug="rag", definition="检索增强")
-        p1 = Paper(
+        concept = await add_concept(
+            session,
+            project_id=pid,
+            name="RAG",
+            slug="rag",
+            definition="检索增强",
+        )
+        p1 = await add_paper(session,
             project_id=pid, source="manual", title="Paper A", status="compiled", concepts=[concept]
         )
-        p2 = Paper(
+        p2 = await add_paper(session,
             project_id=pid, source="manual", title="Paper B", status="compiled", concepts=[concept]
         )
         session.add_all([p1, p2])

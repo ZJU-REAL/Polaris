@@ -39,8 +39,10 @@ from app.core.llm.base import Message
 from app.models.activity import Activity
 from app.models.gate import Gate
 from app.models.idea import RESEARCH_TYPES, Idea
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.models.review import ReviewMessage, ReviewSession
+from app.services.libraries import get_library_for_project
 from app.services.literature.openalex import OpenAlexClient
 from app.services.literature.semantic_scholar import SemanticScholarClient
 from app.services.review import serialize_message
@@ -353,8 +355,11 @@ def validate_goal(raw: Any, *, library_ids: set[str], library_size: int) -> dict
 
 async def _library_index(ctx: ActionContext) -> tuple[set[str], int]:
     async with get_sessionmaker()() as session:
+        library = await get_library_for_project(session, ctx.run.project_id)
         rows = (
-            await session.execute(select(Paper.id).where(Paper.project_id == ctx.run.project_id))
+            await session.execute(
+                select(LibraryPaper.paper_id).where(LibraryPaper.library_id == library.id)
+            )
         ).all()
     ids = {str(pid) for (pid,) in rows}
     return ids, len(ids)
@@ -504,14 +509,26 @@ async def _own_gate_comment(ctx: ActionContext) -> str:
 # ---- 阶段 2：方案深耕 ----
 
 
-async def _grounding_papers(ctx: ActionContext) -> list[Paper]:
+async def _grounding_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]]:
+    """goal.grounding 引用的库内论文，返回 (Paper, 本方向库版 wiki) 对。"""
     goal = _goal(ctx)
     ids = [uuid.UUID(g["paper_id"]) for g in goal.get("grounding") or []]
     if not ids:
         return []
     async with get_sessionmaker()() as session:
-        papers = (await session.execute(select(Paper).where(Paper.id.in_(ids)))).scalars().all()
-    by_id = {p.id: p for p in papers}
+        library = await get_library_for_project(session, ctx.run.project_id)
+        rows = (
+            await session.execute(
+                select(Paper, LibraryPaper.wiki_content)
+                .join(
+                    LibraryPaper,
+                    (LibraryPaper.paper_id == Paper.id)
+                    & (LibraryPaper.library_id == library.id),
+                )
+                .where(Paper.id.in_(ids))
+            )
+        ).all()
+    by_id = {p.id: (p, wiki) for p, wiki in rows}
     return [by_id[i] for i in ids if i in by_id]
 
 
@@ -526,8 +543,8 @@ async def _grounding_context(ctx: ActionContext) -> str:
     papers = await _grounding_papers(ctx)
     why_by_id = {g["paper_id"]: g["why"] for g in goal.get("grounding") or []}
     parts = []
-    for paper in papers:
-        excerpt = (paper.wiki_content or paper.abstract or "")[:_GROUNDING_EXCERPT_CHARS]
+    for paper, wiki in papers:
+        excerpt = (wiki or paper.abstract or "")[:_GROUNDING_EXCERPT_CHARS]
         parts.append(
             f"[[paper:{paper.id}]] {paper.title}\n"
             f"与目标的关系：{why_by_id.get(str(paper.id), '')}\n{excerpt}"
@@ -737,11 +754,14 @@ async def proposal_experiments(ctx: ActionContext, params: dict[str, Any]) -> di
 async def _internal_similar(ctx: ActionContext, query_text: str) -> list[dict[str, Any]]:
     """库内相似论文：embedding 余弦 top-k；embedding 不可用降级关键词检索。"""
     async with get_sessionmaker()() as session:
+        library = await get_library_for_project(session, ctx.run.project_id)
         papers = (
             (
                 await session.execute(
-                    select(Paper).where(
-                        Paper.project_id == ctx.run.project_id, Paper.embedding.is_not(None)
+                    select(Paper)
+                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                    .where(
+                        LibraryPaper.library_id == library.id, Paper.embedding.is_not(None)
                     )
                 )
             )
@@ -968,7 +988,7 @@ def _compose_content(
 async def _build_evidence(ctx: ActionContext) -> list[dict[str, Any]]:
     goal = _goal(ctx)
     papers = await _grounding_papers(ctx)
-    titles = {str(p.id): p.title for p in papers}
+    titles = {str(p.id): p.title for p, _ in papers}
     why_by_id = {g["paper_id"]: g["why"] for g in goal.get("grounding") or []}
     evidence: list[dict[str, Any]] = [
         {

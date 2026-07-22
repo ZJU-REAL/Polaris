@@ -42,12 +42,14 @@ from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment, ExperimentRun
 from app.models.idea import Idea
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import VoyageRun
 from app.services import experiments as experiments_service
 from app.services import ssh_exec
 from app.services.figure_annotate import prepare_image_for_llm
+from app.services.libraries import get_library_for_project
 
 RUN_POLL_SECONDS = 30.0  # 正式运行轮询间隔（测试 monkeypatch 为 0）
 MAX_SETUP_FIXES = 2  # 依赖安装失败回 LLM 修 requirements/run.sh 的次数上限
@@ -871,25 +873,26 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             raise ValueError("实验关联的 idea 不存在")
 
         if not isinstance(experiment.plan, dict):  # 断点幂等
-            papers = (
-                (
-                    await session.execute(
-                        select(Paper)
-                        .where(
-                            Paper.project_id == experiment.project_id,
-                            Paper.status.in_(("compiled", "included")),
-                            Paper.wiki_content.is_not(None),
-                        )
-                        .order_by(Paper.relevance_score.desc().nulls_last(), Paper.created_at)
-                        .limit(_WIKI_CONTEXT_PAPERS)
+            library = await get_library_for_project(session, experiment.project_id)
+            rows = (
+                await session.execute(
+                    select(Paper.title, LibraryPaper.wiki_content)
+                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                    .where(
+                        LibraryPaper.library_id == library.id,
+                        LibraryPaper.status.in_(("compiled", "included")),
+                        LibraryPaper.wiki_content.is_not(None),
                     )
+                    .order_by(
+                        LibraryPaper.relevance_score.desc().nulls_last(),
+                        LibraryPaper.created_at,
+                    )
+                    .limit(_WIKI_CONTEXT_PAPERS)
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
             wiki_context = (
                 "\n\n".join(
-                    f"### {p.title}\n{(p.wiki_content or '')[:_WIKI_EXCERPT_CHARS]}" for p in papers
+                    f"### {title}\n{(wiki or '')[:_WIKI_EXCERPT_CHARS]}" for title, wiki in rows
                 )
                 or "（知识库为空）"
             )

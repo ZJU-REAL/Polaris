@@ -7,10 +7,9 @@ import zipfile
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
 from app.models.user import User
 from app.services.notes import author_name_of
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 async def _setup(client):
@@ -29,14 +28,19 @@ async def _setup(client):
     assert resp.status_code == 204, resp.text
 
     async with get_sessionmaker()() as session:
-        p1 = Paper(
+        p1 = await add_paper(session,
             project_id=uuid.UUID(project_id),
             title="Agent Planning with RL",
             abstract="Planning for agents.",
             status="compiled",
             wiki_content="## TL;DR\n\n一句话（fake）。\n",
         )
-        p2 = Paper(project_id=uuid.UUID(project_id), title="Second Paper", status="included")
+        p2 = await add_paper(
+            session,
+            project_id=uuid.UUID(project_id),
+            title="Second Paper",
+            status="included",
+        )
         session.add_all([p1, p2])
         await session.commit()
         ids = {"p1": str(p1.id), "p2": str(p2.id)}

@@ -22,6 +22,7 @@ from app.services import citations as citations_service
 from app.services import concepts as concepts_service
 from app.services import highlights as highlights_service
 from app.services import notes as notes_service
+from app.services.libraries import membership_for_project
 from app.services.literature.pdf_extract import figure_path
 from app.tools.context import ToolContext
 from app.tools.literature import search_papers as _search_papers
@@ -41,7 +42,12 @@ async def _project_paper(
         raise ValueError(f"paper_id 不是合法 uuid：{raw_id}") from e
     opts = [selectinload(Paper.concepts)] if with_concepts else None
     paper = await session.get(Paper, pid, options=opts)
-    if paper is None or paper.project_id != ctx.project_id:
+    membership = (
+        await membership_for_project(session, project_id=ctx.project_id, paper_id=pid)
+        if paper is not None
+        else None
+    )
+    if paper is None or membership is None:
         raise ValueError(f"库内不存在该论文：{raw_id}")
     return paper
 
@@ -218,7 +224,9 @@ async def find_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]
     async with get_sessionmaker()() as session:
         for pid in paper_ids:
             paper = await session.get(Paper, pid)
-            if paper is None or paper.project_id != ctx.project_id:
+            if paper is None or (
+                await membership_for_project(session, project_id=ctx.project_id, paper_id=pid)
+            ) is None:
                 continue
             for fig in paper.figures or []:
                 if not fig.get("important"):

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
+from app.models.library_direction import DirectionLibrary
 from app.models.paper import Concept
 from app.models.project import ProjectMember
 from app.models.user import User
@@ -21,14 +22,15 @@ from app.schemas.paper import (
 )
 from app.services import concepts as concepts_service
 from app.services import projects as projects_service
+from app.services.libraries import get_library_for_project
 
 router = APIRouter(tags=["concepts"])
 
 
-def _concept_read(concept: Concept, paper_count: int) -> ConceptRead:
+def _concept_read(concept: Concept, paper_count: int, project_id: uuid.UUID) -> ConceptRead:
     return ConceptRead(
         id=concept.id,
-        project_id=concept.project_id,
+        project_id=project_id,
         name=concept.name,
         category=concept.category,
         definition=concept.definition,
@@ -47,10 +49,11 @@ async def list_concepts(
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    library = await get_library_for_project(session, project_id)
     rows = await concepts_service.list_concepts(
-        session, project_id=project_id, category=category, q=q
+        session, library_id=library.id, category=category, q=q
     )
-    return [_concept_read(concept, count) for concept, count in rows]
+    return [_concept_read(concept, count, project_id) for concept, count in rows]
 
 
 @router.post("/projects/{project_id}/concepts/relink", response_model=ConceptRelinkResult)
@@ -67,8 +70,14 @@ async def relink_concepts(
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    library = await get_library_for_project(session, project_id)
     stats, _papers = await concepts_service.link_all_paper_concepts(
-        session, project_id=project_id, llm=get_llm_router(), user_id=user.id, backfill=True
+        session,
+        library_id=library.id,
+        llm=get_llm_router(),
+        user_id=user.id,
+        project_id=project_id,
+        backfill=True,
     )
     return ConceptRelinkResult(**stats)
 
@@ -80,16 +89,18 @@ async def get_concept(
     user: User = Depends(current_active_user),
 ) -> ConceptDetail:
     stmt = (
-        select(Concept)
-        .join(ProjectMember, ProjectMember.project_id == Concept.project_id)
+        select(Concept, DirectionLibrary.project_id)
+        .join(DirectionLibrary, DirectionLibrary.id == Concept.library_id)
+        .join(ProjectMember, ProjectMember.project_id == DirectionLibrary.project_id)
         .where(Concept.id == concept_id, ProjectMember.user_id == user.id)
     )
-    concept = (await session.execute(stmt)).scalar_one_or_none()
-    if concept is None:
+    row = (await session.execute(stmt)).first()
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONCEPT_NOT_FOUND")
+    concept, project_id = row
     papers = await concepts_service.papers_of_concept(session, concept.id)
     related = await concepts_service.related_concepts(session, concept)
-    base = _concept_read(concept, len(papers))
+    base = _concept_read(concept, len(papers), project_id)
     return ConceptDetail(
         **base.model_dump(),
         wiki_content=concept.wiki_content,

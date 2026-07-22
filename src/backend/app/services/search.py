@@ -11,10 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import Experiment
 from app.models.idea import Idea
+from app.models.library_direction import LibraryPaper
 from app.models.manuscript import Manuscript
 from app.models.paper import Concept, Paper
 from app.models.voyage import VoyageRun
 from app.schemas.search import GlobalSearchHit
+from app.services.libraries import get_library_for_project
 
 _SNIPPET_CHARS = 120
 
@@ -35,36 +37,34 @@ async def global_search(
 ) -> list[GlobalSearchHit]:
     pattern = f"%{q}%"
     hits: list[GlobalSearchHit] = []
+    library = await get_library_for_project(session, project_id)
 
-    papers = (
-        (
-            await session.execute(
-                select(Paper)
-                .where(
-                    Paper.project_id == project_id,
-                    Paper.status != "excluded",  # 回收站不出现在搜索里
-                    or_(
-                        Paper.title.ilike(pattern),
-                        Paper.abstract.ilike(pattern),
-                        Paper.tldr.ilike(pattern),
-                    ),
-                )
-                .order_by(Paper.updated_at.desc())
-                .limit(limit_per_type)
+    paper_rows = (
+        await session.execute(
+            select(Paper, LibraryPaper.status)
+            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .where(
+                LibraryPaper.library_id == library.id,
+                LibraryPaper.status != "excluded",  # 回收站不出现在搜索里
+                or_(
+                    Paper.title.ilike(pattern),
+                    Paper.abstract.ilike(pattern),
+                    Paper.tldr.ilike(pattern),
+                ),
             )
+            .order_by(Paper.updated_at.desc())
+            .limit(limit_per_type)
         )
-        .scalars()
-        .all()
-    )
+    ).all()
     hits += [
         GlobalSearchHit(
             type="paper",
             id=p.id,
             title=p.title,
             snippet=_snippet(p.tldr or p.abstract),
-            status=p.status,
+            status=status,
         )
-        for p in papers
+        for p, status in paper_rows
     ]
 
     concepts = (
@@ -72,7 +72,7 @@ async def global_search(
             await session.execute(
                 select(Concept)
                 .where(
-                    Concept.project_id == project_id,
+                    Concept.library_id == library.id,
                     or_(Concept.name.ilike(pattern), Concept.definition.ilike(pattern)),
                 )
                 .order_by(Concept.updated_at.desc())

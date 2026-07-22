@@ -31,10 +31,12 @@ from app.core.llm.base import Message
 from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.idea import Idea
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.models.review import ReviewMessage, ReviewSession
 from app.schemas.idea import FORGE_SIGNALS
+from app.services.libraries import get_library_for_project
 from app.services.review import (
     DEFAULT_PERSONAS,
     elo_update,
@@ -187,27 +189,29 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
     knobs = _forge_knobs(ctx)
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
-        papers = (
-            (
-                await session.execute(
-                    select(Paper)
-                    .where(
-                        Paper.project_id == project.id,
-                        Paper.status.in_(("compiled", "included")),
-                        Paper.wiki_content.is_not(None),
-                    )
-                    .order_by(Paper.relevance_score.desc().nulls_last(), Paper.created_at)
-                    .limit(int(knobs["max_context_papers"]))
+        library = await get_library_for_project(session, project.id)
+        rows = (
+            await session.execute(
+                select(Paper, LibraryPaper.wiki_content)
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(
+                    LibraryPaper.library_id == library.id,
+                    LibraryPaper.status.in_(("compiled", "included")),
+                    LibraryPaper.wiki_content.is_not(None),
                 )
+                .order_by(
+                    LibraryPaper.relevance_score.desc().nulls_last(), LibraryPaper.created_at
+                )
+                .limit(int(knobs["max_context_papers"]))
             )
-            .scalars()
-            .all()
-        )
+        ).all()
+        papers = [p for p, _ in rows]
+        wiki_of = {p.id: wiki for p, wiki in rows}
         concept_names = (
             (
                 await session.execute(
                     select(Concept.name)
-                    .where(Concept.project_id == project.id)
+                    .where(Concept.library_id == library.id)
                     .order_by(Concept.name)
                     .limit(100)
                 )
@@ -218,7 +222,7 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
 
     parts = []
     for paper in papers:
-        excerpt = (paper.wiki_content or "")[:_WIKI_EXCERPT_CHARS]
+        excerpt = (wiki_of.get(paper.id) or "")[:_WIKI_EXCERPT_CHARS]
         parts.append(f"### {paper.title}\nTL;DR：{paper.tldr or '（无）'}\n{excerpt}")
     context_text = "\n\n".join(parts)[:_CONTEXT_CHARS] or "（知识库为空）"
 
@@ -270,11 +274,12 @@ async def _concept_paper_map(
     session: AsyncSession, project_id: uuid.UUID
 ) -> dict[uuid.UUID, tuple[str, str, set[uuid.UUID]]]:
     """概念 → (name, category, 关联论文集合)。"""
+    library = await get_library_for_project(session, project_id)
     rows = (
         await session.execute(
             select(Concept.id, Concept.name, Concept.category, paper_concepts.c.paper_id)
             .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
-            .where(Concept.project_id == project_id)
+            .where(Concept.library_id == library.id)
         )
     ).all()
     result: dict[uuid.UUID, tuple[str, str, set[uuid.UUID]]] = {}
@@ -320,12 +325,18 @@ def _concept_holes(
 async def _trend_concepts(session: AsyncSession, project_id: uuid.UUID) -> list[dict[str, Any]]:
     """近 90 天入库论文中的高频概念（纯代码，无 LLM）。"""
     cutoff = utcnow() - timedelta(days=_TREND_WINDOW_DAYS)
+    library = await get_library_for_project(session, project_id)
     rows = (
         await session.execute(
             select(Concept.name, Paper.id)
             .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
             .join(Paper, Paper.id == paper_concepts.c.paper_id)
-            .where(Concept.project_id == project_id, Paper.created_at >= cutoff)
+            .join(
+                LibraryPaper,
+                (LibraryPaper.paper_id == Paper.id)
+                & (LibraryPaper.library_id == library.id),
+            )
+            .where(Concept.library_id == library.id, LibraryPaper.created_at >= cutoff)
         )
     ).all()
     counts: dict[str, int] = {}
@@ -367,16 +378,21 @@ async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> d
             signals["trends"] = await _trend_concepts(session, ctx.run.project_id)
         excerpt_blocks: list[str] = []
         if "limitations" in enabled:
+            library = await get_library_for_project(session, ctx.run.project_id)
             papers = (
                 (
                     await session.execute(
                         select(Paper)
+                        .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
                         .where(
-                            Paper.project_id == ctx.run.project_id,
+                            LibraryPaper.library_id == library.id,
                             Paper.full_text_path.is_not(None),
-                            Paper.status.in_(("compiled", "included")),
+                            LibraryPaper.status.in_(("compiled", "included")),
                         )
-                        .order_by(Paper.relevance_score.desc().nulls_last(), Paper.created_at)
+                        .order_by(
+                            LibraryPaper.relevance_score.desc().nulls_last(),
+                            LibraryPaper.created_at,
+                        )
                         .limit(_LIMIT_PAPERS)
                     )
                 )

@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.navigator import WIKI_KINDS
 from app.models.activity import Activity
-from app.models.paper import PAPER_STATUSES, Paper
+from app.models.library_direction import LibraryPaper
+from app.models.paper import PAPER_STATUSES
 from app.models.project import Project
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.ingest import IngestKnobs
+from app.services.libraries import get_library_for_project
 
 # 预算从 knobs 派生：每篇编译预留的 token 额度（打分+编译+概念定义+验证）
 _TOKENS_PER_PAPER = 20_000
@@ -87,11 +89,12 @@ async def create_ingest_voyage(
 
 
 async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str, int]:
+    library = await get_library_for_project(session, project_id)
     rows = (
         await session.execute(
-            select(Paper.status, func.count())
-            .where(Paper.project_id == project_id)
-            .group_by(Paper.status)
+            select(LibraryPaper.status, func.count())
+            .where(LibraryPaper.library_id == library.id)
+            .group_by(LibraryPaper.status)
         )
     ).all()
     counts = {status: 0 for status in PAPER_STATUSES}

@@ -6,8 +6,8 @@ from app.core.db import get_sessionmaker
 from app.models.experiment import Experiment
 from app.models.idea import Idea
 from app.models.manuscript import Manuscript
-from app.models.paper import Concept, Paper
 from app.models.voyage import VoyageRun
+from tests.conftest import add_concept, add_paper
 
 from .conftest import register_and_login
 
@@ -24,14 +24,19 @@ async def _setup(client):
         idea = Idea(project_id=pid, title="Graph retrieval idea", summary="用图检索增强 RAG")
         session.add_all(
             [
-                Paper(
+                await add_paper(session,
                     project_id=pid,
                     title="Graph Retrieval for LLMs",
                     tldr="graph-based retrieval",
                     status="included",
                 ),
-                Paper(project_id=pid, title="Excluded graph paper", status="excluded"),
-                Concept(
+                await add_paper(
+                    session,
+                    project_id=pid,
+                    title="Excluded graph paper",
+                    status="excluded",
+                ),
+                await add_concept(session,
                     project_id=pid, name="Graph RAG", slug="graph-rag", definition="图增强检索"
                 ),
                 idea,

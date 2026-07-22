@@ -1,4 +1,8 @@
-"""论文（文献综述对象）、概念（wiki 词条）、笔记 / 标签 / 个人阅读状态与其关联表。"""
+"""论文内容池（全局）、概念（wiki 词条）、笔记 / 标签 / 个人阅读状态与其关联表。
+
+P4 起 ``papers`` 是全平台共享的内容池（按 dedup_key 唯一，只存论文本体）；
+方向对论文的归属与判断字段（相关性分 / 状态 / 库版 wiki）在
+``library_papers``（models/library_direction.py）。"""
 
 import uuid
 from datetime import datetime
@@ -26,8 +30,8 @@ EMBEDDING_DIM = 1024  # BGE-M3（lab LiteLLM /v1/embeddings）
 # postgres 用 pgvector（语义检索），sqlite 等回退 JSON 存 list（仅存不查）
 EmbeddingVariant = JSON().with_variant(Vector(EMBEDDING_DIM), "postgresql")
 
-# 论文状态流转：candidate →(打分) scored | excluded →(下载全文) fetched
-#              →(Librarian 编译) compiled；included/excluded 亦可人工覆盖
+# 论文在方向库内的状态流转（LibraryPaper.status）：candidate →(打分) scored | excluded
+# →(下载全文) fetched →(Librarian 编译) compiled；included/excluded 亦可人工覆盖
 PAPER_STATUSES = ("candidate", "scored", "excluded", "fetched", "compiled", "included")
 
 paper_concepts = Table(
@@ -41,9 +45,6 @@ paper_concepts = Table(
 class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "papers"
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
-    )
     # 全局去重键：arxiv:<id> | doi:<小写doi> | title:<标题+年份+首作者sha1>（services/dedup.py）
     dedup_key: Mapped[str | None] = mapped_column(String(512), unique=True, index=True)
     source: Mapped[str | None] = mapped_column(String(32))  # arxiv | semantic_scholar | manual
@@ -60,28 +61,15 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     pdf_path: Mapped[str | None] = mapped_column(String(1024))
     full_text_path: Mapped[str | None] = mapped_column(String(1024))
-    relevance_score: Mapped[float | None]
     tldr: Mapped[str | None] = mapped_column(Text)
-    wiki_content: Mapped[str | None] = mapped_column(Text)  # markdown，双链 [[概念名]]
     # 提取的论文图列表：[{index, page, width, height, caption: str|null, important: bool}]，
     # 图片文件落 <data_dir>/papers/<paper_id>/figures/fig_<index>.png（路径不出 API）
     figures: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
-    status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
-    # 进垃圾桶的原因（status=excluded 时有值）：irrelevant 相关性不足自动淘汰 | manual 手动删除
-    trash_reason: Mapped[str | None] = mapped_column(String(16))
-    scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    compiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # 编译 wiki_content 实际用到的模型名（取自 LLM 返回结果）；存量数据为 null
-    compiled_model: Mapped[str | None] = mapped_column(String(255))
 
     concepts: Mapped[list["Concept"]] = relationship(
         secondary=paper_concepts, back_populates="papers"
     )
-
-    @property
-    def has_wiki(self) -> bool:
-        return bool(self.wiki_content)
 
     @property
     def pdf_available(self) -> bool:
@@ -100,9 +88,6 @@ class PaperChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     paper_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
     )
     seq: Mapped[int] = mapped_column(nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -203,10 +188,10 @@ class PaperUserMeta(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Concept(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "concepts"
-    __table_args__ = (UniqueConstraint("project_id", "slug", name="uq_concepts_project_slug"),)
+    __table_args__ = (UniqueConstraint("library_id", "slug", name="uq_concepts_library_slug"),)
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("direction_libraries.id", ondelete="CASCADE"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     slug: Mapped[str] = mapped_column(String(255), index=True, nullable=False)

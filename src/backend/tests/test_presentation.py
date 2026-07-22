@@ -6,7 +6,7 @@ import uuid
 from pptx import Presentation as PptxFile
 
 from app.services.presentation import DeckSpec, build_deck, validate_deck_spec
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 DECK = {
     "title": "测试分享",
@@ -139,10 +139,9 @@ async def test_create_presentation_voyage(client, queue_stub):
     assert resp.status_code == 404
 
     from app.core.db import get_sessionmaker
-    from app.models.paper import Paper
 
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=uuid.UUID(project_id),
             title="Self-Rewarding Language Models",
             abstract="LLM as its own reward model.",

@@ -11,8 +11,9 @@ from app.models.activity import Activity
 from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment
 from app.models.gate import Gate
 from app.models.idea import Idea
+from app.models.library_direction import LibraryPaper
 from app.models.manuscript import Manuscript
-from app.models.paper import Paper
+from app.services.libraries import get_library_for_project
 from app.services.papers import PAPER_STATUS_GROUPS
 
 
@@ -24,14 +25,18 @@ async def project_stats(session: AsyncSession, project_id: uuid.UUID) -> dict[st
     today_start = datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
     # 「知识库论文」与文献页口径一致：只算库内（相关性达标及之后），
     # 不含回收站（excluded）与尚未打分的中间状态（candidate）
-    in_library = Paper.status.in_(PAPER_STATUS_GROUPS["library"])
+    library = await get_library_for_project(session, project_id)
+    in_library = LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"])
     papers_total = await _count(
-        session, select(func.count()).where(Paper.project_id == project_id, in_library)
+        session,
+        select(func.count()).where(LibraryPaper.library_id == library.id, in_library),
     )
     papers_today = await _count(
         session,
         select(func.count()).where(
-            Paper.project_id == project_id, in_library, Paper.created_at >= today_start
+            LibraryPaper.library_id == library.id,
+            in_library,
+            LibraryPaper.created_at >= today_start,
         ),
     )
     ideas_candidate = await _count(

@@ -26,12 +26,14 @@ from app.models.activity import Activity
 from app.models.experiment import Experiment
 from app.models.gate import Gate
 from app.models.idea import Idea
+from app.models.library_direction import LibraryPaper
 from app.models.manuscript import Manuscript, ManuscriptFile
 from app.models.paper import Paper
 from app.models.project import Project, ProjectMember
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.manuscript import ManuscriptCreate
 from app.services.citations import DEFAULT_EXPORT_STATUSES, assign_citation_keys
+from app.services.libraries import get_library_for_project
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "assets" / "templates"
 TEMPLATE_KEYS = ("neurips2026", "iclr2026", "acl")
@@ -238,10 +240,15 @@ async def _citations_pack(session: AsyncSession, *, project_id: uuid.UUID) -> li
     条目含契约字段 {bibkey, title, year}，附加内部字段 paper_id / source
     供编译时按固定 key 生成 references.bib（避免库变动导致 key 漂移）。
     """
+    library = await get_library_for_project(session, project_id)
     stmt = (
         select(Paper)
-        .where(Paper.project_id == project_id, Paper.status.in_(DEFAULT_EXPORT_STATUSES))
-        .order_by(Paper.year.asc().nulls_last(), Paper.created_at.asc())
+        .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+        .where(
+            LibraryPaper.library_id == library.id,
+            LibraryPaper.status.in_(DEFAULT_EXPORT_STATUSES),
+        )
+        .order_by(Paper.year.asc().nulls_last(), LibraryPaper.created_at.asc())
     )
     papers = (await session.execute(stmt)).scalars().all()
     keys = assign_citation_keys(papers)

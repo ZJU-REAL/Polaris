@@ -18,7 +18,6 @@ from app.api.auth import current_active_user, require_llm_chat, require_llm_task
 from app.core.db import get_session
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
-from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.paper import (
     PaperBatchIds,
@@ -36,6 +35,7 @@ from app.schemas.paper import (
     TagRead,
 )
 from app.services import figure_annotate as figure_service
+from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
@@ -53,7 +53,7 @@ _HEARTBEAT_SECONDS = 15.0
 
 async def _reads_with_extras(
     session: AsyncSession,
-    papers: Sequence[Paper],
+    papers: Sequence[papers_service.PaperView],
     user_id: uuid.UUID,
     *,
     detail: bool = False,
@@ -66,7 +66,9 @@ async def _reads_with_extras(
     return [model.model_validate(p).model_copy(update=extras[p.id]) for p in papers]
 
 
-async def _paper_detail(session: AsyncSession, paper: Paper, user_id: uuid.UUID) -> PaperDetail:
+async def _paper_detail(
+    session: AsyncSession, paper: papers_service.PaperView, user_id: uuid.UUID
+) -> PaperDetail:
     (detail,) = await _reads_with_extras(session, [paper], user_id, detail=True)
     return detail  # type: ignore[return-value]
 
@@ -80,7 +82,7 @@ async def _get_member_project(session: AsyncSession, project_id: uuid.UUID, user
 
 async def _get_member_paper(
     session: AsyncSession, paper_id: uuid.UUID, user: User, *, with_concepts: bool = False
-) -> Paper:
+) -> papers_service.PaperView:
     paper = await papers_service.get_paper_for_user(
         session, paper_id=paper_id, user_id=user.id, with_concepts=with_concepts
     )
@@ -168,13 +170,19 @@ async def add_paper_manually(
         ) from e
     # 打分失败会 rollback 并使本 session 的 ORM 对象过期，先留住要用的 id
     paper_id, user_id = paper.id, user.id
+    library = await libraries_service.get_library_for_project(session, project_id)
+    membership = await libraries_service.get_membership(
+        session, library_id=library.id, paper_id=paper_id
+    )
     # 顺带相关性打分（best-effort）：失败只记日志，不影响 201；不改 status（人工纳入）
-    await relevance_service.score_added_paper_best_effort(session, paper, project, user_id=user_id)
+    await relevance_service.score_added_paper_best_effort(
+        session, paper, membership, project, user_id=user_id
+    )
     # 重新加载（带 concepts eager load），避免序列化时触发 async lazy load
-    paper = await papers_service.get_paper_for_user(
+    view = await papers_service.get_paper_for_user(
         session, paper_id=paper_id, user_id=user_id, with_concepts=True
     )
-    return await _paper_detail(session, paper, user_id)
+    return await _paper_detail(session, view, user_id)
 
 
 @router.get("/papers/{paper_id}", response_model=PaperDetail)
@@ -281,14 +289,16 @@ async def fetch_paper_pdf(
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
     """按需补下 PDF + 抽全文；已有 PDF 时幂等直接返回。"""
-    paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
+    view = await _get_member_paper(session, paper_id, user, with_concepts=True)
     try:
-        paper = await papers_service.fetch_pdf(session, paper, user_id=user.id)
+        await papers_service.fetch_pdf(
+            session, view.paper, user_id=user.id, project_id=view.project_id
+        )
     except papers_service.PdfSourceUnsupportedError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="PDF_SOURCE_UNSUPPORTED") from e
     except papers_service.PdfFetchFailedError as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="PDF_FETCH_FAILED") from e
-    return await _paper_detail(session, paper, user.id)
+    return await _paper_detail(session, view, user.id)
 
 
 # ---- 论文图片（docs/api-lit.md §6.5） ----
@@ -329,12 +339,15 @@ async def extract_paper_figures(
     user: User = Depends(current_active_user),
 ) -> PaperFiguresResponse:
     """提取嵌入图 + LLM 筛选注释；已有 figures 且非 force 时幂等直返。"""
-    paper = await _get_member_paper(session, paper_id, user)
+    view = await _get_member_paper(session, paper_id, user)
+    paper = view.paper
     if paper.figures is not None and not force:
         return PaperFiguresResponse(figures=[PaperFigure(**f) for f in paper.figures])
     if not paper.pdf_path or not Path(paper.pdf_path).exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PDF_NOT_AVAILABLE")
-    figures = await figure_service.extract_and_annotate(session, paper, user_id=user.id)
+    figures = await figure_service.extract_and_annotate(
+        session, paper, user_id=user.id, project_id=view.project_id
+    )
     return PaperFiguresResponse(figures=[PaperFigure(**f) for f in figures])
 
 

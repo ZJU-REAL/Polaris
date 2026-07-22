@@ -5,9 +5,8 @@ import uuid
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
 from app.models.user import User
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 RECT = {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.12}
 
@@ -28,7 +27,7 @@ async def _setup(client):
     assert resp.status_code == 204, resp.text
 
     async with get_sessionmaker()() as session:
-        p1 = Paper(
+        p1 = await add_paper(session,
             project_id=uuid.UUID(project_id), title="Attention Is All You Need", status="fetched"
         )
         session.add(p1)

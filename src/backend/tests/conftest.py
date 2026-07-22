@@ -101,6 +101,112 @@ async def fake_redis(app):
 
 INVITE_CODE = "test-invite"
 
+# ---- P4 内容池造数据助手 ----
+
+# 判断字段落 library_papers 成员行（其余入 Paper 内容池行）
+_MEMBERSHIP_FIELDS = (
+    "relevance_score",
+    "wiki_content",
+    "status",
+    "trash_reason",
+    "scored_at",
+    "compiled_at",
+    "compiled_model",
+)
+
+
+async def add_paper(session, *, project_id, **fields):
+    """测试造数据统一入口：建内容池 Paper + 隐式库成员行，返回 Paper。
+
+    兼容旧单表口径：status/relevance_score/wiki_content 等判断字段自动落成员行。
+    """
+    import uuid as _uuid
+
+    from app.models.library_direction import LibraryPaper
+    from app.models.paper import Paper
+    from app.services.libraries import get_library_for_project
+
+    member_kwargs = {k: fields.pop(k) for k in list(fields) if k in _MEMBERSHIP_FIELDS}
+    member_kwargs.setdefault("status", "candidate")
+    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
+    library = await get_library_for_project(session, pid)
+    paper = Paper(**fields)
+    session.add(paper)
+    await session.flush()
+    session.add(LibraryPaper(library_id=library.id, paper_id=paper.id, **member_kwargs))
+    await session.flush()
+    return paper
+
+
+async def membership_of(session, *, project_id, paper_id):
+    """取论文在某方向隐式库的成员行（断言判断字段用）。"""
+    import uuid as _uuid
+
+    from app.services.libraries import get_library_for_project, get_membership
+
+    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
+    library = await get_library_for_project(session, pid)
+    return await get_membership(
+        session,
+        library_id=library.id,
+        paper_id=paper_id if isinstance(paper_id, _uuid.UUID) else _uuid.UUID(str(paper_id)),
+    )
+
+
+async def project_paper_rows(session, *, project_id):
+    """某方向隐式库的 (Paper, LibraryPaper) 全量列表（测试断言判断字段用）。"""
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.models.library_direction import LibraryPaper
+    from app.models.paper import Paper
+    from app.services.libraries import get_library_for_project
+
+    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
+    library = await get_library_for_project(session, pid)
+    rows = (
+        await session.execute(
+            select(Paper, LibraryPaper)
+            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .where(LibraryPaper.library_id == library.id)
+        )
+    ).all()
+    return [(paper, membership) for paper, membership in rows]
+
+
+async def project_concepts(session, *, project_id):
+    """某方向隐式库的概念列表。"""
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.models.paper import Concept
+    from app.services.libraries import get_library_for_project
+
+    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
+    library = await get_library_for_project(session, pid)
+    return list(
+        (
+            await session.execute(select(Concept).where(Concept.library_id == library.id))
+        ).scalars()
+    )
+
+
+async def add_concept(session, *, project_id, **fields):
+    """建方向库概念（旧 Concept(project_id=...) 口径的替代）。"""
+    import uuid as _uuid
+
+    from app.models.paper import Concept
+    from app.services.libraries import get_library_for_project
+
+    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
+    library = await get_library_for_project(session, pid)
+    concept = Concept(library_id=library.id, **fields)
+    session.add(concept)
+    await session.flush()
+    return concept
+
 
 def _username_from_email(email: str) -> str:
     """从 email 派生一个合法用户名（小写字母/数字/下划线 3-32 位）。"""

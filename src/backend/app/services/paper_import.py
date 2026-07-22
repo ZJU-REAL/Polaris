@@ -7,10 +7,16 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.paper import Paper
+from app.services.dedup import pool_dedup_key
+from app.services.libraries import (
+    ensure_membership,
+    find_pool_paper,
+    get_library_for_project,
+    get_membership,
+)
 from app.services.literature import get_arxiv_client, get_openalex_client
 from app.services.literature.arxiv import normalize_arxiv_id
 
@@ -25,7 +31,7 @@ class ParseFailedError(Exception):
 
 
 class DuplicatePaperError(Exception):
-    """项目内已有同 arxiv_id / doi 的论文。"""
+    """本方向库内已有同一篇论文（内容池命中且成员行已存在）。"""
 
     def __init__(self, paper_id: uuid.UUID) -> None:
         super().__init__(str(paper_id))
@@ -128,20 +134,6 @@ async def _fields_from_doi(doi: str) -> dict[str, Any]:
     }
 
 
-async def _find_duplicate(
-    session: AsyncSession, *, project_id: uuid.UUID, arxiv_id: str | None, doi: str | None
-) -> uuid.UUID | None:
-    conditions = []
-    if arxiv_id:
-        conditions.append(Paper.arxiv_id == arxiv_id)
-    if doi:
-        conditions.append(func.lower(Paper.doi) == doi.lower())
-    if not conditions:
-        return None
-    stmt = select(Paper.id).where(Paper.project_id == project_id, or_(*conditions)).limit(1)
-    return (await session.execute(stmt)).scalar_one_or_none()
-
-
 async def add_manual_paper(
     session: AsyncSession,
     *,
@@ -150,11 +142,12 @@ async def add_manual_paper(
     doi: str | None = None,
     bibtex: str | None = None,
 ) -> Paper:
-    """手动添加一篇文献（source=manual, status=included）。
+    """手动添加一篇文献（source=manual，成员行 status=included）。
 
-    - 项目内按 arxiv_id / doi 去重 → DuplicatePaperError（路由映射 409）
+    - 先查全局内容池（arxiv/doi/dedup_key）：池中已有则只建成员行（pool hit，
+      跳过解析下载）；本库已有成员行 → DuplicatePaperError（路由映射 409）
     - 解析失败 → ParseFailedError（路由映射 422）
-    - 有 arxiv_id 的自动尝试补下 PDF，失败只记日志不阻塞
+    - 新论文有 arxiv_id 的自动尝试补下 PDF，失败只记日志不阻塞
     """
     if arxiv_id:
         fields = await _fields_from_arxiv(arxiv_id)
@@ -163,11 +156,27 @@ async def add_manual_paper(
     else:
         fields = parse_bibtex_entry(bibtex or "")
 
-    dup_id = await _find_duplicate(
-        session, project_id=project_id, arxiv_id=fields.get("arxiv_id"), doi=fields.get("doi")
+    library = await get_library_for_project(session, project_id)
+    dedup_key = pool_dedup_key(
+        arxiv_id=fields.get("arxiv_id"),
+        doi=fields.get("doi"),
+        title=fields["title"],
+        year=fields.get("year"),
+        authors=fields.get("authors"),
     )
-    if dup_id is not None:
-        raise DuplicatePaperError(dup_id)
+    pooled = await find_pool_paper(
+        session, arxiv_id=fields.get("arxiv_id"), doi=fields.get("doi"), dedup_key=dedup_key
+    )
+    if pooled is not None:
+        if await get_membership(session, library_id=library.id, paper_id=pooled.id) is not None:
+            raise DuplicatePaperError(pooled.id)
+        logger.info("paper pool hit for manual import: %s", pooled.id)
+        await ensure_membership(
+            session, library_id=library.id, paper_id=pooled.id, status="included"
+        )
+        await session.commit()
+        await session.refresh(pooled)
+        return pooled
 
     external_ids: dict[str, str] = {}
     if fields.get("arxiv_id"):
@@ -175,9 +184,8 @@ async def add_manual_paper(
     if fields.get("doi"):
         external_ids["doi"] = fields["doi"]
     paper = Paper(
-        project_id=project_id,
         source="manual",
-        status="included",
+        dedup_key=dedup_key,
         arxiv_id=fields.get("arxiv_id"),
         doi=fields.get("doi"),
         external_ids=external_ids or None,
@@ -192,6 +200,7 @@ async def add_manual_paper(
     )
     session.add(paper)
     await session.flush()
+    await ensure_membership(session, library_id=library.id, paper_id=paper.id, status="included")
 
     if paper.arxiv_id:
         # 尽力而为补下 PDF + 抽全文；失败只记日志，不阻塞创建
@@ -214,7 +223,7 @@ async def add_manual_paper(
         from app.core.llm.router import get_llm_router
         from app.services.affiliations import extract_affiliations_llm
 
-        affs = await extract_affiliations_llm(paper, llm=get_llm_router())
+        affs = await extract_affiliations_llm(paper, llm=get_llm_router(), project_id=project_id)
         if affs:
             paper.affiliations = affs
 

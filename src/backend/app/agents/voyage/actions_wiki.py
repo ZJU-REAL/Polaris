@@ -26,12 +26,15 @@ from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
 from app.models.activity import Activity
 from app.models.base import utcnow
-from app.models.paper import Paper
+from app.models.library_direction import LibraryPaper
+from app.models.paper import Paper, PaperChunk
 from app.models.project import Project
 from app.services.affiliations import extract_affiliations_llm
 from app.services.chunks import embed_pending_chunks, index_paper_fulltext
 from app.services.concepts import link_all_paper_concepts
+from app.services.dedup import pool_dedup_key
 from app.services.figure_annotate import annotate_figures, figures_annotated
+from app.services.libraries import ensure_membership, find_pool_paper, get_library_for_project
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
@@ -159,18 +162,54 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 async def _existing_keys(
-    session: AsyncSession, project_id: uuid.UUID
+    session: AsyncSession, library_id: uuid.UUID
 ) -> tuple[set[str], set[str], set[str]]:
-    """项目内去重键：arxiv_id / doi / 标题小写。"""
+    """库内去重键：arxiv_id / doi / 标题小写（本库已有成员的论文不再重复入库）。"""
     rows = (
         await session.execute(
-            select(Paper.arxiv_id, Paper.doi, Paper.title).where(Paper.project_id == project_id)
+            select(Paper.arxiv_id, Paper.doi, Paper.title)
+            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .where(LibraryPaper.library_id == library_id)
         )
     ).all()
     arxiv_ids = {a for a, _, _ in rows if a}
     dois = {d.lower() for _, d, _ in rows if d}
     titles = {t.strip().lower() for _, _, t in rows if t}
     return arxiv_ids, dois, titles
+
+
+async def _pool_paper_or_new(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    make_paper: Any,
+    arxiv_id: str | None,
+    doi: str | None,
+    title: str,
+    year: int | None,
+    authors: list[Any] | None,
+) -> Paper | None:
+    """写路径统一入口：先按 dedup 键查全局内容池，命中只建成员行（pool hit，
+    跳过重复解析），未命中用 ``make_paper()`` 建新内容池行 + 成员行。
+
+    返回本次新加入库的 Paper；本库已有成员行时返回 None（跳过）。
+    """
+    key = pool_dedup_key(arxiv_id=arxiv_id, doi=doi, title=title, year=year, authors=authors)
+    pooled = await find_pool_paper(session, arxiv_id=arxiv_id, doi=doi, dedup_key=key)
+    if pooled is not None:
+        _, created = await ensure_membership(
+            session, library_id=library_id, paper_id=pooled.id, status="candidate"
+        )
+        if not created:
+            return None
+        logger.info("paper pool hit: %s (%s)", pooled.id, title[:60])
+        return pooled
+    paper = make_paper()
+    paper.dedup_key = key
+    session.add(paper)
+    await session.flush()
+    await ensure_membership(session, library_id=library_id, paper_id=paper.id, status="candidate")
+    return paper
 
 
 # ---- 1. 检索候选（arXiv） ----
@@ -224,13 +263,15 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             categories=categories, keywords=include, since=since, until=now, limit=limit
         )
 
-        arxiv_ids, dois, titles = await _existing_keys(session, project.id)
+        library = await get_library_for_project(session, project.id)
+        arxiv_ids, dois, titles = await _existing_keys(session, library.id)
         new_papers: list[Paper] = []
 
-        def _try_insert(entry: dict[str, Any], source: str) -> bool:
-            """按 arxiv_id/doi/title 三方去重后入库；命中已存量返回 False。
+        async def _try_insert(entry: dict[str, Any], source: str) -> bool:
+            """三方键（arxiv_id/doi/title）+ 全局内容池去重后入库；已在本库返回 False。
 
-            边插边更新去重键集合——RSS↔API↔存量共用同一套集合，互不重插。
+            边插边更新去重键集合——RSS↔API↔存量共用同一套集合，互不重插；
+            池中已有的论文只建成员行（跳过重复解析）。
             """
             aid = entry.get("arxiv_id")
             title = (entry.get("title") or "").strip()
@@ -239,33 +280,47 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 return False
             if (aid and aid in arxiv_ids) or (doi and doi in dois) or title.lower() in titles:
                 return False
-            paper = Paper(
-                project_id=project.id,
-                source=source,
+
+            def make_paper() -> Paper:
+                return Paper(
+                    source=source,
+                    arxiv_id=aid,
+                    doi=entry.get("doi"),
+                    external_ids=(
+                        {"arxiv": aid} | ({"doi": entry["doi"]} if entry.get("doi") else {})
+                    ),
+                    title=title,
+                    authors=entry.get("authors"),
+                    abstract=entry.get("abstract"),
+                    year=entry.get("year"),
+                    venue=entry.get("primary_category"),
+                    url=entry.get("url"),
+                    published_at=_parse_iso(entry.get("published")),
+                )
+
+            paper = await _pool_paper_or_new(
+                session,
+                library_id=library.id,
+                make_paper=make_paper,
                 arxiv_id=aid,
-                doi=entry.get("doi"),
-                external_ids=({"arxiv": aid} | ({"doi": entry["doi"]} if entry.get("doi") else {})),
+                doi=doi,
                 title=title,
-                authors=entry.get("authors"),
-                abstract=entry.get("abstract"),
                 year=entry.get("year"),
-                venue=entry.get("primary_category"),
-                url=entry.get("url"),
-                published_at=_parse_iso(entry.get("published")),
-                status="candidate",
+                authors=entry.get("authors"),
             )
-            session.add(paper)
-            new_papers.append(paper)
             if aid:
                 arxiv_ids.add(aid)
             if doi:
                 dois.add(doi)
             titles.add(title.lower())
+            if paper is None:
+                return False
+            new_papers.append(paper)
             return True
 
         # 补漏层：关键词检索的日期窗口（索引有 3-5 天滞后，故靠 RSS 补新鲜）
         for entry in entries:
-            _try_insert(entry, "arxiv")
+            await _try_insert(entry, "arxiv")
 
         # 新鲜源：分类 RSS /new 当天公告（即时无滞后），仅增量模式补最新论文
         rss_found = 0
@@ -282,7 +337,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                     if not _keyword_match(entry, includes_norm):
                         continue
                     rss_matched += 1
-                    if _try_insert(entry, "arxiv"):
+                    if await _try_insert(entry, "arxiv"):
                         rss_inserted += 1
 
         await session.flush()  # 拿到新论文 id，供 observation 清单
@@ -330,13 +385,15 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
             for a in (definition.get("anchor_papers") or [])
             if isinstance(a, dict) and a.get("arxiv_id")
         ]
+        library = await get_library_for_project(session, project.id)
         candidate_ids = (
             (
                 await session.execute(
                     select(Paper.arxiv_id)
+                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
                     .where(
-                        Paper.project_id == project.id,
-                        Paper.status == "candidate",
+                        LibraryPaper.library_id == library.id,
+                        LibraryPaper.status == "candidate",
                         Paper.arxiv_id.is_not(None),
                     )
                     .order_by(Paper.published_at.desc().nulls_last())
@@ -347,7 +404,7 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
             .all()
         )
         frontier: list[str] = list(dict.fromkeys(anchors + list(candidate_ids)))
-        arxiv_ids, dois, titles = await _existing_keys(session, project.id)
+        arxiv_ids, dois, titles = await _existing_keys(session, library.id)
         processed_seeds = 0
 
         for _level in range(depth):
@@ -375,43 +432,61 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                         continue
                     if (aid and aid in arxiv_ids) or (doi and doi in dois):
                         continue
-                    paper = Paper(
-                        project_id=project.id,
-                        source="semantic_scholar",
+                    authors = [
+                        {"name": a.get("name")}
+                        for a in (item.get("authors") or [])
+                        if a.get("name")
+                    ] or None
+
+                    def make_paper(
+                        item: dict[str, Any] = item,
+                        ext: dict[str, Any] = ext,
+                        aid: str | None = aid,
+                        title: str = title,
+                        authors: list[Any] | None = authors,
+                    ) -> Paper:
+                        return Paper(
+                            source="semantic_scholar",
+                            arxiv_id=aid,
+                            doi=ext.get("DOI"),
+                            external_ids={
+                                k: v
+                                for k, v in (
+                                    ("s2", item.get("paperId")),
+                                    ("arxiv", aid),
+                                    ("doi", ext.get("DOI")),
+                                )
+                                if v
+                            },
+                            title=title,
+                            authors=authors,
+                            abstract=item.get("abstract"),
+                            year=item.get("year"),
+                            venue=item.get("venue") or None,
+                            url=item.get("url"),
+                            published_at=_parse_iso(item.get("publicationDate")),
+                        )
+
+                    paper = await _pool_paper_or_new(
+                        session,
+                        library_id=library.id,
+                        make_paper=make_paper,
                         arxiv_id=aid,
-                        doi=ext.get("DOI"),
-                        external_ids={
-                            k: v
-                            for k, v in (
-                                ("s2", item.get("paperId")),
-                                ("arxiv", aid),
-                                ("doi", ext.get("DOI")),
-                            )
-                            if v
-                        },
+                        doi=doi,
                         title=title,
-                        authors=[
-                            {"name": a.get("name")}
-                            for a in (item.get("authors") or [])
-                            if a.get("name")
-                        ]
-                        or None,
-                        abstract=item.get("abstract"),
                         year=item.get("year"),
-                        venue=item.get("venue") or None,
-                        url=item.get("url"),
-                        published_at=_parse_iso(item.get("publicationDate")),
-                        status="candidate",
+                        authors=authors,
                     )
-                    session.add(paper)
-                    new_papers.append(paper)
-                    inserted += 1
                     titles.add(title.lower())
                     if aid:
                         arxiv_ids.add(aid)
                         next_frontier.append(aid)
                     if doi:
                         dois.add(doi)
+                    if paper is None:
+                        continue
+                    new_papers.append(paper)
+                    inserted += 1
             frontier = next_frontier[:10]
             if not frontier:
                 break
@@ -438,56 +513,67 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
+        library = await get_library_for_project(session, project.id)
         # 稀疏 definition 容忍：rubric / questions 缺失时 prompt 只用 statement
         context_text = build_relevance_context(project)
 
-        # 幂等断点：只取仍是 candidate 的论文 id（已打分的不重复调 LLM）。外层只查 id，
-        # 每篇打分在各自独立 session 内重新加载论文，避免多任务共享一个 AsyncSession。
-        paper_ids = list(
-            (
-                await session.execute(
-                    select(Paper.id)
-                    .where(Paper.project_id == project.id, Paper.status == "candidate")
-                    .order_by(Paper.published_at.desc().nulls_last(), Paper.created_at)
-                    # 最大化模式打分不截断（全部 candidate 逐篇打分，哨兵防失控）
-                    .limit(_UNLIMITED_SENTINEL if _unlimited(knobs) else _MAX_CANDIDATES_CAP)
+        # 幂等断点：只取仍是 candidate 的成员行（已打分的不重复调 LLM）。外层只查 id，
+        # 每篇打分在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
+        rows = (
+            await session.execute(
+                select(LibraryPaper.id, LibraryPaper.paper_id)
+                .join(Paper, Paper.id == LibraryPaper.paper_id)
+                .where(
+                    LibraryPaper.library_id == library.id,
+                    LibraryPaper.status == "candidate",
                 )
-            ).scalars()
-        )
+                .order_by(Paper.published_at.desc().nulls_last(), LibraryPaper.created_at)
+                # 最大化模式打分不截断（全部 candidate 逐篇打分，哨兵防失控）
+                .limit(_UNLIMITED_SENTINEL if _unlimited(knobs) else _MAX_CANDIDATES_CAP)
+            )
+        ).all()
+        membership_ids = [mid for mid, _ in rows]
+        paper_ids = [pid for _, pid in rows]
 
     guidance = ctx.skill_guidance("wiki.score_relevance")
-    total = len(paper_ids)
+    total = len(membership_ids)
     progress = {"n": 0}
+    project_id = ctx.run.project_id
 
-    async def score_one(paper_id: uuid.UUID) -> dict[str, Any] | None:
+    async def score_one(membership_id: uuid.UUID) -> dict[str, Any] | None:
         """单篇打分：独立 session 重新加载 → 共享打分服务写字段 → 状态转移 → 自行 commit。"""
         async with get_sessionmaker()() as session:
-            paper = await session.get(Paper, paper_id)
-            if paper is None or paper.status != "candidate":
+            membership = await session.get(LibraryPaper, membership_id)
+            if membership is None or membership.status != "candidate":
                 return None  # 竞态/已处理：幂等跳过（正常流不会命中）
+            paper = await session.get(Paper, membership.paper_id)
+            if paper is None:
+                return None
             progress["n"] += 1
             await ctx.log(f"相关性打分 {progress['n']}/{total}：{paper.title[:60]}")
             scored = await score_paper_relevance(
                 paper,
+                membership,
                 context_text=context_text,
                 llm=ctx.llm,
                 extra_guidance=guidance,
                 user_id=ctx.run.created_by,
+                project_id=project_id,
                 voyage_id=ctx.run.id,
             )
             score = scored.score
-            paper.status = "scored" if score >= threshold else "excluded"
-            paper.trash_reason = None if paper.status == "scored" else "irrelevant"
+            membership.status = "scored" if score >= threshold else "excluded"
+            membership.trash_reason = None if membership.status == "scored" else "irrelevant"
             # 逐篇 commit：worker 中途被杀后按 status 断点续跑，不重复打分
             await session.commit()
             return {
                 "id": str(paper.id),
                 "title": paper.title,
                 "score": score,
-                "passed": paper.status == "scored",
+                "passed": membership.status == "scored",
             }
 
-    results = await _gather_bounded(_LLM_CONCURRENCY, [score_one(pid) for pid in paper_ids])
+    results = await _gather_bounded(_LLM_CONCURRENCY, [score_one(mid) for mid in membership_ids])
     _reraise_if_cancelled(results)  # worker 被杀须上抛，不当作单篇失败
 
     # gather 后统一汇总（顺序按查询顺序，稳定；不在并发任务里改 ctx.checkpoint）
@@ -541,18 +627,20 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     failed: list[dict[str, str]] = []
 
     async with get_sessionmaker()() as session:
-        papers = (
-            (
-                await session.execute(
-                    select(Paper)
-                    .where(Paper.project_id == ctx.run.project_id, Paper.status == "scored")
-                    .order_by(Paper.relevance_score.desc().nulls_last())
-                    .limit(top_n)
+        library = await get_library_for_project(session, ctx.run.project_id)
+        pairs = (
+            await session.execute(
+                select(Paper, LibraryPaper)
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(
+                    LibraryPaper.library_id == library.id, LibraryPaper.status == "scored"
                 )
+                .order_by(LibraryPaper.relevance_score.desc().nulls_last())
+                .limit(top_n)
             )
-            .scalars()
-            .all()
-        )
+        ).all()
+        papers = [p for p, _ in pairs]
+        membership_of = {p.id: m for p, m in pairs}
         # 发表日期回填：雪球/DOI 来源的论文只有年份，arXiv 能查到精确日期（时间线/趋势视图用）
         need_dates = [p for p in papers if p.published_at is None and p.arxiv_id]
         if need_dates:
@@ -590,7 +678,11 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             # 失败兜底，返回 None 不写入）；失败不影响主流程
             if not paper.affiliations and paper.full_text_path:
                 affs = await extract_affiliations_llm(
-                    paper, llm=ctx.llm, user_id=ctx.run.created_by, voyage_id=ctx.run.id
+                    paper,
+                    llm=ctx.llm,
+                    user_id=ctx.run.created_by,
+                    project_id=ctx.run.project_id,
+                    voyage_id=ctx.run.id,
                 )
                 if affs:
                     paper.affiliations = affs
@@ -612,10 +704,21 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     raise
                 except Exception:  # noqa: BLE001 — 机构补充尽力而为
                     logger.warning("affiliation enrich failed for %s", paper.id, exc_info=True)
-            # 全文分段索引（文献问答/idea 生成的知识底座）；失败不影响主流程
+            # 全文分段索引（文献问答/idea 生成的知识底座）；失败不影响主流程。
+            # 内容池命中的论文可能已有分段（其他方向建的），有则直接复用不重建
             if paper.full_text_path:
                 try:
-                    await index_paper_fulltext(session, paper)
+                    has_chunks = bool(
+                        (
+                            await session.execute(
+                                select(PaperChunk.id)
+                                .where(PaperChunk.paper_id == paper.id)
+                                .limit(1)
+                            )
+                        ).first()
+                    )
+                    if not has_chunks:
+                        await index_paper_fulltext(session, paper)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:  # noqa: BLE001
@@ -634,7 +737,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     failed.append(
                         {"id": str(paper.id), "error": f"figures: {type(e).__name__}: {e}"}
                     )
-            paper.status = "fetched"  # 无全文也进入编译（Librarian 退化用摘要）
+            membership_of[paper.id].status = "fetched"  # 无全文也进入编译（退化用摘要）
             await session.commit()
             fetched += 1
 
@@ -660,30 +763,37 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
+        library = await get_library_for_project(session, project.id)
         statement = _definition(project).get("statement") or project.name
         # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）。外层只查 id，每篇
-        # 编译在各自独立 session 内重新加载论文，避免多任务共享一个 AsyncSession。
-        paper_ids = list(
-            (
-                await session.execute(
-                    select(Paper.id)
-                    .where(Paper.project_id == project.id, Paper.status == "fetched")
-                    .order_by(Paper.relevance_score.desc().nulls_last())
-                    .limit(top_n)
+        # 编译在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
+        rows = (
+            await session.execute(
+                select(LibraryPaper.id, LibraryPaper.paper_id)
+                .where(
+                    LibraryPaper.library_id == library.id, LibraryPaper.status == "fetched"
                 )
-            ).scalars()
-        )
+                .order_by(LibraryPaper.relevance_score.desc().nulls_last())
+                .limit(top_n)
+            )
+        ).all()
+        membership_ids = [mid for mid, _ in rows]
+        paper_ids = [pid for _, pid in rows]
 
     guidance = ctx.skill_guidance("wiki.compile")
-    total = len(paper_ids)
+    total = len(membership_ids)
     progress = {"n": 0}
+    project_id = ctx.run.project_id
 
-    async def compile_one(paper_id: uuid.UUID) -> dict[str, Any] | None:
+    async def compile_one(membership_id: uuid.UUID) -> dict[str, Any] | None:
         """单篇编译：独立 session 重新加载 → 挑图注释 → 图文编译 → 自行 commit。"""
         async with get_sessionmaker()() as session:
-            paper = await session.get(Paper, paper_id)
-            if paper is None or paper.status != "fetched":
+            membership = await session.get(LibraryPaper, membership_id)
+            if membership is None or membership.status != "fetched":
                 return None  # 竞态/已处理：幂等跳过（正常流不会命中）
+            paper = await session.get(Paper, membership.paper_id)
+            if paper is None:
+                return None
             progress["n"] += 1
             await ctx.log(f"📖 精读编译 {progress['n']}/{total}：{paper.title}")
             # ① 编译前筛选注释论文图（stage=librarian 多模态）：图文编译要用重要图；
@@ -696,6 +806,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                         paper.figures,
                         llm=ctx.llm,
                         user_id=ctx.run.created_by,
+                        project_id=project_id,
                         voyage_id=ctx.run.id,
                     )
                     await session.commit()
@@ -709,13 +820,14 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 statement=statement,
                 llm=ctx.llm,
                 user_id=ctx.run.created_by,
+                project_id=project_id,
                 voyage_id=ctx.run.id,
                 extra_guidance=guidance,
             )
-            paper.wiki_content = compiled.content
-            paper.compiled_at = utcnow()
-            paper.compiled_model = compiled.model or None
-            paper.status = "compiled"
+            membership.wiki_content = compiled.content
+            membership.compiled_at = utcnow()
+            membership.compiled_model = compiled.model or None
+            membership.status = "compiled"
             await session.commit()
             await ctx.log(
                 f"✓ 完成 {progress['n']}/{total}：{paper.title[:50]}（{len(compiled.content)} 字）",
@@ -723,7 +835,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             )
             return {"id": str(paper.id), "title": paper.title}
 
-    results = await _gather_bounded(_LLM_CONCURRENCY, [compile_one(pid) for pid in paper_ids])
+    results = await _gather_bounded(_LLM_CONCURRENCY, [compile_one(mid) for mid in membership_ids])
     _reraise_if_cancelled(results)  # worker 被杀须上抛，不当作单篇失败
 
     # gather 后统一汇总（顺序按查询顺序=相关度降序，稳定）
@@ -757,12 +869,14 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
 async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
+        library = await get_library_for_project(session, project.id)
         # 全库上链逻辑与手动补建端点共用（services/concepts.py）
         stats, papers = await link_all_paper_concepts(
             session,
-            project_id=project.id,
+            library_id=library.id,
             llm=ctx.llm,
             user_id=ctx.run.created_by,
+            project_id=project.id,
             voyage_id=ctx.run.id,
         )
         created = int(stats["concepts_created"])
@@ -800,9 +914,10 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         )
         chunks_embedded, chunk_embed_error = await embed_pending_chunks(
             session,
-            project_id=project.id,
+            library_id=library.id,
             llm=ctx.llm,
             user_id=ctx.run.created_by,
+            project_id=project.id,
             voyage_id=ctx.run.id,
             **embed_kwargs,
         )

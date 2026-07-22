@@ -21,8 +21,10 @@ from app.agents.voyage.actions import ActionContext, register
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.services.figure_annotate import important_figures_with_bytes
+from app.services.libraries import get_library_for_project
 from app.services.presentation import (
     DeckSpec,
     build_deck,
@@ -124,19 +126,19 @@ async def _complete_json(
     raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
 
 
-async def _load_papers(ctx: ActionContext) -> list[Paper]:
+async def _load_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]]:
+    """按 params.paper_ids 加载库内论文，返回 (Paper, 本方向库版 wiki) 对（保持传入顺序）。"""
     ids = [uuid.UUID(str(i)) for i in _params(ctx).get("paper_ids") or []]
     async with get_sessionmaker()() as session:
-        papers = (
-            (
-                await session.execute(
-                    select(Paper).where(Paper.id.in_(ids), Paper.project_id == ctx.run.project_id)
-                )
+        library = await get_library_for_project(session, ctx.run.project_id)
+        rows = (
+            await session.execute(
+                select(Paper, LibraryPaper.wiki_content)
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(Paper.id.in_(ids), LibraryPaper.library_id == library.id)
             )
-            .scalars()
-            .all()
-        )
-    by_id = {p.id: p for p in papers}
+        ).all()
+    by_id = {p.id: (p, wiki) for p, wiki in rows}
     ordered = [by_id[i] for i in ids if i in by_id]
     if not ordered:
         raise ValueError("presentation: no papers found for given paper_ids")
@@ -167,11 +169,12 @@ def _figure_catalog(papers: list[Paper]) -> tuple[list[dict[str, Any]], dict[int
 
 @register("present.collect")
 async def present_collect(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
-    papers = await _load_papers(ctx)
+    pairs = await _load_papers(ctx)
+    papers = [p for p, _ in pairs]
     mode = str(_params(ctx).get("mode") or ("single" if len(papers) == 1 else "survey"))
     cap = _SINGLE_BODY_CHARS if mode == "single" else _SURVEY_BODY_CHARS
     materials = []
-    for p in papers:
+    for p, wiki in pairs:
         authors = "、".join(a.get("name", "") for a in (p.authors or []) if isinstance(a, dict))
         materials.append(
             {
@@ -179,7 +182,7 @@ async def present_collect(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 "authors": authors[:120],
                 "venue": f"{p.venue or ''} {p.year or ''}".strip(),
                 "tldr": p.tldr or "",
-                "body": (p.wiki_content or p.abstract or "")[:cap],
+                "body": (wiki or p.abstract or "")[:cap],
             }
         )
     catalog, _ = _figure_catalog(papers)
@@ -266,7 +269,7 @@ async def present_build(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     deck = ctx.checkpoint.get("present_deck")
     if not deck:
         raise ValueError("present.build requires present_deck in checkpoint")
-    papers = await _load_papers(ctx)
+    papers = [p for p, _ in await _load_papers(ctx)]
     _, blobs = _figure_catalog(papers)
 
     # ①文本规范迭代：确定性校验 → LLM 修

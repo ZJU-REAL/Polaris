@@ -18,7 +18,7 @@ from app.core.security import encrypt_secret
 from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
 from app.models.paper import Paper
 from app.services import papers as papers_service
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 # ---- provider 层 ----
 
@@ -145,13 +145,13 @@ async def _setup_semantic_project(client, monkeypatch):
     project_id = uuid.UUID(resp.json()["id"])
 
     async with get_sessionmaker()() as session:
-        pa = Paper(
+        pa = await add_paper(session,
             project_id=project_id,
             title="Cooking pasta at home",
             abstract="A recipe study about food.",
             status="compiled",
         )
-        pb = Paper(
+        pb = await add_paper(session,
             project_id=project_id,
             title="Agent planning",
             abstract=None,
@@ -164,11 +164,16 @@ async def _setup_semantic_project(client, monkeypatch):
     monkeypatch.setattr(papers_service, "semantic_search_supported", lambda session: True)
 
     async def fake_vector_search(session, *, project_id, query_vector, limit):
+        from tests.conftest import membership_of
+
         papers = (
             (await session.execute(select(Paper).where(Paper.id.in_(ordered_ids)))).scalars().all()
         )
-        by_id = {p.id: p for p in papers}
-        return [(by_id[ordered_ids[0]], 0.9), (by_id[ordered_ids[1]], 0.8)][:limit]
+        views = {}
+        for p in papers:
+            membership = await membership_of(session, project_id=project_id, paper_id=p.id)
+            views[p.id] = papers_service.PaperView(p, membership, project_id)
+        return [(views[ordered_ids[0]], 0.9), (views[ordered_ids[1]], 0.8)][:limit]
 
     monkeypatch.setattr(papers_service, "semantic_search_papers", fake_vector_search)
     return str(project_id), headers

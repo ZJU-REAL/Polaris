@@ -215,6 +215,7 @@ async def annotate_figures(
     *,
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> list[dict[str, Any]]:
     """挑重要图并配中文图注，合并结果写 Paper.figures 并返回（调用方负责 commit）。"""
@@ -244,7 +245,7 @@ async def annotate_figures(
                     messages,
                     images=images,
                     user_id=user_id,
-                    project_id=paper.project_id,
+                    project_id=project_id,
                     voyage_id=voyage_id,
                 )
                 merged = _merge(candidates, _extract_json_array(result.content))
@@ -269,12 +270,13 @@ async def extract_and_annotate(
     paper: Paper,
     *,
     user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
 ) -> list[dict[str, Any]]:
     """PyMuPDF 提取候选图 → LLM 筛选注释 → 写 Paper.figures 并落库。
 
     调用方需先保证 paper.pdf_path 存在（无 PDF 由路由映射 404）。
     """
     candidates = await extract_figures(str(paper.id), Path(paper.pdf_path))
-    figures = await annotate_figures(paper, candidates, user_id=user_id)
+    figures = await annotate_figures(paper, candidates, user_id=user_id, project_id=project_id)
     await session.commit()
     return figures

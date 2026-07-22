@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
 from app.models.project import ProjectMember
 from app.models.publication import UserAuthorProfile, UserPublication
@@ -141,8 +142,11 @@ async def match_from_library(session: AsyncSession, *, user_id: uuid.UUID) -> in
         return 0
     stmt = (
         select(Paper)
-        .join(ProjectMember, ProjectMember.project_id == Paper.project_id)
-        .where(ProjectMember.user_id == user_id, Paper.status != "excluded")
+        .distinct()
+        .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+        .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
+        .join(ProjectMember, ProjectMember.project_id == DirectionLibrary.project_id)
+        .where(ProjectMember.user_id == user_id, LibraryPaper.status != "excluded")
     )
     papers = (await session.execute(stmt)).scalars().all()
     seen = await _existing_dedup_keys(session, user_id)

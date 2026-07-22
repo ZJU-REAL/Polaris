@@ -9,8 +9,8 @@ from sqlalchemy import insert
 
 from app.core.db import get_sessionmaker
 from app.models.activity import Activity
-from app.models.paper import Concept, Paper, paper_concepts
-from tests.conftest import register_and_login
+from app.models.paper import Paper, paper_concepts
+from tests.conftest import add_concept, add_paper, register_and_login
 
 
 async def _setup(client):
@@ -20,7 +20,7 @@ async def _setup(client):
     project_id = uuid.UUID(resp.json()["id"])
 
     async with get_sessionmaker()() as session:
-        p1 = Paper(
+        p1 = await add_paper(session,
             project_id=project_id,
             source="arxiv",
             arxiv_id="2406.10001",
@@ -36,7 +36,7 @@ async def _setup(client):
             wiki_content="## TL;DR\n\n使用 [[Agent]] 与 [[规划]] 的方法。\n",
             status="compiled",
         )
-        p2 = Paper(
+        p2 = await add_paper(session,
             project_id=project_id,
             source="arxiv",
             arxiv_id="2406.10002",
@@ -48,14 +48,14 @@ async def _setup(client):
             relevance_score=0.3,
             status="excluded",
         )
-        c1 = Concept(
+        c1 = await add_concept(session,
             project_id=project_id,
             name="Agent",
             slug="agent",
             definition="能自主感知-决策-行动的智能体。",
             category="method",
         )
-        c2 = Concept(
+        c2 = await add_concept(session,
             project_id=project_id,
             name="规划",
             slug="规划",
@@ -269,15 +269,34 @@ async def test_papers_status_group_filters(client):
     project_id, headers, ids = await _setup(client)
 
     from app.core.db import get_sessionmaker
-    from app.models.paper import Paper
 
     async with get_sessionmaker()() as session:
         session.add_all(
             [
-                Paper(project_id=uuid.UUID(project_id), title="scored one", status="scored"),
-                Paper(project_id=uuid.UUID(project_id), title="fetched one", status="fetched"),
-                Paper(project_id=uuid.UUID(project_id), title="included one", status="included"),
-                Paper(project_id=uuid.UUID(project_id), title="cand one", status="candidate"),
+                await add_paper(
+                    session,
+                    project_id=uuid.UUID(project_id),
+                    title="scored one",
+                    status="scored",
+                ),
+                await add_paper(
+                    session,
+                    project_id=uuid.UUID(project_id),
+                    title="fetched one",
+                    status="fetched",
+                ),
+                await add_paper(
+                    session,
+                    project_id=uuid.UUID(project_id),
+                    title="included one",
+                    status="included",
+                ),
+                await add_paper(
+                    session,
+                    project_id=uuid.UUID(project_id),
+                    title="cand one",
+                    status="candidate",
+                ),
             ]
         )
         await session.commit()
@@ -300,14 +319,16 @@ async def test_papers_status_group_filters(client):
 
 
 async def test_delete_paper_and_batch(client, tmp_path):
-    """删除论文（docs/api-lit.md §8.6）：单删 + 批量删 + 文件清理 + 成员校验。"""
+    """删除论文（docs/api-lit.md §8.6）：单删 + 批量删 + 成员校验。
+
+    P4 全局内容池语义：删除只摘掉本方向的成员行，内容池行与落盘文件保留
+    （其他方向可复用）。"""
     project_id, headers, ids = await _setup(client)
 
     from app.core.db import get_sessionmaker
-    from app.models.paper import Paper
     from app.services.literature.pdf_extract import figure_path
 
-    # 给 p1 落一个假 PDF 和图片文件，删除时应一并清理
+    # 给 p1 落一个假 PDF 和图片文件：P4 起删除不清理内容池文件
     pdf = tmp_path / "p1.pdf"
     pdf.write_bytes(b"%PDF-fake")
     fig = figure_path(ids["p1"], 0)
@@ -326,7 +347,10 @@ async def test_delete_paper_and_batch(client, tmp_path):
 
     resp = await client.delete(f"/api/papers/{ids['p1']}", headers=headers)
     assert resp.status_code == 204
-    assert not pdf.exists() and not fig.exists()
+    # 内容池行与文件保留；本方向视角下论文不复存在
+    assert pdf.exists() and fig.exists()
+    async with get_sessionmaker()() as session:
+        assert await session.get(Paper, uuid.UUID(ids["p1"])) is not None
     resp = await client.get(f"/api/papers/{ids['p1']}", headers=headers)
     assert resp.status_code == 404
 
@@ -435,12 +459,11 @@ async def test_papers_advanced_filters(client):
     from datetime import UTC, datetime
 
     from app.core.db import get_sessionmaker
-    from app.models.paper import Paper
 
     project_id, headers, ids = await _setup(client)
     async with get_sessionmaker()() as session:
         session.add(
-            Paper(
+            await add_paper(session,
                 project_id=uuid.UUID(project_id),
                 title="Affiliation Paper",
                 authors=[{"name": "Carol Zhang"}],

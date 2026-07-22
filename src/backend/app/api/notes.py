@@ -68,7 +68,13 @@ async def create_paper_note(
     paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
-    note = await notes_service.create_note(session, paper=paper, author=user, content=data.content)
+    note = await notes_service.create_note(
+        session,
+        paper_id=paper.id,
+        project_id=paper.project_id,
+        author=user,
+        content=data.content,
+    )
     return _note_read(note, notes_service.author_name_of(user.display_name, user.email))
 
 

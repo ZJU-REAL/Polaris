@@ -12,8 +12,7 @@ from app.core.db import get_sessionmaker
 from app.models.experiment import Experiment, ExperimentRun
 from app.models.idea import Idea
 from app.models.manuscript import Manuscript
-from app.models.paper import Paper
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -91,7 +90,7 @@ async def _seed_experiment(project_id: str, idea_id: str, tmp_path=None) -> str:
 
 async def _seed_paper(project_id: str, title: str, year: int = 2024, status="compiled") -> str:
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=uuid.UUID(project_id),
             title=title,
             authors=[{"name": "Ada Smith"}],
