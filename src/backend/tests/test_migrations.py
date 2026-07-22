@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "94e6bc81c510"  # registration_codes.preset_directions（本分支最新）
-PREV_REVISION = "8b3b904e7588"  # user_library_entries.wiki_content 快照
+HEAD_REVISION = "fe8a86942dc7"  # 论文内容池收尾（P4 迁移 B，本分支最新）
+PREV_REVISION = "f7c2abfe8aeb"  # 方向文献库 + 论文内容池（P4 迁移 A）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -125,8 +125,12 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "attempts",
         "provenance",
     } <= columns["voyage_steps"]
-    # 垃圾桶原因标签
-    assert "trash_reason" in columns["papers"]
+    # 垃圾桶原因等判断字段已迁 library_papers（P4 迁移 B 删列）
+    assert "trash_reason" not in columns["papers"]
+    assert "status" not in columns["papers"]
+    assert "relevance_score" not in columns["papers"]
+    assert "wiki_content" not in columns["papers"]
+    assert "project_id" not in columns["papers"]
     # PDF 划线标注表（上一版 paper_highlights）
     assert "paper_highlights" in columns["_tables"]
     assert {
@@ -195,14 +199,24 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "llm_self_managed" in columns["users"]
     # 个人库 wiki 快照列（上一版）
     assert "wiki_content" in columns["user_library_entries"]
-    # 本分支新增：注册码预设研究方向列
+    # 注册码预设研究方向列（上一版）
     assert "preset_directions" in columns["registration_codes"]
+    # 本分支新增：方向文献库三表 + papers.dedup_key（P4 迁移 A）+ 收尾（迁移 B）
+    assert {
+        "direction_libraries",
+        "direction_library_curators",
+        "library_papers",
+    } <= columns["_tables"]
+    assert "dedup_key" in columns["papers"]
 
-    # 最新 revision 可往返（downgrade 移除 registration_codes.preset_directions 列）
+    # 最新 revision 可往返（downgrade 还原 papers/concepts/paper_chunks 的旧列结构）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "preset_directions" not in columns["registration_codes"]
+    assert {"project_id", "status", "relevance_score", "wiki_content"} <= columns["papers"]
+    assert "dedup_key" in columns["papers"]  # 迁移 A 的列仍在
+    assert "library_papers" in columns["_tables"]
+    assert "preset_directions" in columns["registration_codes"]
     assert "wiki_content" in columns["user_library_entries"]
     assert "paper_id" in columns["user_publications"]
     assert "owner_id" in columns["llm_providers"]

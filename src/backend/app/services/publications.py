@@ -5,7 +5,6 @@
 所有库内候选都要经用户确认（pending → confirmed | rejected）。
 """
 
-import hashlib
 import logging
 import re
 import uuid
@@ -15,9 +14,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
 from app.models.project import ProjectMember
 from app.models.publication import UserAuthorProfile, UserPublication
+from app.services.dedup import dedup_key_for as shared_dedup_key_for
 from app.services.paper_import import (
     ParseFailedError,
     _fields_from_arxiv,
@@ -28,21 +29,17 @@ from app.services.paper_import import (
 logger = logging.getLogger(__name__)
 
 
-def _normalize_title(title: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
-
-
 def _normalize_name(name: str) -> str:
     return re.sub(r"[^a-z一-鿿0-9]+", " ", name.lower()).strip()
 
 
 def dedup_key_for(*, doi: str | None, arxiv_id: str | None, title: str) -> str:
-    """去重键：doi → arxiv → 规范化标题 sha1（优先级递减）。"""
-    if doi:
-        return f"doi:{doi.lower()}"
-    if arxiv_id:
-        return f"arxiv:{arxiv_id.lower()}"
-    return f"title:{hashlib.sha1(_normalize_title(title).encode()).hexdigest()}"
+    """去重键：doi → arxiv → 规范化标题 sha1（历史键 doi 优先，顺序不可改）。"""
+    key = shared_dedup_key_for(
+        doi=doi, arxiv_id=arxiv_id, title=title, priority=("doi", "arxiv", "title")
+    )
+    assert key is not None  # title 非空
+    return key
 
 
 # ---- 作者身份绑定 ----
@@ -145,8 +142,11 @@ async def match_from_library(session: AsyncSession, *, user_id: uuid.UUID) -> in
         return 0
     stmt = (
         select(Paper)
-        .join(ProjectMember, ProjectMember.project_id == Paper.project_id)
-        .where(ProjectMember.user_id == user_id, Paper.status != "excluded")
+        .distinct()
+        .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+        .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
+        .join(ProjectMember, ProjectMember.project_id == DirectionLibrary.project_id)
+        .where(ProjectMember.user_id == user_id, LibraryPaper.status != "excluded")
     )
     papers = (await session.execute(stmt)).scalars().all()
     seen = await _existing_dedup_keys(session, user_id)

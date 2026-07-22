@@ -3,9 +3,8 @@
 import uuid
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
 from app.services import publications as publications_service
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 async def _login(client, email="alice@example.com"):
@@ -20,7 +19,7 @@ async def _make_project(client, headers, name="pub-proj"):
 
 async def _make_paper(project_id: str, **kwargs) -> str:
     async with get_sessionmaker()() as session:
-        paper = Paper(project_id=uuid.UUID(project_id), **kwargs)
+        paper = await add_paper(session, project_id=uuid.UUID(project_id), **kwargs)
         session.add(paper)
         await session.commit()
         return str(paper.id)

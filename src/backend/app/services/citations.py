@@ -9,10 +9,11 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
+from app.services.libraries import get_library_for_project, member_paper_stmt
 from app.services.papers import apply_paper_filters
 
 # 缺省导出的论文状态（未显式指定 status 时）
@@ -199,8 +200,9 @@ async def papers_for_export(
 
     paper_ids 指定时按 id 精确导出（多选导出），忽略状态缺省过滤。
     """
+    library = await get_library_for_project(session, project_id)
     stmt = apply_paper_filters(
-        select(Paper),
+        member_paper_stmt(library.id),
         project_id=project_id,
         status=status,
         tag=tag,
@@ -210,6 +212,6 @@ async def papers_for_export(
     if paper_ids:
         stmt = stmt.where(Paper.id.in_(paper_ids))
     elif not status:
-        stmt = stmt.where(Paper.status.in_(DEFAULT_EXPORT_STATUSES))
-    stmt = stmt.order_by(Paper.year.asc().nulls_last(), Paper.created_at.asc())
-    return (await session.execute(stmt)).scalars().all()
+        stmt = stmt.where(LibraryPaper.status.in_(DEFAULT_EXPORT_STATUSES))
+    stmt = stmt.order_by(Paper.year.asc().nulls_last(), LibraryPaper.created_at.asc())
+    return [paper for paper, _ in (await session.execute(stmt)).all()]

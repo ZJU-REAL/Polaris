@@ -80,7 +80,9 @@ async def create_paper_highlight(
     paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
-    hl = await hl_service.create_highlight(session, paper=paper, author=user, data=data)
+    hl = await hl_service.create_highlight(
+        session, paper_id=paper.id, project_id=paper.project_id, author=user, data=data
+    )
     return _hl_read(hl, author_name_of(user.display_name, user.email))
 
 

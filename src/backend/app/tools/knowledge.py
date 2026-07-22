@@ -13,6 +13,7 @@ from app.models.paper import Paper, PaperChunk
 from app.services import chunks as chunks_service
 from app.services import graph as graph_service
 from app.services import search as search_service
+from app.services.libraries import get_library_for_project, membership_for_project
 from app.tools.context import ToolContext
 from app.tools.registry import tool
 
@@ -40,6 +41,7 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     k = min(_MAX_K, max(1, int(args.get("k") or 6)))
 
     async with get_sessionmaker()() as session:
+        library = await get_library_for_project(session, ctx.project_id)
         rows: list[tuple[PaperChunk, float]] = []
         used_mode = "keyword"
         if chunks_service.chunk_vector_search_supported(session):
@@ -51,14 +53,14 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                     voyage_id=ctx.voyage_id,
                 )
                 rows = await chunks_service.semantic_search_chunks(
-                    session, project_id=ctx.project_id, query_vector=vectors[0], limit=k
+                    session, library_id=library.id, query_vector=vectors[0], limit=k
                 )
                 used_mode = "semantic"
             except NotImplementedError:
                 rows = []
         if not rows:
             rows = await chunks_service.keyword_search_chunks(
-                session, project_id=ctx.project_id, q=query, limit=k
+                session, library_id=library.id, q=query, limit=k
             )
             used_mode = used_mode if rows and used_mode == "semantic" else "keyword"
 
@@ -104,11 +106,16 @@ async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         stmt = (
             select(Paper)
-            .where(Paper.id == paper_id, Paper.project_id == ctx.project_id)
+            .where(Paper.id == paper_id)
             .options(selectinload(Paper.concepts))
         )
         paper = (await session.execute(stmt)).scalar_one_or_none()
-        if paper is None:
+        membership = (
+            await membership_for_project(session, project_id=ctx.project_id, paper_id=paper_id)
+            if paper is not None
+            else None
+        )
+        if paper is None or membership is None:
             raise ValueError(f"库内不存在该论文：{args.get('paper_id')}")
         authors = [a.get("name") for a in (paper.authors or []) if isinstance(a, dict)]
         return {
@@ -120,11 +127,11 @@ async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
             "arxiv_id": paper.arxiv_id,
             "doi": paper.doi,
             "url": paper.url,
-            "status": paper.status,
+            "status": membership.status,
             "tldr": paper.tldr,
             "abstract": (paper.abstract or "")[:2000] or None,
             "concepts": [c.name for c in paper.concepts],
-            "has_wiki": bool(paper.wiki_content),
+            "has_wiki": bool(membership.wiki_content),
             "has_fulltext": bool(paper.full_text_path),
         }
 

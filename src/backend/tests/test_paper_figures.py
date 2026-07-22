@@ -18,7 +18,7 @@ from app.models.llm_config import LLMUsage
 from app.models.paper import Paper
 from app.services.figure_annotate import annotate_figures
 from app.services.literature.pdf_extract import extract_figures, figure_path, save_pdf
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 def _image_bytes(width: int, height: int, value: int = 90) -> bytes:
@@ -151,7 +151,7 @@ async def _setup_paper(client, *, email: str = "alice@example.com"):
     resp = await client.post("/api/projects", json={"name": "fig-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=uuid.UUID(project_id),
             source="manual",
             title="Figured Paper",
@@ -238,13 +238,7 @@ async def test_figures_api_extract_annotate_idempotent_force(client):
 
 
 def _paper_stub() -> Paper:
-    return Paper(
-        id=uuid.uuid4(),
-        project_id=uuid.uuid4(),
-        title="Stub Paper",
-        abstract="stub",
-        status="fetched",
-    )
+    return Paper(id=uuid.uuid4(), title="Stub Paper", abstract="stub")
 
 
 def _candidate(index: int, *, page: int = 1, width: int = 400, height: int = 300) -> dict:

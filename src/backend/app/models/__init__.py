@@ -7,6 +7,7 @@ from app.models.feedback import Feedback, FeedbackImage
 from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.library import UserLibraryEntry
+from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
 from app.models.manuscript import (
     Manuscript,
@@ -38,6 +39,8 @@ from app.models.voyage import VoyageRun, VoyageStep
 __all__ = [
     "Activity",
     "Concept",
+    "DirectionLibrary",
+    "DirectionLibraryCurator",
     "Experiment",
     "ExperimentRun",
     "Feedback",
@@ -45,6 +48,7 @@ __all__ = [
     "Gate",
     "Idea",
     "LLMCallLog",
+    "LibraryPaper",
     "LLMProviderConfig",
     "LLMUsage",
     "Manuscript",

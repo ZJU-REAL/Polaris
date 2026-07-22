@@ -4,9 +4,8 @@ import json
 import uuid
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
 from app.services.citations import split_author_name
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 async def _setup(client):
@@ -16,7 +15,9 @@ async def _setup(client):
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
         pid = uuid.UUID(project_id)
-        p1 = Paper(  # venue 含 Proceedings → inproceedings；与 p2 的 key 冲突（后缀 a）
+        # venue 含 Proceedings → inproceedings；与 p2 的 key 冲突（后缀 a）
+        p1 = await add_paper(
+            session,
             project_id=pid,
             title="The Great Agent Benchmark",
             authors=[{"name": "Alice Smith"}, {"name": "Bob Jones"}],
@@ -26,7 +27,7 @@ async def _setup(client):
             url="https://example.org/one",
             status="included",
         )
-        p2 = Paper(  # 有 venue（期刊）→ article + journal 字段
+        p2 = await add_paper(session,   # 有 venue（期刊）→ article + journal 字段
             project_id=pid,
             title="Great Expectations of LLMs",
             authors=[{"name": "Smith, Alice"}],
@@ -34,7 +35,7 @@ async def _setup(client):
             venue="Nature",
             status="compiled",
         )
-        p3 = Paper(  # 无 venue → misc；arxiv 论文带 eprint；中文名整个作 family
+        p3 = await add_paper(session,   # 无 venue → misc；arxiv 论文带 eprint；中文名整个作 family
             project_id=pid,
             title="Quantum Annealing Survey",
             authors=[{"name": "张三"}],
@@ -42,7 +43,13 @@ async def _setup(client):
             arxiv_id="2501.00042",
             status="included",
         )
-        p4 = Paper(project_id=pid, title="Excluded Paper", year=2020, status="excluded")
+        p4 = await add_paper(
+            session,
+            project_id=pid,
+            title="Excluded Paper",
+            year=2020,
+            status="excluded",
+        )
         session.add_all([p1, p2, p3, p4])
         await session.commit()
         p1_id = str(p1.id)

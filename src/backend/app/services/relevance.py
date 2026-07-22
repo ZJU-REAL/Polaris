@@ -1,8 +1,8 @@
 """单篇文献相关性打分（LLM stage=relevance）。
 
 voyage 的 wiki.score_relevance 动作与手动添加端点共用：按项目 definition 组
-context（稀疏容忍）→ 调 LLM → 解析 → 写 relevance_score/tldr/scored_at。
-本模块不改 Paper.status、不 commit——状态转移与落库时机由调用方决定。
+context（稀疏容忍）→ 调 LLM → 解析 → 写成员行 relevance_score/scored_at 与论文 tldr。
+本模块不改成员行 status、不 commit——状态转移与落库时机由调用方决定。
 """
 
 import json
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.base import utcnow
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.models.project import Project
 
@@ -59,16 +60,18 @@ def build_relevance_context(project: Project) -> str:
 
 async def score_paper_relevance(
     paper: Paper,
+    membership: LibraryPaper,
     *,
     context_text: str,
     llm: LLMRouter | None = None,
     extra_guidance: str = "",
     user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> RelevanceResult:
-    """对一篇论文打相关性分并写 relevance_score/tldr/scored_at 字段。
+    """对一篇论文打相关性分：写成员行 relevance_score/scored_at 与论文 tldr。
 
-    不改 status、不 commit（由调用方决定状态转移与落库时机）。
+    不改成员行 status、不 commit（由调用方决定状态转移与落库时机）。
     extra_guidance：追加到 system prompt 的补充指引（voyage 技能注入点用）。
     """
     llm = llm or get_llm_router()
@@ -80,34 +83,37 @@ async def score_paper_relevance(
             Message(role="user", content=user_prompt),
         ],
         user_id=user_id,
-        project_id=paper.project_id,
+        project_id=project_id,
         voyage_id=voyage_id,
     )
     data = _extract_json(result.content)
     score = min(1.0, max(0.0, float(data["score"])))
-    paper.relevance_score = score
+    membership.relevance_score = score
     paper.tldr = str(data.get("tldr") or "") or paper.tldr
-    paper.scored_at = utcnow()
+    membership.scored_at = utcnow()
     return RelevanceResult(score=score, reason=str(data.get("reason") or ""), tldr=paper.tldr or "")
 
 
 async def score_added_paper_best_effort(
     session: AsyncSession,
     paper: Paper,
+    membership: LibraryPaper,
     project: Project,
     *,
     user_id: uuid.UUID | None = None,
 ) -> None:
     """手动添加后的顺带打分（best-effort）：成功则 commit 分数，失败只记 warning。
 
-    不改 status（手动添加 = 人工纳入，分低也保持 included）；LLM 失败/超时时
+    不改成员行 status（手动添加 = 人工纳入，分低也保持 included）；LLM 失败/超时时
     回滚未落库的字段改动，论文本身照常保留。
     """
     try:
         await score_paper_relevance(
             paper,
+            membership,
             context_text=build_relevance_context(project),
             user_id=user_id,
+            project_id=project.id,
         )
         await session.commit()
     except Exception:  # noqa: BLE001 — 顺带增值，失败不影响添加本身

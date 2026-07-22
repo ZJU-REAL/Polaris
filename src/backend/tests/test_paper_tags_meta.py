@@ -3,8 +3,7 @@
 import uuid
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 async def _setup(client):
@@ -13,8 +12,18 @@ async def _setup(client):
     resp = await client.post("/api/projects", json={"name": "tags-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        p1 = Paper(project_id=uuid.UUID(project_id), title="Paper One", status="included")
-        p2 = Paper(project_id=uuid.UUID(project_id), title="Paper Two", status="compiled")
+        p1 = await add_paper(
+            session,
+            project_id=uuid.UUID(project_id),
+            title="Paper One",
+            status="included",
+        )
+        p2 = await add_paper(
+            session,
+            project_id=uuid.UUID(project_id),
+            title="Paper Two",
+            status="compiled",
+        )
         session.add_all([p1, p2])
         await session.commit()
         ids = {"p1": str(p1.id), "p2": str(p2.id)}

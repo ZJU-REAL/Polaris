@@ -7,9 +7,9 @@ from pathlib import Path
 from sqlalchemy import func, select
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper, PaperChunk
+from app.models.paper import PaperChunk
 from app.services.chunks import CHUNK_MAX_CHARS, split_text
-from tests.conftest import register_and_login
+from tests.conftest import add_concept, add_paper, register_and_login
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -67,7 +67,7 @@ async def _setup(client, tmp_path_factory=None):
         for i, (title, body) in enumerate(seeds):
             txt = txt_dir / f"p{i}.txt"
             txt.write_text(body, encoding="utf-8")
-            p = Paper(
+            p = await add_paper(session,
                 project_id=project_id,
                 title=title,
                 abstract=f"{title} abstract",
@@ -102,7 +102,7 @@ async def test_rebuild_index_and_chunk_rows(client):
 
     async with get_sessionmaker()() as session:
         count = (
-            await session.execute(select(func.count()).where(PaperChunk.project_id == project_id))
+            await session.execute(select(func.count()).select_from(PaperChunk))
         ).scalar_one()
         assert count == body["total_chunks"]
 
@@ -188,11 +188,11 @@ async def test_library_chat_sources_include_concepts(client):
 
     from sqlalchemy import insert
 
-    from app.models.paper import Concept, paper_concepts
+    from app.models.paper import paper_concepts
     from app.services.concepts import wiki_slug
 
     async with get_sessionmaker()() as session:
-        c = Concept(
+        c = await add_concept(session,
             project_id=project_id, name="思维树", slug=wiki_slug("思维树"), category="method"
         )
         session.add(c)

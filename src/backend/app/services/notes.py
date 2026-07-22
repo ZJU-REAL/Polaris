@@ -22,10 +22,10 @@ def author_name_of(display_name: str | None, email: str) -> str:
 
 
 async def create_note(
-    session: AsyncSession, *, paper: Paper, author: User, content: str
+    session: AsyncSession, *, paper_id: uuid.UUID, project_id: uuid.UUID, author: User, content: str
 ) -> PaperNote:
     note = PaperNote(
-        paper_id=paper.id, project_id=paper.project_id, author_id=author.id, content=content
+        paper_id=paper_id, project_id=project_id, author_id=author.id, content=content
     )
     session.add(note)
     await session.commit()

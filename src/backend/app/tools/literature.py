@@ -16,7 +16,9 @@ from app.core.db import get_sessionmaker
 from app.models.paper import Concept, Paper
 from app.services import concepts as concepts_service
 from app.services import papers as papers_service
+from app.services.libraries import get_library_for_project, membership_for_project
 from app.services.paper_review import relevant_excerpt
+from app.services.papers import PaperView
 from app.tools.context import ToolContext
 from app.tools.registry import tool
 
@@ -36,7 +38,7 @@ _CONCEPT_CATEGORIES = [
 ]
 
 
-def _paper_brief(paper: Paper, score: float | None = None) -> dict[str, Any]:
+def _paper_brief(paper: PaperView, score: float | None = None) -> dict[str, Any]:
     brief: dict[str, Any] = {
         "paper_id": str(paper.id),
         "title": paper.title,
@@ -50,15 +52,20 @@ def _paper_brief(paper: Paper, score: float | None = None) -> dict[str, Any]:
     return brief
 
 
-async def _get_project_paper(session: Any, ctx: ToolContext, raw_id: Any) -> Paper:
+async def _get_project_paper(session: Any, ctx: ToolContext, raw_id: Any) -> PaperView:
     try:
         paper_id = uuid.UUID(str(raw_id))
     except ValueError as e:
         raise ValueError(f"paper_id 不是合法 uuid：{raw_id}") from e
     paper = await session.get(Paper, paper_id)
-    if paper is None or paper.project_id != ctx.project_id:
+    membership = (
+        await membership_for_project(session, project_id=ctx.project_id, paper_id=paper_id)
+        if paper is not None
+        else None
+    )
+    if paper is None or membership is None:
         raise ValueError(f"库内不存在该论文：{raw_id}")
-    return paper
+    return PaperView(paper, membership, ctx.project_id)
 
 
 @tool(
@@ -210,12 +217,13 @@ async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     if not name:
         raise ValueError("get_concept 需要非空 name")
     async with get_sessionmaker()() as session:
-        stmt = select(Concept).where(Concept.project_id == ctx.project_id, Concept.name.ilike(name))
+        library = await get_library_for_project(session, ctx.project_id)
+        stmt = select(Concept).where(Concept.library_id == library.id, Concept.name.ilike(name))
         concept = (await session.execute(stmt)).scalars().first()
         if concept is None:  # 精确不中再模糊
             stmt = (
                 select(Concept)
-                .where(Concept.project_id == ctx.project_id, Concept.name.ilike(f"%{name}%"))
+                .where(Concept.library_id == library.id, Concept.name.ilike(f"%{name}%"))
                 .order_by(Concept.name)
             )
             concept = (await session.execute(stmt)).scalars().first()
@@ -249,8 +257,9 @@ async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 async def list_concepts(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     category = str(args.get("category") or "").strip() or None
     async with get_sessionmaker()() as session:
+        library = await get_library_for_project(session, ctx.project_id)
         rows = await concepts_service.list_concepts(
-            session, project_id=ctx.project_id, category=category
+            session, library_id=library.id, category=category
         )
     return {
         "concepts": [

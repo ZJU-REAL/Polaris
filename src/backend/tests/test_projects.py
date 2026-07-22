@@ -1,4 +1,4 @@
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 async def test_projects_require_auth(client):
@@ -54,7 +54,11 @@ async def test_delete_project(client):
     from app.models.paper import Paper
 
     async with get_sessionmaker()() as session:
-        session.add(Paper(project_id=_uuid.UUID(project_id), title="orphan check"))
+        session.add(await add_paper(
+            session,
+            project_id=_uuid.UUID(project_id),
+            title="orphan check"),
+        )
         await session.commit()
 
     resp = await client.delete(f"/api/projects/{project_id}", headers=headers)
@@ -63,12 +67,23 @@ async def test_delete_project(client):
     resp = await client.get(f"/api/projects/{project_id}", headers=headers)
     assert resp.status_code == 404
     async with get_sessionmaker()() as session:
-        count = (
+        from app.models.library_direction import DirectionLibrary, LibraryPaper
+
+        # 隐式库与成员行随方向级联删除；内容池 Paper 行保留（全局复用，P4 语义）
+        libs = (
             await session.execute(
-                select(func.count()).where(Paper.project_id == _uuid.UUID(project_id))
+                select(func.count()).where(
+                    DirectionLibrary.project_id == _uuid.UUID(project_id)
+                )
             )
         ).scalar_one()
-        assert count == 0
+        assert libs == 0
+        memberships = (
+            await session.execute(select(func.count()).select_from(LibraryPaper))
+        ).scalar_one()
+        assert memberships == 0
+        pool = (await session.execute(select(func.count()).select_from(Paper))).scalar_one()
+        assert pool == 1
 
 
 async def test_delete_project_requires_owner(client):

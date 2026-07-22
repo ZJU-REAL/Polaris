@@ -21,10 +21,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, PaperNote
 from app.models.project import Project
 from app.models.user import User
 from app.services.concepts import wiki_slug
+from app.services.libraries import get_library_for_project
 from app.services.literature.pdf_extract import figure_path
 from app.services.notes import author_name_of
 from app.services.wiki_compile import FIGURE_MARKER_RE
@@ -99,26 +101,26 @@ def _inline_paper_figures(
 
 
 async def build_obsidian_zip(session: AsyncSession, project: Project) -> bytes:
-    papers = (
-        (
-            await session.execute(
-                select(Paper)
-                .where(
-                    Paper.project_id == project.id,
-                    Paper.status.in_(("compiled", "included")),
-                )
-                .options(selectinload(Paper.concepts))
-                .order_by(Paper.relevance_score.desc().nulls_last())
+    library = await get_library_for_project(session, project.id)
+    paper_rows = (
+        await session.execute(
+            select(Paper, LibraryPaper)
+            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .where(
+                LibraryPaper.library_id == library.id,
+                LibraryPaper.status.in_(("compiled", "included")),
             )
+            .options(selectinload(Paper.concepts))
+            .order_by(LibraryPaper.relevance_score.desc().nulls_last())
         )
-        .scalars()
-        .all()
-    )
+    ).all()
+    papers = [p for p, _ in paper_rows]
+    membership_of = {p.id: m for p, m in paper_rows}
     concepts = (
         (
             await session.execute(
                 select(Concept)
-                .where(Concept.project_id == project.id)
+                .where(Concept.library_id == library.id)
                 .options(selectinload(Concept.papers))
                 .order_by(Concept.name)
             )
@@ -156,17 +158,18 @@ async def build_obsidian_zip(session: AsyncSession, project: Project) -> bytes:
 
         # papers/<slug>.md
         for slug, paper in paper_entries:
+            membership = membership_of[paper.id]
             fm = _frontmatter(
                 {
                     "title": paper.title,
                     "arxiv_id": paper.arxiv_id,
                     "year": paper.year,
-                    "relevance": paper.relevance_score,
-                    "status": paper.status,
+                    "relevance": membership.relevance_score,
+                    "status": membership.status,
                     "concepts": [c.name for c in paper.concepts],
                 }
             )
-            body = paper.wiki_content or (paper.abstract or "（尚未编译 wiki 页）")
+            body = membership.wiki_content or (paper.abstract or "（尚未编译 wiki 页）")
             if paper.figures:
                 body, extra_figure_lines = _inline_paper_figures(zf, paper, slug, body)
                 if extra_figure_lines:

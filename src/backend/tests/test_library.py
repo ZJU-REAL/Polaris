@@ -4,7 +4,7 @@ import uuid
 
 from app.core.db import get_sessionmaker
 from app.models.paper import Paper
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 async def _make_project(client, headers, name="lib-proj"):
@@ -14,7 +14,7 @@ async def _make_project(client, headers, name="lib-proj"):
 
 async def _make_paper(project_id: str, **kwargs) -> str:
     async with get_sessionmaker()() as session:
-        paper = Paper(project_id=uuid.UUID(project_id), **kwargs)
+        paper = await add_paper(session, project_id=uuid.UUID(project_id), **kwargs)
         session.add(paper)
         await session.commit()
         return str(paper.id)

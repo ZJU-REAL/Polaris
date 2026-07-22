@@ -12,7 +12,7 @@ from app.models.paper import Paper
 from app.services.literature import reset_clients, set_clients
 from app.services.literature.arxiv import ArxivClient
 from app.services.literature.openalex import OpenAlexClient
-from tests.conftest import register_and_login
+from tests.conftest import membership_of, register_and_login
 
 ARXIV_FEED_ONE = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -85,7 +85,8 @@ async def test_add_by_arxiv_id_and_dedupe_409(client, lit_clients):
 
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, uuid.UUID(paper_id))
-        assert paper.source == "manual" and paper.status == "included"
+        membership = await membership_of(session, project_id=project_id, paper_id=paper_id)
+        assert paper.source == "manual" and membership.status == "included"
 
     # 项目内按 arxiv_id 去重 → 409 带已有 paper_id
     resp = await client.post(
@@ -184,10 +185,11 @@ async def test_add_scores_relevance_best_effort(client):
 
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, uuid.UUID(body["id"]))
-        assert paper.relevance_score == body["relevance_score"]
+        membership = await membership_of(session, project_id=project_id, paper_id=body["id"])
+        assert membership.relevance_score == body["relevance_score"]
         assert paper.tldr == body["tldr"]
-        assert paper.scored_at is not None
-        assert paper.status == "included"  # 人工纳入，打分不改状态
+        assert membership.scored_at is not None
+        assert membership.status == "included"  # 人工纳入，打分不改状态
 
 
 async def test_add_low_score_keeps_included(client):
@@ -209,8 +211,8 @@ async def test_add_low_score_keeps_included(client):
     assert body["status"] == "included"
 
     async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, uuid.UUID(body["id"]))
-        assert paper.status == "included" and paper.trash_reason is None
+        membership = await membership_of(session, project_id=project_id, paper_id=body["id"])
+        assert membership.status == "included" and membership.trash_reason is None
 
 
 async def test_add_llm_failure_still_201(client, monkeypatch):
@@ -231,9 +233,9 @@ async def test_add_llm_failure_still_201(client, monkeypatch):
     assert body["status"] == "included"
 
     async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, uuid.UUID(body["id"]))
-        assert paper.relevance_score is None and paper.scored_at is None
-        assert paper.status == "included"
+        membership = await membership_of(session, project_id=project_id, paper_id=body["id"])
+        assert membership.relevance_score is None and membership.scored_at is None
+        assert membership.status == "included"
 
 
 async def test_add_mutual_exclusion_422(client):

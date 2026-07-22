@@ -1,4 +1,9 @@
-"""论文库与检索业务逻辑（不 import fastapi）。"""
+"""论文库与检索业务逻辑（不 import fastapi）。
+
+P4 起 ``papers`` 是全局内容池：方向维度的归属/判断（status、相关性分、库版 wiki）
+在 ``library_papers`` 成员行上。API 形状不变（仍收 project_id），这里解析到隐式库后
+以 (Paper, LibraryPaper) 联查，并用 :class:`PaperView` 还原旧单表字段口径给 schema。
+"""
 
 import asyncio
 import json
@@ -16,8 +21,21 @@ from sqlalchemy.orm import selectinload
 
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
-from app.models.paper import Concept, Paper, PaperNote, PaperTag, PaperUserMeta, paper_tag_links
-from app.models.project import ProjectMember
+from app.models.library_direction import LibraryPaper
+from app.models.paper import (
+    Concept,
+    Paper,
+    PaperHighlight,
+    PaperNote,
+    PaperTag,
+    PaperUserMeta,
+    paper_tag_links,
+)
+from app.services.libraries import (
+    get_library_for_project,
+    member_paper_stmt,
+    user_visible_paper_stmt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +66,66 @@ class PdfFetchFailedError(Exception):
     """PDF 下载失败（上游不可达 / 非 200 等）。"""
 
 
-def _member_paper_filter(stmt: Select, user_id: uuid.UUID) -> Select:
-    return stmt.join(ProjectMember, ProjectMember.project_id == Paper.project_id).where(
-        ProjectMember.user_id == user_id
-    )
+class PaperView:
+    """内容池论文 + 库成员行的合并视角（字段口径与旧单表 Paper 一致）。
+
+    本体字段（id/title/authors/pdf_path/…）透传 Paper；判断字段
+    （status/relevance_score/wiki_content/…）取成员行；``project_id`` 为本次
+    访问解析出的方向（过渡期 = 成员行所属隐式库回指的 project）。
+    ``created_at`` 口径 = 加入本方向库的时间（成员行 created_at）。
+    """
+
+    __slots__ = ("paper", "membership", "project_id")
+
+    def __init__(
+        self, paper: Paper, membership: LibraryPaper, project_id: uuid.UUID | None
+    ) -> None:
+        self.paper = paper
+        self.membership = membership
+        self.project_id = project_id
+
+    def __getattr__(self, name: str) -> Any:  # 本体字段透传
+        return getattr(object.__getattribute__(self, "paper"), name)
+
+    @property
+    def id(self) -> uuid.UUID:
+        return self.paper.id
+
+    @property
+    def relevance_score(self) -> float | None:
+        return self.membership.relevance_score
+
+    @property
+    def status(self) -> str:
+        return self.membership.status
+
+    @property
+    def trash_reason(self) -> str | None:
+        return self.membership.trash_reason
+
+    @property
+    def scored_at(self) -> datetime | None:
+        return self.membership.scored_at
+
+    @property
+    def compiled_at(self) -> datetime | None:
+        return self.membership.compiled_at
+
+    @property
+    def compiled_model(self) -> str | None:
+        return self.membership.compiled_model
+
+    @property
+    def wiki_content(self) -> str | None:
+        return self.membership.wiki_content
+
+    @property
+    def has_wiki(self) -> bool:
+        return bool(self.membership.wiki_content)
+
+    @property
+    def created_at(self) -> datetime:
+        return self.membership.created_at
 
 
 def apply_paper_filters(
@@ -71,17 +145,15 @@ def apply_paper_filters(
     created_from: datetime | None = None,
     created_to: datetime | None = None,
 ) -> Select:
-    """论文列表 / 引用导出共用的过滤条件（starred / reading_status 为 user_id 的个人视角）。
+    """论文列表 / 引用导出共用的过滤条件（作用于已 join 成员表的语句）。
 
-    status 支持组别名（docs/api-lit.md §8.5）：
-    - ``library``：库内文献 = 相关性达标及之后的状态（scored/fetched/compiled/included）
-    - ``pending_compile``：待编译 = 已达标但还没有解读（scored/fetched）
+    调用方须以 :func:`app.services.libraries.member_paper_stmt` 为基础语句
+    （本函数只加 WHERE，不负责 join）。status 支持组别名（docs/api-lit.md §8.5）。
     """
-    stmt = stmt.where(Paper.project_id == project_id)
     if status in PAPER_STATUS_GROUPS:
-        stmt = stmt.where(Paper.status.in_(PAPER_STATUS_GROUPS[status]))
+        stmt = stmt.where(LibraryPaper.status.in_(PAPER_STATUS_GROUPS[status]))
     elif status:
-        stmt = stmt.where(Paper.status == status)
+        stmt = stmt.where(LibraryPaper.status == status)
     if q:
         pattern = f"%{q}%"
         stmt = stmt.where(or_(Paper.title.ilike(pattern), Paper.abstract.ilike(pattern)))
@@ -105,9 +177,9 @@ def apply_paper_filters(
             )
         )
     if created_from:
-        stmt = stmt.where(Paper.created_at >= created_from)
+        stmt = stmt.where(LibraryPaper.created_at >= created_from)
     if created_to:
-        stmt = stmt.where(Paper.created_at <= created_to)
+        stmt = stmt.where(LibraryPaper.created_at <= created_to)
     if tag:
         stmt = stmt.where(
             Paper.id.in_(
@@ -152,9 +224,10 @@ async def list_papers(
     published_to: datetime | None = None,
     created_from: datetime | None = None,
     created_to: datetime | None = None,
-) -> tuple[Sequence[Paper], int]:
+) -> tuple[Sequence[PaperView], int]:
+    library = await get_library_for_project(session, project_id)
     stmt = apply_paper_filters(
-        select(Paper),
+        member_paper_stmt(library.id),
         project_id=project_id,
         status=status,
         q=q,
@@ -169,30 +242,46 @@ async def list_papers(
         created_from=created_from,
         created_to=created_to,
     )
-    total = (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    total = (await session.execute(stmt.with_only_columns(func.count()))).scalar_one()
     if sort == "-published_at":
-        stmt = stmt.order_by(Paper.published_at.desc().nulls_last(), Paper.created_at.desc())
+        stmt = stmt.order_by(Paper.published_at.desc().nulls_last(), LibraryPaper.created_at.desc())
     else:  # relevance（默认）
-        stmt = stmt.order_by(Paper.relevance_score.desc().nulls_last(), Paper.created_at.desc())
+        stmt = stmt.order_by(
+            LibraryPaper.relevance_score.desc().nulls_last(), LibraryPaper.created_at.desc()
+        )
     stmt = stmt.offset((page - 1) * size).limit(size)
-    return (await session.execute(stmt)).scalars().all(), int(total)
+    rows = (await session.execute(stmt)).all()
+    return [PaperView(paper, membership, project_id) for paper, membership in rows], int(total)
 
 
 async def get_paper_for_user(
     session: AsyncSession, *, paper_id: uuid.UUID, user_id: uuid.UUID, with_concepts: bool = False
-) -> Paper | None:
-    """取论文；非项目成员视为不存在。"""
-    stmt = _member_paper_filter(select(Paper), user_id).where(Paper.id == paper_id)
+) -> PaperView | None:
+    """取论文（含成员行视角）；用户任一所属方向的库里都没有时视为不存在。
+
+    论文同时在多个可见方向库时取一个确定性视角：优先有 wiki 解读的成员行，
+    其次最早加入的（跨方向复用的论文以先入库方向的解读为主视角）。
+    """
+    stmt = (
+        user_visible_paper_stmt(user_id)
+        .where(Paper.id == paper_id)
+        .order_by(LibraryPaper.wiki_content.is_(None), LibraryPaper.created_at)
+        .limit(1)
+    )
     if with_concepts:
         stmt = stmt.options(selectinload(Paper.concepts))
-    return (await session.execute(stmt)).scalar_one_or_none()
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        return None
+    paper, membership, project_id = row
+    return PaperView(paper, membership, project_id)
 
 
-async def set_paper_status(session: AsyncSession, paper: Paper, status: str) -> Paper:
-    paper.status = status
+async def set_paper_status(session: AsyncSession, view: PaperView, status: str) -> PaperView:
+    view.membership.status = status
     await session.commit()
-    await session.refresh(paper)
-    return paper
+    await session.refresh(view.membership)
+    return view
 
 
 # ---- 标签 / 个人状态 / 笔记数聚合（docs/api-lit.md §5） ----
@@ -235,14 +324,16 @@ async def paper_extras_map(
     return extras
 
 
-async def set_paper_tags(session: AsyncSession, paper: Paper, names: list[str]) -> list[str]:
+async def set_paper_tags(session: AsyncSession, view: PaperView, names: list[str]) -> list[str]:
     """整组覆盖论文标签：新名字自动建 tag，空数组=清空。返回排序后的标签名。"""
+    project_id = view.project_id
+    paper_id = view.paper.id
     cleaned = list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
     existing = (
         (
             await session.execute(
                 select(PaperTag).where(
-                    PaperTag.project_id == paper.project_id, PaperTag.name.in_(cleaned or [""])
+                    PaperTag.project_id == project_id, PaperTag.name.in_(cleaned or [""])
                 )
             )
         )
@@ -252,18 +343,18 @@ async def set_paper_tags(session: AsyncSession, paper: Paper, names: list[str]) 
     by_name = {t.name: t for t in existing}
     for name in cleaned:
         if name not in by_name:
-            tag = PaperTag(project_id=paper.project_id, name=name)
+            tag = PaperTag(project_id=project_id, name=name)
             session.add(tag)
             by_name[name] = tag
     await session.flush()
-    await session.execute(delete(paper_tag_links).where(paper_tag_links.c.paper_id == paper.id))
+    await session.execute(delete(paper_tag_links).where(paper_tag_links.c.paper_id == paper_id))
     if cleaned:
         await session.execute(
             insert(paper_tag_links).values(
-                [{"paper_id": paper.id, "tag_id": by_name[n].id} for n in cleaned]
+                [{"paper_id": paper_id, "tag_id": by_name[n].id} for n in cleaned]
             )
         )
-    await prune_orphan_tags(session, project_id=paper.project_id)
+    await prune_orphan_tags(session, project_id=project_id)
     await session.commit()
     return sorted(cleaned)
 
@@ -298,7 +389,7 @@ async def list_project_tags(
 async def upsert_paper_user_meta(
     session: AsyncSession,
     *,
-    paper: Paper,
+    paper: Any,
     user_id: uuid.UUID,
     starred: bool | None = None,
     reading_status: str | None = None,
@@ -323,39 +414,52 @@ async def upsert_paper_user_meta(
     return meta
 
 
-# ---- 删除论文（docs/api-lit.md §8.6） ----
+# ---- 从方向库移除论文（docs/api-lit.md §8.6） ----
+#
+# P4 全局内容池语义：删除 = 删本方向的成员行与项目侧挂件（笔记/划线/标签关联）；
+# 内容池 Paper 行与磁盘文件（PDF/全文/图）永不删除（可能被其他方向复用）。
 
 
-def _remove_paper_files(paper: Paper) -> None:
-    """尽力清理论文落盘文件（PDF / 全文 / 图片目录）；失败只记日志。"""
-    import shutil
-
-    from app.services.literature.pdf_extract import figures_dir
-
-    for raw in (paper.pdf_path, paper.full_text_path):
-        if not raw:
-            continue
-        try:
-            Path(raw).unlink(missing_ok=True)
-        except OSError:
-            logger.warning("failed to remove paper file %s", raw, exc_info=True)
-    try:
-        fig_dir = figures_dir(str(paper.id)).parent  # <data_dir>/papers/<paper_id>/
-        if fig_dir.exists():
-            shutil.rmtree(fig_dir, ignore_errors=True)
-    except OSError:
-        logger.warning("failed to remove figures dir for %s", paper.id, exc_info=True)
-
-
-async def delete_paper(session: AsyncSession, paper: Paper) -> None:
-    """删除一篇论文：清理落盘文件 + 删行（分段/笔记/标签/概念关联 FK 级联）。
-
-    收尾清理项目内零引用标签（失去最后一篇论文的标签不残留）。
-    """
-    project_id = paper.project_id
-    _remove_paper_files(paper)
-    await session.delete(paper)
+async def _delete_membership_rows(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    memberships: Sequence[LibraryPaper],
+) -> None:
+    """硬删成员行 + 本项目挂在这些论文上的笔记/划线/标签关联（不 commit）。"""
+    paper_ids = [m.paper_id for m in memberships]
+    if not paper_ids:
+        return
+    await session.execute(
+        delete(PaperNote).where(
+            PaperNote.paper_id.in_(paper_ids), PaperNote.project_id == project_id
+        )
+    )
+    await session.execute(
+        delete(PaperHighlight).where(
+            PaperHighlight.paper_id.in_(paper_ids), PaperHighlight.project_id == project_id
+        )
+    )
+    project_tag_ids = select(PaperTag.id).where(PaperTag.project_id == project_id)
+    await session.execute(
+        delete(paper_tag_links).where(
+            paper_tag_links.c.paper_id.in_(paper_ids),
+            paper_tag_links.c.tag_id.in_(project_tag_ids),
+        )
+    )
+    for membership in memberships:
+        await session.delete(membership)
     await session.flush()
+
+
+async def delete_paper(session: AsyncSession, view: PaperView) -> None:
+    """从当前方向库彻底移除一篇论文（垃圾桶里的「彻底删除」）。
+
+    删成员行与本项目的笔记/划线/标签关联；收尾清理项目内零引用标签。
+    内容池行与落盘文件保留（其他方向可复用）。
+    """
+    project_id = view.project_id
+    await _delete_membership_rows(session, project_id=project_id, memberships=[view.membership])
     await prune_orphan_tags(session, project_id=project_id)
     await session.commit()
 
@@ -367,80 +471,83 @@ async def delete_papers(
     paper_ids: list[uuid.UUID],
     hard: bool = False,
 ) -> int:
-    """批量删除项目内论文（非本项目的 id 忽略），返回处理数。
+    """批量删除项目库内论文（非本库的 id 忽略），返回处理数。
 
-    默认软删（移入垃圾桶 = status excluded，可召回）；hard=True 彻底删除（清文件+删行）。
+    默认软删（移入垃圾桶 = 成员行 status excluded，可召回）；hard=True 删成员行。
     """
-    papers = (
+    library = await get_library_for_project(session, project_id)
+    memberships = (
         (
             await session.execute(
-                select(Paper).where(Paper.project_id == project_id, Paper.id.in_(paper_ids))
+                select(LibraryPaper).where(
+                    LibraryPaper.library_id == library.id, LibraryPaper.paper_id.in_(paper_ids)
+                )
             )
         )
         .scalars()
         .all()
     )
-    for paper in papers:
-        if hard:
-            _remove_paper_files(paper)
-            await session.delete(paper)
-        else:
-            paper.status = "excluded"
-            paper.trash_reason = "manual"
-    if hard and papers:
-        # 硬删后收尾：paper_tag_links 已随外键级联删除，清掉失去全部引用的标签
-        await session.flush()
+    if hard:
+        await _delete_membership_rows(session, project_id=project_id, memberships=memberships)
         await prune_orphan_tags(session, project_id=project_id)
+    else:
+        for membership in memberships:
+            membership.status = "excluded"
+            membership.trash_reason = "manual"
     await session.commit()
-    return len(papers)
+    return len(memberships)
 
 
-def restore_status_of(paper: Paper) -> str:
+def restore_status_of(membership: LibraryPaper) -> str:
     """垃圾桶召回后的状态：已编译回 compiled；打过分回 scored；否则按人工精选处理。"""
-    if paper.wiki_content:
+    if membership.wiki_content:
         return "compiled"
-    if paper.relevance_score is not None:
+    if membership.relevance_score is not None:
         return "scored"
     return "included"
 
 
-async def restore_paper(session: AsyncSession, paper: Paper) -> Paper:
+async def restore_paper(session: AsyncSession, view: PaperView) -> PaperView:
     """从垃圾桶召回（docs/api-lit.md §8.6）。"""
-    paper.status = restore_status_of(paper)
-    paper.trash_reason = None
+    view.membership.status = restore_status_of(view.membership)
+    view.membership.trash_reason = None
     await session.commit()
-    await session.refresh(paper)
-    return paper
+    await session.refresh(view.membership)
+    return view
 
 
 async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
-    """清空垃圾桶：彻底删除项目内全部 excluded 论文（清文件 + 删行），返回删除数。"""
-    papers = (
+    """清空垃圾桶：彻底移除库内全部 excluded 成员行，返回删除数。"""
+    library = await get_library_for_project(session, project_id)
+    memberships = (
         (
             await session.execute(
-                select(Paper).where(Paper.project_id == project_id, Paper.status == "excluded")
+                select(LibraryPaper).where(
+                    LibraryPaper.library_id == library.id, LibraryPaper.status == "excluded"
+                )
             )
         )
         .scalars()
         .all()
     )
-    for paper in papers:
-        _remove_paper_files(paper)
-        await session.delete(paper)
-    if papers:
-        await session.flush()
+    if memberships:
+        await _delete_membership_rows(session, project_id=project_id, memberships=memberships)
         await prune_orphan_tags(session, project_id=project_id)
     await session.commit()
-    return len(papers)
+    return len(memberships)
 
 
 # ---- PDF 按需补下（docs/api-lit.md §1） ----
 
 
 async def fetch_pdf(
-    session: AsyncSession, paper: Paper, *, user_id: uuid.UUID | None = None
+    session: AsyncSession,
+    paper: Paper,
+    *,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
 ) -> Paper:
-    """按需补下 PDF + 抽全文；已有 PDF 文件时幂等直接返回。
+    """按需补下 PDF + 抽全文；已有 PDF 文件时幂等直接返回（只动内容池本体字段）。
 
     - 无 arxiv_id → PdfSourceUnsupportedError（路由映射 400）
     - 下载失败 → PdfFetchFailedError（路由映射 502）
@@ -479,7 +586,9 @@ async def fetch_pdf(
         from app.core.llm.router import get_llm_router
         from app.services.affiliations import extract_affiliations_llm
 
-        affs = await extract_affiliations_llm(paper, llm=get_llm_router(), user_id=user_id)
+        affs = await extract_affiliations_llm(
+            paper, llm=get_llm_router(), user_id=user_id, project_id=project_id
+        )
         if affs:
             paper.affiliations = affs
     await session.commit()
@@ -490,7 +599,7 @@ async def fetch_pdf(
 # ---- AI 伴读上下文（docs/api-lit.md §3） ----
 
 
-def build_chat_context(paper: Paper) -> str:
+def build_chat_context(paper: PaperView) -> str:
     """伴读上下文：优先 full_text（超长头尾各留一半），否则 wiki_content，否则 abstract。"""
     if paper.full_text_path and Path(paper.full_text_path).exists():
         text_ = Path(paper.full_text_path).read_text(encoding="utf-8", errors="ignore")
@@ -525,7 +634,7 @@ CHAT_REFERENCES_SUFFIX = """
 
 
 def build_chat_messages(
-    paper: Paper,
+    paper: PaperView,
     *,
     question: str,
     history: Sequence[tuple[str, str]] = (),
@@ -548,11 +657,12 @@ def build_chat_messages(
 
 async def keyword_search_papers(
     session: AsyncSession, *, project_id: uuid.UUID, q: str, limit: int
-) -> list[tuple[Paper, float]]:
-    """关键词检索：title/abstract/wiki_content/笔记内容 ilike，按命中位置给启发式分。
+) -> list[tuple[PaperView, float]]:
+    """关键词检索：title/abstract/库版 wiki/笔记内容 ilike，按命中位置给启发式分。
 
     只检索库内文献（相关性达标）：已删除（excluded）/未筛选（candidate）不出现。
     """
+    library = await get_library_for_project(session, project_id)
     pattern = f"%{q}%"
     note_hit = Paper.id.in_(
         select(PaperNote.paper_id).where(
@@ -560,20 +670,19 @@ async def keyword_search_papers(
         )
     )
     stmt = (
-        select(Paper)
+        member_paper_stmt(library.id)
         .where(
-            Paper.status.in_(PAPER_STATUS_GROUPS["library"]),
-            Paper.project_id == project_id,
+            LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
             or_(
                 Paper.title.ilike(pattern),
                 Paper.abstract.ilike(pattern),
-                Paper.wiki_content.ilike(pattern),
+                LibraryPaper.wiki_content.ilike(pattern),
                 note_hit,
             ),
         )
         .limit(limit * 3)
     )
-    papers = (await session.execute(stmt)).scalars().all()
+    rows = (await session.execute(stmt)).all()
     needle = q.lower()
 
     def score_of(p: Paper) -> float:
@@ -583,16 +692,20 @@ async def keyword_search_papers(
             return 0.7
         return 0.5  # wiki_content / 笔记命中
 
-    ranked = sorted(((p, score_of(p)) for p in papers), key=lambda x: -x[1])
+    ranked = sorted(
+        ((PaperView(paper, membership, project_id), score_of(paper)) for paper, membership in rows),
+        key=lambda x: -x[1],
+    )
     return ranked[:limit]
 
 
 async def keyword_search_concepts(
     session: AsyncSession, *, project_id: uuid.UUID, q: str, limit: int
 ) -> list[tuple[Concept, float]]:
+    library = await get_library_for_project(session, project_id)
     stmt = (
         select(Concept)
-        .where(Concept.project_id == project_id, Concept.name.ilike(f"%{q}%"))
+        .where(Concept.library_id == library.id, Concept.name.ilike(f"%{q}%"))
         .order_by(Concept.name)
         .limit(limit)
     )
@@ -605,32 +718,36 @@ def semantic_search_supported(session: AsyncSession) -> bool:
 
 async def semantic_search_papers(
     session: AsyncSession, *, project_id: uuid.UUID, query_vector: list[float], limit: int
-) -> list[tuple[Paper, float]]:
+) -> list[tuple[PaperView, float]]:
     """pgvector 余弦检索（仅 postgres；调用方需先判 semantic_search_supported）。"""
+    library = await get_library_for_project(session, project_id)
     qv = json.dumps(query_vector)
     rows = (
         await session.execute(
             text(
-                "SELECT id, 1 - (embedding <=> CAST(:qv AS vector)) AS score "
-                "FROM papers "
-                "WHERE project_id = :pid AND embedding IS NOT NULL "
-                "ORDER BY embedding <=> CAST(:qv AS vector) "
+                "SELECT p.id, 1 - (p.embedding <=> CAST(:qv AS vector)) AS score "
+                "FROM papers p "
+                "JOIN library_papers lp ON lp.paper_id = p.id AND lp.library_id = :lib "
+                "WHERE p.embedding IS NOT NULL "
+                "ORDER BY p.embedding <=> CAST(:qv AS vector) "
                 "LIMIT :k"
             ),
-            {"qv": qv, "pid": str(project_id), "k": limit},
+            {"qv": qv, "lib": str(library.id), "k": limit},
         )
     ).all()
     if not rows:
         return []
     scores = {row.id: float(row.score) for row in rows}
-    papers = (
-        (await session.execute(select(Paper).where(Paper.id.in_(list(scores))))).scalars().all()
-    )
-    by_id = {p.id: p for p in papers}
-    return [(by_id[pid], scores[pid]) for pid, _ in ((r.id, r.score) for r in rows) if pid in by_id]
+    pairs = (
+        await session.execute(
+            member_paper_stmt(library.id).where(Paper.id.in_(list(scores)))
+        )
+    ).all()
+    by_id = {p.id: PaperView(p, m, project_id) for p, m in pairs}
+    return [(by_id[pid], scores[pid]) for pid in (r.id for r in rows) if pid in by_id]
 
 
-def rerank_document_of(paper: Paper) -> str:
+def rerank_document_of(paper: Any) -> str:
     """重排送审文本：title + abstract，截断 RERANK_DOC_CHARS 字。"""
     text_ = paper.title or ""
     if paper.abstract:
@@ -642,11 +759,11 @@ async def rerank_paper_rows(
     llm_router: LLMRouter,
     *,
     query: str,
-    rows: list[tuple[Paper, float]],
+    rows: list[tuple[PaperView, float]],
     limit: int,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
-) -> tuple[list[tuple[Paper, float]], bool]:
+) -> tuple[list[tuple[PaperView, float]], bool]:
     """对向量召回结果做 rerank，返回 (top limit 结果, 是否重排成功)。
 
     rerank 未配置（NotImplementedError）或调用异常时降级：按原向量分取前 limit。

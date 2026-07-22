@@ -15,7 +15,7 @@ from app.models.paper import Paper
 from app.services.literature import reset_clients, set_clients
 from app.services.literature.arxiv import ArxivClient
 from app.services.literature.pdf_extract import save_pdf
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, register_and_login
 
 
 def _pdf_bytes(text: str = "hello polaris") -> bytes:
@@ -45,7 +45,7 @@ async def _setup(client, *, arxiv_id: str | None = "2406.00001", email: str = "a
     resp = await client.post("/api/projects", json={"name": "read-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=uuid.UUID(project_id),
             source="arxiv" if arxiv_id else "manual",
             arxiv_id=arxiv_id,
@@ -194,7 +194,7 @@ async def test_chat_with_referenced_papers(client):
     foreign_pid = resp.json()["id"]
 
     async with get_sessionmaker()() as session:
-        referenced = Paper(
+        referenced = await add_paper(session,
             project_id=uuid.UUID(project_id),
             source="manual",
             title="Fara-1.5 Learning Environments",
@@ -202,7 +202,7 @@ async def test_chat_with_referenced_papers(client):
             tldr="Fara-1.5 一句话总结：可扩展的 CUA 学习环境。",
             status="included",
         )
-        foreign = Paper(
+        foreign = await add_paper(session,
             project_id=uuid.UUID(foreign_pid),
             source="manual",
             title="Foreign Paper",

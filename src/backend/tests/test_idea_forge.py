@@ -16,8 +16,7 @@ from app.core.llm.fake import EMBEDDING_DIM, FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.idea import Idea
-from app.models.paper import Paper
-from tests.conftest import RecordingBus, register_and_login
+from tests.conftest import RecordingBus, add_concept, add_paper, register_and_login
 
 DEFINITION = {"statement": "自动化科研 agent 的方法研究"}
 
@@ -43,7 +42,7 @@ async def _seed_compiled_papers(project_id: str, n: int = 3) -> list[str]:
     async with get_sessionmaker()() as session:
         ids = []
         for i in range(n):
-            paper = Paper(
+            paper = await add_paper(session,
                 project_id=uuid.UUID(project_id),
                 source="manual",
                 title=f"Compiled paper {i}",
@@ -333,7 +332,6 @@ async def test_collect_signals_concept_holes_and_trends(client, queue_stub):
     """确定性信号：method×problem 零共现概念对 + 近 90 天概念趋势（纯代码，无 LLM）。"""
     from app.agents.voyage.actions import ActionContext
     from app.agents.voyage.actions_ideas import forge_collect_signals
-    from app.models.paper import Concept
     from app.models.voyage import VoyageRun
 
     project_id, headers = await _setup_project(client)
@@ -341,9 +339,27 @@ async def test_collect_signals_concept_holes_and_trends(client, queue_stub):
 
     async with get_sessionmaker()() as session:
         pid = uuid.UUID(project_id)
-        method_a = Concept(project_id=pid, name="方法A", slug="m-a", category="method")
-        method_b = Concept(project_id=pid, name="方法B", slug="m-b", category="method")
-        problem_x = Concept(project_id=pid, name="问题X", slug="p-x", category="problem")
+        method_a = await add_concept(
+            session,
+            project_id=pid,
+            name="方法A",
+            slug="m-a",
+            category="method",
+        )
+        method_b = await add_concept(
+            session,
+            project_id=pid,
+            name="方法B",
+            slug="m-b",
+            category="method",
+        )
+        problem_x = await add_concept(
+            session,
+            project_id=pid,
+            name="问题X",
+            slug="p-x",
+            category="problem",
+        )
         session.add_all([method_a, method_b, problem_x])
         await session.flush()
         # 方法A 与 问题X 共现（paper0）；方法B 只出现在 paper1/2 → 方法B×问题X 零共现

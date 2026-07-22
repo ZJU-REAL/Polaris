@@ -5,10 +5,10 @@ import uuid
 from sqlalchemy import insert, select
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Concept, Paper, paper_concepts
+from app.models.paper import Paper, paper_concepts
 from app.services.concepts import link_paper_concepts, placeholder_definition
 
-from .conftest import register_and_login
+from .conftest import add_concept, add_paper, membership_of, project_concepts, register_and_login
 
 
 async def _setup(client):
@@ -22,20 +22,20 @@ async def _setup(client):
     async with get_sessionmaker()() as session:
         session.add_all(
             [
-                Paper(
+                await add_paper(session,
                     project_id=pid,
                     title="Paper A",
                     status="compiled",
                     wiki_content="本文提出 [[自我博弈]]，结合 [[强化学习]] 训练。",
                 ),
-                Paper(
+                await add_paper(session,
                     project_id=pid,
                     title="Paper B",
                     status="included",
                     wiki_content="基于 [[强化学习]] 与 [[课程学习]] 的方法。",
                 ),
                 # 未编译 / 无 wiki 内容的不参与
-                Paper(project_id=pid, title="Paper C", status="candidate"),
+                await add_paper(session, project_id=pid, title="Paper C", status="candidate"),
             ]
         )
         await session.commit()
@@ -76,14 +76,14 @@ async def test_relink_backfills_placeholder_definitions(client):
     async with get_sessionmaker()() as session:
         session.add_all(
             [
-                Concept(
+                await add_concept(session,
                     project_id=pid,
                     name="自我博弈",
                     slug="old-x",
                     definition=placeholder_definition("自我博弈"),
                     category="other",
                 ),
-                Concept(
+                await add_concept(session,
                     project_id=pid,
                     name="课程学习",
                     slug="old-y",
@@ -99,17 +99,11 @@ async def test_relink_backfills_placeholder_definitions(client):
     assert resp.json()["concepts_backfilled"] == 2
 
     async with get_sessionmaker()() as session:
-        rows = (
-            (
-                await session.execute(
-                    select(Concept).where(
-                        Concept.project_id == pid, Concept.name.in_(["自我博弈", "课程学习"])
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
+        rows = [
+            c
+            for c in await project_concepts(session, project_id=pid)
+            if c.name in ("自我博弈", "课程学习")
+        ]
         assert len(rows) == 2
         for concept in rows:
             assert not concept.definition.endswith("（定义待补充）")
@@ -119,11 +113,10 @@ async def test_relink_backfills_placeholder_definitions(client):
 async def _set_wiki_content(project_id: str, title: str, content) -> uuid.UUID:
     async with get_sessionmaker()() as session:
         paper = (
-            await session.execute(
-                select(Paper).where(Paper.project_id == uuid.UUID(project_id), Paper.title == title)
-            )
+            await session.execute(select(Paper).where(Paper.title == title))
         ).scalar_one()
-        paper.wiki_content = content
+        membership = await membership_of(session, project_id=project_id, paper_id=paper.id)
+        membership.wiki_content = content
         await session.commit()
         return paper.id
 
@@ -157,9 +150,21 @@ async def test_relink_keeps_concepts_referenced_by_trash_papers(client):
     project_id, headers = await _setup(client)
     pid = uuid.UUID(project_id)
     async with get_sessionmaker()() as session:
-        trashed = Paper(project_id=pid, title="Trashed", status="excluded")
-        kept = Concept(project_id=pid, name="回收站概念", slug="trash-c", definition="d")
-        orphan = Concept(project_id=pid, name="孤儿概念", slug="orphan-c", definition="d")
+        trashed = await add_paper(session, project_id=pid, title="Trashed", status="excluded")
+        kept = await add_concept(
+            session,
+            project_id=pid,
+            name="回收站概念",
+            slug="trash-c",
+            definition="d",
+        )
+        orphan = await add_concept(
+            session,
+            project_id=pid,
+            name="孤儿概念",
+            slug="orphan-c",
+            definition="d",
+        )
         session.add_all([trashed, kept, orphan])
         await session.flush()
         await session.execute(
@@ -172,11 +177,7 @@ async def test_relink_keeps_concepts_referenced_by_trash_papers(client):
     assert resp.json()["concepts_removed"] == 1  # 只删孤儿概念
 
     async with get_sessionmaker()() as session:
-        names = (
-            (await session.execute(select(Concept.name).where(Concept.project_id == pid)))
-            .scalars()
-            .all()
-        )
+        names = [c.name for c in await project_concepts(session, project_id=pid)]
     assert "回收站概念" in names and "孤儿概念" not in names
 
 
@@ -190,7 +191,8 @@ async def test_link_paper_concepts_syncs_after_recompile(client):
     )
     async with get_sessionmaker()() as session:
         paper = (await session.execute(select(Paper).where(Paper.id == paper_id))).scalar_one()
-        created, linked = await link_paper_concepts(session, paper)
+        membership = await membership_of(session, project_id=project_id, paper_id=paper_id)
+        created, linked = await link_paper_concepts(session, paper, membership)
     assert created == 1 and linked == 1  # 新概念（llm=None → 占位定义）
 
     counts = await _concept_counts(client, project_id, headers)
@@ -206,7 +208,8 @@ async def test_link_paper_concepts_empty_content_keeps_links(client):
     paper_id = await _set_wiki_content(project_id, "Paper A", None)
     async with get_sessionmaker()() as session:
         paper = (await session.execute(select(Paper).where(Paper.id == paper_id))).scalar_one()
-        assert await link_paper_concepts(session, paper) == (0, 0)
+        membership = await membership_of(session, project_id=project_id, paper_id=paper_id)
+        assert await link_paper_concepts(session, paper, membership) == (0, 0)
 
     counts = await _concept_counts(client, project_id, headers)
     assert counts == {"自我博弈": 1, "强化学习": 2, "课程学习": 1}
@@ -233,7 +236,7 @@ async def test_auto_sweep_backfills_placeholders_capped(client):
     # 无引用的占位会被 #65 的孤儿清理直接删除，不走回填。
     async with get_sessionmaker()() as session:
         session.add(
-            Concept(
+            await add_concept(session,
                 project_id=pid,
                 name="强化学习",
                 slug="ph-rl",
@@ -244,16 +247,19 @@ async def test_auto_sweep_backfills_placeholders_capped(client):
         await session.commit()
 
     async with get_sessionmaker()() as session:
+        from app.services.libraries import get_library_for_project
+
+        library = await get_library_for_project(session, pid)
         stats, _ = await link_all_paper_concepts(
-            session, project_id=pid, llm=LLMRouter(), backfill=False
+            session, library_id=library.id, llm=LLMRouter(), backfill=False
         )
     assert stats["concepts_backfilled"] == 1
 
     async with get_sessionmaker()() as session:
-        row = (
-            await session.execute(
-                select(Concept).where(Concept.project_id == pid, Concept.name == "强化学习")
-            )
-        ).scalar_one()
+        row = next(
+            c
+            for c in await project_concepts(session, project_id=pid)
+            if c.name == "强化学习"
+        )
         assert not row.definition.endswith("（定义待补充）")
         assert row.category == "method"  # fake provider 返回 method

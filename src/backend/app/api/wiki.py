@@ -19,6 +19,7 @@ from app.api.auth import current_active_user, require_llm_chat
 from app.core.db import get_session
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperChunk
 from app.models.project import Project
 from app.models.user import User
@@ -39,6 +40,7 @@ from app.services import library_chat as library_chat_service
 from app.services import papers as papers_service
 from app.services import projects as projects_service
 from app.services import stats as stats_service
+from app.services.libraries import get_library_for_project
 from app.services.wiki_export import build_obsidian_zip
 
 logger = logging.getLogger(__name__)
@@ -104,7 +106,7 @@ async def search(
         concepts.append(
             ScoredConcept(
                 id=concept.id,
-                project_id=concept.project_id,
+                project_id=project_id,
                 name=concept.name,
                 category=concept.category,
                 definition=concept.definition,
@@ -262,13 +264,16 @@ async def rebuild_fulltext_index(
     幂等：已有分段的论文跳过；新入库论文由 ingest 流水线自动处理，通常无需手动调用。
     """
     await _member_project(session, project_id, user)
-    chunked_ids = select(PaperChunk.paper_id).where(PaperChunk.project_id == project_id)
+    library = await get_library_for_project(session, project_id)
+    chunked_ids = select(PaperChunk.paper_id)
     try:
         papers = (
             (
                 await session.execute(
-                    select(Paper).where(
-                        Paper.project_id == project_id,
+                    select(Paper)
+                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                    .where(
+                        LibraryPaper.library_id == library.id,
                         Paper.full_text_path.is_not(None),
                         Paper.id.not_in(chunked_ids),
                     )
@@ -291,11 +296,20 @@ async def rebuild_fulltext_index(
             chunk_count += n
     await session.commit()
     embedded, embed_error = await chunks_service.embed_pending_chunks(
-        session, project_id=project_id, llm=get_llm_router(), user_id=user.id
+        session,
+        library_id=library.id,
+        llm=get_llm_router(),
+        user_id=user.id,
+        project_id=project_id,
     )
     total_chunks = int(
         (
-            await session.execute(select(func.count()).where(PaperChunk.project_id == project_id))
+            await session.execute(
+                select(func.count())
+                .select_from(PaperChunk)
+                .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
+                .where(LibraryPaper.library_id == library.id)
+            )
         ).scalar_one()
     )
     return {

@@ -16,6 +16,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.router import LLMRouter
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperChunk
 
 CHUNK_TARGET_CHARS = 1200
@@ -65,14 +66,7 @@ async def replace_chunks(session: AsyncSession, paper: Paper, full_text: str) ->
     await session.execute(delete(PaperChunk).where(PaperChunk.paper_id == paper.id))
     chunks = split_text(sanitize_text(full_text))
     for seq, chunk_text in enumerate(chunks):
-        session.add(
-            PaperChunk(
-                paper_id=paper.id,
-                project_id=paper.project_id,
-                seq=seq,
-                text=chunk_text,
-            )
-        )
+        session.add(PaperChunk(paper_id=paper.id, seq=seq, text=chunk_text))
     return len(chunks)
 
 
@@ -87,18 +81,25 @@ async def index_paper_fulltext(session: AsyncSession, paper: Paper) -> int:
 async def embed_pending_chunks(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    library_id: uuid.UUID,
     llm: LLMRouter,
     user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
     limit: int = 2000,
 ) -> tuple[int, str | None]:
-    """批量补齐缺失的分段向量，返回 (成功条数, 错误说明|None)。"""
+    """批量补齐库内论文缺失的分段向量，返回 (成功条数, 错误说明|None)。
+
+    project_id 仅用于 LLM 用量记账归属。
+    """
     pending = (
         (
             await session.execute(
                 select(PaperChunk)
-                .where(PaperChunk.project_id == project_id, PaperChunk.embedding.is_(None))
+                .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
+                .where(
+                    LibraryPaper.library_id == library_id, PaperChunk.embedding.is_(None)
+                )
                 .order_by(PaperChunk.created_at, PaperChunk.seq)
                 .limit(limit)
             )
@@ -137,7 +138,7 @@ def chunk_vector_search_supported(session: AsyncSession) -> bool:
 async def semantic_search_chunks(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    library_id: uuid.UUID,
     query_vector: list[float],
     limit: int,
     paper_ids: list[uuid.UUID] | None = None,
@@ -147,19 +148,20 @@ async def semantic_search_chunks(
     传 paper_ids 时把检索限制在这些论文内（伴读引用指定文献用）。
     """
     qv = json.dumps(query_vector)
-    params: dict[str, object] = {"qv": qv, "pid": str(project_id), "k": limit}
+    params: dict[str, object] = {"qv": qv, "lib": str(library_id), "k": limit}
     paper_filter = ""
     if paper_ids:
-        paper_filter = "AND paper_id = ANY(CAST(:pids AS uuid[])) "
+        paper_filter = "AND c.paper_id = ANY(CAST(:pids AS uuid[])) "
         params["pids"] = [str(p) for p in paper_ids]
     rows = (
         await session.execute(
             sa_text(
-                "SELECT id, 1 - (embedding <=> CAST(:qv AS vector)) AS score "
-                "FROM paper_chunks "
-                "WHERE project_id = :pid AND embedding IS NOT NULL "
+                "SELECT c.id, 1 - (c.embedding <=> CAST(:qv AS vector)) AS score "
+                "FROM paper_chunks c "
+                "JOIN library_papers lp ON lp.paper_id = c.paper_id AND lp.library_id = :lib "
+                "WHERE c.embedding IS NOT NULL "
                 f"{paper_filter}"
-                "ORDER BY embedding <=> CAST(:qv AS vector) "
+                "ORDER BY c.embedding <=> CAST(:qv AS vector) "
                 "LIMIT :k"
             ),
             params,
@@ -180,7 +182,7 @@ async def semantic_search_chunks(
 async def keyword_search_chunks(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    library_id: uuid.UUID,
     q: str,
     limit: int,
     paper_ids: list[uuid.UUID] | None = None,
@@ -196,7 +198,11 @@ async def keyword_search_chunks(
     for term in terms:
         clause = PaperChunk.text.ilike(f"%{term}%")
         cond = clause if cond is None else cond | clause
-    stmt = select(PaperChunk).where(PaperChunk.project_id == project_id, cond)
+    stmt = (
+        select(PaperChunk)
+        .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
+        .where(LibraryPaper.library_id == library_id, cond)
+    )
     if paper_ids:
         stmt = stmt.where(PaperChunk.paper_id.in_(paper_ids))
     candidates = (await session.execute(stmt.limit(limit * 5))).scalars().all()

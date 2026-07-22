@@ -20,7 +20,7 @@ from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.llm_config import LLMUsage
-from app.models.paper import EMBEDDING_DIM, Concept, Paper, paper_concepts
+from app.models.paper import EMBEDDING_DIM, paper_concepts
 from app.models.project import Project
 from app.services import ingest as ingest_service
 from app.services.literature import (
@@ -31,7 +31,12 @@ from app.services.literature import (
     set_clients,
 )
 from app.services.literature.pdf_extract import figure_path
-from tests.conftest import RecordingBus, register_and_login
+from tests.conftest import (
+    RecordingBus,
+    project_concepts,
+    project_paper_rows,
+    register_and_login,
+)
 
 DEFINITION = {
     "statement": "自动化科研 agent 的方法研究",
@@ -295,25 +300,21 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert detail["steps"][1]["observation"]["inserted"] == 1  # 雪球 1 篇
 
     async with get_sessionmaker()() as session:
-        papers = (
-            (await session.execute(select(Paper).where(Paper.project_id == uuid.UUID(project_id))))
-            .scalars()
-            .all()
-        )
-        assert len(papers) == 4  # 3 arXiv 候选 + 1 雪球
+        rows = await project_paper_rows(session, project_id=project_id)
+        assert len(rows) == 4  # 3 arXiv 候选 + 1 雪球
         by_status = {}
-        for p in papers:
-            by_status.setdefault(p.status, []).append(p)
+        for p, m in rows:
+            by_status.setdefault(m.status, []).append((p, m))
         assert len(by_status.get("excluded", [])) == 1  # "irrelevant" 论文被排除
-        assert by_status["excluded"][0].arxiv_id == "2406.00003"
-        compiled = by_status.get("compiled", [])
-        assert len(compiled) == 3
-        for p in compiled:
-            assert p.relevance_score is not None and p.relevance_score >= 0.6
-            assert p.scored_at is not None and p.compiled_at is not None
-            assert p.compiled_model == "fake-default"  # 编译所用模型落库（voyage 路径）
+        assert by_status["excluded"][0][0].arxiv_id == "2406.00003"
+        compiled_rows = by_status.get("compiled", [])
+        assert len(compiled_rows) == 3
+        for p, m in compiled_rows:
+            assert m.relevance_score is not None and m.relevance_score >= 0.6
+            assert m.scored_at is not None and m.compiled_at is not None
+            assert m.compiled_model == "fake-default"  # 编译所用模型落库（voyage 路径）
             assert p.tldr
-            assert "[[Agent]]" in p.wiki_content  # 双链
+            assert "[[Agent]]" in m.wiki_content  # 双链
             assert p.full_text_path and p.pdf_path  # PDF 已抽全文
             assert p.embedding is not None and len(p.embedding) == EMBEDDING_DIM
             # 管线顺带提取论文图（小图被滤），compile 后由 fake VLM 注释
@@ -330,15 +331,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
             ]
             assert figure_path(str(p.id), 0).exists()
 
-        concepts = (
-            (
-                await session.execute(
-                    select(Concept).where(Concept.project_id == uuid.UUID(project_id))
-                )
-            )
-            .scalars()
-            .all()
-        )
+        concepts = await project_concepts(session, project_id=project_id)
         names = {c.name for c in concepts}
         assert names == {"Agent", "强化学习"}
         for c in concepts:
@@ -402,14 +395,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     since_dt = datetime.fromisoformat(detail2["steps"][0]["observation"]["window_since"])
     assert watermark_dt - since_dt == timedelta(days=14)
     async with get_sessionmaker()() as session:
-        total = int(
-            (
-                await session.execute(
-                    select(func.count()).where(Paper.project_id == uuid.UUID(project_id))
-                )
-            ).scalar_one()
-        )
-        assert total == 4
+        assert len(await project_paper_rows(session, project_id=project_id)) == 4
 
 
 class _CrashOnNthRelevance(FakeProvider):
@@ -450,15 +436,9 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
 
     assert await _relevance_call_count() == 3  # 崩溃前 3 篇成功打分（并发，非串行的 1）
     async with get_sessionmaker()() as session:
-        scored = (
-            await session.execute(
-                select(func.count()).where(
-                    Paper.project_id == uuid.UUID(project_id),
-                    Paper.status.in_(("scored", "excluded")),
-                )
-            )
-        ).scalar_one()
-        assert int(scored) == 3  # 逐篇 commit：崩溃前的进度已落库
+        rows = await project_paper_rows(session, project_id=project_id)
+        scored = sum(1 for _, m in rows if m.status in ("scored", "excluded"))
+        assert scored == 3  # 逐篇 commit：崩溃前的进度已落库
 
     # resume：从断点续跑到 done，总打分调用数 == 论文数（无重复）
     engine2, _ = _make_engine()
@@ -468,16 +448,13 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
     assert await _relevance_call_count() == 4  # 4 篇论文各打分一次
 
     async with get_sessionmaker()() as session:
-        statuses = (
-            (
-                await session.execute(
-                    select(Paper.status).where(Paper.project_id == uuid.UUID(project_id))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert sorted(statuses) == ["compiled", "compiled", "compiled", "excluded"]
+        rows = await project_paper_rows(session, project_id=project_id)
+        assert sorted(m.status for _, m in rows) == [
+            "compiled",
+            "compiled",
+            "compiled",
+            "excluded",
+        ]
 
 
 class _BreakOneRelevance(FakeProvider):
@@ -525,16 +502,8 @@ async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_moc
 
     async with get_sessionmaker()() as session:
         by_status: dict[str, int] = {}
-        for status in (
-            (
-                await session.execute(
-                    select(Paper.status).where(Paper.project_id == uuid.UUID(project_id))
-                )
-            )
-            .scalars()
-            .all()
-        ):
-            by_status[status] = by_status.get(status, 0) + 1
+        for _, m in await project_paper_rows(session, project_id=project_id):
+            by_status[m.status] = by_status.get(m.status, 0) + 1
         # 失败打分的那篇仍是 candidate（下次续跑会重试），其余照常推进
         assert by_status.get("candidate", 0) == 1
         assert by_status.get("excluded", 0) == 1  # irrelevant 篮子编织论文
@@ -571,17 +540,9 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
     assert detail["steps"][0]["observation"]["inserted"] == 3  # 默认分类兜底后仍能检索
 
     async with get_sessionmaker()() as session:
-        statuses = (
-            (
-                await session.execute(
-                    select(Paper.status).where(Paper.project_id == uuid.UUID(project_id))
-                )
-            )
-            .scalars()
-            .all()
-        )
+        rows = await project_paper_rows(session, project_id=project_id)
         # 无锚点论文 → 雪球 0 篇；3 候选：2 编译 + 1 排除（无 rubric 时打分只用 statement）
-        assert sorted(statuses) == ["compiled", "compiled", "excluded"]
+        assert sorted(m.status for _, m in rows) == ["compiled", "compiled", "excluded"]
 
 
 def test_rss_loose_keyword_filter():
@@ -634,16 +595,8 @@ async def test_incremental_rss_fresh_layer(client, queue_stub, wiki_mocks):
     assert "cs.LG" in obs["rss_categories"]
 
     async with get_sessionmaker()() as session:
-        by_aid = {
-            aid: status
-            for aid, status in (
-                await session.execute(
-                    select(Paper.arxiv_id, Paper.status).where(
-                        Paper.project_id == uuid.UUID(project_id)
-                    )
-                )
-            ).all()
-        }
+        rows = await project_paper_rows(session, project_id=project_id)
+        by_aid = {p.arxiv_id: m.status for p, m in rows}
         # 版本号已归一化（无 v1/v2 后缀），新鲜论文入库
         assert "2607.30001" in by_aid
         assert "2607.30002" in by_aid
@@ -652,16 +605,7 @@ async def test_incremental_rss_fresh_layer(client, queue_stub, wiki_mocks):
         assert "2607.30004" not in by_aid
         assert "2607.30005" not in by_aid
         # 与存量重复的 arxiv_id 未产生第二条记录
-        dup_count = int(
-            (
-                await session.execute(
-                    select(func.count()).where(
-                        Paper.project_id == uuid.UUID(project_id),
-                        Paper.arxiv_id == "2406.00001",
-                    )
-                )
-            ).scalar_one()
-        )
+        dup_count = sum(1 for p, _ in rows if p.arxiv_id == "2406.00001")
         assert dup_count == 1
 
 
@@ -806,15 +750,8 @@ async def test_unlimited_bootstrap_uncapped(client, queue_stub, wiki_mocks_big):
     assert compile_obs["processed"] == total and compile_obs["succeeded"] == total
 
     async with get_sessionmaker()() as session:
-        compiled = int(
-            (
-                await session.execute(
-                    select(func.count()).where(
-                        Paper.project_id == uuid.UUID(project_id), Paper.status == "compiled"
-                    )
-                )
-            ).scalar_one()
-        )
+        rows = await project_paper_rows(session, project_id=project_id)
+        compiled = sum(1 for _, m in rows if m.status == "compiled")
         assert compiled == total  # 全部编译落库，无一截断
 
 

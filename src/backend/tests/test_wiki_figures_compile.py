@@ -18,7 +18,7 @@ from app.services.literature.pdf_extract import (
     save_pdf,
 )
 from app.services.wiki_compile import compile_paper, strip_invalid_figure_markers
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, membership_of, register_and_login
 
 
 def _transparent_png_bytes(width: int = 400, height: int = 300) -> bytes:
@@ -103,10 +103,8 @@ def test_flatten_png_white_handles_la_and_palette_transparency():
 def _paper_stub(**kwargs) -> Paper:
     return Paper(
         id=uuid.uuid4(),
-        project_id=uuid.uuid4(),
         title="Interleaved Paper",
         abstract="A paper about agents.",
-        status="fetched",
         **kwargs,
     )
 
@@ -182,7 +180,7 @@ async def _setup_paper(client, *, status: str = "scored"):
     resp = await client.post("/api/projects", json={"name": "recompile-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=uuid.UUID(project_id),
             source="manual",
             title="Recompiled Paper",
@@ -222,9 +220,9 @@ async def test_recompile_with_pdf_full_flow(client):
         }
     ]
     async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, uuid.UUID(paper_id))
-        assert paper.compiled_at is not None
-        assert paper.compiled_model == "fake-default"  # 编译所用模型落库
+        membership = await membership_of(session, project_id=project_id, paper_id=paper_id)
+        assert membership.compiled_at is not None
+        assert membership.compiled_model == "fake-default"  # 编译所用模型落库
         # LLMUsage 记账归属 project（annotate + 编译 + 概念定义各 1 次 librarian 调用）
         rows = (
             (await session.execute(select(LLMUsage).where(LLMUsage.stage == "librarian")))
@@ -270,7 +268,7 @@ async def test_obsidian_export_rewrites_figure_markers(client):
     resp = await client.post("/api/projects", json={"name": "export-proj"}, headers=headers)
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=uuid.UUID(project_id),
             source="arxiv",
             arxiv_id="2406.20001",
@@ -365,7 +363,7 @@ async def test_annotate_figures_records_kind(app):
     from app.models.paper import Paper
     from app.services.figure_annotate import annotate_figures
 
-    paper = Paper(id=_uuid.uuid4(), project_id=_uuid.uuid4(), title="Kind Paper", status="fetched")
+    paper = Paper(id=_uuid.uuid4(), title="Kind Paper")
     candidates = [
         {"index": 0, "page": 1, "width": 400, "height": 300},
         {"index": 1, "page": 2, "width": 300, "height": 200},

@@ -60,6 +60,10 @@ async def create_project(
     session.add(project)
     await session.flush()
     session.add(ProjectMember(project_id=project.id, user_id=owner_id, role="owner"))
+    # P4 过渡期：每个方向 1:1 一个隐式文献库（论文归属经 library_papers 引用内容池）
+    from app.services.libraries import implicit_library_for
+
+    session.add(implicit_library_for(project))
     await session.commit()
     await session.refresh(project)
     return project

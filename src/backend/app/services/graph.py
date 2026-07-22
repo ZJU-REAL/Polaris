@@ -12,8 +12,10 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, paper_concepts
 from app.services.concepts import wiki_slug
+from app.services.libraries import get_library_for_project
 
 # 图上展示的论文状态（candidate 未过筛选，噪声大，不进图）
 GRAPH_PAPER_STATUSES = ("scored", "fetched", "compiled", "included")
@@ -43,27 +45,34 @@ async def project_graph(
     max_authors: int = MAX_AUTHORS,
 ) -> dict[str, Any]:
     """构建项目知识图谱，返回 GraphResponse 形状的 dict。"""
+    library = await get_library_for_project(session, project_id)
     paper_total = int(
         (
             await session.execute(
                 select(func.count()).where(
-                    Paper.project_id == project_id, Paper.status.in_(GRAPH_PAPER_STATUSES)
+                    LibraryPaper.library_id == library.id,
+                    LibraryPaper.status.in_(GRAPH_PAPER_STATUSES),
                 )
             )
         ).scalar_one()
     )
-    papers = (
-        (
-            await session.execute(
-                select(Paper)
-                .where(Paper.project_id == project_id, Paper.status.in_(GRAPH_PAPER_STATUSES))
-                .order_by(Paper.relevance_score.desc().nulls_last(), Paper.created_at.desc())
-                .limit(max_papers)
+    rows = (
+        await session.execute(
+            select(Paper, LibraryPaper)
+            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .where(
+                LibraryPaper.library_id == library.id,
+                LibraryPaper.status.in_(GRAPH_PAPER_STATUSES),
             )
+            .order_by(
+                LibraryPaper.relevance_score.desc().nulls_last(),
+                LibraryPaper.created_at.desc(),
+            )
+            .limit(max_papers)
         )
-        .scalars()
-        .all()
-    )
+    ).all()
+    papers = [p for p, _ in rows]
+    membership_of = {p.id: m for p, m in rows}
     paper_ids = [p.id for p in papers]
 
     nodes: list[dict[str, Any]] = [
@@ -71,10 +80,10 @@ async def project_graph(
             "id": str(p.id),
             "type": "paper",
             "label": p.title,
-            "status": p.status,
+            "status": membership_of[p.id].status,
             "year": p.year,
             "published": p.published_at.date().isoformat() if p.published_at else None,
-            "relevance": p.relevance_score,
+            "relevance": membership_of[p.id].relevance_score,
         }
         for p in papers
     ]

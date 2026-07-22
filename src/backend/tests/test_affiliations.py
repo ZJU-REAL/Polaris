@@ -29,7 +29,7 @@ from app.services.literature import (
     reset_clients,
     set_clients,
 )
-from tests.conftest import register_and_login
+from tests.conftest import add_paper, membership_of, register_and_login
 
 FULL_TEXT = (
     "Great Paper Title\n"
@@ -72,7 +72,7 @@ def _paper(tmp_path, full_text: str | None) -> Paper:
         f = tmp_path / "full.txt"
         f.write_text(full_text, encoding="utf-8")
         txt_path = str(f)
-    return Paper(project_id=uuid.uuid4(), title="Affil Paper", full_text_path=txt_path)
+    return Paper(title="Affil Paper", full_text_path=txt_path)
 
 
 # ---- 服务函数单测（无 DB） ----
@@ -86,7 +86,7 @@ async def test_extract_affiliations_parses_array(tmp_path):
     call = llm.calls[0]
     assert call["stage"] == "librarian"
     assert call["max_tokens"] == _MAX_TOKENS
-    assert call["project_id"] == paper.project_id
+    assert call["project_id"] is None  # stub 未传记账归属
 
 
 async def test_extract_affiliations_truncates_head(tmp_path):
@@ -116,9 +116,7 @@ async def test_extract_affiliations_llm_error_returns_none(tmp_path):
 async def test_extract_affiliations_no_fulltext_returns_none(tmp_path):
     llm = _StubLLM('["Zhejiang University"]')
     assert await extract_affiliations_llm(_paper(tmp_path, None), llm=llm) is None
-    missing = Paper(
-        project_id=uuid.uuid4(), title="T", full_text_path=str(tmp_path / "nope.txt")
-    )
+    missing = Paper(title="T", full_text_path=str(tmp_path / "nope.txt"))
     assert await extract_affiliations_llm(missing, llm=llm) is None
     assert llm.calls == []
 
@@ -153,7 +151,7 @@ async def _setup_scored_paper(
         f.write_text(full_text, encoding="utf-8")
         txt_path = str(f)
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=project_id,
             source="snowball",
             status="scored",
@@ -195,7 +193,11 @@ async def test_fetch_extract_prefers_llm_over_openalex(client, lit_clients, tmp_
     assert not openalex_route.called  # 有全文 → 走 LLM，OpenAlex 不被调
     paper = await _load_paper(paper_id)
     assert paper.affiliations == ["Zhejiang University", "Google DeepMind"]  # fake LLM 数组
-    assert paper.status == "fetched"
+    async with get_sessionmaker()() as session:
+        membership = await membership_of(
+            session, project_id=run.project_id, paper_id=paper_id
+        )
+        assert membership.status == "fetched"
 
 
 async def test_fetch_extract_llm_failure_falls_back_to_openalex(
@@ -261,7 +263,7 @@ async def test_fetch_pdf_backfills_affiliations(client, lit_clients):
     resp = await client.post("/api/projects", json={"name": "affil-proj"}, headers=headers)
     project_id = uuid.UUID(resp.json()["id"])
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=project_id,
             source="manual",
             status="included",

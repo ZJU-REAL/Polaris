@@ -4,7 +4,7 @@ import json
 import uuid
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
+from tests.conftest import add_paper
 
 from .conftest import register_and_login
 
@@ -17,7 +17,7 @@ async def _setup(client, email="mcp@example.com"):
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
         session.add(
-            Paper(
+            await add_paper(session,
                 project_id=uuid.UUID(project_id),
                 source="manual",
                 title="MCP retrieval paper",

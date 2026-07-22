@@ -27,6 +27,7 @@ from app.services.figure_annotate import (
     important_figures_with_bytes,
 )
 from app.services.literature.pdf_extract import extract_figures
+from app.services.papers import PaperView
 
 FULLTEXT_PROMPT_CHARS = 24000
 
@@ -134,6 +135,7 @@ async def compile_paper(
     statement: str,
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
     extra_guidance: str = "",
 ) -> CompiledWiki:
@@ -165,7 +167,7 @@ async def compile_paper(
             ],
             images=images or None,
             user_id=user_id,
-            project_id=paper.project_id,
+            project_id=project_id,
             voyage_id=voyage_id,
         )
         if not result.content.strip():
@@ -180,18 +182,21 @@ async def compile_paper(
 
 async def recompile_paper(
     session: AsyncSession,
-    paper: Paper,
+    view: PaperView,
     *,
     user_id: uuid.UUID | None = None,
-) -> Paper:
-    """重跑筛选注释 + 图文编译，覆盖 wiki_content 并落库（docs/api-lit.md §6.6）。
+) -> PaperView:
+    """重跑筛选注释 + 图文编译，覆盖成员行 wiki_content 并落库（docs/api-lit.md §6.6）。
 
     无 PDF 时跳过图片、仅重写文字；status：scored/fetched 升为 compiled，其余不动。
     """
     llm = get_llm_router()
-    project = await session.get(Project, paper.project_id)
+    paper = view.paper
+    membership = view.membership
+    project = await session.get(Project, view.project_id) if view.project_id else None
     definition = project.definition if project and isinstance(project.definition, dict) else {}
     statement = definition.get("statement") or (project.name if project else paper.title)
+    project_id = view.project_id
 
     if paper.pdf_path and Path(paper.pdf_path).exists():
         # 从未提取过，或上一轮一张重要图都没选出来（多为旧提取逻辑漏掉矢量图）→ 重提候选
@@ -201,16 +206,22 @@ async def recompile_paper(
                 c | {"caption": None, "kind": None, "important": False} for c in candidates
             ]
         if paper.figures:
-            await annotate_figures(paper, paper.figures, llm=llm, user_id=user_id)
+            await annotate_figures(
+                paper, paper.figures, llm=llm, user_id=user_id, project_id=project_id
+            )
         await session.commit()
 
-    compiled = await compile_paper(paper, statement=statement, llm=llm, user_id=user_id)
-    paper.wiki_content = compiled.content
-    paper.compiled_at = utcnow()
-    paper.compiled_model = compiled.model or None
-    if paper.status in ("scored", "fetched"):
-        paper.status = "compiled"
+    compiled = await compile_paper(
+        paper, statement=statement, llm=llm, user_id=user_id, project_id=project_id
+    )
+    membership.wiki_content = compiled.content
+    membership.compiled_at = utcnow()
+    membership.compiled_model = compiled.model or None
+    if membership.status in ("scored", "fetched"):
+        membership.status = "compiled"
     await session.commit()
     # 单篇概念上链：新介绍里的 [[双链]] 建词条并关联（否则点击提示"概念尚未入库"）
-    await link_paper_concepts(session, paper, llm=llm, user_id=user_id)
-    return paper
+    await link_paper_concepts(
+        session, paper, membership, llm=llm, user_id=user_id, project_id=project_id
+    )
+    return view

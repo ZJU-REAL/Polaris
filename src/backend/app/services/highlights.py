@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.paper import Paper, PaperHighlight
+from app.models.paper import PaperHighlight
 from app.models.project import ProjectMember
 from app.models.user import User
 from app.schemas.highlight import HighlightCreate
@@ -20,11 +20,16 @@ from app.services.notes import author_name_of
 
 
 async def create_highlight(
-    session: AsyncSession, *, paper: Paper, author: User, data: HighlightCreate
+    session: AsyncSession,
+    *,
+    paper_id: uuid.UUID,
+    project_id: uuid.UUID,
+    author: User,
+    data: HighlightCreate,
 ) -> PaperHighlight:
     hl = PaperHighlight(
-        paper_id=paper.id,
-        project_id=paper.project_id,
+        paper_id=paper_id,
+        project_id=project_id,
         author_id=author.id,
         page=data.page,
         rects=[r.model_dump() for r in data.rects],

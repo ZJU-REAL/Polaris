@@ -8,8 +8,8 @@ import app.tools as tools
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.idea import Idea
-from app.models.paper import Concept, Paper
 from app.tools import ToolContext
+from tests.conftest import add_concept, add_paper
 
 from .conftest import register_and_login
 
@@ -80,14 +80,14 @@ async def test_run_tool_unknown_and_bad_args():
 async def test_library_tools_end_to_end(client):
     project_id = await _project(client)
     async with get_sessionmaker()() as session:
-        concept = Concept(
+        concept = await add_concept(session,
             project_id=project_id,
             name="Retrieval",
             slug="retrieval",
             definition="按需取信息",
             category="method",
         )
-        paper = Paper(
+        paper = await add_paper(session,
             project_id=project_id,
             source="manual",
             title="Retrieval Augmented Agents",
@@ -141,7 +141,13 @@ async def test_cross_project_isolation(client):
     proj_a = await _project(client, email="a@example.com")
     proj_b = await _project(client, email="b@example.com")
     async with get_sessionmaker()() as session:
-        paper = Paper(project_id=proj_b, source="manual", title="B secret", status="compiled")
+        paper = await add_paper(
+            session,
+            project_id=proj_b,
+            source="manual",
+            title="B secret",
+            status="compiled",
+        )
         session.add(paper)
         await session.commit()
         b_paper_id = str(paper.id)

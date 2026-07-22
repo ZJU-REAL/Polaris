@@ -16,9 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, PaperChunk, paper_concepts
 from app.models.project import Project
 from app.services import chunks as chunks_service
+from app.services.libraries import get_library_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ class ChatSource:
 async def _retrieve_chunks(
     session: AsyncSession,
     *,
+    library_id: uuid.UUID,
     project_id: uuid.UUID,
     question: str,
     llm: LLMRouter,
@@ -79,7 +82,7 @@ async def _retrieve_chunks(
             vectors = await llm.embed([question], user_id=user_id, project_id=project_id)
             rows = await chunks_service.semantic_search_chunks(
                 session,
-                project_id=project_id,
+                library_id=library_id,
                 query_vector=vectors[0],
                 limit=MAX_CHUNKS,
                 paper_ids=paper_ids,
@@ -93,7 +96,7 @@ async def _retrieve_chunks(
             await session.rollback()  # postgres 报错后事务已中止，先回滚
     try:
         return await chunks_service.keyword_search_chunks(
-            session, project_id=project_id, q=question, limit=MAX_CHUNKS, paper_ids=paper_ids
+            session, library_id=library_id, q=question, limit=MAX_CHUNKS, paper_ids=paper_ids
         )
     except Exception:  # noqa: BLE001
         logger.warning("chunk keyword search failed; falling back to summaries", exc_info=True)
@@ -145,17 +148,29 @@ async def build_library_messages(
     project_id = project.id
     definition = project.definition if isinstance(project.definition, dict) else {}
     statement = definition.get("statement") or project.name
+    library_id = (await get_library_for_project(session, project_id)).id
 
     rows = await _retrieve_chunks(
-        session, project_id=project_id, question=question, llm=llm, user_id=user_id
+        session,
+        library_id=library_id,
+        project_id=project_id,
+        question=question,
+        llm=llm,
+        user_id=user_id,
     )
     papers: dict[uuid.UUID, Paper] = {}
+    memberships: dict[uuid.UUID, LibraryPaper] = {}
     if rows:
         paper_ids = list({c.paper_id for c, _ in rows})
         found = (
-            (await session.execute(select(Paper).where(Paper.id.in_(paper_ids)))).scalars().all()
-        )
-        papers = {p.id: p for p in found}
+            await session.execute(
+                select(Paper, LibraryPaper)
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(LibraryPaper.library_id == library_id, Paper.id.in_(paper_ids))
+            )
+        ).all()
+        papers = {p.id: p for p, _ in found}
+        memberships = {p.id: m for p, m in found}
 
     # (paper, 送入上下文的正文) 顺序清单：优先检索片段，否则高分论文摘要兜底
     entries: list[tuple[Paper, str]] = []
@@ -165,21 +180,19 @@ async def build_library_messages(
             entries.append((paper, snippet))
     else:
         fallback = (
-            (
-                await session.execute(
-                    select(Paper)
-                    .where(
-                        Paper.project_id == project_id,
-                        Paper.status.in_(("scored", "fetched", "compiled", "included")),
-                    )
-                    .order_by(Paper.relevance_score.desc().nulls_last())
-                    .limit(FALLBACK_PAPERS)
+            await session.execute(
+                select(Paper, LibraryPaper)
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(
+                    LibraryPaper.library_id == library_id,
+                    LibraryPaper.status.in_(("scored", "fetched", "compiled", "included")),
                 )
+                .order_by(LibraryPaper.relevance_score.desc().nulls_last())
+                .limit(FALLBACK_PAPERS)
             )
-            .scalars()
-            .all()
-        )
-        entries = [(p, p.tldr or (p.abstract or "")[:400] or "（无摘要）") for p in fallback]
+        ).all()
+        entries = [(p, p.tldr or (p.abstract or "")[:400] or "（无摘要）") for p, _ in fallback]
+        memberships |= {p.id: m for p, m in fallback}
 
     # 涉及论文的概念清单（回答里的 [[双链]] 只允许用这些名字，保证前端可点可跳）
     concepts_by_paper: dict[uuid.UUID, list[str]] = {}
@@ -203,14 +216,15 @@ async def build_library_messages(
         blocks.append(
             f"[{i}] {paper.title}（{paper.year or '年份未知'}）{concept_line}{fig_line}\n{body}"
         )
+        membership = memberships.get(paper.id)
         sources.append(
             ChatSource(
                 index=i,
                 paper_id=str(paper.id),
                 title=paper.title,
                 year=paper.year,
-                status=paper.status,
-                relevance=paper.relevance_score,
+                status=membership.status if membership else None,
+                relevance=membership.relevance_score if membership else None,
                 concepts=names,
             )
         )
@@ -244,16 +258,16 @@ async def build_reference_context(
     """
     if not paper_ids:
         return "", []
+    library_id = (await get_library_for_project(session, project_id)).id
     found = (
-        (
-            await session.execute(
-                select(Paper).where(Paper.id.in_(paper_ids), Paper.project_id == project_id)
-            )
+        await session.execute(
+            select(Paper, LibraryPaper)
+            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .where(LibraryPaper.library_id == library_id, Paper.id.in_(paper_ids))
         )
-        .scalars()
-        .all()
-    )
-    papers = {p.id: p for p in found}
+    ).all()
+    papers = {p.id: p for p, _ in found}
+    memberships = {p.id: m for p, m in found}
     # 保留用户的选择顺序，并滤掉不属于本项目的
     ordered = [papers[pid] for pid in paper_ids if pid in papers]
     if not ordered:
@@ -261,6 +275,7 @@ async def build_reference_context(
 
     rows = await _retrieve_chunks(
         session,
+        library_id=library_id,
         project_id=project_id,
         question=question,
         llm=llm,
@@ -280,14 +295,15 @@ async def build_reference_context(
         else:
             body = paper.tldr or (paper.abstract or "")[:400] or "（无摘要）"
         blocks.append(f"[{i}] {paper.title}（{paper.year or '年份未知'}）\n{body}")
+        membership = memberships.get(paper.id)
         sources.append(
             ChatSource(
                 index=i,
                 paper_id=str(paper.id),
                 title=paper.title,
                 year=paper.year,
-                status=paper.status,
-                relevance=paper.relevance_score,
+                status=membership.status if membership else None,
+                relevance=membership.relevance_score if membership else None,
             )
         )
     return "\n\n".join(blocks), sources

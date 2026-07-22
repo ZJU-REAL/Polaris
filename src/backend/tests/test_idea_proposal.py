@@ -16,9 +16,8 @@ from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.gate import Gate
 from app.models.idea import Idea
-from app.models.paper import Paper
 from app.models.review import ReviewMessage, ReviewSession
-from tests.conftest import RecordingBus, register_and_login
+from tests.conftest import RecordingBus, add_paper, register_and_login
 
 STATEMENT = "自动化科研 agent 的方法研究"
 
@@ -47,7 +46,7 @@ async def _seed_searchable_papers(project_id: str, statement: str, n: int = 3) -
     async with get_sessionmaker()() as session:
         ids = []
         for i in range(n):
-            paper = Paper(
+            paper = await add_paper(session,
                 project_id=uuid.UUID(project_id),
                 source="manual",
                 title=f"Deep paper {i}",
