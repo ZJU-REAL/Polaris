@@ -11,7 +11,6 @@ from app.core.db import get_session
 from app.core.llm.router import get_llm_router
 from app.models.library_direction import DirectionLibrary
 from app.models.paper import Concept
-from app.models.project import ProjectMember
 from app.models.user import User
 from app.schemas.paper import (
     ConceptDetail,
@@ -27,7 +26,9 @@ from app.services.libraries import get_library_for_project
 router = APIRouter(tags=["concepts"])
 
 
-def _concept_read(concept: Concept, paper_count: int, project_id: uuid.UUID) -> ConceptRead:
+def _concept_read(
+    concept: Concept, paper_count: int, project_id: uuid.UUID | None
+) -> ConceptRead:
     return ConceptRead(
         id=concept.id,
         project_id=project_id,
@@ -88,11 +89,11 @@ async def get_concept(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ConceptDetail:
+    # P5c：方向库全实验室可读，概念详情不做课题成员校验（登录即可）
     stmt = (
         select(Concept, DirectionLibrary.project_id)
         .join(DirectionLibrary, DirectionLibrary.id == Concept.library_id)
-        .join(ProjectMember, ProjectMember.project_id == DirectionLibrary.project_id)
-        .where(Concept.id == concept_id, ProjectMember.user_id == user.id)
+        .where(Concept.id == concept_id)
     )
     row = (await session.execute(stmt)).first()
     if row is None:

@@ -181,7 +181,8 @@ class ConceptRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    project_id: uuid.UUID
+    # 概念所属库回指的课题；共享库（无课题回指）为 None
+    project_id: uuid.UUID | None
     name: str
     category: str | None
     definition: str | None

@@ -164,10 +164,11 @@ async def test_highlight_permissions(client):
     ).status_code == 404
     assert (await client.delete(f"/api/highlights/{hl_id}", headers=bob)).status_code == 404
 
-    # 非项目成员 → 404
+    # 非项目成员：论文可读（P5c）→ 划线列表 200 但只见本人（空）；他人划线仍不可改
     mallory = await register_and_login(client, email="mallory@example.com")
     outsider = {"Authorization": f"Bearer {mallory}"}
-    assert (await client.get(f"/api/papers/{pid}/highlights", headers=outsider)).status_code == 404
+    resp = await client.get(f"/api/papers/{pid}/highlights", headers=outsider)
+    assert resp.status_code == 200 and resp.json() == []
     assert (
         await client.patch(f"/api/highlights/{hl_id}", json={"color": "pink"}, headers=outsider)
     ).status_code == 404

@@ -107,7 +107,8 @@ export const router = createBrowserRouter([
             element: <TopicScope />,
             children: [
               { index: true, element: page(() => import('../features/dashboard/DashboardPage'), 'DashboardPage') },
-              { path: 'wiki', element: page(() => import('../features/wiki/WikiPage'), 'WikiPage') },
+              // 旧文献追踪路径 → 该课题隐式库的 /libraries/:id（保留 ?paper= 等深链）
+              { path: 'wiki', element: page(() => import('../features/libraries/TopicWikiRedirect'), 'TopicWikiRedirect') },
               { path: 'research', element: page(() => import('../features/research/ResearchPage'), 'ResearchPage') },
               { path: 'forge', element: page(() => import('../features/forge/ForgePage'), 'ForgePage') },
               { path: 'review', element: page(() => import('../features/review/ReviewPage'), 'ReviewPage') },
@@ -141,6 +142,9 @@ export const router = createBrowserRouter([
       { path: 'projects/:id', element: page(() => import('../features/projects/ProjectDetailPage'), 'ProjectDetailPage') },
       { path: 'join/:token', element: page(() => import('../features/projects/JoinPage'), 'JoinPage') },
       { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
+      // 实验室区：共享方向文献库（全实验室可读，无需课题）
+      { path: 'libraries', element: page(() => import('../features/libraries/LibrariesPage'), 'LibrariesPage') },
+      { path: 'libraries/:id', element: page(() => import('../features/libraries/LibraryDetailPage'), 'LibraryDetailPage') },
       // MCP 说明已并入设置页签，旧链接重定向
       { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },
       { path: 'skills', element: page(() => import('../features/skills/SkillsPage'), 'SkillsPage') },

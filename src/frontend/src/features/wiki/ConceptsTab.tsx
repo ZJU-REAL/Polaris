@@ -28,7 +28,10 @@ const CATEGORY_FILTERS: CategoryFilter[] = [
 ];
 
 export interface ConceptsTabProps {
-  pid: string;
+  /** 课题 id（成员视角：project 作用域端点 + 概念补建按钮）。 */
+  pid?: string;
+  /** 共享库只读视角（P5c）：给定时列表走 /libraries/{id}/concepts，隐藏补建按钮。 */
+  libraryId?: string;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenPaper: (id: string) => void;
@@ -183,26 +186,24 @@ function ConceptDetailPane({
   );
 }
 
-export function ConceptsTab({ pid, selectedId, onSelect, onOpenPaper, onWikiLink }: ConceptsTabProps) {
+export function ConceptsTab({ pid, libraryId, selectedId, onSelect, onOpenPaper, onWikiLink }: ConceptsTabProps) {
   const queryClient = useQueryClient();
   const [category, setCategory] = useState<CategoryFilter>('all');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
 
+  const opts = { category: category === 'all' ? undefined : category, q: q || undefined } as const;
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['concepts', pid, category, q],
-    queryFn: () =>
-      api.listConcepts(pid, {
-        category: category === 'all' ? undefined : category,
-        q: q || undefined,
-      }),
+    queryKey: libraryId ? ['lib-concepts', libraryId, category, q] : ['concepts', pid, category, q],
+    queryFn: () => (libraryId ? api.listLibraryConcepts(libraryId, opts) : api.listConcepts(pid!, opts)),
     retry: false,
   });
   const concepts = useMemo(() => data ?? [], [data]);
 
-  // 全库概念补建：编译过但概念没上链的历史论文（比如批量任务中断）从这里补
+  // 全库概念补建：编译过但概念没上链的历史论文（比如批量任务中断）从这里补（成员视角限定）
+  const canRelink = !!pid && !libraryId;
   const relinkMutation = useMutation({
-    mutationFn: () => api.relinkConcepts(pid),
+    mutationFn: () => api.relinkConcepts(pid!),
     onSuccess: (r) => {
       if (r.concepts_created === 0 && r.links_created === 0) {
         toast(
@@ -241,22 +242,24 @@ export function ConceptsTab({ pid, selectedId, onSelect, onOpenPaper, onWikiLink
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
               {concepts.length ? tr(`${concepts.length} 个`, `${concepts.length}`) : ''}
             </span>
-            <button
-              className="icon-btn"
-              style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0 }}
-              title={tr(
-                '从已编译论文提取概念：重抽正文 [[双链]]，补建缺失的概念和关联',
-                'Extract concepts from compiled papers: re-scan [[wiki links]] and fill in missing concepts and links',
-              )}
-              disabled={relinkMutation.isPending}
-              onClick={() => relinkMutation.mutate()}
-            >
-              <Icon
-                name="refresh"
-                size={13}
-                style={relinkMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
-              />
-            </button>
+            {canRelink && (
+              <button
+                className="icon-btn"
+                style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0 }}
+                title={tr(
+                  '从已编译论文提取概念：重抽正文 [[双链]]，补建缺失的概念和关联',
+                  'Extract concepts from compiled papers: re-scan [[wiki links]] and fill in missing concepts and links',
+                )}
+                disabled={relinkMutation.isPending}
+                onClick={() => relinkMutation.mutate()}
+              >
+                <Icon
+                  name="refresh"
+                  size={13}
+                  style={relinkMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
+                />
+              </button>
+            )}
           </div>
           <div className="row gap6 wrap" style={{ marginTop: 10 }}>
             {CATEGORY_FILTERS.map((f) => {
@@ -294,7 +297,7 @@ export function ConceptsTab({ pid, selectedId, onSelect, onOpenPaper, onWikiLink
                     )
               }
               action={
-                q ? undefined : (
+                q || !canRelink ? undefined : (
                   <button
                     className="btn btn-soft sm"
                     disabled={relinkMutation.isPending}

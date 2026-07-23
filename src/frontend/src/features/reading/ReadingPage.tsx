@@ -14,7 +14,7 @@ import {
   type ReadingStatus,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { topicPath } from '../../app/project';
+import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { NotesPanel } from './NotesPanel';
 import { HighlightsPanel } from './HighlightsPanel';
 import { PdfReader, type JumpTarget } from './PdfReader';
@@ -205,9 +205,13 @@ export function ReadingPage() {
     onError: (e) => toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
+  // 论文所属课题的隐式库：返回/双链跳转的落点（无课题上下文时退到库列表）
+  const topicLib = useTopicLibrary(paper?.project_id ?? null);
+  const libHref = (suffix: string) => (topicLib ? libraryPath(topicLib.id, suffix) : '/libraries');
   const onWikiLink = useCallback(
-    (name: string) => navigate(topicPath(paper?.project_id, `wiki?concept=${encodeURIComponent(name)}`)),
-    [navigate, paper?.project_id],
+    (name: string) =>
+      navigate(topicLib ? libraryPath(topicLib.id, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
+    [navigate, topicLib],
   );
 
   const onHighlightClick = useCallback((hlId: string) => {
@@ -231,9 +235,9 @@ export function ReadingPage() {
           title={tr('打不开这篇论文', 'Cannot open this paper')}
           desc={tr('论文不存在、你不在这个课题里，或后端暂时不可用。', 'It does not exist, you are not in this topic, or the backend is unavailable.')}
           action={
-            <button className="btn btn-ghost" onClick={() => navigate('/wiki')}>
+            <button className="btn btn-ghost" onClick={() => navigate('/libraries')}>
               <Icon name="book" size={14} />
-              {tr('回文献库', 'Back to library')}
+              {tr('回文献库', 'Back to libraries')}
             </button>
           }
         />
@@ -249,7 +253,7 @@ export function ReadingPage() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 18px 16px' }}>
       {/* —— 顶栏 —— */}
       <div className="row gap12" style={{ flexShrink: 0, marginBottom: 12 }}>
-        <button className="btn btn-ghost sm" onClick={() => navigate(topicPath(paper.project_id, `wiki?paper=${paper.id}`))}>
+        <button className="btn btn-ghost sm" onClick={() => navigate(libHref(`?paper=${paper.id}`))}>
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
           {tr('回文献库', 'Back to library')}
         </button>

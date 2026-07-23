@@ -765,7 +765,8 @@ export type ConceptCategory =
 
 export interface ConceptRead {
   id: string;
-  project_id: string;
+  /** 概念所属库回指的课题；共享库（无课题回指）为 null */
+  project_id: string | null;
   name: string;
   category: ConceptCategory;
   /** 一句话定义 */
@@ -791,6 +792,31 @@ export interface ConceptRelinkResult {
   concepts_created: number;
   links_created: number;
   new_concepts: string[];
+}
+
+// ============================================================
+// P5c · 共享方向库（/libraries，全实验室可读）
+// ============================================================
+
+export interface DirectionLibrarySummary {
+  id: string;
+  name: string;
+  statement: string | null;
+  /** 背后课题（过渡期隐式库 1:1 回指；未来共享库可为 null） */
+  project_id: string | null;
+  /** 是否「我的课题的库」（请求者是背后课题成员 → 显示管理页签） */
+  is_mine: boolean;
+  paper_count: number;
+  concept_count: number;
+  last_compiled_at: string | null;
+  /** 上次同步时间 */
+  last_synced_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DirectionLibraryDetail extends DirectionLibrarySummary {
+  cadence: string | null;
 }
 
 // ============================================================
@@ -2601,6 +2627,47 @@ export const api = {
     if (opts.mode) params.set('mode', opts.mode);
     if (opts.limit) params.set('limit', String(opts.limit));
     return request<SearchResult>(`/projects/${projectId}/search?${params.toString()}`);
+  },
+
+  // —— P5c · 共享方向库（全实验室可读） ——
+  listLibraries(): Promise<DirectionLibrarySummary[]> {
+    return request<DirectionLibrarySummary[]>('/libraries');
+  },
+  getLibrary(id: string): Promise<DirectionLibraryDetail> {
+    return request<DirectionLibraryDetail>(`/libraries/${id}`);
+  },
+  /** 库内论文（缺省只列相关性达标的）。 */
+  listLibraryPapers(
+    id: string,
+    opts: { status?: PaperStatusFilter; q?: string; sort?: PaperSort; page?: number; size?: number } = {},
+  ): Promise<PageOf<PaperRead>> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.q) params.set('q', opts.q);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    const qs = params.toString();
+    return request<PageOf<PaperRead>>(`/libraries/${id}/papers${qs ? `?${qs}` : ''}`);
+  },
+  listLibraryConcepts(
+    id: string,
+    opts: { category?: ConceptCategory; q?: string } = {},
+  ): Promise<ConceptRead[]> {
+    const params = new URLSearchParams();
+    if (opts.category) params.set('category', opts.category);
+    if (opts.q) params.set('q', opts.q);
+    const qs = params.toString();
+    return request<ConceptRead[]>(`/libraries/${id}/concepts${qs ? `?${qs}` : ''}`);
+  },
+  searchLibrary(
+    id: string,
+    opts: { q: string; mode?: SearchMode; limit?: number },
+  ): Promise<SearchResult> {
+    const params = new URLSearchParams({ q: opts.q });
+    if (opts.mode) params.set('mode', opts.mode);
+    if (opts.limit) params.set('limit', String(opts.limit));
+    return request<SearchResult>(`/libraries/${id}/search?${params.toString()}`);
   },
 
   // —— P5a · 课题「相关研究」书架 ——

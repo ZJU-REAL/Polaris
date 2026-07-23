@@ -7,13 +7,13 @@ import { FigureEmbed, usePaperFigures } from '../../components/ui/FigureGallery'
 import { Markdown } from '../../lib/markdown';
 import { api, type LibraryEntry, type PaperAuthor, type Publication } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { topicPath } from '../../app/project';
+import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 
 /* ============================================================
    我的文献库 · 右栏详情（三个 tab 共用）：
    - 活体论文（paperId 非 null）→ 拉论文详情；有 wiki 用文献追踪
      同款 markdown 渲染（含 ![[fig:N]] 嵌入图与 [[概念]] 双链，
-     双链跳转对齐阅读页：/wiki?concept=名称）；
+     双链跳转对齐阅读页：/libraries/<库>?concept=名称）；
    - 活体但没有 wiki → 元数据 + 摘要/TL;DR + 一句提示；
    - 快照条目（论文已删）→ 拉单条详情取 wiki 快照正文；有则渲染
      markdown（图片已随论文删除，![[fig:N]] 用灰字占位），
@@ -129,9 +129,12 @@ export function LibraryDetailPane({
   );
 
   // [[概念]] 双链 → 论文所属课题的 wiki（对齐阅读页的处理）
+  // 双链落点：论文所属课题的隐式库详情页（无课题上下文时退到库列表）
+  const topicLib = useTopicLibrary(paper?.project_id ?? null);
   const onWikiLink = useCallback(
-    (name: string) => navigate(topicPath(paper?.project_id, `wiki?concept=${encodeURIComponent(name)}`)),
-    [navigate, paper?.project_id],
+    (name: string) =>
+      navigate(topicLib ? libraryPath(topicLib.id, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
+    [navigate, topicLib],
   );
 
   if (paperId !== null && paperQuery.isLoading) {

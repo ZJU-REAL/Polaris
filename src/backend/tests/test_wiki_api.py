@@ -132,12 +132,13 @@ async def test_paper_detail_and_manual_status(client):
     )
     assert resp.status_code == 422  # 只允许 included|excluded
 
-    # 非项目成员 → 404
+    # 非项目成员也可读（P5c：库成员论文全员可读），但无课题上下文
     other = await register_and_login(client, email="mallory@example.com")
     resp = await client.get(
         f"/api/papers/{ids['p1']}", headers={"Authorization": f"Bearer {other}"}
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.json()["project_id"] is None
 
 
 async def test_concepts_list_and_detail(client):

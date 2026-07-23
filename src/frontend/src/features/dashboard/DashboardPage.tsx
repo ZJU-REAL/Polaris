@@ -11,15 +11,21 @@ import { gateTitle, gateDesc, gateKindLabel } from '../../components/ui/GateCard
 import { useShell } from '../../app/AppShell';
 import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
+import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { api, type ActivityRead, type GateRead, type StatsRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { compositeOf } from '../forge/ideaShared';
 
 /** 端到端流水线各阶段的真实计数（stats 未就绪时显示 —）；path 带当前课题前缀；
     stuckKey = 当前卡住（还没有产出）的阶段，进度漏斗高亮它。 */
-function buildPipelineStages(stats: StatsRead | undefined, pid: string | null, stuckKey: string | null): PipelineStage[] {
+function buildPipelineStages(
+  stats: StatsRead | undefined,
+  pid: string | null,
+  stuckKey: string | null,
+  wikiPath: string,
+): PipelineStage[] {
   const stages: PipelineStage[] = [
-    { key: 'wiki', path: topicPath(pid, 'wiki'), no: '00', icon: 'book', zh: '文献追踪', en: 'Research Wiki', count: stats?.papers_total ?? null },
+    { key: 'wiki', path: wikiPath, no: '00', icon: 'book', zh: '文献库', en: 'Library', count: stats?.papers_total ?? null },
     { key: 'forge', path: topicPath(pid, 'forge'), no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge', count: stats?.ideas_candidate ?? null },
     { key: 'review', path: topicPath(pid, 'review'), no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review', count: stats?.ideas_under_review ?? null },
     {
@@ -63,7 +69,12 @@ interface PipelineProgress {
   hasManuscripts: boolean;
 }
 
-function buildNextSteps(progress: PipelineProgress, pid: string | null, hasKeywords: boolean): NextStep[] {
+function buildNextSteps(
+  progress: PipelineProgress,
+  pid: string | null,
+  hasKeywords: boolean,
+  wikiIngestPath: string,
+): NextStep[] {
   const { hasPapers, hasIdeas, hasExperiments, hasManuscripts } = progress;
   return [
     {
@@ -73,7 +84,7 @@ function buildNextSteps(progress: PipelineProgress, pid: string | null, hasKeywo
       en: 'Set up literature tracking and run the initial library build',
       actionZh: hasKeywords ? '去启动初始建库' : '先去课题设置里配置关键词',
       actionEn: hasKeywords ? 'Run the initial build' : 'Configure terms in topic settings first',
-      path: hasKeywords ? topicPath(pid, 'wiki?tab=ingest') : `/projects/${pid ?? ''}`,
+      path: hasKeywords ? wikiIngestPath : `/projects/${pid ?? ''}`,
     },
     {
       key: 'ideas',
@@ -440,6 +451,8 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { pendingGates, gatesError, openGates } = useShell();
   const { currentProject, currentProjectId } = useProject();
+  // 课题隐式库（文献库入口链接用；列表未就绪时退回旧 /wiki 路径由重定向兜底）
+  const topicLib = useTopicLibrary(currentProjectId);
 
   const statsQuery = useQuery({
     queryKey: ['stats', currentProjectId],
@@ -495,12 +508,22 @@ export function DashboardPage() {
               : null;
 
   const includeTerms = currentProject?.definition?.keywords?.include ?? [];
-  const nextSteps = buildNextSteps(progress, currentProjectId, includeTerms.length > 0);
+  const nextSteps = buildNextSteps(
+    progress,
+    currentProjectId,
+    includeTerms.length > 0,
+    topicLib ? libraryPath(topicLib.id, '?tab=ingest') : topicPath(currentProjectId, 'wiki?tab=ingest'),
+  );
   // 全流程都有产出 → 整卡隐藏
   const showChecklist = checklistReady && nextSteps.some((s) => !s.done);
 
   const statCards = buildStatCards(stats, pendingGates.length);
-  const stages = buildPipelineStages(stats, currentProjectId, stuckKey);
+  const stages = buildPipelineStages(
+    stats,
+    currentProjectId,
+    stuckKey,
+    topicLib ? libraryPath(topicLib.id) : topicPath(currentProjectId, 'wiki'),
+  );
 
   return (
     <div className="page fadeup">
