@@ -32,8 +32,11 @@ from app.models.paper import (
 )
 from app.models.project import ProjectMember
 from app.services.libraries import (
+    dedupe_member_rows,
     get_library_for_project,
+    get_source_library_ids,
     member_paper_stmt,
+    member_papers_stmt,
     user_visible_paper_stmt,
 )
 
@@ -126,6 +129,20 @@ class PaperView:
     @property
     def created_at(self) -> datetime:
         return self.membership.created_at
+
+
+async def _read_library_ids(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID | None,
+    library_id: uuid.UUID | None,
+) -> list[uuid.UUID]:
+    """并集读路径的库解析：显式 library_id（单库读视图/库工作台）→ [library_id]；
+    否则按课题关联库并集（P7；空关联=空语料，调用方返回空态而非报错）。"""
+    if library_id is not None:
+        return [library_id]
+    assert project_id is not None
+    return await get_source_library_ids(session, project_id)
 
 
 def apply_paper_filters(
@@ -226,13 +243,16 @@ async def list_papers(
     created_from: datetime | None = None,
     created_to: datetime | None = None,
 ) -> tuple[Sequence[PaperView], int]:
-    """库内论文列表。入口二选一：project_id（成员视角，解析隐式库）或
-    library_id（共享库读视角，P5c；project_id 仅作 PaperView 的课题上下文回填）。"""
-    if library_id is None:
-        assert project_id is not None
-        library_id = (await get_library_for_project(session, project_id)).id
-    stmt = apply_paper_filters(
-        member_paper_stmt(library_id),
+    """库内论文列表。入口二选一：library_id（单库读视图/库工作台）或 project_id
+    （课题成员视角 = 关联库并集，P7）。project_id 兼作 PaperView 的课题上下文回填。
+
+    单库（含课题只关联一个库的常见情形）走 SQL 分页快路径；课题关联多库时跨库
+    同一论文按确定性视角归并（有 wiki 优先），Python 侧排序 + 分页保证可移植。"""
+    library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
+    if not library_ids:
+        return [], 0
+
+    filter_kwargs = dict(
         project_id=project_id,
         status=status,
         q=q,
@@ -247,16 +267,44 @@ async def list_papers(
         created_from=created_from,
         created_to=created_to,
     )
-    total = (await session.execute(stmt.with_only_columns(func.count()))).scalar_one()
+
+    if len(library_ids) == 1:
+        stmt = apply_paper_filters(member_paper_stmt(library_ids[0]), **filter_kwargs)
+        total = (await session.execute(stmt.with_only_columns(func.count()))).scalar_one()
+        if sort == "-published_at":
+            stmt = stmt.order_by(
+                Paper.published_at.desc().nulls_last(), LibraryPaper.created_at.desc()
+            )
+        else:  # relevance（默认）
+            stmt = stmt.order_by(
+                LibraryPaper.relevance_score.desc().nulls_last(), LibraryPaper.created_at.desc()
+            )
+        stmt = stmt.offset((page - 1) * size).limit(size)
+        rows = (await session.execute(stmt)).all()
+        return [PaperView(paper, membership, project_id) for paper, membership in rows], int(total)
+
+    # 关联多库并集：过滤 → 跨库归并 → Python 排序 + 分页
+    stmt = apply_paper_filters(member_papers_stmt(library_ids), **filter_kwargs)
+    all_rows = dedupe_member_rows((await session.execute(stmt)).all())
     if sort == "-published_at":
-        stmt = stmt.order_by(Paper.published_at.desc().nulls_last(), LibraryPaper.created_at.desc())
-    else:  # relevance（默认）
-        stmt = stmt.order_by(
-            LibraryPaper.relevance_score.desc().nulls_last(), LibraryPaper.created_at.desc()
+        all_rows.sort(
+            key=lambda pm: (
+                pm[0].published_at is None,
+                -(pm[0].published_at.timestamp() if pm[0].published_at else 0.0),
+                -pm[1].created_at.timestamp(),
+            )
         )
-    stmt = stmt.offset((page - 1) * size).limit(size)
-    rows = (await session.execute(stmt)).all()
-    return [PaperView(paper, membership, project_id) for paper, membership in rows], int(total)
+    else:  # relevance（默认）
+        all_rows.sort(
+            key=lambda pm: (
+                -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18),
+                -pm[1].created_at.timestamp(),
+            )
+        )
+    total = len(all_rows)
+    start = (page - 1) * size
+    page_rows = all_rows[start : start + size]
+    return [PaperView(paper, membership, project_id) for paper, membership in page_rows], int(total)
 
 
 async def _pool_paper_view(
@@ -531,7 +579,10 @@ async def delete_papers(
 
     默认软删（移入垃圾桶 = 成员行 status excluded，可召回）；hard=True 删成员行。
     """
+    # 删除/垃圾桶是课题「自己那份库」的管理操作，落在起源库上（不动共享库）
     library = await get_library_for_project(session, project_id)
+    if library is None:
+        return 0
     memberships = (
         (
             await session.execute(
@@ -575,6 +626,8 @@ async def restore_paper(session: AsyncSession, view: PaperView) -> PaperView:
 async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
     """清空垃圾桶：彻底移除库内全部 excluded 成员行，返回删除数。"""
     library = await get_library_for_project(session, project_id)
+    if library is None:
+        return 0
     memberships = (
         (
             await session.execute(
@@ -726,9 +779,9 @@ async def keyword_search_papers(
     笔记仅作者本人可见（P5b），故只有传 user_id（用户检索入口）才并入笔记命中；
     agent 调用（无用户语境）不搜笔记。入口同 list_papers：project_id 或 library_id。
     """
-    if library_id is None:
-        assert project_id is not None
-        library_id = (await get_library_for_project(session, project_id)).id
+    library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
+    if not library_ids:
+        return []
     pattern = f"%{q}%"
     hits = [
         Paper.title.ilike(pattern),
@@ -744,11 +797,11 @@ async def keyword_search_papers(
             )
         )
     stmt = (
-        member_paper_stmt(library_id)
+        member_papers_stmt(library_ids)
         .where(LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]), or_(*hits))
-        .limit(limit * 3)
+        .limit(limit * 3 * len(library_ids))
     )
-    rows = (await session.execute(stmt)).all()
+    rows = dedupe_member_rows((await session.execute(stmt)).all())
     needle = q.lower()
 
     def score_of(p: Paper) -> float:
@@ -773,12 +826,12 @@ async def keyword_search_concepts(
     q: str,
     limit: int,
 ) -> list[tuple[Concept, float]]:
-    if library_id is None:
-        assert project_id is not None
-        library_id = (await get_library_for_project(session, project_id)).id
+    library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
+    if not library_ids:
+        return []
     stmt = (
         select(Concept)
-        .where(Concept.library_id == library_id, Concept.name.ilike(f"%{q}%"))
+        .where(Concept.library_id.in_(library_ids), Concept.name.ilike(f"%{q}%"))
         .order_by(Concept.name)
         .limit(limit)
     )
@@ -798,29 +851,35 @@ async def semantic_search_papers(
     limit: int,
 ) -> list[tuple[PaperView, float]]:
     """pgvector 余弦检索（仅 postgres；调用方需先判 semantic_search_supported）。"""
-    if library_id is None:
-        assert project_id is not None
-        library_id = (await get_library_for_project(session, project_id)).id
+    library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
+    if not library_ids:
+        return []
     qv = json.dumps(query_vector)
+    # DISTINCT p.id：一篇论文命中多个关联库时只召回一次（分数不受成员行影响）
     rows = (
         await session.execute(
             text(
-                "SELECT p.id, 1 - (p.embedding <=> CAST(:qv AS vector)) AS score "
+                "SELECT DISTINCT p.id, 1 - (p.embedding <=> CAST(:qv AS vector)) AS score "
                 "FROM papers p "
-                "JOIN library_papers lp ON lp.paper_id = p.id AND lp.library_id = :lib "
+                "JOIN library_papers lp ON lp.paper_id = p.id "
+                "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
                 "WHERE p.embedding IS NOT NULL "
-                "ORDER BY p.embedding <=> CAST(:qv AS vector) "
+                "ORDER BY score DESC "
                 "LIMIT :k"
             ),
-            {"qv": qv, "lib": str(library_id), "k": limit},
+            {"qv": qv, "libs": [str(lid) for lid in library_ids], "k": limit},
         )
     ).all()
     if not rows:
         return []
     scores = {row.id: float(row.score) for row in rows}
-    pairs = (
-        await session.execute(member_paper_stmt(library_id).where(Paper.id.in_(list(scores))))
-    ).all()
+    pairs = dedupe_member_rows(
+        (
+            await session.execute(
+                member_papers_stmt(library_ids).where(Paper.id.in_(list(scores)))
+            )
+        ).all()
+    )
     by_id = {p.id: PaperView(p, m, project_id) for p, m in pairs}
     return [(by_id[pid], scores[pid]) for pid in (r.id for r in rows) if pid in by_id]
 

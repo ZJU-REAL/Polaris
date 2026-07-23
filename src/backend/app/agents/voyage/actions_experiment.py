@@ -43,13 +43,16 @@ from app.models.base import utcnow
 from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment, ExperimentRun
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Paper
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import VoyageRun
 from app.services import experiments as experiments_service
 from app.services import ssh_exec
 from app.services.figure_annotate import prepare_image_for_llm
-from app.services.libraries import get_library_for_project
+from app.services.libraries import (
+    dedupe_member_rows,
+    get_source_library_ids,
+    member_papers_stmt,
+)
 
 RUN_POLL_SECONDS = 30.0  # 正式运行轮询间隔（测试 monkeypatch 为 0）
 MAX_SETUP_FIXES = 2  # 依赖安装失败回 LLM 修 requirements/run.sh 的次数上限
@@ -873,23 +876,28 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             raise ValueError("实验关联的 idea 不存在")
 
         if not isinstance(experiment.plan, dict):  # 断点幂等
-            library = await get_library_for_project(session, experiment.project_id)
-            rows = (
-                await session.execute(
-                    select(Paper.title, LibraryPaper.wiki_content)
-                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                    .where(
-                        LibraryPaper.library_id == library.id,
-                        LibraryPaper.status.in_(("compiled", "included")),
-                        LibraryPaper.wiki_content.is_not(None),
-                    )
-                    .order_by(
-                        LibraryPaper.relevance_score.desc().nulls_last(),
-                        LibraryPaper.created_at,
-                    )
-                    .limit(_WIKI_CONTEXT_PAPERS)
+            library_ids = await get_source_library_ids(session, experiment.project_id)
+            member_rows = (
+                dedupe_member_rows(
+                    (
+                        await session.execute(
+                            member_papers_stmt(library_ids).where(
+                                LibraryPaper.status.in_(("compiled", "included")),
+                                LibraryPaper.wiki_content.is_not(None),
+                            )
+                        )
+                    ).all()
                 )
-            ).all()
+                if library_ids
+                else []
+            )
+            member_rows.sort(
+                key=lambda pm: (
+                    -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18),
+                    pm[1].created_at,
+                )
+            )
+            rows = [(p.title, m.wiki_content) for p, m in member_rows[:_WIKI_CONTEXT_PAPERS]]
             wiki_context = (
                 "\n\n".join(
                     f"### {title}\n{(wiki or '')[:_WIKI_EXCERPT_CHARS]}" for title, wiki in rows

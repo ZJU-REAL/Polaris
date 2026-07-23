@@ -264,7 +264,16 @@ async def rebuild_fulltext_index(
     幂等：已有分段的论文跳过；新入库论文由 ingest 流水线自动处理，通常无需手动调用。
     """
     await _member_project(session, project_id, user)
+    # 分段重建是「某具体库」的维护写操作（计库预算），落在课题起源库上
     library = await get_library_for_project(session, project_id)
+    if library is None:
+        return {
+            "papers_indexed": 0,
+            "chunks_created": 0,
+            "embedded": 0,
+            "embed_error": None,
+            "total_chunks": 0,
+        }
     chunked_ids = select(PaperChunk.paper_id)
     try:
         papers = (

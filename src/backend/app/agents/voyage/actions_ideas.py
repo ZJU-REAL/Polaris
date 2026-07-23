@@ -36,7 +36,11 @@ from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project
 from app.models.review import ReviewMessage, ReviewSession
 from app.schemas.idea import FORGE_SIGNALS
-from app.services.libraries import get_library_for_project
+from app.services.libraries import (
+    dedupe_member_rows,
+    get_source_library_ids,
+    member_papers_stmt,
+)
 from app.services.review import (
     DEFAULT_PERSONAS,
     elo_update,
@@ -189,35 +193,46 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
     knobs = _forge_knobs(ctx)
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
-        library = await get_library_for_project(session, project.id)
+        # 课题关联库并集：跨库同一论文按确定性视角归并（有 wiki 优先），再按相关性截断
+        library_ids = await get_source_library_ids(session, project.id)
         rows = (
-            await session.execute(
-                select(Paper, LibraryPaper.wiki_content)
-                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                .where(
-                    LibraryPaper.library_id == library.id,
-                    LibraryPaper.status.in_(("compiled", "included")),
-                    LibraryPaper.wiki_content.is_not(None),
-                )
-                .order_by(
-                    LibraryPaper.relevance_score.desc().nulls_last(), LibraryPaper.created_at
-                )
-                .limit(int(knobs["max_context_papers"]))
+            dedupe_member_rows(
+                (
+                    await session.execute(
+                        member_papers_stmt(library_ids).where(
+                            LibraryPaper.status.in_(("compiled", "included")),
+                            LibraryPaper.wiki_content.is_not(None),
+                        )
+                    )
+                ).all()
             )
-        ).all()
+            if library_ids
+            else []
+        )
+        rows.sort(
+            key=lambda pm: (
+                -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18),
+                pm[1].created_at,
+            )
+        )
+        rows = rows[: int(knobs["max_context_papers"])]
         papers = [p for p, _ in rows]
-        wiki_of = {p.id: wiki for p, wiki in rows}
+        wiki_of = {p.id: m.wiki_content for p, m in rows}
         concept_names = (
             (
-                await session.execute(
-                    select(Concept.name)
-                    .where(Concept.library_id == library.id)
-                    .order_by(Concept.name)
-                    .limit(100)
+                (
+                    await session.execute(
+                        select(Concept.name)
+                        .where(Concept.library_id.in_(library_ids))
+                        .order_by(Concept.name)
+                        .limit(100)
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
+            if library_ids
+            else []
         )
 
     parts = []
@@ -274,12 +289,14 @@ async def _concept_paper_map(
     session: AsyncSession, project_id: uuid.UUID
 ) -> dict[uuid.UUID, tuple[str, str, set[uuid.UUID]]]:
     """概念 → (name, category, 关联论文集合)。"""
-    library = await get_library_for_project(session, project_id)
+    library_ids = await get_source_library_ids(session, project_id)
+    if not library_ids:
+        return {}
     rows = (
         await session.execute(
             select(Concept.id, Concept.name, Concept.category, paper_concepts.c.paper_id)
             .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
-            .where(Concept.library_id == library.id)
+            .where(Concept.library_id.in_(library_ids))
         )
     ).all()
     result: dict[uuid.UUID, tuple[str, str, set[uuid.UUID]]] = {}
@@ -325,7 +342,9 @@ def _concept_holes(
 async def _trend_concepts(session: AsyncSession, project_id: uuid.UUID) -> list[dict[str, Any]]:
     """近 90 天入库论文中的高频概念（纯代码，无 LLM）。"""
     cutoff = utcnow() - timedelta(days=_TREND_WINDOW_DAYS)
-    library = await get_library_for_project(session, project_id)
+    library_ids = await get_source_library_ids(session, project_id)
+    if not library_ids:
+        return []
     rows = (
         await session.execute(
             select(Concept.name, Paper.id)
@@ -334,13 +353,18 @@ async def _trend_concepts(session: AsyncSession, project_id: uuid.UUID) -> list[
             .join(
                 LibraryPaper,
                 (LibraryPaper.paper_id == Paper.id)
-                & (LibraryPaper.library_id == library.id),
+                & (LibraryPaper.library_id.in_(library_ids)),
             )
-            .where(Concept.library_id == library.id, LibraryPaper.created_at >= cutoff)
+            .where(Concept.library_id.in_(library_ids), LibraryPaper.created_at >= cutoff)
         )
     ).all()
+    # 跨库并集：同一 (概念名, 论文) 只计一次（论文可能在多个关联库、概念各库一份）
     counts: dict[str, int] = {}
-    for name, _paper_id in rows:
+    seen: set[tuple[str, uuid.UUID]] = set()
+    for name, paper_id in rows:
+        if (str(name), paper_id) in seen:
+            continue
+        seen.add((str(name), paper_id))
         counts[str(name)] = counts.get(str(name), 0) + 1
     top = sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:_TREND_MAX]
     return [{"concept": name, "recent_papers": n} for name, n in top if n >= 2]
@@ -378,27 +402,28 @@ async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> d
             signals["trends"] = await _trend_concepts(session, ctx.run.project_id)
         excerpt_blocks: list[str] = []
         if "limitations" in enabled:
-            library = await get_library_for_project(session, ctx.run.project_id)
-            papers = (
-                (
-                    await session.execute(
-                        select(Paper)
-                        .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                        .where(
-                            LibraryPaper.library_id == library.id,
-                            Paper.full_text_path.is_not(None),
-                            LibraryPaper.status.in_(("compiled", "included")),
+            library_ids = await get_source_library_ids(session, ctx.run.project_id)
+            limit_rows = (
+                dedupe_member_rows(
+                    (
+                        await session.execute(
+                            member_papers_stmt(library_ids).where(
+                                Paper.full_text_path.is_not(None),
+                                LibraryPaper.status.in_(("compiled", "included")),
+                            )
                         )
-                        .order_by(
-                            LibraryPaper.relevance_score.desc().nulls_last(),
-                            LibraryPaper.created_at,
-                        )
-                        .limit(_LIMIT_PAPERS)
-                    )
+                    ).all()
                 )
-                .scalars()
-                .all()
+                if library_ids
+                else []
             )
+            limit_rows.sort(
+                key=lambda pm: (
+                    -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18),
+                    pm[1].created_at,
+                )
+            )
+            papers = [p for p, _ in limit_rows[:_LIMIT_PAPERS]]
             for paper in papers:
                 path = Path(paper.full_text_path or "")
                 if not path.is_file():

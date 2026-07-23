@@ -15,16 +15,17 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
-
 from app.agents.voyage.actions import ActionContext, register
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
-from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.services.figure_annotate import important_figures_with_bytes
-from app.services.libraries import get_library_for_project
+from app.services.libraries import (
+    dedupe_member_rows,
+    get_source_library_ids,
+    member_papers_stmt,
+)
 from app.services.presentation import (
     DeckSpec,
     build_deck,
@@ -130,15 +131,19 @@ async def _load_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]]:
     """按 params.paper_ids 加载库内论文，返回 (Paper, 本方向库版 wiki) 对（保持传入顺序）。"""
     ids = [uuid.UUID(str(i)) for i in _params(ctx).get("paper_ids") or []]
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.run.project_id)
+        library_ids = await get_source_library_ids(session, ctx.run.project_id)
         rows = (
-            await session.execute(
-                select(Paper, LibraryPaper.wiki_content)
-                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                .where(Paper.id.in_(ids), LibraryPaper.library_id == library.id)
+            dedupe_member_rows(
+                (
+                    await session.execute(
+                        member_papers_stmt(library_ids).where(Paper.id.in_(ids))
+                    )
+                ).all()
             )
-        ).all()
-    by_id = {p.id: (p, wiki) for p, wiki in rows}
+            if library_ids
+            else []
+        )
+    by_id = {p.id: (p, m.wiki_content) for p, m in rows}
     ordered = [by_id[i] for i in ids if i in by_id]
     if not ordered:
         raise ValueError("presentation: no papers found for given paper_ids")

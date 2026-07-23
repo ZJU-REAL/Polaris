@@ -195,13 +195,18 @@ async def add_paper_manually(
     # 打分失败会 rollback 并使本 session 的 ORM 对象过期，先留住要用的 id
     paper_id, user_id = paper.id, user.id
     library = await libraries_service.get_library_for_project(session, project_id)
-    membership = await libraries_service.get_membership(
-        session, library_id=library.id, paper_id=paper_id
+    membership = (
+        await libraries_service.get_membership(
+            session, library_id=library.id, paper_id=paper_id
+        )
+        if library is not None
+        else None
     )
     # 顺带相关性打分（best-effort）：失败只记日志，不影响 201；不改 status（人工纳入）
-    await relevance_service.score_added_paper_best_effort(
-        session, paper, membership, project, user_id=user_id
-    )
+    if membership is not None:
+        await relevance_service.score_added_paper_best_effort(
+            session, paper, membership, project, user_id=user_id
+        )
     # 重新加载（带 concepts eager load），避免序列化时触发 async lazy load
     view = await papers_service.get_paper_for_user(
         session, paper_id=paper_id, user_id=user_id, with_concepts=True

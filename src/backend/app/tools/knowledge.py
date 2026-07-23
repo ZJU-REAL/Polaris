@@ -13,7 +13,7 @@ from app.models.paper import Paper, PaperChunk
 from app.services import chunks as chunks_service
 from app.services import graph as graph_service
 from app.services import search as search_service
-from app.services.libraries import get_library_for_project, membership_for_project
+from app.services.libraries import get_source_library_ids, membership_for_project
 from app.tools.context import ToolContext
 from app.tools.registry import tool
 
@@ -41,10 +41,10 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     k = min(_MAX_K, max(1, int(args.get("k") or 6)))
 
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.project_id)
+        library_ids = await get_source_library_ids(session, ctx.project_id)
         rows: list[tuple[PaperChunk, float]] = []
         used_mode = "keyword"
-        if chunks_service.chunk_vector_search_supported(session):
+        if library_ids and chunks_service.chunk_vector_search_supported(session):
             try:
                 vectors = await ctx.llm.embed(
                     [query],
@@ -53,14 +53,14 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                     voyage_id=ctx.voyage_id,
                 )
                 rows = await chunks_service.semantic_search_chunks(
-                    session, library_id=library.id, query_vector=vectors[0], limit=k
+                    session, library_ids=library_ids, query_vector=vectors[0], limit=k
                 )
                 used_mode = "semantic"
             except NotImplementedError:
                 rows = []
-        if not rows:
+        if not rows and library_ids:
             rows = await chunks_service.keyword_search_chunks(
-                session, library_id=library.id, q=query, limit=k
+                session, library_ids=library_ids, q=query, limit=k
             )
             used_mode = used_mode if rows and used_mode == "semantic" else "keyword"
 

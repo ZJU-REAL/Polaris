@@ -15,7 +15,7 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperNote
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
-from app.services.libraries import get_library_for_project
+from app.services.libraries import get_source_library_ids
 
 
 def author_name_of(display_name: str | None, email: str) -> str:
@@ -91,15 +91,22 @@ async def list_project_notes(
 
     分页 + 内容搜索 + 按论文过滤；返回 (rows, total)，row = (note, author_name, paper_title)。
     """
-    library = await get_library_for_project(session, project_id)
-    in_scope = or_(
-        PaperNote.paper_id.in_(
-            select(LibraryPaper.paper_id).where(LibraryPaper.library_id == library.id)
-        ),
+    # 课题范围 = 关联库并集 ∪ 相关研究书架；无关联库时只剩书架部分
+    library_ids = await get_source_library_ids(session, project_id)
+    scope_conditions = [
         PaperNote.paper_id.in_(
             select(TopicPaper.paper_id).where(TopicPaper.topic_id == project_id)
-        ),
-    )
+        )
+    ]
+    if library_ids:
+        scope_conditions.append(
+            PaperNote.paper_id.in_(
+                select(LibraryPaper.paper_id).where(
+                    LibraryPaper.library_id.in_(library_ids)
+                )
+            )
+        )
+    in_scope = or_(*scope_conditions)
     stmt = (
         select(PaperNote, User.display_name, User.email, Paper.title)
         .join(User, User.id == PaperNote.author_id)

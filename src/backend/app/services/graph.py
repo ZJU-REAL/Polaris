@@ -9,13 +9,13 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, Paper, paper_concepts
+from app.models.paper import Concept, paper_concepts
 from app.services.concepts import wiki_slug
-from app.services.libraries import get_library_for_project
+from app.services.libraries import dedupe_member_rows, get_source_library_ids, member_papers_stmt
 
 # 图上展示的论文状态（candidate 未过筛选，噪声大，不进图）
 GRAPH_PAPER_STATUSES = ("scored", "fetched", "compiled", "included")
@@ -45,32 +45,28 @@ async def project_graph(
     max_authors: int = MAX_AUTHORS,
 ) -> dict[str, Any]:
     """构建项目知识图谱，返回 GraphResponse 形状的 dict。"""
-    library = await get_library_for_project(session, project_id)
-    paper_total = int(
+    library_ids = await get_source_library_ids(session, project_id)
+    if not library_ids:
+        # 课题无关联库 = 无语料 → 空图（前端给空态引导去关联文献库）
+        return {"nodes": [], "edges": [], "paper_total": 0, "truncated": False}
+    # 关联库并集：跨库同一论文按确定性视角归并，再按相关性排序截断 top max_papers
+    dedup_rows = dedupe_member_rows(
         (
             await session.execute(
-                select(func.count()).where(
-                    LibraryPaper.library_id == library.id,
-                    LibraryPaper.status.in_(GRAPH_PAPER_STATUSES),
+                member_papers_stmt(library_ids).where(
+                    LibraryPaper.status.in_(GRAPH_PAPER_STATUSES)
                 )
             )
-        ).scalar_one()
+        ).all()
     )
-    rows = (
-        await session.execute(
-            select(Paper, LibraryPaper)
-            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-            .where(
-                LibraryPaper.library_id == library.id,
-                LibraryPaper.status.in_(GRAPH_PAPER_STATUSES),
-            )
-            .order_by(
-                LibraryPaper.relevance_score.desc().nulls_last(),
-                LibraryPaper.created_at.desc(),
-            )
-            .limit(max_papers)
+    paper_total = len(dedup_rows)
+    dedup_rows.sort(
+        key=lambda pm: (
+            -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18),
+            pm[1].created_at,
         )
-    ).all()
+    )
+    rows = dedup_rows[:max_papers]
     papers = [p for p, _ in rows]
     membership_of = {p.id: m for p, m in rows}
     paper_ids = [p.id for p in papers]

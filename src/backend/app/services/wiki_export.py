@@ -26,7 +26,11 @@ from app.models.paper import Concept, Paper, PaperNote
 from app.models.project import Project
 from app.models.user import User
 from app.services.concepts import wiki_slug
-from app.services.libraries import get_library_for_project
+from app.services.libraries import (
+    dedupe_member_rows,
+    get_source_library_ids,
+    member_papers_stmt,
+)
 from app.services.literature.pdf_extract import figure_path
 from app.services.notes import author_name_of
 from app.services.wiki_compile import FIGURE_MARKER_RE
@@ -104,32 +108,43 @@ async def build_obsidian_zip(
     session: AsyncSession, project: Project, *, user_id: uuid.UUID
 ) -> bytes:
     """构建 vault zip；笔记只导出请求者本人的（P5b 笔记 paper × author，仅作者可见）。"""
-    library = await get_library_for_project(session, project.id)
+    # 课题关联库并集：跨库同一论文按确定性视角归并（有 wiki 优先），再按相关性排序
+    library_ids = await get_source_library_ids(session, project.id)
     paper_rows = (
-        await session.execute(
-            select(Paper, LibraryPaper)
-            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-            .where(
-                LibraryPaper.library_id == library.id,
-                LibraryPaper.status.in_(("compiled", "included")),
-            )
-            .options(selectinload(Paper.concepts))
-            .order_by(LibraryPaper.relevance_score.desc().nulls_last())
+        dedupe_member_rows(
+            (
+                await session.execute(
+                    member_papers_stmt(library_ids)
+                    .where(LibraryPaper.status.in_(("compiled", "included")))
+                    .options(selectinload(Paper.concepts))
+                )
+            ).all()
         )
-    ).all()
+        if library_ids
+        else []
+    )
+    paper_rows.sort(
+        key=lambda pm: -(
+            pm[1].relevance_score if pm[1].relevance_score is not None else -1e18
+        )
+    )
     papers = [p for p, _ in paper_rows]
     membership_of = {p.id: m for p, m in paper_rows}
     concepts = (
         (
-            await session.execute(
-                select(Concept)
-                .where(Concept.library_id == library.id)
-                .options(selectinload(Concept.papers))
-                .order_by(Concept.name)
+            (
+                await session.execute(
+                    select(Concept)
+                    .where(Concept.library_id.in_(library_ids))
+                    .options(selectinload(Concept.papers))
+                    .order_by(Concept.name)
+                )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
+        if library_ids
+        else []
     )
 
     # 论文笔记（有笔记的论文页追加「## 笔记」小节）：只带请求者自己的笔记
