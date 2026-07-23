@@ -12,6 +12,7 @@ import { tr } from '../../lib/i18n';
 import { topicPath, useProject } from '../../app/project';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { AddPaperModal } from './AddPaperModal';
+import { ShelfChatTab } from './ShelfChatTab';
 import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
 
 /* ============================================================
@@ -27,6 +28,8 @@ const PAGE_SIZE = 100;
 
 type ShelfSort = 'added' | 'year';
 type ShelfFilter = 'all' | ShelfWikiSource;
+/** 页面级 tab：书架列表 / 相关研究对话 */
+type PageTab = 'list' | 'chat';
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SORTS: { v: ShelfSort; zh: string; en: string }[] = [
@@ -153,6 +156,7 @@ export function ResearchPage() {
   const topicLib = useTopicLibrary(pid || null);
   const wikiHref = topicLib ? libraryPath(topicLib.id) : topicPath(pid, 'wiki');
 
+  const [tab, setTab] = useState<PageTab>('list');
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<ShelfSort>('added');
   const [filter, setFilter] = useState<ShelfFilter>('all');
@@ -280,18 +284,35 @@ export function ResearchPage() {
           'Papers this topic builds on: pick from the library, note why they matter, read the wikis.',
         )}
         right={
-          <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
-            <Icon name="plus" size={13} />
-            {tr('添加论文', 'Add papers')}
-          </button>
+          tab === 'list' ? (
+            <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
+              <Icon name="plus" size={13} />
+              {tr('添加论文', 'Add papers')}
+            </button>
+          ) : undefined
         }
       />
 
-      {/* —— 双栏卡片容器（同「我的文献库」外壳；窄屏上下堆叠） —— */}
+      {/* —— 页面级 tab：书架列表 / 相关研究对话 —— */}
+      <div className="row" style={{ marginBottom: 14 }}>
+        <Segmented<PageTab>
+          options={[
+            { v: 'list', label: tr('相关研究', 'Related work') },
+            { v: 'chat', label: tr('文献对话', 'Chat') },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+      </div>
+
+      {/* —— 卡片容器（列表用双栏；对话直接铺满） —— */}
       <div
         className="card"
         style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 480 }}
       >
+        {tab === 'chat' ? (
+          <ShelfChatTab pid={pid} />
+        ) : (
         <div className="split split-stackable">
           {/* —— 左：书架列表 —— */}
           <div className="split-list">
@@ -444,6 +465,7 @@ export function ResearchPage() {
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* —— 添加论文（从文献库 / 手动）统一弹窗 —— */}

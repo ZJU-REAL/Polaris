@@ -72,8 +72,8 @@ class ChatSource:
 async def _retrieve_chunks(
     session: AsyncSession,
     *,
-    library_ids: list[uuid.UUID],
-    project_id: uuid.UUID,
+    library_ids: list[uuid.UUID] | None,
+    project_id: uuid.UUID | None,
     question: str,
     llm: LLMRouter,
     user_id: uuid.UUID | None,
@@ -257,6 +257,123 @@ async def build_library_messages(
         Message(
             role="system",
             content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(statement=statement, context=context),
+        )
+    ]
+    messages += [Message(role=role, content=content) for role, content in history]
+    messages.append(Message(role="user", content=question))
+    return messages, sources
+
+
+async def build_scoped_messages(
+    session: AsyncSession,
+    *,
+    statement: str | None,
+    question: str,
+    history: list[tuple[str, str]],
+    paper_ids: list[uuid.UUID],
+    llm: LLMRouter,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+) -> tuple[list[Message], list[ChatSource]]:
+    """按「一组论文」组装文献对话消息（课题相关研究书架 / 个人库收藏）。
+
+    与 build_library_messages 同形，但语料是显式给定的 paper_ids 集合而非某方向的
+    关联库：不经 membership，检索走「纯 paper_ids、不 join 库」分支，没索引到片段的
+    论文降级到 TL;DR/摘要。返回 (messages, 引用来源列表)，形状与 build_library_messages
+    一致，端点可照抄 chat_with_library 的消费方式。
+    """
+    statement_text = statement or "（未指定研究方向）"
+    if not paper_ids:
+        # 空语料：直接给「还没有论文」上下文（不抓片段、不兜底）
+        messages = [
+            Message(
+                role="system",
+                content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(
+                    statement=statement_text, context="（还没有收藏任何论文）"
+                ),
+            )
+        ]
+        messages += [Message(role=role, content=content) for role, content in history]
+        messages.append(Message(role="user", content=question))
+        return messages, []
+
+    rows = await _retrieve_chunks(
+        session,
+        library_ids=None,  # 纯 paper_ids 检索，不按方向库过滤
+        project_id=project_id,
+        question=question,
+        llm=llm,
+        user_id=user_id,
+        paper_ids=paper_ids,
+    )
+    papers: dict[uuid.UUID, Paper] = {}
+    if rows:
+        hit_ids = list({c.paper_id for c, _ in rows})
+        found = (await session.execute(select(Paper).where(Paper.id.in_(hit_ids)))).scalars().all()
+        papers = {p.id: p for p in found}
+
+    # (paper, 送入上下文的正文)：优先检索片段，否则按给定顺序取论文摘要兜底（无 membership）
+    entries: list[tuple[Paper, str]] = []
+    if rows and papers:
+        for paper, chunk_list in _group_by_paper(rows, papers):
+            snippet = "\n…\n".join(c.text for c in chunk_list)[:SNIPPET_CHARS]
+            entries.append((paper, snippet))
+    else:
+        fallback = (
+            (
+                await session.execute(
+                    select(Paper).where(Paper.id.in_(paper_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_id = {p.id: p for p in fallback}
+        # 保留调用方给定的论文顺序（书架/收藏已按新→旧排好）
+        ordered = [by_id[pid] for pid in paper_ids if pid in by_id][:FALLBACK_PAPERS]
+        entries = [(p, p.tldr or (p.abstract or "")[:400] or "（无摘要）") for p in ordered]
+
+    # 涉及论文的概念清单（回答里的 [[双链]] 只允许用这些名字）
+    concepts_by_paper: dict[uuid.UUID, list[str]] = {}
+    if entries:
+        concept_rows = (
+            await session.execute(
+                select(paper_concepts.c.paper_id, Concept.name)
+                .join(Concept, Concept.id == paper_concepts.c.concept_id)
+                .where(paper_concepts.c.paper_id.in_([p.id for p, _ in entries]))
+            )
+        ).all()
+        for paper_id, name in concept_rows:
+            concepts_by_paper.setdefault(paper_id, []).append(name)
+
+    sources: list[ChatSource] = []
+    blocks: list[str] = []
+    for i, (paper, body) in enumerate(entries, start=1):
+        names = concepts_by_paper.get(paper.id, [])[:10]
+        concept_line = f"\n概念：{'、'.join(names)}" if names else ""
+        fig_line = _figure_hints(paper)
+        blocks.append(
+            f"[{i}] {paper.title}（{paper.year or '年份未知'}）{concept_line}{fig_line}\n{body}"
+        )
+        sources.append(
+            ChatSource(
+                index=i,
+                paper_id=str(paper.id),
+                title=paper.title,
+                year=paper.year,
+                status=None,  # 无 membership
+                relevance=None,
+                concepts=names,
+            )
+        )
+
+    context = "\n\n".join(blocks) or "（还没有收藏任何论文）"
+    messages = [
+        Message(
+            role="system",
+            content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(
+                statement=statement_text, context=context
+            ),
         )
     ]
     messages += [Message(role=role, content=content) for role, content in history]

@@ -143,6 +143,25 @@ async def personal_wiki_map(
     return {pid: by_key[key] for pid, key in keys.items() if key in by_key}
 
 
+async def personal_paper_ids(
+    session: AsyncSession, *, user_id: uuid.UUID, tab: str = "saved"
+) -> list[uuid.UUID]:
+    """个人库里能跳回活体论文的 paper_id 集合（last_paper_id 非空）。
+
+    tab="saved" 只取收藏条目；否则取全部有软引用的条目。按收藏时间→建条目时间
+    倒序（新→旧），对齐 shelf_paper_ids 形态，供个人库对话按论文集合检索用。
+    """
+    stmt = select(UserLibraryEntry.last_paper_id).where(
+        UserLibraryEntry.user_id == user_id,
+        UserLibraryEntry.last_paper_id.is_not(None),
+    )
+    if tab == "saved":
+        stmt = stmt.where(UserLibraryEntry.saved.is_(True))
+    recency = func.coalesce(UserLibraryEntry.saved_at, UserLibraryEntry.created_at)
+    stmt = stmt.order_by(recency.desc())
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def purge_entry(session: AsyncSession, *, entry: UserLibraryEntry) -> None:
     await session.delete(entry)
     await session.commit()

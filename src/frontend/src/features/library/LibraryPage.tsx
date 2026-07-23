@@ -11,6 +11,7 @@ import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { SearchInput, useDebounced } from '../wiki/shared';
 import { PublicationsTab, PUBLICATIONS_PAGE_SIZE } from './PublicationsTab';
+import { PersonalChatTab } from './PersonalChatTab';
 import { AuthorBindWizard } from './AuthorBindWizard';
 import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPane';
 
@@ -25,8 +26,8 @@ import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPa
 
 const PAGE_SIZE = 20;
 
-/** 页面级 tab：库内两个 tab + 「我发表的」。 */
-type PageTab = LibraryTab | 'publications';
+/** 页面级 tab：库内两个 tab +「文献对话」+「我发表的」。 */
+type PageTab = LibraryTab | 'publications' | 'chat';
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SORTS: { v: LibrarySort; zh: string; en: string }[] = [
@@ -209,7 +210,7 @@ export function LibraryPage() {
     setPage(1);
   }, [tab, q, sort]);
 
-  const onLibraryTab = tab !== 'publications';
+  const onLibraryTab = tab !== 'publications' && tab !== 'chat';
   const listQuery = useQuery({
     queryKey: ['library', tab, q, sort, page],
     queryFn: () =>
@@ -302,6 +303,7 @@ export function LibraryPage() {
           options={[
             { v: 'saved', label: tr('我的收藏', 'Saved') },
             { v: 'history', label: tr('浏览记录', 'History') },
+            { v: 'chat', label: tr('文献对话', 'Chat') },
             {
               v: 'publications',
               label: (
@@ -341,7 +343,10 @@ export function LibraryPage() {
         className="card"
         style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 480 }}
       >
-        {tab === 'publications' ? (
+        {tab === 'chat' ? (
+          /* ======== 个人文献库对话 ======== */
+          <PersonalChatTab />
+        ) : tab === 'publications' ? (
           /* ======== 我发表的 ======== */
           profileQuery.isLoading ? (
             <div className="empty" style={{ margin: 'auto' }}>{tr('加载中…', 'Loading…')}</div>
