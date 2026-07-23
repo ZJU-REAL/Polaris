@@ -70,7 +70,7 @@ input {
    图标列中心恒为侧栏中线（66/2 = 33px），与展开态一致，收放不跳动。 */
 .nav-collapsed .sidebar { width: 66px; }
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
-.nav-collapsed .sb-brand { justify-content: center; margin: 18px 0 12px; }
+.nav-collapsed .sb-brand { justify-content: center; margin: 14px 0 8px; } /* 垂直边距必须与展开态一致，否则收放跳位 */
 .nav-collapsed .sb-scroll { padding: 0 8px 14px; }
 /* 收起态：eyebrow 盒子与展开态逐像素等高——不改 padding/行高/高度，只把文字弄透明
    （nowrap + overflow hidden 防止窄栏下换行改变高度），下方所有条目纵向零位移。
@@ -85,7 +85,7 @@ input {
 /* 第一组（实验室）上方贴着 logo，不画线 */
 .nav-collapsed .sb-nav-static > .sb-section:first-child::after { content: none; }
 /* 收起态：整行居中，仅留图标（行高与展开态相同，图标尺寸不变） */
-.nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 9px 0; }
+.nav-collapsed .nav-item { justify-content: center; gap: 0; padding: 7px 0; }
 .nav-collapsed .nav-item .nav-label { display: none; }
 /* 收起态：非滚动导航区收窄；切换器 icon-only、保留描边 */
 .nav-collapsed .sb-nav-static { padding: 0 8px; }
@@ -94,39 +94,41 @@ input {
 /* 图形标中心对齐图标列中线（12+24/2+... = 33px），与收起态一致 */
 /* 左边距使图形标(41px)中心落在 12.5+41/2 = 33px（= 收起态居中于 66px 侧栏的中心，
    也 = 导航图标列中线），收放切换时 logo 不位移。 */
-.sb-brand { display: flex; align-items: center; gap: 9px; margin: 18px 16px 12px 12.5px; }
+.sb-brand { display: flex; align-items: center; gap: 9px; margin: 14px 16px 8px 12.5px; }
 .sb-brand h1 { font-size: 14px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
 .sb-brand p { font-size: 11px; color: var(--text-3); margin: 1px 0 0; font-family: var(--mono); }
 
-.sb-scroll { flex: 1; overflow-y: auto; padding: 0 12px 14px; }
+/* 菜单固定不滚动（用户要求）：节奏压缩后常规窗口放得下全部条目；
+   overflow hidden 兜底极矮窗口也不出滚动条。 */
+.sb-scroll { flex: 1; overflow-y: hidden; padding: 0 12px 14px; }
 /* 分组 eyebrow：三组（实验室/课题研究/个人）样式完全一致；
-   上 padding 20 + 上一条目 margin 4 ≈ 24px 分组间距，展开态只靠间距区分、不加分隔线。
-   line-height 定死 14px → 盒子总高 = 20+14+6 = 40px（first-child 特例 12+14+6 = 32px），
+   上 padding 16 + 上一条目 margin 3 ≈ 19px 分组间距，展开态只靠间距区分、不加分隔线。
+   line-height 定死 14px → 盒子总高 = 16+14+6 = 36px（first-child 特例 10+14+6 = 30px），
    收起态沿用同一盒模型（只隐藏文字），保证收放时下方条目纵向不跳。 */
 .sb-section {
   font-size: 11px; font-weight: 600; color: var(--text-4); line-height: 14px;
-  letter-spacing: 0.04em; text-transform: uppercase; padding: 20px 10px 6px;
+  letter-spacing: 0.04em; text-transform: uppercase; padding: 16px 10px 6px;
 }
 
 /* —— 非滚动导航区（实验室 + 课题研究两组）——
    放在 sb-scroll 之外：课题切换器的下拉菜单要能向右溢出到主列上，
    不能被滚动容器的 overflow 裁剪（侧栏本身 z-index 已抬高、不裁剪）。 */
 .sb-nav-static { padding: 0 12px; flex-shrink: 0; }
-/* 第一组（实验室）标签与 logo 间距 ≈ 24px（brand margin 12 + 这里 12） */
-.sb-nav-static > .sb-section:first-child { padding-top: 12px; }
+/* 第一组（实验室）标签与 logo 间距 ≈ 18px（brand margin 8 + 这里 10） */
+.sb-nav-static > .sb-section:first-child { padding-top: 10px; }
 
 /* —— 课题切换器：课题研究组内的一个「特殊条目」——
-   与普通条目同高（38px），常驻 1px 描边表达「可点切换」，打开态浅蓝底；
-   与下方「工作台」之间留 8px。
+   与普通条目同高（34px），常驻 1px 描边表达「可点切换」，打开态浅蓝底；
+   与下方「工作台」之间留 6px。
    图标走统一轨道：内 padding 8 + 描边 1 = nav-item 的 9，nav-ic 中心同为 33px；
    gap 11 与 nav-item 一致，标签起点也对齐（56px）。 —— */
 .topic-switch {
   display: flex; align-items: center; gap: 11px;
-  width: 100%; height: 38px; padding: 0 8px;
+  width: 100%; height: 34px; padding: 0 8px;
   border: 1px solid var(--border-2); border-radius: 9px;
   background: transparent; cursor: pointer;
   font-family: var(--sans);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   transition: background 0.12s, border-color 0.12s;
 }
 .topic-switch:hover { background: var(--nav-hover); border-color: var(--border-strong); }
@@ -140,9 +142,9 @@ input {
 
 .nav-item {
   display: flex; align-items: center; gap: 11px;
-  padding: 9px 9px; border-radius: 9px; cursor: pointer;
+  padding: 7px 9px; border-radius: 9px; cursor: pointer;
   font-size: 13.5px; color: var(--text-2); font-weight: 500;
-  position: relative; user-select: none; margin-bottom: 4px;
+  position: relative; user-select: none; margin-bottom: 3px;
   text-decoration: none;
   transition: background 0.12s, color 0.12s;
 }
