@@ -2689,6 +2689,29 @@ export const api = {
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);
   },
+  /** 新建共享文献库（仅平台 admin；非 admin 返回 403）。 */
+  createLibrary(input: {
+    name: string;
+    statement?: string | null;
+    rubric?: unknown;
+    anchors?: unknown[];
+    cadence?: string | null;
+    monthly_budget?: number | null;
+  }): Promise<DirectionLibraryDetail> {
+    return requestJson<DirectionLibraryDetail>('/libraries', 'POST', input);
+  },
+  /** 课题当前关联的文献库摘要（顺序 = 关联建立时间）。 */
+  getSourceLibraries(projectId: string): Promise<DirectionLibrarySummary[]> {
+    return request<DirectionLibrarySummary[]>(`/projects/${projectId}/source-libraries`);
+  },
+  /** 全量替换课题关联的文献库（空数组合法 = 课题 0 关联）。 */
+  setSourceLibraries(projectId: string, libraryIds: string[]): Promise<DirectionLibrarySummary[]> {
+    return requestJson<DirectionLibrarySummary[]>(
+      `/projects/${projectId}/source-libraries`,
+      'PUT',
+      { library_ids: libraryIds },
+    );
+  },
   /** 编辑库信息（可管理者）；传 null 清空对应字段。 */
   updateLibrary(
     id: string,

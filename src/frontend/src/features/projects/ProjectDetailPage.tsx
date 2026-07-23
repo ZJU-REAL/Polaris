@@ -11,6 +11,8 @@ import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectDefinition, type ProjectRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { useLibraries } from '../libraries/hooks';
+import { LibraryPicker } from '../libraries/LibraryPicker';
 
 /* ============================================================
    /projects/:id — 方向详情：definition 各节卡片化展示 + 就地编辑
@@ -173,6 +175,44 @@ export function ProjectDetailPage() {
     onError: (err) => toast(`${tr('保存失败：', 'Save failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
+  // —— 关联文献库 ——
+  const { data: sourceLibraries } = useQuery({
+    queryKey: ['sourceLibraries', id],
+    queryFn: () => api.getSourceLibraries(id),
+    retry: false,
+    enabled: !!id,
+  });
+  const librariesQuery = useLibraries();
+  const allLibraries = librariesQuery.data ?? [];
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkDraft, setLinkDraft] = useState<Set<string>>(new Set());
+  function openLinkEditor() {
+    setLinkDraft(new Set((sourceLibraries ?? []).map((l) => l.id)));
+    setLinkOpen(true);
+  }
+  function toggleLinkDraft(libId: string) {
+    setLinkDraft((prev) => {
+      const next = new Set(prev);
+      if (next.has(libId)) next.delete(libId);
+      else next.add(libId);
+      return next;
+    });
+  }
+  const setSourceLibsMutation = useMutation({
+    mutationFn: (ids: string[]) => api.setSourceLibraries(id, ids),
+    onSuccess: (libs) => {
+      queryClient.setQueryData(['sourceLibraries', id], libs);
+      // 课题语料 = 关联库并集：相关缓存全部失效
+      void queryClient.invalidateQueries({ queryKey: ['papers', id] });
+      void queryClient.invalidateQueries({ queryKey: ['project-graph', id] });
+      void queryClient.invalidateQueries({ queryKey: ['concepts', id] });
+      void queryClient.invalidateQueries({ queryKey: ['shelf', id] });
+      setLinkOpen(false);
+      toast(tr('关联文献库已更新', 'Linked libraries updated'), 'ok');
+    },
+    onError: (err) => toast(`${tr('更新失败：', 'Update failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
+  });
+
   // —— 成员 ——
   const [memberEmail, setMemberEmail] = useState('');
   const [memberRole, setMemberRole] = useState<'member' | 'owner'>('member');
@@ -329,11 +369,75 @@ export function ProjectDetailPage() {
         </div>
       </Modal>
 
+      {/* —— 管理关联文献库 —— */}
+      <Modal
+        open={linkOpen}
+        onClose={() => setLinkOpen(false)}
+        title={tr('管理关联文献库', 'Linked libraries')}
+        sub={tr('课题语料 = 所选文献库的并集；可全部不选。', 'The topic corpus is the union of the selected libraries — selecting none is allowed.')}
+        width={600}
+        footer={
+          <>
+            <button className="btn btn-ghost sm" onClick={() => setLinkOpen(false)}>{tr('取消', 'Cancel')}</button>
+            <button className="btn btn-primary sm" disabled={setSourceLibsMutation.isPending}
+              onClick={() => setSourceLibsMutation.mutate([...linkDraft])}>
+              {setSourceLibsMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+            </button>
+          </>
+        }
+      >
+        {librariesQuery.isLoading ? (
+          <div className="empty" style={{ padding: 30 }}>{tr('加载中…', 'Loading…')}</div>
+        ) : allLibraries.length === 0 ? (
+          <div className="empty" style={{ padding: 30 }}>{tr('平台还没有文献库。', 'No libraries on the platform yet.')}</div>
+        ) : (
+          <div style={{ maxHeight: '55vh', overflowY: 'auto', marginTop: 4 }}>
+            <LibraryPicker libraries={allLibraries} selectedIds={linkDraft} onToggle={toggleLinkDraft} disabled={setSourceLibsMutation.isPending} />
+          </div>
+        )}
+      </Modal>
+
       <div className="col gap16">
         {/* 一句话定义 */}
         <SectionCard icon="sparkle" zh="课题定义" en="Statement">
           <EditableText value={def.statement ?? ''} placeholder={tr('尚未填写一句话定义', 'No one-line statement yet')}
             onSave={(v) => patchDef({ statement: v })} saving={saving} />
+        </SectionCard>
+
+        {/* 关联文献库 */}
+        <SectionCard icon="book" zh="关联文献库" en="Linked libraries"
+          action={
+            <button className="btn btn-soft sm" onClick={openLinkEditor}>
+              <Icon name="pen" size={12} />
+              {tr('管理', 'Manage')}
+            </button>
+          }
+        >
+          <div className="field-hint" style={{ marginBottom: 10 }}>
+            {tr('课题语料 = 所有关联文献库的并集；想法生成、检索都跑在并集上。', 'The topic corpus is the union of all linked libraries — idea generation and search run over that union.')}
+          </div>
+          {sourceLibraries === undefined ? (
+            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>{tr('加载中…', 'Loading…')}</div>
+          ) : sourceLibraries.length === 0 ? (
+            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>
+              {tr('尚未关联任何文献库；点右上「管理」添加。', 'No linked libraries yet — use “Manage” to add.')}
+            </div>
+          ) : (
+            <div className="col gap8">
+              {sourceLibraries.map((lib) => (
+                <div key={lib.id} className="row gap10" style={{ padding: '9px 11px', background: 'var(--surface-2)', borderRadius: 9 }}>
+                  <span style={{ width: 26, height: 26, borderRadius: 8, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Icon name="book" size={14} />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{lib.name}</div>
+                    {lib.statement && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.4 }}>{lib.statement}</div>}
+                  </div>
+                  <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>{tr(`${lib.paper_count} 篇`, `${lib.paper_count} papers`)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </SectionCard>
 
         {/* 目标与范围 */}
