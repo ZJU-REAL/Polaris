@@ -24,6 +24,60 @@ class IngestConflictError(Exception):
     """同一项目已有 ingest voyage 在跑。"""
 
 
+class LibraryBudgetExhaustedError(Exception):
+    """方向库本月预算已用尽（P6）：拒绝启动新的 ingest。"""
+
+
+async def monthly_library_usage(
+    session: AsyncSession, library_id: uuid.UUID
+) -> dict[str, Any]:
+    """该方向库本月（UTC 自然月）的 LLM 用量聚合（口径与 LLMUsage 记账一致）。"""
+    from app.models.llm_config import LLMUsage  # 延迟导入避免模块环
+
+    now = datetime.now(UTC)
+    month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+    prompt, completion = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(LLMUsage.prompt_tokens), 0),
+                func.coalesce(func.sum(LLMUsage.completion_tokens), 0),
+            ).where(LLMUsage.library_id == library_id, LLMUsage.created_at >= month_start)
+        )
+    ).one()
+    prompt, completion = int(prompt), int(completion)
+    return {
+        "month": now.strftime("%Y-%m"),
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+
+
+async def apply_library_budget(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    monthly_budget: int | None,
+    budget: dict[str, Any],
+) -> dict[str, Any]:
+    """把库的月度预算折算进 run.budget（复用 Voyage 预算暂停语义，不另造状态机）。
+
+    - 本月已用 ≥ 上限 → 抛 LibraryBudgetExhaustedError（拒绝启动）；
+    - 否则 run.budget.max_tokens 收紧为 min(原值, 本月剩余)——运行中一旦累计
+      到剩余额度，引擎按既有预算机制收尾/暂停。
+    """
+    if not monthly_budget:
+        return budget
+    usage = await monthly_library_usage(session, library_id)
+    remaining = int(monthly_budget) - int(usage["total_tokens"])
+    if remaining <= 0:
+        raise LibraryBudgetExhaustedError(str(library_id))
+    max_tokens = budget.get("max_tokens")
+    budget = dict(budget)
+    budget["max_tokens"] = remaining if not max_tokens else min(int(max_tokens), remaining)
+    return budget
+
+
 def derive_budget(knobs: IngestKnobs) -> dict[str, Any]:
     # 最大化模式不设 token 预算：引擎 _budget_exceeded 对 falsy 的 max_tokens（None/缺失）
     # 直接跳过预算检查（engine.py），任务不会因预算暂停/降级收尾。
@@ -54,9 +108,16 @@ async def create_ingest_voyage(
     knobs: IngestKnobs,
     created_by: uuid.UUID | None,
 ) -> VoyageRun:
-    """建 ingest voyage（互斥检查 + Activity 落记录），由调用方入队 run_voyage。"""
+    """建 ingest voyage（互斥检查 + 库预算检查 + Activity 落记录），由调用方入队 run_voyage。"""
     if await find_running_ingest(session, project.id) is not None:
         raise IngestConflictError(str(project.id))
+    library = await get_library_for_project(session, project.id)
+    budget = await apply_library_budget(
+        session,
+        library_id=library.id,
+        monthly_budget=library.monthly_budget,
+        budget=derive_budget(knobs),
+    )
     kind = "wiki_bootstrap" if mode == "bootstrap" else "wiki_ingest"
     goal = (
         f"文献调研初始建库：{project.name}"
@@ -69,7 +130,7 @@ async def create_ingest_voyage(
         status="planning",
         cursor=0,
         checkpoint={"params": {"mode": mode, "knobs": knobs.model_dump()}},
-        budget=derive_budget(knobs),
+        budget=budget,
         project_id=project.id,
         created_by=created_by,
     )

@@ -23,6 +23,7 @@ from app.schemas.libraries import (
     DirectionLibraryDetail,
     DirectionLibrarySummary,
     DirectionLibraryUpdate,
+    LibraryBudgetRead,
 )
 from app.schemas.paper import (
     ConceptRead,
@@ -33,6 +34,7 @@ from app.schemas.paper import (
     SearchResponse,
 )
 from app.services import concepts as concepts_service
+from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
 from app.services import papers as papers_service
 
@@ -104,6 +106,28 @@ async def update_library(
         library = await libraries_service.update_library(session, library=library, fields=fields)
     row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
+
+
+@router.get("/libraries/{library_id}/budget", response_model=LibraryBudgetRead)
+async def get_library_budget(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LibraryBudgetRead:
+    """本月预算消耗（可管理者）：库侧 LLM 调用（打分/编译/概念定义/向量化）的聚合。"""
+    library = await _get_managed_library(session, library_id, user)
+    usage = await ingest_service.monthly_library_usage(session, library.id)
+    budget = library.monthly_budget
+    used = int(usage["total_tokens"])
+    return LibraryBudgetRead(
+        month=usage["month"],
+        monthly_budget=budget,
+        prompt_tokens=usage["prompt_tokens"],
+        completion_tokens=usage["completion_tokens"],
+        used_tokens=used,
+        remaining_tokens=None if not budget else max(0, int(budget) - used),
+        exhausted=bool(budget) and used >= int(budget),
+    )
 
 
 @router.get("/libraries/{library_id}/curators", response_model=list[CuratorRead])

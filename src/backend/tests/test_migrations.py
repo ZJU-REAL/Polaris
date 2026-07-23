@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "1c6c4831d80f"  # 笔记/划线归属拆分（P5b，本分支最新）
-PREV_REVISION = "0775b55c26e4"  # 课题「相关研究」书架（P5a）
+HEAD_REVISION = "3f770d85dca9"  # LLM 用量按方向库归因（P6，本分支最新）
+PREV_REVISION = "1c6c4831d80f"  # 笔记/划线归属拆分（P5b）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -58,6 +58,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "user_library_entries",
                     "user_publications",
                     "topic_papers",
+                    "llm_usage",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -221,13 +222,19 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "note",
         "added_by",
     } <= columns["topic_papers"]
+    # 本分支新增：LLM 用量按方向库归因（P6）
+    assert "library_id" in columns["llm_usage"]
+    assert "library_id" in columns["llm_call_logs"]
 
-    # 最新 revision 可往返（downgrade 补回可空 project_id 列，其余结构不动）
+    # 最新 revision 可往返（downgrade 删 library_id 归因列，其余结构不动）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "project_id" in columns["paper_notes"]
-    assert "project_id" in columns["paper_highlights"]
+    assert "library_id" not in columns["llm_usage"]
+    assert "library_id" not in columns["llm_call_logs"]
+    # P5b 拆分结构不受影响：笔记/划线仍无 project_id
+    assert "project_id" not in columns["paper_notes"]
+    assert "project_id" not in columns["paper_highlights"]
     assert "topic_papers" in columns["_tables"]
     # P4 收尾后的内容池结构不受影响：判断列仍只在 library_papers 上
     assert "project_id" not in columns["papers"]

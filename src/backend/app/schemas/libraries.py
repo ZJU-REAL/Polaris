@@ -58,3 +58,15 @@ class CuratorsUpdate(BaseModel):
     """策展人名单全量替换（平台 admin）。"""
 
     user_ids: list[uuid.UUID]
+
+
+class LibraryBudgetRead(BaseModel):
+    """库预算面板（P6）：本月消耗（UTC 自然月，token 口径与 LLMUsage 记账一致）。"""
+
+    month: str  # 如 "2026-07"
+    monthly_budget: int | None  # None = 不限
+    prompt_tokens: int
+    completion_tokens: int
+    used_tokens: int
+    remaining_tokens: int | None  # 不限时为 None；用超时为 0
+    exhausted: bool  # True = 本月预算已用尽（ingest 会被拒绝启动）

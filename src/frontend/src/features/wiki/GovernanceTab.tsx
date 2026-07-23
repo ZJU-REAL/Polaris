@@ -8,6 +8,7 @@ import { tr } from '../../lib/i18n';
 /* ============================================================
    文献库「治理」页签（P6）：
    - 库信息与预算编辑（可管理者：成员 / 文献库管理员 / 平台管理员）；
+   - 本月 AI 用量进度（超限后同步任务暂停到下月）；
    - 文献库管理员名单（仅平台管理员可编辑）；
    ============================================================ */
 
@@ -29,8 +30,78 @@ export function GovernanceTab({ libraryId }: { libraryId: string }) {
   return (
     <div className="col gap16" style={{ padding: 20, overflowY: 'auto' }}>
       {lib && <LibraryInfoCard lib={lib} />}
+      <BudgetCard libraryId={libraryId} />
       <CuratorsCard libraryId={libraryId} canEdit={admin} />
     </div>
+  );
+}
+
+/* —— 本月用量进度 —— */
+
+function BudgetCard({ libraryId }: { libraryId: string }) {
+  const { data: budget, isError } = useQuery({
+    queryKey: ['library-budget', libraryId],
+    queryFn: () => api.getLibraryBudget(libraryId),
+    retry: false,
+    refetchInterval: 60_000,
+  });
+
+  const limited = budget?.monthly_budget != null && budget.monthly_budget > 0;
+  const ratio = limited && budget ? Math.min(1, budget.used_tokens / budget.monthly_budget!) : 0;
+  const barColor = ratio >= 1 ? 'var(--danger)' : ratio >= 0.8 ? 'var(--warn)' : 'var(--accent)';
+
+  return (
+    <section className="card" style={{ padding: 18 }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('本月 AI 用量', 'AI usage this month')}</h3>
+        {budget && <span className="muted" style={{ fontSize: 12 }}>{budget.month}</span>}
+      </div>
+      {isError ? (
+        <div className="muted" style={{ fontSize: 13 }}>{tr('用量加载失败', 'Failed to load usage')}</div>
+      ) : !budget ? (
+        <div className="skel" style={{ height: 34 }} />
+      ) : (
+        <div className="col gap8">
+          <div className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}>
+            <span>
+              {tr('已用 ', 'Used ')}
+              <strong>{budget.used_tokens.toLocaleString()}</strong>
+              {' tokens'}
+              <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>
+                {tr('输入 ', 'in ')}{budget.prompt_tokens.toLocaleString()} · {tr('输出 ', 'out ')}
+                {budget.completion_tokens.toLocaleString()}
+              </span>
+            </span>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {limited
+                ? `${tr('上限 ', 'Cap ')}${budget.monthly_budget!.toLocaleString()}`
+                : tr('未设上限', 'No cap')}
+            </span>
+          </div>
+          {limited && (
+            <div style={{ height: 8, borderRadius: 4, background: 'var(--surface-3)', overflow: 'hidden' }}>
+              <div
+                style={{
+                  width: `${Math.round(ratio * 100)}%`,
+                  height: '100%',
+                  borderRadius: 4,
+                  background: barColor,
+                  transition: 'width .3s',
+                }}
+              />
+            </div>
+          )}
+          {budget.exhausted && (
+            <div style={{ color: 'var(--danger-tx)', fontSize: 13 }}>
+              {tr(
+                '本月预算已用尽：同步任务已暂停，下月自动恢复，或调高上限后再试。',
+                'Monthly budget used up: syncing is paused until next month, or raise the cap and retry.',
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

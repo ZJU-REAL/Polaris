@@ -38,6 +38,9 @@ async def start_ingest(
         )
     except ingest_service.IngestConflictError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e
+    except ingest_service.LibraryBudgetExhaustedError as e:
+        # 本月预算已用尽：拒绝启动（下月自动恢复，或管理员调高预算）
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_BUDGET_EXHAUSTED") from e
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)
 

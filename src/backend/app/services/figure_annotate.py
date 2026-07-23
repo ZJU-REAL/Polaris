@@ -216,6 +216,7 @@ async def annotate_figures(
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> list[dict[str, Any]]:
     """挑重要图并配中文图注，合并结果写 Paper.figures 并返回（调用方负责 commit）。"""
@@ -246,6 +247,7 @@ async def annotate_figures(
                     images=images,
                     user_id=user_id,
                     project_id=project_id,
+                    library_id=library_id,
                     voyage_id=voyage_id,
                 )
                 merged = _merge(candidates, _extract_json_array(result.content))

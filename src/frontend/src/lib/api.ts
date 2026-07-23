@@ -830,6 +830,20 @@ export interface LibraryCuratorRead {
   display_name: string | null;
 }
 
+/** 库预算面板：本月 AI 用量（token）与上限。 */
+export interface LibraryBudgetRead {
+  /** 如 "2026-07" */
+  month: string;
+  monthly_budget: number | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  used_tokens: number;
+  /** 不限时为 null */
+  remaining_tokens: number | null;
+  /** true = 本月预算已用尽（同步任务会被拒绝启动） */
+  exhausted: boolean;
+}
+
 // ============================================================
 // M2 · Search（关键词 / 语义检索）
 // ============================================================
@@ -2660,6 +2674,10 @@ export const api = {
     },
   ): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>(`/libraries/${id}`, 'PATCH', input);
+  },
+  /** 本月预算消耗（可管理者可见）。 */
+  getLibraryBudget(id: string): Promise<LibraryBudgetRead> {
+    return request<LibraryBudgetRead>(`/libraries/${id}/budget`);
   },
   /** 文献库管理员名单（可管理者可见）。 */
   listLibraryCurators(id: string): Promise<LibraryCuratorRead[]> {

@@ -139,6 +139,7 @@ async def compile_paper(
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
     extra_guidance: str = "",
 ) -> CompiledWiki:
@@ -171,6 +172,7 @@ async def compile_paper(
             images=images or None,
             user_id=user_id,
             project_id=project_id,
+            library_id=library_id,
             voyage_id=voyage_id,
         )
         if not result.content.strip():
@@ -210,12 +212,22 @@ async def recompile_paper(
             ]
         if paper.figures:
             await annotate_figures(
-                paper, paper.figures, llm=llm, user_id=user_id, project_id=project_id
+                paper,
+                paper.figures,
+                llm=llm,
+                user_id=user_id,
+                project_id=project_id,
+                library_id=membership.library_id,
             )
         await session.commit()
 
     compiled = await compile_paper(
-        paper, statement=statement, llm=llm, user_id=user_id, project_id=project_id
+        paper,
+        statement=statement,
+        llm=llm,
+        user_id=user_id,
+        project_id=project_id,
+        library_id=membership.library_id,  # 库版重编译记方向库账（P6）
     )
     membership.wiki_content = compiled.content
     membership.compiled_at = utcnow()

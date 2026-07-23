@@ -3,7 +3,8 @@
 - 路由表存 DB（ModelRoute + LLMProviderConfig，管理端可改），60s 进程内缓存；
 - 查不到路由时回退 settings 默认（FakeProvider，无 key 也能跑通）；
 - 每次 complete/stream 后写一条 LLMUsage 记账（拿不到 usage 时按 len/4 估算），
-  归属到 user + project + voyage。
+  归属到 user + project + voyage；库侧调用（ingest/打分/编译/概念定义/向量化）
+  另带 library_id 记到方向库账上（P6 库级月度预算的依据）。
 """
 
 import logging
@@ -233,6 +234,7 @@ class LLMRouter:
         user_id: uuid.UUID | None,
         project_id: uuid.UUID | None,
         voyage_id: uuid.UUID | None,
+        library_id: uuid.UUID | None = None,
     ) -> None:
         from app.models.llm_config import LLMUsage
 
@@ -242,6 +244,7 @@ class LLMRouter:
                     LLMUsage(
                         user_id=user_id,
                         project_id=project_id,
+                        library_id=library_id,
                         voyage_id=voyage_id,
                         stage=stage,
                         model=model,
@@ -268,6 +271,7 @@ class LLMRouter:
         user_id: uuid.UUID | None,
         project_id: uuid.UUID | None,
         voyage_id: uuid.UUID | None,
+        library_id: uuid.UUID | None = None,
     ) -> None:
         """写一条调用日志（开关打开时才被调用）。任何失败只 warning，不影响主流程。"""
         try:
@@ -286,6 +290,7 @@ class LLMRouter:
                 user_id=user_id,
                 project_id=project_id,
                 voyage_id=voyage_id,
+                library_id=library_id,
             )
         except Exception:  # noqa: BLE001 — 日志记录绝不影响业务调用
             logger.warning("llm call logging failed (stage=%s)", stage, exc_info=True)
@@ -312,6 +317,7 @@ class LLMRouter:
         images: list[bytes] | None = None,
         user_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
+        library_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> CompletionResult:
         provider, route = await self.resolve(stage, user_id)
@@ -346,6 +352,7 @@ class LLMRouter:
                     user_id=user_id,
                     project_id=project_id,
                     voyage_id=voyage_id,
+                    library_id=library_id,
                 )
             raise
         result.usage = self._ensure_usage(messages, result.content, result.usage)
@@ -356,6 +363,7 @@ class LLMRouter:
             user_id=user_id,
             project_id=project_id,
             voyage_id=voyage_id,
+            library_id=library_id,
         )
         if log_enabled:
             await self._log_call(
@@ -371,6 +379,7 @@ class LLMRouter:
                 user_id=user_id,
                 project_id=project_id,
                 voyage_id=voyage_id,
+                library_id=library_id,
             )
         return result
 
@@ -438,6 +447,7 @@ class LLMRouter:
         stage: str = "embedding",
         user_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
+        library_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> list[list[float]]:
         """文本嵌入（stage 默认 embedding）。provider 不支持时抛 NotImplementedError。"""
@@ -468,6 +478,7 @@ class LLMRouter:
                     user_id=user_id,
                     project_id=project_id,
                     voyage_id=voyage_id,
+                    library_id=library_id,
                 )
             raise
         usage = {"prompt_tokens": sum(estimate_tokens(t) for t in texts)}
@@ -478,6 +489,7 @@ class LLMRouter:
             user_id=user_id,
             project_id=project_id,
             voyage_id=voyage_id,
+            library_id=library_id,
         )
         if log_enabled:
             dim = len(vectors[0]) if vectors else 0
@@ -494,6 +506,7 @@ class LLMRouter:
                 user_id=user_id,
                 project_id=project_id,
                 voyage_id=voyage_id,
+                library_id=library_id,
             )
         return vectors
 
@@ -506,6 +519,7 @@ class LLMRouter:
         top_n: int | None = None,
         user_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
+        library_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> list[tuple[int, float]]:
         """重排（stage 默认 rerank），返回 (documents 下标, 分数) 降序。
@@ -541,6 +555,7 @@ class LLMRouter:
                     user_id=user_id,
                     project_id=project_id,
                     voyage_id=voyage_id,
+                    library_id=library_id,
                 )
             raise
         total_tokens = int(result.usage.get("total_tokens", 0)) or (
@@ -553,6 +568,7 @@ class LLMRouter:
             user_id=user_id,
             project_id=project_id,
             voyage_id=voyage_id,
+            library_id=library_id,
         )
         if log_enabled:
             await self._log_call(
@@ -568,6 +584,7 @@ class LLMRouter:
                 user_id=user_id,
                 project_id=project_id,
                 voyage_id=voyage_id,
+                library_id=library_id,
             )
         return result.results
 
@@ -580,6 +597,7 @@ class LLMRouter:
         max_tokens: int | None = None,
         user_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
+        library_id: uuid.UUID | None = None,
         voyage_id: uuid.UUID | None = None,
     ) -> AsyncIterator[str]:
         provider, route = await self.resolve(stage, user_id)
@@ -610,6 +628,7 @@ class LLMRouter:
                     user_id=user_id,
                     project_id=project_id,
                     voyage_id=voyage_id,
+                    library_id=library_id,
                 )
             raise
         content = "".join(collected)
@@ -621,6 +640,7 @@ class LLMRouter:
             user_id=user_id,
             project_id=project_id,
             voyage_id=voyage_id,
+            library_id=library_id,
         )
         # 时延 = 到流结束的完整耗时；response 聚合完整输出
         if log_enabled:
@@ -637,6 +657,7 @@ class LLMRouter:
                 user_id=user_id,
                 project_id=project_id,
                 voyage_id=voyage_id,
+                library_id=library_id,
             )
 
 

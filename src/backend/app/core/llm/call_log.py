@@ -109,6 +109,7 @@ async def record_call(
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
 ) -> None:
     """写一条调用日志（尽力而为，失败只 warning）；低频顺带清理过期日志。"""
     global _last_cleanup_at
@@ -141,6 +142,7 @@ async def record_call(
                     user_id=user_id,
                     project_id=project_id,
                     voyage_id=voyage_id,
+                    library_id=library_id,
                 )
             )
             await session.commit()
