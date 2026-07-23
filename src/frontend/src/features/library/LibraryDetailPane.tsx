@@ -201,16 +201,25 @@ export function LibraryDetailPane({
             {tr('打开阅读页', 'Open reader')}
           </button>
         )}
-        {alive && topicLib && (
-          <button
-            className="btn btn-ghost sm"
-            title={tr('打开这篇所在的方向文献库', 'Open the direction library this paper lives in')}
-            onClick={() => navigate(libraryPath(topicLib.id, `?paper=${paper.id}`))}
-          >
-            <Icon name="book" size={13} />
-            {tr('去文献库', 'Open library')}
-          </button>
-        )}
+        {alive &&
+          (topicLib ? (
+            <button
+              className="btn btn-ghost sm"
+              title={tr('打开这篇所在的方向文献库', 'Open the direction library this paper lives in')}
+              onClick={() => navigate(libraryPath(topicLib.id, `?paper=${paper.id}`))}
+            >
+              <Icon name="book" size={13} />
+              {tr('去文献库', 'Open library')}
+            </button>
+          ) : (
+            // 手动添加、未纳入任何方向文献库：置灰不可点，hover 说明原因
+            <span title={tr('这篇是手动添加的，未纳入公共文献库', 'Manually added — not in any shared library')}>
+              <button className="btn btn-ghost sm" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>
+                <Icon name="book" size={13} />
+                {tr('去文献库', 'Open library')}
+              </button>
+            </span>
+          ))}
         {arxivUrl && (
           <a
             className="btn btn-ghost sm"
