@@ -10,7 +10,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { AccordionSection } from '../../components/ui/Accordion';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
-import { api, ApiError, isAdmin, type DirectionLibrarySummary } from '../../lib/api';
+import { api, type DirectionLibrarySummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useLibraries, libraryPath } from './hooks';
 
@@ -26,6 +26,19 @@ const CADENCES = [
   { v: 'weekly', zh: '每周', en: 'Weekly' },
   { v: 'manual', zh: '手动', en: 'Manual' },
 ] as const;
+
+function StatusBadge({ status }: { status: DirectionLibrarySummary['status'] }) {
+  if (status === 'active') return null;
+  const cfg =
+    status === 'pending'
+      ? { zh: '待审批', en: 'Pending', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' }
+      : { zh: '已驳回', en: 'Rejected', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)' };
+  return (
+    <span className="pill sm" style={{ background: cfg.bg, color: cfg.tx, flexShrink: 0 }}>
+      {tr(cfg.zh, cfg.en)}
+    </span>
+  );
+}
 
 function LibraryCard({ lib, onOpen }: { lib: DirectionLibrarySummary; onOpen: () => void }) {
   const updated = lib.last_compiled_at ?? lib.last_synced_at;
@@ -69,6 +82,7 @@ function LibraryCard({ lib, onOpen }: { lib: DirectionLibrarySummary; onOpen: ()
                 {tr('我在用', 'In use')}
               </span>
             )}
+            <StatusBadge status={lib.status} />
           </div>
         </div>
         <Icon name="arrow" size={14} style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 4 }} />
@@ -104,34 +118,54 @@ function LibraryCard({ lib, onOpen }: { lib: DirectionLibrarySummary; onOpen: ()
   );
 }
 
-/** 新建文献库弹窗（仅平台管理员）。名称必填，其余为可选高级项。 */
+const QUICK_CATEGORIES = ['cs.CL', 'cs.AI', 'cs.LG', 'cs.CV', 'cs.MA', 'stat.ML'];
+
+// arXiv id 宽松校验：2401.01234 / 2401.01234v2 / 老式 hep-th/9901001
+const ARXIV_ID_RE = /^(\d{4}\.\d{4,5}(v\d+)?|[a-z\-]+\/\d{7}(v\d+)?)$/i;
+
+/**
+ * 新建文献库弹窗（P9b：任意登录用户可建）。名称 + 一句话说明必填；
+ * 锚点论文只填 arXiv-id（一行一个，抓取时解析元数据）；关键词 / 分类可选。
+ * 提交后建 pending 库，跳详情页，等管理员审批激活后才能开始抓取。
+ */
 function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [statement, setStatement] = useState('');
-  const [advOpen, setAdvOpen] = useState(false);
-  const [cadence, setCadence] = useState<string>('daily');
-  const [budget, setBudget] = useState('');
-  const [rubricText, setRubricText] = useState('');
   const [anchorsText, setAnchorsText] = useState('');
+  const [advOpen, setAdvOpen] = useState(false);
+  const [includeStr, setIncludeStr] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
+  const [customCat, setCustomCat] = useState('');
+  const [cadence, setCadence] = useState<string>('daily');
+
+  const anchorLines = anchorsText.split(/[\n,，]/).map((x) => x.trim()).filter(Boolean);
+  const badAnchors = anchorLines.filter((x) => !ARXIV_ID_RE.test(x));
+  const includeTerms = includeStr.split(/[,，\n]/).map((x) => x.trim()).filter(Boolean);
+
+  function toggleCat(c: string) {
+    setCategories((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
+  }
+  function addCustomCat() {
+    const c = customCat.trim();
+    if (c && !categories.includes(c)) setCategories((prev) => [...prev, c]);
+    setCustomCat('');
+  }
 
   const mutation = useMutation({
     mutationFn: (input: Parameters<typeof api.createLibrary>[0]) => api.createLibrary(input),
     onSuccess: (lib) => {
-      toast(tr('文献库已创建', 'Library created'), 'ok');
+      toast(
+        tr('已提交，待管理员审批激活后即可开始抓取', 'Submitted — an admin will review and activate it before ingest can start'),
+        'ok',
+      );
       void queryClient.invalidateQueries({ queryKey: ['libraries'] });
       onClose();
       navigate(libraryPath(lib.id));
     },
     onError: (err) => {
-      const forbidden = err instanceof ApiError && err.status === 403;
-      toast(
-        forbidden
-          ? tr('只有平台管理员可以新建文献库', 'Only a platform admin can create libraries')
-          : `${tr('创建失败：', 'Create failed: ')}${err instanceof Error ? err.message : String(err)}`,
-        'error',
-      );
+      toast(`${tr('创建失败：', 'Create failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error');
     },
   });
 
@@ -140,44 +174,24 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       toast(tr('请填写文献库名称', 'Enter a library name'), 'info');
       return;
     }
-    let rubric: unknown;
-    if (rubricText.trim()) {
-      try {
-        rubric = JSON.parse(rubricText);
-      } catch {
-        toast(tr('评审标准不是合法 JSON', 'Rubric is not valid JSON'), 'error');
-        return;
-      }
+    if (!statement.trim()) {
+      toast(tr('请填写一句话说明', 'Enter a one-sentence statement'), 'info');
+      return;
     }
-    let anchors: unknown[] | undefined;
-    if (anchorsText.trim()) {
-      try {
-        const a = JSON.parse(anchorsText);
-        if (!Array.isArray(a)) {
-          toast(tr('锚点论文需为 JSON 数组', 'Anchors must be a JSON array'), 'error');
-          return;
-        }
-        anchors = a;
-      } catch {
-        toast(tr('锚点论文不是合法 JSON', 'Anchors are not valid JSON'), 'error');
-        return;
-      }
+    if (badAnchors.length > 0) {
+      toast(tr(`这些锚点不是合法 arXiv 编号：${badAnchors.join('、')}`, `Not valid arXiv ids: ${badAnchors.join(', ')}`), 'error');
+      return;
     }
-    let monthly_budget: number | undefined;
-    if (budget.trim()) {
-      monthly_budget = Number(budget);
-      if (!Number.isFinite(monthly_budget)) {
-        toast(tr('月度预算需为数字', 'Budget must be a number'), 'error');
-        return;
-      }
-    }
+    const keywords =
+      categories.length > 0 || includeTerms.length > 0
+        ? { arxiv_categories: categories, include: includeTerms }
+        : undefined;
     mutation.mutate({
       name: name.trim(),
-      statement: statement.trim() || undefined,
-      ...(rubric !== undefined ? { rubric } : {}),
-      ...(anchors !== undefined ? { anchors } : {}),
+      statement: statement.trim(),
+      ...(anchorLines.length > 0 ? { anchors: anchorLines } : {}),
+      ...(keywords ? { keywords } : {}),
       cadence,
-      ...(monthly_budget !== undefined ? { monthly_budget } : {}),
     });
   }
 
@@ -186,13 +200,16 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       open={open}
       onClose={onClose}
       title={tr('新建文献库', 'New library')}
-      sub={tr('独立的共享文献库，与任何课题解耦；创建后可任命策展人维护。', 'A standalone shared library, decoupled from any topic — assign curators after creating.')}
-      width={600}
+      sub={tr(
+        '先填好方向，提交后由管理员审批激活；激活后才会开始抓取，创建本身不花额度。',
+        'Describe the direction and submit; an admin activates it. Ingest starts only after activation — creating costs nothing.',
+      )}
+      width={620}
       footer={
         <>
           <button className="btn btn-ghost sm" onClick={onClose}>{tr('取消', 'Cancel')}</button>
           <button className="btn btn-primary sm" disabled={mutation.isPending} onClick={submit}>
-            {mutation.isPending ? tr('创建中…', 'Creating…') : tr('创建文献库', 'Create library')}
+            {mutation.isPending ? tr('提交中…', 'Submitting…') : tr('提交待审批', 'Submit for review')}
           </button>
         </>
       }
@@ -202,33 +219,47 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
           <input className="input" value={name} onChange={(e) => setName(e.target.value)}
             placeholder={tr('如：稀疏注意力', 'e.g. Sparse attention')} />
         </FormField>
-        <FormField label={tr('一句话说明', 'Statement')} hint={tr('这个方向研究什么', 'What this direction studies')}>
+        <FormField label={tr('一句话说明', 'Statement')} hint={tr('这个方向研究什么（必填，用于相关性打分）', 'What this direction studies (required, used for relevance scoring)')}>
           <textarea className="textarea" rows={2} value={statement} onChange={(e) => setStatement(e.target.value)}
             placeholder={tr('用一句话介绍这个文献库的方向', 'One sentence describing this library’s direction')} />
         </FormField>
-        <AccordionSection
-          title="高级设置（可选）"
-          en="Advanced (optional)"
-          open={advOpen}
-          onToggle={() => setAdvOpen((v) => !v)}
+        <FormField
+          label={tr('锚点论文（arXiv 编号，一行一个）', 'Anchor papers (arXiv ids, one per line)')}
+          hint={tr('可留空；抓取时会解析这些论文并做参考文献扩展', 'Optional; ingest resolves these and expands references')}
         >
-          <FormField label={tr('运行节奏', 'Cadence')} hint={tr('自动同步的运行频率', 'How often ingest runs')}>
+          <textarea className="textarea mono" rows={3} value={anchorsText} onChange={(e) => setAnchorsText(e.target.value)}
+            placeholder={'2401.01234\n2312.09876v2'} style={{ fontSize: 12.5 }} />
+          {badAnchors.length > 0 && (
+            <div style={{ color: 'var(--danger-tx)', fontSize: 11.5, marginTop: 4 }}>
+              {tr(`不是合法编号：${badAnchors.join('、')}`, `Not valid ids: ${badAnchors.join(', ')}`)}
+            </div>
+          )}
+        </FormField>
+        <AccordionSection title="收录设置（可选）" en="Inclusion (optional)" open={advOpen} onToggle={() => setAdvOpen((v) => !v)}>
+          <FormField label={tr('arXiv 分类', 'arXiv categories')} hint={tr('留空用默认分类', 'Leave empty for defaults')}>
+            <div className="row gap6 wrap">
+              {[...new Set([...QUICK_CATEGORIES, ...categories])].map((c) => (
+                <button key={c} type="button" className={'chip mono' + (categories.includes(c) ? ' on' : '')} onClick={() => toggleCat(c)}>
+                  {c}
+                </button>
+              ))}
+            </div>
+            <div className="row gap8" style={{ marginTop: 6 }}>
+              <input className="input" style={{ width: 170 }} placeholder={tr('自定义分类，如 cs.IR', 'custom, e.g. cs.IR')}
+                value={customCat} onChange={(e) => setCustomCat(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCat(); } }} />
+              <button className="btn btn-soft sm" onClick={addCustomCat} disabled={!customCat.trim()}>{tr('添加', 'Add')}</button>
+            </div>
+          </FormField>
+          <FormField label={tr('检索关键词（逗号分隔）', 'Include terms (comma-separated)')} hint={tr('可留空', 'Optional')}>
+            <textarea className="textarea" rows={2} value={includeStr} onChange={(e) => setIncludeStr(e.target.value)}
+              placeholder={tr('如 agent, tool use, planning', 'e.g. agent, tool use, planning')} />
+          </FormField>
+          <FormField label={tr('运行节奏', 'Cadence')} hint={tr('激活后自动同步的运行频率', 'How often ingest runs after activation')}>
             <div>
               <Segmented options={CADENCES.map((c) => ({ v: c.v, label: tr(c.zh, c.en) }))}
                 value={cadence as (typeof CADENCES)[number]['v']} onChange={(v) => setCadence(v)} />
             </div>
-          </FormField>
-          <FormField label={tr('月度预算（token）', 'Monthly budget (tokens)')} hint={tr('留空 = 不限', 'Leave blank for unlimited')}>
-            <input className="input mono" inputMode="numeric" value={budget} onChange={(e) => setBudget(e.target.value)}
-              placeholder={tr('如 2000000', 'e.g. 2000000')} />
-          </FormField>
-          <FormField label={tr('评审标准 rubric（JSON）', 'Rubric (JSON)')} hint={tr('可留空，稍后在库管理里调', 'Optional — edit later in library management')}>
-            <textarea className="textarea mono" rows={4} value={rubricText} onChange={(e) => setRubricText(e.target.value)}
-              placeholder={'[{"name": "新颖性", "description": "…", "weight": 1.0}]'} style={{ fontSize: 12 }} />
-          </FormField>
-          <FormField label={tr('锚点论文（JSON 数组）', 'Anchor papers (JSON array)')} hint={tr('可留空', 'Optional')}>
-            <textarea className="textarea mono" rows={3} value={anchorsText} onChange={(e) => setAnchorsText(e.target.value)}
-              placeholder={'[{"title": "…", "arxiv_id": "…"}]'} style={{ fontSize: 12 }} />
           </FormField>
         </AccordionSection>
       </div>
@@ -240,7 +271,7 @@ export function LibrariesPage() {
   const navigate = useNavigate();
   const { data, isLoading, isError, refetch } = useLibraries();
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
-  const canCreate = isAdmin(me);
+  const canCreate = !!me;
   const [createOpen, setCreateOpen] = useState(false);
   const libraries = data ?? [];
   // 我的课题关联的库排前面，其余按名称
