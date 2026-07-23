@@ -398,6 +398,8 @@ async def update_library(
     project.definition 对应键（name 同步 project.name），两边不再漂移。
     """
     for key, value in fields.items():
+        if key == "name" and not value:
+            continue  # name 非空约束：显式 null/空串视为不改名
         setattr(library, key, value)
     if library.project_id is not None:
         project = await session.get(Project, library.project_id)
