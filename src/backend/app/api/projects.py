@@ -9,6 +9,7 @@ from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.models.project import Project
 from app.models.user import User
+from app.schemas.libraries import DirectionLibrarySummary, SourceLibrariesUpdate
 from app.schemas.project import (
     DraftDefinitionRequest,
     DraftDefinitionResponse,
@@ -19,6 +20,7 @@ from app.schemas.project import (
     ProjectRead,
     ProjectUpdate,
 )
+from app.services import libraries as libraries_service
 from app.services import projects as projects_service
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -123,3 +125,39 @@ async def add_member(
     found = await projects_service.add_member(session, project.id, email=data.email, role=data.role)
     if not found:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="USER_NOT_FOUND")
+
+
+@router.get("/{project_id}/source-libraries", response_model=list[DirectionLibrarySummary])
+async def list_source_libraries(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[DirectionLibrarySummary]:
+    """课题关联的文献库（课题语料 = 这些库论文的并集，按关联建立时间）。"""
+    await _get_member_project(session, project_id, user)
+    rows = await libraries_service.source_libraries_overview(
+        session, topic_id=project_id, user=user
+    )
+    return [DirectionLibrarySummary(**row) for row in rows]
+
+
+@router.put("/{project_id}/source-libraries", response_model=list[DirectionLibrarySummary])
+async def set_source_libraries(
+    project_id: uuid.UUID,
+    data: SourceLibrariesUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[DirectionLibrarySummary]:
+    """全量替换课题关联库（课题成员）。空列表 = 清空关联；不存在的库 id 静默忽略。
+
+    关联为空时想法生成/检索/图谱/伴读等消费端给「还没关联文献库」空态，不报错。
+    """
+    await _get_member_project(session, project_id, user)
+    await libraries_service.set_source_libraries(
+        session, topic_id=project_id, library_ids=data.library_ids
+    )
+    await session.commit()
+    rows = await libraries_service.source_libraries_overview(
+        session, topic_id=project_id, user=user
+    )
+    return [DirectionLibrarySummary(**row) for row in rows]

@@ -10,6 +10,8 @@ import { toast } from '../../components/ui/Toast';
 import { topicPath, useProject } from '../../app/project';
 import { api, type AnchorPaper, type ProjectDefinition, type RubricDimension } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { useLibraries } from '../libraries/hooks';
+import { LibraryPicker } from '../libraries/LibraryPicker';
 
 /* ============================================================
    /projects/new — 创建页，单页为主。
@@ -176,6 +178,19 @@ export function ProjectWizardPage() {
   const [name, setName] = useState('');
   const [statement, setStatement] = useState('');
 
+  // —— 关联文献库（可选，可全部不选） ——
+  const librariesQuery = useLibraries();
+  const libraries = librariesQuery.data ?? [];
+  const [selectedLibraryIds, setSelectedLibraryIds] = useState<Set<string>>(new Set());
+  function toggleLibrary(libId: string) {
+    setSelectedLibraryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(libId)) next.delete(libId);
+      else next.add(libId);
+      return next;
+    });
+  }
+
   // —— 文献追踪配置（全部可选，默认折叠） ——
   const [trackOpen, setTrackOpen] = useState(false);
   const [includeTerms, setIncludeTerms] = useState<string[]>([]);
@@ -336,6 +351,14 @@ export function ProjectWizardPage() {
     setSubmitting(true);
     try {
       const created = await api.createProject({ name: name.trim(), definition: buildDefinition() });
+      // 额外关联已勾选的共享文献库（隐式起源库由后端自动建，不在此列）
+      if (selectedLibraryIds.size > 0) {
+        try {
+          await api.setSourceLibraries(created.id, [...selectedLibraryIds]);
+        } catch (e) {
+          toast(tr(`课题已创建，但关联文献库失败：${e instanceof Error ? e.message : String(e)}，可在课题设置里重试`, `Topic created, but linking libraries failed: ${e instanceof Error ? e.message : String(e)} — retry in topic settings`), 'error');
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: ['projects'] });
       setCurrentProjectId(created.id);
       toast(tr('课题已创建', 'Topic created'), 'ok');
@@ -368,6 +391,40 @@ export function ProjectWizardPage() {
             placeholder={tr('如：让 LLM agent 端到端完成从文献调研到论文的研究方法与系统', 'e.g. Methods and systems for LLM agents to go end-to-end from literature survey to paper')} />
         </FormField>
         {formError && <div className="field-error" style={{ marginTop: 4 }}>{formError}</div>}
+      </div>
+
+      {/* —— 关联文献库（可选，可全部不选） —— */}
+      <div className="card card-pad" style={{ marginBottom: 12 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
+          <span className="section-h">
+            <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
+            {tr('关联文献库', 'Linked libraries')}
+          </span>
+          {libraries.length > 0 && (
+            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+              {tr(`已选 ${selectedLibraryIds.size} 个`, `${selectedLibraryIds.size} selected`)}
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--text-3)', margin: '2px 0 12px', lineHeight: 1.6 }}>
+          {tr(
+            '课题的语料 = 关联文献库的并集；可全部不选跳过，稍后在课题设置里添加。',
+            'A topic\u2019s corpus is the union of its linked libraries \u2014 you can skip this and add libraries later in topic settings.',
+          )}
+        </div>
+        {librariesQuery.isLoading ? (
+          <div className="col gap8">
+            {[0, 1].map((i) => (
+              <div key={i} className="skel" style={{ height: 64, borderRadius: 12 }} />
+            ))}
+          </div>
+        ) : libraries.length === 0 ? (
+          <div className="empty" style={{ padding: '20px 14px' }}>
+            {tr('还没有文献库，可先跳过，稍后关联。', 'No libraries yet \u2014 skip for now and link one later.')}
+          </div>
+        ) : (
+          <LibraryPicker libraries={libraries} selectedIds={selectedLibraryIds} onToggle={toggleLibrary} />
+        )}
       </div>
 
       {/* —— 文献追踪配置（可选，默认折叠） —— */}

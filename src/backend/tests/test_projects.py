@@ -45,7 +45,7 @@ async def test_delete_project(client):
     resp = await client.post("/api/projects", json={"name": "to-delete"}, headers=headers)
     project_id = resp.json()["id"]
 
-    # 方向下的论文随删除级联清掉
+    # P7：删课题保留库与内容池，只解除关联（下方断言）
     import uuid as _uuid
 
     from sqlalchemy import func, select
@@ -67,9 +67,14 @@ async def test_delete_project(client):
     resp = await client.get(f"/api/projects/{project_id}", headers=headers)
     assert resp.status_code == 404
     async with get_sessionmaker()() as session:
-        from app.models.library_direction import DirectionLibrary, LibraryPaper
+        from app.models.library_direction import (
+            DirectionLibrary,
+            LibraryPaper,
+            TopicSourceLibrary,
+        )
 
-        # 隐式库与成员行随方向级联删除；内容池 Paper 行保留（全局复用，P4 语义）
+        # P7：删课题不再删库——起源库 project_id 置 NULL、成员行与内容池 Paper 都保留；
+        # 只有课题自己的关联行随课题消失（library 变孤儿，admin 可后续删库）。
         libs = (
             await session.execute(
                 select(func.count()).where(
@@ -77,11 +82,23 @@ async def test_delete_project(client):
                 )
             )
         ).scalar_one()
-        assert libs == 0
+        assert libs == 0  # 无库仍回指这个已删课题
+        total_libs = (
+            await session.execute(select(func.count()).select_from(DirectionLibrary))
+        ).scalar_one()
+        assert total_libs == 1  # 库本体存活（project_id 已 SET NULL）
         memberships = (
             await session.execute(select(func.count()).select_from(LibraryPaper))
         ).scalar_one()
-        assert memberships == 0
+        assert memberships == 1  # 成员行随库存活
+        assoc = (
+            await session.execute(
+                select(func.count()).where(
+                    TopicSourceLibrary.topic_id == _uuid.UUID(project_id)
+                )
+            )
+        ).scalar_one()
+        assert assoc == 0  # 课题自己的关联行随课题删除
         pool = (await session.execute(select(func.count()).select_from(Paper))).scalar_one()
         assert pool == 1
 

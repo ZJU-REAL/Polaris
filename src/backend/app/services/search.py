@@ -6,7 +6,7 @@
 
 import uuid
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.experiment import Experiment
@@ -16,7 +16,7 @@ from app.models.manuscript import Manuscript
 from app.models.paper import Concept, Paper
 from app.models.voyage import VoyageRun
 from app.schemas.search import GlobalSearchHit
-from app.services.libraries import get_library_for_project
+from app.services.libraries import get_source_library_ids
 
 _SNIPPET_CHARS = 120
 
@@ -37,25 +37,33 @@ async def global_search(
 ) -> list[GlobalSearchHit]:
     pattern = f"%{q}%"
     hits: list[GlobalSearchHit] = []
-    library = await get_library_for_project(session, project_id)
+    # 论文/概念按课题关联库并集检索；无关联库 = 无语料时跳过它们，
+    # ideas/实验/航程/稿件等课题作用域实体照常匹配（不受关联库影响）。
+    library_ids = await get_source_library_ids(session, project_id)
 
+    # 跨库并集：group_by(Paper.id) 去掉同一论文命中多库的重复行（状态取任一非回收站行）
     paper_rows = (
-        await session.execute(
-            select(Paper, LibraryPaper.status)
-            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-            .where(
-                LibraryPaper.library_id == library.id,
-                LibraryPaper.status != "excluded",  # 回收站不出现在搜索里
-                or_(
-                    Paper.title.ilike(pattern),
-                    Paper.abstract.ilike(pattern),
-                    Paper.tldr.ilike(pattern),
-                ),
+        (
+            await session.execute(
+                select(Paper, func.min(LibraryPaper.status))
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(
+                    LibraryPaper.library_id.in_(library_ids),
+                    LibraryPaper.status != "excluded",  # 回收站不出现在搜索里
+                    or_(
+                        Paper.title.ilike(pattern),
+                        Paper.abstract.ilike(pattern),
+                        Paper.tldr.ilike(pattern),
+                    ),
+                )
+                .group_by(Paper.id)
+                .order_by(func.max(Paper.updated_at).desc())
+                .limit(limit_per_type)
             )
-            .order_by(Paper.updated_at.desc())
-            .limit(limit_per_type)
-        )
-    ).all()
+        ).all()
+        if library_ids
+        else []
+    )
     hits += [
         GlobalSearchHit(
             type="paper",
@@ -69,18 +77,22 @@ async def global_search(
 
     concepts = (
         (
-            await session.execute(
-                select(Concept)
-                .where(
-                    Concept.library_id == library.id,
-                    or_(Concept.name.ilike(pattern), Concept.definition.ilike(pattern)),
+            (
+                await session.execute(
+                    select(Concept)
+                    .where(
+                        Concept.library_id.in_(library_ids),
+                        or_(Concept.name.ilike(pattern), Concept.definition.ilike(pattern)),
+                    )
+                    .order_by(Concept.updated_at.desc())
+                    .limit(limit_per_type)
                 )
-                .order_by(Concept.updated_at.desc())
-                .limit(limit_per_type)
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
+        if library_ids
+        else []
     )
     hits += [
         GlobalSearchHit(type="concept", id=c.id, title=c.name, snippet=_snippet(c.definition))

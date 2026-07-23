@@ -13,7 +13,7 @@ from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
 from app.models.manuscript import Manuscript
-from app.services.libraries import get_library_for_project
+from app.services.libraries import get_source_library_ids
 from app.services.papers import PAPER_STATUS_GROUPS
 
 
@@ -25,20 +25,27 @@ async def project_stats(session: AsyncSession, project_id: uuid.UUID) -> dict[st
     today_start = datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
     # 「知识库论文」与文献页口径一致：只算库内（相关性达标及之后），
     # 不含回收站（excluded）与尚未打分的中间状态（candidate）
-    library = await get_library_for_project(session, project_id)
+    # 「知识库论文」= 关联库并集内（相关性达标及之后），跨库同一论文只计一次
+    library_ids = await get_source_library_ids(session, project_id)
     in_library = LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"])
-    papers_total = await _count(
-        session,
-        select(func.count()).where(LibraryPaper.library_id == library.id, in_library),
-    )
-    papers_today = await _count(
-        session,
-        select(func.count()).where(
-            LibraryPaper.library_id == library.id,
-            in_library,
-            LibraryPaper.created_at >= today_start,
-        ),
-    )
+    if library_ids:
+        papers_total = await _count(
+            session,
+            select(func.count(func.distinct(LibraryPaper.paper_id))).where(
+                LibraryPaper.library_id.in_(library_ids), in_library
+            ),
+        )
+        papers_today = await _count(
+            session,
+            select(func.count(func.distinct(LibraryPaper.paper_id))).where(
+                LibraryPaper.library_id.in_(library_ids),
+                in_library,
+                LibraryPaper.created_at >= today_start,
+            ),
+        )
+    else:
+        papers_total = 0
+        papers_today = 0
     ideas_candidate = await _count(
         session,
         select(func.count()).where(Idea.project_id == project_id, Idea.status == "candidate"),

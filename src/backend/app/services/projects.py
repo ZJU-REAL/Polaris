@@ -60,10 +60,16 @@ async def create_project(
     session.add(project)
     await session.flush()
     session.add(ProjectMember(project_id=project.id, user_id=owner_id, role="owner"))
-    # P4 过渡期：每个方向 1:1 一个隐式文献库（论文归属经 library_papers 引用内容池）
-    from app.services.libraries import implicit_library_for
+    # 过渡期：每个课题仍自动建一个起源库（论文归属经 library_papers 引用内容池）。
+    # P7 起库/课题解耦——这里同时把它记成一条关联（topic_source_libraries），
+    # 语料并集读路径与「起源库」解析口径一致；Step 3 将改为可选关联既有库，
+    # 不再强制新建。
+    from app.services.libraries import implicit_library_for, set_source_libraries
 
-    session.add(implicit_library_for(project))
+    library = implicit_library_for(project)
+    session.add(library)
+    await session.flush()
+    await set_source_libraries(session, topic_id=project.id, library_ids=[library.id])
     await session.commit()
     await session.refresh(project)
     return project

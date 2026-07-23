@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.activity import Activity
 from app.models.gate import Gate
 from app.models.idea import IDEA_STATUSES, Idea
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.idea import DeepIdeaRequest, ForgeKnobs
 from app.schemas.review import TournamentRequest
-from app.services.libraries import get_library_for_project, get_membership
+from app.services.libraries import get_source_library_ids
 
 # 同项目 idea 类 voyage 互斥（docs/api-m3.md §1 + docs/api-idea2.md §2）
 IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review", "idea_proposal")
@@ -177,16 +178,26 @@ async def _validate_seed(
         paper = await session.get(Paper, target_id)
         if paper is None:
             raise InvalidSeedError(value)
-        library = await get_library_for_project(session, project_id)
-        if await get_membership(session, library_id=library.id, paper_id=paper.id) is None:
+        library_ids = await get_source_library_ids(session, project_id)
+        in_corpus = bool(library_ids) and (
+            await session.execute(
+                select(LibraryPaper.paper_id)
+                .where(
+                    LibraryPaper.library_id.in_(library_ids),
+                    LibraryPaper.paper_id == paper.id,
+                )
+                .limit(1)
+            )
+        ).first() is not None
+        if not in_corpus:
             raise InvalidSeedError(value)
         return f"论文《{paper.title[:60]}》"
     if seed_type == "concept":
         concept = await session.get(Concept, target_id)
         if concept is None:
             raise InvalidSeedError(value)
-        library = await get_library_for_project(session, project_id)
-        if concept.library_id != library.id:
+        library_ids = await get_source_library_ids(session, project_id)
+        if concept.library_id not in set(library_ids):
             raise InvalidSeedError(value)
         return f"概念「{concept.name}」"
     if seed_type == "idea":

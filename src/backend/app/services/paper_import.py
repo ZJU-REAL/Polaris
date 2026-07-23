@@ -235,7 +235,10 @@ async def add_manual_paper(
     """
     fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, bibtex=bibtex)
 
+    # 人工导入落在课题起源库上；课题必须有一个可解析的库（隐式库常态存在）
     library = await get_library_for_project(session, project_id)
+    if library is None:
+        raise ParseFailedError("课题未关联可写入的文献库")
     dedup_key = pool_dedup_key(
         arxiv_id=fields.get("arxiv_id"),
         doi=fields.get("doi"),

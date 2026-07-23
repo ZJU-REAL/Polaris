@@ -42,7 +42,11 @@ from app.models.idea import RESEARCH_TYPES, Idea
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.models.review import ReviewMessage, ReviewSession
-from app.services.libraries import get_library_for_project
+from app.services.libraries import (
+    dedupe_member_rows,
+    get_source_library_ids,
+    member_papers_stmt,
+)
 from app.services.literature.openalex import OpenAlexClient
 from app.services.literature.semantic_scholar import SemanticScholarClient
 from app.services.review import serialize_message
@@ -355,10 +359,14 @@ def validate_goal(raw: Any, *, library_ids: set[str], library_size: int) -> dict
 
 async def _library_index(ctx: ActionContext) -> tuple[set[str], int]:
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.run.project_id)
+        library_ids = await get_source_library_ids(session, ctx.run.project_id)
+        if not library_ids:
+            return set(), 0
         rows = (
             await session.execute(
-                select(LibraryPaper.paper_id).where(LibraryPaper.library_id == library.id)
+                select(LibraryPaper.paper_id)
+                .where(LibraryPaper.library_id.in_(library_ids))
+                .distinct()
             )
         ).all()
     ids = {str(pid) for (pid,) in rows}
@@ -516,19 +524,19 @@ async def _grounding_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]
     if not ids:
         return []
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.run.project_id)
+        library_ids = await get_source_library_ids(session, ctx.run.project_id)
         rows = (
-            await session.execute(
-                select(Paper, LibraryPaper.wiki_content)
-                .join(
-                    LibraryPaper,
-                    (LibraryPaper.paper_id == Paper.id)
-                    & (LibraryPaper.library_id == library.id),
-                )
-                .where(Paper.id.in_(ids))
+            dedupe_member_rows(
+                (
+                    await session.execute(
+                        member_papers_stmt(library_ids).where(Paper.id.in_(ids))
+                    )
+                ).all()
             )
-        ).all()
-    by_id = {p.id: (p, wiki) for p, wiki in rows}
+            if library_ids
+            else []
+        )
+    by_id = {p.id: (p, m.wiki_content) for p, m in rows}
     return [by_id[i] for i in ids if i in by_id]
 
 
@@ -754,19 +762,25 @@ async def proposal_experiments(ctx: ActionContext, params: dict[str, Any]) -> di
 async def _internal_similar(ctx: ActionContext, query_text: str) -> list[dict[str, Any]]:
     """库内相似论文：embedding 余弦 top-k；embedding 不可用降级关键词检索。"""
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.run.project_id)
+        library_ids = await get_source_library_ids(session, ctx.run.project_id)
         papers = (
             (
-                await session.execute(
-                    select(Paper)
-                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                    .where(
-                        LibraryPaper.library_id == library.id, Paper.embedding.is_not(None)
+                (
+                    await session.execute(
+                        select(Paper)
+                        .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                        .where(
+                            LibraryPaper.library_id.in_(library_ids),
+                            Paper.embedding.is_not(None),
+                        )
+                        .distinct()
                     )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
+            if library_ids
+            else []
         )
         if papers:
             try:

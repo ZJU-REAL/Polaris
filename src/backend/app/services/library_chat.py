@@ -20,9 +20,17 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, PaperChunk, paper_concepts
 from app.models.project import Project
 from app.services import chunks as chunks_service
-from app.services.libraries import get_library_for_project
+from app.services.libraries import (
+    dedupe_member_rows,
+    get_source_library_ids,
+    member_papers_stmt,
+)
 
 logger = logging.getLogger(__name__)
+
+# 关联库并集读取的本地别名（跨库同一论文按确定性视角归并）
+_union_member_stmt = member_papers_stmt
+_dedupe = dedupe_member_rows
 
 MAX_SOURCES = 8  # 上下文里最多引用的论文数
 MAX_CHUNKS = 16  # 检索片段数上限
@@ -64,7 +72,7 @@ class ChatSource:
 async def _retrieve_chunks(
     session: AsyncSession,
     *,
-    library_id: uuid.UUID,
+    library_ids: list[uuid.UUID],
     project_id: uuid.UUID,
     question: str,
     llm: LLMRouter,
@@ -82,7 +90,7 @@ async def _retrieve_chunks(
             vectors = await llm.embed([question], user_id=user_id, project_id=project_id)
             rows = await chunks_service.semantic_search_chunks(
                 session,
-                library_id=library_id,
+                library_ids=library_ids,
                 query_vector=vectors[0],
                 limit=MAX_CHUNKS,
                 paper_ids=paper_ids,
@@ -96,7 +104,7 @@ async def _retrieve_chunks(
             await session.rollback()  # postgres 报错后事务已中止，先回滚
     try:
         return await chunks_service.keyword_search_chunks(
-            session, library_id=library_id, q=question, limit=MAX_CHUNKS, paper_ids=paper_ids
+            session, library_ids=library_ids, q=question, limit=MAX_CHUNKS, paper_ids=paper_ids
         )
     except Exception:  # noqa: BLE001
         logger.warning("chunk keyword search failed; falling back to summaries", exc_info=True)
@@ -148,11 +156,24 @@ async def build_library_messages(
     project_id = project.id
     definition = project.definition if isinstance(project.definition, dict) else {}
     statement = definition.get("statement") or project.name
-    library_id = (await get_library_for_project(session, project_id)).id
+    library_ids = await get_source_library_ids(session, project_id)
+    if not library_ids:
+        # 课题无关联库 = 无语料：直接给「空文献库」上下文（不抓片段、不兜底）
+        messages = [
+            Message(
+                role="system",
+                content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(
+                    statement=statement, context="（还没有关联任何文献库）"
+                ),
+            )
+        ]
+        messages += [Message(role=role, content=content) for role, content in history]
+        messages.append(Message(role="user", content=question))
+        return messages, []
 
     rows = await _retrieve_chunks(
         session,
-        library_id=library_id,
+        library_ids=library_ids,
         project_id=project_id,
         question=question,
         llm=llm,
@@ -164,13 +185,12 @@ async def build_library_messages(
         paper_ids = list({c.paper_id for c, _ in rows})
         found = (
             await session.execute(
-                select(Paper, LibraryPaper)
-                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                .where(LibraryPaper.library_id == library_id, Paper.id.in_(paper_ids))
+                _union_member_stmt(library_ids).where(Paper.id.in_(paper_ids))
             )
         ).all()
-        papers = {p.id: p for p, _ in found}
-        memberships = {p.id: m for p, m in found}
+        deduped = _dedupe(found)
+        papers = {p.id: p for p, _ in deduped}
+        memberships = {p.id: m for p, m in deduped}
 
     # (paper, 送入上下文的正文) 顺序清单：优先检索片段，否则高分论文摘要兜底
     entries: list[tuple[Paper, str]] = []
@@ -179,18 +199,21 @@ async def build_library_messages(
             snippet = "\n…\n".join(c.text for c in chunk_list)[:SNIPPET_CHARS]
             entries.append((paper, snippet))
     else:
-        fallback = (
-            await session.execute(
-                select(Paper, LibraryPaper)
-                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                .where(
-                    LibraryPaper.library_id == library_id,
-                    LibraryPaper.status.in_(("scored", "fetched", "compiled", "included")),
+        fallback = _dedupe(
+            (
+                await session.execute(
+                    _union_member_stmt(library_ids).where(
+                        LibraryPaper.status.in_(("scored", "fetched", "compiled", "included"))
+                    )
                 )
-                .order_by(LibraryPaper.relevance_score.desc().nulls_last())
-                .limit(FALLBACK_PAPERS)
+            ).all()
+        )
+        fallback.sort(
+            key=lambda pm: -(
+                pm[1].relevance_score if pm[1].relevance_score is not None else -1e18
             )
-        ).all()
+        )
+        fallback = fallback[:FALLBACK_PAPERS]
         entries = [(p, p.tldr or (p.abstract or "")[:400] or "（无摘要）") for p, _ in fallback]
         memberships |= {p.id: m for p, m in fallback}
 
@@ -258,14 +281,16 @@ async def build_reference_context(
     """
     if not paper_ids:
         return "", []
-    library_id = (await get_library_for_project(session, project_id)).id
-    found = (
-        await session.execute(
-            select(Paper, LibraryPaper)
-            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-            .where(LibraryPaper.library_id == library_id, Paper.id.in_(paper_ids))
-        )
-    ).all()
+    library_ids = await get_source_library_ids(session, project_id)
+    if not library_ids:
+        return "", []
+    found = _dedupe(
+        (
+            await session.execute(
+                _union_member_stmt(library_ids).where(Paper.id.in_(paper_ids))
+            )
+        ).all()
+    )
     papers = {p.id: p for p, _ in found}
     memberships = {p.id: m for p, m in found}
     # 保留用户的选择顺序，并滤掉不属于本项目的
@@ -275,7 +300,7 @@ async def build_reference_context(
 
     rows = await _retrieve_chunks(
         session,
-        library_id=library_id,
+        library_ids=library_ids,
         project_id=project_id,
         question=question,
         llm=llm,

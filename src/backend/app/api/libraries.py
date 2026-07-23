@@ -26,6 +26,7 @@ from app.schemas.libraries import (
     DirectionLibraryUpdate,
     DuplicateCandidateGroup,
     LibraryBudgetRead,
+    LibraryCreate,
     PaperMergeRequest,
     PaperMergeResult,
 )
@@ -82,6 +83,30 @@ async def list_libraries(
     return [DirectionLibrarySummary(**row) for row in rows]
 
 
+@router.post(
+    "/libraries", response_model=DirectionLibraryDetail, status_code=status.HTTP_201_CREATED
+)
+async def create_library(
+    data: LibraryCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> DirectionLibraryDetail:
+    """独立新建方向文献库（平台 admin）：不属于任何课题，课题靠关联消费其语料。"""
+    library = await libraries_service.create_library(
+        session,
+        name=data.name,
+        statement=data.statement,
+        rubric=data.rubric,
+        anchors=data.anchors,
+        cadence=data.cadence,
+        monthly_budget=data.monthly_budget,
+        created_by=user.id,
+    )
+    await session.commit()
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
 @router.get("/libraries/{library_id}", response_model=DirectionLibraryDetail)
 async def get_library(
     library_id: uuid.UUID,
@@ -111,6 +136,25 @@ async def update_library(
         library = await libraries_service.update_library(session, library=library, fields=fields)
     row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
+
+
+@router.delete("/libraries/{library_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_library(
+    library_id: uuid.UUID,
+    force: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> None:
+    """删库（平台 admin 专用）：论文内容池行不动，成员行/概念/策展人一并清除。
+
+    仍有课题关联时默认拒绝（409 LIBRARY_HAS_TOPICS），带 ``?force=true`` 才会
+    一并解除关联（不影响课题本身，课题只是失去这条语料来源）。
+    """
+    library = await _get_library(session, library_id)
+    try:
+        await libraries_service.delete_library(session, library=library, force=force)
+    except libraries_service.LibraryHasTopicsError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_HAS_TOPICS") from e
 
 
 @router.get("/libraries/{library_id}/budget", response_model=LibraryBudgetRead)
@@ -207,7 +251,7 @@ async def list_library_concepts(
 ) -> list[ConceptRead]:
     library = await _get_library(session, library_id)
     rows = await concepts_service.list_concepts(
-        session, library_id=library.id, category=category, q=q
+        session, library_ids=[library.id], category=category, q=q
     )
     return [
         ConceptRead(

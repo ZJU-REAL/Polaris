@@ -139,17 +139,22 @@ def chunk_vector_search_supported(session: AsyncSession) -> bool:
 async def semantic_search_chunks(
     session: AsyncSession,
     *,
-    library_id: uuid.UUID,
+    library_ids: list[uuid.UUID],
     query_vector: list[float],
     limit: int,
     paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
     """pgvector 余弦检索（仅 postgres；调用方需先判 chunk_vector_search_supported）。
 
-    传 paper_ids 时把检索限制在这些论文内（伴读引用指定文献用）。
+    关联库并集：chunk 命中多库时 DISTINCT 去重。传 paper_ids 时把检索限制在这些
+    论文内（伴读引用指定文献用）。
     """
     qv = json.dumps(query_vector)
-    params: dict[str, object] = {"qv": qv, "lib": str(library_id), "k": limit}
+    params: dict[str, object] = {
+        "qv": qv,
+        "libs": [str(lid) for lid in library_ids],
+        "k": limit,
+    }
     paper_filter = ""
     if paper_ids:
         paper_filter = "AND c.paper_id = ANY(CAST(:pids AS uuid[])) "
@@ -157,12 +162,13 @@ async def semantic_search_chunks(
     rows = (
         await session.execute(
             sa_text(
-                "SELECT c.id, 1 - (c.embedding <=> CAST(:qv AS vector)) AS score "
+                "SELECT DISTINCT c.id, 1 - (c.embedding <=> CAST(:qv AS vector)) AS score "
                 "FROM paper_chunks c "
-                "JOIN library_papers lp ON lp.paper_id = c.paper_id AND lp.library_id = :lib "
+                "JOIN library_papers lp ON lp.paper_id = c.paper_id "
+                "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
                 "WHERE c.embedding IS NOT NULL "
                 f"{paper_filter}"
-                "ORDER BY c.embedding <=> CAST(:qv AS vector) "
+                "ORDER BY score DESC "
                 "LIMIT :k"
             ),
             params,
@@ -183,14 +189,14 @@ async def semantic_search_chunks(
 async def keyword_search_chunks(
     session: AsyncSession,
     *,
-    library_id: uuid.UUID,
+    library_ids: list[uuid.UUID],
     q: str,
     limit: int,
     paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
     """关键词降级检索：问题分词后 ilike 命中任一词，按命中词数粗排。
 
-    传 paper_ids 时把检索限制在这些论文内。
+    关联库并集（chunk 去重）。传 paper_ids 时把检索限制在这些论文内。
     """
     terms = [t for t in _WORD_RE.findall(q.lower()) if len(t) >= 2][:8]
     if not terms:
@@ -202,7 +208,8 @@ async def keyword_search_chunks(
     stmt = (
         select(PaperChunk)
         .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
-        .where(LibraryPaper.library_id == library_id, cond)
+        .where(LibraryPaper.library_id.in_(library_ids), cond)
+        .distinct()
     )
     if paper_ids:
         stmt = stmt.where(PaperChunk.paper_id.in_(paper_ids))
