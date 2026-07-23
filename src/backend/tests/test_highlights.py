@@ -1,4 +1,4 @@
-"""PDF 划线标注：CRUD + 颜色规整 + 排序 + 权限（同论文笔记权限模型）。"""
+"""PDF 划线标注：CRUD + 颜色规整 + 排序 + 权限（P5b 起同笔记：仅作者本人可见）。"""
 
 import uuid
 
@@ -47,24 +47,32 @@ async def test_highlight_crud_and_ordering(client):
     )
     assert resp.status_code == 201, resp.text
     hl = resp.json()
-    assert hl["paper_id"] == pid and hl["project_id"] == project_id
+    assert hl["paper_id"] == pid
+    assert "project_id" not in hl  # P5b：划线不再挂项目
     assert hl["page"] == 3 and hl["color"] == "green" and hl["note"] is None
     assert hl["style"] == "highlight"  # 默认样式
     assert hl["author_name"] == "Alice"
     assert hl["rects"] == [RECT]
     hl_id = hl["id"]
 
-    # 第 1 页再建一条（bob）
+    # alice 第 1 页再建一条；bob 也建一条（仅本人可见）
     await client.post(
         f"/api/papers/{pid}/highlights",
         json={"page": 1, "rects": [RECT], "selected_text": "encoder"},
+        headers=alice,
+    )
+    await client.post(
+        f"/api/papers/{pid}/highlights",
+        json={"page": 2, "rects": [RECT], "selected_text": "bob 的划线"},
         headers=bob,
     )
-    # 成员可读，按页码升序
-    resp = await client.get(f"/api/papers/{pid}/highlights", headers=bob)
+    # 只看到自己的，按页码升序
+    resp = await client.get(f"/api/papers/{pid}/highlights", headers=alice)
     rows = resp.json()
     assert [r["page"] for r in rows] == [1, 3]
     assert rows[0]["color"] == "yellow"  # 默认色
+    resp = await client.get(f"/api/papers/{pid}/highlights", headers=bob)
+    assert [r["selected_text"] for r in resp.json()] == ["bob 的划线"]
 
     # 作者改颜色 + 加批注
     resp = await client.patch(
@@ -81,7 +89,7 @@ async def test_highlight_crud_and_ordering(client):
     resp = await client.delete(f"/api/highlights/{hl_id}", headers=alice)
     assert resp.status_code == 204
     resp = await client.get(f"/api/papers/{pid}/highlights", headers=alice)
-    assert len(resp.json()) == 1
+    assert [r["page"] for r in resp.json()] == [1]
 
 
 async def test_highlight_style(client):
@@ -150,11 +158,11 @@ async def test_highlight_permissions(client):
     )
     hl_id = resp.json()["id"]
 
-    # 非作者成员改/删 → 403
+    # 非作者成员改/删 → 404（P5b 起他人划线不可见，视为不存在）
     assert (
         await client.patch(f"/api/highlights/{hl_id}", json={"color": "pink"}, headers=bob)
-    ).status_code == 403
-    assert (await client.delete(f"/api/highlights/{hl_id}", headers=bob)).status_code == 403
+    ).status_code == 404
+    assert (await client.delete(f"/api/highlights/{hl_id}", headers=bob)).status_code == 404
 
     # 非项目成员 → 404
     mallory = await register_and_login(client, email="mallory@example.com")

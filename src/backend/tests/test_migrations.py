@@ -1,4 +1,4 @@
-"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision（论文评审 M5-C）往返。"""
+"""alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision 往返。"""
 
 from pathlib import Path
 
@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "0775b55c26e4"  # 课题「相关研究」书架（P5a，本分支最新）
-PREV_REVISION = "fe8a86942dc7"  # 论文内容池收尾（P4 迁移 B）
+HEAD_REVISION = "1c6c4831d80f"  # 笔记/划线归属拆分（P5b，本分支最新）
+PREV_REVISION = "0775b55c26e4"  # 课题「相关研究」书架（P5a）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -86,9 +86,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "experiments"
     ]
     assert {"seq", "exit_code", "pid", "started_at", "finished_at"} <= columns["experiment_runs"]
-    # M5：笔记 / 标签 / 个人状态表
+    # M5：笔记 / 标签 / 个人状态表（P5b 起笔记/划线归 paper × author，project_id 删列）
     assert {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} <= columns["_tables"]
-    assert {"paper_id", "project_id", "author_id", "content"} <= columns["paper_notes"]
+    assert {"paper_id", "author_id", "content"} <= columns["paper_notes"]
+    assert "project_id" not in columns["paper_notes"]
     assert {"project_id", "name"} <= columns["paper_tags"]
     assert columns["paper_tag_links"] == {"paper_id", "tag_id"}
     assert {"paper_id", "user_id", "starred", "reading_status"} <= columns["paper_user_meta"]
@@ -132,11 +133,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "relevance_score" not in columns["papers"]
     assert "wiki_content" not in columns["papers"]
     assert "project_id" not in columns["papers"]
-    # PDF 划线标注表（上一版 paper_highlights）
+    # PDF 划线标注表（P5b 起无 project_id）
     assert "paper_highlights" in columns["_tables"]
     assert {
         "paper_id",
-        "project_id",
         "author_id",
         "page",
         "rects",
@@ -145,6 +145,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "style",
         "note",
     } <= columns["paper_highlights"]
+    assert "project_id" not in columns["paper_highlights"]
     # 稿件文件版本快照表
     assert "manuscript_file_versions" in columns["_tables"]
     assert {"file_id", "seq", "origin", "label", "content"} <= columns["manuscript_file_versions"]
@@ -221,11 +222,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "added_by",
     } <= columns["topic_papers"]
 
-    # 最新 revision 可往返（downgrade 只删 topic_papers，其余结构不动）
+    # 最新 revision 可往返（downgrade 补回可空 project_id 列，其余结构不动）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "topic_papers" not in columns["_tables"]
+    assert "project_id" in columns["paper_notes"]
+    assert "project_id" in columns["paper_highlights"]
+    assert "topic_papers" in columns["_tables"]
     # P4 收尾后的内容池结构不受影响：判断列仍只在 library_papers 上
     assert "project_id" not in columns["papers"]
     assert "wiki_content" not in columns["papers"]
@@ -255,6 +258,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    assert "project_id" not in columns["paper_notes"]
+    assert "project_id" not in columns["paper_highlights"]
     assert "models" in columns["llm_providers"]
     assert "owner_id" in columns["llm_providers"]
     assert "llm_self_managed" in columns["users"]

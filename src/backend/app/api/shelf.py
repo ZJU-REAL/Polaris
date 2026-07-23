@@ -44,7 +44,7 @@ async def list_shelf(
 ) -> ShelfPage:
     await _require_member(session, project_id, user)
     items, total = await shelf_service.list_shelf(
-        session, project_id=project_id, page=page, size=size
+        session, project_id=project_id, user_id=user.id, page=page, size=size
     )
     return ShelfPage(
         items=[ShelfItemRead.model_validate(i) for i in items],
@@ -131,10 +131,32 @@ async def update_shelf_note(
     await _require_member(session, project_id, user)
     try:
         item = await shelf_service.update_note(
-            session, project_id=project_id, paper_id=paper_id, note=body.note
+            session, project_id=project_id, paper_id=paper_id, user_id=user.id, note=body.note
         )
     except shelf_service.ShelfItemNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SHELF_ITEM_NOT_FOUND") from None
+    return ShelfItemRead.model_validate(item)
+
+
+@router.post(
+    "/projects/{project_id}/shelf/{paper_id}/refresh-snapshot", response_model=ShelfItemRead
+)
+async def refresh_shelf_snapshot(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ShelfItemRead:
+    """手动刷新快照：从当前可得的最优 wiki（库版 > 个人版）重拷；无来源 409。"""
+    await _require_member(session, project_id, user)
+    try:
+        item = await shelf_service.refresh_snapshot(
+            session, project_id=project_id, paper_id=paper_id, user_id=user.id
+        )
+    except shelf_service.ShelfItemNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SHELF_ITEM_NOT_FOUND") from None
+    except shelf_service.NoWikiSourceError:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="NO_WIKI_SOURCE") from None
     return ShelfItemRead.model_validate(item)
 
 

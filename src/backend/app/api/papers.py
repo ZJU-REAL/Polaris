@@ -18,6 +18,7 @@ from app.api.auth import current_active_user, require_llm_chat, require_llm_task
 from app.core.db import get_session
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
+from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.paper import (
     PaperBatchIds,
@@ -32,6 +33,8 @@ from app.schemas.paper import (
     PaperRead,
     PaperTagsUpdate,
     PaperUpdate,
+    PersonalWikiRead,
+    PersonalWikiRequest,
     TagRead,
 )
 from app.services import figure_annotate as figure_service
@@ -39,6 +42,7 @@ from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
+from app.services import personal_wiki as personal_wiki_service
 from app.services import projects as projects_service
 from app.services import relevance as relevance_service
 from app.services import wiki_compile as wiki_compile_service
@@ -81,10 +85,21 @@ async def _get_member_project(session: AsyncSession, project_id: uuid.UUID, user
 
 
 async def _get_member_paper(
-    session: AsyncSession, paper_id: uuid.UUID, user: User, *, with_concepts: bool = False
+    session: AsyncSession,
+    paper_id: uuid.UUID,
+    user: User,
+    *,
+    with_concepts: bool = False,
+    include_pool: bool = False,
 ) -> papers_service.PaperView:
+    """include_pool 只给读路径开：书架/个人库可达的无库论文可读（P5b），
+    写成员行的端点（状态/删除/召回/重编译/标签）维持库可见性。"""
     paper = await papers_service.get_paper_for_user(
-        session, paper_id=paper_id, user_id=user.id, with_concepts=with_concepts
+        session,
+        paper_id=paper_id,
+        user_id=user.id,
+        with_concepts=with_concepts,
+        include_pool=include_pool,
     )
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
@@ -191,7 +206,7 @@ async def get_paper(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
-    paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
+    paper = await _get_member_paper(session, paper_id, user, with_concepts=True, include_pool=True)
     return await _paper_detail(session, paper, user.id)
 
 
@@ -271,7 +286,7 @@ async def get_paper_pdf(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> FileResponse:
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     if not paper.pdf_path or not Path(paper.pdf_path).exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PDF_NOT_AVAILABLE")
     return FileResponse(
@@ -289,7 +304,7 @@ async def fetch_paper_pdf(
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
     """按需补下 PDF + 抽全文；已有 PDF 时幂等直接返回。"""
-    view = await _get_member_paper(session, paper_id, user, with_concepts=True)
+    view = await _get_member_paper(session, paper_id, user, with_concepts=True, include_pool=True)
     try:
         await papers_service.fetch_pdf(
             session, view.paper, user_id=user.id, project_id=view.project_id
@@ -310,7 +325,7 @@ async def list_paper_figures(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[PaperFigure]:
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     return [PaperFigure(**f) for f in (paper.figures or [])]
 
 
@@ -321,7 +336,7 @@ async def get_paper_figure_image(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> FileResponse:
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     known = {int(f["index"]) for f in (paper.figures or [])}
     path = figure_path(str(paper_id), index)
     if index not in known or not path.exists():
@@ -339,7 +354,7 @@ async def extract_paper_figures(
     user: User = Depends(current_active_user),
 ) -> PaperFiguresResponse:
     """提取嵌入图 + LLM 筛选注释；已有 figures 且非 force 时幂等直返。"""
-    view = await _get_member_paper(session, paper_id, user)
+    view = await _get_member_paper(session, paper_id, user, include_pool=True)
     paper = view.paper
     if paper.figures is not None and not force:
         return PaperFiguresResponse(figures=[PaperFigure(**f) for f in paper.figures])
@@ -372,6 +387,51 @@ async def recompile_paper(
     return await _paper_detail(session, paper, user.id)
 
 
+# ---- 个人版 wiki 按需编译（P5b，docs-dev/workspace-ia-redesign.md §3.3/§4） ----
+
+
+@router.post("/papers/{paper_id}/personal-wiki", response_model=PersonalWikiRead)
+async def compile_personal_wiki(
+    paper_id: uuid.UUID,
+    data: PersonalWikiRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_task),
+) -> PersonalWikiRead:
+    """给没有库版 wiki 的池内论文（典型：个人补充入库）编译个人版 wiki。
+
+    通用模板（无 rubric），可选 topic_id 把课题 statement 当侧重提示；
+    结果写进本人个人库条目（user_library_entries.wiki_content），费用归个人。
+    已有库版 wiki → 409 LIBRARY_WIKI_EXISTS；同一 paper × user 编译进行中 →
+    409 COMPILE_IN_PROGRESS。内容池全平台可读，故不要求论文在本人方向库内。
+    """
+    paper = await session.get(Paper, paper_id)
+    if paper is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+    if data.topic_id is not None:
+        # 课题归因/侧重提示：必须是自己所在课题
+        await _get_member_project(session, data.topic_id, user)
+    try:
+        compiled = await personal_wiki_service.compile_personal_wiki(
+            session, paper=paper, user_id=user.id, topic_id=data.topic_id
+        )
+    except personal_wiki_service.LibraryWikiExistsError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="LIBRARY_WIKI_EXISTS"
+        ) from None
+    except personal_wiki_service.CompileInProgressError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="COMPILE_IN_PROGRESS"
+        ) from None
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 — LLM 空响应/调用失败等 → 502
+        logger.warning("personal wiki compile failed for paper %s", paper_id, exc_info=True)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="COMPILE_FAILED") from e
+    return PersonalWikiRead(
+        paper_id=paper_id, wiki_content=compiled.content, model=compiled.model or None
+    )
+
+
 # ---- AI 伴读（docs/api-lit.md §3，SSE 流） ----
 
 
@@ -387,15 +447,16 @@ async def chat_with_paper(
     user: User = Depends(require_llm_chat),
 ) -> StreamingResponse:
     """AI 伴读：stage=reading 流式回答；事件 delta/done/error + 15s 心跳注释。"""
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     project_id = paper.project_id
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
     history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
     llm = get_llm_router()
 
-    # 用户选中的其他文献：检索相关片段作为对比/参考上下文（跨项目引用被过滤）
+    # 用户选中的其他文献：检索相关片段作为对比/参考上下文（跨项目引用被过滤）；
+    # 池级可达的无库论文没有课题上下文（project_id 为空）→ 跳过参考文献检索
     references, sources = "", []
-    if data.context_paper_ids:
+    if data.context_paper_ids and project_id is not None:
         references, sources = await library_chat_service.build_reference_context(
             session,
             project_id=project_id,
@@ -501,7 +562,7 @@ async def set_paper_my_meta(
     user: User = Depends(current_active_user),
 ) -> PaperMyMetaRead:
     """个人星标 / 阅读状态 upsert。"""
-    paper = await _get_member_paper(session, paper_id, user)
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     meta = await papers_service.upsert_paper_user_meta(
         session,
         paper=paper,

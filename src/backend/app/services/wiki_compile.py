@@ -98,8 +98,10 @@ def _figure_prompt_section(selected: list[tuple[dict[str, Any], bytes]]) -> str:
     return "\n".join(lines)
 
 
-def build_compile_prompt(paper: Paper, *, statement: str) -> tuple[str, list[bytes]]:
-    """组装编译 user prompt 与随附图片（无重要图时 images 为空 → 纯文字编译）。"""
+def build_compile_prompt(paper: Paper, *, statement: str | None) -> tuple[str, list[bytes]]:
+    """组装编译 user prompt 与随附图片（无重要图时 images 为空 → 纯文字编译）。
+
+    statement 为空 = 通用模板（个人版 wiki，无方向侧重）：不带「研究方向」行。"""
     body: str | None = None
     source = "abstract"
     if paper.full_text_path and Path(paper.full_text_path).exists():
@@ -107,9 +109,10 @@ def build_compile_prompt(paper: Paper, *, statement: str) -> tuple[str, list[byt
         source = "full_text"
     body = (body or paper.abstract or "（无正文）")[:FULLTEXT_PROMPT_CHARS]
     authors = "、".join(a.get("name", "") for a in (paper.authors or []) if isinstance(a, dict))
+    direction_line = f"研究方向：{statement}\n" if statement else ""
     prompt = (
-        f"研究方向：{statement}\n"
-        f"标题：{paper.title}\n"
+        direction_line
+        + f"标题：{paper.title}\n"
         f"作者：{authors or '未知'}\n"
         f"年份/发表：{paper.year or '未知'} {paper.venue or ''}\n"
         f"正文来源：{source}\n"
@@ -132,7 +135,7 @@ class CompiledWiki:
 async def compile_paper(
     paper: Paper,
     *,
-    statement: str,
+    statement: str | None,
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,

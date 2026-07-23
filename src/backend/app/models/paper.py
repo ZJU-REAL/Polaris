@@ -105,15 +105,12 @@ paper_tag_links = Table(
 
 
 class PaperNote(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """论文笔记：项目成员可读，作者（或平台 admin）可改删。"""
+    """论文笔记（paper × author）：跨课题共享，仅作者本人（或平台 admin）可见可改删。"""
 
     __tablename__ = "paper_notes"
 
     paper_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
     )
     author_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
@@ -132,16 +129,13 @@ class PaperHighlight(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     定位策略「文本锚点为主 + 归一化坐标加速」：selected_text 存选中的原文
     （PDF 换版重抽也能靠文本回锚），rects 存归一化到页面 0..1 的矩形列表
     （每行一个，渲染时按当前页宽高还原色块，缩放无关）。
-    权限同 PaperNote：项目成员可读，作者（或平台 admin）可改删。
+    归属同 PaperNote（paper × author）：跨课题共享，仅作者本人（或平台 admin）可见可改删。
     """
 
     __tablename__ = "paper_highlights"
 
     paper_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
     )
     author_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False

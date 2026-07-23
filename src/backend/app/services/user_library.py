@@ -25,6 +25,8 @@ def dedup_key_for_paper(paper: Paper) -> str:
 
 
 def _snapshot_fields(paper: Paper) -> dict:
+    # wiki_content 用 getattr：调用方可能传裸 Paper（内容池行没有 wiki 字段，
+    # 库版 wiki 在成员行上，由 PaperView / _SnapshotPaper 包装提供）
     return {
         "arxiv_id": paper.arxiv_id,
         "doi": paper.doi,
@@ -35,7 +37,7 @@ def _snapshot_fields(paper: Paper) -> dict:
         "abstract": paper.abstract,
         "url": paper.url,
         "tldr": paper.tldr,
-        "wiki_content": paper.wiki_content,
+        "wiki_content": getattr(paper, "wiki_content", None),
         "last_paper_id": paper.id,
     }
 
@@ -71,6 +73,10 @@ async def record_visit(
         session.add(entry)
     else:
         for field, value in _snapshot_fields(paper).items():
+            # wiki 快照只升不清：论文当前没有库版 wiki 时保留旧快照
+            # （可能是个人编译版 / 库版被删前的快照，P5b 三层解析的兜底层）
+            if field == "wiki_content" and value is None:
+                continue
             setattr(entry, field, value)
     entry.visit_count = (entry.visit_count or 0) + 1  # 未 flush 的新对象默认值尚未生效
     entry.last_visited_at = utcnow()
@@ -100,6 +106,41 @@ async def set_saved(
     await session.commit()
     await session.refresh(entry)
     return entry
+
+
+async def set_personal_wiki(
+    session: AsyncSession, *, user_id: uuid.UUID, paper: Paper, wiki_content: str
+) -> UserLibraryEntry:
+    """把个人编译版 wiki 写进本人条目（无条目则建，不动 saved/浏览统计）。"""
+    entry = await entry_for_paper(session, user_id=user_id, paper=paper)
+    if entry is None:
+        entry = UserLibraryEntry(
+            user_id=user_id, dedup_key=dedup_key_for_paper(paper), **_snapshot_fields(paper)
+        )
+        session.add(entry)
+    entry.wiki_content = wiki_content
+    await session.commit()
+    await session.refresh(entry)
+    return entry
+
+
+async def personal_wiki_map(
+    session: AsyncSession, *, user_id: uuid.UUID, papers: list[Paper]
+) -> dict[uuid.UUID, str]:
+    """paper_id → 本人条目里的 wiki（个人编译版 / 历史快照），无则不在结果里。
+
+    P5b 三层解析（库版实时 > 个人版 > 书架快照）的中间层数据源。
+    """
+    keys = {paper.id: dedup_key_for_paper(paper) for paper in papers}
+    if not keys:
+        return {}
+    stmt = select(UserLibraryEntry.dedup_key, UserLibraryEntry.wiki_content).where(
+        UserLibraryEntry.user_id == user_id,
+        UserLibraryEntry.dedup_key.in_(set(keys.values())),
+        UserLibraryEntry.wiki_content.is_not(None),
+    )
+    by_key = {key: content for key, content in (await session.execute(stmt)).all() if content}
+    return {pid: by_key[key] for pid, key in keys.items() if key in by_key}
 
 
 async def purge_entry(session: AsyncSession, *, entry: UserLibraryEntry) -> None:

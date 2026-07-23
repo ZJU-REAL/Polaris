@@ -26,7 +26,9 @@ router = APIRouter(tags=["library"])
 
 async def _get_member_paper(session: AsyncSession, paper_id: uuid.UUID, user: User) -> Paper:
     """校验论文可见性（所在方向的成员），防止越权拷快照。"""
-    paper = await papers_service.get_paper_for_user(session, paper_id=paper_id, user_id=user.id)
+    paper = await papers_service.get_paper_for_user(
+        session, paper_id=paper_id, user_id=user.id, include_pool=True
+    )
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
     return paper

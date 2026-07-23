@@ -274,7 +274,7 @@ async def get_paper_citation(ctx: ToolContext, args: dict[str, Any]) -> dict[str
 
 @tool(
     "get_paper_notes",
-    description="取某论文的项目笔记（团队共享，附作者）",
+    description="取某论文下当前用户的笔记（P5b 起笔记仅作者本人可见）",
     input_schema={
         "type": "object",
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
@@ -285,7 +285,14 @@ async def get_paper_citation(ctx: ToolContext, args: dict[str, Any]) -> dict[str
 async def get_paper_notes(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         paper = await _project_paper(session, ctx, args.get("paper_id"))
-        rows = await notes_service.list_paper_notes(session, paper_id=paper.id)
+        # 笔记仅作者本人可见：无用户语境（系统内部调用）时返回空
+        rows = (
+            await notes_service.list_paper_notes(
+                session, paper_id=paper.id, author_id=ctx.user_id
+            )
+            if ctx.user_id is not None
+            else []
+        )
         return {
             "paper_id": str(paper.id),
             "notes": [{"author": author, "content": note.content} for note, author in rows],
@@ -294,7 +301,7 @@ async def get_paper_notes(ctx: ToolContext, args: dict[str, Any]) -> dict[str, A
 
 @tool(
     "get_paper_highlights",
-    description="取某论文的划线/高亮（团队共享，含所在页与选中文本）",
+    description="取某论文下当前用户的划线/高亮（含所在页与选中文本；仅作者本人可见）",
     input_schema={
         "type": "object",
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
@@ -305,7 +312,13 @@ async def get_paper_notes(ctx: ToolContext, args: dict[str, Any]) -> dict[str, A
 async def get_paper_highlights(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         paper = await _project_paper(session, ctx, args.get("paper_id"))
-        rows = await highlights_service.list_paper_highlights(session, paper_id=paper.id)
+        rows = (
+            await highlights_service.list_paper_highlights(
+                session, paper_id=paper.id, author_id=ctx.user_id
+            )
+            if ctx.user_id is not None
+            else []
+        )
         return {
             "paper_id": str(paper.id),
             "highlights": [

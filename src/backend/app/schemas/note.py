@@ -17,7 +17,6 @@ class NoteUpdate(BaseModel):
 class NoteRead(BaseModel):
     id: uuid.UUID
     paper_id: uuid.UUID
-    project_id: uuid.UUID
     author_id: uuid.UUID
     author_name: str  # display_name 回退 email @ 前部分
     content: str

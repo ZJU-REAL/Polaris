@@ -370,7 +370,7 @@ export function ReadingPage() {
           {panel === 'highlights' ? (
             <HighlightsPanel
               paperId={paper.id}
-              pid={paper.project_id}
+              pid={paper.project_id ?? ''}
               highlights={highlights}
               loading={highlightsQuery.isLoading}
               error={highlightsQuery.isError}
@@ -379,9 +379,9 @@ export function ReadingPage() {
               onChanged={invalidateHighlights}
             />
           ) : panel === 'notes' ? (
-            <NotesPanel paperId={paper.id} pid={paper.project_id} />
+            <NotesPanel paperId={paper.id} pid={paper.project_id ?? ''} />
           ) : panel === 'chat' ? (
-            <ChatPanel paperId={paper.id} pid={paper.project_id} />
+            <ChatPanel paperId={paper.id} pid={paper.project_id ?? ''} />
           ) : (
             <InfoPanel paper={paper} onWikiLink={onWikiLink} />
           )}

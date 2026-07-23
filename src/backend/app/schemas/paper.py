@@ -28,7 +28,8 @@ class PaperRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    project_id: uuid.UUID
+    # 本次访问解析出的课题上下文；池级可达（书架/个人库）的无库论文可为 null
+    project_id: uuid.UUID | None
     title: str
     authors: list[AuthorRead] = []
     affiliations: list[str] = []  # 发表机构（LLM 从全文解析，OpenAlex 兜底；可能为空）
@@ -235,3 +236,15 @@ class SearchResponse(BaseModel):
     concepts: list[ScoredConcept]
     mode_used: Literal["keyword", "semantic"]
     reranked: bool = False  # semantic 模式下 rerank 是否成功（失败降级为纯向量分）
+
+
+class PersonalWikiRequest(BaseModel):
+    """个人版 wiki 按需编译（P5b）：可选带课题，statement 作为侧重提示 + 用量归因。"""
+
+    topic_id: uuid.UUID | None = None
+
+
+class PersonalWikiRead(BaseModel):
+    paper_id: uuid.UUID
+    wiki_content: str
+    model: str | None = None

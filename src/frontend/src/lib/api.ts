@@ -594,7 +594,8 @@ export interface PaperAuthor {
 
 export interface PaperRead {
   id: string;
-  project_id: string;
+  /** 本次访问解析出的课题上下文；书架/个人库可达的无库论文（个人补充）为 null */
+  project_id: string | null;
   title: string;
   authors: PaperAuthor[];
   /** 发表机构（OpenAlex 补充；可能为空） */
@@ -678,7 +679,6 @@ export type ReadingStatus = 'unread' | 'reading' | 'read';
 export interface NoteRead {
   id: string;
   paper_id: string;
-  project_id: string;
   author_id: string;
   /** display_name 回退 email 前缀 */
   author_name: string;
@@ -707,7 +707,6 @@ export interface HighlightRect {
 export interface HighlightRead {
   id: string;
   paper_id: string;
-  project_id: string;
   author_id: string;
   author_name: string;
   page: number; // 1-indexed
@@ -811,8 +810,8 @@ export interface SearchResult {
 // P5a · 课题「相关研究」书架 — /projects/{pid}/shelf
 // ============================================================
 
-/** 书架条目 wiki 来源：live=库版实时可得 | snapshot=只剩入架快照 | none=没有解读。 */
-export type ShelfWikiSource = 'live' | 'snapshot' | 'none';
+/** 书架条目 wiki 来源：live=库版实时 | personal=本人个人编译版 | snapshot=只剩入架快照 | none=没有解读。 */
+export type ShelfWikiSource = 'live' | 'personal' | 'snapshot' | 'none';
 
 export interface ShelfItemRead {
   paper_id: string;
@@ -827,13 +826,20 @@ export interface ShelfItemRead {
   /** 课题语境的「为什么相关」备注 */
   note: string | null;
   wiki_source: ShelfWikiSource;
-  /** 解析后的 wiki：库版实时 > 快照；none 时为 null */
+  /** 解析后的 wiki：库版实时 > 个人版 > 快照；none 时为 null */
   wiki_content: string | null;
   /** 入架落快照的时间；没快照为 null */
   snapshot_at: string | null;
   /** 来源方向库（个人补充为 null） */
   source_library_id: string | null;
   added_at: string;
+}
+
+/** 个人版 wiki 按需编译结果（P5b）。 */
+export interface PersonalWikiRead {
+  paper_id: string;
+  wiki_content: string;
+  model: string | null;
 }
 
 /** 个人补充入库：arXiv 编号 / DOI / 标题至少给一个。 */
@@ -2623,6 +2629,18 @@ export const api = {
   /** 移出书架：只删书架行，个人库收藏不动。 */
   removeFromShelf(projectId: string, paperId: string): Promise<void> {
     return request<void>(`/projects/${projectId}/shelf/${paperId}`, { method: 'DELETE' });
+  },
+  /** 手动刷新书架快照：从当前最优 wiki（库版 > 个人版）重拷；无来源 409。 */
+  refreshShelfSnapshot(projectId: string, paperId: string): Promise<ShelfItemRead> {
+    return request<ShelfItemRead>(`/projects/${projectId}/shelf/${paperId}/refresh-snapshot`, {
+      method: 'POST',
+    });
+  },
+  /** 个人版 wiki 按需编译（无库版解读的论文；费用记个人额度）。 */
+  compilePersonalWiki(paperId: string, topicId?: string | null): Promise<PersonalWikiRead> {
+    return requestJson<PersonalWikiRead>(`/papers/${paperId}/personal-wiki`, 'POST', {
+      topic_id: topicId ?? null,
+    });
   },
 
   // —— M2 · Ingest ——

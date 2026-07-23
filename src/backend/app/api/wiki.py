@@ -94,7 +94,7 @@ async def search(
             mode_used = "keyword"  # embedding 路由的 provider 不支持 → 回退
     if mode_used == "keyword":
         paper_rows = await papers_service.keyword_search_papers(
-            session, project_id=project_id, q=q, limit=limit
+            session, project_id=project_id, q=q, limit=limit, user_id=user.id
         )
     concept_rows = await papers_service.keyword_search_concepts(
         session, project_id=project_id, q=q, limit=limit
@@ -131,7 +131,7 @@ async def export_obsidian(
     user: User = Depends(current_active_user),
 ) -> Response:
     project = await _member_project(session, project_id, user)
-    content = await build_obsidian_zip(session, project)
+    content = await build_obsidian_zip(session, project, user_id=user.id)
     filename = f"{project.slug}-wiki.zip"
     return Response(
         content=content,
