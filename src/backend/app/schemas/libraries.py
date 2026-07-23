@@ -60,6 +60,39 @@ class CuratorsUpdate(BaseModel):
     user_ids: list[uuid.UUID]
 
 
+class DuplicateCandidatePaper(BaseModel):
+    """重复候选组里的一行（对比要素：标题/年份/来源/全文分段数/wiki 有无）。"""
+
+    id: uuid.UUID
+    title: str
+    year: int | None
+    source: str | None
+    arxiv_id: str | None
+    doi: str | None
+    status: str
+    chunk_count: int
+    has_wiki: bool
+    created_at: datetime
+
+
+class DuplicateCandidateGroup(BaseModel):
+    reason: str  # arxiv | doi | title（按何种键判定为疑似重复）
+    papers: list[DuplicateCandidatePaper]  # 首行 = 建议保留行（更完整优先）
+
+
+class PaperMergeRequest(BaseModel):
+    keep_id: uuid.UUID
+    drop_id: uuid.UUID
+
+
+class PaperMergeResult(BaseModel):
+    kept_id: uuid.UUID
+    dropped_id: uuid.UUID
+    dropped_dedup_key: str | None
+    # 各表 repoint/合并计数（library_memberships/topic_papers/paper_user_meta/...）
+    details: dict[str, Any]
+
+
 class LibraryBudgetRead(BaseModel):
     """库预算面板（P6）：本月消耗（UTC 自然月，token 口径与 LLMUsage 记账一致）。"""
 

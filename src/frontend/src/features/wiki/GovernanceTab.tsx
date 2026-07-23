@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
-import { api, isAdmin, type DirectionLibraryDetail } from '../../lib/api';
+import { api, isAdmin, type DirectionLibraryDetail, type DuplicateCandidatePaper } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
@@ -10,6 +10,7 @@ import { tr } from '../../lib/i18n';
    - 库信息与预算编辑（可管理者：成员 / 文献库管理员 / 平台管理员）；
    - 本月 AI 用量进度（超限后同步任务暂停到下月）；
    - 文献库管理员名单（仅平台管理员可编辑）；
+   - 重复论文候选与合并（不可撤销）。
    ============================================================ */
 
 const CADENCES: { v: string; zh: string; en: string }[] = [
@@ -32,7 +33,121 @@ export function GovernanceTab({ libraryId }: { libraryId: string }) {
       {lib && <LibraryInfoCard lib={lib} />}
       <BudgetCard libraryId={libraryId} />
       <CuratorsCard libraryId={libraryId} canEdit={admin} />
+      <DuplicatesCard libraryId={libraryId} />
     </div>
+  );
+}
+
+/* —— 重复论文候选与合并 —— */
+
+const REASON_LABEL: Record<string, { zh: string; en: string }> = {
+  arxiv: { zh: '同一 arXiv 编号', en: 'Same arXiv id' },
+  doi: { zh: '同一 DOI', en: 'Same DOI' },
+  title: { zh: '标题相同', en: 'Same title' },
+};
+
+function DuplicatesCard({ libraryId }: { libraryId: string }) {
+  const queryClient = useQueryClient();
+  const { data: groups, isLoading, isError } = useQuery({
+    queryKey: ['library-duplicates', libraryId],
+    queryFn: () => api.listDuplicateCandidates(libraryId),
+    retry: false,
+  });
+
+  const merge = useMutation({
+    mutationFn: (input: { keep_id: string; drop_id: string }) => api.mergePapers(input),
+    onSuccess: () => {
+      toast(tr('已合并为一篇论文', 'Merged into one paper'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['library-duplicates', libraryId] });
+      void queryClient.invalidateQueries({ queryKey: ['library', libraryId] });
+      void queryClient.invalidateQueries({ queryKey: ['papers'] });
+    },
+    onError: () => toast(tr('合并失败，请重试', 'Merge failed, please retry'), 'error'),
+  });
+
+  function confirmMerge(keep: DuplicateCandidatePaper, drop: DuplicateCandidatePaper) {
+    const ok = window.confirm(
+      `${tr('确定合并这两篇论文？', 'Merge these two papers?')}\n\n` +
+        `${tr('保留：', 'Keep: ')}${keep.title}\n${tr('并入后删除：', 'Merge & delete: ')}${drop.title}\n\n` +
+        tr(
+          '被删除那篇的解读、笔记、划线、收藏等会全部并到保留的那篇上。此操作不可撤销。',
+          'Its wiki, notes, highlights and stars will all move to the kept paper. This cannot be undone.',
+        ),
+    );
+    if (ok) merge.mutate({ keep_id: keep.id, drop_id: drop.id });
+  }
+
+  return (
+    <section className="card" style={{ padding: 18 }}>
+      <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+        {tr('重复论文', 'Duplicate papers')}
+      </h3>
+      <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+        {tr(
+          '同一篇论文可能因预印本 / 正式版等原因入库两次。确认后合并：保留更完整的一篇，另一篇的所有内容并入后删除（不可撤销）。',
+          'The same paper can be ingested twice (e.g. preprint vs published). Merging keeps the more complete row and folds the other into it — irreversible.',
+        )}
+      </p>
+      {isLoading ? (
+        <div className="skel" style={{ height: 48 }} />
+      ) : isError ? (
+        <div className="muted" style={{ fontSize: 13 }}>{tr('候选加载失败', 'Failed to load candidates')}</div>
+      ) : !groups || groups.length === 0 ? (
+        <div className="muted" style={{ fontSize: 13 }}>
+          {tr('没有发现疑似重复的论文。', 'No suspected duplicates found.')}
+        </div>
+      ) : (
+        <div className="col gap12">
+          {groups.map((group, gi) => {
+            const keep = group.papers[0];
+            if (!keep) return null;
+            return (
+              <div
+                key={`${group.reason}-${keep.id}-${gi}`}
+                style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}
+              >
+                <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                  {tr(REASON_LABEL[group.reason]?.zh ?? group.reason, REASON_LABEL[group.reason]?.en ?? group.reason)}
+                </div>
+                <div className="col gap8">
+                  {group.papers.map((paper, pi) => (
+                    <div key={paper.id} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+                      <div className="col" style={{ minWidth: 0 }}>
+                        <div className="row gap8" style={{ minWidth: 0 }}>
+                          <span style={{ fontSize: 13, fontWeight: pi === 0 ? 650 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {paper.title}
+                          </span>
+                          {pi === 0 && (
+                            <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', flexShrink: 0 }}>
+                              {tr('建议保留', 'Suggested keep')}
+                            </span>
+                          )}
+                        </div>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          {paper.year ?? tr('年份未知', 'Year unknown')} · {paper.source ?? tr('来源未知', 'Unknown source')} ·{' '}
+                          {tr('全文分段 ', 'Chunks ')}{paper.chunk_count}
+                          {paper.has_wiki ? ` · ${tr('已有解读', 'Has wiki')}` : ''}
+                        </span>
+                      </div>
+                      {pi > 0 && (
+                        <button
+                          className="btn btn-soft sm"
+                          disabled={merge.isPending}
+                          onClick={() => confirmMerge(keep, paper)}
+                          style={{ flexShrink: 0 }}
+                        >
+                          {tr('并入保留行', 'Merge into keep')}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 

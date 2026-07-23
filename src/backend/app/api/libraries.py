@@ -10,12 +10,13 @@ project 作用域端点（鉴权同样接入库级写权限助手）。
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_admin
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
-from app.models.library_direction import DirectionLibrary
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.user import User
 from app.schemas.libraries import (
     CuratorRead,
@@ -23,7 +24,10 @@ from app.schemas.libraries import (
     DirectionLibraryDetail,
     DirectionLibrarySummary,
     DirectionLibraryUpdate,
+    DuplicateCandidateGroup,
     LibraryBudgetRead,
+    PaperMergeRequest,
+    PaperMergeResult,
 )
 from app.schemas.paper import (
     ConceptRead,
@@ -36,6 +40,7 @@ from app.schemas.paper import (
 from app.services import concepts as concepts_service
 from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
+from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
 
 router = APIRouter(tags=["libraries"])
@@ -283,3 +288,65 @@ async def search_library(
         for p, s in paper_rows
     ]
     return SearchResponse(papers=papers, concepts=concepts, mode_used=mode_used, reranked=reranked)
+
+
+# ---- P6 治理：重复论文合并 ----
+
+
+@router.get(
+    "/libraries/{library_id}/duplicate-candidates",
+    response_model=list[DuplicateCandidateGroup],
+)
+async def list_duplicate_candidates(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[DuplicateCandidateGroup]:
+    """库内疑似重复论文（可管理者）：arxiv/doi 同源不同行，或规范化标题相同。"""
+    library = await _get_managed_library(session, library_id, user)
+    groups = await paper_merge_service.duplicate_candidates(session, library_id=library.id)
+    return [DuplicateCandidateGroup(**group) for group in groups]
+
+
+@router.post("/papers/merge", response_model=PaperMergeResult)
+async def merge_papers(
+    data: PaperMergeRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperMergeResult:
+    """合并重复论文（不可撤销）：drop 行的全部归属并入 keep 后删除 drop。
+
+    权限：平台 admin，或 keep/drop 任一所在方向库的可管理者。
+    """
+    if user.role != "admin":
+        libraries = (
+            (
+                await session.execute(
+                    select(DirectionLibrary)
+                    .join(LibraryPaper, LibraryPaper.library_id == DirectionLibrary.id)
+                    .where(LibraryPaper.paper_id.in_([data.keep_id, data.drop_id]))
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        allowed = False
+        for library in libraries:
+            if await libraries_service.can_manage_library(session, user=user, library=library):
+                allowed = True
+                break
+        if not allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="PAPER_MERGE_FORBIDDEN")
+    try:
+        report = await paper_merge_service.merge_papers(
+            session, keep_id=data.keep_id, drop_id=data.drop_id
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return PaperMergeResult(
+        kept_id=data.keep_id,
+        dropped_id=data.drop_id,
+        dropped_dedup_key=report.pop("dropped_dedup_key"),
+        details={k: v for k, v in report.items() if k not in ("kept_id", "dropped_id")},
+    )

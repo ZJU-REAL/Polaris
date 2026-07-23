@@ -830,6 +830,34 @@ export interface LibraryCuratorRead {
   display_name: string | null;
 }
 
+/** 重复候选组里的一行（对比要素）。 */
+export interface DuplicateCandidatePaper {
+  id: string;
+  title: string;
+  year: number | null;
+  source: string | null;
+  arxiv_id: string | null;
+  doi: string | null;
+  status: string;
+  chunk_count: number;
+  has_wiki: boolean;
+  created_at: string;
+}
+
+export interface DuplicateCandidateGroup {
+  /** 按何种键判定为疑似重复：arxiv | doi | title */
+  reason: string;
+  /** 首行 = 建议保留行（更完整优先） */
+  papers: DuplicateCandidatePaper[];
+}
+
+export interface PaperMergeResult {
+  kept_id: string;
+  dropped_id: string;
+  dropped_dedup_key: string | null;
+  details: Record<string, unknown>;
+}
+
 /** 库预算面板：本月 AI 用量（token）与上限。 */
 export interface LibraryBudgetRead {
   /** 如 "2026-07" */
@@ -2678,6 +2706,14 @@ export const api = {
   /** 本月预算消耗（可管理者可见）。 */
   getLibraryBudget(id: string): Promise<LibraryBudgetRead> {
     return request<LibraryBudgetRead>(`/libraries/${id}/budget`);
+  },
+  /** 库内疑似重复论文（可管理者）。 */
+  listDuplicateCandidates(id: string): Promise<DuplicateCandidateGroup[]> {
+    return request<DuplicateCandidateGroup[]>(`/libraries/${id}/duplicate-candidates`);
+  },
+  /** 合并重复论文（不可撤销）：drop 的全部归属并入 keep 后删除 drop。 */
+  mergePapers(input: { keep_id: string; drop_id: string }): Promise<PaperMergeResult> {
+    return requestJson<PaperMergeResult>('/papers/merge', 'POST', input);
   },
   /** 文献库管理员名单（可管理者可见）。 */
   listLibraryCurators(id: string): Promise<LibraryCuratorRead[]> {
