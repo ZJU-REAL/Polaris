@@ -30,6 +30,7 @@ from app.schemas.libraries import (
     DuplicateCandidateGroup,
     LibraryBudgetRead,
     LibraryCreate,
+    LibraryReject,
     PaperMergeRequest,
     PaperMergeResult,
 )
@@ -93,9 +94,12 @@ async def list_libraries(
 async def create_library(
     data: LibraryCreate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
+    user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """独立新建方向文献库（平台 admin）：不属于任何课题，课题靠关联消费其语料。"""
+    """用户独立新建方向文献库（任意登录用户，P9b）：新库 status=pending 待审批，
+    创建者记为 submitted_by 并自动成为该库策展人（文献库管理员）。仅落配置，不触发
+    抓取、不花 token；管理员审批激活后才能触发 ingest。不属于任何课题，课题靠关联消费其语料。
+    """
     library = await libraries_service.create_library(
         session,
         name=data.name,
@@ -119,6 +123,36 @@ async def get_library(
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
     library = await _get_library(session, library_id)
+    # 可见性（P9b）：pending/rejected 库仅创建者 + admin 可见，其余人视为不存在。
+    if not libraries_service.library_visible_to(library, user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
+@router.post("/libraries/{library_id}/approve", response_model=DirectionLibraryDetail)
+async def approve_library(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> DirectionLibraryDetail:
+    """审批通过（平台 admin）：pending/rejected → active，激活后可触发抓取。"""
+    library = await _get_library(session, library_id)
+    library = await libraries_service.approve_library(session, library=library)
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
+@router.post("/libraries/{library_id}/reject", response_model=DirectionLibraryDetail)
+async def reject_library(
+    library_id: uuid.UUID,
+    data: LibraryReject,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> DirectionLibraryDetail:
+    """驳回（平台 admin）：→ rejected，可带理由；创建者可改配置后再由 admin 审批。"""
+    library = await _get_library(session, library_id)
+    library = await libraries_service.reject_library(session, library=library, note=data.note)
     row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
 
@@ -202,6 +236,9 @@ async def start_library_ingest(
     带上 project 以兼容活动流/鉴权。互斥以库为准，超预算 409 拒绝。
     """
     library = await _get_managed_library(session, library_id, user)
+    if library.status != "active":
+        # 待审批 / 已驳回的库不能抓取（P9b：仅 active 且预算内可触发）。
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_NOT_ACTIVE")
     project = (
         await session.get(Project, library.project_id)
         if library.project_id is not None
