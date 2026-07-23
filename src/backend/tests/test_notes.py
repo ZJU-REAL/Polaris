@@ -94,9 +94,9 @@ async def test_notes_shared_across_topics_and_survive_library_removal(client):
     project2_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
         from app.models.library_direction import LibraryPaper
-        from app.services.libraries import get_library_for_project
+        from tests.conftest import ensure_project_library
 
-        library2 = await get_library_for_project(session, uuid.UUID(project2_id))
+        library2 = await ensure_project_library(session, uuid.UUID(project2_id))
         session.add(
             LibraryPaper(
                 library_id=library2.id, paper_id=uuid.UUID(ids["p1"]), status="included"

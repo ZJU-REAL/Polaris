@@ -12,7 +12,7 @@ async def test_create_and_list_projects(client):
 
     resp = await client.post(
         "/api/projects",
-        json={"name": "LLM 推理加速", "definition": {"topic": "inference"}},
+        json={"name": "LLM 推理加速", "statement": "推理加速方法"},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
@@ -20,7 +20,8 @@ async def test_create_and_list_projects(client):
     assert project["name"] == "LLM 推理加速"
     assert project["slug"]  # 自动生成
     assert project["status"] == "active"
-    assert project["definition"] == {"topic": "inference"}
+    # P9c：一句话 statement 存入 definition.statement；不含任何收录配置
+    assert project["definition"] == {"statement": "推理加速方法"}
 
     resp = await client.post(
         "/api/projects", json={"name": "Second", "slug": "second"}, headers=headers
@@ -149,3 +150,26 @@ async def test_get_project_not_member_404(client):
     # 非成员列表为空
     resp = await client.get("/api/projects", headers={"Authorization": f"Bearer {token_b}"})
     assert resp.json() == []
+
+
+async def test_create_project_empty_corpus_consumers_ok(client):
+    """P9c：空关联课题（无库、无语料）——论文列表 / ingest 状态等消费端优雅空态，不报错。"""
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = await client.post(
+        "/api/projects", json={"name": "空语料课题", "statement": "还没关联库"}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    project_id = resp.json()["id"]
+
+    resp = await client.get(f"/api/projects/{project_id}/papers", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total"] == 0
+
+    resp = await client.get(f"/api/projects/{project_id}/source-libraries", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+
+    resp = await client.get(f"/api/projects/{project_id}/ingest/state", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["next_sync_at"] is None

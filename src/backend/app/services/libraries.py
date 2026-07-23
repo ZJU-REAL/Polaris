@@ -25,22 +25,6 @@ from app.models.project import Project, ProjectMember
 from app.models.user import User
 
 
-def implicit_library_for(project: Project) -> DirectionLibrary:
-    """按 project 组一个隐式库对象（继承 definition 的 statement/rubric/anchors/cadence）。"""
-    definition = project.definition if isinstance(project.definition, dict) else {}
-    return DirectionLibrary(
-        name=project.name,
-        statement=definition.get("statement"),
-        rubric=definition.get("rubric"),
-        anchors=definition.get("anchor_papers"),
-        definition=definition or None,  # P8a：库承载完整收录配置
-        ingest_state=project.ingest_state,
-        cadence=definition.get("cadence"),
-        created_by=project.owner_id,
-        project_id=project.id,
-    )
-
-
 def library_definition(library: DirectionLibrary) -> dict[str, Any]:
     """库的收录配置（P8a 权威源）：definition JSON；为空时回退标量列拼一份兼容视图。
 
@@ -71,7 +55,8 @@ async def get_library_for_project(
 
     P7 起管理/ingest 路径专用（历史 1:1 语义单库解析）；并集读路径改用
     ``get_source_libraries``/``get_source_library_ids``。不再兜底自动建库——
-    课题创建仍会建关联（services/projects.py），缺失即代表课题真的没有语料。
+    P9c 起课题创建不再自动建隐式库/建关联，缺失即代表课题真的没有语料（存量
+    隐式库仍靠 project_id 回指解析，是带起源溯源的普通独立库）。
     """
     stmt = select(DirectionLibrary).where(DirectionLibrary.project_id == project_id)
     library = (await session.execute(stmt)).scalar_one_or_none()
