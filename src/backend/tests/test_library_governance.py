@@ -1,4 +1,4 @@
-"""P6 库治理（任务 1）：库级写权限助手、策展人任命（仅 admin）、库定义编辑与写回同步。"""
+"""P6/P8a 库治理：库级写权限助手、策展人任命（仅 admin）、库定义编辑（收录配置权威源）。"""
 
 import uuid
 
@@ -120,7 +120,7 @@ async def test_curator_appointment_admin_only(client):
     assert resp.json() == []
 
 
-async def test_patch_library_permission_and_definition_sync(client):
+async def test_patch_library_permission_and_definition_authority(client):
     admin, _owner, curator, stranger, project_id, library_id = await _setup(client)
 
     # 无关用户 403
@@ -147,19 +147,24 @@ async def test_patch_library_permission_and_definition_sync(client):
     assert body["name"] == "稀疏注意力"
     assert body["monthly_budget"] == 500000
     assert body["can_manage"] is True
+    # 响应带出收录配置全量（供「收录设置」回填）
+    assert body["definition"]["rubric"] == ["和稀疏注意力直接相关"]
+    assert body["definition"]["anchor_papers"] == [{"arxiv_id": "2404.00001"}]
 
-    # 库为权威，写时同步回 project.name / project.definition（保持 ingest 兼容）
+    # P8a：库是收录配置唯一权威源——写入 library.definition，不再写回起源课题
     async with get_sessionmaker()() as session:
-        project = await session.get(Project, uuid.UUID(project_id))
-        assert project.name == "稀疏注意力"
-        definition = project.definition
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        assert library.name == "稀疏注意力"
+        assert library.monthly_budget == 500000
+        assert library.statement == "稀疏注意力机制的效率研究"
+        definition = library.definition
         assert definition["statement"] == "稀疏注意力机制的效率研究"
         assert definition["rubric"] == ["和稀疏注意力直接相关"]
         assert definition["anchor_papers"] == [{"arxiv_id": "2404.00001"}]
         assert definition["cadence"] == "daily"
-        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
-        assert library.monthly_budget == 500000
-        assert library.statement == "稀疏注意力机制的效率研究"
+        # 起源课题 project.definition 不再被写回同步
+        project = await session.get(Project, uuid.UUID(project_id))
+        assert (project.definition or {}).get("rubric") != ["和稀疏注意力直接相关"]
 
     # 显式传 null 清空预算
     resp = await client.patch(

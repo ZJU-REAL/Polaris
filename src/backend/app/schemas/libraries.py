@@ -35,6 +35,9 @@ class DirectionLibraryDetail(DirectionLibrarySummary):
     cadence: str | None
     # 每月 ingest 预算（token 数；None = 不限）
     monthly_budget: int | None = None
+    # 收录配置全量（P8a 权威源）：statement/goals/in_scope/out_of_scope/questions/
+    # rubric/anchor_papers/keywords(含 arxiv_categories)/cadence，供「收录设置」编辑
+    definition: dict[str, Any] | None = None
 
 
 class LibraryCreate(BaseModel):
@@ -46,6 +49,7 @@ class LibraryCreate(BaseModel):
     monthly_budget: int | None = Field(default=None, ge=0)
     rubric: Any | None = None
     anchors: list[Any] | None = None
+    keywords: dict[str, Any] | None = None  # {arxiv_categories, include, synonyms}
 
 
 class SourceLibrariesUpdate(BaseModel):
@@ -55,7 +59,13 @@ class SourceLibrariesUpdate(BaseModel):
 
 
 class DirectionLibraryUpdate(BaseModel):
-    """库定义编辑（PATCH /libraries/{id}）：显式传 null 可清空对应字段。"""
+    """库定义编辑（PATCH /libraries/{id}）：显式传 null 可清空对应字段。
+
+    P8a：收录配置写入 library.definition（ingest 权威源）。除 name/monthly_budget 外，
+    其余字段（statement/cadence/rubric/anchors/keywords/goals/scope/questions）即收录配置。
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     statement: str | None = None
@@ -63,6 +73,11 @@ class DirectionLibraryUpdate(BaseModel):
     monthly_budget: int | None = Field(default=None, ge=0)
     rubric: Any | None = None
     anchors: list[Any] | None = None
+    keywords: dict[str, Any] | None = None  # {arxiv_categories, include, synonyms}
+    goals: list[Any] | None = None
+    in_scope: list[Any] | None = None
+    out_of_scope: list[Any] | None = None
+    questions: list[Any] | None = None
 
 
 class CuratorRead(BaseModel):
