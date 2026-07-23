@@ -60,7 +60,6 @@ export function LibraryDetailPage() {
     );
   }
 
-  const isMember = lib.is_mine && !!lib.project_id;
   const canManage = lib.can_manage && !!lib.project_id;
 
   return (
@@ -76,12 +75,6 @@ export function LibraryDetailPage() {
               <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
               {tr('全部文献库', 'All libraries')}
             </button>
-            {isMember && (
-              <button className="btn btn-ghost" onClick={() => navigate(`/projects/${lib.project_id}`)}>
-                <Icon name="compass" size={14} />
-                {tr('课题设置', 'Topic settings')}
-              </button>
-            )}
           </>
         }
       />
