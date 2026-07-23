@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
@@ -8,6 +8,7 @@ import { Markdown } from '../../lib/markdown';
 import { api, type ShelfItemRead, type ShelfWikiSource } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { libraryPath, useLibraries } from '../libraries/hooks';
+import { readerFrom } from '../reading/shared';
 
 /* ============================================================
    相关研究 · 右栏详情（与「我的文献库」LibraryDetailPane 同一版式）：
@@ -245,6 +246,7 @@ export function ShelfDetailPane({
   onRefreshSnapshot: () => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // 摘要 / TL;DR / 嵌图 / 编译信息来自论文详情（与阅读页、文献追踪同 queryKey 缓存互通）
   const paperQuery = useQuery({
@@ -316,10 +318,25 @@ export function ShelfDetailPane({
 
       {/* —— 操作行 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
-        <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${item.paper_id}/read`)}>
+        <button
+          className="btn btn-primary sm"
+          onClick={() => navigate(`/papers/${item.paper_id}/read`, { state: readerFrom(location, 'research') })}
+        >
           <Icon name="file" size={13} />
           {tr('打开阅读页', 'Open reader')}
         </button>
+        {item.source_library_id && (
+          <button
+            className="btn btn-ghost sm"
+            title={tr('打开这篇所在的方向文献库', 'Open the direction library this paper lives in')}
+            onClick={() =>
+              navigate(libraryPath(item.source_library_id ?? '', `?paper=${item.paper_id}`))
+            }
+          >
+            <Icon name="book" size={13} />
+            {tr('去文献库', 'Open library')}
+          </button>
+        )}
         {arxivUrl && (
           <a
             className="btn btn-ghost sm"

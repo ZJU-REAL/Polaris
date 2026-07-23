@@ -1,4 +1,36 @@
 import type { HighlightColor, HighlightStyle, ReadingStatus } from '../../lib/api';
+import { tr } from '../../lib/i18n';
+
+/* ============================================================
+   进阅读页时携带的「上游来源」：/papers/:id/read 的返回按钮
+   据此回到用户真正来的那个界面（相关研究 / 我的文献库 / 文献库），
+   而不是一律回论文所属课题的方向库。刷新丢失 state 时退回默认。
+   ============================================================ */
+
+export type ReaderFromKind = 'research' | 'library' | 'wiki';
+
+export interface ReaderFrom {
+  /** 返回目标的完整 in-app 路径（pathname + search）。 */
+  href: string;
+  kind: ReaderFromKind;
+}
+
+/** 由当前 location 构造进阅读页用的 navigate state。 */
+export function readerFrom(loc: { pathname: string; search: string }, kind: ReaderFromKind): { from: ReaderFrom } {
+  return { from: { href: loc.pathname + loc.search, kind } };
+}
+
+/** 返回按钮文案：按来源界面给出对应的「回…」。 */
+export function readerBackLabel(kind: ReaderFromKind): string {
+  switch (kind) {
+    case 'research':
+      return tr('回相关研究', 'Back to related work');
+    case 'library':
+      return tr('回我的文献库', 'Back to my library');
+    default:
+      return tr('回文献库', 'Back to library');
+  }
+}
 
 /* ============================================================
    阅读工作台共享：阅读状态元信息（文案 + 配色）。

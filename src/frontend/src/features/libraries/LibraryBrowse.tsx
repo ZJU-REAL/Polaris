@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -11,6 +11,7 @@ import { api, type PaperRead, type PaperSort } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { ConceptsTab } from '../wiki/ConceptsTab';
 import { SearchInput, useDebounced } from '../wiki/shared';
+import { readerFrom } from '../reading/shared';
 
 /* ============================================================
    共享文献库只读浏览（P5c 非成员视角）：
@@ -79,6 +80,7 @@ function PaperRow({ p, active, onClick }: { p: PaperRead; active: boolean; onCli
 
 function PaperDetailPane({ paperId, onWikiLink }: { paperId: string; onWikiLink: WikiLinkHandler }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['paper', paperId],
     queryFn: () => api.getPaper(paperId),
@@ -130,7 +132,7 @@ function PaperDetailPane({ paperId, onWikiLink }: { paperId: string; onWikiLink:
         <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 14 }}>{authorsLine(paper)}</div>
       )}
       <div className="row gap8" style={{ marginBottom: 18 }}>
-        <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`)}>
+        <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`, { state: readerFrom(location, 'wiki') })}>
           <Icon name="book" size={13} />
           {tr('打开阅读页', 'Open reading page')}
         </button>

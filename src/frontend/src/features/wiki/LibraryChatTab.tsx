@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
@@ -9,6 +9,7 @@ import { chatLibrarySse } from '../../lib/sse';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { tr } from '../../lib/i18n';
 import { ChatSurface } from '../chat/ChatSurface';
+import { readerFrom } from '../reading/shared';
 import type { ChatMsg } from '../chat/types';
 
 /* ============================================================
@@ -93,6 +94,7 @@ function SourceCard({
   onWikiLink?: WikiLinkHandler;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   return (
     <div
       className="row gap8"
@@ -163,7 +165,7 @@ function SourceCard({
           className="icon-btn"
           style={{ width: 22, height: 22, border: 'none', background: 'transparent' }}
           title={tr('去阅读（PDF + AI 伴读）', 'Read (PDF + AI companion)')}
-          onClick={() => navigate(`/papers/${s.paper_id}/read`)}
+          onClick={() => navigate(`/papers/${s.paper_id}/read`, { state: readerFrom(location, 'wiki') })}
         >
           <Icon name="book" size={12} />
         </button>

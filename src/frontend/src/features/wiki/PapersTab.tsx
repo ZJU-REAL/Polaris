@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PaperStatusPill } from '../../components/ui/StatusPill';
@@ -11,6 +11,7 @@ import { Modal } from '../../components/ui/Modal';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import { PaperReader } from './PaperReader';
+import { readerFrom } from '../reading/shared';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
@@ -891,6 +892,7 @@ function PaperDetailPane({
   onDeleted: () => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [conceptsOpen, setConceptsOpen] = useState(false);
@@ -1060,7 +1062,7 @@ function PaperDetailPane({
 
       {/* —— 操作 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
-        <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`)}>
+        <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`, { state: readerFrom(location, 'wiki') })}>
           <Icon name="file" size={13} />
           {tr('阅读原文', 'Read original')}
         </button>
