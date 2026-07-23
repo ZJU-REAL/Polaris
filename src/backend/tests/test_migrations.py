@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b3e9c1f47a20"  # direction_libraries.definition 收录配置权威（P8a）
-PREV_REVISION = "67d18892a6ce"  # 课题 × 文献库关联 + 库生命周期独立（P7 Step 1）
+HEAD_REVISION = "3ecc41527559"  # users.settings 个人设置 JSON 列（可选全文索引开关）
+PREV_REVISION = "b3e9c1f47a20"  # direction_libraries.definition 收录配置权威（P8a）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -118,6 +118,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 用户系统 U1：users 三新列 + project_invites 表
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
     assert "project_invites" in columns["_tables"]
+    # 可选全文索引：users.settings 个人设置 JSON 列
+    assert "settings" in columns["users"]
     # 任务循环 v1：voyage_runs / voyage_steps 新列
     assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
     assert {
@@ -263,6 +265,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
     assert "manuscript_file_versions" in columns["_tables"]
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
+    # 回退到 P8a：users.settings 列已随 downgrade 删除
+    assert "settings" not in columns["users"]
     assert "project_invites" in columns["_tables"]
     assert "affiliations" in columns["papers"]
     assert {"skill_listings", "skill_ratings"} <= columns["_tables"]

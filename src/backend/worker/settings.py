@@ -8,6 +8,7 @@ from app.services.ingest import DAILY_SYNC_UTC_HOUR, DAILY_SYNC_UTC_MINUTE
 from worker.tasks import (
     daily_publication_match,
     daily_wiki_ingest,
+    index_papers_fulltext_task,
     match_user_publications,
     ping_task,
     reconcile_stuck_voyages,
@@ -26,6 +27,7 @@ class WorkerSettings:
         func(run_voyage, timeout=VOYAGE_JOB_TIMEOUT_SECONDS),
         func(resume_voyage, timeout=VOYAGE_JOB_TIMEOUT_SECONDS),
         match_user_publications,
+        index_papers_fulltext_task,
     ]
     # 每日 03:00 对 cadence=daily 且已 bootstrap 的项目触发增量 ingest（docs/api-m2.md §4）
     cron_jobs = [

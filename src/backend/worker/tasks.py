@@ -93,6 +93,34 @@ async def match_user_publications(ctx: dict[str, Any], user_id: str) -> int:
         return await publications_service.match_from_library(session, user_id=uuid.UUID(user_id))
 
 
+async def index_papers_fulltext_task(
+    ctx: dict[str, Any], scope: str, user_id: str, project_id: str | None = None
+) -> dict[str, Any]:
+    """可选全文索引：按 scope 解析论文集合，批量抓 PDF→分段→嵌入（文献对话检索底座）。
+
+    scope=="shelf" → 课题相关研究书架论文（需 project_id）；
+    scope=="personal" → 本人收藏的个人库论文。
+    """
+    from app.core.llm.router import get_llm_router
+    from app.services.fulltext_index import index_papers_fulltext
+    from app.services.topic_shelf import shelf_paper_ids
+    from app.services.user_library import personal_paper_ids
+
+    uid = uuid.UUID(user_id)
+    async with get_sessionmaker()() as session:
+        if scope == "shelf":
+            if project_id is None:
+                raise ValueError("shelf scope requires project_id")
+            paper_ids = await shelf_paper_ids(session, project_id=uuid.UUID(project_id))
+        elif scope == "personal":
+            paper_ids = await personal_paper_ids(session, user_id=uid, tab="saved")
+        else:
+            raise ValueError(f"unknown scope: {scope}")
+        return await index_papers_fulltext(
+            session, paper_ids=paper_ids, llm=get_llm_router(), user_id=uid
+        )
+
+
 async def daily_publication_match(ctx: dict[str, Any]) -> int:
     """每日 04:00 cron（每日 ingest 之后）：对开了自动匹配的绑定用户逐个跑库内匹配。"""
     async with get_sessionmaker()() as session:

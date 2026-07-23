@@ -34,10 +34,18 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     token_quota: Mapped[int | None] = mapped_column(BigInteger)
     # 功能权限：{feature: bool}；None/缺键 = 允许
     features: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    # 用户个人设置：{key: value}（如 chat_fulltext_index=bool 开启文献对话全文索引）；
+    # 与 features（admin 权限位）分开，None/缺键 = 未设置。
+    settings: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
 
     @property
     def has_avatar(self) -> bool:
         return bool(self.avatar_path)
+
+    def setting(self, key: str, default: Any = None) -> Any:
+        if not self.settings:
+            return default
+        return self.settings.get(key, default)
 
     def feature_enabled(self, feature: str) -> bool:
         if not self.features:

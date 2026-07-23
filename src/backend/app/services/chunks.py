@@ -78,6 +78,39 @@ async def index_paper_fulltext(session: AsyncSession, paper: Paper) -> int:
     return await replace_chunks(session, paper, full_text)
 
 
+async def _embed_chunks(
+    session: AsyncSession,
+    pending: list[PaperChunk],
+    *,
+    llm: LLMRouter,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+) -> tuple[int, str | None]:
+    """分批嵌入给定的待补分段（调用方负责选出 pending），返回 (成功条数, 错误说明|None)。"""
+    embedded = 0
+    for i in range(0, len(pending), EMBED_BATCH):
+        batch = pending[i : i + EMBED_BATCH]
+        try:
+            vectors = await llm.embed(
+                [c.text[:2000] for c in batch],
+                user_id=user_id,
+                project_id=project_id,
+                library_id=library_id,
+                voyage_id=voyage_id,
+            )
+        except NotImplementedError:
+            return embedded, "provider does not support embeddings"
+        except Exception as e:  # noqa: BLE001 — 嵌入失败不影响主流程
+            return embedded, f"{type(e).__name__}: {e}"
+        for chunk, vector in zip(batch, vectors, strict=True):
+            chunk.embedding = vector
+            embedded += 1
+        await session.commit()
+    return embedded, None
+
+
 async def embed_pending_chunks(
     session: AsyncSession,
     *,
@@ -92,7 +125,7 @@ async def embed_pending_chunks(
 
     project_id 仅用于 LLM 用量记账归属。
     """
-    pending = (
+    pending = list(
         (
             await session.execute(
                 select(PaperChunk)
@@ -107,26 +140,53 @@ async def embed_pending_chunks(
         .scalars()
         .all()
     )
-    embedded = 0
-    for i in range(0, len(pending), EMBED_BATCH):
-        batch = pending[i : i + EMBED_BATCH]
-        try:
-            vectors = await llm.embed(
-                [c.text[:2000] for c in batch],
-                user_id=user_id,
-                project_id=project_id,
-                library_id=library_id,  # 全文向量化随库 ingest 记方向库账（P6）
-                voyage_id=voyage_id,
+    return await _embed_chunks(
+        session,
+        pending,
+        llm=llm,
+        user_id=user_id,
+        project_id=project_id,
+        library_id=library_id,  # 全文向量化随库 ingest 记方向库账（P6）
+        voyage_id=voyage_id,
+    )
+
+
+async def embed_pending_chunks_for_papers(
+    session: AsyncSession,
+    *,
+    paper_ids: list[uuid.UUID],
+    llm: LLMRouter,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+    limit: int = 2000,
+) -> tuple[int, str | None]:
+    """按论文集合批量补齐缺失的分段向量（不 join 方向库），返回 (成功条数, 错误说明|None)。
+
+    用于「可选全文索引」按 scope 论文集合建索引；记账归 user_id（不记方向库账）。
+    """
+    if not paper_ids:
+        return 0, None
+    pending = list(
+        (
+            await session.execute(
+                select(PaperChunk)
+                .where(PaperChunk.paper_id.in_(paper_ids), PaperChunk.embedding.is_(None))
+                .order_by(PaperChunk.created_at, PaperChunk.seq)
+                .limit(limit)
             )
-        except NotImplementedError:
-            return embedded, "provider does not support embeddings"
-        except Exception as e:  # noqa: BLE001 — 嵌入失败不影响主流程
-            return embedded, f"{type(e).__name__}: {e}"
-        for chunk, vector in zip(batch, vectors, strict=True):
-            chunk.embedding = vector
-            embedded += 1
-        await session.commit()
-    return embedded, None
+        )
+        .scalars()
+        .all()
+    )
+    return await _embed_chunks(
+        session,
+        pending,
+        llm=llm,
+        user_id=user_id,
+        project_id=project_id,
+        voyage_id=voyage_id,
+    )
 
 
 # ---- 检索 ----
