@@ -43,6 +43,7 @@ from app.services import library_chat as library_chat_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
 from app.services import personal_wiki as personal_wiki_service
+from app.services import projects as projects_service
 from app.services import relevance as relevance_service
 from app.services import wiki_compile as wiki_compile_service
 from app.services.literature.pdf_extract import figure_path
@@ -77,6 +78,15 @@ async def _paper_detail(
 
 
 async def _get_member_project(session: AsyncSession, project_id: uuid.UUID, user: User):
+    """严格课题成员校验（个人语境用，如个人 wiki 的课题归因）：策展人/admin 不放行。"""
+    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    return project
+
+
+async def _get_managed_project(session: AsyncSession, project_id: uuid.UUID, user: User):
+    """库管理校验（文献管理端点用）：成员 ∪ 策展人 ∪ 平台 admin（P6）。"""
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
@@ -257,7 +267,7 @@ async def batch_delete_papers(
 
     默认软删（移入垃圾桶，可召回）；hard=true 彻底删除。
     """
-    await _get_member_project(session, project_id, user)
+    await _get_managed_project(session, project_id, user)
     deleted = await papers_service.delete_papers(
         session, project_id=project_id, paper_ids=data.paper_ids, hard=data.hard
     )
@@ -271,7 +281,7 @@ async def empty_trash(
     user: User = Depends(current_active_user),
 ) -> dict[str, int]:
     """清空垃圾桶：彻底删除项目内全部已删除论文。"""
-    await _get_member_project(session, project_id, user)
+    await _get_managed_project(session, project_id, user)
     deleted = await papers_service.empty_trash(session, project_id=project_id)
     return {"deleted": deleted}
 
