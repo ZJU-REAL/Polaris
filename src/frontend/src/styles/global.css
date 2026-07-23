@@ -553,6 +553,15 @@ select.input { padding-right: 8px; cursor: pointer; }
 /* zoom 0.91 ≈ 1/1.1：右侧详情面板抵消全局放大，恢复原始大小 */
 .split-detail { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; zoom: 0.91; }
 
+/* 窄屏（相关研究等 opt-in 双栏页）：双栏改上下堆叠，列表在上、详情在下 */
+@media (max-width: 920px) {
+  .split-stackable { flex-direction: column; }
+  .split-stackable .split-list {
+    width: 100%; max-height: 44vh; flex-shrink: 0;
+    border-right: none; border-bottom: 0.5px solid var(--border);
+  }
+}
+
 input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 
 /* [[概念]] 双链 chip */
