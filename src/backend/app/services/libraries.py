@@ -8,12 +8,13 @@ API 形状不变（仍收 project_id），service 层经这里解析到 Directio
 import uuid
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.library_direction import DirectionLibrary, LibraryPaper
+from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
 from app.models.paper import Concept, Paper
 from app.models.project import Project, ProjectMember
+from app.models.user import User
 
 
 def implicit_library_for(project: Project) -> DirectionLibrary:
@@ -119,13 +120,25 @@ def member_paper_stmt(library_id: uuid.UUID) -> Select:
 
 
 def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
-    """用户可见论文（其任一所属方向的库里有成员行）：SELECT (Paper, LibraryPaper, project_id)。"""
+    """用户可管理论文（其所属方向的库 ∪ 被任命管理的库 ∪ 平台 admin 全库）
+    的成员行：SELECT (Paper, LibraryPaper, project_id)。P6 起策展人/管理员与
+    成员同权（docs-dev/workspace-ia-redesign.md §5）。"""
+    my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+    my_curated = select(DirectionLibraryCurator.library_id).where(
+        DirectionLibraryCurator.user_id == user_id
+    )
+    is_admin = select(User.id).where(User.id == user_id, User.role == "admin").exists()
     return (
         select(Paper, LibraryPaper, DirectionLibrary.project_id)
         .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
         .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
-        .join(ProjectMember, ProjectMember.project_id == DirectionLibrary.project_id)
-        .where(ProjectMember.user_id == user_id)
+        .where(
+            or_(
+                DirectionLibrary.project_id.in_(my_projects),
+                DirectionLibrary.id.in_(my_curated),
+                is_admin,
+            )
+        )
     )
 
 
@@ -190,6 +203,7 @@ def _overview_dict(
     library: DirectionLibrary,
     *,
     my_projects: set[uuid.UUID],
+    can_manage: bool,
     paper_count: int,
     concept_count: int,
     last_compiled_at: Any,
@@ -199,8 +213,10 @@ def _overview_dict(
         "name": library.name,
         "statement": library.statement,
         "cadence": library.cadence,
+        "monthly_budget": library.monthly_budget,
         "project_id": library.project_id,
         "is_mine": library.project_id is not None and library.project_id in my_projects,
+        "can_manage": can_manage,
         "paper_count": paper_count,
         "concept_count": concept_count,
         "last_compiled_at": last_compiled_at,
@@ -210,9 +226,7 @@ def _overview_dict(
     }
 
 
-async def list_libraries_overview(
-    session: AsyncSession, *, user_id: uuid.UUID
-) -> list[dict[str, Any]]:
+async def list_libraries_overview(session: AsyncSession, *, user: User) -> list[dict[str, Any]]:
     """全部方向库 + 概要统计（读操作对所有登录用户开放，不做成员校验）。"""
     libraries = (
         (await session.execute(select(DirectionLibrary).order_by(DirectionLibrary.created_at)))
@@ -222,11 +236,17 @@ async def list_libraries_overview(
     paper_counts, last_compiled, concept_counts = await _library_stats(
         session, [lib.id for lib in libraries]
     )
-    my_projects = await _my_project_ids(session, user_id)
+    my_projects = await _my_project_ids(session, user.id)
+    my_curated = await _my_curated_library_ids(session, user.id)
     return [
         _overview_dict(
             lib,
             my_projects=my_projects,
+            can_manage=(
+                user.role == "admin"
+                or lib.id in my_curated
+                or (lib.project_id is not None and lib.project_id in my_projects)
+            ),
             paper_count=paper_counts.get(lib.id, 0),
             concept_count=concept_counts.get(lib.id, 0),
             last_compiled_at=last_compiled.get(lib.id),
@@ -236,15 +256,162 @@ async def list_libraries_overview(
 
 
 async def library_overview(
-    session: AsyncSession, *, library: DirectionLibrary, user_id: uuid.UUID
+    session: AsyncSession, *, library: DirectionLibrary, user: User
 ) -> dict[str, Any]:
     """单库详情概要（同列表口径）。"""
     paper_counts, last_compiled, concept_counts = await _library_stats(session, [library.id])
-    my_projects = await _my_project_ids(session, user_id)
+    my_projects = await _my_project_ids(session, user.id)
     return _overview_dict(
         library,
         my_projects=my_projects,
+        can_manage=await can_manage_library(session, user=user, library=library),
         paper_count=paper_counts.get(library.id, 0),
         concept_count=concept_counts.get(library.id, 0),
         last_compiled_at=last_compiled.get(library.id),
     )
+
+
+# ---- P6 治理：策展人（界面叫「文献库管理员」）与库级写权限 ----
+
+
+async def _my_curated_library_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
+    rows = await session.execute(
+        select(DirectionLibraryCurator.library_id).where(
+            DirectionLibraryCurator.user_id == user_id
+        )
+    )
+    return set(rows.scalars().all())
+
+
+async def is_library_curator(
+    session: AsyncSession, *, library_id: uuid.UUID, user_id: uuid.UUID
+) -> bool:
+    row = await session.execute(
+        select(DirectionLibraryCurator.user_id).where(
+            DirectionLibraryCurator.library_id == library_id,
+            DirectionLibraryCurator.user_id == user_id,
+        )
+    )
+    return row.first() is not None
+
+
+async def _is_project_member(
+    session: AsyncSession, *, project_id: uuid.UUID, user_id: uuid.UUID
+) -> bool:
+    row = await session.execute(
+        select(ProjectMember.user_id).where(
+            ProjectMember.project_id == project_id, ProjectMember.user_id == user_id
+        )
+    )
+    return row.first() is not None
+
+
+async def can_manage_library(
+    session: AsyncSession, *, user: User, library: DirectionLibrary
+) -> bool:
+    """库级写权限（docs-dev/workspace-ia-redesign.md §5）：
+    背后课题成员 ∪ 策展人（direction_library_curators）∪ 平台 admin。"""
+    if user.role == "admin":
+        return True
+    if library.project_id is not None and await _is_project_member(
+        session, project_id=library.project_id, user_id=user.id
+    ):
+        return True
+    return await is_library_curator(session, library_id=library.id, user_id=user.id)
+
+
+async def get_managed_project(
+    session: AsyncSession, *, project_id: uuid.UUID, user: User
+) -> Project | None:
+    """库管理入口的统一鉴权（project 作用域的文献管理端点用）：课题成员照常放行；
+    平台 admin 与该课题隐式库的策展人同权；无权限视为不存在（返回 None）。"""
+    project = await session.get(Project, project_id)
+    if project is None:
+        return None
+    if user.role == "admin":
+        return project
+    if await _is_project_member(session, project_id=project_id, user_id=user.id):
+        return project
+    library = (
+        await session.execute(
+            select(DirectionLibrary).where(DirectionLibrary.project_id == project_id)
+        )
+    ).scalar_one_or_none()
+    if library is not None and await is_library_curator(
+        session, library_id=library.id, user_id=user.id
+    ):
+        return project
+    return None
+
+
+async def list_curators(session: AsyncSession, library_id: uuid.UUID) -> list[dict[str, Any]]:
+    stmt = (
+        select(DirectionLibraryCurator.user_id, User.email, User.display_name)
+        .join(User, User.id == DirectionLibraryCurator.user_id)
+        .where(DirectionLibraryCurator.library_id == library_id)
+        .order_by(DirectionLibraryCurator.created_at)
+    )
+    return [
+        {"user_id": user_id, "email": email, "display_name": display_name}
+        for user_id, email, display_name in (await session.execute(stmt)).all()
+    ]
+
+
+async def set_curators(
+    session: AsyncSession, *, library: DirectionLibrary, user_ids: list[uuid.UUID]
+) -> list[dict[str, Any]]:
+    """全量替换策展人名单（平台 admin 专用）；未知 user_id 抛 ValueError。commit 落库。"""
+    unique_ids = list(dict.fromkeys(user_ids))
+    if unique_ids:
+        found = set(
+            (await session.execute(select(User.id).where(User.id.in_(unique_ids)))).scalars().all()
+        )
+        missing = [str(uid) for uid in unique_ids if uid not in found]
+        if missing:
+            raise ValueError(f"unknown user ids: {', '.join(missing)}")
+    await session.execute(
+        delete(DirectionLibraryCurator).where(DirectionLibraryCurator.library_id == library.id)
+    )
+    for uid in unique_ids:
+        session.add(DirectionLibraryCurator(library_id=library.id, user_id=uid))
+    await session.commit()
+    return await list_curators(session, library.id)
+
+
+# 库定义可编辑字段 → project.definition 写回键（库为权威，写时同步保持 ingest 兼容：
+# search/snowball/score/watermark 仍从 project.definition / ingest_state 取数）
+_DEFINITION_SYNC_KEYS = {
+    "statement": "statement",
+    "rubric": "rubric",
+    "anchors": "anchor_papers",
+    "cadence": "cadence",
+}
+
+
+async def update_library(
+    session: AsyncSession, *, library: DirectionLibrary, fields: dict[str, Any]
+) -> DirectionLibrary:
+    """编辑库定义（name/statement/cadence/monthly_budget/rubric/anchors，显式传 null 可清空）。
+
+    过渡期隐式库（project_id 非空）双源并存：ingest 读 project.definition——
+    这里以库为权威，写入时把 statement/rubric/anchors/cadence 同步回
+    project.definition 对应键（name 同步 project.name），两边不再漂移。
+    """
+    for key, value in fields.items():
+        setattr(library, key, value)
+    if library.project_id is not None:
+        project = await session.get(Project, library.project_id)
+        if project is not None:
+            if fields.get("name"):
+                project.name = fields["name"]
+            sync = {k: v for k, v in fields.items() if k in _DEFINITION_SYNC_KEYS}
+            if sync:
+                definition = (
+                    dict(project.definition) if isinstance(project.definition, dict) else {}
+                )
+                for key, value in sync.items():
+                    definition[_DEFINITION_SYNC_KEYS[key]] = value
+                project.definition = definition
+    await session.commit()
+    await session.refresh(library)
+    return library

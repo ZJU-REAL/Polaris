@@ -9,9 +9,10 @@ import { WikiWorkbench } from '../wiki/WikiPage';
 import { LibraryBrowse } from './LibraryBrowse';
 
 /* ============================================================
-   /libraries/:id — 文献库详情（P5c）
-   - 背后课题的成员：完整工作台（论文管理 / 概念 / 图谱 / 对话 /
-     建库与同步 / 笔记，仍走 project 作用域端点）；
+   /libraries/:id — 文献库详情（P5c + P6 治理）
+   - 可管理者（成员 / 文献库管理员 / 平台管理员）：完整工作台
+     （论文管理 / 概念 / 图谱 / 对话 / 建库与同步 / 笔记 / 治理，
+     仍走 project 作用域端点）；
    - 其他人：干净的只读浏览（论文 + 概念，走 /libraries 读端点）。
    ============================================================ */
 
@@ -60,6 +61,7 @@ export function LibraryDetailPage() {
   }
 
   const isMember = lib.is_mine && !!lib.project_id;
+  const canManage = lib.can_manage && !!lib.project_id;
 
   return (
     <div className="page fadeup" style={{ maxWidth: 1360, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}>
@@ -83,7 +85,11 @@ export function LibraryDetailPage() {
           </>
         }
       />
-      {isMember ? <WikiWorkbench pid={lib.project_id!} /> : <LibraryBrowse libraryId={lib.id} />}
+      {canManage ? (
+        <WikiWorkbench pid={lib.project_id!} libraryId={lib.id} />
+      ) : (
+        <LibraryBrowse libraryId={lib.id} />
+      )}
     </div>
   );
 }

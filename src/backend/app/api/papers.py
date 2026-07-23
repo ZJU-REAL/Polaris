@@ -43,7 +43,6 @@ from app.services import library_chat as library_chat_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
 from app.services import personal_wiki as personal_wiki_service
-from app.services import projects as projects_service
 from app.services import relevance as relevance_service
 from app.services import wiki_compile as wiki_compile_service
 from app.services.literature.pdf_extract import figure_path
@@ -78,7 +77,7 @@ async def _paper_detail(
 
 
 async def _get_member_project(session: AsyncSession, project_id: uuid.UUID, user: User):
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     return project
@@ -126,7 +125,7 @@ async def list_papers(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperListPage:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     items, total = await papers_service.list_papers(
@@ -163,7 +162,7 @@ async def add_paper_manually(
     user: User = Depends(current_active_user),
 ) -> Any:
     """手动添加文献：arxiv_id / doi / bibtex 三选一（docs/api-lit.md §4）。"""
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     try:
@@ -534,7 +533,7 @@ async def list_project_tags(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[TagRead]:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     rows = await papers_service.list_project_tags(session, project_id=project_id)

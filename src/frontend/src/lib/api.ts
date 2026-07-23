@@ -806,6 +806,8 @@ export interface DirectionLibrarySummary {
   project_id: string | null;
   /** 是否「我的课题的库」（请求者是背后课题成员 → 显示管理页签） */
   is_mine: boolean;
+  /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 平台管理员（P6） */
+  can_manage: boolean;
   paper_count: number;
   concept_count: number;
   last_compiled_at: string | null;
@@ -817,6 +819,15 @@ export interface DirectionLibrarySummary {
 
 export interface DirectionLibraryDetail extends DirectionLibrarySummary {
   cadence: string | null;
+  /** 每月 AI 预算（token 数；null = 不限） */
+  monthly_budget: number | null;
+}
+
+/** 文献库管理员（后端叫 curator）。 */
+export interface LibraryCuratorRead {
+  user_id: string;
+  email: string;
+  display_name: string | null;
 }
 
 // ============================================================
@@ -2635,6 +2646,28 @@ export const api = {
   },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);
+  },
+  /** 编辑库信息（可管理者）；传 null 清空对应字段。 */
+  updateLibrary(
+    id: string,
+    input: {
+      name?: string;
+      statement?: string | null;
+      cadence?: string | null;
+      monthly_budget?: number | null;
+      rubric?: unknown;
+      anchors?: unknown[] | null;
+    },
+  ): Promise<DirectionLibraryDetail> {
+    return requestJson<DirectionLibraryDetail>(`/libraries/${id}`, 'PATCH', input);
+  },
+  /** 文献库管理员名单（可管理者可见）。 */
+  listLibraryCurators(id: string): Promise<LibraryCuratorRead[]> {
+    return request<LibraryCuratorRead[]>(`/libraries/${id}/curators`);
+  },
+  /** 全量替换文献库管理员名单（仅平台管理员）。 */
+  setLibraryCurators(id: string, userIds: string[]): Promise<LibraryCuratorRead[]> {
+    return requestJson<LibraryCuratorRead[]>(`/libraries/${id}/curators`, 'PUT', { user_ids: userIds });
   },
   /** 库内论文（缺省只列相关性达标的）。 */
   listLibraryPapers(

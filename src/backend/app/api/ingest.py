@@ -12,7 +12,7 @@ from app.models.user import User
 from app.schemas.ingest import IngestRequest, IngestStateRead
 from app.schemas.voyage import VoyageRead
 from app.services import ingest as ingest_service
-from app.services import projects as projects_service
+from app.services import libraries as libraries_service
 
 router = APIRouter(tags=["ingest"])
 
@@ -29,7 +29,7 @@ async def start_ingest(
     user: User = Depends(require_llm_task),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     try:
@@ -48,7 +48,7 @@ async def get_ingest_state(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> IngestStateRead:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     state = await ingest_service.ingest_state(session, project)

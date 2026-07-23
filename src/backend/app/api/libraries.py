@@ -1,7 +1,9 @@
-"""共享方向库只读路由（P5c，docs-dev/workspace-ia-redesign.md §2/§6/§7）。
+"""共享方向库路由（P5c 只读 + P6 治理，docs-dev/workspace-ia-redesign.md §2/§5/§6/§7）。
 
-方向库对全实验室可读：本文件的端点只做登录校验、不做课题成员校验。
-写/管理入口（ingest、论文管理、概念补建等）仍走 project 作用域端点并校验成员。
+方向库对全实验室可读：读端点只做登录校验、不做课题成员校验。
+治理端点（库定义编辑 / 策展人任命）按库级写权限校验：成员 ∪ 策展人 ∪ 平台 admin
+（策展人任命仅平台 admin）。批量写/管理入口（ingest、论文管理、概念补建等）仍走
+project 作用域端点（鉴权同样接入库级写权限助手）。
 个人文献库路由在 ``app/api/library.py``（/me/library），勿混淆。
 """
 
@@ -10,12 +12,18 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_admin
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
 from app.models.library_direction import DirectionLibrary
 from app.models.user import User
-from app.schemas.libraries import DirectionLibraryDetail, DirectionLibrarySummary
+from app.schemas.libraries import (
+    CuratorRead,
+    CuratorsUpdate,
+    DirectionLibraryDetail,
+    DirectionLibrarySummary,
+    DirectionLibraryUpdate,
+)
 from app.schemas.paper import (
     ConceptRead,
     PaperListPage,
@@ -38,6 +46,16 @@ async def _get_library(session: AsyncSession, library_id: uuid.UUID) -> Directio
     return library
 
 
+async def _get_managed_library(
+    session: AsyncSession, library_id: uuid.UUID, user: User
+) -> DirectionLibrary:
+    """治理端点统一入口：库存在 + 请求者有库级写权限（成员/策展人/admin），否则 403。"""
+    library = await _get_library(session, library_id)
+    if not await libraries_service.can_manage_library(session, user=user, library=library):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
+    return library
+
+
 async def _reads_with_extras(
     session: AsyncSession, papers: list, user_id: uuid.UUID
 ) -> list[PaperRead]:
@@ -53,7 +71,7 @@ async def list_libraries(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[DirectionLibrarySummary]:
-    rows = await libraries_service.list_libraries_overview(session, user_id=user.id)
+    rows = await libraries_service.list_libraries_overview(session, user=user)
     return [DirectionLibrarySummary(**row) for row in rows]
 
 
@@ -64,8 +82,58 @@ async def get_library(
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
     library = await _get_library(session, library_id)
-    row = await libraries_service.library_overview(session, library=library, user_id=user.id)
+    row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
+
+
+@router.patch("/libraries/{library_id}", response_model=DirectionLibraryDetail)
+async def update_library(
+    library_id: uuid.UUID,
+    data: DirectionLibraryUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DirectionLibraryDetail:
+    """编辑库定义（可管理者）：name/statement/cadence/monthly_budget/rubric/anchors。
+
+    过渡期隐式库以库为权威，statement/rubric/anchors/cadence 写时同步回
+    project.definition（保持 ingest 兼容），name 同步 project.name。
+    """
+    library = await _get_managed_library(session, library_id, user)
+    fields = data.model_dump(exclude_unset=True)
+    if fields:
+        library = await libraries_service.update_library(session, library=library, fields=fields)
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
+@router.get("/libraries/{library_id}/curators", response_model=list[CuratorRead])
+async def list_curators(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[CuratorRead]:
+    """策展人名单（界面叫「文献库管理员」）；可管理者可见。"""
+    library = await _get_managed_library(session, library_id, user)
+    rows = await libraries_service.list_curators(session, library.id)
+    return [CuratorRead(**row) for row in rows]
+
+
+@router.put("/libraries/{library_id}/curators", response_model=list[CuratorRead])
+async def set_curators(
+    library_id: uuid.UUID,
+    data: CuratorsUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> list[CuratorRead]:
+    """全量替换策展人名单（仅平台 admin）。"""
+    library = await _get_library(session, library_id)
+    try:
+        rows = await libraries_service.set_curators(
+            session, library=library, user_ids=data.user_ids
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return [CuratorRead(**row) for row in rows]
 
 
 @router.get("/libraries/{library_id}/papers", response_model=PaperListPage)

@@ -5,8 +5,9 @@
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DirectionLibrarySummary(BaseModel):
@@ -19,6 +20,8 @@ class DirectionLibrarySummary(BaseModel):
     project_id: uuid.UUID | None
     # 是否「我的课题的库」（请求者是背后课题的成员 → 前端显示管理入口）
     is_mine: bool
+    # 是否可管理本库：成员 ∪ 策展人（界面叫「文献库管理员」）∪ 平台 admin（P6）
+    can_manage: bool
     paper_count: int
     concept_count: int
     last_compiled_at: datetime | None
@@ -30,3 +33,28 @@ class DirectionLibrarySummary(BaseModel):
 
 class DirectionLibraryDetail(DirectionLibrarySummary):
     cadence: str | None
+    # 每月 ingest 预算（token 数；None = 不限）
+    monthly_budget: int | None = None
+
+
+class DirectionLibraryUpdate(BaseModel):
+    """库定义编辑（PATCH /libraries/{id}）：显式传 null 可清空对应字段。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    statement: str | None = None
+    cadence: str | None = Field(default=None, max_length=32)
+    monthly_budget: int | None = Field(default=None, ge=0)
+    rubric: Any | None = None
+    anchors: list[Any] | None = None
+
+
+class CuratorRead(BaseModel):
+    user_id: uuid.UUID
+    email: str
+    display_name: str | None
+
+
+class CuratorsUpdate(BaseModel):
+    """策展人名单全量替换（平台 admin）。"""
+
+    user_ids: list[uuid.UUID]

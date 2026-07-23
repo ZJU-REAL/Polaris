@@ -20,7 +20,7 @@ from app.schemas.paper import (
     ConceptRelinkResult,
 )
 from app.services import concepts as concepts_service
-from app.services import projects as projects_service
+from app.services import libraries as libraries_service
 from app.services.libraries import get_library_for_project
 
 router = APIRouter(tags=["concepts"])
@@ -47,7 +47,7 @@ async def list_concepts(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[ConceptRead]:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     library = await get_library_for_project(session, project_id)
@@ -68,7 +68,7 @@ async def relink_concepts(
     面向历史数据（编译过但概念上链步骤没跑到的论文）；新概念定义分批调 LLM，
     并回填此前留下的占位概念（「…（定义待补充）」）重新拿定义，失败降级为占位、不阻塞。
     """
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     library = await get_library_for_project(session, project_id)
