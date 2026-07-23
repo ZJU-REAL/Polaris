@@ -84,6 +84,7 @@ async def score_paper_relevance(
         ],
         user_id=user_id,
         project_id=project_id,
+        library_id=membership.library_id,  # 打分是库侧判断，记方向库账（P6）
         voyage_id=voyage_id,
     )
     data = _extract_json(result.content)

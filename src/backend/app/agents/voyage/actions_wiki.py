@@ -682,6 +682,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     llm=ctx.llm,
                     user_id=ctx.run.created_by,
                     project_id=ctx.run.project_id,
+                    library_id=library.id,
                     voyage_id=ctx.run.id,
                 )
                 if affs:
@@ -807,6 +808,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                         llm=ctx.llm,
                         user_id=ctx.run.created_by,
                         project_id=project_id,
+                        library_id=membership.library_id,
                         voyage_id=ctx.run.id,
                     )
                     await session.commit()
@@ -821,6 +823,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 llm=ctx.llm,
                 user_id=ctx.run.created_by,
                 project_id=project_id,
+                library_id=membership.library_id,
                 voyage_id=ctx.run.id,
                 extra_guidance=guidance,
             )
@@ -894,6 +897,7 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     texts,
                     user_id=ctx.run.created_by,
                     project_id=ctx.run.project_id,
+                    library_id=library.id,
                     voyage_id=ctx.run.id,
                 )
                 for paper, vector in zip(pending, vectors, strict=True):

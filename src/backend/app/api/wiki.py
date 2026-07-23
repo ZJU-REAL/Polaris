@@ -36,9 +36,9 @@ from app.services import chunks as chunks_service
 from app.services import citations as citations_service
 from app.services import concepts as concepts_service
 from app.services import graph as graph_service
+from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
 from app.services import papers as papers_service
-from app.services import projects as projects_service
 from app.services import stats as stats_service
 from app.services.libraries import get_library_for_project
 from app.services.wiki_export import build_obsidian_zip
@@ -51,7 +51,7 @@ _HEARTBEAT_SECONDS = 15.0
 
 
 async def _member_project(session: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     return project

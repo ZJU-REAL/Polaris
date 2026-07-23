@@ -147,6 +147,7 @@ async def fetch_concept_definitions(
     *,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> dict[str, dict[str, str]]:
     """向 LLM 要概念的一句话定义与类别；分批调用避免响应截断，失败的批重试一次后用占位兜底。"""
@@ -154,12 +155,22 @@ async def fetch_concept_definitions(
     for i in range(0, len(names), _DEF_BATCH_SIZE):
         chunk = names[i : i + _DEF_BATCH_SIZE]
         got = await _fetch_definitions_batch(
-            llm, chunk, user_id=user_id, project_id=project_id, voyage_id=voyage_id
+            llm,
+            chunk,
+            user_id=user_id,
+            project_id=project_id,
+            library_id=library_id,
+            voyage_id=voyage_id,
         )
         if not got:
             # 高负载下的偶发超时/限流：整批失败会让本批全落占位，重试一次能救回大多数
             got = await _fetch_definitions_batch(
-                llm, chunk, user_id=user_id, project_id=project_id, voyage_id=voyage_id
+                llm,
+                chunk,
+                user_id=user_id,
+                project_id=project_id,
+                library_id=library_id,
+                voyage_id=voyage_id,
             )
         out.update(got)
     return out
@@ -171,6 +182,7 @@ async def _fetch_definitions_batch(
     *,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> dict[str, dict[str, str]]:
     """单批（≤_DEF_BATCH_SIZE 个）定义调用；失败返回空 dict（调用方用占位定义兜底）。"""
@@ -185,6 +197,7 @@ async def _fetch_definitions_batch(
             ],
             user_id=user_id,
             project_id=project_id,
+            library_id=library_id,
             voyage_id=voyage_id,
         )
         start = result.content.find("{")
@@ -322,7 +335,12 @@ async def link_all_paper_concepts(
     definitions: dict[str, dict[str, str]] = {}
     if names_to_define and llm is not None:
         definitions = await fetch_concept_definitions(
-            llm, names_to_define, user_id=user_id, project_id=project_id, voyage_id=voyage_id
+            llm,
+            names_to_define,
+            user_id=user_id,
+            project_id=project_id,
+            library_id=library_id,  # 概念定义是库侧编译成本，记方向库账（P6）
+            voyage_id=voyage_id,
         )
 
     created = 0
@@ -452,7 +470,7 @@ async def link_paper_concepts(
     definitions: dict[str, dict[str, str]] = {}
     if new_names and llm is not None:
         definitions = await fetch_concept_definitions(
-            llm, new_names, user_id=user_id, project_id=project_id
+            llm, new_names, user_id=user_id, project_id=project_id, library_id=library_id
         )
 
     created = 0

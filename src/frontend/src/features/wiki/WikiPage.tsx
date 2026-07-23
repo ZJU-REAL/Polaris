@@ -11,6 +11,7 @@ import { ConceptsTab } from './ConceptsTab';
 import { LibraryChatTab } from './LibraryChatTab';
 import { IngestTab } from './IngestTab';
 import { NotesTab } from './NotesTab';
+import { GovernanceTab } from './GovernanceTab';
 
 // 图谱与 PPT 弹窗体量大且非默认视图：按需加载
 const GraphTab = lazy(() => import('./GraphTab').then((m) => ({ default: m.GraphTab })));
@@ -19,14 +20,15 @@ const PresentationModal = lazy(() =>
 );
 
 /* ============================================================
-   文献库工作台（P5c 起挂在 /libraries/:id 的成员视图；原 /wiki 页面主体）
-   六个 Tab：论文库 / 概念库 / 图谱 / 文献对话 / 建库与同步 / 笔记；
-   pid = 库背后课题 id（成员视角，数据仍走 project 作用域端点）。
+   文献库工作台（P5c 起挂在 /libraries/:id 的可管理者视图；原 /wiki 页面主体）
+   Tab：论文库 / 概念库 / 图谱 / 文献对话 / 建库与同步 / 笔记，
+   传入 libraryId 时追加「治理」（P6：库信息与预算 / 文献库管理员 / 重复论文）；
+   pid = 库背后课题 id（数据仍走 project 作用域端点，策展人与 admin 同权放行）。
    ============================================================ */
 
-type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes';
+type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes' | 'govern';
 
-export function WikiWorkbench({ pid }: { pid: string }) {
+export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: string }) {
   const navigate = useNavigate();
 
   const [tab, setTab] = useState<WikiTab>('papers');
@@ -69,7 +71,7 @@ export function WikiWorkbench({ pid }: { pid: string }) {
         seq: (old?.seq ?? 0) + 1,
       }));
       setTab('papers');
-    } else if (tabParam && ['papers', 'concepts', 'graph', 'chat', 'ingest', 'notes'].includes(tabParam)) {
+    } else if (tabParam && ['papers', 'concepts', 'graph', 'chat', 'ingest', 'notes', 'govern'].includes(tabParam)) {
       setTab(tabParam as WikiTab);
     }
     setSearchParams({}, { replace: true });
@@ -139,6 +141,7 @@ export function WikiWorkbench({ pid }: { pid: string }) {
             { v: 'chat', label: tr('文献对话', 'Chat') },
             { v: 'ingest', label: tr('建库与同步', 'Ingest & sync') },
             { v: 'notes', label: tr('笔记', 'Notes') },
+            ...(libraryId ? [{ v: 'govern' as const, label: tr('治理', 'Governance') }] : []),
           ]}
           value={tab}
           onChange={setTab}
@@ -202,6 +205,8 @@ export function WikiWorkbench({ pid }: { pid: string }) {
             stateError={ingestQuery.isError}
             stateLoading={ingestQuery.isLoading}
           />
+        ) : tab === 'govern' && libraryId ? (
+          <GovernanceTab libraryId={libraryId} />
         ) : (
           <NotesTab pid={pid} />
         )}

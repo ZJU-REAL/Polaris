@@ -78,7 +78,16 @@ async def _paper_detail(
 
 
 async def _get_member_project(session: AsyncSession, project_id: uuid.UUID, user: User):
+    """严格课题成员校验（个人语境用，如个人 wiki 的课题归因）：策展人/admin 不放行。"""
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    return project
+
+
+async def _get_managed_project(session: AsyncSession, project_id: uuid.UUID, user: User):
+    """库管理校验（文献管理端点用）：成员 ∪ 策展人 ∪ 平台 admin（P6）。"""
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     return project
@@ -126,7 +135,7 @@ async def list_papers(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperListPage:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     items, total = await papers_service.list_papers(
@@ -163,7 +172,7 @@ async def add_paper_manually(
     user: User = Depends(current_active_user),
 ) -> Any:
     """手动添加文献：arxiv_id / doi / bibtex 三选一（docs/api-lit.md §4）。"""
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     try:
@@ -258,7 +267,7 @@ async def batch_delete_papers(
 
     默认软删（移入垃圾桶，可召回）；hard=true 彻底删除。
     """
-    await _get_member_project(session, project_id, user)
+    await _get_managed_project(session, project_id, user)
     deleted = await papers_service.delete_papers(
         session, project_id=project_id, paper_ids=data.paper_ids, hard=data.hard
     )
@@ -272,7 +281,7 @@ async def empty_trash(
     user: User = Depends(current_active_user),
 ) -> dict[str, int]:
     """清空垃圾桶：彻底删除项目内全部已删除论文。"""
-    await _get_member_project(session, project_id, user)
+    await _get_managed_project(session, project_id, user)
     deleted = await papers_service.empty_trash(session, project_id=project_id)
     return {"deleted": deleted}
 
@@ -534,7 +543,7 @@ async def list_project_tags(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[TagRead]:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     rows = await papers_service.list_project_tags(session, project_id=project_id)

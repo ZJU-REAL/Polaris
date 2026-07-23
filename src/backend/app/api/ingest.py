@@ -12,7 +12,7 @@ from app.models.user import User
 from app.schemas.ingest import IngestRequest, IngestStateRead
 from app.schemas.voyage import VoyageRead
 from app.services import ingest as ingest_service
-from app.services import projects as projects_service
+from app.services import libraries as libraries_service
 
 router = APIRouter(tags=["ingest"])
 
@@ -29,7 +29,7 @@ async def start_ingest(
     user: User = Depends(require_llm_task),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     try:
@@ -38,6 +38,9 @@ async def start_ingest(
         )
     except ingest_service.IngestConflictError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e
+    except ingest_service.LibraryBudgetExhaustedError as e:
+        # 本月预算已用尽：拒绝启动（下月自动恢复，或管理员调高预算）
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_BUDGET_EXHAUSTED") from e
     await queue.enqueue("run_voyage", str(run.id))
     return VoyageRead.model_validate(run)
 
@@ -48,7 +51,7 @@ async def get_ingest_state(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> IngestStateRead:
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     state = await ingest_service.ingest_state(session, project)

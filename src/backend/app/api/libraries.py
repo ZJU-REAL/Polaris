@@ -1,21 +1,34 @@
-"""共享方向库只读路由（P5c，docs-dev/workspace-ia-redesign.md §2/§6/§7）。
+"""共享方向库路由（P5c 只读 + P6 治理，docs-dev/workspace-ia-redesign.md §2/§5/§6/§7）。
 
-方向库对全实验室可读：本文件的端点只做登录校验、不做课题成员校验。
-写/管理入口（ingest、论文管理、概念补建等）仍走 project 作用域端点并校验成员。
+方向库对全实验室可读：读端点只做登录校验、不做课题成员校验。
+治理端点（库定义编辑 / 策展人任命）按库级写权限校验：成员 ∪ 策展人 ∪ 平台 admin
+（策展人任命仅平台 admin）。批量写/管理入口（ingest、论文管理、概念补建等）仍走
+project 作用域端点（鉴权同样接入库级写权限助手）。
 个人文献库路由在 ``app/api/library.py``（/me/library），勿混淆。
 """
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, require_admin
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
-from app.models.library_direction import DirectionLibrary
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.user import User
-from app.schemas.libraries import DirectionLibraryDetail, DirectionLibrarySummary
+from app.schemas.libraries import (
+    CuratorRead,
+    CuratorsUpdate,
+    DirectionLibraryDetail,
+    DirectionLibrarySummary,
+    DirectionLibraryUpdate,
+    DuplicateCandidateGroup,
+    LibraryBudgetRead,
+    PaperMergeRequest,
+    PaperMergeResult,
+)
 from app.schemas.paper import (
     ConceptRead,
     PaperListPage,
@@ -25,7 +38,9 @@ from app.schemas.paper import (
     SearchResponse,
 )
 from app.services import concepts as concepts_service
+from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
+from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
 
 router = APIRouter(tags=["libraries"])
@@ -35,6 +50,16 @@ async def _get_library(session: AsyncSession, library_id: uuid.UUID) -> Directio
     library = await libraries_service.get_library(session, library_id)
     if library is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+    return library
+
+
+async def _get_managed_library(
+    session: AsyncSession, library_id: uuid.UUID, user: User
+) -> DirectionLibrary:
+    """治理端点统一入口：库存在 + 请求者有库级写权限（成员/策展人/admin），否则 403。"""
+    library = await _get_library(session, library_id)
+    if not await libraries_service.can_manage_library(session, user=user, library=library):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
     return library
 
 
@@ -53,7 +78,7 @@ async def list_libraries(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[DirectionLibrarySummary]:
-    rows = await libraries_service.list_libraries_overview(session, user_id=user.id)
+    rows = await libraries_service.list_libraries_overview(session, user=user)
     return [DirectionLibrarySummary(**row) for row in rows]
 
 
@@ -64,8 +89,80 @@ async def get_library(
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
     library = await _get_library(session, library_id)
-    row = await libraries_service.library_overview(session, library=library, user_id=user.id)
+    row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
+
+
+@router.patch("/libraries/{library_id}", response_model=DirectionLibraryDetail)
+async def update_library(
+    library_id: uuid.UUID,
+    data: DirectionLibraryUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DirectionLibraryDetail:
+    """编辑库定义（可管理者）：name/statement/cadence/monthly_budget/rubric/anchors。
+
+    过渡期隐式库以库为权威，statement/rubric/anchors/cadence 写时同步回
+    project.definition（保持 ingest 兼容），name 同步 project.name。
+    """
+    library = await _get_managed_library(session, library_id, user)
+    fields = data.model_dump(exclude_unset=True)
+    if fields:
+        library = await libraries_service.update_library(session, library=library, fields=fields)
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
+@router.get("/libraries/{library_id}/budget", response_model=LibraryBudgetRead)
+async def get_library_budget(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LibraryBudgetRead:
+    """本月预算消耗（可管理者）：库侧 LLM 调用（打分/编译/概念定义/向量化）的聚合。"""
+    library = await _get_managed_library(session, library_id, user)
+    usage = await ingest_service.monthly_library_usage(session, library.id)
+    budget = library.monthly_budget
+    used = int(usage["total_tokens"])
+    return LibraryBudgetRead(
+        month=usage["month"],
+        monthly_budget=budget,
+        prompt_tokens=usage["prompt_tokens"],
+        completion_tokens=usage["completion_tokens"],
+        used_tokens=used,
+        remaining_tokens=None if not budget else max(0, int(budget) - used),
+        exhausted=bool(budget) and used >= int(budget),
+    )
+
+
+@router.get("/libraries/{library_id}/curators", response_model=list[CuratorRead])
+async def list_curators(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[CuratorRead]:
+    """策展人名单（界面叫「文献库管理员」）；可管理者可见。"""
+    library = await _get_managed_library(session, library_id, user)
+    rows = await libraries_service.list_curators(session, library.id)
+    return [CuratorRead(**row) for row in rows]
+
+
+@router.put("/libraries/{library_id}/curators", response_model=list[CuratorRead])
+async def set_curators(
+    library_id: uuid.UUID,
+    data: CuratorsUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> list[CuratorRead]:
+    """全量替换策展人名单（仅平台 admin）。"""
+    library = await _get_library(session, library_id)
+    try:
+        rows = await libraries_service.set_curators(
+            session, library=library, user_ids=data.user_ids
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return [CuratorRead(**row) for row in rows]
 
 
 @router.get("/libraries/{library_id}/papers", response_model=PaperListPage)
@@ -191,3 +288,65 @@ async def search_library(
         for p, s in paper_rows
     ]
     return SearchResponse(papers=papers, concepts=concepts, mode_used=mode_used, reranked=reranked)
+
+
+# ---- P6 治理：重复论文合并 ----
+
+
+@router.get(
+    "/libraries/{library_id}/duplicate-candidates",
+    response_model=list[DuplicateCandidateGroup],
+)
+async def list_duplicate_candidates(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[DuplicateCandidateGroup]:
+    """库内疑似重复论文（可管理者）：arxiv/doi 同源不同行，或规范化标题相同。"""
+    library = await _get_managed_library(session, library_id, user)
+    groups = await paper_merge_service.duplicate_candidates(session, library_id=library.id)
+    return [DuplicateCandidateGroup(**group) for group in groups]
+
+
+@router.post("/papers/merge", response_model=PaperMergeResult)
+async def merge_papers(
+    data: PaperMergeRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperMergeResult:
+    """合并重复论文（不可撤销）：drop 行的全部归属并入 keep 后删除 drop。
+
+    权限：平台 admin，或 keep/drop 任一所在方向库的可管理者。
+    """
+    if user.role != "admin":
+        libraries = (
+            (
+                await session.execute(
+                    select(DirectionLibrary)
+                    .join(LibraryPaper, LibraryPaper.library_id == DirectionLibrary.id)
+                    .where(LibraryPaper.paper_id.in_([data.keep_id, data.drop_id]))
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        allowed = False
+        for library in libraries:
+            if await libraries_service.can_manage_library(session, user=user, library=library):
+                allowed = True
+                break
+        if not allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="PAPER_MERGE_FORBIDDEN")
+    try:
+        report = await paper_merge_service.merge_papers(
+            session, keep_id=data.keep_id, drop_id=data.drop_id
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return PaperMergeResult(
+        kept_id=data.keep_id,
+        dropped_id=data.drop_id,
+        dropped_dedup_key=report.pop("dropped_dedup_key"),
+        details={k: v for k, v in report.items() if k not in ("kept_id", "dropped_id")},
+    )

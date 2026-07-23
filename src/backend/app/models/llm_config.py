@@ -93,6 +93,10 @@ class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), index=True
     )
+    # 方向库归因（P6）：库侧 ingest/打分/编译/概念定义/向量化记库账，个人消费为 NULL
+    library_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("direction_libraries.id", ondelete="SET NULL"), index=True
+    )
     voyage_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("voyage_runs.id", ondelete="SET NULL")
     )
@@ -125,6 +129,9 @@ class LLMCallLog(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL")
+    )
+    library_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("direction_libraries.id", ondelete="SET NULL")
     )
     voyage_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("voyage_runs.id", ondelete="SET NULL")

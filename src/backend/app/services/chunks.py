@@ -115,6 +115,7 @@ async def embed_pending_chunks(
                 [c.text[:2000] for c in batch],
                 user_id=user_id,
                 project_id=project_id,
+                library_id=library_id,  # 全文向量化随库 ingest 记方向库账（P6）
                 voyage_id=voyage_id,
             )
         except NotImplementedError:

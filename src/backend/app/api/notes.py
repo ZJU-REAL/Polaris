@@ -14,9 +14,9 @@ from app.core.db import get_session
 from app.models.paper import PaperNote
 from app.models.user import User
 from app.schemas.note import NotebookPage, NoteCreate, NoteRead, NoteUpdate, NoteWithPaper
+from app.services import libraries as libraries_service
 from app.services import notes as notes_service
 from app.services import papers as papers_service
-from app.services import projects as projects_service
 
 router = APIRouter(tags=["notes"])
 
@@ -111,7 +111,7 @@ async def project_notebook(
     user: User = Depends(current_active_user),
 ) -> NotebookPage:
     """课题笔记本：我的论文笔记在本课题范围内的聚合视图（搜索 + 分页 + 按论文过滤）。"""
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     rows, total = await notes_service.list_project_notes(

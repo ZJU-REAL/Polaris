@@ -69,6 +69,7 @@ async def extract_affiliations_llm(
     llm: LLMRouter,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> list[str] | None:
     """LLM 从论文全文标题页解析机构名列表。
@@ -88,6 +89,7 @@ async def extract_affiliations_llm(
             max_tokens=_MAX_TOKENS,
             user_id=user_id,
             project_id=project_id,
+            library_id=library_id,
             voyage_id=voyage_id,
         )
         return _parse_affiliations(result.content)

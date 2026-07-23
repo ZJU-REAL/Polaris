@@ -806,6 +806,8 @@ export interface DirectionLibrarySummary {
   project_id: string | null;
   /** 是否「我的课题的库」（请求者是背后课题成员 → 显示管理页签） */
   is_mine: boolean;
+  /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 平台管理员（P6） */
+  can_manage: boolean;
   paper_count: number;
   concept_count: number;
   last_compiled_at: string | null;
@@ -817,6 +819,57 @@ export interface DirectionLibrarySummary {
 
 export interface DirectionLibraryDetail extends DirectionLibrarySummary {
   cadence: string | null;
+  /** 每月 AI 预算（token 数；null = 不限） */
+  monthly_budget: number | null;
+}
+
+/** 文献库管理员（后端叫 curator）。 */
+export interface LibraryCuratorRead {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+}
+
+/** 重复候选组里的一行（对比要素）。 */
+export interface DuplicateCandidatePaper {
+  id: string;
+  title: string;
+  year: number | null;
+  source: string | null;
+  arxiv_id: string | null;
+  doi: string | null;
+  status: string;
+  chunk_count: number;
+  has_wiki: boolean;
+  created_at: string;
+}
+
+export interface DuplicateCandidateGroup {
+  /** 按何种键判定为疑似重复：arxiv | doi | title */
+  reason: string;
+  /** 首行 = 建议保留行（更完整优先） */
+  papers: DuplicateCandidatePaper[];
+}
+
+export interface PaperMergeResult {
+  kept_id: string;
+  dropped_id: string;
+  dropped_dedup_key: string | null;
+  details: Record<string, unknown>;
+}
+
+/** 库预算面板：本月 AI 用量（token）与上限。 */
+export interface LibraryBudgetRead {
+  /** 如 "2026-07" */
+  month: string;
+  monthly_budget: number | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  used_tokens: number;
+  /** 不限时为 null */
+  remaining_tokens: number | null;
+  /** true = 本月预算已用尽（同步任务会被拒绝启动） */
+  exhausted: boolean;
 }
 
 // ============================================================
@@ -2635,6 +2688,40 @@ export const api = {
   },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);
+  },
+  /** 编辑库信息（可管理者）；传 null 清空对应字段。 */
+  updateLibrary(
+    id: string,
+    input: {
+      name?: string;
+      statement?: string | null;
+      cadence?: string | null;
+      monthly_budget?: number | null;
+      rubric?: unknown;
+      anchors?: unknown[] | null;
+    },
+  ): Promise<DirectionLibraryDetail> {
+    return requestJson<DirectionLibraryDetail>(`/libraries/${id}`, 'PATCH', input);
+  },
+  /** 本月预算消耗（可管理者可见）。 */
+  getLibraryBudget(id: string): Promise<LibraryBudgetRead> {
+    return request<LibraryBudgetRead>(`/libraries/${id}/budget`);
+  },
+  /** 库内疑似重复论文（可管理者）。 */
+  listDuplicateCandidates(id: string): Promise<DuplicateCandidateGroup[]> {
+    return request<DuplicateCandidateGroup[]>(`/libraries/${id}/duplicate-candidates`);
+  },
+  /** 合并重复论文（不可撤销）：drop 的全部归属并入 keep 后删除 drop。 */
+  mergePapers(input: { keep_id: string; drop_id: string }): Promise<PaperMergeResult> {
+    return requestJson<PaperMergeResult>('/papers/merge', 'POST', input);
+  },
+  /** 文献库管理员名单（可管理者可见）。 */
+  listLibraryCurators(id: string): Promise<LibraryCuratorRead[]> {
+    return request<LibraryCuratorRead[]>(`/libraries/${id}/curators`);
+  },
+  /** 全量替换文献库管理员名单（仅平台管理员）。 */
+  setLibraryCurators(id: string, userIds: string[]): Promise<LibraryCuratorRead[]> {
+    return requestJson<LibraryCuratorRead[]>(`/libraries/${id}/curators`, 'PUT', { user_ids: userIds });
   },
   /** 库内论文（缺省只列相关性达标的）。 */
   listLibraryPapers(
