@@ -30,6 +30,10 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     statement: Mapped[str | None] = mapped_column(Text)  # 方向陈述（一段话）
     rubric: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # 相关性评分标准
     anchors: Mapped[list[Any] | None] = mapped_column(JSONVariant)  # 锚点论文/关键词
+    # P8a：收录配置权威源（结构同原 project.definition：statement/goals/in_scope/
+    # out_of_scope/questions/rubric/anchor_papers/keywords(含 arxiv_categories)/cadence）。
+    # 上方 statement/rubric/anchors/cadence 标量列为展示镜像，由 update_library 同步维护。
+    definition: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     # 文献 ingest 状态：{"watermark": iso, "last_run": {"voyage_id", "finished_at"}}
     ingest_state: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     cadence: Mapped[str | None] = mapped_column(String(32))  # 同步节奏：daily | weekly | ...

@@ -9,7 +9,7 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "67d18892a6ce"  # 课题 × 文献库关联 + 库生命周期独立（P7 Step 1，本分支最新）
+HEAD_REVISION = "b3e9c1f47a20"  # direction_libraries.definition 收录配置权威（P8a）
 PREV_REVISION = "3f770d85dca9"  # LLM 用量按方向库归因（P6）
 
 

@@ -9,12 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.navigator import WIKI_KINDS
 from app.models.activity import Activity
-from app.models.library_direction import LibraryPaper
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import PAPER_STATUSES
 from app.models.project import Project
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.ingest import IngestKnobs
-from app.services.libraries import get_library_for_project
+from app.services.libraries import get_library_for_project, library_definition
 
 # 预算从 knobs 派生：每篇编译预留的 token 额度（打分+编译+概念定义+验证）
 _TOKENS_PER_PAPER = 20_000
@@ -177,10 +177,17 @@ DAILY_SYNC_UTC_HOUR = 3
 DAILY_SYNC_UTC_MINUTE = 0
 
 
-def next_daily_sync_at(project: Project) -> datetime | None:
-    """下一次自动同步时间：cadence=daily 且已完成初始建库才有；否则 None。"""
-    definition = project.definition if isinstance(project.definition, dict) else {}
-    state = project.ingest_state or {}
+def next_daily_sync_at(library: DirectionLibrary | None) -> datetime | None:
+    """下一次自动同步时间：cadence=daily 且已完成初始建库才有；否则 None。
+
+    P8a：节奏/水位线权威源在库（library.definition.cadence / library.ingest_state）。
+    """
+    from app.services.libraries import library_definition
+
+    if library is None:
+        return None
+    definition = library_definition(library)
+    state = library.ingest_state or {}
     if definition.get("cadence") != "daily" or not state.get("watermark"):
         return None
     now = datetime.now(UTC)
@@ -193,7 +200,9 @@ def next_daily_sync_at(project: Project) -> datetime | None:
 
 
 async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any]:
-    state = project.ingest_state or {}
+    # P8a：水位线/last_run 权威源在库（library.ingest_state）
+    library = await get_library_for_project(session, project.id)
+    state = (library.ingest_state if library else None) or {}
     last_run_raw = state.get("last_run") or None
     last_run: dict[str, Any] | None = None
     if isinstance(last_run_raw, dict) and last_run_raw.get("voyage_id"):
@@ -209,7 +218,7 @@ async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any
         "last_run": last_run,
         "paper_counts": await paper_counts(session, project.id),
         "running_voyage_id": running.id if running else None,
-        "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(project)) else None),
+        "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
     }
 
 
@@ -220,8 +229,12 @@ async def find_due_daily_projects(session: AsyncSession) -> list[Project]:
     )
     due: list[Project] = []
     for project in projects:
-        definition = project.definition or {}
-        state = project.ingest_state or {}
+        # P8a：节奏/水位线读起源库（project.definition 不再是权威源）
+        library = await get_library_for_project(session, project.id)
+        if library is None:
+            continue
+        definition = library_definition(library)
+        state = library.ingest_state or {}
         if definition.get("cadence") != "daily" or not state.get("watermark"):
             continue
         if await find_running_ingest(session, project.id) is not None:

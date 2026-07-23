@@ -501,12 +501,13 @@ async def test_ingest_state_next_sync_at(client):
     assert resp.json()["next_sync_at"] is None  # 未 bootstrap（无水位线）
 
     from app.core.db import get_sessionmaker
-    from app.models.project import Project
+    from app.services.libraries import get_library_for_project
 
     async with get_sessionmaker()() as session:
-        project = await session.get(Project, uuid.UUID(project_id))
-        project.definition = {"cadence": "daily"}
-        project.ingest_state = {"watermark": "2026-07-15T00:00:00+00:00"}
+        # P8a：节奏/水位线权威源在库（library.definition.cadence / library.ingest_state）
+        library = await get_library_for_project(session, uuid.UUID(project_id))
+        library.definition = {"cadence": "daily"}
+        library.ingest_state = {"watermark": "2026-07-15T00:00:00+00:00"}
         await session.commit()
 
     resp = await client.get(f"/api/projects/{project_id}/ingest/state", headers=headers)

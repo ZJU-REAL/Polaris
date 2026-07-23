@@ -205,7 +205,7 @@ async def add_paper_manually(
     # 顺带相关性打分（best-effort）：失败只记日志，不影响 201；不改 status（人工纳入）
     if membership is not None:
         await relevance_service.score_added_paper_best_effort(
-            session, paper, membership, project, user_id=user_id
+            session, paper, membership, project_id=project.id, user_id=user_id
         )
     # 重新加载（带 concepts eager load），避免序列化时触发 async lazy load
     view = await papers_service.get_paper_for_user(
