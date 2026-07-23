@@ -130,6 +130,34 @@ async def test_generate_draft_follows_template(client):
     assert "bug" in draft["labels"]
 
 
+async def test_fallback_draft_replaces_uninformative_title(client):
+    """信息量不足的反馈标题（如 "无 token"）在规则回退草稿里不应直接成为 issue 标题：
+    改用正文首句 + 模块定位（fake provider 下 generate_issue_draft 走规则回退）。"""
+    admin = await register_and_login(client, email="admin@example.com")
+    fb = (
+        await client.post(
+            "/api/feedback",
+            json={
+                "title": "无 token",
+                "type": "task",
+                "body": "点生成方案报错，提示没有可用的模型 token",
+                "route": "/wiki",
+            },
+            headers={"Authorization": f"Bearer {admin}"},
+        )
+    ).json()
+    draft = (
+        await client.post(
+            f"/api/admin/feedback/{fb['id']}/draft",
+            headers={"Authorization": f"Bearer {admin}"},
+        )
+    ).json()
+    assert draft["title"].startswith("task: ")  # 模板前缀保留
+    assert draft["title"] != "task: 无 token"  # 不再原样透传无意义标题
+    assert "[wiki]" in draft["title"]  # 带上模块定位
+    assert "没有可用的模型 token" in draft["title"]  # 用正文首句合成
+
+
 async def test_create_issue_mocked_then_conflict(client, monkeypatch):
     admin = await register_and_login(client, email="admin@example.com")
     aheaders = {"Authorization": f"Bearer {admin}"}

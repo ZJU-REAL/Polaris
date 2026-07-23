@@ -280,6 +280,31 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(m.group(0))
 
 
+# 回退草稿标题：原标题短于此视为信息量不足（如 "无 token"），改用正文摘要 + 模块定位
+_MIN_TITLE_LEN = 8
+
+
+def _concise_summary(feedback: Feedback) -> str:
+    """从反馈正文提炼一句话（首个非空行，去掉列表/引用标记，压到 ~80 字）。"""
+    for line in (feedback.body or "").splitlines():
+        cleaned = line.strip().lstrip("-*#> ").strip()
+        if cleaned:
+            return cleaned[:80]
+    return ""
+
+
+def _fallback_title_core(feedback: Feedback) -> str:
+    """回退草稿标题主体：带上模块/路由定位；原标题信息量不足（空/过短，如
+    "无 token"）时改用正文首句，避免无意义标题直接成为 issue 标题。"""
+    scope = feedback.module or module_from_route(feedback.route)
+    raw = (feedback.title or "").strip()
+    if len(raw) >= _MIN_TITLE_LEN:
+        core = raw
+    else:
+        core = _concise_summary(feedback) or raw or "user-reported issue"
+    return f"[{scope}] {core}" if scope else core
+
+
 def _fallback_draft(feedback: Feedback, template: dict[str, Any]) -> dict[str, Any]:
     """LLM 不可用时的规则草稿：把原始反馈塞进模板骨架。"""
     ctx = feedback.context or {}
@@ -294,9 +319,9 @@ def _fallback_draft(feedback: Feedback, template: dict[str, Any]) -> dict[str, A
         f"- route: {feedback.route or '?'}",
         f"- version: {ctx.get('version', '?')} · env: {ctx.get('env', '?')}",
     ]
-    title = feedback.title
-    if not title.lower().startswith(template["title_prefix"].strip().rstrip(":")):
-        title = template["title_prefix"] + title
+    core = _fallback_title_core(feedback)
+    prefix = template["title_prefix"]
+    title = core if core.lower().startswith(prefix.strip().rstrip(":").lower()) else prefix + core
     return {"title": title[:255], "body": "\n".join(lines), "labels": list(template["labels"])}
 
 
