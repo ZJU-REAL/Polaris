@@ -37,6 +37,23 @@ class DirectionLibraryDetail(DirectionLibrarySummary):
     monthly_budget: int | None = None
 
 
+class LibraryCreate(BaseModel):
+    """独立新建方向文献库（POST /libraries，平台 admin）。"""
+
+    name: str = Field(min_length=1, max_length=255)
+    statement: str | None = None
+    cadence: str | None = Field(default=None, max_length=32)
+    monthly_budget: int | None = Field(default=None, ge=0)
+    rubric: Any | None = None
+    anchors: list[Any] | None = None
+
+
+class SourceLibrariesUpdate(BaseModel):
+    """课题关联库全量替换（PUT /projects/{id}/source-libraries）；空列表 = 清空关联。"""
+
+    library_ids: list[uuid.UUID]
+
+
 class DirectionLibraryUpdate(BaseModel):
     """库定义编辑（PATCH /libraries/{id}）：显式传 null 可清空对应字段。"""
 

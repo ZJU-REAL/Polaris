@@ -142,14 +142,29 @@ async def ensure_membership(
 async def membership_for_project(
     session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID
 ) -> LibraryPaper | None:
-    """按 project 解析管理库后取成员行（工具层「论文是否在本方向库内」的统一检查）。
+    """课题关联库并集里该论文的成员行（工具层「论文是否在本课题语料内」的统一检查）。
 
-    课题没有可解析的库（无起源库/无关联库）→ None（视为不在库内，不报错）。
+    跨库同一论文取确定性视角（有 wiki 优先、其次相关性高，见 ``membership_rank``）；
+    课题没有任何关联库或论文不在其中 → None（视为不在语料内，不报错）。
     """
-    library = await get_library_for_project(session, project_id)
-    if library is None:
+    library_ids = await get_source_library_ids(session, project_id)
+    if not library_ids:
         return None
-    return await get_membership(session, library_id=library.id, paper_id=paper_id)
+    rows = (
+        (
+            await session.execute(
+                select(LibraryPaper).where(
+                    LibraryPaper.library_id.in_(library_ids),
+                    LibraryPaper.paper_id == paper_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return None
+    return min(rows, key=membership_rank)
 
 
 async def find_pool_paper(
@@ -367,6 +382,63 @@ async def library_overview(
         concept_count=concept_counts.get(library.id, 0),
         last_compiled_at=last_compiled.get(library.id),
     )
+
+
+async def source_libraries_overview(
+    session: AsyncSession, *, topic_id: uuid.UUID, user: User
+) -> list[dict[str, Any]]:
+    """课题关联库 + 概要统计（同列表口径，按关联建立时间）。"""
+    libraries = await get_source_libraries(session, topic_id)
+    ids = [lib.id for lib in libraries]
+    paper_counts, last_compiled, concept_counts = await _library_stats(session, ids)
+    my_projects = await _my_project_ids(session, user.id)
+    my_curated = await _my_curated_library_ids(session, user.id)
+    return [
+        _overview_dict(
+            lib,
+            my_projects=my_projects,
+            can_manage=(
+                user.role == "admin"
+                or lib.id in my_curated
+                or (lib.project_id is not None and lib.project_id in my_projects)
+            ),
+            paper_count=paper_counts.get(lib.id, 0),
+            concept_count=concept_counts.get(lib.id, 0),
+            last_compiled_at=last_compiled.get(lib.id),
+        )
+        for lib in libraries
+    ]
+
+
+async def create_library(
+    session: AsyncSession,
+    *,
+    name: str,
+    statement: str | None = None,
+    rubric: Any | None = None,
+    anchors: list[Any] | None = None,
+    cadence: str | None = None,
+    monthly_budget: int | None = None,
+    created_by: uuid.UUID,
+) -> DirectionLibrary:
+    """独立新建方向文献库（P7；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
+
+    flush + refresh，不 commit（调用方 api 层负责事务收尾）。
+    """
+    library = DirectionLibrary(
+        name=name,
+        statement=statement,
+        rubric=rubric,
+        anchors=anchors,
+        cadence=cadence,
+        monthly_budget=monthly_budget,
+        created_by=created_by,
+        project_id=None,
+    )
+    session.add(library)
+    await session.flush()
+    await session.refresh(library)
+    return library
 
 
 # ---- P6 治理：策展人（界面叫「文献库管理员」）与库级写权限 ----

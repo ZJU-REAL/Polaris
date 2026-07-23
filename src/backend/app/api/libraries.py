@@ -26,6 +26,7 @@ from app.schemas.libraries import (
     DirectionLibraryUpdate,
     DuplicateCandidateGroup,
     LibraryBudgetRead,
+    LibraryCreate,
     PaperMergeRequest,
     PaperMergeResult,
 )
@@ -80,6 +81,30 @@ async def list_libraries(
 ) -> list[DirectionLibrarySummary]:
     rows = await libraries_service.list_libraries_overview(session, user=user)
     return [DirectionLibrarySummary(**row) for row in rows]
+
+
+@router.post(
+    "/libraries", response_model=DirectionLibraryDetail, status_code=status.HTTP_201_CREATED
+)
+async def create_library(
+    data: LibraryCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> DirectionLibraryDetail:
+    """独立新建方向文献库（平台 admin）：不属于任何课题，课题靠关联消费其语料。"""
+    library = await libraries_service.create_library(
+        session,
+        name=data.name,
+        statement=data.statement,
+        rubric=data.rubric,
+        anchors=data.anchors,
+        cadence=data.cadence,
+        monthly_budget=data.monthly_budget,
+        created_by=user.id,
+    )
+    await session.commit()
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
 
 
 @router.get("/libraries/{library_id}", response_model=DirectionLibraryDetail)
@@ -226,7 +251,7 @@ async def list_library_concepts(
 ) -> list[ConceptRead]:
     library = await _get_library(session, library_id)
     rows = await concepts_service.list_concepts(
-        session, library_id=library.id, category=category, q=q
+        session, library_ids=[library.id], category=category, q=q
     )
     return [
         ConceptRead(

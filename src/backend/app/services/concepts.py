@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import delete, exists, func, insert, select
@@ -87,16 +88,19 @@ def normalize_category(raw: Any) -> str:
 async def list_concepts(
     session: AsyncSession,
     *,
-    library_id: uuid.UUID,
+    library_ids: Sequence[uuid.UUID],
     category: str | None = None,
     q: str | None = None,
 ) -> list[tuple[Concept, int]]:
-    """方向库概念列表（附 paper_count）。"""
+    """方向库并集概念列表（附 paper_count）。传单库时给 ``[library_id]``；课题作用域
+    传关联库并集。空列表 = 无语料，返回空。"""
+    if not library_ids:
+        return []
     paper_count = func.count(paper_concepts.c.paper_id).label("paper_count")
     stmt = (
         select(Concept, paper_count)
         .outerjoin(paper_concepts, paper_concepts.c.concept_id == Concept.id)
-        .where(Concept.library_id == library_id)
+        .where(Concept.library_id.in_(library_ids))
         .group_by(Concept.id)
         .order_by(paper_count.desc(), Concept.name)
     )

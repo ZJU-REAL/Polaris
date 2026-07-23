@@ -21,7 +21,7 @@ from app.schemas.paper import (
 )
 from app.services import concepts as concepts_service
 from app.services import libraries as libraries_service
-from app.services.libraries import get_library_for_project
+from app.services.libraries import get_library_for_project, get_source_library_ids
 
 router = APIRouter(tags=["concepts"])
 
@@ -50,9 +50,9 @@ async def list_concepts(
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    library = await get_library_for_project(session, project_id)
+    library_ids = await get_source_library_ids(session, project_id)
     rows = await concepts_service.list_concepts(
-        session, library_id=library.id, category=category, q=q
+        session, library_ids=library_ids, category=category, q=q
     )
     return [_concept_read(concept, count, project_id) for concept, count in rows]
 
@@ -71,7 +71,11 @@ async def relink_concepts(
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    # 概念补建是「某具体库」的维护写操作（计库预算），落在课题的起源库上；
+    # 课题若无任何可解析的库（全部解绑）则无事可做，返回零结果。
     library = await get_library_for_project(session, project_id)
+    if library is None:
+        return ConceptRelinkResult(papers=0, concepts_created=0, links_created=0)
     stats, _papers = await concepts_service.link_all_paper_concepts(
         session,
         library_id=library.id,
