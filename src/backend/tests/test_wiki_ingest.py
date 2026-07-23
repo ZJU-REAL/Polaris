@@ -807,7 +807,12 @@ async def _create_standalone_library(client, headers, *, name="独立库-自动�
     payload.update(extra)
     resp = await client.post("/api/libraries", json=payload, headers=headers)
     assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
+    library_id = resp.json()["id"]
+    # P9b：新库 pending，需 admin 审批激活后才能触发抓取（调用方均已 promote_admin）。
+    resp = await client.post(f"/api/libraries/{library_id}/approve", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "active"
+    return library_id
 
 
 async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_mocks):
