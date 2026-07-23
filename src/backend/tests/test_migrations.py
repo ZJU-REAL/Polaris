@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "3f770d85dca9"  # LLM 用量按方向库归因（P6，本分支最新）
-PREV_REVISION = "1c6c4831d80f"  # 笔记/划线归属拆分（P5b）
+HEAD_REVISION = "67d18892a6ce"  # 课题 × 文献库关联 + 库生命周期独立（P7 Step 1，本分支最新）
+PREV_REVISION = "3f770d85dca9"  # LLM 用量按方向库归因（P6）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -59,6 +59,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "user_publications",
                     "topic_papers",
                     "llm_usage",
+                    "topic_source_libraries",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -225,13 +226,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 本分支新增：LLM 用量按方向库归因（P6）
     assert "library_id" in columns["llm_usage"]
     assert "library_id" in columns["llm_call_logs"]
+    # 本分支新增：课题 × 文献库关联表（P7 Step 1）
+    assert "topic_source_libraries" in columns["_tables"]
+    assert columns["topic_source_libraries"] == {"topic_id", "library_id", "created_at"}
 
     # 最新 revision 可往返（downgrade 删 library_id 归因列，其余结构不动）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "library_id" not in columns["llm_usage"]
-    assert "library_id" not in columns["llm_call_logs"]
+    assert "topic_source_libraries" not in columns["_tables"]
+    assert "library_id" in columns["llm_usage"]
+    assert "library_id" in columns["llm_call_logs"]
     # P5b 拆分结构不受影响：笔记/划线仍无 project_id
     assert "project_id" not in columns["paper_notes"]
     assert "project_id" not in columns["paper_highlights"]

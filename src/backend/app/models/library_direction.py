@@ -1,12 +1,14 @@
-"""方向文献库：实验室层的文献策展单元（P4）。
+"""方向文献库：实验室层的文献策展单元（P4；P7 起课题/库解耦）。
 
 `papers` 是全局内容池（按 dedup_key 全平台唯一，只存论文本体：元数据/全文/图/embedding）；
 方向对论文的「归属 + 判断」（相关性分、状态流转、库版 wiki 解读）全部落在成员表
 `library_papers` 上——同一篇论文可以同时属于多个方向库，各自打分编译互不干扰，
 删库只删成员行，内容池行永不删除。
 
-过渡期（P4~P5）：每个 project（研究方向）对应一个 1:1 隐式库（project_id 回指），
-API 仍以 project_id 为入口，service 层经 services/libraries.py 解析到库。
+P7 起课题（`Project`）与库多对多关联（`TopicSourceLibrary`）：库不再是课题的附属物，
+`project_id` 语义降级为「起源课题」溯源（ondelete SET NULL——删课题不删库）；
+「课题关联了哪些库」一律经 `topic_source_libraries` 查，`project_id` 仅供历史
+1:1 库与管理路径（`services/libraries.py::get_library_for_project`）兜底解析。
 """
 
 import uuid
@@ -17,7 +19,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstrai
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin, utcnow
 from app.models.paper import Paper
 
 
@@ -35,9 +37,11 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
-    # 过渡期隐式库 1:1 回指 project（P5 拆分课题/库后共享库此列为 NULL）
+    # 起源课题溯源（历史 1:1 库回指；SET NULL——删课题不再级联删库，孤儿库保留）。
+    # 新建的独立库（P7 起 POST /libraries）此列恒为 NULL；「课题关联了哪些库」
+    # 一律经 topic_source_libraries 查，不查这列。
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), unique=True
+        ForeignKey("projects.id", ondelete="SET NULL"), unique=True
     )
 
 
@@ -82,3 +86,24 @@ class LibraryPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     compiled_model: Mapped[str | None] = mapped_column(String(255))
 
     paper: Mapped[Paper] = relationship()
+
+
+class TopicSourceLibrary(Base):
+    """课题 × 文献库关联（P7）：课题的语料 = 关联库论文的并集。
+
+    多对多；课题删除级联清关联行（不动库），库删除级联清关联行（不动课题）。
+    """
+
+    __tablename__ = "topic_source_libraries"
+
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("direction_libraries.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )

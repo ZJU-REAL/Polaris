@@ -113,6 +113,25 @@ async def update_library(
     return DirectionLibraryDetail(**row)
 
 
+@router.delete("/libraries/{library_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_library(
+    library_id: uuid.UUID,
+    force: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> None:
+    """删库（平台 admin 专用）：论文内容池行不动，成员行/概念/策展人一并清除。
+
+    仍有课题关联时默认拒绝（409 LIBRARY_HAS_TOPICS），带 ``?force=true`` 才会
+    一并解除关联（不影响课题本身，课题只是失去这条语料来源）。
+    """
+    library = await _get_library(session, library_id)
+    try:
+        await libraries_service.delete_library(session, library=library, force=force)
+    except libraries_service.LibraryHasTopicsError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_HAS_TOPICS") from e
+
+
 @router.get("/libraries/{library_id}/budget", response_model=LibraryBudgetRead)
 async def get_library_budget(
     library_id: uuid.UUID,
