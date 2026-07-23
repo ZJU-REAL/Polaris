@@ -99,6 +99,7 @@ async def create_library(
         rubric=data.rubric,
         anchors=data.anchors,
         cadence=data.cadence,
+        keywords=data.keywords,
         monthly_budget=data.monthly_budget,
         created_by=user.id,
     )
@@ -125,10 +126,10 @@ async def update_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """编辑库定义（可管理者）：name/statement/cadence/monthly_budget/rubric/anchors。
+    """编辑库定义（可管理者）：name/monthly_budget 与收录配置（statement/cadence/
+    rubric/anchors/keywords/goals/scope/questions）。
 
-    过渡期隐式库以库为权威，statement/rubric/anchors/cadence 写时同步回
-    project.definition（保持 ingest 兼容），name 同步 project.name。
+    P8a：收录配置写入 library.definition（ingest 唯一权威源），不再写回起源课题。
     """
     library = await _get_managed_library(session, library_id, user)
     fields = data.model_dump(exclude_unset=True)

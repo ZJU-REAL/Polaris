@@ -61,7 +61,7 @@ export function LibraryPicker({
                 <span style={{ fontSize: 13.5, fontWeight: 650 }}>{lib.name}</span>
                 {lib.is_mine && (
                   <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-                    {tr('我的课题', 'My topic')}
+                    {tr('我在用', 'In use')}
                   </span>
                 )}
               </div>

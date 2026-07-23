@@ -18,7 +18,6 @@ from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.base import utcnow
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
-from app.models.project import Project
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +43,13 @@ def _extract_json(content: str) -> Any:
     return json.loads(content[start : end + 1])
 
 
-def build_relevance_context(project: Project) -> str:
-    """按项目 definition 组打分 context；rubric / questions 缺失时只用 statement。"""
-    definition = project.definition if isinstance(project.definition, dict) else {}
+def build_relevance_context(definition: dict[str, Any] | None, name: str) -> str:
+    """按库 definition 组打分 context（P8a：库为收录配置权威源）；rubric / questions
+    缺失时只用 statement。``name`` 是 statement 缺失时的兜底方向名（库名）。"""
+    definition = definition if isinstance(definition, dict) else {}
     rubric = definition.get("rubric") or []
     questions = definition.get("questions") or []
-    statement = definition.get("statement") or project.name
+    statement = definition.get("statement") or name
     lines = [f"研究方向：{statement}"]
     if rubric:
         lines.append(f"评分标准（rubric）：{json.dumps(rubric, ensure_ascii=False)}")
@@ -99,22 +99,31 @@ async def score_added_paper_best_effort(
     session: AsyncSession,
     paper: Paper,
     membership: LibraryPaper,
-    project: Project,
     *,
+    project_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
 ) -> None:
     """手动添加后的顺带打分（best-effort）：成功则 commit 分数，失败只记 warning。
 
+    P8a：对照该论文所属库（membership.library_id）的 definition 打分，不再读起源课题。
     不改成员行 status（手动添加 = 人工纳入，分低也保持 included）；LLM 失败/超时时
     回滚未落库的字段改动，论文本身照常保留。
     """
+    from app.models.library_direction import DirectionLibrary
+    from app.services.libraries import library_definition
+
     try:
+        library = await session.get(DirectionLibrary, membership.library_id)
+        context_text = build_relevance_context(
+            library_definition(library) if library else None,
+            library.name if library else paper.title,
+        )
         await score_paper_relevance(
             paper,
             membership,
-            context_text=build_relevance_context(project),
+            context_text=context_text,
             user_id=user_id,
-            project_id=project.id,
+            project_id=project_id,
         )
         await session.commit()
     except Exception:  # noqa: BLE001 — 顺带增值，失败不影响添加本身

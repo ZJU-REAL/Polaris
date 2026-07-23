@@ -33,11 +33,34 @@ def implicit_library_for(project: Project) -> DirectionLibrary:
         statement=definition.get("statement"),
         rubric=definition.get("rubric"),
         anchors=definition.get("anchor_papers"),
+        definition=definition or None,  # P8a：库承载完整收录配置
         ingest_state=project.ingest_state,
         cadence=definition.get("cadence"),
         created_by=project.owner_id,
         project_id=project.id,
     )
+
+
+def library_definition(library: DirectionLibrary) -> dict[str, Any]:
+    """库的收录配置（P8a 权威源）：definition JSON；为空时回退标量列拼一份兼容视图。
+
+    ingest（检索/扩展/打分/编译）与 build_relevance_context 一律经此取 statement/
+    rubric/anchor_papers/keywords/questions/cadence，不再读起源课题 project.definition。
+    """
+    definition = library.definition if isinstance(library.definition, dict) else {}
+    if definition:
+        return definition
+    # 回退：老库或迁移前建的库 definition 为空 → 用标量列拼最小可用配置。
+    fallback: dict[str, Any] = {}
+    if library.statement:
+        fallback["statement"] = library.statement
+    if library.rubric:
+        fallback["rubric"] = library.rubric
+    if library.anchors:
+        fallback["anchor_papers"] = library.anchors
+    if library.cadence:
+        fallback["cadence"] = library.cadence
+    return fallback
 
 
 async def get_library_for_project(
@@ -312,10 +335,20 @@ async def _my_project_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid
     return set(rows.scalars().all())
 
 
+async def _my_linked_library_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
+    """被我参与的课题关联的库 id（P7：is_mine 按关联判定，而非起源课题）。"""
+    rows = await session.execute(
+        select(TopicSourceLibrary.library_id)
+        .join(ProjectMember, ProjectMember.project_id == TopicSourceLibrary.topic_id)
+        .where(ProjectMember.user_id == user_id)
+    )
+    return set(rows.scalars().all())
+
+
 def _overview_dict(
     library: DirectionLibrary,
     *,
-    my_projects: set[uuid.UUID],
+    my_linked: set[uuid.UUID],
     can_manage: bool,
     paper_count: int,
     concept_count: int,
@@ -327,8 +360,9 @@ def _overview_dict(
         "statement": library.statement,
         "cadence": library.cadence,
         "monthly_budget": library.monthly_budget,
+        "definition": library_definition(library),
         "project_id": library.project_id,
-        "is_mine": library.project_id is not None and library.project_id in my_projects,
+        "is_mine": library.id in my_linked,
         "can_manage": can_manage,
         "paper_count": paper_count,
         "concept_count": concept_count,
@@ -350,11 +384,12 @@ async def list_libraries_overview(session: AsyncSession, *, user: User) -> list[
         session, [lib.id for lib in libraries]
     )
     my_projects = await _my_project_ids(session, user.id)
+    my_linked = await _my_linked_library_ids(session, user.id)
     my_curated = await _my_curated_library_ids(session, user.id)
     return [
         _overview_dict(
             lib,
-            my_projects=my_projects,
+            my_linked=my_linked,
             can_manage=(
                 user.role == "admin"
                 or lib.id in my_curated
@@ -373,10 +408,10 @@ async def library_overview(
 ) -> dict[str, Any]:
     """单库详情概要（同列表口径）。"""
     paper_counts, last_compiled, concept_counts = await _library_stats(session, [library.id])
-    my_projects = await _my_project_ids(session, user.id)
+    my_linked = await _my_linked_library_ids(session, user.id)
     return _overview_dict(
         library,
-        my_projects=my_projects,
+        my_linked=my_linked,
         can_manage=await can_manage_library(session, user=user, library=library),
         paper_count=paper_counts.get(library.id, 0),
         concept_count=concept_counts.get(library.id, 0),
@@ -392,11 +427,12 @@ async def source_libraries_overview(
     ids = [lib.id for lib in libraries]
     paper_counts, last_compiled, concept_counts = await _library_stats(session, ids)
     my_projects = await _my_project_ids(session, user.id)
+    my_linked = await _my_linked_library_ids(session, user.id)
     my_curated = await _my_curated_library_ids(session, user.id)
     return [
         _overview_dict(
             lib,
-            my_projects=my_projects,
+            my_linked=my_linked,
             can_manage=(
                 user.role == "admin"
                 or lib.id in my_curated
@@ -418,6 +454,7 @@ async def create_library(
     rubric: Any | None = None,
     anchors: list[Any] | None = None,
     cadence: str | None = None,
+    keywords: dict[str, Any] | None = None,
     monthly_budget: int | None = None,
     created_by: uuid.UUID,
 ) -> DirectionLibrary:
@@ -425,12 +462,24 @@ async def create_library(
 
     flush + refresh，不 commit（调用方 api 层负责事务收尾）。
     """
+    definition: dict[str, Any] = {}
+    if statement:
+        definition["statement"] = statement
+    if rubric:
+        definition["rubric"] = rubric
+    if anchors:
+        definition["anchor_papers"] = anchors
+    if cadence:
+        definition["cadence"] = cadence
+    if keywords:
+        definition["keywords"] = keywords
     library = DirectionLibrary(
         name=name,
         statement=statement,
         rubric=rubric,
         anchors=anchors,
         cadence=cadence,
+        definition=definition or None,  # P8a：独立库同样以 definition 为收录配置权威源
         monthly_budget=monthly_budget,
         created_by=created_by,
         project_id=None,
@@ -548,42 +597,62 @@ async def set_curators(
     return await list_curators(session, library.id)
 
 
-# 库定义可编辑字段 → project.definition 写回键（库为权威，写时同步保持 ingest 兼容：
-# search/snowball/score/watermark 仍从 project.definition / ingest_state 取数）
-_DEFINITION_SYNC_KEYS = {
+# PATCH 顶层便捷字段 → library.definition 的键（收录配置权威源）。statement/cadence/
+# rubric 同名，anchors→anchor_papers（与原 project.definition 结构一致，ingest 直接读）。
+_CONFIG_TO_DEFINITION = {
     "statement": "statement",
+    "cadence": "cadence",
     "rubric": "rubric",
     "anchors": "anchor_papers",
+    "keywords": "keywords",
+    "goals": "goals",
+    "in_scope": "in_scope",
+    "out_of_scope": "out_of_scope",
+    "questions": "questions",
+}
+# definition 键 → 展示镜像标量列（overview/detail 读列，编辑时同步，避免同库内漂移）。
+_DEFINITION_TO_COLUMN = {
+    "statement": "statement",
     "cadence": "cadence",
+    "rubric": "rubric",
+    "anchor_papers": "anchors",
 }
 
 
 async def update_library(
     session: AsyncSession, *, library: DirectionLibrary, fields: dict[str, Any]
 ) -> DirectionLibrary:
-    """编辑库定义（name/statement/cadence/monthly_budget/rubric/anchors，显式传 null 可清空）。
+    """编辑库定义（显式传 null 可清空）。P8a：库是收录配置的唯一权威源。
 
-    过渡期隐式库（project_id 非空）双源并存：ingest 读 project.definition——
-    这里以库为权威，写入时把 statement/rubric/anchors/cadence 同步回
-    project.definition 对应键（name 同步 project.name），两边不再漂移。
+    - name / monthly_budget 落标量列；
+    - statement/cadence/rubric/anchors/keywords/questions/goals/scope 等收录配置写入
+      library.definition（ingest 从这里取数），并把有对应标量列的键镜像回列供展示；
+    - 允许整体传入 ``definition`` 一次性替换。
+    不再写回起源课题 project.definition（P8a 拆掉 P6 写回同步）。
     """
-    for key, value in fields.items():
-        if key == "name" and not value:
-            continue  # name 非空约束：显式 null/空串视为不改名
-        setattr(library, key, value)
-    if library.project_id is not None:
-        project = await session.get(Project, library.project_id)
-        if project is not None:
-            if fields.get("name"):
-                project.name = fields["name"]
-            sync = {k: v for k, v in fields.items() if k in _DEFINITION_SYNC_KEYS}
-            if sync:
-                definition = (
-                    dict(project.definition) if isinstance(project.definition, dict) else {}
-                )
-                for key, value in sync.items():
-                    definition[_DEFINITION_SYNC_KEYS[key]] = value
-                project.definition = definition
+    if fields.get("name"):
+        library.name = fields["name"]  # name 非空约束：显式 null/空串视为不改名
+    if "monthly_budget" in fields:
+        library.monthly_budget = fields["monthly_budget"]
+
+    config_keys = [k for k in fields if k in _CONFIG_TO_DEFINITION]
+    if "definition" in fields or config_keys:
+        definition = dict(library.definition) if isinstance(library.definition, dict) else {}
+        if isinstance(fields.get("definition"), dict):
+            definition = dict(fields["definition"])
+        for key in config_keys:
+            definition[_CONFIG_TO_DEFINITION[key]] = fields[key]
+        library.definition = definition or None
+        # 只镜像本次触及的键对应的标量列，不动未触及列。
+        touched_defn_keys = set()
+        if isinstance(fields.get("definition"), dict):
+            touched_defn_keys |= set(_DEFINITION_TO_COLUMN) & set(definition)
+        touched_defn_keys |= {_CONFIG_TO_DEFINITION[k] for k in config_keys}
+        for defn_key in touched_defn_keys:
+            col = _DEFINITION_TO_COLUMN.get(defn_key)
+            if col:
+                setattr(library, col, definition.get(defn_key))
+
     await session.commit()
     await session.refresh(library)
     return library

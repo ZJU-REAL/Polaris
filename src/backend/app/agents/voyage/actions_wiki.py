@@ -34,7 +34,12 @@ from app.services.chunks import embed_pending_chunks, index_paper_fulltext
 from app.services.concepts import link_all_paper_concepts
 from app.services.dedup import pool_dedup_key
 from app.services.figure_annotate import annotate_figures, figures_annotated
-from app.services.libraries import ensure_membership, find_pool_paper, get_library_for_project
+from app.services.libraries import (
+    ensure_membership,
+    find_pool_paper,
+    get_library_for_project,
+    library_definition,
+)
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
@@ -147,10 +152,6 @@ async def _get_project(session: AsyncSession, ctx: ActionContext) -> Project:
     return project
 
 
-def _definition(project: Project) -> dict[str, Any]:
-    return project.definition if isinstance(project.definition, dict) else {}
-
-
 def _parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -239,8 +240,11 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
     now = utcnow()
     mode = _mode(ctx)
     async with get_sessionmaker()() as session:
-        project = await _get_project(session, ctx)
-        definition = _definition(project)
+        library = await get_library_for_project(session, ctx.run.project_id)
+        if library is None:
+            raise ValueError(f"library not found for project: {ctx.run.project_id}")
+        # P8a：收录配置读库自身 definition（不再读起源课题 project.definition）
+        definition = library_definition(library)
         keywords_def = definition.get("keywords") or {}
         # 稀疏 definition 容忍：无 arxiv_categories 时回退默认 cs.* 分类
         categories = list(keywords_def.get("arxiv_categories") or []) or list(
@@ -248,7 +252,8 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         )
         include = list(keywords_def.get("include") or [])
 
-        watermark = _parse_iso((project.ingest_state or {}).get("watermark"))
+        # 水位线权威源在库（P8a）：library.ingest_state.watermark
+        watermark = _parse_iso((library.ingest_state or {}).get("watermark"))
         if mode == "incremental" and watermark is not None:
             # 回看窗口覆盖 arXiv 关键词索引滞后，防止近几天的新论文被漏抓
             since = watermark - timedelta(days=_INCREMENTAL_LOOKBACK_DAYS)
@@ -263,7 +268,6 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             categories=categories, keywords=include, since=since, until=now, limit=limit
         )
 
-        library = await get_library_for_project(session, project.id)
         arxiv_ids, dois, titles = await _existing_keys(session, library.id)
         new_papers: list[Paper] = []
 
@@ -378,14 +382,15 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
     max_new = _UNLIMITED_SENTINEL if _unlimited(knobs) else int(knobs["max_papers"]) * 2
 
     async with get_sessionmaker()() as session:
-        project = await _get_project(session, ctx)
-        definition = _definition(project)
+        library = await get_library_for_project(session, ctx.run.project_id)
+        if library is None:
+            raise ValueError(f"library not found for project: {ctx.run.project_id}")
+        definition = library_definition(library)
         anchors = [
             normalize_arxiv_id(str(a.get("arxiv_id")))
             for a in (definition.get("anchor_papers") or [])
             if isinstance(a, dict) and a.get("arxiv_id")
         ]
-        library = await get_library_for_project(session, project.id)
         candidate_ids = (
             (
                 await session.execute(
@@ -512,10 +517,11 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
     threshold = float(knobs["relevance_threshold"])
 
     async with get_sessionmaker()() as session:
-        project = await _get_project(session, ctx)
-        library = await get_library_for_project(session, project.id)
+        library = await get_library_for_project(session, ctx.run.project_id)
+        if library is None:
+            raise ValueError(f"library not found for project: {ctx.run.project_id}")
         # 稀疏 definition 容忍：rubric / questions 缺失时 prompt 只用 statement
-        context_text = build_relevance_context(project)
+        context_text = build_relevance_context(library_definition(library), library.name)
 
         # 幂等断点：只取仍是 candidate 的成员行（已打分的不重复调 LLM）。外层只查 id，
         # 每篇打分在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
@@ -765,7 +771,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
         library = await get_library_for_project(session, project.id)
-        statement = _definition(project).get("statement") or project.name
+        statement = library_definition(library).get("statement") or library.name
         # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）。外层只查 id，每篇
         # 编译在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
         rows = (
@@ -947,12 +953,16 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
 async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
-        state = dict(project.ingest_state or {})
+        library = await get_library_for_project(session, project.id)
+        # 水位线权威源在库（P8a）：写 library.ingest_state；起源课题 project.ingest_state
+        # 不再是权威（overview「上次同步时间」读库）。
+        state = dict((library.ingest_state if library else None) or {})
         watermark = ctx.checkpoint.get("watermark_candidate") or state.get("watermark")
         finished_at = utcnow().isoformat()
         state["watermark"] = watermark
         state["last_run"] = {"voyage_id": str(ctx.run.id), "finished_at": finished_at}
-        project.ingest_state = state
+        if library is not None:
+            library.ingest_state = state
 
         compiled_count = int(ctx.checkpoint.get("compiled_count") or 0)
         session.add(

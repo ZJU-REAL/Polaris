@@ -21,7 +21,6 @@ from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.llm_config import LLMUsage
 from app.models.paper import EMBEDDING_DIM, paper_concepts
-from app.models.project import Project
 from app.services import ingest as ingest_service
 from app.services.literature import (
     ArxivClient,
@@ -342,9 +341,12 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
         )
         assert links == 6  # 3 篇编译论文 × 2 概念
 
-        project = await session.get(Project, uuid.UUID(project_id))
-        assert project.ingest_state["watermark"]
-        assert project.ingest_state["last_run"]["voyage_id"] == run_id
+        # P8a：水位线权威源在库（library.ingest_state），不再写起源课题
+        from app.services.libraries import get_library_for_project
+
+        library = await get_library_for_project(session, uuid.UUID(project_id))
+        assert library.ingest_state["watermark"]
+        assert library.ingest_state["last_run"]["voyage_id"] == run_id
 
         activity_kinds = {
             a.kind

@@ -821,6 +821,8 @@ export interface DirectionLibraryDetail extends DirectionLibrarySummary {
   cadence: string | null;
   /** 每月 AI 预算（token 数；null = 不限） */
   monthly_budget: number | null;
+  /** 收录配置全量（P8：库为权威源），供「收录设置」编辑 */
+  definition: ProjectDefinition | null;
 }
 
 /** 文献库管理员（后端叫 curator）。 */
@@ -2720,8 +2722,10 @@ export const api = {
       statement?: string | null;
       cadence?: string | null;
       monthly_budget?: number | null;
-      rubric?: unknown;
-      anchors?: unknown[] | null;
+      rubric?: RubricDimension[] | null;
+      anchors?: AnchorPaper[] | null;
+      keywords?: KeywordSpec | null;
+      questions?: string[] | null;
     },
   ): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>(`/libraries/${id}`, 'PATCH', input);

@@ -17,7 +17,7 @@ import { useLibraries, libraryPath } from './hooks';
 /* ============================================================
    /libraries — 文献库列表（实验室区，P5c）
    卡片流：库名 / 方向陈述 / 论文·概念数 / 最近更新；
-   「我的课题的库」有标识；点击进 /libraries/:id 详情。
+   「我的课题关联的库」有标识；点击进 /libraries/:id 详情。
    平台管理员可在此新建独立共享文献库（与任何课题解耦）。
    ============================================================ */
 
@@ -66,7 +66,7 @@ function LibraryCard({ lib, onOpen }: { lib: DirectionLibrarySummary; onOpen: ()
             </span>
             {lib.is_mine && (
               <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', flexShrink: 0 }}>
-                {tr('我的课题', 'My topic')}
+                {tr('我在用', 'In use')}
               </span>
             )}
           </div>
@@ -243,7 +243,7 @@ export function LibrariesPage() {
   const canCreate = isAdmin(me);
   const [createOpen, setCreateOpen] = useState(false);
   const libraries = data ?? [];
-  // 我的课题的库排前面，其余按名称
+  // 我的课题关联的库排前面，其余按名称
   const sorted = [...libraries].sort(
     (a, b) => Number(b.is_mine) - Number(a.is_mine) || a.name.localeCompare(b.name),
   );

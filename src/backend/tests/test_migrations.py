@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "67d18892a6ce"  # 课题 × 文献库关联 + 库生命周期独立（P7 Step 1，本分支最新）
-PREV_REVISION = "3f770d85dca9"  # LLM 用量按方向库归因（P6）
+HEAD_REVISION = "b3e9c1f47a20"  # direction_libraries.definition 收录配置权威（P8a）
+PREV_REVISION = "67d18892a6ce"  # 课题 × 文献库关联 + 库生命周期独立（P7 Step 1）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -230,11 +230,11 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "topic_source_libraries" in columns["_tables"]
     assert columns["topic_source_libraries"] == {"topic_id", "library_id", "created_at"}
 
-    # 最新 revision 可往返（downgrade 删 library_id 归因列，其余结构不动）
+    # 最新 revision 可往返（downgrade 删 direction_libraries.definition，其余结构不动）
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "topic_source_libraries" not in columns["_tables"]
+    assert "topic_source_libraries" in columns["_tables"]  # P7 表仍在（回退止于 P7）
     assert "library_id" in columns["llm_usage"]
     assert "library_id" in columns["llm_call_logs"]
     # P5b 拆分结构不受影响：笔记/划线仍无 project_id
