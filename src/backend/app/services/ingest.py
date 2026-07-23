@@ -100,18 +100,39 @@ async def find_running_ingest(session: AsyncSession, project_id: uuid.UUID) -> V
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def find_running_ingest_for_library(
+    session: AsyncSession, library_id: uuid.UUID
+) -> VoyageRun | None:
+    """该方向库是否已有 ingest 任务在跑（P9a：库化后互斥以库为准）。"""
+    stmt = (
+        select(VoyageRun)
+        .where(
+            VoyageRun.library_id == library_id,
+            VoyageRun.kind.in_(WIKI_KINDS),
+            VoyageRun.status.not_in(tuple(TERMINAL_STATUSES)),
+        )
+        .order_by(VoyageRun.created_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 async def create_ingest_voyage(
     session: AsyncSession,
     *,
-    project: Project,
+    library: DirectionLibrary,
+    project: Project | None = None,
     mode: str,
     knobs: IngestKnobs,
     created_by: uuid.UUID | None,
 ) -> VoyageRun:
-    """建 ingest voyage（互斥检查 + 库预算检查 + Activity 落记录），由调用方入队 run_voyage。"""
-    if await find_running_ingest(session, project.id) is not None:
-        raise IngestConflictError(str(project.id))
-    library = await get_library_for_project(session, project.id)
+    """建 ingest voyage（互斥检查 + 库预算检查 + Activity 落记录），由调用方入队 run_voyage。
+
+    P9a：任务直接挂 ``library``。有起源课题的隐式库同时带上 ``project`` 以兼容活动流/
+    鉴权；管理员创建的独立库不传 project（run.project_id / activity.project_id 为空）。
+    """
+    if await find_running_ingest_for_library(session, library.id) is not None:
+        raise IngestConflictError(str(library.id))
     budget = await apply_library_budget(
         session,
         library_id=library.id,
@@ -119,11 +140,13 @@ async def create_ingest_voyage(
         budget=derive_budget(knobs),
     )
     kind = "wiki_bootstrap" if mode == "bootstrap" else "wiki_ingest"
+    target_name = project.name if project is not None else library.name
     goal = (
-        f"文献调研初始建库：{project.name}"
+        f"文献调研初始建库：{target_name}"
         if mode == "bootstrap"
-        else f"文献调研增量更新：{project.name}"
+        else f"文献调研增量更新：{target_name}"
     )
+    project_id = project.id if project is not None else None
     run = VoyageRun(
         kind=kind,
         goal=goal,
@@ -131,13 +154,15 @@ async def create_ingest_voyage(
         cursor=0,
         checkpoint={"params": {"mode": mode, "knobs": knobs.model_dump()}},
         budget=budget,
-        project_id=project.id,
+        project_id=project_id,
+        library_id=library.id,
         created_by=created_by,
     )
     session.add(run)
     session.add(
         Activity(
-            project_id=project.id,
+            project_id=project_id,
+            library_id=library.id,
             actor=f"user:{created_by}" if created_by else "system:cron",
             kind="ingest.started",
             message=f"文献调研{'初始建库' if mode == 'bootstrap' else '增量更新'}已启动",

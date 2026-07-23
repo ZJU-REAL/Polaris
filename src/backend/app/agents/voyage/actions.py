@@ -29,8 +29,9 @@ class ActionContext:
     step_id: Any | None = None  # 当前节点 id（动作查自己的闸门等；engine 注入）
 
     async def notify(self, message: dict[str, Any]) -> None:
-        """向项目通知频道发布事件（bus 未注入时为 no-op）。"""
-        if self.bus is not None:
+        """向项目通知频道发布事件（bus 未注入 / 无起源课题时为 no-op）。"""
+        # P9a：独立库任务无 project_id，无项目通知频道，静默跳过。
+        if self.bus is not None and self.run.project_id is not None:
             await self.bus.publish_notify(self.run.project_id, message)
 
     async def log(self, message: str, *, level: str = "info") -> None:
@@ -110,6 +111,7 @@ async def llm_complete(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
         messages,
         user_id=ctx.run.created_by,
         project_id=ctx.run.project_id,
+        library_id=ctx.run.library_id,
         voyage_id=ctx.run.id,
     )
     return {"content": result.content, "model": result.model, "usage": result.usage}
