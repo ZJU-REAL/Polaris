@@ -70,7 +70,7 @@ input {
    图标列中心恒为侧栏中线（66/2 = 33px），与展开态一致，收放不跳动。 */
 .nav-collapsed .sidebar { width: 66px; }
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
-.nav-collapsed .sb-brand { justify-content: center; margin: 18px 0 12px; }
+.nav-collapsed .sb-brand { justify-content: center; margin: 14px 0 8px; } /* 垂直边距必须与展开态一致，否则收放跳位 */
 .nav-collapsed .sb-scroll { padding: 0 8px 14px; }
 /* 收起态：eyebrow 盒子与展开态逐像素等高——不改 padding/行高/高度，只把文字弄透明
    （nowrap + overflow hidden 防止窄栏下换行改变高度），下方所有条目纵向零位移。
@@ -102,12 +102,12 @@ input {
    overflow hidden 兜底极矮窗口也不出滚动条。 */
 .sb-scroll { flex: 1; overflow-y: hidden; padding: 0 12px 14px; }
 /* 分组 eyebrow：三组（实验室/课题研究/个人）样式完全一致；
-   上 padding 14 + 上一条目 margin 2 ≈ 16px 分组间距，展开态只靠间距区分、不加分隔线。
-   line-height 定死 14px → 盒子总高 = 14+14+6 = 34px（first-child 特例 10+14+6 = 30px），
+   上 padding 16 + 上一条目 margin 3 ≈ 19px 分组间距，展开态只靠间距区分、不加分隔线。
+   line-height 定死 14px → 盒子总高 = 16+14+6 = 36px（first-child 特例 10+14+6 = 30px），
    收起态沿用同一盒模型（只隐藏文字），保证收放时下方条目纵向不跳。 */
 .sb-section {
   font-size: 11px; font-weight: 600; color: var(--text-4); line-height: 14px;
-  letter-spacing: 0.04em; text-transform: uppercase; padding: 14px 10px 6px;
+  letter-spacing: 0.04em; text-transform: uppercase; padding: 16px 10px 6px;
 }
 
 /* —— 非滚动导航区（实验室 + 课题研究两组）——
@@ -144,7 +144,7 @@ input {
   display: flex; align-items: center; gap: 11px;
   padding: 7px 9px; border-radius: 9px; cursor: pointer;
   font-size: 13.5px; color: var(--text-2); font-weight: 500;
-  position: relative; user-select: none; margin-bottom: 2px;
+  position: relative; user-select: none; margin-bottom: 3px;
   text-decoration: none;
   transition: background 0.12s, color 0.12s;
 }
