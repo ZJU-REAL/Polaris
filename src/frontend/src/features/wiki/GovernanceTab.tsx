@@ -30,8 +30,14 @@ const CADENCES: { v: string; zh: string; en: string }[] = [
   { v: 'daily', zh: '每天自动同步', en: 'Daily' },
 ];
 
-export function GovernanceTab({ libraryId }: { libraryId: string }) {
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
+export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: string; readOnly?: boolean }) {
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.me(),
+    retry: false,
+    staleTime: 60_000,
+    enabled: !readOnly,
+  });
   const admin = isAdmin(me);
 
   const { data: lib } = useQuery({
@@ -42,11 +48,16 @@ export function GovernanceTab({ libraryId }: { libraryId: string }) {
 
   return (
     <div className="col gap16" style={{ padding: 20, overflowY: 'auto' }}>
-      {lib && <LibraryInfoCard lib={lib} />}
-      {lib && <InclusionSettingsCard lib={lib} />}
-      <BudgetCard libraryId={libraryId} />
-      <CuratorsCard libraryId={libraryId} canEdit={admin} />
-      <DuplicatesCard libraryId={libraryId} />
+      {lib && <LibraryInfoCard lib={lib} readOnly={readOnly} />}
+      {lib && <InclusionSettingsCard lib={lib} readOnly={readOnly} />}
+      {/* 预算 / 管理员名单 / 重复论文均为管理门数据，普通用户取不到 → 只读时不渲染 */}
+      {!readOnly && (
+        <>
+          <BudgetCard libraryId={libraryId} />
+          <CuratorsCard libraryId={libraryId} canEdit={admin} />
+          <DuplicatesCard libraryId={libraryId} />
+        </>
+      )}
     </div>
   );
 }
@@ -235,7 +246,7 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
 
 /* —— 库信息与预算 —— */
 
-function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
+function LibraryInfoCard({ lib, readOnly }: { lib: DirectionLibraryDetail; readOnly?: boolean }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(lib.name);
   const [statement, setStatement] = useState(lib.statement ?? '');
@@ -279,18 +290,20 @@ function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
     <section className="card" style={{ padding: 18 }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('库信息', 'Library info')}</h3>
-        <button
-          className="btn btn-primary sm"
-          disabled={!dirty || budgetInvalid || save.isPending || !name.trim()}
-          onClick={() => save.mutate()}
-        >
-          {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-        </button>
+        {!readOnly && (
+          <button
+            className="btn btn-primary sm"
+            disabled={!dirty || budgetInvalid || save.isPending || !name.trim()}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+          </button>
+        )}
       </div>
       <div className="col gap12">
         <label className="col gap6">
           <span className="muted" style={{ fontSize: 12 }}>{tr('名称', 'Name')}</span>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={255} />
+          <input className="input" value={name} disabled={readOnly} onChange={(e) => setName(e.target.value)} maxLength={255} />
         </label>
         <label className="col gap6">
           <span className="muted" style={{ fontSize: 12 }}>{tr('方向说明（一句话）', 'Statement')}</span>
@@ -298,10 +311,12 @@ function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
             className="input"
             rows={2}
             value={statement}
+            disabled={readOnly}
             onChange={(e) => setStatement(e.target.value)}
             placeholder={tr('这个方向关注什么问题', 'What this direction is about')}
           />
         </label>
+        {!readOnly && (
         <div className="row gap12" style={{ flexWrap: 'wrap' }}>
           <label className="col gap6" style={{ minWidth: 180 }}>
             <span className="muted" style={{ fontSize: 12 }}>{tr('同步节奏', 'Sync cadence')}</span>
@@ -324,7 +339,8 @@ function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
             />
           </label>
         </div>
-        {budgetInvalid && (
+        )}
+        {!readOnly && budgetInvalid && (
           <div style={{ color: 'var(--danger-tx)', fontSize: 12 }}>
             {tr('预算需为不小于 0 的数字', 'Budget must be a number ≥ 0')}
           </div>
@@ -336,7 +352,7 @@ function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
 
 /* —— 收录设置（P8：库为收录配置权威源，ingest 按此检索/打分） —— */
 
-function InclusionSettingsCard({ lib }: { lib: DirectionLibraryDetail }) {
+function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail; readOnly?: boolean }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState<InclusionValue>(() => fromDefinition(lib.definition));
 
@@ -367,15 +383,22 @@ function InclusionSettingsCard({ lib }: { lib: DirectionLibraryDetail }) {
     <section className="card" style={{ padding: 18 }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700 }}>{tr('收录设置', 'Inclusion settings')}</h3>
-        <button className="btn btn-primary sm" disabled={save.isPending} onClick={() => save.mutate()}>
-          {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
-        </button>
+        {!readOnly && (
+          <button className="btn btn-primary sm" disabled={save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+          </button>
+        )}
       </div>
       <p className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
-        {tr(
-          '文献追踪按这里的 arXiv 分类与关键词检索、按打分标准判定相关性；留空则用默认分类、只按方向说明打分。',
-          'Literature tracking searches by these arXiv categories and keywords and scores relevance against the rubric; leave empty to use default categories and statement-only scoring.',
-        )}
+        {readOnly
+          ? tr(
+              '这个文献库按以下 arXiv 分类与关键词检索论文、按打分标准判定相关性（由文献库管理员维护）。',
+              'This library fetches papers by the arXiv categories and terms below and scores relevance against the rubric (maintained by library managers).',
+            )
+          : tr(
+              '文献追踪按这里的 arXiv 分类与关键词检索、按打分标准判定相关性；留空则用默认分类、只按方向说明打分。',
+              'Literature tracking searches by these arXiv categories and keywords and scores relevance against the rubric; leave empty to use default categories and statement-only scoring.',
+            )}
       </p>
       <InclusionSettingsForm
         value={value}
@@ -384,6 +407,7 @@ function InclusionSettingsCard({ lib }: { lib: DirectionLibraryDetail }) {
         statement={lib.statement ?? ''}
         showRubric
         showAnchors
+        readOnly={readOnly}
       />
     </section>
   );

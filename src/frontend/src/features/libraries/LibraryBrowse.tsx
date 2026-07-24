@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -7,19 +7,34 @@ import { FigureEmbed, usePaperFigures } from '../../components/ui/FigureGallery'
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
-import { api, type PaperRead, type PaperSort } from '../../lib/api';
+import { api, type PaperRead, type PaperSort, type ReadingStatus } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { ConceptsTab } from '../wiki/ConceptsTab';
-import { SearchInput, useDebounced } from '../wiki/shared';
-import { readerFrom } from '../reading/shared';
+import { LibraryChatTab } from '../wiki/LibraryChatTab';
+import { NotesTab } from '../wiki/NotesTab';
+import { GovernanceTab } from '../wiki/GovernanceTab';
+import { IngestTab } from '../wiki/IngestTab';
+import {
+  AdvancedPanel,
+  AdvancedToggle,
+  FilterInput,
+  SearchInput,
+  YearRangeField,
+  parseYear,
+  useDebounced,
+} from '../wiki/shared';
+import { READING_STATUS, readerFrom } from '../reading/shared';
+
+// 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
+const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m.GraphTab })));
 
 /* ============================================================
    共享文献库只读浏览（P5c 非成员视角）：
-   论文（列表 + 检索 + 详情解读）/ 概念 两个页签，全部走 /libraries 读端点；
-   没有任何管理入口，收藏/笔记等个人操作去阅读页做。
+   论文库 / 概念库 / 图谱 / 文献对话 / 笔记 / 文献库配置（只读）/ 建库与同步（只读），
+   全部走 /libraries 读端点；没有任何管理入口，收藏/笔记等个人操作去阅读页做。
    ============================================================ */
 
-type BrowseTab = 'papers' | 'concepts';
+type BrowseTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'notes' | 'govern' | 'ingest';
 type SearchScope = 'keyword' | 'semantic';
 
 const PAGE_SIZE = 20;
@@ -179,13 +194,45 @@ function PapersPane({
   const [scope, setScope] = useState<SearchScope>('keyword');
   const [sort, setSort] = useState<PaperSort>('relevance');
   const [page, setPage] = useState(1);
-  useEffect(() => setPage(1), [q, sort, scope]);
+
+  // —— 高级检索（作者 / 机构 / 年份区间 / 阅读状态 / 星标） ——
+  const [advOpen, setAdvOpen] = useState(false);
+  const [advAuthor, setAdvAuthor] = useState('');
+  const [advAffiliation, setAdvAffiliation] = useState('');
+  const [advYearFrom, setAdvYearFrom] = useState('');
+  const [advYearTo, setAdvYearTo] = useState('');
+  const [advReading, setAdvReading] = useState<'' | ReadingStatus>('');
+  const [advStarred, setAdvStarred] = useState(false);
+  const author = useDebounced(advAuthor.trim());
+  const affiliation = useDebounced(advAffiliation.trim());
+  const yearFrom = parseYear(advYearFrom);
+  const yearTo = parseYear(advYearTo);
+  const advActive = !!(author || affiliation || yearFrom || yearTo || advReading || advStarred);
+
+  useEffect(
+    () => setPage(1),
+    [q, sort, scope, author, affiliation, yearFrom, yearTo, advReading, advStarred],
+  );
 
   const semantic = !!q && scope === 'semantic';
   const listQuery = useQuery({
-    queryKey: ['lib-papers', libraryId, q, sort, page],
+    queryKey: [
+      'lib-papers', libraryId, q, sort, page,
+      author, affiliation, yearFrom, yearTo, advReading, advStarred,
+    ],
     queryFn: () =>
-      api.listLibraryPapers(libraryId, { q: q || undefined, sort, page, size: PAGE_SIZE }),
+      api.listLibraryPapersFull(libraryId, {
+        q: q || undefined,
+        sort,
+        page,
+        size: PAGE_SIZE,
+        author: author || undefined,
+        affiliation: affiliation || undefined,
+        published_from: yearFrom ? `${yearFrom}-01-01T00:00:00Z` : undefined,
+        published_to: yearTo ? `${yearTo}-12-31T23:59:59Z` : undefined,
+        reading_status: advReading || undefined,
+        starred: advStarred || undefined,
+      }),
     enabled: !semantic,
     retry: false,
   });
@@ -218,10 +265,79 @@ function PapersPane({
               onChange={setQInput}
               placeholder={tr('搜库内论文：标题 / 摘要 / 解读…', 'Search papers: title / abstract / wiki…')}
             />
+            <AdvancedToggle
+              open={advOpen}
+              active={advActive}
+              onToggle={() => setAdvOpen((o) => !o)}
+              title={tr('高级检索：作者 / 机构 / 年份 / 阅读状态 / 星标', 'Advanced search: author / affiliation / year / reading status / starred')}
+            />
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
               {total ? tr(`${total} 篇`, `${total}`) : ''}
             </span>
           </div>
+          {advOpen && (
+            <div style={semantic ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
+              <AdvancedPanel
+                onClear={
+                  advActive
+                    ? () => {
+                        setAdvAuthor('');
+                        setAdvAffiliation('');
+                        setAdvYearFrom('');
+                        setAdvYearTo('');
+                        setAdvReading('');
+                        setAdvStarred(false);
+                      }
+                    : undefined
+                }
+              >
+                <div className="row gap8">
+                  <FilterInput value={advAuthor} onChange={setAdvAuthor} placeholder={tr('作者姓名…', 'Author name…')} />
+                  <FilterInput
+                    value={advAffiliation}
+                    onChange={setAdvAffiliation}
+                    placeholder={tr('发表机构…', 'Affiliation…')}
+                    title={tr(
+                      '需要论文元数据带有机构信息（入库时自动从 OpenAlex 补充）',
+                      'Needs affiliation metadata (auto-filled from OpenAlex on ingest)',
+                    )}
+                  />
+                </div>
+                <YearRangeField
+                  label={tr('发表年份', 'Year')}
+                  from={advYearFrom}
+                  to={advYearTo}
+                  onFrom={setAdvYearFrom}
+                  onTo={setAdvYearTo}
+                />
+                <div className="row gap6" style={{ alignItems: 'center' }}>
+                  <select
+                    className="input"
+                    style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
+                    value={advReading}
+                    onChange={(e) => setAdvReading(e.target.value as '' | ReadingStatus)}
+                    title={tr('按阅读状态过滤', 'Filter by reading status')}
+                  >
+                    <option value="">{tr('读没读', 'Read?')}</option>
+                    {READING_STATUS.map((m) => (
+                      <option key={m.v} value={m.v}>
+                        {tr(m.label, m.en)}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="row gap6" style={{ cursor: 'pointer', userSelect: 'none', fontSize: 11.5, color: 'var(--text-2)' }}>
+                    <input
+                      type="checkbox"
+                      checked={advStarred}
+                      onChange={(e) => setAdvStarred(e.target.checked)}
+                      style={{ width: 14, height: 14, accentColor: 'var(--accent)' }}
+                    />
+                    {tr('仅看星标', 'Starred only')}
+                  </label>
+                </div>
+              </AdvancedPanel>
+            </div>
+          )}
           <div className="row gap6 wrap" style={{ marginTop: 10 }}>
             <span className={`chip${scope === 'keyword' ? ' on' : ''}`} onClick={() => setScope('keyword')}>
               {tr('关键词', 'Keyword')}
@@ -259,8 +375,8 @@ function PapersPane({
             <EmptyState
               compact
               icon="book"
-              title={q ? tr('没有匹配的论文', 'No matching papers') : tr('这个库还是空的', 'This library is empty')}
-              desc={q ? tr('换个关键词试试。', 'Try a different keyword.') : undefined}
+              title={q || advActive ? tr('没有匹配的论文', 'No matching papers') : tr('这个库还是空的', 'This library is empty')}
+              desc={q || advActive ? tr('换个关键词或调整高级条件试试。', 'Try a different keyword or adjust the filters.') : undefined}
             />
           ) : (
             items.map((p) => (
@@ -298,6 +414,7 @@ function PapersPane({
 }
 
 export function LibraryBrowse({ libraryId }: { libraryId: string }) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<BrowseTab>('papers');
   const [paperId, setPaperId] = useState<string | null>(null);
   const [conceptId, setConceptId] = useState<string | null>(null);
@@ -324,6 +441,26 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
     }
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  // 建库与同步（只读）状态：与工作台同 queryKey，运行中加快轮询
+  const ingestQuery = useQuery({
+    queryKey: ['ingest-state', libraryId],
+    queryFn: () => api.getLibraryIngestState(libraryId),
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.running_voyage_id ? 5_000 : 60_000),
+  });
+
+  const goPaper = useCallback((id: string) => {
+    setPaperId(id);
+    setTab('papers');
+  }, []);
+  const goConcept = useCallback((id: string) => {
+    setConceptId(id);
+    setTab('concepts');
+  }, []);
+  const onWikiLink = useCallback((name: string) => {
+    setPendingConceptName(name);
+  }, []);
 
   // [[概念名]] → 概念 id（库端点解析）
   const resolveQuery = useQuery({
@@ -358,13 +495,31 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
           options={[
             { v: 'papers', label: tr('论文库', 'Papers') },
             { v: 'concepts', label: tr('概念库', 'Concepts') },
+            { v: 'graph', label: tr('图谱', 'Graph') },
+            { v: 'chat', label: tr('文献对话', 'Chat') },
+            { v: 'notes', label: tr('笔记', 'Notes') },
+            { v: 'govern', label: tr('文献库配置', 'Library config') },
+            // 建库与同步放到最后一个标签
+            { v: 'ingest', label: tr('建库与同步', 'Ingest & sync') },
           ]}
           value={tab}
           onChange={setTab}
         />
-        <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>
-          {tr('公共文献库 · 所有人可读', 'Shared library · readable by everyone')}
-        </span>
+        <div className="row gap8">
+          {ingestQuery.data?.running_voyage_id && tab !== 'ingest' && (
+            <span
+              className="pill hoverable"
+              style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
+              onClick={() => navigate(`/voyages/${ingestQuery.data?.running_voyage_id ?? ''}`)}
+            >
+              <span className="dot pulse" />
+              {tr('文献任务运行中 →', 'Literature task running →')}
+            </span>
+          )}
+          <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>
+            {tr('公共文献库 · 所有人可读', 'Shared library · readable by everyone')}
+          </span>
+        </div>
       </div>
 
       <div
@@ -376,18 +531,33 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
             libraryId={libraryId}
             selectedId={paperId}
             onSelect={setPaperId}
-            onWikiLink={setPendingConceptName}
+            onWikiLink={onWikiLink}
           />
-        ) : (
+        ) : tab === 'concepts' ? (
           <ConceptsTab
             libraryId={libraryId}
             selectedId={conceptId}
             onSelect={setConceptId}
-            onOpenPaper={(id) => {
-              setPaperId(id);
-              setTab('papers');
-            }}
-            onWikiLink={setPendingConceptName}
+            onOpenPaper={goPaper}
+            onWikiLink={onWikiLink}
+          />
+        ) : tab === 'graph' ? (
+          <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
+            <GraphTab libraryId={libraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />
+          </Suspense>
+        ) : tab === 'chat' ? (
+          <LibraryChatTab libraryId={libraryId} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
+        ) : tab === 'notes' ? (
+          <NotesTab libraryId={libraryId} />
+        ) : tab === 'govern' ? (
+          <GovernanceTab libraryId={libraryId} readOnly />
+        ) : (
+          <IngestTab
+            libraryId={libraryId}
+            state={ingestQuery.data}
+            stateError={ingestQuery.isError}
+            stateLoading={ingestQuery.isLoading}
+            readOnly
           />
         )}
       </div>

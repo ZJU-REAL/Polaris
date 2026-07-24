@@ -31,6 +31,8 @@ export interface InclusionSettingsFormProps {
   statement: string;
   showRubric?: boolean;
   showAnchors?: boolean;
+  /** 只读：隐藏 AI 生成 / 增删按钮，禁用所有输入，仅展示已配置项。 */
+  readOnly?: boolean;
 }
 
 function BlockLabel({ zh, en, right }: { zh: string; en: string; right?: React.ReactNode }) {
@@ -49,6 +51,7 @@ export function InclusionSettingsForm({
   statement,
   showRubric,
   showAnchors,
+  readOnly,
 }: InclusionSettingsFormProps) {
   const { arxiv_categories, include, rubric, anchors } = value;
   const patch = (p: Partial<InclusionValue>) => onChange({ ...value, ...p });
@@ -134,6 +137,7 @@ export function InclusionSettingsForm({
   return (
     <div className="col gap16">
       {/* —— AI 自动生成 —— */}
+      {!readOnly && (
       <div className="row gap10" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
         <button
           type="button"
@@ -154,79 +158,102 @@ export function InclusionSettingsForm({
             : tr('先填名称和描述', 'Fill in the name and statement first')}
         </span>
       </div>
+      )}
 
       {/* —— arXiv 分类 —— */}
       <div className="col gap6">
         <BlockLabel zh="arXiv 分类" en="arXiv categories" />
-        <div className="row gap6 wrap">
-          {[...new Set([...QUICK_CATEGORIES, ...arxiv_categories])].map((c) => (
-            <button
-              key={c}
-              type="button"
-              className={'chip mono' + (arxiv_categories.includes(c) ? ' on' : '')}
-              onClick={() => toggleCat(c)}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-        <div className="row gap8" style={{ marginTop: 2 }}>
-          <input
-            className="input"
-            style={{ width: 170 }}
-            placeholder={tr('自定义分类，如 cs.IR', 'custom, e.g. cs.IR')}
-            value={customCat}
-            onChange={(e) => setCustomCat(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCat(); } }}
-          />
-          <button type="button" className="btn btn-soft sm" onClick={addCustomCat} disabled={!customCat.trim()}>
-            {tr('添加', 'Add')}
-          </button>
-        </div>
+        {readOnly ? (
+          arxiv_categories.length > 0 ? (
+            <div className="row gap6 wrap">
+              {arxiv_categories.map((c) => (
+                <span key={c} className="chip mono on" style={{ cursor: 'default' }}>{c}</span>
+              ))}
+            </div>
+          ) : (
+            <div className="muted" style={{ fontSize: 12.5 }}>{tr('使用默认分类', 'Using default categories')}</div>
+          )
+        ) : (
+          <>
+            <div className="row gap6 wrap">
+              {[...new Set([...QUICK_CATEGORIES, ...arxiv_categories])].map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={'chip mono' + (arxiv_categories.includes(c) ? ' on' : '')}
+                  onClick={() => toggleCat(c)}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            <div className="row gap8" style={{ marginTop: 2 }}>
+              <input
+                className="input"
+                style={{ width: 170 }}
+                placeholder={tr('自定义分类，如 cs.IR', 'custom, e.g. cs.IR')}
+                value={customCat}
+                onChange={(e) => setCustomCat(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCat(); } }}
+              />
+              <button type="button" className="btn btn-soft sm" onClick={addCustomCat} disabled={!customCat.trim()}>
+                {tr('添加', 'Add')}
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* —— 检索关键词 chips —— */}
       <div className="col gap6">
         <BlockLabel zh="检索关键词" en="Search terms" />
-        {include.length > 0 && (
+        {include.length > 0 ? (
           <div className="row gap6 wrap">
             {include.map((k) => (
               <span key={k} className="chip on" style={{ gap: 4, cursor: 'default' }}>
                 {k}
-                <button
-                  type="button"
-                  aria-label={tr('删除', 'Remove')}
-                  onClick={() => removeKeyword(k)}
-                  style={{ display: 'inline-flex', background: 'none', border: 'none', padding: 0, marginLeft: 2, cursor: 'pointer', color: 'inherit' }}
-                >
-                  <Icon name="x" size={11} />
-                </button>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    aria-label={tr('删除', 'Remove')}
+                    onClick={() => removeKeyword(k)}
+                    style={{ display: 'inline-flex', background: 'none', border: 'none', padding: 0, marginLeft: 2, cursor: 'pointer', color: 'inherit' }}
+                  >
+                    <Icon name="x" size={11} />
+                  </button>
+                )}
               </span>
             ))}
           </div>
+        ) : readOnly ? (
+          <div className="muted" style={{ fontSize: 12.5 }}>{tr('未设检索关键词', 'No search terms set')}</div>
+        ) : null}
+        {!readOnly && (
+          <input
+            className="input"
+            value={kwDraft}
+            onChange={(e) => {
+              const v = e.target.value;
+              // 输入逗号即时成词
+              if (/[,，]/.test(v)) addKeywords(v);
+              else setKwDraft(v);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); addKeywords(kwDraft); }
+              else if (e.key === 'Backspace' && !kwDraft && include.length > 0) {
+                e.preventDefault();
+                removeKeyword(include[include.length - 1]!);
+              }
+            }}
+            onBlur={() => { if (kwDraft.trim()) addKeywords(kwDraft); }}
+            placeholder={tr('输入关键词后回车或逗号添加，如 agent', 'Type a term, press Enter or comma, e.g. agent')}
+          />
         )}
-        <input
-          className="input"
-          value={kwDraft}
-          onChange={(e) => {
-            const v = e.target.value;
-            // 输入逗号即时成词
-            if (/[,，]/.test(v)) addKeywords(v);
-            else setKwDraft(v);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); addKeywords(kwDraft); }
-            else if (e.key === 'Backspace' && !kwDraft && include.length > 0) {
-              e.preventDefault();
-              removeKeyword(include[include.length - 1]!);
-            }
-          }}
-          onBlur={() => { if (kwDraft.trim()) addKeywords(kwDraft); }}
-          placeholder={tr('输入关键词后回车或逗号添加，如 agent', 'Type a term, press Enter or comma, e.g. agent')}
-        />
-        <div className="field-hint">
-          {tr('文献追踪按这些关键词与上面的分类检索候选论文；留空则用默认分类。', 'Literature tracking searches candidates by these terms plus the categories above; leave empty for defaults.')}
-        </div>
+        {!readOnly && (
+          <div className="field-hint">
+            {tr('文献追踪按这些关键词与上面的分类检索候选论文；留空则用默认分类。', 'Literature tracking searches candidates by these terms plus the categories above; leave empty for defaults.')}
+          </div>
+        )}
       </div>
 
       {/* —— 锚点论文 —— */}
@@ -236,15 +263,19 @@ export function InclusionSettingsForm({
             zh="锚点论文"
             en="Anchor papers"
             right={
-              <button type="button" className="btn btn-soft sm" onClick={addAnchor}>
-                <Icon name="plus" size={12} />
-                {tr('添加论文', 'Add paper')}
-              </button>
+              readOnly ? undefined : (
+                <button type="button" className="btn btn-soft sm" onClick={addAnchor}>
+                  <Icon name="plus" size={12} />
+                  {tr('添加论文', 'Add paper')}
+                </button>
+              )
             }
           />
           {anchors.length === 0 ? (
             <div className="muted" style={{ fontSize: 12.5 }}>
-              {tr('可留空；抓取时会解析这些论文并做参考文献扩展。', 'Optional; ingest resolves these and expands references.')}
+              {readOnly
+                ? tr('未设锚点论文。', 'No anchor papers set.')
+                : tr('可留空；抓取时会解析这些论文并做参考文献扩展。', 'Optional; ingest resolves these and expands references.')}
             </div>
           ) : (
             <div className="col gap10">
@@ -259,6 +290,7 @@ export function InclusionSettingsForm({
                           <input
                             className="input"
                             value={a.title}
+                            disabled={readOnly}
                             onChange={(e) => updateAnchor(i, { title: e.target.value })}
                             placeholder={tr('论文标题', 'Paper title')}
                           />
@@ -270,6 +302,7 @@ export function InclusionSettingsForm({
                               className="input mono"
                               style={{ fontSize: 12.5 }}
                               value={a.arxiv_id ?? ''}
+                              disabled={readOnly}
                               onChange={(e) => updateAnchor(i, { arxiv_id: e.target.value })}
                               placeholder="2401.01234"
                             />
@@ -279,6 +312,7 @@ export function InclusionSettingsForm({
                             <input
                               className="input"
                               value={a.reason ?? ''}
+                              disabled={readOnly}
                               onChange={(e) => updateAnchor(i, { reason: e.target.value })}
                               placeholder={tr('为什么把它当作锚点', 'Why it anchors this direction')}
                             />
@@ -290,16 +324,18 @@ export function InclusionSettingsForm({
                           </div>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title={tr('删除论文', 'Remove paper')}
-                        aria-label={tr('删除论文', 'Remove paper')}
-                        onClick={() => removeAnchor(i)}
-                        style={{ flexShrink: 0 }}
-                      >
-                        <Icon name="trash" size={14} />
-                      </button>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title={tr('删除论文', 'Remove paper')}
+                          aria-label={tr('删除论文', 'Remove paper')}
+                          onClick={() => removeAnchor(i)}
+                          style={{ flexShrink: 0 }}
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -316,10 +352,12 @@ export function InclusionSettingsForm({
             zh="打分标准"
             en="Scoring rubric"
             right={
-              <button type="button" className="btn btn-soft sm" onClick={addRubric}>
-                <Icon name="plus" size={12} />
-                {tr('添加维度', 'Add dimension')}
-              </button>
+              readOnly ? undefined : (
+                <button type="button" className="btn btn-soft sm" onClick={addRubric}>
+                  <Icon name="plus" size={12} />
+                  {tr('添加维度', 'Add dimension')}
+                </button>
+              )
             }
           />
           {rubric.length === 0 ? (
@@ -337,6 +375,7 @@ export function InclusionSettingsForm({
                         <input
                           className="input"
                           value={r.name}
+                          disabled={readOnly}
                           onChange={(e) => updateRubric(i, { name: e.target.value })}
                           placeholder={tr('如 方法新颖性', 'e.g. Methodological novelty')}
                         />
@@ -347,6 +386,7 @@ export function InclusionSettingsForm({
                           className="textarea"
                           rows={2}
                           value={r.description}
+                          disabled={readOnly}
                           onChange={(e) => updateRubric(i, { description: e.target.value })}
                           placeholder={tr('这一维度怎样算高分', 'Describe what a high score looks like on this dimension')}
                         />
@@ -364,21 +404,24 @@ export function InclusionSettingsForm({
                           max={3}
                           step={0.1}
                           value={r.weight}
+                          disabled={readOnly}
                           onChange={(e) => updateRubric(i, { weight: Number(e.target.value) })}
                           style={{ width: 220, maxWidth: '100%' }}
                         />
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      title={tr('删除维度', 'Remove dimension')}
-                      aria-label={tr('删除维度', 'Remove dimension')}
-                      onClick={() => removeRubric(i)}
-                      style={{ flexShrink: 0 }}
-                    >
-                      <Icon name="trash" size={14} />
-                    </button>
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title={tr('删除维度', 'Remove dimension')}
+                        aria-label={tr('删除维度', 'Remove dimension')}
+                        onClick={() => removeRubric(i)}
+                        style={{ flexShrink: 0 }}
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
