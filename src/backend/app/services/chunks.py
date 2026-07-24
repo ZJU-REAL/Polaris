@@ -78,6 +78,28 @@ async def index_paper_fulltext(session: AsyncSession, paper: Paper) -> int:
     return await replace_chunks(session, paper, full_text)
 
 
+async def paper_has_chunks(session: AsyncSession, paper_id: uuid.UUID) -> bool:
+    """该论文是否已有分段行。用于「无块才切」——避免重切丢已补的块向量。"""
+    row = (
+        await session.execute(
+            select(PaperChunk.id).where(PaperChunk.paper_id == paper_id).limit(1)
+        )
+    ).first()
+    return row is not None
+
+
+async def user_wants_fulltext_index(
+    session: AsyncSession, user_id: uuid.UUID | None
+) -> bool:
+    """该用户是否开启了「为论文建立全文索引」（chat_fulltext_index）。user_id 空→False。"""
+    if user_id is None:
+        return False
+    from app.models.user import User
+
+    user = await session.get(User, user_id)
+    return bool(user is not None and user.setting("chat_fulltext_index") is True)
+
+
 async def _embed_chunks(
     session: AsyncSession,
     pending: list[PaperChunk],

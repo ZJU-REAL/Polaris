@@ -146,6 +146,43 @@ async def test_shelf_index_rebuild_gated(client, queue_stub):
     assert args[2] == str(project_id)
 
 
+async def test_shelf_index_rebuild_reports_indexable_counts(client, queue_stub):
+    """返回体含 indexable / no_fulltext：书架上有全文的计入 indexable，其余计跳过。"""
+    project_id, headers = await _project(client)
+    await _enable_index(client, headers)
+
+    txt_dir = Path(tempfile.mkdtemp(prefix="polaris-idx-"))
+    txt = txt_dir / "p.txt"
+    txt.write_text("规划方法细节。" * 50, encoding="utf-8")
+    async with get_sessionmaker()() as session:
+        with_text = await add_paper(
+            session, project_id=project_id, title="Has Full Text",
+            status="compiled", full_text_path=str(txt),
+        )
+        no_text = await add_paper(
+            session, project_id=project_id, title="No Full Text", status="candidate",
+        )
+        await session.commit()
+        # 入书架（两篇都上架，才会进 shelf_paper_ids）
+        from app.services.topic_shelf import add_to_shelf
+
+        user = (await client.get("/api/users/me", headers=headers)).json()
+        for p in (with_text, no_text):
+            await add_to_shelf(
+                session, project_id=project_id, paper_id=p.id, user_id=uuid.UUID(user["id"])
+            )
+        await session.commit()
+
+    resp = await client.post(
+        f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["queued"] == 2
+    assert body["indexable"] == 1
+    assert body["no_fulltext"] == 1
+
+
 async def test_shelf_index_rebuild_requires_member(client, queue_stub):
     _, headers = await _project(client)
     await _enable_index(client, headers)

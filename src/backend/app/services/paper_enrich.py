@@ -132,6 +132,24 @@ async def enrich_paper(
             paper = await _rollback_and_reload()
             await emit("extract", "error", f"{type(e).__name__}: {e}")
 
+    # 全文分块（文献问答底座）：抽到全文后就地建块，无块才切（避免重切丢已补的块向量）。
+    # 不单列可见进度阶段（STAGES 保持 download/extract/embed/score 不变）；块向量按用户开关
+    # 在下面 embed 阶段之后补。best-effort：失败记日志、回滚重取，不阻断后续阶段。
+    if paper.full_text_path:
+        from app.services.chunks import index_paper_fulltext, paper_has_chunks
+
+        try:
+            if not await paper_has_chunks(session, paper_id):
+                await index_paper_fulltext(session, paper)
+                await session.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "enrich chunk indexing failed for paper %s", paper_id, exc_info=True
+            )
+            paper = await _rollback_and_reload()
+
     # 作者↔机构：on_add 模式下全文到手且尚无机构时 LLM 补（非独立阶段，best-effort，不发
     # 事件）；on_compile 模式跳过，改由 wiki 编译折叠抽取
     if not paper.affiliations and paper.full_text_path:
@@ -178,6 +196,29 @@ async def enrich_paper(
             logger.warning("enrich embed failed for paper %s", paper_id, exc_info=True)
             paper = await _rollback_and_reload()
             await emit("embed", "error", f"{type(e).__name__}: {e}")
+
+    # 块向量：仅当用户开启全文索引开关时补（开关关只留块行，等重建/开开关再补）。
+    # best-effort，不影响 embed 阶段判定；不发独立进度事件。
+    from app.services.chunks import embed_pending_chunks_for_papers, user_wants_fulltext_index
+
+    if await user_wants_fulltext_index(session, user_id):
+        from app.core.llm.router import get_llm_router
+
+        try:
+            await embed_pending_chunks_for_papers(
+                session,
+                paper_ids=[paper_id],
+                llm=get_llm_router(),
+                user_id=user_id,
+                project_id=project_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "enrich chunk embed failed for paper %s", paper_id, exc_info=True
+            )
+            paper = await _rollback_and_reload()
 
     # ---- score ----
     await emit("score", "running")
