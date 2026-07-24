@@ -48,6 +48,8 @@ from app.schemas.libraries import (
     LibraryReject,
     PaperMergeRequest,
     PaperMergeResult,
+    SuggestDefinitionRequest,
+    SuggestDefinitionResponse,
 )
 from app.schemas.note import NotebookPage, NoteWithPaper
 from app.schemas.paper import (
@@ -157,6 +159,26 @@ async def create_library(
     await session.commit()
     row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
+
+
+@router.post("/libraries/suggest-definition", response_model=SuggestDefinitionResponse)
+async def suggest_library_definition(
+    data: SuggestDefinitionRequest,
+    user: User = Depends(require_llm_task),
+) -> SuggestDefinitionResponse:
+    """AI 根据研究方向名称 + 一句话描述生成一套收录设置（arXiv 分类/检索关键词/
+    打分维度/锚点论文），供建库或编辑弹窗一键填表。
+
+    不需要 library id。同步 LLM→JSON，生成失败/解析不出时返回结构完整的空兜底（各字段
+    空列表）且仍 200，前端可回退手填。费用记个人账（需 full 大模型权限）。
+    """
+    suggestion = await libraries_service.suggest_definition(
+        name=data.name,
+        statement=data.statement,
+        llm=get_llm_router(),
+        user_id=user.id,
+    )
+    return SuggestDefinitionResponse(**suggestion)
 
 
 @router.get("/libraries/{library_id}", response_model=DirectionLibraryDetail)

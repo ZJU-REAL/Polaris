@@ -2704,13 +2704,24 @@ export const api = {
   createLibrary(input: {
     name: string;
     statement?: string | null;
-    rubric?: unknown;
-    anchors?: unknown[];
+    rubric?: RubricDimension[];
+    anchors?: AnchorPaper[];
     cadence?: string | null;
     monthly_budget?: number | null;
     keywords?: KeywordSpec | null;
   }): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>('/libraries', 'POST', input);
+  },
+  /**
+   * AI 根据库名与一句话说明推荐收录设置（分类 / 关键词 / 打分标准 / 锚点论文）。
+   * 供建库与收录设置的「AI 自动生成」按钮调用；结果填进表单供用户修改后保存。
+   */
+  suggestLibraryDefinition(input: { name: string; statement: string }): Promise<{
+    keywords: { arxiv_categories: string[]; include: string[] };
+    rubric: RubricDimension[];
+    anchors: AnchorPaper[];
+  }> {
+    return requestJson('/libraries/suggest-definition', 'POST', input);
   },
   /** 审批通过（仅平台管理员）：pending/rejected → active，激活后可触发抓取。 */
   approveLibrary(id: string): Promise<DirectionLibraryDetail> {

@@ -7,12 +7,12 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { Segmented } from '../../components/ui/Segmented';
-import { AccordionSection } from '../../components/ui/Accordion';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, isAdmin, type DirectionLibrarySummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useLibraries, libraryPath } from './hooks';
+import { InclusionSettingsForm, ARXIV_ID_RE, type InclusionValue } from './InclusionSettingsForm';
 
 /* ============================================================
    /libraries — 文献库列表（实验室区，P5c）
@@ -166,40 +166,25 @@ function LibraryCard({
   );
 }
 
-const QUICK_CATEGORIES = ['cs.CL', 'cs.AI', 'cs.LG', 'cs.CV', 'cs.MA', 'stat.ML'];
-
-// arXiv id 宽松校验：2401.01234 / 2401.01234v2 / 老式 hep-th/9901001
-const ARXIV_ID_RE = /^(\d{4}\.\d{4,5}(v\d+)?|[a-z\-]+\/\d{7}(v\d+)?)$/i;
+const EMPTY_INCLUSION: InclusionValue = { arxiv_categories: [], include: [], rubric: [], anchors: [] };
 
 /**
  * 新建文献库弹窗（P9b：任意登录用户可建）。名称 + 一句话说明必填；
- * 锚点论文只填 arXiv-id（一行一个，抓取时解析元数据）；关键词 / 分类可选。
- * 提交后建 pending 库，跳详情页，等管理员审批激活后才能开始抓取。
+ * 收录设置（分类 / 关键词 / 锚点论文 / 打分标准）共用 InclusionSettingsForm，
+ * 可点「AI 自动生成」按名称+说明推荐一整套。提交后建 pending 库，跳详情页，
+ * 等管理员审批激活后才能开始抓取。
  */
 function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [statement, setStatement] = useState('');
-  const [anchorsText, setAnchorsText] = useState('');
-  const [advOpen, setAdvOpen] = useState(false);
-  const [includeStr, setIncludeStr] = useState('');
-  const [categories, setCategories] = useState<string[]>([]);
-  const [customCat, setCustomCat] = useState('');
   const [cadence, setCadence] = useState<string>('daily');
+  const [incl, setIncl] = useState<InclusionValue>(EMPTY_INCLUSION);
 
-  const anchorLines = anchorsText.split(/[\n,，]/).map((x) => x.trim()).filter(Boolean);
-  const badAnchors = anchorLines.filter((x) => !ARXIV_ID_RE.test(x));
-  const includeTerms = includeStr.split(/[,，\n]/).map((x) => x.trim()).filter(Boolean);
-
-  function toggleCat(c: string) {
-    setCategories((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
-  }
-  function addCustomCat() {
-    const c = customCat.trim();
-    if (c && !categories.includes(c)) setCategories((prev) => [...prev, c]);
-    setCustomCat('');
-  }
+  const badAnchors = incl.anchors.filter(
+    (a) => !!a.arxiv_id && a.arxiv_id.trim() !== '' && !ARXIV_ID_RE.test(a.arxiv_id.trim()),
+  );
 
   const mutation = useMutation({
     mutationFn: (input: Parameters<typeof api.createLibrary>[0]) => api.createLibrary(input),
@@ -227,18 +212,27 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       return;
     }
     if (badAnchors.length > 0) {
-      toast(tr(`这些锚点不是合法 arXiv 编号：${badAnchors.join('、')}`, `Not valid arXiv ids: ${badAnchors.join(', ')}`), 'error');
+      toast(tr('有锚点论文填了非法 arXiv 编号，请修正后再提交', 'Some anchor papers have invalid arXiv ids — fix them first'), 'error');
       return;
     }
     const keywords =
-      categories.length > 0 || includeTerms.length > 0
-        ? { arxiv_categories: categories, include: includeTerms }
+      incl.arxiv_categories.length > 0 || incl.include.length > 0
+        ? { arxiv_categories: incl.arxiv_categories, include: incl.include }
         : undefined;
+    const anchors = incl.anchors
+      .filter((a) => a.title.trim() || (a.arxiv_id ?? '').trim())
+      .map((a) => ({
+        title: a.title.trim(),
+        ...(a.arxiv_id?.trim() ? { arxiv_id: a.arxiv_id.trim() } : {}),
+        ...(a.reason?.trim() ? { reason: a.reason.trim() } : {}),
+      }));
+    const rubric = incl.rubric.filter((r) => r.name.trim());
     mutation.mutate({
       name: name.trim(),
       statement: statement.trim(),
-      ...(anchorLines.length > 0 ? { anchors: anchorLines } : {}),
+      ...(anchors.length > 0 ? { anchors } : {}),
       ...(keywords ? { keywords } : {}),
+      ...(rubric.length > 0 ? { rubric } : {}),
       cadence,
     });
   }
@@ -252,7 +246,7 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
         '先填好方向，提交后由管理员审批激活；激活后才会开始抓取，创建本身不花额度。',
         'Describe the direction and submit; an admin activates it. Ingest starts only after activation — creating costs nothing.',
       )}
-      width={620}
+      width={640}
       footer={
         <>
           <button className="btn btn-ghost sm" onClick={onClose}>{tr('取消', 'Cancel')}</button>
@@ -271,45 +265,21 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
           <textarea className="textarea" rows={2} value={statement} onChange={(e) => setStatement(e.target.value)}
             placeholder={tr('用一句话介绍这个文献库的方向', 'One sentence describing this library’s direction')} />
         </FormField>
-        <FormField
-          label={tr('锚点论文（arXiv 编号，一行一个）', 'Anchor papers (arXiv ids, one per line)')}
-          hint={tr('可留空；抓取时会解析这些论文并做参考文献扩展', 'Optional; ingest resolves these and expands references')}
-        >
-          <textarea className="textarea mono" rows={3} value={anchorsText} onChange={(e) => setAnchorsText(e.target.value)}
-            placeholder={'2401.01234\n2312.09876v2'} style={{ fontSize: 12.5 }} />
-          {badAnchors.length > 0 && (
-            <div style={{ color: 'var(--danger-tx)', fontSize: 11.5, marginTop: 4 }}>
-              {tr(`不是合法编号：${badAnchors.join('、')}`, `Not valid ids: ${badAnchors.join(', ')}`)}
-            </div>
-          )}
+        <FormField label={tr('运行节奏', 'Cadence')} hint={tr('激活后自动同步的运行频率', 'How often ingest runs after activation')}>
+          <div>
+            <Segmented options={CADENCES.map((c) => ({ v: c.v, label: tr(c.zh, c.en) }))}
+              value={cadence as (typeof CADENCES)[number]['v']} onChange={(v) => setCadence(v)} />
+          </div>
         </FormField>
-        <AccordionSection title="收录设置（可选）" en="Inclusion (optional)" open={advOpen} onToggle={() => setAdvOpen((v) => !v)}>
-          <FormField label={tr('arXiv 分类', 'arXiv categories')} hint={tr('留空用默认分类', 'Leave empty for defaults')}>
-            <div className="row gap6 wrap">
-              {[...new Set([...QUICK_CATEGORIES, ...categories])].map((c) => (
-                <button key={c} type="button" className={'chip mono' + (categories.includes(c) ? ' on' : '')} onClick={() => toggleCat(c)}>
-                  {c}
-                </button>
-              ))}
-            </div>
-            <div className="row gap8" style={{ marginTop: 6 }}>
-              <input className="input" style={{ width: 170 }} placeholder={tr('自定义分类，如 cs.IR', 'custom, e.g. cs.IR')}
-                value={customCat} onChange={(e) => setCustomCat(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCat(); } }} />
-              <button className="btn btn-soft sm" onClick={addCustomCat} disabled={!customCat.trim()}>{tr('添加', 'Add')}</button>
-            </div>
-          </FormField>
-          <FormField label={tr('检索关键词（逗号分隔）', 'Include terms (comma-separated)')} hint={tr('可留空', 'Optional')}>
-            <textarea className="textarea" rows={2} value={includeStr} onChange={(e) => setIncludeStr(e.target.value)}
-              placeholder={tr('如 agent, tool use, planning', 'e.g. agent, tool use, planning')} />
-          </FormField>
-          <FormField label={tr('运行节奏', 'Cadence')} hint={tr('激活后自动同步的运行频率', 'How often ingest runs after activation')}>
-            <div>
-              <Segmented options={CADENCES.map((c) => ({ v: c.v, label: tr(c.zh, c.en) }))}
-                value={cadence as (typeof CADENCES)[number]['v']} onChange={(v) => setCadence(v)} />
-            </div>
-          </FormField>
-        </AccordionSection>
+        <div className="hr" style={{ margin: '4px 0 16px' }} />
+        <InclusionSettingsForm
+          value={incl}
+          onChange={setIncl}
+          name={name}
+          statement={statement}
+          showRubric
+          showAnchors
+        />
       </div>
     </Modal>
   );

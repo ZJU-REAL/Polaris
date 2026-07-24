@@ -62,6 +62,47 @@ class LibraryCreate(BaseModel):
     keywords: dict[str, Any] | None = None  # {arxiv_categories, include, synonyms}
 
 
+class SuggestDefinitionRequest(BaseModel):
+    """AI 生成收录设置入参（POST /libraries/suggest-definition）：方向名称 + 一句话描述。
+
+    不需要 library id——建库弹窗还没 id，编辑时前端传库自己的 name/statement。
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    statement: str = Field(default="", max_length=4000)
+
+
+class SuggestedKeywords(BaseModel):
+    """AI 生成的检索关键词块（与库 definition.keywords 的形状对齐，可直接填表单）。"""
+
+    arxiv_categories: list[str] = Field(default_factory=list)  # arXiv 分类代码
+    include: list[str] = Field(default_factory=list)  # 检索关键词/术语
+
+
+class SuggestedRubricDimension(BaseModel):
+    """AI 生成的相关性打分维度（与 rubric 项形状对齐）。"""
+
+    name: str
+    description: str = ""
+    weight: float = 0.0  # 0-1，各维之和≈1
+
+
+class SuggestedAnchor(BaseModel):
+    """AI 生成的锚点论文（与 anchor_papers 项形状对齐；arxiv_id 可空/可能不准）。"""
+
+    title: str
+    arxiv_id: str | None = None
+    reason: str | None = None
+
+
+class SuggestDefinitionResponse(BaseModel):
+    """AI 生成收录设置返回：keywords / rubric / anchors（解析失败时各字段为空列表）。"""
+
+    keywords: SuggestedKeywords
+    rubric: list[SuggestedRubricDimension]
+    anchors: list[SuggestedAnchor]
+
+
 class LibraryReject(BaseModel):
     """驳回 pending 库（POST /libraries/{id}/reject，平台 admin）。"""
 
