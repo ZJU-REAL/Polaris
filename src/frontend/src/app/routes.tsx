@@ -159,6 +159,7 @@ export const router = createBrowserRouter([
       { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },
       { path: 'skills', element: page(() => import('../features/skills/SkillsPage'), 'SkillsPage') },
       { path: 'settings', element: page(() => import('../features/settings/SettingsPage'), 'SettingsPage') },
+      { path: 'settings/admin', element: page(() => import('../features/settings/SettingsPage'), 'AdminSettingsPage') },
     ],
   },
 ]);

@@ -11,7 +11,7 @@ import { topicPath, useProject } from './project';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
-import { api, getToken, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
+import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
@@ -525,6 +525,16 @@ export function AppShell() {
           </div>
           <LangToggle />
           <FeedbackWidget />
+          {isAdmin(me) && (
+            <NavLink
+              to="/settings/admin"
+              className={({ isActive }) => 'icon-btn' + (isActive ? ' active' : '')}
+              title={tr('管理员设置', 'Admin settings')}
+              aria-label={tr('管理员设置', 'Admin settings')}
+            >
+              <Icon name="settings" size={16} />
+            </NavLink>
+          )}
           <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
             <Icon name="bell" size={16} />
             {pending.length > 0 && <span className="badge">{pending.length}</span>}

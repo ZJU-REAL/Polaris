@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon } from '../../components/ui/Icon';
@@ -89,14 +89,6 @@ function PersonalTab() {
     mutationFn: () => api.updateMe({ display_name: name.trim() }),
     onSuccess: () => {
       toast(tr('个人资料已保存', 'Profile saved'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['me'] });
-    },
-    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-  const chatIndexMutation = useMutation({
-    mutationFn: (v: boolean) => api.updateMySettings({ chat_fulltext_index: v }),
-    onSuccess: (_, v) => {
-      toast(v ? tr('已开启全文索引', 'Full-text index enabled') : tr('已关闭全文索引', 'Full-text index disabled'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['me'] });
     },
     onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -200,31 +192,51 @@ function PersonalTab() {
         </button>
       </div>
       </div>
-      <div className="card" style={{ maxWidth: 560, marginTop: 16, padding: '14px 18px' }}>
-        <div className="section-h">{tr('文献对话', 'Literature chat')}</div>
-        <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div id="pref-chat-fulltext" style={{ fontSize: 13, lineHeight: 1.4 }}>
-              {tr('为论文建立全文索引', 'Build a full-text index for papers')}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
-              {tr(
-                '打开后可为你的相关研究/个人文献库的论文建立全文索引，让 AI 文献对话检索得更准（会消耗你的模型额度抓取和嵌入全文）。',
-                'When on, you can build a full-text index for the papers in your related work and personal library, so AI literature chat retrieves more accurately (it uses your model quota to fetch and embed the full text).',
-              )}
-            </div>
-          </div>
-          <Switch
-            checked={me.settings?.chat_fulltext_index ?? false}
-            onChange={(v) => chatIndexMutation.mutate(v)}
-            disabled={chatIndexMutation.isPending}
-            aria-labelledby="pref-chat-fulltext"
-          />
-        </div>
-      </div>
       <AcademicIdentitySection />
-      <PreferencesSection />
     </>
+  );
+}
+
+// ---------------- 文献对话（每用户，存后端 settings） ----------------
+
+function LiteratureChatTab() {
+  const queryClient = useQueryClient();
+  const { data: me, isLoading, isError } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
+  const chatIndexMutation = useMutation({
+    mutationFn: (v: boolean) => api.updateMySettings({ chat_fulltext_index: v }),
+    onSuccess: (_, v) => {
+      toast(v ? tr('已开启全文索引', 'Full-text index enabled') : tr('已关闭全文索引', 'Full-text index disabled'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  if (isLoading) return <div className="card card-pad"><div className="empty">{tr('加载中…', 'Loading…')}</div></div>;
+  if (isError || !me) return <div className="card card-pad"><div className="empty">{tr('无法加载设置', 'Failed to load settings')}</div></div>;
+
+  return (
+    <div className="card" style={{ maxWidth: 560, padding: '14px 18px' }}>
+      <div className="section-h">{tr('文献对话', 'Literature chat')}</div>
+      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div id="pref-chat-fulltext" style={{ fontSize: 13, lineHeight: 1.4 }}>
+            {tr('为论文建立全文索引', 'Build a full-text index for papers')}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
+            {tr(
+              '打开后可为你的相关研究/个人文献库的论文建立全文索引，让 AI 文献对话检索得更准（会消耗你的模型额度抓取和嵌入全文）。',
+              'When on, you can build a full-text index for the papers in your related work and personal library, so AI literature chat retrieves more accurately (it uses your model quota to fetch and embed the full text).',
+            )}
+          </div>
+        </div>
+        <Switch
+          checked={me.settings?.chat_fulltext_index ?? false}
+          onChange={(v) => chatIndexMutation.mutate(v)}
+          disabled={chatIndexMutation.isPending}
+          aria-labelledby="pref-chat-fulltext"
+        />
+      </div>
+    </div>
   );
 }
 
@@ -2222,7 +2234,8 @@ function MyUsageTab() {
 
 // ---------------- 页面 ----------------
 
-type Tab = 'personal' | 'ssh' | 'mymodels' | 'myusage' | 'mcp' | 'llm' | 'daily' | 'usage' | 'users' | 'codes' | 'feedback';
+type Tab = 'personal' | 'ssh' | 'mymodels' | 'myusage' | 'mcp' | 'litchat' | 'prefs';
+type AdminTab = 'llm' | 'daily' | 'usage' | 'users' | 'codes' | 'feedback';
 
 // ---------------- 每日新论文订阅分类（admin） ----------------
 
@@ -3163,12 +3176,11 @@ function CodesTab() {
   );
 }
 
-const PERSONAL_TABS: Tab[] = ['personal', 'ssh', 'mymodels', 'myusage', 'mcp'];
-const ALL_TABS: Tab[] = [...PERSONAL_TABS, 'llm', 'daily', 'usage', 'users', 'codes', 'feedback'];
+const ALL_TABS: Tab[] = ['personal', 'ssh', 'mymodels', 'myusage', 'mcp', 'litchat', 'prefs'];
+const ADMIN_TABS: AdminTab[] = ['llm', 'daily', 'users', 'codes', 'feedback', 'usage'];
 
+/** 普通设置：对所有登录用户统一（个人信息 / SSH / 模型 / 用量 / MCP / 文献对话 / 界面偏好）。 */
 export function SettingsPage() {
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
-  const admin = isAdmin(me);
   // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>(() => {
@@ -3176,14 +3188,53 @@ export function SettingsPage() {
     return t !== null && ALL_TABS.includes(t as Tab) ? (t as Tab) : 'personal';
   });
 
-  const personalItems: { v: Tab; label: string }[] = [
+  const items: { v: Tab; label: string }[] = [
     { v: 'personal', label: tr('个人信息', 'Profile') },
     { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
     { v: 'mymodels', label: tr('我的模型', 'My LLM') },
     { v: 'myusage', label: tr('用量', 'Usage') },
     { v: 'mcp', label: tr('MCP 接入', 'MCP access') },
+    { v: 'litchat', label: tr('文献对话', 'Literature chat') },
+    { v: 'prefs', label: tr('界面偏好', 'Interface') },
   ];
-  const adminItems: { v: Tab; label: string }[] = [
+
+  return (
+    <div className="page fadeup">
+      <PageHead eyebrow="Polaris · Settings" title={tr('设置', 'Settings')} />
+      <div className="row" style={{ gap: 12, marginBottom: 22, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Segmented options={items} value={tab} onChange={setTab} />
+      </div>
+      {tab === 'personal' && <PersonalTab />}
+      {tab === 'ssh' && <SshTab />}
+      {tab === 'mymodels' && <MyLlmTab />}
+      {tab === 'myusage' && <MyUsageTab />}
+      {tab === 'mcp' && <McpToolsContent />}
+      {tab === 'litchat' && <LiteratureChatTab />}
+      {tab === 'prefs' && <PreferencesSection />}
+    </div>
+  );
+}
+
+/** 管理员设置：独立页面，仅管理员可见（顶栏齿轮进入）；非管理员重定向回普通设置。 */
+export function AdminSettingsPage() {
+  const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<AdminTab>(() => {
+    const t = searchParams.get('tab');
+    return t !== null && ADMIN_TABS.includes(t as AdminTab) ? (t as AdminTab) : 'llm';
+  });
+
+  if (isLoading) {
+    return (
+      <div className="page fadeup">
+        <PageHead eyebrow="Polaris · Admin" title={tr('管理员设置', 'Admin settings')} />
+        <div className="card card-pad"><div className="empty">{tr('加载中…', 'Loading…')}</div></div>
+      </div>
+    );
+  }
+  if (!isAdmin(me)) return <Navigate to="/settings" replace />;
+
+  const items: { v: AdminTab; label: string }[] = [
     { v: 'llm', label: tr('LLM 管理', 'LLM admin') },
     { v: 'daily', label: tr('每日论文', 'Daily papers') },
     { v: 'users', label: tr('用户管理', 'Users') },
@@ -3192,45 +3243,18 @@ export function SettingsPage() {
     { v: 'usage', label: tr('用量总览', 'Usage overview') },
   ];
 
-  // 非 admin 只能停留在个人设置组
-  const effectiveTab: Tab = !admin && !PERSONAL_TABS.includes(tab) ? 'personal' : tab;
-
   return (
     <div className="page fadeup">
-      <PageHead eyebrow="Polaris · Settings" title={tr('设置', 'Settings')} />
-      {/* 个人 tab 一块；管理员 tab 紧随其后另成一块，前面标「管理员设置」 */}
+      <PageHead eyebrow="Polaris · Admin" title={tr('管理员设置', 'Admin settings')} />
       <div className="row" style={{ gap: 12, marginBottom: 22, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Segmented options={personalItems} value={effectiveTab} onChange={setTab} />
-        {admin && (
-          <>
-            <span
-              style={{
-                marginLeft: 8,
-                fontSize: 10.5,
-                fontWeight: 700,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                color: 'var(--text-3)',
-                flexShrink: 0,
-              }}
-            >
-              {tr('管理员设置', 'Admin')}
-            </span>
-            <Segmented options={adminItems} value={effectiveTab} onChange={setTab} />
-          </>
-        )}
+        <Segmented options={items} value={tab} onChange={setTab} />
       </div>
-      {effectiveTab === 'personal' && <PersonalTab />}
-      {effectiveTab === 'ssh' && <SshTab />}
-      {effectiveTab === 'mymodels' && <MyLlmTab />}
-      {effectiveTab === 'myusage' && <MyUsageTab />}
-      {effectiveTab === 'mcp' && <McpToolsContent />}
-      {effectiveTab === 'llm' && admin && <LlmTab />}
-      {effectiveTab === 'daily' && admin && <DailyCategoriesTab />}
-      {effectiveTab === 'usage' && admin && <UsageTab />}
-      {effectiveTab === 'users' && admin && <UsersTab />}
-      {effectiveTab === 'codes' && admin && <CodesTab />}
-      {effectiveTab === 'feedback' && admin && <FeedbackTab />}
+      {tab === 'llm' && <LlmTab />}
+      {tab === 'daily' && <DailyCategoriesTab />}
+      {tab === 'usage' && <UsageTab />}
+      {tab === 'users' && <UsersTab />}
+      {tab === 'codes' && <CodesTab />}
+      {tab === 'feedback' && <FeedbackTab />}
     </div>
   );
 }
