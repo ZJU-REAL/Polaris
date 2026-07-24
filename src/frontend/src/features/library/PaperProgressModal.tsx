@@ -10,15 +10,14 @@ import { tr } from '../../lib/i18n';
    - event=stage → 更新对应阶段状态（best-effort：单阶段 error 不代表整体失败）
    - event=done  → 收尾并短暂延迟后自动关闭 + 回调 onDone（刷新列表）
    - event=error → 顶层致命错误，保留弹窗与关闭按钮，不自动关
-   阶段固定顺序：resolve → download → extract → embed → score。
+   阶段固定顺序：download → extract → embed → score（解析元数据在同步请求已完成，不单列）。
    ============================================================ */
 
-type StageId = 'resolve' | 'download' | 'extract' | 'embed' | 'score';
+type StageId = 'download' | 'extract' | 'embed' | 'score';
 type StageStatus = 'pending' | 'running' | 'ok' | 'skipped' | 'error';
 
 // 模块级常量保留 zh/en，渲染处再 tr（import 时求值不随语言切换更新）
 const STAGES: { id: StageId; zh: string; en: string }[] = [
-  { id: 'resolve', zh: '解析元数据', en: 'Resolving metadata' },
   { id: 'download', zh: '下载 PDF', en: 'Downloading PDF' },
   { id: 'extract', zh: '抽取正文', en: 'Extracting text' },
   { id: 'embed', zh: '向量化', en: 'Embedding' },

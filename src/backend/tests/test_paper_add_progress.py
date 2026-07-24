@@ -129,7 +129,7 @@ async def _collect_run_events(redis, *, task_id, **run_kwargs):
 
 
 async def test_enrich_emits_all_stages_running_ok_and_done(client, fake_redis):
-    """无 arxiv 论文（download/extract 跳过）：仍按顺序发 5 个阶段 + done，embed ok。"""
+    """无 arxiv 论文（download/extract 跳过）：仍按顺序发 4 个阶段 + done，embed ok。"""
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     project_id, _ = await make_project_with_library(client, headers, name="enrich-proj")
@@ -151,9 +151,8 @@ async def test_enrich_emits_all_stages_running_ok_and_done(client, fake_redis):
     stage_events = [e["data"] for e in events if e["event"] == "stage"]
     # 每个阶段的取值都在 STAGES 内，且顺序与 STAGES 一致
     seen_order = [s["stage"] for s in stage_events]
-    assert seen_order[0] == "resolve"
-    # resolve/embed 都应有 ok（embed 走 fake provider）
-    assert {"stage": "resolve", "status": "ok", "detail": None} in stage_events
+    assert seen_order[0] == "download"  # 解析已在同步请求阶段完成，进度从下载起
+    # embed 应有 ok（embed 走 fake provider）
     assert any(s["stage"] == "embed" and s["status"] in ("ok", "skipped") for s in stage_events)
     # 阶段整体顺序不倒序
     idx = [paper_enrich.STAGES.index(s) for s in seen_order]
@@ -272,4 +271,4 @@ async def test_paper_task_events_replays_history_for_late_subscriber(client, fak
     # 回放应补齐阶段事件并以 done 收尾（无回放时流会空等心跳、永不结束）
     assert "event: stage" in body
     assert "event: done" in body
-    assert "resolve" in body
+    assert "download" in body
