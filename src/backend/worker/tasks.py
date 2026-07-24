@@ -126,6 +126,15 @@ async def index_papers_fulltext_task(
         )
 
 
+async def daily_feed_sync(ctx: dict[str, Any]) -> dict[str, Any]:
+    """每日 01:30 cron（arXiv 约 00:00 UTC 发布新公告）：抓订阅分类的 New submissions
+    进每日论文池 + 清理 7 天外过期条目。admin 手动刷新走同一任务（见 api/daily.py）。"""
+    from app.services import daily_feed as daily_feed_service
+
+    async with get_sessionmaker()() as session:
+        return await daily_feed_service.sync_daily_feed(session)
+
+
 async def daily_publication_match(ctx: dict[str, Any]) -> int:
     """每日 04:00 cron（每日 ingest 之后）：对开了自动匹配的绑定用户逐个跑库内匹配。"""
     async with get_sessionmaker()() as session:
