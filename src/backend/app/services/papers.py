@@ -388,6 +388,30 @@ async def get_paper_for_user(
     )
 
 
+async def get_library_paper_view(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    project_id: uuid.UUID | None,
+    paper_id: uuid.UUID,
+    with_concepts: bool = False,
+) -> PaperView | None:
+    """取某篇论文在**指定库**的成员行视角（库工作台的单篇管理入口）。
+
+    与 :func:`get_paper_for_user` 的确定性跨库归并不同：这里精确锁定
+    (library_id, paper_id) 的成员行，保证库工作台的写操作只动本库那份归属。
+    库不含该论文时返回 None。project_id = 库回指的课题（独立库为 None）。
+    """
+    stmt = member_paper_stmt(library_id).where(Paper.id == paper_id).limit(1)
+    if with_concepts:
+        stmt = stmt.options(selectinload(Paper.concepts))
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        return None
+    paper, membership = row
+    return PaperView(paper, membership, project_id)
+
+
 async def set_paper_status(session: AsyncSession, view: PaperView, status: str) -> PaperView:
     view.membership.status = status
     await session.commit()
@@ -438,8 +462,14 @@ async def paper_extras_map(
 
 
 async def set_paper_tags(session: AsyncSession, view: PaperView, names: list[str]) -> list[str]:
-    """整组覆盖论文标签：新名字自动建 tag，空数组=清空。返回排序后的标签名。"""
+    """整组覆盖论文标签：新名字自动建 tag，空数组=清空。返回排序后的标签名。
+
+    独立库（project_id 为空）暂不支持标签：PaperTag 以 project 为键，无课题作用域
+    可挂靠——直接返回空列表（不落库、不报错），前端据此隐藏标签编辑。
+    """
     project_id = view.project_id
+    if project_id is None:
+        return []
     paper_id = view.paper.id
     cleaned = list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
     existing = (
@@ -472,7 +502,7 @@ async def set_paper_tags(session: AsyncSession, view: PaperView, names: list[str
     return sorted(cleaned)
 
 
-async def prune_orphan_tags(session: AsyncSession, *, project_id: uuid.UUID) -> int:
+async def prune_orphan_tags(session: AsyncSession, *, project_id: uuid.UUID | None) -> int:
     """删除项目内零引用标签（以 paper_tag_links 计数，回收站论文的引用也算），返回删除数。
 
     不 commit，由调用方在收尾时提交；触发点：整组覆盖标签、硬删论文、清空回收站。
@@ -537,7 +567,7 @@ async def upsert_paper_user_meta(
 async def _delete_membership_rows(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    project_id: uuid.UUID | None,
     memberships: Sequence[LibraryPaper],
 ) -> None:
     """硬删成员行 + 本项目挂在这些论文上的标签关联（不 commit）。"""
@@ -568,6 +598,39 @@ async def delete_paper(session: AsyncSession, view: PaperView) -> None:
     await session.commit()
 
 
+async def _delete_or_trash_memberships(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    tag_project_id: uuid.UUID | None,
+    paper_ids: list[uuid.UUID],
+    hard: bool,
+) -> int:
+    """批量软删/硬删某库内成员行的共享实现（tag_project_id 决定清哪个课题的标签关联）。"""
+    memberships = (
+        (
+            await session.execute(
+                select(LibraryPaper).where(
+                    LibraryPaper.library_id == library_id, LibraryPaper.paper_id.in_(paper_ids)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if hard:
+        await _delete_membership_rows(
+            session, project_id=tag_project_id, memberships=memberships
+        )
+        await prune_orphan_tags(session, project_id=tag_project_id)
+    else:
+        for membership in memberships:
+            membership.status = "excluded"
+            membership.trash_reason = "manual"
+    await session.commit()
+    return len(memberships)
+
+
 async def delete_papers(
     session: AsyncSession,
     *,
@@ -583,26 +646,30 @@ async def delete_papers(
     library = await get_library_for_project(session, project_id)
     if library is None:
         return 0
-    memberships = (
-        (
-            await session.execute(
-                select(LibraryPaper).where(
-                    LibraryPaper.library_id == library.id, LibraryPaper.paper_id.in_(paper_ids)
-                )
-            )
-        )
-        .scalars()
-        .all()
+    return await _delete_or_trash_memberships(
+        session,
+        library_id=library.id,
+        tag_project_id=project_id,
+        paper_ids=paper_ids,
+        hard=hard,
     )
-    if hard:
-        await _delete_membership_rows(session, project_id=project_id, memberships=memberships)
-        await prune_orphan_tags(session, project_id=project_id)
-    else:
-        for membership in memberships:
-            membership.status = "excluded"
-            membership.trash_reason = "manual"
-    await session.commit()
-    return len(memberships)
+
+
+async def delete_library_papers(
+    session: AsyncSession,
+    *,
+    library: Any,
+    paper_ids: list[uuid.UUID],
+    hard: bool = False,
+) -> int:
+    """批量删除某方向库内论文（库工作台入口，含独立库 project_id=None）。"""
+    return await _delete_or_trash_memberships(
+        session,
+        library_id=library.id,
+        tag_project_id=library.project_id,
+        paper_ids=paper_ids,
+        hard=hard,
+    )
 
 
 def restore_status_of(membership: LibraryPaper) -> str:
@@ -623,16 +690,15 @@ async def restore_paper(session: AsyncSession, view: PaperView) -> PaperView:
     return view
 
 
-async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
-    """清空垃圾桶：彻底移除库内全部 excluded 成员行，返回删除数。"""
-    library = await get_library_for_project(session, project_id)
-    if library is None:
-        return 0
+async def _empty_trash_core(
+    session: AsyncSession, *, library_id: uuid.UUID, tag_project_id: uuid.UUID | None
+) -> int:
+    """彻底移除某库全部 excluded 成员行（tag_project_id 决定清哪个课题的标签关联）。"""
     memberships = (
         (
             await session.execute(
                 select(LibraryPaper).where(
-                    LibraryPaper.library_id == library.id, LibraryPaper.status == "excluded"
+                    LibraryPaper.library_id == library_id, LibraryPaper.status == "excluded"
                 )
             )
         )
@@ -640,10 +706,29 @@ async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
         .all()
     )
     if memberships:
-        await _delete_membership_rows(session, project_id=project_id, memberships=memberships)
-        await prune_orphan_tags(session, project_id=project_id)
+        await _delete_membership_rows(
+            session, project_id=tag_project_id, memberships=memberships
+        )
+        await prune_orphan_tags(session, project_id=tag_project_id)
     await session.commit()
     return len(memberships)
+
+
+async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
+    """清空垃圾桶：彻底移除库内全部 excluded 成员行，返回删除数。"""
+    library = await get_library_for_project(session, project_id)
+    if library is None:
+        return 0
+    return await _empty_trash_core(
+        session, library_id=library.id, tag_project_id=project_id
+    )
+
+
+async def empty_library_trash(session: AsyncSession, *, library: Any) -> int:
+    """清空某方向库的垃圾桶（库工作台入口，含独立库 project_id=None）。"""
+    return await _empty_trash_core(
+        session, library_id=library.id, tag_project_id=library.project_id
+    )
 
 
 # ---- PDF 按需补下（docs/api-lit.md §1） ----

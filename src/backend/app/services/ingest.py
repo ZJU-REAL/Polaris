@@ -174,19 +174,23 @@ async def create_ingest_voyage(
     return run
 
 
-async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str, int]:
+def _empty_counts() -> dict[str, int]:
     counts = {status: 0 for status in PAPER_STATUSES}
-    # P9c：课题可无起源库（空语料）——直接给零计数，不报错。
-    library = await get_library_for_project(session, project_id)
-    if library is None:
-        counts["total"] = 0
-        counts["library"] = 0
-        counts["pending_compile"] = 0
-        return counts
+    counts["total"] = 0
+    counts["library"] = 0
+    counts["pending_compile"] = 0
+    return counts
+
+
+async def library_paper_counts(
+    session: AsyncSession, library_id: uuid.UUID
+) -> dict[str, int]:
+    """某方向库的论文状态计数（库级直接统计 library_papers，库工作台/ingest 面板共用）。"""
+    counts = {status: 0 for status in PAPER_STATUSES}
     rows = (
         await session.execute(
             select(LibraryPaper.status, func.count())
-            .where(LibraryPaper.library_id == library.id)
+            .where(LibraryPaper.library_id == library_id)
             .group_by(LibraryPaper.status)
         )
     ).all()
@@ -201,6 +205,14 @@ async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str
     )
     counts["pending_compile"] = counts["scored"] + counts["fetched"]
     return counts
+
+
+async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str, int]:
+    # P9c：课题可无起源库（空语料）——直接给零计数，不报错。
+    library = await get_library_for_project(session, project_id)
+    if library is None:
+        return _empty_counts()
+    return await library_paper_counts(session, library.id)
 
 
 # 每日自动同步的触发时刻（UTC，与 worker/settings.py 的 cron 保持一致）
@@ -230,24 +242,49 @@ def next_daily_sync_at(library: DirectionLibrary | None) -> datetime | None:
     return candidate
 
 
+async def _resolve_last_run(
+    session: AsyncSession, state: dict[str, Any]
+) -> dict[str, Any] | None:
+    """从 ingest_state 里的 last_run 摘要补上当前 voyage 状态（水位线权威源在库）。"""
+    last_run_raw = state.get("last_run") or None
+    if not (isinstance(last_run_raw, dict) and last_run_raw.get("voyage_id")):
+        return None
+    voyage = await session.get(VoyageRun, uuid.UUID(str(last_run_raw["voyage_id"])))
+    return {
+        "voyage_id": last_run_raw["voyage_id"],
+        "status": voyage.status if voyage else "unknown",
+        "finished_at": last_run_raw.get("finished_at"),
+    }
+
+
 async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any]:
     # P8a：水位线/last_run 权威源在库（library.ingest_state）
     library = await get_library_for_project(session, project.id)
     state = (library.ingest_state if library else None) or {}
-    last_run_raw = state.get("last_run") or None
-    last_run: dict[str, Any] | None = None
-    if isinstance(last_run_raw, dict) and last_run_raw.get("voyage_id"):
-        voyage = await session.get(VoyageRun, uuid.UUID(str(last_run_raw["voyage_id"])))
-        last_run = {
-            "voyage_id": last_run_raw["voyage_id"],
-            "status": voyage.status if voyage else "unknown",
-            "finished_at": last_run_raw.get("finished_at"),
-        }
     running = await find_running_ingest(session, project.id)
     return {
         "watermark": state.get("watermark"),
-        "last_run": last_run,
+        "last_run": await _resolve_last_run(session, state),
         "paper_counts": await paper_counts(session, project.id),
+        "running_voyage_id": running.id if running else None,
+        "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
+    }
+
+
+async def library_ingest_state(
+    session: AsyncSession, library: DirectionLibrary
+) -> dict[str, Any]:
+    """某方向库的 ingest 状态（水位线/上次同步/计数/在跑任务/下次同步），库工作台用。
+
+    与课题版口径一致，但一切按库直接取数：计数用 library_papers、互斥/在跑判定
+    以库为准（P9a），适用于独立库（project_id=None）。
+    """
+    state = library.ingest_state or {}
+    running = await find_running_ingest_for_library(session, library.id)
+    return {
+        "watermark": state.get("watermark"),
+        "last_run": await _resolve_last_run(session, state),
+        "paper_counts": await library_paper_counts(session, library.id),
         "running_voyage_id": running.id if running else None,
         "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
     }

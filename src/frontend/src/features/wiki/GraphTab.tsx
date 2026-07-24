@@ -1108,24 +1108,27 @@ function TopicsView({
 /* ---------------- Tab 主体 ---------------- */
 
 export interface GraphTabProps {
-  pid: string;
+  pid?: string;
+  /** 独立库作用域：给定时图谱走 /libraries/{id}/graph */
+  libraryId?: string;
   onOpenPaper: (id: string) => void;
   onOpenConcept: (id: string) => void;
 }
 
-export function GraphTab({ pid, onOpenPaper, onOpenConcept }: GraphTabProps) {
+export function GraphTab({ pid, libraryId, onOpenPaper, onOpenConcept }: GraphTabProps) {
   const [view, setView] = useState<GraphView>('timeline');
   const [focusConceptId, setFocusConceptId] = useState('');
+  const scopeId = libraryId ?? pid ?? '';
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['project-graph', pid],
-    queryFn: () => api.getProjectGraph(pid),
+    queryKey: ['project-graph', scopeId],
+    queryFn: () => (libraryId ? api.getLibraryGraph(libraryId) : api.getProjectGraph(scopeId)),
     retry: false,
     staleTime: 60_000,
   });
 
   // 切方向时清空子主题
-  useEffect(() => setFocusConceptId(''), [pid]);
+  useEffect(() => setFocusConceptId(''), [scopeId]);
 
   const model = useMemo(() => (data ? buildModel(data, focusConceptId) : null), [data, focusConceptId]);
 

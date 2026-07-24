@@ -151,12 +151,62 @@ async def build_library_messages(
     llm: LLMRouter,
     user_id: uuid.UUID | None = None,
 ) -> tuple[list[Message], list[ChatSource]]:
-    """组装文献库对话消息，返回 (messages, 引用来源列表)。"""
+    """组装课题文献库对话消息（关联库并集），返回 (messages, 引用来源列表)。"""
     # 先取出所需字段：检索失败路径里的 rollback 会使 ORM 对象过期，之后再取属性会报错
     project_id = project.id
     definition = project.definition if isinstance(project.definition, dict) else {}
     statement = definition.get("statement") or project.name
     library_ids = await get_source_library_ids(session, project_id)
+    return await build_messages_for_libraries(
+        session,
+        statement=statement,
+        library_ids=library_ids,
+        project_id=project_id,
+        question=question,
+        history=history,
+        llm=llm,
+        user_id=user_id,
+    )
+
+
+async def build_library_messages_for_library(
+    session: AsyncSession,
+    *,
+    library,
+    question: str,
+    history: list[tuple[str, str]],
+    llm: LLMRouter,
+    user_id: uuid.UUID | None = None,
+) -> tuple[list[Message], list[ChatSource]]:
+    """组装单个方向库的对话消息（库工作台入口，含独立库 project_id=None）。"""
+    from app.services.libraries import library_definition
+
+    definition = library_definition(library)
+    statement = definition.get("statement") or library.name
+    return await build_messages_for_libraries(
+        session,
+        statement=statement,
+        library_ids=[library.id],
+        project_id=library.project_id,
+        question=question,
+        history=history,
+        llm=llm,
+        user_id=user_id,
+    )
+
+
+async def build_messages_for_libraries(
+    session: AsyncSession,
+    *,
+    statement: str,
+    library_ids: list[uuid.UUID],
+    project_id: uuid.UUID | None,
+    question: str,
+    history: list[tuple[str, str]],
+    llm: LLMRouter,
+    user_id: uuid.UUID | None = None,
+) -> tuple[list[Message], list[ChatSource]]:
+    """按一组库检索并组装对话消息的共享实现（project_id 仅用于 LLM 记账，可空）。"""
     if not library_ids:
         # 课题无关联库 = 无语料：直接给「空文献库」上下文（不抓片段、不兜底）
         messages = [

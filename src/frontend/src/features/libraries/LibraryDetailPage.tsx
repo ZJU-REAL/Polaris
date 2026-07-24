@@ -4,20 +4,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
-import { api, ApiError, isAdmin, type DirectionLibraryDetail, type IngestMode } from '../../lib/api';
+import { api, isAdmin, type DirectionLibraryDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { WikiWorkbench } from '../wiki/WikiPage';
-import { GovernanceTab } from '../wiki/GovernanceTab';
 import { LibraryBrowse } from './LibraryBrowse';
 
 /* ============================================================
    /libraries/:id — 文献库详情（P5c + P6 治理 + P9b 生命周期）
-   - 可管理者（成员 / 文献库管理员 / 创建者 / 平台管理员）：完整工作台。
-     · 有起源课题的库 → project 作用域工作台（论文/概念/图谱/对话/建库/笔记/治理）；
-     · 独立库（project_id=NULL）→ 库作用域管理台（论文浏览 / 建库与同步 / 治理，
-       走 /libraries 端点；对话/图谱/笔记深绑课题，独立库下暂不提供）。
+   - 可管理者（成员 / 文献库管理员 / 创建者 / 平台管理员）：完整工作台
+     （论文/概念/图谱/对话/建库/笔记/治理）。有起源课题的库走 project 作用域端点；
+     独立库（project_id=NULL）同一套工作台改走 /libraries 端点。
    - 其他人：干净的只读浏览（论文 + 概念）。
    顶部按状态显示横幅：待审批 / 已驳回；平台管理员可就地批准 / 驳回。
    ============================================================ */
@@ -67,7 +64,6 @@ export function LibraryDetailPage() {
   }
 
   const canManage = lib.can_manage;
-  const standalone = !lib.project_id;
 
   return (
     <div className="page fadeup" style={{ maxWidth: 1360, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}>
@@ -84,10 +80,8 @@ export function LibraryDetailPage() {
         }
       />
       <StatusBanner lib={lib} />
-      {canManage && lib.project_id ? (
-        <WikiWorkbench pid={lib.project_id} libraryId={lib.id} />
-      ) : canManage && standalone ? (
-        <StandaloneWorkbench lib={lib} />
+      {canManage ? (
+        <WikiWorkbench pid={lib.project_id ?? undefined} libraryId={lib.id} />
       ) : (
         <LibraryBrowse libraryId={lib.id} />
       )}
@@ -174,99 +168,6 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-/* —— 独立库（project_id=NULL）管理台：论文浏览 / 建库与同步 / 治理 —— */
-
-type StandaloneTab = 'browse' | 'ingest' | 'govern';
-
-function StandaloneWorkbench({ lib }: { lib: DirectionLibraryDetail }) {
-  const [tab, setTab] = useState<StandaloneTab>('browse');
-  return (
-    <>
-      <div className="row" style={{ marginBottom: 14 }}>
-        <Segmented<StandaloneTab>
-          options={[
-            { v: 'browse', label: tr('论文与概念', 'Papers & concepts') },
-            { v: 'ingest', label: tr('建库与同步', 'Ingest & sync') },
-            { v: 'govern', label: tr('治理', 'Governance') },
-          ]}
-          value={tab}
-          onChange={setTab}
-        />
-      </div>
-      {tab === 'browse' ? (
-        <LibraryBrowse libraryId={lib.id} />
-      ) : tab === 'ingest' ? (
-        <div className="card" style={{ flex: 1, minHeight: 480, overflow: 'auto' }}>
-          <LibraryIngestPanel lib={lib} />
-        </div>
-      ) : (
-        <div className="card" style={{ flex: 1, minHeight: 480, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <GovernanceTab libraryId={lib.id} />
-        </div>
-      )}
-    </>
-  );
-}
-
-/* —— 库级抓取触发（走 POST /libraries/{id}/ingest/run，P9a；仅 active 可触发） —— */
-
-function LibraryIngestPanel({ lib }: { lib: DirectionLibraryDetail }) {
-  const navigate = useNavigate();
-  const active = lib.status === 'active';
-
-  const run = useMutation({
-    mutationFn: (mode: IngestMode) => api.startLibraryIngest(lib.id, { mode }),
-    onSuccess: (voyage) => {
-      toast(tr('已开始抓取', 'Ingest started'), 'ok');
-      navigate(`/voyages/${voyage.id}`);
-    },
-    onError: (err) => {
-      const code = err instanceof ApiError ? err.message : '';
-      const msg =
-        code === 'LIBRARY_NOT_ACTIVE'
-          ? tr('文献库还未激活，无法抓取', 'Library is not active yet')
-          : code === 'INGEST_ALREADY_RUNNING'
-            ? tr('已有一个抓取任务在跑，请等它结束', 'An ingest is already running — wait for it to finish')
-            : code === 'LIBRARY_BUDGET_EXHAUSTED'
-              ? tr('本月预算已用尽，下月恢复或调高上限', 'Monthly budget is used up — resumes next month or raise the cap')
-              : tr('启动失败，请重试', 'Failed to start, please retry');
-      toast(msg, 'error');
-    },
-  });
-
-  return (
-    <div className="col gap16" style={{ padding: 20, maxWidth: 640 }}>
-      <div>
-        <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>{tr('建库与同步', 'Ingest & sync')}</h3>
-        <p className="muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
-          {tr(
-            '初始建库会按收录设置检索 arXiv、做参考文献扩展、打分并编译解读；之后用增量更新只补新论文。抓取消耗记本库预算。',
-            'Bootstrap searches arXiv by the inclusion settings, expands references, scores and compiles wikis; later use incremental sync for new papers only. Token cost is billed to this library’s budget.',
-          )}
-        </p>
-      </div>
-      {!active && (
-        <div className="card" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)', padding: '10px 14px', fontSize: 12.5 }}>
-          {tr('文献库待激活：管理员批准后才能开始抓取。', 'Library is not active yet — an admin must approve it before ingest can start.')}
-        </div>
-      )}
-      <div className="row gap10">
-        <button className="btn btn-primary" disabled={!active || run.isPending} onClick={() => run.mutate('bootstrap')}>
-          <Icon name="sparkle" size={14} />
-          {run.isPending ? tr('启动中…', 'Starting…') : tr('初始建库', 'Bootstrap')}
-        </button>
-        <button className="btn btn-soft" disabled={!active || run.isPending} onClick={() => run.mutate('incremental')}>
-          <Icon name="refresh" size={14} />
-          {tr('增量更新', 'Incremental sync')}
-        </button>
-      </div>
-      <p className="muted" style={{ fontSize: 11.5 }}>
-        {tr('在「治理」页签里可以调整收录分类、关键词与打分标准。', 'Tune inclusion categories, keywords and rubric in the Governance tab.')}
-      </p>
     </div>
   );
 }
