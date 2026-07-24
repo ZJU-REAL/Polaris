@@ -2245,7 +2245,7 @@ export const ADMIN_TABS = ['llm', 'daily', 'usage', 'users', 'codes', 'feedback'
 /** arxiv 分类的大致格式：如 cs.AI / stat.ML / hep-th。 */
 const DAILY_CATEGORY_RE = /^[a-z][a-z-]+(\.[A-Za-z]{2,10})?$/;
 
-export function DailyCategoriesTab() {
+function DailyCategoriesSection() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({
     queryKey: ['daily-categories'],
@@ -2370,6 +2370,115 @@ export function DailyCategoriesTab() {
   );
 }
 
+/** 每日论文是否随同步建向量 + 给最近 7 天缺向量的论文补建。 */
+function DailyEmbedSection() {
+  const queryClient = useQueryClient();
+  const settingQuery = useQuery({
+    queryKey: ['daily-embed-enabled'],
+    queryFn: () => api.getDailyEmbedEnabled(),
+    retry: false,
+  });
+  const enabled = settingQuery.data?.enabled ?? false;
+
+  const toggleMutation = useMutation({
+    mutationFn: (next: boolean) => api.setDailyEmbedEnabled(next),
+    onSuccess: (r) => {
+      toast(
+        r.enabled
+          ? tr('已开启：以后每天同步的新论文都会建向量', 'Enabled — new papers will be embedded on each daily sync')
+          : tr('已关闭：每天同步不再建向量', 'Disabled — the daily sync will no longer embed papers'),
+        'ok',
+      );
+      void queryClient.invalidateQueries({ queryKey: ['daily-embed-enabled'] });
+    },
+    onError: (e) => toast(`${tr('设置失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const backfillMutation = useMutation({
+    mutationFn: () => api.backfillDailyEmbeddings(),
+    onSuccess: (r) => {
+      const base = tr(`已补建 ${r.embedded} 篇，跳过 ${r.skipped} 篇`, `Embedded ${r.embedded}, skipped ${r.skipped}`);
+      if (r.failed > 0) {
+        toast(`${base}${tr(`，${r.failed} 篇失败`, `, ${r.failed} failed`)}`, 'info');
+      } else {
+        toast(base, 'ok');
+      }
+    },
+    onError: (e) => toast(`${tr('补建失败', 'Backfill failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  return (
+    <div className="card card-pad" style={{ maxWidth: 640, marginTop: 20 }}>
+      <div className="section-h" style={{ marginBottom: 6 }}>
+        <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('每日论文向量', 'Daily paper embeddings')}
+      </div>
+
+      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div id="daily-embed-toggle" style={{ fontSize: 13, lineHeight: 1.4 }}>
+            {tr('为每日论文建立向量', 'Embed daily papers')}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
+            {tr(
+              '打开后，每天同步时会给新论文生成向量（会消耗嵌入额度）；打开后每日论文的语义检索才有数据，问答也能按正文片段回答。关闭时每日论文只能用关键词检索，问答只按摘要兜底。',
+              'When on, the daily sync generates embeddings for new papers (this consumes embedding quota). Only then does semantic search over daily papers have data, and chat can answer from body passages. When off, daily papers support keyword search only and chat falls back to abstracts.',
+            )}
+          </div>
+        </div>
+        <Switch
+          checked={enabled}
+          onChange={(v) => toggleMutation.mutate(v)}
+          disabled={settingQuery.isLoading || settingQuery.isError || toggleMutation.isPending}
+          aria-labelledby="daily-embed-toggle"
+        />
+      </div>
+
+      {settingQuery.isError && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 10 }}>
+          {tr('无法加载该设置（后端不可用或无权限）', 'Failed to load this setting (backend unavailable or no permission)')}
+        </div>
+      )}
+
+      <div
+        className="row gap8"
+        style={{ alignItems: 'center', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}
+      >
+        <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45 }}>
+          {tr(
+            '历史论文不会自动补建。点右边的按钮，给最近 7 天里还没有向量的每日论文补一遍，可能要跑几十秒。',
+            'Existing papers are not embedded automatically. Use the button to embed the daily papers from the past 7 days that still lack vectors — it may take tens of seconds.',
+          )}
+        </div>
+        <button
+          className="btn btn-soft sm"
+          disabled={backfillMutation.isPending}
+          title={tr(
+            '给最近 7 天里还没有向量的每日论文补建向量',
+            'Embed daily papers from the past 7 days that still lack vectors',
+          )}
+          onClick={() => backfillMutation.mutate()}
+        >
+          <Icon
+            name="refresh"
+            size={12}
+            style={backfillMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
+          />
+          {backfillMutation.isPending ? tr('补建中…', 'Backfilling…') : tr('补建历史向量', 'Backfill embeddings')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function DailyCategoriesTab() {
+  return (
+    <>
+      <DailyCategoriesSection />
+      <DailyEmbedSection />
+    </>
+  );
+}
 
 // ---------------- 用户管理（admin） ----------------
 
