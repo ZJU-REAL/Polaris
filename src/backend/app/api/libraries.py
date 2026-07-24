@@ -7,20 +7,35 @@ project 作用域端点（鉴权同样接入库级写权限助手）。
 个人文献库路由在 ``app/api/library.py``（/me/library），勿混淆。
 """
 
+import asyncio
+import json
+import logging
 import uuid
+from collections.abc import AsyncIterator
+from dataclasses import asdict
+from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_admin, require_llm_task
+from app.api.auth import (
+    current_active_user,
+    require_admin,
+    require_llm_chat,
+    require_llm_task,
+)
 from app.core.db import get_session
+from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.project import Project
 from app.models.user import User
-from app.schemas.ingest import IngestRequest
+from app.schemas.graph import GraphResponse
+from app.schemas.ingest import IngestRequest, IngestStateRead
 from app.schemas.libraries import (
     CuratorRead,
     CuratorsUpdate,
@@ -34,22 +49,50 @@ from app.schemas.libraries import (
     PaperMergeRequest,
     PaperMergeResult,
 )
+from app.schemas.note import NotebookPage, NoteWithPaper
 from app.schemas.paper import (
     ConceptRead,
+    PaperBatchIds,
+    PaperChatRequest,
+    PaperDetail,
     PaperListPage,
+    PaperManualCreate,
     PaperRead,
     ScoredConcept,
     ScoredPaper,
     SearchResponse,
+    TagRead,
 )
 from app.schemas.voyage import VoyageRead
 from app.services import concepts as concepts_service
+from app.services import graph as graph_service
 from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
+from app.services import library_chat as library_chat_service
+from app.services import notes as notes_service
+from app.services import paper_import as paper_import_service
 from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
+from app.services import relevance as relevance_service
 
 router = APIRouter(tags=["libraries"])
+
+logger = logging.getLogger(__name__)
+
+_HEARTBEAT_SECONDS = 15.0
+
+
+def _sse_frame(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+async def _paper_detail(
+    session: AsyncSession, view: papers_service.PaperView, user_id: uuid.UUID
+) -> PaperDetail:
+    extras = await papers_service.paper_extras_map(
+        session, paper_ids=[view.id], user_id=user_id
+    )
+    return PaperDetail.model_validate(view).model_copy(update=extras[view.id])
 
 
 async def _get_library(session: AsyncSession, library_id: uuid.UUID) -> DirectionLibrary:
@@ -296,13 +339,26 @@ async def list_library_papers(
     library_id: uuid.UUID,
     status_filter: str | None = Query(default="library", alias="status"),
     q: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+    starred: bool | None = Query(default=None),
+    reading_status: str | None = Query(default=None, pattern="^(unread|reading|read)$"),
+    author: str | None = Query(default=None),
+    affiliation: str | None = Query(default=None),
+    published_from: datetime | None = Query(default=None),
+    published_to: datetime | None = Query(default=None),
+    created_from: datetime | None = Query(default=None),
+    created_to: datetime | None = Query(default=None),
     sort: str = Query(default="relevance", pattern="^(relevance|-published_at)$"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperListPage:
-    """库内论文（分页/检索/排序）。缺省只列相关性达标的（status=library 组别名）。"""
+    """库内论文（分页/检索/排序/过滤）。缺省只列相关性达标的（status=library 组别名）。
+
+    过滤参数与课题论文列表一致（星标/阅读状态/作者/机构/发表与入库时间）；
+    ``status=excluded`` 取该库垃圾桶。标签过滤仅对有起源课题的库有效（独立库无标签）。
+    """
     library = await _get_library(session, library_id)
     items, total = await papers_service.list_papers(
         session,
@@ -310,6 +366,15 @@ async def list_library_papers(
         project_id=library.project_id,
         status=status_filter,
         q=q,
+        tag=tag,
+        starred=starred,
+        reading_status=reading_status,
+        author=author,
+        affiliation=affiliation,
+        published_from=published_from,
+        published_to=published_to,
+        created_from=created_from,
+        created_to=created_to,
         user_id=user.id,
         sort=sort,
         page=page,
@@ -414,6 +479,229 @@ async def search_library(
         for p, s in paper_rows
     ]
     return SearchResponse(papers=papers, concepts=concepts, mode_used=mode_used, reranked=reranked)
+
+
+# ---- P9d 库级论文管理 / ingest 状态 / 图谱 / 对话 / 笔记（库工作台，含独立库） ----
+#
+# 说明：单篇写操作（改状态/软删召回/彻底删/重编译/标签）仍走 papers 路由的
+# paper 级端点（经库可见性解析成员行，可管理者含策展人/创建者/admin）；本节只补
+# 「集合级」库端点——课题版按 project 作用域，独立库靠这些端点获得同等管理能力。
+
+
+@router.post(
+    "/libraries/{library_id}/papers",
+    response_model=PaperDetail,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_library_paper_manually(
+    library_id: uuid.UUID,
+    data: PaperManualCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Any:
+    """手动把一篇文献加进该库：arxiv_id / doi / bibtex 三选一（可管理者）。"""
+    library = await _get_managed_library(session, library_id, user)
+    try:
+        paper = await paper_import_service.add_manual_paper_to_library(
+            session,
+            library=library,
+            arxiv_id=data.arxiv_id,
+            doi=data.doi,
+            bibtex=data.bibtex,
+            project_id=library.project_id,
+        )
+    except paper_import_service.DuplicatePaperError as e:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "PAPER_EXISTS", "paper_id": str(e.paper_id)},
+        )
+    except paper_import_service.ParseFailedError as e:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"PARSE_FAILED: {e}"
+        ) from e
+    paper_id, user_id, project_id = paper.id, user.id, library.project_id
+    membership = await libraries_service.get_membership(
+        session, library_id=library.id, paper_id=paper_id
+    )
+    if membership is not None:
+        await relevance_service.score_added_paper_best_effort(
+            session, paper, membership, project_id=project_id, user_id=user_id
+        )
+    view = await papers_service.get_library_paper_view(
+        session,
+        library_id=library.id,
+        project_id=project_id,
+        paper_id=paper_id,
+        with_concepts=True,
+    )
+    return await _paper_detail(session, view, user_id)
+
+
+@router.post("/libraries/{library_id}/papers/batch-delete")
+async def batch_delete_library_papers(
+    library_id: uuid.UUID,
+    data: PaperBatchIds,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, int]:
+    """批量删除库内论文（非本库的 id 忽略），返回 {deleted}。默认软删；hard=true 彻底删除。"""
+    library = await _get_managed_library(session, library_id, user)
+    deleted = await papers_service.delete_library_papers(
+        session, library=library, paper_ids=data.paper_ids, hard=data.hard
+    )
+    return {"deleted": deleted}
+
+
+@router.post("/libraries/{library_id}/trash/empty")
+async def empty_library_trash(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, int]:
+    """清空该库垃圾桶：彻底删除库内全部已删除论文成员行。"""
+    library = await _get_managed_library(session, library_id, user)
+    deleted = await papers_service.empty_library_trash(session, library=library)
+    return {"deleted": deleted}
+
+
+@router.get("/libraries/{library_id}/tags", response_model=list[TagRead])
+async def list_library_tags(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[TagRead]:
+    """库标签列表（含引用论文数）。独立库无课题作用域标签 → 空列表。"""
+    library = await _get_library(session, library_id)
+    if library.project_id is None:
+        return []
+    rows = await papers_service.list_project_tags(session, project_id=library.project_id)
+    return [TagRead(**row) for row in rows]
+
+
+@router.get("/libraries/{library_id}/ingest/state", response_model=IngestStateRead)
+async def get_library_ingest_state(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> IngestStateRead:
+    """该库的建库/同步状态：上次同步时间、抓取进度计数、在跑任务、下次自动同步（可管理者）。"""
+    library = await _get_managed_library(session, library_id, user)
+    state = await ingest_service.library_ingest_state(session, library)
+    return IngestStateRead(**state)
+
+
+@router.get("/libraries/{library_id}/graph", response_model=GraphResponse)
+async def library_graph(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> GraphResponse:
+    """库知识图谱：论文 / 作者 / 概念节点与关联边（确定性构建，不走 LLM；全实验室可读）。"""
+    library = await _get_library(session, library_id)
+    data = await graph_service.library_graph(session, library_id=library.id)
+    return GraphResponse(**data)
+
+
+@router.get("/libraries/{library_id}/notes", response_model=NotebookPage)
+async def library_notebook(
+    library_id: uuid.UUID,
+    q: str | None = Query(default=None),
+    paper_id: uuid.UUID | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> NotebookPage:
+    """库笔记本：我在该库论文上写的笔记聚合（搜索 + 分页 + 按论文过滤）。"""
+    library = await _get_library(session, library_id)
+    rows, total = await notes_service.list_library_notes(
+        session,
+        library_id=library.id,
+        author_id=user.id,
+        q=q,
+        paper_id=paper_id,
+        page=page,
+        size=size,
+    )
+    items = [
+        NoteWithPaper(
+            id=note.id,
+            paper_id=note.paper_id,
+            author_id=note.author_id,
+            author_name=author_name,
+            content=note.content,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+            paper_title=paper_title,
+        )
+        for note, author_name, paper_title in rows
+    ]
+    return NotebookPage(items=items, total=total, page=page, size=size)
+
+
+@router.post("/libraries/{library_id}/chat")
+async def chat_with_library(
+    library_id: uuid.UUID,
+    data: PaperChatRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_chat),
+) -> StreamingResponse:
+    """库文献对话：跨库内文献检索 + stage=reading 流式回答（全实验室可读，费用记个人）。
+
+    事件：``sources``（引用来源清单）→ ``delta``* → ``done``；错误 ``error`` 后关流。
+    """
+    library = await _get_library(session, library_id)
+    user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
+    project_id = library.project_id
+    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    llm = get_llm_router()
+    messages, sources = await library_chat_service.build_library_messages_for_library(
+        session, library=library, question=data.question, history=history, llm=llm, user_id=user_id
+    )
+
+    async def event_stream() -> AsyncIterator[str]:
+        yield _sse_frame("sources", {"items": [asdict(source) for source in sources]})
+        queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
+
+        async def pump() -> None:
+            try:
+                async for chunk in llm.stream(
+                    "reading", messages, user_id=user_id, project_id=project_id
+                ):
+                    await queue.put(("delta", chunk))
+                await queue.put(("done", None))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 转成 error 事件后关流
+                logger.warning("library chat stream failed", exc_info=True)
+                await queue.put(("error", f"{type(e).__name__}: {e}"))
+
+        task = asyncio.create_task(pump())
+        collected: list[str] = []
+        try:
+            while True:
+                try:
+                    kind, payload = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
+                except TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                if kind == "delta":
+                    collected.append(payload or "")
+                    yield _sse_frame("delta", {"text": payload})
+                elif kind == "done":
+                    usage = {
+                        "prompt_tokens": sum(estimate_tokens(m.content) for m in messages),
+                        "completion_tokens": estimate_tokens("".join(collected)),
+                    }
+                    yield _sse_frame("done", {"usage": usage})
+                    return
+                else:  # error
+                    yield _sse_frame("error", {"detail": payload})
+                    return
+        finally:
+            task.cancel()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ---- P6 治理：重复论文合并 ----
