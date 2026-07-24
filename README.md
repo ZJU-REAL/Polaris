@@ -163,46 +163,23 @@ make lint                   # ruff check + tsc --noEmit
 
 ## Docker deployment
 
-The default path is to **build locally with Compose** — the same `docker/docker-compose.yml` used in
-development, without the dev overlay:
+Deploy from pre-built images on Docker Hub (`tricktreat/polaris-{api,worker,frontend}`, published by
+CI on every `v*` tag) — no local build needed:
 
 ```bash
-cp .env.example .env        # set POLARIS_ENV=prod, secrets, and at least one LLM key
-make build                  # build texbase + api/worker/frontend images
-docker compose -f docker/docker-compose.yml up -d
+cp .env.example .env        # set POLARIS_ENV=prod, POLARIS_IMAGE_TAG, secrets, and an LLM key
+docker compose --env-file .env -f docker/docker-compose.yml pull
+docker compose --env-file .env -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml exec api alembic upgrade head   # required on first run
 ```
 
-For persistent host-path bind mounts, backups, and restricted-network builds, add the prod overlay
-(`-f docker/docker-compose.prod.yml`) — see [docs/deployment.md](docs/deployment.md).
+The frontend is served at `http://<host>:8080`. The `worker` container is required (it runs all long
+tasks), and the first-run migration is mandatory (Postgres tables are not auto-created). Pass
+`--env-file .env` so Compose reads `POLARIS_IMAGE_TAG` (default `latest`) / `POLARIS_IMAGE_PREFIX`
+(default `tricktreat`) from the repo-root `.env`.
 
-### Alternative: pull pre-built images
-
-CI publishes `amd64` images to Docker Hub as `tricktreat/polaris-{api,worker,frontend}` on every `v*`
-tag (see [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)). To deploy
-without building, set `POLARIS_IMAGE_TAG` in `.env` and pull instead of build:
-
-```bash
-docker compose --env-file .env -f docker/docker-compose.yml pull
-docker compose --env-file .env -f docker/docker-compose.yml up -d
-docker compose -f docker/docker-compose.yml exec api alembic upgrade head
-```
-
-The `image:` in the compose file doubles as the local build tag and the pull source, controlled by
-`POLARIS_IMAGE_PREFIX` (default `tricktreat`) / `POLARIS_IMAGE_TAG` (default `latest`).
-
-> [!IMPORTANT]
-> For the pull path, pass `--env-file .env` so Compose reads `POLARIS_IMAGE_TAG` / `POLARIS_IMAGE_PREFIX`
-> from the repo-root `.env`. Without it, Compose looks for the interpolation `.env` next to the compose
-> file (`docker/`) and silently falls back to `:latest`.
-
-The frontend is served at `http://<host>:8080` (nginx reverse-proxies `/api`, `/ws`, `/mcp` to the api
-container).
-
-> [!NOTE]
-> The `worker` container is not optional — it runs every long task (literature fetch, AI generation,
-> experiments, compilation). Postgres tables are not auto-created, so the first-run `alembic upgrade
-> head` is mandatory.
+For building locally instead, bind mounts, backups, and restricted networks, see
+[docs/deployment.md](docs/deployment.md).
 
 ## Documentation
 
