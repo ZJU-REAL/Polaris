@@ -7,7 +7,7 @@ import { tr } from '../../lib/i18n';
    而不是一律回论文所属课题的方向库。刷新丢失 state 时退回默认。
    ============================================================ */
 
-export type ReaderFromKind = 'research' | 'library' | 'wiki';
+export type ReaderFromKind = 'research' | 'library' | 'wiki' | 'daily';
 
 export interface ReaderFrom {
   /** 返回目标的完整 in-app 路径（pathname + search）。 */
@@ -27,6 +27,8 @@ export function readerBackLabel(kind: ReaderFromKind): string {
       return tr('回相关研究', 'Back to related work');
     case 'library':
       return tr('回我的文献库', 'Back to my library');
+    case 'daily':
+      return tr('回每日新论文', 'Back to Daily Papers');
     default:
       return tr('回文献库', 'Back to library');
   }

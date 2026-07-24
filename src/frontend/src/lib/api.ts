@@ -2315,6 +2315,8 @@ export interface DailyPaperItem {
 
 export interface DailyPaperDetail extends DailyPaperItem {
   wiki_content: string | null;
+  /** 内容池是否已下到 PDF：true→可进平台阅读器，false→仅能去 arxiv 下载 */
+  pdf_available: boolean;
 }
 
 export type DailyPage = PageOf<DailyPaperItem>;

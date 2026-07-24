@@ -339,6 +339,7 @@ async def get_entry_item(
     likes = await _likes_by_entry(session, [entry.id], user_id=user_id)
     item = _entry_item(entry, paper, likes[entry.id])
     item["wiki_content"] = entry.wiki_content
+    item["pdf_available"] = paper.pdf_available
     return item
 
 

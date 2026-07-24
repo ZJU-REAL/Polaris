@@ -1,14 +1,17 @@
 import { Fragment, useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
-import { ApiError, api, type DailyPaperItem, type DailySort } from '../../lib/api';
+import { ApiError, api, type DailyPaperItem, type DailySort, type PaperDetail } from '../../lib/api';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { Markdown } from '../../lib/markdown';
+import { PaperReader } from '../wiki/PaperReader';
+import { readerFrom } from '../reading/shared';
 import { SearchInput, useDebounced } from '../wiki/shared';
 import { DailyLikes } from './DailyLikes';
 import { DailyChatTab } from './DailyChatTab';
@@ -123,6 +126,9 @@ function DailyDetailPane({
   onCollect: (p: CollectPaperRef) => void;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [readerOpen, setReaderOpen] = useState(false);
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['daily-paper', entryId],
     queryFn: () => api.getDailyPaper(entryId),
@@ -160,6 +166,17 @@ function DailyDetailPane({
   }
 
   const authors = paper.authors.map((a) => a.name).filter(Boolean).join(', ');
+  // 「链接放 arxiv，不放标题」：优先原文 url，退回 arxiv abs 页
+  const arxivHref = paper.url ?? (paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null);
+  // PDF 不可用时的下载去处：arxiv pdf，无 arxiv_id 退回原文 url
+  const pdfDownloadUrl = paper.arxiv_id ? `https://arxiv.org/pdf/${paper.arxiv_id}` : paper.url;
+  // 复用常规详情的阅览器：把每日详情映射成 PaperReader 需要的字段（id 用内容池 paper_id）
+  const readerPaper: PaperDetail = {
+    ...(paper as unknown as PaperDetail),
+    id: paper.paper_id,
+    venue: null,
+    tldr: null,
+  };
 
   return (
     <div className="scroll fadeup" key={paper.entry_id} style={{ overflowY: 'auto', flex: 1, padding: '26px 32px 60px' }}>
@@ -170,22 +187,28 @@ function DailyDetailPane({
           </span>
         ))}
         <AnnounceBadge type={paper.announce_type} />
-        {paper.arxiv_id && (
-          <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>
-            arXiv:{paper.arxiv_id}
-          </span>
-        )}
+        {paper.arxiv_id &&
+          (arxivHref ? (
+            <a
+              className="pill sm mono"
+              href={arxivHref}
+              target="_blank"
+              rel="noreferrer noopener"
+              style={{ background: 'var(--surface-3)', textDecoration: 'none', color: 'var(--accent)' }}
+              title={tr('打开 arXiv 页面', 'Open on arXiv')}
+            >
+              arXiv:{paper.arxiv_id}
+            </a>
+          ) : (
+            <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>
+              arXiv:{paper.arxiv_id}
+            </span>
+          ))}
       </div>
 
+      {/* 标题永远是纯文本（不可点）；链接放上面的 arXiv chip */}
       <h1 style={{ fontSize: 21, fontWeight: 680, lineHeight: 1.3, margin: '2px 0 6px', letterSpacing: '-0.01em' }}>
-        {paper.url ? (
-          <a href={paper.url} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
-            {paper.title}
-            <Icon name="link" size={14} style={{ display: 'inline-block', marginLeft: 6, verticalAlign: 'baseline', color: 'var(--text-3)' }} />
-          </a>
-        ) : (
-          paper.title
-        )}
+        {paper.title}
       </h1>
       {authors && <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 6 }}>{authors}</div>}
       {paper.published_at && (
@@ -194,7 +217,65 @@ function DailyDetailPane({
         </div>
       )}
 
-      <div className="row gap8" style={{ marginBottom: 18 }}>
+      {/* —— 操作栏（对齐常规论文详情 PaperDetailPane） —— */}
+      <div className="row gap8 wrap" style={{ marginBottom: 18 }}>
+        {paper.pdf_available ? (
+          <button
+            className="btn btn-primary sm"
+            onClick={() =>
+              navigate(`/papers/${paper.paper_id}/read`, { state: readerFrom(location, 'daily') })
+            }
+          >
+            <Icon name="file" size={13} />
+            {tr('阅读原文', 'Read original')}
+          </button>
+        ) : (
+          pdfDownloadUrl && (
+            <a
+              className="btn btn-primary sm"
+              href={pdfDownloadUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              style={{ textDecoration: 'none' }}
+              title={tr('在 arXiv 打开 PDF', 'Open the PDF on arXiv')}
+            >
+              <Icon name="download" size={13} />
+              {tr('下载原文', 'Download PDF')}
+            </a>
+          )
+        )}
+        <button
+          className="btn btn-soft sm"
+          title={
+            paper.has_wiki
+              ? tr('用最新的图文模式重写这篇介绍', 'Rewrite this intro with the latest text+figures mode')
+              : tr('AI 精读并编译图文介绍', 'Have the AI read and compile an illustrated intro')
+          }
+          disabled={compileMutation.isPending}
+          onClick={() => compileMutation.mutate()}
+        >
+          {compileMutation.isPending ? (
+            <>
+              <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
+              {tr('AI 编译中，约半分钟…', 'Compiling — about half a minute…')}
+            </>
+          ) : (
+            <>
+              <Icon name="sparkle" size={13} />
+              {paper.has_wiki ? tr('重新编译', 'Recompile') : tr('编译', 'Compile')}
+            </>
+          )}
+        </button>
+        {paper.wiki_content && (
+          <button
+            className="btn btn-soft sm"
+            title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
+            onClick={() => setReaderOpen(true)}
+          >
+            <Icon name="book" size={13} />
+            {tr('阅览模式', 'Reading mode')}
+          </button>
+        )}
         <button
           className="btn btn-primary sm"
           onClick={() => onCollect({ paper_id: paper.paper_id, entry_id: paper.entry_id, title: paper.title })}
@@ -217,40 +298,51 @@ function DailyDetailPane({
         <div className="empty" style={{ padding: 20 }}>{tr('这篇还没有摘要。', 'No abstract for this paper.')}</div>
       )}
 
-      {/* —— AI 解读：有内容直接渲染；没有则给「生成」按钮（同步编译约半分钟） —— */}
+      {/* —— AI 图文介绍：渲染风格对齐常规详情（同容器/字号/Markdown props） —— */}
       {paper.wiki_content ? (
-        <div className="card card-pad" style={{ background: 'var(--surface-2)', marginTop: 14 }}>
-          <div className="row gap8" style={{ marginBottom: 8 }}>
-            <Icon name="sparkle" size={14} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 12, fontWeight: 700 }}>{tr('AI 解读', 'AI summary')}</span>
+        <div style={{ marginTop: 22 }}>
+          <div
+            className="row"
+            style={{
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              paddingBottom: 10,
+              marginBottom: 16,
+              borderBottom: '0.5px solid var(--border)',
+            }}
+          >
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+              {tr('AI 图文介绍', 'AI intro')}
+            </span>
+            <button
+              className="btn btn-soft sm"
+              title={tr('全屏专注阅读', 'Full-screen focused reading')}
+              onClick={() => setReaderOpen(true)}
+            >
+              <Icon name="book" size={13} />
+              {tr('阅览模式', 'Reading mode')}
+            </button>
           </div>
-          <Markdown source={paper.wiki_content} style={{ fontSize: 13 }} />
+          <Markdown source={paper.wiki_content} />
         </div>
       ) : (
-        <div className="row gap10" style={{ marginTop: 14 }}>
-          <button
-            className="btn btn-soft sm"
-            disabled={compileMutation.isPending}
-            onClick={() => compileMutation.mutate()}
-          >
-            {compileMutation.isPending ? (
-              <>
-                <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                {tr('生成中…', 'Generating…')}
-              </>
-            ) : (
-              <>
-                <Icon name="sparkle" size={13} />
-                {tr('生成解读', 'Generate summary')}
-              </>
-            )}
-          </button>
-          {compileMutation.isPending && (
-            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-              {tr('大约需要半分钟', 'Takes about half a minute')}
-            </span>
+        <EmptyState
+          compact
+          icon="pen"
+          title={tr('还没有 AI 介绍', 'No AI intro yet')}
+          desc={tr(
+            '点上方的编译按钮，让 AI 精读这篇论文并生成图文介绍。',
+            'Hit the compile button above to have the AI read this paper and write an illustrated intro.',
           )}
-        </div>
+        />
+      )}
+
+      {readerOpen && (
+        <PaperReader
+          paper={readerPaper}
+          renderFigure={() => null}
+          onClose={() => setReaderOpen(false)}
+        />
       )}
     </div>
   );

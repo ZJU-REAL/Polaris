@@ -57,6 +57,7 @@ class DailyPaperItem(BaseModel):
 
 class DailyPaperDetail(DailyPaperItem):
     wiki_content: str | None = None
+    pdf_available: bool = False
 
 
 class DailyPage(BaseModel):
