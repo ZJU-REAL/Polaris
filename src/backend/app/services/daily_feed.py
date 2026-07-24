@@ -410,7 +410,15 @@ _COMPILING: set[uuid.UUID] = set()
 async def compile_entry_wiki(
     session: AsyncSession, *, entry_id: uuid.UUID, user_id: uuid.UUID
 ) -> DailyFeedEntry:
-    """通用模板编译单篇解读（全实验室共享一份），写进 entry；费用记个人。"""
+    """通用模板编译单篇解读（全实验室共享一份），写进 entry；费用记个人。
+
+    论文已有 PDF（典型：收录后被后台补全过）时先抽图 + 标注重要图，
+    与库版重新编译同款逻辑，产出图文解读；无 PDF 则纯文字。
+    """
+    from pathlib import Path
+
+    from app.services.figure_annotate import annotate_figures
+    from app.services.literature.pdf_extract import extract_figures
     from app.services.wiki_compile import compile_paper
 
     entry = await session.get(DailyFeedEntry, entry_id)
@@ -422,6 +430,16 @@ async def compile_entry_wiki(
         raise CompileInProgressError(str(entry_id))
     _COMPILING.add(entry_id)
     try:
+        if paper.pdf_path and Path(paper.pdf_path).exists():
+            # 从未提取过，或上一轮一张重要图都没选出来 → 重提候选（对齐 recompile_paper）
+            if paper.figures is None or not any(f.get("important") for f in paper.figures):
+                candidates = await extract_figures(str(paper.id), Path(paper.pdf_path))
+                paper.figures = [
+                    c | {"caption": None, "kind": None, "important": False} for c in candidates
+                ]
+            if paper.figures:
+                await annotate_figures(paper, paper.figures, user_id=user_id)
+            await session.commit()
         compiled = await compile_paper(paper, statement=None, user_id=user_id)
     finally:
         _COMPILING.discard(entry_id)

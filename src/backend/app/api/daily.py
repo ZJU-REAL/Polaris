@@ -11,12 +11,16 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_admin, require_llm_chat, require_llm_task
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
+from app.core.redis import get_redis_dep
+from app.models.library_direction import DirectionLibrary
+from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.daily import (
     DailyCategoriesRead,
@@ -34,6 +38,7 @@ from app.schemas.daily import (
 from app.schemas.paper import PaperChatRequest
 from app.services import daily_feed as daily_service
 from app.services import library_chat as library_chat_service
+from app.services import paper_enrich as paper_enrich_service
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +166,7 @@ async def collect(
     payload: DailyCollectRequest,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
 ) -> DailyCollectResponse:
     results = await daily_service.collect_papers(
         session,
@@ -170,6 +176,27 @@ async def collect(
         topic_ids=payload.topic_ids,
         personal=payload.personal,
     )
+    # 与手动添加同款后台补全（#74：下载→抽取→补机构→向量化→打分）——池论文是轻量行，
+    # 收录后按第一个成功收录的方向库为打分目标；仅书架/个人收录则无打分目标。
+    target_library_id = next(
+        (r["target_id"] for r in results if r["target_type"] == "library" and not r["forbidden"]),
+        None,
+    )
+    project_id = None
+    if target_library_id is not None:
+        library = await session.get(DirectionLibrary, target_library_id)
+        project_id = library.project_id if library is not None else None
+    for paper_id in payload.paper_ids:
+        paper = await session.get(Paper, paper_id)
+        if paper is None or paper_enrich_service.paper_processing_complete(paper):
+            continue
+        await paper_enrich_service.launch_paper_enrichment(
+            redis=redis,
+            paper_id=paper_id,
+            user_id=user.id,
+            library_id=target_library_id,
+            project_id=project_id,
+        )
     return DailyCollectResponse(results=results)
 
 

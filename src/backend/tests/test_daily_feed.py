@@ -192,6 +192,17 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
         "topic_ids": [project_id],
         "personal": True,
     }
+    # 收录会启动与手动添加同款的后台补全（#74），打分目标 = 第一个成功收录的方向库
+    launched: list[dict] = []
+
+    async def _fake_launch(**kwargs):
+        launched.append(kwargs)
+        return "task-stub"
+
+    from app.services import paper_enrich
+
+    monkeypatch.setattr(paper_enrich, "launch_paper_enrichment", _fake_launch)
+
     resp = await client.post("/api/daily/collect", json=payload, headers=headers)
     assert resp.status_code == 200
     results = {r["target_type"]: r for r in resp.json()["results"]}
@@ -199,6 +210,12 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
     assert results["topic"]["added"] == 1
     # 入架必入个人库（add_to_shelf 自带同步），个人库目标看到的是「已存在」
     assert results["personal"]["added"] + results["personal"]["skipped_existing"] == 1
+
+    # 池论文是轻量行（无 PDF）→ 必然触发补全，且目标库/课题归因正确
+    assert len(launched) == 1
+    assert str(launched[0]["paper_id"]) == item["paper_id"]
+    assert launched[0]["library_id"] == library_id
+    assert str(launched[0]["project_id"]) == project_id
 
     # 重复收录 → skipped_existing
     resp = await client.post("/api/daily/collect", json=payload, headers=headers)
