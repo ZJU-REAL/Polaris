@@ -28,6 +28,7 @@ from app.schemas.daily import (
     DailyCollectionsRead,
     DailyCollectRequest,
     DailyCollectResponse,
+    DailyCollectTask,
     DailyCompileResult,
     DailyDay,
     DailyLikerFull,
@@ -186,18 +187,21 @@ async def collect(
     if target_library_id is not None:
         library = await session.get(DirectionLibrary, target_library_id)
         project_id = library.project_id if library is not None else None
+    tasks: list[DailyCollectTask] = []
     for paper_id in payload.paper_ids:
         paper = await session.get(Paper, paper_id)
         if paper is None or paper_enrich_service.paper_processing_complete(paper):
             continue
-        await paper_enrich_service.launch_paper_enrichment(
+        task_id = await paper_enrich_service.launch_paper_enrichment(
             redis=redis,
             paper_id=paper_id,
             user_id=user.id,
             library_id=target_library_id,
             project_id=project_id,
         )
-    return DailyCollectResponse(results=results)
+        if task_id:
+            tasks.append(DailyCollectTask(paper_id=paper_id, task_id=task_id))
+    return DailyCollectResponse(results=results, tasks=tasks)
 
 
 @router.get("/categories", response_model=DailyCategoriesRead)

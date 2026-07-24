@@ -178,10 +178,13 @@ export function CollectTreeModal({
   paper,
   open,
   onClose,
+  onCollected,
 }: {
   paper: CollectPaperRef;
   open: boolean;
   onClose: () => void;
+  /** 收录触发了后台补全时回调（taskId + 标题），父级据此弹分阶段进度框（同手动添加）。 */
+  onCollected?: (task: { taskId: string; title: string }) => void;
 }) {
   const queryClient = useQueryClient();
   const { projects } = useProject();
@@ -289,6 +292,9 @@ export function CollectTreeModal({
       }
       void queryClient.invalidateQueries({ queryKey: ['daily-collections', paper.entry_id] });
       onClose();
+      // 收录若启动了后台补全（同手动添加），交给父级弹分阶段进度框
+      const task = resp.tasks?.find((t) => t.paper_id === paper.paper_id);
+      if (task) onCollected?.({ taskId: task.task_id, title: paper.title });
     },
     onError: (e) =>
       toast(

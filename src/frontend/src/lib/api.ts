@@ -2325,8 +2325,15 @@ export interface DailyCollectResult {
   forbidden: boolean;
 }
 
+export interface DailyCollectTask {
+  paper_id: string;
+  task_id: string;
+}
+
 export interface DailyCollectResponse {
   results: DailyCollectResult[];
+  /** 收录后启动的后台补全任务（同手动添加）；订阅可显示下载/抽取/向量化/打分进度 */
+  tasks?: DailyCollectTask[];
 }
 
 /** 该论文已在哪些收录目标里（树选框预勾选/禁用）。 */
