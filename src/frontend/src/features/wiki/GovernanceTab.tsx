@@ -2,8 +2,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
-import { api, isAdmin, type DirectionLibraryDetail, type DuplicateCandidatePaper, type RubricDimension } from '../../lib/api';
+import { api, isAdmin, type DirectionLibraryDetail, type DuplicateCandidatePaper, type ProjectDefinition } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { InclusionSettingsForm, type InclusionValue } from '../libraries/InclusionSettingsForm';
+
+/** library.definition → 收录设置表单初值 */
+function fromDefinition(def: ProjectDefinition | null): InclusionValue {
+  const d = def ?? {};
+  return {
+    arxiv_categories: d.keywords?.arxiv_categories ?? [],
+    include: d.keywords?.include ?? [],
+    rubric: d.rubric ?? [],
+    anchors: d.anchor_papers ?? [],
+  };
+}
 
 /* ============================================================
    文献库「治理」页签（P6）：
@@ -324,43 +336,24 @@ function LibraryInfoCard({ lib }: { lib: DirectionLibraryDetail }) {
 
 /* —— 收录设置（P8：库为收录配置权威源，ingest 按此检索/打分） —— */
 
-const QUICK_CATEGORIES = ['cs.CL', 'cs.AI', 'cs.LG', 'cs.CV', 'cs.MA', 'stat.ML'];
-
 function InclusionSettingsCard({ lib }: { lib: DirectionLibraryDetail }) {
   const queryClient = useQueryClient();
-  const def = lib.definition ?? {};
-  const [categories, setCategories] = useState<string[]>(def.keywords?.arxiv_categories ?? []);
-  const [includeStr, setIncludeStr] = useState((def.keywords?.include ?? []).join(', '));
-  const [customCat, setCustomCat] = useState('');
-  const [rubric, setRubric] = useState<RubricDimension[]>(def.rubric ?? []);
+  const [value, setValue] = useState<InclusionValue>(() => fromDefinition(lib.definition));
 
   useEffect(() => {
-    const d = lib.definition ?? {};
-    setCategories(d.keywords?.arxiv_categories ?? []);
-    setIncludeStr((d.keywords?.include ?? []).join(', '));
-    setRubric(d.rubric ?? []);
+    setValue(fromDefinition(lib.definition));
   }, [lib]);
-
-  const includeTerms = includeStr.split(/[,，\n]/).map((x) => x.trim()).filter(Boolean);
-
-  function toggleCat(c: string) {
-    setCategories((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
-  }
-  function addCustomCat() {
-    const c = customCat.trim();
-    if (c && !categories.includes(c)) setCategories((prev) => [...prev, c]);
-    setCustomCat('');
-  }
 
   const save = useMutation({
     mutationFn: () =>
       api.updateLibrary(lib.id, {
         keywords: {
           ...(lib.definition?.keywords ?? {}),
-          arxiv_categories: categories,
-          include: includeTerms,
+          arxiv_categories: value.arxiv_categories,
+          include: value.include,
         },
-        rubric: rubric.filter((r) => r.name.trim()),
+        rubric: value.rubric.filter((r) => r.name.trim()),
+        anchors: value.anchors.filter((a) => a.title.trim() || (a.arxiv_id ?? '').trim()),
       }),
     onSuccess: () => {
       toast(tr('收录设置已保存', 'Inclusion settings saved'), 'ok');
@@ -378,77 +371,20 @@ function InclusionSettingsCard({ lib }: { lib: DirectionLibraryDetail }) {
           {save.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
         </button>
       </div>
-      <p className="muted" style={{ fontSize: 12, marginBottom: 14 }}>
+      <p className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
         {tr(
           '文献追踪按这里的 arXiv 分类与关键词检索、按打分标准判定相关性；留空则用默认分类、只按方向说明打分。',
           'Literature tracking searches by these arXiv categories and keywords and scores relevance against the rubric; leave empty to use default categories and statement-only scoring.',
         )}
       </p>
-
-      <div className="col gap6" style={{ marginBottom: 14 }}>
-        <span className="muted" style={{ fontSize: 12 }}>{tr('arXiv 分类', 'arXiv categories')}</span>
-        <div className="row gap6 wrap">
-          {[...new Set([...QUICK_CATEGORIES, ...categories])].map((c) => (
-            <button key={c} type="button" className={'chip mono' + (categories.includes(c) ? ' on' : '')} onClick={() => toggleCat(c)}>
-              {c}
-            </button>
-          ))}
-        </div>
-        <div className="row gap8" style={{ marginTop: 6 }}>
-          <input
-            className="input"
-            style={{ width: 170 }}
-            placeholder={tr('自定义分类，如 cs.IR', 'custom, e.g. cs.IR')}
-            value={customCat}
-            onChange={(e) => setCustomCat(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomCat(); } }}
-          />
-          <button className="btn btn-soft sm" onClick={addCustomCat} disabled={!customCat.trim()}>{tr('添加', 'Add')}</button>
-        </div>
-      </div>
-
-      <label className="col gap6" style={{ marginBottom: 14 }}>
-        <span className="muted" style={{ fontSize: 12 }}>{tr('检索关键词（逗号分隔）', 'Include terms (comma-separated)')}</span>
-        <textarea
-          className="input"
-          rows={2}
-          value={includeStr}
-          onChange={(e) => setIncludeStr(e.target.value)}
-          placeholder={tr('如 agent, tool use, planning', 'e.g. agent, tool use, planning')}
-        />
-      </label>
-
-      <div className="col gap6">
-        <div className="row" style={{ justifyContent: 'space-between' }}>
-          <span className="muted" style={{ fontSize: 12 }}>{tr('打分标准（rubric）', 'Scoring rubric')}</span>
-          <button className="btn btn-soft sm" onClick={() => setRubric([...rubric, { name: '', description: '', weight: 1 }])}>
-            <Icon name="plus" size={12} />
-            {tr('添加维度', 'Add dimension')}
-          </button>
-        </div>
-        {rubric.length === 0 ? (
-          <div className="muted" style={{ fontSize: 12.5 }}>
-            {tr('未设打分维度：只按方向说明判定相关性。', 'No dimensions — relevance is judged by the statement only.')}
-          </div>
-        ) : (
-          <div className="col gap8">
-            {rubric.map((r, i) => (
-              <div key={i} className="row gap8" style={{ alignItems: 'flex-start' }}>
-                <input className="input" style={{ width: 120 }} placeholder={tr('维度名', 'Name')} value={r.name}
-                  onChange={(e) => setRubric(rubric.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-                <input className="input" style={{ flex: 1 }} placeholder={tr('打分标准', 'Criteria')} value={r.description}
-                  onChange={(e) => setRubric(rubric.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))} />
-                <input className="input mono" style={{ width: 64 }} inputMode="decimal" value={String(r.weight)}
-                  onChange={(e) => setRubric(rubric.map((x, j) => (j === i ? { ...x, weight: Number(e.target.value) || 0 } : x)))} />
-                <button className="icon-btn" style={{ height: 38 }} title={tr('删除维度', 'Remove dimension')}
-                  onClick={() => setRubric(rubric.filter((_, j) => j !== i))}>
-                  <Icon name="trash" size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <InclusionSettingsForm
+        value={value}
+        onChange={setValue}
+        name={lib.name}
+        statement={lib.statement ?? ''}
+        showRubric
+        showAnchors
+      />
     </section>
   );
 }

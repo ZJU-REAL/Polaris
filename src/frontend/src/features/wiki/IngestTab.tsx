@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
@@ -95,12 +95,19 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
   const scopeId = libraryId ?? pid ?? '';
 
   // 无 include 关键词时 arXiv 检索会退化成无差别抓取（空转烧钱），前端禁止启动。
-  // 独立库的关键词在治理页配置、后端自行校验，这里不做课题级的关键词拦截。
   const { projects } = useProject();
   const project = libraryId ? undefined : projects.find((p) => p.id === pid);
-  // 课题不再承载收录关键词（P9e：project.definition 退役）；课题作用域 ingest 一律
-  // 提示去文献库配置，独立库的关键词校验在后端。
-  const noKeywords = !!project;
+  // 库作用域：真读该库 definition 的 include 关键词是否为空（拿不到库定义时不误报）。
+  // 课题作用域（P9e：project.definition 退役）沿用旧代理，提示去文献库配置关键词。
+  const { data: libDef } = useQuery({
+    queryKey: ['library', libraryId],
+    queryFn: () => api.getLibrary(libraryId as string),
+    enabled: !!libraryId,
+    retry: false,
+  });
+  const noKeywords = libraryId
+    ? !!libDef && (libDef.definition?.keywords?.include?.length ?? 0) === 0
+    : !!project;
 
   // —— 成本旋钮（bootstrap） ——
   const [monthsBack, setMonthsBack] = useState(6);
