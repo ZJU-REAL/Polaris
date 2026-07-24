@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { SelectMenu } from '../../components/ui/SelectMenu';
+import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import {
@@ -28,6 +29,7 @@ import {
   YearRangeField,
 } from '../wiki/shared';
 import { AddPaperModal } from './AddPaperModal';
+import { ShelfChatTab } from './ShelfChatTab';
 import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
 
 /* ============================================================
@@ -42,6 +44,8 @@ import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
 const PAGE_SIZE = 100;
 
 type ShelfFilter = 'all' | ShelfWikiSource;
+/** 页面级 tab：书架列表 / 相关研究对话 */
+type PageTab = 'list' | 'chat';
 /** 阅读状态筛选：空串=不限；其余透传给后端 reading_status。 */
 type ReadingFilter = '' | ReadingStatus;
 
@@ -284,6 +288,7 @@ export function ResearchPage() {
   const { currentProjectId } = useProject();
   const pid = currentProjectId ?? '';
 
+  const [tab, setTab] = useState<PageTab>('list');
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<ShelfSort>('added');
   const [filter, setFilter] = useState<ShelfFilter>('all');
@@ -498,26 +503,47 @@ export function ResearchPage() {
           'Papers you hand-picked from the linked libraries into this topic: note why they matter, read the wikis. The corpus holds far more.',
         )}
         right={
-          <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
-            <Icon name="plus" size={13} />
-            {tr('添加论文', 'Add papers')}
-          </button>
+          tab === 'list' ? (
+            <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
+              <Icon name="plus" size={13} />
+              {tr('添加论文', 'Add papers')}
+            </button>
+          ) : undefined
         }
       />
 
-      <LinkedLibrariesBar
-        pid={pid}
-        libs={libs}
-        corpusTotal={corpusTotal}
-        loading={sourceLibrariesQuery.isLoading}
-        onNavigate={(path) => navigate(path)}
-      />
+      {/* —— 页面级 tab：书架列表 / 相关研究对话 —— */}
+      <div className="row" style={{ marginBottom: 14 }}>
+        <Segmented<PageTab>
+          options={[
+            { v: 'list', label: tr('相关研究', 'Related work') },
+            { v: 'chat', label: tr('文献对话', 'Chat') },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+      </div>
 
-      {/* —— 双栏卡片容器（同「我的文献库」外壳；窄屏上下堆叠） —— */}
+      {/* 关联文献库栏（语料来源）：仅列表视图显示 */}
+      {tab === 'list' && (
+        <LinkedLibrariesBar
+          pid={pid}
+          libs={libs}
+          corpusTotal={corpusTotal}
+          loading={sourceLibrariesQuery.isLoading}
+          onNavigate={(path) => navigate(path)}
+        />
+      )}
+
+      {/* —— 卡片容器（列表用双栏；对话直接铺满） —— */}
+
       <div
         className="card"
         style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 480 }}
       >
+        {tab === 'chat' ? (
+          <ShelfChatTab pid={pid} />
+        ) : (
         <div className="split split-stackable">
           {/* —— 左：书架列表 —— */}
           <div className="split-list">
@@ -755,6 +781,7 @@ export function ResearchPage() {
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* —— 添加论文（从文献库 / 手动）统一弹窗 —— */}

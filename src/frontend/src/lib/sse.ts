@@ -187,6 +187,23 @@ export function chatLibrarySse(
   return postSse(`/projects/${projectId}/chat`, input, handlers);
 }
 
+/** 课题相关研究对话：POST /projects/{pid}/shelf/chat（sources → delta* → done/error）。 */
+export function chatShelfSse(
+  projectId: string,
+  input: { question: string; history: { role: 'user' | 'assistant'; content: string }[] },
+  handlers: PostSseHandlers,
+): () => void {
+  return postSse(`/projects/${projectId}/shelf/chat`, input, handlers);
+}
+
+/** 个人文献库对话：POST /library/chat（sources → delta* → done/error）。 */
+export function chatPersonalSse(
+  input: { question: string; history: { role: 'user' | 'assistant'; content: string }[] },
+  handlers: PostSseHandlers,
+): () => void {
+  return postSse('/library/chat', input, handlers);
+}
+
 /** 独立库对话：POST /libraries/{id}/chat（事件协议同 chatLibrarySse）。 */
 export function chatLibraryByIdSse(
   libraryId: string,

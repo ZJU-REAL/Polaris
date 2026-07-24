@@ -139,41 +139,64 @@ def chunk_vector_search_supported(session: AsyncSession) -> bool:
 async def semantic_search_chunks(
     session: AsyncSession,
     *,
-    library_ids: list[uuid.UUID],
+    library_ids: list[uuid.UUID] | None = None,
     query_vector: list[float],
     limit: int,
     paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
     """pgvector 余弦检索（仅 postgres；调用方需先判 chunk_vector_search_supported）。
 
-    关联库并集：chunk 命中多库时 DISTINCT 去重。传 paper_ids 时把检索限制在这些
-    论文内（伴读引用指定文献用）。
+    默认按 library_ids 限定关联库并集（chunk 命中多库时 DISTINCT 去重）。
+    传 paper_ids 时把检索限制在这些论文内（伴读引用指定文献用）。
+    library_ids 为空/None 且给了 paper_ids 时走「纯 paper_ids、不 join 库」分支
+    （课题相关研究 / 个人库对话按论文集合直接检索）。
     """
     qv = json.dumps(query_vector)
-    params: dict[str, object] = {
-        "qv": qv,
-        "libs": [str(lid) for lid in library_ids],
-        "k": limit,
-    }
-    paper_filter = ""
-    if paper_ids:
-        paper_filter = "AND c.paper_id = ANY(CAST(:pids AS uuid[])) "
-        params["pids"] = [str(p) for p in paper_ids]
-    rows = (
-        await session.execute(
-            sa_text(
-                "SELECT DISTINCT c.id, 1 - (c.embedding <=> CAST(:qv AS vector)) AS score "
-                "FROM paper_chunks c "
-                "JOIN library_papers lp ON lp.paper_id = c.paper_id "
-                "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
-                "WHERE c.embedding IS NOT NULL "
-                f"{paper_filter}"
-                "ORDER BY score DESC "
-                "LIMIT :k"
-            ),
-            params,
-        )
-    ).all()
+    if not library_ids and paper_ids:
+        # 纯 paper_ids 分支：不 join library_papers，只按论文集合过滤
+        params: dict[str, object] = {
+            "qv": qv,
+            "pids": [str(p) for p in paper_ids],
+            "k": limit,
+        }
+        rows = (
+            await session.execute(
+                sa_text(
+                    "SELECT c.id, 1 - (c.embedding <=> CAST(:qv AS vector)) AS score "
+                    "FROM paper_chunks c "
+                    "WHERE c.embedding IS NOT NULL "
+                    "AND c.paper_id = ANY(CAST(:pids AS uuid[])) "
+                    "ORDER BY score DESC "
+                    "LIMIT :k"
+                ),
+                params,
+            )
+        ).all()
+    else:
+        params = {
+            "qv": qv,
+            "libs": [str(lid) for lid in (library_ids or [])],
+            "k": limit,
+        }
+        paper_filter = ""
+        if paper_ids:
+            paper_filter = "AND c.paper_id = ANY(CAST(:pids AS uuid[])) "
+            params["pids"] = [str(p) for p in paper_ids]
+        rows = (
+            await session.execute(
+                sa_text(
+                    "SELECT DISTINCT c.id, 1 - (c.embedding <=> CAST(:qv AS vector)) AS score "
+                    "FROM paper_chunks c "
+                    "JOIN library_papers lp ON lp.paper_id = c.paper_id "
+                    "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
+                    "WHERE c.embedding IS NOT NULL "
+                    f"{paper_filter}"
+                    "ORDER BY score DESC "
+                    "LIMIT :k"
+                ),
+                params,
+            )
+        ).all()
     if not rows:
         return []
     scores = {row.id: float(row.score) for row in rows}
@@ -189,14 +212,16 @@ async def semantic_search_chunks(
 async def keyword_search_chunks(
     session: AsyncSession,
     *,
-    library_ids: list[uuid.UUID],
+    library_ids: list[uuid.UUID] | None = None,
     q: str,
     limit: int,
     paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
     """关键词降级检索：问题分词后 ilike 命中任一词，按命中词数粗排。
 
-    关联库并集（chunk 去重）。传 paper_ids 时把检索限制在这些论文内。
+    默认按 library_ids 限定关联库并集（chunk 去重）。传 paper_ids 时把检索限制在
+    这些论文内。library_ids 为空/None 且给了 paper_ids 时走「纯 paper_ids、不 join
+    库」分支（课题相关研究 / 个人库对话按论文集合直接检索）。
     """
     terms = [t for t in _WORD_RE.findall(q.lower()) if len(t) >= 2][:8]
     if not terms:
@@ -205,14 +230,18 @@ async def keyword_search_chunks(
     for term in terms:
         clause = PaperChunk.text.ilike(f"%{term}%")
         cond = clause if cond is None else cond | clause
-    stmt = (
-        select(PaperChunk)
-        .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
-        .where(LibraryPaper.library_id.in_(library_ids), cond)
-        .distinct()
-    )
-    if paper_ids:
-        stmt = stmt.where(PaperChunk.paper_id.in_(paper_ids))
+    if not library_ids and paper_ids:
+        # 纯 paper_ids 分支：不 join library_papers，只按论文集合过滤
+        stmt = select(PaperChunk).where(PaperChunk.paper_id.in_(paper_ids), cond)
+    else:
+        stmt = (
+            select(PaperChunk)
+            .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
+            .where(LibraryPaper.library_id.in_(library_ids or []), cond)
+            .distinct()
+        )
+        if paper_ids:
+            stmt = stmt.where(PaperChunk.paper_id.in_(paper_ids))
     candidates = (await session.execute(stmt.limit(limit * 5))).scalars().all()
 
     def score_of(chunk: PaperChunk) -> float:

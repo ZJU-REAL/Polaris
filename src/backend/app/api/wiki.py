@@ -41,6 +41,8 @@ from app.services import library_chat as library_chat_service
 from app.services import papers as papers_service
 from app.services import stats as stats_service
 from app.services.libraries import get_library_for_project
+from app.services.topic_shelf import shelf_paper_ids
+from app.services.user_library import personal_paper_ids
 from app.services.wiki_export import build_obsidian_zip
 
 logger = logging.getLogger(__name__)
@@ -189,24 +191,16 @@ def _sse_frame(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
-@router.post("/projects/{project_id}/chat")
-async def chat_with_library(
-    project_id: uuid.UUID,
-    data: PaperChatRequest,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_chat),
+def _chat_stream_response(
+    messages: list,
+    sources: list,
+    *,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID | None,
 ) -> StreamingResponse:
-    """文献库对话（docs/api-lit.md §8）：跨文献检索 + stage=reading 流式回答。
-
-    事件：``sources``（引用来源清单）→ ``delta``* → ``done``；错误 ``error`` 后关流。
-    """
-    project = await _member_project(session, project_id, user)
-    user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
-    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    """文献对话 SSE 骨架：先发 ``sources``，再 stage=reading 流式 ``delta``* → ``done``；
+    出错 ``error`` 后关流；空闲发 ``: ping`` 心跳。库/课题/个人三种对话共用。"""
     llm = get_llm_router()
-    messages, sources = await library_chat_service.build_library_messages(
-        session, project=project, question=data.question, history=history, llm=llm, user_id=user_id
-    )
 
     async def event_stream() -> AsyncIterator[str]:
         yield _sse_frame("sources", {"items": [asdict(s) for s in sources]})
@@ -222,7 +216,7 @@ async def chat_with_library(
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 — 转成 error 事件后关流
-                logger.warning("library chat stream failed", exc_info=True)
+                logger.warning("literature chat stream failed", exc_info=True)
                 await queue.put(("error", f"{type(e).__name__}: {e}"))
 
         task = asyncio.create_task(pump())
@@ -251,6 +245,86 @@ async def chat_with_library(
             task.cancel()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.post("/projects/{project_id}/chat")
+async def chat_with_library(
+    project_id: uuid.UUID,
+    data: PaperChatRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_chat),
+) -> StreamingResponse:
+    """文献库对话（docs/api-lit.md §8）：跨文献检索 + stage=reading 流式回答。
+
+    事件：``sources``（引用来源清单）→ ``delta``* → ``done``；错误 ``error`` 后关流。
+    """
+    project = await _member_project(session, project_id, user)
+    user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
+    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    llm = get_llm_router()
+    messages, sources = await library_chat_service.build_library_messages(
+        session, project=project, question=data.question, history=history, llm=llm, user_id=user_id
+    )
+    return _chat_stream_response(messages, sources, user_id=user_id, project_id=project_id)
+
+
+@router.post("/projects/{project_id}/shelf/chat")
+async def chat_with_shelf(
+    project_id: uuid.UUID,
+    data: PaperChatRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_chat),
+) -> StreamingResponse:
+    """课题相关研究对话：语料 = 该课题相关研究书架上的论文集合。
+
+    检索只覆盖书架论文（不按方向库过滤），没索引的论文降级 TL;DR/摘要。
+    事件序列与文献库对话一致（``sources`` → ``delta``* → ``done``）。
+    """
+    project = await _member_project(session, project_id, user)
+    user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
+    statement = project.statement or project.name
+    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    llm = get_llm_router()
+    paper_ids = await shelf_paper_ids(session, project_id=project_id)
+    messages, sources = await library_chat_service.build_scoped_messages(
+        session,
+        statement=statement,
+        question=data.question,
+        history=history,
+        paper_ids=paper_ids,
+        llm=llm,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    return _chat_stream_response(messages, sources, user_id=user_id, project_id=project_id)
+
+
+@router.post("/library/chat")
+async def chat_with_personal_library(
+    data: PaperChatRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_chat),
+) -> StreamingResponse:
+    """个人文献库对话：语料 = 本人收藏的论文集合（用户级，方向无关）。
+
+    检索只覆盖个人收藏（不按方向库过滤），没索引的论文降级 TL;DR/摘要。
+    事件序列与文献库对话一致（``sources`` → ``delta``* → ``done``）。
+    """
+    user_id = user.id
+    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    llm = get_llm_router()
+    paper_ids = await personal_paper_ids(session, user_id=user_id, tab="saved")
+    messages, sources = await library_chat_service.build_scoped_messages(
+        session,
+        statement=None,
+        question=data.question,
+        history=history,
+        paper_ids=paper_ids,
+        llm=llm,
+        user_id=user_id,
+        project_id=None,
+    )
+    return _chat_stream_response(messages, sources, user_id=user_id, project_id=None)
 
 
 @router.post("/projects/{project_id}/index/rebuild")
