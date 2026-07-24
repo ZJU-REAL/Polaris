@@ -2680,6 +2680,13 @@ export const api = {
   restorePaper(id: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/papers/${id}/restore`, { method: 'POST' });
   },
+  /** 课题起源库作用域的召回/彻底删除（精确锁定本库成员行，避免跨库误删）。 */
+  restoreProjectPaper(projectId: string, paperId: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/projects/${projectId}/papers/${paperId}/restore`, { method: 'POST' });
+  },
+  deleteProjectPaper(projectId: string, paperId: string): Promise<void> {
+    return request<void>(`/projects/${projectId}/papers/${paperId}`, { method: 'DELETE' });
+  },
   /** 清空垃圾桶：彻底删除项目内全部已删除论文。 */
   emptyTrash(projectId: string): Promise<{ deleted: number }> {
     return request<{ deleted: number }>(`/projects/${projectId}/trash/empty`, { method: 'POST' });
@@ -2988,6 +2995,13 @@ export const api = {
   /** 库作用域单篇详情：锁定该库那份成员行（相关度/状态/wiki 不跨库串味）。 */
   getLibraryPaper(id: string, paperId: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/libraries/${id}/papers/${paperId}`);
+  },
+  /** 库作用域的召回/彻底删除（精确锁定本库成员行，避免跨库误删）。 */
+  restoreLibraryPaper(id: string, paperId: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/libraries/${id}/papers/${paperId}/restore`, { method: 'POST' });
+  },
+  deleteLibraryPaper(id: string, paperId: string): Promise<void> {
+    return request<void>(`/libraries/${id}/papers/${paperId}`, { method: 'DELETE' });
   },
   /** 手动添加文献到库；409 → PAPER_EXISTS（body 含 paper_id）；422 → PARSE_FAILED。 */
   importLibraryPaper(id: string, input: PaperImportInput): Promise<PaperDetail> {

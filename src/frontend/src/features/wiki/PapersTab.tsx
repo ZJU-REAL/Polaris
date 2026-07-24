@@ -473,7 +473,9 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
   };
 
   const restoreMutation = useMutation({
-    mutationFn: (id: string) => api.restorePaper(id),
+    // 作用域召回：锁定当前库那份成员行，避免跨库误召回（见彻底删除同理）
+    mutationFn: (id: string) =>
+      libraryId ? api.restoreLibraryPaper(libraryId, id) : api.restoreProjectPaper(pid, id),
     onSuccess: (p) => {
       toast(`${tr('已召回：', 'Restored: ')}${p.title.slice(0, 30)}`, 'ok');
       invalidate();
@@ -483,7 +485,9 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
   });
 
   const purgeMutation = useMutation({
-    mutationFn: (id: string) => api.deletePaper(id),
+    // 作用域彻底删除：只删当前库那份成员行；无库作用域会命中错误的库、删不掉本库这份
+    mutationFn: (id: string) =>
+      libraryId ? api.deleteLibraryPaper(libraryId, id) : api.deleteProjectPaper(pid, id),
     onSuccess: () => {
       toast(tr('已彻底删除', 'Permanently deleted'), 'ok');
       invalidate();
