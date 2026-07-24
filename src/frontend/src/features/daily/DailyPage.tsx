@@ -438,7 +438,6 @@ export function DailyPage() {
       <PageHead
         eyebrow="Polaris · Daily Papers"
         title={tr('每日新论文', 'Daily Papers')}
-        sub={tr('arxiv 每日新提交，保留最近 7 天', 'New arxiv submissions, kept for the last 7 days')}
         right={
           (categoriesQuery.data?.categories.length ?? 0) > 0 ? (
             <div className="row gap6 wrap" style={{ justifyContent: 'flex-end', maxWidth: 420 }}>
