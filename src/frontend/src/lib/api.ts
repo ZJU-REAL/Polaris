@@ -2711,9 +2711,17 @@ export const api = {
     const qs = params.toString();
     return request<DirectionLibrarySummary[]>(`/libraries${qs ? `?${qs}` : ''}`);
   },
-  /** 申请把个人库转为公共库（创建者调；返回更新后的库，状态转 pending 待审批）。 */
+  /** 申请把个人库转为公共库（创建者/策展人→pending；平台 admin 调则直接通过转公共）。 */
   requestPublicLibrary(id: string): Promise<DirectionLibrarySummary> {
     return requestJson<DirectionLibrarySummary>(`/libraries/${id}/request-public`, 'POST', {});
+  },
+  /** 撤回转公共申请（创建者/策展人）：pending → 退回可用个人库。 */
+  cancelRequestPublicLibrary(id: string): Promise<DirectionLibraryDetail> {
+    return requestJson<DirectionLibraryDetail>(`/libraries/${id}/cancel-request-public`, 'POST', {});
+  },
+  /** 把公共库转回个人库（平台 admin）：其他成员将看不到。 */
+  makeLibraryPersonal(id: string): Promise<DirectionLibraryDetail> {
+    return requestJson<DirectionLibraryDetail>(`/libraries/${id}/make-personal`, 'POST', {});
   },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);

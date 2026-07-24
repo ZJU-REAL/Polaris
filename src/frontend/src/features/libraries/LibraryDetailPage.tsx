@@ -116,20 +116,66 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
   });
   const requestPublic = useMutation({
     mutationFn: () => api.requestPublicLibrary(lib.id),
-    onSuccess: () => { toast(tr('已提交申请，等待管理员审批', 'Request submitted — waiting for an admin to review'), 'ok'); invalidate(); },
+    // admin 发起直接转公共；普通归属人发起是提交申请。
+    onSuccess: () => {
+      toast(
+        admin
+          ? tr('已转为公共文献库', 'Made public')
+          : tr('已提交申请，等待管理员审批', 'Request submitted — waiting for an admin to review'),
+        'ok',
+      );
+      invalidate();
+    },
+    onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
+  });
+  const cancelRequest = useMutation({
+    mutationFn: () => api.cancelRequestPublicLibrary(lib.id),
+    onSuccess: () => { toast(tr('已撤回申请', 'Request withdrawn'), 'ok'); invalidate(); },
+    onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
+  });
+  const makePersonal = useMutation({
+    mutationFn: () => api.makeLibraryPersonal(lib.id),
+    onSuccess: () => { toast(tr('已转为个人文献库', 'Made personal'), 'ok'); invalidate(); },
     onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
   });
 
-  // 个人 active 库 + 我是归属人：显示「申请转为公共文献库」入口（含被驳回后的重新申请）。
   if (lib.status === 'active') {
-    if (lib.is_public || !isOwner) return null;
+    // 公共库：仅平台 admin 可就地转回个人（转回后其他成员看不到）。
+    if (lib.is_public) {
+      if (!admin) return null;
+      return (
+        <div className="card" style={{ padding: '12px 16px', marginBottom: 14 }}>
+          <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div className="col gap4" style={{ minWidth: 0 }}>
+              <div className="row gap8" style={{ fontWeight: 680, fontSize: 13.5 }}>
+                <Icon name="book" size={14} style={{ color: 'var(--ok-tx)' }} />
+                {tr('公共文献库', 'Public library')}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
+                {tr(
+                  '全实验室可见、维护额度由管理员承担。转为个人库后仅归属人可见，其他成员将看不到。',
+                  'Visible to the whole lab, upkeep covered by admins. Making it personal hides it from everyone but its owner.',
+                )}
+              </div>
+            </div>
+            <div className="row gap8" style={{ flexShrink: 0 }}>
+              <button className="btn btn-soft sm" disabled={makePersonal.isPending} onClick={() => makePersonal.mutate()}>
+                {makePersonal.isPending ? tr('处理中…', 'Working…') : tr('转为个人文献库', 'Make personal')}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    // 个人库：归属人或 admin 可发起转公共（admin 直接通过）。
+    if (!(isOwner || admin)) return null;
     return (
       <div className="card" style={{ padding: '12px 16px', marginBottom: 14 }}>
         <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div className="col gap4" style={{ minWidth: 0 }}>
             <div className="row gap8" style={{ fontWeight: 680, fontSize: 13.5 }}>
               <Icon name="users" size={14} style={{ color: 'var(--accent)' }} />
-              {tr('这是你的个人文献库', 'This is your personal library')}
+              {tr('个人文献库', 'Personal library')}
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
               {tr(
@@ -147,15 +193,13 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
             <button
               className="btn btn-soft sm"
               disabled={requestPublic.isPending}
-              onClick={() => {
-                if (!window.confirm(tr(
-                  '确定申请把这个个人文献库转为公共文献库吗？通过后本库将归实验室所有。',
-                  'Request to make this personal library public? Once approved it belongs to the lab.',
-                ))) return;
-                requestPublic.mutate();
-              }}
+              onClick={() => requestPublic.mutate()}
             >
-              {requestPublic.isPending ? tr('提交中…', 'Submitting…') : tr('申请转为公共文献库', 'Request to make public')}
+              {requestPublic.isPending
+                ? tr('提交中…', 'Submitting…')
+                : admin
+                  ? tr('转为公共文献库', 'Make public')
+                  : tr('申请转为公共文献库', 'Request to make public')}
             </button>
           </div>
         </div>
@@ -196,6 +240,13 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
                 {tr('驳回', 'Reject')}
               </button>
             )}
+          </div>
+        )}
+        {pending && !admin && isOwner && (
+          <div className="row gap8" style={{ flexShrink: 0 }}>
+            <button className="btn btn-soft sm" disabled={cancelRequest.isPending} onClick={() => cancelRequest.mutate()}>
+              {cancelRequest.isPending ? tr('处理中…', 'Working…') : tr('取消申请', 'Withdraw request')}
+            </button>
           </div>
         )}
       </div>

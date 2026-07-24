@@ -22,6 +22,37 @@ import { InclusionSettingsForm, ARXIV_ID_RE, type InclusionValue } from './Inclu
    平台管理员可在此新建独立共享文献库（与任何课题解耦）。
    ============================================================ */
 
+/** 圆角小勾选框（体系内样式，替代原生 checkbox）。与论文撰写/实验搭建一致。 */
+function CheckBox({ checked, onToggle, title }: { checked: boolean; onToggle: () => void; title?: string }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      style={{
+        width: 18,
+        height: 18,
+        flexShrink: 0,
+        borderRadius: 5,
+        border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
+        background: checked ? 'var(--accent)' : 'transparent',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        padding: 0,
+        color: '#fff',
+        transition: 'all .12s',
+      }}
+    >
+      {checked && <Icon name="check" size={12} sw={2.4} />}
+    </button>
+  );
+}
+
 const CADENCES = [
   { v: 'daily', zh: '每日', en: 'Daily' },
   { v: 'weekly', zh: '每周', en: 'Weekly' },
@@ -107,11 +138,23 @@ function LibraryCard({
         flexDirection: 'column',
         gap: 10,
         cursor: 'pointer',
-        outline: selectMode && selected ? '2px solid var(--accent)' : undefined,
-        outlineOffset: -2,
+        borderColor: selectMode && selected ? 'var(--accent)' : undefined,
       }}
     >
       <div className="row gap8" style={{ alignItems: 'flex-start' }}>
+        {/* 占位常驻（仅 admin）：切换多选时卡片尺寸/位置不变 */}
+        {admin && (
+          <div
+            style={{ paddingTop: 3, visibility: selectMode ? 'visible' : 'hidden' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CheckBox
+              checked={selected}
+              onToggle={onToggleSelect}
+              title={selected ? tr('取消选择', 'Deselect') : tr('选择', 'Select')}
+            />
+          </div>
+        )}
         <span
           style={{
             width: 34,
@@ -146,15 +189,7 @@ function LibraryCard({
             </div>
           )}
         </div>
-        {selectMode ? (
-          <input
-            type="checkbox"
-            checked={selected}
-            readOnly
-            aria-label={tr('选择', 'Select')}
-            style={{ width: 16, height: 16, accentColor: 'var(--accent)', flexShrink: 0, marginTop: 3, cursor: 'pointer' }}
-          />
-        ) : canDelete ? (
+        {canDelete ? (
           <button
             className="icon-btn"
             title={tr('删除文献库', 'Delete library')}
@@ -167,7 +202,7 @@ function LibraryCard({
           >
             <Icon name="trash" size={14} />
           </button>
-        ) : (
+        ) : selectMode ? null : (
           <Icon name="arrow" size={14} style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 4 }} />
         )}
       </div>
@@ -356,6 +391,13 @@ export function LibrariesPage() {
     setSelectMode(false);
     setSelectedIds(new Set());
   }
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+  const allSelected = sorted.length > 0 && sorted.every((l) => selectedIds.has(l.id));
+  function toggleSelectAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(sorted.map((l) => l.id)));
+  }
 
   // 删除单个库：409 LIBRARY_HAS_TOPICS 时二次确认后带 force 重删。
   // 返回 true = 已删除，false = 用户在二次确认里放弃。
@@ -397,7 +439,7 @@ export function LibrariesPage() {
     },
     onSuccess: ({ deleted, skipped, failed }) => {
       void queryClient.invalidateQueries({ queryKey: ['libraries'] });
-      exitSelect();
+      clearSelection();
       if (failed.length > 0) {
         toast(
           tr(`已删除 ${deleted} 个，${failed.length} 个失败：${failed[0]}`, `Deleted ${deleted}, ${failed.length} failed: ${failed[0]}`),
@@ -421,23 +463,12 @@ export function LibrariesPage() {
         eyebrow={tr('实验室', 'Lab')}
         title={tr('文献库', 'Libraries')}
         right={
-          <div className="row gap8">
-            {admin && sorted.length > 0 && (
-              <button
-                className="btn btn-ghost sm"
-                onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
-              >
-                <Icon name={selectMode ? 'x' : 'check'} size={13} />
-                {selectMode ? tr('退出多选', 'Done') : tr('多选', 'Select')}
-              </button>
-            )}
-            {canCreate ? (
-              <button className="btn btn-primary sm" onClick={() => setCreateOpen(true)}>
-                <Icon name="plus" size={13} />
-                {tr('新建文献库', 'New library')}
-              </button>
-            ) : null}
-          </div>
+          canCreate ? (
+            <button className="btn btn-primary sm" onClick={() => setCreateOpen(true)}>
+              <Icon name="plus" size={13} />
+              {tr('新建文献库', 'New library')}
+            </button>
+          ) : null
         }
       />
 
@@ -459,47 +490,28 @@ export function LibrariesPage() {
             wrapStyle={{ width: 140 }}
           />
         </div>
-      </div>
-
-      {selectMode && (
-        <div
-          className="row gap10"
-          style={{
-            margin: '0 0 14px',
-            padding: '9px 14px',
-            borderRadius: 10,
-            background: 'var(--surface-2)',
-            border: '0.5px solid var(--border)',
-          }}
-        >
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-            {tr(`已选 ${selectedIds.size} 个`, `${selectedIds.size} selected`)}
-          </span>
-          <div style={{ flex: 1 }} />
-          <button className="btn btn-ghost sm" disabled={deleteMutation.isPending} onClick={exitSelect}>
-            {tr('取消', 'Cancel')}
-          </button>
+        {admin && sorted.length > 0 && (
           <button
-            className="btn btn-danger sm"
-            disabled={selectedIds.size === 0 || deleteMutation.isPending}
-            onClick={() => {
-              const targets = sorted.filter((l) => selectedIds.has(l.id));
-              if (targets.length === 0) return;
-              const ok = window.confirm(
-                tr(
-                  `确定删除选中的 ${targets.length} 个文献库吗？此操作不可撤销。`,
-                  `Delete ${targets.length} selected libraries? This cannot be undone.`,
-                ),
-              );
-              if (!ok) return;
-              deleteMutation.mutate(targets);
-            }}
+            className={`btn sm ${selectMode ? 'btn-primary' : 'btn-soft'}`}
+            onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+            title={tr('批量选择', 'Multi-select')}
           >
-            <Icon name="trash" size={13} />
-            {deleteMutation.isPending ? tr('删除中…', 'Deleting…') : tr('删除', 'Delete')}
+            <Icon name="check" size={13} />
+            {tr('多选', 'Multi-select')}
           </button>
-        </div>
-      )}
+        )}
+        {/* 全选放工具栏：不再插入额外行导致卡片下移 */}
+        {admin && selectMode && sorted.length > 0 && (
+          <div className="row gap8" style={{ alignItems: 'center' }}>
+            <CheckBox checked={allSelected} onToggle={toggleSelectAll} title={tr('全选', 'Select all')} />
+            <span className="muted" style={{ fontSize: 12 }}>
+              {selectedIds.size > 0
+                ? tr(`已选 ${selectedIds.size} 个`, `${selectedIds.size} selected`)
+                : tr('全选', 'Select all')}
+            </span>
+          </div>
+        )}
+      </div>
 
       {canCreate && <NewLibraryModal open={createOpen} onClose={() => setCreateOpen(false)} />}
 
@@ -578,6 +590,50 @@ export function LibrariesPage() {
               }}
             />
           ))}
+        </div>
+      )}
+
+      {/* 批量操作栏（多选模式下有选中时浮出底部，与论文撰写/实验搭建一致） */}
+      {admin && selectMode && selectedIds.size > 0 && (
+        <div
+          className="card card-pad"
+          style={{
+            position: 'sticky',
+            bottom: 16,
+            marginTop: 16,
+            boxShadow: 'var(--shadow-pop)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+            {tr(`已选 ${selectedIds.size} 个`, `${selectedIds.size} selected`)}
+          </span>
+          <div className="row gap8" style={{ marginLeft: 'auto' }}>
+            <button
+              className="btn btn-danger sm"
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                const targets = sorted.filter((l) => selectedIds.has(l.id));
+                if (targets.length === 0) return;
+                const ok = window.confirm(
+                  tr(
+                    `确定删除选中的 ${targets.length} 个文献库吗？此操作不可撤销。`,
+                    `Delete ${targets.length} selected libraries? This cannot be undone.`,
+                  ),
+                );
+                if (!ok) return;
+                deleteMutation.mutate(targets);
+              }}
+            >
+              <Icon name="trash" size={13} />
+              {deleteMutation.isPending ? tr('删除中…', 'Deleting…') : tr('批量删除', 'Delete selected')}
+            </button>
+            <button className="btn btn-ghost sm" disabled={deleteMutation.isPending} onClick={clearSelection}>
+              {tr('取消选择', 'Clear')}
+            </button>
+          </div>
         </div>
       )}
     </div>

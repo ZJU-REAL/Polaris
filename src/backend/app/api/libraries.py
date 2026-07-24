@@ -114,6 +114,17 @@ async def _get_managed_library(
     return library
 
 
+async def _get_visible_library(
+    session: AsyncSession, library_id: uuid.UUID, user: User
+) -> DirectionLibrary:
+    """只读端点统一入口：库存在 + 对请求者可见（P10：公共库全员，个人库仅归属人/admin）；
+    不可见按不存在处理（404），避免个人库经 id 泄漏内容。"""
+    library = await _get_library(session, library_id)
+    if not libraries_service.library_visible_to(library, user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+    return library
+
+
 async def _reads_with_extras(
     session: AsyncSession, papers: list, user_id: uuid.UUID
 ) -> list[PaperRead]:
@@ -210,20 +221,60 @@ async def request_library_public(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """申请把个人库转为公共库（P10）：仅创建者或该库策展人可发起；status → pending
-    等 admin 审批（is_public 仍 false）。无权者视为不存在（404）。
+    """申请把个人库转为公共库（P10）：创建者/策展人发起 → status=pending 等 admin 审批；
+    **平台 admin 发起则直接通过**（直接转公共，无需审批）。无权者视为不存在（404）。
     """
+    library = await _get_library(session, library_id)
+    is_admin = user.role == "admin"
+    is_owner = library.submitted_by is not None and library.submitted_by == user.id
+    is_curator = await libraries_service.is_library_curator(
+        session, library_id=library.id, user_id=user.id
+    )
+    if not (is_admin or is_owner or is_curator):
+        # 能看到但无权发起 → 403；看不到（陌生人个人库）→ 404 隐藏存在。
+        if libraries_service.library_visible_to(library, user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+    if is_admin:
+        library = await libraries_service.approve_library(session, library=library)
+    else:
+        library = await libraries_service.request_public(session, library=library)
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
+@router.post("/libraries/{library_id}/cancel-request-public", response_model=DirectionLibraryDetail)
+async def cancel_request_library_public(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DirectionLibraryDetail:
+    """撤回转公共申请（P10）：创建者/策展人把 pending 退回可用的个人库
+    （is_public=false、status=active）。无权者视为不存在（404）。"""
     library = await _get_library(session, library_id)
     is_owner = library.submitted_by is not None and library.submitted_by == user.id
     is_curator = await libraries_service.is_library_curator(
         session, library_id=library.id, user_id=user.id
     )
-    if not (is_owner or is_curator):
-        # 能看到但无权发起（如非策展人 admin）→ 403；看不到（陌生人个人库）→ 404 隐藏存在。
+    if not (is_owner or is_curator or user.role == "admin"):
         if libraries_service.library_visible_to(library, user):
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    library = await libraries_service.request_public(session, library=library)
+    library = await libraries_service.cancel_request_public(session, library=library)
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
+@router.post("/libraries/{library_id}/make-personal", response_model=DirectionLibraryDetail)
+async def make_library_personal(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> DirectionLibraryDetail:
+    """把公共库转回个人库（平台 admin，P10）：is_public → false、status=active。
+    转回后仅归属人 + admin 可见，其他成员看不到。"""
+    library = await _get_library(session, library_id)
+    library = await libraries_service.make_personal(session, library=library)
     row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
 
@@ -421,7 +472,7 @@ async def list_library_papers(
     过滤参数与课题论文列表一致（星标/阅读状态/标签/作者/机构/发表与入库时间）；
     ``status=excluded`` 取该库垃圾桶。P9e 起标签是库作用域，独立库同样可用。
     """
-    library = await _get_library(session, library_id)
+    library = await _get_visible_library(session, library_id, user)
     items, total = await papers_service.list_papers(
         session,
         library_id=library.id,
@@ -458,7 +509,7 @@ async def list_library_concepts(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[ConceptRead]:
-    library = await _get_library(session, library_id)
+    library = await _get_visible_library(session, library_id, user)
     rows = await concepts_service.list_concepts(
         session, library_ids=[library.id], category=category, q=q
     )
@@ -485,7 +536,7 @@ async def search_library(
     user: User = Depends(current_active_user),
 ) -> SearchResponse:
     """库内检索（关键词/语义）。语义模式的 embed/rerank 记个人账（无课题上下文）。"""
-    library = await _get_library(session, library_id)
+    library = await _get_visible_library(session, library_id, user)
 
     mode_used = "keyword"
     reranked = False
@@ -633,7 +684,7 @@ async def list_library_tags(
     user: User = Depends(current_active_user),
 ) -> list[TagRead]:
     """库标签列表（含引用论文数）。"""
-    library = await _get_library(session, library_id)
+    library = await _get_visible_library(session, library_id, user)
     rows = await papers_service.list_library_tags(session, library_id=library.id)
     return [TagRead(**row) for row in rows]
 
@@ -645,7 +696,7 @@ async def get_library_ingest_state(
     user: User = Depends(current_active_user),
 ) -> IngestStateRead:
     """该库的建库/同步状态：上次同步时间、抓取进度计数、在跑任务、下次自动同步（可管理者）。"""
-    library = await _get_managed_library(session, library_id, user)
+    library = await _get_visible_library(session, library_id, user)
     state = await ingest_service.library_ingest_state(session, library)
     return IngestStateRead(**state)
 
@@ -657,7 +708,7 @@ async def library_graph(
     user: User = Depends(current_active_user),
 ) -> GraphResponse:
     """库知识图谱：论文 / 作者 / 概念节点与关联边（确定性构建，不走 LLM；全实验室可读）。"""
-    library = await _get_library(session, library_id)
+    library = await _get_visible_library(session, library_id, user)
     data = await graph_service.library_graph(session, library_id=library.id)
     return GraphResponse(**data)
 
@@ -673,7 +724,7 @@ async def library_notebook(
     user: User = Depends(current_active_user),
 ) -> NotebookPage:
     """库笔记本：我在该库论文上写的笔记聚合（搜索 + 分页 + 按论文过滤）。"""
-    library = await _get_library(session, library_id)
+    library = await _get_visible_library(session, library_id, user)
     rows, total = await notes_service.list_library_notes(
         session,
         library_id=library.id,
@@ -710,7 +761,7 @@ async def chat_with_library(
 
     事件：``sources``（引用来源清单）→ ``delta``* → ``done``；错误 ``error`` 后关流。
     """
-    library = await _get_library(session, library_id)
+    library = await _get_visible_library(session, library_id, user)
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
     project_id = library.project_id
     history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮

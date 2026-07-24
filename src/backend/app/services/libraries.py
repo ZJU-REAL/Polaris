@@ -775,6 +775,31 @@ async def reject_library(
     return library
 
 
+async def cancel_request_public(
+    session: AsyncSession, *, library: DirectionLibrary
+) -> DirectionLibrary:
+    """撤回转公共申请（P10）：pending → 退回可用个人库（is_public=false、status=active），
+    清驳回理由。鉴权（创建者/策展人）由 api 层校验。commit 落库。"""
+    library.is_public = False
+    library.status = "active"
+    library.review_note = None
+    await session.commit()
+    await session.refresh(library)
+    return library
+
+
+async def make_personal(
+    session: AsyncSession, *, library: DirectionLibrary
+) -> DirectionLibrary:
+    """管理员把公共库转回个人库（P10）：is_public → false、status=active。转回后仅
+    归属人 + admin 可见（其他成员看不到）。鉴权（平台 admin）由 api 层校验。commit 落库。"""
+    library.is_public = False
+    library.status = "active"
+    await session.commit()
+    await session.refresh(library)
+    return library
+
+
 # ---- P6 治理：策展人（界面叫「文献库管理员」）与库级写权限 ----
 
 

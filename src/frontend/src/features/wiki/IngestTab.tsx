@@ -28,6 +28,8 @@ export interface IngestTabProps {
   stateLoading: boolean;
   /** 切到本工作台「收录设置」（govern）tab；关键词提示据此跳转，无则退回导航。 */
   onGoGovern?: () => void;
+  /** 只读（普通用户视角）：仅展示左侧状态列，隐藏增量同步 / 初始建库等触发入口。 */
+  readOnly?: boolean;
 }
 
 // 模块级常量只存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
@@ -89,7 +91,7 @@ function KnobRange({
   );
 }
 
-export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onGoGovern }: IngestTabProps) {
+export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onGoGovern, readOnly = false }: IngestTabProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scopeId = libraryId ?? pid ?? '';
@@ -102,7 +104,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
   const { data: libDef } = useQuery({
     queryKey: ['library', libraryId],
     queryFn: () => api.getLibrary(libraryId as string),
-    enabled: !!libraryId,
+    enabled: !!libraryId && !readOnly,
     retry: false,
   });
   const noKeywords = libraryId
@@ -303,6 +305,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
           </div>
 
           {/* 增量同步 */}
+          {!readOnly && (
           <div className="card card-pad">
             <div className="row gap10" style={{ marginBottom: 8 }}>
               <span className="section-h">
@@ -326,9 +329,11 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
               </div>
             )}
           </div>
+          )}
         </div>
 
-        {/* —— 右：冷启动表单 —— */}
+        {/* —— 右：冷启动表单（仅可管理者） —— */}
+        {!readOnly && (
         <div className="card card-pad" style={{ flex: 1.2, minWidth: 0 }}>
           <div className="row gap10" style={{ marginBottom: 6 }}>
             <span className="section-h">
@@ -503,6 +508,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             )}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

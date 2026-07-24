@@ -179,6 +179,38 @@ async def test_personal_library_hidden_from_stranger(client):
     assert resp.status_code == 200
 
 
+async def test_personal_library_read_endpoints_hidden_from_stranger(client):
+    """个人库的只读端点（papers/concepts/graph/notes）对非归属人 404，不经 id 泄漏内容。
+
+    回归：修复前这些端点只做 _get_library（查存在），漏了可见性校验。转公共后陌生人可读。"""
+    owner = await _hdr(client, "readvis-owner@example.com")
+    stranger = await _hdr(client, "readvis-stranger@example.com")
+    admin = await _hdr(client, "readvis-admin@example.com")
+    await _promote_admin("readvis-admin@example.com")
+    lib_id = await _create_personal(client, owner, name="只读端点个人库")
+
+    read_paths = [
+        f"/api/libraries/{lib_id}/papers",
+        f"/api/libraries/{lib_id}/concepts",
+        f"/api/libraries/{lib_id}/graph",
+        f"/api/libraries/{lib_id}/notes",
+    ]
+    # 陌生人：全部 404（不泄漏）
+    for path in read_paths:
+        resp = await client.get(path, headers=stranger)
+        assert resp.status_code == 404, (path, resp.status_code)
+    # 归属人自己：可读
+    resp = await client.get(f"/api/libraries/{lib_id}/papers", headers=owner)
+    assert resp.status_code == 200
+
+    # 申请转公共 + admin 批准 → 陌生人可读
+    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
+    resp = await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
+    assert resp.status_code == 200
+    resp = await client.get(f"/api/libraries/{lib_id}/papers", headers=stranger)
+    assert resp.status_code == 200
+
+
 async def test_admin_sees_others_personal(client):
     admin = await _hdr(client, "p10-a10@example.com")
     await _promote_admin("p10-a10@example.com")
@@ -291,3 +323,51 @@ def test_ingest_billing_owner_unit():
     personal = DirectionLibrary(name="me", is_public=False, submitted_by=owner_id)
     assert _ingest_billing_owner(public) is None
     assert _ingest_billing_owner(personal) == owner_id
+
+
+# ---- P10 细化：admin 直通 / 取消申请 / 转回个人 ----
+
+
+async def test_admin_request_public_auto_approves(client):
+    """平台 admin 发起 request-public → 直接转公共（跳过 pending 审批）。"""
+    admin = await _hdr(client, "auto-admin@example.com")
+    await _promote_admin("auto-admin@example.com")
+    lib_id = await _create_personal(client, admin, name="admin 自建库")
+    resp = await client.post(f"/api/libraries/{lib_id}/request-public", headers=admin)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["is_public"] is True and body["status"] == "active"
+
+
+async def test_cancel_request_public_returns_personal(client):
+    """归属人撤回 pending 申请 → 退回可用个人库。"""
+    await _hdr(client, "cancel-placeholder@example.com")  # 占位 admin（首个注册用户自动 admin）
+    owner = await _hdr(client, "cancel-owner@example.com")
+    lib_id = await _create_personal(client, owner)
+    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
+    resp = await client.post(f"/api/libraries/{lib_id}/cancel-request-public", headers=owner)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "active" and body["is_public"] is False
+
+
+async def test_make_personal_admin_only(client):
+    """admin 把公共库转回个人（其他人看不到）；非 admin 转个人 → 403。"""
+    await _hdr(client, "mp-placeholder@example.com")  # 占位 admin（首个注册用户自动 admin）
+    owner = await _hdr(client, "mp-owner@example.com")
+    admin = await _hdr(client, "mp-admin@example.com")
+    await _promote_admin("mp-admin@example.com")
+    lib_id = await _create_personal(client, owner)
+    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
+    await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
+    # 非 admin 转个人 → 403
+    resp = await client.post(f"/api/libraries/{lib_id}/make-personal", headers=owner)
+    assert resp.status_code == 403
+    # admin 转个人 → is_public false
+    resp = await client.post(f"/api/libraries/{lib_id}/make-personal", headers=admin)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_public"] is False
+    # 转回个人后，原本非归属人的陌生人看不到
+    stranger = await _hdr(client, "mp-stranger@example.com")
+    resp = await client.get(f"/api/libraries/{lib_id}", headers=stranger)
+    assert resp.status_code == 404
