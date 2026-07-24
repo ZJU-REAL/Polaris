@@ -40,3 +40,6 @@ docs-dev/
 # --- 本地 AI 助手配置（不入库） ---
 CLAUDE.md
 .claude/
+
+# setuptools build output (pip install . in a mounted container leaves this behind)
+src/backend/build/
