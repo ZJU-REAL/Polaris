@@ -1480,7 +1480,10 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   });
 
   const bulkExportMutation = useMutation({
-    mutationFn: () => api.downloadCitations(pid ?? '', { format: 'bibtex', ids: [...selected] }),
+    mutationFn: () =>
+      libraryId
+        ? api.downloadLibraryCitations(libraryId, { format: 'bibtex', ids: [...selected] })
+        : api.downloadCitations(pid ?? '', { format: 'bibtex', ids: [...selected] }),
     onSuccess: (blob) => {
       saveBlob(blob, 'polaris-selected.bib');
       toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
@@ -1852,16 +1855,14 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                 <Icon name="x" size={12} />
                 {tr('删除', 'Delete')}
               </button>
-              {!libraryId && (
-                <button
-                  className="btn btn-ghost sm"
-                  disabled={selected.size === 0 || bulkExportMutation.isPending}
-                  onClick={() => bulkExportMutation.mutate()}
-                >
-                  <Icon name="download" size={12} />
-                  {tr('导出 BibTeX', 'Export BibTeX')}
-                </button>
-              )}
+              <button
+                className="btn btn-ghost sm"
+                disabled={selected.size === 0 || bulkExportMutation.isPending}
+                onClick={() => bulkExportMutation.mutate()}
+              >
+                <Icon name="download" size={12} />
+                {tr('导出 BibTeX', 'Export BibTeX')}
+              </button>
             </>
           )}
         </div>

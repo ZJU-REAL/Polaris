@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,6 +68,7 @@ from app.schemas.paper import (
     TagRead,
 )
 from app.schemas.voyage import VoyageRead
+from app.services import citations as citations_service
 from app.services import concepts as concepts_service
 from app.services import graph as graph_service
 from app.services import ingest as ingest_service
@@ -673,6 +674,49 @@ async def search_library(
         for p, s in paper_rows
     ]
     return SearchResponse(papers=papers, concepts=concepts, mode_used=mode_used, reranked=reranked)
+
+
+@router.get("/libraries/{library_id}/export/citations")
+async def export_library_citations(
+    library_id: uuid.UUID,
+    format_: str = Query(default="bibtex", alias="format", pattern="^(bibtex|csl-json)$"),
+    ids: str | None = Query(default=None, description="逗号分隔的论文 id（多选导出）"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """库作用域引用导出：BibTeX / CSL-JSON（独立方向库也可用；读端点全实验室可读）。
+
+    不传 ids 导出全库在库论文（缺省 status in compiled/included）；ids 指定时按 id
+    精确导出（多选导出），非成员/垃圾桶（excluded）不含。
+    """
+    library = await _get_visible_library(session, library_id, user)
+    paper_ids: list[uuid.UUID] | None = None
+    if ids:
+        try:
+            paper_ids = [uuid.UUID(x) for x in ids.split(",") if x.strip()]
+        except ValueError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="INVALID_IDS") from e
+    papers = await citations_service.papers_for_library_export(
+        session,
+        library_id=library.id,
+        user_id=user.id,
+        paper_ids=paper_ids,
+    )
+    if format_ == "bibtex":
+        return Response(
+            content=citations_service.build_bibtex(papers),
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="polaris-library-citations.bib"'
+            },
+        )
+    return Response(
+        content=json.dumps(citations_service.build_csl_json(papers), ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="polaris-library-citations.json"'
+        },
+    )
 
 
 # ---- P9d 库级论文管理 / ingest 状态 / 图谱 / 对话 / 笔记（库工作台，含独立库） ----

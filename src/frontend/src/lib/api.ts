@@ -2793,6 +2793,15 @@ export const api = {
     if (opts.ids?.length) params.set('ids', opts.ids.join(','));
     return requestBlob(`/projects/${projectId}/export/citations?${params.toString()}`);
   },
+  /** 库作用域引用导出（独立方向库也可用）：不传 ids 导出全库，传 ids 精确导出多选。 */
+  downloadLibraryCitations(
+    libraryId: string,
+    opts: { format: CitationFormat; ids?: string[] },
+  ): Promise<Blob> {
+    const params = new URLSearchParams({ format: opts.format });
+    if (opts.ids?.length) params.set('ids', opts.ids.join(','));
+    return requestBlob(`/libraries/${libraryId}/export/citations?${params.toString()}`);
+  },
 
   // —— M2 · Concepts ——
   listConcepts(
