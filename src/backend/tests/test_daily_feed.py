@@ -216,6 +216,11 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
     assert str(launched[0]["paper_id"]) == item["paper_id"]
     assert launched[0]["library_id"] == library_id
     assert str(launched[0]["project_id"]) == project_id
+    # 响应回传补全任务，前端据此弹与手动添加同款的分阶段进度框
+    tasks = resp.json()["tasks"]
+    assert len(tasks) == 1
+    assert tasks[0]["task_id"] == "task-stub"
+    assert tasks[0]["paper_id"] == item["paper_id"]
 
     # 重复收录 → skipped_existing
     resp = await client.post("/api/daily/collect", json=payload, headers=headers)

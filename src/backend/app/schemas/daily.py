@@ -88,8 +88,17 @@ class DailyCollectResult(BaseModel):
     forbidden: bool
 
 
+class DailyCollectTask(BaseModel):
+    """收录后启动的后台补全任务：paper_id → task_id，供前端订阅分阶段进度（同手动添加）。"""
+
+    paper_id: uuid.UUID
+    task_id: str
+
+
 class DailyCollectResponse(BaseModel):
     results: list[DailyCollectResult]
+    # 已启动补全的论文任务（论文已处理完整或 redis 不可用时为空），前端据此弹进度框
+    tasks: list[DailyCollectTask] = []
 
 
 class DailyCollectionsRead(BaseModel):

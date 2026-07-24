@@ -13,6 +13,7 @@ import { SearchInput, useDebounced } from '../wiki/shared';
 import { DailyLikes } from './DailyLikes';
 import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
+import { PaperProgressModal } from '../library/PaperProgressModal';
 
 /* ============================================================
    /daily — 每日新论文：arxiv 每日新提交（订阅分类内），保留最近 7 天。
@@ -271,6 +272,8 @@ export function DailyPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
+  // 收录到库/课题/个人后若启动了后台补全，弹出与手动添加同款分阶段进度框
+  const [progress, setProgress] = useState<{ taskId: string; title: string } | null>(null);
 
   useEffect(() => setPage(1), [q, sort, day, category, announce]);
 
@@ -540,7 +543,20 @@ export function DailyPage() {
       </div>
 
       {collectPaper && (
-        <CollectTreeModal paper={collectPaper} open={collectOpen} onClose={() => setCollectOpen(false)} />
+        <CollectTreeModal
+          paper={collectPaper}
+          open={collectOpen}
+          onClose={() => setCollectOpen(false)}
+          onCollected={(t) => setProgress(t)}
+        />
+      )}
+
+      {progress && (
+        <PaperProgressModal
+          taskId={progress.taskId}
+          paperTitle={progress.title}
+          onClose={() => setProgress(null)}
+        />
       )}
     </div>
   );
