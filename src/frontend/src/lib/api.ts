@@ -518,6 +518,17 @@ export interface AffiliationModeRead {
   mode: AffiliationMode;
 }
 
+/** 每日论文是否随同步建立向量（关闭时每日的语义检索没有数据）。 */
+export interface DailyEmbedSetting {
+  enabled: boolean;
+}
+/** 补建历史向量的结果计数。 */
+export interface DailyEmbedBackfillResult {
+  embedded: number;
+  skipped: number;
+  failed: number;
+}
+
 export interface LlmCallLogRow {
   id: string;
   created_at: string;
@@ -3641,6 +3652,17 @@ export const api = {
   },
   setAffiliationMode(mode: AffiliationMode): Promise<AffiliationModeRead> {
     return requestJson<AffiliationModeRead>('/admin/settings/affiliation-mode', 'PUT', { mode });
+  },
+  /** 每日论文是否建立向量（admin）。关闭时每日只有关键词检索。 */
+  getDailyEmbedEnabled(): Promise<DailyEmbedSetting> {
+    return request<DailyEmbedSetting>('/admin/settings/daily-embed');
+  },
+  setDailyEmbedEnabled(enabled: boolean): Promise<DailyEmbedSetting> {
+    return requestJson<DailyEmbedSetting>('/admin/settings/daily-embed', 'PUT', { enabled });
+  },
+  /** 给最近 7 天里还没有向量的每日论文补建向量（可能耗时几十秒）。 */
+  backfillDailyEmbeddings(): Promise<DailyEmbedBackfillResult> {
+    return request<DailyEmbedBackfillResult>('/admin/settings/daily-embed/backfill', { method: 'POST' });
   },
   putLlmCallLogSettings(enabled: boolean): Promise<LlmCallLogSettings> {
     return requestJson<LlmCallLogSettings>('/admin/llm/call-logs/settings', 'PUT', { enabled });
