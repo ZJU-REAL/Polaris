@@ -12,24 +12,16 @@ from app.models.library_direction import DirectionLibrary
 from app.models.llm_config import LLMUsage
 from app.models.voyage import VoyageRun
 from app.services import ingest as ingest_service
-from tests.conftest import register_and_login
+from tests.conftest import make_project_with_library, register_and_login
 
 
 async def _setup_project(client, email="budget-owner@example.com"):
     token = await register_and_login(client, email=email)
     headers = {"Authorization": f"Bearer {token}"}
-    resp = await client.post("/api/projects", json={"name": "预算方向"}, headers=headers)
-    assert resp.status_code == 201, resp.text
-    project_id = resp.json()["id"]
-    async with get_sessionmaker()() as session:
-        library = (
-            await session.execute(
-                select(DirectionLibrary).where(
-                    DirectionLibrary.project_id == uuid.UUID(project_id)
-                )
-            )
-        ).scalar_one()
-        library_id = library.id
+    # P9c：课题不再自动建库——显式配一条 active 起源库（project_id 回指）。
+    project_id, library_id = await make_project_with_library(
+        client, headers, name="预算方向"
+    )
     return headers, project_id, library_id
 
 

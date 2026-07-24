@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
@@ -82,6 +82,7 @@ function RefList({ sources, onOpen }: { sources: LibraryChatSource[]; onOpen: (i
 
 export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const stream = useCallback(
     (
       args: {
@@ -157,7 +158,7 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
       renderAssistant={(m: ChatMsg) => <Markdown source={m.content} style={{ fontSize: 12.5 }} />}
       assistantExtras={(m: ChatMsg) =>
         (m.sources?.length ?? 0) > 0 && (m.done || m.content) ? (
-          <RefList sources={m.sources ?? []} onOpen={(id) => navigate(`/papers/${id}/read`)} />
+          <RefList sources={m.sources ?? []} onOpen={(id) => navigate(`/papers/${id}/read`, { state: location.state })} />
         ) : null
       }
       messageActions={(m: ChatMsg) => <SaveNoteButton content={m.content} paperId={paperId} pid={pid} />}

@@ -227,19 +227,6 @@ export interface ProjectDefinition {
   cadence?: string;
 }
 
-/** AI 补全高级设置 — POST /projects/draft-definition 入参。 */
-export interface DraftDefinitionInput {
-  statement: string;
-  name: string;
-  keywords_include: string[];
-}
-
-/** AI 补全结果；source=fallback 表示 LLM 未配置，后端用默认模板生成。 */
-export interface DraftDefinitionResult {
-  definition: ProjectDefinition;
-  source: 'llm' | 'fallback';
-}
-
 export interface ProjectMemberRead {
   user_id?: string;
   email?: string;
@@ -250,7 +237,7 @@ export interface ProjectMemberRead {
 export interface ProjectRead {
   id: string;
   name: string;
-  definition: ProjectDefinition | null;
+  statement: string | null;
   status?: string;
   members?: ProjectMemberRead[];
   created_at?: string;
@@ -806,8 +793,14 @@ export interface DirectionLibrarySummary {
   project_id: string | null;
   /** 是否「我的课题的库」（请求者是背后课题成员 → 显示管理页签） */
   is_mine: boolean;
-  /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 平台管理员（P6） */
+  /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 创建者 ∪ 平台管理员（P6/P9b） */
   can_manage: boolean;
+  /** 生命周期（P9b）：pending 待审批 | active 已激活 | rejected 已驳回 */
+  status: 'pending' | 'active' | 'rejected';
+  /** 驳回理由（status=rejected 时有值） */
+  review_note: string | null;
+  /** 库创建者（用户建库；pending/rejected 库仅创建者 + 平台管理员可见） */
+  submitted_by: string | null;
   paper_count: number;
   concept_count: number;
   last_compiled_at: string | null;
@@ -2403,19 +2396,19 @@ export const api = {
   listProjects(): Promise<ProjectRead[]> {
     return request<ProjectRead[]>('/projects');
   },
-  createProject(input: { name: string; definition: ProjectDefinition }): Promise<ProjectRead> {
+  createProject(input: {
+    name: string;
+    statement?: string;
+    source_library_ids?: string[];
+  }): Promise<ProjectRead> {
     return requestJson<ProjectRead>('/projects', 'POST', input);
-  },
-  /** 由 LLM 根据一句话定义草拟完整 definition（目标/问题/rubric/同义词等）。 */
-  draftDefinition(input: DraftDefinitionInput): Promise<DraftDefinitionResult> {
-    return requestJson<DraftDefinitionResult>('/projects/draft-definition', 'POST', input);
   },
   getProject(id: string): Promise<ProjectRead> {
     return request<ProjectRead>(`/projects/${id}`);
   },
   patchProject(
     id: string,
-    input: { name?: string; definition?: ProjectDefinition; status?: string },
+    input: { name?: string; statement?: string; status?: string },
   ): Promise<ProjectRead> {
     return requestJson<ProjectRead>(`/projects/${id}`, 'PATCH', input);
   },
@@ -2691,7 +2684,7 @@ export const api = {
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);
   },
-  /** 新建共享文献库（仅平台 admin；非 admin 返回 403）。 */
+  /** 新建文献库（P9b：任意登录用户可建；新库 status=pending 待管理员审批激活）。 */
   createLibrary(input: {
     name: string;
     statement?: string | null;
@@ -2699,8 +2692,21 @@ export const api = {
     anchors?: unknown[];
     cadence?: string | null;
     monthly_budget?: number | null;
+    keywords?: KeywordSpec | null;
   }): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>('/libraries', 'POST', input);
+  },
+  /** 审批通过（仅平台管理员）：pending/rejected → active，激活后可触发抓取。 */
+  approveLibrary(id: string): Promise<DirectionLibraryDetail> {
+    return request<DirectionLibraryDetail>(`/libraries/${id}/approve`, { method: 'POST' });
+  },
+  /** 驳回（仅平台管理员）：→ rejected，可带理由。 */
+  rejectLibrary(id: string, note?: string | null): Promise<DirectionLibraryDetail> {
+    return requestJson<DirectionLibraryDetail>(`/libraries/${id}/reject`, 'POST', { note: note ?? null });
+  },
+  /** 对某个方向库直接触发抓取（P9a；仅 status=active 且预算内，可管理者）。 */
+  startLibraryIngest(id: string, input: { mode: IngestMode; knobs?: IngestKnobs }): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/libraries/${id}/ingest/run`, 'POST', input);
   },
   /** 课题当前关联的文献库摘要（顺序 = 关联建立时间）。 */
   getSourceLibraries(projectId: string): Promise<DirectionLibrarySummary[]> {
@@ -2782,6 +2788,84 @@ export const api = {
     if (opts.mode) params.set('mode', opts.mode);
     if (opts.limit) params.set('limit', String(opts.limit));
     return request<SearchResult>(`/libraries/${id}/search?${params.toString()}`);
+  },
+
+  // —— P9d · 独立库文献管理台（镜像 project 作用域的集合端点） ——
+  /** 库内论文（全过滤维度，同 listPapers）；status=excluded 为垃圾桶。 */
+  listLibraryPapersFull(
+    id: string,
+    opts: {
+      status?: PaperStatusFilter;
+      q?: string;
+      sort?: PaperSort;
+      page?: number;
+      size?: number;
+      tag?: string;
+      starred?: boolean;
+      reading_status?: ReadingStatus;
+      author?: string;
+      affiliation?: string;
+      published_from?: string;
+      published_to?: string;
+      created_from?: string;
+      created_to?: string;
+    } = {},
+  ): Promise<PageOf<PaperRead>> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.q) params.set('q', opts.q);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    if (opts.tag) params.set('tag', opts.tag);
+    if (opts.starred) params.set('starred', 'true');
+    if (opts.reading_status) params.set('reading_status', opts.reading_status);
+    if (opts.author) params.set('author', opts.author);
+    if (opts.affiliation) params.set('affiliation', opts.affiliation);
+    if (opts.published_from) params.set('published_from', opts.published_from);
+    if (opts.published_to) params.set('published_to', opts.published_to);
+    if (opts.created_from) params.set('created_from', opts.created_from);
+    if (opts.created_to) params.set('created_to', opts.created_to);
+    const qs = params.toString();
+    return request<PageOf<PaperRead>>(`/libraries/${id}/papers${qs ? `?${qs}` : ''}`);
+  },
+  /** 手动添加文献到库；409 → PAPER_EXISTS（body 含 paper_id）；422 → PARSE_FAILED。 */
+  importLibraryPaper(id: string, input: PaperImportInput): Promise<PaperDetail> {
+    return requestJson<PaperDetail>(`/libraries/${id}/papers`, 'POST', input);
+  },
+  /** 批量删除库内论文：默认软删（垃圾桶），hard=true 彻底删除。 */
+  batchDeleteLibraryPapers(id: string, paperIds: string[], hard = false): Promise<{ deleted: number }> {
+    return requestJson<{ deleted: number }>(`/libraries/${id}/papers/batch-delete`, 'POST', {
+      paper_ids: paperIds,
+      hard,
+    });
+  },
+  /** 清空库垃圾桶：彻底删除库内全部已删除论文。 */
+  emptyLibraryTrash(id: string): Promise<{ deleted: number }> {
+    return request<{ deleted: number }>(`/libraries/${id}/trash/empty`, { method: 'POST' });
+  },
+  /** 库标签（独立库不支持标签，恒返回 []）。 */
+  listLibraryTags(id: string): Promise<TagRead[]> {
+    return request<TagRead[]>(`/libraries/${id}/tags`);
+  },
+  getLibraryIngestState(id: string): Promise<IngestState> {
+    return request<IngestState>(`/libraries/${id}/ingest/state`);
+  },
+  getLibraryGraph(id: string): Promise<GraphData> {
+    return request<GraphData>(`/libraries/${id}/graph`);
+  },
+  /** 库笔记本：全库笔记分页 + 搜索。 */
+  listLibraryNotes(
+    id: string,
+    opts: { q?: string; paper_id?: string; page?: number; size?: number } = {},
+  ): Promise<PageOf<NoteWithPaper>> {
+    const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
+    if (opts.paper_id) params.set('paper_id', opts.paper_id);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    const qs = params.toString();
+    return request<PageOf<NoteWithPaper>>(`/libraries/${id}/notes${qs ? `?${qs}` : ''}`);
   },
 
   // —— P5a · 课题「相关研究」书架 ——

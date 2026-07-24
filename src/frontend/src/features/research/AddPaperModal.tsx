@@ -44,7 +44,8 @@ export function AddPaperModal({
   onClose,
   pid,
   shelvedIds,
-  wikiHref,
+  libraryHref,
+  libraryLabel,
   addPending,
   onAdd,
   importPending,
@@ -55,8 +56,10 @@ export function AddPaperModal({
   pid: string;
   /** 已入架论文 id 集合（勾选态用） */
   shelvedIds: Set<string>;
-  /** 文献库入口路径（「去文献库」按钮） */
-  wikiHref: string;
+  /** 文献库入口路径（1 个关联库→进那个库；多个→课题设置；0 个→全部库列表） */
+  libraryHref: string;
+  /** 文献库入口按钮文案（随关联库数量变化） */
+  libraryLabel: string;
   addPending: boolean;
   onAdd: (paperId: string) => void;
   importPending: boolean;
@@ -113,11 +116,11 @@ export function AddPaperModal({
               style={{ flexShrink: 0 }}
               onClick={() => {
                 onClose();
-                navigate(wikiHref);
+                navigate(libraryHref);
               }}
             >
               <Icon name="book" size={13} />
-              {tr('去文献库', 'Open library')}
+              {libraryLabel}
             </button>
           </div>
 

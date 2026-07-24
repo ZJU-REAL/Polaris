@@ -131,8 +131,7 @@ async def _get_project(session: AsyncSession, ctx: ActionContext) -> Project:
 
 
 def _statement(project: Project) -> str:
-    definition = project.definition if isinstance(project.definition, dict) else {}
-    return str(definition.get("statement") or project.name)
+    return str(project.statement or project.name)
 
 
 def _extract_json(content: str) -> Any:

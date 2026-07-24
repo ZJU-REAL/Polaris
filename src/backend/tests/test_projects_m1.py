@@ -29,16 +29,16 @@ async def test_patch_project_permissions(client):
     resp = await client.post("/api/projects", json={"name": "patch-me"}, headers=owner_headers)
     project_id = resp.json()["id"]
 
-    # owner 可改 name/definition/status
+    # owner 可改 name/statement/status
     resp = await client.patch(
         f"/api/projects/{project_id}",
-        json={"name": "改名", "definition": {"statement": "方向"}, "status": "archived"},
+        json={"name": "改名", "statement": "方向", "status": "archived"},
         headers=owner_headers,
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["name"] == "改名"
-    assert body["definition"] == {"statement": "方向"}
+    assert body["statement"] == "方向"
     assert body["status"] == "archived"
 
     # 加成员：按 email；未知邮箱 404

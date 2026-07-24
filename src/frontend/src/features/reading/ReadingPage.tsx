@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { Segmented } from '../../components/ui/Segmented';
@@ -20,7 +20,7 @@ import { HighlightsPanel } from './HighlightsPanel';
 import { PdfReader, type JumpTarget } from './PdfReader';
 import { ChatPanel } from './ChatPanel';
 import { InfoPanel } from './InfoPanel';
-import { READING_STATUS } from './shared';
+import { READING_STATUS, readerBackLabel, type ReaderFrom } from './shared';
 
 /* ============================================================
    /papers/:id/read — 论文阅读工作台：
@@ -42,7 +42,10 @@ const LS_COLLAPSED = 'polaris.reading.rightCollapsed';
 export function ReadingPage() {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  // 上游来源（从相关研究 / 我的文献库 / 文献库进来时带上）：返回按钮据此回到真正的来处。
+  const from = (location.state as { from?: ReaderFrom } | null)?.from ?? null;
   const [panel, setPanel] = useState<PanelTab>('highlights');
   const [activeHl, setActiveHl] = useState<string | null>(null);
   const [jump, setJump] = useState<JumpTarget | null>(null);
@@ -235,9 +238,9 @@ export function ReadingPage() {
           title={tr('打不开这篇论文', 'Cannot open this paper')}
           desc={tr('论文不存在、你不在这个课题里，或后端暂时不可用。', 'It does not exist, you are not in this topic, or the backend is unavailable.')}
           action={
-            <button className="btn btn-ghost" onClick={() => navigate('/libraries')}>
+            <button className="btn btn-ghost" onClick={() => navigate(from ? from.href : '/libraries')}>
               <Icon name="book" size={14} />
-              {tr('回文献库', 'Back to libraries')}
+              {from ? readerBackLabel(from.kind) : tr('回文献库', 'Back to libraries')}
             </button>
           }
         />
@@ -253,9 +256,12 @@ export function ReadingPage() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 18px 16px' }}>
       {/* —— 顶栏 —— */}
       <div className="row gap12" style={{ flexShrink: 0, marginBottom: 12 }}>
-        <button className="btn btn-ghost sm" onClick={() => navigate(libHref(`?paper=${paper.id}`))}>
+        <button
+          className="btn btn-ghost sm"
+          onClick={() => navigate(from ? from.href : libHref(`?paper=${paper.id}`))}
+        >
           <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
-          {tr('回文献库', 'Back to library')}
+          {from ? readerBackLabel(from.kind) : tr('回文献库', 'Back to library')}
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div

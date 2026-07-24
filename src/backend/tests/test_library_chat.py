@@ -50,7 +50,7 @@ async def _setup(client, tmp_path_factory=None):
     headers = {"Authorization": f"Bearer {token}"}
     resp = await client.post(
         "/api/projects",
-        json={"name": "lib-chat", "definition": {"statement": "LLM agent 规划"}},
+        json={"name": "lib-chat", "statement": "LLM agent 规划"},
         headers=headers,
     )
     project_id = uuid.UUID(resp.json()["id"])

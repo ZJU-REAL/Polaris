@@ -99,6 +99,8 @@ async def test_initialize_structure_creates_draft(client):
     detail = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
     paths = {f["path"] for f in detail["files"]}
     assert "draft.tex" in paths and "main.tex" in paths  # 原主文件仍在
+    # draft.tex 带 \bibliography{references}，工作区里必须有 references.bib 供编译解析 \cite
+    assert "references.bib" in paths
     assert detail["main_tex"] == "draft.tex"  # 编译主文件已切换
 
     # 原 main.tex 内容未被改动
@@ -113,3 +115,24 @@ async def test_initialize_structure_creates_draft(client):
     assert "% POLARIS_SECTION: method" in r2.json()["content"]
     detail2 = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
     assert [f["path"] for f in detail2["files"]].count("draft.tex") == 1
+
+
+async def test_initialize_structure_restores_missing_references_bib(client):
+    """遗留稿件：references.bib 被删掉后再初始化，draft.tex 的 \\bibliography 需重新有 bib 落库。"""
+    project_id, headers = await _setup_project(client)
+    ms_id = (await _create_manuscript(client, headers, project_id)).json()["id"]
+
+    async def _paths() -> set[str]:
+        detail = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
+        return {f["path"] for f in detail["files"]}
+
+    detail0 = (await client.get(f"/api/manuscripts/{ms_id}", headers=headers)).json()
+    bib0 = next(f for f in detail0["files"] if f["path"] == "references.bib")
+    r = await client.delete(f"/api/manuscripts/{ms_id}/files/{bib0['id']}", headers=headers)
+    assert r.status_code == 204, r.text
+    assert "references.bib" not in await _paths()
+
+    r = await client.post(f"/api/manuscripts/{ms_id}/initialize-structure", headers=headers)
+    assert r.status_code == 200, r.text
+    paths = await _paths()
+    assert "draft.tex" in paths and "references.bib" in paths

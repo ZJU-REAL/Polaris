@@ -20,6 +20,7 @@ from app.core.events import EventBus
 from app.core.redis import get_redis
 from app.schemas.ingest import IngestKnobs
 from app.services import ingest as ingest_service
+from app.services import libraries as libraries_service
 from app.services import publications as publications_service
 
 
@@ -72,9 +73,13 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
     async with get_sessionmaker()() as session:
         projects = await ingest_service.find_due_daily_projects(session)
         for project in projects:
+            library = await libraries_service.get_library_for_project(session, project.id)
+            if library is None:
+                continue  # 无语料库（理论上 find_due 已过滤，双保险）
             try:
                 run = await ingest_service.create_ingest_voyage(
                     session,
+                    library=library,
                     project=project,
                     mode="incremental",
                     knobs=IngestKnobs(),

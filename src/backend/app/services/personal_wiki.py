@@ -65,8 +65,7 @@ async def compile_personal_wiki(
     if topic_id is not None:
         project = await session.get(Project, topic_id)
         if project is not None:
-            definition = project.definition if isinstance(project.definition, dict) else {}
-            statement = definition.get("statement") or project.name
+            statement = project.statement or project.name
 
     key = (paper.id, user_id)
     if key in _COMPILING:
