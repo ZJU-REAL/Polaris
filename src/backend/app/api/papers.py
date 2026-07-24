@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_llm_chat, require_llm_task
 from app.core.db import get_session
-from app.core.events import paper_task_channel
+from app.core.events import paper_task_channel, paper_task_log_key
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
 from app.core.redis import get_redis_dep
@@ -240,25 +240,47 @@ async def paper_task_events(
     if owner is None or owner != str(user.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_TASK_NOT_FOUND")
 
+    def _frame_from(raw: Any) -> tuple[str, str] | None:
+        """把一条原始事件（bytes/str JSON）解析成 (event, sse_frame)；无效则 None。"""
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        event = str(payload.get("event", "message"))
+        return event, _sse_frame(event, payload.get("data"))
+
     async def stream() -> AsyncIterator[str]:
+        # 先订阅频道（不漏后续实时事件），再回放持久化历史：pub/sub 不补发，
+        # 而任务常在订阅前就发完事件（dev 无网络/LLM 时几毫秒跑完）。回放窗口内
+        # 与实时流可能重复个别事件，但前端按 stage 幂等更新、done 有 stopped 卫兵，
+        # 重复无害。历史里已含 done/error 说明任务已结束，回放完直接收流。
         pubsub = redis.pubsub()
         await pubsub.subscribe(paper_task_channel(task_id))
         last_ping = time.monotonic()
         try:
+            try:
+                history = await redis.lrange(paper_task_log_key(task_id), 0, -1)
+            except Exception:  # noqa: BLE001 — 回放尽力而为，失败则退化为纯实时
+                history = []
+            for raw in history:
+                parsed = _frame_from(raw)
+                if parsed is None:
+                    continue
+                event, frame = parsed
+                yield frame
+                if event in ("done", "error"):
+                    return
             while True:
                 message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message is not None:
-                    raw = message["data"]
-                    if isinstance(raw, bytes):
-                        raw = raw.decode("utf-8")
-                    try:
-                        payload = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    event = str(payload.get("event", "message"))
-                    yield _sse_frame(event, payload.get("data"))
-                    if event in ("done", "error"):
-                        return
+                    parsed = _frame_from(message["data"])
+                    if parsed is not None:
+                        event, frame = parsed
+                        yield frame
+                        if event in ("done", "error"):
+                            return
                 if time.monotonic() - last_ping >= _HEARTBEAT_SECONDS:
                     yield ": ping\n\n"
                     last_ping = time.monotonic()

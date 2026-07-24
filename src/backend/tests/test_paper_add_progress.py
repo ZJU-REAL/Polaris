@@ -245,3 +245,31 @@ async def test_manual_add_scores_via_background_task(client, fake_redis):
         membership = await membership_of(session, project_id=project_id, paper_id=body["id"])
         assert membership.relevance_score is not None
         assert membership.status == "included"  # 人工纳入，打分不改状态
+
+
+async def test_paper_task_events_replays_history_for_late_subscriber(client, fake_redis):
+    """回归：任务在订阅前就发完事件（pub/sub 不补发）时，SSE 连上应回放历史 + done。
+
+    这是"进度弹窗卡在处理中"的根因：迟到订阅者只订频道拿不到任何事件。
+    """
+    token = await register_and_login(client, email="late@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, _ = await make_project_with_library(client, headers, name="replay-proj")
+    resp = await client.post(
+        f"/api/projects/{project_id}/papers",
+        json={"bibtex": "@article{lt,\n title={Late Sub},\n doi={10.9/late},\n}"},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    task_id = resp.json()["task_id"]
+    assert task_id
+    # 任务彻底跑完（事件已全部发布并结束）之后，才去订阅 —— 复现竞态
+    await paper_enrich.await_task(task_id)
+
+    resp = await client.get(f"/api/paper-tasks/{task_id}/events", headers=headers)
+    assert resp.status_code == 200
+    body = resp.text
+    # 回放应补齐阶段事件并以 done 收尾（无回放时流会空等心跳、永不结束）
+    assert "event: stage" in body
+    assert "event: done" in body
+    assert "resolve" in body
