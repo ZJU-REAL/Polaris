@@ -5,7 +5,7 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -218,6 +218,54 @@ async def create_pool_paper(
     return paper
 
 
+async def create_pool_paper_stub(
+    session: AsyncSession,
+    *,
+    fields: dict[str, Any],
+) -> Paper:
+    """按解析字段建内容池 Paper（source=manual）——只落元数据，**不下载 PDF、不抽全文**。
+
+    重活（下载/抽取/向量化/打分）交给后台任务 enrich_paper 分阶段做；此处只做同步、
+    确定性的建行工作。调用方负责先查池去重（find_pool_paper）与收尾 commit。
+    """
+    external_ids: dict[str, str] = {}
+    if fields.get("arxiv_id"):
+        external_ids["arxiv"] = fields["arxiv_id"]
+    if fields.get("doi"):
+        external_ids["doi"] = fields["doi"]
+    paper = Paper(
+        source="manual",
+        dedup_key=pool_dedup_key(
+            arxiv_id=fields.get("arxiv_id"),
+            doi=fields.get("doi"),
+            title=fields["title"],
+            year=fields.get("year"),
+            authors=fields.get("authors"),
+        ),
+        arxiv_id=fields.get("arxiv_id"),
+        doi=fields.get("doi"),
+        external_ids=external_ids or None,
+        title=fields["title"],
+        authors=fields.get("authors"),
+        affiliations=fields.get("affiliations"),
+        abstract=fields.get("abstract"),
+        year=fields.get("year"),
+        venue=fields.get("venue"),
+        url=fields.get("url"),
+        published_at=fields.get("published_at"),
+    )
+    session.add(paper)
+    await session.flush()
+    return paper
+
+
+class ManualAddResult(NamedTuple):
+    """手动添加结果：paper + 是否新建了内容池行（决定是否要启动后台补全任务）。"""
+
+    paper: Paper
+    created: bool  # True=新建池行；False=池命中（论文已存在）
+
+
 async def add_manual_paper(
     session: AsyncSession,
     *,
@@ -225,8 +273,11 @@ async def add_manual_paper(
     arxiv_id: str | None = None,
     doi: str | None = None,
     bibtex: str | None = None,
-) -> Paper:
-    """手动添加一篇文献到课题起源库（source=manual，成员行 status=included）。"""
+) -> ManualAddResult:
+    """手动添加一篇文献到课题起源库（source=manual，成员行 status=included）。
+
+    只做同步的解析 + 去重 + 建行；PDF 下载/全文抽取/向量化/打分由后台任务完成。
+    """
     # 人工导入落在课题起源库上；课题必须有一个可解析的库（隐式库常态存在）
     library = await get_library_for_project(session, project_id)
     if library is None:
@@ -249,13 +300,13 @@ async def add_manual_paper_to_library(
     doi: str | None = None,
     bibtex: str | None = None,
     project_id: uuid.UUID | None = None,
-) -> Paper:
+) -> ManualAddResult:
     """手动添加一篇文献到**指定库**（库工作台入口，含独立库 project_id=None）。
 
     - 先查全局内容池（arxiv/doi/dedup_key）：池中已有则只建成员行（pool hit，
       跳过解析下载）；本库已有成员行 → DuplicatePaperError（路由映射 409）
     - 解析失败 → ParseFailedError（路由映射 422）
-    - 新论文有 arxiv_id 的自动尝试补下 PDF，失败只记日志不阻塞
+    - 新论文只落元数据行；PDF 下载/全文抽取/向量化/打分由后台任务补全
     project_id 仅用于 LLM 记账归因（补机构等），独立库为空。
     """
     fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, bibtex=bibtex)
@@ -278,10 +329,10 @@ async def add_manual_paper_to_library(
         )
         await session.commit()
         await session.refresh(pooled)
-        return pooled
+        return ManualAddResult(paper=pooled, created=False)
 
-    paper = await create_pool_paper(session, fields=fields, project_id=project_id)
+    paper = await create_pool_paper_stub(session, fields=fields)
     await ensure_membership(session, library_id=library.id, paper_id=paper.id, status="included")
     await session.commit()
     await session.refresh(paper)
-    return paper
+    return ManualAddResult(paper=paper, created=True)

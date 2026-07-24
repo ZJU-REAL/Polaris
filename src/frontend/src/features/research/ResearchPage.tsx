@@ -29,6 +29,7 @@ import {
   YearRangeField,
 } from '../wiki/shared';
 import { AddPaperModal } from './AddPaperModal';
+import { PaperProgressModal } from '../library/PaperProgressModal';
 import { ShelfChatTab } from './ShelfChatTab';
 import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
 
@@ -294,6 +295,8 @@ export function ResearchPage() {
   const [filter, setFilter] = useState<ShelfFilter>('all');
   const [selId, setSelId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // 个人补充入架后若后端返回 task_id，弹出分阶段处理进度
+  const [progress, setProgress] = useState<{ taskId: string; title: string } | null>(null);
 
   // 关键词 + 高级检索条件（走后端）
   const [qInput, setQInput] = useState('');
@@ -440,9 +443,14 @@ export function ResearchPage() {
   const importMutation = useMutation({
     mutationFn: (input: ShelfImportInput) => api.importToShelf(pid, input),
     onSuccess: (item) => {
-      toast(tr('已添加到相关研究', 'Added to related work'), 'ok');
       setSelId(item.paper_id);
       invalidate();
+      if (item.task_id) {
+        // 还需后处理：弹进度弹窗替代成功 toast，避免重复打扰
+        setProgress({ taskId: item.task_id, title: item.title });
+      } else {
+        toast(tr('已添加到相关研究', 'Added to related work'), 'ok');
+      }
     },
     onError: (e) => toast(`${tr('添加失败：', 'Failed to add: ')}${errText(e)}`, 'error'),
   });
@@ -793,6 +801,15 @@ export function ResearchPage() {
         importPending={importMutation.isPending}
         onImport={(input) => importMutation.mutateAsync(input)}
       />
+
+      {progress && (
+        <PaperProgressModal
+          taskId={progress.taskId}
+          paperTitle={progress.title}
+          onClose={() => setProgress(null)}
+          onDone={invalidate}
+        />
+      )}
     </div>
   );
 }

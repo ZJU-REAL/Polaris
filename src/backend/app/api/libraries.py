@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,7 @@ from app.core.db import get_session
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
+from app.core.redis import get_redis_dep
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.project import Project
 from app.models.user import User
@@ -72,10 +74,10 @@ from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
 from app.services import notes as notes_service
+from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
 from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
-from app.services import relevance as relevance_service
 
 router = APIRouter(tags=["libraries"])
 
@@ -611,11 +613,15 @@ async def add_library_paper_manually(
     data: PaperManualCreate,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
 ) -> Any:
-    """手动把一篇文献加进该库：arxiv_id / doi / bibtex 三选一（可管理者）。"""
+    """手动把一篇文献加进该库：arxiv_id / doi / bibtex 三选一（可管理者）。
+
+    同步只建元数据行；下载/抽取/向量化/打分由后台任务完成，响应回传 task_id。
+    """
     library = await _get_managed_library(session, library_id, user)
     try:
-        paper = await paper_import_service.add_manual_paper_to_library(
+        result = await paper_import_service.add_manual_paper_to_library(
             session,
             library=library,
             arxiv_id=data.arxiv_id,
@@ -632,13 +638,15 @@ async def add_library_paper_manually(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"PARSE_FAILED: {e}"
         ) from e
-    paper_id, user_id, project_id = paper.id, user.id, library.project_id
-    membership = await libraries_service.get_membership(
-        session, library_id=library.id, paper_id=paper_id
-    )
-    if membership is not None:
-        await relevance_service.score_added_paper_best_effort(
-            session, paper, membership, project_id=project_id, user_id=user_id
+    paper_id, user_id, project_id = result.paper.id, user.id, library.project_id
+    task_id: str | None = None
+    if result.created or not paper_enrich_service.paper_processing_complete(result.paper):
+        task_id = await paper_enrich_service.launch_paper_enrichment(
+            redis=redis,
+            paper_id=paper_id,
+            user_id=user_id,
+            library_id=library.id,
+            project_id=project_id,
         )
     view = await papers_service.get_library_paper_view(
         session,
@@ -647,7 +655,8 @@ async def add_library_paper_manually(
         paper_id=paper_id,
         with_concepts=True,
     )
-    return await _paper_detail(session, view, user_id)
+    detail = await _paper_detail(session, view, user_id)
+    return detail.model_copy(update={"task_id": task_id})
 
 
 @router.post("/libraries/{library_id}/papers/batch-delete")

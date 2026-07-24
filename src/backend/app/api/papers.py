@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import asdict
@@ -12,12 +13,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_llm_chat, require_llm_task
 from app.core.db import get_session
+from app.core.events import paper_task_channel
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
+from app.core.redis import get_redis_dep
 from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.paper import (
@@ -40,11 +44,11 @@ from app.schemas.paper import (
 from app.services import figure_annotate as figure_service
 from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
+from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
 from app.services import personal_wiki as personal_wiki_service
 from app.services import projects as projects_service
-from app.services import relevance as relevance_service
 from app.services import wiki_compile as wiki_compile_service
 from app.services.literature.pdf_extract import figure_path
 
@@ -170,13 +174,18 @@ async def add_paper_manually(
     data: PaperManualCreate,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
 ) -> Any:
-    """手动添加文献：arxiv_id / doi / bibtex 三选一（docs/api-lit.md §4）。"""
+    """手动添加文献：arxiv_id / doi / bibtex 三选一（docs/api-lit.md §4）。
+
+    同步只建元数据行；PDF 下载/全文抽取/向量化/相关性打分交给后台任务，响应回传
+    task_id 供前端订阅分阶段进度（论文已处理完整时为 null）。
+    """
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     try:
-        paper = await paper_import_service.add_manual_paper(
+        result = await paper_import_service.add_manual_paper(
             session,
             project_id=project_id,
             arxiv_id=data.arxiv_id,
@@ -192,26 +201,82 @@ async def add_paper_manually(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"PARSE_FAILED: {e}"
         ) from e
-    # 打分失败会 rollback 并使本 session 的 ORM 对象过期，先留住要用的 id
-    paper_id, user_id = paper.id, user.id
-    library = await libraries_service.get_library_for_project(session, project_id)
-    membership = (
-        await libraries_service.get_membership(
-            session, library_id=library.id, paper_id=paper_id
-        )
-        if library is not None
-        else None
-    )
-    # 顺带相关性打分（best-effort）：失败只记日志，不影响 201；不改 status（人工纳入）
-    if membership is not None:
-        await relevance_service.score_added_paper_best_effort(
-            session, paper, membership, project_id=project.id, user_id=user_id
+    paper_id, user_id = result.paper.id, user.id
+    # 后台补全：新建或未处理完整时启动（含针对起源库 definition 的打分）
+    task_id: str | None = None
+    if result.created or not paper_enrich_service.paper_processing_complete(result.paper):
+        library = await libraries_service.get_library_for_project(session, project_id)
+        task_id = await paper_enrich_service.launch_paper_enrichment(
+            redis=redis,
+            paper_id=paper_id,
+            user_id=user_id,
+            library_id=library.id if library is not None else None,
+            project_id=project.id,
         )
     # 重新加载（带 concepts eager load），避免序列化时触发 async lazy load
     view = await papers_service.get_paper_for_user(
         session, paper_id=paper_id, user_id=user_id, with_concepts=True
     )
-    return await _paper_detail(session, view, user_id)
+    detail = await _paper_detail(session, view, user_id)
+    return detail.model_copy(update={"task_id": task_id})
+
+
+def _sse_frame(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+@router.get("/paper-tasks/{task_id}/events")
+async def paper_task_events(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
+) -> StreamingResponse:
+    """SSE：手动添加文献的后台补全进度（下载/抽取/向量化/打分）。
+
+    鉴权：task 归属用户（redis paper_task_owner:{task_id}）须等于当前登录用户，否则 404。
+    转发 paper_task 频道事件，15s 心跳，收到 done/error 后结束流。
+    """
+    owner = await paper_enrich_service.owner_of(redis, task_id)
+    if owner is None or owner != str(user.id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_TASK_NOT_FOUND")
+
+    async def stream() -> AsyncIterator[str]:
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(paper_task_channel(task_id))
+        last_ping = time.monotonic()
+        try:
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message is not None:
+                    raw = message["data"]
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+                    try:
+                        payload = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    event = str(payload.get("event", "message"))
+                    yield _sse_frame(event, payload.get("data"))
+                    if event in ("done", "error"):
+                        return
+                if time.monotonic() - last_ping >= _HEARTBEAT_SECONDS:
+                    yield ": ping\n\n"
+                    last_ping = time.monotonic()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            await pubsub.unsubscribe(paper_task_channel(task_id))
+            await pubsub.aclose()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/papers/{paper_id}", response_model=PaperDetail)

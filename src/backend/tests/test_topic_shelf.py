@@ -230,7 +230,7 @@ async def test_import_miss_fetches_and_creates_pool_only_paper(client, lit_clien
     respx.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
         return_value=httpx.Response(200, text=ARXIV_FEED_ONE)
     )
-    respx.get(url__regex=r"https://arxiv\.org/pdf/.*").mock(return_value=httpx.Response(404))
+    # 同步入架只建元数据行（PDF 下载移入后台任务），此处不下载 PDF
 
     resp = await client.post(
         f"/api/projects/{project_id}/shelf/import",

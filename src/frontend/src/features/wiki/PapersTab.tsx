@@ -33,6 +33,7 @@ import { clickable } from '../../lib/a11y';
 import { categoryMeta, saveBlob, SearchInput, useDebounced } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
 import { AddToButton } from '../library/AddToPopover';
+import { PaperProgressModal } from '../library/PaperProgressModal';
 
 /* ============================================================
    论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
@@ -105,6 +106,13 @@ function AddPaperModal({
   const [doi, setDoi] = useState('');
   const [bibtex, setBibtex] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
+  // 手动添加后若后端返回 task_id，弹出分阶段处理进度
+  const [progress, setProgress] = useState<{ taskId: string; title: string } | null>(null);
+
+  const invalidateLists = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
+    void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
+  }, [queryClient, scopeId]);
 
   const input: PaperImportInput | null =
     method === 'arxiv'
@@ -129,12 +137,16 @@ function AddPaperModal({
   const importMutation = useMutation({
     mutationFn: (inp: PaperImportInput) => (libraryId ? api.importLibraryPaper(libraryId, inp) : api.importPaper(pid, inp)),
     onSuccess: (p) => {
-      toast(tr('文献已加进论文库', 'Paper added to the library'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
-      void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
+      invalidateLists();
       reset();
       onClose();
       onImported(p.id);
+      if (p.task_id) {
+        // 还需后处理：弹进度弹窗替代成功 toast，避免重复打扰
+        setProgress({ taskId: p.task_id, title: p.title });
+      } else {
+        toast(tr('文献已加进论文库', 'Paper added to the library'), 'ok');
+      }
     },
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
@@ -154,6 +166,7 @@ function AddPaperModal({
   });
 
   return (
+    <>
     <Modal
       open={open}
       onClose={onClose}
@@ -276,6 +289,15 @@ function AddPaperModal({
         )}
       </div>
     </Modal>
+    {progress && (
+      <PaperProgressModal
+        taskId={progress.taskId}
+        paperTitle={progress.title}
+        onClose={() => setProgress(null)}
+        onDone={invalidateLists}
+      />
+    )}
+    </>
   );
 }
 

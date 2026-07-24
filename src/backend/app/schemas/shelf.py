@@ -26,6 +26,8 @@ class ShelfItemRead(BaseModel):
     snapshot_at: datetime | None
     source_library_id: uuid.UUID | None
     added_at: datetime
+    # 个人补充入架时启动的后台补全任务 id（下载/抽取/向量化）；无需补全时为 null。
+    task_id: str | None = None
 
     @field_validator("authors", mode="before")
     @classmethod
