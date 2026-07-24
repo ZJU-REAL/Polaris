@@ -153,6 +153,8 @@ export const router = createBrowserRouter([
       // 实验室区：共享方向文献库（全实验室可读，无需课题）
       { path: 'libraries', element: page(() => import('../features/libraries/LibrariesPage'), 'LibrariesPage') },
       { path: 'libraries/:id', element: page(() => import('../features/libraries/LibraryDetailPage'), 'LibraryDetailPage') },
+      // 实验室区：每日新论文池（arxiv 每日新提交，保留最近 7 天）
+      { path: 'daily', element: page(() => import('../features/daily/DailyPage'), 'DailyPage') },
       // MCP 说明已并入设置页签，旧链接重定向
       { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },
       { path: 'skills', element: page(() => import('../features/skills/SkillsPage'), 'SkillsPage') },

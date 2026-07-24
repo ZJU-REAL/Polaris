@@ -32,6 +32,7 @@ interface NavEntry {
 // 实验室级导航：跨课题的公共资产（P5c 起为共享方向文献库列表）
 const NAV_LAB: NavEntry[] = [
   { to: '/libraries', icon: 'book', zh: '文献库', en: 'Libraries' },
+  { to: '/daily', icon: 'heart', zh: '每日新论文', en: 'Daily Papers' },
 ];
 
 const NAV_MAIN: NavEntry[] = [
@@ -68,6 +69,7 @@ function crumbFor(pathname: string): [string, string] {
   if (p.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
   if (p.startsWith('/papers/')) return [tr('文献库', 'Libraries'), tr('论文阅读', 'Paper reading')];
   if (p === '/libraries') return [tr('实验室', 'Lab'), tr('文献库', 'Libraries')];
+  if (p === '/daily') return [tr('实验室', 'Lab'), tr('每日新论文', 'Daily Papers')];
   if (p.startsWith('/libraries/')) return [tr('文献库', 'Libraries'), tr('库详情', 'Library detail')];
   if (p.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
   if (p.startsWith('/join/')) return [tr('课题', 'Topics'), tr('接受邀请', 'Accept invite')];

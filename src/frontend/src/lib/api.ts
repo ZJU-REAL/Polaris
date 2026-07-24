@@ -2244,6 +2244,94 @@ export interface PublicationPage extends PageOf<Publication> {
   counts: { pending: number; confirmed: number; rejected: number };
 }
 
+// ============================================================
+// 每日新论文池（/daily）— arxiv 每日新提交，保留最近 7 天
+// ============================================================
+
+/** 点赞人（头像堆展示用）。 */
+export interface DailyLiker {
+  id: string;
+  display_name: string;
+  has_avatar: boolean;
+}
+
+/** 完整点赞名单里的一行（点赞时间倒序）。 */
+export interface DailyLikerFull extends DailyLiker {
+  liked_at: string;
+}
+
+/** 点/取消赞后的汇总（幂等返回，供乐观更新对账）。 */
+export interface DailyLikeState {
+  entry_id: string;
+  like_count: number;
+  liked_by_me: boolean;
+  likers_preview: DailyLiker[];
+}
+
+export type DailySort = 'likes' | 'date';
+
+export interface DailyPaperItem {
+  entry_id: string;
+  paper_id: string;
+  /** YYYY-MM-DD */
+  feed_date: string;
+  primary_category: string;
+  categories: string[];
+  announce_type: 'new' | 'cross';
+  title: string;
+  authors: PaperAuthor[];
+  abstract: string | null;
+  year: number | null;
+  arxiv_id: string | null;
+  url: string | null;
+  published_at: string | null;
+  has_wiki: boolean;
+  like_count: number;
+  liked_by_me: boolean;
+  /** 预览最多 5 人；自己赞过时排第一 */
+  likers_preview: DailyLiker[];
+  /** 仅「我赞过的」列表返回 */
+  liked_at?: string | null;
+}
+
+export interface DailyPaperDetail extends DailyPaperItem {
+  wiki_content: string | null;
+}
+
+export type DailyPage = PageOf<DailyPaperItem>;
+
+export interface DailyDay {
+  /** YYYY-MM-DD */
+  date: string;
+  count: number;
+}
+
+export interface DailyCollectRequest {
+  paper_ids: string[];
+  direction_library_ids: string[];
+  topic_ids: string[];
+  personal: boolean;
+}
+
+export interface DailyCollectResult {
+  target_type: 'library' | 'topic' | 'personal';
+  target_id: string | null;
+  added: number;
+  skipped_existing: number;
+  forbidden: boolean;
+}
+
+export interface DailyCollectResponse {
+  results: DailyCollectResult[];
+}
+
+/** 该论文已在哪些收录目标里（树选框预勾选/禁用）。 */
+export interface DailyCollectionsRead {
+  direction_library_ids: string[];
+  topic_ids: string[];
+  in_personal: boolean;
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -3756,5 +3844,58 @@ export const api = {
   /** 手动添加发表（arxiv_id / doi / bibtex 三选一）；解析失败 422。 */
   addPublication(input: { arxiv_id: string } | { doi: string } | { bibtex: string }): Promise<Publication> {
     return requestJson<Publication>('/me/publications', 'POST', input);
+  },
+
+  // —— 每日新论文池（/daily） ——
+  /** 池内现存日期（倒序）与每天篇数。 */
+  listDailyDays(): Promise<DailyDay[]> {
+    return request<DailyDay[]>('/daily/days');
+  },
+  listDailyPapers(
+    opts: { date?: string; sort?: DailySort; page?: number; size?: number; q?: string } = {},
+  ): Promise<DailyPage> {
+    const params = new URLSearchParams();
+    if (opts.date) params.set('date', opts.date);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    if (opts.q) params.set('q', opts.q);
+    const qs = params.toString();
+    return request<DailyPage>(`/daily/papers${qs ? `?${qs}` : ''}`);
+  },
+  getDailyPaper(entryId: string): Promise<DailyPaperDetail> {
+    return request<DailyPaperDetail>(`/daily/papers/${entryId}`);
+  },
+  likeDailyPaper(entryId: string): Promise<DailyLikeState> {
+    return request<DailyLikeState>(`/daily/papers/${entryId}/like`, { method: 'PUT' });
+  },
+  unlikeDailyPaper(entryId: string): Promise<DailyLikeState> {
+    return request<DailyLikeState>(`/daily/papers/${entryId}/like`, { method: 'DELETE' });
+  },
+  /** 完整点赞名单（点赞时间倒序）。 */
+  listDailyLikers(entryId: string): Promise<DailyLikerFull[]> {
+    return request<DailyLikerFull[]>(`/daily/papers/${entryId}/likers`);
+  },
+  /** 我赞过的（随池内过期一起消失）。 */
+  listMyDailyLiked(opts: { page?: number; size?: number } = {}): Promise<DailyPage> {
+    const params = new URLSearchParams();
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    const qs = params.toString();
+    return request<DailyPage>(`/daily/liked${qs ? `?${qs}` : ''}`);
+  },
+  /** 批量收录：论文 × 目标（方向库 / 课题相关研究 / 个人库）。 */
+  collectDaily(input: DailyCollectRequest): Promise<DailyCollectResponse> {
+    return requestJson<DailyCollectResponse>('/daily/collect', 'POST', input);
+  },
+  getDailyCollections(entryId: string): Promise<DailyCollectionsRead> {
+    return request<DailyCollectionsRead>(`/daily/papers/${entryId}/collections`);
+  },
+  getDailyCategories(): Promise<{ categories: string[] }> {
+    return request<{ categories: string[] }>('/daily/categories');
+  },
+  /** 更新订阅分类（admin）。 */
+  setDailyCategories(categories: string[]): Promise<{ categories: string[] }> {
+    return requestJson<{ categories: string[] }>('/daily/categories', 'PUT', { categories });
   },
 };
