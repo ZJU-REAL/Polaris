@@ -1,12 +1,15 @@
 """个人文献库路由（issue #108）：/me/library，用户级、方向无关。"""
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.core.llm.router import get_llm_router
 from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.library import (
@@ -18,6 +21,7 @@ from app.schemas.library import (
     LibraryStateRead,
     LibraryVisitCreate,
 )
+from app.services import citations as citations_service
 from app.services import papers as papers_service
 from app.services import user_library as library_service
 
@@ -45,6 +49,7 @@ async def _get_own_entry(session: AsyncSession, entry_id: uuid.UUID, user: User)
 async def list_library(
     tab: str = Query(default="history", pattern="^(saved|history)$"),
     q: str | None = Query(default=None),
+    mode: str = Query(default="keyword", pattern="^(keyword|semantic)$"),
     sort: str = Query(default="recent", pattern="^(recent|title|visits|year)$"),
     year_from: int | None = Query(default=None),
     year_to: int | None = Query(default=None),
@@ -55,6 +60,32 @@ async def list_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> LibraryPage:
+    # 语义检索：仅「我的收藏」tab 有意义（浏览记录不做语义），候选=本人收藏且有向量的论文。
+    # embed/rerank 记个人账（无课题上下文）；非 postgres / provider 不支持 → 回退关键词。
+    if mode == "semantic" and tab == "saved" and q and papers_service.semantic_search_supported(
+        session
+    ):
+        try:
+            vectors = await get_llm_router().embed([q], user_id=user.id)
+            candidates = await library_service.semantic_saved_entries(
+                session,
+                user_id=user.id,
+                query_vector=vectors[0],
+                limit=max(papers_service.RERANK_CANDIDATES, size),
+            )
+            ranked, _reranked = await papers_service.rerank_paper_rows(
+                get_llm_router(), query=q, rows=candidates, limit=size, user_id=user.id
+            )
+            entries = [entry for entry, _ in ranked]
+            return LibraryPage(
+                items=[LibraryEntryRead.model_validate(e) for e in entries],
+                total=len(entries),
+                page=1,
+                size=size,
+                mode_used="semantic",
+            )
+        except NotImplementedError:
+            pass  # embedding 路由的 provider 不支持 → 回退关键词
     items, total = await library_service.list_entries(
         session,
         user_id=user.id,
@@ -73,6 +104,7 @@ async def list_library(
         total=total,
         page=page,
         size=size,
+        mode_used="keyword",
     )
 
 
@@ -111,6 +143,44 @@ async def library_state(
     paper = await _get_member_paper(session, paper_id, user)
     entry = await library_service.entry_for_paper(session, user_id=user.id, paper=paper)
     return LibraryStateRead(entry_id=entry.id if entry else None, saved=bool(entry and entry.saved))
+
+
+@router.get("/me/library/export/citations")
+async def export_personal_citations(
+    format_: str = Query(default="bibtex", alias="format", pattern="^(bibtex|csl-json)$"),
+    ids: str | None = Query(default=None, description="逗号分隔的论文 id（多选导出）"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """个人库引用导出：BibTeX / CSL-JSON。
+
+    不传 ids 导出全部收藏；ids 指定时按 id 精确导出（多选导出），只含属于本人收藏的论文，
+    非本人 / 非收藏 / 源方向已删除（无软引用）的一律不含。
+    """
+    paper_ids: list[uuid.UUID] | None = None
+    if ids:
+        try:
+            paper_ids = [uuid.UUID(x) for x in ids.split(",") if x.strip()]
+        except ValueError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="INVALID_IDS") from e
+    papers = await citations_service.papers_for_personal_export(
+        session, user_id=user.id, paper_ids=paper_ids
+    )
+    if format_ == "bibtex":
+        return Response(
+            content=citations_service.build_bibtex(papers),
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="polaris-my-library-citations.bib"'
+            },
+        )
+    return Response(
+        content=json.dumps(citations_service.build_csl_json(papers), ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="polaris-my-library-citations.json"'
+        },
+    )
 
 
 @router.post("/me/library", response_model=LibraryEntryRead, status_code=status.HTTP_201_CREATED)

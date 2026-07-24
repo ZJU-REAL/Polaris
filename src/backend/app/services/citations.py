@@ -9,8 +9,10 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.library import UserLibraryEntry
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.services.libraries import (
@@ -255,3 +257,32 @@ async def papers_for_library_export(
     stmt = stmt.order_by(Paper.year.asc().nulls_last(), LibraryPaper.created_at.asc())
     rows = (await session.execute(stmt)).all()
     return [paper for paper, _ in rows]
+
+
+async def papers_for_personal_export(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    paper_ids: list[uuid.UUID] | None = None,
+) -> Sequence[Paper]:
+    """个人库导出对象：本人收藏条目软引用的活体论文（源方向已删除的条目无 Paper，不含）。
+
+    paper_ids 指定时按 id 精确导出（多选导出），且必须属于本人 saved 条目——
+    传入的非本人/非收藏论文一律忽略。按年份升序。
+    """
+    allowed = select(UserLibraryEntry.last_paper_id).where(
+        UserLibraryEntry.user_id == user_id,
+        UserLibraryEntry.saved.is_(True),
+        UserLibraryEntry.last_paper_id.is_not(None),
+    )
+    if paper_ids:
+        allowed = allowed.where(UserLibraryEntry.last_paper_id.in_(paper_ids))
+    allowed_ids = [pid for pid in (await session.execute(allowed)).scalars().all() if pid]
+    if not allowed_ids:
+        return []
+    stmt = (
+        select(Paper)
+        .where(Paper.id.in_(allowed_ids))
+        .order_by(Paper.year.asc().nulls_last(), Paper.title.asc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
