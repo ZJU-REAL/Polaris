@@ -18,12 +18,18 @@ class DirectionLibrarySummary(BaseModel):
     statement: str | None
     # 过渡期隐式库回指的课题；未来共享库可为 None
     project_id: uuid.UUID | None
-    # 生命周期（P9b）：pending 待审批 | active 已激活 | rejected 已驳回
+    # 生命周期（P9b）：pending 待审批（=申请转公共）| active 可用 | rejected 已驳回
     status: str
-    # 驳回理由（status=rejected 时有值）
+    # 归属（P10）：个人库 false（仅创建者 + admin 可见）| 公共库 true（全实验室可见）
+    is_public: bool = False
+    # 驳回理由（转公共被驳回时有值）
     review_note: str | None = None
-    # 库创建者（用户建库；pending/rejected 库仅创建者 + admin 可见）
+    # 库创建者（个人库仅创建者 + admin 可见）
     submitted_by: uuid.UUID | None = None
+    # 创建者展示名（submitted_by 的 display_name，前端展示归属）
+    owner_name: str | None = None
+    # 请求者是否本库归属人（submitted_by==我）：个人库删除 / 申请转公共入口据此
+    is_owner: bool = False
     # 是否「我的课题的库」（请求者是背后课题的成员 → 前端显示管理入口）
     is_mine: bool
     # 是否可管理本库：成员 ∪ 策展人（界面叫「文献库管理员」）∪ 平台 admin（P6）

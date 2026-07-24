@@ -158,6 +158,12 @@ async def _resolve_library(
     return None
 
 
+def _ingest_billing_owner(library: DirectionLibrary) -> uuid.UUID | None:
+    """ingest LLM 调用的计费归属（P10）：公共库走全局/系统 key（None），个人库走
+    创建者 key（submitted_by）。token 记账仍按 library_id 落库（另经调用参数带上）。"""
+    return None if library.is_public else library.submitted_by
+
+
 def _parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -528,6 +534,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             raise ValueError(f"library not found for project: {ctx.run.project_id}")
         # 稀疏 definition 容忍：rubric / questions 缺失时 prompt 只用 statement
         context_text = build_relevance_context(library_definition(library), library.name)
+        billing_user_id = _ingest_billing_owner(library)
 
         # 幂等断点：只取仍是 candidate 的成员行（已打分的不重复调 LLM）。外层只查 id，
         # 每篇打分在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
@@ -569,7 +576,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 context_text=context_text,
                 llm=ctx.llm,
                 extra_guidance=guidance,
-                user_id=ctx.run.created_by,
+                user_id=billing_user_id,
                 project_id=project_id,
                 voyage_id=ctx.run.id,
             )
@@ -640,6 +647,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
 
     async with get_sessionmaker()() as session:
         library = await _resolve_library(session, ctx)
+        billing_user_id = _ingest_billing_owner(library)
         pairs = (
             await session.execute(
                 select(Paper, LibraryPaper)
@@ -692,7 +700,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                 affs = await extract_affiliations_llm(
                     paper,
                     llm=ctx.llm,
-                    user_id=ctx.run.created_by,
+                    user_id=billing_user_id,
                     project_id=ctx.run.project_id,
                     library_id=library.id,
                     voyage_id=ctx.run.id,
@@ -779,6 +787,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
         if library is None:
             raise ValueError(f"library not found for run: {ctx.run.id}")
         statement = library_definition(library).get("statement") or library.name
+        billing_user_id = _ingest_billing_owner(library)
         # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）。外层只查 id，每篇
         # 编译在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
         rows = (
@@ -819,7 +828,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                         paper,
                         paper.figures,
                         llm=ctx.llm,
-                        user_id=ctx.run.created_by,
+                        user_id=billing_user_id,
                         project_id=project_id,
                         library_id=membership.library_id,
                         voyage_id=ctx.run.id,
@@ -834,7 +843,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 paper,
                 statement=statement,
                 llm=ctx.llm,
-                user_id=ctx.run.created_by,
+                user_id=billing_user_id,
                 project_id=project_id,
                 library_id=membership.library_id,
                 voyage_id=ctx.run.id,
@@ -887,12 +896,13 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         library = await _resolve_library(session, ctx)
         if library is None:
             raise ValueError(f"library not found for run: {ctx.run.id}")
+        billing_user_id = _ingest_billing_owner(library)
         # 全库上链逻辑与手动补建端点共用（services/concepts.py）
         stats, papers = await link_all_paper_concepts(
             session,
             library_id=library.id,
             llm=ctx.llm,
-            user_id=ctx.run.created_by,
+            user_id=billing_user_id,
             project_id=ctx.run.project_id,
             voyage_id=ctx.run.id,
         )
@@ -909,7 +919,7 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             try:
                 vectors = await ctx.llm.embed(
                     texts,
-                    user_id=ctx.run.created_by,
+                    user_id=billing_user_id,
                     project_id=ctx.run.project_id,
                     library_id=library.id,
                     voyage_id=ctx.run.id,
@@ -934,7 +944,7 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             session,
             library_id=library.id,
             llm=ctx.llm,
-            user_id=ctx.run.created_by,
+            user_id=billing_user_id,
             project_id=ctx.run.project_id,
             voyage_id=ctx.run.id,
             **embed_kwargs,

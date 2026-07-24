@@ -136,6 +136,7 @@ async def ensure_project_library(session, project_id):
         name=project.name if project else "test-lib",
         project_id=pid,
         status="active",
+        is_public=True,  # 课题起源库=共享库（P10：全实验室可读，等价存量 active 回填公共）
         created_by=None,
     )
     session.add(library)
@@ -247,6 +248,7 @@ async def make_project_with_library(
             definition=definition,
             project_id=project_id,
             status="active",
+            is_public=True,  # 课题起源库=共享库（P10：全实验室可读）
             created_by=None,
         )
         if definition:
