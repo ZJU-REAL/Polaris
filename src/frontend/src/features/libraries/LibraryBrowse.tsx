@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { FigureEmbed, usePaperFigures } from '../../components/ui/FigureGallery';
@@ -21,6 +21,7 @@ import {
   SearchInput,
   YearRangeField,
   parseYear,
+  saveBlob,
   useDebounced,
 } from '../wiki/shared';
 import { READING_STATUS, readerFrom } from '../reading/shared';
@@ -47,7 +48,21 @@ function authorsLine(p: PaperRead): string {
     .join(', ');
 }
 
-function PaperRow({ p, active, onClick }: { p: PaperRead; active: boolean; onClick: () => void }) {
+function PaperRow({
+  p,
+  active,
+  checked,
+  selectMode,
+  onClick,
+  onToggleCheck,
+}: {
+  p: PaperRead;
+  active: boolean;
+  checked: boolean;
+  selectMode: boolean;
+  onClick: () => void;
+  onToggleCheck: () => void;
+}) {
   return (
     <div
       onClick={onClick}
@@ -61,6 +76,23 @@ function PaperRow({ p, active, onClick }: { p: PaperRead; active: boolean; onCli
       }}
     >
       <div className="row gap8" style={{ alignItems: 'flex-start' }}>
+        {/* 占位常驻：切换多选时行内容不左右跳 */}
+        <input
+          type="checkbox"
+          checked={checked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={onToggleCheck}
+          title={tr('选中后可批量导出引用', 'Select for bulk citation export')}
+          style={{
+            width: 13,
+            height: 13,
+            margin: '2px 0 0',
+            flexShrink: 0,
+            accentColor: 'var(--accent)',
+            cursor: 'pointer',
+            visibility: selectMode ? 'visible' : 'hidden',
+          }}
+        />
         <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>{p.title}</div>
         <AddToButton paperId={p.id} />
       </div>
@@ -198,6 +230,24 @@ function PapersPane({
   const [scope, setScope] = useState<SearchScope>('keyword');
   const [sort, setSort] = useState<PaperSort>('relevance');
   const [page, setPage] = useState(1);
+
+  // 多选（批量导出引用）：默认关闭，底部「多选」按钮开启后行首出现复选框（只读浏览不加删除）
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setSelected(new Set());
+    setSelectMode(false);
+  }, [libraryId, q]);
+
+  const bulkExportMutation = useMutation({
+    mutationFn: () => api.downloadLibraryCitations(libraryId, { format: 'bibtex', ids: [...selected] }),
+    onSuccess: (blob) => {
+      saveBlob(blob, 'polaris-library-citations.bib');
+      toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
+    },
+    onError: (e) =>
+      toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
 
   // —— 高级检索（作者 / 机构 / 年份区间 / 阅读状态 / 星标） ——
   const [advOpen, setAdvOpen] = useState(false);
@@ -384,7 +434,22 @@ function PapersPane({
             />
           ) : (
             items.map((p) => (
-              <PaperRow key={p.id} p={p} active={p.id === selectedId} onClick={() => onSelect(p.id)} />
+              <PaperRow
+                key={p.id}
+                p={p}
+                active={p.id === selectedId}
+                checked={selected.has(p.id)}
+                selectMode={selectMode}
+                onClick={() => onSelect(p.id)}
+                onToggleCheck={() =>
+                  setSelected((old) => {
+                    const next = new Set(old);
+                    if (next.has(p.id)) next.delete(p.id);
+                    else next.add(p.id);
+                    return next;
+                  })
+                }
+              />
             ))
           )}
         </div>
@@ -402,6 +467,34 @@ function PapersPane({
             </button>
           </div>
         )}
+
+        {/* —— 底部固定操作栏：多选 + 导出引用（只读浏览不含删除） —— */}
+        <div
+          className="row gap8"
+          style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
+        >
+          <button
+            className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
+            title={tr('开启后列表出现复选框，可批量导出引用', 'Show checkboxes for bulk citation export')}
+            onClick={() => {
+              setSelectMode((m) => !m);
+              setSelected(new Set());
+            }}
+          >
+            <Icon name="check" size={13} />
+            {selectMode ? tr(`已选 ${selected.size}`, `${selected.size} selected`) : tr('多选', 'Select')}
+          </button>
+          {selectMode && (
+            <button
+              className="btn btn-ghost sm"
+              disabled={selected.size === 0 || bulkExportMutation.isPending}
+              onClick={() => bulkExportMutation.mutate()}
+            >
+              <Icon name="download" size={12} />
+              {tr('导出 BibTeX', 'Export BibTeX')}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="split-detail">

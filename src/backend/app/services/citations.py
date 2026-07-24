@@ -224,3 +224,34 @@ async def papers_for_export(
     deduped = dedupe_member_rows((await session.execute(stmt)).all())
     deduped.sort(key=lambda pm: (pm[0].year is None, pm[0].year or 0, pm[1].created_at))
     return [paper for paper, _ in deduped]
+
+
+async def papers_for_library_export(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    user_id: uuid.UUID,
+    status: str | None = None,
+    paper_ids: list[uuid.UUID] | None = None,
+) -> Sequence[Paper]:
+    """库作用域导出对象：某方向库的在库成员论文（独立方向库也可用）。
+
+    缺省 status in (compiled, included)；paper_ids 指定时按 id 精确导出（多选导出），
+    仍排除该库垃圾桶（excluded）与非成员。单库无需跨库归并（每篇至多一行）。
+    """
+    library_ids = [library_id]
+    stmt = apply_paper_filters(
+        member_papers_stmt(library_ids),
+        library_ids=library_ids,
+        status=status,
+        user_id=user_id,
+    )
+    if paper_ids:
+        stmt = stmt.where(Paper.id.in_(paper_ids))
+        if not status:
+            stmt = stmt.where(LibraryPaper.status != "excluded")
+    elif not status:
+        stmt = stmt.where(LibraryPaper.status.in_(DEFAULT_EXPORT_STATUSES))
+    stmt = stmt.order_by(Paper.year.asc().nulls_last(), LibraryPaper.created_at.asc())
+    rows = (await session.execute(stmt)).all()
+    return [paper for paper, _ in rows]
