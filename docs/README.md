@@ -17,6 +17,8 @@ For a high-level tour of the product and its feature set, start with the
 | --- | --- |
 | [Getting Started](getting-started.md) | Prerequisites, cloning, configuring `.env`, and running the full stack with `make dev` (Docker) or the no-Docker local path. |
 | [Core Concepts](concepts.md) | The six-stage research pipeline, the Voyage long-running agent (Navigator / Helm / Sextant), the skill system, and the MCP read-only tool layer, explained in depth. |
+| [Literature Management](literature-management.md) | The single content pool and the four collections on top of it (direction library, course shelf, personal library, daily feed), and the paper lifecycle: download, extract, chunk, embed, extract figures, compile, delete + orphan GC. |
+| [Embedding & Retrieval](embedding-and-retrieval.md) | The two vector representations (paper-level vs full-text chunks), how and when each is built, the `chat_fulltext_index` opt-in, and how semantic search and literature chat retrieve (pgvector, graded fallback). |
 | [Architecture](architecture.md) | The public-facing system design: layered backend, ARQ worker, LLM abstraction with DB model routing, the deterministic-vs-judgemental split, data stores, and real-time channels. |
 | [Configuration](configuration.md) | Reference table of every environment variable and setting from `.env.example` (database, cache, secrets, LLM providers, literature APIs, data directory, model routing). |
 | [Development](development.md) | Local development workflow: repo layout, running the stack, migrations, tests, linting, the layering convention, and the branch-per-feature Git workflow. |
