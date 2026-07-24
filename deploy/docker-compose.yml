@@ -1,0 +1,80 @@
+# Polaris 拉镜像部署（从 Docker Hub 拉现成镜像，无需在服务器上构建）。
+#
+# 与 docker/docker-compose*.yml 的区别：那套是本地 `build:` 构建用的；
+# 本文件用 `image:` 直接拉预构建镜像，适合把镜像 push 到 registry 后在服务器上部署。
+#
+# 用法（把本目录的 docker-compose.yml + .env.example 拷到服务器某目录，如 ~/polaris）：
+#   1) cp .env.example .env  && 编辑 .env（密钥务必自己生成，见文件内注释）
+#   2) 在 .env 里设 POLARIS_IMAGE_PREFIX / POLARIS_IMAGE_TAG 指向你 push 的镜像
+#   3) docker compose pull
+#   4) docker compose up -d
+#   5) docker compose exec api alembic upgrade head   # 首次必跑：postgres 不会自动建表
+#
+# 数据持久化到 ./data（bind mount）。备份即 tar 这个目录；切勿 `down -v`（会删卷）。
+# ⚠️ 镜像架构要和服务器 CPU 一致（Mac 构建出的是 arm64，x86 服务器需 amd64 镜像）。
+
+name: polaris
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    env_file: ./.env
+    volumes:
+      - ./data/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-polaris}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ./data/redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ${POLARIS_IMAGE_PREFIX:-polaris}/polaris-api:${POLARIS_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      POLARIS_DATA_DIR: /srv/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/appdata:/srv/data
+      - ./data/tectonic-cache:/root/.cache/Tectonic
+
+  worker:
+    image: ${POLARIS_IMAGE_PREFIX:-polaris}/polaris-worker:${POLARIS_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      POLARIS_DATA_DIR: /srv/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data/appdata:/srv/data
+      - ./data/tectonic-cache:/root/.cache/Tectonic
+
+  frontend:
+    image: ${POLARIS_IMAGE_PREFIX:-polaris}/polaris-frontend:${POLARIS_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
