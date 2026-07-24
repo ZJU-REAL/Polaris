@@ -65,6 +65,11 @@ class DailyPage(BaseModel):
     total: int
     page: int
     size: int
+    # 实际使用的检索方式：请求 semantic 但数据库/模型不支持时回退 keyword，前端据此提示
+    mode_used: Literal["keyword", "semantic"] = "keyword"
+    # 语义检索时的向量覆盖度（池内已建向量数 / 池内总数）；池论文默认不建向量，结果可能不全
+    vector_ready: int | None = None
+    vector_total: int | None = None
 
 
 class DailyDay(BaseModel):

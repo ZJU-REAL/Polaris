@@ -11,13 +11,15 @@
   个人库 save_paper），无权目标单独标记 forbidden，不整体失败。
 """
 
+import asyncio
 import datetime as dt
+import json
 import logging
 import re
 import uuid
 from typing import Any
 
-from sqlalchemy import String, cast, delete, func, select
+from sqlalchemy import String, cast, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
@@ -43,6 +45,13 @@ from app.services.paper_import import _parse_iso
 logger = logging.getLogger(__name__)
 
 CATEGORIES_SETTING_KEY = "daily_feed_categories"
+
+# 每日池论文是否自动建向量（管理员开关，默认关——每天上百篇，开了才花嵌入调用）
+EMBED_ENABLED_SETTING_KEY = "daily_feed_embed_enabled"
+DEFAULT_EMBED_ENABLED = False
+
+# 批量嵌入的每批条数（与 chunks.EMBED_BATCH 对齐）
+EMBED_BATCH = 32
 
 # arXiv 分类形如 cs.AI / stat.ML / eess.IV / math.OC（主类小写，子类大写字母数字短串）
 _CATEGORY_RE = re.compile(r"^[a-z][a-z-]{1,15}(\.[A-Za-z]{2,10})?$")
@@ -97,6 +106,117 @@ async def set_categories(session: AsyncSession, categories: list[str]) -> list[s
         row.value = cleaned
     await session.commit()
     return cleaned
+
+
+async def get_daily_embed_enabled(session: AsyncSession) -> bool:
+    """每日池论文是否自动建向量（默认关；非法存量值回落默认）。"""
+    row = await session.get(SystemSetting, EMBED_ENABLED_SETTING_KEY)
+    value = row.value if row is not None else None
+    return value if isinstance(value, bool) else DEFAULT_EMBED_ENABLED
+
+
+async def set_daily_embed_enabled(session: AsyncSession, enabled: bool) -> bool:
+    row = await session.get(SystemSetting, EMBED_ENABLED_SETTING_KEY)
+    if row is None:
+        session.add(SystemSetting(key=EMBED_ENABLED_SETTING_KEY, value=bool(enabled)))
+    else:
+        row.value = bool(enabled)
+    await session.commit()
+    return bool(enabled)
+
+
+# ---- 池论文向量（语义检索/池对话底座） ----
+
+
+async def embed_papers_missing_vectors(
+    session: AsyncSession,
+    *,
+    paper_ids: list[uuid.UUID],
+    user_id: uuid.UUID | None = None,
+) -> dict[str, int]:
+    """给定论文中还没有向量的批量嵌入（幂等：已有向量的一律不动）。
+
+    best-effort：整批失败只记日志并继续下一批；provider 不支持嵌入直接停手。
+    返回 {embedded, skipped(已有向量), failed(嵌入未成功)}。
+    """
+    if not paper_ids:
+        return {"embedded": 0, "skipped": 0, "failed": 0}
+    from app.core.llm.router import get_llm_router
+    from app.services.paper_enrich import paper_embedding_text
+
+    rows = (
+        (await session.execute(select(Paper).where(Paper.id.in_(list(set(paper_ids))))))
+        .scalars()
+        .all()
+    )
+    pending = [p for p in rows if p.embedding is None]
+    stats = {"embedded": 0, "skipped": len(rows) - len(pending), "failed": 0}
+    if not pending:
+        return stats
+    # 先把文本与 id 取出来：失败回滚会让 ORM 实例过期，之后再读属性会触发意外 IO
+    items = [(p.id, paper_embedding_text(p)) for p in pending]
+    llm = get_llm_router()
+    for i in range(0, len(items), EMBED_BATCH):
+        batch = items[i : i + EMBED_BATCH]
+        try:
+            vectors = await llm.embed([t for _, t in batch], user_id=user_id)
+        except asyncio.CancelledError:
+            raise
+        except NotImplementedError:
+            logger.info("daily embed skipped: provider does not support embeddings")
+            stats["failed"] += len(items) - i
+            break
+        except Exception:  # noqa: BLE001 — 嵌入失败不阻断同步
+            logger.warning("daily embed batch failed", exc_info=True)
+            stats["failed"] += len(batch)
+            continue
+        try:
+            for (paper_id, _), vector in zip(batch, vectors, strict=True):
+                paper = await session.get(Paper, paper_id)
+                if paper is not None:
+                    paper.embedding = vector
+            await session.commit()
+            stats["embedded"] += len(batch)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.warning("daily embed commit failed", exc_info=True)
+            await session.rollback()
+            stats["failed"] += len(batch)
+    return stats
+
+
+async def backfill_embeddings(
+    session: AsyncSession, *, user_id: uuid.UUID | None = None, today: dt.date | None = None
+) -> dict[str, int]:
+    """给当前 7 天窗口内所有缺向量的每日论文补建向量（管理员开开关后一次性补齐用）。"""
+    cutoff = (today or _today_utc()) - dt.timedelta(days=DAILY_FEED_RETENTION_DAYS - 1)
+    paper_ids = list(
+        (
+            await session.execute(
+                select(DailyFeedEntry.paper_id).where(DailyFeedEntry.feed_date >= cutoff)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return await embed_papers_missing_vectors(session, paper_ids=paper_ids, user_id=user_id)
+
+
+async def embedding_coverage(
+    session: AsyncSession, *, today: dt.date | None = None
+) -> tuple[int, int]:
+    """(有向量的池论文数, 池论文总数)——语义检索结果覆盖度提示用。"""
+    cutoff = (today or _today_utc()) - dt.timedelta(days=DAILY_FEED_RETENTION_DAYS - 1)
+    base = (
+        select(func.count())
+        .select_from(DailyFeedEntry)
+        .join(Paper, Paper.id == DailyFeedEntry.paper_id)
+        .where(DailyFeedEntry.feed_date >= cutoff)
+    )
+    total = (await session.execute(base)).scalar_one()
+    ready = (await session.execute(base.where(Paper.embedding.is_not(None)))).scalar_one()
+    return int(ready), int(total)
 
 
 # ---- 每日同步（cron / 手动刷新） ----
@@ -159,6 +279,7 @@ async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
     today = _today_utc()
     client = get_arxiv_client()
     fetched = created = 0
+    touched: list[uuid.UUID] = []  # 本次同步涉及的池论文（开了自动建向量时补嵌用）
 
     for category in categories:
         entries = await client.fetch_new(category)  # 失败已在客户端兜底为 []
@@ -184,6 +305,7 @@ async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
                 paper = _make_pool_paper(entry)
                 session.add(paper)
                 await session.flush()
+            touched.append(paper.id)
             row = (
                 await session.execute(
                     select(DailyFeedEntry).where(DailyFeedEntry.paper_id == paper.id)
@@ -206,7 +328,26 @@ async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
 
     expired = await cleanup_expired(session, today=today)
     await session.commit()
-    return {"fetched": fetched, "created": created, "expired": expired, "categories": categories}
+
+    # 建向量（管理员开关，默认关）：只嵌本次涉及且还没向量的论文，费用记系统账。
+    # best-effort——嵌入出问题不影响同步本身的结果。
+    embedded = 0
+    try:
+        if await get_daily_embed_enabled(session):
+            stats = await embed_papers_missing_vectors(session, paper_ids=touched)
+            embedded = stats["embedded"]
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.warning("daily feed embedding step failed", exc_info=True)
+
+    return {
+        "fetched": fetched,
+        "created": created,
+        "expired": expired,
+        "categories": categories,
+        "embedded": embedded,
+    }
 
 
 # ---- 池浏览 ----
@@ -273,6 +414,18 @@ def _entry_item(entry: DailyFeedEntry, paper: Paper, likes: dict[str, Any]) -> d
     }
 
 
+async def entry_items(
+    session: AsyncSession,
+    rows: list[tuple[DailyFeedEntry, Paper]],
+    *,
+    user_id: uuid.UUID,
+) -> list[dict[str, Any]]:
+    """(entry, paper) 行 → 列表项（补点赞汇总）；保持传入顺序。"""
+    likes = await _likes_by_entry(session, [entry.id for entry, _ in rows], user_id=user_id)
+    empty = {"like_count": 0, "liked_by_me": False, "likers_preview": []}
+    return [_entry_item(entry, paper, likes.get(entry.id, empty)) for entry, paper in rows]
+
+
 async def list_days(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (
         await session.execute(
@@ -323,9 +476,62 @@ async def list_papers(
     stmt = stmt.offset((page - 1) * size).limit(size)
 
     rows = (await session.execute(stmt)).all()
-    likes = await _likes_by_entry(session, [entry.id for entry, _ in rows], user_id=user_id)
-    empty = {"like_count": 0, "liked_by_me": False, "likers_preview": []}
-    return [_entry_item(entry, paper, likes.get(entry.id, empty)) for entry, paper in rows], total
+    return await entry_items(session, list(rows), user_id=user_id), total
+
+
+async def semantic_search_daily(
+    session: AsyncSession,
+    *,
+    query_vector: list[float],
+    limit: int,
+    date: dt.date | None = None,
+    category: str | None = None,
+    announce: str | None = None,
+) -> list[tuple[DailyFeedEntry, Paper, float]]:
+    """池内向量检索（pgvector 余弦；仅 postgres，调用方先判 semantic_search_supported）。
+
+    只召回已有向量的池论文——池论文默认不建向量（管理员开关），所以结果可能不全，
+    调用方需要如实告知前端。筛选条件与关键词列表一致（日期/分类/公告类型）。
+    """
+    where = ["p.embedding IS NOT NULL"]
+    params: dict[str, Any] = {"qv": json.dumps(query_vector), "k": limit}
+    if date is not None:
+        where.append("e.feed_date = :feed_date")
+        params["feed_date"] = date
+    if announce in ("new", "cross"):
+        where.append("e.announce_type = :announce")
+        params["announce"] = announce
+    if category:
+        where.append(
+            "(e.primary_category = :category OR CAST(e.categories AS text) LIKE :category_like)"
+        )
+        params["category"] = category
+        params["category_like"] = f'%"{category}"%'
+    rows = (
+        await session.execute(
+            text(
+                "SELECT e.id AS entry_id, 1 - (p.embedding <=> CAST(:qv AS vector)) AS score "
+                "FROM daily_feed_entries e "
+                "JOIN papers p ON p.id = e.paper_id "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY score DESC "
+                "LIMIT :k"
+            ),
+            params,
+        )
+    ).all()
+    if not rows:
+        return []
+    scores = {row.entry_id: float(row.score) for row in rows}
+    pairs = (
+        await session.execute(
+            select(DailyFeedEntry, Paper)
+            .join(Paper, Paper.id == DailyFeedEntry.paper_id)
+            .where(DailyFeedEntry.id.in_(list(scores)))
+        )
+    ).all()
+    by_id = {entry.id: (entry, paper) for entry, paper in pairs}
+    return [(*by_id[eid], scores[eid]) for eid in (row.entry_id for row in rows) if eid in by_id]
 
 
 async def get_entry_item(

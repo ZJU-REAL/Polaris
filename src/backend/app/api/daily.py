@@ -6,10 +6,11 @@
 
 import asyncio
 import datetime as dt
+import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,9 +38,11 @@ from app.schemas.daily import (
     DailyPaperDetail,
 )
 from app.schemas.paper import PaperChatRequest
+from app.services import citations as citations_service
 from app.services import daily_feed as daily_service
 from app.services import library_chat as library_chat_service
 from app.services import paper_enrich as paper_enrich_service
+from app.services import papers as papers_service
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,7 @@ async def list_days(
 async def list_papers(
     date: dt.date | None = Query(default=None),
     sort: str = Query(default="likes", pattern="^(likes|date)$"),
+    mode: str = Query(default="keyword", pattern="^(keyword|semantic)$"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
     q: str | None = Query(default=None),
@@ -68,18 +72,97 @@ async def list_papers(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DailyPage:
-    items, total = await daily_service.list_papers(
-        session,
-        user_id=user.id,
-        date=date,
-        sort=sort,
-        page=page,
+    """池内列表 / 检索。
+
+    mode=semantic 且有 q 时走论文向量检索（结果按相关度排序、不分页）；数据库不是
+    postgres 或 provider 不支持嵌入时回退关键词，响应里 mode_used 如实反映。
+    池论文默认不建向量（管理员开关），语义结果可能不全，覆盖度见 vector_ready/total。
+    """
+    mode_used = "keyword"
+    items: list[dict] = []
+    total = 0
+    if mode == "semantic" and q and q.strip() and papers_service.semantic_search_supported(session):
+        try:
+            vectors = await get_llm_router().embed([q.strip()], user_id=user.id)
+            rows = await daily_service.semantic_search_daily(
+                session,
+                query_vector=vectors[0],
+                limit=max(papers_service.RERANK_CANDIDATES, size),
+                date=date,
+                category=category,
+                announce=announce,
+            )
+            mode_used = "semantic"
+            entry_by_paper = {paper.id: entry for entry, paper, _ in rows}
+            # 向量召回 → rerank 取前 size（rerank 未配置时降级为纯向量分，见 papers 服务）
+            ranked, _reranked = await papers_service.rerank_paper_rows(
+                get_llm_router(),
+                query=q.strip(),
+                rows=[(paper, score) for _, paper, score in rows],
+                limit=size,
+                user_id=user.id,
+            )
+            items = await daily_service.entry_items(
+                session, [(entry_by_paper[p.id], p) for p, _ in ranked], user_id=user.id
+            )
+            total = len(items)
+        except NotImplementedError:
+            mode_used = "keyword"  # embedding 路由的 provider 不支持 → 回退
+    if mode_used == "keyword":
+        items, total = await daily_service.list_papers(
+            session,
+            user_id=user.id,
+            date=date,
+            sort=sort,
+            page=page,
+            size=size,
+            q=q,
+            announce=announce,
+            category=category,
+        )
+        return DailyPage(items=items, total=total, page=page, size=size, mode_used=mode_used)
+    ready, ready_total = await daily_service.embedding_coverage(session)
+    return DailyPage(
+        items=items,
+        total=total,
+        page=1,  # 语义结果按相关度返回一页
         size=size,
-        q=q,
-        announce=announce,
-        category=category,
+        mode_used=mode_used,
+        vector_ready=ready,
+        vector_total=ready_total,
     )
-    return DailyPage(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export/citations")
+async def export_daily_citations(
+    format_: str = Query(default="bibtex", alias="format", pattern="^(bibtex|csl-json)$"),
+    ids: str | None = Query(default=None, description="逗号分隔的论文 id（多选导出）"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """导出每日新论文的引用：BibTeX / CSL-JSON。
+
+    范围 = 当前滚动窗口内的每日论文；ids 指定时按 id 精确导出（窗口外的 id 落选）。
+    每日推送全实验室共享，登录即可导出。
+    """
+    paper_ids: list[uuid.UUID] | None = None
+    if ids:
+        try:
+            paper_ids = [uuid.UUID(x) for x in ids.split(",") if x.strip()]
+        except ValueError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="INVALID_IDS") from e
+    papers = await citations_service.papers_for_daily_export(session, paper_ids=paper_ids)
+    if format_ == "bibtex":
+        return Response(
+            content=citations_service.build_bibtex(papers),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="polaris-daily-citations.bib"'},
+        )
+    return Response(
+        content=json.dumps(citations_service.build_csl_json(papers), ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="polaris-daily-citations.json"'},
+    )
 
 
 @router.get("/liked", response_model=DailyPage)

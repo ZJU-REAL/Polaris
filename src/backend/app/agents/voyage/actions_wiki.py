@@ -46,6 +46,7 @@ from app.services.libraries import (
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
+from app.services.paper_enrich import paper_embedding_text
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
 from app.services.relevance import build_relevance_context, score_paper_relevance
 from app.services.wiki_compile import compile_paper
@@ -927,7 +928,8 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         embed_error: str | None = None
         pending = [p for p in papers if p.embedding is None]
         if pending:
-            texts = [f"{p.title}\n{p.tldr or ''}\n{p.abstract or ''}"[:2000] for p in pending]
+            # 文本口径与手动补全/每日池共用（services/paper_enrich.paper_embedding_text）
+            texts = [paper_embedding_text(p) for p in pending]
             try:
                 vectors = await ctx.llm.embed(
                     texts,

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -12,7 +12,7 @@ import { tr } from '../../lib/i18n';
 import { Markdown } from '../../lib/markdown';
 import { PaperReader } from '../wiki/PaperReader';
 import { readerFrom } from '../reading/shared';
-import { SearchInput, useDebounced } from '../wiki/shared';
+import { SearchInput, saveBlob, useDebounced } from '../wiki/shared';
 import { DailyLikes } from './DailyLikes';
 import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
@@ -67,11 +67,17 @@ function AnnounceBadge({ type }: { type: DailyPaperItem['announce_type'] }) {
 function DailyRow({
   p,
   active,
+  checked,
+  selectMode,
   onClick,
+  onToggleCheck,
 }: {
   p: DailyPaperItem;
   active: boolean;
+  checked: boolean;
+  selectMode: boolean;
   onClick: () => void;
+  onToggleCheck: () => void;
 }) {
   return (
     <div
@@ -85,7 +91,24 @@ function DailyRow({
         transition: 'background 0.12s',
       }}
     >
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+        {/* 占位常驻：切换多选时行内容不左右跳 */}
+        <input
+          type="checkbox"
+          checked={checked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={onToggleCheck}
+          title={tr('选中后可批量导出引用', 'Select for bulk citation export')}
+          style={{
+            width: 13,
+            height: 13,
+            margin: '2px 0 0',
+            flexShrink: 0,
+            accentColor: 'var(--accent)',
+            cursor: 'pointer',
+            visibility: selectMode ? 'visible' : 'hidden',
+          }}
+        />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>{p.title}</div>
           <div className="row gap8" style={{ marginTop: 5, fontSize: 11, color: 'var(--text-3)' }}>
@@ -108,10 +131,8 @@ function DailyRow({
               </span>
             )}
           </div>
-        </div>
-        {/* 行右侧点赞区：[♥][头像堆][+N][数字] */}
-        <div style={{ paddingTop: 1 }}>
-          <DailyLikes item={p} />
+          {/* 第三行：[♥] 点赞者头像（单行，超出用 +N） …… N 人赞过 */}
+          <DailyLikes item={p} variant="row" />
         </div>
       </div>
     </div>
@@ -350,24 +371,33 @@ function DailyDetailPane({
 
 type DailyView = 'papers' | 'chat';
 type AnnounceFilter = 'all' | 'new' | 'cross';
+type SearchScope = 'keyword' | 'semantic';
 
 export function DailyPage() {
   const [view, setView] = useState<DailyView>('papers');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
+  const [scope, setScope] = useState<SearchScope>('keyword');
   const [sort, setSort] = useState<DailySort>('likes');
   const [page, setPage] = useState(1);
-  // —— 高级过滤：日期（null=全部 7 天）/ 订阅分类（''=全部）/ 类型 ——
+  // —— 高级过滤：日期（null=全部 7 天，默认落在最新一天）/ 订阅分类（''=全部）/ 类型 ——
   const [day, setDay] = useState<string | null>(null);
   const [category, setCategory] = useState('');
-  const [announce, setAnnounce] = useState<AnnounceFilter>('all');
+  const [announce, setAnnounce] = useState<AnnounceFilter>('new');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
   // 收录到库/课题/个人后若启动了后台补全，弹出与手动添加同款分阶段进度框
   const [progress, setProgress] = useState<{ taskId: string; title: string } | null>(null);
+  // 多选（批量导出引用）：默认关闭，底部「多选」按钮开启后行首出现复选框；存 paper_id
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => setPage(1), [q, sort, day, category, announce]);
+  useEffect(() => setPage(1), [q, scope, sort, day, category, announce]);
+  useEffect(() => {
+    setSelected(new Set());
+    setSelectMode(false);
+  }, [q, scope, day, category, announce]);
 
   const daysQuery = useQuery({
     queryKey: ['daily-days'],
@@ -379,17 +409,32 @@ export function DailyPage() {
 
   // 有数据的日期，升序（旧 → 新），日期步进只在这些日期间跳
   const dates = (daysQuery.data ?? []).map((d) => d.date).sort();
+  const latestDate = dates[dates.length - 1] ?? null;
+
+  // 日期一改就算用户表过态，之后不再自动初始化
+  const didInitDay = useRef(false);
+  const pickDay = useCallback((d: string | null) => {
+    didInitDay.current = true;
+    setDay(d);
+  }, []);
+  // 默认只看当天：日期列表到手后落到最新一天（只做一次，不覆盖用户选择）
+  useEffect(() => {
+    if (didInitDay.current || !latestDate) return;
+    didInitDay.current = true;
+    setDay(latestDate);
+  }, [latestDate]);
+
   const dayIdx = day ? dates.indexOf(day) : -1;
   // 「全部」视为最新一天的后一位：← 从全部进入最新一天；→ 在最新一天回到全部
   const canPrevDay = dates.length > 0 && (day === null || dayIdx > 0);
   const canNextDay = day !== null && dayIdx >= 0;
   const goPrevDay = () => {
-    if (day === null) setDay(dates[dates.length - 1] ?? null);
-    else if (dayIdx > 0) setDay(dates[dayIdx - 1] ?? null);
+    if (day === null) pickDay(latestDate);
+    else if (dayIdx > 0) pickDay(dates[dayIdx - 1] ?? null);
   };
   const goNextDay = () => {
     if (day === null) return;
-    setDay(dayIdx >= 0 && dayIdx < dates.length - 1 ? (dates[dayIdx + 1] ?? null) : null);
+    pickDay(dayIdx >= 0 && dayIdx < dates.length - 1 ? (dates[dayIdx + 1] ?? null) : null);
   };
 
   const categoriesQuery = useQuery({
@@ -399,31 +444,55 @@ export function DailyPage() {
     staleTime: 300_000,
   });
 
+  // 语义检索：只在有关键词时生效；结果按相关度排序、不分页
+  const semantic = !!q && scope === 'semantic';
   const listQuery = useQuery({
-    queryKey: ['daily-papers', sort, page, q, day, category, announce],
+    queryKey: ['daily-papers', scope, sort, page, q, day, category, announce],
     queryFn: () =>
       api.listDailyPapers({
-        sort,
-        page,
+        sort: semantic ? undefined : sort,
+        page: semantic ? undefined : page,
         size: PAGE_SIZE,
         q: q || undefined,
         date: day ?? undefined,
         category: category || undefined,
         announce: announce === 'all' ? undefined : announce,
+        mode: semantic ? 'semantic' : undefined,
       }),
     retry: false,
     placeholderData: keepPreviousData,
   });
-  const filtered = !!q || day !== null || !!category || announce !== 'all';
+  // 默认口径（当天 + 新工作）之外还加了条件才算「筛过」——空列表时给的话术不一样
+  const filtered = !!q || !!category || announce !== 'new' || (day !== null && day !== latestDate);
   const items = listQuery.data?.items ?? [];
   const total = listQuery.data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pages = semantic ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // 后端明确回了「用的是关键词」→ 说明语义检索这会儿不可用
+  const fallbackNotice = semantic && listQuery.data?.mode_used === 'keyword';
 
   // 首条自动选中
   const firstId = items[0]?.entry_id ?? null;
   useEffect(() => {
     if (!selectedId && firstId) setSelectedId(firstId);
   }, [selectedId, firstId]);
+
+  const toggleSelected = (paperId: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(paperId)) next.delete(paperId);
+      else next.add(paperId);
+      return next;
+    });
+
+  const exportMutation = useMutation({
+    mutationFn: () => api.downloadDailyCitations({ format: 'bibtex', ids: [...selected] }),
+    onSuccess: (blob) => {
+      saveBlob(blob, 'polaris-daily-citations.bib');
+      toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
+    },
+    onError: (e) =>
+      toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
 
   const openCollect = (p: CollectPaperRef) => {
     setCollectPaper(p);
@@ -485,11 +554,53 @@ export function DailyPage() {
                   {total ? tr(`${total} 篇`, `${total}`) : ''}
                 </span>
               </div>
+              {/* 检索方式：关键词字面匹配 / 语义检索（按意思找） */}
               <div className="row gap6 wrap" style={{ marginTop: 10 }}>
-                <span className={`chip${sort === 'likes' ? ' on' : ''}`} onClick={() => setSort('likes')}>
+                <span className={`chip${scope === 'keyword' ? ' on' : ''}`} onClick={() => setScope('keyword')}>
+                  {tr('关键词', 'Keyword')}
+                </span>
+                <span className={`chip${scope === 'semantic' ? ' on' : ''}`} onClick={() => setScope('semantic')}>
+                  {tr('语义检索', 'Semantic')}
+                </span>
+              </div>
+              {semantic && (
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5 }}>
+                  {tr(
+                    '语义检索只覆盖已生成向量的论文，结果可能不全。',
+                    'Semantic search only covers papers that already have embeddings — results may be incomplete.',
+                  )}
+                </div>
+              )}
+              {fallbackNotice && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    fontSize: 11,
+                    color: 'var(--warn-tx)',
+                    background: 'var(--warn-bg)',
+                    borderRadius: 7,
+                    padding: '5px 9px',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
+                </div>
+              )}
+              <div className="row gap6 wrap" style={{ marginTop: 8 }}>
+                <span
+                  className={`chip${!semantic && sort === 'likes' ? ' on' : ''}`}
+                  style={semantic ? { opacity: 0.45, pointerEvents: 'none' } : undefined}
+                  title={semantic ? tr('语义检索按相关度排序', 'Semantic results are ranked by relevance') : undefined}
+                  onClick={() => setSort('likes')}
+                >
                   {tr('按点赞', 'Most liked')}
                 </span>
-                <span className={`chip${sort === 'date' ? ' on' : ''}`} onClick={() => setSort('date')}>
+                <span
+                  className={`chip${!semantic && sort === 'date' ? ' on' : ''}`}
+                  style={semantic ? { opacity: 0.45, pointerEvents: 'none' } : undefined}
+                  title={semantic ? tr('语义检索按相关度排序', 'Semantic results are ranked by relevance') : undefined}
+                  onClick={() => setSort('date')}
+                >
                   {tr('按时间', 'Newest')}
                 </span>
                 <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px', flexShrink: 0 }} />
@@ -516,8 +627,12 @@ export function DailyPage() {
                 </button>
                 <span
                   className={`chip${day !== null ? ' on' : ''}`}
-                  title={day !== null ? tr('点击回到全部 7 天', 'Click to show all 7 days') : undefined}
-                  onClick={() => setDay(null)}
+                  title={
+                    day !== null
+                      ? tr('点击看全部 7 天', 'Click to show all 7 days')
+                      : tr('点击只看最新一天', 'Click to show the latest day only')
+                  }
+                  onClick={() => pickDay(day === null ? latestDate : null)}
                 >
                   {day !== null ? dayLabel(day, dayCount.get(day)) : tr('全部 7 天', 'All 7 days')}
                 </span>
@@ -594,7 +709,14 @@ export function DailyPage() {
                           {dayLabel(p.feed_date, dayCount.get(p.feed_date))}
                         </div>
                       )}
-                      <DailyRow p={p} active={p.entry_id === selectedId} onClick={() => setSelectedId(p.entry_id)} />
+                      <DailyRow
+                        p={p}
+                        active={p.entry_id === selectedId}
+                        checked={selected.has(p.paper_id)}
+                        selectMode={selectMode}
+                        onClick={() => setSelectedId(p.entry_id)}
+                        onToggleCheck={() => toggleSelected(p.paper_id)}
+                      />
                     </Fragment>
                   );
                 })
@@ -617,6 +739,34 @@ export function DailyPage() {
                 </button>
               </div>
             )}
+
+            {/* —— 底部固定操作栏：多选 + 导出引用 —— */}
+            <div
+              className="row gap8"
+              style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
+            >
+              <button
+                className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
+                title={tr('开启后列表出现复选框，可批量导出引用', 'Show checkboxes to export citations in bulk')}
+                onClick={() => {
+                  setSelectMode((m) => !m);
+                  setSelected(new Set());
+                }}
+              >
+                <Icon name="check" size={13} />
+                {selectMode ? tr(`已选 ${selected.size}`, `${selected.size} selected`) : tr('多选', 'Select')}
+              </button>
+              {selectMode && (
+                <button
+                  className="btn btn-ghost sm"
+                  disabled={selected.size === 0 || exportMutation.isPending}
+                  onClick={() => exportMutation.mutate()}
+                >
+                  <Icon name="download" size={12} />
+                  {tr('导出 BibTeX', 'Export BibTeX')}
+                </button>
+              )}
+            </div>
           </div>
 
           {/* —— 右：详情 —— */}
