@@ -105,18 +105,28 @@ export function InfoPanel({
       <div style={{ fontSize: 14.5, fontWeight: 660, lineHeight: 1.4, marginBottom: 5 }}>{paper.title}</div>
       {paper.authors.length > 0 && (
         <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
-          {paper.authors.map((a, i) => (
-            <span key={`${a.name}-${i}`}>
-              {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
-              <span
-                className="author-link"
-                title={tr(`回文献库只看 ${a.name} 的论文`, `Back to the library, showing only ${a.name}'s papers`)}
-                {...clickable(() => navigate(topicPath(paper.project_id, `wiki?author=${encodeURIComponent(a.name)}`)))}
-              >
-                {a.name}
+          {paper.authors.map((a, i) => {
+            const affil = a.affiliations?.filter(Boolean) ?? [];
+            return (
+              <span key={`${a.name}-${i}`}>
+                {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
+                <span
+                  className="author-link"
+                  title={
+                    affil.length > 0
+                      ? `${a.name} — ${affil.join('; ')}`
+                      : tr(`回文献库只看 ${a.name} 的论文`, `Back to the library, showing only ${a.name}'s papers`)
+                  }
+                  {...clickable(() => navigate(topicPath(paper.project_id, `wiki?author=${encodeURIComponent(a.name)}`)))}
+                >
+                  {a.name}
+                </span>
+                {affil.length > 0 && (
+                  <span style={{ color: 'var(--text-4)', fontSize: 10.5 }}> ({affil[0]}{affil.length > 1 ? ` +${affil.length - 1}` : ''})</span>
+                )}
               </span>
-            </span>
-          ))}
+            );
+          })}
         </div>
       )}
       {(paper.affiliations?.length ?? 0) > 0 && (

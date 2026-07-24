@@ -512,6 +512,12 @@ export interface LlmCallLogSettings {
   enabled: boolean;
 }
 
+/** 论文作者↔机构抽取模式：入库时抽 / 编译 wiki 时顺带抽（省一次调用）。 */
+export type AffiliationMode = 'on_add' | 'on_compile';
+export interface AffiliationModeRead {
+  mode: AffiliationMode;
+}
+
 export interface LlmCallLogRow {
   id: string;
   created_at: string;
@@ -579,6 +585,8 @@ export type PaperSort = 'relevance' | '-published_at';
 
 export interface PaperAuthor {
   name: string;
+  /** 该作者最可能的所属机构（OpenAlex 结构化 / LLM 从标题页尽力对应；可能为空） */
+  affiliations?: string[];
 }
 
 export interface PaperRead {
@@ -3604,6 +3612,13 @@ export const api = {
   },
   getLlmCallLogSettings(): Promise<LlmCallLogSettings> {
     return request<LlmCallLogSettings>('/admin/llm/call-logs/settings');
+  },
+  /** 机构抽取模式（admin）。 */
+  getAffiliationMode(): Promise<AffiliationModeRead> {
+    return request<AffiliationModeRead>('/admin/settings/affiliation-mode');
+  },
+  setAffiliationMode(mode: AffiliationMode): Promise<AffiliationModeRead> {
+    return requestJson<AffiliationModeRead>('/admin/settings/affiliation-mode', 'PUT', { mode });
   },
   putLlmCallLogSettings(enabled: boolean): Promise<LlmCallLogSettings> {
     return requestJson<LlmCallLogSettings>('/admin/llm/call-logs/settings', 'PUT', { enabled });

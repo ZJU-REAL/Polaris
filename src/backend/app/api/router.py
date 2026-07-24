@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api import (
     admin_codes,
     admin_llm,
+    admin_settings,
     admin_users,
     auth,
     concepts,
@@ -49,6 +50,7 @@ api_router.include_router(projects.router)
 api_router.include_router(gates.router)
 api_router.include_router(voyages.router)
 api_router.include_router(admin_llm.router)
+api_router.include_router(admin_settings.router)
 api_router.include_router(me_llm.router)
 api_router.include_router(papers.router)
 api_router.include_router(library.router)

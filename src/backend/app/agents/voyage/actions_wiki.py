@@ -28,7 +28,11 @@ from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, PaperChunk
-from app.services.affiliations import extract_affiliations_llm
+from app.services.affiliations import (
+    apply_author_affiliations,
+    extract_author_affiliations_llm,
+    get_affiliation_extraction_mode,
+)
 from app.services.chunks import embed_pending_chunks, index_paper_fulltext
 from app.services.concepts import link_all_paper_concepts
 from app.services.dedup import pool_dedup_key
@@ -648,6 +652,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     async with get_sessionmaker()() as session:
         library = await _resolve_library(session, ctx)
         billing_user_id = _ingest_billing_owner(library)
+        affil_mode = await get_affiliation_extraction_mode(session)
         pairs = (
             await session.execute(
                 select(Paper, LibraryPaper)
@@ -694,10 +699,11 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             except Exception as e:  # noqa: BLE001 — 下载/抽取失败降级用 abstract
                 degraded += 1
                 failed.append({"id": str(paper.id), "error": f"{type(e).__name__}: {e}"})
-            # 发表机构补充（高级检索用）：优先 LLM 从全文标题页解析（extract 内部已带
-            # 失败兜底，返回 None 不写入）；失败不影响主流程
-            if not paper.affiliations and paper.full_text_path:
-                affs = await extract_affiliations_llm(
+            # 发表机构补充（高级检索用）：on_add 模式下优先 LLM 从全文标题页逐位作者解析
+            # 机构（extract 内部已带失败兜底，返回 None 不写入）；on_compile 模式跳过该
+            # 专门调用（改折叠进 wiki.compile）。失败不影响主流程
+            if affil_mode == "on_add" and not paper.affiliations and paper.full_text_path:
+                mapping = await extract_author_affiliations_llm(
                     paper,
                     llm=ctx.llm,
                     user_id=billing_user_id,
@@ -705,10 +711,10 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     library_id=library.id,
                     voyage_id=ctx.run.id,
                 )
-                if affs:
-                    paper.affiliations = affs
-            # OpenAlex 反查兜底（无全文 / LLM 解析失败）；DOI 论文发表日期缺失时也要
-            # 反查一次（走不了上面的 arXiv 回填，与机构是否已解析无关）
+                apply_author_affiliations(paper, mapping)
+            # OpenAlex 反查兜底（无全文 / LLM 未给机构 / on_compile 模式）：OpenAlex 的
+            # authors 已带机构，用 apply_author_affiliations 逐位对齐并汇总 paper.affiliations。
+            # DOI 论文发表日期缺失时也要反查一次（走不了上面的 arXiv 回填）。
             need_date = paper.published_at is None and not paper.arxiv_id
             if (not paper.affiliations or need_date) and (paper.arxiv_id or paper.doi):
                 try:
@@ -718,7 +724,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                         else await get_openalex_client().get_by_doi(paper.doi)
                     )
                     if not paper.affiliations:
-                        paper.affiliations = (meta or {}).get("affiliations") or []
+                        apply_author_affiliations(paper, (meta or {}).get("authors"))
                     if paper.published_at is None:
                         paper.published_at = _parse_iso((meta or {}).get("published"))
                 except asyncio.CancelledError:
@@ -817,6 +823,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             paper = await session.get(Paper, membership.paper_id)
             if paper is None:
                 return None
+            affil_mode = await get_affiliation_extraction_mode(session)
             progress["n"] += 1
             await ctx.log(f"📖 精读编译 {progress['n']}/{total}：{paper.title}")
             # ① 编译前筛选注释论文图（stage=librarian 多模态）：图文编译要用重要图；
@@ -838,7 +845,9 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                     raise
                 except Exception:  # noqa: BLE001
                     logger.warning("figure annotation failed for paper %s", paper.id, exc_info=True)
-            # ② 图文编译（重要图 ≤4 张随 prompt 送入）+ ③ 无效 ![[fig:N]] 标记剥除
+            # ② 图文编译（重要图 ≤4 张随 prompt 送入）+ ③ 无效 ![[fig:N]] 标记剥除。
+            #    on_compile 模式且尚无机构时顺带带回作者↔机构映射（省一次专门调用）。
+            collect_affs = affil_mode == "on_compile" and not paper.affiliations
             compiled = await compile_paper(
                 paper,
                 statement=statement,
@@ -848,11 +857,14 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 library_id=membership.library_id,
                 voyage_id=ctx.run.id,
                 extra_guidance=guidance,
+                collect_affiliations=collect_affs,
             )
             membership.wiki_content = compiled.content
             membership.compiled_at = utcnow()
             membership.compiled_model = compiled.model or None
             membership.status = "compiled"
+            if compiled.author_affiliations and not paper.affiliations:
+                apply_author_affiliations(paper, compiled.author_affiliations)
             await session.commit()
             await ctx.log(
                 f"✓ 完成 {progress['n']}/{total}：{paper.title[:50]}（{len(compiled.content)} 字）",

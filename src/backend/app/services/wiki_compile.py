@@ -20,6 +20,12 @@ from app.core.llm.router import LLMRouter, get_llm_router
 from app.models.base import utcnow
 from app.models.paper import Paper
 from app.models.project import Project
+from app.services.affiliations import (
+    AFFIL_COMPILE_INSTRUCTION,
+    apply_author_affiliations,
+    get_affiliation_extraction_mode,
+    parse_and_strip_affiliation_block,
+)
 from app.services.concepts import link_paper_concepts
 from app.services.figure_annotate import (
     FIGURE_KIND_ZH,
@@ -126,10 +132,15 @@ def build_compile_prompt(paper: Paper, *, statement: str | None) -> tuple[str, l
 
 @dataclass(slots=True)
 class CompiledWiki:
-    """compile_paper 结果：校验过标记的 wiki markdown + 实际使用的模型名。"""
+    """compile_paper 结果：校验过标记的 wiki markdown + 实际使用的模型名。
+
+    author_affiliations：仅 on_compile 模式下从编译输出的定界块解析出的作者↔机构映射
+    （解析失败 / 未开该模式为 None）；调用方据此补库。
+    """
 
     content: str
     model: str
+    author_affiliations: list[dict[str, Any]] | None = None
 
 
 async def compile_paper(
@@ -142,19 +153,26 @@ async def compile_paper(
     library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
     extra_guidance: str = "",
+    collect_affiliations: bool = False,
 ) -> CompiledWiki:
     """图文编译一篇论文，返回校验过标记的 wiki markdown 与所用模型（调用方负责落库）。
 
     模型名取自 LLM 实际返回结果（CompletionResult.model），而非路由表配置，
     避免路由中途被改导致记录偏差。
     extra_guidance：追加到 system prompt 的补充指引（wiki.compile 注入点的项目技能）。
+    collect_affiliations（on_compile 模式）：在 prompt 末尾追加指令，要求 LLM 在正文后附
+    作者↔机构定界块；拿到结果后 best-effort 解析并**无论成败都从正文剥离**该块，绝不
+    让它残留进 wiki，也绝不因解析失败让编译失败。
     """
     llm = llm or get_llm_router()
     user_prompt, images = build_compile_prompt(paper, statement=statement)
+    if collect_affiliations:
+        user_prompt += AFFIL_COMPILE_INSTRUCTION
     valid = {int(f["index"]) for f in (paper.figures or [])}
 
     content = ""
     model = ""
+    author_affiliations: list[dict[str, Any]] | None = None
     for attempt in range(2):
         prompt = user_prompt
         if attempt == 1:
@@ -177,12 +195,18 @@ async def compile_paper(
         )
         if not result.content.strip():
             raise ValueError("librarian returned empty content")
-        content = strip_invalid_figure_markers(result.content, valid)
+        body = result.content
+        if collect_affiliations:
+            # 先剥离机构定界块（无论 JSON 是否可解析都删干净）再校验图片标记
+            body, mapping = parse_and_strip_affiliation_block(body)
+            if mapping is not None:
+                author_affiliations = mapping
+        content = strip_invalid_figure_markers(body, valid)
         model = result.model
         # 有配图但一张都没插 → 带强指令重写一次；仍失败则接受纯文字稿（图库里还能看图）
         if not images or FIGURE_MARKER_RE.search(content):
             break
-    return CompiledWiki(content=content, model=model)
+    return CompiledWiki(content=content, model=model, author_affiliations=author_affiliations)
 
 
 async def recompile_paper(
@@ -222,6 +246,9 @@ async def recompile_paper(
             )
         await session.commit()
 
+    # on_compile 模式且尚无机构时，让本次编译顺带带回作者↔机构映射（省一次专门调用）
+    mode = await get_affiliation_extraction_mode(session)
+    collect_affs = mode == "on_compile" and not paper.affiliations
     compiled = await compile_paper(
         paper,
         statement=statement,
@@ -229,12 +256,15 @@ async def recompile_paper(
         user_id=user_id,
         project_id=project_id,
         library_id=membership.library_id,  # 库版重编译记方向库账（P6）
+        collect_affiliations=collect_affs,
     )
     membership.wiki_content = compiled.content
     membership.compiled_at = utcnow()
     membership.compiled_model = compiled.model or None
     if membership.status in ("scored", "fetched"):
         membership.status = "compiled"
+    if compiled.author_affiliations and not paper.affiliations:
+        apply_author_affiliations(paper, compiled.author_affiliations)
     await session.commit()
     # 单篇概念上链：新介绍里的 [[双链]] 建词条并关联（否则点击提示"概念尚未入库"）
     await link_paper_concepts(

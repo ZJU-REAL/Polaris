@@ -830,16 +830,21 @@ async def fetch_pdf(
             await index_paper_fulltext(session, paper)
         except Exception:  # noqa: BLE001
             logger.warning("chunk indexing failed for paper %s", paper.id, exc_info=True)
-    # 发表机构：全文到手后 LLM 从标题页解析（此路径原先不补机构）；失败不影响主流程
+    # 发表机构：on_add 模式下全文到手后 LLM 从标题页逐位作者解析机构（此路径原先不补
+    # 机构）；on_compile 模式跳过，改由 wiki 编译折叠抽取。失败不影响主流程
     if not paper.affiliations and paper.full_text_path:
         from app.core.llm.router import get_llm_router
-        from app.services.affiliations import extract_affiliations_llm
-
-        affs = await extract_affiliations_llm(
-            paper, llm=get_llm_router(), user_id=user_id, project_id=project_id
+        from app.services.affiliations import (
+            apply_author_affiliations,
+            extract_author_affiliations_llm,
+            get_affiliation_extraction_mode,
         )
-        if affs:
-            paper.affiliations = affs
+
+        if await get_affiliation_extraction_mode(session) == "on_add":
+            mapping = await extract_author_affiliations_llm(
+                paper, llm=get_llm_router(), user_id=user_id, project_id=project_id
+            )
+            apply_author_affiliations(paper, mapping)
     await session.commit()
     await session.refresh(paper)
     return paper

@@ -92,8 +92,8 @@ async def test_papers_list_filter_sort_paginate(client):
     body = resp.json()
     assert body["total"] == 2 and body["page"] == 1 and body["size"] == 20
     assert body["items"][0]["relevance_score"] == 0.9  # 默认按相关性降序
-    assert body["items"][0]["authors"] == [{"name": "Alice"}]
-    assert body["items"][1]["authors"] == [{"name": "Bob"}]  # 字符串作者归一化
+    assert body["items"][0]["authors"] == [{"name": "Alice", "affiliations": []}]
+    assert body["items"][1]["authors"] == [{"name": "Bob", "affiliations": []}]  # 字符串作者归一化
     assert body["items"][0]["has_wiki"] is True
 
     resp = await client.get(f"/api/projects/{project_id}/papers?status=compiled", headers=headers)

@@ -23,6 +23,7 @@ import {
   api,
   isAdmin,
   type AdminUserRead,
+  type AffiliationMode,
   type EffectiveTestResult,
   type LlmCallLogRow,
   type LlmProviderInput,
@@ -1581,11 +1582,65 @@ function CallLogsSection() {
   );
 }
 
+function AffiliationModeSection() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['affiliation-mode'],
+    queryFn: () => api.getAffiliationMode(),
+    retry: false,
+  });
+  const mode: AffiliationMode = data?.mode ?? 'on_add';
+
+  const setMutation = useMutation({
+    mutationFn: (m: AffiliationMode) => api.setAffiliationMode(m),
+    onSuccess: (r) => {
+      toast(tr('已保存机构抽取时机', 'Affiliation extraction timing saved'), 'ok');
+      queryClient.setQueryData(['affiliation-mode'], r);
+    },
+    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 20 }}>
+      <div className="section-h" style={{ marginBottom: 6 }}>
+        <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('作者机构抽取', 'Author affiliation extraction')}
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
+        {tr(
+          '大模型从论文标题页解析每位作者所属机构的时机。选「编译 wiki 时抽取」会把机构解析折叠进精读编译那一次调用里，省下一次单独的大模型调用。（DOI 论文的机构由 OpenAlex 结构化数据直接给出，不受此设置影响。）',
+          "When the model parses each author's affiliation from the title page. \"Extract while compiling\" folds it into the deep-reading compile call, saving a separate LLM call. (Affiliations for DOI papers come straight from OpenAlex and are unaffected.)",
+        )}
+      </div>
+      {isLoading ? (
+        <div className="empty" style={{ padding: 16 }}>{tr('加载中…', 'Loading…')}</div>
+      ) : isError ? (
+        <div className="empty" style={{ padding: 16 }}>
+          {tr('无法加载（后端不可用或无权限）', 'Failed to load (backend unavailable or no permission)')}
+        </div>
+      ) : (
+        <Segmented
+          options={[
+            { v: 'on_add' as AffiliationMode, label: tr('添加时抽取', 'Extract on add') },
+            {
+              v: 'on_compile' as AffiliationMode,
+              label: tr('编译 wiki 时抽取（省一次调用）', 'Extract while compiling (saves a call)'),
+            },
+          ]}
+          value={mode}
+          onChange={(v) => { if (v !== mode) setMutation.mutate(v); }}
+        />
+      )}
+    </div>
+  );
+}
+
 function LlmTab() {
   return (
     <>
       <ProvidersSection adapter={adminLlmAdapter} />
       <RoutesSection adapter={adminLlmAdapter} />
+      <AffiliationModeSection />
       <CallLogsSection />
     </>
   );
