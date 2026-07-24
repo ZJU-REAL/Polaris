@@ -2745,6 +2745,13 @@ export const api = {
   ): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>(`/libraries/${id}`, 'PATCH', input);
   },
+  /**
+   * 删除文献库（仅平台 admin）。库仍有课题关联且未 force 时后端返回
+   * 409 LIBRARY_HAS_TOPICS；传 force=true 连同关联一起删除。返回 204 无 body。
+   */
+  deleteLibrary(id: string, force = false): Promise<void> {
+    return request<void>(`/libraries/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' });
+  },
   /** 本月预算消耗（可管理者可见）。 */
   getLibraryBudget(id: string): Promise<LibraryBudgetRead> {
     return request<LibraryBudgetRead>(`/libraries/${id}/budget`);

@@ -32,15 +32,9 @@ export function StartPage() {
         >
           <Icon name="layers" size={24} />
         </div>
-        <h1 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px' }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>
           {tr('选择或创建课题', 'Pick or create a topic')}
         </h1>
-        <div style={{ fontSize: 13, color: 'var(--text-2)', maxWidth: 460, margin: '0 auto', lineHeight: 1.6 }}>
-          {tr(
-            '课题是你的个人研究空间：文献追踪、想法、实验和论文都在课题里进行。创建只需名称和一句话描述。',
-            'A topic is your personal research space — literature tracking, ideas, experiments and papers all live inside one. Creating one takes just a name and one sentence.',
-          )}
-        </div>
       </div>
 
       {isLoading ? (

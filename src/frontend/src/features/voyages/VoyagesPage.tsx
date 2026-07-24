@@ -1,15 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { Modal } from '../../components/ui/Modal';
-import { FormField } from '../../components/ui/FormField';
-import { toast } from '../../components/ui/Toast';
-import { SelectMenu } from '../../components/ui/SelectMenu';
 import { useProject } from '../../app/project';
 import { api, VOYAGE_TERMINAL, type VoyageRead } from '../../lib/api';
 import { fmtDuration, fmtFullTime, fmtRelative } from '../../lib/format';
@@ -17,7 +13,7 @@ import { tr } from '../../lib/i18n';
 
 /* ============================================================
    /voyages — AI 任务列表：状态/类型过滤 + 行（类型徽章/目标/
-   迷你进度条/耗时/状态）+ 「新建演示任务」（POST /voyages {kind:"demo"}）。
+   迷你进度条/耗时/状态）。任务由建库/想法/实验等业务动作发起。
    ============================================================ */
 
 type Filter = 'all' | 'active' | 'paused' | 'done' | 'failed';
@@ -144,8 +140,7 @@ function SkeletonRows() {
 
 export function VoyagesPage() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const { projects, currentProjectId } = useProject();
+  const { currentProjectId } = useProject();
 
   const [filter, setFilter] = useState<Filter>('all');
   const [kindFilter, setKindFilter] = useState<string>('all');
@@ -163,35 +158,12 @@ export function VoyagesPage() {
     [data, filter, kindFilter],
   );
 
-  // —— 新建演示航程 ——
-  const [createOpen, setCreateOpen] = useState(false);
-  const [goal, setGoal] = useState('演示任务');
-  const [createProjectId, setCreateProjectId] = useState<string>('');
-  const effectiveProjectId = createProjectId || currentProjectId || projects[0]?.id || '';
-
-  const createMutation = useMutation({
-    mutationFn: () => api.createVoyage({ kind: 'demo', project_id: effectiveProjectId, goal: goal.trim() }),
-    onSuccess: (v) => {
-      toast(tr('演示任务已入队', 'Demo task queued'), 'ok');
-      setCreateOpen(false);
-      void queryClient.invalidateQueries({ queryKey: ['voyages'] });
-      navigate(`/voyages/${v.id}`);
-    },
-    onError: (err) => toast(`${tr('创建失败：', 'Create failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
-  });
-
   return (
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Voyages"
         title={tr('任务', 'Tasks')}
         sub={tr('需要人工审批时任务会自动暂停，审批通过后继续执行。', 'Tasks pause automatically when they need approval, then resume once approved.')}
-        right={
-          <button className="btn btn-primary" disabled={projects.length === 0} onClick={() => setCreateOpen(true)}>
-            <Icon name="play" size={14} />
-            {tr('新建演示任务', 'New demo task')}
-          </button>
-        }
       />
 
       <>
@@ -245,7 +217,7 @@ export function VoyagesPage() {
                 desc={
                   filter !== 'all' || kindFilter !== 'all'
                     ? tr('当前筛选条件下没有任务，换个筛选试试。', 'No tasks match the current filters — try different ones.')
-                    : tr('点击右上角的新建演示任务按钮创建第一个任务。', 'Use the "New demo task" button in the top right to create your first task.')
+                    : tr('还没有任务。发起建库、想法生成、实验等操作后，任务会出现在这里。', 'No tasks yet. Tasks show up here once you start ingest, idea generation, experiments, and so on.')
                 }
                 compact
               />
@@ -300,42 +272,6 @@ export function VoyagesPage() {
             </div>
           )}
       </>
-
-      {/* 新建演示航程 */}
-      <Modal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title={
-          <>
-            <Icon name="play" size={16} style={{ color: 'var(--accent)' }} />
-            {tr('新建演示任务', 'New demo task')}
-          </>
-        }
-        sub={tr('创建一个演示任务，体验规划、执行与自动校验的完整流程。', 'Create a demo task to walk through planning, execution and auto-check.')}
-        footer={
-          <>
-            <button className="btn btn-ghost" onClick={() => setCreateOpen(false)}>{tr('取消', 'Cancel')}</button>
-            <button
-              className="btn btn-primary"
-              disabled={!goal.trim() || !effectiveProjectId || createMutation.isPending}
-              onClick={() => createMutation.mutate()}
-            >
-              {createMutation.isPending ? tr('入队中…', 'Queuing…') : tr('启动任务', 'Start task')}
-            </button>
-          </>
-        }
-      >
-        <FormField label={tr('所属课题', 'Topic')}>
-          <SelectMenu
-            value={effectiveProjectId}
-            options={projects.map((p) => ({ value: p.id, label: p.name }))}
-            onChange={setCreateProjectId}
-          />
-        </FormField>
-        <FormField label={tr('目标', 'Goal')} hint={tr('系统将围绕该目标自动生成三步计划', 'A three-step plan will be generated around this goal')}>
-          <textarea className="textarea" rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
-        </FormField>
-      </Modal>
     </div>
   );
 }
