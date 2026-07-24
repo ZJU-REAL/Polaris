@@ -13,11 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_admin
+from app.api.auth import current_active_user, require_admin, require_llm_task
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
+from app.core.queue import TaskQueue, get_task_queue
 from app.models.library_direction import DirectionLibrary, LibraryPaper
+from app.models.project import Project
 from app.models.user import User
+from app.schemas.ingest import IngestRequest
 from app.schemas.libraries import (
     CuratorRead,
     CuratorsUpdate,
@@ -38,6 +41,7 @@ from app.schemas.paper import (
     ScoredPaper,
     SearchResponse,
 )
+from app.schemas.voyage import VoyageRead
 from app.services import concepts as concepts_service
 from app.services import ingest as ingest_service
 from app.services import libraries as libraries_service
@@ -178,6 +182,46 @@ async def get_library_budget(
         remaining_tokens=None if not budget else max(0, int(budget) - used),
         exhausted=bool(budget) and used >= int(budget),
     )
+
+
+@router.post(
+    "/libraries/{library_id}/ingest/run",
+    response_model=VoyageRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_library_ingest(
+    library_id: uuid.UUID,
+    data: IngestRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_task),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> VoyageRead:
+    """对某个方向库直接触发抓取（P9a）：可管理者（成员/策展人/admin）皆可。
+
+    管理员创建的独立库（project_id 为空）由此入口驱动 ingest；起源课题的隐式库同时
+    带上 project 以兼容活动流/鉴权。互斥以库为准，超预算 409 拒绝。
+    """
+    library = await _get_managed_library(session, library_id, user)
+    project = (
+        await session.get(Project, library.project_id)
+        if library.project_id is not None
+        else None
+    )
+    try:
+        run = await ingest_service.create_ingest_voyage(
+            session,
+            library=library,
+            project=project,
+            mode=data.mode,
+            knobs=data.knobs,
+            created_by=user.id,
+        )
+    except ingest_service.IngestConflictError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e
+    except ingest_service.LibraryBudgetExhaustedError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_BUDGET_EXHAUSTED") from e
+    await queue.enqueue("run_voyage", str(run.id))
+    return VoyageRead.model_validate(run)
 
 
 @router.get("/libraries/{library_id}/curators", response_model=list[CuratorRead])

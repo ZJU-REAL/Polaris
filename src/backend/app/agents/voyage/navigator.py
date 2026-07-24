@@ -577,6 +577,7 @@ class Navigator:
                 ],
                 user_id=run.created_by,
                 project_id=run.project_id,
+                library_id=run.library_id,
                 voyage_id=run.id,
             )
             try:
@@ -664,6 +665,7 @@ class Navigator:
                 ],
                 user_id=run.created_by,
                 project_id=run.project_id,
+                library_id=run.library_id,
                 voyage_id=run.id,
             )
             try:
