@@ -4,6 +4,7 @@ import { Icon } from '../../components/ui/Icon';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import type { PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { portalUrl } from '../../lib/endpoint';
 
 /* ============================================================
    论文 wiki 阅览模式：把 AI 编译的图文介绍铺成一页干净、居中、
@@ -53,7 +54,7 @@ export function PaperReader({
   }, [onClose]);
 
   const venueYear = [paper.venue, paper.year].filter(Boolean).join(' · ');
-  const readLink = `${window.location.origin}/papers/${paper.id}/read`;
+  const readLink = portalUrl(`/papers/${paper.id}/read`);
   const sourceUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : paper.url ?? null;
   const sourceLabel = paper.arxiv_id ? `arXiv:${paper.arxiv_id}` : tr('论文源链接', 'Source');
 

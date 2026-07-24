@@ -3,7 +3,8 @@ COMPOSE_DEV  = docker compose -f docker/docker-compose.yml -f docker/docker-comp
 BACKEND_PY   = src/backend/.venv/bin/python
 BACKEND_PIP  = src/backend/.venv/bin/pip
 
-.PHONY: dev up down logs backend-dev frontend-dev venv migrate test lint build texbase
+.PHONY: dev up down logs backend-dev frontend-dev venv migrate test lint build texbase \
+        desktop-deps desktop-dev desktop-shell desktop-dist
 
 ## ---- Docker ----
 texbase:        ## Build the shared TeX base image (api/worker FROM it; cached unless Dockerfile.texbase changed)
@@ -35,6 +36,23 @@ backend-dev:    ## Run the backend locally (SQLite fallback, see config.py)
 frontend-dev:   ## Run the frontend locally
 	cd src/frontend && npm install && npm run dev
 
+## ---- Desktop (Electron shell) ----
+DESKTOP = npm --prefix src/desktop
+
+desktop-deps:   ## Install desktop shell dependencies
+	$(DESKTOP) install
+
+desktop-dev:    ## Run the shell against the built frontend (app:// protocol, the real path)
+	cd src/frontend && npm run build
+	$(DESKTOP) run dev
+
+desktop-shell:  ## Run the shell without rebuilding the frontend
+	$(DESKTOP) run dev
+
+desktop-dist:   ## Package an installer for the current platform (unsigned)
+	cd src/frontend && npm run build
+	$(DESKTOP) run dist:$(shell uname | tr '[:upper:]' '[:lower:]' | sed 's/darwin/mac/')
+
 ## ---- Quality ----
 migrate:
 	cd src/backend && .venv/bin/alembic upgrade head
@@ -46,6 +64,7 @@ test:           ## Backend tests + frontend build
 lint:
 	cd src/backend && .venv/bin/ruff check app worker tests
 	cd src/frontend && npx tsc --noEmit
+	cd src/desktop && npx tsc --noEmit
 
 build: texbase  ## Build production images
 	$(COMPOSE) build

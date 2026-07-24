@@ -43,3 +43,6 @@ CLAUDE.md
 
 # setuptools build output (pip install . in a mounted container leaves this behind)
 src/backend/build/
+
+# electron-builder output (src/desktop/dist is covered by the global dist/ rule)
+src/desktop/release/
