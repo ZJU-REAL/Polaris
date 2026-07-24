@@ -162,11 +162,13 @@ shared one only loses one membership.
 | Download PDF | ✓ | ✓ (arxiv) | ✓ | — | — |
 | Extract full text | ✓ | ✓ | ✓ | — | — |
 | Chunk | ✓ | ✓ | ✓ | — | — |
-| Paper-level embedding | ✓ | ✓ | ✓ | — | (planned, opt-in) |
-| Chunk embedding | ✓ | opt-in | opt-in | — | — |
+| Paper-level embedding | ✓ | ✓ | ✓ | — | admin opt-in |
+| Chunk embedding | ✓ | user opt-in | user opt-in | — | — |
 | Extract figures | ✓ | — | — | ✓ (lazy) | — |
 | Compile wiki | ✓ | — | — | ✓ | — |
 | Score relevance | ✓ | ✓ (with target) | — | — | — |
 
-"opt-in" = only when the user's `chat_fulltext_index` setting is on. "planned" = the daily
-paper-level embedding is an admin-gated addition (see the retrieval doc).
+"user opt-in" = only when that user's `chat_fulltext_index` setting is on. "admin opt-in" = only when
+`daily_feed_embed_enabled` is on (off by default); see
+[Embedding & Retrieval](embedding-and-retrieval.md). All of these steps are idempotent — an existing
+PDF, chunk set, or vector is never redone.
