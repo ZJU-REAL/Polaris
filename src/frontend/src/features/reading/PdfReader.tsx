@@ -594,7 +594,8 @@ export function PdfReader({
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               position: 'fixed',
-            left: Math.min(Math.max(pending.x, 10), window.innerWidth - 280),
+            // 外层 Math.max 兜底：视口窄于浮条（280px）时上式会算出负值，把浮条推出左边界
+            left: Math.max(8, Math.min(Math.max(pending.x, 10), window.innerWidth - 280)),
             // 下方空间不够（浮条约 40px 高）时翻到选区上方，避免超出窗口底部
             top:
               pending.y + 48 > window.innerHeight

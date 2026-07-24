@@ -393,76 +393,78 @@ function SshTab() {
           {tr('还没有 SSH 凭据 — 添加一台 GPU 服务器后即可在 Experiment Lab 发起实验', 'No SSH credentials yet — add a GPU server to run experiments in Experiment Lab')}
         </div>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>{tr('名称', 'Name')}</th>
-              <th>host</th>
-              <th style={{ width: 60 }}>port</th>
-              <th>username</th>
-              <th style={{ width: 130 }}>{tr('最近验证', 'Last verified')}</th>
-              <th style={{ width: 150 }} />
-            </tr>
-          </thead>
-          <tbody>
-            {creds.map((c) => (
-              <Fragment key={c.id}>
-                <tr>
-                  <td style={{ fontWeight: 600 }}>{c.name}</td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{c.host}</td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{c.port}</td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{c.username}</td>
-                  <td className="mono" style={{ fontSize: 11, color: c.last_verified_at ? 'var(--ok-tx)' : 'var(--text-4)' }}>
-                    {c.last_verified_at ? fmtTime(c.last_verified_at) : tr('从未验证', 'Never verified')}
-                  </td>
-                  <td>
-                    <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
-                      <button
-                        className="btn btn-soft sm"
-                        onClick={() => setSysinfoId(sysinfoId === c.id ? null : c.id)}
-                      >
-                        <Icon name="cpu" size={12} />
-                        {sysinfoId === c.id ? tr('收起状态', 'Hide status') : tr('系统状态', 'System status')}
-                      </button>
-                      <button
-                        className="btn btn-soft sm"
-                        disabled={testMutation.isPending}
-                        onClick={() => testMutation.mutate(c.id)}
-                      >
-                        {testMutation.isPending && testMutation.variables === c.id ? tr('连接中…', 'Connecting…') : tr('测试连接', 'Test connection')}
-                      </button>
-                      <button
-                        className="icon-btn"
-                        style={{ width: 26, height: 26 }}
-                        title={tr('删除', 'Delete')}
-                        disabled={deleteMutation.isPending}
-                        onClick={() => {
-                          if (window.confirm(`${tr('确定删除凭据', 'Delete credential')} “${c.name}”？${tr('使用中的实验将无法再连接该服务器。', 'Experiments using it will no longer be able to reach this server.')}`)) {
-                            deleteMutation.mutate(c.id);
-                          }
-                        }}
-                      >
-                        <Icon name="trash" size={13} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-                {sysinfoId === c.id && (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{tr('名称', 'Name')}</th>
+                <th>host</th>
+                <th style={{ width: 60 }}>port</th>
+                <th>username</th>
+                <th style={{ width: 130 }}>{tr('最近验证', 'Last verified')}</th>
+                <th style={{ width: 150 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {creds.map((c) => (
+                <Fragment key={c.id}>
                   <tr>
-                    <td colSpan={6} style={{ background: 'var(--surface-2)', padding: '12px 16px' }}>
-                      <SysinfoPanel
-                        loading={sysinfoQuery.isLoading}
-                        error={sysinfoQuery.isError}
-                        info={sysinfoQuery.data}
-                        onRefresh={() => void sysinfoQuery.refetch()}
-                      />
+                    <td style={{ fontWeight: 600 }}>{c.name}</td>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{c.host}</td>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{c.port}</td>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{c.username}</td>
+                    <td className="mono" style={{ fontSize: 11, color: c.last_verified_at ? 'var(--ok-tx)' : 'var(--text-4)' }}>
+                      {c.last_verified_at ? fmtTime(c.last_verified_at) : tr('从未验证', 'Never verified')}
+                    </td>
+                    <td>
+                      <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
+                        <button
+                          className="btn btn-soft sm"
+                          onClick={() => setSysinfoId(sysinfoId === c.id ? null : c.id)}
+                        >
+                          <Icon name="cpu" size={12} />
+                          {sysinfoId === c.id ? tr('收起状态', 'Hide status') : tr('系统状态', 'System status')}
+                        </button>
+                        <button
+                          className="btn btn-soft sm"
+                          disabled={testMutation.isPending}
+                          onClick={() => testMutation.mutate(c.id)}
+                        >
+                          {testMutation.isPending && testMutation.variables === c.id ? tr('连接中…', 'Connecting…') : tr('测试连接', 'Test connection')}
+                        </button>
+                        <button
+                          className="icon-btn"
+                          style={{ width: 26, height: 26 }}
+                          title={tr('删除', 'Delete')}
+                          disabled={deleteMutation.isPending}
+                          onClick={() => {
+                            if (window.confirm(`${tr('确定删除凭据', 'Delete credential')} “${c.name}”？${tr('使用中的实验将无法再连接该服务器。', 'Experiments using it will no longer be able to reach this server.')}`)) {
+                              deleteMutation.mutate(c.id);
+                            }
+                          }}
+                        >
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
+                  {sysinfoId === c.id && (
+                    <tr>
+                      <td colSpan={6} style={{ background: 'var(--surface-2)', padding: '12px 16px' }}>
+                        <SysinfoPanel
+                          loading={sysinfoQuery.isLoading}
+                          error={sysinfoQuery.isError}
+                          info={sysinfoQuery.data}
+                          onRefresh={() => void sysinfoQuery.refetch()}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <Modal
@@ -866,112 +868,114 @@ function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
       ) : providers.length === 0 ? (
         <div className="empty" style={{ padding: 24 }}>{tr('还没有 provider，先添加一个；配置好前 AI 功能不可用', 'No providers yet — add one; AI features stay unavailable until configured')}</div>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th style={{ width: 230 }}>{tr('名称', 'Name')}</th>
-              <th style={{ width: 130 }}>api_key</th>
-              <th>{tr('可用模型', 'Models')}</th>
-              <th style={{ width: 80 }}>{tr('状态', 'Status')}</th>
-              <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
-              <th style={{ width: 70 }} />
-            </tr>
-          </thead>
-          <tbody>
-            {providers.map((p) => {
-              const models = p.models ?? [];
-              const firstModel = firstModelOf(p);
-              const expanded = expandedModels.has(p.id);
-              const shownModels = expanded ? models : models.slice(0, MODELS_COLLAPSED);
-              const hiddenCount = models.length - shownModels.length;
-              const state: TestState = firstModel
-                ? tests.results[testKeyOf(p.id, firstModel, 'chat')] ?? { status: 'idle' }
-                : { status: 'idle' };
-              return (
-                <tr key={p.id}>
-                  <td>
-                    <div className="row gap6" style={{ alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, fontWeight: 650 }}>{p.name}</span>
-                      <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                        {p.kind}
-                      </span>
-                    </div>
-                    <div className="mono" title={p.base_url ?? undefined}
-                      style={{ fontSize: 10.5, color: 'var(--text-3)', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {p.base_url ?? '—'}
-                    </div>
-                  </td>
-                  <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
-                  <td>
-                    {models.length === 0 ? (
-                      <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('（未填写）', '(none)')}</span>
-                    ) : (
-                      <div className="row gap6" style={{ flexWrap: 'wrap' }}>
-                        {shownModels.map((m) => (
-                          <span key={m} className="tag mono" style={{ fontSize: 10.5 }}>{m}</span>
-                        ))}
-                        {hiddenCount > 0 && (
-                          <span className="tag mono" role="button" title={models.join(', ')}
-                            style={{ fontSize: 10.5, cursor: 'pointer', color: 'var(--accent-text)' }}
-                            onClick={() => toggleModelsExpanded(p.id)}>
-                            +{hiddenCount}
-                          </span>
-                        )}
-                        {expanded && models.length > MODELS_COLLAPSED && (
-                          <span className="tag" role="button"
-                            style={{ fontSize: 10.5, cursor: 'pointer', color: 'var(--text-3)' }}
-                            onClick={() => toggleModelsExpanded(p.id)}>
-                            {tr('收起', 'Collapse')}
-                          </span>
-                        )}
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 230 }}>{tr('名称', 'Name')}</th>
+                <th style={{ width: 130 }}>api_key</th>
+                <th>{tr('可用模型', 'Models')}</th>
+                <th style={{ width: 80 }}>{tr('状态', 'Status')}</th>
+                <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
+                <th style={{ width: 70 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {providers.map((p) => {
+                const models = p.models ?? [];
+                const firstModel = firstModelOf(p);
+                const expanded = expandedModels.has(p.id);
+                const shownModels = expanded ? models : models.slice(0, MODELS_COLLAPSED);
+                const hiddenCount = models.length - shownModels.length;
+                const state: TestState = firstModel
+                  ? tests.results[testKeyOf(p.id, firstModel, 'chat')] ?? { status: 'idle' }
+                  : { status: 'idle' };
+                return (
+                  <tr key={p.id}>
+                    <td>
+                      <div className="row gap6" style={{ alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, fontWeight: 650 }}>{p.name}</span>
+                        <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                          {p.kind}
+                        </span>
                       </div>
-                    )}
-                  </td>
-                  <td>
-                    <span
-                      className="pill sm"
-                      role="button"
-                      title={p.enabled ? tr('点击停用', 'Click to disable') : tr('点击启用', 'Click to enable')}
-                      style={{
-                        cursor: toggleMutation.isPending ? 'default' : 'pointer',
-                        ...(p.enabled
-                          ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
-                          : { background: 'var(--surface-3)', color: 'var(--text-3)' }),
-                      }}
-                      onClick={() => { if (!toggleMutation.isPending) toggleMutation.mutate(p); }}
-                    >
-                      {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
-                    </span>
-                  </td>
-                  <td>
-                    <ModelStatusBadge
-                      state={state}
-                      onTest={firstModel ? () => void runProviderTests([p]) : undefined}
-                      idleHint={firstModel ? undefined : tr('先填写可用模型才能测试', 'Add models first to enable testing')}
-                    />
-                  </td>
-                  <td>
-                    <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
-                      <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('编辑', 'Edit')}
-                        onClick={() => { setDraft(draftFrom(p)); setModal(p.id); }}>
-                        <Icon name="pen" size={13} />
-                      </button>
-                      <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('删除', 'Delete')}
-                        disabled={deleteMutation.isPending}
-                        onClick={() => {
-                          if (window.confirm(`${tr('确定删除 Provider', 'Delete provider')} “${p.name}”？${tr('模型路由表里引用它的环节将失效。', 'Routing rows that reference it will stop working.')}`)) {
-                            deleteMutation.mutate(p.id);
-                          }
-                        }}>
-                        <Icon name="trash" size={13} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      <div className="mono" title={p.base_url ?? undefined}
+                        style={{ fontSize: 10.5, color: 'var(--text-3)', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {p.base_url ?? '—'}
+                      </div>
+                    </td>
+                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
+                    <td>
+                      {models.length === 0 ? (
+                        <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('（未填写）', '(none)')}</span>
+                      ) : (
+                        <div className="row gap6" style={{ flexWrap: 'wrap' }}>
+                          {shownModels.map((m) => (
+                            <span key={m} className="tag mono" style={{ fontSize: 10.5 }}>{m}</span>
+                          ))}
+                          {hiddenCount > 0 && (
+                            <span className="tag mono" role="button" title={models.join(', ')}
+                              style={{ fontSize: 10.5, cursor: 'pointer', color: 'var(--accent-text)' }}
+                              onClick={() => toggleModelsExpanded(p.id)}>
+                              +{hiddenCount}
+                            </span>
+                          )}
+                          {expanded && models.length > MODELS_COLLAPSED && (
+                            <span className="tag" role="button"
+                              style={{ fontSize: 10.5, cursor: 'pointer', color: 'var(--text-3)' }}
+                              onClick={() => toggleModelsExpanded(p.id)}>
+                              {tr('收起', 'Collapse')}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <span
+                        className="pill sm"
+                        role="button"
+                        title={p.enabled ? tr('点击停用', 'Click to disable') : tr('点击启用', 'Click to enable')}
+                        style={{
+                          cursor: toggleMutation.isPending ? 'default' : 'pointer',
+                          ...(p.enabled
+                            ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
+                            : { background: 'var(--surface-3)', color: 'var(--text-3)' }),
+                        }}
+                        onClick={() => { if (!toggleMutation.isPending) toggleMutation.mutate(p); }}
+                      >
+                        {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
+                      </span>
+                    </td>
+                    <td>
+                      <ModelStatusBadge
+                        state={state}
+                        onTest={firstModel ? () => void runProviderTests([p]) : undefined}
+                        idleHint={firstModel ? undefined : tr('先填写可用模型才能测试', 'Add models first to enable testing')}
+                      />
+                    </td>
+                    <td>
+                      <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
+                        <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('编辑', 'Edit')}
+                          onClick={() => { setDraft(draftFrom(p)); setModal(p.id); }}>
+                          <Icon name="pen" size={13} />
+                        </button>
+                        <button className="icon-btn" style={{ width: 26, height: 26 }} title={tr('删除', 'Delete')}
+                          disabled={deleteMutation.isPending}
+                          onClick={() => {
+                            if (window.confirm(`${tr('确定删除 Provider', 'Delete provider')} “${p.name}”？${tr('模型路由表里引用它的环节将失效。', 'Routing rows that reference it will stop working.')}`)) {
+                              deleteMutation.mutate(p.id);
+                            }
+                          }}>
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <Modal
@@ -1249,109 +1253,111 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
           {tr('路由表加载失败（后端不可用），保存将覆盖整表。', 'Failed to load routes (backend unavailable); saving will overwrite the whole table.')}
         </div>
       )}
-      <table className="table">
-        <thead>
-          <tr>
-            <th style={{ width: 150 }}>{tr('环节', 'Stage')}</th>
-            <th style={{ width: 170 }}>provider</th>
-            <th>model</th>
-            <th style={{ width: 90 }}>temperature</th>
-            <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visibleStages.map((stage) => {
-            const explicit = rows[stage] !== undefined;
-            const capability = CAPABILITY_STAGES.has(stage);
-            const follows = !explicit && stage !== 'default' && !capability;
-            const unset = capability && !explicit; // 能力型环节未设置：不跟随默认，运行时降级
-            // 展示值：显式行用自己的；跟随默认的行弱化展示 default 的 provider/模型
-            const shown = rows[stage] ?? (follows ? defaultRow : undefined) ?? emptyDraftRow;
-            const label = STAGE_LABELS[stage];
-            const eff = effectiveOf(stage);
-            const state: TestState = eff
-              ? tests.results[testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))] ?? { status: 'idle' }
-              : { status: 'idle' };
-            const providerModels = providers.find((p) => p.id === shown.provider_id)?.models ?? [];
-            return (
-              <tr key={stage}>
-                <td>
-                  <div className="row gap6" style={{ alignItems: 'center' }}>
-                    <span style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : stage}</span>
-                    {follows && (
-                      <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                        {tr('跟随默认', 'Follows default')}
-                      </span>
-                    )}
-                    {unset && (
-                      <span
-                        className="pill sm"
-                        style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}
-                        title={tr('该环节需要专用模型，不跟随默认；未配置时相关功能自动降级', 'This stage needs a dedicated model and never follows Default; features degrade while unset')}
-                      >
-                        {tr('未设置', 'Not set')}
-                      </span>
-                    )}
-                    {explicit && stage !== 'default' && (
-                      <button
-                        className="icon-btn"
-                        style={{ width: 20, height: 20 }}
-                        title={capability
-                          ? tr('清除设置，恢复「未设置」', 'Clear — back to "Not set"')
-                          : tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
-                        onClick={() => clearRow(stage)}
-                      >
-                        <Icon name="x" size={11} />
-                      </button>
-                    )}
-                  </div>
-                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{stage}</div>
-                </td>
-                <td>
-                  <SelectMenu
-                    style={{ height: 32 }}
-                    muted={follows}
-                    value={shown.provider_id}
-                    options={[
-                      { value: '', label: tr('（未配置）', '(not set)') },
-                      ...providers.map((p) => ({ value: p.id, label: p.name })),
-                    ]}
-                    onChange={(v) => setRow(stage, { provider_id: v, model: '' })}
-                  />
-                </td>
-                <td>
-                  <ModelCombobox
-                    value={shown.model}
-                    options={providerModels}
-                    muted={follows}
-                    placeholder={unset
-                      ? tr('未配置，相关功能将降级', 'Not set — related features degrade')
-                      : tr('如 deepseek-chat', 'e.g. deepseek-chat')}
-                    onChange={(v) => setRow(stage, { model: v })}
-                  />
-                </td>
-                <td>
-                  <input
-                    className="input mono"
-                    style={{ height: 32, width: '100%', fontSize: 12, ...(follows ? { color: 'var(--text-3)' } : {}) }}
-                    value={shown.temperature}
-                    placeholder={tr('默认', 'default')}
-                    inputMode="decimal"
-                    onChange={(e) => setRow(stage, { temperature: e.target.value })}
-                  />
-                </td>
-                <td>
-                  <ModelStatusBadge
-                    state={state}
-                    onTest={eff ? () => void runTests([stage]) : undefined}
-                    idleHint={unset ? tr('未配置，批量测试将跳过该环节', 'Not set; batch tests skip this stage') : undefined}
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{ width: 150 }}>{tr('环节', 'Stage')}</th>
+              <th style={{ width: 170 }}>provider</th>
+              <th>model</th>
+              <th style={{ width: 90 }}>temperature</th>
+              <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleStages.map((stage) => {
+              const explicit = rows[stage] !== undefined;
+              const capability = CAPABILITY_STAGES.has(stage);
+              const follows = !explicit && stage !== 'default' && !capability;
+              const unset = capability && !explicit; // 能力型环节未设置：不跟随默认，运行时降级
+              // 展示值：显式行用自己的；跟随默认的行弱化展示 default 的 provider/模型
+              const shown = rows[stage] ?? (follows ? defaultRow : undefined) ?? emptyDraftRow;
+              const label = STAGE_LABELS[stage];
+              const eff = effectiveOf(stage);
+              const state: TestState = eff
+                ? tests.results[testKeyOf(eff.provider_id, eff.model.trim(), capabilityOf(stage))] ?? { status: 'idle' }
+                : { status: 'idle' };
+              const providerModels = providers.find((p) => p.id === shown.provider_id)?.models ?? [];
+              return (
+                <tr key={stage}>
+                  <td>
+                    <div className="row gap6" style={{ alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : stage}</span>
+                      {follows && (
+                        <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                          {tr('跟随默认', 'Follows default')}
+                        </span>
+                      )}
+                      {unset && (
+                        <span
+                          className="pill sm"
+                          style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}
+                          title={tr('该环节需要专用模型，不跟随默认；未配置时相关功能自动降级', 'This stage needs a dedicated model and never follows Default; features degrade while unset')}
+                        >
+                          {tr('未设置', 'Not set')}
+                        </span>
+                      )}
+                      {explicit && stage !== 'default' && (
+                        <button
+                          className="icon-btn"
+                          style={{ width: 20, height: 20 }}
+                          title={capability
+                            ? tr('清除设置，恢复「未设置」', 'Clear — back to "Not set"')
+                            : tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
+                          onClick={() => clearRow(stage)}
+                        >
+                          <Icon name="x" size={11} />
+                        </button>
+                      )}
+                    </div>
+                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{stage}</div>
+                  </td>
+                  <td>
+                    <SelectMenu
+                      style={{ height: 32 }}
+                      muted={follows}
+                      value={shown.provider_id}
+                      options={[
+                        { value: '', label: tr('（未配置）', '(not set)') },
+                        ...providers.map((p) => ({ value: p.id, label: p.name })),
+                      ]}
+                      onChange={(v) => setRow(stage, { provider_id: v, model: '' })}
+                    />
+                  </td>
+                  <td>
+                    <ModelCombobox
+                      value={shown.model}
+                      options={providerModels}
+                      muted={follows}
+                      placeholder={unset
+                        ? tr('未配置，相关功能将降级', 'Not set — related features degrade')
+                        : tr('如 deepseek-chat', 'e.g. deepseek-chat')}
+                      onChange={(v) => setRow(stage, { model: v })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className="input mono"
+                      style={{ height: 32, width: '100%', fontSize: 12, ...(follows ? { color: 'var(--text-3)' } : {}) }}
+                      value={shown.temperature}
+                      placeholder={tr('默认', 'default')}
+                      inputMode="decimal"
+                      onChange={(e) => setRow(stage, { temperature: e.target.value })}
+                    />
+                  </td>
+                  <td>
+                    <ModelStatusBadge
+                      state={state}
+                      onTest={eff ? () => void runTests([stage]) : undefined}
+                      idleHint={unset ? tr('未配置，批量测试将跳过该环节', 'Not set; batch tests skip this stage') : undefined}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       <div className="row" style={{ justifyContent: 'center', marginTop: 10 }}>
         <button className="btn btn-ghost sm" onClick={() => setShowAll((v) => !v)}>
           <Icon name="chevDown" size={12} style={showAll ? { transform: 'rotate(180deg)' } : undefined} />
@@ -1537,46 +1543,48 @@ function CallLogsSection() {
         </div>
       ) : (
         <>
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 140 }}>{tr('时间', 'Time')}</th>
-                <th style={{ width: 110 }}>{tr('环节', 'Stage')}</th>
-                <th>{tr('模型', 'Model')}</th>
-                <th style={{ width: 90, textAlign: 'right' }}>{tr('时延', 'Latency')} (ms)</th>
-                <th style={{ width: 120, textAlign: 'right' }}>tokens</th>
-                <th style={{ width: 70 }}>{tr('状态', 'Status')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((row) => (
-                <Fragment key={row.id}>
-                  <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === row.id ? null : row.id)}>
-                    <td className="mono" style={{ fontSize: 11 }}>{fmtTime(row.created_at)}</td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{row.stage}</td>
-                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                      {row.model}
-                      <span style={{ color: 'var(--text-4)' }}> · {row.provider_name}</span>
-                    </td>
-                    <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{row.duration_ms.toLocaleString()}</td>
-                    <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>
-                      {row.prompt_tokens.toLocaleString()} + {row.completion_tokens.toLocaleString()}
-                    </td>
-                    <td>
-                      <span className="pill sm" style={statusPill(row)}>{row.status === 'ok' ? 'ok' : tr('出错', 'error')}</span>
-                    </td>
-                  </tr>
-                  {expandedId === row.id && (
-                    <tr>
-                      <td colSpan={6} style={{ background: 'var(--surface-2)', padding: '12px 16px' }}>
-                        <CallLogDetailPanel id={row.id} />
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th style={{ width: 140 }}>{tr('时间', 'Time')}</th>
+                  <th style={{ width: 110 }}>{tr('环节', 'Stage')}</th>
+                  <th>{tr('模型', 'Model')}</th>
+                  <th style={{ width: 90, textAlign: 'right' }}>{tr('时延', 'Latency')} (ms)</th>
+                  <th style={{ width: 120, textAlign: 'right' }}>tokens</th>
+                  <th style={{ width: 70 }}>{tr('状态', 'Status')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((row) => (
+                  <Fragment key={row.id}>
+                    <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === row.id ? null : row.id)}>
+                      <td className="mono" style={{ fontSize: 11 }}>{fmtTime(row.created_at)}</td>
+                      <td className="mono" style={{ fontSize: 11.5 }}>{row.stage}</td>
+                      <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                        {row.model}
+                        <span style={{ color: 'var(--text-4)' }}> · {row.provider_name}</span>
+                      </td>
+                      <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{row.duration_ms.toLocaleString()}</td>
+                      <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>
+                        {row.prompt_tokens.toLocaleString()} + {row.completion_tokens.toLocaleString()}
+                      </td>
+                      <td>
+                        <span className="pill sm" style={statusPill(row)}>{row.status === 'ok' ? 'ok' : tr('出错', 'error')}</span>
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+                    {expandedId === row.id && (
+                      <tr>
+                        <td colSpan={6} style={{ background: 'var(--surface-2)', padding: '12px 16px' }}>
+                          <CallLogDetailPanel id={row.id} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="row gap8" style={{ justifyContent: 'flex-end', marginTop: 12, alignItems: 'center' }}>
             <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
               {tr(`共 ${total} 条 · 第 ${page + 1} / ${pageCount} 页`, `${total} entries · page ${page + 1} / ${pageCount}`)}
@@ -1674,54 +1682,56 @@ function ManagedEffectiveView({ effective }: { effective: LlmSelfConfig }) {
         {effective.providers.length === 0 ? (
           <div className="empty" style={{ padding: 24 }}>{tr('管理员尚未配置任何 provider', 'The admin has not configured any provider yet')}</div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 230 }}>{tr('名称', 'Name')}</th>
-                <th style={{ width: 130 }}>api_key</th>
-                <th>{tr('可用模型', 'Models')}</th>
-                <th style={{ width: 80 }}>{tr('状态', 'Status')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {effective.providers.map((p) => {
-                const models = p.models ?? [];
-                return (
-                  <tr key={p.id}>
-                    <td>
-                      <div className="row gap6" style={{ alignItems: 'center' }}>
-                        <span style={{ fontSize: 12, fontWeight: 650 }}>{p.name}</span>
-                        <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>{p.kind}</span>
-                      </div>
-                      <div className="mono" title={p.base_url ?? undefined}
-                        style={{ fontSize: 10.5, color: 'var(--text-3)', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {p.base_url ?? '—'}
-                      </div>
-                    </td>
-                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
-                    <td>
-                      {models.length === 0 ? (
-                        <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('（未填写）', '(none)')}</span>
-                      ) : (
-                        <div className="row gap6" style={{ flexWrap: 'wrap' }}>
-                          {models.map((m) => (
-                            <span key={m} className="tag mono" style={{ fontSize: 10.5 }}>{m}</span>
-                          ))}
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th style={{ width: 230 }}>{tr('名称', 'Name')}</th>
+                  <th style={{ width: 130 }}>api_key</th>
+                  <th>{tr('可用模型', 'Models')}</th>
+                  <th style={{ width: 80 }}>{tr('状态', 'Status')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {effective.providers.map((p) => {
+                  const models = p.models ?? [];
+                  return (
+                    <tr key={p.id}>
+                      <td>
+                        <div className="row gap6" style={{ alignItems: 'center' }}>
+                          <span style={{ fontSize: 12, fontWeight: 650 }}>{p.name}</span>
+                          <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>{p.kind}</span>
                         </div>
-                      )}
-                    </td>
-                    <td>
-                      <span className="pill sm" style={p.enabled
-                        ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
-                        : { background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                        {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        <div className="mono" title={p.base_url ?? undefined}
+                          style={{ fontSize: 10.5, color: 'var(--text-3)', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {p.base_url ?? '—'}
+                        </div>
+                      </td>
+                      <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.api_key_masked ?? '—'}</td>
+                      <td>
+                        {models.length === 0 ? (
+                          <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('（未填写）', '(none)')}</span>
+                        ) : (
+                          <div className="row gap6" style={{ flexWrap: 'wrap' }}>
+                            {models.map((m) => (
+                              <span key={m} className="tag mono" style={{ fontSize: 10.5 }}>{m}</span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <span className="pill sm" style={p.enabled
+                          ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
+                          : { background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                          {p.enabled ? tr('启用', 'Enabled') : tr('停用', 'Disabled')}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -1734,34 +1744,36 @@ function ManagedEffectiveView({ effective }: { effective: LlmSelfConfig }) {
         {effective.routes.length === 0 ? (
           <div className="empty" style={{ padding: 24 }}>{tr('管理员尚未配置路由表', 'The admin has not configured any routing yet')}</div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 180 }}>{tr('环节', 'Stage')}</th>
-                <th style={{ width: 170 }}>provider</th>
-                <th>model</th>
-                <th style={{ width: 100 }}>temperature</th>
-              </tr>
-            </thead>
-            <tbody>
-              {effective.routes.map((r) => {
-                const label = STAGE_LABELS[r.stage];
-                return (
-                  <tr key={r.stage}>
-                    <td>
-                      <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : r.stage}</div>
-                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{r.stage}</div>
-                    </td>
-                    <td style={{ fontSize: 12 }}>{providerName(r.provider_id)}</td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{r.model}</td>
-                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
-                      {r.temperature === null || r.temperature === undefined ? tr('默认', 'default') : r.temperature}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th style={{ width: 180 }}>{tr('环节', 'Stage')}</th>
+                  <th style={{ width: 170 }}>provider</th>
+                  <th>model</th>
+                  <th style={{ width: 100 }}>temperature</th>
+                </tr>
+              </thead>
+              <tbody>
+                {effective.routes.map((r) => {
+                  const label = STAGE_LABELS[r.stage];
+                  return (
+                    <tr key={r.stage}>
+                      <td>
+                        <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : r.stage}</div>
+                        <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{r.stage}</div>
+                      </td>
+                      <td style={{ fontSize: 12 }}>{providerName(r.provider_id)}</td>
+                      <td className="mono" style={{ fontSize: 11.5 }}>{r.model}</td>
+                      <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                        {r.temperature === null || r.temperature === undefined ? tr('默认', 'default') : r.temperature}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </>
@@ -1867,45 +1879,47 @@ function MyModelStatusSection({ config }: { config: LlmSelfConfig }) {
       {routes.length === 0 ? (
         <div className="empty" style={{ padding: 24 }}>{tr('还没有生效的模型路由', 'No routes in effect yet')}</div>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th style={{ width: 180 }}>{tr('环节', 'Stage')}</th>
-              <th>provider · model</th>
-              <th style={{ width: 220 }}>{tr('状态', 'Status')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {routes.map((r) => {
-              const label = STAGE_LABELS[r.stage];
-              const state = results[r.stage];
-              return (
-                <tr key={r.stage}>
-                  <td>
-                    <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : r.stage}</div>
-                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{r.stage}</div>
-                  </td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>
-                    {providerName(r.provider_id)}
-                    <span style={{ color: 'var(--text-3)' }}> · {r.model}</span>
-                  </td>
-                  <td>
-                    <div className="row gap8" style={{ alignItems: 'center' }}>
-                      <button
-                        className="btn btn-soft sm"
-                        disabled={testingAll || state?.status === 'testing'}
-                        onClick={() => void testOne(r.stage)}
-                      >
-                        {tr('测试', 'Test')}
-                      </button>
-                      {renderResult(state)}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 180 }}>{tr('环节', 'Stage')}</th>
+                <th>provider · model</th>
+                <th style={{ width: 220 }}>{tr('状态', 'Status')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {routes.map((r) => {
+                const label = STAGE_LABELS[r.stage];
+                const state = results[r.stage];
+                return (
+                  <tr key={r.stage}>
+                    <td>
+                      <div style={{ fontSize: 12, fontWeight: 650 }}>{label ? tr(label.zh, label.en) : r.stage}</div>
+                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{r.stage}</div>
+                    </td>
+                    <td className="mono" style={{ fontSize: 11.5 }}>
+                      {providerName(r.provider_id)}
+                      <span style={{ color: 'var(--text-3)' }}> · {r.model}</span>
+                    </td>
+                    <td>
+                      <div className="row gap8" style={{ alignItems: 'center' }}>
+                        <button
+                          className="btn btn-soft sm"
+                          disabled={testingAll || state?.status === 'testing'}
+                          onClick={() => void testOne(r.stage)}
+                        >
+                          {tr('测试', 'Test')}
+                        </button>
+                        {renderResult(state)}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -2086,36 +2100,38 @@ export function UsageTab() {
       ) : rows.length === 0 ? (
         <div className="empty" style={{ padding: 24 }}>{tr(`近 ${days} 天暂无用量记录`, `No usage records in the last ${days} days`)}</div>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>{tr('日期', 'Date')}</th>
-              <th>stage</th>
-              <th>model</th>
-              <th style={{ textAlign: 'right' }}>prompt tok</th>
-              <th style={{ textAlign: 'right' }}>completion tok</th>
-              <th style={{ textAlign: 'right' }}>calls</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>
-                <td className="mono" style={{ fontSize: 11.5 }}>{r.date}</td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{r.stage}</td>
-                <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{r.model}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.prompt_tokens.toLocaleString()}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.completion_tokens.toLocaleString()}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{tr('日期', 'Date')}</th>
+                <th>stage</th>
+                <th>model</th>
+                <th style={{ textAlign: 'right' }}>prompt tok</th>
+                <th style={{ textAlign: 'right' }}>completion tok</th>
+                <th style={{ textAlign: 'right' }}>calls</th>
               </tr>
-            ))}
-            <tr>
-              <td colSpan={3} style={{ fontWeight: 650 }}>{tr('合计', 'Total')}</td>
-              <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.prompt.toLocaleString()}</td>
-              <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.completion.toLocaleString()}</td>
-              <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.calls.toLocaleString()}</td>
-            </tr>
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{r.date}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{r.stage}</td>
+                  <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{r.model}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.prompt_tokens.toLocaleString()}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.completion_tokens.toLocaleString()}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
+                </tr>
+              ))}
+              <tr>
+                <td colSpan={3} style={{ fontWeight: 650 }}>{tr('合计', 'Total')}</td>
+                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.prompt.toLocaleString()}</td>
+                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.completion.toLocaleString()}</td>
+                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.calls.toLocaleString()}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -2196,36 +2212,38 @@ function MyUsageTab() {
         ) : rows.length === 0 ? (
           <div className="empty" style={{ padding: 24 }}>{tr(`近 ${days} 天暂无用量记录`, `No usage records in the last ${days} days`)}</div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{tr('日期', 'Date')}</th>
-                <th>stage</th>
-                <th>model</th>
-                <th style={{ textAlign: 'right' }}>prompt tok</th>
-                <th style={{ textAlign: 'right' }}>completion tok</th>
-                <th style={{ textAlign: 'right' }}>calls</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{r.date}</td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{r.stage}</td>
-                  <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{r.model}</td>
-                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.prompt_tokens.toLocaleString()}</td>
-                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.completion_tokens.toLocaleString()}</td>
-                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{tr('日期', 'Date')}</th>
+                  <th>stage</th>
+                  <th>model</th>
+                  <th style={{ textAlign: 'right' }}>prompt tok</th>
+                  <th style={{ textAlign: 'right' }}>completion tok</th>
+                  <th style={{ textAlign: 'right' }}>calls</th>
                 </tr>
-              ))}
-              <tr>
-                <td colSpan={3} style={{ fontWeight: 650 }}>{tr('合计', 'Total')}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.prompt.toLocaleString()}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.completion.toLocaleString()}</td>
-                <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.calls.toLocaleString()}</td>
-              </tr>
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{r.date}</td>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{r.stage}</td>
+                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{r.model}</td>
+                    <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.prompt_tokens.toLocaleString()}</td>
+                    <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.completion_tokens.toLocaleString()}</td>
+                    <td className="mono" style={{ fontSize: 11.5, textAlign: 'right' }}>{r.calls.toLocaleString()}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td colSpan={3} style={{ fontWeight: 650 }}>{tr('合计', 'Total')}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.prompt.toLocaleString()}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.completion.toLocaleString()}</td>
+                  <td className="mono" style={{ fontSize: 11.5, textAlign: 'right', fontWeight: 650 }}>{totals.calls.toLocaleString()}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </>
@@ -2957,98 +2975,100 @@ export function UsersTab() {
         </div>
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th style={{ width: 34 }}>
-                <input
-                  type="checkbox"
-                  checked={allChecked}
-                  onChange={() => setChecked(allChecked ? new Set() : new Set(users.map((u) => u.id)))}
-                />
-              </th>
-              <th>{tr('用户', 'User')}</th>
-              <th>{tr('角色', 'Role')}</th>
-              <th>{tr('状态', 'Status')}</th>
-              <th>{tr('AI 用量 / 配额', 'AI usage / quota')}</th>
-              <th>{tr('大模型', 'LLM')}</th>
-              <th>{tr('LLM 接管', 'LLM takeover')}</th>
-              <th>{tr('功能权限', 'Features')}</th>
-              <th style={{ width: 108 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td>
-                  <input type="checkbox" checked={checked.has(u.id)} onChange={() => toggle(u.id)} />
-                </td>
-                <td>
-                  <div className="row gap10">
-                    <Avatar userId={u.id} hasAvatar={u.has_avatar} name={u.display_name || u.email} size={26} />
-                    <div>
-                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>
-                        {u.display_name || '—'}
-                        {u.username && <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', fontWeight: 400, marginLeft: 6 }}>@{u.username}</span>}
-                      </div>
-                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{u.email}</div>
-                    </div>
-                  </div>
-                </td>
-                <td>
-                  <span className="pill sm" style={u.role === 'admin' ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : undefined}>
-                    {u.role === 'admin' ? tr('管理员', 'Admin') : tr('成员', 'Member')}
-                  </span>
-                </td>
-                <td>
-                  <span className="pill sm" style={{ background: u.is_active ? 'var(--ok-bg)' : 'var(--surface-3)', color: u.is_active ? 'var(--ok-tx)' : 'var(--text-3)' }}>
-                    {u.is_active ? tr('启用', 'Active') : tr('停用', 'Disabled')}
-                  </span>
-                </td>
-                <td className="mono" style={{ fontSize: 11.5 }}>
-                  {u.tokens_used.toLocaleString()}
-                  <span style={{ color: 'var(--text-3)' }}> / {u.token_quota != null ? u.token_quota.toLocaleString() : tr('不限', 'unlimited')}</span>
-                </td>
-                <td style={{ fontSize: 11.5, color: 'var(--text-2)' }}>
-                  {u.llm_access === 'blocked' ? tr('锁定', 'Blocked') : u.llm_access === 'chat_only' ? tr('仅对话', 'Chat only') : tr('不限', 'Unrestricted')}
-                </td>
-                <td>
-                  <span
-                    className="pill sm"
-                    role="button"
-                    title={u.llm_self_managed
-                      ? tr('该用户自管 LLM，点击改为管理员接管', 'User manages their own LLM; click to take over')
-                      : tr('由管理员接管，点击释放给用户自管', 'Managed by admin; click to release to the user')}
-                    style={{
-                      cursor: takeoverMutation.isPending ? 'default' : 'pointer',
-                      ...(u.llm_self_managed
-                        ? { background: 'var(--surface-3)', color: 'var(--text-3)' }
-                        : { background: 'var(--accent-soft)', color: 'var(--accent-text)' }),
-                    }}
-                    onClick={() => { if (!takeoverMutation.isPending) takeoverMutation.mutate(u); }}
-                  >
-                    {u.llm_self_managed ? tr('已释放', 'Released') : tr('接管中', 'Managed')}
-                  </span>
-                </td>
-                <td style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{featureSummary(u)}</td>
-                <td>
-                  <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
-                    <button className="btn btn-ghost sm" onClick={() => setEditing(u)}>{tr('编辑', 'Edit')}</button>
-                    {me?.id === u.id ? (
-                      <button className="icon-btn" disabled title={tr('不能删除自己的账号', 'You cannot delete your own account')} style={{ opacity: 0.4 }}>
-                        <Icon name="trash" size={15} />
-                      </button>
-                    ) : (
-                      <button className="icon-btn" title={tr('删除用户', 'Delete user')} style={{ color: 'var(--danger-tx)' }} onClick={() => setDeleting(u)}>
-                        <Icon name="trash" size={15} />
-                      </button>
-                    )}
-                  </div>
-                </td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 34 }}>
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={() => setChecked(allChecked ? new Set() : new Set(users.map((u) => u.id)))}
+                  />
+                </th>
+                <th>{tr('用户', 'User')}</th>
+                <th>{tr('角色', 'Role')}</th>
+                <th>{tr('状态', 'Status')}</th>
+                <th>{tr('AI 用量 / 配额', 'AI usage / quota')}</th>
+                <th>{tr('大模型', 'LLM')}</th>
+                <th>{tr('LLM 接管', 'LLM takeover')}</th>
+                <th>{tr('功能权限', 'Features')}</th>
+                <th style={{ width: 108 }}></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id}>
+                  <td>
+                    <input type="checkbox" checked={checked.has(u.id)} onChange={() => toggle(u.id)} />
+                  </td>
+                  <td>
+                    <div className="row gap10">
+                      <Avatar userId={u.id} hasAvatar={u.has_avatar} name={u.display_name || u.email} size={26} />
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+                          {u.display_name || '—'}
+                          {u.username && <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', fontWeight: 400, marginLeft: 6 }}>@{u.username}</span>}
+                        </div>
+                        <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{u.email}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <span className="pill sm" style={u.role === 'admin' ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : undefined}>
+                      {u.role === 'admin' ? tr('管理员', 'Admin') : tr('成员', 'Member')}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="pill sm" style={{ background: u.is_active ? 'var(--ok-bg)' : 'var(--surface-3)', color: u.is_active ? 'var(--ok-tx)' : 'var(--text-3)' }}>
+                      {u.is_active ? tr('启用', 'Active') : tr('停用', 'Disabled')}
+                    </span>
+                  </td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>
+                    {u.tokens_used.toLocaleString()}
+                    <span style={{ color: 'var(--text-3)' }}> / {u.token_quota != null ? u.token_quota.toLocaleString() : tr('不限', 'unlimited')}</span>
+                  </td>
+                  <td style={{ fontSize: 11.5, color: 'var(--text-2)' }}>
+                    {u.llm_access === 'blocked' ? tr('锁定', 'Blocked') : u.llm_access === 'chat_only' ? tr('仅对话', 'Chat only') : tr('不限', 'Unrestricted')}
+                  </td>
+                  <td>
+                    <span
+                      className="pill sm"
+                      role="button"
+                      title={u.llm_self_managed
+                        ? tr('该用户自管 LLM，点击改为管理员接管', 'User manages their own LLM; click to take over')
+                        : tr('由管理员接管，点击释放给用户自管', 'Managed by admin; click to release to the user')}
+                      style={{
+                        cursor: takeoverMutation.isPending ? 'default' : 'pointer',
+                        ...(u.llm_self_managed
+                          ? { background: 'var(--surface-3)', color: 'var(--text-3)' }
+                          : { background: 'var(--accent-soft)', color: 'var(--accent-text)' }),
+                      }}
+                      onClick={() => { if (!takeoverMutation.isPending) takeoverMutation.mutate(u); }}
+                    >
+                      {u.llm_self_managed ? tr('已释放', 'Released') : tr('接管中', 'Managed')}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{featureSummary(u)}</td>
+                  <td>
+                    <div className="row gap6" style={{ justifyContent: 'flex-end' }}>
+                      <button className="btn btn-ghost sm" onClick={() => setEditing(u)}>{tr('编辑', 'Edit')}</button>
+                      {me?.id === u.id ? (
+                        <button className="icon-btn" disabled title={tr('不能删除自己的账号', 'You cannot delete your own account')} style={{ opacity: 0.4 }}>
+                          <Icon name="trash" size={15} />
+                        </button>
+                      ) : (
+                        <button className="icon-btn" title={tr('删除用户', 'Delete user')} style={{ color: 'var(--danger-tx)' }} onClick={() => setDeleting(u)}>
+                          <Icon name="trash" size={15} />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       {editing && <UserEditModal u={editing} onClose={() => setEditing(null)} />}
       {deleting && <DeleteUserModal u={deleting} onClose={() => setDeleting(null)} />}
@@ -3215,71 +3235,73 @@ export function CodesTab() {
         <div className="empty">{tr('还没有注册码，点右上角生成一个', 'No codes yet — generate one from the top right')}</div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{tr('注册码', 'Code')}</th>
-                <th>{tr('备注', 'Note')}</th>
-                <th>{tr('预设课题', 'Topics')}</th>
-                <th>{tr('使用', 'Uses')}</th>
-                <th>{tr('有效期', 'Expiry')}</th>
-                <th>{tr('状态', 'Status')}</th>
-                <th style={{ textAlign: 'right' }}>{tr('操作', 'Actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {codes.map((c: RegistrationCodeRead) => {
-                const [zh, en, color] = CODE_STATUS_LABEL[c.status] ?? [c.status, c.status, 'var(--text-3)'];
-                return (
-                  <tr key={c.id}>
-                    <td>
-                      <button
-                        className="btn btn-ghost sm"
-                        style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}
-                        title={tr('点击复制', 'Click to copy')}
-                        onClick={() => copy(c.code)}
-                      >
-                        {c.code} <Icon name="link" size={12} style={{ opacity: 0.6 }} />
-                      </button>
-                    </td>
-                    <td style={{ color: c.note ? 'var(--text)' : 'var(--text-4)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {c.note || '—'}
-                    </td>
-                    <td
-                      style={{ color: c.preset_directions.length ? 'var(--text)' : 'var(--text-4)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      title={c.preset_directions.join('\n')}
-                    >
-                      {c.preset_directions.length ? c.preset_directions.join('；') : '—'}
-                    </td>
-                    <td style={{ fontFamily: 'var(--mono)' }}>
-                      {c.used_count}
-                      {c.max_uses != null ? ` / ${c.max_uses}` : tr(' / 不限', ' / ∞')}
-                    </td>
-                    <td style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                      {c.expires_at ? fmtTime(c.expires_at) : tr('永久', 'Never')}
-                    </td>
-                    <td>
-                      <span className="pill" style={{ color, borderColor: 'var(--border)' }}>
-                        <span className="dot" style={{ background: color }} />
-                        {tr(zh, en)}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      {!c.revoked && (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{tr('注册码', 'Code')}</th>
+                  <th>{tr('备注', 'Note')}</th>
+                  <th>{tr('预设课题', 'Topics')}</th>
+                  <th>{tr('使用', 'Uses')}</th>
+                  <th>{tr('有效期', 'Expiry')}</th>
+                  <th>{tr('状态', 'Status')}</th>
+                  <th style={{ textAlign: 'right' }}>{tr('操作', 'Actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {codes.map((c: RegistrationCodeRead) => {
+                  const [zh, en, color] = CODE_STATUS_LABEL[c.status] ?? [c.status, c.status, 'var(--text-3)'];
+                  return (
+                    <tr key={c.id}>
+                      <td>
                         <button
                           className="btn btn-ghost sm"
-                          disabled={revokeMutation.isPending}
-                          onClick={() => revokeMutation.mutate(c.id)}
+                          style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}
+                          title={tr('点击复制', 'Click to copy')}
+                          onClick={() => copy(c.code)}
                         >
-                          {tr('停用', 'Revoke')}
+                          {c.code} <Icon name="link" size={12} style={{ opacity: 0.6 }} />
                         </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </td>
+                      <td style={{ color: c.note ? 'var(--text)' : 'var(--text-4)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.note || '—'}
+                      </td>
+                      <td
+                        style={{ color: c.preset_directions.length ? 'var(--text)' : 'var(--text-4)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={c.preset_directions.join('\n')}
+                      >
+                        {c.preset_directions.length ? c.preset_directions.join('；') : '—'}
+                      </td>
+                      <td style={{ fontFamily: 'var(--mono)' }}>
+                        {c.used_count}
+                        {c.max_uses != null ? ` / ${c.max_uses}` : tr(' / 不限', ' / ∞')}
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                        {c.expires_at ? fmtTime(c.expires_at) : tr('永久', 'Never')}
+                      </td>
+                      <td>
+                        <span className="pill" style={{ color, borderColor: 'var(--border)' }}>
+                          <span className="dot" style={{ background: color }} />
+                          {tr(zh, en)}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {!c.revoked && (
+                          <button
+                            className="btn btn-ghost sm"
+                            disabled={revokeMutation.isPending}
+                            onClick={() => revokeMutation.mutate(c.id)}
+                          >
+                            {tr('停用', 'Revoke')}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

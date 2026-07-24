@@ -15,6 +15,7 @@ import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMe
 import { tr } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
+import { useIsMobile } from '../lib/useBreakpoint';
 
 interface NavEntry {
   /** 非课题作用域页面的绝对路径（与 sub 二选一）。 */
@@ -340,6 +341,17 @@ export function AppShell() {
     });
   };
 
+  // —— 手机：侧栏改覆盖式抽屉 ——
+  // 桌面的「收起」是窄轨道（占位、可记忆），手机需要的是盖在内容上的抽屉，
+  // 语义不同，所以另起一个 state；且不进 localStorage —— 每次进站默认关闭，
+  // 否则一打开页面就被侧栏盖住。
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // 点了导航项就关抽屉，否则新页面被侧栏盖着；转桌面宽度时也一并复位。
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname, isMobile]);
+
   // —— 全局搜索（⌘K / Ctrl+K）——
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
@@ -461,13 +473,21 @@ export function AppShell() {
   const ctx: ShellContext = { pendingGates: pending, gatesError: pendingQuery.isError, openGates };
 
   return (
-    <div className={'app' + (navCollapsed ? ' nav-collapsed' : '')}>
-      {/* —— 侧栏 —— */}
+    <div
+      className={
+        'app' +
+        // 手机上不存在「图标轨道」形态：只有抽屉的开/关，桌面的收起态记忆保持不变，
+        // 转回宽屏时自动恢复。
+        (isMobile ? (mobileNavOpen ? ' nav-open' : '') : navCollapsed ? ' nav-collapsed' : '')
+      }
+    >
+      {/* —— 侧栏（手机上是覆盖式抽屉，见 global.css 响应式一节）—— */}
       <div className="sidebar">
         <div className="sb-brand">
           <PolarisMark size={41} />
-          {/* 收起后只留左侧图形标：直接不渲染字标，杜绝溢出（不靠 CSS 隐藏） */}
-          {!navCollapsed && <PolarisWordmark height={30} />}
+          {/* 收起后只留左侧图形标：直接不渲染字标，杜绝溢出（不靠 CSS 隐藏）。
+              手机抽屉是完整宽度，字标照常显示。 */}
+          {(!navCollapsed || isMobile) && <PolarisWordmark height={30} />}
         </div>
         {/* —— 实验室 + 课题研究两组（平面分组，只靠 eyebrow + 间距区分，不加分隔线）。
             放在滚动区之外：课题切换器的下拉菜单要能向右溢出到主列上 —— */}
@@ -478,7 +498,7 @@ export function AppShell() {
           ))}
 
           <div className="sb-section">{tr('课题研究', 'Topic')}</div>
-          <TopicSwitcher collapsed={navCollapsed} />
+          <TopicSwitcher collapsed={navCollapsed && !isMobile} />
           {NAV_MAIN.map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
@@ -498,18 +518,40 @@ export function AppShell() {
           <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
         </div>
         <div className="sb-foot">
-          <UserMenu me={me} collapsed={navCollapsed} />
+          <UserMenu me={me} collapsed={navCollapsed && !isMobile} />
         </div>
       </div>
+
+      {/* —— 手机抽屉的遮罩：点它关闭 —— */}
+      {isMobile && mobileNavOpen && (
+        <div className="sidebar-scrim" onClick={() => setMobileNavOpen(false)} />
+      )}
 
       {/* —— 主列 —— */}
       <div className="main">
         <div className="topbar">
           <button
             className="icon-btn nav-toggle"
-            onClick={toggleNav}
-            title={navCollapsed ? tr('展开菜单栏', 'Expand sidebar') : tr('收起菜单栏', 'Collapse sidebar')}
-            aria-label={navCollapsed ? tr('展开菜单栏', 'Expand sidebar') : tr('收起菜单栏', 'Collapse sidebar')}
+            onClick={isMobile ? () => setMobileNavOpen((o) => !o) : toggleNav}
+            title={
+              isMobile
+                ? mobileNavOpen
+                  ? tr('关闭菜单', 'Close menu')
+                  : tr('打开菜单', 'Open menu')
+                : navCollapsed
+                  ? tr('展开菜单栏', 'Expand sidebar')
+                  : tr('收起菜单栏', 'Collapse sidebar')
+            }
+            aria-label={
+              isMobile
+                ? mobileNavOpen
+                  ? tr('关闭菜单', 'Close menu')
+                  : tr('打开菜单', 'Open menu')
+                : navCollapsed
+                  ? tr('展开菜单栏', 'Expand sidebar')
+                  : tr('收起菜单栏', 'Collapse sidebar')
+            }
+            aria-expanded={isMobile ? mobileNavOpen : undefined}
           >
             <Icon name="sidebar" size={16} />
           </button>

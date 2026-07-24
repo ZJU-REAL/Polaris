@@ -913,301 +913,303 @@ export function WriterEditorPage() {
       )}
 
       {/* —— 三栏（可拖拽调宽 / 可收起） —— */}
-      <div ref={splitRef} style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        {/* 左：文件树 */}
-        {layout.leftOpen && (
-          <div
-            style={{
-              width: layout.leftW,
-              flexShrink: 0,
-              borderRight: '0.5px solid var(--border)',
-              background: 'var(--sidebar-bg)',
-              minHeight: 0,
-              overflow: 'hidden',
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              <FileTree
-                files={ms.files}
-                currentId={currentFileId}
-                busy={fileOpsBusy}
-                onSelect={(f) => setCurrentFileId(f.id)}
-                onCreate={(path) => createFileMutation.mutate(path)}
-                onCreateFolder={(path) => createFolderMutation.mutate(path)}
-                onUpload={(file) => uploadFileMutation.mutate(file)}
-                onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
-                onDelete={(f) => deleteFileMutation.mutate(f.id)}
+      <div className="workbench-panx" style={{ flex: 1, minHeight: 0 }}>
+        <div ref={splitRef} className="workbench-panx-inner" style={{ height: '100%', display: 'flex' }}>
+          {/* 左：文件树 */}
+          {layout.leftOpen && (
+            <div
+              style={{
+                width: layout.leftW,
+                flexShrink: 0,
+                borderRight: '0.5px solid var(--border)',
+                background: 'var(--sidebar-bg)',
+                minHeight: 0,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <FileTree
+                  files={ms.files}
+                  currentId={currentFileId}
+                  busy={fileOpsBusy}
+                  onSelect={(f) => setCurrentFileId(f.id)}
+                  onCreate={(path) => createFileMutation.mutate(path)}
+                  onCreateFolder={(path) => createFolderMutation.mutate(path)}
+                  onUpload={(file) => uploadFileMutation.mutate(file)}
+                  onRename={(f, path) => renameFileMutation.mutate({ fid: f.id, path })}
+                  onDelete={(f) => deleteFileMutation.mutate(f.id)}
+                />
+              </div>
+              <OutlinePanel
+                content={docContent}
+                open={layout.outlineOpen}
+                onToggle={() => patchLayout({ outlineOpen: !layout.outlineOpen })}
+                onJump={(line) => {
+                  if (view) jumpToLine(view, line);
+                }}
               />
             </div>
-            <OutlinePanel
-              content={docContent}
-              open={layout.outlineOpen}
-              onToggle={() => patchLayout({ outlineOpen: !layout.outlineOpen })}
-              onJump={(line) => {
-                if (view) jumpToLine(view, line);
-              }}
-            />
-          </div>
-        )}
-        <Gutter
-          dragging={dragging === 'left'}
-          onMouseDown={layout.leftOpen ? onLeftGutterDown : undefined}
-          onReset={() => patchLayout({ leftW: DEFAULT_LAYOUT.leftW })}
-          collapsed={!layout.leftOpen}
-          onToggle={() => patchLayout({ leftOpen: !layout.leftOpen })}
-          toggleTitle={layout.leftOpen ? tr('收起文件列表', 'Collapse file list') : tr('展开文件列表', 'Expand file list')}
-          chevronDeg={layout.leftOpen ? 180 : 0}
-        />
+          )}
+          <Gutter
+            dragging={dragging === 'left'}
+            onMouseDown={layout.leftOpen ? onLeftGutterDown : undefined}
+            onReset={() => patchLayout({ leftW: DEFAULT_LAYOUT.leftW })}
+            collapsed={!layout.leftOpen}
+            onToggle={() => patchLayout({ leftOpen: !layout.leftOpen })}
+            toggleTitle={layout.leftOpen ? tr('收起文件列表', 'Collapse file list') : tr('展开文件列表', 'Expand file list')}
+            chevronDeg={layout.leftOpen ? 180 : 0}
+          />
 
-        {/* 中：编辑器 */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--surface)' }}>
-          {currentFile ? (
-            currentFile.is_binary ? (
+          {/* 中：编辑器 */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--surface)' }}>
+            {currentFile ? (
+              currentFile.is_binary ? (
+                <>
+                  <div
+                    className="row gap8"
+                    style={{ padding: '6px 14px', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}
+                  >
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{currentFile.path}</span>
+                    <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>{tr('二进制文件', 'binary')}</span>
+                  </div>
+                  <BinaryPreview manuscriptId={ms.id} file={currentFile} />
+                </>
+              ) : (
               <>
                 <div
                   className="row gap8"
                   style={{ padding: '6px 14px', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}
                 >
                   <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{currentFile.path}</span>
-                  <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>{tr('二进制文件', 'binary')}</span>
+                  {currentFile.readonly && (
+                    <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>{tr('只读', 'read-only')}</span>
+                  )}
+                  <button
+                    className="writer-mini-btn"
+                    style={{ marginLeft: 'auto' }}
+                    title={tr('查找 / 替换（⌘F）', 'Find / replace (⌘F)')}
+                    disabled={!view}
+                    onClick={() => view && openSearchPanel(view)}
+                  >
+                    <Icon name="search" size={11} />
+                  </button>
+                  <button
+                    className="writer-mini-btn"
+                    title={tr('版本历史（AI 写入前 / 每次编译自动存档）', 'Version history (auto-saved before each AI write and on every compile)')}
+                    onClick={() => setHistoryOpen(true)}
+                  >
+                    <Icon name="clock" size={11} />
+                  </button>
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                    {tr('⌘S 编译', '⌘S to compile')}
+                  </span>
                 </div>
-                <BinaryPreview manuscriptId={ms.id} file={currentFile} />
-              </>
-            ) : (
-            <>
-              <div
-                className="row gap8"
-                style={{ padding: '6px 14px', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}
-              >
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{currentFile.path}</span>
-                {currentFile.readonly && (
-                  <span className="pill sm" style={{ height: 17, fontSize: 9.5 }}>{tr('只读', 'read-only')}</span>
-                )}
-                <button
-                  className="writer-mini-btn"
-                  style={{ marginLeft: 'auto' }}
-                  title={tr('查找 / 替换（⌘F）', 'Find / replace (⌘F)')}
-                  disabled={!view}
-                  onClick={() => view && openSearchPanel(view)}
-                >
-                  <Icon name="search" size={11} />
-                </button>
-                <button
-                  className="writer-mini-btn"
-                  title={tr('版本历史（AI 写入前 / 每次编译自动存档）', 'Version history (auto-saved before each AI write and on every compile)')}
-                  onClick={() => setHistoryOpen(true)}
-                >
-                  <Icon name="clock" size={11} />
-                </button>
-                <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
-                  {tr('⌘S 编译', '⌘S to compile')}
-                </span>
-              </div>
-              <EditorPane
-                key={currentFile.id}
-                manuscriptId={ms.id}
-                fileId={currentFile.id}
-                readonly={!!currentFile.readonly}
-                user={user}
-                onCompile={handleCompileShortcut}
-                onStatus={handleStatus}
-                onPeers={handlePeers}
-                onView={handleView}
-                onDocChange={handleDocChange}
-                aiTarget={aiTarget}
-              />
-              {/* 编辑器下方：内联 AI（润色 / 改写 / 续写）操作条 */}
-              {!currentFile.readonly && (
-                <div
-                  className="row gap6"
-                  style={{
-                    padding: '6px 14px',
-                    borderTop: '0.5px solid var(--border)',
-                    background: 'var(--surface-2)',
-                    flexShrink: 0,
-                  }}
-                >
-                  <span
-                    className="mono"
-                    title={writingModel ? tr(`当前撰写模型：${writingModel}`, `Current writing model: ${writingModel}`) : tr('撰写模型（未知）', 'Writing model (unknown)')}
+                <EditorPane
+                  key={currentFile.id}
+                  manuscriptId={ms.id}
+                  fileId={currentFile.id}
+                  readonly={!!currentFile.readonly}
+                  user={user}
+                  onCompile={handleCompileShortcut}
+                  onStatus={handleStatus}
+                  onPeers={handlePeers}
+                  onView={handleView}
+                  onDocChange={handleDocChange}
+                  aiTarget={aiTarget}
+                />
+                {/* 编辑器下方：内联 AI（润色 / 改写 / 续写）操作条 */}
+                {!currentFile.readonly && (
+                  <div
+                    className="row gap6"
                     style={{
-                      fontSize: 10.5,
-                      fontWeight: 600,
-                      color: 'var(--text-3)',
-                      marginRight: 4,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      maxWidth: 200,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      padding: '6px 14px',
+                      borderTop: '0.5px solid var(--border)',
+                      background: 'var(--surface-2)',
+                      flexShrink: 0,
                     }}
                   >
-                    <Icon name="sparkle" size={11} style={{ flexShrink: 0, color: 'var(--accent)' }} />
-                    {writingModel ?? (routesQuery.isLoading ? tr('模型加载中…', 'Loading model…') : tr('AI 辅助', 'AI assist'))}
-                  </span>
-                  <button
-                    className="btn btn-ghost sm"
-                    style={{ height: 24, fontSize: 11 }}
-                    disabled={isWriting}
-                    title={isWriting ? tr('AI 正在起草中', 'AI is drafting') : tr('AI 按事实包起草各节', 'AI drafts sections from the fact pack')}
-                    onClick={() => setDraftOpen(true)}
-                  >
-                    <Icon name="sparkle" size={11} />
-                    {isWriting ? tr('AI 起草中…', 'AI drafting…') : tr('AI 起草', 'AI draft')}
-                  </button>
-                  {(['polish', 'rewrite', 'continue'] as const).map((m) => (
+                    <span
+                      className="mono"
+                      title={writingModel ? tr(`当前撰写模型：${writingModel}`, `Current writing model: ${writingModel}`) : tr('撰写模型（未知）', 'Writing model (unknown)')}
+                      style={{
+                        fontSize: 10.5,
+                        fontWeight: 600,
+                        color: 'var(--text-3)',
+                        marginRight: 4,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        maxWidth: 200,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <Icon name="sparkle" size={11} style={{ flexShrink: 0, color: 'var(--accent)' }} />
+                      {writingModel ?? (routesQuery.isLoading ? tr('模型加载中…', 'Loading model…') : tr('AI 辅助', 'AI assist'))}
+                    </span>
                     <button
-                      key={m}
-                      className={`btn sm ${assistMode === m ? 'btn-soft' : 'btn-ghost'}`}
+                      className="btn btn-ghost sm"
                       style={{ height: 24, fontSize: 11 }}
-                      disabled={!view || isWriting}
-                      title={
-                        m === 'continue'
-                          ? tr('AI 从光标处向后续写', 'AI continues from the cursor')
-                          : m === 'polish'
-                            ? tr('选中一段文字后 AI 润色', 'Select text, then AI polishes it')
-                            : tr('选中一段文字后 AI 按要求改写', 'Select text, then AI rewrites it as instructed')
-                      }
-                      onClick={() => setAssistMode((cur) => (cur === m ? null : m))}
+                      disabled={isWriting}
+                      title={isWriting ? tr('AI 正在起草中', 'AI is drafting') : tr('AI 按事实包起草各节', 'AI drafts sections from the fact pack')}
+                      onClick={() => setDraftOpen(true)}
                     >
                       <Icon name="sparkle" size={11} />
-                      {m === 'polish' ? tr('润色', 'Polish') : m === 'rewrite' ? tr('改写', 'Rewrite') : tr('续写', 'Continue')}
+                      {isWriting ? tr('AI 起草中…', 'AI drafting…') : tr('AI 起草', 'AI draft')}
                     </button>
-                  ))}
+                    {(['polish', 'rewrite', 'continue'] as const).map((m) => (
+                      <button
+                        key={m}
+                        className={`btn sm ${assistMode === m ? 'btn-soft' : 'btn-ghost'}`}
+                        style={{ height: 24, fontSize: 11 }}
+                        disabled={!view || isWriting}
+                        title={
+                          m === 'continue'
+                            ? tr('AI 从光标处向后续写', 'AI continues from the cursor')
+                            : m === 'polish'
+                              ? tr('选中一段文字后 AI 润色', 'Select text, then AI polishes it')
+                              : tr('选中一段文字后 AI 按要求改写', 'Select text, then AI rewrites it as instructed')
+                        }
+                        onClick={() => setAssistMode((cur) => (cur === m ? null : m))}
+                      >
+                        <Icon name="sparkle" size={11} />
+                        {m === 'polish' ? tr('润色', 'Polish') : m === 'rewrite' ? tr('改写', 'Rewrite') : tr('续写', 'Continue')}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {assistMode && view && currentFile && !currentFile.readonly && (
+                  <AssistPanel
+                    key={`${currentFile.id}-${assistMode}`}
+                    manuscriptId={ms.id}
+                    mode={assistMode}
+                    view={view}
+                    onClose={() => setAssistMode(null)}
+                  />
+                )}
+              </>
+              )
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <EmptyState compact icon="file" title={tr('还没有文件', 'No files yet')} desc={tr('点左侧 + 号新建一个 .tex 文件开始写作。', 'Click + on the left to create a .tex file and start writing.')} />
+              </div>
+            )}
+          </div>
+
+          <Gutter
+            dragging={dragging === 'right'}
+            onMouseDown={layout.rightOpen ? onRightGutterDown : undefined}
+            onReset={() => patchLayout({ rightW: DEFAULT_LAYOUT.rightW })}
+            collapsed={!layout.rightOpen}
+            onToggle={() => patchLayout({ rightOpen: !layout.rightOpen })}
+            toggleTitle={layout.rightOpen ? tr('收起预览面板', 'Collapse preview panel') : tr('展开预览面板', 'Expand preview panel')}
+            chevronDeg={layout.rightOpen ? 0 : 180}
+          />
+
+          {/* 右：PDF 预览 + 诊断 */}
+          {layout.rightOpen && (
+            <div
+              ref={rightColRef}
+              style={{
+                width: layout.rightW,
+                flexShrink: 0,
+                borderLeft: '0.5px solid var(--border)',
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                overflow: 'hidden',
+              }}
+            >
+              {/* 上：PDF */}
+              <div
+                style={{
+                  flex: layout.pdfOpen ? `${layout.pdfFrac} 1 0px` : '0 0 auto',
+                  minHeight: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  borderBottom: '0.5px solid var(--border)',
+                }}
+              >
+                <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: layout.pdfOpen ? '0.5px solid var(--border)' : 'none', background: 'var(--surface)' }}>
+                  <button
+                    className="writer-mini-btn"
+                    title={layout.pdfOpen ? tr('收起编译预览', 'Collapse PDF preview') : tr('展开编译预览', 'Expand PDF preview')}
+                    onClick={() => patchLayout({ pdfOpen: !layout.pdfOpen })}
+                  >
+                    <Icon name="chevDown" size={11} style={{ transform: layout.pdfOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
+                  </button>
+                  <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>{tr('编译预览 · PDF', 'PDF preview')}</span>
+                  {compile && (
+                    <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
+                      v{compile.version} · {fmtRelative(compile.compiled_at)} · {(compile.duration_ms / 1000).toFixed(1)}s
+                    </span>
+                  )}
                 </div>
-              )}
-              {assistMode && view && currentFile && !currentFile.readonly && (
-                <AssistPanel
-                  key={`${currentFile.id}-${assistMode}`}
-                  manuscriptId={ms.id}
-                  mode={assistMode}
-                  view={view}
-                  onClose={() => setAssistMode(null)}
+                {layout.pdfOpen && (
+                  // 拖动分栏时挡住 iframe，避免鼠标事件被它吞掉
+                  <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', pointerEvents: dragging ? 'none' : 'auto' }}>
+                    <PdfPane msId={ms.id} compile={compile} />
+                  </div>
+                )}
+              </div>
+
+              {layout.pdfOpen && layout.diagOpen && (
+                <Gutter
+                  horizontal
+                  dragging={dragging === 'pdf'}
+                  onMouseDown={onPdfGutterDown}
+                  onReset={() => patchLayout({ pdfFrac: DEFAULT_LAYOUT.pdfFrac })}
                 />
               )}
-            </>
-            )
-          ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <EmptyState compact icon="file" title={tr('还没有文件', 'No files yet')} desc={tr('点左侧 + 号新建一个 .tex 文件开始写作。', 'Click + on the left to create a .tex file and start writing.')} />
+
+              {/* 下：诊断 */}
+              <div
+                style={{
+                  flex: layout.diagOpen ? `${1 - layout.pdfFrac} 1 0px` : '0 0 auto',
+                  minHeight: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  background: 'var(--surface)',
+                }}
+              >
+                <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: layout.diagOpen ? '0.5px solid var(--border)' : 'none' }}>
+                  <button
+                    className="writer-mini-btn"
+                    title={layout.diagOpen ? tr('收起编译诊断', 'Collapse build diagnostics') : tr('展开编译诊断', 'Expand build diagnostics')}
+                    onClick={() => patchLayout({ diagOpen: !layout.diagOpen })}
+                  >
+                    <Icon name="chevDown" size={11} style={{ transform: layout.diagOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
+                  </button>
+                  <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>{tr('编译诊断', 'Build diagnostics')}</span>
+                  {compile && (
+                    <span className="mono" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
+                      {errCount > 0 && <span style={{ color: 'var(--danger-tx)', fontWeight: 700 }}>{errCount} {tr('错误', 'errors')}</span>}
+                      {errCount > 0 && warnCount > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
+                      {warnCount > 0 && <span style={{ color: 'var(--warn-tx)', fontWeight: 700 }}>{warnCount} {tr('警告', 'warnings')}</span>}
+                      {errCount === 0 && warnCount === 0 && <span style={{ color: 'var(--ok-tx)' }}>{tr('没有问题 ✓', 'No issues ✓')}</span>}
+                    </span>
+                  )}
+                </div>
+                {layout.diagOpen && (
+                  <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+                    {!compile ? (
+                      <div className="empty" style={{ padding: 24, fontSize: 12 }}>{tr('还没编译过，编译后这里显示错误和警告。', 'Not compiled yet — errors and warnings will show here after a compile.')}</div>
+                    ) : compile.diagnostics.length === 0 ? (
+                      <div className="empty" style={{ padding: 24, fontSize: 12 }}>
+                        {compile.status === 'ok' ? tr('编译干净，没有错误和警告 🎉', 'Clean compile — no errors or warnings 🎉') : tr('编译未产出诊断信息。', 'The compile produced no diagnostics.')}
+                      </div>
+                    ) : (
+                      compile.diagnostics.map((d, i) => <DiagRow key={i} d={d} onClick={() => onDiagClick(d)} />)
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
-
-        <Gutter
-          dragging={dragging === 'right'}
-          onMouseDown={layout.rightOpen ? onRightGutterDown : undefined}
-          onReset={() => patchLayout({ rightW: DEFAULT_LAYOUT.rightW })}
-          collapsed={!layout.rightOpen}
-          onToggle={() => patchLayout({ rightOpen: !layout.rightOpen })}
-          toggleTitle={layout.rightOpen ? tr('收起预览面板', 'Collapse preview panel') : tr('展开预览面板', 'Expand preview panel')}
-          chevronDeg={layout.rightOpen ? 0 : 180}
-        />
-
-        {/* 右：PDF 预览 + 诊断 */}
-        {layout.rightOpen && (
-          <div
-            ref={rightColRef}
-            style={{
-              width: layout.rightW,
-              flexShrink: 0,
-              borderLeft: '0.5px solid var(--border)',
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0,
-              overflow: 'hidden',
-            }}
-          >
-            {/* 上：PDF */}
-            <div
-              style={{
-                flex: layout.pdfOpen ? `${layout.pdfFrac} 1 0px` : '0 0 auto',
-                minHeight: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                borderBottom: '0.5px solid var(--border)',
-              }}
-            >
-              <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: layout.pdfOpen ? '0.5px solid var(--border)' : 'none', background: 'var(--surface)' }}>
-                <button
-                  className="writer-mini-btn"
-                  title={layout.pdfOpen ? tr('收起编译预览', 'Collapse PDF preview') : tr('展开编译预览', 'Expand PDF preview')}
-                  onClick={() => patchLayout({ pdfOpen: !layout.pdfOpen })}
-                >
-                  <Icon name="chevDown" size={11} style={{ transform: layout.pdfOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
-                </button>
-                <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>{tr('编译预览 · PDF', 'PDF preview')}</span>
-                {compile && (
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>
-                    v{compile.version} · {fmtRelative(compile.compiled_at)} · {(compile.duration_ms / 1000).toFixed(1)}s
-                  </span>
-                )}
-              </div>
-              {layout.pdfOpen && (
-                // 拖动分栏时挡住 iframe，避免鼠标事件被它吞掉
-                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', pointerEvents: dragging ? 'none' : 'auto' }}>
-                  <PdfPane msId={ms.id} compile={compile} />
-                </div>
-              )}
-            </div>
-
-            {layout.pdfOpen && layout.diagOpen && (
-              <Gutter
-                horizontal
-                dragging={dragging === 'pdf'}
-                onMouseDown={onPdfGutterDown}
-                onReset={() => patchLayout({ pdfFrac: DEFAULT_LAYOUT.pdfFrac })}
-              />
-            )}
-
-            {/* 下：诊断 */}
-            <div
-              style={{
-                flex: layout.diagOpen ? `${1 - layout.pdfFrac} 1 0px` : '0 0 auto',
-                minHeight: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                background: 'var(--surface)',
-              }}
-            >
-              <div className="row gap8" style={{ padding: '6px 12px', flexShrink: 0, borderBottom: layout.diagOpen ? '0.5px solid var(--border)' : 'none' }}>
-                <button
-                  className="writer-mini-btn"
-                  title={layout.diagOpen ? tr('收起编译诊断', 'Collapse build diagnostics') : tr('展开编译诊断', 'Expand build diagnostics')}
-                  onClick={() => patchLayout({ diagOpen: !layout.diagOpen })}
-                >
-                  <Icon name="chevDown" size={11} style={{ transform: layout.diagOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .12s' }} />
-                </button>
-                <span style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--text-2)' }}>{tr('编译诊断', 'Build diagnostics')}</span>
-                {compile && (
-                  <span className="mono" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
-                    {errCount > 0 && <span style={{ color: 'var(--danger-tx)', fontWeight: 700 }}>{errCount} {tr('错误', 'errors')}</span>}
-                    {errCount > 0 && warnCount > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
-                    {warnCount > 0 && <span style={{ color: 'var(--warn-tx)', fontWeight: 700 }}>{warnCount} {tr('警告', 'warnings')}</span>}
-                    {errCount === 0 && warnCount === 0 && <span style={{ color: 'var(--ok-tx)' }}>{tr('没有问题 ✓', 'No issues ✓')}</span>}
-                  </span>
-                )}
-              </div>
-              {layout.diagOpen && (
-                <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
-                  {!compile ? (
-                    <div className="empty" style={{ padding: 24, fontSize: 12 }}>{tr('还没编译过，编译后这里显示错误和警告。', 'Not compiled yet — errors and warnings will show here after a compile.')}</div>
-                  ) : compile.diagnostics.length === 0 ? (
-                    <div className="empty" style={{ padding: 24, fontSize: 12 }}>
-                      {compile.status === 'ok' ? tr('编译干净，没有错误和警告 🎉', 'Clean compile — no errors or warnings 🎉') : tr('编译未产出诊断信息。', 'The compile produced no diagnostics.')}
-                    </div>
-                  ) : (
-                    compile.diagnostics.map((d, i) => <DiagRow key={i} d={d} onClick={() => onDiagClick(d)} />)
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* —— 抽屉 / Modal —— */}

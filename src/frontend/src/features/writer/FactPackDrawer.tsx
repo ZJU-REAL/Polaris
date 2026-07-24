@@ -119,28 +119,30 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
           {metrics.length === 0 ? (
             <div style={{ fontSize: 11.5, color: 'var(--text-4)' }}>{tr('暂无实验指标', 'No experiment metrics')}</div>
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{tr('指标', 'Metric')}</th>
-                  <th style={{ textAlign: 'right' }}>{tr('最优值', 'Best')}</th>
-                  <th style={{ textAlign: 'right' }}>{tr('轮数', 'Runs')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.map((m) => (
-                  <tr key={m.name}>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{m.name}</td>
-                    <td className="mono" style={{ textAlign: 'right', fontWeight: 650 }}>
-                      {m.best ?? '—'}
-                    </td>
-                    <td className="mono" style={{ textAlign: 'right', color: 'var(--text-3)' }}>
-                      {m.runs?.length ?? 0}
-                    </td>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{tr('指标', 'Metric')}</th>
+                    <th style={{ textAlign: 'right' }}>{tr('最优值', 'Best')}</th>
+                    <th style={{ textAlign: 'right' }}>{tr('轮数', 'Runs')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {metrics.map((m) => (
+                    <tr key={m.name}>
+                      <td className="mono" style={{ fontSize: 11.5 }}>{m.name}</td>
+                      <td className="mono" style={{ textAlign: 'right', fontWeight: 650 }}>
+                        {m.best ?? '—'}
+                      </td>
+                      <td className="mono" style={{ textAlign: 'right', color: 'var(--text-3)' }}>
+                        {m.runs?.length ?? 0}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           {/* —— 图表 —— */}

@@ -91,4 +91,16 @@
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue",
     system-ui, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", ui-monospace, "Menlo", "Cascadia Code", monospace;
+
+  /* — Breakpoints —
+     全站只有两档断点。CSS 变量不能用在 @media 条件里，所以这里只是「登记」，
+     供组件内 calc()/引用；真正的断点写在三处，改一处必须同改另两处：
+       1. 本文件的 --bp-*（登记用）
+       2. global.css 末尾 @media 块里的字面量（1024px / 768px）
+       3. lib/useBreakpoint.ts 的 BP 常量（JS 侧判断用）
+     注意 html{zoom:1.1}：@media 求值看真实视口 px，不受 zoom 影响，但内部
+     布局的可用宽度是「视口/1.1」。关 zoom 的断点与主重排断点都定在 768px，
+     所以手机分支内「媒体 px == 布局 px」，不必再做换算。 */
+  --bp-compact: 1024px;   /* 平板 / 小笔记本 */
+  --bp-mobile:  768px;    /* 手机 */
 }

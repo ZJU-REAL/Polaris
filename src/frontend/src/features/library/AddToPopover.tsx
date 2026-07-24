@@ -235,6 +235,8 @@ function Popover({
     left: anchor.left,
     ...(anchor.top !== undefined ? { top: anchor.top } : { bottom: anchor.bottom }),
     width: POP_W,
+    // 窄屏（POP_W + 16 放不下）时收进视口，否则右侧溢出
+    maxWidth: 'calc(100vw - 16px)',
     zIndex: POP_Z,
     background: 'var(--surface)',
     border: '0.5px solid var(--border-2)',

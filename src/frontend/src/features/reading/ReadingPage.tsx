@@ -323,81 +323,86 @@ export function ReadingPage() {
         </button>
       </div>
 
-      {/* —— 左右分栏：右侧可拖拽调宽 / 收起 —— */}
-      <div ref={splitRef} style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        {/* 左：PDF 阅读器（可划线） */}
-        <div
-          className="card"
-          style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-        >
-          <PdfReader
-            paper={paper}
-            highlights={highlights}
-            activeHighlightId={activeHl}
-            creating={createHlMutation.isPending}
-            onCreateHighlight={(input) => createHlMutation.mutate(input)}
-            onHighlightClick={onHighlightClick}
-            jumpTarget={jump}
-          />
-        </div>
-
-        {!rightCollapsed && (
-          <>
-            {/* 拖拽分隔条：拖动调宽，双击复位 */}
-            <div
-              onMouseDown={onDragStart}
-              onDoubleClick={() => setRightWidth(RIGHT_DEFAULT)}
-              title={tr('拖动调整宽度 · 双击复位', 'Drag to resize · double-click to reset')}
-              style={{
-                width: 12,
-                flexShrink: 0,
-                cursor: 'col-resize',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <div style={{ width: 3, height: 42, borderRadius: 3, background: 'var(--border-2)' }} />
-            </div>
-
-            {/* 右：四面板 */}
-            <div
-              className="card"
-              style={{ width: rightWidth, flexShrink: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-            >
-              <div style={{ padding: '10px 14px 0', flexShrink: 0 }}>
-                <Segmented<PanelTab>
-              options={[
-                { v: 'highlights', label: `${tr('标注', 'Highlights')}${highlights.length ? ` · ${highlights.length}` : ''}` },
-                { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` · ${paper.note_count}` : ''}` },
-                { v: 'chat', label: tr('AI 伴读', 'AI chat') },
-                { v: 'info', label: tr('论文信息', 'Paper info') },
-              ]}
-              value={panel}
-              onChange={setPanel}
+      {/* —— 左右分栏：右侧可拖拽调宽 / 收起 ——
+          外层 .workbench-panx 只在手机上发力：分栏最小可用宽约 640px，窄屏
+          放不下，整体改横向平移而不是撑破外壳（拖拽仍是鼠标事件，触屏无效，
+          待后续批次补手势）。 */}
+      <div className="workbench-panx" style={{ flex: 1, minHeight: 0 }}>
+        <div ref={splitRef} className="workbench-panx-inner" style={{ height: '100%', display: 'flex' }}>
+          {/* 左：PDF 阅读器（可划线） */}
+          <div
+            className="card"
+            style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          >
+            <PdfReader
+              paper={paper}
+              highlights={highlights}
+              activeHighlightId={activeHl}
+              creating={createHlMutation.isPending}
+              onCreateHighlight={(input) => createHlMutation.mutate(input)}
+              onHighlightClick={onHighlightClick}
+              jumpTarget={jump}
             />
           </div>
-          {panel === 'highlights' ? (
-            <HighlightsPanel
-              paperId={paper.id}
-              pid={paper.project_id ?? ''}
-              highlights={highlights}
-              loading={highlightsQuery.isLoading}
-              error={highlightsQuery.isError}
-              activeHighlightId={activeHl}
-              onJump={onJump}
-              onChanged={invalidateHighlights}
-            />
-          ) : panel === 'notes' ? (
-            <NotesPanel paperId={paper.id} pid={paper.project_id ?? ''} />
-          ) : panel === 'chat' ? (
-            <ChatPanel paperId={paper.id} pid={paper.project_id ?? ''} />
-          ) : (
-            <InfoPanel paper={paper} onWikiLink={onWikiLink} />
-          )}
+
+          {!rightCollapsed && (
+            <>
+              {/* 拖拽分隔条：拖动调宽，双击复位 */}
+              <div
+                onMouseDown={onDragStart}
+                onDoubleClick={() => setRightWidth(RIGHT_DEFAULT)}
+                title={tr('拖动调整宽度 · 双击复位', 'Drag to resize · double-click to reset')}
+                style={{
+                  width: 12,
+                  flexShrink: 0,
+                  cursor: 'col-resize',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <div style={{ width: 3, height: 42, borderRadius: 3, background: 'var(--border-2)' }} />
+              </div>
+
+              {/* 右：四面板 */}
+              <div
+                className="card"
+                style={{ width: rightWidth, flexShrink: 0, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+              >
+                <div style={{ padding: '10px 14px 0', flexShrink: 0 }}>
+                  <Segmented<PanelTab>
+                options={[
+                  { v: 'highlights', label: `${tr('标注', 'Highlights')}${highlights.length ? ` · ${highlights.length}` : ''}` },
+                  { v: 'notes', label: `${tr('笔记', 'Notes')}${paper.note_count ? ` · ${paper.note_count}` : ''}` },
+                  { v: 'chat', label: tr('AI 伴读', 'AI chat') },
+                  { v: 'info', label: tr('论文信息', 'Paper info') },
+                ]}
+                value={panel}
+                onChange={setPanel}
+              />
             </div>
-          </>
-        )}
+            {panel === 'highlights' ? (
+              <HighlightsPanel
+                paperId={paper.id}
+                pid={paper.project_id ?? ''}
+                highlights={highlights}
+                loading={highlightsQuery.isLoading}
+                error={highlightsQuery.isError}
+                activeHighlightId={activeHl}
+                onJump={onJump}
+                onChanged={invalidateHighlights}
+              />
+            ) : panel === 'notes' ? (
+              <NotesPanel paperId={paper.id} pid={paper.project_id ?? ''} />
+            ) : panel === 'chat' ? (
+              <ChatPanel paperId={paper.id} pid={paper.project_id ?? ''} />
+            ) : (
+              <InfoPanel paper={paper} onWikiLink={onWikiLink} />
+            )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

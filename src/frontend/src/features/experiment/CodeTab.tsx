@@ -320,83 +320,86 @@ export function CodeTab({ exp, active }: { exp: ExperimentDetail; active: boolea
       </div>
 
       {/* VS Code 式布局：左树右编辑器 */}
-      <div
-        className="card"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: `${treeW}px 5px 1fr`,
-          overflow: 'hidden',
-          height: 'calc(100vh - 290px)',
-          minHeight: 420,
-        }}
-      >
-        <div style={{ borderRight: '0.5px solid var(--border)', overflowY: 'auto', padding: '6px 0', background: 'var(--surface-2)' }}>
-          <TreeLevel
-            dir={tree}
-            depth={0}
-            selected={selected}
-            collapsed={collapsed}
-            onToggle={(p) =>
-              setCollapsed((prev) => {
-                const next = new Set(prev);
-                if (next.has(p)) next.delete(p);
-                else next.add(p);
-                return next;
-              })
-            }
-            onSelect={setSelected}
-          />
-        </div>
-        {/* 拖拽分隔条：调整文件树宽度 */}
+      {/* 手机上放不下「文件树 + 编辑器」，整体横向平移而不撑破外壳 */}
+      <div className="workbench-panx">
         <div
-          onMouseDown={onDividerDown}
-          title={tr('拖拽调整宽度', 'Drag to resize')}
-          style={{ cursor: 'col-resize', background: 'var(--border)', width: 5, opacity: 0.6 }}
-        />
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          {/* 当前文件“标签页” */}
-          <div
-            className="row gap6"
-            style={{
-              padding: '7px 14px',
-              borderBottom: '0.5px solid var(--border)',
-              alignItems: 'center',
-              background: 'var(--surface-2)',
-              flexShrink: 0,
-            }}
-          >
-            <Icon name="file" size={12} style={{ color: 'var(--accent)' }} />
-            <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{selected ?? ''}</span>
-            {file.data?.truncated && (
-              <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)', marginLeft: 8 }}>
-                {tr('仅前 200KB', 'first 200KB')}
-              </span>
-            )}
-            {selected && (
-              <button
-                className="icon-btn"
-                style={{ width: 24, height: 24, marginLeft: 'auto' }}
-                title={tr('下载此文件', 'Download this file')}
-                onClick={() => void downloadFile(selected)}
-              >
-                <Icon name="download" size={12} />
-              </button>
-            )}
+          className="card workbench-panx-inner"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `${treeW}px 5px 1fr`,
+            overflow: 'hidden',
+            height: 'calc(100vh - 290px)',
+            minHeight: 420,
+          }}
+        >
+          <div style={{ borderRight: '0.5px solid var(--border)', overflowY: 'auto', padding: '6px 0', background: 'var(--surface-2)' }}>
+            <TreeLevel
+              dir={tree}
+              depth={0}
+              selected={selected}
+              collapsed={collapsed}
+              onToggle={(p) =>
+                setCollapsed((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(p)) next.delete(p);
+                  else next.add(p);
+                  return next;
+                })
+              }
+              onSelect={setSelected}
+            />
           </div>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            {file.isLoading ? (
-              <div className="muted" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
-            ) : file.data ? (
-              file.data.binary ? (
-                <div className="muted" style={{ padding: 24, fontSize: 12.5 }}>
-                  {tr('二进制文件，不支持预览', 'Binary file, preview unavailable')} · {fmtBytes(file.data.size)}
-                </div>
+          {/* 拖拽分隔条：调整文件树宽度 */}
+          <div
+            onMouseDown={onDividerDown}
+            title={tr('拖拽调整宽度', 'Drag to resize')}
+            style={{ cursor: 'col-resize', background: 'var(--border)', width: 5, opacity: 0.6 }}
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            {/* 当前文件“标签页” */}
+            <div
+              className="row gap6"
+              style={{
+                padding: '7px 14px',
+                borderBottom: '0.5px solid var(--border)',
+                alignItems: 'center',
+                background: 'var(--surface-2)',
+                flexShrink: 0,
+              }}
+            >
+              <Icon name="file" size={12} style={{ color: 'var(--accent)' }} />
+              <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{selected ?? ''}</span>
+              {file.data?.truncated && (
+                <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)', marginLeft: 8 }}>
+                  {tr('仅前 200KB', 'first 200KB')}
+                </span>
+              )}
+              {selected && (
+                <button
+                  className="icon-btn"
+                  style={{ width: 24, height: 24, marginLeft: 'auto' }}
+                  title={tr('下载此文件', 'Download this file')}
+                  onClick={() => void downloadFile(selected)}
+                >
+                  <Icon name="download" size={12} />
+                </button>
+              )}
+            </div>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              {file.isLoading ? (
+                <div className="muted" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
+              ) : file.data ? (
+                file.data.binary ? (
+                  <div className="muted" style={{ padding: 24, fontSize: 12.5 }}>
+                    {tr('二进制文件，不支持预览', 'Binary file, preview unavailable')} · {fmtBytes(file.data.size)}
+                  </div>
+                ) : (
+                  <CodeViewer content={file.data.content} path={file.data.path} />
+                )
               ) : (
-                <CodeViewer content={file.data.content} path={file.data.path} />
-              )
-            ) : (
-              <div className="muted" style={{ padding: 24 }}>{tr('选择左侧文件查看内容', 'Select a file to view')}</div>
-            )}
+                <div className="muted" style={{ padding: 24 }}>{tr('选择左侧文件查看内容', 'Select a file to view')}</div>
+              )}
+            </div>
           </div>
         </div>
       </div>
