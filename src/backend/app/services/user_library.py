@@ -1,11 +1,12 @@
 """个人文献库：浏览记录 upsert、收藏、列表检索（用户级，方向无关）。"""
 
+import json
 import uuid
 from typing import cast
 
 from sqlalchemy import Text as SAText
 from sqlalchemy import cast as sa_cast
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
@@ -160,6 +161,46 @@ async def personal_paper_ids(
     recency = func.coalesce(UserLibraryEntry.saved_at, UserLibraryEntry.created_at)
     stmt = stmt.order_by(recency.desc())
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def semantic_saved_entries(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    query_vector: list[float],
+    limit: int,
+) -> list[tuple[UserLibraryEntry, float]]:
+    """对本人收藏、且软引用论文有向量的条目跑 pgvector 余弦，返回 (条目, 相似度) 降序。
+
+    候选集 = saved 且 last_paper_id 非空的条目里，其 Paper.embedding 非空的那些
+    （覆盖不全的已知限制：没生成向量的收藏不会命中）。仅 postgres，调用方需先判
+    semantic_search_supported。条目自身带 title/authors 快照，命中即可直接渲染成个人库行。
+    """
+    stmt = select(UserLibraryEntry).where(
+        UserLibraryEntry.user_id == user_id,
+        UserLibraryEntry.saved.is_(True),
+        UserLibraryEntry.last_paper_id.is_not(None),
+    )
+    entries = list((await session.execute(stmt)).scalars().all())
+    by_pid: dict[uuid.UUID, UserLibraryEntry] = {
+        e.last_paper_id: e for e in entries if e.last_paper_id is not None
+    }
+    if not by_pid:
+        return []
+    qv = json.dumps(query_vector)
+    rows = (
+        await session.execute(
+            text(
+                "SELECT p.id, 1 - (p.embedding <=> CAST(:qv AS vector)) AS score "
+                "FROM papers p "
+                "WHERE p.id = ANY(CAST(:ids AS uuid[])) AND p.embedding IS NOT NULL "
+                "ORDER BY score DESC "
+                "LIMIT :k"
+            ),
+            {"qv": qv, "ids": [str(pid) for pid in by_pid], "k": limit},
+        )
+    ).all()
+    return [(by_pid[row.id], float(row.score)) for row in rows if row.id in by_pid]
 
 
 async def purge_entry(session: AsyncSession, *, entry: UserLibraryEntry) -> None:

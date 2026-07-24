@@ -6,7 +6,14 @@ import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/Toast';
-import { api, type LibraryEntry, type LibrarySort, type LibraryTab, type Publication } from '../../lib/api';
+import {
+  api,
+  type LibraryEntry,
+  type LibrarySort,
+  type LibraryTab,
+  type Publication,
+  type SearchMode,
+} from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import {
@@ -15,6 +22,7 @@ import {
   FilterInput,
   parseYear,
   SearchInput,
+  saveBlob,
   useDebounced,
   YearRangeField,
 } from '../wiki/shared';
@@ -34,6 +42,8 @@ import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPa
    ============================================================ */
 
 const PAGE_SIZE = 20;
+// 语义检索一次返回一组结果（不分页），上限比普通分页大些
+const SEMANTIC_SIZE = 50;
 
 /** 页面级 tab：库内两个 tab +「我赞过的」+「文献对话」+「我发表的」。 */
 type PageTab = LibraryTab | 'liked' | 'publications' | 'chat';
@@ -57,6 +67,9 @@ function EntryRow({
   tab,
   active,
   busy,
+  selectMode,
+  checked,
+  onToggleCheck,
   onSelect,
   onToggleSave,
   onPurge,
@@ -65,6 +78,9 @@ function EntryRow({
   tab: LibraryTab;
   active: boolean;
   busy: boolean;
+  selectMode: boolean;
+  checked: boolean;
+  onToggleCheck: () => void;
   onSelect: () => void;
   onToggleSave: () => void;
   onPurge: () => void;
@@ -94,6 +110,28 @@ function EntryRow({
         transition: 'background 0.12s',
       }}
     >
+      {/* 多选复选框：占位常驻（源方向已删除的条目无活体论文，不能导出引用 → 禁用） */}
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={entry.last_paper_id === null}
+        onClick={(e) => e.stopPropagation()}
+        onChange={onToggleCheck}
+        title={
+          entry.last_paper_id === null
+            ? tr('源方向已删除，无法导出引用', 'Source deleted — cannot export citation')
+            : tr('选中后可批量导出引用', 'Select for bulk citation export')
+        }
+        style={{
+          width: 13,
+          height: 13,
+          margin: '2px 0 0',
+          flexShrink: 0,
+          accentColor: 'var(--accent)',
+          cursor: entry.last_paper_id === null ? 'not-allowed' : 'pointer',
+          visibility: selectMode ? 'visible' : 'hidden',
+        }}
+      />
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* 顶部 mono 元信息行：编号/venue + 年份 + 源方向状态；右侧浏览信息 */}
         <div className="row gap8" style={{ marginBottom: 5 }}>
@@ -203,9 +241,15 @@ export function LibraryPage() {
   const [tab, setTab] = useState<PageTab>('saved');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
+  const [scope, setScope] = useState<SearchMode>('keyword');
   const [sort, setSort] = useState<LibrarySort>('recent');
   const [page, setPage] = useState(1);
   const [clearOpen, setClearOpen] = useState(false);
+
+  // 多选（批量导出引用）：默认关闭，仅「我的收藏」可用；选中集合按论文 id 存
+  // （last_paper_id，跨页/跨搜索都能带着走；导出端点按论文 id 精确取本人收藏）
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // 高级检索：年份区间 / 作者 / venue（走后端）
   const [advOpen, setAdvOpen] = useState(false);
@@ -230,25 +274,40 @@ export function LibraryPage() {
   // 「我发表的」：修改署名信息时整卡显示表单
   const [editingAuthor, setEditingAuthor] = useState(false);
 
-  // tab / 搜索词 / 排序 / 高级条件变化时回到第一页
+  // 语义检索：仅「我的收藏」+ 有关键词时生效（浏览记录是流水，不做语义）；
+  // 语义态不分页、高级过滤置灰（后端按向量相似度返回一组结果）
+  const semantic = tab === 'saved' && scope === 'semantic' && !!q;
+
+  // tab / 搜索词 / 检索模式 / 排序 / 高级条件变化时回到第一页
   useEffect(() => {
     setPage(1);
-  }, [tab, q, sort, author, venue, yearFrom, yearTo]);
+  }, [tab, q, scope, sort, author, venue, yearFrom, yearTo]);
+
+  // 切 tab / 换搜索词 / 换检索模式时清空多选（避免选中集跨上下文残留）
+  useEffect(() => {
+    setSelected(new Set());
+    setSelectMode(false);
+  }, [tab, q, scope]);
 
   const onLibraryTab = tab !== 'publications' && tab !== 'chat' && tab !== 'liked';
   const listQuery = useQuery({
-    queryKey: ['library', tab, q, sort, page, author.trim(), venue.trim(), yearFrom.trim(), yearTo.trim()],
+    queryKey: [
+      'library', tab, q, semantic, sort, page,
+      author.trim(), venue.trim(), yearFrom.trim(), yearTo.trim(),
+    ],
     queryFn: () =>
       api.listLibrary({
         tab: tab as LibraryTab,
         q: q || undefined,
+        mode: semantic ? 'semantic' : undefined,
         sort,
-        page,
-        size: PAGE_SIZE,
-        author: author.trim() || undefined,
-        venue: venue.trim() || undefined,
-        year_from: parseYear(yearFrom),
-        year_to: parseYear(yearTo),
+        page: semantic ? 1 : page,
+        size: semantic ? SEMANTIC_SIZE : PAGE_SIZE,
+        // 语义态不叠加高级过滤（后端语义分支忽略），关键词态照常带上
+        author: semantic ? undefined : author.trim() || undefined,
+        venue: semantic ? undefined : venue.trim() || undefined,
+        year_from: semantic ? undefined : parseYear(yearFrom),
+        year_to: semantic ? undefined : parseYear(yearTo),
       }),
     enabled: onLibraryTab,
     retry: false,
@@ -310,6 +369,15 @@ export function LibraryPage() {
       invalidate();
     },
     onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
+  });
+
+  const exportMutation = useMutation({
+    mutationFn: () => api.downloadPersonalCitations({ format: 'bibtex', ids: [...selected] }),
+    onSuccess: (blob) => {
+      saveBlob(blob, 'polaris-my-library-citations.bib');
+      toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
+    },
+    onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${errText(e)}`, 'error'),
   });
 
   const clearMutation = useMutation({
@@ -456,27 +524,48 @@ export function LibraryPage() {
                 </div>
 
                 {advOpen && (
-                  <AdvancedPanel onClear={advActive ? clearAdvanced : undefined}>
-                    <YearRangeField
-                      label={tr('年份', 'Year')}
-                      from={yearFrom}
-                      to={yearTo}
-                      onFrom={setYearFrom}
-                      onTo={setYearTo}
-                    />
-                    <div className="row gap8">
-                      <FilterInput
-                        value={author}
-                        onChange={setAuthor}
-                        placeholder={tr('作者姓名…', 'Author name…')}
+                  <div style={semantic ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
+                    <AdvancedPanel onClear={advActive ? clearAdvanced : undefined}>
+                      <YearRangeField
+                        label={tr('年份', 'Year')}
+                        from={yearFrom}
+                        to={yearTo}
+                        onFrom={setYearFrom}
+                        onTo={setYearTo}
                       />
-                      <FilterInput
-                        value={venue}
-                        onChange={setVenue}
-                        placeholder={tr('期刊 / 会议…', 'Venue…')}
-                      />
-                    </div>
-                  </AdvancedPanel>
+                      <div className="row gap8">
+                        <FilterInput
+                          value={author}
+                          onChange={setAuthor}
+                          placeholder={tr('作者姓名…', 'Author name…')}
+                        />
+                        <FilterInput
+                          value={venue}
+                          onChange={setVenue}
+                          placeholder={tr('期刊 / 会议…', 'Venue…')}
+                        />
+                      </div>
+                    </AdvancedPanel>
+                  </div>
+                )}
+
+                {/* 关键词 / 语义 检索模式切换（语义仅「我的收藏」有意义） */}
+                {tab === 'saved' && (
+                  <div className="row gap6 wrap" style={{ marginTop: 10 }}>
+                    <span
+                      className={`chip${scope === 'keyword' ? ' on' : ''}`}
+                      onClick={() => setScope('keyword')}
+                    >
+                      {tr('关键词', 'Keyword')}
+                    </span>
+                    <span
+                      className={`chip${scope === 'semantic' ? ' on' : ''}`}
+                      onClick={() => setScope('semantic')}
+                      title={tr('按语义相似度检索收藏（需已生成向量）', 'Semantic search over saved papers (needs embeddings)')}
+                    >
+                      {tr('语义检索', 'Semantic')}
+                    </span>
+                  </div>
                 )}
 
                 <div className="row gap8" style={{ marginTop: 10 }}>
@@ -485,20 +574,7 @@ export function LibraryPage() {
                     value={sort}
                     onChange={setSort}
                   />
-                  {tab === 'saved' && (
-                    <span
-                      className="mono"
-                      style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}
-                    >
-                      {data ? tr(`共 ${data.total} 条`, `${data.total} total`) : ''}
-                    </span>
-                  )}
-                </div>
-                {tab === 'history' && (
-                  <div className="row gap8" style={{ marginTop: 8, alignItems: 'center' }}>
-                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
-                      {data ? tr(`共 ${data.total} 条记录`, `Total: ${data.total} records`) : ''}
-                    </span>
+                  {tab === 'history' && (
                     <button
                       className="btn btn-ghost sm"
                       style={{ marginLeft: 'auto', height: 26, flexShrink: 0 }}
@@ -508,6 +584,24 @@ export function LibraryPage() {
                       <Icon name="trash" size={13} />
                       {tr('清空记录', 'Clear history')}
                     </button>
+                  )}
+                </div>
+
+                {/* 语义检索提示：回退关键词 / 覆盖范围说明 */}
+                {semantic && data?.mode_used === 'keyword' && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--warn-tx, var(--text-3))' }}>
+                    {tr(
+                      '当前环境暂不支持语义检索，已按关键词返回。',
+                      'Semantic search is unavailable here — showing keyword results.',
+                    )}
+                  </div>
+                )}
+                {semantic && data?.mode_used === 'semantic' && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-4)' }}>
+                    {tr(
+                      '语义检索只覆盖已生成向量的收藏论文，结果可能不全。',
+                      'Semantic search only covers saved papers with embeddings — results may be incomplete.',
+                    )}
                   </div>
                 )}
               </div>
@@ -561,6 +655,18 @@ export function LibraryPage() {
                       tab={tab}
                       active={entry.id === selEntry?.id}
                       busy={busy}
+                      selectMode={selectMode}
+                      checked={entry.last_paper_id !== null && selected.has(entry.last_paper_id)}
+                      onToggleCheck={() =>
+                        setSelected((old) => {
+                          const pid = entry.last_paper_id;
+                          if (pid === null) return old;
+                          const next = new Set(old);
+                          if (next.has(pid)) next.delete(pid);
+                          else next.add(pid);
+                          return next;
+                        })
+                      }
                       onSelect={() => setSelEntry(entry)}
                       onToggleSave={() => toggleMutation.mutate(entry)}
                       onPurge={() => purgeMutation.mutate(entry)}
@@ -569,8 +675,8 @@ export function LibraryPage() {
                 )}
               </div>
 
-              {/* 底部分页栏 */}
-              {data && data.total > PAGE_SIZE && (
+              {/* 底部分页栏（语义检索不分页） */}
+              {!semantic && data && data.total > PAGE_SIZE && (
                 <div
                   className="row gap12"
                   style={{
@@ -595,6 +701,36 @@ export function LibraryPage() {
                     {tr('下一页', 'Next')}
                     <Icon name="chevron" size={12} />
                   </button>
+                </div>
+              )}
+
+              {/* —— 底部操作栏：多选 + 导出引用（仅「我的收藏」；不含删除） —— */}
+              {tab === 'saved' && (
+                <div
+                  className="row gap8"
+                  style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
+                >
+                  <button
+                    className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
+                    title={tr('开启后列表出现复选框，可批量导出引用', 'Show checkboxes for bulk citation export')}
+                    onClick={() => {
+                      setSelectMode((m) => !m);
+                      setSelected(new Set());
+                    }}
+                  >
+                    <Icon name="check" size={13} />
+                    {selectMode ? tr(`已选 ${selected.size}`, `${selected.size} selected`) : tr('多选', 'Select')}
+                  </button>
+                  {selectMode && (
+                    <button
+                      className="btn btn-ghost sm"
+                      disabled={selected.size === 0 || exportMutation.isPending}
+                      onClick={() => exportMutation.mutate()}
+                    >
+                      <Icon name="download" size={12} />
+                      {tr('导出 BibTeX', 'Export BibTeX')}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

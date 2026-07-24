@@ -2217,6 +2217,9 @@ export interface LibraryState {
 /** 单条详情 = 列表条目字段 + wiki 快照正文（列表响应不含 wiki）。 */
 export type LibraryEntryDetail = LibraryEntry & { wiki_content: string | null };
 
+/** 个人库列表响应：分页条目 + 实际使用的检索模式（语义不支持时后端回退 keyword）。 */
+export type LibraryListResult = PageOf<LibraryEntry> & { mode_used: SearchMode };
+
 // ============================================================
 // 我发表的（作者信息绑定 + 发表同步）— issue #109
 // ============================================================
@@ -3830,6 +3833,8 @@ export const api = {
     opts: {
       tab: LibraryTab;
       q?: string;
+      /** 检索模式：semantic 仅「我的收藏」有意义；非 postgres/provider 不支持时后端回退 keyword。 */
+      mode?: SearchMode;
       sort?: LibrarySort;
       page?: number;
       size?: number;
@@ -3838,10 +3843,11 @@ export const api = {
       author?: string;
       venue?: string;
     },
-  ): Promise<PageOf<LibraryEntry>> {
+  ): Promise<LibraryListResult> {
     const params = new URLSearchParams();
     params.set('tab', opts.tab);
     if (opts.q) params.set('q', opts.q);
+    if (opts.mode) params.set('mode', opts.mode);
     if (opts.sort) params.set('sort', opts.sort);
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));
@@ -3849,7 +3855,13 @@ export const api = {
     if (opts.year_to != null) params.set('year_to', String(opts.year_to));
     if (opts.author) params.set('author', opts.author);
     if (opts.venue) params.set('venue', opts.venue);
-    return request<PageOf<LibraryEntry>>(`/me/library?${params.toString()}`);
+    return request<LibraryListResult>(`/me/library?${params.toString()}`);
+  },
+  /** 个人库引用导出：不传 ids 导出全部收藏，传 ids（论文 id）精确导出多选。 */
+  downloadPersonalCitations(opts: { format: CitationFormat; ids?: string[] }): Promise<Blob> {
+    const params = new URLSearchParams({ format: opts.format });
+    if (opts.ids?.length) params.set('ids', opts.ids.join(','));
+    return requestBlob(`/me/library/export/citations?${params.toString()}`);
   },
   /** 打开阅读页时上报一次浏览（自动建/更新浏览记录条目）。 */
   recordLibraryVisit(paperId: string): Promise<LibraryEntry> {
