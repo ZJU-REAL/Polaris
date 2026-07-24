@@ -3,7 +3,8 @@
 同步请求只建元数据行（paper_import.create_pool_paper_stub）；重活在这里以后台
 asyncio 任务跑，自开新 AsyncSession，按阶段向 redis 频道发进度事件供前端订阅。
 
-阶段固定集合（前端按此渲染）：resolve → download → extract → embed → score。
+阶段固定集合（前端按此渲染）：download → extract → embed → score。
+（解析元数据在同步请求阶段已完成，不作为进度阶段单列。）
 每阶段 best-effort：失败发 status="error" 但继续后续步骤；已就绪则 status="skipped"。
 """
 
@@ -22,7 +23,7 @@ from app.models.paper import Paper
 logger = logging.getLogger(__name__)
 
 # 前端按此固定顺序渲染进度条；事件 data.stage 取值于此
-STAGES = ["resolve", "download", "extract", "embed", "score"]
+STAGES = ["download", "extract", "embed", "score"]
 
 _OWNER_TTL_SECONDS = 600  # paper_task_owner 归属 key 存活时间
 
@@ -91,8 +92,7 @@ async def enrich_paper(
         await session.rollback()
         return await session.get(Paper, paper_id)
 
-    # resolve 已在同步请求阶段完成，补发一条 ok 让前端进度条起步
-    await emit("resolve", "ok")
+    # 解析元数据（resolve）已在同步请求阶段完成，进度从「下载」起，不单列该阶段。
 
     # ---- download ----
     await emit("download", "running")

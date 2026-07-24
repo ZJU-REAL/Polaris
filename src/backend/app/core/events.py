@@ -29,14 +29,34 @@ def paper_task_channel(task_id: str) -> str:
     return f"paper_task:{task_id}:events"
 
 
+def paper_task_log_key(task_id: str) -> str:
+    """进度事件的有序回放日志（Redis list）。
+
+    pub/sub 不给迟到订阅者补发历史：后台任务往往在前端 SSE 连上之前就发完事件
+    （dev 下无网络/LLM 时几毫秒跑完），只订频道会永远收不到、卡在处理中。故每条
+    事件同时 append 到此 list（带 TTL），SSE 端点连上先回放它再接实时流。
+    """
+    return f"paper_task:{task_id}:log"
+
+
+_PAPER_TASK_LOG_TTL = 600  # 回放日志存活时间（秒），与归属 key 一致
+
+
 async def publish_paper_task_event(
     bus: "EventBus", task_id: str, event: str, data: dict[str, Any]
 ) -> None:
-    """发布一条论文处理进度事件到 paper_task 频道。
+    """发布一条论文处理进度事件：先落回放日志（list + TTL），再发频道。
 
-    与 voyage 事件不同：没有 voyage 行，故不落库，只做实时转发（进度是临时态）。
+    与 voyage 事件不同：没有 voyage 行，不落库；但进度事件有竞态（任务可能早于
+    订阅者发完），故用一个短存活的 Redis list 做有序回放，SSE 连上时先补历史。
     """
     payload = json.dumps({"event": event, "data": data}, ensure_ascii=False, default=str)
+    log_key = paper_task_log_key(task_id)
+    # 先 append 再 publish：迟到订阅者能从 list 回放；已订阅者从频道实时拿。
+    pipe = bus._redis.pipeline()
+    pipe.rpush(log_key, payload)
+    pipe.expire(log_key, _PAPER_TASK_LOG_TTL)
+    await pipe.execute()
     await bus._redis.publish(paper_task_channel(task_id), payload)
 
 
