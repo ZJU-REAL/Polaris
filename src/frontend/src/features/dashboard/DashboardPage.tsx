@@ -1,7 +1,11 @@
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
+import { Segmented } from '../../components/ui/Segmented';
+import { ProjectSettings } from '../projects/ProjectDetailPage';
+import { VoyagesList } from '../voyages/VoyagesPage';
 import { PipelineFlow, type PipelineStage } from '../../components/ui/PipelineFlow';
 import { StatCard, type StatCardProps } from '../../components/ui/StatCard';
 import { StatusPill } from '../../components/ui/StatusPill';
@@ -540,10 +544,24 @@ function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number)
   ];
 }
 
+type DashTab = 'overview' | 'settings' | 'tasks';
+
 export function DashboardPage() {
   const navigate = useNavigate();
   const { pendingGates, gatesError, openGates } = useShell();
   const { currentProject, currentProjectId } = useProject();
+
+  // —— 三标签：课题概况 / 课题设置 / 任务；?tab= 深链进入后清参数（照抄 WikiPage 那套） ——
+  const [tab, setTab] = useState<DashTab>('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (!tabParam) return;
+    if ((['overview', 'settings', 'tasks'] as const).some((t) => t === tabParam)) {
+      setTab(tabParam as DashTab);
+    }
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const statsQuery = useQuery({
     queryKey: ['stats', currentProjectId],
@@ -630,54 +648,68 @@ export function DashboardPage() {
     <div className="page fadeup">
       <PageHead
         eyebrow="Polaris · Autonomous Research"
-        title={tr('工作台', 'Workbench')}
-        right={
-          <>
-            <button className="btn btn-ghost" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>
-              <Icon name="compass" size={15} />
-              {tr('任务', 'Tasks')}
-            </button>
-            <button className="btn btn-primary" onClick={() => navigate(topicPath(currentProjectId, 'voyages'))}>
-              <Icon name="play" size={14} />
-              {tr('运行今日循环', "Run today's loop")}
-            </button>
-          </>
-        }
+        title={tr('课题工作台', 'Topic Workbench')}
+        dense
       />
 
-      {showChecklist && <NextStepsCard steps={nextSteps} onNavigate={navigate} />}
-
-      <PipelineFlow
-        stages={stages}
-        directionLabel={currentProject?.name ?? 'Polaris'}
-        onNavigate={navigate}
-      />
-
-      <LiteratureCard
-        pid={currentProjectId}
-        linkedCount={linkedCount}
-        shelfCount={shelfCount}
-        onNavigate={navigate}
-      />
-
-      <div className="row gap16" style={{ marginBottom: 24 }}>
-        {statCards.map((s) => (
-          <StatCard key={s.label} {...s} />
-        ))}
+      <div style={{ marginBottom: 22 }}>
+        <Segmented
+          options={[
+            { v: 'overview' as const, label: tr('课题概况', 'Overview') },
+            { v: 'settings' as const, label: tr('课题设置', 'Settings') },
+            { v: 'tasks' as const, label: tr('任务', 'Tasks') },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
       </div>
 
-      <div className="row gap20" style={{ alignItems: 'flex-start' }}>
-        <div className="col gap20" style={{ flex: 1.5, minWidth: 0 }}>
-          <FeaturedIdeaCard pid={currentProjectId} />
-          <ActivityFeed
-            activities={statsQuery.data?.recent_activities ?? []}
-            error={statsQuery.isError}
+      {tab === 'overview' && (
+        <>
+          {showChecklist && <NextStepsCard steps={nextSteps} onNavigate={navigate} />}
+
+          <PipelineFlow
+            stages={stages}
+            directionLabel={currentProject?.name ?? 'Polaris'}
+            onNavigate={navigate}
           />
-        </div>
-        <div style={{ flex: 1, minWidth: 0, position: 'sticky', top: 0 }}>
-          <GatePreview gates={pendingGates} gatesError={gatesError} openGates={openGates} />
-        </div>
-      </div>
+
+          <LiteratureCard
+            pid={currentProjectId}
+            linkedCount={linkedCount}
+            shelfCount={shelfCount}
+            onNavigate={navigate}
+          />
+
+          <div className="row gap16" style={{ marginBottom: 24 }}>
+            {statCards.map((s) => (
+              <StatCard key={s.label} {...s} />
+            ))}
+          </div>
+
+          <div className="row gap20" style={{ alignItems: 'flex-start' }}>
+            <div className="col gap20" style={{ flex: 1.5, minWidth: 0 }}>
+              <FeaturedIdeaCard pid={currentProjectId} />
+              <ActivityFeed
+                activities={statsQuery.data?.recent_activities ?? []}
+                error={statsQuery.isError}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 0, position: 'sticky', top: 0 }}>
+              <GatePreview gates={pendingGates} gatesError={gatesError} openGates={openGates} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {tab === 'settings' &&
+        (currentProjectId ? (
+          <ProjectSettings id={currentProjectId} embedded />
+        ) : (
+          <div className="empty" style={{ padding: 60 }}>{tr('请先选择一个课题', 'Pick a topic first')}</div>
+        ))}
+
+      {tab === 'tasks' && <VoyagesList />}
     </div>
   );
 }

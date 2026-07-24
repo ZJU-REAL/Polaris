@@ -6,7 +6,7 @@ import { StatusPill } from '../../components/ui/StatusPill';
 import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { topicPath, useProject } from '../../app/project';
+import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
@@ -82,8 +82,9 @@ function EditableText({ value, placeholder, onSave, saving }: {
   );
 }
 
-export function ProjectDetailPage() {
-  const { id = '' } = useParams();
+/** 课题设置主体（接课题 id）：既作独立页 `/projects/:id` 的内容，
+    也被工作台「课题设置」标签以 `embedded` 内嵌（内嵌时不渲染大标题/eyebrow，避免与工作台页头重复）。 */
+export function ProjectSettings({ id, embedded = false }: { id: string; embedded?: boolean }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { currentProjectId, setCurrentProjectId } = useProject();
@@ -204,17 +205,12 @@ export function ProjectDetailPage() {
   const [nameDraft, setNameDraft] = useState('');
 
   if (isLoading) {
-    return (
-      <div className="page fadeup">
-        <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>
-      </div>
-    );
+    return <div className="empty" style={{ padding: 80 }}>{tr('加载中…', 'Loading…')}</div>;
   }
   if (isError || !project) {
     const notFound = error instanceof ApiError && error.status === 404;
     return (
-      <div className="page fadeup">
-        <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
+      <div className="card card-pad" style={{ textAlign: 'center', padding: 60 }}>
           <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 8 }}>
             {notFound ? tr('课题不存在', 'Topic not found') : tr('无法加载课题设置', 'Failed to load topic settings')}
           </div>
@@ -225,7 +221,6 @@ export function ProjectDetailPage() {
             <button className="btn btn-soft" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
             <button className="btn btn-ghost" onClick={() => navigate('/')}>{tr('返回总览', 'Back to dashboard')}</button>
           </div>
-        </div>
       </div>
     );
   }
@@ -233,11 +228,11 @@ export function ProjectDetailPage() {
   const saving = patchMutation.isPending;
 
   return (
-    <div className="page fadeup">
-      {/* 页头 */}
+    <>
+      {/* 页头：嵌入工作台标签时降级为紧凑标题（不重复大标题 / eyebrow） */}
       <div className="row" style={{ alignItems: 'flex-start', marginBottom: 24 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="h-eyebrow">{tr('课题设置', 'Topic Settings')}</div>
+          {!embedded && <div className="h-eyebrow">{tr('课题设置', 'Topic Settings')}</div>}
           {editingName ? (
             <div className="row gap8" style={{ marginTop: 8 }}>
               <input className="input" style={{ fontSize: 17, fontWeight: 650, width: 380 }} value={nameDraft}
@@ -252,8 +247,8 @@ export function ProjectDetailPage() {
               <button className="btn btn-ghost sm" onClick={() => setEditingName(false)}>{tr('取消', 'Cancel')}</button>
             </div>
           ) : (
-            <div className="row gap10" style={{ marginTop: 6 }}>
-              <h1 className="h-title" style={{ margin: 0 }}>{project.name}</h1>
+            <div className="row gap10" style={{ marginTop: embedded ? 0 : 6 }}>
+              <h1 className="h-title" style={{ margin: 0, fontSize: embedded ? 18 : undefined }}>{project.name}</h1>
               <button className="icon-btn" style={{ width: 26, height: 26, border: 'none', background: 'transparent' }}
                 title={tr('编辑名称', 'Edit name')} onClick={() => { setNameDraft(project.name); setEditingName(true); }}>
                 <Icon name="pen" size={14} />
@@ -266,10 +261,6 @@ export function ProjectDetailPage() {
           </div>
         </div>
         <div className="row gap8">
-          <button className="btn btn-ghost" onClick={() => navigate(topicPath(id, 'voyages'))}>
-            <Icon name="compass" size={14} />
-            {tr('查看任务', 'View tasks')}
-          </button>
           <button
             className="btn btn-ghost"
             style={{ color: 'var(--danger-tx)' }}
@@ -459,6 +450,16 @@ export function ProjectDetailPage() {
           </div>
         </SectionCard>
       </div>
+    </>
+  );
+}
+
+/** 独立页 `/projects/:id`：套页壳后渲染课题设置主体。 */
+export function ProjectDetailPage() {
+  const { id = '' } = useParams();
+  return (
+    <div className="page fadeup">
+      <ProjectSettings id={id} />
     </div>
   );
 }

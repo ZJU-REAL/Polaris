@@ -21,6 +21,8 @@ interface NavEntry {
   to?: string;
   /** 课题作用域子路径（渲染时经 topicPath 拼 /t/<id> 前缀）；to 与 sub 都缺省 = 工作台。 */
   sub?: string;
+  /** 覆盖高亮匹配：true 时仅精确匹配路径（工作台标签项指向 /t/<id>?tab=… 时用，避免常亮）。 */
+  end?: boolean;
   no?: string;
   icon: IconName;
   zh: string;
@@ -272,7 +274,7 @@ function TopicSwitcher({ collapsed }: { collapsed: boolean }) {
               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               onClick={() => {
                 setOpen(false);
-                navigate(`/projects/${currentProjectId}`);
+                navigate(topicPath(currentProjectId) + '?tab=settings');
               }}
             >
               <Icon name="settings" size={13} style={{ color: 'var(--text-3)' }} />
@@ -289,8 +291,8 @@ function NavItem({ n }: { n: NavEntry }) {
   const { currentProjectId } = useProject();
   // 课题作用域条目带 /t/<id> 前缀；无当前课题时退回旧路径，由重定向兜底
   const to = n.to ?? topicPath(currentProjectId, n.sub);
-  // 工作台（课题根路径）只在精确匹配时高亮，避免盖住全部子页面
-  const end = n.to == null && n.sub == null;
+  // 工作台（课题根路径）与其标签项只在精确匹配时高亮，避免盖住全部子页面
+  const end = n.end ?? (n.to == null && n.sub == null);
   return (
     <NavLink
       to={to}
@@ -483,9 +485,10 @@ export function AppShell() {
           }).map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
-          <NavItem n={{ sub: 'voyages', icon: 'compass', zh: '任务', en: 'Tasks' }} />
+          {/* 任务 / 课题设置已并入工作台标签：指向 /t/<id>?tab=… */}
+          <NavItem n={{ to: topicPath(currentProjectId) + '?tab=tasks', end: true, icon: 'compass', zh: '任务', en: 'Tasks' }} />
           {currentProjectId && (
-            <NavItem n={{ to: `/projects/${currentProjectId}`, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
+            <NavItem n={{ to: topicPath(currentProjectId) + '?tab=settings', end: true, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
           )}
         </div>
 
