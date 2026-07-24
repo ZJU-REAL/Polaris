@@ -362,6 +362,9 @@ def _overview_dict(
         "monthly_budget": library.monthly_budget,
         "definition": library_definition(library),
         "project_id": library.project_id,
+        "status": library.status,
+        "review_note": library.review_note,
+        "submitted_by": library.submitted_by,
         "is_mine": library.id in my_linked,
         "can_manage": can_manage,
         "paper_count": paper_count,
@@ -393,6 +396,7 @@ async def list_libraries_overview(session: AsyncSession, *, user: User) -> list[
             can_manage=(
                 user.role == "admin"
                 or lib.id in my_curated
+                or lib.submitted_by == user.id
                 or (lib.project_id is not None and lib.project_id in my_projects)
             ),
             paper_count=paper_counts.get(lib.id, 0),
@@ -400,7 +404,17 @@ async def list_libraries_overview(session: AsyncSession, *, user: User) -> list[
             last_compiled_at=last_compiled.get(lib.id),
         )
         for lib in libraries
+        if library_visible_to(lib, user)
     ]
+
+
+def library_visible_to(library: DirectionLibrary, user: User) -> bool:
+    """库对请求者是否可见（P9b）：active 全员可读；pending/rejected 仅创建者 + admin 可见。"""
+    if library.status == "active":
+        return True
+    if user.role == "admin":
+        return True
+    return library.submitted_by == user.id
 
 
 async def library_overview(
@@ -457,8 +471,13 @@ async def create_library(
     keywords: dict[str, Any] | None = None,
     monthly_budget: int | None = None,
     created_by: uuid.UUID,
+    status: str = "pending",
 ) -> DirectionLibrary:
-    """独立新建方向文献库（P7；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
+    """用户独立新建方向文献库（P9b；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
+
+    P9b：任意登录用户可建，新库默认 ``status='pending'`` 待审批（仅配置，不触发抓取、
+    不花 token）；创建者记为 ``submitted_by`` 并自动加为该库策展人（文献库管理员），
+    以便在审批前管理自己的 pending 库。管理员审批后转 active 才能触发抓取。
 
     flush + refresh，不 commit（调用方 api 层负责事务收尾）。
     """
@@ -482,10 +501,38 @@ async def create_library(
         definition=definition or None,  # P8a：独立库同样以 definition 为收录配置权威源
         monthly_budget=monthly_budget,
         created_by=created_by,
+        submitted_by=created_by,
+        status=status,
         project_id=None,
     )
     session.add(library)
     await session.flush()
+    # 创建者自动成为该库策展人（幂等：避免重复主键）。
+    if not await is_library_curator(session, library_id=library.id, user_id=created_by):
+        session.add(DirectionLibraryCurator(library_id=library.id, user_id=created_by))
+        await session.flush()
+    await session.refresh(library)
+    return library
+
+
+async def approve_library(
+    session: AsyncSession, *, library: DirectionLibrary
+) -> DirectionLibrary:
+    """审批通过（平台 admin）：pending/rejected → active，清空驳回理由。commit 落库。"""
+    library.status = "active"
+    library.review_note = None
+    await session.commit()
+    await session.refresh(library)
+    return library
+
+
+async def reject_library(
+    session: AsyncSession, *, library: DirectionLibrary, note: str | None = None
+) -> DirectionLibrary:
+    """驳回（平台 admin）：→ rejected，记录驳回理由。commit 落库。"""
+    library.status = "rejected"
+    library.review_note = note
+    await session.commit()
     await session.refresh(library)
     return library
 
@@ -531,6 +578,8 @@ async def can_manage_library(
     """库级写权限（docs-dev/workspace-ia-redesign.md §5）：
     背后课题成员 ∪ 策展人（direction_library_curators）∪ 平台 admin。"""
     if user.role == "admin":
+        return True
+    if library.submitted_by is not None and library.submitted_by == user.id:
         return True
     if library.project_id is not None and await _is_project_member(
         session, project_id=library.project_id, user_id=user.id

@@ -806,8 +806,14 @@ export interface DirectionLibrarySummary {
   project_id: string | null;
   /** 是否「我的课题的库」（请求者是背后课题成员 → 显示管理页签） */
   is_mine: boolean;
-  /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 平台管理员（P6） */
+  /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 创建者 ∪ 平台管理员（P6/P9b） */
   can_manage: boolean;
+  /** 生命周期（P9b）：pending 待审批 | active 已激活 | rejected 已驳回 */
+  status: 'pending' | 'active' | 'rejected';
+  /** 驳回理由（status=rejected 时有值） */
+  review_note: string | null;
+  /** 库创建者（用户建库；pending/rejected 库仅创建者 + 平台管理员可见） */
+  submitted_by: string | null;
   paper_count: number;
   concept_count: number;
   last_compiled_at: string | null;
@@ -2691,7 +2697,7 @@ export const api = {
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);
   },
-  /** 新建共享文献库（仅平台 admin；非 admin 返回 403）。 */
+  /** 新建文献库（P9b：任意登录用户可建；新库 status=pending 待管理员审批激活）。 */
   createLibrary(input: {
     name: string;
     statement?: string | null;
@@ -2699,8 +2705,21 @@ export const api = {
     anchors?: unknown[];
     cadence?: string | null;
     monthly_budget?: number | null;
+    keywords?: KeywordSpec | null;
   }): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>('/libraries', 'POST', input);
+  },
+  /** 审批通过（仅平台管理员）：pending/rejected → active，激活后可触发抓取。 */
+  approveLibrary(id: string): Promise<DirectionLibraryDetail> {
+    return request<DirectionLibraryDetail>(`/libraries/${id}/approve`, { method: 'POST' });
+  },
+  /** 驳回（仅平台管理员）：→ rejected，可带理由。 */
+  rejectLibrary(id: string, note?: string | null): Promise<DirectionLibraryDetail> {
+    return requestJson<DirectionLibraryDetail>(`/libraries/${id}/reject`, 'POST', { note: note ?? null });
+  },
+  /** 对某个方向库直接触发抓取（P9a；仅 status=active 且预算内，可管理者）。 */
+  startLibraryIngest(id: string, input: { mode: IngestMode; knobs?: IngestKnobs }): Promise<VoyageRead> {
+    return requestJson<VoyageRead>(`/libraries/${id}/ingest/run`, 'POST', input);
   },
   /** 课题当前关联的文献库摘要（顺序 = 关联建立时间）。 */
   getSourceLibraries(projectId: string): Promise<DirectionLibrarySummary[]> {

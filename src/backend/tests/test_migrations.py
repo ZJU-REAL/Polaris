@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b8919453c913"  # 任务系统库化：voyage_runs/activities 可挂方向库（P9a）
-PREV_REVISION = "b3e9c1f47a20"  # direction_libraries.definition 收录配置权威（P8a）
+HEAD_REVISION = "d3a7f1c9b2e4"  # 文献库生命周期：direction_libraries.status/审批（P9b）
+PREV_REVISION = "b8919453c913"  # 任务系统库化：voyage_runs/activities 可挂方向库（P9a）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -61,6 +61,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "llm_usage",
                     "topic_source_libraries",
                     "activities",
+                    "direction_libraries",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -133,6 +134,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 任务系统库化 P9a：voyage_runs / activities 新增 library_id（project_id 转可空）
     assert "library_id" in columns["voyage_runs"]
     assert "library_id" in columns["activities"]
+    # 文献库生命周期 P9b：direction_libraries 新增 status/review_note/submitted_by
+    assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
     # 垃圾桶原因等判断字段已迁 library_papers（P4 迁移 B 删列）
     assert "trash_reason" not in columns["papers"]
     assert "status" not in columns["papers"]
@@ -234,13 +237,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "topic_source_libraries" in columns["_tables"]
     assert columns["topic_source_libraries"] == {"topic_id", "library_id", "created_at"}
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（P8a），删 voyage_runs /
-    # activities 的 library_id 并把 project_id 收回 NOT NULL，其余结构不动。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（P9a），删
+    # direction_libraries 的 status/review_note/submitted_by，其余结构不动。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "library_id" not in columns["voyage_runs"]  # P9a 列已回退
-    assert "library_id" not in columns["activities"]
+    # P9b 三列已回退，P9a 的 library_id 仍在（downgrade 只退一步）
+    assert not ({"status", "review_note", "submitted_by"} & columns["direction_libraries"])
+    assert "library_id" in columns["voyage_runs"]
+    assert "library_id" in columns["activities"]
     assert "topic_source_libraries" in columns["_tables"]  # P7 表仍在
     assert "library_id" in columns["llm_usage"]
     assert "library_id" in columns["llm_call_logs"]
@@ -288,3 +293,5 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # P9a 列在重新 upgrade 后回归
     assert "library_id" in columns["voyage_runs"]
     assert "library_id" in columns["activities"]
+    # P9b 列在重新 upgrade 后回归
+    assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
