@@ -2807,6 +2807,84 @@ export const api = {
     return request<SearchResult>(`/libraries/${id}/search?${params.toString()}`);
   },
 
+  // —— P9d · 独立库文献管理台（镜像 project 作用域的集合端点） ——
+  /** 库内论文（全过滤维度，同 listPapers）；status=excluded 为垃圾桶。 */
+  listLibraryPapersFull(
+    id: string,
+    opts: {
+      status?: PaperStatusFilter;
+      q?: string;
+      sort?: PaperSort;
+      page?: number;
+      size?: number;
+      tag?: string;
+      starred?: boolean;
+      reading_status?: ReadingStatus;
+      author?: string;
+      affiliation?: string;
+      published_from?: string;
+      published_to?: string;
+      created_from?: string;
+      created_to?: string;
+    } = {},
+  ): Promise<PageOf<PaperRead>> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.q) params.set('q', opts.q);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    if (opts.tag) params.set('tag', opts.tag);
+    if (opts.starred) params.set('starred', 'true');
+    if (opts.reading_status) params.set('reading_status', opts.reading_status);
+    if (opts.author) params.set('author', opts.author);
+    if (opts.affiliation) params.set('affiliation', opts.affiliation);
+    if (opts.published_from) params.set('published_from', opts.published_from);
+    if (opts.published_to) params.set('published_to', opts.published_to);
+    if (opts.created_from) params.set('created_from', opts.created_from);
+    if (opts.created_to) params.set('created_to', opts.created_to);
+    const qs = params.toString();
+    return request<PageOf<PaperRead>>(`/libraries/${id}/papers${qs ? `?${qs}` : ''}`);
+  },
+  /** 手动添加文献到库；409 → PAPER_EXISTS（body 含 paper_id）；422 → PARSE_FAILED。 */
+  importLibraryPaper(id: string, input: PaperImportInput): Promise<PaperDetail> {
+    return requestJson<PaperDetail>(`/libraries/${id}/papers`, 'POST', input);
+  },
+  /** 批量删除库内论文：默认软删（垃圾桶），hard=true 彻底删除。 */
+  batchDeleteLibraryPapers(id: string, paperIds: string[], hard = false): Promise<{ deleted: number }> {
+    return requestJson<{ deleted: number }>(`/libraries/${id}/papers/batch-delete`, 'POST', {
+      paper_ids: paperIds,
+      hard,
+    });
+  },
+  /** 清空库垃圾桶：彻底删除库内全部已删除论文。 */
+  emptyLibraryTrash(id: string): Promise<{ deleted: number }> {
+    return request<{ deleted: number }>(`/libraries/${id}/trash/empty`, { method: 'POST' });
+  },
+  /** 库标签（独立库不支持标签，恒返回 []）。 */
+  listLibraryTags(id: string): Promise<TagRead[]> {
+    return request<TagRead[]>(`/libraries/${id}/tags`);
+  },
+  getLibraryIngestState(id: string): Promise<IngestState> {
+    return request<IngestState>(`/libraries/${id}/ingest/state`);
+  },
+  getLibraryGraph(id: string): Promise<GraphData> {
+    return request<GraphData>(`/libraries/${id}/graph`);
+  },
+  /** 库笔记本：全库笔记分页 + 搜索。 */
+  listLibraryNotes(
+    id: string,
+    opts: { q?: string; paper_id?: string; page?: number; size?: number } = {},
+  ): Promise<PageOf<NoteWithPaper>> {
+    const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
+    if (opts.paper_id) params.set('paper_id', opts.paper_id);
+    if (opts.page) params.set('page', String(opts.page));
+    if (opts.size) params.set('size', String(opts.size));
+    const qs = params.toString();
+    return request<PageOf<NoteWithPaper>>(`/libraries/${id}/notes${qs ? `?${qs}` : ''}`);
+  },
+
   // —— P5a · 课题「相关研究」书架 ——
   listShelf(projectId: string, opts: { page?: number; size?: number } = {}): Promise<PageOf<ShelfItemRead>> {
     const params = new URLSearchParams();
