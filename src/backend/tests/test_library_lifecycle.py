@@ -67,7 +67,7 @@ async def test_create_project_can_link_existing_libraries(client):
     )
     assert resp.status_code == 201, resp.text
     project = resp.json()
-    assert project["definition"] == {"statement": "一句话"}
+    assert project["statement"] == "一句话"
     project_id = uuid.UUID(project["id"])
 
     async with get_sessionmaker()() as session:

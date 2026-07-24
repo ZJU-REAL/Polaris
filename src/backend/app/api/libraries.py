@@ -356,8 +356,8 @@ async def list_library_papers(
 ) -> PaperListPage:
     """库内论文（分页/检索/排序/过滤）。缺省只列相关性达标的（status=library 组别名）。
 
-    过滤参数与课题论文列表一致（星标/阅读状态/作者/机构/发表与入库时间）；
-    ``status=excluded`` 取该库垃圾桶。标签过滤仅对有起源课题的库有效（独立库无标签）。
+    过滤参数与课题论文列表一致（星标/阅读状态/标签/作者/机构/发表与入库时间）；
+    ``status=excluded`` 取该库垃圾桶。P9e 起标签是库作用域，独立库同样可用。
     """
     library = await _get_library(session, library_id)
     items, total = await papers_service.list_papers(
@@ -570,11 +570,9 @@ async def list_library_tags(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[TagRead]:
-    """库标签列表（含引用论文数）。独立库无课题作用域标签 → 空列表。"""
+    """库标签列表（含引用论文数）。"""
     library = await _get_library(session, library_id)
-    if library.project_id is None:
-        return []
-    rows = await papers_service.list_project_tags(session, project_id=library.project_id)
+    rows = await papers_service.list_library_tags(session, library_id=library.id)
     return [TagRead(**row) for row in rows]
 
 

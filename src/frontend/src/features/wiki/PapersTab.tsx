@@ -786,7 +786,7 @@ const PaperRow = memo(function PaperRow({
 
 /* ---------------- 标签就地编辑 ---------------- */
 
-function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
+function TagEditor({ paper, scopeId }: { paper: PaperDetail; scopeId: string }) {
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [value, setValue] = useState('');
@@ -796,8 +796,8 @@ function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
     mutationFn: (names: string[]) => api.putPaperTags(paper.id, names),
     onSuccess: (p) => {
       queryClient.setQueryData<PaperDetail>(['paper', paper.id], p);
-      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
-      void queryClient.invalidateQueries({ queryKey: ['project-tags', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
+      void queryClient.invalidateQueries({ queryKey: ['project-tags', scopeId] });
     },
     onError: (e) =>
       toast(`${tr('标签更新失败：', 'Tag update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -1170,8 +1170,8 @@ function PaperDetailPane({
         </span>
       </div>
 
-      {/* —— 标签（就地编辑；独立库不支持标签，隐藏） —— */}
-      {!libraryId && <TagEditor paper={paper} pid={pid} />}
+      {/* —— 标签（就地编辑；库作用域，课题/独立库通用） —— */}
+      <TagEditor paper={paper} scopeId={scopeId} />
 
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
@@ -1450,7 +1450,6 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
     queryKey: ['project-tags', scopeId],
     queryFn: () => (libraryId ? api.listLibraryTags(libraryId) : api.listTags(scopeId)),
     retry: false,
-    enabled: !libraryId,
   });
   const projectTags = tagsQuery.data ?? [];
 
@@ -1649,24 +1648,22 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               {tr('垃圾桶', 'Trash')}
             </span>
           </div>
-          {/* 标签（独立库不支持，隐藏）/ 阅读状态过滤 */}
+          {/* 标签（库作用域，课题/独立库通用）/ 阅读状态过滤 */}
           <div className="row gap6" style={{ marginTop: 8, ...filterDisabled }}>
-            {!libraryId && (
-              <select
-                className="input"
-                style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
-                value={tagFilter}
-                onChange={(e) => setTagFilter(e.target.value)}
-                title={tr('按标签过滤', 'Filter by tag')}
-              >
-                <option value="">{tr('全部标签', 'All tags')}</option>
-                {projectTags.map((t) => (
-                  <option key={t.id} value={t.name}>
-                    {t.name}（{t.paper_count}）
-                  </option>
-                ))}
-              </select>
-            )}
+            <select
+              className="input"
+              style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+              title={tr('按标签过滤', 'Filter by tag')}
+            >
+              <option value="">{tr('全部标签', 'All tags')}</option>
+              {projectTags.map((t) => (
+                <option key={t.id} value={t.name}>
+                  {t.name}（{t.paper_count}）
+                </option>
+              ))}
+            </select>
             <select
               className="input"
               style={{ height: 26, fontSize: 11.5, width: 88, padding: '0 6px' }}

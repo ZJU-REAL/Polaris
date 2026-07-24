@@ -507,11 +507,11 @@ export function DashboardPage() {
               ? 'paper-review'
               : null;
 
-  const includeTerms = currentProject?.definition?.keywords?.include ?? [];
+  // 课题不再承载收录关键词（P9e：project.definition 退役）；建库/关键词属文献库。
   const nextSteps = buildNextSteps(
     progress,
     currentProjectId,
-    includeTerms.length > 0,
+    false,
     topicLib ? libraryPath(topicLib.id, '?tab=ingest') : topicPath(currentProjectId, 'wiki?tab=ingest'),
   );
   // 全流程都有产出 → 整卡隐藏

@@ -1,6 +1,6 @@
 """P9d：独立库（project_id=NULL）的库级论文管理台。
 
-覆盖库级论文列表/过滤、软删召回、批量删除、清空垃圾桶、手动添加、标签空态、
+覆盖库级论文列表/过滤、软删召回、批量删除、清空垃圾桶、手动添加、库级标签、
 ingest 状态、图谱、笔记、文献对话，以及非管理者的鉴权 403。
 """
 
@@ -213,14 +213,38 @@ async def test_standalone_recompile_via_paper_endpoint(client):
     assert resp.json()["has_wiki"] is True
 
 
-async def test_standalone_tags_empty(client):
-    creator, _admin, lib_id = await _setup(client, prefix="p9d-tags")
-    p1 = await _seed_paper(lib_id, title="No tags here")
-    resp = await client.get(f"/api/libraries/{lib_id}/tags", headers=creator)
-    assert resp.status_code == 200 and resp.json() == []
-    resp = await client.put(f"/api/papers/{p1}/tags", json={"names": ["方法"]}, headers=creator)
+async def test_standalone_tags_scoped_to_library(client):
+    """P9e：独立库（project_id=NULL）也能打标签、列标签、按标签筛选、零引用清理。"""
+    creator, _admin, lib_id = await _setup(client, prefix="p9e-tags")
+    p1 = await _seed_paper(lib_id, title="Tagged paper")
+    p2 = await _seed_paper(lib_id, title="Untagged paper")
+
+    # 打标签（去重 + 排序）
+    resp = await client.put(
+        f"/api/papers/{p1}/tags", json={"names": ["方法", "评测", "方法"]}, headers=creator
+    )
     assert resp.status_code == 200, resp.text
+    assert resp.json()["tags"] == ["方法", "评测"]
+
+    # 库标签列表（含引用论文数）
+    resp = await client.get(f"/api/libraries/{lib_id}/tags", headers=creator)
+    assert resp.status_code == 200, resp.text
+    assert {t["name"]: t["paper_count"] for t in resp.json()} == {"方法": 1, "评测": 1}
+
+    # 按标签筛选库论文
+    resp = await client.get(
+        f"/api/libraries/{lib_id}/papers", params={"tag": "方法"}, headers=creator
+    )
+    assert resp.status_code == 200, resp.text
+    assert [p["title"] for p in resp.json()["items"]] == ["Tagged paper"]
+
+    # 清空标签 → 零引用标签自动清理
+    resp = await client.put(f"/api/papers/{p1}/tags", json={"names": []}, headers=creator)
     assert resp.json()["tags"] == []
+    resp = await client.get(f"/api/libraries/{lib_id}/tags", headers=creator)
+    assert resp.json() == []
+    # 未打标签的论文不受影响
+    assert p2
 
 
 async def test_standalone_ingest_state(client):
