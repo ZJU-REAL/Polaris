@@ -138,7 +138,8 @@ function SkeletonRows() {
   );
 }
 
-export function VoyagesPage() {
+/** 任务列表主体（过滤条 + 列表）：无自身 PageHead / 页壳，供工作台「任务」标签内嵌。 */
+export function VoyagesList() {
   const navigate = useNavigate();
   const { currentProjectId } = useProject();
 
@@ -159,14 +160,7 @@ export function VoyagesPage() {
   );
 
   return (
-    <div className="page fadeup">
-      <PageHead
-        eyebrow="Polaris · Voyages"
-        title={tr('任务', 'Tasks')}
-        sub={tr('需要人工审批时任务会自动暂停，审批通过后继续执行。', 'Tasks pause automatically when they need approval, then resume once approved.')}
-      />
-
-      <>
+    <>
           <div className="row gap10" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
             <Segmented options={FILTERS.map((f) => ({ v: f.v, label: tr(f.zh, f.en) }))} value={filter} onChange={setFilter} />
             <select
@@ -271,7 +265,19 @@ export function VoyagesPage() {
               })}
             </div>
           )}
-      </>
+    </>
+  );
+}
+
+export function VoyagesPage() {
+  return (
+    <div className="page fadeup">
+      <PageHead
+        eyebrow="Polaris · Voyages"
+        title={tr('任务', 'Tasks')}
+        sub={tr('需要人工审批时任务会自动暂停，审批通过后继续执行。', 'Tasks pause automatically when they need approval, then resume once approved.')}
+      />
+      <VoyagesList />
     </div>
   );
 }
