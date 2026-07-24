@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -8,6 +8,7 @@ import { fmtTime } from '../../lib/format';
 import { api, type NoteWithPaper } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { SearchInput, useDebounced } from './shared';
+import { readerFrom } from '../reading/shared';
 
 /* ============================================================
    笔记本 Tab：整个研究方向的阅读笔记（搜索 + 分页），
@@ -54,6 +55,7 @@ function NoteItem({ note, onOpenPaper }: { note: NoteWithPaper; onOpenPaper: () 
 
 export function NotesTab({ pid, libraryId }: { pid?: string; libraryId?: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const scopeId = libraryId ?? pid ?? '';
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
@@ -121,7 +123,11 @@ export function NotesTab({ pid, libraryId }: { pid?: string; libraryId?: string 
         ) : (
           <div className="col" style={{ gap: 12, maxWidth: 860, margin: '0 auto' }}>
             {notes.map((n) => (
-              <NoteItem key={n.id} note={n} onOpenPaper={() => navigate(`/papers/${n.paper_id}/read`)} />
+              <NoteItem
+                key={n.id}
+                note={n}
+                onOpenPaper={() => navigate(`/papers/${n.paper_id}/read`, { state: readerFrom(location, 'wiki') })}
+              />
             ))}
           </div>
         )}
