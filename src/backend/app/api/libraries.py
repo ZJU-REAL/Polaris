@@ -221,20 +221,60 @@ async def request_library_public(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """申请把个人库转为公共库（P10）：仅创建者或该库策展人可发起；status → pending
-    等 admin 审批（is_public 仍 false）。无权者视为不存在（404）。
+    """申请把个人库转为公共库（P10）：创建者/策展人发起 → status=pending 等 admin 审批；
+    **平台 admin 发起则直接通过**（直接转公共，无需审批）。无权者视为不存在（404）。
     """
+    library = await _get_library(session, library_id)
+    is_admin = user.role == "admin"
+    is_owner = library.submitted_by is not None and library.submitted_by == user.id
+    is_curator = await libraries_service.is_library_curator(
+        session, library_id=library.id, user_id=user.id
+    )
+    if not (is_admin or is_owner or is_curator):
+        # 能看到但无权发起 → 403；看不到（陌生人个人库）→ 404 隐藏存在。
+        if libraries_service.library_visible_to(library, user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+    if is_admin:
+        library = await libraries_service.approve_library(session, library=library)
+    else:
+        library = await libraries_service.request_public(session, library=library)
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
+@router.post("/libraries/{library_id}/cancel-request-public", response_model=DirectionLibraryDetail)
+async def cancel_request_library_public(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DirectionLibraryDetail:
+    """撤回转公共申请（P10）：创建者/策展人把 pending 退回可用的个人库
+    （is_public=false、status=active）。无权者视为不存在（404）。"""
     library = await _get_library(session, library_id)
     is_owner = library.submitted_by is not None and library.submitted_by == user.id
     is_curator = await libraries_service.is_library_curator(
         session, library_id=library.id, user_id=user.id
     )
-    if not (is_owner or is_curator):
-        # 能看到但无权发起（如非策展人 admin）→ 403；看不到（陌生人个人库）→ 404 隐藏存在。
+    if not (is_owner or is_curator or user.role == "admin"):
         if libraries_service.library_visible_to(library, user):
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
-    library = await libraries_service.request_public(session, library=library)
+    library = await libraries_service.cancel_request_public(session, library=library)
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
+@router.post("/libraries/{library_id}/make-personal", response_model=DirectionLibraryDetail)
+async def make_library_personal(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_admin),
+) -> DirectionLibraryDetail:
+    """把公共库转回个人库（平台 admin，P10）：is_public → false、status=active。
+    转回后仅归属人 + admin 可见，其他成员看不到。"""
+    library = await _get_library(session, library_id)
+    library = await libraries_service.make_personal(session, library=library)
     row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
 

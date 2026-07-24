@@ -323,3 +323,51 @@ def test_ingest_billing_owner_unit():
     personal = DirectionLibrary(name="me", is_public=False, submitted_by=owner_id)
     assert _ingest_billing_owner(public) is None
     assert _ingest_billing_owner(personal) == owner_id
+
+
+# ---- P10 细化：admin 直通 / 取消申请 / 转回个人 ----
+
+
+async def test_admin_request_public_auto_approves(client):
+    """平台 admin 发起 request-public → 直接转公共（跳过 pending 审批）。"""
+    admin = await _hdr(client, "auto-admin@example.com")
+    await _promote_admin("auto-admin@example.com")
+    lib_id = await _create_personal(client, admin, name="admin 自建库")
+    resp = await client.post(f"/api/libraries/{lib_id}/request-public", headers=admin)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["is_public"] is True and body["status"] == "active"
+
+
+async def test_cancel_request_public_returns_personal(client):
+    """归属人撤回 pending 申请 → 退回可用个人库。"""
+    await _hdr(client, "cancel-placeholder@example.com")  # 占位 admin（首个注册用户自动 admin）
+    owner = await _hdr(client, "cancel-owner@example.com")
+    lib_id = await _create_personal(client, owner)
+    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
+    resp = await client.post(f"/api/libraries/{lib_id}/cancel-request-public", headers=owner)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "active" and body["is_public"] is False
+
+
+async def test_make_personal_admin_only(client):
+    """admin 把公共库转回个人（其他人看不到）；非 admin 转个人 → 403。"""
+    await _hdr(client, "mp-placeholder@example.com")  # 占位 admin（首个注册用户自动 admin）
+    owner = await _hdr(client, "mp-owner@example.com")
+    admin = await _hdr(client, "mp-admin@example.com")
+    await _promote_admin("mp-admin@example.com")
+    lib_id = await _create_personal(client, owner)
+    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
+    await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
+    # 非 admin 转个人 → 403
+    resp = await client.post(f"/api/libraries/{lib_id}/make-personal", headers=owner)
+    assert resp.status_code == 403
+    # admin 转个人 → is_public false
+    resp = await client.post(f"/api/libraries/{lib_id}/make-personal", headers=admin)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_public"] is False
+    # 转回个人后，原本非归属人的陌生人看不到
+    stranger = await _hdr(client, "mp-stranger@example.com")
+    resp = await client.get(f"/api/libraries/{lib_id}", headers=stranger)
+    assert resp.status_code == 404
