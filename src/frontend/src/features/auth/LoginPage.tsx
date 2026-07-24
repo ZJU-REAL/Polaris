@@ -154,14 +154,11 @@ export function LoginPage() {
 
       {/* 右侧表单卡片 */}
       <div className="auth-card fadeup">
-        <div className="auth-card-brandline">{tr('北极星 AI 科研智能体', 'Polaris AI Research Agent')}</div>
         <div className="auth-card-title">
           {isRegister ? tr('创建账号', 'Create your account') : tr('欢迎回来', 'Welcome back')}
         </div>
         <div className="auth-card-sub">
-          {isRegister
-            ? tr('让 AI 与你一起做研究', 'Do research together with AI')
-            : tr('登录以继续你的研究', 'Sign in to continue your research')}
+          {tr('北极星 AI 科研智能体，让 AI 与你一起做研究', 'Polaris AI research agent — do research together with AI')}
         </div>
 
         <div className="row" style={{ justifyContent: 'center', marginBottom: 18 }}>

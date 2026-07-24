@@ -713,10 +713,6 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
     box-shadow: 0 22px 60px rgba(2, 8, 24, 0.55), 0 2px 8px rgba(2, 8, 24, 0.35);
   }
 }
-.auth-card-brandline {
-  font-size: 14px; font-weight: 800; color: var(--text-1);
-  text-align: center; letter-spacing: 0.06em; margin-bottom: 10px;
-}
 .auth-card-title { font-size: 21px; font-weight: 700; color: var(--text-1); text-align: center; }
 .auth-card-sub { font-size: 12.5px; color: var(--text-3); text-align: center; margin: 5px 0 18px; }
 
