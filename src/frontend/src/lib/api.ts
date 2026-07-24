@@ -3852,7 +3852,17 @@ export const api = {
     return request<DailyDay[]>('/daily/days');
   },
   listDailyPapers(
-    opts: { date?: string; sort?: DailySort; page?: number; size?: number; q?: string } = {},
+    opts: {
+      date?: string;
+      sort?: DailySort;
+      page?: number;
+      size?: number;
+      q?: string;
+      /** 类型筛选：new=新工作，cross=更新（交叉提交）；不传=全部 */
+      announce?: 'new' | 'cross';
+      /** 订阅分类筛选，如 cs.AI；不传=全部分类 */
+      category?: string;
+    } = {},
   ): Promise<DailyPage> {
     const params = new URLSearchParams();
     if (opts.date) params.set('date', opts.date);
@@ -3860,6 +3870,8 @@ export const api = {
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));
     if (opts.q) params.set('q', opts.q);
+    if (opts.announce) params.set('announce', opts.announce);
+    if (opts.category) params.set('category', opts.category);
     const qs = params.toString();
     return request<DailyPage>(`/daily/papers${qs ? `?${qs}` : ''}`);
   },
@@ -3890,6 +3902,13 @@ export const api = {
   },
   getDailyCollections(entryId: string): Promise<DailyCollectionsRead> {
     return request<DailyCollectionsRead>(`/daily/papers/${entryId}/collections`);
+  },
+  /** 触发单篇 AI 解读编译（同步等待，约半分钟）；409 detail=COMPILE_IN_PROGRESS，502 编译失败。 */
+  compileDailyPaper(entryId: string): Promise<{ entry_id: string; wiki_content: string; model: string }> {
+    return request<{ entry_id: string; wiki_content: string; model: string }>(
+      `/daily/papers/${entryId}/compile`,
+      { method: 'POST' },
+    );
   },
   getDailyCategories(): Promise<{ categories: string[] }> {
     return request<{ categories: string[] }>('/daily/categories');

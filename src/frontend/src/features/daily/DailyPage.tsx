@@ -1,13 +1,17 @@
 import { Fragment, useEffect, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { api, type DailyPaperItem, type DailySort } from '../../lib/api';
+import { Segmented } from '../../components/ui/Segmented';
+import { toast } from '../../components/ui/Toast';
+import { ApiError, api, type DailyPaperItem, type DailySort } from '../../lib/api';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { Markdown } from '../../lib/markdown';
 import { SearchInput, useDebounced } from '../wiki/shared';
 import { DailyLikes } from './DailyLikes';
+import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
 
 /* ============================================================
@@ -35,6 +39,25 @@ function authorsBrief(p: DailyPaperItem): string {
   const names = p.authors.map((a) => a.name).filter(Boolean);
   if (names.length === 0) return '';
   return names.length > 3 ? `${names.slice(0, 3).join(', ')} et al.` : names.join(', ');
+}
+
+/** 类型徽标：new=绿色 NEW；cross=「更新」（保持原角标样式，仅换文案）。 */
+function AnnounceBadge({ type }: { type: DailyPaperItem['announce_type'] }) {
+  if (type === 'new') {
+    return (
+      <span
+        className="pill sm"
+        style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)', fontWeight: 700, letterSpacing: '0.05em', flexShrink: 0 }}
+      >
+        NEW
+      </span>
+    );
+  }
+  return (
+    <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)', flexShrink: 0 }}>
+      {tr('更新', 'Updated')}
+    </span>
+  );
 }
 
 function DailyRow({
@@ -65,20 +88,21 @@ function DailyRow({
             <span className="pill sm mono" style={{ background: 'var(--surface-3)', flexShrink: 0 }}>
               {p.primary_category}
             </span>
-            {p.announce_type === 'cross' && (
-              <span
-                className="pill sm"
-                style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)', flexShrink: 0 }}
-              >
-                {tr('转投', 'cross')}
-              </span>
-            )}
+            <AnnounceBadge type={p.announce_type} />
             <span
               style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
               title={p.authors.map((a) => a.name).join(', ')}
             >
               {authorsBrief(p)}
             </span>
+            {p.has_wiki && (
+              <span
+                title={tr('已有 AI 解读', 'AI summary available')}
+                style={{ display: 'inline-flex', color: 'var(--accent)', flexShrink: 0 }}
+              >
+                <Icon name="file" size={11} />
+              </span>
+            )}
           </div>
         </div>
         {/* 行右侧点赞区：[♥][头像堆][+N][数字] */}
@@ -97,10 +121,29 @@ function DailyDetailPane({
   entryId: string;
   onCollect: (p: CollectPaperRef) => void;
 }) {
+  const queryClient = useQueryClient();
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['daily-paper', entryId],
     queryFn: () => api.getDailyPaper(entryId),
     retry: false,
+  });
+
+  // 单篇 AI 解读编译：同步等待（约半分钟）；409 = 已有人在编译
+  const compileMutation = useMutation({
+    mutationFn: () => api.compileDailyPaper(entryId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
+      void queryClient.invalidateQueries({ queryKey: ['daily-papers'] }); // 列表行的 has_wiki 标记
+      void queryClient.invalidateQueries({ queryKey: ['daily-liked'] });
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409) {
+        toast(tr('已有人在生成，稍后刷新即可', 'Someone is already generating it, refresh later'), 'info');
+        void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
+      } else {
+        toast(`${tr('生成解读失败', 'Failed to generate summary')}：${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+    },
   });
 
   if (isLoading) return <div className="empty">{tr('加载论文详情…', 'Loading paper…')}</div>;
@@ -125,11 +168,7 @@ function DailyDetailPane({
             {c}
           </span>
         ))}
-        {paper.announce_type === 'cross' && (
-          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
-            {tr('转投', 'cross')}
-          </span>
-        )}
+        <AnnounceBadge type={paper.announce_type} />
         {paper.arxiv_id && (
           <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>
             arXiv:{paper.arxiv_id}
@@ -176,20 +215,64 @@ function DailyDetailPane({
       ) : (
         <div className="empty" style={{ padding: 20 }}>{tr('这篇还没有摘要。', 'No abstract for this paper.')}</div>
       )}
+
+      {/* —— AI 解读：有内容直接渲染；没有则给「生成」按钮（同步编译约半分钟） —— */}
+      {paper.wiki_content ? (
+        <div className="card card-pad" style={{ background: 'var(--surface-2)', marginTop: 14 }}>
+          <div className="row gap8" style={{ marginBottom: 8 }}>
+            <Icon name="sparkle" size={14} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontSize: 12, fontWeight: 700 }}>{tr('AI 解读', 'AI summary')}</span>
+          </div>
+          <Markdown source={paper.wiki_content} style={{ fontSize: 13 }} />
+        </div>
+      ) : (
+        <div className="row gap10" style={{ marginTop: 14 }}>
+          <button
+            className="btn btn-soft sm"
+            disabled={compileMutation.isPending}
+            onClick={() => compileMutation.mutate()}
+          >
+            {compileMutation.isPending ? (
+              <>
+                <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                {tr('生成中…', 'Generating…')}
+              </>
+            ) : (
+              <>
+                <Icon name="sparkle" size={13} />
+                {tr('生成解读', 'Generate summary')}
+              </>
+            )}
+          </button>
+          {compileMutation.isPending && (
+            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+              {tr('大约需要半分钟', 'Takes about half a minute')}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
+type DailyView = 'papers' | 'chat';
+type AnnounceFilter = 'all' | 'new' | 'cross';
+
 export function DailyPage() {
+  const [view, setView] = useState<DailyView>('papers');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
   const [sort, setSort] = useState<DailySort>('likes');
   const [page, setPage] = useState(1);
+  // —— 高级过滤：日期（null=全部 7 天）/ 订阅分类（''=全部）/ 类型 ——
+  const [day, setDay] = useState<string | null>(null);
+  const [category, setCategory] = useState('');
+  const [announce, setAnnounce] = useState<AnnounceFilter>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
 
-  useEffect(() => setPage(1), [q, sort]);
+  useEffect(() => setPage(1), [q, sort, day, category, announce]);
 
   const daysQuery = useQuery({
     queryKey: ['daily-days'],
@@ -199,6 +282,21 @@ export function DailyPage() {
   });
   const dayCount = new Map((daysQuery.data ?? []).map((d) => [d.date, d.count] as const));
 
+  // 有数据的日期，升序（旧 → 新），日期步进只在这些日期间跳
+  const dates = (daysQuery.data ?? []).map((d) => d.date).sort();
+  const dayIdx = day ? dates.indexOf(day) : -1;
+  // 「全部」视为最新一天的后一位：← 从全部进入最新一天；→ 在最新一天回到全部
+  const canPrevDay = dates.length > 0 && (day === null || dayIdx > 0);
+  const canNextDay = day !== null && dayIdx >= 0;
+  const goPrevDay = () => {
+    if (day === null) setDay(dates[dates.length - 1] ?? null);
+    else if (dayIdx > 0) setDay(dates[dayIdx - 1] ?? null);
+  };
+  const goNextDay = () => {
+    if (day === null) return;
+    setDay(dayIdx >= 0 && dayIdx < dates.length - 1 ? (dates[dayIdx + 1] ?? null) : null);
+  };
+
   const categoriesQuery = useQuery({
     queryKey: ['daily-categories'],
     queryFn: () => api.getDailyCategories(),
@@ -207,11 +305,21 @@ export function DailyPage() {
   });
 
   const listQuery = useQuery({
-    queryKey: ['daily-papers', sort, page, q],
-    queryFn: () => api.listDailyPapers({ sort, page, size: PAGE_SIZE, q: q || undefined }),
+    queryKey: ['daily-papers', sort, page, q, day, category, announce],
+    queryFn: () =>
+      api.listDailyPapers({
+        sort,
+        page,
+        size: PAGE_SIZE,
+        q: q || undefined,
+        date: day ?? undefined,
+        category: category || undefined,
+        announce: announce === 'all' ? undefined : announce,
+      }),
     retry: false,
     placeholderData: keepPreviousData,
   });
+  const filtered = !!q || day !== null || !!category || announce !== 'all';
   const items = listQuery.data?.items ?? [];
   const total = listQuery.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -250,10 +358,25 @@ export function DailyPage() {
         }
       />
 
+      <div className="row" style={{ marginBottom: 14 }}>
+        <Segmented<DailyView>
+          options={[
+            { v: 'papers', label: tr('论文', 'Papers') },
+            { v: 'chat', label: tr('对话', 'Chat') },
+          ]}
+          value={view}
+          onChange={setView}
+        />
+      </div>
+
       <div
         className="card"
         style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 480 }}
       >
+        {view === 'chat' ? (
+          /* ======== 池对话：就最近 7 天的每日新论文问答 ======== */
+          <DailyChatTab />
+        ) : (
         <div className="split">
           {/* —— 左：按日期分组的列表 —— */}
           <div className="split-list">
@@ -268,13 +391,64 @@ export function DailyPage() {
                   {total ? tr(`${total} 篇`, `${total}`) : ''}
                 </span>
               </div>
-              <div className="row gap6" style={{ marginTop: 10 }}>
+              <div className="row gap6 wrap" style={{ marginTop: 10 }}>
                 <span className={`chip${sort === 'likes' ? ' on' : ''}`} onClick={() => setSort('likes')}>
                   {tr('按点赞', 'Most liked')}
                 </span>
                 <span className={`chip${sort === 'date' ? ' on' : ''}`} onClick={() => setSort('date')}>
                   {tr('按时间', 'Newest')}
                 </span>
+                <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px', flexShrink: 0 }} />
+                {/* 类型筛选：全部 / 新工作(new) / 更新(cross) */}
+                <span className={`chip${announce === 'all' ? ' on' : ''}`} onClick={() => setAnnounce('all')}>
+                  {tr('全部', 'All')}
+                </span>
+                <span className={`chip${announce === 'new' ? ' on' : ''}`} onClick={() => setAnnounce('new')}>
+                  {tr('新工作', 'New')}
+                </span>
+                <span className={`chip${announce === 'cross' ? ' on' : ''}`} onClick={() => setAnnounce('cross')}>
+                  {tr('更新', 'Updated')}
+                </span>
+              </div>
+              {/* —— 日期步进 + 订阅分类下拉 —— */}
+              <div className="row gap6 wrap" style={{ marginTop: 8 }}>
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ padding: '0 7px', height: 24, fontSize: 11 }}
+                  disabled={!canPrevDay}
+                  onClick={goPrevDay}
+                >
+                  ‹ {tr('前一天', 'Prev day')}
+                </button>
+                <span
+                  className={`chip${day !== null ? ' on' : ''}`}
+                  title={day !== null ? tr('点击回到全部 7 天', 'Click to show all 7 days') : undefined}
+                  onClick={() => setDay(null)}
+                >
+                  {day !== null ? dayLabel(day, dayCount.get(day)) : tr('全部 7 天', 'All 7 days')}
+                </span>
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ padding: '0 7px', height: 24, fontSize: 11 }}
+                  disabled={!canNextDay}
+                  onClick={goNextDay}
+                >
+                  {tr('后一天', 'Next day')} ›
+                </button>
+                <div style={{ flex: 1 }} />
+                <select
+                  className="input mono"
+                  style={{ height: 24, fontSize: 11, padding: '0 4px', maxWidth: 128, flexShrink: 0 }}
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                >
+                  <option value="">{tr('全部分类', 'All categories')}</option>
+                  {(categoriesQuery.data?.categories ?? []).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -292,10 +466,10 @@ export function DailyPage() {
                 <EmptyState
                   compact
                   icon="book"
-                  title={q ? tr('没有匹配的论文', 'No matching papers') : tr('今天还没有新论文', 'No new papers yet')}
+                  title={filtered ? tr('没有匹配的论文', 'No matching papers') : tr('今天还没有新论文', 'No new papers yet')}
                   desc={
-                    q
-                      ? tr('换个关键词试试。', 'Try a different keyword.')
+                    filtered
+                      ? tr('换个关键词或过滤条件试试。', 'Try a different keyword or filter.')
                       : tr(
                           '今天还没有新论文。arxiv 周末不发布新提交。',
                           'No new papers yet. arxiv does not announce on weekends.',
@@ -362,6 +536,7 @@ export function DailyPage() {
             )}
           </div>
         </div>
+        )}
       </div>
 
       {collectPaper && (
