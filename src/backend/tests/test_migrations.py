@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e2b9d47a0c31"  # 课题 statement 上列 + 退役 project.definition（P9e）
-PREV_REVISION = "c6e0b3a91f47"  # 删除惰性列 projects.ingest_state（P9e）
+HEAD_REVISION = "3ecc41527559"  # users.settings 个人设置 JSON 列（可选全文索引开关）
+PREV_REVISION = "e2b9d47a0c31"  # 课题 statement 上列 + 退役 project.definition（P9e）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -123,6 +123,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 用户系统 U1：users 三新列 + project_invites 表
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
     assert "project_invites" in columns["_tables"]
+    # 可选全文索引：users.settings 个人设置 JSON 列
+    assert "settings" in columns["users"]
     # 任务循环 v1：voyage_runs / voyage_steps 新列
     assert {"mode", "plan_iteration", "done_criteria"} <= columns["voyage_runs"]
     assert {
@@ -244,14 +246,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "topic_source_libraries" in columns["_tables"]
     assert columns["topic_source_libraries"] == {"topic_id", "library_id", "created_at"}
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（P9e 删 ingest_state）。
-    # 该步只回退 mig3（projects：还原 definition、删 statement），其余结构不动。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（e2b9d47a0c31，P9e 课题 statement）。
+    # 该步只回退本迁移（users：删 settings 个人设置列），projects 的 statement 结构不动。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    # mig3 回退后 projects.definition 还原、statement 删除；ingest_state 仍无（mig2 已删）
-    assert "definition" in columns["projects"]
-    assert "statement" not in columns["projects"]
+    # 本迁移回退后 users.settings 删除；上一版 P9e 的 statement 仍在、definition 已退役
+    assert "settings" not in columns["users"]
+    assert "statement" in columns["projects"]
+    assert "definition" not in columns["projects"]
     assert "ingest_state" not in columns["projects"]
     # 只退一步：标签库化（mig1）仍在，paper_tags 仍以 library_id 为键
     assert "library_id" in columns["paper_tags"]
@@ -289,6 +292,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
     assert "manuscript_file_versions" in columns["_tables"]
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
+    # 回退到 P8a：users.settings 列已随 downgrade 删除
+    assert "settings" not in columns["users"]
     assert "project_invites" in columns["_tables"]
     assert "affiliations" in columns["papers"]
     assert {"skill_listings", "skill_ratings"} <= columns["_tables"]

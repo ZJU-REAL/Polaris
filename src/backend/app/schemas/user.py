@@ -20,6 +20,13 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     has_avatar: bool = False
     token_quota: int | None = None
     features: dict[str, Any] | None = None
+    settings: dict[str, Any] | None = None
+
+
+class UserSettingsUpdate(BaseModel):
+    """本人个人设置更新（当前仅文献对话全文索引开关）。"""
+
+    chat_fulltext_index: bool
 
 
 class UserSearchResult(BaseModel):

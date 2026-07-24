@@ -123,6 +123,8 @@ export interface UserRead {
   has_avatar?: boolean;
   token_quota?: number | null;
   features?: Record<string, boolean> | null;
+  /** 用户个人设置（后端可能暂未返回，可选） */
+  settings?: { chat_fulltext_index?: boolean } | null;
 }
 
 export interface UsageSummary {
@@ -2265,6 +2267,10 @@ export const api = {
   updateMe(input: { display_name?: string }): Promise<UserRead> {
     return requestJson<UserRead>('/users/me', 'PATCH', input);
   },
+  /** 个人设置：文献对话是否为论文建立全文索引。 */
+  updateMySettings(input: { chat_fulltext_index: boolean }): Promise<UserRead> {
+    return requestJson<UserRead>('/users/me/settings', 'PATCH', input);
+  },
   setUsername(username: string): Promise<UserRead> {
     return requestJson<UserRead>('/users/me/username', 'PATCH', { username });
   },
@@ -2949,6 +2955,14 @@ export const api = {
   // —— 文献知识底座：全文索引重建（对话走 sse.ts chatLibrarySse） ——
   rebuildFulltextIndex(projectId: string): Promise<RebuildIndexResult> {
     return request<RebuildIndexResult>(`/projects/${projectId}/index/rebuild`, { method: 'POST' });
+  },
+  /** 可选全文索引：为本课题「相关研究」这批论文异步建全文索引（设置关时后端 409 INDEXING_DISABLED）。 */
+  buildShelfIndex(projectId: string): Promise<{ queued: number }> {
+    return requestJson<{ queued: number }>(`/projects/${projectId}/shelf/index/rebuild`, 'POST', {});
+  },
+  /** 可选全文索引：为「我的收藏」这批个人文献异步建全文索引。 */
+  buildPersonalIndex(): Promise<{ queued: number }> {
+    return requestJson<{ queued: number }>('/library/index/rebuild', 'POST', {});
   },
 
   // —— M2 · Obsidian 导出（zip blob） ——

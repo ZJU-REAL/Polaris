@@ -3,8 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Markdown } from '../../lib/markdown';
 import { chatShelfSse } from '../../lib/sse';
 import { tr } from '../../lib/i18n';
+import { api } from '../../lib/api';
 import { ChatSurface } from '../chat/ChatSurface';
 import { ChatFigure, SourceList, makeCitationRenderer } from '../chat/LiteratureChatSources';
+import { BuildIndexButton } from '../chat/BuildIndexButton';
 import type { ChatMsg } from '../chat/types';
 
 /* ============================================================
@@ -84,6 +86,7 @@ export function ShelfChatTab({ pid }: ShelfChatTabProps) {
         '只就本课题「相关研究」里的这批论文回答，问对比、归类、找空白都行；[n] 为引用来源编号。',
         'Answers stay within this topic’s related work; ask for comparisons, groupings or open problems. [n] marks a source number.',
       )}
+      headerAction={<BuildIndexButton build={() => api.buildShelfIndex(pid)} />}
       emptyIcon="chat"
       emptyTitle={tr('和本课题的相关研究对话', 'Chat with this topic’s related work')}
       emptyDesc={tr(

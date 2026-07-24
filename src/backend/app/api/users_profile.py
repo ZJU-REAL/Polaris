@@ -15,7 +15,13 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
 from app.schemas.llm_admin import UsageRow
-from app.schemas.user import UsageSummary, UsernameUpdate, UserRead, UserSearchResult
+from app.schemas.user import (
+    UsageSummary,
+    UsernameUpdate,
+    UserRead,
+    UserSearchResult,
+    UserSettingsUpdate,
+)
 from app.services import llm_admin as llm_admin_service
 from app.services import users as users_service
 from app.services.users import tokens_used_by_user
@@ -40,6 +46,20 @@ async def set_my_username(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="USERNAME_TAKEN")
     user.username = uname
     user.username_locked = True
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@router.patch("/users/me/settings", response_model=UserRead)
+async def set_my_settings(
+    body: UserSettingsUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> User:
+    """本人个人设置：目前仅文献对话全文索引开关（合并进 settings JSON）。"""
+    # JSON 列原地改需 flag_modified；重新赋值整 dict 最稳（触发 ORM 脏检测）。
+    user.settings = {**(user.settings or {}), "chat_fulltext_index": body.chat_fulltext_index}
     await session.commit()
     await session.refresh(user)
     return user

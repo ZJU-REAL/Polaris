@@ -92,6 +92,14 @@ function PersonalTab() {
     },
     onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
+  const chatIndexMutation = useMutation({
+    mutationFn: (v: boolean) => api.updateMySettings({ chat_fulltext_index: v }),
+    onSuccess: (_, v) => {
+      toast(v ? tr('已开启全文索引', 'Full-text index enabled') : tr('已关闭全文索引', 'Full-text index disabled'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
   const avatarMutation = useMutation({
     mutationFn: (file: File) => api.uploadAvatar(file),
     onSuccess: () => {
@@ -190,6 +198,28 @@ function PersonalTab() {
           {tr('保存', 'Save')}
         </button>
       </div>
+      </div>
+      <div className="card" style={{ maxWidth: 560, marginTop: 16, padding: '14px 18px' }}>
+        <div className="section-h">{tr('文献对话', 'Literature chat')}</div>
+        <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div id="pref-chat-fulltext" style={{ fontSize: 13, lineHeight: 1.4 }}>
+              {tr('为论文建立全文索引', 'Build a full-text index for papers')}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
+              {tr(
+                '打开后可为你的相关研究/个人文献库的论文建立全文索引，让 AI 文献对话检索得更准（会消耗你的模型额度抓取和嵌入全文）。',
+                'When on, you can build a full-text index for the papers in your related work and personal library, so AI literature chat retrieves more accurately (it uses your model quota to fetch and embed the full text).',
+              )}
+            </div>
+          </div>
+          <Switch
+            checked={me.settings?.chat_fulltext_index ?? false}
+            onChange={(v) => chatIndexMutation.mutate(v)}
+            disabled={chatIndexMutation.isPending}
+            aria-labelledby="pref-chat-fulltext"
+          />
+        </div>
       </div>
       <AcademicIdentitySection />
       <PreferencesSection />

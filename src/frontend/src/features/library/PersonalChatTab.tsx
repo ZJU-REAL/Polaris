@@ -3,8 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Markdown } from '../../lib/markdown';
 import { chatPersonalSse } from '../../lib/sse';
 import { tr } from '../../lib/i18n';
+import { api } from '../../lib/api';
 import { ChatSurface } from '../chat/ChatSurface';
 import { ChatFigure, SourceList, makeCitationRenderer } from '../chat/LiteratureChatSources';
+import { BuildIndexButton } from '../chat/BuildIndexButton';
 import type { ChatMsg } from '../chat/types';
 
 /* ============================================================
@@ -80,6 +82,7 @@ export function PersonalChatTab() {
         '只就我收藏的这批个人文献回答，不限某个课题；[n] 为引用来源编号。',
         'Answers stay within your saved personal papers, across all topics. [n] marks a source number.',
       )}
+      headerAction={<BuildIndexButton build={() => api.buildPersonalIndex()} />}
       emptyIcon="chat"
       emptyTitle={tr('和我收藏的文献对话', 'Chat with my saved papers')}
       emptyDesc={tr(

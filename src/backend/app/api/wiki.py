@@ -19,6 +19,7 @@ from app.api.auth import current_active_user, require_llm_chat
 from app.core.db import get_session
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
+from app.core.queue import TaskQueue, get_task_queue
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperChunk
 from app.models.project import Project
@@ -325,6 +326,46 @@ async def chat_with_personal_library(
         project_id=None,
     )
     return _chat_stream_response(messages, sources, user_id=user_id, project_id=None)
+
+
+def _require_fulltext_index_enabled(user: User) -> None:
+    """可选全文索引门控：用户未在设置里开启 → 409。"""
+    if user.setting("chat_fulltext_index") is not True:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="INDEXING_DISABLED")
+
+
+@router.post("/projects/{project_id}/shelf/index/rebuild")
+async def rebuild_shelf_fulltext_index(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> dict[str, Any]:
+    """可选全文索引：对课题相关研究书架上的论文批量建全文索引（抓 PDF→分段→嵌入）。
+
+    需先在个人设置里开启（未开 → 409 INDEXING_DISABLED）。长任务走 worker。
+    """
+    await _member_project(session, project_id, user)
+    _require_fulltext_index_enabled(user)
+    paper_ids = await shelf_paper_ids(session, project_id=project_id)
+    await queue.enqueue("index_papers_fulltext_task", "shelf", str(user.id), str(project_id))
+    return {"queued": len(paper_ids)}
+
+
+@router.post("/library/index/rebuild")
+async def rebuild_personal_fulltext_index(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> dict[str, Any]:
+    """可选全文索引：对本人收藏的个人库论文批量建全文索引（抓 PDF→分段→嵌入）。
+
+    需先在个人设置里开启（未开 → 409 INDEXING_DISABLED）。长任务走 worker。
+    """
+    _require_fulltext_index_enabled(user)
+    paper_ids = await personal_paper_ids(session, user_id=user.id, tab="saved")
+    await queue.enqueue("index_papers_fulltext_task", "personal", str(user.id), None)
+    return {"queued": len(paper_ids)}
 
 
 @router.post("/projects/{project_id}/index/rebuild")
