@@ -227,6 +227,19 @@ async def register(
     return user
 
 
+@router.get("/auth/username-available", tags=["auth"])
+async def username_available(
+    username: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    """注册表单实时检查用户名是否可用（公开接口，只回可用与否，不泄露其他信息）。"""
+    uname = username.strip().lower()
+    taken = (
+        await session.execute(select(User.id).where(User.username == uname))
+    ).first()
+    return {"available": taken is None}
+
+
 router.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate), prefix="/users", tags=["users"]
 )

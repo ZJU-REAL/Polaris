@@ -63,6 +63,21 @@ async def test_register_login_me_flow(client):
     assert resp.json()["email"] == "bob@example.com"
 
 
+async def test_username_available(client):
+    resp = await client.get("/api/auth/username-available", params={"username": "bob"})
+    assert resp.status_code == 200
+    assert resp.json() == {"available": True}
+
+    resp = await client.post("/api/auth/register", json=_register_body())
+    assert resp.status_code == 201
+
+    resp = await client.get("/api/auth/username-available", params={"username": "bob"})
+    assert resp.json() == {"available": False}
+    # 大小写与首尾空白归一后同样算占用
+    resp = await client.get("/api/auth/username-available", params={"username": " BOB "})
+    assert resp.json() == {"available": False}
+
+
 async def test_me_requires_auth(client):
     resp = await client.get("/api/users/me")
     assert resp.status_code == 401

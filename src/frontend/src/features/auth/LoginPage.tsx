@@ -1,12 +1,12 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { LangToggle } from '../../components/ui/LangToggle';
 import { PolarisMark, PolarisWordmark } from '../../components/ui/PolarisLogo';
 import { Segmented } from '../../components/ui/Segmented';
 import { useAuth } from '../../app/auth';
-import { ApiError } from '../../lib/api';
+import { ApiError, api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 type Mode = 'login' | 'register';
@@ -93,6 +93,23 @@ export function LoginPage() {
   const pwdLevel = passwordStrength(password);
   const pwdMatch = password2 !== '' && password === password2;
 
+  // 用户名可用性：停止输入 400ms 后查询（格式合法才查）
+  const [usernameDebounced, setUsernameDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setUsernameDebounced(username), 400);
+    return () => clearTimeout(t);
+  }, [username]);
+  const usernameCheck = useQuery({
+    queryKey: ['username-available', usernameDebounced],
+    queryFn: () => api.usernameAvailable(usernameDebounced),
+    enabled: mode === 'register' && USERNAME_RE.test(usernameDebounced),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const checkSettled = usernameValid && usernameDebounced === username && usernameCheck.data != null;
+  const usernameTaken = checkSettled && !usernameCheck.data!.available;
+  const usernameFree = checkSettled && usernameCheck.data!.available;
+
   const mutation = useMutation({
     mutationFn: async () => {
       if (mode === 'login') {
@@ -134,7 +151,7 @@ export function LoginPage() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (isRegister && step === 1) {
-      if (usernameValid) setStep(2);
+      if (usernameValid && !usernameTaken) setStep(2);
       return;
     }
     mutation.mutate();
@@ -226,24 +243,42 @@ export function LoginPage() {
               </div>
               <div className="auth-field">
                 <label htmlFor="username">{tr('用户名', 'Username')}</label>
-                <input
-                  id="username"
-                  className="auth-input"
-                  type="text"
-                  required
-                  autoComplete="username"
-                  placeholder="e.g. zhang_san"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value.toLowerCase())}
-                />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    id="username"
+                    className="auth-input"
+                    type="text"
+                    required
+                    autoComplete="username"
+                    placeholder="e.g. zhang_san"
+                    style={{ width: '100%' }}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                  />
+                  {usernameFree && (
+                    <Icon
+                      name="check"
+                      size={15}
+                      style={{
+                        position: 'absolute',
+                        right: 12,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        color: 'var(--ok)',
+                      }}
+                    />
+                  )}
+                </div>
                 <div
                   style={{
                     fontSize: 11,
-                    color: username && !usernameValid ? 'var(--danger-tx)' : 'var(--text-4)',
+                    color: usernameTaken || (username && !usernameValid) ? 'var(--danger-tx)' : 'var(--text-4)',
                     marginTop: 4,
                   }}
                 >
-                  {tr('小写字母、数字、下划线，3-32 位；全局唯一', 'lowercase letters, digits, underscore; 3-32 chars; unique')}
+                  {usernameTaken
+                    ? tr('用户名已存在，换一个吧', 'Username already taken — try another')
+                    : tr('小写字母、数字、下划线，3-32 位；全局唯一', 'lowercase letters, digits, underscore; 3-32 chars; unique')}
                 </div>
               </div>
               <div className="auth-field">
@@ -345,7 +380,7 @@ export function LoginPage() {
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={mutation.isPending || (isRegister && !usernameValid)}
+              disabled={mutation.isPending || (isRegister && (!usernameValid || usernameTaken))}
               style={{ width: '100%', justifyContent: 'center', height: 38, marginTop: 6 }}
             >
               {mutation.isPending ? (
