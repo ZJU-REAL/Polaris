@@ -13,3 +13,21 @@ class AffiliationModeRead(BaseModel):
 
 class AffiliationModeUpdate(BaseModel):
     mode: AffiliationMode
+
+
+class DailyEmbedRead(BaseModel):
+    """每日新论文是否自动建向量（开了才能做语义检索；默认关）。"""
+
+    enabled: bool
+
+
+class DailyEmbedUpdate(BaseModel):
+    enabled: bool
+
+
+class DailyEmbedBackfillResult(BaseModel):
+    """一次性补建向量的结果：本次新建 / 已有跳过 / 未成功。"""
+
+    embedded: int
+    skipped: int
+    failed: int = 0

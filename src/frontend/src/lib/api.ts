@@ -2322,7 +2322,8 @@ export interface DailyPaperDetail extends DailyPaperItem {
   pdf_available: boolean;
 }
 
-export type DailyPage = PageOf<DailyPaperItem>;
+/** 每日论文分页；语义检索时后端回带实际用的检索方式（旧后端不返回 → 可选）。 */
+export type DailyPage = PageOf<DailyPaperItem> & { mode_used?: SearchMode };
 
 export interface DailyDay {
   /** YYYY-MM-DD */
@@ -3940,6 +3941,8 @@ export const api = {
       announce?: 'new' | 'cross';
       /** 订阅分类筛选，如 cs.AI；不传=全部分类 */
       category?: string;
+      /** 检索方式：keyword=字面匹配，semantic=向量检索（只覆盖已生成向量的论文） */
+      mode?: SearchMode;
     } = {},
   ): Promise<DailyPage> {
     const params = new URLSearchParams();
@@ -3950,8 +3953,15 @@ export const api = {
     if (opts.q) params.set('q', opts.q);
     if (opts.announce) params.set('announce', opts.announce);
     if (opts.category) params.set('category', opts.category);
+    if (opts.mode) params.set('mode', opts.mode);
     const qs = params.toString();
     return request<DailyPage>(`/daily/papers${qs ? `?${qs}` : ''}`);
+  },
+  /** 导出每日论文的引用（不传 ids = 当前池全部）。 */
+  downloadDailyCitations(opts: { format: CitationFormat; ids?: string[] }): Promise<Blob> {
+    const params = new URLSearchParams({ format: opts.format });
+    if (opts.ids?.length) params.set('ids', opts.ids.join(','));
+    return requestBlob(`/daily/export/citations?${params.toString()}`);
   },
   getDailyPaper(entryId: string): Promise<DailyPaperDetail> {
     return request<DailyPaperDetail>(`/daily/papers/${entryId}`);

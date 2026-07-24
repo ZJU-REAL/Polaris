@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 # 前端按此固定顺序渲染进度条；事件 data.stage 取值于此
 STAGES = ["download", "extract", "embed", "score"]
 
+# 论文级向量的文本上限（字符）
+EMBED_TEXT_MAX_CHARS = 2000
+
 _OWNER_TTL_SECONDS = 600  # paper_task_owner 归属 key 存活时间
 
 
@@ -43,6 +46,21 @@ def paper_processing_complete(paper: Paper) -> bool:
     return bool(paper.pdf_path and paper.full_text_path and paper.embedding is not None)
 
 
+def paper_embedding_text(paper: Paper) -> str:
+    """论文级向量的统一文本口径：标题 + 作者名 + 摘要（截断 EMBED_TEXT_MAX_CHARS 字）。
+
+    三处生成 Paper.embedding 的地方共用（手动添加补全、ingest 上链批量、每日池批量），
+    保证同一批向量在同一口径下可比。作者名进文本是为了「找某人的工作」这类检索。
+    """
+    names: list[str] = []
+    for item in paper.authors or []:
+        name = item.get("name") if isinstance(item, dict) else item
+        if name and str(name).strip():
+            names.append(str(name).strip())
+    parts = [paper.title or "", ", ".join(names), paper.abstract or ""]
+    return "\n".join(parts)[:EMBED_TEXT_MAX_CHARS]
+
+
 async def embed_paper(
     paper: Paper,
     *,
@@ -50,15 +68,14 @@ async def embed_paper(
     project_id: uuid.UUID | None = None,
     library_id: uuid.UUID | None = None,
 ) -> None:
-    """为论文生成 Paper.embedding（复用 wiki.link_concepts 的嵌入口径）。
+    """为论文生成 Paper.embedding（文本口径见 paper_embedding_text）。
 
     provider 不支持嵌入时抛 NotImplementedError（调用方按 skipped 处理）。
     """
     from app.core.llm.router import get_llm_router
 
-    text = f"{paper.title}\n{paper.tldr or ''}\n{paper.abstract or ''}"[:2000]
     vectors = await get_llm_router().embed(
-        [text],
+        [paper_embedding_text(paper)],
         user_id=user_id,
         project_id=project_id,
         library_id=library_id,

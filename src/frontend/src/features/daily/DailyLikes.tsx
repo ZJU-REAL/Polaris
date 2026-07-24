@@ -14,10 +14,13 @@ import {
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
-   每日新论文的行内点赞区：[♥] [头像堆] [+N] [数字]。
+   每日新论文的点赞区：[♥] [头像堆] [+N] [数字]。
    - 点击爱心乐观更新（翻转 liked_by_me、count±1、头像堆增删自己）；
    - 悬停头像堆 ~300ms 弹出完整点赞名单（懒加载）；
    - like_count=0 时只渲染灰爱心 + 0，行高不抖动。
+   两种排布：
+   - 'inline'（默认，详情页操作栏）：紧凑一串，宽度自适应；
+   - 'row'（列表行第三行）：占满整行，爱心在行头、头像堆居中且只占一行、行尾是「N 人赞过」。
    ============================================================ */
 
 // 点赞爱心的红色（各端点赞通用色，刻意不随主题变化的局部常量）
@@ -52,7 +55,13 @@ function applyLikeState(qc: QueryClient, state: DailyLikeState) {
   );
 }
 
-export function DailyLikes({ item }: { item: DailyPaperItem }) {
+export function DailyLikes({
+  item,
+  variant = 'inline',
+}: {
+  item: DailyPaperItem;
+  variant?: 'inline' | 'row';
+}) {
   const qc = useQueryClient();
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -149,39 +158,48 @@ export function DailyLikes({ item }: { item: DailyPaperItem }) {
   // 弹层放行上方；贴近视口顶部时改放下方
   const below = anchor !== null && anchor.top < 240;
 
+  const isRow = variant === 'row';
+  const showPile = item.like_count > 0 && item.likers_preview.length > 0;
+
   return (
     <div
       className="row"
-      style={{ gap: 5, flexShrink: 0 }}
+      style={isRow ? { gap: 6, width: '100%', minWidth: 0, marginTop: 4 } : { gap: 5, flexShrink: 0 }}
       onClick={(e) => e.stopPropagation()}
     >
       <button
         className="icon-btn"
-        style={{ width: 24, height: 24 }}
+        style={isRow ? { width: 20, height: 20, flexShrink: 0 } : { width: 24, height: 24 }}
         title={item.liked_by_me ? tr('取消点赞', 'Unlike') : tr('点赞', 'Like')}
         onClick={toggle}
       >
         <span key={popKey} className={popKey > 0 ? 'heart-pop' : undefined} style={{ display: 'flex' }}>
           <Icon
             name={item.liked_by_me ? 'heartFill' : 'heart'}
-            size={15}
+            size={isRow ? 14 : 15}
             style={{ color: item.liked_by_me ? HEART_RED : 'var(--text-4)' }}
           />
         </span>
       </button>
 
-      {item.like_count > 0 && item.likers_preview.length > 0 && (
+      {/* 行内排布下头像堆占中间那一段：只占一行，装不下的靠 Facepile 的 +N 收尾 */}
+      {isRow && !showPile && <div style={{ flex: 1 }} />}
+      {showPile && (
         <div
           ref={wrapRef}
           onMouseEnter={onEnter}
           onMouseLeave={onLeave}
-          style={{ display: 'flex', position: 'relative' }}
+          style={
+            isRow
+              ? { display: 'flex', position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden', flexWrap: 'nowrap' }
+              : { display: 'flex', position: 'relative' }
+          }
         >
           <Facepile
             users={item.likers_preview}
             total={item.like_count}
-            size={20}
-            accentFirst={item.liked_by_me}
+            size={isRow ? 18 : 20}
+            accentFirst={!isRow && item.liked_by_me}
           />
 
           {hovered && anchor && (
@@ -239,14 +257,20 @@ export function DailyLikes({ item }: { item: DailyPaperItem }) {
       )}
 
       <span
-        className="mono"
+        className={isRow ? undefined : 'mono'}
         style={{
           fontSize: 11,
           color: item.like_count > 0 ? 'var(--text-3)' : 'var(--text-4)',
           minWidth: 14,
+          flexShrink: 0,
+          whiteSpace: 'nowrap',
         }}
       >
-        {item.like_count}
+        {isRow
+          ? item.like_count > 0
+            ? tr(`${item.like_count} 人赞过`, `${item.like_count} likes`)
+            : tr('还没人赞过', 'No likes yet')
+          : item.like_count}
       </span>
     </div>
   );
