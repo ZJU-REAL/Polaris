@@ -49,27 +49,30 @@ async def list_projects(session: AsyncSession, user_id: uuid.UUID) -> Sequence[P
 async def create_project(
     session: AsyncSession, owner_id: uuid.UUID, data: ProjectCreate
 ) -> Project:
-    """建项目并把 owner 记为成员（role=owner）。"""
+    """建课题并把 owner 记为成员（role=owner）。
+
+    P9c：课题不再拥有库，也不拥有收录配置——不自动建隐式库、不写收录配置。
+    只建 project（name + 一句话 statement 存入 ``definition.statement`` 供课题语境
+    提示）+ 按 ``source_library_ids`` 关联**已有**文献库（可为空，空=课题暂无语料，
+    各消费端给空态）。文献库全部是独立创建、管理员审批的（P9b）。
+    """
     slug = await _unique_slug(session, data.slug or slugify(data.name))
+    statement = (data.statement or "").strip()
     project = Project(
         name=data.name,
         slug=slug,
-        definition=data.definition,
+        definition={"statement": statement} if statement else None,
         owner_id=owner_id,
     )
     session.add(project)
     await session.flush()
     session.add(ProjectMember(project_id=project.id, user_id=owner_id, role="owner"))
-    # 过渡期：每个课题仍自动建一个起源库（论文归属经 library_papers 引用内容池）。
-    # P7 起库/课题解耦——这里同时把它记成一条关联（topic_source_libraries），
-    # 语料并集读路径与「起源库」解析口径一致；Step 3 将改为可选关联既有库，
-    # 不再强制新建。
-    from app.services.libraries import implicit_library_for, set_source_libraries
+    if data.source_library_ids:
+        from app.services.libraries import set_source_libraries
 
-    library = implicit_library_for(project)
-    session.add(library)
-    await session.flush()
-    await set_source_libraries(session, topic_id=project.id, library_ids=[library.id])
+        await set_source_libraries(
+            session, topic_id=project.id, library_ids=list(data.source_library_ids)
+        )
     await session.commit()
     await session.refresh(project)
     return project

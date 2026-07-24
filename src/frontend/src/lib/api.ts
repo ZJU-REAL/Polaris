@@ -2409,7 +2409,11 @@ export const api = {
   listProjects(): Promise<ProjectRead[]> {
     return request<ProjectRead[]>('/projects');
   },
-  createProject(input: { name: string; definition: ProjectDefinition }): Promise<ProjectRead> {
+  createProject(input: {
+    name: string;
+    statement?: string;
+    source_library_ids?: string[];
+  }): Promise<ProjectRead> {
     return requestJson<ProjectRead>('/projects', 'POST', input);
   },
   /** 由 LLM 根据一句话定义草拟完整 definition（目标/问题/rubric/同义词等）。 */

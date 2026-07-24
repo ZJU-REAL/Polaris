@@ -35,6 +35,7 @@ from app.services.literature import (
 from app.services.literature.pdf_extract import figure_path
 from tests.conftest import (
     RecordingBus,
+    make_project_with_library,
     project_concepts,
     project_paper_rows,
     register_and_login,
@@ -244,11 +245,11 @@ async def wiki_mocks(app):
 async def _setup_project(client):
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
-    resp = await client.post(
-        "/api/projects", json={"name": "wiki-proj", "definition": DEFINITION}, headers=headers
+    # P9c：课题不再自动建库——显式配一个带 DEFINITION 的 active 起源库并关联。
+    project_id, _library_id = await make_project_with_library(
+        client, headers, name="wiki-proj", definition=DEFINITION
     )
-    assert resp.status_code == 201, resp.text
-    return resp.json()["id"], headers
+    return project_id, headers
 
 
 def _make_engine() -> tuple[VoyageEngine, RecordingBus]:
@@ -519,13 +520,12 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
     """稀疏 definition（只有 statement）也能跑通 bootstrap 全链路（默认 cs.* 分类兜底）。"""
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
-    resp = await client.post(
-        "/api/projects",
-        json={"name": "sparse-proj", "definition": {"statement": "自动化科研 agent 的方法研究"}},
-        headers=headers,
+    project_id, _library_id = await make_project_with_library(
+        client,
+        headers,
+        name="sparse-proj",
+        definition={"statement": "自动化科研 agent 的方法研究"},
     )
-    assert resp.status_code == 201, resp.text
-    project_id = resp.json()["id"]
 
     resp = await client.post(
         f"/api/projects/{project_id}/ingest",

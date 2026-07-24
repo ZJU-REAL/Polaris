@@ -115,21 +115,46 @@ _MEMBERSHIP_FIELDS = (
 )
 
 
-async def add_paper(session, *, project_id, **fields):
-    """测试造数据统一入口：建内容池 Paper + 隐式库成员行，返回 Paper。
+async def ensure_project_library(session, project_id):
+    """确保课题有一个 active 起源库并已关联；没有则新建（测试造数据用）。
 
-    兼容旧单表口径：status/relevance_score/wiki_content 等判断字段自动落成员行。
+    P9c 起 create_project 不再自动建隐式库——语料相关测试经此显式补一个
+    project_id 回指的 active 库并登记为关联，等价存量隐式库效果。
     """
     import uuid as _uuid
 
+    from app.models.library_direction import DirectionLibrary
+    from app.models.project import Project
+    from app.services.libraries import get_library_for_project, set_source_libraries
+
+    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
+    library = await get_library_for_project(session, pid)
+    if library is not None:
+        return library
+    project = await session.get(Project, pid)
+    library = DirectionLibrary(
+        name=project.name if project else "test-lib",
+        project_id=pid,
+        status="active",
+        created_by=None,
+    )
+    session.add(library)
+    await session.flush()
+    await set_source_libraries(session, topic_id=pid, library_ids=[library.id])
+    return library
+
+
+async def add_paper(session, *, project_id, **fields):
+    """测试造数据统一入口：建内容池 Paper + 起源库成员行，返回 Paper。
+
+    兼容旧单表口径：status/relevance_score/wiki_content 等判断字段自动落成员行。
+    """
     from app.models.library_direction import LibraryPaper
     from app.models.paper import Paper
-    from app.services.libraries import get_library_for_project
 
     member_kwargs = {k: fields.pop(k) for k in list(fields) if k in _MEMBERSHIP_FIELDS}
     member_kwargs.setdefault("status", "candidate")
-    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
-    library = await get_library_for_project(session, pid)
+    library = await ensure_project_library(session, project_id)
     paper = Paper(**fields)
     session.add(paper)
     await session.flush()
@@ -139,13 +164,12 @@ async def add_paper(session, *, project_id, **fields):
 
 
 async def membership_of(session, *, project_id, paper_id):
-    """取论文在某方向隐式库的成员行（断言判断字段用）。"""
+    """取论文在某课题起源库的成员行（断言判断字段用）。"""
     import uuid as _uuid
 
-    from app.services.libraries import get_library_for_project, get_membership
+    from app.services.libraries import get_membership
 
-    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
-    library = await get_library_for_project(session, pid)
+    library = await ensure_project_library(session, project_id)
     return await get_membership(
         session,
         library_id=library.id,
@@ -154,17 +178,13 @@ async def membership_of(session, *, project_id, paper_id):
 
 
 async def project_paper_rows(session, *, project_id):
-    """某方向隐式库的 (Paper, LibraryPaper) 全量列表（测试断言判断字段用）。"""
-    import uuid as _uuid
-
+    """某课题起源库的 (Paper, LibraryPaper) 全量列表（测试断言判断字段用）。"""
     from sqlalchemy import select
 
     from app.models.library_direction import LibraryPaper
     from app.models.paper import Paper
-    from app.services.libraries import get_library_for_project
 
-    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
-    library = await get_library_for_project(session, pid)
+    library = await ensure_project_library(session, project_id)
     rows = (
         await session.execute(
             select(Paper, LibraryPaper)
@@ -176,16 +196,12 @@ async def project_paper_rows(session, *, project_id):
 
 
 async def project_concepts(session, *, project_id):
-    """某方向隐式库的概念列表。"""
-    import uuid as _uuid
-
+    """某课题起源库的概念列表。"""
     from sqlalchemy import select
 
     from app.models.paper import Concept
-    from app.services.libraries import get_library_for_project
 
-    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
-    library = await get_library_for_project(session, pid)
+    library = await ensure_project_library(session, project_id)
     return list(
         (
             await session.execute(select(Concept).where(Concept.library_id == library.id))
@@ -194,18 +210,56 @@ async def project_concepts(session, *, project_id):
 
 
 async def add_concept(session, *, project_id, **fields):
-    """建方向库概念（旧 Concept(project_id=...) 口径的替代）。"""
-    import uuid as _uuid
-
+    """建课题起源库概念（旧 Concept(project_id=...) 口径的替代）。"""
     from app.models.paper import Concept
-    from app.services.libraries import get_library_for_project
 
-    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
-    library = await get_library_for_project(session, pid)
+    library = await ensure_project_library(session, project_id)
     concept = Concept(library_id=library.id, **fields)
     session.add(concept)
     await session.flush()
     return concept
+
+
+async def make_project_with_library(
+    client, headers, *, name="wiki-proj", statement=None, definition=None
+):
+    """建课题 + 一条 active 起源库（可带 definition）+ 关联，返回 (project_id, library_id)。
+
+    P9c 起 create_project 不建库；依赖库语料/ingest 的 API 测试经此显式配库
+    （project_id 回指 + 关联，等价存量隐式库）。definition 同时镜像标量列，供
+    ingest 在 definition 为空时的回退读取。project_id 以 str 返回（与 API 一致）。
+    """
+    import uuid as _uuid
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary
+    from app.services.libraries import set_source_libraries
+
+    payload: dict = {"name": name}
+    if statement is not None:
+        payload["statement"] = statement
+    resp = await client.post("/api/projects", json=payload, headers=headers)
+    assert resp.status_code == 201, resp.text
+    project_id = _uuid.UUID(resp.json()["id"])
+    async with get_sessionmaker()() as session:
+        library = DirectionLibrary(
+            name=name,
+            definition=definition,
+            project_id=project_id,
+            status="active",
+            created_by=None,
+        )
+        if definition:
+            library.statement = definition.get("statement")
+            library.rubric = definition.get("rubric")
+            library.anchors = definition.get("anchor_papers")
+            library.cadence = definition.get("cadence")
+        session.add(library)
+        await session.flush()
+        await set_source_libraries(session, topic_id=project_id, library_ids=[library.id])
+        await session.commit()
+        library_id = library.id
+    return str(project_id), library_id
 
 
 def _username_from_email(email: str) -> str:

@@ -16,9 +16,11 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    definition: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # 访谈结果 JSON
-    # 文献 ingest 状态：{"watermark": iso, "last_run": {"voyage_id", "finished_at"}}
-    # 已处理论文不入此列——去重以 Paper 表（arxiv_id/doi/title）为准
+    # P9c：仅存 {"statement": 一句话}（课题语境提示）。收录配置（rubric/anchors/
+    # keywords/goals/scope/questions/cadence）权威源在文献库 definition，不再进此列。
+    definition: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    # 已退役（P8/P9c）：水位线/last_run 权威源在库 ``DirectionLibrary.ingest_state``。
+    # 此列不再被读写，保留仅为暂缓删列（后续迁移可 drop）。
     ingest_state: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     owner_id: Mapped[uuid.UUID] = mapped_column(

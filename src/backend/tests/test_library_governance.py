@@ -9,7 +9,7 @@ from app.models.library_direction import DirectionLibrary, DirectionLibraryCurat
 from app.models.project import Project
 from app.models.user import User
 from app.services import libraries as libraries_service
-from tests.conftest import register_and_login
+from tests.conftest import make_project_with_library, register_and_login
 
 
 async def _register(client, email):
@@ -28,13 +28,9 @@ async def _setup(client):
     owner = await _register(client, "gov-owner@example.com")
     curator = await _register(client, "gov-curator@example.com")
     stranger = await _register(client, "gov-stranger@example.com")
-    resp = await client.post("/api/projects", json={"name": "治理方向"}, headers=owner)
-    assert resp.status_code == 201, resp.text
-    project_id = resp.json()["id"]
-    resp = await client.get("/api/libraries", headers=owner)
-    assert resp.status_code == 200, resp.text
-    library_id = next(x["id"] for x in resp.json() if x["project_id"] == project_id)
-    return admin, owner, curator, stranger, project_id, library_id
+    # P9c：课题不再自动建库——显式建课题 + 关联一条 active 起源库（project_id 回指）。
+    project_id, library_id = await make_project_with_library(client, owner, name="治理方向")
+    return admin, owner, curator, stranger, project_id, str(library_id)
 
 
 async def _appoint(client, admin, library_id, email) -> uuid.UUID:

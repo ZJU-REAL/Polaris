@@ -220,9 +220,7 @@ async def register(
             await projects_service.create_project(
                 session,
                 owner_id=user.id,
-                data=ProjectCreate(
-                    name=direction[:255], definition={"statement": direction}
-                ),
+                data=ProjectCreate(name=direction[:255], statement=direction),
             )
         except Exception:  # noqa: BLE001
             logger.exception("preset direction project creation failed: %s", direction)

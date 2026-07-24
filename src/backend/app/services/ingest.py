@@ -175,7 +175,14 @@ async def create_ingest_voyage(
 
 
 async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str, int]:
+    counts = {status: 0 for status in PAPER_STATUSES}
+    # P9c：课题可无起源库（空语料）——直接给零计数，不报错。
     library = await get_library_for_project(session, project_id)
+    if library is None:
+        counts["total"] = 0
+        counts["library"] = 0
+        counts["pending_compile"] = 0
+        return counts
     rows = (
         await session.execute(
             select(LibraryPaper.status, func.count())
@@ -183,7 +190,6 @@ async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str
             .group_by(LibraryPaper.status)
         )
     ).all()
-    counts = {status: 0 for status in PAPER_STATUSES}
     total = 0
     for status, count in rows:
         counts[status] = int(count)
