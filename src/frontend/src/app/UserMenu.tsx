@@ -50,8 +50,8 @@ function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         >
           <div
             style={{
-              width: 148,
-              height: 148,
+              width: 168,
+              height: 224,
               borderRadius: 10,
               background: 'var(--surface-2)',
               border: '0.5px solid var(--border)',
@@ -62,7 +62,7 @@ function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             }}
           >
             <img
-              src="/xhs-qr.png"
+              src="/xhs-qr.jpg"
               alt={tr('小红书二维码', 'RED (Xiaohongshu) QR')}
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
               onError={(e) => {
