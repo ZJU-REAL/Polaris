@@ -167,7 +167,6 @@ async def list_shelf(
     # 故过滤只作用于 Paper 本体与请求者个人视角（PaperUserMeta），书架保持方向无关。
     base = apply_paper_filters(
         base,
-        project_id=None,
         status=None,
         q=q,
         author=author,
