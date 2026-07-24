@@ -322,14 +322,14 @@ async def test_papers_status_group_filters(client):
 async def test_delete_paper_and_batch(client, tmp_path):
     """删除论文（docs/api-lit.md §8.6）：单删 + 批量删 + 成员校验。
 
-    P4 全局内容池语义：删除只摘掉本方向的成员行，内容池行与落盘文件保留
-    （其他方向可复用）。"""
+    全局内容池语义：删除摘掉本方向的成员行；当这是该论文最后一处引用（别处都没有）时，
+    连内容池本体与落盘文件一并回收（孤儿清理）。这里 p1/p2 只在本方向，故删除后本体消失。"""
     project_id, headers, ids = await _setup(client)
 
     from app.core.db import get_sessionmaker
     from app.services.literature.pdf_extract import figure_path
 
-    # 给 p1 落一个假 PDF 和图片文件：P4 起删除不清理内容池文件
+    # 给 p1 落一个假 PDF 和图片文件：孤儿回收时应一并清理
     pdf = tmp_path / "p1.pdf"
     pdf.write_bytes(b"%PDF-fake")
     fig = figure_path(ids["p1"], 0)
@@ -348,10 +348,10 @@ async def test_delete_paper_and_batch(client, tmp_path):
 
     resp = await client.delete(f"/api/papers/{ids['p1']}", headers=headers)
     assert resp.status_code == 204
-    # 内容池行与文件保留；本方向视角下论文不复存在
-    assert pdf.exists() and fig.exists()
+    # 别处再无引用 → 内容池本体与落盘文件一并回收（孤儿清理）
+    assert not pdf.exists() and not fig.exists()
     async with get_sessionmaker()() as session:
-        assert await session.get(Paper, uuid.UUID(ids["p1"])) is not None
+        assert await session.get(Paper, uuid.UUID(ids["p1"])) is None
     resp = await client.get(f"/api/papers/{ids['p1']}", headers=headers)
     assert resp.status_code == 404
 

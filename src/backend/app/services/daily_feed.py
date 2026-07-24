@@ -128,12 +128,29 @@ def _make_pool_paper(entry: dict[str, Any]) -> Paper:
 
 
 async def cleanup_expired(session: AsyncSession, *, today: dt.date | None = None) -> int:
-    """删过期 entry（保留含今天共 RETENTION 天）；likes 显式跟删（不依赖 DB 级联）。"""
+    """删过期 entry（保留含今天共 RETENTION 天）；likes 显式跟删（不依赖 DB 级联）。
+
+    过期退出推送后，若某文章不再被任何集合引用（库/书架/个人库/论著），回收其内容池
+    本体 + 落盘文件——否则从没人收藏的每日推送会把内容池越堆越大。
+    """
     cutoff = (today or _today_utc()) - dt.timedelta(days=DAILY_FEED_RETENTION_DAYS - 1)
-    expired_ids = select(DailyFeedEntry.id).where(DailyFeedEntry.feed_date < cutoff)
+    expired = (
+        await session.execute(
+            select(DailyFeedEntry.id, DailyFeedEntry.paper_id).where(
+                DailyFeedEntry.feed_date < cutoff
+            )
+        )
+    ).all()
+    if not expired:
+        return 0
+    expired_ids = [row.id for row in expired]
     await session.execute(delete(DailyFeedLike).where(DailyFeedLike.entry_id.in_(expired_ids)))
-    result = await session.execute(delete(DailyFeedEntry).where(DailyFeedEntry.feed_date < cutoff))
-    return result.rowcount or 0
+    await session.execute(delete(DailyFeedEntry).where(DailyFeedEntry.id.in_(expired_ids)))
+    # 延迟 import 避免与 papers 服务循环依赖；entry 已删，孤儿检查不会再命中本推送
+    from app.services.papers import gc_orphan_papers
+
+    await gc_orphan_papers(session, [row.paper_id for row in expired])
+    return len(expired_ids)
 
 
 async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:

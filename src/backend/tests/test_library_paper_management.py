@@ -168,7 +168,8 @@ async def test_standalone_batch_delete_and_empty_trash(client):
             .all()
         )
         assert rows == []
-        assert await session.get(Paper, uuid.UUID(p1)) is not None
+        # 清空垃圾桶后该论文别处再无引用 → 内容池本体也被回收（孤儿清理）
+        assert await session.get(Paper, uuid.UUID(p1)) is None
 
 
 async def test_standalone_hard_batch_delete(client):
