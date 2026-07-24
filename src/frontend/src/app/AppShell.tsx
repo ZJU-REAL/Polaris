@@ -11,7 +11,7 @@ import { topicPath, useProject } from './project';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
-import { api, getToken, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
+import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
@@ -86,6 +86,7 @@ function crumbFor(pathname: string): [string, string] {
     '/library': ['Polaris', tr('我的文献库', 'My Library')],
     '/skills': ['Polaris', tr('技能', 'Skills')],
     '/settings': ['Polaris', tr('设置', 'Settings')],
+    '/admin': ['Polaris', tr('管理', 'Manage')],
   };
   return table[p] ?? ['Polaris', '—'];
 }
@@ -312,6 +313,7 @@ function NavItem({ n }: { n: NavEntry }) {
 
 export function AppShell() {
   const location = useLocation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   // —— 审批抽屉 ——
@@ -523,6 +525,18 @@ export function AppShell() {
             <span>{tr('搜索论文 / 想法 / 实验…', 'Search papers / ideas / experiments…')}</span>
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
           </div>
+          {/* 管理员设置入口（仅管理员可见） */}
+          {isAdmin(me) && (
+            <button
+              className="icon-btn"
+              onClick={() => navigate('/admin')}
+              title={tr('管理', 'Manage')}
+              aria-label={tr('管理', 'Manage')}
+              style={location.pathname === '/admin' ? { color: 'var(--accent)', background: 'var(--surface-2)' } : undefined}
+            >
+              <Icon name="settings" size={16} />
+            </button>
+          )}
           <LangToggle />
           <FeedbackWidget />
           <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>

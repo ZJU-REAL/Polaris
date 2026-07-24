@@ -159,6 +159,8 @@ export const router = createBrowserRouter([
       { path: 'mcp-tools', element: <Navigate to="/settings?tab=mcp" replace /> },
       { path: 'skills', element: page(() => import('../features/skills/SkillsPage'), 'SkillsPage') },
       { path: 'settings', element: page(() => import('../features/settings/SettingsPage'), 'SettingsPage') },
+      // 管理员设置独立成页（非管理员进来是「无权访问」空态）
+      { path: 'admin', element: page(() => import('../features/settings/AdminSettingsPage'), 'AdminSettingsPage') },
     ],
   },
 ]);

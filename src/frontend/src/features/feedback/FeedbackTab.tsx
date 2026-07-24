@@ -29,7 +29,7 @@ import {
 } from './labels';
 
 /* ============================================================
-   /settings · 反馈 Tab（admin）：列表 + 过滤 + triage + 生成 GitHub issue。
+   /admin · 反馈 Tab（admin）：列表 + 过滤 + triage + 生成 GitHub issue。
    ============================================================ */
 
 function parseLabels(raw: string): string[] {

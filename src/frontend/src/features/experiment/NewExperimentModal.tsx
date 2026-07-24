@@ -180,7 +180,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       </FormField>
       {noCreds && (
         <div style={{ marginTop: -6, marginBottom: 14 }}>
-          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate('/settings'); }}>
+          <button className="btn btn-soft sm" onClick={() => { onClose(); navigate('/settings?tab=ssh'); }}>
             <Icon name="settings" size={13} />
             {tr('去设置页添加 SSH 凭据', 'Add an SSH credential in Settings')}
           </button>
