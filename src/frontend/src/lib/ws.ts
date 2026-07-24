@@ -7,6 +7,7 @@
    ============================================================ */
 
 import type { GateRead, ReviewMessageRead } from './api';
+import { wsUrl } from './endpoint';
 
 export type NotificationMessage =
   | { type: 'gate.created'; gate: GateRead }
@@ -54,8 +55,7 @@ export function connectNotifications(
       scheduleReconnect();
       return;
     }
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${proto}://${window.location.host}/ws/notifications?token=${encodeURIComponent(token)}`;
+    const url = wsUrl(`/ws/notifications?token=${encodeURIComponent(token)}`);
     try {
       ws = new WebSocket(url);
     } catch {
