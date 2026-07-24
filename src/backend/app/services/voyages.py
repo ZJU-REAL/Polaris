@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.project import ProjectMember
+from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.voyage import VoyageCreate
 
@@ -53,18 +54,50 @@ async def list_voyages(
     return (await session.execute(stmt)).scalars().all()
 
 
+async def _is_project_member(
+    session: AsyncSession, *, project_id: uuid.UUID, user_id: uuid.UUID
+) -> bool:
+    row = await session.execute(
+        select(ProjectMember.user_id).where(
+            ProjectMember.project_id == project_id, ProjectMember.user_id == user_id
+        )
+    )
+    return row.first() is not None
+
+
 async def get_voyage(
     session: AsyncSession,
     *,
     voyage_id: uuid.UUID,
     user_id: uuid.UUID,
     with_steps: bool = False,
+    user: User | None = None,
 ) -> VoyageRun | None:
-    """取航程；非项目成员视为不存在（返回 None）。"""
-    stmt = _member_filter(select(VoyageRun), user_id).where(VoyageRun.id == voyage_id)
+    """取航程；无访问权视为不存在（返回 None）。
+
+    访问权：起源课题成员（项目作用域任务）∪ 可管理其方向库者（P9a 库化任务——独立库
+    无课题，鉴权走库级写权限：成员/策展人/admin）。库级鉴权需要 ``user``（角色/策展人
+    判定），故 API 层传完整 user；仅传 user_id 时退化为项目成员判定。
+    """
+    stmt = select(VoyageRun).where(VoyageRun.id == voyage_id)
     if with_steps:
         stmt = stmt.options(selectinload(VoyageRun.steps))
-    return (await session.execute(stmt)).scalar_one_or_none()
+    run = (await session.execute(stmt)).scalar_one_or_none()
+    if run is None:
+        return None
+    if run.project_id is not None and await _is_project_member(
+        session, project_id=run.project_id, user_id=user_id
+    ):
+        return run
+    if run.library_id is not None and user is not None:
+        from app.services.libraries import can_manage_library, get_library
+
+        library = await get_library(session, run.library_id)
+        if library is not None and await can_manage_library(
+            session, user=user, library=library
+        ):
+            return run
+    return None
 
 
 async def cancel_voyage(session: AsyncSession, run: VoyageRun) -> VoyageRun:

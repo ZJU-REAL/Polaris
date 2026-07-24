@@ -39,7 +39,7 @@ async def _get_owned_voyage(
     session: AsyncSession, voyage_id: uuid.UUID, user: User, with_steps: bool = False
 ) -> VoyageRun:
     run = await voyages_service.get_voyage(
-        session, voyage_id=voyage_id, user_id=user.id, with_steps=with_steps
+        session, voyage_id=voyage_id, user_id=user.id, with_steps=with_steps, user=user
     )
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="VOYAGE_NOT_FOUND")

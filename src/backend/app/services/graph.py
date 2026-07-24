@@ -49,6 +49,32 @@ async def project_graph(
     if not library_ids:
         # 课题无关联库 = 无语料 → 空图（前端给空态引导去关联文献库）
         return {"nodes": [], "edges": [], "paper_total": 0, "truncated": False}
+    return await _graph_for_library_ids(
+        session, library_ids=library_ids, max_papers=max_papers, max_authors=max_authors
+    )
+
+
+async def library_graph(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    max_papers: int = MAX_PAPERS,
+    max_authors: int = MAX_AUTHORS,
+) -> dict[str, Any]:
+    """构建单个方向库的知识图谱（库工作台入口，含独立库）。"""
+    return await _graph_for_library_ids(
+        session, library_ids=[library_id], max_papers=max_papers, max_authors=max_authors
+    )
+
+
+async def _graph_for_library_ids(
+    session: AsyncSession,
+    *,
+    library_ids: list[uuid.UUID],
+    max_papers: int = MAX_PAPERS,
+    max_authors: int = MAX_AUTHORS,
+) -> dict[str, Any]:
+    """按一组库（并集）构图的共享实现。"""
     # 关联库并集：跨库同一论文按确定性视角归并，再按相关性排序截断 top max_papers
     dedup_rows = dedupe_member_rows(
         (

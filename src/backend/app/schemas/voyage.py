@@ -56,7 +56,8 @@ class VoyageRead(BaseModel):
     cursor: int
     budget: dict[str, Any] | None
     usage: dict[str, Any] | None
-    project_id: uuid.UUID
+    project_id: uuid.UUID | None = None
+    library_id: uuid.UUID | None = None
     created_by: uuid.UUID | None
     created_at: datetime
     updated_at: datetime

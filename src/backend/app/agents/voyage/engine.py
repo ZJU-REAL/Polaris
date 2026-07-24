@@ -158,8 +158,11 @@ class VoyageEngine:
         if self._bus is not None:
             await self._bus.publish_voyage_event(run_id, event, data)
 
-    async def _emit_notify(self, project_id: uuid.UUID, message: dict[str, Any]) -> None:
-        if self._bus is not None:
+    async def _emit_notify(
+        self, project_id: uuid.UUID | None, message: dict[str, Any]
+    ) -> None:
+        # P9a：库化任务可能无起源课题（project_id 为空）——无项目通知频道，静默跳过。
+        if project_id is not None and self._bus is not None:
             await self._bus.publish_notify(project_id, message)
 
     async def _emit_status(self, run: VoyageRun) -> None:
@@ -245,7 +248,12 @@ class VoyageEngine:
         """
         if "skills" in (run.checkpoint or {}):
             return
-        snapshot = await skills_service.snapshot_for_project(session, run.project_id)
+        # P9a：独立库任务无起源课题 → 无项目作用域技能，快照留空。
+        snapshot = (
+            await skills_service.snapshot_for_project(session, run.project_id)
+            if run.project_id is not None
+            else {}
+        )
         checkpoint = dict(run.checkpoint or {})
         checkpoint["skills"] = snapshot
         run.checkpoint = checkpoint

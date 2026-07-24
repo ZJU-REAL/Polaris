@@ -34,7 +34,7 @@ async def _setup_project(client, *, statement=STATEMENT, email="alice@example.co
     headers = {"Authorization": f"Bearer {token}"}
     resp = await client.post(
         "/api/projects",
-        json={"name": "deep-proj", "definition": {"statement": statement}},
+        json={"name": "deep-proj", "statement": statement},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text

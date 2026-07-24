@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
+  type DirectionLibrarySummary,
   type ReadingStatus,
   type ShelfImportInput,
   type ShelfItemRead,
@@ -15,8 +16,8 @@ import {
   type ShelfWikiSource,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { topicPath, useProject } from '../../app/project';
-import { libraryPath, useTopicLibrary } from '../libraries/hooks';
+import { useProject } from '../../app/project';
+import { libraryPath } from '../libraries/hooks';
 import {
   AdvancedPanel,
   AdvancedToggle,
@@ -166,6 +167,115 @@ function ShelfRow({
   );
 }
 
+/* ---------------- 关联文献库区块（书架之上） ---------------- */
+
+/** 非 active 库的小状态徽标（待审批 / 已驳回）。 */
+function LibStatusBadge({ status }: { status: DirectionLibrarySummary['status'] }) {
+  if (status === 'active') return null;
+  const cfg =
+    status === 'pending'
+      ? { zh: '待审批', en: 'Pending', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' }
+      : { zh: '已驳回', en: 'Rejected', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)' };
+  return (
+    <span className="pill sm" style={{ background: cfg.bg, color: cfg.tx, flexShrink: 0, marginLeft: 2 }}>
+      {tr(cfg.zh, cfg.en)}
+    </span>
+  );
+}
+
+/** 课题关联的文献库（语料来源）：库名 + 各库论文数 + 进库入口。
+    总篇数用工作台同源的 stats.papers_total（并集去重口径），不做 per-library 相加。 */
+function LinkedLibrariesBar({
+  pid,
+  libs,
+  corpusTotal,
+  loading,
+  onNavigate,
+}: {
+  pid: string;
+  libs: DirectionLibrarySummary[];
+  /** 并集语料总篇数（stats.papers_total，与工作台一致）；未就绪时 null */
+  corpusTotal: number | null;
+  loading: boolean;
+  onNavigate: (path: string) => void;
+}) {
+  const linkedCount = libs.length;
+  const totalPart = corpusTotal !== null ? tr(` · 共 ${corpusTotal} 篇`, ` · ${corpusTotal} papers`) : '';
+  const title =
+    linkedCount === 0
+      ? tr('关联文献库', 'Linked libraries')
+      : tr(`关联文献库 · ${linkedCount} 个${totalPart}`, `Linked libraries · ${linkedCount}${totalPart}`);
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 16, flexShrink: 0 }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: linkedCount === 0 ? 0 : 12 }}>
+        <span className="section-h">
+          <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
+          {title}
+        </span>
+        <button className="btn btn-ghost sm" onClick={() => onNavigate(`/projects/${pid}`)}>
+          <Icon name="link" size={12} />
+          {tr('管理关联库', 'Linked libraries')}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="row gap8">
+          <div className="skel" style={{ height: 30, width: 180 }} />
+          <div className="skel" style={{ height: 30, width: 150 }} />
+        </div>
+      ) : linkedCount === 0 ? (
+        <div className="row gap10" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.5, flex: 1, minWidth: 220 }}>
+            {tr(
+              '这个课题还没关联文献库——先去关联，才有可挑选的语料。',
+              'This topic has no linked libraries yet — link one to get a corpus to pick from.',
+            )}
+          </span>
+          <div className="row gap8">
+            <button className="btn btn-primary sm" onClick={() => onNavigate(`/projects/${pid}`)}>
+              <Icon name="link" size={13} />
+              {tr('去关联', 'Link a library')}
+            </button>
+            <button className="btn btn-ghost sm" onClick={() => onNavigate('/libraries')}>
+              {tr('浏览全部文献库', 'Browse all libraries')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+            {libs.map((lib) => (
+              <button
+                key={lib.id}
+                className="btn btn-soft sm"
+                style={{ maxWidth: 300 }}
+                title={lib.name}
+                onClick={() => onNavigate(libraryPath(lib.id))}
+              >
+                <Icon name="book" size={12} style={{ flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                  {lib.name}
+                </span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
+                  {tr(`${lib.paper_count} 篇`, `${lib.paper_count}`)}
+                </span>
+                <LibStatusBadge status={lib.status} />
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.55, marginTop: 10 }}>
+            {tr(
+              '这些库的论文并集就是课题的可用语料；下面「相关研究」是你从中手挑出来的一小撮，两个数不一样是正常的。',
+              'The union of these libraries is the corpus available to this topic; the related work below is the handful you hand-picked — the two counts differ by design.',
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- 页面 ---------------- */
 
 export function ResearchPage() {
@@ -173,9 +283,6 @@ export function ResearchPage() {
   const queryClient = useQueryClient();
   const { currentProjectId } = useProject();
   const pid = currentProjectId ?? '';
-  // 文献库入口：课题隐式库详情页（列表未就绪时退回旧 /wiki 路径由重定向兜底）
-  const topicLib = useTopicLibrary(pid || null);
-  const wikiHref = topicLib ? libraryPath(topicLib.id) : topicPath(pid, 'wiki');
 
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<ShelfSort>('added');
@@ -264,6 +371,35 @@ export function ResearchPage() {
     retry: false,
   });
   const shelvedIds = new Set(idsQuery.data?.paper_ids ?? []);
+
+  // 课题关联的文献库（语料来源）：缓存键与工作台/课题设置共享（['sourceLibraries', pid]）
+  const sourceLibrariesQuery = useQuery({
+    queryKey: ['sourceLibraries', pid],
+    queryFn: () => api.getSourceLibraries(pid),
+    enabled: !!pid,
+    retry: false,
+  });
+  // 并集语料总篇数：与工作台完全同源（['stats', pid] → papers_total），不做 per-library 相加
+  const statsQuery = useQuery({
+    queryKey: ['stats', pid],
+    queryFn: () => api.getStats(pid),
+    enabled: !!pid,
+    retry: false,
+  });
+  const libs = useMemo<DirectionLibrarySummary[]>(() => sourceLibrariesQuery.data ?? [], [sourceLibrariesQuery.data]);
+  const corpusTotal = statsQuery.data?.papers_total ?? null;
+
+  // 「文献库入口」目标：正好 1 个关联库→进那个库；多个→课题设置关联区；0 个→全部文献库列表。
+  // （不再指向隐式库 topicLib——新模型里课题无单一隐式库）
+  const firstLib = libs[0];
+  const libEntryHref =
+    libs.length === 1 && firstLib ? libraryPath(firstLib.id) : libs.length > 1 ? `/projects/${pid}` : '/libraries';
+  const libEntryLabel =
+    libs.length === 1
+      ? tr('去文献库', 'Open library')
+      : libs.length > 1
+        ? tr('管理关联库', 'Linked libraries')
+        : tr('浏览全部文献库', 'Browse libraries');
 
   const data = shelfQuery.data;
   const items = useMemo(() => data?.items ?? [], [data]);
@@ -358,8 +494,8 @@ export function ResearchPage() {
         eyebrow="Polaris · Related Work"
         title={tr('相关研究', 'Related Work')}
         sub={tr(
-          '这个课题直接依赖的论文：从文献库挑选，写下为什么相关，随手翻解读。',
-          'Papers this topic builds on: pick from the library, note why they matter, read the wikis.',
+          '你从关联文献库里手挑进课题的论文：写下为什么相关，随手翻解读。可用语料远不止这些。',
+          'Papers you hand-picked from the linked libraries into this topic: note why they matter, read the wikis. The corpus holds far more.',
         )}
         right={
           <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
@@ -367,6 +503,14 @@ export function ResearchPage() {
             {tr('添加论文', 'Add papers')}
           </button>
         }
+      />
+
+      <LinkedLibrariesBar
+        pid={pid}
+        libs={libs}
+        corpusTotal={corpusTotal}
+        loading={sourceLibrariesQuery.isLoading}
+        onNavigate={(path) => navigate(path)}
       />
 
       {/* —— 双栏卡片容器（同「我的文献库」外壳；窄屏上下堆叠） —— */}
@@ -596,9 +740,9 @@ export function ResearchPage() {
                         <Icon name="plus" size={13} />
                         {tr('添加论文', 'Add papers')}
                       </button>
-                      <button className="btn btn-soft sm" onClick={() => navigate(wikiHref)}>
+                      <button className="btn btn-soft sm" onClick={() => navigate(libEntryHref)}>
                         <Icon name="book" size={13} />
-                        {tr('去文献库', 'Open the library')}
+                        {libEntryLabel}
                       </button>
                     </div>
                   }
@@ -619,7 +763,8 @@ export function ResearchPage() {
         onClose={() => setAddOpen(false)}
         pid={pid}
         shelvedIds={shelvedIds}
-        wikiHref={wikiHref}
+        libraryHref={libEntryHref}
+        libraryLabel={libEntryLabel}
         addPending={addMutation.isPending}
         onAdd={(paperId) => addMutation.mutate(paperId)}
         importPending={importMutation.isPending}

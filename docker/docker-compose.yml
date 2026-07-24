@@ -25,6 +25,8 @@ services:
       retries: 10
 
   api:
+    # image 兼作构建 tag 与拉取来源：`build` 时打成此名，`docker compose pull` 时从此拉。
+    image: ${POLARIS_IMAGE_PREFIX:-tricktreat}/polaris-api:${POLARIS_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
@@ -44,6 +46,7 @@ services:
       - tectonic-cache:/root/.cache/Tectonic   # tectonic 宏包缓存（首次编译联网下载）
 
   worker:
+    image: ${POLARIS_IMAGE_PREFIX:-tricktreat}/polaris-worker:${POLARIS_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
@@ -61,6 +64,7 @@ services:
       - tectonic-cache:/root/.cache/Tectonic   # tectonic 宏包缓存（与 api 共享）
 
   frontend:
+    image: ${POLARIS_IMAGE_PREFIX:-tricktreat}/polaris-frontend:${POLARIS_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
