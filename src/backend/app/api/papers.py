@@ -279,6 +279,35 @@ async def paper_task_events(
     )
 
 
+@router.get("/projects/{project_id}/papers/{paper_id}", response_model=PaperDetail)
+async def get_project_paper(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperDetail:
+    """取某篇论文在**课题起源库**那份成员行的详情（课题论文库单篇详情）。
+
+    精确锁定起源库 (library, paper_id) 的成员行——相关度/状态/wiki 都是该库口径，
+    不做跨库归并（对照无库作用域的 ``GET /papers/{id}``）。论文不在该课题库 → 404。
+    鉴权同课题其它读端点（成员 ∪ 策展人 ∪ admin）。
+    """
+    await _get_managed_project(session, project_id, user)
+    library = await libraries_service.get_library_for_project(session, project_id)
+    if library is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+    view = await papers_service.get_library_paper_view(
+        session,
+        library_id=library.id,
+        project_id=project_id,
+        paper_id=paper_id,
+        with_concepts=True,
+    )
+    if view is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+    return await _paper_detail(session, view, user.id)
+
+
 @router.get("/papers/{paper_id}", response_model=PaperDetail)
 async def get_paper(
     paper_id: uuid.UUID,

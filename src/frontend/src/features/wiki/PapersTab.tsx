@@ -824,7 +824,7 @@ function TagEditor({ paper, scopeId }: { paper: PaperDetail; scopeId: string }) 
   const putMutation = useMutation({
     mutationFn: (names: string[]) => api.putPaperTags(paper.id, names),
     onSuccess: (p) => {
-      queryClient.setQueryData<PaperDetail>(['paper', paper.id], p);
+      queryClient.setQueryData<PaperDetail>(['paper', scopeId, paper.id], p);
       void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
       void queryClient.invalidateQueries({ queryKey: ['project-tags', scopeId] });
     },
@@ -940,16 +940,28 @@ function PaperDetailPane({
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
 
+  // 作用域读：锁定当前库/课题那份成员行，避免同一论文属多个库时读到跨库归并的错行
+  // （相关度/状态/wiki）。queryKey 带 scope 隔离不同库的缓存。
   const { data: paper, isLoading, isError } = useQuery({
-    queryKey: ['paper', paperId],
-    queryFn: () => api.getPaper(paperId),
+    queryKey: ['paper', scopeId, paperId],
+    queryFn: () =>
+      libraryId
+        ? api.getLibraryPaper(libraryId, paperId)
+        : pid
+          ? api.getProjectPaper(pid, paperId)
+          : api.getPaper(paperId),
     retry: false,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.patchPaper(paperId, { status: 'excluded' }),
+    // 作用域删：只删当前库那份成员行（同列表多选删除口径），不误删跨库的另一份。
+    mutationFn: () =>
+      libraryId
+        ? api.batchDeleteLibraryPapers(libraryId, [paperId])
+        : api.batchDeletePapers(scopeId, [paperId]),
     onSuccess: () => {
       toast(tr('已移入垃圾桶，可在列表底部的垃圾桶中召回', 'Moved to trash — restore it from the trash any time'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['paper', scopeId, paperId] });
       void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
       void queryClient.invalidateQueries({ queryKey: ['papers-trash', scopeId] });
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
@@ -964,7 +976,7 @@ function PaperDetailPane({
   const metaMutation = useMutation({
     mutationFn: (input: Partial<MyMeta>) => api.putMyMeta(paperId, input),
     onSuccess: (meta) => {
-      queryClient.setQueryData<PaperDetail>(['paper', paperId], (old) =>
+      queryClient.setQueryData<PaperDetail>(['paper', scopeId, paperId], (old) =>
         old ? { ...old, starred: meta.starred, reading_status: meta.reading_status } : old,
       );
       void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
@@ -978,7 +990,7 @@ function PaperDetailPane({
     mutationFn: () => api.recompilePaper(paperId),
     onSuccess: () => {
       toast(tr('编译完成，介绍已更新', 'Compiled — the intro has been updated'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['paper', paperId] });
+      void queryClient.invalidateQueries({ queryKey: ['paper', scopeId, paperId] });
       void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
       void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
     },

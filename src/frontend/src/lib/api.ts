@@ -2625,6 +2625,10 @@ export const api = {
   getPaper(id: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/papers/${id}`);
   },
+  /** 课题作用域单篇详情：锁定课题起源库那份成员行（相关度/状态/wiki 不跨库串味）。 */
+  getProjectPaper(projectId: string, paperId: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/projects/${projectId}/papers/${paperId}`);
+  },
   /** 人工纳入/排除。 */
   patchPaper(id: string, input: { status: 'included' | 'excluded' }): Promise<PaperRead> {
     return requestJson<PaperRead>(`/papers/${id}`, 'PATCH', input);
@@ -2980,6 +2984,10 @@ export const api = {
     if (opts.created_to) params.set('created_to', opts.created_to);
     const qs = params.toString();
     return request<PageOf<PaperRead>>(`/libraries/${id}/papers${qs ? `?${qs}` : ''}`);
+  },
+  /** 库作用域单篇详情：锁定该库那份成员行（相关度/状态/wiki 不跨库串味）。 */
+  getLibraryPaper(id: string, paperId: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/libraries/${id}/papers/${paperId}`);
   },
   /** 手动添加文献到库；409 → PAPER_EXISTS（body 含 paper_id）；422 → PARSE_FAILED。 */
   importLibraryPaper(id: string, input: PaperImportInput): Promise<PaperDetail> {
