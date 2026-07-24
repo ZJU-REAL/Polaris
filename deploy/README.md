@@ -1,58 +1,74 @@
-# Polaris 拉镜像部署
+<!-- 语言 / Language: **English** · [中文](./README.zh-CN.md) -->
 
-从 Docker Hub（或任意 registry）拉预构建镜像部署，服务器上无需构建。
-只需 `deploy/docker-compose.yml` + 一份 `.env` 两个文件。
+# Polaris — Deploy from Pre-built Images
 
-## 一次性：推送镜像（在有镜像的机器上）
+Deploy Polaris by pulling pre-built images from Docker Hub (or any registry) —
+no build on the server. You only need two files: `deploy/docker-compose.yml`
+and a `.env`.
+
+## One-time: push the images (on a machine that has them)
 
 ```bash
 docker login
-U=<你的DockerHub用户名>
+U=<your-dockerhub-username>
 for s in api worker frontend; do
   docker tag  polaris-$s:latest $U/polaris-$s:v1
   docker push $U/polaris-$s:v1
 done
 ```
 
-> `polaris-texbase` 不用推——它是 api/worker 的构建基础镜像，层已烤进 api/worker。
+> `polaris-texbase` does not need to be pushed — it is the build-base for
+> api/worker, and its layers are already baked into those two images.
 >
-> ⚠️ **架构要匹配**：Mac 构建出的是 `arm64`，x86_64 服务器需要 `amd64` 镜像。
-> 跨架构用 `docker buildx build --platform linux/amd64 --push ...` 出对应架构镜像。
+> ⚠️ **Match the architecture**: images built on a Mac are `arm64`; an x86_64
+> server needs `amd64` images. For cross-arch, build with
+> `docker buildx build --platform linux/amd64 --push ...`.
 
-## 服务器端
+## On the server
 
 ```bash
 mkdir -p ~/polaris && cd ~/polaris
-# 拷入 deploy/docker-compose.yml 和 deploy/.env.example
+# Copy in deploy/docker-compose.yml and deploy/.env.example
 cp .env.example .env
-# 编辑 .env：
-#   - POLARIS_IMAGE_PREFIX 设为你的用户名，POLARIS_IMAGE_TAG 设为 v1
-#   - POLARIS_SECRET_KEY / POLARIS_ENCRYPTION_KEY 按注释生成
-#   - POLARIS_DATABASE_URL 里的密码与 POSTGRES_PASSWORD 一致
-#   - 至少填一个 LLM key（也可先留空，之后在管理端配）
+# Edit .env:
+#   - Set POLARIS_IMAGE_PREFIX to your username, POLARIS_IMAGE_TAG to v1
+#   - Generate POLARIS_SECRET_KEY / POLARIS_ENCRYPTION_KEY (see inline notes)
+#   - The password in POLARIS_DATABASE_URL must match POSTGRES_PASSWORD
+#   - Set at least one LLM key (or leave blank and configure later in the admin UI)
 
-docker compose pull            # 拉全部镜像
+docker compose pull            # pull all images
 docker compose up -d
-docker compose exec api alembic upgrade head   # 首次必跑：postgres 不自动建表
-docker compose ps              # 5 个服务 healthy/up
+docker compose exec api alembic upgrade head   # required on first run: postgres tables aren't auto-created
+docker compose ps              # all 5 services healthy/up
 ```
 
-浏览器访问 `http://<服务器IP>:8080`，用邀请码注册。前端 nginx 已反代 `/api`、`/ws`、`/mcp` 到 api 容器，只需开放 8080。
+Open `http://<server-ip>:8080` and register with the invite code. The frontend
+nginx already reverse-proxies `/api`, `/ws`, and `/mcp` to the api container, so
+only port 8080 needs to be exposed.
 
-## 常用运维
+## Everyday operations
 
 ```bash
-docker compose logs -f api worker                              # 看日志
+docker compose logs -f api worker                             # tail logs
 docker compose pull && docker compose up -d \
-  && docker compose exec api alembic upgrade head              # 更新到新版镜像
-docker compose down                                            # 停（数据保留在 ./data）
+  && docker compose exec api alembic upgrade head             # update to a newer image
+docker compose down                                           # stop (data kept in ./data)
 ```
 
-数据全在 `~/polaris/data/`（pgdata / redisdata / appdata / tectonic-cache）。备份 tar 该目录即可，**切勿 `docker compose down -v`**（会删数据卷）。
+All data lives under `~/polaris/data/` (pgdata / redisdata / appdata /
+tectonic-cache). Back it up by tarring that directory. **Never run
+`docker compose down -v`** — it deletes the data volumes.
 
-## 要点
+## Notes
 
-- **worker 容器不能省**：ARQ worker 跑所有长任务（文献抓取、AI 生成、实验、编译），只起 api 会让任务永久 pending。
-- **迁移必跑一次**：`alembic upgrade head`；以后有新迁移，更新镜像后再跑一次。
-- **LLM key 可事后配**：`.env` 留空也能起，进管理端配模型路由后 AI 功能即可用；`POLARIS_ENV=prod` 下 fake 回退被强制禁用，不会吐假内容。
-- **代理**：`POLARIS_OUTBOUND_PROXY` 只作用于文献 API + GitHub；LLM 若需代理走标准 `HTTPS_PROXY`/`NO_PROXY`。
+- **The worker container is not optional**: the ARQ worker runs every
+  long-running task (literature fetch, AI generation, experiments, compilation).
+  Running only the api leaves those tasks pending forever.
+- **Run the migration once**: `alembic upgrade head`; run it again after each
+  image update that ships a new migration.
+- **LLM keys can be configured later**: the stack boots with them blank; once
+  you add a model route in the admin UI, AI features become available. Under
+  `POLARIS_ENV=prod` the fake fallback is force-disabled, so it never serves
+  fake content.
+- **Proxy**: `POLARIS_OUTBOUND_PROXY` only affects the literature APIs and
+  GitHub; if the LLM needs a proxy, use the standard `HTTPS_PROXY`/`NO_PROXY`.
