@@ -7,6 +7,7 @@ import { Markdown } from '../../lib/markdown';
 import { api, type LibraryChatSource } from '../../lib/api';
 import { chatPaperSse } from '../../lib/sse';
 import { tr } from '../../lib/i18n';
+import { portalUrl } from '../../lib/endpoint';
 import { ChatSurface } from '../chat/ChatSurface';
 import type { ChatMsg, ContextRef } from '../chat/types';
 
@@ -133,7 +134,7 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
     [paperId],
   );
 
-  const readLink = `${window.location.origin}/papers/${paperId}/read`;
+  const readLink = portalUrl(`/papers/${paperId}/read`);
 
   return (
     <ChatSurface

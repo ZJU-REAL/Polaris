@@ -7,6 +7,7 @@ import { SelectMenu } from '../../components/ui/SelectMenu';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { copyText } from '../../lib/clipboard';
 import {
   api,
   type FeedbackRead,
@@ -266,14 +267,11 @@ export function FeedbackTab() {
 
   const copyMarkdown = () => {
     const md = `# ${draftTitle}\n\n${draftBody}`;
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(md).then(
-        () => toast(tr('已复制 markdown', 'Markdown copied'), 'ok'),
-        () => toast(tr('复制失败', 'Copy failed'), 'error'),
-      );
-    } else {
-      toast(tr('当前环境不支持复制', 'Clipboard not available'), 'error');
-    }
+    void copyText(md).then((ok) =>
+      ok
+        ? toast(tr('已复制 markdown', 'Markdown copied'), 'ok')
+        : toast(tr('复制失败', 'Copy failed'), 'error'),
+    );
   };
 
   const filterSelect = (

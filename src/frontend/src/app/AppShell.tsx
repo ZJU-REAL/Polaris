@@ -15,6 +15,8 @@ import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMe
 import { tr } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
+import { notifyDesktop } from '../lib/desktop-notify';
+import { setBadgeCount } from '../lib/host';
 
 interface NavEntry {
   /** 非课题作用域页面的绝对路径（与 sub 二选一）。 */
@@ -399,15 +401,23 @@ export function AppShell() {
       if (msg.type === 'gate.created') {
         void queryClient.invalidateQueries({ queryKey: ['gates'] });
         toast(`${tr('新审批请求', 'New approval request')}：${gateTitle(msg.gate)}`, 'info');
+        notifyDesktop(tr('新审批请求', 'New approval request'), gateTitle(msg.gate));
       } else if (msg.type === 'gate.decided') {
         void queryClient.invalidateQueries({ queryKey: ['gates'] });
         void queryClient.invalidateQueries({ queryKey: ['voyages'] });
       } else if (msg.type === 'voyage.status') {
         void queryClient.invalidateQueries({ queryKey: ['voyages'] });
         void queryClient.invalidateQueries({ queryKey: ['voyage', msg.voyage_id] });
-        if (msg.status === 'paused_gate') toast(tr('任务等待审批', 'Task paused for approval'), 'info');
-        else if (msg.status === 'done') toast(tr('任务完成', 'Task done'), 'ok');
-        else if (msg.status === 'failed') toast(tr('任务失败', 'Task failed'), 'error');
+        if (msg.status === 'paused_gate') {
+          toast(tr('任务等待审批', 'Task paused for approval'), 'info');
+          notifyDesktop(tr('任务等待审批', 'Task paused for approval'));
+        } else if (msg.status === 'done') {
+          toast(tr('任务完成', 'Task done'), 'ok');
+          notifyDesktop(tr('任务完成', 'Task done'));
+        } else if (msg.status === 'failed') {
+          toast(tr('任务失败', 'Task failed'), 'error');
+          notifyDesktop(tr('任务失败', 'Task failed'));
+        }
       } else if (msg.type === 'review.message') {
         // 正在看该 session 的组件共享此 query cache → 直接乐观追加（按 id 去重）
         queryClient.setQueryData<ReviewMessageRead[]>(['session-messages', msg.session_id], (old) =>
@@ -439,10 +449,18 @@ export function AppShell() {
       } else if (msg.type === 'experiment.status') {
         void queryClient.invalidateQueries({ queryKey: ['experiments'] });
         void queryClient.invalidateQueries({ queryKey: ['experiment', msg.experiment_id] });
-        if (msg.status === 'awaiting_gate') toast(tr('实验等待预算审批', 'Experiment awaiting budget approval'), 'info');
-        else if (msg.status === 'running') toast(tr('实验正式运行中', 'Experiment running'), 'info');
-        else if (msg.status === 'done') toast(tr('实验完成', 'Experiment done'), 'ok');
-        else if (msg.status === 'failed') toast(tr('实验失败', 'Experiment failed'), 'error');
+        if (msg.status === 'awaiting_gate') {
+          toast(tr('实验等待预算审批', 'Experiment awaiting budget approval'), 'info');
+          notifyDesktop(tr('实验等待预算审批', 'Experiment awaiting budget approval'));
+        } else if (msg.status === 'running') {
+          toast(tr('实验正式运行中', 'Experiment running'), 'info');
+        } else if (msg.status === 'done') {
+          toast(tr('实验完成', 'Experiment done'), 'ok');
+          notifyDesktop(tr('实验完成', 'Experiment done'));
+        } else if (msg.status === 'failed') {
+          toast(tr('实验失败', 'Experiment failed'), 'error');
+          notifyDesktop(tr('实验失败', 'Experiment failed'));
+        }
       }
     });
     return close;
@@ -455,6 +473,11 @@ export function AppShell() {
     retry: false,
     staleTime: 60_000,
   });
+
+  // 桌面端 Dock/任务栏角标 = 待审批数（web 端 setBadgeCount 是 no-op）
+  useEffect(() => {
+    setBadgeCount(pending.length);
+  }, [pending.length]);
 
   const [c1, c2] = crumbFor(location.pathname);
 
