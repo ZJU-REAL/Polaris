@@ -204,6 +204,15 @@ export function chatPersonalSse(
   return postSse('/library/chat', input, handlers);
 }
 
+/** 独立库对话：POST /libraries/{id}/chat（事件协议同 chatLibrarySse）。 */
+export function chatLibraryByIdSse(
+  libraryId: string,
+  input: { question: string; history: { role: 'user' | 'assistant'; content: string }[] },
+  handlers: PostSseHandlers,
+): () => void {
+  return postSse(`/libraries/${libraryId}/chat`, input, handlers);
+}
+
 /** 写作辅助：POST /manuscripts/{id}/assist（delta* → warnings? → done/error）。 */
 export interface AssistInput {
   mode: 'polish' | 'rewrite' | 'continue';

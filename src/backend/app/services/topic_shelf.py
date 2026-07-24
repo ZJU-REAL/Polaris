@@ -22,6 +22,7 @@ from app.services import paper_import, user_library
 from app.services.dedup import dedup_key_for
 from app.services.libraries import find_pool_paper
 from app.services.literature.arxiv import normalize_arxiv_id
+from app.services.papers import apply_paper_filters
 
 
 class PaperNotFoundError(Exception):
@@ -141,21 +142,68 @@ async def list_shelf(
     user_id: uuid.UUID,
     page: int = 1,
     size: int = 20,
+    q: str | None = None,
+    author: str | None = None,
+    affiliation: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    reading_status: str | None = None,
+    starred: bool | None = None,
+    sort: str = "added",
 ) -> tuple[list[dict[str, Any]], int]:
-    """分页列书架（最新入架在前），每条带解析后的 wiki 内容与来源状态。
+    """分页列书架，每条带解析后的 wiki 内容与来源状态。
 
-    个人版层按请求者（user_id）本人的个人库条目解析。"""
+    个人版层按请求者（user_id）本人的个人库条目解析。高级检索的
+    q/author/affiliation/starred/reading_status 复用 :func:`apply_paper_filters`
+    （只作用于内容池 Paper / 个人视角 PaperUserMeta，不触碰方向库）；
+    year 范围就地作用于 ``Paper.year``。sort：added（默认，最新入架在前）/
+    year / relevance / title。"""
     base = (
         select(TopicPaper, Paper)
         .join(Paper, Paper.id == TopicPaper.paper_id)
         .where(TopicPaper.topic_id == project_id)
     )
+    # 复用论文库过滤器：传 None 的库相关参数（status/created_*）不会引用/join 方向库，
+    # 故过滤只作用于 Paper 本体与请求者个人视角（PaperUserMeta），书架保持方向无关。
+    base = apply_paper_filters(
+        base,
+        project_id=None,
+        status=None,
+        q=q,
+        author=author,
+        affiliation=affiliation,
+        starred=starred,
+        reading_status=reading_status,
+        user_id=user_id,
+        created_from=None,
+        created_to=None,
+    )
+    if year_from is not None:
+        base = base.where(Paper.year.isnot(None), Paper.year >= year_from)
+    if year_to is not None:
+        base = base.where(Paper.year.isnot(None), Paper.year <= year_to)
+
     total = (await session.execute(base.with_only_columns(func.count()))).scalar_one()
+
+    if sort == "year":
+        order = (Paper.year.desc().nulls_last(), TopicPaper.created_at.desc())
+    elif sort == "title":
+        order = (Paper.title.asc(),)
+    elif sort == "relevance":
+        # 相关性分在方向库成员行上（Paper 本体没有）；用只读相关子查询取该论文
+        # 在各方向库的最高分排序，不 join 方向库、不改变书架行形状。
+        relevance_sub = (
+            select(func.max(LibraryPaper.relevance_score))
+            .where(LibraryPaper.paper_id == Paper.id)
+            .scalar_subquery()
+        )
+        order = (relevance_sub.desc().nulls_last(), TopicPaper.created_at.desc())
+    else:  # added（默认，最新入架在前）
+        order = (TopicPaper.created_at.desc(),)
+
     rows = (
         await session.execute(
-            base.order_by(TopicPaper.created_at.desc())
-            .offset((page - 1) * size)
-            .limit(size)
+            base.order_by(*order).offset((page - 1) * size).limit(size)
         )
     ).all()
     wiki_rows = await _wiki_rows_for(session, [paper.id for _, paper in rows])

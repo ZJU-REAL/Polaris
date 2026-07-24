@@ -60,6 +60,7 @@ async def run_tool_loop(
             messages,
             user_id=ctx.run.created_by,
             project_id=ctx.run.project_id,
+            library_id=ctx.run.library_id,
             voyage_id=ctx.run.id,
         )
         messages.append(Message(role="assistant", content=result.content))

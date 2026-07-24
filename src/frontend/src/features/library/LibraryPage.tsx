@@ -9,7 +9,15 @@ import { toast } from '../../components/ui/Toast';
 import { api, type LibraryEntry, type LibrarySort, type LibraryTab, type Publication } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
-import { SearchInput, useDebounced } from '../wiki/shared';
+import {
+  AdvancedPanel,
+  AdvancedToggle,
+  FilterInput,
+  parseYear,
+  SearchInput,
+  useDebounced,
+  YearRangeField,
+} from '../wiki/shared';
 import { PublicationsTab, PUBLICATIONS_PAGE_SIZE } from './PublicationsTab';
 import { PersonalChatTab } from './PersonalChatTab';
 import { AuthorBindWizard } from './AuthorBindWizard';
@@ -34,6 +42,7 @@ const SORTS: { v: LibrarySort; zh: string; en: string }[] = [
   { v: 'recent', zh: '按最近浏览', en: 'By recency' },
   { v: 'title', zh: '按标题', en: 'By title' },
   { v: 'visits', zh: '按次数', en: 'By visits' },
+  { v: 'year', zh: '按年份', en: 'By year' },
 ];
 
 function errText(e: unknown): string {
@@ -197,6 +206,21 @@ export function LibraryPage() {
   const [page, setPage] = useState(1);
   const [clearOpen, setClearOpen] = useState(false);
 
+  // 高级检索：年份区间 / 作者 / venue（走后端）
+  const [advOpen, setAdvOpen] = useState(false);
+  const [author, setAuthor] = useState('');
+  const [venue, setVenue] = useState('');
+  const [yearFrom, setYearFrom] = useState('');
+  const [yearTo, setYearTo] = useState('');
+
+  const advActive = !!author.trim() || !!venue.trim() || !!yearFrom.trim() || !!yearTo.trim();
+  const clearAdvanced = () => {
+    setAuthor('');
+    setVenue('');
+    setYearFrom('');
+    setYearTo('');
+  };
+
   // 双栏选中态：收藏/记录共用一份（同一种条目），「我发表的」单独一份。
   // 翻页/搜索/切 tab 都不清空——右栏基于选中时的快照继续展示，
   // 当前页里若还有同 id 条目则换用最新数据。
@@ -205,16 +229,26 @@ export function LibraryPage() {
   // 「我发表的」：修改署名信息时整卡显示表单
   const [editingAuthor, setEditingAuthor] = useState(false);
 
-  // tab / 搜索词 / 排序变化时回到第一页
+  // tab / 搜索词 / 排序 / 高级条件变化时回到第一页
   useEffect(() => {
     setPage(1);
-  }, [tab, q, sort]);
+  }, [tab, q, sort, author, venue, yearFrom, yearTo]);
 
   const onLibraryTab = tab !== 'publications' && tab !== 'chat';
   const listQuery = useQuery({
-    queryKey: ['library', tab, q, sort, page],
+    queryKey: ['library', tab, q, sort, page, author.trim(), venue.trim(), yearFrom.trim(), yearTo.trim()],
     queryFn: () =>
-      api.listLibrary({ tab: tab as LibraryTab, q: q || undefined, sort, page, size: PAGE_SIZE }),
+      api.listLibrary({
+        tab: tab as LibraryTab,
+        q: q || undefined,
+        sort,
+        page,
+        size: PAGE_SIZE,
+        author: author.trim() || undefined,
+        venue: venue.trim() || undefined,
+        year_from: parseYear(yearFrom),
+        year_to: parseYear(yearTo),
+      }),
     enabled: onLibraryTab,
     retry: false,
     placeholderData: keepPreviousData,
@@ -400,13 +434,46 @@ export function LibraryPage() {
           <div className="split">
             {/* —— 左：列表 —— */}
             <div className="split-list">
-              {/* 工具栏：搜索 + 排序 + 计数 + 清空记录 */}
+              {/* 工具栏：搜索 + 高级检索 + 排序 + 计数 + 清空记录 */}
               <div style={{ padding: '12px 14px 10px', borderBottom: '0.5px solid var(--border)' }}>
-                <SearchInput
-                  value={qInput}
-                  onChange={setQInput}
-                  placeholder={tr('搜索标题 / 作者…', 'Search title / authors…')}
-                />
+                <div className="row gap8">
+                  <SearchInput
+                    value={qInput}
+                    onChange={setQInput}
+                    placeholder={tr('搜索标题 / 作者…', 'Search title / authors…')}
+                  />
+                  <AdvancedToggle
+                    open={advOpen}
+                    active={advActive}
+                    onToggle={() => setAdvOpen((o) => !o)}
+                    title={tr('高级检索：年份 / 作者 / 期刊会议', 'Advanced search: year / author / venue')}
+                  />
+                </div>
+
+                {advOpen && (
+                  <AdvancedPanel onClear={advActive ? clearAdvanced : undefined}>
+                    <YearRangeField
+                      label={tr('年份', 'Year')}
+                      from={yearFrom}
+                      to={yearTo}
+                      onFrom={setYearFrom}
+                      onTo={setYearTo}
+                    />
+                    <div className="row gap8">
+                      <FilterInput
+                        value={author}
+                        onChange={setAuthor}
+                        placeholder={tr('作者姓名…', 'Author name…')}
+                      />
+                      <FilterInput
+                        value={venue}
+                        onChange={setVenue}
+                        placeholder={tr('期刊 / 会议…', 'Venue…')}
+                      />
+                    </div>
+                  </AdvancedPanel>
+                )}
+
                 <div className="row gap8" style={{ marginTop: 10 }}>
                   <Segmented<LibrarySort>
                     options={SORTS.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))}
@@ -461,15 +528,15 @@ export function LibraryPage() {
                     compact
                     icon="bookmark"
                     title={
-                      q
+                      q || advActive
                         ? tr('没有匹配的文献', 'No matching papers')
                         : tab === 'saved'
                           ? tr('还没有收藏的文献', 'Nothing saved yet')
                           : tr('还没有浏览记录', 'No reading history yet')
                     }
                     desc={
-                      q
-                        ? tr('换个关键词试试。', 'Try a different keyword.')
+                      q || advActive
+                        ? tr('换个关键词或放宽高级检索条件。', 'Try another keyword or loosen the filters.')
                         : tab === 'saved'
                           ? tr(
                               '在论文阅读页点右上角的书签按钮，就能把它收进这里。',

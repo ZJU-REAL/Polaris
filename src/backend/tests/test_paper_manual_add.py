@@ -12,7 +12,7 @@ from app.models.paper import Paper
 from app.services.literature import reset_clients, set_clients
 from app.services.literature.arxiv import ArxivClient
 from app.services.literature.openalex import OpenAlexClient
-from tests.conftest import membership_of, register_and_login
+from tests.conftest import make_project_with_library, membership_of, register_and_login
 
 ARXIV_FEED_ONE = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -58,8 +58,9 @@ async def lit_clients():
 async def _setup(client):
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
-    resp = await client.post("/api/projects", json={"name": "manual-proj"}, headers=headers)
-    return resp.json()["id"], headers
+    # P9c：课题不再自动建库——显式配一条 active 起源库供人工纳入落成员行。
+    project_id, _library_id = await make_project_with_library(client, headers, name="manual-proj")
+    return project_id, headers
 
 
 @respx.mock

@@ -1,13 +1,15 @@
 import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import { FigureEmbed, usePaperFigures } from '../../components/ui/FigureGallery';
+import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import { api, type LibraryEntry, type PaperAuthor, type Publication } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
+import { readerFrom } from '../reading/shared';
 
 /* ============================================================
    我的文献库 · 右栏详情（三个 tab 共用）：
@@ -87,6 +89,8 @@ export function LibraryDetailPane({
   entryId?: string;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
 
   // 与文献追踪详情面板同一个 queryKey（['paper', id]），缓存互通
   const paperQuery = useQuery({
@@ -107,6 +111,35 @@ export function LibraryDetailPane({
   });
   const snapshotWiki =
     wantSnapshotWiki && entryQuery.isSuccess ? entryQuery.data.wiki_content : null;
+
+  // —— 个人版 wiki（对齐阅读页 InfoPanel）：活体论文没有库版解读时，读本人个人库
+  //    条目里的个人编译版；没有则可现场生成（后端 /papers/{id}/personal-wiki，算个人额度）——
+  const needPersonal = paperQuery.isSuccess && !paperQuery.data.wiki_content;
+  const libStateQuery = useQuery({
+    queryKey: ['library-state', paperId],
+    queryFn: () => api.getLibraryState(paperId ?? ''),
+    enabled: needPersonal && paperId !== null && entryId === undefined,
+    retry: false,
+  });
+  const personalEntryId = entryId ?? libStateQuery.data?.entry_id ?? null;
+  const personalEntryQuery = useQuery({
+    queryKey: ['library-entry', personalEntryId],
+    queryFn: () => api.getLibraryEntry(personalEntryId ?? ''),
+    enabled: needPersonal && !!personalEntryId,
+    retry: false,
+  });
+  const personalWiki = needPersonal ? (personalEntryQuery.data?.wiki_content ?? null) : null;
+  const generateMutation = useMutation({
+    mutationFn: () => api.compilePersonalWiki(paperId ?? '', paperQuery.data?.project_id ?? null),
+    onSuccess: () => {
+      toast(tr('个人版解读已生成', 'Personal wiki generated'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['library-state', paperId] });
+      void queryClient.invalidateQueries({ queryKey: ['library-entry'] });
+      void queryClient.invalidateQueries({ queryKey: ['library'] });
+    },
+    onError: (e) =>
+      toast(`${tr('生成失败：', 'Failed to generate: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
 
   // 正文 ![[fig:N]] 嵌入图（同文献追踪）
   const figures = usePaperFigures(paper);
@@ -191,11 +224,33 @@ export function LibraryDetailPane({
       {/* —— 操作：打开阅读页（仅活体论文）+ 外链 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
         {alive && (
-          <button className="btn btn-primary sm" onClick={() => navigate(`/papers/${paper.id}/read`)}>
+          <button
+            className="btn btn-primary sm"
+            onClick={() => navigate(`/papers/${paper.id}/read`, { state: readerFrom(location, 'library') })}
+          >
             <Icon name="file" size={13} />
             {tr('打开阅读页', 'Open reader')}
           </button>
         )}
+        {alive &&
+          (topicLib ? (
+            <button
+              className="btn btn-ghost sm"
+              title={tr('打开这篇所在的方向文献库', 'Open the direction library this paper lives in')}
+              onClick={() => navigate(libraryPath(topicLib.id, `?paper=${paper.id}`))}
+            >
+              <Icon name="book" size={13} />
+              {tr('去文献库', 'Open library')}
+            </button>
+          ) : (
+            // 手动添加、未纳入任何方向文献库：置灰不可点，hover 说明原因
+            <span title={tr('这篇是手动添加的，未纳入公共文献库', 'Manually added — not in any shared library')}>
+              <button className="btn btn-ghost sm" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>
+                <Icon name="book" size={13} />
+                {tr('去文献库', 'Open library')}
+              </button>
+            </span>
+          ))}
         {arxivUrl && (
           <a
             className="btn btn-ghost sm"
@@ -285,9 +340,60 @@ export function LibraryDetailPane({
               </div>
               <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
             </>
+          ) : personalWiki ? (
+            <>
+              <div
+                className="row gap8"
+                style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
+              >
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+                  {tr('AI 图文介绍', 'AI intro')}
+                </span>
+                <span
+                  className="mono"
+                  title={tr('公共库里没有这篇的解读，这是你自己生成的个人版。', 'No shared library wiki; this is the personal version you generated.')}
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--accent-text)',
+                    background: 'var(--accent-soft)',
+                    padding: '1px 7px',
+                    borderRadius: 999,
+                  }}
+                >
+                  {tr('个人版', 'Personal')}
+                </span>
+              </div>
+              <Markdown source={personalWiki} onWikiLink={onWikiLink} renderFigure={renderFigure} />
+            </>
           ) : (
-            <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-              {tr('该论文还没有生成 wiki', 'No wiki generated for this paper yet')}
+            // 没有库版、也没有个人版 → 提供现场生成（个人版，算个人额度）
+            <div
+              style={{
+                padding: '18px 20px',
+                borderRadius: 10,
+                border: '1px dashed var(--border-2)',
+                textAlign: 'center',
+              }}
+            >
+              <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
+                {tr(
+                  '这篇论文还没有解读。可以用 AI 生成一份个人版（使用你的模型额度）。',
+                  'No wiki for this paper yet. Generate a personal one with AI (uses your model quota).',
+                )}
+              </div>
+              <button
+                className="btn btn-soft sm"
+                style={{ marginTop: 10 }}
+                disabled={
+                  generateMutation.isPending || libStateQuery.isLoading || personalEntryQuery.isLoading
+                }
+                onClick={() => generateMutation.mutate()}
+              >
+                <Icon name="sparkle" size={13} />
+                {generateMutation.isPending
+                  ? tr('生成中…（约 1 分钟）', 'Generating… (~1 min)')
+                  : tr('生成 wiki', 'Generate wiki')}
+              </button>
             </div>
           )}
         </div>

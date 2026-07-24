@@ -100,18 +100,39 @@ async def find_running_ingest(session: AsyncSession, project_id: uuid.UUID) -> V
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def find_running_ingest_for_library(
+    session: AsyncSession, library_id: uuid.UUID
+) -> VoyageRun | None:
+    """该方向库是否已有 ingest 任务在跑（P9a：库化后互斥以库为准）。"""
+    stmt = (
+        select(VoyageRun)
+        .where(
+            VoyageRun.library_id == library_id,
+            VoyageRun.kind.in_(WIKI_KINDS),
+            VoyageRun.status.not_in(tuple(TERMINAL_STATUSES)),
+        )
+        .order_by(VoyageRun.created_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 async def create_ingest_voyage(
     session: AsyncSession,
     *,
-    project: Project,
+    library: DirectionLibrary,
+    project: Project | None = None,
     mode: str,
     knobs: IngestKnobs,
     created_by: uuid.UUID | None,
 ) -> VoyageRun:
-    """建 ingest voyage（互斥检查 + 库预算检查 + Activity 落记录），由调用方入队 run_voyage。"""
-    if await find_running_ingest(session, project.id) is not None:
-        raise IngestConflictError(str(project.id))
-    library = await get_library_for_project(session, project.id)
+    """建 ingest voyage（互斥检查 + 库预算检查 + Activity 落记录），由调用方入队 run_voyage。
+
+    P9a：任务直接挂 ``library``。有起源课题的隐式库同时带上 ``project`` 以兼容活动流/
+    鉴权；管理员创建的独立库不传 project（run.project_id / activity.project_id 为空）。
+    """
+    if await find_running_ingest_for_library(session, library.id) is not None:
+        raise IngestConflictError(str(library.id))
     budget = await apply_library_budget(
         session,
         library_id=library.id,
@@ -119,11 +140,13 @@ async def create_ingest_voyage(
         budget=derive_budget(knobs),
     )
     kind = "wiki_bootstrap" if mode == "bootstrap" else "wiki_ingest"
+    target_name = project.name if project is not None else library.name
     goal = (
-        f"文献调研初始建库：{project.name}"
+        f"文献调研初始建库：{target_name}"
         if mode == "bootstrap"
-        else f"文献调研增量更新：{project.name}"
+        else f"文献调研增量更新：{target_name}"
     )
+    project_id = project.id if project is not None else None
     run = VoyageRun(
         kind=kind,
         goal=goal,
@@ -131,13 +154,15 @@ async def create_ingest_voyage(
         cursor=0,
         checkpoint={"params": {"mode": mode, "knobs": knobs.model_dump()}},
         budget=budget,
-        project_id=project.id,
+        project_id=project_id,
+        library_id=library.id,
         created_by=created_by,
     )
     session.add(run)
     session.add(
         Activity(
-            project_id=project.id,
+            project_id=project_id,
+            library_id=library.id,
             actor=f"user:{created_by}" if created_by else "system:cron",
             kind="ingest.started",
             message=f"文献调研{'初始建库' if mode == 'bootstrap' else '增量更新'}已启动",
@@ -149,16 +174,26 @@ async def create_ingest_voyage(
     return run
 
 
-async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str, int]:
-    library = await get_library_for_project(session, project_id)
+def _empty_counts() -> dict[str, int]:
+    counts = {status: 0 for status in PAPER_STATUSES}
+    counts["total"] = 0
+    counts["library"] = 0
+    counts["pending_compile"] = 0
+    return counts
+
+
+async def library_paper_counts(
+    session: AsyncSession, library_id: uuid.UUID
+) -> dict[str, int]:
+    """某方向库的论文状态计数（库级直接统计 library_papers，库工作台/ingest 面板共用）。"""
+    counts = {status: 0 for status in PAPER_STATUSES}
     rows = (
         await session.execute(
             select(LibraryPaper.status, func.count())
-            .where(LibraryPaper.library_id == library.id)
+            .where(LibraryPaper.library_id == library_id)
             .group_by(LibraryPaper.status)
         )
     ).all()
-    counts = {status: 0 for status in PAPER_STATUSES}
     total = 0
     for status, count in rows:
         counts[status] = int(count)
@@ -170,6 +205,14 @@ async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str
     )
     counts["pending_compile"] = counts["scored"] + counts["fetched"]
     return counts
+
+
+async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str, int]:
+    # P9c：课题可无起源库（空语料）——直接给零计数，不报错。
+    library = await get_library_for_project(session, project_id)
+    if library is None:
+        return _empty_counts()
+    return await library_paper_counts(session, library.id)
 
 
 # 每日自动同步的触发时刻（UTC，与 worker/settings.py 的 cron 保持一致）
@@ -199,24 +242,49 @@ def next_daily_sync_at(library: DirectionLibrary | None) -> datetime | None:
     return candidate
 
 
+async def _resolve_last_run(
+    session: AsyncSession, state: dict[str, Any]
+) -> dict[str, Any] | None:
+    """从 ingest_state 里的 last_run 摘要补上当前 voyage 状态（水位线权威源在库）。"""
+    last_run_raw = state.get("last_run") or None
+    if not (isinstance(last_run_raw, dict) and last_run_raw.get("voyage_id")):
+        return None
+    voyage = await session.get(VoyageRun, uuid.UUID(str(last_run_raw["voyage_id"])))
+    return {
+        "voyage_id": last_run_raw["voyage_id"],
+        "status": voyage.status if voyage else "unknown",
+        "finished_at": last_run_raw.get("finished_at"),
+    }
+
+
 async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any]:
     # P8a：水位线/last_run 权威源在库（library.ingest_state）
     library = await get_library_for_project(session, project.id)
     state = (library.ingest_state if library else None) or {}
-    last_run_raw = state.get("last_run") or None
-    last_run: dict[str, Any] | None = None
-    if isinstance(last_run_raw, dict) and last_run_raw.get("voyage_id"):
-        voyage = await session.get(VoyageRun, uuid.UUID(str(last_run_raw["voyage_id"])))
-        last_run = {
-            "voyage_id": last_run_raw["voyage_id"],
-            "status": voyage.status if voyage else "unknown",
-            "finished_at": last_run_raw.get("finished_at"),
-        }
     running = await find_running_ingest(session, project.id)
     return {
         "watermark": state.get("watermark"),
-        "last_run": last_run,
+        "last_run": await _resolve_last_run(session, state),
         "paper_counts": await paper_counts(session, project.id),
+        "running_voyage_id": running.id if running else None,
+        "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
+    }
+
+
+async def library_ingest_state(
+    session: AsyncSession, library: DirectionLibrary
+) -> dict[str, Any]:
+    """某方向库的 ingest 状态（水位线/上次同步/计数/在跑任务/下次同步），库工作台用。
+
+    与课题版口径一致，但一切按库直接取数：计数用 library_papers、互斥/在跑判定
+    以库为准（P9a），适用于独立库（project_id=None）。
+    """
+    state = library.ingest_state or {}
+    running = await find_running_ingest_for_library(session, library.id)
+    return {
+        "watermark": state.get("watermark"),
+        "last_run": await _resolve_last_run(session, state),
+        "paper_counts": await library_paper_counts(session, library.id),
         "running_voyage_id": running.id if running else None,
         "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
     }

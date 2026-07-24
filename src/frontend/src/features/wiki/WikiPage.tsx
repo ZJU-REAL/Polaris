@@ -28,8 +28,14 @@ const PresentationModal = lazy(() =>
 
 type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes' | 'govern';
 
-export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: string }) {
+export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: string }) {
   const navigate = useNavigate();
+
+  // 独立库（无起源课题）：集合级数据走 /libraries/{id}/* 端点，隐藏 PPT / 导出（均为课题域）。
+  const standalone = !pid;
+  const scopeId = standalone ? libraryId! : pid!;
+  /** 传给各 Tab 的库作用域标识：仅独立库置位，课题库保持 undefined 走 project 端点。 */
+  const tabLibraryId = standalone ? libraryId : undefined;
 
   const [tab, setTab] = useState<WikiTab>('papers');
   const [presentOpen, setPresentOpen] = useState(false);
@@ -45,7 +51,7 @@ export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: str
     setPaperId(null);
     setConceptId(null);
     setPendingConceptName(null);
-  }, [pid]);
+  }, [scopeId]);
 
   // 深链 ?paper=<id>（idea 详情 / 阅读页返回）、?concept=<名称>
   // （阅读页双链跳转，按名称解析）、?author= / ?affiliation=
@@ -79,16 +85,19 @@ export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: str
 
   // —— ingest 状态（tab 计数 + Ingest 面板共用） ——
   const ingestQuery = useQuery({
-    queryKey: ['ingest-state', pid],
-    queryFn: () => api.getIngestState(pid),
+    queryKey: ['ingest-state', scopeId],
+    queryFn: () => (standalone ? api.getLibraryIngestState(libraryId!) : api.getIngestState(pid!)),
     retry: false,
     refetchInterval: (q) => (q.state.data?.running_voyage_id ? 5_000 : 60_000),
   });
 
   // —— [[概念名]] → 概念 id 解析 ——
   const resolveQuery = useQuery({
-    queryKey: ['concept-resolve', pid, pendingConceptName],
-    queryFn: () => api.listConcepts(pid, { q: pendingConceptName ?? '' }),
+    queryKey: ['concept-resolve', scopeId, pendingConceptName],
+    queryFn: () =>
+      standalone
+        ? api.listLibraryConcepts(libraryId!, { q: pendingConceptName ?? '' })
+        : api.listConcepts(pid!, { q: pendingConceptName ?? '' }),
     enabled: !!pendingConceptName,
     retry: false,
   });
@@ -157,11 +166,15 @@ export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: str
               {tr('文献任务运行中 →', 'Literature task running →')}
             </span>
           )}
-          <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>
-            <Icon name="chart" size={13} />
-            {tr('论文分享 PPT', 'Paper sharing PPT')}
-          </button>
-          <ExportMenu pid={pid} />
+          {!standalone && (
+            <>
+              <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>
+                <Icon name="chart" size={13} />
+                {tr('论文分享 PPT', 'Paper sharing PPT')}
+              </button>
+              <ExportMenu pid={pid!} />
+            </>
+          )}
         </div>
       </div>
 
@@ -178,6 +191,7 @@ export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: str
         {tab === 'papers' ? (
           <PapersTab
             pid={pid}
+            libraryId={tabLibraryId}
             selectedId={paperId}
             onSelect={setPaperId}
             onOpenConcept={goConcept}
@@ -187,6 +201,7 @@ export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: str
         ) : tab === 'concepts' ? (
           <ConceptsTab
             pid={pid}
+            libraryId={tabLibraryId}
             selectedId={conceptId}
             onSelect={setConceptId}
             onOpenPaper={goPaper}
@@ -194,13 +209,14 @@ export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: str
           />
         ) : tab === 'graph' ? (
           <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
-            <GraphTab pid={pid} onOpenPaper={goPaper} onOpenConcept={goConcept} />
+            <GraphTab pid={pid} libraryId={tabLibraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />
           </Suspense>
         ) : tab === 'chat' ? (
-          <LibraryChatTab pid={pid} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
+          <LibraryChatTab pid={pid} libraryId={tabLibraryId} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
         ) : tab === 'ingest' ? (
           <IngestTab
             pid={pid}
+            libraryId={tabLibraryId}
             state={ingestQuery.data}
             stateError={ingestQuery.isError}
             stateLoading={ingestQuery.isLoading}
@@ -208,14 +224,14 @@ export function WikiWorkbench({ pid, libraryId }: { pid: string; libraryId?: str
         ) : tab === 'govern' && libraryId ? (
           <GovernanceTab libraryId={libraryId} />
         ) : (
-          <NotesTab pid={pid} />
+          <NotesTab pid={pid} libraryId={tabLibraryId} />
         )}
       </div>
 
-      {presentOpen && (
+      {!standalone && presentOpen && (
         <Suspense fallback={null}>
           <PresentationModal
-            projectId={pid}
+            projectId={pid!}
             initialPaperId={paperId ?? undefined}
             onClose={() => setPresentOpen(false)}
           />

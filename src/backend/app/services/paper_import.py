@@ -226,19 +226,39 @@ async def add_manual_paper(
     doi: str | None = None,
     bibtex: str | None = None,
 ) -> Paper:
-    """手动添加一篇文献（source=manual，成员行 status=included）。
+    """手动添加一篇文献到课题起源库（source=manual，成员行 status=included）。"""
+    # 人工导入落在课题起源库上；课题必须有一个可解析的库（隐式库常态存在）
+    library = await get_library_for_project(session, project_id)
+    if library is None:
+        raise ParseFailedError("课题未关联可写入的文献库")
+    return await add_manual_paper_to_library(
+        session,
+        library=library,
+        arxiv_id=arxiv_id,
+        doi=doi,
+        bibtex=bibtex,
+        project_id=project_id,
+    )
+
+
+async def add_manual_paper_to_library(
+    session: AsyncSession,
+    *,
+    library: Any,
+    arxiv_id: str | None = None,
+    doi: str | None = None,
+    bibtex: str | None = None,
+    project_id: uuid.UUID | None = None,
+) -> Paper:
+    """手动添加一篇文献到**指定库**（库工作台入口，含独立库 project_id=None）。
 
     - 先查全局内容池（arxiv/doi/dedup_key）：池中已有则只建成员行（pool hit，
       跳过解析下载）；本库已有成员行 → DuplicatePaperError（路由映射 409）
     - 解析失败 → ParseFailedError（路由映射 422）
     - 新论文有 arxiv_id 的自动尝试补下 PDF，失败只记日志不阻塞
+    project_id 仅用于 LLM 记账归因（补机构等），独立库为空。
     """
     fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, bibtex=bibtex)
-
-    # 人工导入落在课题起源库上；课题必须有一个可解析的库（隐式库常态存在）
-    library = await get_library_for_project(session, project_id)
-    if library is None:
-        raise ParseFailedError("课题未关联可写入的文献库")
     dedup_key = pool_dedup_key(
         arxiv_id=fields.get("arxiv_id"),
         doi=fields.get("doi"),

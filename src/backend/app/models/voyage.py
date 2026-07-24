@@ -89,8 +89,13 @@ class VoyageRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     budget: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # {max_tokens?, ...}
     usage: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # 累计 tokens
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    # P9a：任务可直接挂方向库（ingest 类）。起源课题的隐式库两者都带（兼容活动流/
+    # 鉴权）；管理员创建的独立库 project_id 为空。
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    library_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("direction_libraries.id", ondelete="SET NULL"), index=True, nullable=True
     )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")

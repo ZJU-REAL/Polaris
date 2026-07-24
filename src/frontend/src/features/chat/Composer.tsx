@@ -18,6 +18,8 @@ import {
 
 interface ComposerProps {
   pid: string;
+  /** 独立库作用域：给定时 / 选择器的论文/概念候选走库端点 */
+  libraryId?: string;
   streaming: boolean;
   /** / 选择器提供哪些实体类型 */
   contextKinds: ContextKind[];
@@ -44,6 +46,7 @@ const TRIGGER_RE = /(^|\s)([/@])(\S*)$/;
 
 export function Composer({
   pid,
+  libraryId,
   streaming,
   contextKinds,
   attachesPaperLink,
@@ -62,8 +65,9 @@ export function Composer({
   // —— / 选择器候选：按需拉取真实列表 ——
   const slashOpen = menu?.type === 'slash';
   const papersQ = useQuery({
-    queryKey: ['chat-ctx-papers', pid],
-    queryFn: () => api.listPapers(pid, { size: 60 }),
+    queryKey: ['chat-ctx-papers', libraryId ?? pid],
+    queryFn: () =>
+      libraryId ? api.listLibraryPapersFull(libraryId, { size: 60 }) : api.listPapers(pid, { size: 60 }),
     enabled: slashOpen && contextKinds.includes('paper'),
     staleTime: 60_000,
   });
@@ -80,8 +84,8 @@ export function Composer({
     staleTime: 60_000,
   });
   const conceptsQ = useQuery({
-    queryKey: ['chat-ctx-concepts', pid],
-    queryFn: () => api.listConcepts(pid),
+    queryKey: ['chat-ctx-concepts', libraryId ?? pid],
+    queryFn: () => (libraryId ? api.listLibraryConcepts(libraryId) : api.listConcepts(pid)),
     enabled: slashOpen && contextKinds.includes('concept'),
     staleTime: 60_000,
   });

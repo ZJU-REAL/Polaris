@@ -20,7 +20,9 @@ import { tr } from '../../lib/i18n';
    ============================================================ */
 
 export interface IngestTabProps {
-  pid: string;
+  pid?: string;
+  /** 独立库作用域：给定时抓取走 /libraries/{id}/ingest/run，状态走库端点 */
+  libraryId?: string;
   state: IngestState | undefined;
   stateError: boolean;
   stateLoading: boolean;
@@ -85,14 +87,18 @@ function KnobRange({
   );
 }
 
-export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabProps) {
+export function IngestTab({ pid, libraryId, state, stateError, stateLoading }: IngestTabProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const scopeId = libraryId ?? pid ?? '';
 
-  // 无 include 关键词时 arXiv 检索会退化成无差别抓取（空转烧钱），前端禁止启动
+  // 无 include 关键词时 arXiv 检索会退化成无差别抓取（空转烧钱），前端禁止启动。
+  // 独立库的关键词在治理页配置、后端自行校验，这里不做课题级的关键词拦截。
   const { projects } = useProject();
-  const project = projects.find((p) => p.id === pid);
-  const noKeywords = !!project && (project.definition?.keywords?.include ?? []).length === 0;
+  const project = libraryId ? undefined : projects.find((p) => p.id === pid);
+  // 课题不再承载收录关键词（P9e：project.definition 退役）；课题作用域 ingest 一律
+  // 提示去文献库配置，独立库的关键词校验在后端。
+  const noKeywords = !!project;
 
   // —— 成本旋钮（bootstrap） ——
   const [monthsBack, setMonthsBack] = useState(6);
@@ -106,7 +112,8 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
   const running = !!state?.running_voyage_id;
 
   const ingestMutation = useMutation({
-    mutationFn: (input: { mode: IngestMode; knobs: IngestKnobs }) => api.startIngest(pid, input),
+    mutationFn: (input: { mode: IngestMode; knobs: IngestKnobs }) =>
+      libraryId ? api.startLibraryIngest(libraryId, input) : api.startIngest(scopeId, input),
     onSuccess: (v, input) => {
       toast(
         input.mode === 'bootstrap'
@@ -114,7 +121,7 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
           : tr('增量同步已开始，跳转任务详情…', 'Incremental sync started — opening task detail…'),
         'ok',
       );
-      void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
       navigate(`/voyages/${v.id}`);
     },
     onError: (e) => {
@@ -123,12 +130,17 @@ export function IngestTab({ pid, state, stateError, stateLoading }: IngestTabPro
           tr('这个文献库本月 AI 预算已用尽，同步已暂停；下月自动恢复，或请管理员调高预算。', 'This library has used up its monthly AI budget — syncing is paused until next month, or ask an admin to raise the budget.'),
           'error',
         );
-      } else if (e instanceof ApiError && e.status === 409) {
+      } else if (e instanceof ApiError && e.message === 'LIBRARY_NOT_ACTIVE') {
         toast(
-          tr('该课题已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this topic — wait for it to finish.'),
+          tr('文献库还未激活，管理员批准后才能开始抓取。', 'Library is not active yet — an admin must approve it before ingest can start.'),
           'error',
         );
-        void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
+      } else if (e instanceof ApiError && e.status === 409) {
+        toast(
+          tr('该文献库已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this library — wait for it to finish.'),
+          'error',
+        );
+        void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
       } else {
         toast(`${tr('启动失败：', 'Failed to start: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }

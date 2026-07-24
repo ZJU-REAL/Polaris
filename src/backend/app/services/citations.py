@@ -209,7 +209,7 @@ async def papers_for_export(
         return []  # 课题无关联库 = 无可导出语料
     stmt = apply_paper_filters(
         member_papers_stmt(library_ids),
-        project_id=project_id,
+        library_ids=library_ids,
         status=status,
         tag=tag,
         starred=starred,
