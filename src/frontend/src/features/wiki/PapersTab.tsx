@@ -1068,7 +1068,7 @@ function PaperDetailPane({
           )}
         </div>
         {relevance !== null && (
-          <ScoreRing value={Math.round(relevance * 100) / 10} size={56} label={tr('相关度', 'Relevance')} />
+          <ScoreRing value={relevance} max={1} size={56} label={tr('相关度', 'Relevance')} />
         )}
       </div>
 

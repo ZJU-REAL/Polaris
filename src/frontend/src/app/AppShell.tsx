@@ -311,7 +311,6 @@ function NavItem({ n }: { n: NavEntry }) {
 export function AppShell() {
   const location = useLocation();
   const queryClient = useQueryClient();
-  const { currentProjectId } = useProject();
 
   // —— 审批抽屉 ——
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -485,11 +484,7 @@ export function AppShell() {
           }).map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
-          {/* 任务 / 课题设置已并入工作台标签：指向 /t/<id>?tab=… */}
-          <NavItem n={{ to: topicPath(currentProjectId) + '?tab=tasks', end: true, icon: 'compass', zh: '任务', en: 'Tasks' }} />
-          {currentProjectId && (
-            <NavItem n={{ to: topicPath(currentProjectId) + '?tab=settings', end: true, icon: 'sliders', zh: '课题设置', en: 'Topic settings' }} />
-          )}
+          {/* 任务 / 课题设置已并入「工作台」的标签页（概况/设置/任务），侧栏不再单列 */}
         </div>
 
         {/* —— 个人区：跨课题的个人页面（设置入口在底部头像菜单里，不重复占位） —— */}
