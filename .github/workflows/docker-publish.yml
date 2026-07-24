@@ -1,0 +1,66 @@
+# 发布：build 并 push 镜像到 Docker Hub。
+# 与 docker-build.yml 分工：那个在 PR 上只 build 做回归检查，本文件负责发版推送。
+#
+# 触发：push 版本 tag（v*，如 v1.0.0）时自动发布，tag 名即镜像 tag；也可手动触发。
+# 架构：ubuntu-latest 是 x86_64，普通 docker build 出 amd64 镜像（覆盖多数服务器）。
+#       texbase 本地建好后 api/worker 直接 FROM 它，无需把 texbase 也推 registry。
+#
+# 需要的仓库 Secrets（Settings → Secrets and variables → Actions）：
+#   DOCKERHUB_USERNAME  Docker Hub 用户名（同时用作镜像命名空间）
+#   DOCKERHUB_TOKEN     Docker Hub Personal Access Token（Read & Write）
+name: docker-publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "手动发布时的镜像 tag（如 v1.0.0）"
+        required: true
+        default: "latest"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NS: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "$NS" --password-stdin
+
+      # texbase 只进本地 daemon（不 push）；api/worker 的 Dockerfile 默认 FROM polaris-texbase:latest
+      - name: Build texbase (base image, local only)
+        run: docker build -f docker/Dockerfile.texbase -t polaris-texbase:latest docker/
+
+      - name: Build images
+        run: |
+          T="${{ steps.meta.outputs.tag }}"
+          docker build -f docker/Dockerfile.api      -t "$NS/polaris-api:$T"      -t "$NS/polaris-api:latest"      .
+          docker build -f docker/Dockerfile.worker   -t "$NS/polaris-worker:$T"   -t "$NS/polaris-worker:latest"   .
+          docker build -f docker/Dockerfile.frontend -t "$NS/polaris-frontend:$T" -t "$NS/polaris-frontend:latest" .
+
+      - name: Push images
+        run: |
+          T="${{ steps.meta.outputs.tag }}"
+          for s in api worker frontend; do
+            docker push "$NS/polaris-$s:$T"
+            docker push "$NS/polaris-$s:latest"
+          done
+
+      - name: Log out
+        if: always()
+        run: docker logout

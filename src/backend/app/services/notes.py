@@ -124,3 +124,40 @@ async def list_project_notes(
         (note, author_name_of(display_name, email), title)
         for note, display_name, email, title in rows
     ], int(total)
+
+
+async def list_library_notes(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    author_id: uuid.UUID,
+    q: str | None = None,
+    paper_id: uuid.UUID | None = None,
+    page: int = 1,
+    size: int = 20,
+) -> tuple[Sequence[tuple[PaperNote, str, str]], int]:
+    """库笔记本：「我的」笔记里落在该方向库论文上的部分（库工作台入口，含独立库）。
+
+    范围 = 该库成员行覆盖的论文（LibraryPaper.library_id）；无课题书架维度。
+    分页 + 内容搜索 + 按论文过滤；返回 (rows, total)，row = (note, author_name, paper_title)。
+    """
+    in_scope = PaperNote.paper_id.in_(
+        select(LibraryPaper.paper_id).where(LibraryPaper.library_id == library_id)
+    )
+    stmt = (
+        select(PaperNote, User.display_name, User.email, Paper.title)
+        .join(User, User.id == PaperNote.author_id)
+        .join(Paper, Paper.id == PaperNote.paper_id)
+        .where(PaperNote.author_id == author_id, in_scope)
+    )
+    if q:
+        stmt = stmt.where(PaperNote.content.ilike(f"%{q}%"))
+    if paper_id is not None:
+        stmt = stmt.where(PaperNote.paper_id == paper_id)
+    total = (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    stmt = stmt.order_by(PaperNote.created_at.desc()).offset((page - 1) * size).limit(size)
+    rows = (await session.execute(stmt)).all()
+    return [
+        (note, author_name_of(display_name, email), title)
+        for note, display_name, email, title in rows
+    ], int(total)

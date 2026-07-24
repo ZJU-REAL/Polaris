@@ -32,7 +32,7 @@ async def _setup_project(client, email="alice@example.com", name="forge-proj"):
     token = await register_and_login(client, email)
     headers = {"Authorization": f"Bearer {token}"}
     resp = await client.post(
-        "/api/projects", json={"name": name, "definition": DEFINITION}, headers=headers
+        "/api/projects", json={"name": name, "statement": DEFINITION["statement"]}, headers=headers
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"], headers

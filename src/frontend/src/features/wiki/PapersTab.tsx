@@ -67,7 +67,9 @@ export interface AdvSearchSeed {
 }
 
 export interface PapersTabProps {
-  pid: string;
+  pid?: string;
+  /** 独立库作用域：给定时集合级调用走 /libraries/{id}/* 端点，并隐藏标签编辑/过滤 */
+  libraryId?: string;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenConcept: (id: string) => void;
@@ -83,17 +85,20 @@ type ImportMethod = 'arxiv' | 'doi' | 'bibtex';
 
 function AddPaperModal({
   pid,
+  libraryId,
   open,
   onClose,
   onImported,
 }: {
   pid: string;
+  libraryId?: string;
   open: boolean;
   onClose: () => void;
   /** 添加成功 / 已存在时跳转选中该论文 */
   onImported: (paperId: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const scopeId = libraryId ?? pid;
   const [method, setMethod] = useState<ImportMethod>('arxiv');
   const [arxivId, setArxivId] = useState('');
   const [doi, setDoi] = useState('');
@@ -121,11 +126,11 @@ function AddPaperModal({
   };
 
   const importMutation = useMutation({
-    mutationFn: (inp: PaperImportInput) => api.importPaper(pid, inp),
+    mutationFn: (inp: PaperImportInput) => (libraryId ? api.importLibraryPaper(libraryId, inp) : api.importPaper(pid, inp)),
     onSuccess: (p) => {
       toast(tr('文献已加进论文库', 'Paper added to the library'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
-      void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
+      void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
       reset();
       onClose();
       onImported(p.id);
@@ -152,7 +157,7 @@ function AddPaperModal({
       open={open}
       onClose={onClose}
       title={tr('添加文献', 'Add paper')}
-      sub={tr('手动把一篇论文加进当前课题的论文库', 'Manually add a paper to this topic’s library')}
+      sub={libraryId ? tr('手动把一篇论文加进这个文献库', 'Manually add a paper to this library') : tr('手动把一篇论文加进当前课题的论文库', 'Manually add a paper to this topic’s library')}
       width={520}
       footer={
         <>
@@ -411,14 +416,18 @@ export function ExportMenu({
 
 /* ---------------- 垃圾桶 ---------------- */
 
-function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClose: () => void }) {
+function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?: string; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const scopeId = libraryId ?? pid;
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [trashQ, setTrashQ] = useState('');
 
   const trashQuery = useQuery({
-    queryKey: ['papers-trash', pid],
-    queryFn: () => api.listPapers(pid, { status: 'excluded', size: 100, sort: '-published_at' }),
+    queryKey: ['papers-trash', scopeId],
+    queryFn: () =>
+      libraryId
+        ? api.listLibraryPapersFull(libraryId, { status: 'excluded', size: 100, sort: '-published_at' })
+        : api.listPapers(pid, { status: 'excluded', size: 100, sort: '-published_at' }),
     enabled: open,
     retry: false,
   });
@@ -434,10 +443,10 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
     : allItems;
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ['papers-trash', pid] });
-    void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
-    void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
-    void queryClient.invalidateQueries({ queryKey: ['project-graph', pid] });
+    void queryClient.invalidateQueries({ queryKey: ['papers-trash', scopeId] });
+    void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
+    void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
+    void queryClient.invalidateQueries({ queryKey: ['project-graph', scopeId] });
   };
 
   const restoreMutation = useMutation({
@@ -461,7 +470,7 @@ function TrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClos
   });
 
   const emptyMutation = useMutation({
-    mutationFn: () => api.emptyTrash(pid),
+    mutationFn: () => (libraryId ? api.emptyLibraryTrash(libraryId) : api.emptyTrash(pid)),
     onSuccess: (res) => {
       toast(tr(`垃圾桶已清空（${res.deleted} 篇）`, `Trash emptied (${res.deleted} papers)`), 'ok');
       setConfirmEmpty(false);
@@ -778,7 +787,7 @@ const PaperRow = memo(function PaperRow({
 
 /* ---------------- 标签就地编辑 ---------------- */
 
-function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
+function TagEditor({ paper, scopeId }: { paper: PaperDetail; scopeId: string }) {
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [value, setValue] = useState('');
@@ -788,8 +797,8 @@ function TagEditor({ paper, pid }: { paper: PaperDetail; pid: string }) {
     mutationFn: (names: string[]) => api.putPaperTags(paper.id, names),
     onSuccess: (p) => {
       queryClient.setQueryData<PaperDetail>(['paper', paper.id], p);
-      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
-      void queryClient.invalidateQueries({ queryKey: ['project-tags', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
+      void queryClient.invalidateQueries({ queryKey: ['project-tags', scopeId] });
     },
     onError: (e) =>
       toast(`${tr('标签更新失败：', 'Tag update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -874,6 +883,7 @@ const AFFIL_CHIP_LIMIT = 6;
 function PaperDetailPane({
   paperId,
   pid,
+  libraryId,
   onOpenConcept,
   onWikiLink,
   onFilterAuthor,
@@ -882,6 +892,7 @@ function PaperDetailPane({
 }: {
   paperId: string;
   pid: string;
+  libraryId?: string;
   onOpenConcept: (id: string) => void;
   onWikiLink: WikiLinkHandler;
   /** 点击作者名 → 论文库按该作者过滤 */
@@ -894,6 +905,7 @@ function PaperDetailPane({
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const scopeId = libraryId ?? pid;
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [conceptsOpen, setConceptsOpen] = useState(false);
   const [affilsOpen, setAffilsOpen] = useState(false);
@@ -910,10 +922,10 @@ function PaperDetailPane({
     mutationFn: () => api.patchPaper(paperId, { status: 'excluded' }),
     onSuccess: () => {
       toast(tr('已移入垃圾桶，可在列表底部的垃圾桶中召回', 'Moved to trash — restore it from the trash any time'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
-      void queryClient.invalidateQueries({ queryKey: ['papers-trash', pid] });
-      void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
-      void queryClient.invalidateQueries({ queryKey: ['project-graph', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
+      void queryClient.invalidateQueries({ queryKey: ['papers-trash', scopeId] });
+      void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
+      void queryClient.invalidateQueries({ queryKey: ['project-graph', scopeId] });
       onDeleted();
     },
     onError: (e) =>
@@ -927,7 +939,7 @@ function PaperDetailPane({
       queryClient.setQueryData<PaperDetail>(['paper', paperId], (old) =>
         old ? { ...old, starred: meta.starred, reading_status: meta.reading_status } : old,
       );
-      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
     },
     onError: (e) =>
       toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -940,7 +952,7 @@ function PaperDetailPane({
       toast(tr('编译完成，介绍已更新', 'Compiled — the intro has been updated'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['paper', paperId] });
       void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
-      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
     },
     onError: (e) =>
       toast(`${tr('重新编译失败：', 'Recompile failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -1160,8 +1172,8 @@ function PaperDetailPane({
         </span>
       </div>
 
-      {/* —— 标签（就地编辑） —— */}
-      <TagEditor paper={paper} pid={pid} />
+      {/* —— 标签（就地编辑；库作用域，课题/独立库通用） —— */}
+      <TagEditor paper={paper} scopeId={scopeId} />
 
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
@@ -1341,7 +1353,8 @@ function PaperDetailPane({
 
 /* ---------------- Tab 主体 ---------------- */
 
-export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed }: PapersTabProps) {
+export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed }: PapersTabProps) {
+  const scopeId = libraryId ?? pid ?? '';
   const [view, setView] = useState<ViewFilter>('all');
   const [sort, setSort] = useState<PaperSort>('relevance');
   const [mode, setMode] = useState<SearchMode>('keyword');
@@ -1405,25 +1418,25 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
-  }, [pid, view, q, tagFilter, readingFilter]);
+  }, [scopeId, view, q, tagFilter, readingFilter]);
 
   const bulkDeleteMutation = useMutation({
-    mutationFn: () => api.batchDeletePapers(pid, [...selected]),
+    mutationFn: () => (libraryId ? api.batchDeleteLibraryPapers(libraryId, [...selected]) : api.batchDeletePapers(scopeId, [...selected])),
     onSuccess: (res) => {
       toast(tr(`已把 ${res.deleted} 篇移入垃圾桶，可召回`, `Moved ${res.deleted} papers to trash — restorable`), 'ok');
       if (selectedId && selected.has(selectedId)) onSelect('');
       setSelected(new Set());
       setSelectMode(false);
-      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
-      void queryClient.invalidateQueries({ queryKey: ['ingest-state', pid] });
-      void queryClient.invalidateQueries({ queryKey: ['project-graph', pid] });
+      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
+      void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
+      void queryClient.invalidateQueries({ queryKey: ['project-graph', scopeId] });
     },
     onError: (e) =>
       toast(`${tr('删除失败：', 'Delete failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
   const bulkExportMutation = useMutation({
-    mutationFn: () => api.downloadCitations(pid, { format: 'bibtex', ids: [...selected] }),
+    mutationFn: () => api.downloadCitations(pid ?? '', { format: 'bibtex', ids: [...selected] }),
     onSuccess: (blob) => {
       saveBlob(blob, 'polaris-selected.bib');
       toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
@@ -1436,17 +1449,17 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
 
   // —— 项目标签（过滤下拉用；接口未就绪时静默降级） ——
   const tagsQuery = useQuery({
-    queryKey: ['project-tags', pid],
-    queryFn: () => api.listTags(pid),
+    queryKey: ['project-tags', scopeId],
+    queryFn: () => (libraryId ? api.listLibraryTags(libraryId) : api.listTags(scopeId)),
     retry: false,
   });
   const projectTags = tagsQuery.data ?? [];
 
   // —— 关键词/浏览：分页列表 ——
   const listQuery = useInfiniteQuery({
-    queryKey: ['papers', pid, view, q, sort, tagFilter, readingFilter, author, affiliation, advPubFrom, advPubTo, advCreatedFrom, advCreatedTo],
-    queryFn: ({ pageParam }) =>
-      api.listPapers(pid, {
+    queryKey: ['papers', scopeId, view, q, sort, tagFilter, readingFilter, author, affiliation, advPubFrom, advPubTo, advCreatedFrom, advCreatedTo],
+    queryFn: ({ pageParam }) => {
+      const opts = {
         ...viewQuery(view),
         q: q || undefined,
         sort,
@@ -1460,7 +1473,9 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
         created_to: advCreatedTo ? `${advCreatedTo}T23:59:59Z` : undefined,
         page: pageParam,
         size: PAGE_SIZE,
-      }),
+      };
+      return libraryId ? api.listLibraryPapersFull(libraryId, opts) : api.listPapers(scopeId, opts);
+    },
     initialPageParam: 1,
     getNextPageParam: (last) => (last.page * last.size < last.total ? last.page + 1 : undefined),
     retry: false,
@@ -1469,8 +1484,11 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
 
   // —— 语义检索 ——
   const semQuery = useQuery({
-    queryKey: ['wiki-search', pid, q],
-    queryFn: () => api.searchProject(pid, { q, mode: 'semantic', limit: 30 }),
+    queryKey: ['wiki-search', scopeId, q],
+    queryFn: () =>
+      libraryId
+        ? api.searchLibrary(libraryId, { q, mode: 'semantic', limit: 30 })
+        : api.searchProject(scopeId, { q, mode: 'semantic', limit: 30 }),
     retry: (count, e) => !(e instanceof ApiError) && count < 1,
     enabled: semanticActive,
   });
@@ -1632,7 +1650,7 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
               {tr('垃圾桶', 'Trash')}
             </span>
           </div>
-          {/* 标签 / 阅读状态 / 仅星标 过滤 */}
+          {/* 标签（库作用域，课题/独立库通用）/ 阅读状态过滤 */}
           <div className="row gap6" style={{ marginTop: 8, ...filterDisabled }}>
             <select
               className="input"
@@ -1790,14 +1808,16 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
                 <Icon name="x" size={12} />
                 {tr('删除', 'Delete')}
               </button>
-              <button
-                className="btn btn-ghost sm"
-                disabled={selected.size === 0 || bulkExportMutation.isPending}
-                onClick={() => bulkExportMutation.mutate()}
-              >
-                <Icon name="download" size={12} />
-                {tr('导出 BibTeX', 'Export BibTeX')}
-              </button>
+              {!libraryId && (
+                <button
+                  className="btn btn-ghost sm"
+                  disabled={selected.size === 0 || bulkExportMutation.isPending}
+                  onClick={() => bulkExportMutation.mutate()}
+                >
+                  <Icon name="download" size={12} />
+                  {tr('导出 BibTeX', 'Export BibTeX')}
+                </button>
+              )}
             </>
           )}
         </div>
@@ -1808,7 +1828,8 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
         {selectedId ? (
           <PaperDetailPane
             paperId={selectedId}
-            pid={pid}
+            pid={pid ?? ''}
+            libraryId={libraryId}
             onOpenConcept={onOpenConcept}
             onWikiLink={onWikiLink}
             onFilterAuthor={filterByAuthor}
@@ -1823,10 +1844,10 @@ export function PapersTab({ pid, selectedId, onSelect, onOpenConcept, onWikiLink
       </div>
 
       {/* —— 添加文献 Modal —— */}
-      <AddPaperModal pid={pid} open={addOpen} onClose={() => setAddOpen(false)} onImported={onSelect} />
+      <AddPaperModal pid={pid ?? ''} libraryId={libraryId} open={addOpen} onClose={() => setAddOpen(false)} onImported={onSelect} />
 
       {/* —— 垃圾桶 —— */}
-      <TrashModal pid={pid} open={trashOpen} onClose={() => setTrashOpen(false)} />
+      <TrashModal pid={pid ?? ''} libraryId={libraryId} open={trashOpen} onClose={() => setTrashOpen(false)} />
     </div>
   );
 }

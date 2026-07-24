@@ -1,0 +1,77 @@
+# Docker 构建上下文过滤（compose 里 context: 仓库根）。
+# 目的：① 绝不把机密带进公开镜像；② 大幅缩小上传给 daemon 的上下文。
+# 说明：Dockerfile 的 COPY 只取 src/backend、src/frontend；此文件是显式加固，
+#       防止有人误加 COPY 或往子目录里丢机密文件时静默泄露。
+
+# ---- 机密：任何情况都不许进镜像 ----
+# 注意：.dockerignore 的 `*.pem` 只匹配上下文根目录，不像 .gitignore 递归；
+#       子目录里的机密必须用 `**/*.pem` 才能挡住，故每类都给根 + 递归两份。
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+*.pem
+**/*.pem
+*.key
+**/*.key
+*.p12
+**/*.p12
+*.pfx
+**/*.pfx
+id_rsa*
+**/id_rsa*
+id_ed25519*
+**/id_ed25519*
+*.db
+**/*.db
+*.sqlite
+**/*.sqlite
+*.sqlite3
+**/*.sqlite3
+secrets/
+**/secrets/
+
+# ---- 版本控制 / 本地元数据 ----
+.git
+.gitignore
+.gitattributes
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# ---- 平行 checkout / worktree（在仓库根，非镜像所需）----
+Polaris-dev/
+pr/
+rescue/
+backup/
+
+# ---- Python 缓存与构建产物 ----
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/*.egg-info/
+**/build/
+**/.venv/
+**/venv/
+
+# ---- Node / 前端（镜像内 npm ci 重装，dist 由 build stage 产出）----
+**/node_modules/
+**/dist/
+**/.vite/
+npm-debug.log*
+
+# ---- 文档 / 原型 / 部署脚本（运行时不需要，减小上下文）----
+docs/
+docs-dev/
+原型.html
+*.md
+!README.md
+
+# ---- 日志 / 临时文件 ----
+*.log
+tmp/
+**/tmp/

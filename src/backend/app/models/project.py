@@ -2,13 +2,12 @@
 
 import uuid
 from datetime import datetime
-from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -16,10 +15,9 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    definition: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # 访谈结果 JSON
-    # 文献 ingest 状态：{"watermark": iso, "last_run": {"voyage_id", "finished_at"}}
-    # 已处理论文不入此列——去重以 Paper 表（arxiv_id/doi/title）为准
-    ingest_state: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    # P9e：课题语境提示（一句话）。收录配置（rubric/anchors/keywords/goals/scope/
+    # questions/cadence）权威源在文献库 ``DirectionLibrary.definition``，不在课题上。
+    statement: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     owner_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False

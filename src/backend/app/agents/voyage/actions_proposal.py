@@ -695,12 +695,7 @@ async def proposal_design(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
 
 async def _resources_profile(ctx: ActionContext) -> str:
-    async with get_sessionmaker()() as session:
-        project = await _get_project(session, ctx)
-    definition = project.definition if isinstance(project.definition, dict) else {}
-    resources = definition.get("resources")
-    if resources:
-        return f"项目资源画像：{json.dumps(resources, ensure_ascii=False)[:1500]}"
+    # 资源画像随 project.definition 一并退役（P9e）——课题不再承载收录/资源配置。
     return "项目资源画像：（未配置，按通用实验室资源假设，并在正文显式标注该假设）"
 
 

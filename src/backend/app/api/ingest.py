@@ -32,9 +32,17 @@ async def start_ingest(
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    library = await libraries_service.get_library_for_project(session, project.id)
+    if library is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     try:
         run = await ingest_service.create_ingest_voyage(
-            session, project=project, mode=data.mode, knobs=data.knobs, created_by=user.id
+            session,
+            library=library,
+            project=project,
+            mode=data.mode,
+            knobs=data.knobs,
+            created_by=user.id,
         )
     except ingest_service.IngestConflictError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e

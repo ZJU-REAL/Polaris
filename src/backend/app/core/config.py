@@ -4,7 +4,7 @@ import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("polaris.config")
@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     # 未配置任何 LLM 路由时是否回退内置 fake provider（仅测试/无 key 演示用）。
     # 默认关闭：未配置时 AI 功能返回 LLM_NOT_CONFIGURED，而不是产出演示假内容。
+    # 生产（env=prod）下无论如何都强制关闭，见下方 _prod_forbids_fake_llm。
     llm_fake_fallback: bool = False
 
     # ---- 文献 API ----
@@ -73,6 +74,17 @@ class Settings(BaseSettings):
             logger.warning("忽略非法配置值（疑似注释混入）：%r", v[:40])
             return ""
         return v
+
+    @model_validator(mode="after")
+    def _prod_forbids_fake_llm(self) -> "Settings":
+        """生产环境结构性禁用 fake provider 回退：即便误设 POLARIS_LLM_FAKE_FALLBACK=1
+        也一律钉死为 False，杜绝把演示假内容当成真实 AI 输出发给用户。"""
+        if self.env == "prod" and self.llm_fake_fallback:
+            logger.warning(
+                "env=prod：忽略 POLARIS_LLM_FAKE_FALLBACK=1，生产禁止 fake LLM 回退"
+            )
+            object.__setattr__(self, "llm_fake_fallback", False)
+        return self
 
     @property
     def is_sqlite(self) -> bool:

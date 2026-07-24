@@ -499,6 +499,21 @@ async def initialize_structure(
             draft.content = new_content
             draft.updated_by = user_id
 
+    # draft.tex 里带 \bibliography{references}，若工作区还没有 references.bib（遗留稿件、
+    # 或建稿模板未生成）就一并落库，否则 AI 起草后编译解析 \cite 会找不到 bib 文件。
+    if "references.bib" not in by_path:
+        from app.services import latex_compile  # 延迟导入避免循环
+
+        session.add(
+            ManuscriptFile(
+                manuscript_id=manuscript.id,
+                path="references.bib",
+                content=await latex_compile.build_references_bib(session, manuscript),
+                readonly=False,
+                updated_by=user_id,
+            )
+        )
+
     manuscript.main_tex = DRAFT_TEX  # 编译主文件切到草稿
     await session.commit()
     await session.refresh(draft)

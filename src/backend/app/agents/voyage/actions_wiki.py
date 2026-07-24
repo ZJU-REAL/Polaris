@@ -26,9 +26,8 @@ from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
 from app.models.activity import Activity
 from app.models.base import utcnow
-from app.models.library_direction import LibraryPaper
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, PaperChunk
-from app.models.project import Project
 from app.services.affiliations import extract_affiliations_llm
 from app.services.chunks import embed_pending_chunks, index_paper_fulltext
 from app.services.concepts import link_all_paper_concepts
@@ -145,11 +144,18 @@ def _mode(ctx: ActionContext) -> str:
     )
 
 
-async def _get_project(session: AsyncSession, ctx: ActionContext) -> Project:
-    project = await session.get(Project, ctx.run.project_id)
-    if project is None:
-        raise ValueError(f"project not found: {ctx.run.project_id}")
-    return project
+async def _resolve_library(
+    session: AsyncSession, ctx: ActionContext
+) -> DirectionLibrary | None:
+    """P9a：库化任务优先按 ``run.library_id`` 直接定位方向库；回退起源课题解析（兼容
+    库化前建的存量 run）。独立库（无起源课题）也能由此拿到自己的库。"""
+    if ctx.run.library_id is not None:
+        library = await session.get(DirectionLibrary, ctx.run.library_id)
+        if library is not None:
+            return library
+    if ctx.run.project_id is not None:
+        return await get_library_for_project(session, ctx.run.project_id)
+    return None
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -240,7 +246,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
     now = utcnow()
     mode = _mode(ctx)
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.run.project_id)
+        library = await _resolve_library(session, ctx)
         if library is None:
             raise ValueError(f"library not found for project: {ctx.run.project_id}")
         # P8a：收录配置读库自身 definition（不再读起源课题 project.definition）
@@ -382,7 +388,7 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
     max_new = _UNLIMITED_SENTINEL if _unlimited(knobs) else int(knobs["max_papers"]) * 2
 
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.run.project_id)
+        library = await _resolve_library(session, ctx)
         if library is None:
             raise ValueError(f"library not found for project: {ctx.run.project_id}")
         definition = library_definition(library)
@@ -517,7 +523,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
     threshold = float(knobs["relevance_threshold"])
 
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.run.project_id)
+        library = await _resolve_library(session, ctx)
         if library is None:
             raise ValueError(f"library not found for project: {ctx.run.project_id}")
         # 稀疏 definition 容忍：rubric / questions 缺失时 prompt 只用 statement
@@ -633,7 +639,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     failed: list[dict[str, str]] = []
 
     async with get_sessionmaker()() as session:
-        library = await get_library_for_project(session, ctx.run.project_id)
+        library = await _resolve_library(session, ctx)
         pairs = (
             await session.execute(
                 select(Paper, LibraryPaper)
@@ -769,8 +775,9 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
     top_n = _compile_limit(knobs)
 
     async with get_sessionmaker()() as session:
-        project = await _get_project(session, ctx)
-        library = await get_library_for_project(session, project.id)
+        library = await _resolve_library(session, ctx)
+        if library is None:
+            raise ValueError(f"library not found for run: {ctx.run.id}")
         statement = library_definition(library).get("statement") or library.name
         # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）。外层只查 id，每篇
         # 编译在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
@@ -877,15 +884,16 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
 @register("wiki.link_concepts")
 async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
-        project = await _get_project(session, ctx)
-        library = await get_library_for_project(session, project.id)
+        library = await _resolve_library(session, ctx)
+        if library is None:
+            raise ValueError(f"library not found for run: {ctx.run.id}")
         # 全库上链逻辑与手动补建端点共用（services/concepts.py）
         stats, papers = await link_all_paper_concepts(
             session,
             library_id=library.id,
             llm=ctx.llm,
             user_id=ctx.run.created_by,
-            project_id=project.id,
+            project_id=ctx.run.project_id,
             voyage_id=ctx.run.id,
         )
         created = int(stats["concepts_created"])
@@ -927,7 +935,7 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             library_id=library.id,
             llm=ctx.llm,
             user_id=ctx.run.created_by,
-            project_id=project.id,
+            project_id=ctx.run.project_id,
             voyage_id=ctx.run.id,
             **embed_kwargs,
         )
@@ -952,8 +960,7 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
 @register("wiki.update_watermark")
 async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
-        project = await _get_project(session, ctx)
-        library = await get_library_for_project(session, project.id)
+        library = await _resolve_library(session, ctx)
         # 水位线权威源在库（P8a）：写 library.ingest_state；起源课题 project.ingest_state
         # 不再是权威（overview「上次同步时间」读库）。
         state = dict((library.ingest_state if library else None) or {})
@@ -967,7 +974,8 @@ async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         compiled_count = int(ctx.checkpoint.get("compiled_count") or 0)
         session.add(
             Activity(
-                project_id=project.id,
+                project_id=ctx.run.project_id,
+                library_id=library.id if library is not None else None,
                 actor="agent:librarian",
                 kind="ingest.completed",
                 message=f"文献调研完成：本次编译 {compiled_count} 篇 wiki 页",

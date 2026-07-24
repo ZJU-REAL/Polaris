@@ -8,7 +8,7 @@ import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
-import { api, ApiError, type ProjectDefinition, type ProjectRead } from '../../lib/api';
+import { api, ApiError, type ProjectRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useLibraries } from '../libraries/hooks';
 import { LibraryPicker } from '../libraries/LibraryPicker';
@@ -113,7 +113,7 @@ export function ProjectDetailPage() {
   });
 
   const patchMutation = useMutation({
-    mutationFn: (input: { name?: string; definition?: ProjectDefinition }) => api.patchProject(id, input),
+    mutationFn: (input: { name?: string; statement?: string }) => api.patchProject(id, input),
     onSuccess: (updated: ProjectRead) => {
       queryClient.setQueryData(['project', id], updated);
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -230,11 +230,7 @@ export function ProjectDetailPage() {
     );
   }
 
-  const def: ProjectDefinition = project.definition ?? {};
   const saving = patchMutation.isPending;
-
-  const patchDef = (partial: Partial<ProjectDefinition>) =>
-    patchMutation.mutate({ definition: { ...def, ...partial } });
 
   return (
     <div className="page fadeup">
@@ -344,8 +340,8 @@ export function ProjectDetailPage() {
       <div className="col gap16">
         {/* 一句话定义 */}
         <SectionCard icon="sparkle" zh="课题定义" en="Statement">
-          <EditableText value={def.statement ?? ''} placeholder={tr('尚未填写一句话定义', 'No one-line statement yet')}
-            onSave={(v) => patchDef({ statement: v })} saving={saving} />
+          <EditableText value={project.statement ?? ''} placeholder={tr('尚未填写一句话定义', 'No one-line statement yet')}
+            onSave={(v) => patchMutation.mutate({ statement: v })} saving={saving} />
         </SectionCard>
 
         {/* 关联文献库 */}

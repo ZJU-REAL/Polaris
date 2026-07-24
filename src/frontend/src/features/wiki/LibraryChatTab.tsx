@@ -5,7 +5,7 @@ import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { api, type LibraryChatSource } from '../../lib/api';
-import { chatLibrarySse } from '../../lib/sse';
+import { chatLibrarySse, chatLibraryByIdSse } from '../../lib/sse';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { tr } from '../../lib/i18n';
 import { ChatSurface } from '../chat/ChatSurface';
@@ -207,15 +207,19 @@ function SourceList({
 }
 
 export interface LibraryChatTabProps {
-  pid: string;
+  /** 课题作用域（成员视角，走 /projects/{pid}/chat） */
+  pid?: string;
+  /** 独立库作用域（走 /libraries/{id}/chat）；与 pid 二选一 */
+  libraryId?: string;
   onOpenPaper: (id: string) => void;
   /** [[概念名]] 双链点击 → 按名称跳概念库 */
   onWikiLink?: WikiLinkHandler;
 }
 
-export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabProps) {
+export function LibraryChatTab({ pid, libraryId, onOpenPaper, onWikiLink }: LibraryChatTabProps) {
+  const scopePid = pid ?? '';
   const rebuildMutation = useMutation({
-    mutationFn: () => api.rebuildFulltextIndex(pid),
+    mutationFn: () => api.rebuildFulltextIndex(scopePid),
     onSuccess: (r) => {
       if (r.papers_indexed === 0) {
         toast(tr('全文索引已是最新', 'Full-text index is up to date'), 'info');
@@ -278,7 +282,32 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
         onError: (d: string) => void;
       },
     ) =>
-      chatLibrarySse(pid, { question: args.question, history: args.history }, {
+      (libraryId
+        ? chatLibraryByIdSse(libraryId, { question: args.question, history: args.history }, {
+            onEvent: (event, dataStr) => {
+              if (event === 'sources') ctrl.onSources?.(dataStr);
+              else if (event === 'delta') {
+                try {
+                  const t = (JSON.parse(dataStr) as { text?: string }).text ?? '';
+                  if (t) ctrl.onDelta(t);
+                } catch {
+                  /* ignore */
+                }
+              } else if (event === 'done') ctrl.onDone();
+              else if (event === 'error') {
+                let detail = tr('服务端出错', 'Server error');
+                try {
+                  detail = (JSON.parse(dataStr) as { detail?: string }).detail ?? detail;
+                } catch {
+                  /* keep */
+                }
+                ctrl.onError(detail);
+              }
+            },
+            onClose: () => ctrl.onDone(),
+            onError: (err) => ctrl.onError(err instanceof Error ? err.message : String(err)),
+          })
+        : chatLibrarySse(scopePid, { question: args.question, history: args.history }, {
         onEvent: (event, dataStr) => {
           if (event === 'sources') ctrl.onSources?.(dataStr);
           else if (event === 'delta') {
@@ -301,31 +330,34 @@ export function LibraryChatTab({ pid, onOpenPaper, onWikiLink }: LibraryChatTabP
         },
         onClose: () => ctrl.onDone(),
         onError: (err) => ctrl.onError(err instanceof Error ? err.message : String(err)),
-      }),
-    [pid],
+      })),
+    [pid, libraryId, scopePid],
   );
 
   return (
     <ChatSurface
-      surfaceKey={`library:${pid}`}
-      pid={pid}
+      surfaceKey={libraryId ? `library-standalone:${libraryId}` : `library:${scopePid}`}
+      pid={scopePid}
+      libraryId={libraryId}
       title={tr('文献对话', 'Library chat')}
-      contextKinds={['paper', 'idea', 'experiment', 'concept']}
+      contextKinds={libraryId ? ['paper', 'concept'] : ['paper', 'idea', 'experiment', 'concept']}
       hint={tr(
         '回答基于从整个文献库检索到的全文片段，可做跨文献对比与综合梳理；[n] 为引用来源编号。',
         'Answers are grounded in full-text passages from the whole library; [n] marks a source number.',
       )}
       headerAction={
-        <button
-          className="btn btn-ghost sm"
-          style={{ height: 26, fontSize: 10.5, flexShrink: 0 }}
-          title={tr('给较早入库、还没建全文索引的论文补索引', 'Backfill the full-text index for older papers')}
-          disabled={rebuildMutation.isPending}
-          onClick={() => rebuildMutation.mutate()}
-        >
-          <Icon name="refresh" size={11} style={rebuildMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
-          {tr('补建索引', 'Rebuild index')}
-        </button>
+        libraryId ? undefined : (
+          <button
+            className="btn btn-ghost sm"
+            style={{ height: 26, fontSize: 10.5, flexShrink: 0 }}
+            title={tr('给较早入库、还没建全文索引的论文补索引', 'Backfill the full-text index for older papers')}
+            disabled={rebuildMutation.isPending}
+            onClick={() => rebuildMutation.mutate()}
+          >
+            <Icon name="refresh" size={11} style={rebuildMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
+            {tr('补建索引', 'Rebuild index')}
+          </button>
+        )
       }
       emptyIcon="chat"
       emptyTitle={tr('和整个文献库对话', 'Chat with the whole library')}

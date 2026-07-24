@@ -20,7 +20,7 @@ from app.models.topic_shelf import TopicPaper
 from app.models.user import User
 from app.services import paper_merge as merge_service
 from app.services.libraries import get_library_for_project
-from tests.conftest import add_concept, add_paper, register_and_login
+from tests.conftest import add_concept, add_paper, ensure_project_library, register_and_login
 
 
 async def _setup(client, *, email="merge-owner@example.com", name="合并方向"):
@@ -44,8 +44,8 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
         other_id = await _user_id(session, "merge-b@example.com")
         pid = uuid.UUID(project_id)
         pid_b = uuid.UUID(project_b)
-        lib_a = await get_library_for_project(session, pid)
-        lib_b = await get_library_for_project(session, pid_b)
+        lib_a = await ensure_project_library(session, pid)
+        lib_b = await ensure_project_library(session, pid_b)
 
         # keep：A 库 scored（无 wiki、无全文分段）
         keep = await add_paper(
