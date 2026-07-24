@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { api, getToken, setToken, type RegisterInput } from '../lib/api';
 
 interface AuthValue {
@@ -16,12 +17,18 @@ const AuthContext = createContext<AuthValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setTokenState] = useState<string | null>(() => getToken());
+  const queryClient = useQueryClient();
 
-  const login = useCallback(async (email: string, password: string) => {
-    const t = await api.login(email, password);
-    setToken(t);
-    setTokenState(t);
-  }, []);
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const t = await api.login(email, password);
+      setToken(t);
+      setTokenState(t);
+      // 切换账号：清空所有缓存查询，避免残留上一个用户的 me/项目/文献库等数据
+      queryClient.clear();
+    },
+    [queryClient],
+  );
 
   const register = useCallback(
     async (input: RegisterInput) => {
@@ -34,7 +41,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setToken(null);
     setTokenState(null);
-  }, []);
+    // 登出：清掉缓存，避免下一个登录用户短暂看到上一个用户的数据
+    queryClient.clear();
+  }, [queryClient]);
 
   const value = useMemo<AuthValue>(
     () => ({ token, isAuthenticated: token !== null, login, register, logout }),
