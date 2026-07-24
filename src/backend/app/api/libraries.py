@@ -529,6 +529,59 @@ async def get_library_paper(
     return await _paper_detail(session, view, user.id)
 
 
+async def _managed_library_paper_view(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    user: User,
+    with_concepts: bool = False,
+) -> papers_service.PaperView:
+    """可管理者精确锁定本库那份成员行（垃圾桶召回/彻底删除用；不跨库归并）。"""
+    library = await _get_managed_library(session, library_id, user)
+    view = await papers_service.get_library_paper_view(
+        session,
+        library_id=library.id,
+        project_id=library.project_id,
+        paper_id=paper_id,
+        with_concepts=with_concepts,
+    )
+    if view is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+    return view
+
+
+@router.post("/libraries/{library_id}/papers/{paper_id}/restore", response_model=PaperDetail)
+async def restore_library_paper(
+    library_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperDetail:
+    """从**指定库**的垃圾桶召回该篇（精确锁定本库成员行，不跨库归并）。"""
+    view = await _managed_library_paper_view(
+        session, library_id=library_id, paper_id=paper_id, user=user, with_concepts=True
+    )
+    view = await papers_service.restore_paper(session, view)
+    return await _paper_detail(session, view, user.id)
+
+
+@router.delete(
+    "/libraries/{library_id}/papers/{paper_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_library_paper(
+    library_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """从**指定库**彻底删除该篇（只删本库成员行，内容池论文/文件/笔记保留）。"""
+    view = await _managed_library_paper_view(
+        session, library_id=library_id, paper_id=paper_id, user=user
+    )
+    await papers_service.delete_paper(session, view)
+
+
 @router.get("/libraries/{library_id}/concepts", response_model=list[ConceptRead])
 async def list_library_concepts(
     library_id: uuid.UUID,
