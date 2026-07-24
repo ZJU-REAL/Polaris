@@ -195,12 +195,9 @@ export function DailyLikes({
               : { display: 'flex', position: 'relative' }
           }
         >
-          <Facepile
-            users={item.likers_preview}
-            total={item.like_count}
-            size={isRow ? 18 : 20}
-            accentFirst={!isRow && item.liked_by_me}
-          />
+          {/* 头像描边一律用 surface（浅色即白）：「我赞过」已由实心红心表达，
+              不再给首个头像加 accent 描边，两种排布下观感一致 */}
+          <Facepile users={item.likers_preview} total={item.like_count} size={isRow ? 18 : 20} />
 
           {hovered && anchor && (
             <div

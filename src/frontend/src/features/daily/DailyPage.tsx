@@ -156,6 +156,20 @@ function DailyDetailPane({
     retry: false,
   });
 
+  // 下载原文：把 PDF 抓进平台（顺带抽全文/分块），成功后按钮变「阅读原文」
+  const fetchPdfMutation = useMutation({
+    mutationFn: () => api.requestPaperPdf(paper!.paper_id),
+    onSuccess: () => {
+      toast(tr('已下载原文，可以在线阅读了', 'PDF fetched — you can read it here now'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
+    },
+    onError: (e) =>
+      toast(
+        `${tr('下载原文失败', 'Failed to fetch the PDF')}：${e instanceof Error ? e.message : String(e)}`,
+        'error',
+      ),
+  });
+
   // 单篇 AI 解读编译：同步等待（约半分钟）；409 = 已有人在编译
   const compileMutation = useMutation({
     mutationFn: () => api.compileDailyPaper(entryId),
@@ -251,18 +265,25 @@ function DailyDetailPane({
             {tr('阅读原文', 'Read original')}
           </button>
         ) : (
-          pdfDownloadUrl && (
-            <a
+          (paper.arxiv_id || pdfDownloadUrl) && (
+            <button
               className="btn btn-primary sm"
-              href={pdfDownloadUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              style={{ textDecoration: 'none' }}
-              title={tr('在 arXiv 打开 PDF', 'Open the PDF on arXiv')}
+              disabled={fetchPdfMutation.isPending}
+              onClick={() => fetchPdfMutation.mutate()}
+              title={tr('下载 PDF 到平台，下载后即可在线阅读', 'Fetch the PDF into Polaris so it can be read here')}
             >
-              <Icon name="download" size={13} />
-              {tr('下载原文', 'Download PDF')}
-            </a>
+              {fetchPdfMutation.isPending ? (
+                <>
+                  <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                  {tr('下载中…', 'Downloading…')}
+                </>
+              ) : (
+                <>
+                  <Icon name="download" size={13} />
+                  {tr('下载原文', 'Download PDF')}
+                </>
+              )}
+            </button>
           )
         )}
         <button
