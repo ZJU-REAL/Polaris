@@ -1116,7 +1116,7 @@ export interface GraphTabProps {
 }
 
 export function GraphTab({ pid, libraryId, onOpenPaper, onOpenConcept }: GraphTabProps) {
-  const [view, setView] = useState<GraphView>('timeline');
+  const [view, setView] = useState<GraphView>('trends');
   const [focusConceptId, setFocusConceptId] = useState('');
   const scopeId = libraryId ?? pid ?? '';
 
