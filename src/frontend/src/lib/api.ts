@@ -2255,6 +2255,13 @@ export const api = {
     return requestJson<UserRead>('/auth/register', 'POST', input);
   },
 
+  /** 注册表单实时检查用户名是否可用。 */
+  usernameAvailable(username: string): Promise<{ available: boolean }> {
+    return request<{ available: boolean }>(
+      `/auth/username-available?username=${encodeURIComponent(username)}`,
+    );
+  },
+
   /** 健康检查：{status, version}（反馈上下文里带版本号用）。 */
   health(): Promise<HealthInfo> {
     return request<HealthInfo>('/health');

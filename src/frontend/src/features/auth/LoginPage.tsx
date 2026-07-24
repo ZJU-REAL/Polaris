@@ -1,15 +1,16 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { LangToggle } from '../../components/ui/LangToggle';
 import { PolarisMark, PolarisWordmark } from '../../components/ui/PolarisLogo';
 import { Segmented } from '../../components/ui/Segmented';
 import { useAuth } from '../../app/auth';
-import { ApiError } from '../../lib/api';
+import { ApiError, api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 type Mode = 'login' | 'register';
+type Step = 1 | 2;
 
 const USERNAME_RE = /^[a-z0-9_]{3,32}$/;
 
@@ -35,17 +36,79 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : tr('未知错误', 'Unknown error');
 }
 
+/**
+ * 密码强度：0 = 未达最低要求（≥8 位且同时含字母和数字），1 弱 / 2 中 / 3 强。
+ * 达标后按字符类别数（小写/大写/数字/符号）与长度加分。
+ */
+function passwordStrength(pw: string): 0 | 1 | 2 | 3 {
+  if (pw.length < 8 || !/[a-zA-Z]/.test(pw) || !/\d/.test(pw)) return 0;
+  let score = [/[a-z]/, /[A-Z]/, /\d/, /[^a-zA-Z0-9]/].filter((re) => re.test(pw)).length;
+  if (pw.length >= 12) score += 1;
+  return score <= 2 ? 1 : score === 3 ? 2 : 3;
+}
+
+const STRENGTH_LABEL: Record<1 | 2 | 3, { zh: string; en: string }> = {
+  1: { zh: '弱', en: 'Weak' },
+  2: { zh: '中', en: 'Fair' },
+  3: { zh: '强', en: 'Strong' },
+};
+
+function PasswordMeter({ password }: { password: string }) {
+  const level = passwordStrength(password);
+  return (
+    <>
+      <div className={`pwd-meter lv${level}`}>
+        <div className="pwd-meter-bars">
+          <i />
+          <i />
+          <i />
+        </div>
+        <span className="pwd-meter-label">
+          {level === 0 ? '' : tr(STRENGTH_LABEL[level].zh, STRENGTH_LABEL[level].en)}
+        </span>
+      </div>
+      <div
+        className="pwd-hint"
+        style={{ color: password && level === 0 ? 'var(--danger-tx)' : 'var(--text-4)' }}
+      >
+        {tr('至少 8 位，需同时包含字母和数字', 'At least 8 characters, with both letters and digits')}
+      </div>
+    </>
+  );
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
   const { isAuthenticated, login, register } = useAuth();
   const [mode, setMode] = useState<Mode>('login');
+  const [step, setStep] = useState<Step>(1); // 仅注册用：1 账号信息 / 2 设置密码
   const [identifier, setIdentifier] = useState(''); // 登录：邮箱或用户名；注册：邮箱
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [password2, setPassword2] = useState('');
   const [inviteCode, setInviteCode] = useState('');
 
   const usernameValid = USERNAME_RE.test(username);
+  const pwdLevel = passwordStrength(password);
+  const pwdMatch = password2 !== '' && password === password2;
+
+  // 用户名可用性：停止输入 400ms 后查询（格式合法才查）
+  const [usernameDebounced, setUsernameDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setUsernameDebounced(username), 400);
+    return () => clearTimeout(t);
+  }, [username]);
+  const usernameCheck = useQuery({
+    queryKey: ['username-available', usernameDebounced],
+    queryFn: () => api.usernameAvailable(usernameDebounced),
+    enabled: mode === 'register' && USERNAME_RE.test(usernameDebounced),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const checkSettled = usernameValid && usernameDebounced === username && usernameCheck.data != null;
+  const usernameTaken = checkSettled && !usernameCheck.data!.available;
+  const usernameFree = checkSettled && usernameCheck.data!.available;
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -68,64 +131,101 @@ export function LoginPage() {
     return <Navigate to="/" replace />;
   }
 
+  const isRegister = mode === 'register';
+
+  function switchMode(m: Mode) {
+    setMode(m);
+    setStep(1);
+    setPassword('');
+    setPassword2('');
+    mutation.reset();
+  }
+
+  function backToStep1() {
+    setPassword('');
+    setPassword2('');
+    mutation.reset();
+    setStep(1);
+  }
+
   function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (isRegister && step === 1) {
+      if (usernameValid && !usernameTaken) setStep(2);
+      return;
+    }
     mutation.mutate();
   }
 
-  const isRegister = mode === 'register';
-
   return (
     <div className="auth-page">
+      {/* 左上角品牌 */}
+      <div className="auth-brand">
+        <PolarisMark size={56} />
+        <PolarisWordmark height={32} />
+      </div>
+
       <div style={{ position: 'absolute', top: 18, right: 20 }}>
         <LangToggle />
       </div>
+
+      {/* 右侧表单卡片 */}
       <div className="auth-card fadeup">
-        {/* 品牌区 */}
-        <div className="col" style={{ alignItems: 'center', marginBottom: 24 }}>
-          <div style={{ marginBottom: 14 }}>
-            <PolarisMark size={86} />
-          </div>
-          <PolarisWordmark height={44} />
-          <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>
-            {tr('北极星 | AI 科研智能体', 'Polaris | AI Research Agent')}
-          </div>
+        <div className="auth-card-title">
+          {isRegister ? tr('创建账号', 'Create your account') : tr('欢迎回来', 'Welcome back')}
+        </div>
+        <div className="auth-card-sub">
+          {tr('北极星 AI 科研智能体，让 AI 与你一起做研究', 'Polaris AI research agent — do research together with AI')}
         </div>
 
-        <div className="row" style={{ justifyContent: 'center', marginBottom: 22 }}>
+        <div className="row" style={{ justifyContent: 'center', marginBottom: 18 }}>
           <Segmented<Mode>
             options={[
               { v: 'login', label: tr('登录', 'Sign in') },
               { v: 'register', label: tr('注册', 'Sign up') },
             ]}
             value={mode}
-            onChange={(m) => {
-              setMode(m);
-              mutation.reset();
-            }}
+            onChange={switchMode}
           />
         </div>
+
+        {isRegister && (
+          <div className="auth-steps">
+            <div className={`auth-step${step === 1 ? ' active' : ' done'}`}>
+              <span className="dot">{step > 1 ? <Icon name="check" size={11} /> : '1'}</span>
+              {tr('账号信息', 'Account')}
+            </div>
+            <div className="auth-step-line" />
+            <div className={`auth-step${step === 2 ? ' active' : ''}`}>
+              <span className="dot">2</span>
+              {tr('设置密码', 'Password')}
+            </div>
+          </div>
+        )}
 
         {mutation.isError && <div className="auth-error">{errorMessage(mutation.error)}</div>}
 
         <form onSubmit={onSubmit}>
-          <div className="auth-field">
-            <label htmlFor="identifier">
-              {isRegister ? tr('邮箱', 'Email') : tr('邮箱或用户名', 'Email or username')}
-            </label>
-            <input
-              id="identifier"
-              className="auth-input"
-              type={isRegister ? 'email' : 'text'}
-              required
-              autoComplete={isRegister ? 'email' : 'username'}
-              placeholder={isRegister ? 'you@zju.edu.cn' : tr('邮箱或用户名', 'Email or username')}
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-            />
-          </div>
+          {/* 登录表单 / 注册第 1 步：账号信息 */}
+          {(!isRegister || step === 1) && (
+            <div className="auth-field">
+              <label htmlFor="identifier">
+                {isRegister ? tr('邮箱', 'Email') : tr('邮箱或用户名', 'Email or username')}
+              </label>
+              <input
+                id="identifier"
+                className="auth-input"
+                type={isRegister ? 'email' : 'text'}
+                required
+                autoComplete={isRegister ? 'email' : 'username'}
+                placeholder={isRegister ? 'you@zju.edu.cn' : tr('邮箱或用户名', 'Email or username')}
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+              />
+            </div>
+          )}
 
-          {isRegister && (
+          {isRegister && step === 1 && (
             <>
               <div className="auth-field">
                 <label htmlFor="displayName">{tr('姓名', 'Name')}</label>
@@ -143,72 +243,154 @@ export function LoginPage() {
               </div>
               <div className="auth-field">
                 <label htmlFor="username">{tr('用户名', 'Username')}</label>
-                <input
-                  id="username"
-                  className="auth-input"
-                  type="text"
-                  required
-                  autoComplete="username"
-                  placeholder="e.g. zhang_san"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value.toLowerCase())}
-                />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    id="username"
+                    className="auth-input"
+                    type="text"
+                    required
+                    autoComplete="username"
+                    placeholder="e.g. zhang_san"
+                    style={{ width: '100%' }}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                  />
+                  {usernameFree && (
+                    <Icon
+                      name="check"
+                      size={15}
+                      style={{
+                        position: 'absolute',
+                        right: 12,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        color: 'var(--ok)',
+                      }}
+                    />
+                  )}
+                </div>
                 <div
                   style={{
                     fontSize: 11,
-                    color: username && !usernameValid ? 'var(--danger-tx)' : 'var(--text-4)',
+                    color: usernameTaken || (username && !usernameValid) ? 'var(--danger-tx)' : 'var(--text-4)',
                     marginTop: 4,
                   }}
                 >
-                  {tr('小写字母、数字、下划线，3-32 位；全局唯一', 'lowercase letters, digits, underscore; 3-32 chars; unique')}
+                  {usernameTaken
+                    ? tr('用户名已存在，换一个吧', 'Username already taken — try another')
+                    : tr('小写字母、数字、下划线，3-32 位；全局唯一', 'lowercase letters, digits, underscore; 3-32 chars; unique')}
                 </div>
+              </div>
+              <div className="auth-field">
+                <label htmlFor="invite">{tr('邀请码', 'Invite code')}</label>
+                <input
+                  id="invite"
+                  className="auth-input"
+                  type="text"
+                  required
+                  placeholder="POLARIS-XXXX"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                />
               </div>
             </>
           )}
 
-          <div className="auth-field">
-            <label htmlFor="password">{tr('密码', 'Password')}</label>
-            <input
-              id="password"
-              className="auth-input"
-              type="password"
-              required
-              minLength={8}
-              autoComplete={isRegister ? 'new-password' : 'current-password'}
-              placeholder={tr('至少 8 位', 'At least 8 characters')}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-
-          {isRegister && (
+          {/* 登录密码 */}
+          {!isRegister && (
             <div className="auth-field">
-              <label htmlFor="invite">{tr('邀请码', 'Invite code')}</label>
+              <label htmlFor="password">{tr('密码', 'Password')}</label>
               <input
-                id="invite"
+                id="password"
                 className="auth-input"
-                type="text"
+                type="password"
                 required
-                placeholder="POLARIS-XXXX"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value)}
+                autoComplete="current-password"
+                placeholder={tr('输入密码', 'Enter password')}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
           )}
 
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={mutation.isPending || (isRegister && !usernameValid)}
-            style={{ width: '100%', justifyContent: 'center', height: 38, marginTop: 6 }}
-          >
-            {mutation.isPending ? (
-              <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-            ) : (
-              <Icon name={isRegister ? 'plus' : 'arrow'} size={14} />
-            )}
-            {isRegister ? tr('注册并登录', 'Sign up and log in') : tr('登录', 'Sign in')}
-          </button>
+          {/* 注册第 2 步：设置密码 */}
+          {isRegister && step === 2 && (
+            <>
+              <div className="auth-step2-account">
+                {tr('账号：', 'Account: ')}
+                <b>{identifier}</b>
+              </div>
+              <div className="auth-field">
+                <label htmlFor="password">{tr('密码', 'Password')}</label>
+                <input
+                  id="password"
+                  className="auth-input"
+                  type="password"
+                  required
+                  autoFocus
+                  autoComplete="new-password"
+                  placeholder={tr('至少 8 位，含字母和数字', 'At least 8 chars, letters and digits')}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <PasswordMeter password={password} />
+              </div>
+              <div className="auth-field">
+                <label htmlFor="password2">{tr('确认密码', 'Confirm password')}</label>
+                <input
+                  id="password2"
+                  className="auth-input"
+                  type="password"
+                  required
+                  autoComplete="new-password"
+                  placeholder={tr('再输入一遍', 'Type it again')}
+                  value={password2}
+                  onChange={(e) => setPassword2(e.target.value)}
+                />
+                {password2 !== '' && !pwdMatch && (
+                  <div style={{ fontSize: 11, color: 'var(--danger-tx)', marginTop: 4 }}>
+                    {tr('两次输入的密码不一致', 'Passwords do not match')}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* 操作按钮 */}
+          {isRegister && step === 2 ? (
+            <div className="row" style={{ gap: 10, marginTop: 6 }}>
+              <button type="button" className="btn" style={{ height: 38 }} onClick={backToStep1}>
+                {tr('上一步', 'Back')}
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={mutation.isPending || pwdLevel === 0 || !pwdMatch}
+                style={{ flex: 1, justifyContent: 'center', height: 38 }}
+              >
+                {mutation.isPending ? (
+                  <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                ) : (
+                  <Icon name="plus" size={14} />
+                )}
+                {tr('注册并登录', 'Sign up and log in')}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={mutation.isPending || (isRegister && (!usernameValid || usernameTaken))}
+              style={{ width: '100%', justifyContent: 'center', height: 38, marginTop: 6 }}
+            >
+              {mutation.isPending ? (
+                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              ) : (
+                <Icon name="arrow" size={14} />
+              )}
+              {isRegister ? tr('下一步', 'Next') : tr('登录', 'Sign in')}
+            </button>
+          )}
         </form>
       </div>
     </div>
