@@ -209,7 +209,7 @@ export function DailyLikedTab() {
           <LikedDetail p={selected} />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
-            {tr('选择左侧论文查看详情', 'Select a paper to view details')}
+            {tr('选择论文查看详情', 'Select a paper to view details')}
           </div>
         )}
       </div>

@@ -1090,6 +1090,15 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
         确实不能换行的行显式挂 .row-nowrap。 */
   .row { flex-wrap: wrap; }
 
+  /* 分段切换（全站 43 处标签条）：窄屏放不下时原本会把按钮压到断词
+     （「浏览记/录」），改成整条横向滚动、按钮不压缩不断词。 */
+  .segmented {
+    max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .segmented::-webkit-scrollbar { display: none; }
+  .segmented > button { flex-shrink: 0; white-space: nowrap; }
+
   /* —— 宽内容兜底 —— */
   .table-wrap > .table { min-width: 560px; }
   .workbench-panx { overflow-x: auto; overflow-y: hidden; }
