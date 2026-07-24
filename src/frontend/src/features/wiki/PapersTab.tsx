@@ -32,6 +32,7 @@ import { tr } from '../../lib/i18n';
 import { clickable } from '../../lib/a11y';
 import { categoryMeta, saveBlob, SearchInput, useDebounced } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
+import { AddToButton } from '../library/AddToPopover';
 
 /* ============================================================
    论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
@@ -735,7 +736,12 @@ const PaperRow = memo(function PaperRow({
           <RelevanceBar value={p.relevance_score} />
         </span>
       </div>
-      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>{p.title}</div>
+      <div className="row gap8" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>
+          {p.title}
+        </div>
+        <AddToButton paperId={p.id} />
+      </div>
       <div className="row gap8" style={{ marginTop: 6 }}>
         <PaperStatusPill status={p.status} sm />
         <ReadingDot status={p.reading_status} />

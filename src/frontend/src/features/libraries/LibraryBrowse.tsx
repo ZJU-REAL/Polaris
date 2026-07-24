@@ -24,6 +24,7 @@ import {
   useDebounced,
 } from '../wiki/shared';
 import { READING_STATUS, readerFrom } from '../reading/shared';
+import { AddToButton } from '../library/AddToPopover';
 
 // 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
 const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m.GraphTab })));
@@ -59,7 +60,10 @@ function PaperRow({ p, active, onClick }: { p: PaperRead; active: boolean; onCli
         transition: 'background 0.12s',
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>{p.title}</div>
+      <div className="row gap8" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>{p.title}</div>
+        <AddToButton paperId={p.id} />
+      </div>
       <div className="row gap8" style={{ marginTop: 4, fontSize: 11, color: 'var(--text-3)' }}>
         {p.has_wiki && (
           <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
