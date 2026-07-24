@@ -8,9 +8,13 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from sqlalchemy import select
+
 from app.core.db import get_sessionmaker
 from app.models.daily_feed import DAILY_FEED_RETENTION_DAYS, DailyFeedEntry
+from app.models.library import UserLibraryEntry
 from app.models.paper import Paper
+from app.models.user import User
 from app.services import daily_feed as daily_feed_service
 from tests.test_scoped_paper_detail import (
     _add_membership,
@@ -24,6 +28,23 @@ from tests.test_scoped_paper_detail import (
 async def _paper_exists(paper_id: str) -> bool:
     async with get_sessionmaker()() as session:
         return await session.get(Paper, uuid.UUID(paper_id)) is not None
+
+
+async def _add_personal_entry(email: str, paper_id: str, *, saved: bool) -> None:
+    """给某用户对某论文建一条个人库条目：saved=True 收藏 / False 纯浏览记录。"""
+    async with get_sessionmaker()() as session:
+        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
+        paper = await session.get(Paper, uuid.UUID(paper_id))
+        session.add(
+            UserLibraryEntry(
+                user_id=user.id,
+                dedup_key=paper.dedup_key or f"title:{paper_id}",
+                title=paper.title,
+                saved=saved,
+                last_paper_id=paper.id,
+            )
+        )
+        await session.commit()
 
 
 async def _set_pdf_path(paper_id: str, path: str) -> None:
@@ -133,3 +154,38 @@ async def test_daily_feed_expiry_gcs_orphan_but_keeps_referenced(client):
 
     assert not await _paper_exists(orphan_id)  # 只在推送 → 回收
     assert await _paper_exists(kept_id)  # 库仍引用 → 保留
+
+
+async def test_hard_delete_ignores_browsing_history(client):
+    """个人库里只有 saved=False 的浏览记录：不算引用，彻底删除仍回收本体。
+
+    回归：浏览过一次不该让被删论文续命（这正是 2310.17688 删不掉的原因）。
+    """
+    admin = await _hdr(client, "hist-admin@example.com")
+    await _promote_admin("hist-admin@example.com")
+    creator = await _hdr(client, "hist-owner@example.com")
+    lib = await _create_active_standalone(client, creator, admin, name="浏览过的库")
+
+    paper_id = await _new_paper(title="Only browsed")
+    await _add_membership(lib, paper_id, status="excluded", relevance=0.2)
+    await _add_personal_entry("hist-owner@example.com", paper_id, saved=False)  # 纯浏览
+
+    resp = await _hard_delete(client, lib, paper_id, creator)
+    assert resp.status_code == 200 and resp.json()["deleted"] == 1
+    assert not await _paper_exists(paper_id)  # 浏览记录不算引用 → 回收
+
+
+async def test_hard_delete_kept_when_saved_to_personal_library(client):
+    """个人库里有 saved=True 收藏：算引用，彻底删除保留本体。"""
+    admin = await _hdr(client, "saved-admin@example.com")
+    await _promote_admin("saved-admin@example.com")
+    creator = await _hdr(client, "saved-owner@example.com")
+    lib = await _create_active_standalone(client, creator, admin, name="收藏了的库")
+
+    paper_id = await _new_paper(title="Saved to personal")
+    await _add_membership(lib, paper_id, status="excluded", relevance=0.2)
+    await _add_personal_entry("saved-owner@example.com", paper_id, saved=True)  # 真收藏
+
+    resp = await _hard_delete(client, lib, paper_id, creator)
+    assert resp.status_code == 200 and resp.json()["deleted"] == 1
+    assert await _paper_exists(paper_id)  # 个人库收藏仍引用 → 保留
