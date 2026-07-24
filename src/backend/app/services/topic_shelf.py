@@ -9,7 +9,7 @@
 """
 
 import uuid
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -335,6 +335,14 @@ async def remove_from_shelf(
     await session.commit()
 
 
+class ShelfImportResult(NamedTuple):
+    """个人补充入架结果：书架条目 + paper + 是否新建了内容池行。"""
+
+    item: dict[str, Any]
+    paper: Paper
+    created: bool
+
+
 async def import_to_shelf(
     session: AsyncSession,
     *,
@@ -343,13 +351,15 @@ async def import_to_shelf(
     arxiv_id: str | None = None,
     doi: str | None = None,
     title: str | None = None,
-) -> dict[str, Any]:
+) -> ShelfImportResult:
     """个人补充入库：先按 dedup 查全局池，命中直接入架；未命中抓取解析入池后入架。
 
     个人补充**不建任何 library_papers 成员行**（「在池但不在任何库」是合法状态，
     §3.5）；解析计费按现有归因规则记调用用户。仅有标题且池中查不到时无法抓取
-    （paper_import.ParseFailedError → 路由映射 422）。
+    （paper_import.ParseFailedError → 路由映射 422）。新建池行只落元数据；PDF 下载/
+    全文抽取/向量化由后台任务补全（无 target，不打分）。
     """
+    created = False
     normalized_arxiv = normalize_arxiv_id(arxiv_id) if arxiv_id else None
     clean_doi = doi.strip().removeprefix("https://doi.org/") if doi else None
     paper = await find_pool_paper(
@@ -382,9 +392,9 @@ async def import_to_shelf(
             ),
         )
         if paper is None:
-            paper = await paper_import.create_pool_paper(
-                session, fields=fields, user_id=user_id, project_id=project_id
-            )
-    return await add_to_shelf(
+            paper = await paper_import.create_pool_paper_stub(session, fields=fields)
+            created = True
+    item = await add_to_shelf(
         session, project_id=project_id, paper_id=paper.id, user_id=user_id
     )
+    return ShelfImportResult(item=item, paper=paper, created=created)

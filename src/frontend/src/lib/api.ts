@@ -650,6 +650,8 @@ export interface PaperDetail extends PaperRead {
   concepts: PaperConceptRef[];
   /** 论文图片列表（后端未就绪时可能缺失） */
   figures?: FigureInfo[];
+  /** 手动添加后若仍需分阶段后处理，返回可订阅进度的任务 id；已处理完整时为 null。 */
+  task_id?: string | null;
 }
 
 export interface PageOf<T> {
@@ -918,6 +920,8 @@ export interface ShelfItemRead {
   /** 来源方向库（个人补充为 null） */
   source_library_id: string | null;
   added_at: string;
+  /** 个人补充入架后若仍需分阶段后处理，返回可订阅进度的任务 id；已处理完整时为 null。 */
+  task_id?: string | null;
 }
 
 /** 个人版 wiki 按需编译结果（P5b）。 */

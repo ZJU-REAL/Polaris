@@ -96,6 +96,9 @@ class PaperDetail(PaperRead):
     pdf_available: bool = False
     concepts: list[PaperConceptRead] = []
     figures: list[PaperFigure] = []
+    # 手动添加后启动的后台补全任务 id（下载/抽取/向量化/打分）；无需补全时为 null。
+    # 前端凭此订阅 GET /paper-tasks/{task_id}/events 显示分阶段进度。
+    task_id: str | None = None
 
     @field_validator("figures", mode="before")
     @classmethod

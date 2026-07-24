@@ -69,9 +69,7 @@ async def test_add_by_arxiv_id_and_dedupe_409(client, lit_clients):
     respx.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
         return_value=httpx.Response(200, text=ARXIV_FEED_ONE)
     )
-    # PDF 下载失败也不阻塞创建（只记日志）
-    respx.get(url__regex=r"https://arxiv\.org/pdf/.*").mock(return_value=httpx.Response(404))
-
+    # 同步请求只建元数据行（PDF 下载/抽取移入后台任务）：此处不下载 PDF
     resp = await client.post(
         f"/api/projects/{project_id}/papers", json={"arxiv_id": "2406.00001v2"}, headers=headers
     )
@@ -81,7 +79,7 @@ async def test_add_by_arxiv_id_and_dedupe_409(client, lit_clients):
     assert body["status"] == "included"
     assert body["arxiv_id"] == "2406.00001"
     assert body["authors"] == [{"name": "Alice Smith"}]
-    assert body["pdf_available"] is False  # 自动补 PDF 失败不阻塞
+    assert body["pdf_available"] is False  # 同步阶段不下载 PDF
     paper_id = body["id"]
 
     async with get_sessionmaker()() as session:
@@ -172,29 +170,31 @@ async def test_add_parse_failures_422(client, lit_clients):
     assert resp.json()["detail"].startswith("PARSE_FAILED")
 
 
-async def test_add_scores_relevance_best_effort(client):
-    """手动添加成功后顺带打相关性分（fake LLM）：分数/tldr/scored_at 落库，status 保持 included。"""
+async def test_add_scores_relevance_best_effort(client, fake_redis):
+    """打分已移入后台任务（fake LLM）：跑完后分数/tldr/scored_at 落库，status 保持 included。"""
+    from app.services import paper_enrich
+
     project_id, headers = await _setup(client)
     resp = await client.post(
         f"/api/projects/{project_id}/papers", json={"bibtex": BIBTEX_ENTRY}, headers=headers
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["relevance_score"] is not None and body["relevance_score"] > 0.6
-    assert body["tldr"]
+    assert body["relevance_score"] is None  # 同步响应尚未打分
     assert body["status"] == "included"
+    await paper_enrich.await_task(body["task_id"])
 
     async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, uuid.UUID(body["id"]))
         membership = await membership_of(session, project_id=project_id, paper_id=body["id"])
-        assert membership.relevance_score == body["relevance_score"]
-        assert paper.tldr == body["tldr"]
+        assert membership.relevance_score is not None and membership.relevance_score > 0.6
         assert membership.scored_at is not None
         assert membership.status == "included"  # 人工纳入，打分不改状态
 
 
-async def test_add_low_score_keeps_included(client):
-    """分低绝不改状态：fake LLM 对含 irrelevant 的标题给低分，论文仍 included。"""
+async def test_add_low_score_keeps_included(client, fake_redis):
+    """分低绝不改状态：fake LLM 对含 irrelevant 的标题给低分（后台任务），论文仍 included。"""
+    from app.services import paper_enrich
+
     project_id, headers = await _setup(client)
     bibtex = (
         "@article{doe2024irr,\n"
@@ -208,11 +208,12 @@ async def test_add_low_score_keeps_included(client):
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["relevance_score"] is not None and body["relevance_score"] < 0.6
     assert body["status"] == "included"
+    await paper_enrich.await_task(body["task_id"])
 
     async with get_sessionmaker()() as session:
         membership = await membership_of(session, project_id=project_id, paper_id=body["id"])
+        assert membership.relevance_score is not None and membership.relevance_score < 0.6
         assert membership.status == "included" and membership.trash_reason is None
 
 

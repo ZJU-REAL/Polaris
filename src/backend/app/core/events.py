@@ -24,6 +24,22 @@ def notify_channel(project_id: uuid.UUID | str) -> str:
     return f"notify:project:{project_id}"
 
 
+def paper_task_channel(task_id: str) -> str:
+    """手动添加文献的分阶段处理进度频道（SSE 端点订阅转发）。"""
+    return f"paper_task:{task_id}:events"
+
+
+async def publish_paper_task_event(
+    bus: "EventBus", task_id: str, event: str, data: dict[str, Any]
+) -> None:
+    """发布一条论文处理进度事件到 paper_task 频道。
+
+    与 voyage 事件不同：没有 voyage 行，故不落库，只做实时转发（进度是临时态）。
+    """
+    payload = json.dumps({"event": event, "data": data}, ensure_ascii=False, default=str)
+    await bus._redis.publish(paper_task_channel(task_id), payload)
+
+
 class EventBus:
     """薄封装：把事件序列化为 JSON 发布到对应频道。"""
 

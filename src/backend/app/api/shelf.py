@@ -8,10 +8,12 @@ services/topic_shelf.py：入架落 wiki 快照 + 同步 upsert 个人库；
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.core.redis import get_redis_dep
 from app.models.user import User
 from app.schemas.shelf import (
     ShelfAddRequest,
@@ -21,6 +23,7 @@ from app.schemas.shelf import (
     ShelfNoteUpdate,
     ShelfPage,
 )
+from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
 from app.services import projects as projects_service
 from app.services import topic_shelf as shelf_service
@@ -121,11 +124,15 @@ async def import_to_shelf(
     body: ShelfImportRequest,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
 ) -> ShelfItemRead:
-    """个人补充入库：查池命中直接入架；未命中抓取解析入池（不进任何方向库）再入架。"""
+    """个人补充入库：查池命中直接入架；未命中抓取解析入池（不进任何方向库）再入架。
+
+    新建或未处理完整时启动后台补全任务（下载/抽取/向量化，无库不打分），回传 task_id。
+    """
     await _require_member(session, project_id, user)
     try:
-        item = await shelf_service.import_to_shelf(
+        result = await shelf_service.import_to_shelf(
             session,
             project_id=project_id,
             user_id=user.id,
@@ -137,7 +144,16 @@ async def import_to_shelf(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"PARSE_FAILED: {e}"
         ) from e
-    return ShelfItemRead.model_validate(item)
+    task_id: str | None = None
+    if result.created or not paper_enrich_service.paper_processing_complete(result.paper):
+        task_id = await paper_enrich_service.launch_paper_enrichment(
+            redis=redis,
+            paper_id=result.paper.id,
+            user_id=user.id,
+            library_id=None,
+            project_id=project_id,
+        )
+    return ShelfItemRead.model_validate(result.item).model_copy(update={"task_id": task_id})
 
 
 @router.patch("/projects/{project_id}/shelf/{paper_id}", response_model=ShelfItemRead)
