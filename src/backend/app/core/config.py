@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     secret_key: str = "dev-only-secret-key-change-me"  # JWT 签名
     encryption_key: str = ""  # Fernet key；为空时 security.py 会从 secret_key 派生（仅限 dev）
     invite_code: str = "polaris-lab"  # 注册邀请码（实验室内部制）
+    # prod 下额外放行的跨域前端来源（逗号分隔）。桌面客户端的 app://polaris 恒在白名单内、
+    # 无需在此配置；这一项留给「前端与 API 不同域」的部署形态。web 生产走 nginx 同源反代，
+    # 根本不进 CORS 分支。用逗号分隔的 str 而非 list[str]：pydantic-settings 对 list[str]
+    # 要求 env 值是 JSON 字面量（'["a","b"]'），与本仓库 .env 的朴素风格不兼容。
+    cors_origins: str = ""
 
     # ---- GitHub（用户反馈 → issue）----
     github_token: str = ""  # PAT（repo scope）；为空时禁用「建 issue」，仅出草稿
@@ -89,6 +94,10 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 @lru_cache

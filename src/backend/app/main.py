@@ -21,6 +21,11 @@ from app.services.skills import ensure_builtin_skills
 
 logger = logging.getLogger(__name__)
 
+# Electron 桌面客户端的固定 origin：页面由自定义 app:// scheme 加载（见 src/desktop）。
+# 恒在 prod 白名单内且无需配置——网页无法伪造自定义 scheme 的 Origin 头，且这里
+# allow_credentials=False + Bearer 鉴权没有 ambient authority，故对 web 攻击面零增量。
+DESKTOP_ORIGIN = "app://polaris"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,8 +58,11 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        # TODO(部署): prod 收紧为前端域名白名单
-        allow_origins=["*"] if settings.env == "dev" else [],
+        # dev 全放开；prod 只放行桌面客户端 + POLARIS_CORS_ORIGINS 里显式配置的前端域名。
+        # web 生产是 nginx 同源反代，不经过这里。
+        allow_origins=(
+            ["*"] if settings.env == "dev" else [DESKTOP_ORIGIN, *settings.cors_origin_list]
+        ),
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
