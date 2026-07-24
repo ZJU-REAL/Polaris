@@ -144,11 +144,8 @@ export function LoginPage() {
     <div className="auth-page">
       {/* 左上角品牌 */}
       <div className="auth-brand">
-        <PolarisMark size={42} />
-        <div>
-          <PolarisWordmark height={21} />
-          <div className="auth-brand-sub">{tr('北极星 | AI 科研智能体', 'Polaris | AI Research Agent')}</div>
-        </div>
+        <PolarisMark size={56} />
+        <PolarisWordmark height={32} />
       </div>
 
       <div style={{ position: 'absolute', top: 18, right: 20 }}>
@@ -157,6 +154,7 @@ export function LoginPage() {
 
       {/* 右侧表单卡片 */}
       <div className="auth-card fadeup">
+        <div className="auth-card-brandline">{tr('北极星 AI 科研智能体', 'Polaris AI Research Agent')}</div>
         <div className="auth-card-title">
           {isRegister ? tr('创建账号', 'Create your account') : tr('欢迎回来', 'Welcome back')}
         </div>
