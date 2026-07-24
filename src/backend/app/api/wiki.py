@@ -351,6 +351,23 @@ def _require_fulltext_index_enabled(user: User) -> None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="INDEXING_DISABLED")
 
 
+async def _count_with_fulltext(
+    session: AsyncSession, paper_ids: list[uuid.UUID]
+) -> int:
+    """这批论文里有本地全文（full_text_path 非空）的篇数（一条 count，不抓 PDF）。"""
+    if not paper_ids:
+        return 0
+    return int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(Paper)
+                .where(Paper.id.in_(paper_ids), Paper.full_text_path.is_not(None))
+            )
+        ).scalar_one()
+    )
+
+
 @router.post("/projects/{project_id}/shelf/index/rebuild")
 async def rebuild_shelf_fulltext_index(
     project_id: uuid.UUID,
@@ -365,8 +382,13 @@ async def rebuild_shelf_fulltext_index(
     await _member_project(session, project_id, user)
     _require_fulltext_index_enabled(user)
     paper_ids = await shelf_paper_ids(session, project_id=project_id)
+    indexable = await _count_with_fulltext(session, paper_ids)
     await queue.enqueue("index_papers_fulltext_task", "shelf", str(user.id), str(project_id))
-    return {"queued": len(paper_ids)}
+    return {
+        "queued": len(paper_ids),
+        "indexable": indexable,
+        "no_fulltext": len(paper_ids) - indexable,
+    }
 
 
 @router.post("/library/index/rebuild")
@@ -381,8 +403,13 @@ async def rebuild_personal_fulltext_index(
     """
     _require_fulltext_index_enabled(user)
     paper_ids = await personal_paper_ids(session, user_id=user.id, tab="saved")
+    indexable = await _count_with_fulltext(session, paper_ids)
     await queue.enqueue("index_papers_fulltext_task", "personal", str(user.id), None)
-    return {"queued": len(paper_ids)}
+    return {
+        "queued": len(paper_ids),
+        "indexable": indexable,
+        "no_fulltext": len(paper_ids) - indexable,
+    }
 
 
 @router.post("/projects/{project_id}/index/rebuild")

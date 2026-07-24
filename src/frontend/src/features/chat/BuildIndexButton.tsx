@@ -10,19 +10,37 @@ import { toast } from '../../components/ui/Toast';
    相关研究对话 / 个人文献库对话共用，只换 build 回调。
    ============================================================ */
 
-export function BuildIndexButton({ build }: { build: () => Promise<{ queued: number }> }) {
+/** 建索引端点返回：异步走 {queued, indexable, no_fulltext}，同步库场景走 {indexed, skipped}。 */
+type BuildIndexResult = {
+  queued?: number;
+  indexable?: number;
+  no_fulltext?: number;
+  indexed?: number;
+  skipped?: number;
+};
+
+function buildResultToast(data: BuildIndexResult): string {
+  // 兼容同步库场景（有 indexed）与异步场景（有 indexable/no_fulltext）
+  const indexable = data.indexed ?? data.indexable ?? 0;
+  const skipped = data.skipped ?? data.no_fulltext ?? 0;
+  if (skipped > 0) {
+    return tr(
+      `已排队 ${indexable} 篇建立全文索引，${skipped} 篇无全文已跳过（约需几分钟）`,
+      `Queued ${indexable} paper(s) for indexing; skipped ${skipped} without full text (takes a few minutes)`,
+    );
+  }
+  return tr(
+    `已排队 ${indexable} 篇建立全文索引，完成后对话检索会更准（约需几分钟）`,
+    `Queued ${indexable} paper(s) for full-text indexing — chat retrieval will improve once it finishes (takes a few minutes)`,
+  );
+}
+
+export function BuildIndexButton({ build }: { build: () => Promise<BuildIndexResult> }) {
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
 
   const mutation = useMutation({
     mutationFn: build,
-    onSuccess: () =>
-      toast(
-        tr(
-          '已开始建立全文索引，完成后对话检索会更准（约需几分钟）',
-          'Building the full-text index — chat retrieval will improve once it finishes (takes a few minutes)',
-        ),
-        'ok',
-      ),
+    onSuccess: (data) => toast(buildResultToast(data), 'ok'),
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
         toast(tr('请先到设置里打开「为论文建立全文索引」', 'Enable the full-text index in Settings first'), 'error');

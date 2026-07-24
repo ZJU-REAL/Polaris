@@ -971,6 +971,13 @@ export interface RebuildIndexResult {
   total_chunks: number;
 }
 
+/** 异步建索引端点（相关研究 / 个人库）的返回：入队总数 + 有全文可索引 / 无全文跳过 篇数。 */
+export interface QueuedIndexResult {
+  queued: number;
+  indexable: number;
+  no_fulltext: number;
+}
+
 // ============================================================
 // 知识图谱（论文 / 作者 / 概念网络）
 // ============================================================
@@ -3137,12 +3144,12 @@ export const api = {
     return request<RebuildIndexResult>(`/projects/${projectId}/index/rebuild`, { method: 'POST' });
   },
   /** 可选全文索引：为本课题「相关研究」这批论文异步建全文索引（设置关时后端 409 INDEXING_DISABLED）。 */
-  buildShelfIndex(projectId: string): Promise<{ queued: number }> {
-    return requestJson<{ queued: number }>(`/projects/${projectId}/shelf/index/rebuild`, 'POST', {});
+  buildShelfIndex(projectId: string): Promise<QueuedIndexResult> {
+    return requestJson<QueuedIndexResult>(`/projects/${projectId}/shelf/index/rebuild`, 'POST', {});
   },
   /** 可选全文索引：为「我的收藏」这批个人文献异步建全文索引。 */
-  buildPersonalIndex(): Promise<{ queued: number }> {
-    return requestJson<{ queued: number }>('/library/index/rebuild', 'POST', {});
+  buildPersonalIndex(): Promise<QueuedIndexResult> {
+    return requestJson<QueuedIndexResult>('/library/index/rebuild', 'POST', {});
   },
 
   // —— M2 · Obsidian 导出（zip blob） ——
