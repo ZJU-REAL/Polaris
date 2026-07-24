@@ -503,6 +503,32 @@ async def list_library_papers(
     )
 
 
+@router.get("/libraries/{library_id}/papers/{paper_id}", response_model=PaperDetail)
+async def get_library_paper(
+    library_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperDetail:
+    """取某篇论文在**指定库**的成员行详情（库工作台单篇详情，含独立库）。
+
+    精确锁定 (library_id, paper_id)：相关度/状态/wiki 都是本库那份成员行，不做
+    跨库归并（对照 :func:`papers_service.get_paper_for_user` 的确定性归并）。库不含
+    该论文 → 404。读端点全实验室可读（可见性同本文件其它读端点）。
+    """
+    library = await _get_visible_library(session, library_id, user)
+    view = await papers_service.get_library_paper_view(
+        session,
+        library_id=library.id,
+        project_id=library.project_id,
+        paper_id=paper_id,
+        with_concepts=True,
+    )
+    if view is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+    return await _paper_detail(session, view, user.id)
+
+
 @router.get("/libraries/{library_id}/concepts", response_model=list[ConceptRead])
 async def list_library_concepts(
     library_id: uuid.UUID,
