@@ -213,7 +213,7 @@ async def register(
             status.HTTP_400_BAD_REQUEST,
             detail={"code": "REGISTER_INVALID_PASSWORD", "reason": e.reason},
         ) from e
-    # 邀请码预设的研究方向 → 自动建项目（稀疏 definition，后续访谈可补全）。
+    # 邀请码预设的研究方向 → 自动建项目（只落一句话 statement，后续可补全）。
     # 建项目失败不影响注册结果。
     for direction in preset_directions:
         try:

@@ -154,8 +154,7 @@ async def build_library_messages(
     """组装课题文献库对话消息（关联库并集），返回 (messages, 引用来源列表)。"""
     # 先取出所需字段：检索失败路径里的 rollback 会使 ORM 对象过期，之后再取属性会报错
     project_id = project.id
-    definition = project.definition if isinstance(project.definition, dict) else {}
-    statement = definition.get("statement") or project.name
+    statement = project.statement or project.name
     library_ids = await get_source_library_ids(session, project_id)
     return await build_messages_for_libraries(
         session,

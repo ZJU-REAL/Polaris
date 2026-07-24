@@ -20,8 +20,8 @@ async def test_create_and_list_projects(client):
     assert project["name"] == "LLM 推理加速"
     assert project["slug"]  # 自动生成
     assert project["status"] == "active"
-    # P9c：一句话 statement 存入 definition.statement；不含任何收录配置
-    assert project["definition"] == {"statement": "推理加速方法"}
+    # P9e：一句话存入 project.statement 列；不含任何收录配置
+    assert project["statement"] == "推理加速方法"
 
     resp = await client.post(
         "/api/projects", json={"name": "Second", "slug": "second"}, headers=headers

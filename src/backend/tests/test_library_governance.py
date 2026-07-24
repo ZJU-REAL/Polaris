@@ -158,9 +158,9 @@ async def test_patch_library_permission_and_definition_authority(client):
         assert definition["rubric"] == ["和稀疏注意力直接相关"]
         assert definition["anchor_papers"] == [{"arxiv_id": "2404.00001"}]
         assert definition["cadence"] == "daily"
-        # 起源课题 project.definition 不再被写回同步
+        # 起源课题不再承载收录配置（P9e：project.definition 已退役）——库 patch 不外溢到课题
         project = await session.get(Project, uuid.UUID(project_id))
-        assert (project.definition or {}).get("rubric") != ["和稀疏注意力直接相关"]
+        assert project.statement != "稀疏注意力机制的效率研究"
 
     # 显式传 null 清空预算
     resp = await client.patch(

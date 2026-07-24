@@ -2,13 +2,12 @@
 
 import uuid
 from datetime import datetime
-from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -16,12 +15,9 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    # P9c：仅存 {"statement": 一句话}（课题语境提示）。收录配置（rubric/anchors/
-    # keywords/goals/scope/questions/cadence）权威源在文献库 definition，不再进此列。
-    definition: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    # 已退役（P8/P9c）：水位线/last_run 权威源在库 ``DirectionLibrary.ingest_state``。
-    # 此列不再被读写，保留仅为暂缓删列（后续迁移可 drop）。
-    ingest_state: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    # P9e：课题语境提示（一句话）。收录配置（rubric/anchors/keywords/goals/scope/
+    # questions/cadence）权威源在文献库 ``DirectionLibrary.definition``，不在课题上。
+    statement: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     owner_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
