@@ -10,6 +10,7 @@ import { toast } from '../../components/ui/Toast';
 import {
   api,
   type DirectionLibrarySummary,
+  type PaperRead,
   type ReadingStatus,
   type ShelfImportInput,
   type ShelfItemRead,
@@ -24,6 +25,7 @@ import {
   AdvancedToggle,
   FilterInput,
   parseYear,
+  saveBlob,
   SearchInput,
   useDebounced,
   YearRangeField,
@@ -49,6 +51,32 @@ type ShelfFilter = 'all' | ShelfWikiSource;
 type PageTab = 'list' | 'chat';
 /** 阅读状态筛选：空串=不限；其余透传给后端 reading_status。 */
 type ReadingFilter = '' | ReadingStatus;
+/** 搜索作用域：关键词（后端书架过滤）/ 语义检索（课题语料向量召回）。 */
+type SearchScope = 'keyword' | 'semantic';
+
+/** 语义检索命中的 ScoredPaper（课题语料，未必已入书架）映射成书架行需要的最小字段。
+    note / wiki_content / snapshot_at / source_library_id 语义结果里没有，按缺省填；
+    wiki_source 用 has_wiki 粗略推断（有解读→库版徽标，没有→暂无）。行/详情只作展示用，
+    真正的备注/移出/生成走 (pid, paper_id) 幂等接口，不依赖这些映射字段。 */
+function scoredToShelf(p: PaperRead & { score?: number | null }): ShelfItemRead {
+  return {
+    paper_id: p.id,
+    title: p.title,
+    authors: p.authors,
+    year: p.year,
+    venue: p.venue,
+    arxiv_id: p.arxiv_id,
+    doi: p.doi,
+    url: p.url,
+    tldr: p.tldr,
+    note: null,
+    wiki_source: p.has_wiki ? 'live' : 'none',
+    wiki_content: null,
+    snapshot_at: null,
+    source_library_id: null,
+    added_at: p.created_at,
+  };
+}
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SORTS: { v: ShelfSort; zh: string; en: string }[] = [
@@ -80,11 +108,17 @@ function errText(e: unknown): string {
 function ShelfRow({
   item,
   active,
+  checked,
+  selectMode,
   onSelect,
+  onToggleCheck,
 }: {
   item: ShelfItemRead;
   active: boolean;
+  checked: boolean;
+  selectMode: boolean;
   onSelect: () => void;
+  onToggleCheck: () => void;
 }) {
   const authors = item.authors.map((a) => a.name).join(', ');
   return (
@@ -107,8 +141,25 @@ function ShelfRow({
         transition: 'background 0.12s',
       }}
     >
-      {/* 顶部 mono 元信息行：编号/venue + 年份；右侧解读状态徽标 */}
+      {/* 顶部 mono 元信息行：复选框（多选态常驻占位）+ 编号/venue + 年份；右侧解读状态徽标 */}
       <div className="row gap8" style={{ marginBottom: 5 }}>
+        {/* 占位常驻：切换多选时行内容不左右跳（对齐文献库 PapersTab） */}
+        <input
+          type="checkbox"
+          checked={checked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={onToggleCheck}
+          title={tr('选中后可批量导出引用', 'Select for bulk citation export')}
+          style={{
+            width: 13,
+            height: 13,
+            margin: 0,
+            flexShrink: 0,
+            accentColor: 'var(--accent)',
+            cursor: 'pointer',
+            visibility: selectMode ? 'visible' : 'hidden',
+          }}
+        />
         <span
           className="mono"
           style={{
@@ -301,6 +352,10 @@ export function ResearchPage() {
   // 关键词 + 高级检索条件（走后端）
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
+  const [scope, setScope] = useState<SearchScope>('keyword');
+  // 多选导出：默认关闭，底部「多选」按钮开启后行首出现复选框
+  const [selectMode, setSelectMode] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [advOpen, setAdvOpen] = useState(false);
   const [author, setAuthor] = useState('');
   const [affiliation, setAffiliation] = useState('');
@@ -333,6 +388,7 @@ export function ResearchPage() {
     setSelId(null);
     setFilter('all');
     setQInput('');
+    setScope('keyword');
     clearAdvanced();
   }, [pid]);
 
@@ -340,6 +396,15 @@ export function ResearchPage() {
   useEffect(() => {
     setPage(1);
   }, [q, sort, author, affiliation, yearFrom, yearTo, readingStatus, starred]);
+
+  // 切换课题 / 搜索词 / 过滤 / 作用域时退出多选（对齐文献库 PapersTab）
+  useEffect(() => {
+    setCheckedIds(new Set());
+    setSelectMode(false);
+  }, [pid, q, scope, filter, sort]);
+
+  // 语义检索：有查询词且作用域为语义时激活；结果替换列表、不分页、置灰其余过滤
+  const semantic = !!q && scope === 'semantic';
 
   const shelfQuery = useQuery({
     queryKey: [
@@ -368,10 +433,23 @@ export function ResearchPage() {
         reading_status: readingStatus || undefined,
         starred: starred || undefined,
       }),
-    enabled: !!pid,
+    enabled: !!pid && !semantic,
     retry: false,
     placeholderData: keepPreviousData,
   });
+  // 语义检索：复用课题作用域搜索端点（向量召回 + rerank）；结果是课题语料（未必已入书架）
+  const semQuery = useQuery({
+    queryKey: ['shelf-search', pid, q],
+    queryFn: () => api.searchProject(pid, { q, mode: 'semantic', limit: 30 }),
+    enabled: !!pid && semantic,
+    retry: false,
+  });
+  const semItems = useMemo<ShelfItemRead[]>(
+    () => (semQuery.data?.papers ?? []).map(scoredToShelf),
+    [semQuery.data],
+  );
+  // 后端 provider 不支持向量时会回退关键词，如实提示
+  const semFallback = semantic && semQuery.data?.mode_used === 'keyword';
   const idsQuery = useQuery({
     queryKey: ['shelf-ids', pid],
     queryFn: () => api.listShelfIds(pid),
@@ -419,8 +497,13 @@ export function ResearchPage() {
     [items, filter],
   );
 
-  // 选中项：优先手动选择；不在可见列表（被过滤/移出）时退回第一条
-  const selected = visible.find((i) => i.paper_id === selId) ?? visible[0] ?? null;
+  // 列表数据源：语义态用检索结果，否则用书架可见项
+  const rows = semantic ? semItems : visible;
+
+  // 选中项：优先手动选择；不在可见列表（被过滤/移出/切模式）时退回第一条
+  const selected = rows.find((i) => i.paper_id === selId) ?? rows[0] ?? null;
+  // 语义命中的论文可能尚未入书架：详情面板据此切换「移出」/「加入相关研究」
+  const selectedOnShelf = selected ? shelvedIds.has(selected.paper_id) : false;
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['shelf', pid] });
@@ -491,12 +574,36 @@ export function ResearchPage() {
     onError: (e) => toast(`${tr('刷新失败：', 'Failed to refresh: ')}${errText(e)}`, 'error'),
   });
 
-  const countText =
-    data === undefined
+  // 多选导出：把勾选的 paper_id 子集导成 BibTeX（course 作用域，复用文献库同一端点）
+  const exportMutation = useMutation({
+    mutationFn: () => api.downloadCitations(pid, { format: 'bibtex', ids: [...checkedIds] }),
+    onSuccess: (blob) => {
+      saveBlob(blob, 'polaris-selected.bib');
+      toast(tr(`已导出 ${checkedIds.size} 篇的 BibTeX`, `Exported BibTeX for ${checkedIds.size} papers`), 'ok');
+    },
+    onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${errText(e)}`, 'error'),
+  });
+
+  const toggleCheck = (paperId: string) =>
+    setCheckedIds((old) => {
+      const next = new Set(old);
+      if (next.has(paperId)) next.delete(paperId);
+      else next.add(paperId);
+      return next;
+    });
+
+  const countText = semantic
+    ? semQuery.data === undefined
+      ? ''
+      : tr(`语义命中 ${semItems.length} 篇`, `${semItems.length} semantic matches`)
+    : data === undefined
       ? ''
       : filter === 'all'
         ? tr(`共 ${data.total} 篇相关研究`, `${data.total} related papers`)
         : tr(`筛出 ${visible.length} 篇 · 共 ${data.total} 篇`, `${visible.length} shown · ${data.total} total`);
+
+  // 语义态置灰高级检索 / 排序 / 状态过滤（这些只作用于关键词书架查询）
+  const filterDisabled = semantic ? { opacity: 0.45, pointerEvents: 'none' as const } : undefined;
 
   return (
     <div
@@ -557,7 +664,11 @@ export function ResearchPage() {
                 <SearchInput
                   value={qInput}
                   onChange={setQInput}
-                  placeholder={tr('搜索标题 / 作者…', 'Search title / authors…')}
+                  placeholder={
+                    scope === 'semantic'
+                      ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
+                      : tr('搜索标题 / 作者…', 'Search title / authors…')
+                  }
                 />
                 <AdvancedToggle
                   open={advOpen}
@@ -570,7 +681,22 @@ export function ResearchPage() {
                 />
               </div>
 
+              {/* 关键词 / 语义检索切换（对齐文献库 LibraryBrowse） */}
+              <div className="row gap6 wrap" style={{ marginTop: 8 }}>
+                <span className={`chip${scope === 'keyword' ? ' on' : ''}`} onClick={() => setScope('keyword')}>
+                  {tr('关键词', 'Keyword')}
+                </span>
+                <span
+                  className={`chip${scope === 'semantic' ? ' on' : ''}`}
+                  title={tr('用自然语言在课题语料里语义召回', 'Semantic recall over the topic corpus')}
+                  onClick={() => setScope('semantic')}
+                >
+                  {tr('语义检索', 'Semantic')}
+                </span>
+              </div>
+
               {advOpen && (
+                <div style={filterDisabled}>
                 <AdvancedPanel onClear={advActive ? clearAdvanced : undefined}>
                   <div className="row gap8">
                     <FilterInput
@@ -614,9 +740,10 @@ export function ResearchPage() {
                     {tr('只看星标', 'Starred only')}
                   </label>
                 </AdvancedPanel>
+                </div>
               )}
 
-              <div className="row gap8" style={{ marginTop: 10 }}>
+              <div className="row gap8" style={{ marginTop: 10, ...filterDisabled }}>
                 <SelectMenu
                   value={sort}
                   options={SORTS.map((s) => ({ value: s.v, label: tr(s.zh, s.en) }))}
@@ -635,11 +762,66 @@ export function ResearchPage() {
               <div className="mono" style={{ marginTop: 8, fontSize: 10.5, color: 'var(--text-3)' }}>
                 {countText}
               </div>
+              {semFallback && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    fontSize: 11,
+                    color: 'var(--warn-tx)',
+                    background: 'var(--warn-bg)',
+                    borderRadius: 7,
+                    padding: '5px 9px',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
+                </div>
+              )}
             </div>
 
             {/* 列表（自滚动） */}
             <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
-              {shelfQuery.isLoading ? (
+              {semantic ? (
+                /* —— 语义检索结果 —— */
+                semQuery.isLoading ? (
+                  <div style={{ padding: 14 }} className="col gap12">
+                    <div className="skel" style={{ height: 84 }} />
+                    <div className="skel" style={{ height: 84 }} />
+                    <div className="skel" style={{ height: 84 }} />
+                  </div>
+                ) : semQuery.isError ? (
+                  <EmptyState
+                    compact
+                    icon="x"
+                    title={tr('语义检索失败', 'Semantic search failed')}
+                    desc={tr('后端暂时不可用，稍后再试或改用关键词。', 'Backend unavailable — retry later or switch to keyword.')}
+                    action={
+                      <button className="btn btn-soft sm" onClick={() => setScope('keyword')}>
+                        {tr('改用关键词', 'Use keyword')}
+                      </button>
+                    }
+                  />
+                ) : semItems.length === 0 ? (
+                  <EmptyState
+                    compact
+                    icon="search"
+                    title={tr('没有语义匹配的论文', 'No semantic matches')}
+                    desc={tr('换个说法，或改用关键词搜索。', 'Rephrase the query, or switch to keyword search.')}
+                  />
+                ) : (
+                  semItems.map((item) => (
+                    <ShelfRow
+                      key={item.paper_id}
+                      item={item}
+                      active={item.paper_id === selected?.paper_id}
+                      checked={checkedIds.has(item.paper_id)}
+                      selectMode={selectMode}
+                      onSelect={() => setSelId(item.paper_id)}
+                      onToggleCheck={() => toggleCheck(item.paper_id)}
+                    />
+                  ))
+                )
+              ) : shelfQuery.isLoading ? (
                 <div style={{ padding: 14 }} className="col gap12">
                   <div className="skel" style={{ height: 84 }} />
                   <div className="skel" style={{ height: 84 }} />
@@ -701,14 +883,49 @@ export function ResearchPage() {
                     key={item.paper_id}
                     item={item}
                     active={item.paper_id === selected?.paper_id}
+                    checked={checkedIds.has(item.paper_id)}
+                    selectMode={selectMode}
                     onSelect={() => setSelId(item.paper_id)}
+                    onToggleCheck={() => toggleCheck(item.paper_id)}
                   />
                 ))
               )}
             </div>
 
-            {/* 底部分页栏（超过单页上限 100 才出现） */}
-            {totalPages > 1 && (
+            {/* —— 底部操作栏：多选 + 导出 BibTeX（常驻，对齐文献库 PapersTab） —— */}
+            <div
+              className="row gap8"
+              style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
+            >
+              <button
+                className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
+                title={tr('开启后列表出现复选框，可批量导出引用', 'Show checkboxes to bulk-export citations')}
+                onClick={() => {
+                  setSelectMode((m) => !m);
+                  setCheckedIds(new Set());
+                }}
+              >
+                <Icon name="check" size={13} />
+                {selectMode ? tr(`已选 ${checkedIds.size}`, `${checkedIds.size} selected`) : tr('多选', 'Select')}
+              </button>
+              {selectMode && (
+                <button
+                  className="btn btn-ghost sm"
+                  disabled={checkedIds.size === 0 || exportMutation.isPending}
+                  onClick={() => exportMutation.mutate()}
+                >
+                  {exportMutation.isPending ? (
+                    <Icon name="refresh" size={12} style={{ animation: 'spin 1s linear infinite' }} />
+                  ) : (
+                    <Icon name="download" size={12} />
+                  )}
+                  {tr('导出 BibTeX', 'Export BibTeX')}
+                </button>
+              )}
+            </div>
+
+            {/* 底部分页栏（超过单页上限 100 才出现；语义结果不分页） */}
+            {!semantic && totalPages > 1 && (
               <div
                 className="row gap12"
                 style={{
@@ -753,8 +970,11 @@ export function ResearchPage() {
                   refreshSnapshotMutation.isPending && refreshSnapshotMutation.variables === selected.paper_id
                 }
                 onRefreshSnapshot={() => refreshSnapshotMutation.mutate(selected.paper_id)}
+                onShelf={!semantic || selectedOnShelf}
+                onAdd={() => addMutation.mutate(selected.paper_id)}
+                addPending={addMutation.isPending && addMutation.variables === selected.paper_id}
               />
-            ) : shelfQuery.isSuccess && items.length === 0 && !hasServerFilter ? (
+            ) : !semantic && shelfQuery.isSuccess && items.length === 0 && !hasServerFilter ? (
               /* 书架为空 → 右栏放引导 */
               <div style={{ margin: 'auto' }}>
                 <EmptyState

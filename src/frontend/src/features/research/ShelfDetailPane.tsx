@@ -232,6 +232,9 @@ export function ShelfDetailPane({
   onGenerateWiki,
   refreshing,
   onRefreshSnapshot,
+  onShelf = true,
+  onAdd,
+  addPending = false,
 }: {
   item: ShelfItemRead;
   notePending: boolean;
@@ -244,6 +247,11 @@ export function ShelfDetailPane({
   /** 本篇的快照正在刷新 */
   refreshing: boolean;
   onRefreshSnapshot: () => void;
+  /** 是否已在相关研究书架内。false（语义检索命中的语料论文尚未收藏）时隐藏
+      备注 / 移出 / 生成解读等书架专属操作，改为「加入相关研究」。 */
+  onShelf?: boolean;
+  onAdd?: () => void;
+  addPending?: boolean;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -369,7 +377,7 @@ export function ShelfDetailPane({
             {tr('原文链接', 'Source link')}
           </a>
         )}
-        {item.wiki_source === 'none' && (
+        {onShelf && item.wiki_source === 'none' && (
           <button
             className="btn btn-soft sm"
             title={tr('用 AI 生成这篇论文的个人版解读（使用你的模型额度）', 'Generate a personal wiki with AI (uses your model quota)')}
@@ -380,7 +388,7 @@ export function ShelfDetailPane({
             {generating ? tr('生成中…', 'Generating…') : tr('生成 wiki', 'Generate wiki')}
           </button>
         )}
-        {item.wiki_source === 'snapshot' && (
+        {onShelf && item.wiki_source === 'snapshot' && (
           <button
             className="btn btn-soft sm"
             title={tr(
@@ -394,20 +402,33 @@ export function ShelfDetailPane({
             {refreshing ? tr('刷新中…', 'Refreshing…') : tr('刷新快照', 'Refresh snapshot')}
           </button>
         )}
-        <button
-          className="btn btn-ghost sm"
-          title={tr('移出相关研究（个人库收藏保留）', 'Remove from related work (kept in my library)')}
-          disabled={removePending}
-          onClick={onRemove}
-          style={{ marginLeft: 'auto', color: 'var(--danger-tx)' }}
-        >
-          <Icon name="trash" size={13} />
-          {tr('移出', 'Remove')}
-        </button>
+        {onShelf ? (
+          <button
+            className="btn btn-ghost sm"
+            title={tr('移出相关研究（个人库收藏保留）', 'Remove from related work (kept in my library)')}
+            disabled={removePending}
+            onClick={onRemove}
+            style={{ marginLeft: 'auto', color: 'var(--danger-tx)' }}
+          >
+            <Icon name="trash" size={13} />
+            {tr('移出', 'Remove')}
+          </button>
+        ) : onAdd ? (
+          <button
+            className="btn btn-primary sm"
+            title={tr('把这篇加入相关研究（同时收藏进个人库）', 'Add to related work (also saved to my library)')}
+            disabled={addPending}
+            onClick={onAdd}
+            style={{ marginLeft: 'auto' }}
+          >
+            <Icon name="plus" size={13} />
+            {addPending ? tr('加入中…', 'Adding…') : tr('加入相关研究', 'Add to related work')}
+          </button>
+        ) : null}
       </div>
 
-      {/* —— 课题备注：为什么相关 —— */}
-      <NoteEditor key={item.paper_id} note={item.note} pending={notePending} onSave={onSaveNote} />
+      {/* —— 课题备注：为什么相关（仅书架内论文） —— */}
+      {onShelf && <NoteEditor key={item.paper_id} note={item.note} pending={notePending} onSave={onSaveNote} />}
 
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
@@ -501,20 +522,27 @@ export function ShelfDetailPane({
           }}
         >
           <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
-            {tr(
-              '这篇论文还没有解读。可以用 AI 生成一份个人版（使用你的模型额度）。',
-              'No wiki for this paper yet. Generate a personal one with AI (uses your model quota).',
-            )}
+            {onShelf
+              ? tr(
+                  '这篇论文还没有解读。可以用 AI 生成一份个人版（使用你的模型额度）。',
+                  'No wiki for this paper yet. Generate a personal one with AI (uses your model quota).',
+                )
+              : tr(
+                  '这篇论文还没有解读。加入相关研究后可以用 AI 生成个人版。',
+                  'No wiki for this paper yet. Add it to related work to generate a personal one with AI.',
+                )}
           </div>
-          <button
-            className="btn btn-soft sm"
-            style={{ marginTop: 10 }}
-            disabled={generating}
-            onClick={onGenerateWiki}
-          >
-            <Icon name="sparkle" size={13} />
-            {generating ? tr('生成中…', 'Generating…') : tr('生成 wiki', 'Generate wiki')}
-          </button>
+          {onShelf && (
+            <button
+              className="btn btn-soft sm"
+              style={{ marginTop: 10 }}
+              disabled={generating}
+              onClick={onGenerateWiki}
+            >
+              <Icon name="sparkle" size={13} />
+              {generating ? tr('生成中…', 'Generating…') : tr('生成 wiki', 'Generate wiki')}
+            </button>
+          )}
         </div>
       )}
     </div>
