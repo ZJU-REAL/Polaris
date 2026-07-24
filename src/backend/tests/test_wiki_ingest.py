@@ -19,8 +19,11 @@ from app.core.db import get_sessionmaker
 from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.llm_config import LLMUsage
 from app.models.paper import EMBEDDING_DIM, paper_concepts
+from app.models.user import User
+from app.models.voyage import VoyageRun
 from app.services import ingest as ingest_service
 from app.services.literature import (
     ArxivClient,
@@ -32,6 +35,7 @@ from app.services.literature import (
 from app.services.literature.pdf_extract import figure_path
 from tests.conftest import (
     RecordingBus,
+    make_project_with_library,
     project_concepts,
     project_paper_rows,
     register_and_login,
@@ -241,11 +245,11 @@ async def wiki_mocks(app):
 async def _setup_project(client):
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
-    resp = await client.post(
-        "/api/projects", json={"name": "wiki-proj", "definition": DEFINITION}, headers=headers
+    # P9c：课题不再自动建库——显式配一个带 DEFINITION 的 active 起源库并关联。
+    project_id, _library_id = await make_project_with_library(
+        client, headers, name="wiki-proj", definition=DEFINITION
     )
-    assert resp.status_code == 201, resp.text
-    return resp.json()["id"], headers
+    return project_id, headers
 
 
 def _make_engine() -> tuple[VoyageEngine, RecordingBus]:
@@ -516,13 +520,12 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
     """稀疏 definition（只有 statement）也能跑通 bootstrap 全链路（默认 cs.* 分类兜底）。"""
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
-    resp = await client.post(
-        "/api/projects",
-        json={"name": "sparse-proj", "definition": {"statement": "自动化科研 agent 的方法研究"}},
-        headers=headers,
+    project_id, _library_id = await make_project_with_library(
+        client,
+        headers,
+        name="sparse-proj",
+        definition={"statement": "自动化科研 agent 的方法研究"},
     )
-    assert resp.status_code == 201, resp.text
-    project_id = resp.json()["id"]
 
     resp = await client.post(
         f"/api/projects/{project_id}/ingest",
@@ -776,3 +779,196 @@ async def test_daily_cron_project_selection(client, queue_stub, wiki_mocks):
     async with get_sessionmaker()() as session:
         due = await ingest_service.find_due_daily_projects(session)
         assert [p.id for p in due] == [uuid.UUID(project_id)]
+
+
+# ---- P9a：任务系统库化（VoyageRun 可挂方向库，独立库可直接触发抓取） ----
+
+
+async def _promote_admin(email: str) -> None:
+    """把已注册用户提为平台 admin（独立建库 / 库级 ingest 触发需要）。"""
+    async with get_sessionmaker()() as session:
+        user = (
+            await session.execute(select(User).where(User.email == email))
+        ).scalar_one()
+        user.role = "admin"
+        await session.commit()
+
+
+async def _create_standalone_library(client, headers, *, name="独立库-自动化科研", **extra):
+    """经 POST /libraries 建一个不挂课题的独立库（project_id=NULL）。"""
+    payload = {
+        "name": name,
+        "statement": DEFINITION["statement"],
+        "rubric": DEFINITION["rubric"],
+        "anchors": DEFINITION["anchor_papers"],
+        "cadence": "daily",
+        "keywords": DEFINITION["keywords"],
+    }
+    payload.update(extra)
+    resp = await client.post("/api/libraries", json=payload, headers=headers)
+    assert resp.status_code == 201, resp.text
+    library_id = resp.json()["id"]
+    # P9b：新库 pending，需 admin 审批激活后才能触发抓取（调用方均已 promote_admin）。
+    resp = await client.post(f"/api/libraries/{library_id}/approve", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "active"
+    return library_id
+
+
+async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_mocks):
+    """独立库（project_id=NULL）经 /libraries/{id}/ingest/run 触发并跑通全链路。
+
+    校验：任务挂库（project_id 空、library_id 指向本库）、同库并发互斥、水位线写库、
+    库版论文编译、库级用量归因、库级活动流（project_id 空 / library_id 指向本库）。
+    """
+    token = await register_and_login(client, email="lib-admin@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("lib-admin@example.com")
+    library_id = await _create_standalone_library(client, headers)
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    voyage = resp.json()
+    assert voyage["kind"] == "wiki_bootstrap"
+    assert voyage["library_id"] == library_id
+    assert voyage["project_id"] is None  # 独立库无起源课题
+    run_id = voyage["id"]
+    assert ("run_voyage", (run_id,), {}) in queue_stub.jobs
+
+    # 同库并发互斥 → 409（库化后互斥以库为准）
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "INGEST_ALREADY_RUNNING"
+
+    engine, _bus = _make_engine()
+    await engine.run(uuid.UUID(run_id))
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        # 水位线权威源写在库上
+        assert library.ingest_state["watermark"]
+        assert library.ingest_state["last_run"]["voyage_id"] == run_id
+
+        # 库版论文：3 arXiv 候选 + 1 雪球，3 篇编译
+        members = (
+            (
+                await session.execute(
+                    select(LibraryPaper).where(LibraryPaper.library_id == library.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(members) == 4
+        assert sum(1 for m in members if m.status == "compiled") == 3
+        assert sum(1 for m in members if m.status == "excluded") == 1
+
+        # 库级用量归因：ingest 全程 LLM 调用（打分/图注/编译/概念定义/向量化）记到库上
+        usage = (
+            (
+                await session.execute(
+                    select(LLMUsage).where(LLMUsage.library_id == library.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert usage, "库级 ingest 应产生按库归因的用量记录"
+        assert {u.library_id for u in usage} == {library.id}
+
+        # 库级活动流：project_id 为空，library_id 指向本库
+        acts = (
+            (
+                await session.execute(
+                    select(Activity).where(Activity.library_id == library.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert {"ingest.started", "ingest.completed"} <= {a.kind for a in acts}
+        assert all(a.project_id is None for a in acts)
+
+
+async def test_standalone_library_ingest_budget_gate(client, queue_stub):
+    """独立库触发同样受库预算门约束：本月用尽 → 409 且不入队。"""
+    token = await register_and_login(client, email="lib-budget@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("lib-budget@example.com")
+    library_id = await _create_standalone_library(
+        client, headers, name="独立库-预算", monthly_budget=1000
+    )
+    async with get_sessionmaker()() as session:
+        session.add(
+            LLMUsage(
+                library_id=uuid.UUID(library_id),
+                stage="librarian",
+                model="fake",
+                prompt_tokens=800,
+                completion_tokens=300,  # 1100 ≥ 1000
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap"},
+        headers=headers,
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "LIBRARY_BUDGET_EXHAUSTED"
+    assert queue_stub.jobs == []
+
+
+async def test_standalone_library_ingest_forbidden_for_stranger(client, queue_stub):
+    """非管理者不能触发库级 ingest（成员/策展人/admin 之外 → 403）。"""
+    token = await register_and_login(client, email="lib-owner2@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("lib-owner2@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-权限")
+
+    stranger = await register_and_login(client, email="lib-stranger@example.com")
+    sh = {"Authorization": f"Bearer {stranger}"}
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap"},
+        headers=sh,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "LIBRARY_MANAGE_FORBIDDEN"
+    assert queue_stub.jobs == []
+
+
+async def test_project_ingest_run_carries_library_id(client, queue_stub, wiki_mocks):
+    """隐式库不回归：课题触发的 ingest 现在既带 project_id 也带 library_id（同库解析一致）。"""
+    project_id, headers = await _setup_project(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    voyage = resp.json()
+    assert voyage["project_id"] == project_id
+    assert voyage["library_id"] is not None
+
+    async with get_sessionmaker()() as session:
+        from app.services.libraries import get_library_for_project
+
+        library = await get_library_for_project(session, uuid.UUID(project_id))
+        assert voyage["library_id"] == str(library.id)
+        run = await session.get(VoyageRun, uuid.UUID(voyage["id"]))
+        assert run.library_id == library.id
+        assert run.project_id == uuid.UUID(project_id)

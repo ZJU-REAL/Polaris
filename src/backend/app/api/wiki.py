@@ -283,8 +283,7 @@ async def chat_with_shelf(
     """
     project = await _member_project(session, project_id, user)
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
-    definition = project.definition if isinstance(project.definition, dict) else {}
-    statement = definition.get("statement") or project.name
+    statement = project.statement or project.name
     history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
     llm = get_llm_router()
     paper_ids = await shelf_paper_ids(session, project_id=project_id)

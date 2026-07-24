@@ -551,7 +551,11 @@ async def list_project_tags(
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    rows = await papers_service.list_project_tags(session, project_id=project_id)
+    # 课题标签解析到其隐式起源库（无库=无语料，空列表）。
+    library = await libraries_service.get_library_for_project(session, project_id)
+    if library is None:
+        return []
+    rows = await papers_service.list_library_tags(session, library_id=library.id)
     return [TagRead(**row) for row in rows]
 
 

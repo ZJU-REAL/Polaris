@@ -200,9 +200,9 @@ async def test_shelf_resolves_personal_wiki_between_live_and_snapshot(client):
     # 库后来收录并编译 → 库版实时优先
     async with get_sessionmaker()() as session:
         from app.models.library_direction import LibraryPaper
-        from app.services.libraries import get_library_for_project
+        from tests.conftest import ensure_project_library
 
-        library = await get_library_for_project(session, uuid.UUID(project_id))
+        library = await ensure_project_library(session, uuid.UUID(project_id))
         session.add(
             LibraryPaper(
                 library_id=library.id,

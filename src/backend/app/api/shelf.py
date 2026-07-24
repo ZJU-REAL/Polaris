@@ -39,12 +39,32 @@ async def list_shelf(
     project_id: uuid.UUID,
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
+    q: str | None = Query(default=None),
+    author: str | None = Query(default=None),
+    affiliation: str | None = Query(default=None),
+    year_from: int | None = Query(default=None),
+    year_to: int | None = Query(default=None),
+    reading_status: str | None = Query(default=None, pattern="^(unread|reading|read)$"),
+    starred: bool | None = Query(default=None),
+    sort: str = Query(default="added", pattern="^(added|year|relevance|title)$"),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ShelfPage:
     await _require_member(session, project_id, user)
     items, total = await shelf_service.list_shelf(
-        session, project_id=project_id, user_id=user.id, page=page, size=size
+        session,
+        project_id=project_id,
+        user_id=user.id,
+        page=page,
+        size=size,
+        q=q,
+        author=author,
+        affiliation=affiliation,
+        year_from=year_from,
+        year_to=year_to,
+        reading_status=reading_status,
+        starred=starred,
+        sort=sort,
     )
     return ShelfPage(
         items=[ShelfItemRead.model_validate(i) for i in items],

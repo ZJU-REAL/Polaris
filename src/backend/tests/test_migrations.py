@@ -10,7 +10,7 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "3ecc41527559"  # users.settings 个人设置 JSON 列（可选全文索引开关）
-PREV_REVISION = "b3e9c1f47a20"  # direction_libraries.definition 收录配置权威（P8a）
+PREV_REVISION = "e2b9d47a0c31"  # 课题 statement 上列 + 退役 project.definition（P9e）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -60,6 +60,9 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "topic_papers",
                     "llm_usage",
                     "topic_source_libraries",
+                    "activities",
+                    "direction_libraries",
+                    "projects",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -92,7 +95,9 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"paper_notes", "paper_tags", "paper_tag_links", "paper_user_meta"} <= columns["_tables"]
     assert {"paper_id", "author_id", "content"} <= columns["paper_notes"]
     assert "project_id" not in columns["paper_notes"]
-    assert {"project_id", "name"} <= columns["paper_tags"]
+    # P9e：标签库化——paper_tags 以 library_id 为作用域键（project_id 删列）
+    assert {"library_id", "name"} <= columns["paper_tags"]
+    assert "project_id" not in columns["paper_tags"]
     assert columns["paper_tag_links"] == {"paper_id", "tag_id"}
     assert {"paper_id", "user_id", "starred", "reading_status"} <= columns["paper_user_meta"]
     # 论文图片：papers.figures JSON 列
@@ -131,6 +136,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "attempts",
         "provenance",
     } <= columns["voyage_steps"]
+    # 任务系统库化 P9a：voyage_runs / activities 新增 library_id（project_id 转可空）
+    assert "library_id" in columns["voyage_runs"]
+    assert "library_id" in columns["activities"]
+    # 文献库生命周期 P9b：direction_libraries 新增 status/review_note/submitted_by
+    assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
+    # P9e：课题 statement 上列；project.definition / projects.ingest_state 退役删列
+    assert "statement" in columns["projects"]
+    assert "definition" not in columns["projects"]
+    assert "ingest_state" not in columns["projects"]
     # 垃圾桶原因等判断字段已迁 library_papers（P4 迁移 B 删列）
     assert "trash_reason" not in columns["papers"]
     assert "status" not in columns["papers"]
@@ -232,11 +246,24 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "topic_source_libraries" in columns["_tables"]
     assert columns["topic_source_libraries"] == {"topic_id", "library_id", "created_at"}
 
-    # 最新 revision 可往返（downgrade 删 direction_libraries.definition，其余结构不动）
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（e2b9d47a0c31，P9e 课题 statement）。
+    # 该步只回退本迁移（users：删 settings 个人设置列），projects 的 statement 结构不动。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "topic_source_libraries" in columns["_tables"]  # P7 表仍在（回退止于 P7）
+    # 本迁移回退后 users.settings 删除；上一版 P9e 的 statement 仍在、definition 已退役
+    assert "settings" not in columns["users"]
+    assert "statement" in columns["projects"]
+    assert "definition" not in columns["projects"]
+    assert "ingest_state" not in columns["projects"]
+    # 只退一步：标签库化（mig1）仍在，paper_tags 仍以 library_id 为键
+    assert "library_id" in columns["paper_tags"]
+    assert "project_id" not in columns["paper_tags"]
+    # P9b 三列仍在（本次 downgrade 未触及），P9a 的 library_id 仍在
+    assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
+    assert "library_id" in columns["voyage_runs"]
+    assert "library_id" in columns["activities"]
+    assert "topic_source_libraries" in columns["_tables"]  # P7 表仍在
     assert "library_id" in columns["llm_usage"]
     assert "library_id" in columns["llm_call_logs"]
     # P5b 拆分结构不受影响：笔记/划线仍无 project_id
@@ -282,3 +309,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "registration_codes" in columns["_tables"]
     assert "preset_directions" in columns["registration_codes"]
     assert {"feedback", "feedback_images"} <= columns["_tables"]
+    # P9a 列在重新 upgrade 后回归
+    assert "library_id" in columns["voyage_runs"]
+    assert "library_id" in columns["activities"]
+    # P9b 列在重新 upgrade 后回归
+    assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
+    # P9e 列在重新 upgrade 后回归：projects.statement 在、definition/ingest_state 删
+    assert "statement" in columns["projects"]
+    assert "definition" not in columns["projects"]
+    assert "ingest_state" not in columns["projects"]
+    assert "library_id" in columns["paper_tags"]
+    assert "project_id" not in columns["paper_tags"]

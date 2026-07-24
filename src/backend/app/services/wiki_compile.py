@@ -199,8 +199,9 @@ async def recompile_paper(
     paper = view.paper
     membership = view.membership
     project = await session.get(Project, view.project_id) if view.project_id else None
-    definition = project.definition if project and isinstance(project.definition, dict) else {}
-    statement = definition.get("statement") or (project.name if project else paper.title)
+    statement = (project.statement if project else None) or (
+        project.name if project else paper.title
+    )
     project_id = view.project_id
 
     if paper.pdf_path and Path(paper.pdf_path).exists():

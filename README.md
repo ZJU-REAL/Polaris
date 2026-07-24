@@ -161,6 +161,26 @@ make test                   # backend pytest + frontend build
 make lint                   # ruff check + tsc --noEmit
 ```
 
+## Docker deployment
+
+Deploy from pre-built images on Docker Hub (`tricktreat/polaris-{api,worker,frontend}`, published by
+CI on every `v*` tag) — no local build needed:
+
+```bash
+cp .env.example .env        # set POLARIS_ENV=prod, POLARIS_IMAGE_TAG, secrets, and an LLM key
+docker compose --env-file .env -f docker/docker-compose.yml pull
+docker compose --env-file .env -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml exec api alembic upgrade head   # required on first run
+```
+
+The frontend is served at `http://<host>:8080`. The `worker` container is required (it runs all long
+tasks), and the first-run migration is mandatory (Postgres tables are not auto-created). Pass
+`--env-file .env` so Compose reads `POLARIS_IMAGE_TAG` (default `latest`) / `POLARIS_IMAGE_PREFIX`
+(default `tricktreat`) from the repo-root `.env`.
+
+For building locally instead, bind mounts, backups, and restricted networks, see
+[docs/deployment.md](docs/deployment.md).
+
 ## Documentation
 
 Full documentation lives in [docs/](docs/):

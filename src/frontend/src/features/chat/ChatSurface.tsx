@@ -25,6 +25,8 @@ export interface ChatSurfaceConfig {
   /** localStorage 命名空间，如 `library:${pid}` / `reading:${paperId}` */
   surfaceKey: string;
   pid: string;
+  /** 独立库作用域：透传给 Composer，让 / 选择器候选走库端点 */
+  libraryId?: string;
   title: string;
   contextKinds: ContextKind[];
   hint: ReactNode;
@@ -352,6 +354,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
 
         <Composer
           pid={cfg.pid}
+          libraryId={cfg.libraryId}
           streaming={streaming}
           contextKinds={cfg.contextKinds}
           attachesPaperLink={cfg.attachesPaperLink}

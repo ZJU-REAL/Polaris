@@ -96,7 +96,7 @@ async def test_preset_directions_create_projects(client):
     projects = (await client.get("/api/projects", headers=invited_headers)).json()
     by_name = {p["name"]: p for p in projects}
     assert set(by_name) == {"LLM 长程规划", "多模态检索"}
-    assert by_name["LLM 长程规划"]["definition"] == {"statement": "LLM 长程规划"}
+    assert by_name["LLM 长程规划"]["statement"] == "LLM 长程规划"
 
 
 async def test_code_without_directions_creates_no_projects(client):

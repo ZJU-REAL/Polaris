@@ -151,13 +151,16 @@ class PaperHighlight(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class PaperTag(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """项目级论文标签（同项目内名字唯一）；与论文多对多（paper_tag_links）。"""
+    """库级论文标签（同库内名字唯一）；与论文多对多（paper_tag_links）。
+
+    P9e：标签作用域从课题（project_id）改为文献库（library_id）——独立库也能打标签。
+    课题的标签操作解析到其隐式起源库后走库级实现。"""
 
     __tablename__ = "paper_tags"
-    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_paper_tags_project_name"),)
+    __table_args__ = (UniqueConstraint("library_id", "name", name="uq_paper_tags_library_name"),)
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("direction_libraries.id", ondelete="CASCADE"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
 
