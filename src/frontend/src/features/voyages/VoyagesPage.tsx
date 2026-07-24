@@ -218,6 +218,8 @@ export function VoyagesList() {
             </div>
           ) : (
             <div className="card" style={{ overflow: 'hidden' }}>
+              {/* 行内定宽列合计放不下窄屏，整块横滚而不是把中间的标题列挤成 0 宽 */}
+              <div className="table-wrap">
               {voyages.map((v, i) => {
                 const active = !VOYAGE_TERMINAL.has(v.status);
                 const running = RUNNING_STATUSES.has(v.status);
@@ -263,6 +265,7 @@ export function VoyagesList() {
                   </div>
                 );
               })}
+              </div>
             </div>
           )}
     </>

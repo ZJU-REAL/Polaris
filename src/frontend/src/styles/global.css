@@ -1101,6 +1101,9 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 
   /* —— 宽内容兜底 —— */
   .table-wrap > .table { min-width: 560px; }
+  /* 任务列表行：徽标 + 标题 + 进度 130 + 耗时 78 + 状态 134 + 箭头，定宽列
+     合计放不下窄屏，给最小宽度让整块横滚，而不是把标题列压没、时间戳折成三行 */
+  .table-wrap > .voyage-row { min-width: 720px; }
   .workbench-panx { overflow-x: auto; overflow-y: hidden; }
   .workbench-panx > .workbench-panx-inner { min-width: 900px; }
 
