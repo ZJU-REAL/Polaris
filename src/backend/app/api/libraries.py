@@ -126,10 +126,18 @@ async def _reads_with_extras(
 
 @router.get("/libraries", response_model=list[DirectionLibrarySummary])
 async def list_libraries(
+    type: str | None = Query(default=None, pattern="^(personal|public|all)$"),
+    status_filter: str | None = Query(default=None, alias="status"),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[DirectionLibrarySummary]:
-    rows = await libraries_service.list_libraries_overview(session, user=user)
+    """可见方向库（P10）：普通用户看自己的个人库 + 全部公共库，admin 看全部。
+
+    可选 ``type``（personal|public|all，默认 all）与 ``status`` 在可见集合内进一步筛选。
+    """
+    rows = await libraries_service.list_libraries_overview(
+        session, user=user, type=type, status=status_filter
+    )
     return [DirectionLibrarySummary(**row) for row in rows]
 
 
@@ -141,9 +149,10 @@ async def create_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """用户独立新建方向文献库（任意登录用户，P9b）：新库 status=pending 待审批，
-    创建者记为 submitted_by 并自动成为该库策展人（文献库管理员）。仅落配置，不触发
-    抓取、不花 token；管理员审批激活后才能触发 ingest。不属于任何课题，课题靠关联消费其语料。
+    """用户独立新建方向文献库（任意登录用户，P10）：新库即刻可用的**个人库**
+    （status=active、is_public=false，仅创建者 + admin 可见，token 记创建者账），
+    无需审批。创建者记为 submitted_by 并自动成为该库策展人。想转公共（全实验室可见、
+    走系统 key）经 POST /libraries/{id}/request-public 申请、admin 审批。不属于任何课题。
     """
     library = await libraries_service.create_library(
         session,
@@ -195,13 +204,38 @@ async def get_library(
     return DirectionLibraryDetail(**row)
 
 
+@router.post("/libraries/{library_id}/request-public", response_model=DirectionLibraryDetail)
+async def request_library_public(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DirectionLibraryDetail:
+    """申请把个人库转为公共库（P10）：仅创建者或该库策展人可发起；status → pending
+    等 admin 审批（is_public 仍 false）。无权者视为不存在（404）。
+    """
+    library = await _get_library(session, library_id)
+    is_owner = library.submitted_by is not None and library.submitted_by == user.id
+    is_curator = await libraries_service.is_library_curator(
+        session, library_id=library.id, user_id=user.id
+    )
+    if not (is_owner or is_curator):
+        # 能看到但无权发起（如非策展人 admin）→ 403；看不到（陌生人个人库）→ 404 隐藏存在。
+        if libraries_service.library_visible_to(library, user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_MANAGE_FORBIDDEN")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+    library = await libraries_service.request_public(session, library=library)
+    row = await libraries_service.library_overview(session, library=library, user=user)
+    return DirectionLibraryDetail(**row)
+
+
 @router.post("/libraries/{library_id}/approve", response_model=DirectionLibraryDetail)
 async def approve_library(
     library_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_admin),
 ) -> DirectionLibraryDetail:
-    """审批通过（平台 admin）：pending/rejected → active，激活后可触发抓取。"""
+    """审批通过转公共库（平台 admin，P10）：is_public → true、status → active，
+    全实验室可见、ingest 走系统/全局 key。"""
     library = await _get_library(session, library_id)
     library = await libraries_service.approve_library(session, library=library)
     row = await libraries_service.library_overview(session, library=library, user=user)
@@ -215,7 +249,8 @@ async def reject_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_admin),
 ) -> DirectionLibraryDetail:
-    """驳回（平台 admin）：→ rejected，可带理由；创建者可改配置后再由 admin 审批。"""
+    """驳回转公共申请（平台 admin，P10）：退回可用的个人库（is_public=false、
+    status=active），可带理由；创建者可调整后再申请。"""
     library = await _get_library(session, library_id)
     library = await libraries_service.reject_library(session, library=library, note=data.note)
     row = await libraries_service.library_overview(session, library=library, user=user)
@@ -247,16 +282,21 @@ async def delete_library(
     library_id: uuid.UUID,
     force: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
+    user: User = Depends(current_active_user),
 ) -> None:
-    """删库（平台 admin 专用）：论文内容池行不动，成员行/概念/策展人一并清除。
+    """删库（P10）：个人库创建者本人或 admin 可删；公共库仅 admin 可删（否则 403）。
+    论文内容池行不动，成员行/概念/策展人一并清除。
 
     仍有课题关联时默认拒绝（409 LIBRARY_HAS_TOPICS），带 ``?force=true`` 才会
     一并解除关联（不影响课题本身，课题只是失去这条语料来源）。
     """
     library = await _get_library(session, library_id)
     try:
-        await libraries_service.delete_library(session, library=library, force=force)
+        await libraries_service.delete_library(
+            session, library=library, user=user, force=force
+        )
+    except libraries_service.LibraryDeleteForbiddenError as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_DELETE_FORBIDDEN") from e
     except libraries_service.LibraryHasTopicsError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_HAS_TOPICS") from e
 

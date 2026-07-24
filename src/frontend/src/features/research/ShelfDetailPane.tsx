@@ -257,7 +257,7 @@ export function ShelfDetailPane({
   const paper = paperQuery.data;
 
   // 来源方向库名（列表小且 5 分钟缓存，直接查全量列表）
-  const libsQuery = useLibraries(item.source_library_id !== null);
+  const libsQuery = useLibraries({}, item.source_library_id !== null);
   const sourceLib = item.source_library_id
     ? (libsQuery.data?.find((l) => l.id === item.source_library_id) ?? null)
     : null;

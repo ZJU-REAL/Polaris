@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "3ecc41527559"  # users.settings 个人设置 JSON 列（可选全文索引开关）
-PREV_REVISION = "e2b9d47a0c31"  # 课题 statement 上列 + 退役 project.definition（P9e）
+HEAD_REVISION = "47b973fb7e13"  # direction_libraries.is_public 个人/公共归属（P10）
+PREV_REVISION = "3ecc41527559"  # users.settings 个人设置 JSON 列（可选全文索引开关）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -141,6 +141,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "library_id" in columns["activities"]
     # 文献库生命周期 P9b：direction_libraries 新增 status/review_note/submitted_by
     assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
+    # 文献库归属 P10：direction_libraries.is_public 个人/公共
+    assert "is_public" in columns["direction_libraries"]
     # P9e：课题 statement 上列；project.definition / projects.ingest_state 退役删列
     assert "statement" in columns["projects"]
     assert "definition" not in columns["projects"]
@@ -246,13 +248,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "topic_source_libraries" in columns["_tables"]
     assert columns["topic_source_libraries"] == {"topic_id", "library_id", "created_at"}
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（e2b9d47a0c31，P9e 课题 statement）。
-    # 该步只回退本迁移（users：删 settings 个人设置列），projects 的 statement 结构不动。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（3ecc41527559，users.settings）。
+    # 该步只回退本迁移（direction_libraries：删 is_public 归属列），其余结构不动。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    # 本迁移回退后 users.settings 删除；上一版 P9e 的 statement 仍在、definition 已退役
-    assert "settings" not in columns["users"]
+    # 本迁移回退后 is_public 删除；上一版 users.settings 仍在，P9e statement 仍在
+    assert "is_public" not in columns["direction_libraries"]
+    assert "settings" in columns["users"]
     assert "statement" in columns["projects"]
     assert "definition" not in columns["projects"]
     assert "ingest_state" not in columns["projects"]
@@ -292,8 +295,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
     assert "manuscript_file_versions" in columns["_tables"]
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
-    # 回退到 P8a：users.settings 列已随 downgrade 删除
-    assert "settings" not in columns["users"]
+    # 本迁移回退只删 direction_libraries.is_public；users.settings 仍在
+    assert "settings" in columns["users"]
     assert "project_invites" in columns["_tables"]
     assert "affiliations" in columns["papers"]
     assert {"skill_listings", "skill_ratings"} <= columns["_tables"]
@@ -314,6 +317,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "library_id" in columns["activities"]
     # P9b 列在重新 upgrade 后回归
     assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
+    # P10 归属列在重新 upgrade 后回归
+    assert "is_public" in columns["direction_libraries"]
     # P9e 列在重新 upgrade 后回归：projects.statement 在、definition/ingest_state 删
     assert "statement" in columns["projects"]
     assert "definition" not in columns["projects"]

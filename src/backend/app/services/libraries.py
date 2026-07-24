@@ -345,6 +345,8 @@ def _overview_dict(
     paper_count: int,
     concept_count: int,
     last_compiled_at: Any,
+    owner_name: str | None = None,
+    is_owner: bool = False,
 ) -> dict[str, Any]:
     return {
         "id": library.id,
@@ -355,8 +357,11 @@ def _overview_dict(
         "definition": library_definition(library),
         "project_id": library.project_id,
         "status": library.status,
+        "is_public": library.is_public,
         "review_note": library.review_note,
         "submitted_by": library.submitted_by,
+        "owner_name": owner_name,
+        "is_owner": is_owner,
         "is_mine": library.id in my_linked,
         "can_manage": can_manage,
         "paper_count": paper_count,
@@ -368,8 +373,32 @@ def _overview_dict(
     }
 
 
-async def list_libraries_overview(session: AsyncSession, *, user: User) -> list[dict[str, Any]]:
-    """全部方向库 + 概要统计（读操作对所有登录用户开放，不做成员校验）。"""
+async def _owner_names(
+    session: AsyncSession, submitted_by: Iterable[uuid.UUID | None]
+) -> dict[uuid.UUID, str | None]:
+    """批量取库创建者的展示名（submitted_by → display_name），避免逐库 N+1。"""
+    ids = {uid for uid in submitted_by if uid is not None}
+    if not ids:
+        return {}
+    rows = await session.execute(
+        select(User.id, User.display_name).where(User.id.in_(ids))
+    )
+    return {uid: name for uid, name in rows.all()}
+
+
+async def list_libraries_overview(
+    session: AsyncSession,
+    *,
+    user: User,
+    type: str | None = None,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """可见方向库 + 概要统计（P10）。
+
+    可见范围：admin 看全部；普通用户看**自己的个人库（submitted_by==me 且非 public）
+    ∪ 全部公共库（is_public）**。可选 ``type``（personal|public|all，默认 all）与
+    ``status`` 做进一步筛选（都不影响可见性边界，只在可见集合内过滤）。
+    """
     libraries = (
         (await session.execute(select(DirectionLibrary).order_by(DirectionLibrary.created_at)))
         .scalars()
@@ -381,28 +410,42 @@ async def list_libraries_overview(session: AsyncSession, *, user: User) -> list[
     my_projects = await _my_project_ids(session, user.id)
     my_linked = await _my_linked_library_ids(session, user.id)
     my_curated = await _my_curated_library_ids(session, user.id)
-    return [
-        _overview_dict(
-            lib,
-            my_linked=my_linked,
-            can_manage=(
-                user.role == "admin"
-                or lib.id in my_curated
-                or lib.submitted_by == user.id
-                or (lib.project_id is not None and lib.project_id in my_projects)
-            ),
-            paper_count=paper_counts.get(lib.id, 0),
-            concept_count=concept_counts.get(lib.id, 0),
-            last_compiled_at=last_compiled.get(lib.id),
+    owner_names = await _owner_names(session, (lib.submitted_by for lib in libraries))
+    want = (type or "all").lower()
+    result: list[dict[str, Any]] = []
+    for lib in libraries:
+        if not library_visible_to(lib, user):
+            continue
+        if want == "personal" and lib.is_public:
+            continue
+        if want == "public" and not lib.is_public:
+            continue
+        if status is not None and lib.status != status:
+            continue
+        result.append(
+            _overview_dict(
+                lib,
+                my_linked=my_linked,
+                can_manage=(
+                    user.role == "admin"
+                    or lib.id in my_curated
+                    or lib.submitted_by == user.id
+                    or (lib.project_id is not None and lib.project_id in my_projects)
+                ),
+                paper_count=paper_counts.get(lib.id, 0),
+                concept_count=concept_counts.get(lib.id, 0),
+                last_compiled_at=last_compiled.get(lib.id),
+                owner_name=owner_names.get(lib.submitted_by),
+                is_owner=lib.submitted_by == user.id,
+            )
         )
-        for lib in libraries
-        if library_visible_to(lib, user)
-    ]
+    return result
 
 
 def library_visible_to(library: DirectionLibrary, user: User) -> bool:
-    """库对请求者是否可见（P9b）：active 全员可读；pending/rejected 仅创建者 + admin 可见。"""
-    if library.status == "active":
+    """库对请求者是否可见（P10）：公共库（is_public）全员可读；个人库（含申请转公共
+    的 pending 态）仅创建者 + admin 可见。"""
+    if library.is_public:
         return True
     if user.role == "admin":
         return True
@@ -415,6 +458,7 @@ async def library_overview(
     """单库详情概要（同列表口径）。"""
     paper_counts, last_compiled, concept_counts = await _library_stats(session, [library.id])
     my_linked = await _my_linked_library_ids(session, user.id)
+    owner_names = await _owner_names(session, [library.submitted_by])
     return _overview_dict(
         library,
         my_linked=my_linked,
@@ -422,6 +466,8 @@ async def library_overview(
         paper_count=paper_counts.get(library.id, 0),
         concept_count=concept_counts.get(library.id, 0),
         last_compiled_at=last_compiled.get(library.id),
+        owner_name=owner_names.get(library.submitted_by),
+        is_owner=library.submitted_by == user.id,
     )
 
 
@@ -435,6 +481,7 @@ async def source_libraries_overview(
     my_projects = await _my_project_ids(session, user.id)
     my_linked = await _my_linked_library_ids(session, user.id)
     my_curated = await _my_curated_library_ids(session, user.id)
+    owner_names = await _owner_names(session, (lib.submitted_by for lib in libraries))
     return [
         _overview_dict(
             lib,
@@ -442,11 +489,14 @@ async def source_libraries_overview(
             can_manage=(
                 user.role == "admin"
                 or lib.id in my_curated
+                or lib.submitted_by == user.id
                 or (lib.project_id is not None and lib.project_id in my_projects)
             ),
             paper_count=paper_counts.get(lib.id, 0),
             concept_count=concept_counts.get(lib.id, 0),
             last_compiled_at=last_compiled.get(lib.id),
+            owner_name=owner_names.get(lib.submitted_by),
+            is_owner=lib.submitted_by == user.id,
         )
         for lib in libraries
     ]
@@ -638,13 +688,14 @@ async def create_library(
     keywords: dict[str, Any] | None = None,
     monthly_budget: int | None = None,
     created_by: uuid.UUID,
-    status: str = "pending",
+    status: str = "active",
 ) -> DirectionLibrary:
-    """用户独立新建方向文献库（P9b；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
+    """用户独立新建方向文献库（P10；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
 
-    P9b：任意登录用户可建，新库默认 ``status='pending'`` 待审批（仅配置，不触发抓取、
-    不花 token）；创建者记为 ``submitted_by`` 并自动加为该库策展人（文献库管理员），
-    以便在审批前管理自己的 pending 库。管理员审批后转 active 才能触发抓取。
+    P10：任意登录用户可建，新库默认 ``status='active'`` + ``is_public=false``——即刻
+    可用的**个人库**（仅创建者 + admin 可见，token 记创建者账），无需审批。创建者记为
+    ``submitted_by`` 并自动加为该库策展人（文献库管理员）。想让全实验室可见/走系统 key
+    的，经 ``POST /libraries/{id}/request-public`` 申请、admin 审批后转公共库。
 
     flush + refresh，不 commit（调用方 api 层负责事务收尾）。
     """
@@ -682,10 +733,27 @@ async def create_library(
     return library
 
 
+async def request_public(
+    session: AsyncSession, *, library: DirectionLibrary
+) -> DirectionLibrary:
+    """申请把个人库转为公共库（P10）：is_public 仍 false，status → pending 等 admin 审批。
+
+    鉴权（仅创建者 / 策展人）由 api 层校验。幂等：重复申请只是保持 pending。commit 落库。
+    """
+    library.status = "pending"
+    await session.commit()
+    await session.refresh(library)
+    return library
+
+
 async def approve_library(
     session: AsyncSession, *, library: DirectionLibrary
 ) -> DirectionLibrary:
-    """审批通过（平台 admin）：pending/rejected → active，清空驳回理由。commit 落库。"""
+    """审批通过转公共库（平台 admin，P10）：is_public → true、status → active、清驳回理由。
+
+    公共库全实验室可见、ingest 走系统/全局 key（token 不再记创建者账）。commit 落库。
+    """
+    library.is_public = True
     library.status = "active"
     library.review_note = None
     await session.commit()
@@ -696,8 +764,11 @@ async def approve_library(
 async def reject_library(
     session: AsyncSession, *, library: DirectionLibrary, note: str | None = None
 ) -> DirectionLibrary:
-    """驳回（平台 admin）：→ rejected，记录驳回理由。commit 落库。"""
-    library.status = "rejected"
+    """驳回转公共申请（平台 admin，P10）：退回可用的**个人库**（is_public=false、
+    status=active），记录驳回理由。不再置不可用的 rejected 态。commit 落库。
+    """
+    library.is_public = False
+    library.status = "active"
     library.review_note = note
     await session.commit()
     await session.refresh(library)
@@ -742,8 +813,10 @@ async def _is_project_member(
 async def can_manage_library(
     session: AsyncSession, *, user: User, library: DirectionLibrary
 ) -> bool:
-    """库级写权限（docs-dev/workspace-ia-redesign.md §5）：
-    背后课题成员 ∪ 策展人（direction_library_curators）∪ 平台 admin。"""
+    """库级写权限（P10）：平台 admin ∪ 创建者（submitted_by）∪ 策展人 ∪ 背后课题成员。
+
+    公共库全体 admin 都能管；个人库只创建者 + admin（策展人默认含创建者本人，仍适用）。
+    """
     if user.role == "admin":
         return True
     if library.submitted_by is not None and library.submitted_by == user.id:
@@ -881,13 +954,33 @@ class LibraryHasTopicsError(Exception):
     """库仍有课题关联，删除需要 force=true（先解绑或确认一并解除关联）。"""
 
 
+class LibraryDeleteForbiddenError(Exception):
+    """无权删除该库（个人库仅创建者/admin；公共库仅 admin）。路由映射 403。"""
+
+
+def can_delete_library(library: DirectionLibrary, user: User) -> bool:
+    """删库权限（P10）：公共库仅平台 admin；个人库创建者本人或 admin。"""
+    if user.role == "admin":
+        return True
+    if library.is_public:
+        return False
+    return library.submitted_by is not None and library.submitted_by == user.id
+
+
 async def delete_library(
-    session: AsyncSession, *, library: DirectionLibrary, force: bool = False
+    session: AsyncSession,
+    *,
+    library: DirectionLibrary,
+    user: User,
+    force: bool = False,
 ) -> None:
-    """删库（平台 admin 专用）：论文内容池行不动；成员行/概念/策展人/课题关联行
-    随库一并清除（DB ``ondelete=CASCADE``）。有课题关联且未 ``force`` → 拒绝
+    """删库（P10）：公共库仅平台 admin；个人库创建者本人或 admin 可删（无权抛
+    ``LibraryDeleteForbiddenError`` → 403）。论文内容池行不动；成员行/概念/策展人/
+    课题关联行随库一并清除（DB ``ondelete=CASCADE``）。有课题关联且未 ``force`` → 拒绝
     （``LibraryHasTopicsError``，路由映射 409，提示先解绑或带 force 确认）。
     """
+    if not can_delete_library(library, user):
+        raise LibraryDeleteForbiddenError(str(library.id))
     if not force:
         linked = (
             await session.execute(

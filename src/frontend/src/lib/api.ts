@@ -797,6 +797,12 @@ export interface DirectionLibrarySummary {
   is_mine: boolean;
   /** 是否可管理本库：成员 ∪ 文献库管理员 ∪ 创建者 ∪ 平台管理员（P6/P9b） */
   can_manage: boolean;
+  /** 归属模型：个人库 false（归属人=owner_name）| 公共库 true（实验室/全体 admin 所有） */
+  is_public: boolean;
+  /** 归属人名（个人库=创建者；公共库=原创建者/策展人；可能为空） */
+  owner_name: string | null;
+  /** 请求者是否本库归属人（submitted_by==我）：个人库删除 / 申请转公共入口据此判定 */
+  is_owner: boolean;
   /** 生命周期（P9b）：pending 待审批 | active 已激活 | rejected 已驳回 */
   status: 'pending' | 'active' | 'rejected';
   /** 驳回理由（status=rejected 时有值） */
@@ -2694,8 +2700,20 @@ export const api = {
   },
 
   // —— P5c · 共享方向库（全实验室可读） ——
-  listLibraries(): Promise<DirectionLibrarySummary[]> {
-    return request<DirectionLibrarySummary[]>('/libraries');
+  /** 文献库列表；可按归属类型（个人/公共）与生命周期状态过滤（仅有值才拼进 query）。 */
+  listLibraries(filters?: {
+    type?: 'personal' | 'public' | 'all';
+    status?: DirectionLibrarySummary['status'];
+  }): Promise<DirectionLibrarySummary[]> {
+    const params = new URLSearchParams();
+    if (filters?.type && filters.type !== 'all') params.set('type', filters.type);
+    if (filters?.status) params.set('status', filters.status);
+    const qs = params.toString();
+    return request<DirectionLibrarySummary[]>(`/libraries${qs ? `?${qs}` : ''}`);
+  },
+  /** 申请把个人库转为公共库（创建者调；返回更新后的库，状态转 pending 待审批）。 */
+  requestPublicLibrary(id: string): Promise<DirectionLibrarySummary> {
+    return requestJson<DirectionLibrarySummary>(`/libraries/${id}/request-public`, 'POST', {});
   },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);

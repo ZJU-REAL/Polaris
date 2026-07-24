@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -45,7 +45,14 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(16), nullable=False, server_default="active"
     )
     review_note: Mapped[str | None] = mapped_column(Text)  # 驳回理由（status=rejected 时有值）
-    # 库创建者（P9b 用户建库）：pending/rejected 库仅创建者 + admin 可见/可管理。
+    # 归属（P10）：个人库 is_public=false（仅创建者 + admin 可见/可管理），公共库
+    # is_public=true（全实验室可见，全体 admin + 创建者/策展人可管理）。个人库经
+    # POST /libraries/{id}/request-public 申请、admin 审批后转公共。存量 active 库
+    # 迁移回填为公共（保留原全员可读语义）。
+    is_public: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    # 库创建者（P9b 用户建库）：个人库仅创建者 + admin 可见/可管理。
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

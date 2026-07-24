@@ -89,12 +89,14 @@ export function LibraryDetailPage() {
   );
 }
 
-/* —— 状态横幅：待审批 / 已驳回；平台管理员就地批准 / 驳回 —— */
+/* —— 状态横幅：申请转公共 / 审批中 / 已驳回；平台管理员就地批准 / 驳回 —— */
 
 function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
   const queryClient = useQueryClient();
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
   const admin = isAdmin(me);
+  // 「我是归属人」= submitted_by==我（后端 is_owner；用于个人库删除 / 申请转公共）
+  const isOwner = lib.is_owner;
   const [rejecting, setRejecting] = useState(false);
   const [note, setNote] = useState('');
 
@@ -112,8 +114,54 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
     onSuccess: () => { toast(tr('已驳回', 'Rejected'), 'ok'); setRejecting(false); setNote(''); invalidate(); },
     onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
   });
+  const requestPublic = useMutation({
+    mutationFn: () => api.requestPublicLibrary(lib.id),
+    onSuccess: () => { toast(tr('已提交申请，等待管理员审批', 'Request submitted — waiting for an admin to review'), 'ok'); invalidate(); },
+    onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
+  });
 
-  if (lib.status === 'active') return null;
+  // 个人 active 库 + 我是归属人：显示「申请转为公共文献库」入口（含被驳回后的重新申请）。
+  if (lib.status === 'active') {
+    if (lib.is_public || !isOwner) return null;
+    return (
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 14 }}>
+        <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div className="col gap4" style={{ minWidth: 0 }}>
+            <div className="row gap8" style={{ fontWeight: 680, fontSize: 13.5 }}>
+              <Icon name="users" size={14} style={{ color: 'var(--accent)' }} />
+              {tr('这是你的个人文献库', 'This is your personal library')}
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
+              {tr(
+                '转为公共文献库后，本库归实验室所有、维护额度由管理员承担，你将成为该库的管理员（策展人）。',
+                'After going public it belongs to the lab, its upkeep budget is covered by admins, and you become its curator (admin).',
+              )}
+            </div>
+            {lib.review_note && (
+              <div style={{ fontSize: 12, color: 'var(--danger-tx)', marginTop: 2 }}>
+                {tr(`上次申请被驳回：${lib.review_note}`, `Last request was rejected: ${lib.review_note}`)}
+              </div>
+            )}
+          </div>
+          <div className="row gap8" style={{ flexShrink: 0 }}>
+            <button
+              className="btn btn-soft sm"
+              disabled={requestPublic.isPending}
+              onClick={() => {
+                if (!window.confirm(tr(
+                  '确定申请把这个个人文献库转为公共文献库吗？通过后本库将归实验室所有。',
+                  'Request to make this personal library public? Once approved it belongs to the lab.',
+                ))) return;
+                requestPublic.mutate();
+              }}
+            >
+              {requestPublic.isPending ? tr('提交中…', 'Submitting…') : tr('申请转为公共文献库', 'Request to make public')}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const pending = lib.status === 'pending';
   const bg = pending ? 'var(--warn-bg)' : 'var(--danger-bg)';
@@ -128,11 +176,11 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
         <div className="col gap4" style={{ minWidth: 0 }}>
           <div className="row gap8" style={{ color: tx, fontWeight: 680, fontSize: 13.5 }}>
             <Icon name={pending ? 'clock' : 'x'} size={14} />
-            {pending ? tr('待审批', 'Pending review') : tr('已驳回', 'Rejected')}
+            {pending ? tr('审批中', 'Under review') : tr('已驳回', 'Rejected')}
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
             {pending
-              ? tr('管理员激活后才能开始抓取；创建本身不花额度。', 'Ingest can start only after an admin activates it; creating costs nothing.')
+              ? tr('转为公共文献库的申请正在等待管理员审批；期间本库仍照常可用。', 'The request to make this library public is awaiting an admin’s review; the library stays usable in the meantime.')
               : lib.review_note
                 ? tr(`驳回理由：${lib.review_note}`, `Reason: ${lib.review_note}`)
                 : tr('未通过审批。可调整配置后请管理员重新审批。', 'Not approved. Adjust the config and ask an admin to review again.')}

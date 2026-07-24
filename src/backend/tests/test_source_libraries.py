@@ -144,19 +144,21 @@ async def test_create_library_admin_independent(client):
     assert body["name"] == "独立库"
     assert body["project_id"] is None
     assert body["is_mine"] is False
-    # P9b：新建库落 pending 待审批（即便建库人是 admin，也需显式 approve 才激活）
-    assert body["status"] == "pending"
+    # P10：新建库即刻可用的个人库（active + 非 public），无需审批
+    assert body["status"] == "active"
+    assert body["is_public"] is False
 
 
 async def test_create_library_any_user_allowed(client):
-    """P9b：建库权限放开——任意登录用户可建，新库 pending、创建者自动成为策展人。"""
+    """P10：建库权限放开——任意登录用户可建，新库 active 个人库、创建者自动成为策展人。"""
     await _hdr(client, "p9b-admin5@example.com")  # 首个注册者=平台 admin，占位
     member = await _hdr(client, "p9b-member5@example.com")
     resp = await client.post("/api/libraries", json={"name": "x"}, headers=member)
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["status"] == "pending"
-    assert body["can_manage"] is True  # 创建者可管理自己的 pending 库
+    assert body["status"] == "active"
+    assert body["is_public"] is False
+    assert body["can_manage"] is True  # 创建者可管理自己的个人库
     # 创建者被记为该库策展人
     resp = await client.get(f"/api/libraries/{body['id']}/curators", headers=member)
     assert resp.status_code == 200, resp.text
