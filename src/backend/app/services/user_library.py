@@ -13,7 +13,7 @@ from app.models.library import UserLibraryEntry
 from app.models.paper import Paper
 from app.services.dedup import dedup_key_for
 
-LIBRARY_SORTS = ("recent", "title", "visits")
+LIBRARY_SORTS = ("recent", "title", "visits", "year")
 LIBRARY_TABS = ("saved", "history")
 
 
@@ -172,6 +172,10 @@ async def list_entries(
     sort: str = "recent",
     page: int = 1,
     size: int = 20,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    author: str | None = None,
+    venue: str | None = None,
 ) -> tuple[list[UserLibraryEntry], int]:
     stmt = select(UserLibraryEntry).where(UserLibraryEntry.user_id == user_id)
     if tab == "saved":
@@ -187,11 +191,24 @@ async def list_entries(
                 UserLibraryEntry.venue.ilike(pattern),
             )
         )
+    # 高级检索：作者在 JSON 列上做文本包含匹配（同 q 里的作者匹配口径）
+    if author:
+        stmt = stmt.where(sa_cast(UserLibraryEntry.authors, SAText).ilike(f"%{author}%"))
+    if venue:
+        stmt = stmt.where(UserLibraryEntry.venue.ilike(f"%{venue}%"))
+    if year_from is not None:
+        stmt = stmt.where(UserLibraryEntry.year.isnot(None), UserLibraryEntry.year >= year_from)
+    if year_to is not None:
+        stmt = stmt.where(UserLibraryEntry.year.isnot(None), UserLibraryEntry.year <= year_to)
     if sort == "title":
         stmt = stmt.order_by(UserLibraryEntry.title.asc())
     elif sort == "visits":
         stmt = stmt.order_by(
             UserLibraryEntry.visit_count.desc(), UserLibraryEntry.last_visited_at.desc()
+        )
+    elif sort == "year":
+        stmt = stmt.order_by(
+            UserLibraryEntry.year.desc().nulls_last(), UserLibraryEntry.created_at.desc()
         )
     else:  # recent：收藏 tab 里没浏览过的条目按收藏时间排
         recency = func.coalesce(

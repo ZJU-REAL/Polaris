@@ -45,14 +45,28 @@ async def _get_own_entry(session: AsyncSession, entry_id: uuid.UUID, user: User)
 async def list_library(
     tab: str = Query(default="history", pattern="^(saved|history)$"),
     q: str | None = Query(default=None),
-    sort: str = Query(default="recent", pattern="^(recent|title|visits)$"),
+    sort: str = Query(default="recent", pattern="^(recent|title|visits|year)$"),
+    year_from: int | None = Query(default=None),
+    year_to: int | None = Query(default=None),
+    author: str | None = Query(default=None),
+    venue: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> LibraryPage:
     items, total = await library_service.list_entries(
-        session, user_id=user.id, tab=tab, q=q, sort=sort, page=page, size=size
+        session,
+        user_id=user.id,
+        tab=tab,
+        q=q,
+        sort=sort,
+        page=page,
+        size=size,
+        year_from=year_from,
+        year_to=year_to,
+        author=author,
+        venue=venue,
     )
     return LibraryPage(
         items=[LibraryEntryRead.model_validate(e) for e in items],

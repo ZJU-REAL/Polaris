@@ -307,6 +307,113 @@ async def test_import_title_only_pool_hit_and_miss(client):
     assert resp.status_code == 422
 
 
+async def _shelve(client, headers, project_id, paper_id):
+    resp = await client.post(
+        f"/api/projects/{project_id}/shelf", json={"paper_id": paper_id}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def test_shelf_advanced_search_filters_and_sort(client):
+    project_id, headers = await _setup(client, name="shelf-search")
+    p_trans = await _seed_paper(
+        project_id,
+        title="Attention Is All You Need",
+        abstract="A transformer architecture.",
+        authors=[{"name": "Ashish Vaswani"}],
+        affiliations=["Google Brain"],
+        year=2017,
+        status="compiled",
+        relevance_score=0.9,
+    )
+    p_resnet = await _seed_paper(
+        project_id,
+        title="Deep Residual Learning",
+        abstract="Residual networks for image recognition.",
+        authors=[{"name": "Kaiming He"}],
+        affiliations=["Microsoft Research"],
+        year=2015,
+        status="scored",
+        relevance_score=0.4,
+    )
+    p_bert = await _seed_paper(
+        project_id,
+        title="BERT Pretraining",
+        abstract="Bidirectional transformers.",
+        authors=[{"name": "Jacob Devlin"}],
+        affiliations=["Google AI"],
+        year=2019,
+        status="compiled",
+        relevance_score=0.6,
+    )
+    for pid in (p_resnet, p_trans, p_bert):  # 入架顺序：resnet 最早、bert 最新
+        await _shelve(client, headers, project_id, pid)
+
+    async def query(**params):
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        resp = await client.get(f"/api/projects/{project_id}/shelf?{qs}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        return [i["paper_id"] for i in body["items"]], body["total"]
+
+    # q 命中标题/摘要
+    got, total = await query(q="Residual")
+    assert total == 1 and got == [p_resnet]
+    # 作者（JSON 文本包含）
+    got, _ = await query(author="Kaiming")
+    assert got == [p_resnet]
+    # 机构
+    got, _ = await query(affiliation="Microsoft")
+    assert got == [p_resnet]
+    # 年份范围（含端点）
+    got, _ = await query(year_from=2016, year_to=2018)
+    assert got == [p_trans]
+    got, _ = await query(year_from=2018)
+    assert got == [p_bert]
+    got, _ = await query(year_to=2016)
+    assert got == [p_resnet]
+
+    # 默认 sort=added：最新入架在前
+    got, _ = await query()
+    assert got == [p_bert, p_trans, p_resnet]
+    # sort=year（降序，nulls last）
+    got, _ = await query(sort="year")
+    assert got == [p_bert, p_trans, p_resnet]
+    # sort=title（升序）：Attention < BERT < Deep
+    got, _ = await query(sort="title")
+    assert got == [p_trans, p_bert, p_resnet]
+    # sort=relevance（降序）：0.9 > 0.6 > 0.4
+    got, _ = await query(sort="relevance")
+    assert got == [p_trans, p_bert, p_resnet]
+
+
+async def test_shelf_filters_by_personal_star_and_reading_status(client):
+    project_id, headers = await _setup(client, name="shelf-personal")
+    p1 = await _seed_paper(project_id, title="Starred One", status="scored")
+    p2 = await _seed_paper(project_id, title="Plain Two", status="scored")
+    for pid in (p1, p2):
+        await _shelve(client, headers, project_id, pid)
+
+    # 个人视角：给 p1 打星 + 标记在读（PaperUserMeta，方向无关）
+    resp = await client.put(
+        f"/api/papers/{p1}/my-meta",
+        json={"starred": True, "reading_status": "reading"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    async def query(**params):
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        resp = await client.get(f"/api/projects/{project_id}/shelf?{qs}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        return [i["paper_id"] for i in resp.json()["items"]]
+
+    assert await query(starred="true") == [p1]
+    assert await query(starred="false") == [p2]
+    assert await query(reading_status="reading") == [p1]
+    assert sorted(await query(reading_status="unread")) == sorted([p2])
+
+
 async def test_shelf_requires_project_membership(client):
     project_id, headers = await _setup(client)
     paper_id = await _seed_paper(project_id, title="Members Only", status="scored")

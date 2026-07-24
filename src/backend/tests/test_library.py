@@ -127,6 +127,63 @@ async def test_list_search_and_note(client):
     assert resp.json()["note"] == "经典必读"
 
 
+async def test_library_advanced_filters_and_year_sort(client):
+    token = await register_and_login(client, email="libadv@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id = await _make_project(client, headers, "lib-adv")
+    p_old = await _make_paper(
+        project_id,
+        title="Old Paper",
+        authors=[{"name": "Alice Smith"}],
+        year=2015,
+        venue="NeurIPS",
+        status="included",
+    )
+    p_mid = await _make_paper(
+        project_id,
+        title="Mid Paper",
+        authors=[{"name": "Bob Jones"}],
+        year=2018,
+        venue="ICML",
+        status="included",
+    )
+    p_new = await _make_paper(
+        project_id,
+        title="New Paper",
+        authors=[{"name": "Carol Lee"}],
+        year=2021,
+        venue="ICLR",
+        status="included",
+    )
+    for pid in (p_old, p_mid, p_new):
+        await client.post("/api/me/library/visits", json={"paper_id": pid}, headers=headers)
+
+    async def query(**params):
+        merged = {"tab": "history", **params}
+        qs = "&".join(f"{k}={v}" for k, v in merged.items())
+        resp = await client.get(f"/api/me/library?{qs}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        return [i["title"] for i in body["items"]], body["total"]
+
+    # author（JSON 文本包含）
+    got, _ = await query(author="Bob")
+    assert got == ["Mid Paper"]
+    # venue
+    got, _ = await query(venue="ICLR")
+    assert got == ["New Paper"]
+    # year 范围（含端点）
+    got, total = await query(year_from=2016, year_to=2020)
+    assert got == ["Mid Paper"] and total == 1
+    got, _ = await query(year_from=2019)
+    assert got == ["New Paper"]
+    got, _ = await query(year_to=2016)
+    assert got == ["Old Paper"]
+    # sort=year（降序）
+    got, _ = await query(sort="year")
+    assert got == ["New Paper", "Mid Paper", "Old Paper"]
+
+
 async def test_clear_history_keeps_saved(client):
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}

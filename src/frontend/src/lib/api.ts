@@ -887,6 +887,9 @@ export interface SearchResult {
 /** 书架条目 wiki 来源：live=库版实时 | personal=本人个人编译版 | snapshot=只剩入架快照 | none=没有解读。 */
 export type ShelfWikiSource = 'live' | 'personal' | 'snapshot' | 'none';
 
+/** 书架排序：added=添加时间 | year=年份 | relevance=相关度 | title=标题（默认 added）。 */
+export type ShelfSort = 'added' | 'year' | 'relevance' | 'title';
+
 export interface ShelfItemRead {
   paper_id: string;
   title: string;
@@ -2156,7 +2159,7 @@ export interface FeedbackPatch {
 // ============================================================
 
 export type LibraryTab = 'saved' | 'history';
-export type LibrarySort = 'recent' | 'title' | 'visits';
+export type LibrarySort = 'recent' | 'title' | 'visits' | 'year';
 
 export interface LibraryEntry {
   id: string;
@@ -2869,10 +2872,32 @@ export const api = {
   },
 
   // —— P5a · 课题「相关研究」书架 ——
-  listShelf(projectId: string, opts: { page?: number; size?: number } = {}): Promise<PageOf<ShelfItemRead>> {
+  listShelf(
+    projectId: string,
+    opts: {
+      page?: number;
+      size?: number;
+      q?: string;
+      author?: string;
+      affiliation?: string;
+      year_from?: number;
+      year_to?: number;
+      reading_status?: ReadingStatus;
+      starred?: boolean;
+      sort?: ShelfSort;
+    } = {},
+  ): Promise<PageOf<ShelfItemRead>> {
     const params = new URLSearchParams();
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));
+    if (opts.q) params.set('q', opts.q);
+    if (opts.author) params.set('author', opts.author);
+    if (opts.affiliation) params.set('affiliation', opts.affiliation);
+    if (opts.year_from != null) params.set('year_from', String(opts.year_from));
+    if (opts.year_to != null) params.set('year_to', String(opts.year_to));
+    if (opts.reading_status) params.set('reading_status', opts.reading_status);
+    if (opts.starred) params.set('starred', 'true');
+    if (opts.sort) params.set('sort', opts.sort);
     const qs = params.toString();
     return request<PageOf<ShelfItemRead>>(`/projects/${projectId}/shelf${qs ? `?${qs}` : ''}`);
   },
@@ -3583,7 +3608,17 @@ export const api = {
 
   // —— 我的文献库（跨研究方向的个人收藏 + 浏览记录，issue #108） ——
   listLibrary(
-    opts: { tab: LibraryTab; q?: string; sort?: LibrarySort; page?: number; size?: number },
+    opts: {
+      tab: LibraryTab;
+      q?: string;
+      sort?: LibrarySort;
+      page?: number;
+      size?: number;
+      year_from?: number;
+      year_to?: number;
+      author?: string;
+      venue?: string;
+    },
   ): Promise<PageOf<LibraryEntry>> {
     const params = new URLSearchParams();
     params.set('tab', opts.tab);
@@ -3591,6 +3626,10 @@ export const api = {
     if (opts.sort) params.set('sort', opts.sort);
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));
+    if (opts.year_from != null) params.set('year_from', String(opts.year_from));
+    if (opts.year_to != null) params.set('year_to', String(opts.year_to));
+    if (opts.author) params.set('author', opts.author);
+    if (opts.venue) params.set('venue', opts.venue);
     return request<PageOf<LibraryEntry>>(`/me/library?${params.toString()}`);
   },
   /** 打开阅读页时上报一次浏览（自动建/更新浏览记录条目）。 */

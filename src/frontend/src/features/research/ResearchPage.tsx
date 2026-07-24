@@ -3,20 +3,30 @@ import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
-import { Segmented } from '../../components/ui/Segmented';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
   type DirectionLibrarySummary,
+  type ReadingStatus,
   type ShelfImportInput,
   type ShelfItemRead,
+  type ShelfSort,
   type ShelfWikiSource,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useProject } from '../../app/project';
 import { libraryPath } from '../libraries/hooks';
+import {
+  AdvancedPanel,
+  AdvancedToggle,
+  FilterInput,
+  parseYear,
+  SearchInput,
+  useDebounced,
+  YearRangeField,
+} from '../wiki/shared';
 import { AddPaperModal } from './AddPaperModal';
 import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
 
@@ -28,16 +38,19 @@ import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
    入架同时自动收藏进「我的文献库」；移出书架不动个人库。
    ============================================================ */
 
-// 后端单页上限 100；书架通常远小于此，客户端排序/过滤在页内完成
+// 后端单页上限 100；排序/关键词/筛选走后端，wiki_source 状态过滤在页内完成
 const PAGE_SIZE = 100;
 
-type ShelfSort = 'added' | 'year';
 type ShelfFilter = 'all' | ShelfWikiSource;
+/** 阅读状态筛选：空串=不限；其余透传给后端 reading_status。 */
+type ReadingFilter = '' | ReadingStatus;
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SORTS: { v: ShelfSort; zh: string; en: string }[] = [
   { v: 'added', zh: '按添加时间', en: 'By added' },
   { v: 'year', zh: '按年份', en: 'By year' },
+  { v: 'relevance', zh: '按相关度', en: 'By relevance' },
+  { v: 'title', zh: '按标题', en: 'By title' },
 ];
 const FILTERS: { v: ShelfFilter; zh: string; en: string }[] = [
   { v: 'all', zh: '全部状态', en: 'All statuses' },
@@ -45,6 +58,12 @@ const FILTERS: { v: ShelfFilter; zh: string; en: string }[] = [
   { v: 'personal', zh: '个人版解读', en: 'Personal wiki' },
   { v: 'snapshot', zh: '快照解读', en: 'Snapshot wiki' },
   { v: 'none', zh: '暂无解读', en: 'No wiki' },
+];
+const READING_FILTERS: { v: ReadingFilter; zh: string; en: string }[] = [
+  { v: '', zh: '全部', en: 'All' },
+  { v: 'unread', zh: '未读', en: 'Unread' },
+  { v: 'reading', zh: '在读', en: 'Reading' },
+  { v: 'read', zh: '已读', en: 'Read' },
 ];
 
 function errText(e: unknown): string {
@@ -271,15 +290,76 @@ export function ResearchPage() {
   const [selId, setSelId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
+  // 关键词 + 高级检索条件（走后端）
+  const [qInput, setQInput] = useState('');
+  const q = useDebounced(qInput.trim());
+  const [advOpen, setAdvOpen] = useState(false);
+  const [author, setAuthor] = useState('');
+  const [affiliation, setAffiliation] = useState('');
+  const [yearFrom, setYearFrom] = useState('');
+  const [yearTo, setYearTo] = useState('');
+  const [readingStatus, setReadingStatus] = useState<ReadingFilter>('');
+  const [starred, setStarred] = useState(false);
+
+  const advActive =
+    !!author.trim() ||
+    !!affiliation.trim() ||
+    !!yearFrom.trim() ||
+    !!yearTo.trim() ||
+    readingStatus !== '' ||
+    starred;
+  // 是否有任何后端筛选（用于空态文案区分「没添加」vs「没匹配」）
+  const hasServerFilter = !!q || advActive;
+
+  const clearAdvanced = () => {
+    setAuthor('');
+    setAffiliation('');
+    setYearFrom('');
+    setYearTo('');
+    setReadingStatus('');
+    setStarred(false);
+  };
+
   useEffect(() => {
     setPage(1);
     setSelId(null);
     setFilter('all');
+    setQInput('');
+    clearAdvanced();
   }, [pid]);
 
+  // 后端筛选/排序变化时回到第一页
+  useEffect(() => {
+    setPage(1);
+  }, [q, sort, author, affiliation, yearFrom, yearTo, readingStatus, starred]);
+
   const shelfQuery = useQuery({
-    queryKey: ['shelf', pid, page],
-    queryFn: () => api.listShelf(pid, { page, size: PAGE_SIZE }),
+    queryKey: [
+      'shelf',
+      pid,
+      page,
+      sort,
+      q,
+      author.trim(),
+      affiliation.trim(),
+      yearFrom.trim(),
+      yearTo.trim(),
+      readingStatus,
+      starred,
+    ],
+    queryFn: () =>
+      api.listShelf(pid, {
+        page,
+        size: PAGE_SIZE,
+        sort,
+        q: q || undefined,
+        author: author.trim() || undefined,
+        affiliation: affiliation.trim() || undefined,
+        year_from: parseYear(yearFrom),
+        year_to: parseYear(yearTo),
+        reading_status: readingStatus || undefined,
+        starred: starred || undefined,
+      }),
     enabled: !!pid,
     retry: false,
     placeholderData: keepPreviousData,
@@ -325,14 +405,11 @@ export function ResearchPage() {
   const items = useMemo(() => data?.items ?? [], [data]);
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.size)) : 1;
 
-  // 客户端排序 + 状态过滤（书架规模小，页内完成）
-  const visible = useMemo(() => {
-    const filtered = filter === 'all' ? items : items.filter((i) => i.wiki_source === filter);
-    const sorted = [...filtered];
-    if (sort === 'year') sorted.sort((a, b) => (b.year ?? -1) - (a.year ?? -1));
-    else sorted.sort((a, b) => b.added_at.localeCompare(a.added_at));
-    return sorted;
-  }, [items, filter, sort]);
+  // 后端已排序/筛选；wiki_source 状态过滤留在页内完成（后端无此参数）
+  const visible = useMemo(
+    () => (filter === 'all' ? items : items.filter((i) => i.wiki_source === filter)),
+    [items, filter],
+  );
 
   // 选中项：优先手动选择；不在可见列表（被过滤/移出）时退回第一条
   const selected = visible.find((i) => i.paper_id === selId) ?? visible[0] ?? null;
@@ -444,13 +521,78 @@ export function ResearchPage() {
         <div className="split split-stackable">
           {/* —— 左：书架列表 —— */}
           <div className="split-list">
-            {/* 工具栏：排序 + 状态过滤 + 计数 */}
+            {/* 工具栏：搜索 + 高级检索 + 排序 + 状态过滤 + 计数 */}
             <div style={{ padding: '12px 14px 10px', borderBottom: '0.5px solid var(--border)' }}>
               <div className="row gap8">
-                <Segmented<ShelfSort>
-                  options={SORTS.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))}
+                <SearchInput
+                  value={qInput}
+                  onChange={setQInput}
+                  placeholder={tr('搜索标题 / 作者…', 'Search title / authors…')}
+                />
+                <AdvancedToggle
+                  open={advOpen}
+                  active={advActive}
+                  onToggle={() => setAdvOpen((o) => !o)}
+                  title={tr(
+                    '高级检索：作者 / 机构 / 年份 / 阅读状态',
+                    'Advanced search: author / affiliation / year / reading status',
+                  )}
+                />
+              </div>
+
+              {advOpen && (
+                <AdvancedPanel onClear={advActive ? clearAdvanced : undefined}>
+                  <div className="row gap8">
+                    <FilterInput
+                      value={author}
+                      onChange={setAuthor}
+                      placeholder={tr('作者姓名…', 'Author name…')}
+                    />
+                    <FilterInput
+                      value={affiliation}
+                      onChange={setAffiliation}
+                      placeholder={tr('发表机构…', 'Affiliation…')}
+                      title={tr('需要论文元数据带有机构信息', 'Needs affiliation metadata')}
+                    />
+                  </div>
+                  <YearRangeField
+                    label={tr('年份', 'Year')}
+                    from={yearFrom}
+                    to={yearTo}
+                    onFrom={setYearFrom}
+                    onTo={setYearTo}
+                  />
+                  <div className="row gap6 wrap" style={{ alignItems: 'center' }}>
+                    <span style={{ width: 52, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
+                      {tr('阅读状态', 'Reading')}
+                    </span>
+                    {READING_FILTERS.map((f) => (
+                      <span
+                        key={f.v || 'all'}
+                        className={`chip${readingStatus === f.v ? ' on' : ''}`}
+                        onClick={() => setReadingStatus(f.v)}
+                      >
+                        {tr(f.zh, f.en)}
+                      </span>
+                    ))}
+                  </div>
+                  <label
+                    className="row gap6"
+                    style={{ fontSize: 11.5, color: 'var(--text-2)', cursor: 'pointer', alignItems: 'center' }}
+                  >
+                    <input type="checkbox" checked={starred} onChange={(e) => setStarred(e.target.checked)} />
+                    {tr('只看星标', 'Starred only')}
+                  </label>
+                </AdvancedPanel>
+              )}
+
+              <div className="row gap8" style={{ marginTop: 10 }}>
+                <SelectMenu
                   value={sort}
-                  onChange={setSort}
+                  options={SORTS.map((s) => ({ value: s.v, label: tr(s.zh, s.en) }))}
+                  onChange={(v) => setSort(v as ShelfSort)}
+                  wrapStyle={{ width: 132, flexShrink: 0 }}
+                  style={{ height: 30, fontSize: 12 }}
                 />
                 <SelectMenu
                   value={filter}
@@ -486,12 +628,32 @@ export function ResearchPage() {
                   }
                 />
               ) : items.length === 0 ? (
-                <EmptyState
-                  compact
-                  icon="pin"
-                  title={tr('还没有添加论文', 'No papers yet')}
-                  desc={tr('这个课题直接依赖的论文会列在这里。', 'Papers this topic builds on will show up here.')}
-                />
+                hasServerFilter ? (
+                  <EmptyState
+                    compact
+                    icon="search"
+                    title={tr('没有匹配的论文', 'No matching papers')}
+                    desc={tr('换个关键词或放宽高级检索条件。', 'Try another keyword or loosen the filters.')}
+                    action={
+                      <button
+                        className="btn btn-soft sm"
+                        onClick={() => {
+                          setQInput('');
+                          clearAdvanced();
+                        }}
+                      >
+                        {tr('清除筛选', 'Clear filters')}
+                      </button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    compact
+                    icon="pin"
+                    title={tr('还没有添加论文', 'No papers yet')}
+                    desc={tr('这个课题直接依赖的论文会列在这里。', 'Papers this topic builds on will show up here.')}
+                  />
+                )
               ) : visible.length === 0 ? (
                 <EmptyState
                   compact
@@ -562,7 +724,7 @@ export function ResearchPage() {
                 }
                 onRefreshSnapshot={() => refreshSnapshotMutation.mutate(selected.paper_id)}
               />
-            ) : shelfQuery.isSuccess && items.length === 0 ? (
+            ) : shelfQuery.isSuccess && items.length === 0 && !hasServerFilter ? (
               /* 书架为空 → 右栏放引导 */
               <div style={{ margin: 'auto' }}>
                 <EmptyState
