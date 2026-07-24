@@ -276,17 +276,34 @@ async def chat_with_shelf(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_llm_chat),
 ) -> StreamingResponse:
-    """课题相关研究对话：语料 = 该课题相关研究书架上的论文集合。
+    """课题文献对话：语料 = 课题关联文献库并集 ∪ 相关研究书架（含手动补充）。
 
-    检索只覆盖书架论文（不按方向库过滤），没索引的论文降级 TL;DR/摘要。
-    事件序列与文献库对话一致（``sources`` → ``delta``* → ``done``）。
+    覆盖课题的整个语料（关联库里的论文），外加书架上手动加进来、可能不属于
+    任何方向库的补充论文；按 paper_id 集合检索（不按方向库过滤），没索引的
+    论文降级 TL;DR/摘要。事件序列与文献库对话一致（``sources`` → ``delta``* → ``done``）。
     """
     project = await _member_project(session, project_id, user)
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
     statement = project.statement or project.name
     history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
     llm = get_llm_router()
-    paper_ids = await shelf_paper_ids(session, project_id=project_id)
+    # 语料并集：关联文献库成员论文 ∪ 相关研究书架论文（去重）
+    library_ids = await libraries_service.get_source_library_ids(session, project_id)
+    corpus_ids: set[uuid.UUID] = set()
+    if library_ids:
+        corpus_ids = set(
+            (
+                await session.execute(
+                    select(LibraryPaper.paper_id)
+                    .where(LibraryPaper.library_id.in_(library_ids))
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+    shelf_ids = await shelf_paper_ids(session, project_id=project_id)
+    paper_ids = list(corpus_ids | set(shelf_ids))
     messages, sources = await library_chat_service.build_scoped_messages(
         session,
         statement=statement,

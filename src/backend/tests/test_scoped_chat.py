@@ -193,8 +193,36 @@ async def test_shelf_chat_sse(client):
     assert resp.status_code == 404
 
 
+async def test_shelf_chat_covers_linked_library_corpus(client):
+    """回归：课题对话语料 = 关联文献库 ∪ 相关研究书架。
+
+    论文只在课题关联库里、没入书架时，课题对话仍应感知到它们
+    （修复前 scope 只有 shelf_paper_ids，空书架 → 感知不到关联库文献）。"""
+    token = await register_and_login(client, email="scoped-corpus@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, _ids = await _project_with_papers(client, headers)
+    # 关键：不入书架（shelf 为空），论文只在课题关联库里
+
+    async with client.stream(
+        "POST",
+        f"/api/projects/{project_id}/shelf/chat",
+        json={"question": "planning 方向有哪些方法？", "history": []},
+        headers=headers,
+    ) as resp:
+        assert resp.status_code == 200
+        body = (await resp.aread()).decode("utf-8")
+
+    events = _parse_sse(body)
+    kinds = [e for e, _ in events]
+    assert kinds[0] == "sources" and kinds[-1] == "done" and "error" not in kinds
+    items = events[0][1]["items"]
+    assert len(items) >= 1, "关联库里的论文应进入课题对话语料，即使没入书架"
+    titles = {it["title"] for it in items}
+    assert titles & {"Planning with Tree Search", "Reflexion Self-Improvement"}
+
+
 async def test_shelf_chat_empty_corpus(client):
-    """空书架：无论文 → sources 空、仍能 done 收尾（走空语料分支）。"""
+    """空书架 + 无关联库：无论文 → sources 空、仍能 done 收尾（走空语料分支）。"""
     token = await register_and_login(client, email="scoped-empty-shelf@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     resp = await client.post(
