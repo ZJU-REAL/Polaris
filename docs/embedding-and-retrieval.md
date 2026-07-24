@@ -23,14 +23,16 @@ The paper-level vector is computed from a short, deterministic text. **The formu
 everywhere a paper-level vector is produced**, otherwise queries and documents land in inconsistent
 vector spaces and cosine ranking degrades.
 
-- Current sites: `paper_enrich.py::embed_paper` and the ingest `wiki.link_concepts` batch both use
-  `title + tldr + abstract` (truncated to 2000 chars). Because `tldr` only exists on compiled papers,
-  this is already inconsistent in practice (most papers embed `title + abstract`).
-- Target: a single shared helper `paper_embedding_text(paper)` = **title + author names + abstract**,
-  used by `embed_paper`, the ingest batch, and the daily-paper embedding. Existing vectors are **not**
-  re-embedded; new papers use the new formula and the old ones converge as they are recompiled /
-  re-indexed. The small difference (title + abstract dominate) keeps search usable during the
-  transition.
+The formula lives in one shared helper, `paper_enrich.py::paper_embedding_text(paper)` =
+**title + author names + abstract**, truncated to 2000 chars. All three producers call it:
+`embed_paper` (manual add / Daily collect / fetch-PDF), the ingest `wiki.link_concepts` batch, and
+the daily-feed batch.
+
+Author names are part of the text so that "find work by X" style queries land. The previous formula
+was `title + tldr + abstract`, which was inconsistent in practice because `tldr` only exists on
+compiled papers. Existing vectors are deliberately **not** re-embedded: the difference is dominated
+by title + abstract, so search stays usable while old vectors converge naturally as papers are
+recompiled or re-indexed.
 
 The **query** side embeds the user's search text as-is (`get_llm_router().embed([q])`); the
 query-vs-document asymmetry is normal — only the document formula needs to be consistent.
@@ -51,11 +53,13 @@ In summary:
   - Manual rebuild endpoints (`/projects/{id}/shelf/index/rebuild`, `/library/index/rebuild`) require
     the opt-in; `/projects/{id}/index/rebuild` (a direction library) is a synchronous maintenance
     endpoint that returns `{indexed, embedded, skipped}`.
-- **Daily-feed papers carry no embeddings by default** — `sync_daily_feed` builds lightweight rows
-  with no LLM. Making the daily feed semantically searchable requires generating paper-level vectors
-  for it; this is an **admin-gated addition** (`daily_feed_embed_enabled`, off by default), embedding
-  only rows with a `NULL` vector, using the shared `paper_embedding_text` formula. Chunk vectors are
-  not built for daily papers (they have no full text).
+- **Daily-feed papers are embedded only when an admin turns it on.** `sync_daily_feed` builds
+  lightweight rows with no LLM, so daily papers have no vector by default. The admin setting
+  **`daily_feed_embed_enabled` (off by default)** makes each sync embed the papers it touched that
+  still have a `NULL` vector, using the shared `paper_embedding_text` formula;
+  `POST /admin/settings/daily-embed/backfill` fills the current window in one shot. Both are
+  idempotent (an existing vector is never overwritten) and best-effort (a failed batch is logged and
+  never breaks the sync). Chunk vectors are not built for daily papers — they have no full text.
 
 ## Retrieval
 
@@ -76,10 +80,25 @@ Used by the library search box (keyword ↔ semantic toggle) and, by reuse, the 
    reranked}`; `mode_used` reports `keyword` when semantic was unavailable so the UI can show a
    fallback notice.
 
-Because this query is library-membership-scoped, collections without library membership (the daily
-feed; personal-library snapshot rows) cannot reuse it directly — they need their own pgvector query
-over the appropriate candidate set (e.g. `daily_feed_entries ⨝ papers` or the user's saved
-`user_library_entries.last_paper_id`).
+Because this query is library-membership-scoped, collections without library membership need their
+own pgvector query over the right candidate set. Two exist:
+
+- **Personal library** — `GET /me/library?mode=semantic` ranks the caller's **saved** entries whose
+  `last_paper_id` points at a pool paper with a vector (`user_library.semantic_saved_entries`), then
+  reranks. Coverage is inherently partial (an entry whose source paper is gone, or which was never
+  embedded, cannot be ranked), and the UI says so.
+- **Daily feed** — `GET /daily/papers?mode=semantic` runs a pgvector query over
+  `daily_feed_entries ⨝ papers` with **no library join** (`daily_feed.semantic_search_daily`),
+  honoring the date / category / announce filters, then reranks. It returns `mode_used` plus
+  `vector_ready` / `vector_total` so the UI can state honestly how much of the pool is embedded.
+
+Every semantic path falls back to keyword when pgvector is unavailable or the provider cannot embed,
+reporting `mode_used="keyword"` rather than failing.
+
+**Citation export** follows the same per-collection scoping: `papers_for_export` (project),
+`papers_for_library_export`, `papers_for_personal_export` (caller's saved papers), and
+`papers_for_daily_export` (current window) all feed the shared `build_bibtex` / `build_csl_json`
+generators, each honoring an optional `ids` subset for multi-select export.
 
 ### Chunk retrieval for literature chat
 
@@ -98,11 +117,12 @@ with a **graded fallback** (`_retrieve_chunks`) so any failure degrades instead 
 does the same, but its summary fallback selects the first `FALLBACK_PAPERS` papers **in the caller's
 order** and feeds their `tldr` / abstract.
 
-**Consequence for the daily-feed chat today:** daily papers have no chunks and no embeddings, so both
-chunk paths return nothing and it always lands on the summary fallback — i.e. it dumps the abstracts
-of the first N daily papers (by list order, **not** by question relevance) into the prompt. This is
-the concrete motivation for the opt-in daily paper-level embeddings: with vectors, the daily feed can
-rank the candidate set by similarity instead of taking a blind prefix.
+**Consequence for the daily-feed chat:** daily papers never have chunks (no full text), so both chunk
+paths return nothing and the chat always lands on the summary fallback — it feeds the abstracts of
+the first N daily papers **in list order, not by question relevance**. Enabling daily embeddings
+makes the *search* semantic, but the chat's fallback still takes a blind prefix: ranking that
+candidate set by the paper-level vectors is a deliberate follow-up, because `build_scoped_messages`
+is shared by the shelf, personal-library and daily chats and changing it must not regress the others.
 
 ## Design principles
 
