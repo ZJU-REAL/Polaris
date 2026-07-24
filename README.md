@@ -161,6 +161,43 @@ make test                   # backend pytest + frontend build
 make lint                   # ruff check + tsc --noEmit
 ```
 
+## Docker deployment
+
+Pre-built `amd64` images are published to Docker Hub as `tricktreat/polaris-{api,worker,frontend}`
+(pushed by CI on every `v*` tag — see [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)).
+Deploy on any host with Docker, no build required:
+
+```bash
+# On the server, in a checkout (or just the docker/ dir + .env):
+cp .env.example .env
+# Edit .env:
+#   - POLARIS_ENV=prod                      (forces safe prod defaults)
+#   - POLARIS_IMAGE_TAG=v0.1.0              (or leave 'latest'; prefix defaults to tricktreat)
+#   - POLARIS_SECRET_KEY / POLARIS_ENCRYPTION_KEY   (generate; see comments in .env.example)
+#   - POLARIS_DATABASE_URL password must match POSTGRES_PASSWORD
+#   - at least one LLM key (or leave blank and add it later in the admin UI)
+
+docker compose --env-file .env -f docker/docker-compose.yml pull      # pull the published images
+docker compose --env-file .env -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml exec api alembic upgrade head   # required on first run
+```
+
+The frontend is served at `http://<host>:8080` (nginx reverse-proxies `/api`, `/ws`, `/mcp` to the
+api container). The same `docker/docker-compose.yml` both builds locally (`make build`) and pulls
+published images — `image:` doubles as the build tag and the pull source, controlled by
+`POLARIS_IMAGE_PREFIX` / `POLARIS_IMAGE_TAG` in `.env`.
+
+> [!IMPORTANT]
+> Pass `--env-file .env` so Compose reads `POLARIS_IMAGE_TAG` / `POLARIS_IMAGE_PREFIX` from the repo
+> root `.env`. Without it, Compose looks for the interpolation `.env` next to the compose file
+> (`docker/`) and silently falls back to `tricktreat/...:latest`.
+
+> [!NOTE]
+> The `worker` container is not optional — it runs every long task (literature fetch, AI generation,
+> experiments, compilation). Postgres tables are not auto-created, so the first-run `alembic upgrade
+> head` is mandatory. For host-path bind mounts, backups, and restricted-network builds, see
+> [docs/deployment.md](docs/deployment.md).
+
 ## Documentation
 
 Full documentation lives in [docs/](docs/):

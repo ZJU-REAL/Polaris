@@ -31,6 +31,31 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up
 This builds the images, starts everything detached, and restarts services unless stopped. Routine
 updates only rebuild the pip/source layers of `api`/`worker`, which takes minutes.
 
+## Deploy from published images (no build)
+
+CI publishes `amd64` images to Docker Hub as `tricktreat/polaris-{api,worker,frontend}` on every
+`v*` tag (see `.github/workflows/docker-publish.yml`). The `api`/`worker`/`frontend` services carry
+an `image:` of `${POLARIS_IMAGE_PREFIX:-tricktreat}/polaris-<svc>:${POLARIS_IMAGE_TAG:-latest}`, which
+doubles as the local build tag and the pull source. So the same compose file can pull instead of
+build — no TeX base image or local build needed:
+
+```bash
+cp .env.example .env          # set POLARIS_ENV=prod, POLARIS_IMAGE_TAG, secrets, and an LLM key
+docker compose --env-file .env -f docker/docker-compose.yml pull
+docker compose --env-file .env -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml exec api alembic upgrade head   # first run
+```
+
+Add the prod overlay (`-f docker/docker-compose.prod.yml`) as well if you want the host-path bind
+mounts described below instead of named volumes. Set `POLARIS_IMAGE_PREFIX` / `POLARIS_IMAGE_TAG` in
+`.env` to select the registry namespace and version.
+
+> [!IMPORTANT]
+> The `--env-file .env` flag matters for `pull`/`up`: Compose resolves `${POLARIS_IMAGE_TAG}` from the
+> interpolation env file, which defaults to `.env` next to the compose file (`docker/`), not the repo
+> root. Without the flag it silently falls back to `:latest`. (Container runtime config still comes
+> from `env_file: ../.env` regardless.)
+
 ## Data directory convention
 
 The prod overlay persists all state to bind-mounted host directories instead of anonymous volumes, so
