@@ -306,10 +306,11 @@ function LibraryInfoCard({ lib, readOnly }: { lib: DirectionLibraryDetail; readO
           <input className="input" value={name} disabled={readOnly} onChange={(e) => setName(e.target.value)} maxLength={255} />
         </label>
         <label className="col gap6">
-          <span className="muted" style={{ fontSize: 12 }}>{tr('方向说明（一句话）', 'Statement')}</span>
+          <span className="muted" style={{ fontSize: 12 }}>{tr('方向描述', 'Description')}</span>
           <textarea
-            className="input"
-            rows={2}
+            className="textarea"
+            rows={3}
+            style={{ resize: 'none', height: 78 }}
             value={statement}
             disabled={readOnly}
             onChange={(e) => setStatement(e.target.value)}
