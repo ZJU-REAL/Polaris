@@ -52,8 +52,9 @@ function NoteItem({ note, onOpenPaper }: { note: NoteWithPaper; onOpenPaper: () 
   );
 }
 
-export function NotesTab({ pid }: { pid: string }) {
+export function NotesTab({ pid, libraryId }: { pid?: string; libraryId?: string }) {
   const navigate = useNavigate();
+  const scopeId = libraryId ?? pid ?? '';
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
   const [page, setPage] = useState(1);
@@ -64,8 +65,11 @@ export function NotesTab({ pid }: { pid: string }) {
   }, [q]);
 
   const notesQuery = useQuery({
-    queryKey: ['project-notes', pid, q, page],
-    queryFn: () => api.listProjectNotes(pid, { q: q || undefined, page, size: PAGE_SIZE }),
+    queryKey: ['project-notes', scopeId, q, page],
+    queryFn: () =>
+      libraryId
+        ? api.listLibraryNotes(libraryId, { q: q || undefined, page, size: PAGE_SIZE })
+        : api.listProjectNotes(scopeId, { q: q || undefined, page, size: PAGE_SIZE }),
     retry: false,
     placeholderData: keepPreviousData,
   });
