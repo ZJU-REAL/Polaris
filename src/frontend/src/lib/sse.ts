@@ -204,6 +204,14 @@ export function chatPersonalSse(
   return postSse('/library/chat', input, handlers);
 }
 
+/** 每日新论文池对话：POST /daily/chat（sources → delta* → done/error，语料为最近 7 天的池）。 */
+export function chatDailySse(
+  input: { question: string; history: { role: 'user' | 'assistant'; content: string }[] },
+  handlers: PostSseHandlers,
+): () => void {
+  return postSse('/daily/chat', input, handlers);
+}
+
 /** 独立库对话：POST /libraries/{id}/chat（事件协议同 chatLibrarySse）。 */
 export function chatLibraryByIdSse(
   libraryId: string,

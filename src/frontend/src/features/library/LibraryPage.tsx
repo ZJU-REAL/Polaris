@@ -20,6 +20,7 @@ import {
 } from '../wiki/shared';
 import { PublicationsTab, PUBLICATIONS_PAGE_SIZE } from './PublicationsTab';
 import { PersonalChatTab } from './PersonalChatTab';
+import { DailyLikedTab } from './DailyLikedTab';
 import { AuthorBindWizard } from './AuthorBindWizard';
 import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPane';
 
@@ -34,8 +35,8 @@ import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPa
 
 const PAGE_SIZE = 20;
 
-/** 页面级 tab：库内两个 tab +「文献对话」+「我发表的」。 */
-type PageTab = LibraryTab | 'publications' | 'chat';
+/** 页面级 tab：库内两个 tab +「我赞过的」+「文献对话」+「我发表的」。 */
+type PageTab = LibraryTab | 'liked' | 'publications' | 'chat';
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SORTS: { v: LibrarySort; zh: string; en: string }[] = [
@@ -234,7 +235,7 @@ export function LibraryPage() {
     setPage(1);
   }, [tab, q, sort, author, venue, yearFrom, yearTo]);
 
-  const onLibraryTab = tab !== 'publications' && tab !== 'chat';
+  const onLibraryTab = tab !== 'publications' && tab !== 'chat' && tab !== 'liked';
   const listQuery = useQuery({
     queryKey: ['library', tab, q, sort, page, author.trim(), venue.trim(), yearFrom.trim(), yearTo.trim()],
     queryFn: () =>
@@ -337,6 +338,7 @@ export function LibraryPage() {
           options={[
             { v: 'saved', label: tr('我的收藏', 'Saved') },
             { v: 'history', label: tr('浏览记录', 'History') },
+            { v: 'liked', label: tr('我赞过的', 'Liked') },
             { v: 'chat', label: tr('文献对话', 'Chat') },
             {
               v: 'publications',
@@ -380,6 +382,9 @@ export function LibraryPage() {
         {tab === 'chat' ? (
           /* ======== 个人文献库对话 ======== */
           <PersonalChatTab />
+        ) : tab === 'liked' ? (
+          /* ======== 我赞过的（每日新论文，保留 7 天） ======== */
+          <DailyLikedTab />
         ) : tab === 'publications' ? (
           /* ======== 我发表的 ======== */
           profileQuery.isLoading ? (

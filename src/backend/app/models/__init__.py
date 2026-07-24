@@ -2,6 +2,7 @@
 
 from app.models.activity import Activity
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.daily_feed import DailyFeedEntry, DailyFeedLike
 from app.models.experiment import Experiment, ExperimentRun
 from app.models.feedback import Feedback, FeedbackImage
 from app.models.gate import Gate
@@ -40,6 +41,8 @@ from app.models.voyage import VoyageRun, VoyageStep
 __all__ = [
     "Activity",
     "Concept",
+    "DailyFeedEntry",
+    "DailyFeedLike",
     "DirectionLibrary",
     "DirectionLibraryCurator",
     "Experiment",

@@ -7,7 +7,7 @@ export type IconName =
   | 'file' | 'git' | 'chart' | 'grid' | 'layers' | 'sparkle' | 'refresh'
   | 'logout' | 'dot' | 'compass' | 'users' | 'trash'
   | 'star' | 'starFill' | 'chat' | 'download' | 'sliders' | 'sidebar' | 'minus'
-  | 'pin' | 'share' | 'bookmark' | 'bookmarkFill';
+  | 'pin' | 'share' | 'bookmark' | 'bookmarkFill' | 'heart' | 'heartFill';
 
 export interface IconProps {
   name: IconName;
@@ -65,6 +65,8 @@ export function Icon({ name, size = 17, sw = 1.6, style }: IconProps) {
     compass: <><circle cx="12" cy="12" r="9" {...p} /><path d="M15.5 8.5l-2.2 5-4.8 2 2.2-5z" {...p} /></>,
     users: <><circle cx="9" cy="8" r="3.5" {...p} /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" {...p} /><circle cx="17" cy="9" r="2.5" {...p} /><path d="M16.5 14.6c2.6.6 4.5 2.8 4.5 5.4" {...p} /></>,
     trash: <><path d="M4 7h16M10 7V4h4v3M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" {...p} /><path d="M10 11v7M14 11v7" {...p} /></>,
+    heart: <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" {...p} />,
+    heartFill: <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="currentColor" strokeWidth={sw} strokeLinejoin="round" />,
     bookmark: <path d="M7 3.5h10a1 1 0 0 1 1 1v16l-6-3.9-6 3.9v-16a1 1 0 0 1 1-1z" {...p} />,
     bookmarkFill: <path d="M7 3.5h10a1 1 0 0 1 1 1v16l-6-3.9-6 3.9v-16a1 1 0 0 1 1-1z" fill="currentColor" stroke="currentColor" strokeWidth={sw} strokeLinejoin="round" />,
     star: <path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z" {...p} />,

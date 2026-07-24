@@ -6,6 +6,7 @@ from arq.connections import RedisSettings
 from app.core.config import get_settings
 from app.services.ingest import DAILY_SYNC_UTC_HOUR, DAILY_SYNC_UTC_MINUTE
 from worker.tasks import (
+    daily_feed_sync,
     daily_publication_match,
     daily_wiki_ingest,
     index_papers_fulltext_task,
@@ -28,9 +29,12 @@ class WorkerSettings:
         func(resume_voyage, timeout=VOYAGE_JOB_TIMEOUT_SECONDS),
         match_user_publications,
         index_papers_fulltext_task,
+        daily_feed_sync,
     ]
     # 每日 03:00 对 cadence=daily 且已 bootstrap 的项目触发增量 ingest（docs/api-m2.md §4）
     cron_jobs = [
+        # 每日论文池：arXiv 约 00:00 UTC 发布新公告，01:30 抓取（错开 03:00 的每日 ingest）
+        cron(daily_feed_sync, hour=1, minute=30),
         cron(daily_wiki_ingest, hour=DAILY_SYNC_UTC_HOUR, minute=DAILY_SYNC_UTC_MINUTE),
         # 每日 ingest 后一小时跑发表匹配（新入库论文 → 姓名+机构命中进待确认）
         cron(daily_publication_match, hour=DAILY_SYNC_UTC_HOUR + 1, minute=DAILY_SYNC_UTC_MINUTE),

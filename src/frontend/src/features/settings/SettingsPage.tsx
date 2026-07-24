@@ -2167,7 +2167,137 @@ function MyUsageTab() {
 
 // ---------------- 页面 ----------------
 
-type Tab = 'personal' | 'ssh' | 'mymodels' | 'myusage' | 'mcp' | 'llm' | 'usage' | 'users' | 'codes' | 'feedback';
+type Tab = 'personal' | 'ssh' | 'mymodels' | 'myusage' | 'mcp' | 'llm' | 'daily' | 'usage' | 'users' | 'codes' | 'feedback';
+
+// ---------------- 每日新论文订阅分类（admin） ----------------
+
+/** arxiv 分类的大致格式：如 cs.AI / stat.ML / hep-th。 */
+const DAILY_CATEGORY_RE = /^[a-z][a-z-]+(\.[A-Za-z]{2,10})?$/;
+
+function DailyCategoriesTab() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['daily-categories'],
+    queryFn: () => api.getDailyCategories(),
+    retry: false,
+  });
+  // 本地编辑副本：首次拿到数据后接管，避免 refetch 覆盖未保存的改动
+  const [cats, setCats] = useState<string[] | null>(null);
+  const [input, setInput] = useState('');
+  useEffect(() => {
+    if (data && cats === null) setCats(data.categories);
+  }, [data, cats]);
+
+  const shown = cats ?? data?.categories ?? [];
+  const dirty = !!data && JSON.stringify(shown) !== JSON.stringify(data.categories);
+
+  const saveMutation = useMutation({
+    mutationFn: () => api.setDailyCategories(shown),
+    onSuccess: (res) => {
+      toast(tr('订阅分类已保存', 'Subscribed categories saved'), 'ok');
+      setCats(res.categories);
+      void queryClient.invalidateQueries({ queryKey: ['daily-categories'] });
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 422) {
+        toast(tr('分类格式不对', 'Invalid category format'), 'error');
+      } else {
+        toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+    },
+  });
+
+  const add = () => {
+    const v = input.trim();
+    if (!v) return;
+    if (!DAILY_CATEGORY_RE.test(v)) {
+      toast(tr('分类格式不对，应形如 cs.AI / stat.ML', 'Invalid format — expected e.g. cs.AI / stat.ML'), 'error');
+      return;
+    }
+    if (!shown.includes(v)) setCats([...shown, v]);
+    setInput('');
+  };
+
+  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
+  if (isError) {
+    return <div className="empty">{tr('无法加载订阅分类（后端不可用）', 'Failed to load categories (backend unavailable)')}</div>;
+  }
+
+  return (
+    <div className="card card-pad" style={{ maxWidth: 640 }}>
+      <div className="section-h" style={{ marginBottom: 6 }}>
+        <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('每日新论文订阅分类', 'Daily papers subscribed categories')}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 14 }}>
+        {tr(
+          '每天从 arxiv 抓取这些分类下的新提交，全实验室共用一份。改动从下一次抓取开始生效。',
+          'New arxiv submissions in these categories are fetched daily, shared lab-wide. Changes apply from the next fetch.',
+        )}
+      </div>
+
+      <div className="row gap6 wrap" style={{ marginBottom: 12 }}>
+        {shown.length === 0 ? (
+          <span style={{ fontSize: 12, color: 'var(--text-4)' }}>
+            {tr('还没有订阅分类，先添加一个。', 'No categories yet — add one below.')}
+          </span>
+        ) : (
+          shown.map((c) => (
+            <span
+              key={c}
+              className="pill sm mono"
+              style={{ background: 'var(--surface-3)', gap: 4, paddingRight: 5 }}
+            >
+              {c}
+              <button
+                title={tr('移除', 'Remove')}
+                onClick={() => setCats(shown.filter((x) => x !== c))}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  color: 'var(--text-3)',
+                  display: 'inline-flex',
+                  padding: 1,
+                }}
+              >
+                <Icon name="x" size={10} />
+              </button>
+            </span>
+          ))
+        )}
+      </div>
+
+      <div className="row gap8">
+        <input
+          className="input mono"
+          style={{ width: 200 }}
+          placeholder={tr('如 cs.AI，回车添加', 'e.g. cs.AI, Enter to add')}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button className="btn btn-soft sm" disabled={!input.trim()} onClick={add}>
+          <Icon name="plus" size={12} />
+          {tr('添加', 'Add')}
+        </button>
+        <div style={{ flex: 1 }} />
+        <button
+          className="btn btn-primary sm"
+          disabled={!dirty || saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          {saveMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 
 // ---------------- 用户管理（admin） ----------------
@@ -2979,7 +3109,7 @@ function CodesTab() {
 }
 
 const PERSONAL_TABS: Tab[] = ['personal', 'ssh', 'mymodels', 'myusage', 'mcp'];
-const ALL_TABS: Tab[] = [...PERSONAL_TABS, 'llm', 'usage', 'users', 'codes', 'feedback'];
+const ALL_TABS: Tab[] = [...PERSONAL_TABS, 'llm', 'daily', 'usage', 'users', 'codes', 'feedback'];
 
 export function SettingsPage() {
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
@@ -3000,6 +3130,7 @@ export function SettingsPage() {
   ];
   const adminItems: { v: Tab; label: string }[] = [
     { v: 'llm', label: tr('LLM 管理', 'LLM admin') },
+    { v: 'daily', label: tr('每日论文', 'Daily papers') },
     { v: 'users', label: tr('用户管理', 'Users') },
     { v: 'codes', label: tr('注册码', 'Codes') },
     { v: 'feedback', label: tr('反馈', 'Feedback') },
@@ -3040,6 +3171,7 @@ export function SettingsPage() {
       {effectiveTab === 'myusage' && <MyUsageTab />}
       {effectiveTab === 'mcp' && <McpToolsContent />}
       {effectiveTab === 'llm' && admin && <LlmTab />}
+      {effectiveTab === 'daily' && admin && <DailyCategoriesTab />}
       {effectiveTab === 'usage' && admin && <UsageTab />}
       {effectiveTab === 'users' && admin && <UsersTab />}
       {effectiveTab === 'codes' && admin && <CodesTab />}
