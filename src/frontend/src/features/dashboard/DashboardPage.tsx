@@ -11,8 +11,7 @@ import { gateTitle, gateDesc, gateKindLabel } from '../../components/ui/GateCard
 import { useShell } from '../../app/AppShell';
 import { topicPath, useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
-import { libraryPath, useTopicLibrary } from '../libraries/hooks';
-import { api, type ActivityRead, type GateRead, type StatsRead } from '../../lib/api';
+import { api, type ActivityRead, type DirectionLibrarySummary, type GateRead, type StatsRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { compositeOf } from '../forge/ideaShared';
 
@@ -22,10 +21,10 @@ function buildPipelineStages(
   stats: StatsRead | undefined,
   pid: string | null,
   stuckKey: string | null,
-  wikiPath: string,
+  litPath: string,
 ): PipelineStage[] {
   const stages: PipelineStage[] = [
-    { key: 'wiki', path: wikiPath, no: '00', icon: 'book', zh: '文献库', en: 'Library', count: stats?.papers_total ?? null },
+    { key: 'wiki', path: litPath, no: '00', icon: 'book', zh: '文献', en: 'Literature', count: stats?.papers_total ?? null },
     { key: 'forge', path: topicPath(pid, 'forge'), no: '01', icon: 'bulb', zh: '想法生成', en: 'Idea Forge', count: stats?.ideas_candidate ?? null },
     { key: 'review', path: topicPath(pid, 'review'), no: '02', icon: 'scale', zh: '想法评审', en: 'Idea Review', count: stats?.ideas_under_review ?? null },
     {
@@ -60,6 +59,10 @@ interface NextStep {
   actionZh: string;
   actionEn: string;
   path: string;
+  /** 可选次链接（如「浏览全部文献库」）：仅当前步骤渲染 */
+  altActionZh?: string;
+  altActionEn?: string;
+  altPath?: string;
 }
 
 interface PipelineProgress {
@@ -72,25 +75,43 @@ interface PipelineProgress {
 function buildNextSteps(
   progress: PipelineProgress,
   pid: string | null,
-  hasKeywords: boolean,
-  wikiIngestPath: string,
+  linkedCount: number,
 ): NextStep[] {
   const { hasPapers, hasIdeas, hasExperiments, hasManuscripts } = progress;
+  // 第 1 步「让课题有文献可用」：先按关联库数量分岔引导，最终以「并集里真有论文」为完成。
+  //   关联 0 库 → 去关联/新建文献库（次链接浏览全部库）
+  //   已关联但并集空 → 去「相关研究」从关联库里挑论文
+  //   并集有论文 → 完成
+  const linkStep: NextStep =
+    linkedCount > 0
+      ? {
+          key: 'papers',
+          done: hasPapers,
+          zh: '从关联文献库里挑选论文，充实课题的「相关研究」',
+          en: "Pick papers from the linked libraries to fill the topic's related work",
+          actionZh: '去相关研究挑选论文',
+          actionEn: 'Pick related work',
+          path: topicPath(pid, 'research'),
+        }
+      : {
+          key: 'papers',
+          done: hasPapers,
+          zh: '关联一个文献库作为课题的文献来源（也可以新建一个）',
+          en: "Link a literature library as the topic's source (or create a new one)",
+          actionZh: '去关联文献库',
+          actionEn: 'Link a library',
+          path: `/projects/${pid ?? ''}`,
+          altActionZh: '浏览全部文献库',
+          altActionEn: 'Browse all libraries',
+          altPath: '/libraries',
+        };
   return [
-    {
-      key: 'papers',
-      done: hasPapers,
-      zh: '配置文献追踪并启动初始建库，建立课题知识库',
-      en: 'Set up literature tracking and run the initial library build',
-      actionZh: hasKeywords ? '去启动初始建库' : '先去课题设置里配置关键词',
-      actionEn: hasKeywords ? 'Run the initial build' : 'Configure terms in topic settings first',
-      path: hasKeywords ? wikiIngestPath : `/projects/${pid ?? ''}`,
-    },
+    linkStep,
     {
       key: 'ideas',
       done: hasIdeas,
-      zh: '基于知识库生成第一批研究想法',
-      en: 'Generate your first batch of research ideas from the library',
+      zh: '基于关联文献生成第一批研究想法',
+      en: 'Generate your first batch of research ideas from the linked literature',
       actionZh: '去生成想法',
       actionEn: 'Generate ideas',
       path: topicPath(pid, 'forge'),
@@ -173,10 +194,17 @@ function NextStepsCard({ steps, onNavigate }: { steps: NextStep[]; onNavigate: (
                 {tr(s.zh, s.en)}
               </span>
               {isCurrent && (
-                <button className="btn btn-primary sm" style={{ flexShrink: 0 }} onClick={() => onNavigate(s.path)}>
-                  {tr(s.actionZh, s.actionEn)}
-                  <Icon name="arrow" size={12} />
-                </button>
+                <div className="row gap8" style={{ flexShrink: 0 }}>
+                  {s.altPath && (
+                    <button className="btn btn-ghost sm" onClick={() => onNavigate(s.altPath!)}>
+                      {tr(s.altActionZh ?? '', s.altActionEn ?? '')}
+                    </button>
+                  )}
+                  <button className="btn btn-primary sm" onClick={() => onNavigate(s.path)}>
+                    {tr(s.actionZh, s.actionEn)}
+                    <Icon name="arrow" size={12} />
+                  </button>
+                </div>
               )}
             </div>
           );
@@ -303,7 +331,7 @@ function ActivityFeed({ activities, error }: { activities: ActivityRead[]; error
         {error ? (
           <div className="empty" style={{ padding: 18 }}>{tr('无法加载活动（后端不可用）', 'Failed to load activity (backend unavailable)')}</div>
         ) : activities.length === 0 ? (
-          <div className="empty" style={{ padding: 18 }}>{tr('暂无活动 — 运行一次文献初始建库试试', 'No activity yet — try running an initial library build')}</div>
+          <div className="empty" style={{ padding: 18 }}>{tr('暂无活动 — 先关联文献库或生成想法', 'No activity yet — link a library or generate ideas')}</div>
         ) : (
           activities.map((a) => {
             const gate = a.kind.toLowerCase().includes('gate');
@@ -412,13 +440,78 @@ function GatePreview({ gates, gatesError, openGates }: {
   );
 }
 
+/** 课题文献概览：关联文献库数 + 相关研究书架篇数，入口→相关研究 / 关联库管理。
+    shelfCount 无接口时传 null（只显示关联库数 + 入口）。 */
+function LiteratureCard({
+  pid,
+  linkedCount,
+  shelfCount,
+  onNavigate,
+}: {
+  pid: string | null;
+  linkedCount: number;
+  shelfCount: number | null;
+  onNavigate: (path: string) => void;
+}) {
+  const hasLinked = linkedCount > 0;
+  return (
+    <div className="card card-pad" style={{ marginBottom: 24 }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+        <span className="section-h">
+          <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
+          {tr('相关研究', 'Related work')}
+        </span>
+        <button className="btn btn-ghost sm" onClick={() => onNavigate(`/projects/${pid ?? ''}`)}>
+          <Icon name="link" size={12} />
+          {tr('管理关联库', 'Linked libraries')}
+        </button>
+      </div>
+      <div className="row gap16" style={{ alignItems: 'baseline', marginBottom: 14 }}>
+        <div>
+          <span className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>{linkedCount}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 6 }}>{tr('个关联文献库', 'linked libraries')}</span>
+        </div>
+        {shelfCount !== null && (
+          <div>
+            <span className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>{shelfCount}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 6 }}>{tr('篇相关研究', 'in related work')}</span>
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginBottom: 14 }}>
+        {hasLinked
+          ? tr('课题语料 = 关联文献库的并集；抓取论文在文献库里进行。', 'The topic corpus is the union of its linked libraries — papers are fetched inside the libraries.')
+          : tr('课题还没关联文献库；关联后即可从库里挑论文进「相关研究」。', 'No linked libraries yet — link one to pick papers into related work.')}
+      </div>
+      <div className="row gap8">
+        {hasLinked ? (
+          <button className="btn btn-primary sm" onClick={() => onNavigate(topicPath(pid, 'research'))}>
+            <Icon name="book" size={13} />
+            {tr('去相关研究', 'Open related work')}
+          </button>
+        ) : (
+          <>
+            <button className="btn btn-primary sm" onClick={() => onNavigate(`/projects/${pid ?? ''}`)}>
+              <Icon name="link" size={13} />
+              {tr('去关联文献库', 'Link a library')}
+            </button>
+            <button className="btn btn-ghost sm" onClick={() => onNavigate('/libraries')}>
+              {tr('浏览全部文献库', 'Browse all libraries')}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** GET /projects/{pid}/stats → 4 张指标卡（后端不可用时显示 —）。 */
 function buildStatCards(stats: StatsRead | undefined, pendingGatesCount: number): StatCardProps[] {
   return [
     {
       icon: 'book',
-      label: tr('知识库论文', 'Papers in vault'),
-      en: 'Papers in vault',
+      label: tr('关联文献', 'Linked papers'),
+      en: 'Linked papers',
       value: stats ? stats.papers_total : '—',
       sub: stats ? `+${stats.papers_today} ${tr('今日', 'today')}` : undefined,
     },
@@ -451,8 +544,6 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { pendingGates, gatesError, openGates } = useShell();
   const { currentProject, currentProjectId } = useProject();
-  // 课题隐式库（文献库入口链接用；列表未就绪时退回旧 /wiki 路径由重定向兜底）
-  const topicLib = useTopicLibrary(currentProjectId);
 
   const statsQuery = useQuery({
     queryKey: ['stats', currentProjectId],
@@ -476,6 +567,22 @@ export function DashboardPage() {
     enabled: !!currentProjectId,
     retry: false,
   });
+  // 课题关联的文献库（P7）：语料 = 关联库并集；键与课题设置页共享缓存
+  const sourceLibrariesQuery = useQuery<DirectionLibrarySummary[]>({
+    queryKey: ['sourceLibraries', currentProjectId],
+    queryFn: () => api.getSourceLibraries(currentProjectId!),
+    enabled: !!currentProjectId,
+    retry: false,
+  });
+  // 「相关研究」书架条目数（P5a）：键与相关研究页共享缓存
+  const shelfIdsQuery = useQuery({
+    queryKey: ['shelf-ids', currentProjectId],
+    queryFn: () => api.listShelfIds(currentProjectId!),
+    enabled: !!currentProjectId,
+    retry: false,
+  });
+  const linkedCount = sourceLibrariesQuery.data?.length ?? 0;
+  const shelfCount = shelfIdsQuery.data?.paper_ids.length ?? null;
 
   const stats = statsQuery.data;
   // 级联兜底：晚期产物存在 ⇒ 前置阶段必然完成（实验只能由晋级想法而来）
@@ -490,7 +597,7 @@ export function DashboardPage() {
   const progress: PipelineProgress = { hasPapers, hasIdeas, hasExperiments, hasManuscripts };
 
   // stats/列表还没就绪时不渲染 checklist、不高亮漏斗（避免误判闪烁）
-  const checklistReady = !!stats && !ideasQuery.isLoading && !experimentsQuery.isLoading;
+  const checklistReady = !!stats && !ideasQuery.isLoading && !experimentsQuery.isLoading && !sourceLibrariesQuery.isLoading;
 
   // 流水线漏斗高亮：第一个还没有产出的阶段（全流程有产出但暂无稿件送审时提示论文评审）
   const stuckKey = !checklistReady || !stats
@@ -507,13 +614,7 @@ export function DashboardPage() {
               ? 'paper-review'
               : null;
 
-  // 课题不再承载收录关键词（P9e：project.definition 退役）；建库/关键词属文献库。
-  const nextSteps = buildNextSteps(
-    progress,
-    currentProjectId,
-    false,
-    topicLib ? libraryPath(topicLib.id, '?tab=ingest') : topicPath(currentProjectId, 'wiki?tab=ingest'),
-  );
+  const nextSteps = buildNextSteps(progress, currentProjectId, linkedCount);
   // 全流程都有产出 → 整卡隐藏
   const showChecklist = checklistReady && nextSteps.some((s) => !s.done);
 
@@ -522,7 +623,7 @@ export function DashboardPage() {
     stats,
     currentProjectId,
     stuckKey,
-    topicLib ? libraryPath(topicLib.id) : topicPath(currentProjectId, 'wiki'),
+    linkedCount > 0 ? topicPath(currentProjectId, 'research') : `/projects/${currentProjectId ?? ''}`,
   );
 
   return (
@@ -549,6 +650,13 @@ export function DashboardPage() {
       <PipelineFlow
         stages={stages}
         directionLabel={currentProject?.name ?? 'Polaris'}
+        onNavigate={navigate}
+      />
+
+      <LiteratureCard
+        pid={currentProjectId}
+        linkedCount={linkedCount}
+        shelfCount={shelfCount}
         onNavigate={navigate}
       />
 
