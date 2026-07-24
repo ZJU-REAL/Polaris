@@ -9,7 +9,8 @@ export interface ScoreRingProps {
 export function ScoreRing({ value, max = 10, size = 46, label }: ScoreRingProps) {
   const pct = Math.max(0, Math.min(1, value / max));
   const deg = pct * 360;
-  const color = value >= 7.5 ? 'var(--ok)' : value >= 6 ? 'var(--accent)' : 'var(--warn)';
+  // 阈值按占比算，兼容不同量纲（0-10 想法评分 / 0-1 相关度）：对 max=10 等价于原来的 7.5/6
+  const color = pct >= 0.75 ? 'var(--ok)' : pct >= 0.6 ? 'var(--accent)' : 'var(--warn)';
   return (
     <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
       <div
@@ -33,7 +34,7 @@ export function ScoreRing({ value, max = 10, size = 46, label }: ScoreRingProps)
         }}
       >
         <span style={{ fontFamily: 'var(--mono)', fontSize: size * 0.3, fontWeight: 700, color: 'var(--text)' }}>
-          {value.toFixed(1)}
+          {value.toFixed(max <= 1 ? 2 : 1)}
         </span>
         {label && <span style={{ fontSize: 8, color: 'var(--text-3)', marginTop: -1 }}>{label}</span>}
       </div>
