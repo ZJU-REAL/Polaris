@@ -10,7 +10,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { AccordionSection } from '../../components/ui/Accordion';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
-import { api, type DirectionLibrarySummary } from '../../lib/api';
+import { api, ApiError, isAdmin, type DirectionLibrarySummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useLibraries, libraryPath } from './hooks';
 
@@ -40,21 +40,46 @@ function StatusBadge({ status }: { status: DirectionLibrarySummary['status'] }) 
   );
 }
 
-function LibraryCard({ lib, onOpen }: { lib: DirectionLibrarySummary; onOpen: () => void }) {
+function LibraryCard({
+  lib,
+  admin,
+  selectMode,
+  selected,
+  onOpen,
+  onToggleSelect,
+  onDelete,
+}: {
+  lib: DirectionLibrarySummary;
+  admin: boolean;
+  selectMode: boolean;
+  selected: boolean;
+  onOpen: () => void;
+  onToggleSelect: () => void;
+  onDelete: () => void;
+}) {
   const updated = lib.last_compiled_at ?? lib.last_synced_at;
+  const activate = selectMode ? onToggleSelect : onOpen;
   return (
     <div
       className="card hoverable"
       role="button"
       tabIndex={0}
-      onClick={onOpen}
+      onClick={activate}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen();
+          activate();
         }
       }}
-      style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 10, cursor: 'pointer' }}
+      style={{
+        padding: '18px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        cursor: 'pointer',
+        outline: selectMode && selected ? '2px solid var(--accent)' : undefined,
+        outlineOffset: -2,
+      }}
     >
       <div className="row gap8" style={{ alignItems: 'flex-start' }}>
         <span
@@ -85,7 +110,30 @@ function LibraryCard({ lib, onOpen }: { lib: DirectionLibrarySummary; onOpen: ()
             <StatusBadge status={lib.status} />
           </div>
         </div>
-        <Icon name="arrow" size={14} style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 4 }} />
+        {selectMode ? (
+          <input
+            type="checkbox"
+            checked={selected}
+            readOnly
+            aria-label={tr('选择', 'Select')}
+            style={{ width: 16, height: 16, accentColor: 'var(--accent)', flexShrink: 0, marginTop: 3, cursor: 'pointer' }}
+          />
+        ) : admin ? (
+          <button
+            className="icon-btn"
+            title={tr('删除文献库', 'Delete library')}
+            aria-label={tr('删除文献库', 'Delete library')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            style={{ flexShrink: 0, marginTop: -2, color: 'var(--text-4)' }}
+          >
+            <Icon name="trash" size={14} />
+          </button>
+        ) : (
+          <Icon name="arrow" size={14} style={{ color: 'var(--text-4)', flexShrink: 0, marginTop: 4 }} />
+        )}
       </div>
       <div
         style={{
@@ -269,34 +317,157 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
 
 export function LibrariesPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data, isLoading, isError, refetch } = useLibraries();
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
   const canCreate = !!me;
+  const admin = isAdmin(me);
   const [createOpen, setCreateOpen] = useState(false);
+  // 多选态（仅 admin 可用）：selectMode 打开后每张卡可勾选，顶部出现批量操作栏
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const libraries = data ?? [];
   // 我的课题关联的库排前面，其余按名称
   const sorted = [...libraries].sort(
     (a, b) => Number(b.is_mine) - Number(a.is_mine) || a.name.localeCompare(b.name),
   );
 
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function exitSelect() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
+
+  // 删除单个库：409 LIBRARY_HAS_TOPICS 时二次确认后带 force 重删。
+  // 返回 true = 已删除，false = 用户在二次确认里放弃。
+  async function deleteOne(lib: DirectionLibrarySummary): Promise<boolean> {
+    try {
+      await api.deleteLibrary(lib.id);
+      return true;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.message.includes('LIBRARY_HAS_TOPICS')) {
+        const ok = window.confirm(
+          tr(
+            `文献库「${lib.name}」仍被课题关联，确定连同关联一起删除吗？`,
+            `Library “${lib.name}” is still linked to topics — delete it together with those links?`,
+          ),
+        );
+        if (!ok) return false;
+        await api.deleteLibrary(lib.id, true);
+        return true;
+      }
+      throw e;
+    }
+  }
+
+  // 单删 / 批量删都走这个 mutation（批量按选中项串行处理，逐个弹 409 确认）。
+  const deleteMutation = useMutation({
+    mutationFn: async (targets: DirectionLibrarySummary[]) => {
+      let deleted = 0;
+      let skipped = 0;
+      const failed: string[] = [];
+      for (const lib of targets) {
+        try {
+          if (await deleteOne(lib)) deleted += 1;
+          else skipped += 1;
+        } catch (e) {
+          failed.push(e instanceof Error ? e.message : String(e));
+        }
+      }
+      return { deleted, skipped, failed };
+    },
+    onSuccess: ({ deleted, skipped, failed }) => {
+      void queryClient.invalidateQueries({ queryKey: ['libraries'] });
+      exitSelect();
+      if (failed.length > 0) {
+        toast(
+          tr(`已删除 ${deleted} 个，${failed.length} 个失败：${failed[0]}`, `Deleted ${deleted}, ${failed.length} failed: ${failed[0]}`),
+          'error',
+        );
+      } else if (deleted > 0) {
+        toast(
+          tr(`已删除 ${deleted} 个文献库${skipped ? `，跳过 ${skipped} 个` : ''}`, `Deleted ${deleted} librar${deleted === 1 ? 'y' : 'ies'}${skipped ? `, skipped ${skipped}` : ''}`),
+          'ok',
+        );
+      } else {
+        toast(tr('已取消删除', 'Deletion cancelled'), 'info');
+      }
+    },
+    onError: (err) => toast(`${tr('删除失败：', 'Delete failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
+  });
+
   return (
     <div className="page fadeup" style={{ maxWidth: 1200 }}>
       <PageHead
         eyebrow={tr('实验室', 'Lab')}
         title={tr('文献库', 'Libraries')}
-        sub={tr(
-          '按研究方向维护的公共文献库：解读、概念和原文对所有人开放，随便逛。',
-          'Shared per-direction libraries — wikis, concepts and full texts are open to everyone.',
-        )}
         right={
-          canCreate ? (
-            <button className="btn btn-primary sm" onClick={() => setCreateOpen(true)}>
-              <Icon name="plus" size={13} />
-              {tr('新建文献库', 'New library')}
-            </button>
-          ) : undefined
+          <div className="row gap8">
+            {admin && sorted.length > 0 && (
+              <button
+                className="btn btn-ghost sm"
+                onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+              >
+                <Icon name={selectMode ? 'x' : 'check'} size={13} />
+                {selectMode ? tr('退出多选', 'Done') : tr('多选', 'Select')}
+              </button>
+            )}
+            {canCreate ? (
+              <button className="btn btn-primary sm" onClick={() => setCreateOpen(true)}>
+                <Icon name="plus" size={13} />
+                {tr('新建文献库', 'New library')}
+              </button>
+            ) : null}
+          </div>
         }
       />
+
+      {selectMode && (
+        <div
+          className="row gap10"
+          style={{
+            margin: '0 0 14px',
+            padding: '9px 14px',
+            borderRadius: 10,
+            background: 'var(--surface-2)',
+            border: '0.5px solid var(--border)',
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+            {tr(`已选 ${selectedIds.size} 个`, `${selectedIds.size} selected`)}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button className="btn btn-ghost sm" disabled={deleteMutation.isPending} onClick={exitSelect}>
+            {tr('取消', 'Cancel')}
+          </button>
+          <button
+            className="btn btn-danger sm"
+            disabled={selectedIds.size === 0 || deleteMutation.isPending}
+            onClick={() => {
+              const targets = sorted.filter((l) => selectedIds.has(l.id));
+              if (targets.length === 0) return;
+              const ok = window.confirm(
+                tr(
+                  `确定删除选中的 ${targets.length} 个文献库吗？此操作不可撤销。`,
+                  `Delete ${targets.length} selected libraries? This cannot be undone.`,
+                ),
+              );
+              if (!ok) return;
+              deleteMutation.mutate(targets);
+            }}
+          >
+            <Icon name="trash" size={13} />
+            {deleteMutation.isPending ? tr('删除中…', 'Deleting…') : tr('删除', 'Delete')}
+          </button>
+        </div>
+      )}
 
       {canCreate && <NewLibraryModal open={createOpen} onClose={() => setCreateOpen(false)} />}
 
@@ -355,7 +526,25 @@ export function LibrariesPage() {
           }}
         >
           {sorted.map((lib) => (
-            <LibraryCard key={lib.id} lib={lib} onOpen={() => navigate(libraryPath(lib.id))} />
+            <LibraryCard
+              key={lib.id}
+              lib={lib}
+              admin={admin}
+              selectMode={selectMode}
+              selected={selectedIds.has(lib.id)}
+              onOpen={() => navigate(libraryPath(lib.id))}
+              onToggleSelect={() => toggleSelect(lib.id)}
+              onDelete={() => {
+                const ok = window.confirm(
+                  tr(
+                    `确定删除文献库「${lib.name}」吗？此操作不可撤销。`,
+                    `Delete library "${lib.name}"? This cannot be undone.`,
+                  ),
+                );
+                if (!ok) return;
+                deleteMutation.mutate([lib]);
+              }}
+            />
           ))}
         </div>
       )}

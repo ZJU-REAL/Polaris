@@ -220,6 +220,7 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
             state={ingestQuery.data}
             stateError={ingestQuery.isError}
             stateLoading={ingestQuery.isLoading}
+            onGoGovern={libraryId ? () => setTab('govern') : undefined}
           />
         ) : tab === 'govern' && libraryId ? (
           <GovernanceTab libraryId={libraryId} />

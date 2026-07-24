@@ -498,10 +498,6 @@ export function ResearchPage() {
       <PageHead
         eyebrow="Polaris · Related Work"
         title={tr('相关研究', 'Related Work')}
-        sub={tr(
-          '你从关联文献库里手挑进课题的论文：写下为什么相关，随手翻解读。可用语料远不止这些。',
-          'Papers you hand-picked from the linked libraries into this topic: note why they matter, read the wikis. The corpus holds far more.',
-        )}
         right={
           tab === 'list' ? (
             <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>

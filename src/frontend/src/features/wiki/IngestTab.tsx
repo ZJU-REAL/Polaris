@@ -26,6 +26,8 @@ export interface IngestTabProps {
   state: IngestState | undefined;
   stateError: boolean;
   stateLoading: boolean;
+  /** 切到本工作台「收录设置」（govern）tab；关键词提示据此跳转，无则退回导航。 */
+  onGoGovern?: () => void;
 }
 
 // 模块级常量只存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
@@ -87,7 +89,7 @@ function KnobRange({
   );
 }
 
-export function IngestTab({ pid, libraryId, state, stateError, stateLoading }: IngestTabProps) {
+export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onGoGovern }: IngestTabProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scopeId = libraryId ?? pid ?? '';
@@ -454,16 +456,16 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading }: I
               }}
             >
               {tr(
-                '这个课题还没有配置 include 关键词，无法启动文献追踪——先在课题设置里配置关键词。',
-                'This topic has no include terms yet, so literature tracking cannot start — add them in topic settings first.',
+                '这个文献库还没有配置检索关键词，无法启动文献追踪——先去收录设置配置关键词。',
+                'This library has no search terms configured yet, so literature tracking cannot start — configure them in inclusion settings first.',
               )}
               <button
                 className="btn btn-soft sm"
                 style={{ marginTop: 8, display: 'flex' }}
-                onClick={() => navigate(`/projects/${pid}`)}
+                onClick={() => onGoGovern?.()}
               >
                 <Icon name="sliders" size={13} />
-                {tr('去课题设置配置关键词', 'Configure terms in topic settings')}
+                {tr('去收录设置配置关键词', 'Configure terms in inclusion settings')}
               </button>
             </div>
           )}
