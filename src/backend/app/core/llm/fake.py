@@ -20,7 +20,15 @@ _PLAN_EDIT_MARKER = "POLARIS_PLAN_EDIT"  # 计划编辑（loop 失败回灌，na
 _VERDICT_MARKER = '"passed"'
 _RELEVANCE_MARKER = '"score"'
 _CONCEPTS_MARKER = "概念列表："
-_AFFILIATIONS_MARKER = "POLARIS_AFFILIATIONS"  # 发表机构解析（services/affiliations.py）
+_AFFILIATIONS_MARKER = "POLARIS_AUTHOR_AFFIL"  # 逐位作者机构解析（affiliations.py 专门调用）
+_AFFIL_COMPILE_MARKER = "POLARIS_AFFILIATIONS"  # on_compile 折叠进 wiki 编译的机构定界块请求
+# on_compile 模式下 librarian 编译输出附带的确定性机构定界块（与 FULL_TEXT 对齐）
+_FAKE_AFFIL_BLOCK = (
+    "\n\n<<<POLARIS_AFFILIATIONS\n"
+    '[{"name": "Alice Zhang", "affiliations": ["Zhejiang University"]}, '
+    '{"name": "Bob Li", "affiliations": ["Google DeepMind"]}]\n'
+    "POLARIS_AFFILIATIONS>>>\n"
+)
 _LIBRARIAN_MARKER = "TL;DR"
 _INTERVIEW_MARKER = '"out_of_scope"'
 _GAPS_MARKER = '"gaps"'  # forge gap 分析
@@ -246,10 +254,16 @@ class FakeProvider(LLMProvider):
                 },
                 ensure_ascii=False,
             )
-        # 发表机构解析：user prompt 内嵌论文标题页文本（可能含 TL;DR 等其他 marker），
-        # 须先于通用 marker 判断；返回确定性机构数组
+        # 发表机构解析（专门调用）：system prompt 带 POLARIS_AUTHOR_AFFIL，user prompt 内嵌
+        # 标题页文本（可能含 TL;DR 等其他 marker），须先于通用 marker 判断；返回逐位作者映射
         if _AFFILIATIONS_MARKER in full_text:
-            return json.dumps(["Zhejiang University", "Google DeepMind"], ensure_ascii=False)
+            return json.dumps(
+                [
+                    {"name": "Alice Zhang", "affiliations": ["Zhejiang University"]},
+                    {"name": "Bob Li", "affiliations": ["Google DeepMind"]},
+                ],
+                ensure_ascii=False,
+            )
         # 伴读/文献库对话 system prompt 会内嵌论文全文/wiki（可能含 TL;DR 等其他
         # marker），须最先判断
         if _LIBRARY_MARKER in full_text:
@@ -735,6 +749,8 @@ class FakeProvider(LLMProvider):
         title = title_match.group(1).strip() if title_match else "未知论文"
         # 多模态图文编译（请求带 images）时在方法段落后插入图片标记
         figure_line = "![[fig:0]]\n\n" if with_figure else ""
+        # on_compile 模式：prompt 末尾要求附机构定界块时，在正文之后追加确定性块
+        affil_block = _FAKE_AFFIL_BLOCK if _AFFIL_COMPILE_MARKER in last_user else ""
         return (
             f"## TL;DR\n\n{title} 的一句话总结（fake librarian）。\n\n"
             "## 研究背景与动机\n\n围绕 [[Agent]] 场景的关键问题展开叙述（fake）。\n\n"
@@ -742,6 +758,7 @@ class FakeProvider(LLMProvider):
             f"{figure_line}"
             "## 实验与结果\n\n在多个基准上验证有效（fake）。\n\n"
             "## 讨论与可借鉴点\n\n可复用其训练流程，局限在于评测范围（fake）。\n"
+            f"{affil_block}"
         )
 
     # ---- Idea 2.0 深耕（actions_proposal.py 的 system prompt 对齐，docs/api-idea2.md） ----

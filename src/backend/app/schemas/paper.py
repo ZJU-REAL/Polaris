@@ -9,18 +9,26 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 class AuthorRead(BaseModel):
     name: str
+    # 该作者最可能的所属机构（OpenAlex 结构化 / LLM 从标题页尽力对应；可能为空）
+    affiliations: list[str] = []
 
 
-def _normalize_authors(value: Any) -> list[dict[str, str]]:
-    """兼容历史数据：字符串列表 → [{"name": ...}]。"""
+def _normalize_authors(value: Any) -> list[dict[str, Any]]:
+    """兼容历史数据：字符串列表 → [{"name": ...}]；保留每位作者的机构映射。"""
     if not isinstance(value, list):
         return []
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     for item in value:
         if isinstance(item, str):
             normalized.append({"name": item})
         elif isinstance(item, dict) and item.get("name"):
-            normalized.append({"name": str(item["name"])})
+            affs = item.get("affiliations")
+            normalized.append(
+                {
+                    "name": str(item["name"]),
+                    "affiliations": [str(a) for a in affs if a] if isinstance(affs, list) else [],
+                }
+            )
     return normalized
 
 

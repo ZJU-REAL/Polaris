@@ -226,7 +226,7 @@ async def test_openalex_by_arxiv_id(cache_redis):
     assert meta is not None
     assert meta["cited_by_count"] == 42
     assert meta["doi"] == "10.48550/arXiv.2404.11111"
-    assert meta["authors"] == [{"name": "Eve"}]
+    assert meta["authors"] == [{"name": "Eve", "affiliations": []}]
     assert meta["venue"] == "arXiv"
     await client.aclose()
 

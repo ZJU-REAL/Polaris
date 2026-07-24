@@ -31,8 +31,18 @@ def _simplify(work: dict[str, Any]) -> dict[str, Any]:
         if isinstance((work.get("primary_location") or {}).get("source"), dict)
         else None,
         "cited_by_count": work.get("cited_by_count", 0),
+        # 作者 + 每位作者的机构（OpenAlex 结构化给出 authorships[].institutions）
         "authors": [
-            {"name": a.get("author", {}).get("display_name")}
+            {
+                "name": a["author"]["display_name"],
+                "affiliations": list(
+                    dict.fromkeys(
+                        inst["display_name"]
+                        for inst in (a.get("institutions") or [])
+                        if isinstance(inst, dict) and inst.get("display_name")
+                    )
+                ),
+            }
             for a in work.get("authorships", [])
             if a.get("author", {}).get("display_name")
         ],

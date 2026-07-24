@@ -132,18 +132,23 @@ async def enrich_paper(
             paper = await _rollback_and_reload()
             await emit("extract", "error", f"{type(e).__name__}: {e}")
 
-    # 发表机构：全文到手且尚无机构时 LLM 补（非独立阶段，best-effort，不发事件）
+    # 作者↔机构：on_add 模式下全文到手且尚无机构时 LLM 补（非独立阶段，best-effort，不发
+    # 事件）；on_compile 模式跳过，改由 wiki 编译折叠抽取
     if not paper.affiliations and paper.full_text_path:
         try:
             from app.core.llm.router import get_llm_router
-            from app.services.affiliations import extract_affiliations_llm
-
-            affs = await extract_affiliations_llm(
-                paper, llm=get_llm_router(), user_id=user_id, project_id=project_id
+            from app.services.affiliations import (
+                apply_author_affiliations,
+                extract_author_affiliations_llm,
+                get_affiliation_extraction_mode,
             )
-            if affs:
-                paper.affiliations = affs
-                await session.commit()
+
+            if await get_affiliation_extraction_mode(session) == "on_add":
+                mapping = await extract_author_affiliations_llm(
+                    paper, llm=get_llm_router(), user_id=user_id, project_id=project_id
+                )
+                if mapping and apply_author_affiliations(paper, mapping):
+                    await session.commit()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001

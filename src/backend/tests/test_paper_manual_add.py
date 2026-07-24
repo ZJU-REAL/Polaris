@@ -78,7 +78,7 @@ async def test_add_by_arxiv_id_and_dedupe_409(client, lit_clients):
     assert body["title"] == "Autonomous Research Agents"
     assert body["status"] == "included"
     assert body["arxiv_id"] == "2406.00001"
-    assert body["authors"] == [{"name": "Alice Smith"}]
+    assert body["authors"] == [{"name": "Alice Smith", "affiliations": []}]
     assert body["pdf_available"] is False  # 同步阶段不下载 PDF
     paper_id = body["id"]
 
@@ -132,7 +132,10 @@ async def test_add_by_bibtex_and_dedupe_by_doi(client):
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["title"] == "A Benchmark for Agents"  # 花括号剥掉
-    assert body["authors"] == [{"name": "Smith, Alice"}, {"name": "Bob Jones"}]
+    assert body["authors"] == [
+        {"name": "Smith, Alice", "affiliations": []},
+        {"name": "Bob Jones", "affiliations": []},
+    ]
     assert body["year"] == 2025
     assert body["venue"] == "Proceedings of NeurIPS"
     assert body["doi"] == "10.1000/bench"
