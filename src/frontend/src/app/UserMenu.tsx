@@ -14,10 +14,21 @@ function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Modal open={open} onClose={onClose} title={tr('关于我们', 'About us')} width={440}>
       <div className="col gap16" style={{ padding: '2px 2px 4px' }}>
+        <div className="col gap6">
+          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.2, color: 'var(--text-1)' }}>
+            {tr('浙江大学 REAL Lab', 'REAL Lab · Zhejiang University')}
+          </div>
+          <div style={{ fontSize: 12.5, fontWeight: 620, color: 'var(--accent-text)' }}>
+            {tr(
+              '会推理、有具身、能自主、可成长的真实世界智能',
+              'Reasoning · Embodied · Agentic · Lifelong-learning AI',
+            )}
+          </div>
+        </div>
         <div style={{ fontSize: 13, lineHeight: 1.75, color: 'var(--text-2)' }}>
           {tr(
-            'Polaris 由浙江大学 REAL Lab 研发——一个面向科研全流程的 AI 科研智能体平台。',
-            'Polaris is built by the REAL Lab at Zhejiang University — an AI research-agent platform for the whole research workflow.',
+            'REAL 聚焦通向真实世界智能的四大核心能力：推理（Reasoning）让模型深度思考、求解复杂问题；具身（Embodied）让智能通过物理本体感知并作用于真实环境；智能体（Agentic）让系统自主规划、调用工具、执行长程任务；终身学习（Lifelong）让智能体在持续交互中不断积累经验、自我进化。四者层层递进，共同指向真正立足现实世界的通用智能。Polaris 正是 REAL Lab 面向科研全流程打造的 AI 科研智能体平台。',
+            'REAL pursues four capabilities on the path to real-world intelligence. Reasoning gives models deep thinking and complex problem-solving; Embodied lets intelligence perceive and act on the physical world through a body; Agentic lets systems plan, use tools, and carry out long-horizon tasks on their own; Lifelong lets agents keep accumulating experience and evolving. Together they build toward general intelligence grounded in the real world. Polaris is REAL Lab’s AI research-agent platform for the whole research workflow.',
           )}
         </div>
         <div className="col gap8">
@@ -50,8 +61,8 @@ function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         >
           <div
             style={{
-              width: 148,
-              height: 148,
+              width: 240,
+              height: 320,
               borderRadius: 10,
               background: 'var(--surface-2)',
               border: '0.5px solid var(--border)',
@@ -62,7 +73,7 @@ function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             }}
           >
             <img
-              src="/xhs-qr.png"
+              src="/xhs-qr.jpg"
               alt={tr('小红书二维码', 'RED (Xiaohongshu) QR')}
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
               onError={(e) => {
