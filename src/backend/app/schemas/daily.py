@@ -100,6 +100,14 @@ class DailyCollectionsRead(BaseModel):
     in_personal: bool
 
 
+class DailyCompileResult(BaseModel):
+    """单篇解读编译结果（全实验室共享一份，存 entry 上）。"""
+
+    entry_id: uuid.UUID
+    wiki_content: str
+    model: str | None
+
+
 class DailyCategoriesRead(BaseModel):
     categories: list[str]
 

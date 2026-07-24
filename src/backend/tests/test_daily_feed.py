@@ -74,6 +74,17 @@ async def test_sync_idempotent_and_cross_merge(client, monkeypatch):
         merged = next(r for r in rows if "cs.CL" in (r.categories or []))
         assert set(merged.categories) == {"cs.AI", "cs.CL"}
 
+    # 高级过滤：分类命中合并进 categories 的条目；announce 过滤
+    token = await register_and_login(client, email="filter@example.com")
+    fh = {"Authorization": f"Bearer {token}"}
+    resp = await client.get("/api/daily/papers", params={"category": "cs.CL"}, headers=fh)
+    assert resp.status_code == 200 and resp.json()["total"] == 1
+    assert resp.json()["items"][0]["title"] == "Paper A"
+    resp = await client.get("/api/daily/papers", params={"announce": "new"}, headers=fh)
+    assert resp.json()["total"] == 2  # Paper A 首见于 cs.AI 时 announce=new
+    resp = await client.get("/api/daily/papers", params={"announce": "cross"}, headers=fh)
+    assert resp.json()["total"] == 0
+
 
 async def test_cleanup_expired_keeps_paper_and_membership(client, monkeypatch):
     token = await register_and_login(client)
@@ -225,6 +236,86 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["results"][0]["forbidden"] is True
+
+
+async def test_compile_entry_and_collect_copies_wiki(client, monkeypatch):
+    """单篇解读编译（fake LLM）落 entry；收录时拷进方向库成员行 / 书架快照 / 个人库条目。"""
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, library_id = await make_project_with_library(client, headers, name="wiki-proj")
+    await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.00041", "Compile Me")]})
+    resp = await client.get("/api/daily/papers", headers=headers)
+    item = resp.json()["items"][0]
+    entry_id, paper_id = item["entry_id"], item["paper_id"]
+    assert item["has_wiki"] is False
+
+    resp = await client.post(f"/api/daily/papers/{entry_id}/compile", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["wiki_content"].strip()
+
+    resp = await client.get(f"/api/daily/papers/{entry_id}", headers=headers)
+    assert resp.json()["has_wiki"] is True and resp.json()["wiki_content"].strip()
+
+    resp = await client.post(
+        "/api/daily/collect",
+        json={
+            "paper_ids": [paper_id],
+            "direction_library_ids": [str(library_id)],
+            "topic_ids": [project_id],
+            "personal": True,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.library import UserLibraryEntry
+    from app.models.library_direction import LibraryPaper
+    from app.models.topic_shelf import TopicPaper
+
+    async with get_sessionmaker()() as session:
+        membership = (
+            await session.execute(select(LibraryPaper).where(LibraryPaper.library_id == library_id))
+        ).scalar_one()
+        assert membership.wiki_content and membership.compiled_at is not None
+        shelf_row = (await session.execute(select(TopicPaper))).scalar_one()
+        assert shelf_row.wiki_snapshot
+        personal = (await session.execute(select(UserLibraryEntry))).scalar_one()
+        assert personal.wiki_content
+
+
+async def test_daily_pool_chat_sse(client, monkeypatch):
+    """池对话：scope = 池内全部论文，摘要级降级（无索引），sources → delta* → done。"""
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.00051", "Chat About Me")]})
+
+    async with client.stream(
+        "POST",
+        "/api/daily/chat",
+        json={"question": "今天有什么值得看的论文？", "history": []},
+        headers=headers,
+    ) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        body = (await resp.aread()).decode("utf-8")
+
+    import json
+
+    events = []
+    for block in body.strip().split("\n\n"):
+        event, data = None, None
+        for line in block.split("\n"):
+            if line.startswith("event: "):
+                event = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = json.loads(line[len("data: ") :])
+        if event is not None:
+            events.append((event, data))
+    kinds = [e for e, _ in events]
+    assert kinds[0] == "sources" and kinds[-1] == "done" and "error" not in kinds
 
 
 async def test_categories_admin_and_refresh(client, queue_stub):

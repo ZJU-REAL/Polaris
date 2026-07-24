@@ -17,9 +17,10 @@ import re
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import String, cast, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.base import utcnow
 from app.models.daily_feed import (
     DAILY_FEED_RETENTION_DAYS,
     DEFAULT_DAILY_CATEGORIES,
@@ -51,6 +52,10 @@ _MAX_LIKERS_PREVIEW = 5
 
 class DailyEntryNotFoundError(Exception):
     pass
+
+
+class CompileInProgressError(Exception):
+    """同一 entry 的解读编译已在进行中（进程内防抖，语义同 personal_wiki）。"""
 
 
 class InvalidCategoryError(Exception):
@@ -271,12 +276,22 @@ async def list_papers(
     page: int = 1,
     size: int = 20,
     q: str | None = None,
+    announce: str | None = None,
+    category: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     stmt = select(DailyFeedEntry, Paper).join(Paper, Paper.id == DailyFeedEntry.paper_id)
     if date is not None:
         stmt = stmt.where(DailyFeedEntry.feed_date == date)
     if q:
         stmt = stmt.where(Paper.title.ilike(f"%{q.strip()}%"))
+    if announce in ("new", "cross"):
+        stmt = stmt.where(DailyFeedEntry.announce_type == announce)
+    if category:
+        # 命中任一分类（categories 是 JSON 数组；LIKE 序列化文本，PG/sqlite 通用）
+        stmt = stmt.where(
+            (DailyFeedEntry.primary_category == category)
+            | cast(DailyFeedEntry.categories, String).like(f'%"{category}"%')
+        )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await session.execute(count_stmt)).scalar_one()
@@ -380,6 +395,43 @@ async def list_my_liked(
     return items, total
 
 
+# ---- 池对话与单篇解读（P2） ----
+
+
+async def daily_paper_ids(session: AsyncSession) -> list[uuid.UUID]:
+    """池内现存全部论文 id（池对话的 scope）。"""
+    return list((await session.execute(select(DailyFeedEntry.paper_id))).scalars().all())
+
+
+# 进行中的解读编译（entry_id）；单实例进程内防抖，多副本最坏重复编译一次、后写覆盖
+_COMPILING: set[uuid.UUID] = set()
+
+
+async def compile_entry_wiki(
+    session: AsyncSession, *, entry_id: uuid.UUID, user_id: uuid.UUID
+) -> DailyFeedEntry:
+    """通用模板编译单篇解读（全实验室共享一份），写进 entry；费用记个人。"""
+    from app.services.wiki_compile import compile_paper
+
+    entry = await session.get(DailyFeedEntry, entry_id)
+    if entry is None:
+        raise DailyEntryNotFoundError(str(entry_id))
+    paper = await session.get(Paper, entry.paper_id)
+    assert paper is not None  # 外键保证
+    if entry_id in _COMPILING:
+        raise CompileInProgressError(str(entry_id))
+    _COMPILING.add(entry_id)
+    try:
+        compiled = await compile_paper(paper, statement=None, user_id=user_id)
+    finally:
+        _COMPILING.discard(entry_id)
+    entry.wiki_content = compiled.content
+    entry.wiki_model = compiled.model or None
+    await session.commit()
+    await session.refresh(entry)
+    return entry
+
+
 # ---- 收录到各类库 ----
 
 
@@ -427,9 +479,26 @@ async def collect_papers(
     topic_ids: list[uuid.UUID],
     personal: bool = False,
 ) -> list[dict[str, Any]]:
-    """把一批论文分发进方向库 / 课题书架 / 个人库；逐目标返回结果，无权只标记不失败。"""
+    """把一批论文分发进方向库 / 课题书架 / 个人库；逐目标返回结果，无权只标记不失败。
+
+    entry 已有共享解读（wiki_content）时顺带拷贝进目标（方向库成员行 / 书架快照 /
+    个人库条目），让解读在 entry 7 天过期后于目标库存活。
+    """
     papers = [p for pid in paper_ids if (p := await session.get(Paper, pid)) is not None]
     results: list[dict[str, Any]] = []
+    wiki_rows = (
+        (
+            await session.execute(
+                select(DailyFeedEntry).where(
+                    DailyFeedEntry.paper_id.in_([p.id for p in papers]),
+                    DailyFeedEntry.wiki_content.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    entry_wiki = {e.paper_id: e for e in wiki_rows}
 
     for library_id in direction_library_ids:
         library = await session.get(DirectionLibrary, library_id)
@@ -446,8 +515,16 @@ async def collect_papers(
             continue
         added = skipped = 0
         for paper in papers:
+            wiki = entry_wiki.get(paper.id)
+            extra: dict[str, Any] = {}
+            if wiki is not None:
+                extra = {
+                    "wiki_content": wiki.wiki_content,
+                    "compiled_at": utcnow(),
+                    "compiled_model": wiki.wiki_model,
+                }
             _, created = await ensure_membership(
-                session, library_id=library_id, paper_id=paper.id, status="included"
+                session, library_id=library_id, paper_id=paper.id, status="included", **extra
             )
             added += int(created)
             skipped += int(not created)
@@ -490,6 +567,20 @@ async def collect_papers(
             await shelf_service.add_to_shelf(
                 session, project_id=topic_id, paper_id=paper.id, user_id=user.id
             )
+            wiki = entry_wiki.get(paper.id)
+            if wiki is not None:
+                # 书架行没有库版快照时用共享解读兜底（add_to_shelf 只取库版 wiki）
+                row = (
+                    await session.execute(
+                        select(TopicPaper).where(
+                            TopicPaper.topic_id == topic_id, TopicPaper.paper_id == paper.id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if row is not None and row.wiki_snapshot is None:
+                    row.wiki_snapshot = wiki.wiki_content
+                    row.snapshot_at = utcnow()
+                    await session.commit()
             added += 1
         results.append(
             {
@@ -508,7 +599,11 @@ async def collect_papers(
             if existing is not None and existing.saved:
                 skipped += 1
                 continue
-            await user_library.save_paper(session, user_id=user.id, paper=paper)
+            saved_entry = await user_library.save_paper(session, user_id=user.id, paper=paper)
+            wiki = entry_wiki.get(paper.id)
+            if wiki is not None and not saved_entry.wiki_content:
+                saved_entry.wiki_content = wiki.wiki_content
+                await session.commit()
             added += 1
         results.append(
             {
