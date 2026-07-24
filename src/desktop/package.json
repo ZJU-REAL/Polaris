@@ -7,9 +7,10 @@
   "scripts": {
     "build:main": "esbuild src/main/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/main.cjs --external:electron",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/preload.cjs --external:electron",
+    "build:agent": "esbuild src/agent/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/agent.cjs --external:electron",
     "build:smoke": "esbuild src/smoke.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/smoke.cjs --external:electron",
-    "build": "npm run build:main && npm run build:preload",
-    "smoke": "npm run build:preload && npm run build:smoke && electron dist/smoke.cjs",
+    "build": "npm run build:main && npm run build:preload && npm run build:agent",
+    "smoke": "npm run build:preload && npm run build:agent && npm run build:smoke && electron dist/smoke.cjs",
     "dev": "npm run build && electron .",
     "lint": "tsc --noEmit",
     "icons": "./scripts/make-icons.sh",

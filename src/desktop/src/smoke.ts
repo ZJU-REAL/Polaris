@@ -17,6 +17,8 @@
 import { BrowserWindow, app } from 'electron';
 import { join } from 'node:path';
 
+import { pingAgent, stopAgent } from './main/agent/supervisor';
+import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
 import { APP_INDEX, buildCsp, handleAppProtocol, registerAppScheme } from './main/protocol';
 
@@ -129,6 +131,39 @@ void app.whenReady().then(async () => {
 
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
+
+  console.log('\n第二期骨架（一期应当全部「不可用」但管道是通的）');
+  const manifest = await capabilityManifest();
+  check('契约版本已声明', manifest.contract >= 1);
+  check(
+    '所有本地能力一期均为不可用',
+    Object.values(manifest.capabilities).every((c) => !c.available),
+  );
+  check(
+    'tectonic 探测已真的执行（第二期直接用）',
+    typeof (manifest.capabilities['latex.compile'].detail as { found?: boolean })?.found === 'boolean',
+  );
+
+  // 这是最关键的一条：证明 renderer → preload → router → supervisor → agent
+  // 这条 stdio 管道现在就是通的，第二期只需要换掉 agent 侧的 handler。
+  check('本地 agent 进程可探活（stdio JSON-RPC 往返）', await pingAgent());
+
+  const localError = (await win.webContents.executeJavaScript(
+    `window.polaris.invoke('local.latex.compile', { manuscriptId: 'x', engine: 'tectonic' })
+       .then(() => 'UNEXPECTED_SUCCESS', e => String(e && e.message || e))`,
+  )) as string;
+  check(
+    'local.* 以结构化的能力不可用错误结束',
+    localError.includes('ERR_CAPABILITY_UNAVAILABLE'),
+    localError.slice(0, 120),
+  );
+  check(
+    '错误确实来自 agent 而不是 main 就地抛出',
+    localError.includes('method not implemented in phase 1'),
+    localError.slice(0, 120),
+  );
+
+  stopAgent();
 
   if (consoleErrors.length) {
     console.log('\n渲染进程 console 错误：');

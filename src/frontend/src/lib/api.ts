@@ -1,6 +1,7 @@
 import { tr } from './i18n';
 import { apiBase } from './endpoint';
 import { readToken, writeToken } from './token-store';
+import { LocalUnavailable, noteLocalFailure, resolveLocalHandler } from './local-routes';
 /* ============================================================
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
@@ -36,6 +37,20 @@ export function setToken(token: string | null): void {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // 本地能力优先（一期路由表为空，这里恒为 null）。只有 LocalUnavailable 才静默
+  // 回落服务器——本地跑出来的业务错误（例如 LaTeX 语法错）是正常结果，不能因此
+  // 再去服务器跑一遍：双倍开销、诊断信息还对不上。
+  const method = (init.method ?? 'GET').toUpperCase();
+  const local = resolveLocalHandler(method, path);
+  if (local) {
+    try {
+      return (await local.route.handler({ method, path, params: local.params, init })) as T;
+    } catch (err) {
+      if (!(err instanceof LocalUnavailable)) throw err;
+      noteLocalFailure(local.route.capability);
+    }
+  }
+
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token && !headers.has('Authorization')) {
@@ -79,6 +94,18 @@ function requestJson<T>(path: string, method: string, body: unknown): Promise<T>
 
 /** 二进制下载（PDF / zip / .bib 等），带 Bearer，错误时解析 detail。 */
 async function requestBlob(path: string): Promise<Blob> {
+  const local = resolveLocalHandler('GET', path);
+  if (local) {
+    try {
+      const value = await local.route.handler({ method: 'GET', path, params: local.params, init: {} });
+      if (!(value instanceof Blob)) throw new LocalUnavailable('local handler did not return a Blob');
+      return value;
+    } catch (err) {
+      if (!(err instanceof LocalUnavailable)) throw err;
+      noteLocalFailure(local.route.capability);
+    }
+  }
+
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);

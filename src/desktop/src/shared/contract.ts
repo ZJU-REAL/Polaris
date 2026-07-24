@@ -19,6 +19,45 @@ export interface HostInfo {
   appVersion: string;
 }
 
+/** 契约版本。前端读到比自己新的 host 时按能力表降级，而不是按版本号写特判。 */
+export const CONTRACT_VERSION = 1;
+
+/** 单个能力的可用性。detail 给前端做提示（如 tectonic 装了但缓存是空的）。 */
+export interface CapabilityState {
+  available: boolean;
+  /** 不可用的原因，仅用于展示与排错，不要拿来做分支判断。 */
+  reason?: string;
+  detail?: unknown;
+}
+
+/**
+ * 能力清单。前端所有「要不要走本地」的判断只读这张表——
+ * 绝不读 platform、绝不读版本号做特判，否则第二期增删能力又要改前端。
+ */
+export interface CapabilityManifest {
+  hostVersion: string;
+  platform: HostInfo['platform'];
+  contract: number;
+  capabilities: Record<string, CapabilityState>;
+}
+
+/** 已知能力键。第二期实现时把对应的 available 翻成 true。 */
+export const CAPABILITY_LATEX_COMPILE = 'latex.compile';
+export const CAPABILITY_PAPER_IMPORT = 'papers.import';
+export const CAPABILITY_PDF_CACHE = 'cache.pdf';
+
+/** 长任务句柄：invoke 立刻返回它，进度经事件通道推。 */
+export interface JobHandle {
+  jobId: string;
+}
+
+export type FolderPurpose = 'paper-import' | 'zotero-library';
+
+export interface LatexCompileInput {
+  manuscriptId: string;
+  engine: 'tectonic' | 'pdflatex' | 'xelatex' | 'lualatex';
+}
+
 /** 服务器连通性探测结果（打 GET {url}/api/health）。 */
 export type ServerProbe =
   | { ok: true; version: string }
@@ -36,6 +75,21 @@ export interface Methods {
   'host.copyText': { params: { text: string }; result: boolean };
   /** Dock/任务栏角标（待审批数）。Windows 需 overlay icon，一期不做，静默忽略。 */
   'host.setBadgeCount': { params: { count: number }; result: void };
+  'host.capabilities': { params: void; result: CapabilityManifest };
+
+  /* ---- local.*：第二期的本地计算能力 ----
+     现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把
+     renderer → preload → router → agent supervisor 这条管道**现在就打通**。
+     等第二期真的接上本地进程时，改的只有 agent 侧的 handler。 */
+
+  /** 本地 tectonic 编译。返回 JobHandle，日志与结果经 job.* 事件推。 */
+  'local.latex.compile': { params: LatexCompileInput; result: JobHandle };
+  /** 弹原生目录选择框，返回不透明句柄 token（绝不把真实路径交给 renderer）。 */
+  'local.fs.pickFolder': { params: { purpose: FolderPurpose }; result: { token: string } | null };
+  /** 扫描已授权目录里的 PDF（识别 arXiv id / DOI）。 */
+  'local.papers.scan': { params: { token: string }; result: JobHandle };
+  /** 取消长任务。 */
+  'local.job.cancel': { params: { jobId: string }; result: void };
 }
 
 export type MethodName = keyof Methods;
@@ -56,7 +110,13 @@ export interface RpcRequest {
 export type HostEvent =
   | { type: 'host.serverChanged'; serverUrl: string }
   /** 原生菜单「服务器…」→ 让前端打开配置页（换服务器的唯一入口，一期不做设置页分组）。 */
-  | { type: 'host.openServerSetup' };
+  | { type: 'host.openServerSetup' }
+  /* ---- 长任务事件。形状现在定死：第二期的编译日志与扫描进度直接用它们，
+     preload 与前端订阅代码不需要再改。 ---- */
+  | { type: 'job.progress'; jobId: string; phase: string; done: number; total: number; note?: string }
+  | { type: 'job.log'; jobId: string; chunk: string }
+  | { type: 'job.done'; jobId: string; result: unknown }
+  | { type: 'job.error'; jobId: string; code: string; message: string };
 
 export const IPC_CHANNEL_RPC = 'polaris:rpc';
 export const IPC_CHANNEL_EVENT = 'polaris:event';

@@ -19,7 +19,9 @@ import {
   type MethodName,
   type RpcRequest,
 } from '../../shared/contract';
+import { capabilityManifest } from '../capabilities';
 import * as host from './methods.host';
+import * as local from './methods.local';
 
 function asString(params: unknown, key: string): string {
   const value = (params as Record<string, unknown> | null)?.[key];
@@ -46,6 +48,12 @@ const HANDLERS: Record<MethodName, Handler> = {
   'host.openExternal': (p) => host.openExternal(asString(p, 'url')),
   'host.copyText': (p) => host.copyText(asString(p, 'text')),
   'host.setBadgeCount': (p) => host.setBadgeCount(asNumber(p, 'count')),
+  'host.capabilities': () => capabilityManifest(),
+  // local.* 一期全部走到 agent 再以 ERR_CAPABILITY_UNAVAILABLE 结束（见 methods.local.ts）
+  'local.latex.compile': (p) => local.latexCompile(p),
+  'local.fs.pickFolder': (p) => local.pickFolder(p),
+  'local.papers.scan': (p) => local.papersScan(p),
+  'local.job.cancel': (p) => local.jobCancel(asString(p, 'jobId')),
 };
 
 export function installIpc(): void {

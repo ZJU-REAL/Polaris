@@ -15,7 +15,24 @@ export type ServerProbe =
 
 export type HostEvent =
   | { type: 'host.serverChanged'; serverUrl: string }
-  | { type: 'host.openServerSetup' };
+  | { type: 'host.openServerSetup' }
+  | { type: 'job.progress'; jobId: string; phase: string; done: number; total: number; note?: string }
+  | { type: 'job.log'; jobId: string; chunk: string }
+  | { type: 'job.done'; jobId: string; result: unknown }
+  | { type: 'job.error'; jobId: string; code: string; message: string };
+
+export interface CapabilityState {
+  available: boolean;
+  reason?: string;
+  detail?: unknown;
+}
+
+export interface CapabilityManifest {
+  hostVersion: string;
+  platform: string;
+  contract: number;
+  capabilities: Record<string, CapabilityState>;
+}
 
 interface HostBridge {
   invoke(method: string, params?: unknown): Promise<unknown>;
@@ -63,6 +80,36 @@ export async function hostCopyText(text: string): Promise<boolean> {
 /** Dock/任务栏角标（待审批数）。 */
 export function setBadgeCount(count: number): void {
   void bridge()?.invoke('host.setBadgeCount', { count });
+}
+
+/* —— 能力清单 ——
+   前端所有「走本地还是走远端」的判断只读这张表：绝不读 platform、绝不读版本号
+   做特判，否则第二期能力增删又要回来改前端。 */
+
+let manifest: CapabilityManifest | null = null;
+
+/** 拉一次能力清单并缓存；web 端返回 null。 */
+export async function loadCapabilities(): Promise<CapabilityManifest | null> {
+  const b = bridge();
+  if (!b) return null;
+  manifest = (await b.invoke('host.capabilities')) as CapabilityManifest;
+  return manifest;
+}
+
+/** 同步查询某项能力。清单还没拉到时一律当作不可用（宁可走服务器）。 */
+export function isCapabilityAvailable(capability: string): boolean {
+  return manifest?.capabilities[capability]?.available === true;
+}
+
+export function capabilitySnapshot(): CapabilityManifest | null {
+  return manifest;
+}
+
+/** 供 invoke 的通用出口（host-jobs 等内部模块用）。 */
+export async function invokeHost(method: string, params?: unknown): Promise<unknown> {
+  const b = bridge();
+  if (!b) throw new Error('desktop host unavailable');
+  return await b.invoke(method, params);
 }
 
 /** 订阅宿主事件，返回取消订阅函数（web 端返回 no-op）。 */
