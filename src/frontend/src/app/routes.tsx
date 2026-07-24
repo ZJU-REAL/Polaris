@@ -85,6 +85,12 @@ function LegacyTopicRedirect({ sub }: { sub?: string }) {
   return <Navigate to={topicPath(id, sub) + location.search + location.hash} replace />;
 }
 
+/** 旧课题设置页 `/projects/:id` → 工作台「课题设置」标签 `/t/:id?tab=settings`。 */
+function ProjectSettingsRedirect() {
+  const { id = '' } = useParams();
+  return <Navigate to={topicPath(id) + '?tab=settings'} replace />;
+}
+
 export const router = createBrowserRouter([
   { path: '/login', element: page(() => import('../features/auth/LoginPage'), 'LoginPage') },
   {
@@ -115,7 +121,8 @@ export const router = createBrowserRouter([
               { path: 'experiment', element: page(() => import('../features/experiment/ExperimentPage'), 'ExperimentPage') },
               { path: 'writer', element: page(() => import('../features/writer/WriterPage'), 'WriterPage') },
               { path: 'paper-review', element: page(() => import('../features/paper-review/PaperReviewPage'), 'PaperReviewPage') },
-              { path: 'voyages', element: page(() => import('../features/voyages/VoyagesPage'), 'VoyagesPage') },
+              // 任务已并入工作台「任务」标签：/t/:id/voyages → /t/:id?tab=tasks
+              { path: 'voyages', element: <Navigate to="..?tab=tasks" replace /> },
             ],
           },
           // 实体详情页：按实体 id 拉数据，保持顶层路径（分享/收藏链接稳定）
@@ -139,7 +146,8 @@ export const router = createBrowserRouter([
       // —— 非课题作用域 ——
       { path: 'start', element: page(() => import('../features/start/StartPage'), 'StartPage') },
       { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
-      { path: 'projects/:id', element: page(() => import('../features/projects/ProjectDetailPage'), 'ProjectDetailPage') },
+      // 课题设置已并入工作台「课题设置」标签：/projects/:id → /t/:id?tab=settings
+      { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
       { path: 'join/:token', element: page(() => import('../features/projects/JoinPage'), 'JoinPage') },
       { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
       // 实验室区：共享方向文献库（全实验室可读，无需课题）

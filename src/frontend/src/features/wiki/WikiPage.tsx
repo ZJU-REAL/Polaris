@@ -148,9 +148,10 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
             { v: 'concepts', label: tr('概念库', 'Concepts') },
             { v: 'graph', label: tr('图谱', 'Graph') },
             { v: 'chat', label: tr('文献对话', 'Chat') },
-            { v: 'ingest', label: tr('建库与同步', 'Ingest & sync') },
             { v: 'notes', label: tr('笔记', 'Notes') },
-            ...(libraryId ? [{ v: 'govern' as const, label: tr('治理', 'Governance') }] : []),
+            ...(libraryId ? [{ v: 'govern' as const, label: tr('文献库配置', 'Library config') }] : []),
+            // 建库与同步放到最后一个标签
+            { v: 'ingest', label: tr('建库与同步', 'Ingest & sync') },
           ]}
           value={tab}
           onChange={setTab}
