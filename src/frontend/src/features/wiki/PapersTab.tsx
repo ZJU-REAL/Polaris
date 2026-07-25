@@ -31,7 +31,7 @@ import {
 import { tr } from '../../lib/i18n';
 import { usePendingByPaper } from '../../lib/pending';
 import { clickable } from '../../lib/a11y';
-import { categoryMeta, saveBlob, SearchInput, useDebounced } from './shared';
+import { categoryMeta, MetaItem, saveBlob, SearchInput, useDebounced } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
 import { AddToButton } from '../library/AddToPopover';
 import { PaperProgressModal } from '../library/PaperProgressModal';
@@ -896,19 +896,6 @@ function TagEditor({ paper, scopeId }: { paper: PaperDetail; scopeId: string }) 
 
 /** 概念 chips 默认最多展示数，超出折叠 */
 const CONCEPT_CHIP_LIMIT = 12;
-
-function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="row" style={{ gap: 12, padding: '4px 0', alignItems: 'flex-start' }}>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', width: 88, flexShrink: 0 }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 12.5, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
-        {children}
-      </span>
-    </div>
-  );
-}
 
 /** 机构 chips 默认最多展示数，超出折叠 */
 const AFFIL_CHIP_LIMIT = 6;

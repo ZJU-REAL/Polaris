@@ -44,6 +44,20 @@ export function Section({ title, children }: { title: ReactNode; children: React
   );
 }
 
+/** frontmatter 风格元数据行（论文详情的 arxiv_id / doi / published… 卡片用）。 */
+export function MetaItem({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="row" style={{ gap: 12, padding: '4px 0', alignItems: 'flex-start' }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--accent-text)', width: 88, flexShrink: 0 }}>
+        {label}
+      </span>
+      <span style={{ fontSize: 12.5, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
+        {children}
+      </span>
+    </div>
+  );
+}
+
 /** 触发浏览器下载一个 blob（导出 zip / .bib / .json 用）。 */
 export function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);

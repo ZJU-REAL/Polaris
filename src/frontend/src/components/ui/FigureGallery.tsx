@@ -504,11 +504,17 @@ export function FiguresSection({
   paper,
   style,
   defaultCollapsed = false,
+  readOnly = false,
 }: {
   paper: PaperDetail;
   style?: CSSProperties;
   /** 正文已内嵌图片时默认折叠画廊，避免重复视觉 */
   defaultCollapsed?: boolean;
+  /**
+   * 只读模式：不渲染「提取图片 / 重新提取配图」按钮，只展示已有的图。
+   * 给普通用户的只读文献库用——提取图片端点只对管理员开放，普通用户点必然 403。
+   */
+  readOnly?: boolean;
 }) {
   const queryClient = useQueryClient();
   const figures = usePaperFigures(paper);
@@ -554,9 +560,9 @@ export function FiguresSection({
     },
   });
 
-  // 没图：有 PDF 时给一个小按钮按需提取；没 PDF 就什么都不显示
+  // 没图：有 PDF 时给一个小按钮按需提取；没 PDF（或只读）就什么都不显示
   if (figures.length === 0) {
-    if (!paper.pdf_available) return null;
+    if (!paper.pdf_available || readOnly) return null;
     return (
       <div style={{ marginTop: 16, ...style }}>
         <button
@@ -596,7 +602,7 @@ export function FiguresSection({
             {expanded ? tr('收起', 'Collapse') : tr(`展开全部图片（${figures.length} 张）`, `Show all figures (${figures.length})`)}
           </button>
         )}
-        {paper.pdf_available && (
+        {paper.pdf_available && !readOnly && (
           <button
             className="btn btn-ghost sm"
             style={{ marginLeft: 'auto' }}
