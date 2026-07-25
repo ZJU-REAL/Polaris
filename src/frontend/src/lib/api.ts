@@ -3583,8 +3583,10 @@ export const api = {
       }
       throw new ApiError(res.status, detail, body);
     }
+    // 后端对该头做了百分号编码（HTTP 头只能 latin-1，提示是中文）
     const raw = res.headers.get('X-Export-Notes');
-    const notes = raw ? raw.split('|').map((s) => s.trim()).filter(Boolean) : [];
+    const decoded = raw ? decodeURIComponent(raw) : '';
+    const notes = decoded ? decoded.split('|').map((s) => s.trim()).filter(Boolean) : [];
     return { blob: await res.blob(), notes };
   },
 
