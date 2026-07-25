@@ -31,7 +31,8 @@ from app.services import verification
 
 logger = logging.getLogger(__name__)
 
-JWT_LIFETIME_SECONDS = 60 * 60 * 24  # 24h
+# 有效期改为可配置（POLARIS_SESSION_LIFETIME_SECONDS），默认 30 天。
+# 保留这个名字是为了不惊动现有 import；取值走 settings。
 MIN_PASSWORD_LENGTH = 8
 
 
@@ -102,7 +103,10 @@ bearer_transport = BearerTransport(tokenUrl="api/auth/jwt/login")
 
 
 def get_jwt_strategy() -> JWTStrategy:
-    return JWTStrategy(secret=get_settings().secret_key, lifetime_seconds=JWT_LIFETIME_SECONDS)
+    settings = get_settings()
+    return JWTStrategy(
+        secret=settings.secret_key, lifetime_seconds=settings.session_lifetime_seconds
+    )
 
 
 auth_backend = AuthenticationBackend(

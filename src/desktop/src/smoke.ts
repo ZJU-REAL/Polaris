@@ -15,6 +15,7 @@
    ============================================================ */
 
 import { BrowserWindow, app } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { pingAgent, stopAgent } from './main/agent/supervisor';
@@ -129,6 +130,83 @@ void app.whenReady().then(async () => {
   )) as string;
   check('未配置服务器时进入配置页', /连接到服务器|Connect to a server/.test(title), `title=${title}`);
 
+  // macOS 的交通灯占据窗口左上角约 y=14..26（见 window.ts 的 trafficLightPosition），
+  // 页面左上角的品牌标必须落在这条带子下面，否则会被压住。
+  const geom = JSON.parse(
+    (await win.webContents.executeJavaScript(`(() => {
+      const el = document.querySelector('.auth-brand');
+      const r = el ? el.getBoundingClientRect() : null;
+      return JSON.stringify({
+        platformAttr: document.documentElement.dataset.desktopPlatform ?? null,
+        band: getComputedStyle(document.documentElement).getPropertyValue('--titlebar-h').trim(),
+        brandTop: r ? Math.round(r.top) : null,
+        brandLeft: r ? Math.round(r.left) : null,
+      });
+    })()`)) as string,
+  ) as { platformAttr: string | null; band: string; brandTop: number | null; brandLeft: number | null };
+
+  // 标题栏留白只在 macOS 需要：Windows/Linux 保留系统原生标题栏，页面不该预留、
+  // 也不该自己做拖拽区。两边都正向断言，免得哪天在非 macOS 上误开。
+  const isMac = process.platform === 'darwin';
+
+  check('<html> 已标记桌面平台', geom.platformAttr === process.platform, `attr=${geom.platformAttr}`);
+  if (isMac) {
+    check('标题栏留白变量已生效', geom.band !== '' && geom.band !== '0px', `--titlebar-h=${geom.band}`);
+    check(
+      '品牌标避开交通灯（top ≥ 34）',
+      geom.brandTop !== null && geom.brandTop >= 34,
+      `top=${geom.brandTop} left=${geom.brandLeft}`,
+    );
+  } else {
+    check('非 macOS 不预留标题栏', geom.band === '0px', `--titlebar-h=${geom.band}`);
+  }
+
+  // 顶部留白必须是拖拽区：内容盖住了系统标题栏，不声明就拖不动窗口。
+  // （主内容区顶栏的 .crumb/.spacer 同理，但那要登录后才存在，smoke 覆盖不到。）
+  const dragRegion = (await win.webContents.executeJavaScript(
+    `getComputedStyle(document.querySelector('.auth-page'), '::before')
+       .getPropertyValue('-webkit-app-region')`,
+  )) as string;
+  if (isMac) {
+    check('顶部留白是拖拽区', dragRegion.trim() === 'drag', `app-region=${dragRegion}`);
+  } else {
+    check('非 macOS 顶部无拖拽区', dragRegion.trim() !== 'drag', `app-region=${dragRegion}`);
+  }
+
+  // 主内容顶栏要登录后才存在，这里注入一份同构 DOM 来验规则本身。
+  // 重点是**高度**：.topbar 是 align-items:center，空的 .spacer 默认高度为 0，
+  // 光有 -webkit-app-region:drag 也抓不住——这正是第一版漏掉的地方。
+  const topbar = JSON.parse(
+    (await win.webContents.executeJavaScript(`(() => {
+      const bar = document.createElement('div');
+      bar.className = 'topbar';
+      bar.innerHTML = '<button class="icon-btn"></button><div class="crumb"><span>a</span></div><div class="spacer"></div>';
+      document.body.appendChild(bar);
+      const spacer = bar.querySelector('.spacer');
+      const crumb = bar.querySelector('.crumb');
+      const out = {
+        spacerH: Math.round(spacer.getBoundingClientRect().height),
+        crumbH: Math.round(crumb.getBoundingClientRect().height),
+        spacerRegion: getComputedStyle(spacer).getPropertyValue('-webkit-app-region').trim(),
+        btnRegion: getComputedStyle(bar.querySelector('.icon-btn')).getPropertyValue('-webkit-app-region').trim(),
+      };
+      bar.remove();
+      return JSON.stringify(out);
+    })()`)) as string,
+  ) as { spacerH: number; crumbH: number; spacerRegion: string; btnRegion: string };
+
+  if (isMac) {
+    check('顶栏空白是拖拽区', topbar.spacerRegion === 'drag', `region=${topbar.spacerRegion}`);
+    check(
+      '顶栏空白有可抓取的高度',
+      topbar.spacerH >= 40,
+      `spacer=${topbar.spacerH}px crumb=${topbar.crumbH}px`,
+    );
+  } else {
+    check('非 macOS 顶栏无拖拽区', topbar.spacerRegion !== 'drag', `region=${topbar.spacerRegion}`);
+  }
+  check('顶栏按钮不被拖拽区吞掉', topbar.btnRegion !== 'drag', `btn=${topbar.btnRegion}`);
+
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
 
@@ -170,6 +248,12 @@ void app.whenReady().then(async () => {
     for (const m of consoleErrors.slice(0, 20)) console.log('  -', m);
   }
   check('渲染进程无 console 错误', consoleErrors.length === 0);
+
+  if (process.env.POLARIS_SMOKE_SHOT) {
+    const image = await win.webContents.capturePage();
+    await writeFile(process.env.POLARIS_SMOKE_SHOT, image.toPNG());
+    console.log(`\n已截图 → ${process.env.POLARIS_SMOKE_SHOT}`);
+  }
 
   console.log(problems.length ? `\n${problems.length} 项失败` : '\n全部通过');
   app.exit(problems.length ? 1 : 0);

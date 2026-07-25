@@ -16,6 +16,12 @@ const path = require('node:path');
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
 
+  // universal 构建会先分架构打包到 *-temp 再 lipo 合并，而 @electron/universal
+  // 要求两个架构的非二进制文件逐字节相同。逐架构签名会让
+  // Frameworks/.../_CodeSignature/CodeResources 不一致，合并直接报错。
+  // 所以临时目录一律跳过，只签合并后的产物。
+  if (context.appOutDir.endsWith('-temp')) return;
+
   const appPath = path.join(
     context.appOutDir,
     `${context.packager.appInfo.productFilename}.app`,

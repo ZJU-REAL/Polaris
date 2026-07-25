@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     secret_key: str = "dev-only-secret-key-change-me"  # JWT 签名
     encryption_key: str = ""  # Fernet key；为空时 security.py 会从 secret_key 派生（仅限 dev）
     invite_code: str = "polaris-lab"  # 注册邀请码（实验室内部制）
+    # 登录会话有效期。默认 30 天：桌面端与网页都希望「登录一次就一直在」，
+    # 24h 会让用户每天重登一次。没有 refresh token 机制，所以直接给长有效期；
+    # 想收紧就调小这个值（单位：秒）。
+    session_lifetime_seconds: int = 60 * 60 * 24 * 30
     # prod 下额外放行的跨域前端来源（逗号分隔）。桌面客户端的 app://polaris 恒在白名单内、
     # 无需在此配置；这一项留给「前端与 API 不同域」的部署形态。web 生产走 nginx 同源反代，
     # 根本不进 CORS 分支。用逗号分隔的 str 而非 list[str]：pydantic-settings 对 list[str]

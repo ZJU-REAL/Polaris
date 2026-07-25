@@ -10,6 +10,42 @@ html, body { margin: 0; padding: 0; height: 100%; }
 /* 全站等比放大 10%（用户反馈基准字号偏小）：
    组件字号均为 px 定值，zoom 统一缩放字体与间距，视觉比例不变 */
 html { zoom: 1.1; }
+
+/* —— 桌面端（macOS）标题栏留白 ——
+   外壳用 titleBarStyle: hiddenInset，系统把红黄绿三个交通灯直接叠在内容区
+   左上角，而页面从 y=0 开始画，侧栏品牌标与登录页品牌标会被压在下面。
+   这里给顶部留一条带子，由 main.tsx 在桌面端给 <html> 打 data-desktop-platform。
+
+   注意 html{zoom:1.1}：这里写的 px 会被放大 1.1 倍，而交通灯按窗口点定位、
+   不受 zoom 影响，所以要先除以 1.1——40 物理 px ÷ 1.1 ≈ 36.4px。
+   web 端与非 macOS 桌面端该变量恒为 0，所有 calc 退化成原值。 */
+:root { --titlebar-h: 0px; }
+:root[data-desktop-platform='darwin'] { --titlebar-h: 36.4px; }
+
+/* 让空出来的带子可以拖动窗口（内容盖住了系统标题栏区域，否则拖不动）。
+   只覆盖留白本身，不会挡住任何可点元素。 */
+:root[data-desktop-platform='darwin'] .sidebar::before,
+:root[data-desktop-platform='darwin'] .auth-page::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: var(--titlebar-h);
+  -webkit-app-region: drag;
+}
+
+/* 主内容区顶栏同理：它横跨窗口顶部，不给拖拽区的话那片空白按不动窗口。
+
+   只挑面包屑与中间的弹性空白，**不整条 .topbar 设 drag**：
+   -webkit-app-region 会向下继承，而用户菜单/通知的下拉浮层就渲染在 .topbar
+   内部（见上面 z-index 那段注释），整条设 drag 会让点浮层里的条目变成拖窗口。
+   这两块本身没有任何可交互元素，正好是需要能拖的地方。
+   还要 align-self: stretch：.topbar 是 align-items:center，而 .spacer 是个空 div，
+   默认高度为 0——拖拽区是条零高度的矩形，等于没有。撑满行高才真的抓得住。
+   .spacer 本来就没有内容，撑开不可见；.crumb 自身是 flex 居中，撑开后文字不动。 */
+:root[data-desktop-platform='darwin'] .topbar > .crumb,
+:root[data-desktop-platform='darwin'] .topbar > .spacer {
+  -webkit-app-region: drag;
+  align-self: stretch;
+}
 body {
   font-family: var(--sans);
   color: var(--text);
@@ -58,6 +94,7 @@ input {
    ============================================================ */
 .sidebar {
   width: 248px; flex-shrink: 0;
+  padding-top: var(--titlebar-h); /* 桌面端给交通灯让位，web 端为 0 */
   background: var(--sidebar-bg);
   border-right: 0.5px solid var(--border-2);
   display: flex; flex-direction: column;
@@ -251,6 +288,10 @@ input {
 .h-sub .en { color: var(--text-3); font-size: 13px; }
 /* 页头右侧操作区（原为组件内联样式，挪到这里以便窄屏覆盖） */
 .page-head-actions { flex-shrink: 0; margin-left: 16px; }
+
+/* —— 课题工作台：指标卡行 + 主次两栏（原为内联样式，挪到这里以便窄屏覆盖）—— */
+.dash-primary { flex: 1.5; min-width: 0; }
+.dash-side { flex: 1; min-width: 0; position: sticky; top: 0; }
 
 /* —— 整屏「列表 + 详情」页（相关研究 / 我的文献库 / 每日新论文 / 公共库浏览）——
    页面与卡片撑满视口高度，滚动发生在 .split 内部的两块里。原本这两组样式在
@@ -692,7 +733,7 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   padding: 24px clamp(24px, 9vw, 150px) 24px 24px;
 }
 .auth-brand {
-  position: absolute; top: 26px; left: 30px;
+  position: absolute; top: calc(26px + var(--titlebar-h)); left: 30px;
   display: flex; align-items: center; gap: 14px;
 }
 .auth-card {
@@ -1065,6 +1106,8 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   /* —— 关掉全局放大：手机屏本来就窄，放大 10% 等于凭空少 1/11 的宽度；
         关掉后媒体查询值与布局值一致，.split-detail 的反向抵消一并归 1 —— */
   html { zoom: 1; }
+  /* 这里 zoom 已关，带子按物理 px 直接给 */
+  :root[data-desktop-platform='darwin'] { --titlebar-h: 40px; }
   .split-detail { zoom: 1; }
 
   /* —— 触屏基建 —— */
@@ -1142,6 +1185,15 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   .split .split-list { max-height: 70vh; }
   .split-detail { display: block; }
   .split-detail > * { flex: none; overflow: visible; }
+
+  /* 工作台：4 张指标卡是 flex:1，折行后每行分到的宽度不同、大小参差；
+     改 2×2 网格，四张卡等宽等高。 */
+  .dash-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 主次两栏（1.5:1）的 flex-basis 是 0，窄屏下只会一起压扁而不是换行，
+     两边内容都被挤到逐字断行；直接改上下单栏。 */
+  .dash-main { display: block; }
+  .dash-primary + .dash-side { margin-top: 20px; }
+  .dash-side { position: static; }
 
   /* 页头（全站 17 个页面共用）：右侧操作区不压缩、标题 flex-basis 为 0，
      同排会把标题挤成窄条逐字换行。窄屏改成标题在上、操作区在下。 */

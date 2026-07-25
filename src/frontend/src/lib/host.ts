@@ -46,6 +46,12 @@ function bridge(): HostBridge | undefined {
     : (window as unknown as { polaris?: HostBridge }).polaris;
 }
 
+/** 桌面端平台标识；web 端返回 null。 */
+export function hostPlatform(): 'darwin' | 'win32' | 'linux' | null {
+  const info = typeof window === 'undefined' ? undefined : window.__POLARIS__;
+  return info?.platform ?? null;
+}
+
 /** 是否有可用的桌面宿主桥（比 endpoint.isDesktop() 更严格：桥必须真的注入成功）。 */
 export function hasHost(): boolean {
   return bridge() != null;

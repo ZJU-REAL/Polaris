@@ -187,6 +187,7 @@ export function LoginPage() {
   const [view, setView] = useState<View>('auth');
   const [mode, setMode] = useState<Mode>('login');
   const [step, setStep] = useState<Step>(1); // 仅注册用：1 账号信息 / 2 设置密码
+  // 记住上次登录的账号（只记账号，不记密码；写入在 auth.tsx 的 login 里）
   const [identifier, setIdentifier] = useState(() => getLastAccount());
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');

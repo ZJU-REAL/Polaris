@@ -1,0 +1,172 @@
+# 桌面端发版：三平台出包并建 GitHub Release。
+# 与 desktop-build.yml 分工：那个在 PR 上只跑 smoke 做回归检查，本文件负责发版。
+#
+# 触发：push 版本 tag（v*，如 v1.0.0）时自动发版，tag 名即版本号；也可手动触发。
+#
+# 关于签名：**产物一律未签名**。macOS 侧由 electron-builder 的 afterPack 钩子补一个
+# ad-hoc 签名——不是锦上添花：electron-builder 改包会让 Electron 自带签名失效，
+# Apple Silicon 内核拒绝执行无有效签名的二进制，用户会看到「已损坏」。ad-hoc 只保证
+# 能启动，不等于公证（notarization），首次打开仍需绕 Gatekeeper，见 release 正文。
+#
+# macOS 出 universal 单包（Intel + Apple Silicon 通吃），用户不必分辨自己的芯片。
+# 注意 @electron/universal 要求两个架构的非二进制文件逐字节相同才能 lipo 合并，
+# 所以 afterPack 钩子跳过 *-temp 目录、只给合并后的产物签名——逐架构签名会让
+# _CodeSignature/CodeResources 不一致，合并会直接报错。
+name: desktop-release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "手动发版时的版本号（如 v0.2.0）"
+        required: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macos
+            args: --mac --universal
+          - os: windows-latest
+            name: windows
+            args: --win --x64
+          - os: ubuntu-latest
+            name: linux
+            args: --linux --x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            src/frontend/package-lock.json
+            src/desktop/package-lock.json
+
+      - name: Resolve version
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # 让安装包文件名带上真实版本号（electron-builder 读 package.json 的 version）
+      - name: Stamp version
+        shell: bash
+        run: |
+          npm --prefix src/desktop version "${{ steps.meta.outputs.version }}" \
+            --no-git-tag-version --allow-same-version
+
+      - name: Build renderer
+        shell: bash
+        run: |
+          npm ci --prefix src/frontend
+          npm run build --prefix src/frontend
+
+      - name: Build shell
+        shell: bash
+        run: |
+          npm ci --prefix src/desktop
+          npm run build --prefix src/desktop
+
+      # 发版前先验一遍，避免把加载不起来的包发出去（Linux 侧代表全平台的 renderer 行为）
+      - name: Smoke (linux only)
+        if: matrix.name == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2t64 || \
+          sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2
+          # chrome-sandbox 必须 setuid root，否则 Electron FATAL 中止
+          sudo chown root:root src/desktop/node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 src/desktop/node_modules/electron/dist/chrome-sandbox
+          cd src/desktop && xvfb-run -a npm run smoke
+
+      - name: Package
+        shell: bash
+        working-directory: src/desktop
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      # 只收安装包本身：release/ 下还有 *-unpacked 目录与 .blockmap，不必上传
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            src/desktop/release/*.dmg
+            src/desktop/release/*.zip
+            src/desktop/release/*.exe
+            src/desktop/release/*.AppImage
+            src/desktop/release/*.deb
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Resolve version
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -lh dist
+          cat > notes.md <<'EOF'
+          ## 安装
+
+          | 平台 | 下载 |
+          |---|---|
+          | macOS（Intel / Apple Silicon 通用） | `*-universal.dmg` 或 `*-universal-mac.zip` |
+          | Windows | `*.exe`（安装器）或 `*-win.zip`（免安装） |
+          | Linux | `*.AppImage` 或 `*.deb` |
+
+          安装包**未经签名与公证**，首次打开需要放行一次：
+
+          - **macOS**：`xattr -dr com.apple.quarantine /Applications/Polaris.app`，或右键 →
+            打开 → 仍要打开。用 zip 比 dmg 少一层隔离属性传播。
+          - **Windows**：SmartScreen 会拦，「更多信息 → 仍要运行」；或直接用 zip 免安装版。
+          - **Linux**：AppImage 需宿主有 `libnss3 libgtk-3-0 libasound2`；Ubuntu 24.04+ 的
+            AppArmor 限制或缺 SUID chrome-sandbox 时用 `--no-sandbox` 启动。
+
+          ## 首次使用
+
+          启动后填写你所在实验室的 Polaris 服务器地址（会打 `/api/health` 校验）。
+          之后可从菜单 Server…（Cmd+,）切换。
+
+          **服务器需要部署含 CORS 白名单的后端版本**，否则桌面端登录会失败——桌面端页面在
+          `app://polaris`，每个请求都跨域，旧版本后端在生产模式下会拒绝预检。
+          EOF
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            --title "Polaris ${{ steps.meta.outputs.tag }}" \
+            --notes-file notes.md \
+            dist/*
