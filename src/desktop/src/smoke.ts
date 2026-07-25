@@ -145,13 +145,21 @@ void app.whenReady().then(async () => {
     })()`)) as string,
   ) as { platformAttr: string | null; band: string; brandTop: number | null; brandLeft: number | null };
 
-  check('<html> 已标记桌面平台', geom.platformAttr === 'darwin', `attr=${geom.platformAttr}`);
-  check('标题栏留白变量已生效', geom.band !== '' && geom.band !== '0px', `--titlebar-h=${geom.band}`);
-  check(
-    '品牌标避开交通灯（top ≥ 34）',
-    geom.brandTop !== null && geom.brandTop >= 34,
-    `top=${geom.brandTop} left=${geom.brandLeft}`,
-  );
+  // 标题栏留白只在 macOS 需要：Windows/Linux 保留系统原生标题栏，页面不该预留、
+  // 也不该自己做拖拽区。两边都正向断言，免得哪天在非 macOS 上误开。
+  const isMac = process.platform === 'darwin';
+
+  check('<html> 已标记桌面平台', geom.platformAttr === process.platform, `attr=${geom.platformAttr}`);
+  if (isMac) {
+    check('标题栏留白变量已生效', geom.band !== '' && geom.band !== '0px', `--titlebar-h=${geom.band}`);
+    check(
+      '品牌标避开交通灯（top ≥ 34）',
+      geom.brandTop !== null && geom.brandTop >= 34,
+      `top=${geom.brandTop} left=${geom.brandLeft}`,
+    );
+  } else {
+    check('非 macOS 不预留标题栏', geom.band === '0px', `--titlebar-h=${geom.band}`);
+  }
 
   // 顶部留白必须是拖拽区：内容盖住了系统标题栏，不声明就拖不动窗口。
   // （主内容区顶栏的 .crumb/.spacer 同理，但那要登录后才存在，smoke 覆盖不到。）
@@ -159,7 +167,11 @@ void app.whenReady().then(async () => {
     `getComputedStyle(document.querySelector('.auth-page'), '::before')
        .getPropertyValue('-webkit-app-region')`,
   )) as string;
-  check('顶部留白是拖拽区', dragRegion.trim() === 'drag', `app-region=${dragRegion}`);
+  if (isMac) {
+    check('顶部留白是拖拽区', dragRegion.trim() === 'drag', `app-region=${dragRegion}`);
+  } else {
+    check('非 macOS 顶部无拖拽区', dragRegion.trim() !== 'drag', `app-region=${dragRegion}`);
+  }
 
   // 主内容顶栏要登录后才存在，这里注入一份同构 DOM 来验规则本身。
   // 重点是**高度**：.topbar 是 align-items:center，空的 .spacer 默认高度为 0，
@@ -183,8 +195,16 @@ void app.whenReady().then(async () => {
     })()`)) as string,
   ) as { spacerH: number; crumbH: number; spacerRegion: string; btnRegion: string };
 
-  check('顶栏空白是拖拽区', topbar.spacerRegion === 'drag', `region=${topbar.spacerRegion}`);
-  check('顶栏空白有可抓取的高度', topbar.spacerH >= 40, `spacer=${topbar.spacerH}px crumb=${topbar.crumbH}px`);
+  if (isMac) {
+    check('顶栏空白是拖拽区', topbar.spacerRegion === 'drag', `region=${topbar.spacerRegion}`);
+    check(
+      '顶栏空白有可抓取的高度',
+      topbar.spacerH >= 40,
+      `spacer=${topbar.spacerH}px crumb=${topbar.crumbH}px`,
+    );
+  } else {
+    check('非 macOS 顶栏无拖拽区', topbar.spacerRegion !== 'drag', `region=${topbar.spacerRegion}`);
+  }
   check('顶栏按钮不被拖拽区吞掉', topbar.btnRegion !== 'drag', `btn=${topbar.btnRegion}`);
 
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
