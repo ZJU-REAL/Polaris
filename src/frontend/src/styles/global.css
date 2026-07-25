@@ -556,14 +556,8 @@ select.input { padding-right: 8px; cursor: pointer; }
 /* zoom 0.91 ≈ 1/1.1：右侧详情面板抵消全局放大，恢复原始大小 */
 .split-detail { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; zoom: 0.91; }
 
-/* 窄屏（相关研究等 opt-in 双栏页）：双栏改上下堆叠，列表在上、详情在下 */
-@media (max-width: 920px) {
-  .split-stackable { flex-direction: column; }
-  .split-stackable .split-list {
-    width: 100%; max-height: 44vh; flex-shrink: 0;
-    border-right: none; border-bottom: 0.5px solid var(--border);
-  }
-}
+/* 窄屏下双栏改上下堆叠：规则已提升为 .split 的默认行为，见文件末尾
+   「响应式断点」一节。.split-stackable 保留为无副作用的历史别名。 */
 
 input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 
@@ -987,4 +981,152 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   }
   .paper-reader-body img, .fig-embed, figure { break-inside: avoid; page-break-inside: avoid; }
   .paper-reader-header h1 { font-size: 22px; }
+}
+
+/* ============================================================
+   响应式断点 — 移动设备适配（兜底级：不破版、能读、能轻操作）
+   ------------------------------------------------------------
+   两档断点，全站唯一口径；改这里必须同改 tokens.css 的 --bp-* 与
+   lib/useBreakpoint.ts 的 BP 常量（CSS 变量不能用在 @media 条件里）。
+     1024px  平板 / 小笔记本：双栏堆叠、留白收窄
+      768px  手机：关全局 zoom、侧栏改覆盖抽屉、顶栏收窄
+
+   关于 html{zoom:1.1}：@media 求值看真实视口 px，不受 zoom 影响，但
+   内部布局的可用宽度是「视口/1.1」。把关 zoom 的断点与主重排断点都
+   定在 768px，手机分支内「媒体 px == 布局 px」，后续不必再做换算。
+   ============================================================ */
+
+/* —— 通用工具类（基础态无副作用，窄屏才发力） —— */
+
+/* 宽表格的横滚壳：桌面上 .table 是 width:100%，包一层不改变任何表现 */
+.table-wrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* 重工作台（阅读器 / 写作三栏 / 代码分栏）的窄屏兜底：本期不重排交互，
+   只让它们整体横向平移，避免撑破外壳。用法是外层挂 .workbench-panx、
+   内层唯一子元素挂 .workbench-panx-inner。基础态完全不生效。 */
+.workbench-panx { min-width: 0; }
+
+/* .row 在窄屏默认允许折行；确实不能换行的行（分页器、工具条）挂 .row-nowrap */
+.row-nowrap { flex-wrap: nowrap !important; }
+
+/* ============================================================
+   <= 1024px — 平板 / 小笔记本
+   ============================================================ */
+@media (max-width: 1024px) {
+  /* 双栏（列表 + 详情）一律上下堆叠。覆盖相关研究 / 文献库 / 每日推送 /
+     Wiki 论文与概念 / 公共库浏览等全部 .split 页面。 */
+  .split { flex-direction: column; }
+  .split .split-list {
+    width: 100%; max-height: 44vh; flex-shrink: 0;
+    border-right: none; border-bottom: 0.5px solid var(--border);
+  }
+
+  .page { padding: 22px 18px 60px; }
+
+  /* 右侧抽屉不超出视口 */
+  .drawer { width: min(420px, 100vw - 32px); }
+}
+
+/* ============================================================
+   <= 768px — 手机
+   ============================================================ */
+@media (max-width: 768px) {
+  /* —— 关掉全局放大：手机屏本来就窄，放大 10% 等于凭空少 1/11 的宽度；
+        关掉后媒体查询值与布局值一致，.split-detail 的反向抵消一并归 1 —— */
+  html { zoom: 1; }
+  .split-detail { zoom: 1; }
+
+  /* —— 触屏基建 —— */
+  * { -webkit-tap-highlight-color: transparent; }
+  .content { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+  /* —— 侧栏改覆盖式抽屉（配合 AppShell 的 .app.nav-open）——
+        脱离 flex 流，主列独占全宽；默认滑出屏外，不占位也不可点。 */
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: min(280px, 84vw);
+    transform: translateX(-100%);
+    transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: 6px 0 28px rgba(10, 22, 44, 0.18);
+    z-index: 45;
+  }
+  .app.nav-open .sidebar { transform: none; }
+  .sidebar-scrim {
+    position: fixed; inset: 0; background: rgba(10, 22, 44, 0.28);
+    z-index: 44; animation: fadeUp 0.18s ease;
+  }
+  /* 手机上没有「图标轨道」形态：桌面的收起态在这里一律按完整抽屉渲染
+     （AppShell 也不会挂 .nav-collapsed，这条只是防御性兜底） */
+  .nav-collapsed .sidebar { width: min(280px, 84vw); }
+  .nav-collapsed .nav-item { justify-content: flex-start; gap: 9px; }
+  .nav-collapsed .nav-item .nav-label { display: inline; }
+
+  /* —— 顶栏收窄 —— */
+  .topbar {
+    gap: 8px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  /* 面包屑只留当前页，去掉上级与分隔符 */
+  .crumb { min-width: 0; }
+  .crumb > span { display: none; }
+  .crumb b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 搜索框收成图标按钮（不改 DOM，只藏文字） */
+  .searchbox {
+    min-width: 0; width: 32px; flex-shrink: 0;
+    padding: 0; justify-content: center;
+  }
+  .searchbox > span { display: none; }
+
+  /* —— 页面留白 —— */
+  .page {
+    padding: 14px 12px calc(48px + env(safe-area-inset-bottom, 0px));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  /* —— 不破版的关键一招：标签列自动折行 ——
+        全站 200+ 处「固定宽标签 + flexShrink:0」的两栏行靠这条自动堆叠。
+        确实不能换行的行显式挂 .row-nowrap。 */
+  .row { flex-wrap: wrap; }
+
+  /* 分段切换（全站 43 处标签条）：窄屏放不下时原本会把按钮压到断词
+     （「浏览记/录」），改成整条横向滚动、按钮不压缩不断词。 */
+  .segmented {
+    max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .segmented::-webkit-scrollbar { display: none; }
+  .segmented > button { flex-shrink: 0; white-space: nowrap; }
+
+  /* —— 宽内容兜底 —— */
+  .table-wrap > .table { min-width: 560px; }
+  /* 任务列表行：徽标 + 标题 + 进度 130 + 耗时 78 + 状态 134 + 箭头，定宽列
+     合计放不下窄屏，给最小宽度让整块横滚，而不是把标题列压没、时间戳折成三行 */
+  .table-wrap > .voyage-row { min-width: 720px; }
+  .workbench-panx { overflow-x: auto; overflow-y: hidden; }
+  .workbench-panx > .workbench-panx-inner { min-width: 900px; }
+
+  /* 抽屉铺满 */
+  .drawer { width: 100vw; border-left: none; }
+
+  /* 文献对话的会话历史栏：窄屏改浮层覆盖，展开时不再挤压对话区 */
+  .chat-shell { position: relative; }
+  .chat-shell .chat-history {
+    position: absolute; top: 0; left: 0; bottom: 0; z-index: 6;
+    box-shadow: 6px 0 22px rgba(10, 22, 44, 0.14);
+  }
+
+  /* 命令面板 / 弹窗贴边留白 */
+  .modal-scrim { padding: 12px; }
+}
+
+/* ============================================================
+   触屏（无 hover）：把「悬停才显形」的操作按钮改成常显，否则点不到
+   ============================================================ */
+@media (hover: none) {
+  .writer-file .writer-file-ops { display: flex; }
+  .panel-gutter .panel-gutter-btn { opacity: 1; }
+  .chat-history-item .chat-history-x { display: flex; }
+  .chat-chip-x { opacity: 1; }
 }

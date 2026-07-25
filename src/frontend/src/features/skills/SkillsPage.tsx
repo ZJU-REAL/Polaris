@@ -10,6 +10,7 @@ import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { tr } from '../../lib/i18n';
+import { useIsCompact } from '../../lib/useBreakpoint';
 import { useProject } from '../../app/project';
 import {
   api,
@@ -890,6 +891,7 @@ function EnabledPanel({ projectId }: { projectId: string }) {
 // ---- 页面 ----
 
 export function SkillsPage() {
+  const compact = useIsCompact();
   const queryClient = useQueryClient();
   const { currentProjectId } = useProject();
   const [view, setView] = useState<'library' | 'market'>('library');
@@ -1002,7 +1004,8 @@ export function SkillsPage() {
       <div
         style={{
           display: view === 'library' ? 'grid' : 'none',
-          gridTemplateColumns: 'minmax(0, 1fr) 320px',
+          // 窄屏放不下 320px 侧栏，改单列上下排（内联样式吃不到媒体查询，走 JS 断点）
+          gridTemplateColumns: compact ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) 320px',
           gap: 18,
           alignItems: 'start',
         }}

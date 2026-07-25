@@ -82,7 +82,9 @@ function FeedbackCard({
         <Icon name="chevron" size={13} style={{ color: 'var(--text-3)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform .12s', flexShrink: 0 }} />
         <TypePill type={fb.type} />
         <SeverityPill severity={fb.severity} />
-        <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {/* minWidth 给下限而不是 0：flex-basis 为 0 的标题在窄屏会被同排的
+            pill 挤成零宽整条消失，给下限后它会整体换行到自己一行 */}
+        <span style={{ flex: 1, minWidth: 160, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {fb.title}
         </span>
         {fb.module && (

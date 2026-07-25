@@ -502,7 +502,7 @@ function PapersPane({
           <PaperDetailPane paperId={selectedId} onWikiLink={onWikiLink} />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
-            {tr('从左侧选择一篇论文', 'Pick a paper from the list')}
+            {tr('从列表中选择一篇论文', 'Pick a paper from the list')}
           </div>
         )}
       </div>

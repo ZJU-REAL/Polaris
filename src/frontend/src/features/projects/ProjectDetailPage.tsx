@@ -235,7 +235,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
           {!embedded && <div className="h-eyebrow">{tr('课题设置', 'Topic Settings')}</div>}
           {editingName ? (
             <div className="row gap8" style={{ marginTop: 8 }}>
-              <input className="input" style={{ fontSize: 17, fontWeight: 650, width: 380 }} value={nameDraft}
+              <input className="input" style={{ fontSize: 17, fontWeight: 650, width: 380, maxWidth: '100%' }} value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)} />
               <button className="btn btn-primary sm" disabled={saving}
                 onClick={() => {

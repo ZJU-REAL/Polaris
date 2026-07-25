@@ -15,6 +15,8 @@ export interface SegmentedProps<V extends string> {
 export function Segmented<V extends string>({ options, value, onChange }: SegmentedProps<V>) {
   return (
     <div
+      // .segmented 只为窄屏服务：手机上按钮不再被压到断词，整条改横向滚动（见 global.css）
+      className="segmented"
       style={{
         display: 'inline-flex',
         background: 'var(--surface-2)',

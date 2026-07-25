@@ -2,7 +2,10 @@
 <html lang="zh">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover：配合 global.css 里的 env(safe-area-inset-*)，
+         让内容延伸到 iPhone 刘海/home 指示条区域而不被系统条挡住 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f7f9fc" />
     <!-- Polaris 品牌标（与 src/components/ui/PolarisLogo.tsx 同源） -->
     <link
       rel="icon"

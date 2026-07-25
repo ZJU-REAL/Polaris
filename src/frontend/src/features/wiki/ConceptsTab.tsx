@@ -329,7 +329,7 @@ export function ConceptsTab({ pid, libraryId, selectedId, onSelect, onOpenPaper,
           />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
-            {tr('从左侧选择一个概念', 'Pick a concept from the list')}
+            {tr('从列表中选择一个概念', 'Pick a concept from the list')}
           </div>
         )}
       </div>

@@ -177,7 +177,10 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
 // 表头与各行是独立 grid，列宽必须定宽才能上下对齐；状态列要放得下
 // 「评审中 under review」pill，操作列要放得下「图标 + 发起实验」，
 // 否则右对齐的操作区会向左溢出、盖住状态标签
-const LB_GRID = '36px minmax(0,1fr) 64px 150px 48px 48px 150px 136px';
+const LB_GRID = '36px minmax(220px,1fr) 64px 150px 48px 48px 150px 136px';
+// 标题列给 220px 下限、其余定宽列合计 632px、7 个 12px gap、左右 padding 36：
+// 合计 972。窄屏低于此宽度就整块横滚，而不是让标题列被挤成 0 宽整列消失。
+const LB_MIN_W = 972;
 
 function LeaderboardTab({
   pid,
@@ -241,117 +244,119 @@ function LeaderboardTab({
   }
 
   return (
-    <div>
-      {/* 表头 */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: LB_GRID,
-          gap: 12,
-          padding: '10px 18px',
-          borderBottom: '0.5px solid var(--border)',
-          fontSize: 10.5,
-          fontWeight: 650,
-          color: 'var(--text-3)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.04em',
-        }}
-      >
-        <span>#</span>
-        <span>{tr('想法', 'Idea')}</span>
-        <span style={{ textAlign: 'right' }}>Elo</span>
-        <span>{tr('四维 rubric', 'Rubric (4 dims)')}</span>
-        <span style={{ textAlign: 'right' }}>{tr('对局', 'Matches')}</span>
-        <span style={{ textAlign: 'right' }}>{tr('胜场', 'Wins')}</span>
-        <span>{tr('状态', 'Status')}</span>
-        <span />
-      </div>
-      {rows.map((r, i) => {
-        const promotable = canPromote && (r.status === 'candidate' || r.status === 'under_review');
-        return (
-          <div
-            key={r.id}
-            className="hoverable"
-            onClick={() => navigate(`/ideas/${r.id}`)}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: LB_GRID,
-              gap: 12,
-              alignItems: 'center',
-              padding: '12px 18px',
-              borderBottom: '0.5px solid var(--border)',
-            }}
-          >
-            <span
-              className="mono"
-              style={{ fontSize: 14, fontWeight: 700, color: i < 3 ? 'var(--accent-text)' : 'var(--text-3)' }}
+    <div className="table-wrap">
+      <div style={{ minWidth: LB_MIN_W }}>
+        {/* 表头 */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: LB_GRID,
+            gap: 12,
+            padding: '10px 18px',
+            borderBottom: '0.5px solid var(--border)',
+            fontSize: 10.5,
+            fontWeight: 650,
+            color: 'var(--text-3)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+          }}
+        >
+          <span>#</span>
+          <span>{tr('想法', 'Idea')}</span>
+          <span style={{ textAlign: 'right' }}>Elo</span>
+          <span>{tr('四维 rubric', 'Rubric (4 dims)')}</span>
+          <span style={{ textAlign: 'right' }}>{tr('对局', 'Matches')}</span>
+          <span style={{ textAlign: 'right' }}>{tr('胜场', 'Wins')}</span>
+          <span>{tr('状态', 'Status')}</span>
+          <span />
+        </div>
+        {rows.map((r, i) => {
+          const promotable = canPromote && (r.status === 'candidate' || r.status === 'under_review');
+          return (
+            <div
+              key={r.id}
+              className="hoverable"
+              onClick={() => navigate(`/ideas/${r.id}`)}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: LB_GRID,
+                gap: 12,
+                alignItems: 'center',
+                padding: '12px 18px',
+                borderBottom: '0.5px solid var(--border)',
+              }}
             >
-              {i + 1}
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
+              <span
+                className="mono"
+                style={{ fontSize: 14, fontWeight: 700, color: i < 3 ? 'var(--accent-text)' : 'var(--text-3)' }}
               >
-                {r.title}
+                {i + 1}
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {r.title}
+                </div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-3)',
+                    marginTop: 2,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {r.summary}
+                </div>
               </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: 'var(--text-3)',
-                  marginTop: 2,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {r.summary}
+              <span className="mono" style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--accent-text)', textAlign: 'right' }}>
+                {Math.round(r.elo_rating)}
+              </span>
+              <MiniScoreBars scores={r.scores} />
+              <span className="mono" style={{ fontSize: 12.5, textAlign: 'right' }}>{r.matches}</span>
+              <span className="mono" style={{ fontSize: 12.5, textAlign: 'right', color: 'var(--ok-tx)' }}>{r.wins}</span>
+              <StatusPill status={r.status} sm />
+              <div className="row gap6" style={{ justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
+                <button
+                  className="icon-btn"
+                  title={tr('辩论记录', 'Debate history')}
+                  onClick={() => onOpenMatches(r.id)}
+                  style={{ width: 26, height: 26 }}
+                >
+                  <Icon name="scale" size={13} />
+                </button>
+                {promotable && (
+                  <button
+                    className="btn btn-primary sm"
+                    disabled={running || promoteMutation.isPending}
+                    onClick={() => promoteMutation.mutate(r.id)}
+                  >
+                    {tr('晋级', 'Promote')}
+                  </button>
+                )}
+                {r.status === 'promoted' && (
+                  <button
+                    className="btn btn-soft sm"
+                    title={tr('从该想法发起实验', 'Start an experiment from this idea')}
+                    onClick={() => navigate(topicPath(pid, `experiment?new=${r.id}`))}
+                  >
+                    <Icon name="flask" size={12} />
+                    {tr('发起实验', 'Start experiment')}
+                  </button>
+                )}
               </div>
             </div>
-            <span className="mono" style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--accent-text)', textAlign: 'right' }}>
-              {Math.round(r.elo_rating)}
-            </span>
-            <MiniScoreBars scores={r.scores} />
-            <span className="mono" style={{ fontSize: 12.5, textAlign: 'right' }}>{r.matches}</span>
-            <span className="mono" style={{ fontSize: 12.5, textAlign: 'right', color: 'var(--ok-tx)' }}>{r.wins}</span>
-            <StatusPill status={r.status} sm />
-            <div className="row gap6" style={{ justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
-              <button
-                className="icon-btn"
-                title={tr('辩论记录', 'Debate history')}
-                onClick={() => onOpenMatches(r.id)}
-                style={{ width: 26, height: 26 }}
-              >
-                <Icon name="scale" size={13} />
-              </button>
-              {promotable && (
-                <button
-                  className="btn btn-primary sm"
-                  disabled={running || promoteMutation.isPending}
-                  onClick={() => promoteMutation.mutate(r.id)}
-                >
-                  {tr('晋级', 'Promote')}
-                </button>
-              )}
-              {r.status === 'promoted' && (
-                <button
-                  className="btn btn-soft sm"
-                  title={tr('从该想法发起实验', 'Start an experiment from this idea')}
-                  onClick={() => navigate(topicPath(pid, `experiment?new=${r.id}`))}
-                >
-                  <Icon name="flask" size={12} />
-                  {tr('发起实验', 'Start experiment')}
-                </button>
-              )}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -212,7 +212,7 @@ export function McpToolsContent() {
       {isLoading && <EmptyState icon="server" title={tr('加载中…', 'Loading…')} />}
       {isError && <EmptyState icon="server" title={tr('加载失败', 'Failed to load')} />}
       {data && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))', gap: 12 }}>
           {shown.map((t) => (
             <ToolCard key={t.name} t={t} />
           ))}
