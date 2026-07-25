@@ -20,6 +20,7 @@ import {
   type RpcRequest,
 } from '../../shared/contract';
 import { capabilityManifest } from '../capabilities';
+import { getSecret, secretsAvailable, setSecret } from '../secrets';
 import * as host from './methods.host';
 import * as local from './methods.local';
 
@@ -49,6 +50,15 @@ const HANDLERS: Record<MethodName, Handler> = {
   'host.copyText': (p) => host.copyText(asString(p, 'text')),
   'host.setBadgeCount': (p) => host.setBadgeCount(asNumber(p, 'count')),
   'host.capabilities': () => capabilityManifest(),
+  'host.secret.available': () => secretsAvailable(),
+  'host.secret.get': (p) => getSecret(asString(p, 'key')),
+  'host.secret.set': (p) => {
+    const value = (p as { value?: unknown } | null)?.value;
+    if (value !== null && typeof value !== 'string') {
+      throw new Error(`${ERR_INVALID_PARAMS}: value must be a string or null`);
+    }
+    return setSecret(asString(p, 'key'), value);
+  },
   // local.* 一期全部走到 agent 再以 ERR_CAPABILITY_UNAVAILABLE 结束（见 methods.local.ts）
   'local.latex.compile': (p) => local.latexCompile(p),
   'local.fs.pickFolder': (p) => local.pickFolder(p),

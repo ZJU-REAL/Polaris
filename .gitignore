@@ -10,7 +10,9 @@ __pycache__/
 htmlcov/
 
 # --- Node ---
-node_modules/
+# 不带尾斜杠：跨 worktree 开发时 node_modules 常常是个软链，`node_modules/`
+# 只匹配目录，会把软链漏进提交
+node_modules
 dist/
 *.tsbuildinfo
 .vite/

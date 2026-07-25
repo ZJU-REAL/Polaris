@@ -14,6 +14,9 @@ type Step = 1 | 2;
 
 const USERNAME_RE = /^[a-z0-9_]{3,32}$/;
 
+/** 上次登录用的邮箱/用户名。只存标识符，不存密码。 */
+const LAST_ACCOUNT_KEY = 'polaris.lastAccount';
+
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 400 && err.message.includes('LOGIN_BAD_CREDENTIALS')) {
@@ -82,7 +85,8 @@ export function LoginPage() {
   const { isAuthenticated, login, register } = useAuth();
   const [mode, setMode] = useState<Mode>('login');
   const [step, setStep] = useState<Step>(1); // 仅注册用：1 账号信息 / 2 设置密码
-  const [identifier, setIdentifier] = useState(''); // 登录：邮箱或用户名；注册：邮箱
+  // 记住上次登录的账号（只记账号，不记密码）
+  const [identifier, setIdentifier] = useState(() => localStorage.getItem(LAST_ACCOUNT_KEY) ?? '');
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -114,6 +118,7 @@ export function LoginPage() {
     mutationFn: async () => {
       if (mode === 'login') {
         await login(identifier, password);
+        localStorage.setItem(LAST_ACCOUNT_KEY, identifier.trim());
       } else {
         await register({
           email: identifier,

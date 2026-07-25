@@ -229,6 +229,28 @@ void app.whenReady().then(async () => {
   }
   check('渲染进程无 console 错误', consoleErrors.length === 0);
 
+  console.log('\n凭据存储（系统钥匙串）');
+  const secrets = JSON.parse(
+    (await win.webContents.executeJavaScript(`(async () => {
+      const p = window.polaris;
+      const available = await p.invoke('host.secret.available');
+      // 先备份现有会话，测完还回去——smoke 与正式应用共用同一个 userData
+      const before = await p.invoke('host.secret.get', { key: 'auth.token' });
+      const wrote = await p.invoke('host.secret.set', { key: 'auth.token', value: 'smoke-probe' });
+      const readBack = await p.invoke('host.secret.get', { key: 'auth.token' });
+      await p.invoke('host.secret.set', { key: 'auth.token', value: before });
+      const restored = await p.invoke('host.secret.get', { key: 'auth.token' });
+      // 白名单外的键必须被拒
+      const rogue = await p.invoke('host.secret.set', { key: 'evil', value: 'x' });
+      return JSON.stringify({ available, wrote, readBack, restoredOk: restored === before, rogue });
+    })()`)) as string,
+  ) as { available: boolean; wrote: boolean; readBack: string | null; restoredOk: boolean; rogue: boolean };
+
+  check('钥匙串可用', secrets.available === true);
+  check('会话可写入并读回', secrets.wrote === true && secrets.readBack === 'smoke-probe');
+  check('测试后原会话已还原', secrets.restoredOk === true);
+  check('白名单外的键被拒绝', secrets.rogue === false);
+
   if (process.env.POLARIS_SMOKE_SHOT) {
     const image = await win.webContents.capturePage();
     await writeFile(process.env.POLARIS_SMOKE_SHOT, image.toPNG());

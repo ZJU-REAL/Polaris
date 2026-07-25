@@ -90,3 +90,16 @@ async def test_login_wrong_password(client):
         data={"username": "carol@example.com", "password": "wrong"},
     )
     assert resp.status_code == 400
+
+
+async def test_session_lifetime_is_configurable_and_long_by_default():
+    """登录会话默认 30 天：24h 会让用户每天重登一次。
+
+    没有 refresh token 机制，所以有效期就是会话时长；要收紧改
+    POLARIS_SESSION_LIFETIME_SECONDS 即可，不必改代码。
+    """
+    from app.api.auth import get_jwt_strategy
+    from app.core.config import Settings, get_settings
+
+    assert Settings().session_lifetime_seconds == 60 * 60 * 24 * 30
+    assert get_jwt_strategy().lifetime_seconds == get_settings().session_lifetime_seconds

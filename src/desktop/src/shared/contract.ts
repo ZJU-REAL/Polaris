@@ -76,6 +76,11 @@ export interface Methods {
   /** Dock/任务栏角标（待审批数）。Windows 需 overlay icon，一期不做，静默忽略。 */
   'host.setBadgeCount': { params: { count: number }; result: void };
   'host.capabilities': { params: void; result: CapabilityManifest };
+  /* 凭据：会话令牌走系统钥匙串（safeStorage），不落明文 localStorage。
+     available=false 表示本机没有可用 keyring（Linux 常见），前端据此回落。 */
+  'host.secret.available': { params: void; result: boolean };
+  'host.secret.get': { params: { key: string }; result: string | null };
+  'host.secret.set': { params: { key: string; value: string | null }; result: boolean };
 
   /* ---- local.*：第二期的本地计算能力 ----
      现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把
