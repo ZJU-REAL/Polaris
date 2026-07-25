@@ -4040,6 +4040,10 @@ export const api = {
   getDailyCollections(entryId: string): Promise<DailyCollectionsRead> {
     return request<DailyCollectionsRead>(`/daily/papers/${entryId}/collections`);
   },
+  /** 把这篇每日论文的 PDF 下到平台（幂等）；下完可在线阅读。400=不支持的来源，502=下载失败。 */
+  fetchDailyPaperPdf(entryId: string): Promise<DailyPaperDetail> {
+    return request<DailyPaperDetail>(`/daily/papers/${entryId}/fetch-pdf`, { method: 'POST' });
+  },
   /** 触发单篇 AI 解读编译（同步等待，约半分钟）；409 detail=COMPILE_IN_PROGRESS，502 编译失败。 */
   compileDailyPaper(entryId: string): Promise<{ entry_id: string; wiki_content: string; model: string }> {
     return request<{ entry_id: string; wiki_content: string; model: string }>(

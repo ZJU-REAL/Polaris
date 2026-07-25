@@ -631,6 +631,24 @@ async def daily_paper_ids(session: AsyncSession) -> list[uuid.UUID]:
 _COMPILING: set[uuid.UUID] = set()
 
 
+async def fetch_entry_pdf(
+    session: AsyncSession, *, entry_id: uuid.UUID, user_id: uuid.UUID
+) -> Paper:
+    """给某条每日论文补下 PDF + 抽全文（幂等：已有 PDF 直接返回）。
+
+    每日池是全实验室共享的，且池论文通常不属于任何库/书架，走不了
+    ``/papers/{id}/fetch-pdf`` 的成员可见性兜底——故按 entry 授权单开一条。
+    """
+    from app.services.papers import fetch_pdf
+
+    entry = await session.get(DailyFeedEntry, entry_id)
+    if entry is None:
+        raise DailyEntryNotFoundError(str(entry_id))
+    paper = await session.get(Paper, entry.paper_id)
+    assert paper is not None  # 外键保证
+    return await fetch_pdf(session, paper, user_id=user_id)
+
+
 async def compile_entry_wiki(
     session: AsyncSession, *, entry_id: uuid.UUID, user_id: uuid.UUID
 ) -> DailyFeedEntry:

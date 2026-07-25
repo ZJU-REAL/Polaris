@@ -158,7 +158,7 @@ function DailyDetailPane({
 
   // 下载原文：把 PDF 抓进平台（顺带抽全文/分块），成功后按钮变「阅读原文」
   const fetchPdfMutation = useMutation({
-    mutationFn: () => api.requestPaperPdf(paper!.paper_id),
+    mutationFn: () => api.fetchDailyPaperPdf(entryId),
     onSuccess: () => {
       toast(tr('已下载原文，可以在线阅读了', 'PDF fetched — you can read it here now'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });

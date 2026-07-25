@@ -337,6 +337,29 @@ async def chat_with_daily_pool(
     return _chat_stream_response(messages, sources, user_id=user.id, project_id=None)
 
 
+@router.post("/papers/{entry_id}/fetch-pdf", response_model=DailyPaperDetail)
+async def fetch_entry_pdf(
+    entry_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DailyPaperDetail:
+    """把这篇每日论文的 PDF 下到平台（幂等），下完即可在线阅读。
+
+    每日池论文通常不属于任何库/书架，走不了 /papers/{id}/fetch-pdf 的成员可见性兜底，
+    故按 entry 授权单开一条；每日推送全实验室共享，登录即可。
+    """
+    try:
+        await daily_service.fetch_entry_pdf(session, entry_id=entry_id, user_id=user.id)
+    except daily_service.DailyEntryNotFoundError as exc:
+        raise _NOT_FOUND from exc
+    except papers_service.PdfSourceUnsupportedError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="PDF_SOURCE_UNSUPPORTED") from e
+    except papers_service.PdfFetchFailedError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="PDF_FETCH_FAILED") from e
+    item = await daily_service.get_entry_item(session, entry_id=entry_id, user_id=user.id)
+    return DailyPaperDetail(**item)
+
+
 @router.post("/papers/{entry_id}/compile", response_model=DailyCompileResult)
 async def compile_entry(
     entry_id: uuid.UUID,
