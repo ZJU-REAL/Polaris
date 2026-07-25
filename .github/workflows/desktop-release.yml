@@ -24,6 +24,9 @@ on:
         description: "手动发版时的版本号（如 v0.2.0）"
         required: true
 
+# 手动触发一律发 draft：手动跑要么是验证三平台出包、要么是临时构建，
+# 都该先过目再公开。只有 push v* tag 才直接发布。
+
 jobs:
   build:
     strategy:
@@ -166,7 +169,11 @@ jobs:
           **服务器需要部署含 CORS 白名单的后端版本**，否则桌面端登录会失败——桌面端页面在
           `app://polaris`，每个请求都跨域，旧版本后端在生产模式下会拒绝预检。
           EOF
-          gh release create "${{ steps.meta.outputs.tag }}" \
+          DRAFT=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DRAFT="--draft"
+          fi
+          gh release create "${{ steps.meta.outputs.tag }}" $DRAFT \
             --title "Polaris ${{ steps.meta.outputs.tag }}" \
             --notes-file notes.md \
             dist/*
