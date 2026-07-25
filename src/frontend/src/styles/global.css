@@ -289,10 +289,6 @@ input {
 /* 标签行：标签在左、操作靠右（marginLeft:auto）。窄屏允许换行，
    否则标签组和按钮同排会把两边都挤扁。 */
 .page-tabs { flex-wrap: wrap; gap: 10px; align-items: center; }
-/* 技能页顶部行：标签靠左，其余（导入 / 新建）自动推到右侧。
-   这一行的内容来自同一个片段，没有独立容器可以挂 margin-left。 */
-.skills-top > :not(:first-child) { margin-left: 0; }
-.skills-top > :nth-child(2) { margin-left: auto; }
 
 /* 页头右侧操作区（原为组件内联样式，挪到这里以便窄屏覆盖） */
 .page-head-actions { flex-shrink: 0; margin-left: 16px; }

@@ -941,37 +941,36 @@ export function SkillsPage() {
   return (
     <div className="page fadeup">
       {/* —— 顶部一行：技能库 / 技能市场靠左，导入与新建靠右 —— */}
-      <div className="row page-tabs skills-top" style={{ marginBottom: 14 }}>
-          <>
-            <Segmented
-              options={[
-                { v: 'library', label: tr('技能库', 'Library') },
-                { v: 'market', label: tr('技能市场', 'Market') },
-              ]}
-              value={view}
-              onChange={setView}
+      {/* —— 顶部一行：技能库 / 技能市场靠左，导入与新建靠右 —— */}
+      <div className="row page-tabs" style={{ marginBottom: 14 }}>
+        <Segmented
+          options={[
+            { v: 'library', label: tr('技能库', 'Library') },
+            { v: 'market', label: tr('技能市场', 'Market') },
+          ]}
+          value={view}
+          onChange={setView}
+        />
+        {view === 'library' && (
+          <div className="row gap8" style={{ marginLeft: 'auto' }}>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json,application/json"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                void onImportFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
             />
-            {view === 'library' && (
-              <>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    void onImportFile(e.target.files?.[0]);
-                    e.target.value = '';
-                  }}
-                />
-                <button className="btn btn-soft" disabled={importMutation.isPending} onClick={() => importInputRef.current?.click()}>
-                  {tr('导入', 'Import')}
-                </button>
-                <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
-                  <Icon name="plus" size={14} /> {tr('新建技能', 'New skill')}
-                </button>
-              </>
-            )}
-          </>
+            <button className="btn btn-soft" disabled={importMutation.isPending} onClick={() => importInputRef.current?.click()}>
+              {tr('导入', 'Import')}
+            </button>
+            <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
+              <Icon name="plus" size={14} /> {tr('新建技能', 'New skill')}
+            </button>
+          </div>
+        )}
       </div>
 
       {view === 'market' && <MarketView />}
