@@ -16,19 +16,8 @@ if (!container) {
   throw new Error('#root element not found');
 }
 
-const root = createRoot(container);
-
-// 桌面端先把钥匙串里的会话读出来再渲染：AuthProvider 在初始化时同步取 token，
-// 晚一步就会先闪一下登录页。web 端 installDesktopTokenStore 直接返回。
-void import('./lib/session')
-  .then(({ installDesktopTokenStore }) => installDesktopTokenStore())
-  .catch(() => {
-    /* 钥匙串不可用：保持 localStorage，不阻断启动 */
-  })
-  .finally(() => {
-    root.render(
-      <StrictMode>
-        <App />
-      </StrictMode>,
-    );
-  });
+createRoot(container).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);

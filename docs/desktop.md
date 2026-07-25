@@ -80,6 +80,10 @@ clipboard / Notification 全部按 https 页面的规则工作，**前端一行�
 - 分享链接用 `portalUrl()` 而不是 `window.location.origin`：这些链接是给别人用浏览器打开的，
   桌面端必须指向服务器上的 web 门户。
 - 系统通知走 `lib/desktop-notify.ts`，只发「需要人介入」与「终态」事件，且只在窗口失焦时发。
+- **登录令牌就放 localStorage，不要再改用 Electron 的 safeStorage。** 试过，退回了：
+  未签名/ad-hoc 签名的包每次构建签名都不同，钥匙串 ACL 对不上，macOS 每次启动都弹
+  授权框，用户体验很差。要用钥匙串的前提是先有稳定的 Developer ID 签名。会话本身靠
+  `POLARIS_SESSION_LIFETIME_SECONDS`（默认 30 天）保持，不依赖钥匙串。
 
 ## 开发与打包
 

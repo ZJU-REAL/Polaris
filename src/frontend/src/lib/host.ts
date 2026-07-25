@@ -118,27 +118,6 @@ export async function invokeHost(method: string, params?: unknown): Promise<unkn
   return await b.invoke(method, params);
 }
 
-/* —— 凭据（系统钥匙串）—— */
-
-/** 本机是否有可用的钥匙串。Linux 上没有 keyring 时为 false，调用方应回落。 */
-export async function secretsAvailable(): Promise<boolean> {
-  const b = bridge();
-  if (!b) return false;
-  return (await b.invoke('host.secret.available')) === true;
-}
-
-export async function getSecret(key: string): Promise<string | null> {
-  const b = bridge();
-  if (!b) return null;
-  return (await b.invoke('host.secret.get', { key })) as string | null;
-}
-
-export async function setSecret(key: string, value: string | null): Promise<boolean> {
-  const b = bridge();
-  if (!b) return false;
-  return (await b.invoke('host.secret.set', { key, value })) === true;
-}
-
 /** 订阅宿主事件，返回取消订阅函数（web 端返回 no-op）。 */
 export function onHostEvent(handler: (event: HostEvent) => void): () => void {
   const b = bridge();
