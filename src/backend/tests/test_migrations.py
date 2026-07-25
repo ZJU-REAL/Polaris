@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "47b973fb7e13"  # direction_libraries.is_public 个人/公共归属（P10）
-PREV_REVISION = "3ecc41527559"  # users.settings 个人设置 JSON 列（可选全文索引开关）
+HEAD_REVISION = "49ddb68e7cf2"  # email_verification_codes 邮箱验证码表
+PREV_REVISION = "f2d34705e152"  # 每日新论文池（Daily Paper）
 
 
 def _make_config(db_path: Path) -> Config:
@@ -248,13 +248,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "topic_source_libraries" in columns["_tables"]
     assert columns["topic_source_libraries"] == {"topic_id", "library_id", "created_at"}
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（3ecc41527559，users.settings）。
-    # 该步只回退本迁移（direction_libraries：删 is_public 归属列），其余结构不动。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（f2d34705e152，每日新论文池）。
+    # 该步只回退本迁移（删 email_verification_codes 表），其余结构不动。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    # 本迁移回退后 is_public 删除；上一版 users.settings 仍在，P9e statement 仍在
-    assert "is_public" not in columns["direction_libraries"]
+    # 本迁移回退后验证码表消失；更早的 is_public / users.settings / P9e statement 都还在
+    assert "email_verification_codes" not in columns["_tables"]
+    assert "is_public" in columns["direction_libraries"]
     assert "settings" in columns["users"]
     assert "statement" in columns["projects"]
     assert "definition" not in columns["projects"]
@@ -295,7 +296,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
     assert "manuscript_file_versions" in columns["_tables"]
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
-    # 本迁移回退只删 direction_libraries.is_public；users.settings 仍在
+    # 本迁移回退只删 email_verification_codes 表；users.settings 仍在
     assert "settings" in columns["users"]
     assert "project_invites" in columns["_tables"]
     assert "affiliations" in columns["papers"]
