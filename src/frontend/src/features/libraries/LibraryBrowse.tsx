@@ -464,12 +464,7 @@ function PaperDetailPane({
                 PDF
               </span>
             )}
-            {(paper.note_count ?? 0) > 0 && (
-              <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
-                <Icon name="pen" size={10} />
-                {tr(`${paper.note_count} 条笔记`, `${paper.note_count} notes`)}
-              </span>
-            )}
+            {/* 笔记数不在这里重复：下方「我的笔记」区标题已带计数 */}
           </div>
           <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
             {paper.title}
@@ -776,6 +771,30 @@ function PaperDetailPane({
               >
                 {tr('个人版', 'Personal')}
               </span>
+              <div className="row gap6" style={{ marginLeft: 'auto' }}>
+                <button
+                  className="btn btn-soft sm"
+                  title={tr('全屏专注阅读', 'Full-screen focused reading')}
+                  onClick={() => {
+                    setReaderPrint(false);
+                    setReaderOpen(true);
+                  }}
+                >
+                  <Icon name="book" size={13} />
+                  {tr('阅览模式', 'Reading mode')}
+                </button>
+                <button
+                  className="btn btn-ghost sm"
+                  title={tr('打开阅览页并唤起打印，另存为 PDF', 'Open the reader and print to save as PDF')}
+                  onClick={() => {
+                    setReaderPrint(true);
+                    setReaderOpen(true);
+                  }}
+                >
+                  <Icon name="download" size={13} />
+                  {tr('导出 PDF', 'Export PDF')}
+                </button>
+              </div>
             </div>
             <Markdown source={personalWiki} onWikiLink={onWikiLink} renderFigure={renderFigure} />
           </>
@@ -804,6 +823,8 @@ function PaperDetailPane({
       {readerOpen && (
         <PaperReader
           paper={paper}
+          /* 库版 wiki 不存在时阅览个人版（正文不在 paper 上，显式传入） */
+          wikiContent={paper.wiki_content ?? personalWiki}
           renderFigure={renderFigure}
           onWikiLink={onWikiLink}
           onFilterAuthor={(name) => {

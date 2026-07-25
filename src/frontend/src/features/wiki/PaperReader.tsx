@@ -19,6 +19,7 @@ export function PaperReader({
   onFilterAuthor,
   onClose,
   autoPrint,
+  wikiContent,
 }: {
   paper: PaperDetail;
   renderFigure: (n: number) => ReactNode;
@@ -28,6 +29,8 @@ export function PaperReader({
   onClose: () => void;
   /** 打开后自动唤起打印对话框（「导出 PDF」一步直达） */
   autoPrint?: boolean;
+  /** 正文覆写：库版 wiki 不在 paper 上时（如个人版解读）传进来阅览 */
+  wikiContent?: string | null;
 }) {
   // 打开即打印：等一帧让正文（含图）渲染完再唤起打印
   useEffect(() => {
@@ -126,9 +129,13 @@ export function PaperReader({
             </div>
           )}
 
-          {paper.wiki_content ? (
+          {(wikiContent ?? paper.wiki_content) ? (
             <div className="paper-reader-body">
-              <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
+              <Markdown
+                source={(wikiContent ?? paper.wiki_content)!}
+                onWikiLink={onWikiLink}
+                renderFigure={renderFigure}
+              />
             </div>
           ) : (
             <p className="muted" style={{ fontSize: 13 }}>
