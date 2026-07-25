@@ -19,6 +19,7 @@ import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import { clickable } from '../../lib/a11y';
 import {
+  ApiError,
   api,
   type MyMeta,
   type PaperDetail,
@@ -48,6 +49,7 @@ import {
   useDebounced,
 } from '../wiki/shared';
 import { READING_STATUS, ReadingDot, readerFrom } from '../reading/shared';
+import { NoteCard } from '../reading/NotesPanel';
 import { AddToButton } from '../library/AddToPopover';
 
 // 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
@@ -200,6 +202,118 @@ const PaperRow = memo(function PaperRow({
   prev.p === next.p && prev.active === next.active && prev.checked === next.checked && prev.selectMode === next.selectMode,
 );
 
+/* 「我的笔记」折叠区：GET/POST /papers/{id}/notes 对全员开放（内容池可读即可写自己的笔记），
+   所以非成员的只读浏览也能记笔记。后端只返回本人的笔记，因此列出来的每条都可以改/删。
+   列表按需拉取（展开才请求），收起时计数用详情里的 note_count（同样是本人条数）。 */
+function MyNotesSection({
+  libraryId,
+  paperId,
+  noteCount,
+}: {
+  libraryId: string;
+  paperId: string;
+  noteCount: number;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const notesQuery = useQuery({
+    queryKey: ['paper-notes', paperId],
+    queryFn: () => api.listPaperNotes(paperId),
+    enabled: open,
+    retry: false,
+  });
+  const notes = notesQuery.data ?? [];
+
+  // 笔记增删改后：本身的列表 + 详情 note_count + 列表/搜索行 + 库笔记本
+  const refresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['paper-notes', paperId] });
+    void queryClient.invalidateQueries({ queryKey: ['paper', libraryId, paperId] });
+    void queryClient.invalidateQueries({ queryKey: ['lib-papers', libraryId] });
+    void queryClient.invalidateQueries({ queryKey: ['lib-search', libraryId] });
+    void queryClient.invalidateQueries({ queryKey: ['project-notes', libraryId] });
+  }, [queryClient, libraryId, paperId]);
+
+  const createMutation = useMutation({
+    mutationFn: () => api.createPaperNote(paperId, draft.trim()),
+    onSuccess: () => {
+      toast(tr('笔记已保存', 'Note saved'), 'ok');
+      setDraft('');
+      refresh();
+    },
+    onError: (e) =>
+      toast(`${tr('保存失败：', 'Save failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const count = notesQuery.data ? notes.length : noteCount;
+
+  return (
+    <div className="card" style={{ marginTop: 18, overflow: 'hidden' }}>
+      <div
+        className="row"
+        onClick={() => setOpen((o) => !o)}
+        style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
+      >
+        <span className="row gap6" style={{ fontSize: 12.5, fontWeight: 650 }}>
+          <Icon name="pen" size={12} style={{ color: 'var(--text-3)' }} />
+          {tr('我的笔记', 'My notes')}
+          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
+            · {count}
+          </span>
+        </span>
+        <Icon
+          name="chevDown"
+          size={14}
+          style={{ color: 'var(--text-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+        />
+      </div>
+      {open && (
+        <div style={{ padding: '0 16px 14px' }}>
+          {notesQuery.isLoading ? (
+            <div className="empty" style={{ padding: 12 }}>
+              {tr('加载笔记…', 'Loading notes…')}
+            </div>
+          ) : notesQuery.isError ? (
+            <EmptyState
+              compact
+              icon="x"
+              title={tr('笔记暂时加载不出来', 'Notes failed to load')}
+              desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
+            />
+          ) : notes.length === 0 ? (
+            <div className="empty" style={{ padding: '4px 0 12px', textAlign: 'left' }}>
+              {tr('还没有笔记，在下面写第一条。', 'No notes yet — write your first one below.')}
+            </div>
+          ) : (
+            notes.map((n) => <NoteCard key={n.id} note={n} canEdit onSaved={refresh} />)
+          )}
+          <textarea
+            className="textarea"
+            style={{ width: '100%', minHeight: 72, maxHeight: 200, fontSize: 12.5, resize: 'vertical' }}
+            placeholder={tr('记下想法、疑问或要点，支持 Markdown…', 'Jot down ideas, questions or key points — Markdown supported…')}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className="row" style={{ marginTop: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+              {tr('笔记只有你自己看得到。', 'Only you can see your notes.')}
+            </span>
+            <button
+              className="btn btn-primary sm"
+              disabled={createMutation.isPending || !draft.trim()}
+              onClick={() => createMutation.mutate()}
+            >
+              <Icon name="pen" size={13} />
+              {createMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存笔记', 'Save note')}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PaperDetailPane({
   libraryId,
   paperId,
@@ -248,13 +362,56 @@ function PaperDetailPane({
       toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
+  /* —— 个人版解读：这个库没编译过这篇时，读/生成本人个人库条目里的个人版（与阅读页 InfoPanel 同一套 query key）——
+     POST /papers/{id}/personal-wiki 不校验成员身份（内容池全平台可读），费用记个人额度；
+     已有库版 wiki 时后端返回 409，所以入口只在 !wiki_content 时出现。 */
+  const needPersonal = !!paper && !paper.wiki_content;
+  const libStateQuery = useQuery({
+    queryKey: ['library-state', paperId],
+    queryFn: () => api.getLibraryState(paperId),
+    enabled: needPersonal,
+    retry: false,
+  });
+  const entryId = libStateQuery.data?.entry_id ?? null;
+  const entryQuery = useQuery({
+    queryKey: ['library-entry', entryId],
+    queryFn: () => api.getLibraryEntry(entryId!),
+    enabled: needPersonal && !!entryId,
+    retry: false,
+  });
+  const personalWikiMutation = useMutation({
+    mutationFn: () => api.compilePersonalWiki(paperId, paper?.project_id ?? null),
+    onSuccess: () => {
+      toast(tr('个人版解读已生成', 'Personal wiki generated'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['library-state', paperId] });
+      void queryClient.invalidateQueries({ queryKey: ['library-entry'] });
+      void queryClient.invalidateQueries({ queryKey: ['library'] });
+    },
+    onError: (e) => {
+      // 409：这期间这篇已经有库版解读了 —— 刷新详情就能看到公共库那份
+      if (e instanceof ApiError && e.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: ['paper', libraryId, paperId] });
+        toast(tr('这篇已经有公共库的解读了，正在刷新。', 'This paper already has a shared library wiki — refreshing.'), 'info');
+        return;
+      }
+      toast(`${tr('生成失败：', 'Failed to generate: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+    },
+  });
+  /* 优先用个人库条目里的正文；刚生成完条目还没刷新到时先用返回值兜底。
+     面板不随选中项重挂载 → mutation 状态会跨论文残留，用 paper_id 兜住 + 换论文时 reset。 */
+  const justGenerated =
+    personalWikiMutation.data?.paper_id === paperId ? personalWikiMutation.data.wiki_content : null;
+  const personalWiki = needPersonal ? entryQuery.data?.wiki_content ?? justGenerated : null;
+  const resetPersonalWiki = personalWikiMutation.reset;
+
   // 换论文时收起本地开合状态（面板不随选中项重挂载，得自己收）
   useEffect(() => {
     setAbstractOpen(false);
     setConceptsOpen(false);
     setAffilsOpen(false);
     setReaderOpen(false);
-  }, [paperId]);
+    resetPersonalWiki();
+  }, [paperId, resetPersonalWiki]);
 
   // 正文 ![[fig:N]] 嵌入图（与文献追踪同款渲染；图片端点对全员开放）
   const figures = usePaperFigures(paper);
@@ -541,6 +698,9 @@ function PaperDetailPane({
         </div>
       )}
 
+      {/* —— 我的笔记（个人维度，只读浏览也能写） —— */}
+      <MyNotesSection libraryId={libraryId} paperId={paper.id} noteCount={paper.note_count ?? 0} />
+
       {/* —— 重要图片画廊（只读：不给提取/重新提取入口，那是管理员操作） —— */}
       <FiguresSection paper={paper} readOnly defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)} />
 
@@ -591,9 +751,52 @@ function PaperDetailPane({
             </div>
             <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
           </>
+        ) : personalWiki ? (
+          <>
+            <div
+              className="row gap8"
+              style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
+            >
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+                {tr('AI 图文介绍', 'AI intro')}
+              </span>
+              <span
+                className="mono"
+                title={tr(
+                  '这个库里没有这篇的解读，这是你自己生成的个人版。',
+                  'This library has no wiki for the paper; this is the personal version you generated.',
+                )}
+                style={{
+                  fontSize: 10,
+                  color: 'var(--accent-text)',
+                  background: 'var(--accent-soft)',
+                  padding: '1px 7px',
+                  borderRadius: 999,
+                }}
+              >
+                {tr('个人版', 'Personal')}
+              </span>
+            </div>
+            <Markdown source={personalWiki} onWikiLink={onWikiLink} renderFigure={renderFigure} />
+          </>
         ) : (
-          <div className="empty" style={{ padding: 20 }}>
-            {tr('这篇还没有 AI 图文介绍。', 'No AI intro for this paper yet.')}
+          <div className="col" style={{ alignItems: 'center', gap: 8, padding: '18px 20px' }}>
+            <div className="empty" style={{ padding: 0 }}>
+              {tr('这篇还没有 AI 图文介绍。', 'No AI intro for this paper yet.')}
+            </div>
+            <button
+              className="btn btn-soft sm"
+              disabled={personalWikiMutation.isPending || libStateQuery.isLoading || entryQuery.isLoading}
+              onClick={() => personalWikiMutation.mutate()}
+            >
+              <Icon name="sparkle" size={12} />
+              {personalWikiMutation.isPending
+                ? tr('生成中…（约 1 分钟）', 'Generating… (~1 min)')
+                : tr('生成我的解读', 'Generate my wiki')}
+            </button>
+            <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+              {tr('将使用你的模型额度，生成只有你能看到的个人版解读。', 'Uses your model quota to generate a personal wiki only you can see.')}
+            </span>
           </div>
         )}
       </div>
