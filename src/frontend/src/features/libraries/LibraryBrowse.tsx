@@ -129,12 +129,21 @@ function PaperRow({
   );
 }
 
-function PaperDetailPane({ paperId, onWikiLink }: { paperId: string; onWikiLink: WikiLinkHandler }) {
+function PaperDetailPane({
+  libraryId,
+  paperId,
+  onWikiLink,
+}: {
+  libraryId: string;
+  paperId: string;
+  onWikiLink: WikiLinkHandler;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
+  // 库作用域取详情：锁定本库那份成员行，相关度/状态/wiki 不会串到该论文在别的库的副本
   const { data: paper, isLoading, isError } = useQuery({
-    queryKey: ['paper', paperId],
-    queryFn: () => api.getPaper(paperId),
+    queryKey: ['paper', libraryId, paperId],
+    queryFn: () => api.getLibraryPaper(libraryId, paperId),
     retry: false,
   });
 
@@ -503,6 +512,7 @@ function PapersPane({
       <div className="split-detail">
         {selectedId ? (
           <PaperDetailPane
+            libraryId={libraryId}
             paperId={selectedId}
             onWikiLink={onWikiLink}
           />

@@ -540,10 +540,14 @@ async def extract_paper_figures(
     paper_id: uuid.UUID,
     force: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_llm_task),
 ) -> PaperFiguresResponse:
-    """提取嵌入图 + LLM 筛选注释；已有 figures 且非 force 时幂等直返。"""
-    view = await _get_member_paper(session, paper_id, user, include_pool=True)
+    """提取嵌入图 + LLM 筛选注释；已有 figures 且非 force 时幂等直返。
+
+    库维护动作（写共享的 paper.figures + 调视觉模型），故与重新编译同口径：
+    不开池级兜底，只有对该论文所在库有管理权的人可调。
+    """
+    view = await _get_member_paper(session, paper_id, user)
     paper = view.paper
     if paper.figures is not None and not force:
         return PaperFiguresResponse(figures=[PaperFigure(**f) for f in paper.figures])

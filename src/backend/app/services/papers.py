@@ -342,12 +342,23 @@ async def _pool_paper_view(
     paper = await session.get(Paper, paper_id, options=options)
     if paper is None:
         return None
-    # P5c 方向库全实验室可读：论文只要在任一方向库有成员行，任何登录用户可读。
+    # P5c 公共方向库全实验室可读：论文在任一**公共**库有成员行时，任何登录用户可读；
+    # 个人库（is_public=false）只对归属人放行，与 library_visible_to 的口径一致——
+    # 否则别人私有个人库里的论文可被任意用户凭 paper_id 读到。
     # 视角取确定性成员行（优先有 wiki 解读的，其次最早入库的）；无课题上下文
     # （project_id=None：伴读不带参考检索、LLM 记账归个人）。
+    from app.models.library_direction import DirectionLibrary
+
     shared_stmt = (
         select(LibraryPaper)
-        .where(LibraryPaper.paper_id == paper_id)
+        .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
+        .where(
+            LibraryPaper.paper_id == paper_id,
+            or_(
+                DirectionLibrary.is_public.is_(True),
+                DirectionLibrary.submitted_by == user_id,
+            ),
+        )
         .order_by(LibraryPaper.wiki_content.is_(None), LibraryPaper.created_at)
         .limit(1)
     )
