@@ -10,6 +10,8 @@ import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { portalUrl } from '../../lib/endpoint';
+import { copyText } from '../../lib/clipboard';
 import { useLibraries } from '../libraries/hooks';
 import { LibraryPicker } from '../libraries/LibraryPicker';
 
@@ -194,9 +196,10 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
     onError: (err) => toast(`${tr('撤销失败：', 'Failed to revoke: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
   const copyInvite = (token: string) => {
-    void navigator.clipboard.writeText(`${window.location.origin}/join/${token}`).then(
-      () => toast(tr('邀请链接已复制', 'Invite link copied'), 'ok'),
-      () => toast(tr('复制失败，请手动复制', 'Copy failed — please copy manually'), 'error'),
+    void copyText(portalUrl(`/join/${token}`)).then((ok) =>
+      ok
+        ? toast(tr('邀请链接已复制', 'Invite link copied'), 'ok')
+        : toast(tr('复制失败，请手动复制', 'Copy failed — please copy manually'), 'error'),
     );
   };
 
@@ -432,7 +435,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
                 {invites!.map((inv) => (
                   <div key={inv.id} className="row gap8" style={{ padding: '7px 10px', background: 'var(--surface-2)', borderRadius: 9 }}>
                     <span className="mono" style={{ fontSize: 11, color: 'var(--text-2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {`${window.location.origin}/join/${inv.token}`}
+                      {portalUrl(`/join/${inv.token}`)}
                     </span>
                     <span style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
                       {tr(

@@ -1,4 +1,7 @@
 import { tr } from './i18n';
+import { apiBase } from './endpoint';
+import { readToken, writeToken } from './token-store';
+import { LocalUnavailable, noteLocalFailure, resolveLocalHandler } from './local-routes';
 /* ============================================================
    Polaris API client — thin fetch wrapper.
    baseURL /api (proxied to FastAPI at :8000 in dev), JSON,
@@ -10,8 +13,8 @@ import { tr } from './i18n';
    M1 契约见 docs/api-m1.md（Projects / Voyages / Gates / Admin LLM）。
    ============================================================ */
 
-const BASE = '/api';
-const TOKEN_KEY = 'polaris.token';
+/* baseURL 与 token 后端都经抽象层解析：web 端 apiBase() === '/api'、token 走
+   localStorage，与改造前逐字等价；桌面端由 Electron 注入服务器地址。 */
 
 export class ApiError extends Error {
   constructor(
@@ -26,24 +29,34 @@ export class ApiError extends Error {
 }
 
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return readToken();
 }
 
 export function setToken(token: string | null): void {
-  if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
-  } else {
-    localStorage.removeItem(TOKEN_KEY);
-  }
+  writeToken(token);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // 本地能力优先（一期路由表为空，这里恒为 null）。只有 LocalUnavailable 才静默
+  // 回落服务器——本地跑出来的业务错误（例如 LaTeX 语法错）是正常结果，不能因此
+  // 再去服务器跑一遍：双倍开销、诊断信息还对不上。
+  const method = (init.method ?? 'GET').toUpperCase();
+  const local = resolveLocalHandler(method, path);
+  if (local) {
+    try {
+      return (await local.route.handler({ method, path, params: local.params, init })) as T;
+    } catch (err) {
+      if (!(err instanceof LocalUnavailable)) throw err;
+      noteLocalFailure(local.route.capability);
+    }
+  }
+
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
   if (res.status === 401 && token && !path.startsWith('/auth/')) {
     // 会话过期/失效：清 token 并跳登录（避免在登录/注册接口上误触发）
     setToken(null);
@@ -81,10 +94,22 @@ function requestJson<T>(path: string, method: string, body: unknown): Promise<T>
 
 /** 二进制下载（PDF / zip / .bib 等），带 Bearer，错误时解析 detail。 */
 async function requestBlob(path: string): Promise<Blob> {
+  const local = resolveLocalHandler('GET', path);
+  if (local) {
+    try {
+      const value = await local.route.handler({ method: 'GET', path, params: local.params, init: {} });
+      if (!(value instanceof Blob)) throw new LocalUnavailable('local handler did not return a Blob');
+      return value;
+    } catch (err) {
+      if (!(err instanceof LocalUnavailable)) throw err;
+      noteLocalFailure(local.route.capability);
+    }
+  }
+
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  const res = await fetch(`${BASE}${path}`, { headers });
+  const res = await fetch(`${apiBase()}${path}`, { headers });
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`;
     let body: unknown;
@@ -3568,7 +3593,7 @@ export const api = {
     const headers = new Headers();
     const token = getToken();
     if (token) headers.set('Authorization', `Bearer ${token}`);
-    const res = await fetch(`${BASE}/manuscripts/${id}/export/arxiv`, { headers });
+    const res = await fetch(`${apiBase()}/manuscripts/${id}/export/arxiv`, { headers });
     if (!res.ok) {
       let detail = res.statusText || `HTTP ${res.status}`;
       let body: unknown;

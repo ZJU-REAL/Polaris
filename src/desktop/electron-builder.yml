@@ -1,0 +1,51 @@
+appId: org.zju.polaris
+productName: Polaris
+copyright: ZJU-REAL
+
+directories:
+  output: release
+  buildResources: build
+
+# 只打主进程/preload 的 esbuild 产物；renderer 走 extraResources 复用
+# src/frontend 的既有 vite 构建，桌面端不引入第二套前端构建配置。
+files:
+  - dist/**
+  - package.json
+
+extraResources:
+  - from: ../frontend/dist
+    to: renderer
+
+asar: true
+
+# 深链接：一期 handler 为空，但注册必须现在就在包里，否则二期要全员重装
+protocols:
+  - name: Polaris
+    schemes:
+      - polaris
+
+# 打包后补 ad-hoc 签名（仅 macOS）。electron-builder 改包会让 Electron 自带的
+# 签名失效，而 Apple Silicon 内核拒绝执行无有效签名的二进制。详见脚本内注释。
+afterPack: build/after-pack.cjs
+
+mac:
+  category: public.app-category.productivity
+  target:
+    # zip 优先：分发时比 dmg 少一层隔离属性传播，未签名场景更省事
+    - target: zip
+    - target: dmg
+  # 不用 Developer ID 签名。注意 identity: null 只是「跳过签名」，不会替你做
+  # ad-hoc 签名——那件事由上面的 afterPack 钩子完成。
+  identity: null
+
+win:
+  target:
+    # zip 便携版优先：绕过 SmartScreen 对安装器的检查
+    - target: zip
+    - target: nsis
+
+linux:
+  category: Science
+  target:
+    - target: AppImage
+    - target: deb

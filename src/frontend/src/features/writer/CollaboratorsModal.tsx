@@ -5,6 +5,8 @@ import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 import { api, ApiError, type CollaboratorRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { portalUrl } from '../../lib/endpoint';
+import { copyText } from '../../lib/clipboard';
 
 /* ============================================================
    协作者管理弹窗：列出协作者（owner 高亮），搜索平台用户加入，
@@ -95,7 +97,7 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
   const shareMutation = useMutation({
     mutationFn: () => api.createManuscriptShareLink(manuscriptId),
     onSuccess: (link) => {
-      setShareUrl(`${window.location.origin}${link.join_path}`);
+      setShareUrl(portalUrl(link.join_path));
     },
     onError: (e) => {
       if (isForbidden(e)) toast(tr('需要课题 owner 或管理员权限', 'Requires topic owner or admin permission'), 'error');
@@ -107,10 +109,9 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
 
   async function copyShare() {
     if (!shareUrl) return;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
+    if (await copyText(shareUrl)) {
       toast(tr('已复制分享链接', 'Share link copied'), 'ok');
-    } catch {
+    } else {
       toast(tr('复制失败，请手动选择链接复制', 'Copy failed — select the link and copy manually'), 'error');
     }
   }
