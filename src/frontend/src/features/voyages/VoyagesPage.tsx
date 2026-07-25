@@ -65,6 +65,7 @@ export const KIND_META: Record<string, KindMeta> = {
   presentation: { zh: '论文分享', en: 'Paper slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
   custom: { zh: '流程技能', en: 'Workflow skill', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   demo: { zh: '演示', en: 'Demo', icon: 'play', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
+  daily_feed_sync: { zh: '每日新论文', en: 'Daily paper sync', icon: 'refresh', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
 };
 
 function kindMeta(kind: string): KindMeta {
@@ -75,7 +76,7 @@ function kindMeta(kind: string): KindMeta {
    文献库任务（建库/增量更新）与每日新论文任务归实验室工作台，其余归课题。
    课题工作台的类型筛选只列课题类型：那里根本不会出现库任务，列出来只会
    选中后永远空列表。 */
-export const LIBRARY_TASK_KINDS = ['wiki_bootstrap', 'wiki_ingest'] as const;
+export const LIBRARY_TASK_KINDS = ['wiki_bootstrap', 'wiki_ingest', 'daily_feed_sync'] as const;
 export const TOPIC_TASK_KINDS = Object.keys(KIND_META).filter(
   (k) => !(LIBRARY_TASK_KINDS as readonly string[]).includes(k),
 );
