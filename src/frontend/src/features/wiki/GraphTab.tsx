@@ -36,6 +36,10 @@ const TYPE_META: { v: GraphNodeType; zh: string; en: string; cssVar: string }[] 
   { v: 'author', zh: '作者', en: 'Author', cssVar: '--warn' },
 ];
 
+/** 网络图（canvas 力导向）一次能流畅推的节点数上限；超过就先提示、由用户决定要不要硬画。
+    时间线 / 趋势 / 主题都是聚合视图，不受影响。 */
+const NETWORK_NODE_LIMIT = 800;
+
 function cssColor(name: string, fallback: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
@@ -1111,24 +1115,36 @@ export interface GraphTabProps {
   pid?: string;
   /** 独立库作用域：给定时图谱走 /libraries/{id}/graph */
   libraryId?: string;
+  /** 实验室作用域：走 /lab/graph（全部可见文献库的并集；同时给 libraryId 则只看那一个库） */
+  scope?: 'lab';
   onOpenPaper: (id: string) => void;
   onOpenConcept: (id: string) => void;
 }
 
-export function GraphTab({ pid, libraryId, onOpenPaper, onOpenConcept }: GraphTabProps) {
+export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: GraphTabProps) {
   const [view, setView] = useState<GraphView>('trends');
   const [focusConceptId, setFocusConceptId] = useState('');
-  const scopeId = libraryId ?? pid ?? '';
+  // 后端不再截断论文，全实验室能一次给上千个节点：网络图超过阈值先问一句再画
+  const [forceNetwork, setForceNetwork] = useState(false);
+  const scopeId = scope === 'lab' ? `lab:${libraryId ?? 'all'}` : (libraryId ?? pid ?? '');
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['project-graph', scopeId],
-    queryFn: () => (libraryId ? api.getLibraryGraph(libraryId) : api.getProjectGraph(scopeId)),
+    queryFn: () =>
+      scope === 'lab'
+        ? api.getLabGraph(libraryId)
+        : libraryId
+          ? api.getLibraryGraph(libraryId)
+          : api.getProjectGraph(scopeId),
     retry: false,
     staleTime: 60_000,
   });
 
-  // 切方向时清空子主题
-  useEffect(() => setFocusConceptId(''), [scopeId]);
+  // 切方向时清空子主题，并重新按节点数决定要不要拦网络图
+  useEffect(() => {
+    setFocusConceptId('');
+    setForceNetwork(false);
+  }, [scopeId]);
 
   const model = useMemo(() => (data ? buildModel(data, focusConceptId) : null), [data, focusConceptId]);
 
@@ -1161,10 +1177,17 @@ export function GraphTab({ pid, libraryId, onOpenPaper, onOpenConcept }: GraphTa
           compact
           icon="layers"
           title={tr('还没有可展示的网络', 'No network to show yet')}
-          desc={tr(
-            '先运行初始建库让论文通过筛选并完成编译，图谱会自动把论文、作者、概念连成网络。',
-            'Run the initial library build so papers get screened and compiled — the graph then links papers, authors, and concepts automatically.',
-          )}
+          desc={
+            scope === 'lab'
+              ? tr(
+                  '你能看到的文献库里还没有通过筛选并编译过的论文。任意一个库跑完初始建库后，这里会把全实验室的论文、作者、概念连成网络。',
+                  'None of the libraries you can see has screened and compiled papers yet. Once any library finishes its initial build, this links the whole lab’s papers, authors, and concepts.',
+                )
+              : tr(
+                  '先运行初始建库让论文通过筛选并完成编译，图谱会自动把论文、作者、概念连成网络。',
+                  'Run the initial library build so papers get screened and compiled — the graph then links papers, authors, and concepts automatically.',
+                )
+          }
         />
       </div>
     );
@@ -1216,7 +1239,26 @@ export function GraphTab({ pid, libraryId, onOpenPaper, onOpenConcept }: GraphTa
       </div>
 
       {model && view === 'network' && (
-        <NetworkView model={model} onOpenPaper={onOpenPaper} onOpenConcept={onOpenConcept} onFocusConcept={setFocusConceptId} />
+        model.nodes.length > NETWORK_NODE_LIMIT && !forceNetwork ? (
+          <div style={{ margin: 'auto', padding: 24 }}>
+            <EmptyState
+              compact
+              icon="layers"
+              title={tr('节点太多，网络图会很卡', 'Too many nodes for the network view')}
+              desc={tr(
+                `这一批有 ${model.nodes.length} 个节点。先用上面的「子主题」筛一下，或换「趋势」「时间线」「主题」视图看全量——它们是聚合的，不受节点数影响。`,
+                `This batch has ${model.nodes.length} nodes. Narrow it down with the subtopic filter above, or use the Trends / Timeline / Topics views — they aggregate, so node count doesn't matter.`,
+              )}
+              action={
+                <button className="btn btn-soft" onClick={() => setForceNetwork(true)}>
+                  {tr('仍然画出来', 'Render anyway')}
+                </button>
+              }
+            />
+          </div>
+        ) : (
+          <NetworkView model={model} onOpenPaper={onOpenPaper} onOpenConcept={onOpenConcept} onFocusConcept={setFocusConceptId} />
+        )
       )}
       {model && view === 'timeline' && <TimelineView model={model} onOpenPaper={onOpenPaper} />}
       {model && view === 'trends' && <TrendsView model={model} onFocusConcept={setFocusConceptId} />}

@@ -67,20 +67,24 @@ export function WikiWorkbench({
   }, [scopeId]);
 
   // 深链 ?paper=<id>（idea 详情 / 阅读页返回）、?concept=<名称>
-  // （阅读页双链跳转，按名称解析）、?author= / ?affiliation=
-  // （阅读页作者/机构点击 → 论文库按其过滤）与 ?tab=<tab>
+  // （阅读页双链跳转，按名称解析）、?conceptId=<id>（实验室跨库图谱点概念直接进来）、
+  // ?author= / ?affiliation=（阅读页作者/机构点击 → 论文库按其过滤）与 ?tab=<tab>
   // （工作台「下一步」直达建库面板）：处理后清掉参数
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const p = searchParams.get('paper');
     const c = searchParams.get('concept');
+    const cid = searchParams.get('conceptId');
     const author = searchParams.get('author');
     const affiliation = searchParams.get('affiliation');
     const tabParam = searchParams.get('tab');
-    if (!p && !c && !author && !affiliation && !tabParam) return;
+    if (!p && !c && !cid && !author && !affiliation && !tabParam) return;
     if (p) {
       setPaperId(p);
       setTab('papers');
+    } else if (cid) {
+      setConceptId(cid);
+      setTab('concepts');
     } else if (c) {
       setPendingConceptName(c);
     } else if (author || affiliation) {

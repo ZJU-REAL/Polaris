@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c4a91e7b2f36"  # 个人标签表 user_paper_tags
-PREV_REVISION = "c5e2a90d41f7"  # 库任务归实验室：回填 library_id、清 project_id
+HEAD_REVISION = "b7f3d21c8a05"  # llm_usage.created_at 索引
+PREV_REVISION = "c4a91e7b2f36"  # 个人标签表 user_paper_tags
 
 
 def _make_config(db_path: Path) -> Config:
@@ -18,6 +18,15 @@ def _make_config(db_path: Path) -> Config:
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db_path}")
     return cfg
+
+
+def _index_names(db_path: Path, table: str) -> set[str]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            return {ix["name"] for ix in inspect(conn).get_indexes(table)}
+    finally:
+        engine.dispose()
 
 
 def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
@@ -257,14 +266,17 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 本分支新增：个人标签表（paper × user × name，与库标签完全独立）
     assert "user_paper_tags" in columns["_tables"]
     assert {"id", "user_id", "paper_id", "name"} <= columns["user_paper_tags"]
+    # 本分支新增：用量面板按时间窗聚合用的 llm_usage.created_at 索引
+    assert "ix_llm_usage_created_at" in _index_names(db_path, "llm_usage")
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（c5e2a90d41f7，库任务归实验室）。
-    # 该步只删个人标签表，其余结构不动（库标签 paper_tags 一点不受影响）。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（c4a91e7b2f36，个人标签表）。
+    # 该步只删 llm_usage 上的索引，任何表/列都不动。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    # 个人标签表消失；库标签表与上一版的两张备份表、回收站列都还在
-    assert "user_paper_tags" not in columns["_tables"]
+    assert "ix_llm_usage_created_at" not in _index_names(db_path, "llm_usage")
+    # 个人标签表与上一版的两张备份表、回收站列都还在
+    assert "user_paper_tags" in columns["_tables"]
     assert {"paper_tags", "paper_tag_links", "_pr3_backfilled_curators"} <= columns["_tables"]
     assert "_c5e2a90d_voyage_topic" in columns["_tables"]
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
@@ -320,7 +332,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    # 个人标签表在重新 upgrade 后回归；回收站列与两张备份表也仍在
+    # 索引回归；个人标签表、回收站列与两张备份表也仍在
+    assert "ix_llm_usage_created_at" in _index_names(db_path, "llm_usage")
     assert "user_paper_tags" in columns["_tables"]
     assert {"id", "user_id", "paper_id", "name"} <= columns["user_paper_tags"]
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]

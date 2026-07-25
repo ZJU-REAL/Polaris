@@ -32,6 +32,7 @@ def _concept_read(
     return ConceptRead(
         id=concept.id,
         project_id=project_id,
+        library_id=concept.library_id,
         name=concept.name,
         category=concept.category,
         definition=concept.definition,

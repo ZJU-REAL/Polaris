@@ -11,9 +11,12 @@ from app.schemas.admin_settings import (
     DailyEmbedBackfillResult,
     DailyEmbedRead,
     DailyEmbedUpdate,
+    LabLeaderboardSettingRead,
+    LabLeaderboardSettingUpdate,
 )
 from app.services import affiliations as affiliations_service
 from app.services import daily_feed as daily_service
+from app.services import lab as lab_service
 
 router = APIRouter(
     prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(require_admin)]
@@ -64,3 +67,21 @@ async def backfill_daily_embed(
     """给当前窗口内还没有向量的每日论文一次性补建（开开关后补齐历史用）。费用记系统账。"""
     stats = await daily_service.backfill_embeddings(session)
     return DailyEmbedBackfillResult(**stats)
+
+
+@router.get("/lab-leaderboard", response_model=LabLeaderboardSettingRead)
+async def get_lab_leaderboard(
+    session: AsyncSession = Depends(get_session),
+) -> LabLeaderboardSettingRead:
+    """实验室概况页的用量排行榜是否对普通成员可见（默认开）。"""
+    return LabLeaderboardSettingRead(enabled=await lab_service.get_leaderboard_enabled(session))
+
+
+@router.put("/lab-leaderboard", response_model=LabLeaderboardSettingRead)
+async def set_lab_leaderboard(
+    payload: LabLeaderboardSettingUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> LabLeaderboardSettingRead:
+    return LabLeaderboardSettingRead(
+        enabled=await lab_service.set_leaderboard_enabled(session, payload.enabled)
+    )

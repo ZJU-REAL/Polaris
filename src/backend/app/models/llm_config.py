@@ -88,6 +88,8 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "llm_usage"
+    # 用量面板按天/周窗口聚合（/lab/usage、排行榜），没这个索引就是全表扫
+    __table_args__ = (Index("ix_llm_usage_created_at", "created_at"),)
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     project_id: Mapped[uuid.UUID | None] = mapped_column(

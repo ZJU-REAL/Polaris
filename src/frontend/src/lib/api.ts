@@ -832,6 +832,8 @@ export interface ConceptRead {
   id: string;
   /** 概念所属库回指的课题；共享库（无课题回指）为 null */
   project_id: string | null;
+  /** 概念所属文献库（跨库图谱据此跳回它所在的库） */
+  library_id: string;
   name: string;
   category: ConceptCategory;
   /** 一句话定义 */
@@ -1080,6 +1082,51 @@ export interface GraphData {
   edges: GraphEdge[];
   paper_total: number;
   truncated: boolean;
+}
+
+// ============================================================
+// 实验室数据面板（/lab 概况页）
+// ============================================================
+
+export interface LabStats {
+  libraries: { total: number; public: number; personal: number };
+  papers: {
+    /** 全局内容池总量（含每日新论文、个人库导入） */
+    pool_total: number;
+    /** 可见库并集内的论文数，跨库同一篇只算一次 */
+    library_members_deduped: number;
+    compiled: number;
+  };
+  concepts: { total: number };
+  chunks: {
+    papers_with_chunks: number;
+    total_chunks: number;
+    chunks_with_embedding: number;
+    /** false 时向量存了也不能按语义搜（本机 sqlite） */
+    vector_search_supported: boolean;
+  };
+  vectors: { papers_with_embedding: number; papers_total: number };
+  /** 排行榜是否对普通成员可见（管理员开关） */
+  leaderboard_enabled: boolean;
+}
+
+export interface LabLeaderboardEntry {
+  user_id: string;
+  display_name: string | null;
+  username: string | null;
+  has_avatar: boolean;
+  role: string;
+  tokens_used: number;
+}
+
+export interface LabLeaderboardResponse {
+  enabled: boolean;
+  days: number;
+  items: LabLeaderboardEntry[];
+}
+
+export interface LabLeaderboardSetting {
+  enabled: boolean;
 }
 
 // ============================================================
@@ -3185,6 +3232,26 @@ export const api = {
   getLibraryGraph(id: string): Promise<GraphData> {
     return request<GraphData>(`/libraries/${id}/graph`);
   },
+
+  // —— 实验室数据面板（/lab 概况页） ——
+  /** 索引与内容统计（跨库论文去重，只算当前用户看得到的库）。 */
+  getLabStats(): Promise<LabStats> {
+    return request<LabStats>('/lab/stats');
+  },
+  /** 全实验室最近 N 天 token 用量（按 日期 × stage × model）。 */
+  getLabUsage(days: number): Promise<LlmUsageRow[]> {
+    return request<LlmUsageRow[]>(`/lab/usage?days=${days}`);
+  },
+  /** 成员用量排行榜；开关关掉时普通用户 403。 */
+  getLabLeaderboard(opts: { days: number; limit?: number }): Promise<LabLeaderboardResponse> {
+    const params = new URLSearchParams({ days: String(opts.days) });
+    if (opts.limit) params.set('limit', String(opts.limit));
+    return request<LabLeaderboardResponse>(`/lab/usage/leaderboard?${params}`);
+  },
+  /** 跨库图谱：不传 libraryId = 全部可见库的并集。 */
+  getLabGraph(libraryId?: string): Promise<GraphData> {
+    return request<GraphData>(`/lab/graph${libraryId ? `?library_id=${libraryId}` : ''}`);
+  },
   /** 库笔记本：全库笔记分页 + 搜索。 */
   listLibraryNotes(
     id: string,
@@ -3793,6 +3860,13 @@ export const api = {
   },
   setDailyEmbedEnabled(enabled: boolean): Promise<DailyEmbedSetting> {
     return requestJson<DailyEmbedSetting>('/admin/settings/daily-embed', 'PUT', { enabled });
+  },
+  /** 实验室概况页的用量排行榜是否对普通成员可见（admin，默认开）。 */
+  getLabLeaderboardEnabled(): Promise<LabLeaderboardSetting> {
+    return request<LabLeaderboardSetting>('/admin/settings/lab-leaderboard');
+  },
+  setLabLeaderboardEnabled(enabled: boolean): Promise<LabLeaderboardSetting> {
+    return requestJson<LabLeaderboardSetting>('/admin/settings/lab-leaderboard', 'PUT', { enabled });
   },
   /** 给最近 7 天里还没有向量的每日论文补建向量（可能耗时几十秒）。 */
   backfillDailyEmbeddings(): Promise<DailyEmbedBackfillResult> {

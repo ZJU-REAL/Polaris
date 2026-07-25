@@ -2058,6 +2058,66 @@ function MyLlmTab() {
 
 // ---------------- 用量 ----------------
 
+/** 实验室概况页的用量排行榜是否对普通成员可见（管理员开关，默认开）。 */
+function LabLeaderboardSection() {
+  const queryClient = useQueryClient();
+  const settingQuery = useQuery({
+    queryKey: ['lab-leaderboard-enabled'],
+    queryFn: () => api.getLabLeaderboardEnabled(),
+    retry: false,
+  });
+  const enabled = settingQuery.data?.enabled ?? true;
+
+  const toggleMutation = useMutation({
+    mutationFn: (next: boolean) => api.setLabLeaderboardEnabled(next),
+    onSuccess: (r) => {
+      toast(
+        r.enabled
+          ? tr('已开启：全体成员都能看到排行榜', 'Enabled — every member can see the leaderboard')
+          : tr('已关闭：只有管理员能看到排行榜', 'Disabled — only admins can see the leaderboard'),
+        'ok',
+      );
+      void queryClient.invalidateQueries({ queryKey: ['lab-leaderboard-enabled'] });
+      void queryClient.invalidateQueries({ queryKey: ['lab-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['lab-leaderboard'] });
+    },
+    onError: (e) => toast(`${tr('设置失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="section-h" style={{ marginBottom: 6 }}>
+        <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('用量排行榜', 'Usage leaderboard')}
+      </div>
+      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div id="lab-leaderboard-toggle" style={{ fontSize: 13, lineHeight: 1.4 }}>
+            {tr('在实验室概况页显示排行榜', 'Show the leaderboard on the Lab overview')}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
+            {tr(
+              '打开后，全体成员都能在实验室工作台看到各人的 token 消耗排名。关闭后这一区只对管理员显示，成员仍然能在「设置」里看自己的用量。',
+              'When on, every member sees each person’s token consumption ranking on the Lab workbench. When off, the section shows for admins only — members can still see their own usage under Settings.',
+            )}
+          </div>
+        </div>
+        <Switch
+          checked={enabled}
+          onChange={(v) => toggleMutation.mutate(v)}
+          disabled={settingQuery.isLoading || settingQuery.isError || toggleMutation.isPending}
+          aria-labelledby="lab-leaderboard-toggle"
+        />
+      </div>
+      {settingQuery.isError && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 10 }}>
+          {tr('无法加载该设置（后端不可用或无权限）', 'Failed to load this setting (backend unavailable or no permission)')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function UsageTab() {
   const [days, setDays] = useState<'7' | '30' | '90'>('30');
   const { data, isLoading, isError, refetch } = useQuery({
@@ -2080,6 +2140,8 @@ export function UsageTab() {
   );
 
   return (
+    <>
+    <LabLeaderboardSection />
     <div className="card card-pad">
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
         <span className="section-h">
@@ -2135,6 +2197,7 @@ export function UsageTab() {
         </div>
       )}
     </div>
+    </>
   );
 }
 

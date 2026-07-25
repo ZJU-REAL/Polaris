@@ -25,6 +25,16 @@ class DailyEmbedUpdate(BaseModel):
     enabled: bool
 
 
+class LabLeaderboardSettingRead(BaseModel):
+    """用量排行榜是否对普通成员可见（默认开；关掉后只有管理员看得到）。"""
+
+    enabled: bool
+
+
+class LabLeaderboardSettingUpdate(BaseModel):
+    enabled: bool
+
+
 class DailyEmbedBackfillResult(BaseModel):
     """一次性补建向量的结果：本次新建 / 已有跳过 / 未成功。"""
 

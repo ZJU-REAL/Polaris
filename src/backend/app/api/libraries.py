@@ -612,6 +612,7 @@ async def list_library_concepts(
         ConceptRead(
             id=concept.id,
             project_id=library.project_id,
+            library_id=library.id,
             name=concept.name,
             category=concept.category,
             definition=concept.definition,
@@ -672,6 +673,7 @@ async def search_library(
             ScoredConcept(
                 id=concept.id,
                 project_id=library.project_id,
+                library_id=library.id,
                 name=concept.name,
                 category=concept.category,
                 definition=concept.definition,

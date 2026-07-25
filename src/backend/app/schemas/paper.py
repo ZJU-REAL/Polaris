@@ -216,6 +216,8 @@ class ConceptRead(BaseModel):
     id: uuid.UUID
     # 概念所属库回指的课题；共享库（无课题回指）为 None
     project_id: uuid.UUID | None
+    # 概念所属文献库（跨库场景下据此跳回它所在的库）
+    library_id: uuid.UUID
     name: str
     category: str | None
     definition: str | None

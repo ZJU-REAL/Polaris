@@ -2,8 +2,9 @@
 
 节点：论文（打分通过及之后的状态）、概念（paper_concepts 关联）、作者（Paper.authors JSON）。
 边：论文—概念（上链关系）、论文—作者（署名）。
-规模控制：论文按相关度取 top ``max_papers``；作者按关联论文数取 top ``max_authors``，
-单篇论文最多取前 ``authors_per_paper`` 位作者（长作者列表只保留头部署名）。
+规模控制：论文不再设实际上限（实验室级面板要看全量，``max_papers`` 只是个兜底的
+天花板，调用方可自定）；作者按关联论文数取 top ``max_authors``，单篇论文最多取前
+``authors_per_paper`` 位作者（长作者列表只保留头部署名）。
 """
 
 import uuid
@@ -20,8 +21,11 @@ from app.services.libraries import dedupe_member_rows, get_source_library_ids, m
 # 图上展示的论文状态（candidate 未过筛选，噪声大，不进图）
 GRAPH_PAPER_STATUSES = ("scored", "fetched", "compiled", "included")
 
-MAX_PAPERS = 150
-MAX_AUTHORS = 80
+# 论文不截断：单库/跨库都给全量（前端的网络视图自己按节点数决定要不要硬画）。
+# 留个大到不可能碰到的天花板，纯粹防御异常数据量把响应撑爆。
+MAX_PAPERS = 100_000
+# 作者只是网络视图上的配角，仍按关联论文数取头部（否则每篇 8 位作者会把图糊死）
+MAX_AUTHORS = 400
 AUTHORS_PER_PAPER = 8
 
 
@@ -64,6 +68,21 @@ async def library_graph(
     """构建单个方向库的知识图谱（库工作台入口，含独立库）。"""
     return await _graph_for_library_ids(
         session, library_ids=[library_id], max_papers=max_papers, max_authors=max_authors
+    )
+
+
+async def libraries_graph(
+    session: AsyncSession,
+    *,
+    library_ids: list[uuid.UUID],
+    max_papers: int = MAX_PAPERS,
+    max_authors: int = MAX_AUTHORS,
+) -> dict[str, Any]:
+    """构建一组库并集的知识图谱（实验室面板：全部可见库）。空集合返回空图。"""
+    if not library_ids:
+        return {"nodes": [], "edges": [], "paper_total": 0, "truncated": False}
+    return await _graph_for_library_ids(
+        session, library_ids=library_ids, max_papers=max_papers, max_authors=max_authors
     )
 
 
@@ -168,5 +187,6 @@ async def _graph_for_library_ids(
         "nodes": nodes,
         "edges": edges,
         "paper_total": paper_total,
-        "truncated": paper_total > len(papers) or len(author_papers) > len(kept_authors),
+        # 只反映论文被截断（作者取头部是固定的展示规则，不该让前端提示「论文较多」）
+        "truncated": paper_total > len(papers),
     }

@@ -1,16 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Icon } from '../../components/ui/Icon';
+import { Avatar } from '../../components/ui/Avatar';
+import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
+import { toast } from '../../components/ui/Toast';
 import { Segmented } from '../../components/ui/Segmented';
 import { StatCard } from '../../components/ui/StatCard';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
-import { api, type DirectionLibrarySummary, type VoyageRead } from '../../lib/api';
+import { api, isAdmin, type DirectionLibrarySummary, type LabStats, type VoyageRead } from '../../lib/api';
 import { fmtFullTime, fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { useLibraries, libraryPath } from '../libraries/hooks';
+
+// 图谱体量大且不是首屏必需：按需加载（与文献库工作台同样处理）
+const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m.GraphTab })));
 import {
   FILTERS,
   KIND_META,
@@ -25,7 +30,9 @@ import {
 /* ============================================================
    /lab — 实验室工作台
    两个标签：
-   - 概况：文献库与每日新论文的汇总（全部走既有列表接口，无新增聚合端点）
+   - 概况：实验室级数据面板 —— 索引与内容统计（/lab/stats，后端聚合、跨库去重、
+     按可见库收敛）、AI 用量与排行榜（/lab/usage 系列）、跨库概念图谱
+     （/lab/graph）、文献库与每日新论文汇总
    - 任务：全部可见任务按归属分组（课题任务 / 文献库任务 / 其它），
      覆盖课题工作台看不到的「课题外任务」（VoyageRun.project_id 可为空）
    ============================================================ */
@@ -61,7 +68,8 @@ function LibrariesCard() {
   }, [data]);
   const publicCount = libs.filter((l) => l.is_public).length;
   const personalCount = libs.length - publicCount;
-  const paperTotal = libs.reduce((acc, l) => acc + l.paper_count, 0);
+  // 这里不再报「共 N 篇论文」：各库论文数相加会把跨库的同一篇重复计数，
+  // 去重后的总数在上面的指标卡里（走 /lab/stats）。
 
   return (
     <div className="card" style={{ overflow: 'hidden', marginBottom: 20 }}>
@@ -75,8 +83,8 @@ function LibrariesCard() {
             {isLoading || isError
               ? tr('实验室共享的方向文献库', 'Shared direction libraries')
               : tr(
-                  `公共库 ${publicCount} 个 · 个人库 ${personalCount} 个 · 共 ${paperTotal} 篇论文`,
-                  `${publicCount} public · ${personalCount} personal · ${paperTotal} papers`,
+                  `公共库 ${publicCount} 个 · 个人库 ${personalCount} 个`,
+                  `${publicCount} public · ${personalCount} personal`,
                 )}
           </div>
         </div>
@@ -278,11 +286,495 @@ function DailyCard() {
   );
 }
 
+/* ---------- 面板通用零件 ---------- */
+
+/** 面板小节外壳：图标 + 标题 + 说明 + 右侧操作，与文献库/每日新论文两张卡同款。 */
+function PanelCard({
+  icon,
+  title,
+  hint,
+  action,
+  children,
+  style,
+}: {
+  icon: IconName;
+  title: string;
+  hint?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div className="card" style={{ overflow: 'hidden', marginBottom: 20, ...style }}>
+      <div className="row gap10" style={{ padding: '14px 18px', borderBottom: '0.5px solid var(--border)' }}>
+        <Icon name={icon} size={15} style={{ color: 'var(--text-2)', flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 650, letterSpacing: '-0.01em' }}>{title}</div>
+          {hint && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>{hint}</div>}
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** 「已完成 / 总数」的一行进度条。 */
+function MeterRow({ label, done, total, note }: { label: string; done: number; total: number; note?: string }) {
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  return (
+    <div>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
+        <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}>{label}</span>
+        <span className="mono" style={{ fontSize: 12 }}>
+          {done.toLocaleString()}
+          <span style={{ color: 'var(--text-4)' }}> / {total.toLocaleString()}</span>
+        </span>
+      </div>
+      <div style={{ height: 6, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden', marginTop: 6 }}>
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: 'var(--accent)' }} />
+      </div>
+      {note && <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4, lineHeight: 1.45 }}>{note}</div>}
+    </div>
+  );
+}
+
+/* ---------- 索引与内容统计 ---------- */
+
+/** 编译 / 全文分段 / 向量三条索引进度，数字全部来自 /lab/stats（跨库去重、按可见库收敛）。 */
+function IndexCard({ stats, isLoading, isError }: { stats?: LabStats; isLoading: boolean; isError: boolean }) {
+  return (
+    <PanelCard
+      icon="layers"
+      title={tr('索引进度', 'Index coverage')}
+      hint={tr(
+        '论文的解读、全文分段与向量建到了什么程度——决定文献对话和语义检索能不能用',
+        'How far reading notes, full-text chunks, and embeddings have been built — this decides whether chat and semantic search work',
+      )}
+    >
+      {isLoading ? (
+        <div className="col gap10" style={{ padding: '16px 18px' }}>
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skel" style={{ height: 20, width: `${90 - i * 10}%` }} />
+          ))}
+        </div>
+      ) : isError || !stats ? (
+        <EmptyState
+          icon="x"
+          title={tr('无法加载统计', 'Failed to load stats')}
+          desc={tr('后端不可用，稍后重试。', 'Backend unavailable — try again later.')}
+          compact
+        />
+      ) : (
+        <div style={{ padding: '16px 18px' }}>
+          <div
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px 28px' }}
+          >
+            <MeterRow
+              label={tr('已编译解读的论文', 'Papers with reading notes')}
+              done={stats.papers.compiled}
+              total={stats.papers.library_members_deduped}
+            />
+            <MeterRow
+              label={tr('已切好全文分段的论文', 'Papers with full-text chunks')}
+              done={stats.chunks.papers_with_chunks}
+              total={stats.papers.library_members_deduped}
+              note={tr(`共 ${stats.chunks.total_chunks.toLocaleString()} 个分段`, `${stats.chunks.total_chunks.toLocaleString()} chunks in total`)}
+            />
+            <MeterRow
+              label={tr('已建向量的分段', 'Chunks embedded')}
+              done={stats.chunks.chunks_with_embedding}
+              total={stats.chunks.total_chunks}
+              note={
+                stats.chunks.vector_search_supported
+                  ? tr('这些分段可以按语义检索', 'These chunks are searchable by meaning')
+                  : tr(
+                      '当前数据库不支持向量检索，建好的向量暂时只能存着，检索会退回关键词',
+                      'This database can’t search vectors — embeddings are stored but search falls back to keywords',
+                    )
+              }
+            />
+            <MeterRow
+              label={tr('已建向量的论文', 'Papers embedded')}
+              done={stats.vectors.papers_with_embedding}
+              total={stats.vectors.papers_total}
+            />
+          </div>
+          <div
+            className="row gap16"
+            style={{ marginTop: 16, paddingTop: 14, borderTop: '0.5px solid var(--border)', flexWrap: 'wrap' }}
+          >
+            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+              {tr(
+                `内容池共 ${stats.papers.pool_total.toLocaleString()} 篇（含每日新论文与个人收藏，不只文献库）`,
+                `${stats.papers.pool_total.toLocaleString()} papers in the shared pool (includes daily papers and personal picks, not just libraries)`,
+              )}
+            </span>
+            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+              {tr(
+                `概念 ${stats.concepts.total.toLocaleString()} 个`,
+                `${stats.concepts.total.toLocaleString()} concepts`,
+              )}
+            </span>
+          </div>
+        </div>
+      )}
+    </PanelCard>
+  );
+}
+
+/* ---------- AI 用量与排行榜 ---------- */
+
+type UsageWindow = '7' | '30' | '90';
+
+/** 每天一根柱：下段 prompt、上段 completion（单色系明暗区分，不新造颜色）。 */
+function UsageBars({ rows }: { rows: { date: string; prompt: number; completion: number }[] }) {
+  const max = Math.max(1, ...rows.map((r) => r.prompt + r.completion));
+  // 柱子多的时候（30/90 天）只在两端标日期，免得文字糊成一片
+  const labelEvery = Math.max(1, Math.ceil(rows.length / 8));
+  return (
+    <div className="row" style={{ gap: rows.length > 40 ? 2 : 5, alignItems: 'flex-end' }}>
+      {rows.map((r, i) => {
+        const total = r.prompt + r.completion;
+        const h = Math.max(2, Math.round((total / max) * 88));
+        const promptH = total > 0 ? Math.round((r.prompt / total) * h) : h;
+        return (
+          <div key={r.date} style={{ flex: 1, minWidth: 0 }}>
+            <div
+              title={`${r.date} · ${total.toLocaleString()} tokens`}
+              style={{ height: 88, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
+            >
+              <div
+                style={{
+                  height: h - promptH,
+                  background: 'var(--accent)',
+                  borderRadius: '3px 3px 0 0',
+                }}
+              />
+              <div
+                style={{
+                  height: promptH,
+                  background: 'var(--accent-soft)',
+                  borderRadius: h - promptH > 0 ? '0 0 2px 2px' : '3px 3px 2px 2px',
+                }}
+              />
+            </div>
+            {i % labelEvery === 0 && (
+              <div className="mono" style={{ fontSize: 9, color: 'var(--text-4)', textAlign: 'center', marginTop: 4 }}>
+                {r.date.slice(5)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 全实验室 AI 用量：合计 + 按天柱状 + 按环节分布。 */
+function UsageCard({ days, onDays }: { days: UsageWindow; onDays: (v: UsageWindow) => void }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['lab-usage', days],
+    queryFn: () => api.getLabUsage(Number(days)),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const rows = useMemo(() => data ?? [], [data]);
+
+  const totals = rows.reduce(
+    (acc, r) => ({
+      prompt: acc.prompt + r.prompt_tokens,
+      completion: acc.completion + r.completion_tokens,
+      calls: acc.calls + r.calls,
+    }),
+    { prompt: 0, completion: 0, calls: 0 },
+  );
+
+  const byDay = useMemo(() => {
+    const m = new Map<string, { date: string; prompt: number; completion: number }>();
+    for (const r of rows) {
+      const cur = m.get(r.date) ?? { date: r.date, prompt: 0, completion: 0 };
+      cur.prompt += r.prompt_tokens;
+      cur.completion += r.completion_tokens;
+      m.set(r.date, cur);
+    }
+    return [...m.values()].sort((a, b) => a.date.localeCompare(b.date));
+  }, [rows]);
+
+  // 按环节（stage）分布：取消耗最多的前 6 个
+  const byStage = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows) m.set(r.stage, (m.get(r.stage) ?? 0) + r.prompt_tokens + r.completion_tokens);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  }, [rows]);
+  const stageMax = Math.max(1, ...byStage.map(([, v]) => v));
+
+  return (
+    <PanelCard
+      icon="chart"
+      title={tr('AI 用量', 'AI usage')}
+      hint={tr('全实验室的 token 消耗', 'Token consumption across the lab')}
+      action={
+        <Segmented
+          options={[
+            { v: '7' as const, label: tr('7 天', '7d') },
+            { v: '30' as const, label: tr('30 天', '30d') },
+            { v: '90' as const, label: tr('90 天', '90d') },
+          ]}
+          value={days}
+          onChange={onDays}
+        />
+      }
+      style={{ marginBottom: 0, flex: '1 1 380px', minWidth: 0 }}
+    >
+      {isLoading ? (
+        <div className="col gap10" style={{ padding: '18px' }}>
+          <div className="skel" style={{ height: 14, width: '40%' }} />
+          <div className="skel" style={{ height: 88, width: '100%' }} />
+        </div>
+      ) : isError ? (
+        <EmptyState
+          icon="x"
+          title={tr('无法加载用量', 'Failed to load usage')}
+          desc={tr('后端不可用，稍后重试。', 'Backend unavailable — try again later.')}
+          compact
+        />
+      ) : byDay.length === 0 ? (
+        <EmptyState
+          icon="chart"
+          title={tr('这段时间没有 AI 调用', 'No AI calls in this window')}
+          desc={tr('跑一次建库或精读编译，用量就会出现在这里。', 'Run a library build or a compile — usage shows up here afterwards.')}
+          compact
+        />
+      ) : (
+        <div style={{ padding: '16px 18px' }}>
+          <div className="row gap20" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+            <div>
+              <div className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>
+                {(totals.prompt + totals.completion).toLocaleString()}
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>{tr('token 合计', 'total tokens')}</div>
+            </div>
+            <div>
+              <div className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>
+                {totals.calls.toLocaleString()}
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>{tr('调用次数', 'calls')}</div>
+            </div>
+          </div>
+
+          <UsageBars rows={byDay} />
+
+          <div className="row gap12" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+            <span className="row gap8" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--accent-soft)' }} />
+              {tr('输入', 'Input')} {totals.prompt.toLocaleString()}
+            </span>
+            <span className="row gap8" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--accent)' }} />
+              {tr('输出', 'Output')} {totals.completion.toLocaleString()}
+            </span>
+          </div>
+
+          {byStage.length > 0 && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '0.5px solid var(--border)' }}>
+              <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 8 }}>
+                {tr('消耗最多的环节', 'Where it goes')}
+              </div>
+              <div className="col gap8">
+                {byStage.map(([stage, value]) => (
+                  <div key={stage} className="row gap10">
+                    <span className="mono" style={{ fontSize: 11.5, width: 108, flexShrink: 0, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {stage}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, height: 6, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden' }}>
+                      <span
+                        style={{ display: 'block', width: `${Math.round((value / stageMax) * 100)}%`, height: '100%', borderRadius: 999, background: 'var(--accent)' }}
+                      />
+                    </span>
+                    <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)', width: 78, textAlign: 'right', flexShrink: 0 }}>
+                      {value.toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </PanelCard>
+  );
+}
+
+/** 成员用量排行榜：名次 + 头像 + 名称 + 用量条 + 数值。 */
+function LeaderboardCard({ days, adminView }: { days: UsageWindow; adminView: boolean }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['lab-leaderboard', days],
+    queryFn: () => api.getLabLeaderboard({ days: Number(days), limit: 10 }),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const items = data?.items ?? [];
+  const max = Math.max(1, ...items.map((x) => x.tokens_used));
+
+  return (
+    <PanelCard
+      icon="users"
+      title={tr('用量排行榜', 'Usage leaderboard')}
+      hint={tr(`最近 ${days} 天消耗最多的成员`, `Top consumers in the last ${days} days`)}
+      action={
+        adminView && data && !data.enabled ? (
+          <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)', flexShrink: 0 }}>
+            {tr('仅管理员可见', 'Admins only')}
+          </span>
+        ) : undefined
+      }
+      style={{ marginBottom: 0, flex: '1 1 340px', minWidth: 0 }}
+    >
+      {isLoading ? (
+        <div className="col gap10" style={{ padding: '16px 18px' }}>
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skel" style={{ height: 26, width: `${95 - i * 8}%` }} />
+          ))}
+        </div>
+      ) : isError ? (
+        <EmptyState
+          icon="x"
+          title={tr('无法加载排行榜', 'Failed to load leaderboard')}
+          desc={tr('后端不可用，稍后重试。', 'Backend unavailable — try again later.')}
+          compact
+        />
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon="users"
+          title={tr('这段时间还没有人用过 AI', 'Nobody used AI in this window')}
+          desc={tr('有人跑过任务之后，排名会出现在这里。', 'Rankings show up once someone runs a task.')}
+          compact
+        />
+      ) : (
+        <div className="col gap10" style={{ padding: '14px 18px' }}>
+          {items.map((u, i) => {
+            const name = u.display_name || u.username || tr('未命名', 'Unnamed');
+            const top = i === 0;
+            return (
+              <div key={u.user_id} className="row gap10">
+                <span
+                  className="mono"
+                  style={{
+                    width: 22,
+                    height: 22,
+                    flexShrink: 0,
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: top ? 'var(--accent-soft)' : 'var(--surface-3)',
+                    color: top ? 'var(--accent-text)' : 'var(--text-3)',
+                  }}
+                >
+                  {i + 1}
+                </span>
+                <Avatar userId={u.user_id} hasAvatar={u.has_avatar} name={name} size={24} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    title={name}
+                    style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    {name}
+                  </div>
+                  <div style={{ height: 5, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden', marginTop: 5 }}>
+                    <div
+                      style={{
+                        width: `${Math.max(2, Math.round((u.tokens_used / max) * 100))}%`,
+                        height: '100%',
+                        borderRadius: 999,
+                        background: top ? 'var(--accent)' : 'var(--accent-soft)',
+                      }}
+                    />
+                  </div>
+                </div>
+                <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)', width: 78, textAlign: 'right', flexShrink: 0 }}>
+                  {u.tokens_used.toLocaleString()}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </PanelCard>
+  );
+}
+
+/* ---------- 跨库概念图谱 ---------- */
+
+/** 跨库图谱：默认「趋势」视图＝概念随时间的演化；可切到单个文献库。 */
+function GraphCard({ libs }: { libs: DirectionLibrarySummary[] }) {
+  const navigate = useNavigate();
+  const [libraryId, setLibraryId] = useState('');
+
+  const openPaper = useCallback((id: string) => navigate(`/papers/${id}/read`), [navigate]);
+  // 概念属于某个具体的库，先问后端它在哪个库，再跳到那个库的概念页
+  const openConcept = useCallback(
+    async (id: string) => {
+      try {
+        const concept = await api.getConcept(id);
+        navigate(`${libraryPath(concept.library_id)}?conceptId=${id}`);
+      } catch {
+        toast(tr('打不开这个概念（后端不可用）', 'Could not open this concept (backend unavailable)'), 'error');
+      }
+    },
+    [navigate],
+  );
+
+  return (
+    <PanelCard
+      icon="sparkle"
+      title={tr('概念图谱', 'Concept graph')}
+      hint={tr(
+        '默认看「趋势」：概念随时间的消长；也能切到网络、时间线、主题',
+        'Defaults to Trends — how concepts rise and fall over time; Network, Timeline, and Topics are there too',
+      )}
+      action={
+        <select
+          className="input"
+          aria-label={tr('选择文献库', 'Pick a library')}
+          value={libraryId}
+          onChange={(e) => setLibraryId(e.target.value)}
+          style={{ height: 30, fontSize: 12, maxWidth: 200, padding: '0 8px', flexShrink: 0 }}
+        >
+          <option value="">{tr('全部文献库', 'All libraries')}</option>
+          {libs.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+      }
+    >
+      <div style={{ display: 'flex', height: 560 }}>
+        <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
+          <GraphTab
+            scope="lab"
+            libraryId={libraryId || undefined}
+            onOpenPaper={openPaper}
+            onOpenConcept={openConcept}
+          />
+        </Suspense>
+      </div>
+    </PanelCard>
+  );
+}
+
 function OverviewTab() {
   const { data: libs } = useLibraries();
-  const { data: days } = useQuery({
-    queryKey: ['daily-days'],
-    queryFn: () => api.listDailyDays(),
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
+  // 库/论文/概念的数字一律走后端聚合：前端把各库 paper_count 相加会把
+  // 跨库的同一篇论文重复计数，也拿不到分段与向量口径
+  const statsQuery = useQuery({
+    queryKey: ['lab-stats'],
+    queryFn: () => api.getLabStats(),
     retry: false,
     staleTime: 60_000,
   });
@@ -293,9 +785,14 @@ function OverviewTab() {
     refetchInterval: 30_000,
   });
 
+  const [usageDays, setUsageDays] = useState<UsageWindow>('30');
+
+  const stats = statsQuery.data;
   const libList = libs ?? [];
-  const dayList = days ?? [];
   const activeVoyages = (voyages ?? []).filter((v) => matchFilter(v, 'active') || matchFilter(v, 'paused')).length;
+  const admin = isAdmin(me);
+  // 开关关掉时排行榜只对管理员显示；加载中先不显示，免得闪一下又消失
+  const showLeaderboard = !!stats && (stats.leaderboard_enabled || admin);
 
   return (
     <>
@@ -304,22 +801,22 @@ function OverviewTab() {
           icon="book"
           label="文献库"
           en="Libraries"
-          value={libs ? libList.length : '—'}
-          sub={libs ? tr(`${libList.filter((l) => l.is_public).length} 个公共库`, `${libList.filter((l) => l.is_public).length} public`) : undefined}
+          value={stats ? stats.libraries.total : '—'}
+          sub={stats ? tr(`${stats.libraries.public} 个公共库`, `${stats.libraries.public} public`) : undefined}
         />
         <StatCard
           icon="file"
-          label="论文总量"
-          en="Papers"
-          value={libs ? libList.reduce((a, l) => a + l.paper_count, 0) : '—'}
-          sub={tr('全部文献库', 'across libraries')}
+          label="库内论文"
+          en="Papers in libraries"
+          value={stats ? stats.papers.library_members_deduped : '—'}
+          sub={tr('跨库同一篇只算一次', 'deduplicated across libraries')}
         />
         <StatCard
-          icon="heart"
-          label="每日新论文"
-          en="Daily papers"
-          value={days ? dayList.reduce((a, d) => a + d.count, 0) : '—'}
-          sub={tr('近 7 天', 'last 7 days')}
+          icon="sparkle"
+          label="概念"
+          en="Concepts"
+          value={stats ? stats.concepts.total : '—'}
+          sub={tr('全部文献库', 'across libraries')}
         />
         <StatCard
           icon="compass"
@@ -330,6 +827,15 @@ function OverviewTab() {
           accent
         />
       </div>
+
+      <IndexCard stats={stats} isLoading={statsQuery.isLoading} isError={statsQuery.isError} />
+
+      <div className="row gap16" style={{ marginBottom: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <UsageCard days={usageDays} onDays={setUsageDays} />
+        {showLeaderboard && <LeaderboardCard days={usageDays} adminView={admin} />}
+      </div>
+
+      <GraphCard libs={libList} />
 
       <LibrariesCard />
       <DailyCard />
