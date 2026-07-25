@@ -8,9 +8,10 @@
 # Apple Silicon 内核拒绝执行无有效签名的二进制，用户会看到「已损坏」。ad-hoc 只保证
 # 能启动，不等于公证（notarization），首次打开仍需绕 Gatekeeper，见 release 正文。
 #
-# macOS 为什么分 arm64 / x64 两个包而不是 universal：universal 是先分架构打包再 lipo
-# 合并，而 ad-hoc 签名发生在合并之前，合并后签名是否仍然有效没有把握。分开出包绕过
-# 这个不确定性，代价只是多一个文件。
+# macOS 出 universal 单包（Intel + Apple Silicon 通吃），用户不必分辨自己的芯片。
+# 注意 @electron/universal 要求两个架构的非二进制文件逐字节相同才能 lipo 合并，
+# 所以 afterPack 钩子跳过 *-temp 目录、只给合并后的产物签名——逐架构签名会让
+# _CodeSignature/CodeResources 不一致，合并会直接报错。
 name: desktop-release
 
 on:
@@ -31,7 +32,7 @@ jobs:
         include:
           - os: macos-14
             name: macos
-            args: --mac --arm64 --x64
+            args: --mac --universal
           - os: windows-latest
             name: windows
             args: --win --x64
@@ -142,8 +143,7 @@ jobs:
 
           | 平台 | 下载 |
           |---|---|
-          | macOS（Apple Silicon） | `*-arm64.dmg` 或 `*-arm64-mac.zip` |
-          | macOS（Intel） | `*-x64.dmg` 或 `*-x64-mac.zip` |
+          | macOS（Intel / Apple Silicon 通用） | `*-universal.dmg` 或 `*-universal-mac.zip` |
           | Windows | `*.exe`（安装器）或 `*-win.zip`（免安装） |
           | Linux | `*.AppImage` 或 `*.deb` |
 
