@@ -11,7 +11,7 @@ import { parsePaperRef } from '../../lib/paper-ref';
 import { SearchInput, useDebounced } from '../wiki/shared';
 
 /* ============================================================
-   相关研究 · 「添加论文」统一入口（弹窗，两个页签）：
+   相关研究 · 「添加文献」统一入口（弹窗，两个页签）：
    - 从文献库：检索当前课题关联的文献库，结果行内一键添加，
      已入架的显示勾选态；找不到时引导切到手动添加。
    - 手动添加：arXiv 编号 / DOI，平台自动查重（池里已有直接
@@ -85,7 +85,7 @@ export function AddPaperModal({
       open={open}
       onClose={onClose}
       width={600}
-      title={tr('添加论文', 'Add papers')}
+      title={tr('添加文献', 'Add paper')}
       sub={tr('加入这个课题的相关研究，可以连续添加多篇。', 'Add to related work for this topic — add several in a row.')}
     >
       <Segmented<AddTab> options={TABS.map((t) => ({ v: t.v, label: tr(t.zh, t.en) }))} value={tab} onChange={setTab} />

@@ -85,13 +85,12 @@ export function PaperMyMetaRow({
   );
 }
 
-/* ---------------- 标签：库标签（只读）+ 我的标签（可编辑） ---------------- */
+/* ---------------- 标签：我的标签 ---------------- */
 
-/* 两组标签是两回事，样式上一眼分开：
-   - 库标签＝实心底色（.tag 默认样式），整个文献库共用一套，编辑在文献工作台；
-   - 我的标签＝描边 + 强调色，只有自己看得到，哪儿都能改。 */
+/* 库标签（库作用域共享标签）的界面入口已移除——它是整组覆盖的共享状态，
+   一个人改会冲掉别人的；个人标签取代了它。后端端点与数据保留。 */
 
-/** 我的标签 chip 的描边样式（区别于实心的库标签）。 */
+/** 我的标签 chip 的描边样式。 */
 const myTagStyle: CSSProperties = {
   background: 'transparent',
   borderColor: 'var(--accent-soft-2)',
@@ -100,24 +99,6 @@ const myTagStyle: CSSProperties = {
   alignItems: 'center',
   gap: 4,
 };
-
-/** 库标签只读展示（编辑在文献工作台）；没有标签就不占位。 */
-export function PaperTagsRow({ tags, style }: { tags: string[] | undefined; style?: CSSProperties }) {
-  if (!tags || tags.length === 0) return null;
-  return (
-    <div className="row gap6 wrap" style={{ marginTop: 14, ...style }}>
-      <span className="row gap6 mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}>
-        <Icon name="users" size={11} />
-        {tr('库标签', 'Library tags')}
-      </span>
-      {tags.map((t) => (
-        <span key={t} className="tag">
-          {t}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 /**
  * 我的标签：就地增删，只有本人可见可改。
@@ -222,19 +203,16 @@ export function PaperMyTagsRow({
   );
 }
 
-/** 列表行里的标签小 chip：库标签实心 / 我的标签描边，最多各显 2 个。 */
-export function PaperTagChips({
-  tags,
+/** 列表行里的我的标签小 chip（描边），最多显 2 个，多的折成 +N。 */
+export function PaperMyTagChips({
   myTags,
   limit = 2,
 }: {
-  tags: string[] | undefined;
   myTags: string[] | undefined;
   limit?: number;
 }) {
-  const lib = tags ?? [];
   const mine = myTags ?? [];
-  const hidden = Math.max(0, lib.length - limit) + Math.max(0, mine.length - limit);
+  const hidden = Math.max(0, mine.length - limit);
   const chipStyle: CSSProperties = {
     fontSize: 10,
     height: 17,
@@ -248,11 +226,6 @@ export function PaperTagChips({
   };
   return (
     <>
-      {lib.slice(0, limit).map((t) => (
-        <span key={`lib-${t}`} className="tag" style={chipStyle} title={tr(`库标签：${t}`, `Library tag: ${t}`)}>
-          {t}
-        </span>
-      ))}
       {mine.slice(0, limit).map((t) => (
         <span
           key={`my-${t}`}

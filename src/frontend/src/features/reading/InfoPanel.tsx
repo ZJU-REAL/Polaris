@@ -14,7 +14,7 @@ import { clickable } from '../../lib/a11y';
 import { api, type PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { topicPath } from '../../app/project';
-import { PaperMyTagsRow, PaperTagsRow } from '../shared/PaperDetailBlocks';
+import { PaperMyTagsRow } from '../shared/PaperDetailBlocks';
 
 /* ============================================================
    阅读工作台 · 论文信息面板（PaperDetailPane 的精简版）：
@@ -182,9 +182,14 @@ export function InfoPanel({
         </MetaItem>
       </div>
 
-      {/* —— 标签：库标签只读（编辑在文献工作台）+ 我的标签边读边打 —— */}
-      <PaperTagsRow tags={paper.tags} style={{ marginTop: 12 }} />
-      <PaperMyTagsRow paperId={paper.id} myTags={paper.my_tags} detailKey={['paper', paper.id]} />
+      {/* —— 我的标签：边读边打，只有自己看得到 —— */}
+      {/* 库标签的界面入口已移除，个人标签取代了它；后端端点与数据保留。 */}
+      <PaperMyTagsRow
+        paperId={paper.id}
+        myTags={paper.my_tags}
+        detailKey={['paper', paper.id]}
+        style={{ marginTop: 12 }}
+      />
 
       {/* —— 概念 chips —— */}
       {paper.concepts.length > 0 && (

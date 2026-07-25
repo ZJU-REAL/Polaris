@@ -146,7 +146,7 @@ function ShelfRow({
           checked={checked}
           onClick={(e) => e.stopPropagation()}
           onChange={onToggleCheck}
-          title={tr('选中后可批量导出引用', 'Select for bulk citation export')}
+          title={tr('选中后可批量移出 / 导出引用', 'Select for bulk remove / citation export')}
           style={{
             width: 13,
             height: 13,
@@ -683,6 +683,29 @@ export function ResearchPage() {
     onError: (e) => toast(`${tr('移除失败：', 'Failed to remove: ')}${errText(e)}`, 'error'),
   });
 
+  // 多选批量移出：后端没有批量端点，按选中集逐篇调（同样是软删，落回收站）
+  const bulkRemoveMutation = useMutation({
+    mutationFn: async (paperIds: string[]) => {
+      await Promise.all(paperIds.map((paperId) => api.removeFromShelf(pid, paperId)));
+      return paperIds.length;
+    },
+    onSuccess: (n, paperIds) => {
+      toast(
+        tr(
+          `已把 ${n} 篇移入回收站，可以召回（个人库收藏保留）`,
+          `Moved ${n} papers to trash — restorable (saved copies stay)`,
+        ),
+        'ok',
+      );
+      setSelId((old) => (old && paperIds.includes(old) ? null : old));
+      setCheckedIds(new Set());
+      setSelectMode(false);
+      invalidate();
+      void queryClient.invalidateQueries({ queryKey: ['shelf-trash', pid] });
+    },
+    onError: (e) => toast(`${tr('移除失败：', 'Failed to remove: ')}${errText(e)}`, 'error'),
+  });
+
   // 个人版 wiki 按需生成（wiki_source=none 的论文；费用记个人额度）
   const generateMutation = useMutation({
     mutationFn: (paperId: string) => api.compilePersonalWiki(paperId, pid),
@@ -741,11 +764,12 @@ export function ResearchPage() {
       <PageHead
         eyebrow="Polaris · Related Work"
         title={tr('相关研究', 'Related Work')}
+        dense
         right={
           tab === 'list' ? (
             <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
               <Icon name="plus" size={13} />
-              {tr('添加论文', 'Add papers')}
+              {tr('添加文献', 'Add paper')}
             </button>
           ) : undefined
         }
@@ -998,47 +1022,6 @@ export function ResearchPage() {
               )}
             </div>
 
-            {/* —— 底部操作栏：多选 + 导出 BibTeX（常驻，对齐文献库 PapersTab） —— */}
-            <div
-              className="row gap8"
-              style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
-            >
-              <button
-                className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-                title={tr('开启后列表出现复选框，可批量导出引用', 'Show checkboxes to bulk-export citations')}
-                onClick={() => {
-                  setSelectMode((m) => !m);
-                  setCheckedIds(new Set());
-                }}
-              >
-                <Icon name="check" size={13} />
-                {selectMode ? tr(`已选 ${checkedIds.size}`, `${checkedIds.size} selected`) : tr('多选', 'Select')}
-              </button>
-              {selectMode && (
-                <button
-                  className="btn btn-ghost sm"
-                  disabled={checkedIds.size === 0 || exportMutation.isPending}
-                  onClick={() => exportMutation.mutate()}
-                >
-                  {exportMutation.isPending ? (
-                    <Icon name="refresh" size={12} style={{ animation: 'spin 1s linear infinite' }} />
-                  ) : (
-                    <Icon name="download" size={12} />
-                  )}
-                  {tr('导出 BibTeX', 'Export BibTeX')}
-                </button>
-              )}
-              <button
-                className="btn btn-ghost sm"
-                style={{ marginLeft: 'auto' }}
-                title={tr('回收站：移出的论文可以召回或彻底删除', 'Trash: removed papers — restore or delete forever')}
-                onClick={() => setTrashOpen(true)}
-              >
-                <Icon name="trash" size={13} />
-                {tr('回收站', 'Trash')}
-              </button>
-            </div>
-
             {/* 底部分页栏（超过单页上限 100 才出现；语义结果不分页） */}
             {!semantic && totalPages > 1 && (
               <div
@@ -1067,6 +1050,56 @@ export function ResearchPage() {
                 </button>
               </div>
             )}
+            {/* —— 底部操作栏：多选（删除 / 导出）+ 回收站入口，与文献工作台 / 我的文献库同款 —— */}
+            <div
+              className="row gap8"
+              style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
+            >
+              <button
+                className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
+                title={tr('开启后列表出现复选框，可批量移出 / 导出引用', 'Show checkboxes for bulk remove / citation export')}
+                onClick={() => {
+                  setSelectMode((m) => !m);
+                  setCheckedIds(new Set());
+                }}
+              >
+                <Icon name="check" size={13} />
+                {selectMode
+                  ? tr(`已选 ${checkedIds.size} 篇`, `${checkedIds.size} selected`)
+                  : tr('多选', 'Select')}
+              </button>
+              {selectMode && (
+                <>
+                  <button
+                    className="btn btn-ghost sm"
+                    style={{ color: 'var(--danger-tx)' }}
+                    title={tr('移入回收站（可召回，个人库收藏保留）', 'Move to trash (restorable, saved copies stay)')}
+                    disabled={checkedIds.size === 0 || bulkRemoveMutation.isPending}
+                    onClick={() => bulkRemoveMutation.mutate([...checkedIds])}
+                  >
+                    <Icon name="x" size={12} />
+                    {tr('删除', 'Delete')}
+                  </button>
+                  <button
+                    className="btn btn-ghost sm"
+                    disabled={checkedIds.size === 0 || exportMutation.isPending}
+                    onClick={() => exportMutation.mutate()}
+                  >
+                    <Icon name="download" size={12} />
+                    {tr('导出 BibTeX', 'Export BibTeX')}
+                  </button>
+                </>
+              )}
+              <button
+                className="btn btn-ghost sm"
+                style={{ marginLeft: 'auto' }}
+                title={tr('回收站：移出的论文可以召回或彻底删除', 'Trash: removed papers — restore or delete forever')}
+                onClick={() => setTrashOpen(true)}
+              >
+                <Icon name="trash" size={13} />
+                {tr('回收站', 'Trash')}
+              </button>
+            </div>
           </div>
 
           {/* —— 右：详情 / 空态引导 —— */}
@@ -1105,7 +1138,7 @@ export function ResearchPage() {
                     <div className="row gap10" style={{ justifyContent: 'center' }}>
                       <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
                         <Icon name="plus" size={13} />
-                        {tr('添加论文', 'Add papers')}
+                        {tr('添加文献', 'Add paper')}
                       </button>
                       <button className="btn btn-soft sm" onClick={() => navigate(libEntryHref)}>
                         <Icon name="book" size={13} />
@@ -1125,7 +1158,7 @@ export function ResearchPage() {
         )}
       </div>
 
-      {/* —— 添加论文（从文献库 / 手动）统一弹窗 —— */}
+      {/* —— 添加文献（从文献库 / 手动）统一弹窗 —— */}
       <AddPaperModal
         open={addOpen}
         onClose={() => setAddOpen(false)}

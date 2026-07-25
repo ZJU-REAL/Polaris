@@ -29,10 +29,9 @@ import { tr } from '../../lib/i18n';
 import {
   ConceptChips,
   PaperMyMetaRow,
+  PaperMyTagChips,
   PaperMyTagsRow,
   PaperNotesSection,
-  PaperTagChips,
-  PaperTagsRow,
   WikiHeaderActions,
 } from '../shared/PaperDetailBlocks';
 import { ConceptsTab } from '../wiki/ConceptsTab';
@@ -73,7 +72,7 @@ type BrowseTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'notes' | 'govern' |
 
 const PAGE_SIZE = 20;
 
-/** 列表视图筛选（口径同文献工作台：全部 = 已纳入的文献） */
+/** 列表范围筛选（口径同文献工作台：全部 = 已纳入的文献）；收在高级检索面板里 */
 type ViewFilter = 'all' | 'compiled' | 'starred';
 
 // 模块级常量存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
@@ -159,7 +158,7 @@ const PaperRow = memo(function PaperRow({
       <div className="row gap8" style={{ marginTop: 6 }}>
         <PaperStatusPill status={p.status} sm />
         <ReadingDot status={p.reading_status} />
-        <PaperTagChips tags={p.tags} myTags={p.my_tags} />
+        <PaperMyTagChips myTags={p.my_tags} />
         {(p.note_count ?? 0) > 0 && (
           <span
             className="row"
@@ -408,8 +407,8 @@ function PaperDetailPane({
         invalidateKeys={listKeys}
       />
 
-      {/* —— 标签：库标签只读（编辑在文献工作台）+ 我的标签就地改 —— */}
-      <PaperTagsRow tags={paper.tags} />
+      {/* —— 我的标签：就地改，只有自己看得到 —— */}
+      {/* 库标签的界面入口已移除，个人标签取代了它；后端端点与数据保留。 */}
       <PaperMyTagsRow
         paperId={paper.id}
         myTags={paper.my_tags}
@@ -614,9 +613,8 @@ function PapersPane({
   const [semanticOn, setSemanticOn] = useState(false);
   const [sort, setSort] = useState<PaperSort>('relevance');
   const [page, setPage] = useState(1);
-  // 视图筛选（全部 / 已编译 / 已星标）+ 标签过滤，口径同文献工作台
+  // 范围筛选（全部 / 已编译 / 已星标）：收在高级检索面板里，口径同文献工作台
   const [view, setView] = useState<ViewFilter>('all');
-  const [tagFilter, setTagFilter] = useState('');
 
   // 多选（批量导出引用）：默认关闭，底部「多选」按钮开启后行首出现复选框（只读浏览不加删除）
   const [selectMode, setSelectMode] = useState(false);
@@ -624,7 +622,7 @@ function PapersPane({
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
-  }, [libraryId, q, view, tagFilter]);
+  }, [libraryId, q, view]);
 
   const bulkExportMutation = useMutation({
     mutationFn: () => api.downloadLibraryCitations(libraryId, { format: 'bibtex', ids: [...selected] }),
@@ -644,16 +642,16 @@ function PapersPane({
   const [advYearTo, setAdvYearTo] = useState('');
   const [advMyTag, setAdvMyTag] = useState('');
   const [advReading, setAdvReading] = useState<'' | ReadingStatus>('');
-  const [advStarred, setAdvStarred] = useState(false);
   const author = useDebounced(advAuthor.trim());
   const affiliation = useDebounced(advAffiliation.trim());
   const yearFrom = parseYear(advYearFrom);
   const yearTo = parseYear(advYearTo);
-  const advActive = !!(author || affiliation || yearFrom || yearTo || advMyTag || advReading || advStarred);
+  // 范围也算一个高级条件（「已星标」就是原来的星标筛选，不再单列）
+  const advActive = !!(author || affiliation || yearFrom || yearTo || advMyTag || advReading) || view !== 'all';
 
   useEffect(
     () => setPage(1),
-    [q, sort, semanticOn, view, tagFilter, author, affiliation, yearFrom, yearTo, advMyTag, advReading, advStarred],
+    [q, sort, semanticOn, view, author, affiliation, yearFrom, yearTo, advMyTag, advReading],
   );
 
   // 点作者/机构 → 列表只留匹配的论文（走已有的高级检索），其余条件重置并展开面板
@@ -667,7 +665,7 @@ function PapersPane({
       setAdvYearTo('');
       setAdvMyTag('');
       setAdvReading('');
-      setAdvStarred(false);
+      setView('all');
       setAdvOpen(true);
       onSelect('');
       if (patch.author) {
@@ -681,26 +679,17 @@ function PapersPane({
   const filterByAuthor = useCallback((name: string) => applyAdvFilter({ author: name }), [applyAdvFilter]);
   const filterByAffiliation = useCallback((name: string) => applyAdvFilter({ affiliation: name }), [applyAdvFilter]);
 
-  // 库内标签（过滤下拉用；接口未就绪时静默降级）
-  const tagsQuery = useQuery({
-    queryKey: ['lib-tags', libraryId],
-    queryFn: () => api.listLibraryTags(libraryId),
-    retry: false,
-  });
-  const libraryTags = tagsQuery.data ?? [];
-
   const semantic = !!q && semanticOn;
   const listQuery = useQuery({
     queryKey: [
-      'lib-papers', libraryId, view, tagFilter, advMyTag, q, sort, page,
-      author, affiliation, yearFrom, yearTo, advReading, advStarred,
+      'lib-papers', libraryId, view, advMyTag, q, sort, page,
+      author, affiliation, yearFrom, yearTo, advReading,
     ],
     queryFn: () => {
       const vq = viewQuery(view);
       return api.listLibraryPapersFull(libraryId, {
         status: vq.status,
-        starred: vq.starred || advStarred || undefined,
-        tag: tagFilter || undefined,
+        starred: vq.starred || undefined,
         my_tag: advMyTag || undefined,
         q: q || undefined,
         sort,
@@ -735,7 +724,7 @@ function PapersPane({
     if (!selectedId && firstId) onSelect(firstId);
   }, [selectedId, firstId, onSelect]);
 
-  const hasFilter = !!q || advActive || view !== 'all' || !!tagFilter;
+  const hasFilter = !!q || advActive;
   const filterDisabled = semantic ? { opacity: 0.45, pointerEvents: 'none' as const } : undefined;
 
   return (
@@ -758,8 +747,8 @@ function PapersPane({
               active={advActive}
               onToggle={() => setAdvOpen((o) => !o)}
               title={tr(
-                '高级检索：作者 / 机构 / 年份 / 我的标签 / 阅读状态 / 星标',
-                'Advanced search: author / affiliation / year / my tags / reading status / starred',
+                '高级检索：范围 / 作者 / 机构 / 年份 / 我的标签 / 阅读状态',
+                'Advanced search: scope / author / affiliation / year / my tags / reading status',
               )}
             />
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
@@ -778,11 +767,27 @@ function PapersPane({
                         setAdvYearTo('');
                         setAdvMyTag('');
                         setAdvReading('');
-                        setAdvStarred(false);
+                        setView('all');
                       }
                     : undefined
                 }
               >
+                {/* 范围：原来面板外的那排 chip 收进来；「已星标」即原先单列的星标筛选 */}
+                <div className="row gap6 wrap" style={{ alignItems: 'center' }}>
+                  <span style={{ width: 52, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
+                    {tr('范围', 'Scope')}
+                  </span>
+                  {VIEW_FILTERS.map((f) => (
+                    <span
+                      key={f.v}
+                      className={`chip${view === f.v ? ' on' : ''}`}
+                      title={tr(f.hintZh, f.hintEn)}
+                      onClick={() => setView(f.v)}
+                    >
+                      {tr(f.zh, f.en)}
+                    </span>
+                  ))}
+                </div>
                 <div className="row gap8">
                   <FilterInput value={advAuthor} onChange={setAdvAuthor} placeholder={tr('作者姓名…', 'Author name…')} />
                   <FilterInput
@@ -804,48 +809,7 @@ function PapersPane({
                 />
                 <MyTagField value={advMyTag} onChange={setAdvMyTag} />
                 <ReadingStatusField value={advReading} onChange={setAdvReading} />
-                <label className="row gap6" style={{ cursor: 'pointer', userSelect: 'none', fontSize: 11.5, color: 'var(--text-2)' }}>
-                  <input
-                    type="checkbox"
-                    checked={advStarred}
-                    onChange={(e) => setAdvStarred(e.target.checked)}
-                    style={{ width: 14, height: 14, accentColor: 'var(--accent)' }}
-                  />
-                  {tr('仅看星标', 'Starred only')}
-                </label>
               </AdvancedPanel>
-            </div>
-          )}
-          {/* 视图筛选：全部 / 已编译 / 已星标（语义检索时置灰） */}
-          <div className="row gap6 wrap" style={{ marginTop: 10, ...filterDisabled }}>
-            {VIEW_FILTERS.map((f) => (
-              <span
-                key={f.v}
-                className={`chip${view === f.v ? ' on' : ''}`}
-                title={tr(f.hintZh, f.hintEn)}
-                onClick={() => setView(f.v)}
-              >
-                {tr(f.zh, f.en)}
-              </span>
-            ))}
-          </div>
-          {/* 标签过滤（库作用域标签） */}
-          {libraryTags.length > 0 && (
-            <div className="row gap6" style={{ marginTop: 8, ...filterDisabled }}>
-              <select
-                className="input"
-                style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
-                value={tagFilter}
-                onChange={(e) => setTagFilter(e.target.value)}
-                title={tr('按标签过滤', 'Filter by tag')}
-              >
-                <option value="">{tr('全部标签', 'All tags')}</option>
-                {libraryTags.map((t) => (
-                  <option key={t.id} value={t.name}>
-                    {t.name}（{t.paper_count}）
-                  </option>
-                ))}
-              </select>
             </div>
           )}
           {/* 排序（语义检索按相关度返回，排序无效 → 置灰） */}
@@ -935,7 +899,9 @@ function PapersPane({
             }}
           >
             <Icon name="check" size={13} />
-            {selectMode ? tr(`已选 ${selected.size}`, `${selected.size} selected`) : tr('多选', 'Select')}
+            {selectMode
+              ? tr(`已选 ${selected.size} 篇`, `${selected.size} selected`)
+              : tr('多选', 'Select')}
           </button>
           {selectMode && (
             <button

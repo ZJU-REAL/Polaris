@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
@@ -34,11 +34,13 @@ import { PersonalChatTab } from './PersonalChatTab';
 import { DailyLikedTab } from './DailyLikedTab';
 import { AuthorBindWizard } from './AuthorBindWizard';
 import { AddToLibraryModal } from './AddToLibraryModal';
+import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPane';
 
 /* ============================================================
    /library — 我的文献库：
-   「我的收藏」+「浏览记录」+「回收站」+「我发表的」等 tab；
+   「我的收藏」+「浏览记录」+「我发表的」等 tab（回收站是列表
+   底部操作行里的弹窗入口，与实验室文献库 / 相关研究一致）；
    双栏主从布局对齐文献追踪（Stage 00）的论文库：
    左栏列表（搜索/排序/分页/行操作），右栏选中条目的详情
    （活体论文展示 wiki，快照条目展示元数据 + 外链）。
@@ -48,9 +50,14 @@ import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPa
 const PAGE_SIZE = 20;
 // 语义检索一次返回一组结果（不分页），上限比普通分页大些
 const SEMANTIC_SIZE = 50;
+// 回收站弹窗一次拉这么多条（不分页，超出的在弹窗里提示总数）
+const TRASH_SIZE = 100;
 
-/** 页面级 tab：库内三个 tab（收藏 / 浏览记录 / 回收站）+「我赞过的」+「文献对话」+「我发表的」。 */
-type PageTab = LibraryTab | 'liked' | 'publications' | 'chat';
+/** 页面级 tab：库内两个 tab（收藏 / 浏览记录）+「我赞过的」+「文献对话」+「我发表的」。
+    回收站不再是 tab，改成列表底部操作行里的弹窗。 */
+type PageTab = 'saved' | 'history' | 'liked' | 'publications' | 'chat';
+/** 列表 tab：收藏 / 浏览记录（走同一套列表端点）。 */
+type ListTab = Extract<LibraryTab, 'saved' | 'history'>;
 
 // 模块级常量不调 tr()：保留 zh/en 字段，渲染处再 tr
 const SORTS: { v: LibrarySort; zh: string; en: string }[] = [
@@ -76,11 +83,10 @@ function EntryRow({
   onToggleCheck,
   onSelect,
   onToggleSave,
-  onRestore,
   onPurge,
 }: {
   entry: LibraryEntry;
-  tab: LibraryTab;
+  tab: ListTab;
   active: boolean;
   busy: boolean;
   selectMode: boolean;
@@ -88,7 +94,6 @@ function EntryRow({
   onToggleCheck: () => void;
   onSelect: () => void;
   onToggleSave: () => void;
-  onRestore: () => void;
   onPurge: () => void;
 }) {
   const authors = entry.authors.map((a) => a.name).join(', ');
@@ -126,7 +131,7 @@ function EntryRow({
         title={
           entry.last_paper_id === null
             ? tr('源方向已删除，无法导出引用', 'Source deleted — cannot export citation')
-            : tr('选中后可批量导出引用', 'Select for bulk citation export')
+            : tr('选中后可批量删除 / 导出引用', 'Select for bulk delete / citation export')
         }
         style={{
           width: 13,
@@ -154,11 +159,7 @@ function EntryRow({
               {tr('源课题已删除', 'Source topic deleted')}
             </span>
           )}
-          {tab === 'trash' ? (
-            <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
-              {tr(`${fmtRelative(entry.trashed_at)} 移入`, `trashed ${fmtRelative(entry.trashed_at)}`)}
-            </span>
-          ) : entry.visit_count > 0 ? (
+          {entry.visit_count > 0 ? (
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
               {fmtRelative(entry.last_visited_at)}
               {' · '}
@@ -209,56 +210,31 @@ function EntryRow({
         )}
       </div>
 
-      {/* —— 右：操作（回收站里换成召回 / 彻底删除） —— */}
+      {/* —— 右：操作（收藏开关 / 浏览记录删除） —— */}
       <div className="row gap6" style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-        {tab === 'trash' ? (
-          <>
-            <button
-              className="icon-btn"
-              disabled={busy}
-              title={tr('召回到「我的收藏」', 'Restore to Saved')}
-              style={{ color: 'var(--accent)' }}
-              onClick={onRestore}
-            >
-              <Icon name="refresh" size={15} />
-            </button>
-            <button
-              className="icon-btn"
-              disabled={busy}
-              title={tr('彻底删除，无法再召回', 'Delete forever — cannot be restored')}
-              style={{ color: 'var(--danger-tx)' }}
-              onClick={onPurge}
-            >
-              <Icon name="x" size={15} />
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              className="icon-btn"
-              disabled={busy}
-              title={
-                entry.saved
-                  ? tr('取消收藏（放进回收站，可召回）', 'Unsave (goes to trash, restorable)')
-                  : tr('收藏', 'Save')
-              }
-              style={{ color: entry.saved ? 'var(--accent)' : 'var(--text-3)' }}
-              onClick={onToggleSave}
-            >
-              <Icon name={entry.saved ? 'bookmarkFill' : 'bookmark'} size={15} />
-            </button>
-            {tab === 'history' && (
-              <button
-                className="icon-btn"
-                disabled={busy}
-                title={tr('彻底删除这条记录', 'Delete this record')}
-                style={{ color: 'var(--text-3)' }}
-                onClick={onPurge}
-              >
-                <Icon name="trash" size={15} />
-              </button>
-            )}
-          </>
+        <button
+          className="icon-btn"
+          disabled={busy}
+          title={
+            entry.saved
+              ? tr('取消收藏（放进回收站，可召回）', 'Unsave (goes to trash, restorable)')
+              : tr('收藏', 'Save')
+          }
+          style={{ color: entry.saved ? 'var(--accent)' : 'var(--text-3)' }}
+          onClick={onToggleSave}
+        >
+          <Icon name={entry.saved ? 'bookmarkFill' : 'bookmark'} size={15} />
+        </button>
+        {tab === 'history' && (
+          <button
+            className="icon-btn"
+            disabled={busy}
+            title={tr('彻底删除这条记录', 'Delete this record')}
+            style={{ color: 'var(--text-3)' }}
+            onClick={onPurge}
+          >
+            <Icon name="trash" size={15} />
+          </button>
         )}
       </div>
     </div>
@@ -274,6 +250,108 @@ function PickHint() {
   );
 }
 
+/* ---------------- 回收站 ---------------- */
+
+/** 我的文献库回收站：弹窗外壳复用共享 TrashModal，端点与行映射留在这里。
+    取消收藏是软删，条目落在这里，可召回或彻底删除；浏览记录不受影响。 */
+function PersonalTrashModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
+
+  const trashQuery = useQuery({
+    queryKey: ['library', 'trash', TRASH_SIZE],
+    queryFn: () => api.listLibrary({ tab: 'trash', sort: 'recent', page: 1, size: TRASH_SIZE }),
+    enabled: open,
+    retry: false,
+  });
+  const trashed = useMemo(() => trashQuery.data?.items ?? [], [trashQuery.data]);
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['library'] });
+    void queryClient.invalidateQueries({ queryKey: ['library-state'] });
+  };
+
+  const restoreMutation = useMutation({
+    mutationFn: (entryId: string) => api.restoreLibraryEntry(entryId),
+    onSuccess: (entry) => {
+      toast(`${tr('已召回：', 'Restored: ')}${entry.title.slice(0, 30)}`, 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`${tr('召回失败：', 'Restore failed: ')}${errText(e)}`, 'error'),
+  });
+
+  const purgeMutation = useMutation({
+    mutationFn: (entryId: string) => api.removeLibraryEntry(entryId, 'purge'),
+    onSuccess: () => {
+      toast(tr('已彻底删除', 'Permanently deleted'), 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
+  });
+
+  const emptyMutation = useMutation({
+    mutationFn: () => api.emptyPersonalTrash(),
+    onSuccess: (res) => {
+      toast(tr(`回收站已清空（${res.deleted} 条）`, `Trash emptied (${res.deleted} entries)`), 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`${tr('清空失败：', 'Empty failed: ')}${errText(e)}`, 'error'),
+  });
+
+  const items = useMemo<TrashItemView[]>(
+    () =>
+      trashed.map((entry) => {
+        const authors = entry.authors.map((a) => a.name).join(', ');
+        return {
+          id: entry.id,
+          code: entry.arxiv_id ?? entry.venue ?? '—',
+          year: entry.year,
+          title: entry.title,
+          leading:
+            entry.last_paper_id === null ? (
+              <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+                {tr('源课题已删除', 'Source topic deleted')}
+              </span>
+            ) : undefined,
+          aside: (
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+              {tr(`${fmtRelative(entry.trashed_at)} 移入`, `trashed ${fmtRelative(entry.trashed_at)}`)}
+            </span>
+          ),
+          desc: entry.tldr ?? entry.abstract ?? (authors || null),
+          searchText: [entry.title, authors].join('\n'),
+        };
+      }),
+    [trashed],
+  );
+
+  return (
+    <TrashModal
+      open={open}
+      onClose={onClose}
+      sub={tr(
+        '取消收藏的文献放在这里；召回后回到「我的收藏」，清空浏览记录不会动这里',
+        'Papers you unsaved land here; restoring puts them back in Saved — clearing history leaves this alone',
+      )}
+      items={items}
+      total={trashQuery.data?.total}
+      loading={trashQuery.isLoading}
+      busy={restoreMutation.isPending || purgeMutation.isPending || emptyMutation.isPending}
+      emptying={emptyMutation.isPending}
+      onRestore={(id) => restoreMutation.mutate(id)}
+      onPurge={(id) => purgeMutation.mutate(id)}
+      onEmpty={() => emptyMutation.mutate()}
+      emptyWarning={(n) =>
+        tr(
+          `将彻底删除回收站里的全部 ${n} 条，无法恢复`,
+          `This permanently deletes all ${n} entries in the trash — no undo`,
+        )
+      }
+      restoreHint={tr('召回到「我的收藏」', 'Restore to Saved')}
+      purgeHint={tr('彻底删除，无法再召回', 'Delete forever — cannot be restored')}
+    />
+  );
+}
+
 export function LibraryPage() {
   const queryClient = useQueryClient();
 
@@ -285,13 +363,14 @@ export function LibraryPage() {
   const [sort, setSort] = useState<LibrarySort>('recent');
   const [page, setPage] = useState(1);
   const [clearOpen, setClearOpen] = useState(false);
-  const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
 
-  // 多选（批量导出引用）：默认关闭，仅「我的收藏」可用；选中集合按论文 id 存
-  // （last_paper_id，跨页/跨搜索都能带着走；导出端点按论文 id 精确取本人收藏）
+  // 多选（批量删除 / 导出引用）：默认关闭，仅「我的收藏」可用。
+  // 选中集合是「条目 id → 论文 id」的映射：删除按条目 id 走个人库端点，
+  // 导出按论文 id 走引用端点；勾选时就记下映射，跨页/跨搜索都能带着走。
   const [selectMode, setSelectMode] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Map<string, string>>(new Map());
 
   // 高级检索：年份区间 / 作者 / 机构 / 期刊会议 / 我的标签 / 阅读状态 / 星标（走后端）
   const [advOpen, setAdvOpen] = useState(false);
@@ -368,11 +447,11 @@ export function LibraryPage() {
 
   // 切 tab / 换搜索词 / 换检索模式时清空多选（避免选中集跨上下文残留）
   useEffect(() => {
-    setSelected(new Set());
+    setSelected(new Map());
     setSelectMode(false);
   }, [tab, q, semanticOn]);
 
-  const onLibraryTab = tab !== 'publications' && tab !== 'chat' && tab !== 'liked';
+  const onLibraryTab = tab === 'saved' || tab === 'history';
   const listQuery = useQuery({
     queryKey: [
       'library', tab, q, semantic, sort, page,
@@ -381,7 +460,7 @@ export function LibraryPage() {
     ],
     queryFn: () =>
       api.listLibrary({
-        tab: tab as LibraryTab,
+        tab: tab as ListTab,
         q: q || undefined,
         mode: semantic ? 'semantic' : undefined,
         sort,
@@ -452,20 +531,11 @@ export function LibraryPage() {
     onError: (e) => toast(`${tr('操作失败：', 'Action failed: ')}${errText(e)}`, 'error'),
   });
 
-  const restoreMutation = useMutation({
-    mutationFn: (entry: LibraryEntry) => api.restoreLibraryEntry(entry.id),
-    onSuccess: (_d, entry) => {
-      toast(`${tr('已召回：', 'Restored: ')}${entry.title.slice(0, 30)}`, 'ok');
-      setSelEntry((old) => (old && old.id === entry.id ? null : old));
-      invalidate();
-    },
-    onError: (e) => toast(`${tr('召回失败：', 'Restore failed: ')}${errText(e)}`, 'error'),
-  });
-
+  // 浏览记录里的「彻底删除这条记录」（收藏条目的软删走上面的 toggleMutation）
   const purgeMutation = useMutation({
     mutationFn: (entry: LibraryEntry) => api.removeLibraryEntry(entry.id, 'purge'),
     onSuccess: (_d, entry) => {
-      toast(tab === 'trash' ? tr('已彻底删除', 'Permanently deleted') : tr('已删除这条记录', 'Record deleted'), 'ok');
+      toast(tr('已删除这条记录', 'Record deleted'), 'ok');
       // 删除的是当前选中项 → 清空右栏
       setSelEntry((old) => (old && old.id === entry.id ? null : old));
       invalidate();
@@ -473,19 +543,24 @@ export function LibraryPage() {
     onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
   });
 
-  const emptyTrashMutation = useMutation({
-    mutationFn: () => api.emptyPersonalTrash(),
-    onSuccess: (res) => {
-      setEmptyTrashOpen(false);
-      setSelEntry(null);
-      toast(tr(`回收站已清空（${res.deleted} 条）`, `Trash emptied (${res.deleted} entries)`), 'ok');
+  // 多选批量取消收藏：后端没有批量端点，按选中集逐条调（同样是软删，落回收站）
+  const bulkUnsaveMutation = useMutation({
+    mutationFn: async (entryIds: string[]) => {
+      await Promise.all(entryIds.map((id) => api.removeLibraryEntry(id, 'unsave')));
+      return entryIds.length;
+    },
+    onSuccess: (n, entryIds) => {
+      toast(tr(`已把 ${n} 篇移入回收站，可以召回`, `Moved ${n} papers to trash — restorable`), 'ok');
+      setSelEntry((old) => (old && entryIds.includes(old.id) ? null : old));
+      setSelected(new Map());
+      setSelectMode(false);
       invalidate();
     },
-    onError: (e) => toast(`${tr('清空失败：', 'Empty failed: ')}${errText(e)}`, 'error'),
+    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
   });
 
   const exportMutation = useMutation({
-    mutationFn: () => api.downloadPersonalCitations({ format: 'bibtex', ids: [...selected] }),
+    mutationFn: () => api.downloadPersonalCitations({ format: 'bibtex', ids: [...selected.values()] }),
     onSuccess: (blob) => {
       saveBlob(blob, 'polaris-my-library-citations.bib');
       toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
@@ -504,7 +579,7 @@ export function LibraryPage() {
     onError: (e) => toast(`${tr('清空失败：', 'Clear failed: ')}${errText(e)}`, 'error'),
   });
 
-  const busy = toggleMutation.isPending || purgeMutation.isPending || restoreMutation.isPending;
+  const busy = toggleMutation.isPending || purgeMutation.isPending || bulkUnsaveMutation.isPending;
 
   return (
     <div
@@ -531,7 +606,6 @@ export function LibraryPage() {
           options={[
             { v: 'saved', label: tr('我的收藏', 'Saved') },
             { v: 'history', label: tr('浏览记录', 'History') },
-            { v: 'trash', label: tr('回收站', 'Trash') },
             { v: 'liked', label: tr('我赞过的', 'Liked') },
             { v: 'chat', label: tr('文献对话', 'Chat') },
             {
@@ -628,7 +702,7 @@ export function LibraryPage() {
             </div>
           )
         ) : (
-          /* ======== 我的收藏 / 浏览记录 / 回收站 ======== */
+          /* ======== 我的收藏 / 浏览记录 ======== */
           <div className="split">
             {/* —— 左：列表 —— */}
             <div className="split-list">
@@ -654,9 +728,7 @@ export function LibraryPage() {
                             '按语义相似度检索收藏（需已生成向量）',
                             'Semantic search over saved papers (needs embeddings)',
                           )
-                        : tab === 'history'
-                          ? tr('浏览记录是流水，只支持关键词检索', 'History is a raw log — keyword search only')
-                          : tr('回收站只支持关键词检索', 'Trash supports keyword search only')
+                        : tr('浏览记录是流水，只支持关键词检索', 'History is a raw log — keyword search only')
                     }
                   />
                   <AdvancedToggle
@@ -732,27 +804,7 @@ export function LibraryPage() {
                       {tr('清空记录', 'Clear history')}
                     </button>
                   )}
-                  {tab === 'trash' && (
-                    <button
-                      className="btn btn-ghost sm"
-                      style={{ marginLeft: 'auto', height: 26, flexShrink: 0, color: 'var(--danger-tx)' }}
-                      disabled={emptyTrashMutation.isPending || (data !== undefined && data.total === 0)}
-                      onClick={() => setEmptyTrashOpen(true)}
-                    >
-                      <Icon name="x" size={13} />
-                      {tr('清空回收站', 'Empty trash')}
-                    </button>
-                  )}
                 </div>
-
-                {tab === 'trash' && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5 }}>
-                    {tr(
-                      '取消收藏的文献先放这里，召回就回到「我的收藏」；彻底删除之后找不回来。清空浏览记录不会动这里。',
-                      'Unsaved papers land here — restore one and it goes back to Saved. Deleting forever cannot be undone; clearing your history leaves this list alone.',
-                    )}
-                  </div>
-                )}
 
                 {/* 语义检索提示：回退关键词 / 覆盖范围说明 */}
                 {semantic && data?.mode_used === 'keyword' && (
@@ -792,15 +844,13 @@ export function LibraryPage() {
                 ) : entries.length === 0 ? (
                   <EmptyState
                     compact
-                    icon={tab === 'trash' ? 'trash' : 'bookmark'}
+                    icon="bookmark"
                     title={
                       q || advActive
                         ? tr('没有匹配的文献', 'No matching papers')
                         : tab === 'saved'
                           ? tr('还没有收藏的文献', 'Nothing saved yet')
-                          : tab === 'history'
-                            ? tr('还没有浏览记录', 'No reading history yet')
-                            : tr('回收站是空的', 'Trash is empty')
+                          : tr('还没有浏览记录', 'No reading history yet')
                     }
                     desc={
                       q || advActive
@@ -810,15 +860,10 @@ export function LibraryPage() {
                               '点右上角「添加文献」，填 arXiv 编号 / DOI / BibTeX 就能直接加进来；在论文阅读页点右上角的书签按钮也能收进这里。',
                               'Use “Add paper” in the top right — an arXiv ID, DOI or BibTeX entry is enough. You can also tap the bookmark button on any paper reading page.',
                             )
-                          : tab === 'history'
-                            ? tr(
-                                '打开任意论文的阅读页后，会自动记录在这里。',
-                                'Papers you open in the reader will show up here automatically.',
-                              )
-                            : tr(
-                                '取消收藏的文献会先放进这里，随时可以召回。',
-                                'Papers you unsave land here and can be restored any time.',
-                              )
+                          : tr(
+                              '打开任意论文的阅读页后，会自动记录在这里。',
+                              'Papers you open in the reader will show up here automatically.',
+                            )
                     }
                     action={
                       tab === 'saved' && !q && !advActive ? (
@@ -838,20 +883,19 @@ export function LibraryPage() {
                       active={entry.id === selEntry?.id}
                       busy={busy}
                       selectMode={selectMode}
-                      checked={entry.last_paper_id !== null && selected.has(entry.last_paper_id)}
+                      checked={selected.has(entry.id)}
                       onToggleCheck={() =>
                         setSelected((old) => {
                           const pid = entry.last_paper_id;
                           if (pid === null) return old;
-                          const next = new Set(old);
-                          if (next.has(pid)) next.delete(pid);
-                          else next.add(pid);
+                          const next = new Map(old);
+                          if (next.has(entry.id)) next.delete(entry.id);
+                          else next.set(entry.id, pid);
                           return next;
                         })
                       }
                       onSelect={() => setSelEntry(entry)}
                       onToggleSave={() => toggleMutation.mutate(entry)}
-                      onRestore={() => restoreMutation.mutate(entry)}
                       onPurge={() => purgeMutation.mutate(entry)}
                     />
                   ))
@@ -887,35 +931,67 @@ export function LibraryPage() {
                 </div>
               )}
 
-              {/* —— 底部操作栏：多选 + 导出引用（仅「我的收藏」；不含删除） —— */}
-              {tab === 'saved' && (
-                <div
-                  className="row gap8"
-                  style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
-                >
-                  <button
-                    className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-                    title={tr('开启后列表出现复选框，可批量导出引用', 'Show checkboxes for bulk citation export')}
-                    onClick={() => {
-                      setSelectMode((m) => !m);
-                      setSelected(new Set());
-                    }}
-                  >
-                    <Icon name="check" size={13} />
-                    {selectMode ? tr(`已选 ${selected.size}`, `${selected.size} selected`) : tr('多选', 'Select')}
-                  </button>
-                  {selectMode && (
+              {/* —— 底部操作栏：多选（删除 / 导出）+ 回收站入口，与实验室文献库 / 相关研究同款 —— */}
+              <div
+                className="row gap8"
+                style={{ padding: '9px 14px', borderTop: '0.5px solid var(--border)', flexShrink: 0 }}
+              >
+                {/* 多选只对「我的收藏」有意义：浏览记录是流水，不做批量 */}
+                {tab === 'saved' && (
+                  <>
                     <button
-                      className="btn btn-ghost sm"
-                      disabled={selected.size === 0 || exportMutation.isPending}
-                      onClick={() => exportMutation.mutate()}
+                      className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
+                      title={tr(
+                        '开启后列表出现复选框，可批量删除 / 导出引用',
+                        'Show checkboxes for bulk delete / citation export',
+                      )}
+                      onClick={() => {
+                        setSelectMode((m) => !m);
+                        setSelected(new Map());
+                      }}
                     >
-                      <Icon name="download" size={12} />
-                      {tr('导出 BibTeX', 'Export BibTeX')}
+                      <Icon name="check" size={13} />
+                      {selectMode
+                        ? tr(`已选 ${selected.size} 篇`, `${selected.size} selected`)
+                        : tr('多选', 'Select')}
                     </button>
+                    {selectMode && (
+                      <>
+                        <button
+                          className="btn btn-ghost sm"
+                          style={{ color: 'var(--danger-tx)' }}
+                          title={tr('移入回收站（可召回）', 'Move to trash (restorable)')}
+                          disabled={selected.size === 0 || bulkUnsaveMutation.isPending}
+                          onClick={() => bulkUnsaveMutation.mutate([...selected.keys()])}
+                        >
+                          <Icon name="x" size={12} />
+                          {tr('删除', 'Delete')}
+                        </button>
+                        <button
+                          className="btn btn-ghost sm"
+                          disabled={selected.size === 0 || exportMutation.isPending}
+                          onClick={() => exportMutation.mutate()}
+                        >
+                          <Icon name="download" size={12} />
+                          {tr('导出 BibTeX', 'Export BibTeX')}
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ marginLeft: 'auto' }}
+                  title={tr(
+                    '回收站：取消收藏的文献可以召回或彻底删除',
+                    'Trash: unsaved papers — restore or delete forever',
                   )}
-                </div>
-              )}
+                  onClick={() => setTrashOpen(true)}
+                >
+                  <Icon name="trash" size={13} />
+                  {tr('回收站', 'Trash')}
+                </button>
+              </div>
             </div>
 
             {/* —— 右：详情 —— */}
@@ -956,7 +1032,7 @@ export function LibraryPage() {
         title={tr('清空浏览记录？', 'Clear reading history?')}
         message={tr(
           '将删除全部浏览记录；已收藏的文献留在「我的收藏」，回收站里的条目也不受影响。此操作不可撤销。',
-          'All reading history will be deleted. Saved papers stay in the Saved tab and the Trash tab is left alone. This cannot be undone.',
+          'All reading history will be deleted. Saved papers stay in Saved and the trash is left alone. This cannot be undone.',
         )}
         confirmText={tr('清空', 'Clear')}
         danger
@@ -964,20 +1040,8 @@ export function LibraryPage() {
         onConfirm={() => clearMutation.mutate()}
       />
 
-      {/* —— 清空回收站确认 —— */}
-      <ConfirmModal
-        open={emptyTrashOpen}
-        onClose={() => setEmptyTrashOpen(false)}
-        title={tr('清空回收站？', 'Empty trash?')}
-        message={tr(
-          '将彻底删除回收站里的全部条目，删掉之后没法再召回。',
-          'Everything in the trash will be deleted for good — nothing can be restored afterwards.',
-        )}
-        confirmText={tr('清空回收站', 'Empty trash')}
-        danger
-        busy={emptyTrashMutation.isPending}
-        onConfirm={() => emptyTrashMutation.mutate()}
-      />
+      {/* —— 回收站（取消收藏的条目：召回 / 彻底删除 / 清空） —— */}
+      <PersonalTrashModal open={trashOpen} onClose={() => setTrashOpen(false)} />
     </div>
   );
 }

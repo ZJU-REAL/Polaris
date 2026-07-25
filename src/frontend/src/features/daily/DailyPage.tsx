@@ -44,7 +44,6 @@ import {
   PaperMyMetaRow,
   PaperMyTagsRow,
   PaperNotesSection,
-  PaperTagsRow,
   WikiHeaderActions,
 } from '../shared/PaperDetailBlocks';
 import { DailyLikes } from './DailyLikes';
@@ -396,8 +395,8 @@ function DailyDetailPane({
         />
       )}
 
-      {/* —— 标签：库标签只读（编辑在文献工作台）+ 我的标签就地改 —— */}
-      <PaperTagsRow tags={poolPaper?.tags} />
+      {/* —— 我的标签：就地改，只有自己看得到 —— */}
+      {/* 库标签的界面入口已移除，个人标签取代了它；后端端点与数据保留。 */}
       {poolPaper && (
         <PaperMyTagsRow paperId={poolPaper.id} myTags={poolPaper.my_tags} detailKey={poolKey} />
       )}
