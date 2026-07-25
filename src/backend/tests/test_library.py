@@ -135,6 +135,7 @@ async def test_library_advanced_filters_and_year_sort(client):
         project_id,
         title="Old Paper",
         authors=[{"name": "Alice Smith"}],
+        affiliations=["Stanford University"],
         year=2015,
         venue="NeurIPS",
         status="included",
@@ -143,6 +144,7 @@ async def test_library_advanced_filters_and_year_sort(client):
         project_id,
         title="Mid Paper",
         authors=[{"name": "Bob Jones"}],
+        affiliations=["Microsoft Research"],
         year=2018,
         venue="ICML",
         status="included",
@@ -151,6 +153,7 @@ async def test_library_advanced_filters_and_year_sort(client):
         project_id,
         title="New Paper",
         authors=[{"name": "Carol Lee"}],
+        affiliations=["Google DeepMind"],
         year=2021,
         venue="ICLR",
         status="included",
@@ -169,6 +172,11 @@ async def test_library_advanced_filters_and_year_sort(client):
     # author（JSON 文本包含）
     got, _ = await query(author="Bob")
     assert got == ["Mid Paper"]
+    # affiliation：条目快照没有机构字段，按软引用的活体论文匹配
+    got, total = await query(affiliation="Microsoft")
+    assert got == ["Mid Paper"] and total == 1
+    got, total = await query(affiliation="Nowhere Institute")
+    assert got == [] and total == 0
     # venue
     got, _ = await query(venue="ICLR")
     assert got == ["New Paper"]

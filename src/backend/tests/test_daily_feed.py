@@ -134,6 +134,64 @@ async def test_cleanup_expired_keeps_paper_and_membership(client, monkeypatch):
     assert resp.json()["total"] == 0
 
 
+async def test_list_filters_by_author_and_affiliation(client, monkeypatch):
+    """详情面板里点作者 / 点机构 chip 带上来的过滤（JSON 文本包含匹配）。
+
+    机构是编译解读时才解析出来的，同步进来的池论文没有——这里直接写进论文行模拟已编译。
+    """
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.paper import Paper
+
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    await _run_sync(
+        monkeypatch,
+        {
+            "cs.AI": [
+                _rss_entry("2607.00041", "Vision Paper"),
+                _rss_entry("2607.00042", "Language Paper"),
+            ]
+        },
+    )
+    # 造作者/机构：Vision=Kaiming He@Meta AI，Language=Jacob Devlin@Google Research
+    async with get_sessionmaker()() as session:
+        papers = (await session.execute(select(Paper))).scalars().all()
+        for paper in papers:
+            if paper.title == "Vision Paper":
+                paper.authors = [{"name": "Kaiming He"}]
+                paper.affiliations = ["Meta AI"]
+            else:
+                paper.authors = [{"name": "Jacob Devlin"}]
+                paper.affiliations = ["Google Research"]
+        await session.commit()
+
+    async def query(**params):
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        resp = await client.get(f"/api/daily/papers?{qs}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        return [i["title"] for i in body["items"]], body["total"]
+
+    got, total = await query()
+    assert total == 2
+    # 机构随列表一起返回，前端详情才能画出可点的 chips
+    resp = await client.get("/api/daily/papers", headers=headers)
+    by_title = {i["title"]: i for i in resp.json()["items"]}
+    assert by_title["Vision Paper"]["affiliations"] == ["Meta AI"]
+
+    got, total = await query(author="Kaiming")
+    assert got == ["Vision Paper"] and total == 1
+    got, total = await query(affiliation="Google")
+    assert got == ["Language Paper"] and total == 1
+    got, total = await query(author="Nobody")
+    assert got == [] and total == 0
+    # 与其他条件叠加
+    got, _ = await query(affiliation="Meta", announce="new")
+    assert got == ["Vision Paper"]
+
+
 async def test_like_toggle_facepile_and_sort(client, monkeypatch):
     token_a = await register_and_login(client)  # 首个 = admin
     token_b = await register_and_login(client, email="bob@example.com")
