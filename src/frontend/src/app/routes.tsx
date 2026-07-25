@@ -127,7 +127,6 @@ export const router = createBrowserRouter([
           },
           // 实体详情页：按实体 id 拉数据，保持顶层路径（分享/收藏链接稳定）
           { path: 'voyages/:id', element: page(() => import('../features/voyages/VoyageDetailPage'), 'VoyageDetailPage') },
-          { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
           { path: 'ideas/:id', element: page(() => import('../features/forge/IdeaDetailPage'), 'IdeaDetailPage') },
           { path: 'experiment/:id', element: page(() => import('../features/experiment/ExperimentDetailPage'), 'ExperimentDetailPage') },
           { path: 'writer/:id', element: page(() => import('../features/writer/WriterEditorPage'), 'WriterEditorPage') },
@@ -144,6 +143,9 @@ export const router = createBrowserRouter([
         ],
       },
       // —— 非课题作用域 ——
+      // 阅读页按论文 id 取数，文献库 / 每日新论文的论文都可读，与课题无关：
+      // 放在守卫外，否则没有任何课题的用户点「阅读原文」会被重定向去建课题。
+      { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
       { path: 'start', element: page(() => import('../features/start/StartPage'), 'StartPage') },
       { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
       // 课题设置已并入工作台「课题设置」标签：/projects/:id → /t/:id?tab=settings
