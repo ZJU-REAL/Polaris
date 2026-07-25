@@ -16,6 +16,7 @@ import { McpToolsContent } from '../mcp/McpToolsPage';
 import { AcademicIdentitySection } from './AcademicIdentitySection';
 import { tr } from '../../lib/i18n';
 import { copyText } from '../../lib/clipboard';
+import { STAGE_LABELS } from '../../lib/stageLabels';
 import { setTaskLogHistory, useTaskLogHistory } from '../../lib/prefs';
 import {
   ApiError,
@@ -994,28 +995,6 @@ function ProvidersSection({ adapter }: { adapter: LlmAdapter }) {
 }
 
 // ---------------- 模型路由表 ----------------
-
-/** stage 标签（渲染处再 tr；代码标识符照常显示在下方）。 */
-const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
-  default: { zh: '默认', en: 'Default' },
-  navigator: { zh: '任务规划', en: 'Task planning' },
-  sextant: { zh: '自动校验', en: 'Auto verification' },
-  interview: { zh: '课题访谈', en: 'Topic interview' },
-  relevance: { zh: '相关度打分', en: 'Relevance scoring' },
-  librarian: { zh: '文献抓取', en: 'Paper fetching' },
-  reading: { zh: '精读编译', en: 'Deep reading' },
-  embedding: { zh: '向量嵌入', en: 'Embeddings' },
-  forge: { zh: '想法生成', en: 'Idea generation' },
-  forge_signal: { zh: '信号摘要', en: 'Signal digest' },
-  goal_explore: { zh: '目标构建', en: 'Goal building' },
-  proposal: { zh: '方案起草', en: 'Proposal drafting' },
-  proposal_review: { zh: '方案评审', en: 'Proposal review' },
-  debate: { zh: '辩论评审', en: 'Debate review' },
-  experiment: { zh: '实验', en: 'Experiments' },
-  writing: { zh: '论文撰写', en: 'Paper writing' },
-  review: { zh: '论文评审', en: 'Paper review' },
-  rerank: { zh: '重排序', en: 'Reranking' },
-};
 
 /** 常驻顶层的行：默认 + 两个能力型环节；其余环节收进展开区。 */
 const PRIMARY_STAGES: string[] = ['default', 'embedding', 'rerank'];

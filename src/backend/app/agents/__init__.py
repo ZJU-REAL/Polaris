@@ -1,7 +1,6 @@
 """Agent 编排层（M3 实现，暂为占位）。
 
 规划中的 agents：
-- interviewer: 研究方向定义访谈，产出 Project.definition
 - surveyor: 文献检索/打分/编纂（Paper/Concept wiki）
 - ideator: 想法生成 + 四维评分 + Elo 锦标赛
 - reviewer: 多人设评审（ReviewSession/ReviewMessage）

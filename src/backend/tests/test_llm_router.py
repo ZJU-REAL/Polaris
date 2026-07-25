@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
-from app.core.llm.router import LLMRouter
+from app.core.llm.router import STAGES, STREAM_STAGES, LLMRouter
 from app.core.security import encrypt_secret
 from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
 from app.services.llm_admin import mask_api_key
@@ -113,6 +113,38 @@ async def test_stream_records_usage(app):
     async with get_sessionmaker()() as session:
         rows = (await session.execute(select(LLMUsage))).scalars().all()
         assert len(rows) == 1
+
+
+def test_stage_catalog():
+    """环节清单：interview 已废弃移除；extract（结构化抽取）已就位。"""
+    assert "interview" not in STAGES
+    assert "extract" in STAGES
+    assert "librarian" in STAGES
+    assert "feedback_issue" in STAGES
+    assert len(set(STAGES)) == len(STAGES)  # 无重复
+
+
+def test_extract_stage_is_not_streamed():
+    """extract 是短 JSON 抽取：不进流式广播（否则 JSON 会灌满任务终端）。"""
+    assert "extract" not in STREAM_STAGES
+    assert "librarian" in STREAM_STAGES  # 图文精读编译仍逐段广播
+
+
+async def test_extract_stage_falls_back_to_default_route(app):
+    """extract 不是能力型环节：未单独配置时平滑跟随 default。"""
+    async with get_sessionmaker()() as session:
+        provider = LLMProviderConfig(name="fake-db", kind="fake", enabled=True)
+        session.add(provider)
+        await session.flush()
+        session.add(ModelRoute(stage="default", provider_id=provider.id, model="fake-db-default"))
+        await session.commit()
+
+    router = LLMRouter()
+    result = await router.complete("extract", [Message(role="user", content="抽点 JSON")])
+    assert result.model == "fake-db-default"
+    async with get_sessionmaker()() as session:
+        rows = (await session.execute(select(LLMUsage))).scalars().all()
+        assert [r.stage for r in rows] == ["extract"]
 
 
 def test_mask_api_key():

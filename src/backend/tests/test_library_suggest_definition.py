@@ -74,7 +74,7 @@ async def test_suggest_definition_parses_and_coerces():
     assert anchors[1]["arxiv_id"] is None  # arxiv 可空
     # 调用参数：stage / 记账 / prompt 内容
     call = llm.calls[0]
-    assert call["stage"] == "librarian"
+    assert call["stage"] == "extract"  # 纯文本短 JSON 抽取，不占多模态 librarian 路由
     assert call["user_id"] is None
     assert "检索增强生成" in call["messages"][1].content
 

@@ -194,7 +194,7 @@ async def _fetch_definitions_batch(
         return {}
     try:
         result = await llm.complete(
-            "librarian",
+            "extract",
             [
                 Message(role="system", content=CONCEPT_DEF_SYSTEM_PROMPT),
                 Message(role="user", content="概念列表：" + json.dumps(names, ensure_ascii=False)),

@@ -512,6 +512,23 @@ async def test_llm_short_stage_not_streamed(app):
     assert not any(e == "llm_delta" for _v, e, _d in bus.voyage_events)
 
 
+async def test_concept_definition_extract_stage_not_streamed(app):
+    """概念定义批量生成改走 extract：不再冒充 librarian 挤进流式广播（终端不被 JSON 灌满）。
+
+    流式路径同时是唯一把大模型全文写进 voyage_terminal_logs 的地方，
+    所以没有 llm_start/llm_delta/llm_end 就等于终端里也不会留下这段 JSON。
+    """
+    from app.core.llm.router import LLMRouter
+    from app.services.concepts import _fetch_definitions_batch
+
+    bus = RecordingBus()
+    router = LLMRouter()
+    router.event_bus = bus
+    defs = await _fetch_definitions_batch(router, ["强化学习"], voyage_id=uuid.uuid4())
+    assert defs  # 调用确实发生了（fake provider 按「概念列表：」marker 应答）
+    assert bus.voyage_events == []
+
+
 async def test_llm_multimodal_stage_also_streams(app):
     """多模态调用（带图，如 wiki 精读编译 librarian stage）现在也流式广播——
     图片附在请求上、正文照常逐段吐（终端可实时看到 wiki 生成）。"""

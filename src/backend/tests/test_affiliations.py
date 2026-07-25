@@ -118,7 +118,7 @@ async def test_extract_author_affiliations_parses_mapping(tmp_path):
         {"name": "Bob Li", "affiliations": ["Google DeepMind"]},  # strip
     ]  # 空名整项丢弃
     call = llm.calls[0]
-    assert call["stage"] == "librarian"
+    assert call["stage"] == "extract"  # 纯文本短 JSON 抽取，不占多模态 librarian 路由
     assert call["max_tokens"] == _MAX_TOKENS
     assert call["project_id"] is None
 

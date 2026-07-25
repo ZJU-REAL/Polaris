@@ -37,13 +37,17 @@ class LLMNotConfiguredError(RuntimeError):
 
 # 科研环节枚举（docs/api-m1.md §2；M2 新增 embedding，见 docs/api-m2.md §7；
 # 文献管理增强新增 reading（AI 伴读），见 docs/api-lit.md §3）
+#
+# librarian 与 extract 的分工：librarian = 长文本 + 多模态（wiki 图文精读编译、
+# 论文图筛选注释、幻灯片大纲/内容/视觉评审），要强模型；extract = 纯文本短 JSON
+# 结构化抽取（作者↔机构解析、概念定义批量生成、建库向导收录设置），小模型够用。
 STAGES = (
     "default",
     "navigator",
     "sextant",
-    "interview",
     "relevance",
     "librarian",
+    "extract",
     "embedding",
     "rerank",
     "forge",
@@ -90,7 +94,8 @@ _FALLBACK_ROUTE = ResolvedRoute(
 
 # 长文本生成的 stage：complete() 有 event_bus + voyage_id 时改走流式并逐段广播
 # llm_delta（任务详情页 terminal 实时展示"大模型正在输出什么"）。短 JSON 调用
-# （relevance 打分 / sextant 判定等）不流式，避免噪声。
+# （relevance 打分 / sextant 判定 / extract 结构化抽取等）不流式，避免噪声——
+# 流式路径还会把整段输出写进 voyage_terminal_logs，JSON 混进终端毫无可读性。
 STREAM_STAGES = frozenset(
     {"navigator", "debate", "experiment", "writing", "proposal", "review", "librarian"}
 )

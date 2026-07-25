@@ -668,7 +668,7 @@ async def suggest_definition(
     user_prompt = f"研究方向名称：{name.strip()}\n\n一句话描述：{statement_line}"
     try:
         result = await llm.complete(
-            "librarian",
+            "extract",
             [
                 Message(role="system", content=SUGGEST_DEFINITION_SYSTEM_PROMPT),
                 Message(role="user", content=user_prompt),

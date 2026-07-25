@@ -202,7 +202,7 @@ async def extract_author_affiliations_llm(
     known_block = "\n".join(f"- {n}" for n in known) if known else _NO_AUTHORS_HINT
     try:
         result = await llm.complete(
-            "librarian",
+            "extract",
             [
                 Message(role="system", content=AUTHOR_AFFIL_SYSTEM_PROMPT),
                 Message(

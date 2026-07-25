@@ -12,6 +12,7 @@ import { useProject } from '../../app/project';
 import { api, isAdmin, type DirectionLibrarySummary, type LabStats, type VoyageRead } from '../../lib/api';
 import { fmtFullTime, fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
+import { stageLabel } from '../../lib/stageLabels';
 import { useLibraries, libraryPath } from '../libraries/hooks';
 
 // 图谱体量大且不是首屏必需：按需加载（与文献库工作台同样处理）
@@ -580,8 +581,11 @@ function UsageCard({ days, onDays }: { days: UsageWindow; onDays: (v: UsageWindo
               <div className="col gap8">
                 {byStage.map(([stage, value]) => (
                   <div key={stage} className="row gap10">
-                    <span className="mono" style={{ fontSize: 11.5, width: 108, flexShrink: 0, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {stage}
+                    <span
+                      style={{ fontSize: 11.5, width: 108, flexShrink: 0, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={stage}
+                    >
+                      {tr(stageLabel(stage).zh, stageLabel(stage).en)}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, height: 6, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden' }}>
                       <span

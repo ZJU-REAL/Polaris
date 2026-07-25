@@ -453,13 +453,14 @@ export interface GateRead {
 
 export type LlmProviderKind = 'openai_compat' | 'anthropic' | 'fake';
 
+/** 与后端 `app/core/llm/router.py` 的 STAGES 保持一致（大白话名字见 lib/stageLabels.ts）。 */
 export const LLM_STAGES = [
   'default',
   'navigator',
   'sextant',
-  'interview',
   'relevance',
   'librarian',
+  'extract',
   'reading',
   'embedding',
   'rerank',
@@ -472,6 +473,7 @@ export const LLM_STAGES = [
   'experiment',
   'writing',
   'review',
+  'feedback_issue',
 ] as const;
 
 export type LlmStage = (typeof LLM_STAGES)[number];

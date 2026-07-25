@@ -223,14 +223,22 @@ async def test_recompile_with_pdf_full_flow(client):
         membership = await membership_of(session, project_id=project_id, paper_id=paper_id)
         assert membership.compiled_at is not None
         assert membership.compiled_model == "fake-default"  # 编译所用模型落库
-        # LLMUsage 记账归属 project（annotate + 编译 + 概念定义各 1 次 librarian 调用）
+        # LLMUsage 记账归属 project：annotate + 编译走 librarian（多模态），
+        # 概念定义走 extract（纯文本短 JSON）
         rows = (
             (await session.execute(select(LLMUsage).where(LLMUsage.stage == "librarian")))
             .scalars()
             .all()
         )
-        assert len(rows) == 3
+        assert len(rows) == 2
         assert all(str(r.project_id) == project_id for r in rows)
+        extract_rows = (
+            (await session.execute(select(LLMUsage).where(LLMUsage.stage == "extract")))
+            .scalars()
+            .all()
+        )
+        assert len(extract_rows) == 1
+        assert all(str(r.project_id) == project_id for r in extract_rows)
 
     # 再跑一次：覆盖 wiki_content，仍成功（重跑 annotate + 编译）
     resp = await client.post(f"/api/papers/{paper_id}/recompile", headers=headers)

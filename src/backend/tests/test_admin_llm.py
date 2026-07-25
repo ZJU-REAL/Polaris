@@ -164,13 +164,23 @@ async def test_routes_put_get_and_validation(client):
     resp = await client.get("/api/admin/llm/routes", headers=admin)
     assert len(resp.json()) == 2
 
-    # 非法 stage → 400
+    # 非法 stage → 400（interview 已废弃移除，与随便一个不存在的 stage 同等对待）
+    for bad_stage in ("nope", "interview"):
+        resp = await client.put(
+            "/api/admin/llm/routes",
+            json=[{"stage": bad_stage, "provider_id": provider_id, "model": "m"}],
+            headers=admin,
+        )
+        assert resp.status_code == 400, bad_stage
+
+    # 新增的结构化抽取环节可配置
     resp = await client.put(
         "/api/admin/llm/routes",
-        json=[{"stage": "nope", "provider_id": provider_id, "model": "m"}],
+        json=[{"stage": "extract", "provider_id": provider_id, "model": "fake-small"}],
         headers=admin,
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 200, resp.text
+    assert [r["stage"] for r in resp.json()] == ["extract"]
 
     # 不存在的 provider → 400
     resp = await client.put(
