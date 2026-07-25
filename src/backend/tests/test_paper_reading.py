@@ -87,6 +87,27 @@ async def test_get_pdf_404_then_serves_file(client):
     assert resp.content == content
 
 
+async def test_get_pdf_supports_range(client):
+    """阅读器把地址交给 pdf.js 按需取段，端点必须真的支持 Range，否则退回整包下载。"""
+    project_id, headers, paper_id = await _setup(client)
+    content = _pdf_bytes()
+    path = save_pdf(paper_id, content)
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(paper_id))
+        paper.pdf_path = str(path)
+        await session.commit()
+
+    full = await client.get(f"/api/papers/{paper_id}/pdf", headers=headers)
+    assert full.headers.get("accept-ranges") == "bytes"
+
+    resp = await client.get(
+        f"/api/papers/{paper_id}/pdf", headers={**headers, "Range": "bytes=0-99"}
+    )
+    assert resp.status_code == 206
+    assert resp.content == content[:100]
+    assert resp.headers["content-range"] == f"bytes 0-99/{len(content)}"
+
+
 @respx.mock
 async def test_fetch_pdf_success_idempotent_and_400(client, lit_clients):
     project_id, headers, paper_id = await _setup(client)

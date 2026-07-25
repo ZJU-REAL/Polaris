@@ -17,9 +17,11 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { tr } from '../../lib/i18n';
+import { apiBase } from '../../lib/endpoint';
 import {
   api,
   ApiError,
+  getToken,
   type HighlightColor,
   type HighlightCreateInput,
   type HighlightRead,
@@ -46,10 +48,15 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 // 模块级常量，避免每次 render 生成新对象触发 react-pdf 重新加载。
 // cMap / 标准字体数据必须提供，否则 pdf.js 画不出字形、整页空白（资源由 vite
 // copyPdfAssets 插件从 pdfjs-dist 拷到 public/pdfjs 下，见 vite.config.ts）。
+// disableAutoFetch：只取当前要渲染的那几段，不在后台把整份 PDF 拉完。25MB 的论文
+// 走校外代理约 0.5MB/s，整包下载要等 45 秒才出第一页；按需取段后首屏是几百 KB。
+// 服务端不支持 Range 时 pdf.js 自动退回整包下载，行为与改造前一致。
 const PDF_OPTIONS = {
   cMapUrl: '/pdfjs/cmaps/',
   cMapPacked: true,
   standardFontDataUrl: '/pdfjs/standard_fonts/',
+  disableAutoFetch: true,
+  rangeChunkSize: 262144,
 };
 
 export interface JumpTarget {
@@ -206,9 +213,23 @@ export function PdfReader({
     if (dy !== 0) el.style.top = `${parseFloat(el.style.top || '0') + dy}px`;
   }, [pending]);
 
+  // 标注阅读器把地址直接交给 pdf.js，由它按需发 Range 请求；鉴权头随请求带上，
+  // 所以这里不能用 blob。对象要 memo：react-pdf 认引用，每次新对象都会重新加载整份。
+  const pdfSource = useMemo(() => {
+    const src: { url: string; httpHeaders?: Record<string, string> } = {
+      url: `${apiBase()}/papers/${paper.id}/pdf`,
+    };
+    const token = getToken();
+    if (token) src.httpHeaders = { Authorization: `Bearer ${token}` };
+    return src;
+  }, [paper.id]);
+
+  // 标准阅读器是 <iframe>，带不了 Authorization 头，只能整包下成 blob——所以推迟到
+  // 真的切过去才下，默认的标注模式不再为它付这 25MB 的等待。
   const pdfQuery = useQuery({
     queryKey: ['paper-pdf', paper.id],
     queryFn: () => api.fetchPaperPdf(paper.id),
+    enabled: mode === 'standard' && paper.pdf_available,
     retry: false,
     staleTime: Infinity,
   });
@@ -236,7 +257,7 @@ export function PdfReader({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [url, mode]); // 从标准模式切回时容器重新挂载，需重新测量并观察
+  }, [mode]); // 从标准模式切回时容器重新挂载，需重新测量并观察
 
   // 触控板双指捏合 / Ctrl(⌘)+滚轮 缩放：浏览器默认会整页缩放，这里拦下来只缩放 PDF。
   // 捏合手势在浏览器里表现为 ctrlKey=true 的 wheel 事件；必须用 passive:false 才能 preventDefault。
@@ -259,7 +280,7 @@ export function PdfReader({
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [url, mode]);
+  }, [mode]);
 
   const fetchPdfMutation = useMutation({
     mutationFn: () => api.requestPaperPdf(paper.id),
@@ -393,22 +414,9 @@ export function PdfReader({
     [],
   );
 
-  if (pdfQuery.isLoading) {
-    return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div
-            className="pulse"
-            style={{ width: 220, height: 300, margin: '0 auto 16px', borderRadius: 10, background: 'var(--surface-3)' }}
-          />
-          <div className="muted" style={{ fontSize: 12.5 }}>正在加载 PDF…</div>
-        </div>
-      </div>
-    );
-  }
-
-  // 无 PDF：引导获取（沿用原逻辑）
-  if (pdfQuery.isError || !url) {
+  // 无 PDF：引导获取（原先靠「先整包下一遍，404 就是没有」判断，现在直接读元数据，
+  // 免掉一次无谓的整包下载）
+  if (!paper.pdf_available) {
     const canFetch = !!paper.arxiv_id;
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -509,12 +517,32 @@ export function PdfReader({
       </div>
 
       {mode === 'standard' ? (
-        // 浏览器内置 PDF 阅读器：自带缩放/搜索/打印，但不承载我们的标注层
-        <iframe
-          title={paper.title}
-          src={url}
-          style={{ flex: 1, minHeight: 0, width: '100%', border: 'none', background: '#525659' }}
-        />
+        // 浏览器内置 PDF 阅读器：自带缩放/搜索/打印，但不承载我们的标注层。
+        // 它只认能直接取到的地址，带不了鉴权头，所以这里必须等整包下完拿到 blob。
+        url ? (
+          <iframe
+            title={paper.title}
+            src={url}
+            style={{ flex: 1, minHeight: 0, width: '100%', border: 'none', background: '#525659' }}
+          />
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: '#525659',
+              color: pdfQuery.isError ? '#fca5a5' : '#cbd5e1',
+              fontSize: 12.5,
+            }}
+          >
+            {pdfQuery.isError
+              ? tr('PDF 加载失败，可以换回标注阅读器', 'Failed to load — try the annotating reader')
+              : tr('正在下载完整 PDF…', 'Downloading the full PDF…')}
+          </div>
+        )
       ) : (
     <div
       ref={scrollRef}
@@ -524,7 +552,7 @@ export function PdfReader({
       style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#525659', padding: '14px 0' }}
     >
       <Document
-        file={url}
+        file={pdfSource}
         options={PDF_OPTIONS}
         onLoadSuccess={({ numPages: n }) => setNumPages(n)}
         loading={
@@ -533,8 +561,9 @@ export function PdfReader({
           </div>
         }
         error={
+          // 任何加载失败都会走到这里（文件损坏、网络中断、被拦截），别把话说死成「损坏」
           <div className="muted" style={{ textAlign: 'center', padding: 40, color: '#fca5a5' }}>
-            PDF 打不开，文件可能损坏。
+            {tr('PDF 加载失败，请稍后重试。', 'Could not load this PDF — try again later.')}
           </div>
         }
       >

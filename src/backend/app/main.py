@@ -66,6 +66,10 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
+        # 跨源下这些响应头默认对 JS 不可见。pdf.js 靠 Accept-Ranges / Content-Range /
+        # Content-Length 判断服务端支不支持分段取，读不到就退回整包下载——桌面端
+        # （app://polaris 是跨源）的 PDF 阅读会因此又变回「等整份下完」。
+        expose_headers=["Accept-Ranges", "Content-Range", "Content-Length", "Content-Disposition"],
     )
 
     @app.exception_handler(LLMNotConfiguredError)
