@@ -29,6 +29,7 @@ import {
   type SearchMode,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { usePendingByPaper } from '../../lib/pending';
 import { clickable } from '../../lib/a11y';
 import { categoryMeta, saveBlob, SearchInput, useDebounced } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
@@ -921,6 +922,8 @@ function PaperDetailPane({
   onFilterAuthor,
   onFilterAffiliation,
   onDeleted,
+  compiling,
+  onRecompile,
 }: {
   paperId: string;
   pid: string;
@@ -933,6 +936,9 @@ function PaperDetailPane({
   onFilterAffiliation: (name: string) => void;
   /** 删除成功后回调（父组件清空选中，自动跳到列表第一篇） */
   onDeleted: () => void;
+  /** 这篇正在 AI 编译（状态存在列表页，切走再切回来照样是「编译中」） */
+  compiling: boolean;
+  onRecompile: (paperId: string) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -989,18 +995,13 @@ function PaperDetailPane({
       toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  // 重新编译：用最新的图文模式重写 wiki 页（同步调用，约 1 分钟）
-  const recompileMutation = useMutation({
-    mutationFn: () => api.recompilePaper(paperId),
-    onSuccess: () => {
-      toast(tr('编译完成，介绍已更新', 'Compiled — the intro has been updated'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['paper', scopeId, paperId] });
-      void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
-      void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
-    },
-    onError: (e) =>
-      toast(`${tr('重新编译失败：', 'Recompile failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
+  // 换论文时收起本地开合状态（面板不再随选中项重挂载，得自己收）
+  useEffect(() => {
+    setAbstractOpen(false);
+    setConceptsOpen(false);
+    setAffilsOpen(false);
+    setReaderOpen(false);
+  }, [paperId]);
 
   // 正文 ![[fig:N]] 嵌入图（docs/api-lit.md §6.6）
   const figures = usePaperFigures(paper);
@@ -1129,10 +1130,10 @@ function PaperDetailPane({
               ? tr('用最新的图文模式重写这篇介绍', 'Rewrite this intro with the latest text+figures mode')
               : tr('AI 精读并编译图文介绍', 'Have the AI read and compile an illustrated intro')
           }
-          disabled={recompileMutation.isPending}
-          onClick={() => recompileMutation.mutate()}
+          disabled={compiling}
+          onClick={() => onRecompile(paperId)}
         >
-          {recompileMutation.isPending ? (
+          {compiling ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
               {tr('AI 编译中，约 1 分钟…', 'Compiling — about a minute…')}
@@ -1463,6 +1464,26 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
     setSelected(new Set());
     setSelectMode(false);
   }, [scopeId, view, q, tagFilter, readingFilter]);
+
+  // 重新编译：同步等着（约 1 分钟），用户很可能切走再切回来。
+  // 进行中状态按 paper id 记在列表页这一层：详情面板换论文不会丢，多篇同时编译也各记各的。
+  const compilePending = usePendingByPaper();
+  const recompile = useCallback(
+    (paperId: string) => {
+      void compilePending.run(paperId, async () => {
+        try {
+          await api.recompilePaper(paperId);
+          toast(tr('编译完成，介绍已更新', 'Compiled — the intro has been updated'), 'ok');
+          void queryClient.invalidateQueries({ queryKey: ['paper', scopeId, paperId] });
+          void queryClient.invalidateQueries({ queryKey: ['paper-figures', paperId] });
+          void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
+        } catch (e) {
+          toast(`${tr('重新编译失败：', 'Recompile failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+        }
+      });
+    },
+    [compilePending, queryClient, scopeId],
+  );
 
   const bulkDeleteMutation = useMutation({
     mutationFn: () => (libraryId ? api.batchDeleteLibraryPapers(libraryId, [...selected]) : api.batchDeletePapers(scopeId, [...selected])),
@@ -1872,8 +1893,6 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       <div className="split-detail">
         {selectedId ? (
           <PaperDetailPane
-            /* key：换论文时重挂载，避免上一篇的「编译中 / 下载中」状态串台 */
-            key={selectedId}
             paperId={selectedId}
             pid={pid ?? ''}
             libraryId={libraryId}
@@ -1882,6 +1901,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
             onFilterAuthor={filterByAuthor}
             onFilterAffiliation={filterByAffiliation}
             onDeleted={() => onSelect('')}
+            compiling={compilePending.has(selectedId)}
+            onRecompile={recompile}
           />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>

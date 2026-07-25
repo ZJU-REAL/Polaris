@@ -503,8 +503,6 @@ function PapersPane({
       <div className="split-detail">
         {selectedId ? (
           <PaperDetailPane
-            /* key：换论文时重挂载，避免上一篇的「编译中 / 下载中」状态串台 */
-            key={selectedId}
             paperId={selectedId}
             onWikiLink={onWikiLink}
           />

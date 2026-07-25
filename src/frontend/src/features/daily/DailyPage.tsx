@@ -10,6 +10,7 @@ import { ApiError, api, type DailyPaperItem, type DailySort, type PaperDetail } 
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { Markdown } from '../../lib/markdown';
+import { usePendingByPaper } from '../../lib/pending';
 import { PaperReader } from '../wiki/PaperReader';
 import { readerFrom } from '../reading/shared';
 import {
@@ -149,11 +150,20 @@ function DailyRow({
 function DailyDetailPane({
   entryId,
   onCollect,
+  downloading,
+  compiling,
+  onFetchPdf,
+  onCompile,
 }: {
   entryId: string;
   onCollect: (p: CollectPaperRef) => void;
+  /** 这篇正在下载原文（状态存在父组件，切走再切回来照样是「下载中」） */
+  downloading: boolean;
+  /** 这篇正在 AI 编译 */
+  compiling: boolean;
+  onFetchPdf: (entryId: string) => void;
+  onCompile: (entryId: string) => void;
 }) {
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
   const [readerOpen, setReaderOpen] = useState(false);
@@ -163,37 +173,8 @@ function DailyDetailPane({
     retry: false,
   });
 
-  // 下载原文：把 PDF 抓进平台（顺带抽全文/分块），成功后按钮变「阅读原文」
-  const fetchPdfMutation = useMutation({
-    mutationFn: () => api.fetchDailyPaperPdf(entryId),
-    onSuccess: () => {
-      toast(tr('已下载原文，可以在线阅读了', 'PDF fetched — you can read it here now'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
-    },
-    onError: (e) =>
-      toast(
-        `${tr('下载原文失败', 'Failed to fetch the PDF')}：${e instanceof Error ? e.message : String(e)}`,
-        'error',
-      ),
-  });
-
-  // 单篇 AI 解读编译：同步等待（约半分钟）；409 = 已有人在编译
-  const compileMutation = useMutation({
-    mutationFn: () => api.compileDailyPaper(entryId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
-      void queryClient.invalidateQueries({ queryKey: ['daily-papers'] }); // 列表行的 has_wiki 标记
-      void queryClient.invalidateQueries({ queryKey: ['daily-liked'] });
-    },
-    onError: (e) => {
-      if (e instanceof ApiError && e.status === 409) {
-        toast(tr('已有人在生成，稍后刷新即可', 'Someone is already generating it, refresh later'), 'info');
-        void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
-      } else {
-        toast(`${tr('生成解读失败', 'Failed to generate summary')}：${e instanceof Error ? e.message : String(e)}`, 'error');
-      }
-    },
-  });
+  // 换论文时关掉阅览模式（面板不再随选中项重挂载，本地开合状态要自己收）
+  useEffect(() => setReaderOpen(false), [entryId]);
 
   if (isLoading) return <div className="empty">{tr('加载论文详情…', 'Loading paper…')}</div>;
   if (isError || !paper) {
@@ -275,11 +256,11 @@ function DailyDetailPane({
           (paper.arxiv_id || pdfDownloadUrl) && (
             <button
               className="btn btn-primary sm"
-              disabled={fetchPdfMutation.isPending}
-              onClick={() => fetchPdfMutation.mutate()}
+              disabled={downloading}
+              onClick={() => onFetchPdf(paper.entry_id)}
               title={tr('下载 PDF 到平台，下载后即可在线阅读', 'Fetch the PDF into Polaris so it can be read here')}
             >
-              {fetchPdfMutation.isPending ? (
+              {downloading ? (
                 <>
                   <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
                   {tr('下载中…', 'Downloading…')}
@@ -300,10 +281,10 @@ function DailyDetailPane({
               ? tr('用最新的图文模式重写这篇介绍', 'Rewrite this intro with the latest text+figures mode')
               : tr('AI 精读并编译图文介绍', 'Have the AI read and compile an illustrated intro')
           }
-          disabled={compileMutation.isPending}
-          onClick={() => compileMutation.mutate()}
+          disabled={compiling}
+          onClick={() => onCompile(paper.entry_id)}
         >
-          {compileMutation.isPending ? (
+          {compiling ? (
             <>
               <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
               {tr('AI 编译中，约半分钟…', 'Compiling — about half a minute…')}
@@ -403,17 +384,21 @@ type AnnounceFilter = 'all' | 'new' | 'cross';
 // 类型筛选默认值：只看新工作（高级检索面板里的「恢复默认」也回到这个值）
 const DEFAULT_ANNOUNCE: AnnounceFilter = 'new';
 
+// 列表固定按点赞排序（没有排序切换 UI）；语义检索时后端按相关度排，忽略这个值
+const DAILY_SORT: DailySort = 'likes';
+
 export function DailyPage() {
+  const queryClient = useQueryClient();
   const [view, setView] = useState<DailyView>('papers');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
   // 语义检索开关（true=按意思检索，false=关键词字面匹配）
   const [semanticOn, setSemanticOn] = useState(false);
-  const [sort, setSort] = useState<DailySort>('likes');
   const [page, setPage] = useState(1);
   // —— 日期（null=全部 7 天，默认落在最新一天）留在工具栏；分类 / 类型收进高级检索面板 ——
   const [day, setDay] = useState<string | null>(null);
-  const [advOpen, setAdvOpen] = useState(false);
+  // 高级检索默认展开：分类 / 类型是常用筛选，藏起来用户找不到
+  const [advOpen, setAdvOpen] = useState(true);
   const [category, setCategory] = useState('');
   const [announce, setAnnounce] = useState<AnnounceFilter>(DEFAULT_ANNOUNCE);
   // 高级条件是否偏离默认（决定高级检索按钮上的小圆点）
@@ -427,7 +412,7 @@ export function DailyPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => setPage(1), [q, semanticOn, sort, day, category, announce]);
+  useEffect(() => setPage(1), [q, semanticOn, day, category, announce]);
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
@@ -481,10 +466,10 @@ export function DailyPage() {
   // 语义检索：只在有关键词时生效；结果按相关度排序、不分页
   const semantic = !!q && semanticOn;
   const listQuery = useQuery({
-    queryKey: ['daily-papers', semanticOn, sort, page, q, day, category, announce],
+    queryKey: ['daily-papers', semanticOn, page, q, day, category, announce],
     queryFn: () =>
       api.listDailyPapers({
-        sort: semantic ? undefined : sort,
+        sort: semantic ? undefined : DAILY_SORT,
         page: semantic ? undefined : page,
         size: PAGE_SIZE,
         q: q || undefined,
@@ -532,6 +517,54 @@ export function DailyPage() {
     setCollectPaper(p);
     setCollectOpen(true);
   };
+
+  // —— 两个长任务（下载原文 / AI 编译）都同步等着，用户很可能切走再切回来 ——
+  // 进行中状态按 entry_id 记在这一层：详情面板换论文不会丢，多篇同时跑也各记各的。
+  const downloadPending = usePendingByPaper();
+  const compilePending = usePendingByPaper();
+
+  const fetchPdf = useCallback(
+    (entryId: string) => {
+      void downloadPending.run(entryId, async () => {
+        try {
+          await api.fetchDailyPaperPdf(entryId);
+          toast(tr('已下载原文，可以在线阅读了', 'PDF fetched — you can read it here now'), 'ok');
+          void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
+        } catch (e) {
+          toast(
+            `${tr('下载原文失败', 'Failed to fetch the PDF')}：${e instanceof Error ? e.message : String(e)}`,
+            'error',
+          );
+        }
+      });
+    },
+    [downloadPending, queryClient],
+  );
+
+  // 单篇 AI 解读编译：同步等待（约半分钟）；409 = 已有人在编译
+  const compile = useCallback(
+    (entryId: string) => {
+      void compilePending.run(entryId, async () => {
+        try {
+          await api.compileDailyPaper(entryId);
+          void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
+          void queryClient.invalidateQueries({ queryKey: ['daily-papers'] }); // 列表行的 has_wiki 标记
+          void queryClient.invalidateQueries({ queryKey: ['daily-liked'] });
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 409) {
+            toast(tr('已有人在生成，稍后刷新即可', 'Someone is already generating it, refresh later'), 'info');
+            void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
+          } else {
+            toast(
+              `${tr('生成解读失败', 'Failed to generate summary')}：${e instanceof Error ? e.message : String(e)}`,
+              'error',
+            );
+          }
+        }
+      });
+    },
+    [compilePending, queryClient],
+  );
 
   return (
     <div
@@ -684,24 +717,6 @@ export function DailyPage() {
                   {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
                 </div>
               )}
-              <div className="row gap6 wrap" style={{ marginTop: 8 }}>
-                <span
-                  className={`chip${!semantic && sort === 'likes' ? ' on' : ''}`}
-                  style={semantic ? { opacity: 0.45, pointerEvents: 'none' } : undefined}
-                  title={semantic ? tr('语义检索按相关度排序', 'Semantic results are ranked by relevance') : undefined}
-                  onClick={() => setSort('likes')}
-                >
-                  {tr('按点赞', 'Most liked')}
-                </span>
-                <span
-                  className={`chip${!semantic && sort === 'date' ? ' on' : ''}`}
-                  style={semantic ? { opacity: 0.45, pointerEvents: 'none' } : undefined}
-                  title={semantic ? tr('语义检索按相关度排序', 'Semantic results are ranked by relevance') : undefined}
-                  onClick={() => setSort('date')}
-                >
-                  {tr('按时间', 'Newest')}
-                </span>
-              </div>
               {/* —— 日期步进（主导航，不收进高级检索） —— */}
               <div className="row gap6 wrap" style={{ marginTop: 8 }}>
                 <button
@@ -846,10 +861,12 @@ export function DailyPage() {
           <div className="split-detail">
             {selectedId ? (
               <DailyDetailPane
-                /* key：换论文时重挂载，避免上一篇的「下载中 / 编译中」状态串台 */
-                key={selectedId}
                 entryId={selectedId}
                 onCollect={openCollect}
+                downloading={downloadPending.has(selectedId)}
+                compiling={compilePending.has(selectedId)}
+                onFetchPdf={fetchPdf}
+                onCompile={compile}
               />
             ) : (
               <div className="empty" style={{ margin: 'auto' }}>
