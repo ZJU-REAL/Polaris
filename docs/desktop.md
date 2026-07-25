@@ -87,9 +87,14 @@ make desktop-dist          # 出当前平台安装包（未签名）
 
 ### 未签名分发的注意事项
 
-- **macOS**：`identity: null` 会做 ad-hoc 签名——Apple Silicon 上完全无签名的二进制会被
-  内核直接拒绝执行，这一步不能省。分发用 zip 而不是 dmg（少一层隔离属性传播），
-  用户首次打开需 `xattr -dr com.apple.quarantine /Applications/Polaris.app`。
+- **macOS**：`identity: null` 只是「不用 Developer ID 签名」，它**不会**替你做 ad-hoc 签名。
+  而 electron-builder 改包（换图标、塞 app.asar、放 extraResources）会让 Electron 预编译
+  二进制自带的签名失效，Apple Silicon 内核**拒绝执行无有效签名的二进制**，用户会看到
+  「已损坏」——这不是 quarantine 属性，`xattr` 删不掉。所以 `build/after-pack.cjs` 在打包后
+  补一次 `codesign --force --deep --sign -` 并当场校验，签不上就让打包失败。
+  这不能替代公证（notarization），只是让未签名分发能真的启动。
+  分发用 zip 而不是 dmg（少一层隔离属性传播），用户首次打开仍需
+  `xattr -dr com.apple.quarantine /Applications/Polaris.app` 或右键→打开。
 - **Windows**：优先分发 zip 便携版，绕过 SmartScreen 对安装器的检查。
 - **Linux**：AppImage 需宿主有 `libnss3 libgtk-3-0 libasound2`；Ubuntu 24.04+ 的 AppArmor
   限制或缺 SUID chrome-sandbox 时需要 `--no-sandbox` 启动——**写在说明里，不要在代码里

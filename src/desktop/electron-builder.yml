@@ -24,14 +24,18 @@ protocols:
     schemes:
       - polaris
 
+# 打包后补 ad-hoc 签名（仅 macOS）。electron-builder 改包会让 Electron 自带的
+# 签名失效，而 Apple Silicon 内核拒绝执行无有效签名的二进制。详见脚本内注释。
+afterPack: build/after-pack.cjs
+
 mac:
   category: public.app-category.productivity
   target:
     # zip 优先：分发时比 dmg 少一层隔离属性传播，未签名场景更省事
     - target: zip
     - target: dmg
-  # 未配置证书时 electron-builder 会做 ad-hoc 签名——Apple Silicon 上完全无签名
-  # 的二进制会被内核直接拒绝执行，所以这一步不能省。
+  # 不用 Developer ID 签名。注意 identity: null 只是「跳过签名」，不会替你做
+  # ad-hoc 签名——那件事由上面的 afterPack 钩子完成。
   identity: null
 
 win:
