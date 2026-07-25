@@ -16,21 +16,41 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
 from app.schemas.project import ProjectCreate
-from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.schemas.user import (
+    ResetPasswordRequest,
+    SendCodeRequest,
+    SendCodeResult,
+    UserCreate,
+    UserRead,
+    UserUpdate,
+)
+from app.services import email as email_service
 from app.services import projects as projects_service
 from app.services import registration_codes as codes_service
+from app.services import verification
 
 logger = logging.getLogger(__name__)
 
 JWT_LIFETIME_SECONDS = 60 * 60 * 24  # 24h
+MIN_PASSWORD_LENGTH = 8
 
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     def __init__(self, user_db: SQLAlchemyUserDatabase) -> None:
         super().__init__(user_db)
-        secret = get_settings().secret_key
+        settings = get_settings()
+        secret = settings.secret_key
         self.reset_password_token_secret = secret
         self.verification_token_secret = secret
+
+    async def validate_password(self, password: str, user: UserCreate | User) -> None:
+        """密码强度下限：≥8 位且同时含字母和数字（与前端强度条的「达标线」一致）。
+        注册与重置密码两条路径都会过这里。"""
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise exceptions.InvalidPasswordException(reason="PASSWORD_TOO_SHORT")
+        if not (any(c.isalpha() for c in password) and any(c.isdigit() for c in password)):
+            raise exceptions.InvalidPasswordException(reason="PASSWORD_NEEDS_LETTER_AND_DIGIT")
+
 
     async def on_after_register(self, user: User, request: Request | None = None) -> None:
         """首个注册用户自动提升为平台 admin（实验室自举）。"""
@@ -190,6 +210,18 @@ async def register(
     settings.invite_code 静态码（兜底，避免没建过码时无人能注册 / 把管理员锁死）。
     注册码带预设研究方向时，注册成功后自动为新用户建好对应方向的项目。
     """
+    # 邮箱验证码：开启邮件系统后必填必对（未配 SMTP 的部署跳过，否则没人能注册）
+    if get_settings().email_enabled:
+        verified = await verification.verify_code(
+            session,
+            verification.normalize_email(user_create.email),
+            verification.PURPOSE_REGISTER,
+            user_create.email_code,
+        )
+        if not verified:
+            await session.commit()  # 保留 attempts 自增
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="INVALID_CODE")
+
     redeemed = await codes_service.redeem_code(session, user_create.invite_code)
     if redeemed is None and user_create.invite_code != get_settings().invite_code:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="INVALID_INVITE_CODE")
@@ -225,6 +257,87 @@ async def register(
         except Exception:  # noqa: BLE001
             logger.exception("preset direction project creation failed: %s", direction)
     return user
+
+
+@router.get("/auth/capabilities", tags=["auth"])
+async def auth_capabilities() -> dict[str, bool]:
+    """前端据此决定是否显示验证码输入与「忘记密码」——没配 SMTP 就别给走不通的入口。"""
+    enabled = get_settings().email_enabled
+    return {"email": enabled, "password_reset": enabled, "register_email_code": enabled}
+
+
+@router.post("/auth/send-code", response_model=SendCodeResult, tags=["auth"])
+async def send_code(
+    payload: SendCodeRequest,
+    session: AsyncSession = Depends(get_session),
+) -> SendCodeResult:
+    """发送邮箱验证码。
+
+    purpose=register：邮箱已注册直接报错（注册接口本来也会告知，不存在额外泄露）。
+    purpose=reset：无论邮箱是否存在都回 sent=true，只在存在时真发信——否则这就成了
+    账号枚举接口。
+    """
+    if not get_settings().email_enabled:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="EMAIL_NOT_CONFIGURED")
+
+    email = verification.normalize_email(payload.email)
+    exists = (
+        await session.execute(select(User.id).where(func.lower(User.email) == email))
+    ).first() is not None
+
+    if payload.purpose == verification.PURPOSE_REGISTER and exists:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="REGISTER_USER_ALREADY_EXISTS")
+
+    remaining = await verification.cooldown_remaining(session, email, payload.purpose)
+    if remaining > 0:
+        return SendCodeResult(sent=False, retry_after=remaining)
+
+    # 邮箱不存在时也照常签发（只是不发信）：否则「第二次请求有没有冷却」本身就能
+    # 区分邮箱是否注册过，等于留了个账号枚举的旁路。
+    code = await verification.issue_code(session, email, payload.purpose)
+    await session.commit()
+    if exists or payload.purpose == verification.PURPOSE_REGISTER:
+        await email_service.send_verification_code(
+            email, payload.purpose, code, verification.CODE_TTL_SECONDS // 60
+        )
+    return SendCodeResult(sent=True)
+
+
+@router.post("/auth/reset-password", tags=["auth"])
+async def reset_password(
+    payload: ResetPasswordRequest,
+    user_manager: UserManager = Depends(get_user_manager),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    """凭邮箱验证码重设密码。验证码错误与邮箱不存在返回同一个错误码，避免枚举。"""
+    if not get_settings().email_enabled:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="EMAIL_NOT_CONFIGURED")
+
+    email = verification.normalize_email(payload.email)
+    ok = await verification.verify_code(session, email, verification.PURPOSE_RESET, payload.code)
+    if not ok:
+        await session.commit()  # 保留 attempts 自增
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="INVALID_CODE")
+
+    user = (
+        await session.execute(select(User).where(func.lower(User.email) == email))
+    ).scalar_one_or_none()
+    if user is None:
+        await session.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="INVALID_CODE")
+
+    try:
+        await user_manager.validate_password(payload.password, user)
+    except exceptions.InvalidPasswordException as e:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_PASSWORD", "reason": e.reason},
+        ) from e
+
+    user.hashed_password = user_manager.password_helper.hash(payload.password)
+    await session.commit()
+    logger.info("密码已重置：user_id=%s", user.id)
+    return {"ok": True}
 
 
 @router.get("/auth/username-available", tags=["auth"])

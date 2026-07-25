@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     s2_api_key: str = ""  # Semantic Scholar（可空，限流更严）
     openalex_mailto: str = "polaris@example.org"  # OpenAlex polite pool
 
+    # ---- 邮件（密码重置等事务邮件）----
+    # smtp_host 为空 = 关闭发信：忘记密码入口在前端自动隐藏（见 /auth/capabilities）。
+    smtp_host: str = ""
+    smtp_port: int = 465
+    # ssl=建连即 TLS（465/994）｜starttls=明文建连后升级（587/25）｜none=不加密（仅内网调试）
+    smtp_security: Literal["ssl", "starttls", "none"] = "ssl"
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""  # 发件地址；留空回退 smtp_user
+    smtp_from_name: str = "Polaris"
+    smtp_timeout: int = 20
+
     # ---- 文件卷（PDF/全文等产物；容器内挂 /srv/data）----
     data_dir: str = "./data"
     # 文献 API（arXiv/S2/OpenAlex）出站代理，如 http://host.docker.internal:7897；
@@ -94,6 +106,15 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
+
+    @property
+    def email_enabled(self) -> bool:
+        """配了发信服务器才算开启；未开启时忘记密码入口整条链路都不暴露。"""
+        return bool(self.smtp_host and self.email_from_address)
+
+    @property
+    def email_from_address(self) -> str:
+        return self.smtp_from or self.smtp_user
 
     @property
     def cors_origin_list(self) -> list[str]:

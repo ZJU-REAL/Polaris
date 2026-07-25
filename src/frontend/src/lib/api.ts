@@ -212,6 +212,20 @@ export interface RegisterInput {
   display_name: string;
   username: string;
   invite_code: string;
+  /** 邮箱验证码；未开启邮件系统的部署可省略 */
+  email_code?: string;
+}
+
+export interface AuthCapabilities {
+  email: boolean;
+  password_reset: boolean;
+  register_email_code: boolean;
+}
+
+export interface SendCodeResult {
+  sent: boolean;
+  /** 冷却中的剩余秒数 */
+  retry_after: number;
 }
 
 /** admin 判定：role=admin 或 fastapi-users superuser。 */
@@ -2422,6 +2436,25 @@ export const api = {
     return request<{ available: boolean }>(
       `/auth/username-available?username=${encodeURIComponent(username)}`,
     );
+  },
+
+  /** 邮件系统是否可用（决定验证码与「忘记密码」入口是否显示）。 */
+  authCapabilities(): Promise<AuthCapabilities> {
+    return request<AuthCapabilities>('/auth/capabilities');
+  },
+
+  /** 申请邮箱验证码；冷却中返回 sent=false 与剩余秒数。 */
+  sendAuthCode(email: string, purpose: 'register' | 'reset'): Promise<SendCodeResult> {
+    return requestJson<SendCodeResult>('/auth/send-code', 'POST', { email, purpose });
+  },
+
+  /** 凭邮箱验证码重设密码。 */
+  resetPassword(email: string, code: string, password: string): Promise<{ ok: boolean }> {
+    return requestJson<{ ok: boolean }>('/auth/reset-password', 'POST', {
+      email,
+      code,
+      password,
+    });
   },
 
   /** 健康检查：{status, version}（反馈上下文里带版本号用）。 */

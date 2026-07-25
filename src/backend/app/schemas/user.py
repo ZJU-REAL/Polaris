@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi_users import schemas
 from pydantic import BaseModel, EmailStr, Field
@@ -42,16 +42,41 @@ class UserCreate(schemas.BaseUserCreate):
     display_name: str = Field(min_length=1, max_length=255)
     username: str = Field(pattern=USERNAME_PATTERN)
     invite_code: str  # 与 settings.invite_code 比对，见 api/auth.py
+    # 邮箱验证码（先 POST /auth/send-code 获取）；未开启邮件系统时可留空
+    email_code: str = ""
 
     def create_update_dict(self) -> dict[str, Any]:
         d = super().create_update_dict()
-        d.pop("invite_code", None)  # 非表字段，入库前剔除
+        for k in ("invite_code", "email_code"):  # 非表字段，入库前剔除
+            d.pop(k, None)
         return d
 
     def create_update_dict_superuser(self) -> dict[str, Any]:
         d = super().create_update_dict_superuser()
-        d.pop("invite_code", None)
+        for k in ("invite_code", "email_code"):
+            d.pop(k, None)
         return d
+
+
+class SendCodeRequest(BaseModel):
+    """申请邮箱验证码。"""
+
+    email: EmailStr
+    purpose: Literal["register", "reset"]
+
+
+class SendCodeResult(BaseModel):
+    sent: bool
+    # 冷却中时的剩余秒数（前端据此倒计时）
+    retry_after: int = 0
+
+
+class ResetPasswordRequest(BaseModel):
+    """凭邮箱验证码重设密码。"""
+
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=8)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class UserUpdate(schemas.BaseUserUpdate):

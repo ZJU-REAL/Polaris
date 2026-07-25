@@ -747,6 +747,27 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 }
 .auth-step2-account b { color: var(--text-1); font-weight: 600; }
 
+/* 验证码：输入框 + 获取按钮 */
+.auth-code-row { display: flex; gap: 8px; }
+.auth-code-row .auth-input { flex: 1; min-width: 0; letter-spacing: 0.18em; }
+.auth-code-row .btn { height: 38px; flex-shrink: 0; white-space: nowrap; min-width: 92px; justify-content: center; }
+
+/* 记住密码 / 忘记密码 */
+.auth-options {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin: -4px 0 14px;
+}
+.auth-check {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none;
+}
+.auth-check input { width: 13px; height: 13px; accent-color: var(--accent); cursor: pointer; }
+.auth-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font-size: 12.5px; color: var(--accent);
+}
+.auth-link:hover { text-decoration: underline; }
+
 /* 密码强度条（三级） */
 .pwd-meter { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .pwd-meter-bars { display: flex; gap: 5px; flex: 1; }

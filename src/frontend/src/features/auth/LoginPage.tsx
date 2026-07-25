@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -7,12 +7,15 @@ import { PolarisMark, PolarisWordmark } from '../../components/ui/PolarisLogo';
 import { Segmented } from '../../components/ui/Segmented';
 import { useAuth } from '../../app/auth';
 import { ApiError, api } from '../../lib/api';
+import { getLastAccount, isRemembered } from '../../lib/token-store';
 import { tr } from '../../lib/i18n';
 
 type Mode = 'login' | 'register';
+type View = 'auth' | 'forgot';
 type Step = 1 | 2;
 
 const USERNAME_RE = /^[a-z0-9_]{3,32}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
@@ -25,8 +28,17 @@ function errorMessage(err: unknown): string {
     if (err.status === 400 && err.message.includes('USERNAME_TAKEN')) {
       return tr('用户名已被占用，换一个吧', 'Username already taken');
     }
+    if (err.status === 400 && err.message.includes('INVALID_CODE')) {
+      return tr('验证码错误或已过期，请重新获取', 'Invalid or expired code — request a new one');
+    }
+    if (err.status === 400 && err.message.includes('PASSWORD_')) {
+      return tr('密码不符合要求：至少 8 位且含字母和数字', 'Password must be 8+ chars with letters and digits');
+    }
     if (err.status === 403 && err.message.includes('INVALID_INVITE_CODE')) {
       return tr('邀请码无效', 'Invalid invite code');
+    }
+    if (err.status === 503 && err.message.includes('EMAIL_NOT_CONFIGURED')) {
+      return tr('服务器未配置邮件系统，请联系管理员', 'Email is not configured on the server — contact an admin');
     }
     return `${tr('请求失败', 'Request failed')}（${err.status}）：${err.message}`;
   }
@@ -38,7 +50,8 @@ function errorMessage(err: unknown): string {
 
 /**
  * 密码强度：0 = 未达最低要求（≥8 位且同时含字母和数字），1 弱 / 2 中 / 3 强。
- * 达标后按字符类别数（小写/大写/数字/符号）与长度加分。
+ * 达标后按字符类别数（小写/大写/数字/符号）与长度加分。后端 validate_password
+ * 用的是同一条达标线。
  */
 function passwordStrength(pw: string): 0 | 1 | 2 | 3 {
   if (pw.length < 8 || !/[a-zA-Z]/.test(pw) || !/\d/.test(pw)) return 0;
@@ -77,17 +90,127 @@ function PasswordMeter({ password }: { password: string }) {
   );
 }
 
+/** 验证码发送 + 冷却倒计时。冷却由后端裁决（retry_after），前端只做展示。 */
+function useCodeSender(purpose: 'register' | 'reset') {
+  const [cooldown, setCooldown] = useState(0);
+  const [note, setNote] = useState('');
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    timer.current = window.setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => window.clearTimeout(timer.current);
+  }, [cooldown]);
+
+  const mutation = useMutation({
+    mutationFn: (email: string) => api.sendAuthCode(email, purpose),
+    onSuccess: (r) => {
+      setCooldown(r.sent ? 60 : r.retry_after);
+      setNote(
+        r.sent
+          ? tr('验证码已发送，请查收邮件', 'Code sent — check your inbox')
+          : tr('发送太频繁，请稍后再试', 'Too many requests — try again shortly'),
+      );
+    },
+  });
+
+  return { cooldown, note, send: mutation.mutate, sending: mutation.isPending, error: mutation.error };
+}
+
+/** 验证码输入框 + 右侧「获取验证码」按钮。 */
+function CodeField({
+  id,
+  code,
+  onCode,
+  email,
+  sender,
+}: {
+  id: string;
+  code: string;
+  onCode: (v: string) => void;
+  email: string;
+  sender: ReturnType<typeof useCodeSender>;
+}) {
+  const emailOk = EMAIL_RE.test(email.trim());
+  return (
+    <div className="auth-field">
+      <label htmlFor={id}>{tr('邮箱验证码', 'Email code')}</label>
+      <div className="auth-code-row">
+        <input
+          id={id}
+          className="auth-input"
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          required
+          maxLength={6}
+          placeholder={tr('6 位验证码', '6-digit code')}
+          value={code}
+          onChange={(e) => onCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        />
+        <button
+          type="button"
+          className="btn"
+          disabled={!emailOk || sender.cooldown > 0 || sender.sending}
+          onClick={() => sender.send(email.trim())}
+        >
+          {sender.cooldown > 0
+            ? `${sender.cooldown}s`
+            : sender.sending
+              ? tr('发送中', 'Sending')
+              : tr('获取验证码', 'Send code')}
+        </button>
+      </div>
+      {(sender.note || sender.error) && (
+        <div
+          style={{
+            fontSize: 11,
+            marginTop: 4,
+            color: sender.error ? 'var(--danger-tx)' : 'var(--text-4)',
+          }}
+        >
+          {sender.error ? errorMessage(sender.error) : sender.note}
+        </div>
+      )}
+      {!emailOk && (
+        <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-4)' }}>
+          {tr('先填写上方邮箱，再获取验证码', 'Enter your email above first')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
   const { isAuthenticated, login, register } = useAuth();
+  const [view, setView] = useState<View>('auth');
   const [mode, setMode] = useState<Mode>('login');
   const [step, setStep] = useState<Step>(1); // 仅注册用：1 账号信息 / 2 设置密码
-  const [identifier, setIdentifier] = useState(''); // 登录：邮箱或用户名；注册：邮箱
+  const [identifier, setIdentifier] = useState(() => getLastAccount());
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const [inviteCode, setInviteCode] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [remember, setRemember] = useState(() => isRemembered());
+
+  // 忘记密码
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotDone, setForgotDone] = useState(false);
+
+  const capabilities = useQuery({
+    queryKey: ['auth-capabilities'],
+    queryFn: () => api.authCapabilities(),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const emailOn = capabilities.data?.email ?? false;
+
+  const registerSender = useCodeSender('register');
+  const resetSender = useCodeSender('reset');
 
   const usernameValid = USERNAME_RE.test(username);
   const pwdLevel = passwordStrength(password);
@@ -113,7 +236,7 @@ export function LoginPage() {
   const mutation = useMutation({
     mutationFn: async () => {
       if (mode === 'login') {
-        await login(identifier, password);
+        await login(identifier, password, remember);
       } else {
         await register({
           email: identifier,
@@ -121,10 +244,16 @@ export function LoginPage() {
           display_name: displayName.trim(),
           username,
           invite_code: inviteCode,
+          email_code: emailCode,
         });
       }
     },
     onSuccess: () => navigate('/', { replace: true }),
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: () => api.resetPassword(forgotEmail.trim(), forgotCode, password),
+    onSuccess: () => setForgotDone(true),
   });
 
   if (isAuthenticated) {
@@ -133,19 +262,28 @@ export function LoginPage() {
 
   const isRegister = mode === 'register';
 
+  function clearPasswords() {
+    setPassword('');
+    setPassword2('');
+  }
+
   function switchMode(m: Mode) {
     setMode(m);
     setStep(1);
-    setPassword('');
-    setPassword2('');
+    clearPasswords();
+    setEmailCode('');
     mutation.reset();
   }
 
-  function backToStep1() {
-    setPassword('');
-    setPassword2('');
-    mutation.reset();
+  function toLogin() {
+    setView('auth');
+    setMode('login');
     setStep(1);
+    clearPasswords();
+    setForgotCode('');
+    setForgotDone(false);
+    resetMutation.reset();
+    mutation.reset();
   }
 
   function onSubmit(e: FormEvent) {
@@ -157,19 +295,143 @@ export function LoginPage() {
     mutation.mutate();
   }
 
-  return (
-    <div className="auth-page">
-      {/* 左上角品牌 */}
+  function onForgotSubmit(e: FormEvent) {
+    e.preventDefault();
+    resetMutation.mutate();
+  }
+
+  const brand = (
+    <>
       <div className="auth-brand">
         <PolarisMark size={56} />
         <PolarisWordmark height={32} />
       </div>
-
       <div style={{ position: 'absolute', top: 18, right: 20 }}>
         <LangToggle />
       </div>
+    </>
+  );
 
-      {/* 右侧表单卡片 */}
+  /* ---------- 忘记密码 ---------- */
+  if (view === 'forgot') {
+    return (
+      <div className="auth-page">
+        {brand}
+        <div className="auth-card fadeup">
+          <div className="auth-card-title">{tr('找回密码', 'Reset password')}</div>
+          <div className="auth-card-sub">
+            {forgotDone
+              ? tr('密码已重设，用新密码登录吧', 'Password updated — sign in with it')
+              : tr('用注册邮箱接收验证码，然后设置新密码', 'Get a code by email, then set a new password')}
+          </div>
+
+          {forgotDone ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center', height: 38 }}
+              onClick={toLogin}
+            >
+              <Icon name="arrow" size={14} />
+              {tr('去登录', 'Go to sign in')}
+            </button>
+          ) : (
+            <form onSubmit={onForgotSubmit}>
+              {resetMutation.isError && (
+                <div className="auth-error">{errorMessage(resetMutation.error)}</div>
+              )}
+
+              <div className="auth-field">
+                <label htmlFor="forgot-email">{tr('注册邮箱', 'Account email')}</label>
+                <input
+                  id="forgot-email"
+                  className="auth-input"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  placeholder="you@zju.edu.cn"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                />
+              </div>
+
+              <CodeField
+                id="forgot-code"
+                code={forgotCode}
+                onCode={setForgotCode}
+                email={forgotEmail}
+                sender={resetSender}
+              />
+
+              <div className="auth-field">
+                <label htmlFor="new-password">{tr('新密码', 'New password')}</label>
+                <input
+                  id="new-password"
+                  className="auth-input"
+                  type="password"
+                  required
+                  autoComplete="new-password"
+                  placeholder={tr('至少 8 位，含字母和数字', 'At least 8 chars, letters and digits')}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <PasswordMeter password={password} />
+              </div>
+
+              <div className="auth-field">
+                <label htmlFor="new-password2">{tr('确认新密码', 'Confirm new password')}</label>
+                <input
+                  id="new-password2"
+                  className="auth-input"
+                  type="password"
+                  required
+                  autoComplete="new-password"
+                  placeholder={tr('再输入一遍', 'Type it again')}
+                  value={password2}
+                  onChange={(e) => setPassword2(e.target.value)}
+                />
+                {password2 !== '' && !pwdMatch && (
+                  <div style={{ fontSize: 11, color: 'var(--danger-tx)', marginTop: 4 }}>
+                    {tr('两次输入的密码不一致', 'Passwords do not match')}
+                  </div>
+                )}
+              </div>
+
+              <div className="row" style={{ gap: 10, marginTop: 6 }}>
+                <button type="button" className="btn" style={{ height: 38 }} onClick={toLogin}>
+                  {tr('返回登录', 'Back')}
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={
+                    resetMutation.isPending ||
+                    forgotCode.length < 6 ||
+                    pwdLevel === 0 ||
+                    !pwdMatch
+                  }
+                  style={{ flex: 1, justifyContent: 'center', height: 38 }}
+                >
+                  {resetMutation.isPending ? (
+                    <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  ) : (
+                    <Icon name="check" size={14} />
+                  )}
+                  {tr('重设密码', 'Reset password')}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- 登录 / 注册 ---------- */
+  return (
+    <div className="auth-page">
+      {brand}
+
       <div className="auth-card fadeup">
         <div className="auth-card-title">
           {isRegister ? tr('创建账号', 'Create your account') : tr('欢迎回来', 'Welcome back')}
@@ -227,6 +489,15 @@ export function LoginPage() {
 
           {isRegister && step === 1 && (
             <>
+              {emailOn && (
+                <CodeField
+                  id="register-code"
+                  code={emailCode}
+                  onCode={setEmailCode}
+                  email={identifier}
+                  sender={registerSender}
+                />
+              )}
               <div className="auth-field">
                 <label htmlFor="displayName">{tr('姓名', 'Name')}</label>
                 <input
@@ -296,21 +567,46 @@ export function LoginPage() {
             </>
           )}
 
-          {/* 登录密码 */}
+          {/* 登录密码 + 记住密码 / 忘记密码 */}
           {!isRegister && (
-            <div className="auth-field">
-              <label htmlFor="password">{tr('密码', 'Password')}</label>
-              <input
-                id="password"
-                className="auth-input"
-                type="password"
-                required
-                autoComplete="current-password"
-                placeholder={tr('输入密码', 'Enter password')}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
+            <>
+              <div className="auth-field">
+                <label htmlFor="password">{tr('密码', 'Password')}</label>
+                <input
+                  id="password"
+                  className="auth-input"
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  placeholder={tr('输入密码', 'Enter password')}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              <div className="auth-options">
+                <label className="auth-check">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => setRemember(e.target.checked)}
+                  />
+                  {tr('记住密码', 'Remember me')}
+                </label>
+                {capabilities.data?.password_reset && (
+                  <button
+                    type="button"
+                    className="auth-link"
+                    onClick={() => {
+                      setForgotEmail(identifier.includes('@') ? identifier : '');
+                      clearPasswords();
+                      setView('forgot');
+                    }}
+                  >
+                    {tr('忘记密码？', 'Forgot password?')}
+                  </button>
+                )}
+              </div>
+            </>
           )}
 
           {/* 注册第 2 步：设置密码 */}
@@ -359,7 +655,16 @@ export function LoginPage() {
           {/* 操作按钮 */}
           {isRegister && step === 2 ? (
             <div className="row" style={{ gap: 10, marginTop: 6 }}>
-              <button type="button" className="btn" style={{ height: 38 }} onClick={backToStep1}>
+              <button
+                type="button"
+                className="btn"
+                style={{ height: 38 }}
+                onClick={() => {
+                  clearPasswords();
+                  mutation.reset();
+                  setStep(1);
+                }}
+              >
                 {tr('上一步', 'Back')}
               </button>
               <button
@@ -380,7 +685,10 @@ export function LoginPage() {
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={mutation.isPending || (isRegister && (!usernameValid || usernameTaken))}
+              disabled={
+                mutation.isPending ||
+                (isRegister && (!usernameValid || usernameTaken || (emailOn && emailCode.length < 6)))
+              }
               style={{ width: '100%', justifyContent: 'center', height: 38, marginTop: 6 }}
             >
               {mutation.isPending ? (

@@ -2,12 +2,13 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { Navigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, getToken, setToken, type RegisterInput } from '../lib/api';
+import { setLastAccount, setRemembered } from '../lib/token-store';
 
 interface AuthValue {
   token: string | null;
   isAuthenticated: boolean;
-  /** 登录成功后 token 写入 localStorage。 */
-  login: (email: string, password: string) => Promise<void>;
+  /** 登录成功后写入 token；remember 决定落 localStorage 还是 sessionStorage。 */
+  login: (email: string, password: string, remember?: boolean) => Promise<void>;
   /** 注册（含邀请码）后自动登录。 */
   register: (input: RegisterInput) => Promise<void>;
   logout: () => void;
@@ -20,8 +21,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
   const login = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, remember = true) => {
       const t = await api.login(email, password);
+      // 先定偏好再写 token：writeToken 据此决定落哪个 storage
+      setRemembered(remember);
+      setLastAccount(remember ? email : null);
       setToken(t);
       setTokenState(t);
       // 切换账号：清空所有缓存查询，避免残留上一个用户的 me/项目/文献库等数据

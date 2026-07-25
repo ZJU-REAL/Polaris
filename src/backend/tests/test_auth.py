@@ -78,6 +78,16 @@ async def test_username_available(client):
     assert resp.json() == {"available": False}
 
 
+async def test_password_policy_rejects_weak(client):
+    resp = await client.post("/api/auth/register", json=_register_body(password="short1"))
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["reason"] == "PASSWORD_TOO_SHORT"
+
+    resp = await client.post("/api/auth/register", json=_register_body(password="onlyletters"))
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["reason"] == "PASSWORD_NEEDS_LETTER_AND_DIGIT"
+
+
 async def test_me_requires_auth(client):
     resp = await client.get("/api/users/me")
     assert resp.status_code == 401
