@@ -180,7 +180,7 @@ async def test_personal_library_hidden_from_stranger(client):
 
 
 async def test_personal_library_read_endpoints_hidden_from_stranger(client):
-    """个人库的只读端点（papers/concepts/graph/notes）对非归属人 404，不经 id 泄漏内容。
+    """个人库的只读端点（papers/concepts/graph/notes/建库同步状态）对非归属人 404，不泄漏内容。
 
     回归：修复前这些端点只做 _get_library（查存在），漏了可见性校验。转公共后陌生人可读。"""
     owner = await _hdr(client, "readvis-owner@example.com")
@@ -194,6 +194,7 @@ async def test_personal_library_read_endpoints_hidden_from_stranger(client):
         f"/api/libraries/{lib_id}/concepts",
         f"/api/libraries/{lib_id}/graph",
         f"/api/libraries/{lib_id}/notes",
+        f"/api/libraries/{lib_id}/ingest/state",
     ]
     # 陌生人：全部 404（不泄漏）
     for path in read_paths:

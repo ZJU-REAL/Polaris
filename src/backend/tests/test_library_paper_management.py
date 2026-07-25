@@ -334,5 +334,7 @@ async def test_manage_endpoints_forbidden_for_non_manager(client):
         f"/api/libraries/{lib_id}/papers", json={"bibtex": BIBTEX_ENTRY}, headers=stranger
     )
     assert resp.status_code == 403
+    # 建库/同步状态是只读端点，按库可见性放行（公共库全员可读，见 #66 的只读同步视图）；
+    # 个人库对陌生人 404 的回归在 test_library_approval 里覆盖。
     resp = await client.get(f"/api/libraries/{lib_id}/ingest/state", headers=stranger)
-    assert resp.status_code == 403
+    assert resp.status_code == 200
