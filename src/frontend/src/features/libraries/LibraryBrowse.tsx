@@ -1107,6 +1107,7 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
         ) : tab === 'concepts' ? (
           <ConceptsTab
             libraryId={libraryId}
+            canManage={false}
             selectedId={conceptId}
             onSelect={setConceptId}
             onOpenPaper={goPaper}
@@ -1117,7 +1118,7 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
             <GraphTab libraryId={libraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />
           </Suspense>
         ) : tab === 'chat' ? (
-          <LibraryChatTab libraryId={libraryId} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
+          <LibraryChatTab libraryId={libraryId} canManage={false} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
         ) : tab === 'notes' ? (
           <NotesTab libraryId={libraryId} />
         ) : tab === 'govern' ? (

@@ -81,7 +81,7 @@ export function LibraryDetailPage() {
       />
       <StatusBanner lib={lib} />
       {canManage ? (
-        <WikiWorkbench pid={lib.project_id ?? undefined} libraryId={lib.id} />
+        <WikiWorkbench pid={lib.project_id ?? undefined} libraryId={lib.id} canManage={canManage} />
       ) : (
         <LibraryBrowse libraryId={lib.id} />
       )}

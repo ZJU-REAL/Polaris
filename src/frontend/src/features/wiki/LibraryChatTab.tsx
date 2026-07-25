@@ -211,15 +211,29 @@ export interface LibraryChatTabProps {
   pid?: string;
   /** 独立库作用域（走 /libraries/{id}/chat）；与 pid 二选一 */
   libraryId?: string;
+  /**
+   * 能否管理这个库。本组件同时被文献工作台和共享库只读浏览复用，两边都会传 libraryId，
+   * 所以「补建索引」这类管理操作只认这个开关，不能靠「有没有 libraryId」判断。
+   */
+  canManage?: boolean;
   onOpenPaper: (id: string) => void;
   /** [[概念名]] 双链点击 → 按名称跳概念库 */
   onWikiLink?: WikiLinkHandler;
 }
 
-export function LibraryChatTab({ pid, libraryId, onOpenPaper, onWikiLink }: LibraryChatTabProps) {
+export function LibraryChatTab({
+  pid,
+  libraryId,
+  canManage = false,
+  onOpenPaper,
+  onWikiLink,
+}: LibraryChatTabProps) {
   const scopePid = pid ?? '';
+  // 补建索引是管理操作：库作用域优先走 /libraries 端点，否则回落课题端点
+  const canRebuild = canManage && !!(libraryId || pid);
   const rebuildMutation = useMutation({
-    mutationFn: () => api.rebuildFulltextIndex(scopePid),
+    mutationFn: () =>
+      libraryId ? api.rebuildLibraryFulltextIndex(libraryId) : api.rebuildFulltextIndex(scopePid),
     onSuccess: (r) => {
       if (r.papers_indexed === 0) {
         toast(tr('全文索引已是最新', 'Full-text index is up to date'), 'info');
@@ -346,7 +360,7 @@ export function LibraryChatTab({ pid, libraryId, onOpenPaper, onWikiLink }: Libr
         'Answers are grounded in full-text passages from the whole library; [n] marks a source number.',
       )}
       headerAction={
-        libraryId ? undefined : (
+        !canRebuild ? undefined : (
           <button
             className="btn btn-ghost sm"
             style={{ height: 26, fontSize: 10.5, flexShrink: 0 }}

@@ -28,7 +28,16 @@ const PresentationModal = lazy(() =>
 
 type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes' | 'govern';
 
-export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: string }) {
+export function WikiWorkbench({
+  pid,
+  libraryId,
+  canManage = false,
+}: {
+  pid?: string;
+  libraryId?: string;
+  /** 能否管理这个库（决定共享 Tab 里的管理操作显不显示）；由调用方按 can_manage 传入。 */
+  canManage?: boolean;
+}) {
   const navigate = useNavigate();
 
   // 独立库（无起源课题）：集合级数据与导出走 /libraries/{id}/* 端点；PPT 仍是课题域，隐藏。
@@ -202,6 +211,7 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
           <ConceptsTab
             pid={pid}
             libraryId={tabLibraryId}
+            canManage={canManage}
             selectedId={conceptId}
             onSelect={setConceptId}
             onOpenPaper={goPaper}
@@ -212,7 +222,13 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
             <GraphTab pid={pid} libraryId={tabLibraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />
           </Suspense>
         ) : tab === 'chat' ? (
-          <LibraryChatTab pid={pid} libraryId={tabLibraryId} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
+          <LibraryChatTab
+            pid={pid}
+            libraryId={tabLibraryId}
+            canManage={canManage}
+            onOpenPaper={goPaper}
+            onWikiLink={onWikiLink}
+          />
         ) : tab === 'ingest' ? (
           <IngestTab
             pid={pid}

@@ -28,10 +28,15 @@ const CATEGORY_FILTERS: CategoryFilter[] = [
 ];
 
 export interface ConceptsTabProps {
-  /** 课题 id（成员视角：project 作用域端点 + 概念补建按钮）。 */
+  /** 课题 id（给定时列表与概念补建走 project 作用域端点）。 */
   pid?: string;
-  /** 共享库只读视角（P5c）：给定时列表走 /libraries/{id}/concepts，隐藏补建按钮。 */
+  /** 库作用域：给定时列表与概念补建走 /libraries/{id}/* 端点。 */
   libraryId?: string;
+  /**
+   * 能否管理这个库。本组件同时被文献工作台和共享库只读浏览复用，两边都会传 libraryId，
+   * 所以管理操作（概念补建）只认这个开关，不能靠「有没有 libraryId」判断。
+   */
+  canManage?: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenPaper: (id: string) => void;
@@ -186,7 +191,15 @@ function ConceptDetailPane({
   );
 }
 
-export function ConceptsTab({ pid, libraryId, selectedId, onSelect, onOpenPaper, onWikiLink }: ConceptsTabProps) {
+export function ConceptsTab({
+  pid,
+  libraryId,
+  canManage = false,
+  selectedId,
+  onSelect,
+  onOpenPaper,
+  onWikiLink,
+}: ConceptsTabProps) {
   const queryClient = useQueryClient();
   const [category, setCategory] = useState<CategoryFilter>('all');
   const [qInput, setQInput] = useState('');
@@ -200,10 +213,11 @@ export function ConceptsTab({ pid, libraryId, selectedId, onSelect, onOpenPaper,
   });
   const concepts = useMemo(() => data ?? [], [data]);
 
-  // 全库概念补建：编译过但概念没上链的历史论文（比如批量任务中断）从这里补（成员视角限定）
-  const canRelink = !!pid && !libraryId;
+  // 全库概念补建：编译过但概念没上链的历史论文（比如批量任务中断）从这里补。
+  // 只有能管理这个库的人看得到；库作用域优先走 /libraries 端点，否则回落课题端点。
+  const canRelink = canManage && !!(libraryId || pid);
   const relinkMutation = useMutation({
-    mutationFn: () => api.relinkConcepts(pid!),
+    mutationFn: () => (libraryId ? api.relinkLibraryConcepts(libraryId) : api.relinkConcepts(pid!)),
     onSuccess: (r) => {
       if (r.concepts_created === 0 && r.links_created === 0) {
         toast(
@@ -219,9 +233,16 @@ export function ConceptsTab({ pid, libraryId, selectedId, onSelect, onOpenPaper,
           'ok',
         );
       }
-      void queryClient.invalidateQueries({ queryKey: ['concepts', pid] });
+      // 两种作用域的 queryKey 形状不同，按当前作用域刷新对应的那组
+      if (libraryId) {
+        void queryClient.invalidateQueries({ queryKey: ['lib-concepts', libraryId] });
+        void queryClient.invalidateQueries({ queryKey: ['papers', libraryId] });
+        void queryClient.invalidateQueries({ queryKey: ['lib-papers', libraryId] });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['concepts', pid] });
+        void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
+      }
       void queryClient.invalidateQueries({ queryKey: ['concept'] });
-      void queryClient.invalidateQueries({ queryKey: ['papers', pid] });
       void queryClient.invalidateQueries({ queryKey: ['paper'] });
     },
     onError: (e) =>
