@@ -60,11 +60,15 @@ async def test_can_manage_library_three_identities(client):
         ).scalar_one()
         curator_user = await session.get(User, curator_id)
 
-        # 平台 admin / 背后课题成员可管理；无关用户不可
+        # 平台 admin 可管理；无关用户不可
         assert await libraries_service.can_manage_library(session, user=admin_user, library=library)
-        assert await libraries_service.can_manage_library(session, user=owner_user, library=library)
         assert not await libraries_service.can_manage_library(
             session, user=stranger_user, library=library
+        )
+        # 起源课题的成员（这里是建课题的 owner）不再因这层关系可管理：库与课题解耦后
+        # project_id 只是历史指针。存量的这批人由迁移 b3d81f6c05a9 补成策展人。
+        assert not await libraries_service.can_manage_library(
+            session, user=owner_user, library=library
         )
         # 任命为策展人后可管理
         assert not await libraries_service.can_manage_library(
