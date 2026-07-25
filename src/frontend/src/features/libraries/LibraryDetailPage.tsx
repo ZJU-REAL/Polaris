@@ -133,40 +133,9 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
     onSuccess: () => { toast(tr('已撤回申请', 'Request withdrawn'), 'ok'); invalidate(); },
     onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
   });
-  const makePersonal = useMutation({
-    mutationFn: () => api.makeLibraryPersonal(lib.id),
-    onSuccess: () => { toast(tr('已转为个人文献库', 'Made personal'), 'ok'); invalidate(); },
-    onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
-  });
-
   if (lib.status === 'active') {
-    // 公共库：仅平台 admin 可就地转回个人（转回后其他成员看不到）。
-    if (lib.is_public) {
-      if (!admin) return null;
-      return (
-        <div className="card" style={{ padding: '12px 16px', marginBottom: 14 }}>
-          <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <div className="col gap4" style={{ minWidth: 0 }}>
-              <div className="row gap8" style={{ fontWeight: 680, fontSize: 13.5 }}>
-                <Icon name="book" size={14} style={{ color: 'var(--ok-tx)' }} />
-                {tr('公共文献库', 'Public library')}
-              </div>
-              <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
-                {tr(
-                  '转为个人库后仅归属人可见，其他成员将看不到。',
-                  'Making it personal hides it from everyone but its owner.',
-                )}
-              </div>
-            </div>
-            <div className="row gap8" style={{ flexShrink: 0 }}>
-              <button className="btn btn-soft sm" disabled={makePersonal.isPending} onClick={() => makePersonal.mutate()}>
-                {makePersonal.isPending ? tr('处理中…', 'Working…') : tr('转为个人文献库', 'Make personal')}
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
+    // 公共库：转回个人在「文献库配置 · 库信息」里，这里不再重复。
+    if (lib.is_public) return null;
     // 个人库：归属人或 admin 可发起转公共（admin 直接通过）。
     if (!(isOwner || admin)) return null;
     return (

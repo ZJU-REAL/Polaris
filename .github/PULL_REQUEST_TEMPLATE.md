@@ -6,6 +6,26 @@
 
 Closes #
 
+## Area
+
+<!-- Tick what this touches. Keep it to what actually changed. -->
+
+- [ ] frontend
+- [ ] desktop (Electron client)
+- [ ] backend-api
+- [ ] voyage (task loop)
+- [ ] literature / wiki
+- [ ] daily papers
+- [ ] idea forge
+- [ ] experiment
+- [ ] writer
+- [ ] review
+- [ ] skills
+- [ ] llm routing / usage
+- [ ] auth / users
+- [ ] infra / deploy
+- [ ] docs
+
 ## What changed
 
 -
@@ -17,6 +37,7 @@ Closes #
 - [ ] `tsc --noEmit` / frontend build passes (frontend touched)
 - [ ] Backend tests pass (backend touched)
 - [ ] Alembic `upgrade head` + downgrade roundtrip passes (migration added)
+- [ ] `alembic heads` shows a single head (migration added)
 - [ ] Manually verified in local dev
 
 ## Checklist

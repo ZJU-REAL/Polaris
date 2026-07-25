@@ -22,12 +22,18 @@ body:
       description: Which part of Polaris does this touch?
       options:
         - frontend
+        - desktop (Electron client)
         - backend-api
         - voyage (task loop)
         - literature / wiki
+        - daily papers
+        - idea forge
+        - experiment
         - writer
         - review
         - skills
+        - llm routing / usage
+        - auth / users
         - infra / deploy
         - docs
         - other / not sure

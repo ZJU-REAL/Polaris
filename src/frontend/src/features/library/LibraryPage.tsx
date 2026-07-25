@@ -5,9 +5,11 @@ import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
+  type CitationFormat,
   type LibraryEntry,
   type LibrarySort,
   type LibraryTab,
@@ -560,10 +562,14 @@ export function LibraryPage() {
   });
 
   const exportMutation = useMutation({
-    mutationFn: () => api.downloadPersonalCitations({ format: 'bibtex', ids: [...selected.values()] }),
-    onSuccess: (blob) => {
-      saveBlob(blob, 'polaris-my-library-citations.bib');
-      toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
+    mutationFn: (format: CitationFormat) =>
+      api.downloadPersonalCitations({ format, ids: [...selected.values()] }),
+    onSuccess: (blob, format) => {
+      saveBlob(
+        blob,
+        format === 'bibtex' ? 'polaris-my-library-citations.bib' : 'polaris-my-library-citations.json',
+      );
+      toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} papers`), 'ok');
     },
     onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${errText(e)}`, 'error'),
   });
@@ -961,14 +967,14 @@ export function LibraryPage() {
                           <Icon name="x" size={12} />
                           {tr('删除', 'Delete')}
                         </button>
-                        <button
-                          className="btn btn-ghost sm"
-                          disabled={selected.size === 0 || exportMutation.isPending}
-                          onClick={() => exportMutation.mutate()}
-                        >
-                          <Icon name="download" size={12} />
-                          {tr('导出 BibTeX', 'Export BibTeX')}
-                        </button>
+                        <ExportDropdown
+                          sm
+                          placement="up"
+                          align="left"
+                          busy={exportMutation.isPending}
+                          disabled={selected.size === 0}
+                          items={citationExportItems((format) => exportMutation.mutate(format))}
+                        />
                       </>
                     )}
                   </>

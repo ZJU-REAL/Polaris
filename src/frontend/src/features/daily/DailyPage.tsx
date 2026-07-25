@@ -11,11 +11,13 @@ import {
   usePaperFigures,
 } from '../../components/ui/FigureGallery';
 import { CompileBadge } from '../../components/ui/CompileBadge';
+import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import {
   ApiError,
   api,
+  type CitationFormat,
   type DailyPaperItem,
   type DailySort,
   type PaperDetail,
@@ -685,10 +687,10 @@ export function DailyPage() {
     });
 
   const exportMutation = useMutation({
-    mutationFn: () => api.downloadDailyCitations({ format: 'bibtex', ids: [...selected] }),
-    onSuccess: (blob) => {
-      saveBlob(blob, 'polaris-daily-citations.bib');
-      toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
+    mutationFn: (format: CitationFormat) => api.downloadDailyCitations({ format, ids: [...selected] }),
+    onSuccess: (blob, format) => {
+      saveBlob(blob, format === 'bibtex' ? 'polaris-daily-citations.bib' : 'polaris-daily-citations.json');
+      toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} papers`), 'ok');
     },
     onError: (e) =>
       toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -1054,14 +1056,14 @@ export function DailyPage() {
                 {selectMode ? tr(`已选 ${selected.size}`, `${selected.size} selected`) : tr('多选', 'Select')}
               </button>
               {selectMode && (
-                <button
-                  className="btn btn-ghost sm"
-                  disabled={selected.size === 0 || exportMutation.isPending}
-                  onClick={() => exportMutation.mutate()}
-                >
-                  <Icon name="download" size={12} />
-                  {tr('导出 BibTeX', 'Export BibTeX')}
-                </button>
+                <ExportDropdown
+                  sm
+                  placement="up"
+                  align="left"
+                  busy={exportMutation.isPending}
+                  disabled={selected.size === 0}
+                  items={citationExportItems((format) => exportMutation.mutate(format))}
+                />
               )}
             </div>
           </div>

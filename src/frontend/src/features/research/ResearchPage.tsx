@@ -6,9 +6,11 @@ import { PageHead } from '../../components/ui/PageHead';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
+  type CitationFormat,
   type DirectionLibrarySummary,
   type PaperRead,
   type ReadingStatus,
@@ -220,7 +222,7 @@ function ShelfRow({
   );
 }
 
-/* ---------------- 关联文献库区块（书架之上） ---------------- */
+/* ---------------- 关联文献库一栏（列表下方） ---------------- */
 
 /** 非 active 库的小状态徽标（待审批 / 已驳回）。 */
 function LibStatusBadge({ status }: { status: DirectionLibrarySummary['status'] }) {
@@ -236,86 +238,64 @@ function LibStatusBadge({ status }: { status: DirectionLibrarySummary['status'] 
   );
 }
 
-/** 课题关联的文献库（语料来源）：库名 + 各库论文数 + 进库入口。
-    总篇数用工作台同源的 stats.papers_total（并集去重口径），不做 per-library 相加。 */
-function LinkedLibrariesBar({
+/** 列表下方的一栏：课题关联的文献库，点库名进对应的库详情页。 */
+function LinkedLibrariesRow({
   pid,
   libs,
-  corpusTotal,
   loading,
   onNavigate,
 }: {
   pid: string;
   libs: DirectionLibrarySummary[];
-  /** 并集语料总篇数（stats.papers_total，与工作台一致）；未就绪时 null */
-  corpusTotal: number | null;
   loading: boolean;
   onNavigate: (path: string) => void;
 }) {
-  const linkedCount = libs.length;
-  const totalPart = corpusTotal !== null ? tr(` · 共 ${corpusTotal} 篇`, ` · ${corpusTotal} papers`) : '';
-  const title =
-    linkedCount === 0
-      ? tr('关联文献库', 'Linked libraries')
-      : tr(`关联文献库 · ${linkedCount} 个${totalPart}`, `Linked libraries · ${linkedCount}${totalPart}`);
+  if (loading) {
+    return (
+      <div className="row gap8" style={{ marginTop: 12, flexShrink: 0 }}>
+        <div className="skel" style={{ height: 22, width: 160 }} />
+        <div className="skel" style={{ height: 22, width: 120 }} />
+      </div>
+    );
+  }
 
   return (
-    <div className="card card-pad" style={{ marginBottom: 16, flexShrink: 0 }}>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: linkedCount === 0 ? 0 : 12 }}>
-        <span className="section-h">
-          <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
-          {title}
-        </span>
-        <button className="btn btn-ghost sm" onClick={() => onNavigate(`/projects/${pid}`)}>
-          <Icon name="link" size={12} />
-          {tr('管理关联库', 'Linked libraries')}
-        </button>
-      </div>
-
-      {loading ? (
-        <div className="row gap8">
-          <div className="skel" style={{ height: 30, width: 180 }} />
-          <div className="skel" style={{ height: 30, width: 150 }} />
-        </div>
-      ) : linkedCount === 0 ? (
-        <div className="row gap10" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.5, flex: 1, minWidth: 220 }}>
-            {tr(
-              '这个课题还没关联文献库——先去关联，才有可挑选的语料。',
-              'This topic has no linked libraries yet — link one to get a corpus to pick from.',
-            )}
+    <div
+      className="row gap8"
+      style={{ marginTop: 12, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}
+    >
+      <span className="row gap6" style={{ color: 'var(--text-3)', flexShrink: 0 }}>
+        <Icon name="book" size={13} style={{ color: 'var(--accent)' }} />
+        {tr('关联文献库', 'Linked libraries')}
+      </span>
+      {libs.length === 0 ? (
+        <>
+          <span style={{ color: 'var(--text-3)' }}>
+            {tr('还没关联，先关联一个再挑论文。', 'None yet — link one to pick papers from.')}
           </span>
-          <div className="row gap8">
-            <button className="btn btn-primary sm" onClick={() => onNavigate(`/projects/${pid}`)}>
-              <Icon name="link" size={13} />
-              {tr('去关联', 'Link a library')}
-            </button>
-            <button className="btn btn-ghost sm" onClick={() => onNavigate('/libraries')}>
-              {tr('浏览全部文献库', 'Browse all libraries')}
-            </button>
-          </div>
-        </div>
+          <button className="btn btn-ghost sm" onClick={() => onNavigate(`/projects/${pid}`)}>
+            <Icon name="link" size={12} />
+            {tr('去关联', 'Link a library')}
+          </button>
+        </>
       ) : (
-        <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-          {libs.map((lib) => (
-            <button
-              key={lib.id}
-              className="btn btn-soft sm"
-              style={{ maxWidth: 300 }}
-              title={lib.name}
-              onClick={() => onNavigate(libraryPath(lib.id))}
-            >
-              <Icon name="book" size={12} style={{ flexShrink: 0 }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-                {lib.name}
-              </span>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
-                {tr(`${lib.paper_count} 篇`, `${lib.paper_count}`)}
-              </span>
-              <LibStatusBadge status={lib.status} />
-            </button>
-          ))}
-        </div>
+        libs.map((lib) => (
+          <button
+            key={lib.id}
+            className="btn btn-ghost sm"
+            style={{ maxWidth: 300 }}
+            title={lib.name}
+            onClick={() => onNavigate(libraryPath(lib.id))}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+              {lib.name}
+            </span>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
+              {tr(`${lib.paper_count} 篇`, `${lib.paper_count}`)}
+            </span>
+            <LibStatusBadge status={lib.status} />
+          </button>
+        ))
       )}
     </div>
   );
@@ -583,15 +563,7 @@ export function ResearchPage() {
     enabled: !!pid,
     retry: false,
   });
-  // 并集语料总篇数：与工作台完全同源（['stats', pid] → papers_total），不做 per-library 相加
-  const statsQuery = useQuery({
-    queryKey: ['stats', pid],
-    queryFn: () => api.getStats(pid),
-    enabled: !!pid,
-    retry: false,
-  });
   const libs = useMemo<DirectionLibrarySummary[]>(() => sourceLibrariesQuery.data ?? [], [sourceLibrariesQuery.data]);
-  const corpusTotal = statsQuery.data?.papers_total ?? null;
 
   // 「文献库入口」目标：正好 1 个关联库→进那个库；多个→课题设置关联区；0 个→全部文献库列表。
   // （不再指向隐式库 topicLib——新模型里课题无单一隐式库）
@@ -717,12 +689,12 @@ export function ResearchPage() {
     onError: (e) => toast(`${tr('刷新失败：', 'Failed to refresh: ')}${errText(e)}`, 'error'),
   });
 
-  // 多选导出：把勾选的 paper_id 子集导成 BibTeX（course 作用域，复用文献库同一端点）
+  // 多选导出：把勾选的 paper_id 子集导出引用（course 作用域，复用文献库同一端点）
   const exportMutation = useMutation({
-    mutationFn: () => api.downloadCitations(pid, { format: 'bibtex', ids: [...checkedIds] }),
-    onSuccess: (blob) => {
-      saveBlob(blob, 'polaris-selected.bib');
-      toast(tr(`已导出 ${checkedIds.size} 篇的 BibTeX`, `Exported BibTeX for ${checkedIds.size} papers`), 'ok');
+    mutationFn: (format: CitationFormat) => api.downloadCitations(pid, { format, ids: [...checkedIds] }),
+    onSuccess: (blob, format) => {
+      saveBlob(blob, format === 'bibtex' ? 'polaris-selected.bib' : 'polaris-selected.json');
+      toast(tr(`已导出 ${checkedIds.size} 篇`, `Exported ${checkedIds.size} papers`), 'ok');
     },
     onError: (e) => toast(`${tr('导出失败：', 'Export failed: ')}${errText(e)}`, 'error'),
   });
@@ -778,17 +750,6 @@ export function ResearchPage() {
           onChange={setTab}
         />
       </div>
-
-      {/* 关联文献库栏（语料来源）：仅列表视图显示 */}
-      {tab === 'list' && (
-        <LinkedLibrariesBar
-          pid={pid}
-          libs={libs}
-          corpusTotal={corpusTotal}
-          loading={sourceLibrariesQuery.isLoading}
-          onNavigate={(path) => navigate(path)}
-        />
-      )}
 
       {/* —— 卡片容器（列表用双栏；对话直接铺满） —— */}
 
@@ -1071,14 +1032,14 @@ export function ResearchPage() {
                     <Icon name="x" size={12} />
                     {tr('删除', 'Delete')}
                   </button>
-                  <button
-                    className="btn btn-ghost sm"
-                    disabled={checkedIds.size === 0 || exportMutation.isPending}
-                    onClick={() => exportMutation.mutate()}
-                  >
-                    <Icon name="download" size={12} />
-                    {tr('导出 BibTeX', 'Export BibTeX')}
-                  </button>
+                  <ExportDropdown
+                    sm
+                    placement="up"
+                    align="left"
+                    busy={exportMutation.isPending}
+                    disabled={checkedIds.size === 0}
+                    items={citationExportItems((format) => exportMutation.mutate(format))}
+                  />
                 </>
               )}
               <button
@@ -1148,6 +1109,16 @@ export function ResearchPage() {
         </div>
         )}
       </div>
+
+      {/* 关联文献库：列表下方一栏，点库名进对应的库 */}
+      {tab === 'list' && (
+        <LinkedLibrariesRow
+          pid={pid}
+          libs={libs}
+          loading={sourceLibrariesQuery.isLoading}
+          onNavigate={(path) => navigate(path)}
+        />
+      )}
 
       {/* —— 添加文献（从文献库 / 手动）统一弹窗 —— */}
       <AddPaperModal

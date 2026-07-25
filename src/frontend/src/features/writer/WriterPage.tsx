@@ -236,7 +236,7 @@ function ManuscriptCard({
 export function WriterPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProjectId } = useProject();
   const pid = currentProjectId;
   const [modalOpen, setModalOpen] = useState(false);
   const [view, setView] = useState<ViewMode>('active');
@@ -398,8 +398,8 @@ export function WriterPage() {
         eyebrow="Stage 04 · Paper Writer"
         title={tr('论文撰写', 'Paper Writer')}
         sub={
-          currentProject
-            ? `${tr('当前课题：', 'Current topic: ')}${currentProject.name}`
+          pid
+            ? undefined
             : projectsLoading
               ? tr('加载课题…', 'Loading topics…')
               : tr('选择一个课题', 'Pick a topic')

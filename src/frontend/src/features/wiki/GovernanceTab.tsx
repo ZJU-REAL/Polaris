@@ -48,7 +48,7 @@ export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: stri
 
   return (
     <div className="col gap16" style={{ padding: 20, overflowY: 'auto' }}>
-      {lib && <LibraryInfoCard lib={lib} readOnly={readOnly} />}
+      {lib && <LibraryInfoCard lib={lib} readOnly={readOnly} admin={admin} />}
       {lib && <InclusionSettingsCard lib={lib} readOnly={readOnly} />}
       {/* 预算 / 管理员名单 / 重复论文均为管理门数据，普通用户取不到 → 只读时不渲染 */}
       {!readOnly && (
@@ -246,7 +246,16 @@ function BudgetCard({ libraryId }: { libraryId: string }) {
 
 /* —— 库信息与预算 —— */
 
-function LibraryInfoCard({ lib, readOnly }: { lib: DirectionLibraryDetail; readOnly?: boolean }) {
+function LibraryInfoCard({
+  lib,
+  readOnly,
+  admin,
+}: {
+  lib: DirectionLibraryDetail;
+  readOnly?: boolean;
+  /** 平台管理员：可把公共库转回个人库 */
+  admin?: boolean;
+}) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(lib.name);
   const [statement, setStatement] = useState(lib.statement ?? '');
@@ -285,6 +294,18 @@ function LibraryInfoCard({ lib, readOnly }: { lib: DirectionLibraryDetail; readO
   });
 
   const budgetInvalid = budget.trim() !== '' && (!Number.isFinite(Number(budget)) || Number(budget) < 0);
+
+  // 公共库转回个人库：仅平台管理员，转回后只有归属人能看到
+  const makePersonal = useMutation({
+    mutationFn: () => api.makeLibraryPersonal(lib.id),
+    onSuccess: () => {
+      toast(tr('已转为个人文献库', 'Made personal'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['library', lib.id] });
+      void queryClient.invalidateQueries({ queryKey: ['libraries'] });
+    },
+    onError: () => toast(tr('操作失败，请重试', 'Action failed, please retry'), 'error'),
+  });
+  const canMakePersonal = !readOnly && !!admin && lib.is_public && lib.status === 'active';
 
   return (
     <section className="card" style={{ padding: 18 }}>
@@ -344,6 +365,30 @@ function LibraryInfoCard({ lib, readOnly }: { lib: DirectionLibraryDetail; readO
         {!readOnly && budgetInvalid && (
           <div style={{ color: 'var(--danger-tx)', fontSize: 12 }}>
             {tr('预算需为不小于 0 的数字', 'Budget must be a number ≥ 0')}
+          </div>
+        )}
+        {canMakePersonal && (
+          <div
+            className="row"
+            style={{
+              justifyContent: 'space-between',
+              alignItems: 'flex-end',
+              gap: 12,
+              flexWrap: 'wrap',
+              borderTop: '0.5px solid var(--border)',
+              paddingTop: 12,
+            }}
+          >
+            <div className="col gap6" style={{ minWidth: 0 }}>
+              <span className="muted" style={{ fontSize: 12 }}>{tr('归属', 'Ownership')}</span>
+              <span className="row gap6" style={{ fontSize: 13 }}>
+                <Icon name="book" size={13} style={{ color: 'var(--ok-tx)' }} />
+                {tr('公共文献库 · 全实验室可见', 'Public · visible to the whole lab')}
+              </span>
+            </div>
+            <button className="btn btn-soft sm" disabled={makePersonal.isPending} onClick={() => makePersonal.mutate()}>
+              {makePersonal.isPending ? tr('处理中…', 'Working…') : tr('转为个人文献库', 'Make personal')}
+            </button>
           </div>
         )}
       </div>

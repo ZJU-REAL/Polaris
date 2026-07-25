@@ -182,7 +182,7 @@ export function ExperimentPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProjectId } = useProject();
   const pid = currentProjectId;
 
   const newIdeaId = searchParams.get('new');
@@ -337,8 +337,8 @@ export function ExperimentPage() {
         eyebrow="Stage 03 · Experiment Lab"
         title={tr('实验搭建', 'Experiment Lab')}
         sub={
-          currentProject
-            ? tr(`当前课题：${currentProject.name}`, `Current topic: ${currentProject.name}`)
+          pid
+            ? undefined
             : projectsLoading
               ? tr('加载课题…', 'Loading topics…')
               : tr('选择一个课题', 'Pick a topic')

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -10,6 +10,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { CompileBadge } from '../../components/ui/CompileBadge';
+import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { PaperReader } from './PaperReader';
 import { readerFrom } from '../reading/shared';
 import { toast } from '../../components/ui/Toast';
@@ -315,19 +316,6 @@ export function ExportMenu({
   /** 列表过滤条件，透传给课题版引用导出；不传导出全部库内文献（库版不支持过滤） */
   filters?: { status?: PaperStatusFilter; starred?: boolean };
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-
-  // 点外面关闭
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
-
   const obsidianMutation = useMutation({
     mutationFn: () =>
       libraryId ? api.downloadLibraryObsidianExport(libraryId) : api.downloadObsidianExport(pid!),
@@ -357,91 +345,34 @@ export function ExportMenu({
 
   const busy = obsidianMutation.isPending || citationsMutation.isPending;
 
-  const itemStyle: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    width: '100%',
-    padding: '8px 12px',
-    border: 'none',
-    background: 'transparent',
-    cursor: 'pointer',
-    fontSize: 12,
-    fontFamily: 'var(--sans)',
-    color: 'var(--text)',
-    textAlign: 'left',
-  };
-
   return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button className="btn btn-ghost" onClick={() => setOpen((o) => !o)} disabled={busy}>
-        {busy ? (
-          <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-        ) : (
-          <Icon name="download" size={14} />
-        )}
-        {tr('导出', 'Export')}
-        <Icon name="chevDown" size={12} />
-      </button>
-      {open && (
-        <div
-          className="card"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 4px)',
-            right: 0,
-            zIndex: 30,
-            minWidth: 210,
-            padding: '4px 0',
-            boxShadow: 'var(--shadow-pop)',
-          }}
-        >
-          <button
-            style={itemStyle}
-            onClick={() => {
-              setOpen(false);
-              obsidianMutation.mutate();
-            }}
-          >
-            <Icon name="file" size={13} style={{ color: 'var(--text-3)' }} />
-            <span>
-              {tr('Obsidian 笔记库', 'Obsidian vault')}
-              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>.zip</span>
-            </span>
-          </button>
-          <button
-            style={itemStyle}
-            onClick={() => {
-              setOpen(false);
-              citationsMutation.mutate('bibtex');
-            }}
-          >
-            <Icon name="book" size={13} style={{ color: 'var(--text-3)' }} />
-            <span>
-              {tr('BibTeX 引用', 'BibTeX citations')}
-              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>
-                {tr('.bib · 全部库内文献', '.bib · whole library')}
-              </span>
-            </span>
-          </button>
-          <button
-            style={itemStyle}
-            onClick={() => {
-              setOpen(false);
-              citationsMutation.mutate('csl-json');
-            }}
-          >
-            <Icon name="layers" size={13} style={{ color: 'var(--text-3)' }} />
-            <span>
-              CSL-JSON
-              <span className="muted" style={{ marginLeft: 5, fontSize: 10.5 }}>
-                {tr('Zotero 可直接导入', 'imports straight into Zotero')}
-              </span>
-            </span>
-          </button>
-        </div>
-      )}
-    </div>
+    <ExportDropdown
+      busy={busy}
+      minWidth={210}
+      items={[
+        {
+          key: 'obsidian',
+          icon: 'file',
+          label: tr('Obsidian 笔记库', 'Obsidian vault'),
+          hint: '.zip',
+          onSelect: () => obsidianMutation.mutate(),
+        },
+        {
+          key: 'bibtex',
+          icon: 'book',
+          label: tr('BibTeX 引用', 'BibTeX citations'),
+          hint: tr('.bib · 全部库内文献', '.bib · whole library'),
+          onSelect: () => citationsMutation.mutate('bibtex'),
+        },
+        {
+          key: 'csl-json',
+          icon: 'layers',
+          label: 'CSL-JSON',
+          hint: tr('Zotero 可直接导入', 'imports straight into Zotero'),
+          onSelect: () => citationsMutation.mutate('csl-json'),
+        },
+      ]}
+    />
   );
 }
 
@@ -1207,13 +1138,13 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   });
 
   const bulkExportMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (format: CitationFormat) =>
       libraryId
-        ? api.downloadLibraryCitations(libraryId, { format: 'bibtex', ids: [...selected] })
-        : api.downloadCitations(pid ?? '', { format: 'bibtex', ids: [...selected] }),
-    onSuccess: (blob) => {
-      saveBlob(blob, 'polaris-selected.bib');
-      toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
+        ? api.downloadLibraryCitations(libraryId, { format, ids: [...selected] })
+        : api.downloadCitations(pid ?? '', { format, ids: [...selected] }),
+    onSuccess: (blob, format) => {
+      saveBlob(blob, format === 'bibtex' ? 'polaris-selected.bib' : 'polaris-selected.json');
+      toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} papers`), 'ok');
     },
     onError: (e) =>
       toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -1568,14 +1499,14 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                 <Icon name="x" size={12} />
                 {tr('删除', 'Delete')}
               </button>
-              <button
-                className="btn btn-ghost sm"
-                disabled={selected.size === 0 || bulkExportMutation.isPending}
-                onClick={() => bulkExportMutation.mutate()}
-              >
-                <Icon name="download" size={12} />
-                {tr('导出 BibTeX', 'Export BibTeX')}
-              </button>
+              <ExportDropdown
+                sm
+                placement="up"
+                align="left"
+                busy={bulkExportMutation.isPending}
+                disabled={selected.size === 0}
+                items={citationExportItems((format) => bulkExportMutation.mutate(format))}
+              />
             </>
           )}
           <button

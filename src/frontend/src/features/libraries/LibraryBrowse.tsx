@@ -10,6 +10,7 @@ import {
   usePaperFigures,
 } from '../../components/ui/FigureGallery';
 import { CompileBadge } from '../../components/ui/CompileBadge';
+import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { PaperStatusPill } from '../../components/ui/StatusPill';
@@ -20,6 +21,7 @@ import { fmtTime } from '../../lib/format';
 import {
   ApiError,
   api,
+  type CitationFormat,
   type PaperRead,
   type PaperSort,
   type PaperStatusFilter,
@@ -624,10 +626,10 @@ function PapersPane({
   }, [libraryId, q, view]);
 
   const bulkExportMutation = useMutation({
-    mutationFn: () => api.downloadLibraryCitations(libraryId, { format: 'bibtex', ids: [...selected] }),
-    onSuccess: (blob) => {
-      saveBlob(blob, 'polaris-library-citations.bib');
-      toast(tr(`已导出 ${selected.size} 篇的 BibTeX`, `Exported BibTeX for ${selected.size} papers`), 'ok');
+    mutationFn: (format: CitationFormat) => api.downloadLibraryCitations(libraryId, { format, ids: [...selected] }),
+    onSuccess: (blob, format) => {
+      saveBlob(blob, format === 'bibtex' ? 'polaris-library-citations.bib' : 'polaris-library-citations.json');
+      toast(tr(`已导出 ${selected.size} 篇`, `Exported ${selected.size} papers`), 'ok');
     },
     onError: (e) =>
       toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
@@ -897,14 +899,14 @@ function PapersPane({
               : tr('多选', 'Select')}
           </button>
           {selectMode && (
-            <button
-              className="btn btn-ghost sm"
-              disabled={selected.size === 0 || bulkExportMutation.isPending}
-              onClick={() => bulkExportMutation.mutate()}
-            >
-              <Icon name="download" size={12} />
-              {tr('导出 BibTeX', 'Export BibTeX')}
-            </button>
+            <ExportDropdown
+              sm
+              placement="up"
+              align="left"
+              busy={bulkExportMutation.isPending}
+              disabled={selected.size === 0}
+              items={citationExportItems((format) => bulkExportMutation.mutate(format))}
+            />
           )}
         </div>
       </div>

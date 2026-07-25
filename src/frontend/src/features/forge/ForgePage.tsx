@@ -389,7 +389,7 @@ export function ForgePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { openGates } = useShell();
-  const { isLoading: projectsLoading, currentProject, currentProjectId } = useProject();
+  const { isLoading: projectsLoading, currentProjectId } = useProject();
   const pid = currentProjectId;
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -566,8 +566,8 @@ export function ForgePage() {
         eyebrow="Stage 01 · Idea Forge"
         title={tr('想法生成', 'Idea Forge')}
         sub={
-          currentProject
-            ? tr(`当前课题：${currentProject.name}`, `Current topic: ${currentProject.name}`)
+          pid
+            ? undefined
             : projectsLoading
               ? tr('加载课题…', 'Loading topics…')
               : tr('选择一个课题', 'Pick a topic')
