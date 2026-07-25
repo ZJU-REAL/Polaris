@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.paper import PaperConceptRead
+
 
 class DailyLiker(BaseModel):
     """点赞人（facepile 头像用）。"""
@@ -58,6 +60,11 @@ class DailyPaperItem(BaseModel):
 class DailyPaperDetail(DailyPaperItem):
     wiki_content: str | None = None
     pdf_available: bool = False
+    # 解读的编译模型与时间（编译徽标；wiki_model 在 entry 上，时间取 entry 最后更新）
+    wiki_model: str | None = None
+    compiled_at: datetime | None = None
+    # 论文已上链的概念（与库版详情同款 chips；池论文无库成员行，概念仍挂在论文上）
+    concepts: list[PaperConceptRead] = []
 
 
 class DailyPage(BaseModel):

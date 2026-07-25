@@ -2373,6 +2373,11 @@ export interface DailyPaperDetail extends DailyPaperItem {
   wiki_content: string | null;
   /** 内容池是否已下到 PDF：true→可进平台阅读器，false→仅能去 arxiv 下载 */
   pdf_available: boolean;
+  /** 解读的编译模型与时间（编译徽标；未编译时为 null） */
+  wiki_model?: string | null;
+  compiled_at?: string | null;
+  /** 论文已上链的概念（与库版详情同款 chips） */
+  concepts?: PaperConceptRef[];
 }
 
 /** 每日论文分页；语义检索时后端回带实际用的检索方式（旧后端不返回 → 可选）。 */

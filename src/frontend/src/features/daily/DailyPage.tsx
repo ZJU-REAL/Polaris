@@ -10,6 +10,7 @@ import {
   hasEmbeddedFigures,
   usePaperFigures,
 } from '../../components/ui/FigureGallery';
+import { CompileBadge } from '../../components/ui/CompileBadge';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { ApiError, api, type DailyPaperItem, type DailySort, type PaperDetail } from '../../lib/api';
@@ -24,6 +25,7 @@ import {
   AdvancedToggle,
   SearchInput,
   SemanticSwitch,
+  categoryMeta,
   saveBlob,
   useDebounced,
 } from '../wiki/shared';
@@ -356,6 +358,26 @@ function DailyDetailPane({
         <div className="empty" style={{ padding: 20 }}>{tr('这篇还没有摘要。', 'No abstract for this paper.')}</div>
       )}
 
+      {/* —— 概念 chips（与库版同款；每日没有概念库 tab，故只展示不跳转） —— */}
+      {(paper.concepts?.length ?? 0) > 0 && (
+        <div className="row gap8 wrap" style={{ marginTop: 16 }}>
+          {paper.concepts!.map((c) => {
+            const meta = categoryMeta(c.category);
+            return (
+              <span
+                key={c.id}
+                className="pill sm"
+                style={{ background: meta.bg, color: meta.c, height: 24 }}
+                title={tr(meta.zh, meta.en)}
+              >
+                {c.name}
+                <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{tr(meta.zh, meta.en)}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* —— 重要图片画廊（只读：提取/重新提取是库维护动作，普通用户没权限） —— */}
       <FiguresSection
         paper={readerPaper}
@@ -376,9 +398,12 @@ function DailyDetailPane({
               borderBottom: '0.5px solid var(--border)',
             }}
           >
-            <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-              {tr('AI 图文介绍', 'AI intro')}
-            </span>
+            <div className="row gap8" style={{ minWidth: 0 }}>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
+                {tr('AI 图文介绍', 'AI intro')}
+              </span>
+              <CompileBadge model={paper.wiki_model ?? null} at={paper.compiled_at ?? null} />
+            </div>
             <div className="row gap6">
               <button
                 className="btn btn-soft sm"

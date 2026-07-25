@@ -540,12 +540,21 @@ async def get_entry_item(
     entry = await session.get(DailyFeedEntry, entry_id)
     if entry is None:
         raise DailyEntryNotFoundError(str(entry_id))
-    paper = await session.get(Paper, entry.paper_id)
+    from sqlalchemy.orm import selectinload
+
+    # 概念随论文一起取（详情才需要，列表不带）
+    paper = await session.get(Paper, entry.paper_id, options=[selectinload(Paper.concepts)])
     assert paper is not None  # 外键保证
     likes = await _likes_by_entry(session, [entry.id], user_id=user_id)
     item = _entry_item(entry, paper, likes[entry.id])
     item["wiki_content"] = entry.wiki_content
     item["pdf_available"] = paper.pdf_available
+    # 编译徽标：模型在 entry 上，时间用 entry 最后更新（仅在有解读时才有意义）
+    item["wiki_model"] = entry.wiki_model
+    item["compiled_at"] = entry.updated_at if entry.wiki_content else None
+    item["concepts"] = [
+        {"id": c.id, "name": c.name, "category": c.category} for c in (paper.concepts or [])
+    ]
     return item
 
 
