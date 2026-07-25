@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -20,14 +20,19 @@ import { fmtTime } from '../../lib/format';
 import {
   ApiError,
   api,
-  type MyMeta,
-  type PaperDetail,
   type PaperRead,
   type PaperSort,
   type PaperStatusFilter,
   type ReadingStatus,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import {
+  ConceptChips,
+  PaperMyMetaRow,
+  PaperNotesSection,
+  PaperTagsRow,
+  WikiHeaderActions,
+} from '../shared/PaperDetailBlocks';
 import { ConceptsTab } from '../wiki/ConceptsTab';
 import { LibraryChatTab } from '../wiki/LibraryChatTab';
 import { NotesTab } from '../wiki/NotesTab';
@@ -44,13 +49,11 @@ import {
   SearchInput,
   SemanticSwitch,
   YearRangeField,
-  categoryMeta,
   parseYear,
   saveBlob,
   useDebounced,
 } from '../wiki/shared';
 import { READING_STATUS, ReadingDot, readerFrom } from '../reading/shared';
-import { NoteCard } from '../reading/NotesPanel';
 import { AddToButton } from '../library/AddToPopover';
 
 // 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
@@ -65,9 +68,6 @@ const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m
 type BrowseTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'notes' | 'govern' | 'ingest';
 
 const PAGE_SIZE = 20;
-
-/** 概念 chips 默认最多展示数，超出折叠（与文献工作台一致；机构 chips 见 AffiliationChips） */
-const CONCEPT_CHIP_LIMIT = 12;
 
 /** 列表视图筛选（口径同文献工作台：全部 = 已纳入的文献） */
 type ViewFilter = 'all' | 'compiled' | 'starred';
@@ -202,118 +202,6 @@ const PaperRow = memo(function PaperRow({
   prev.p === next.p && prev.active === next.active && prev.checked === next.checked && prev.selectMode === next.selectMode,
 );
 
-/* 「我的笔记」折叠区：GET/POST /papers/{id}/notes 对全员开放（内容池可读即可写自己的笔记），
-   所以非成员的只读浏览也能记笔记。后端只返回本人的笔记，因此列出来的每条都可以改/删。
-   列表按需拉取（展开才请求），收起时计数用详情里的 note_count（同样是本人条数）。 */
-function MyNotesSection({
-  libraryId,
-  paperId,
-  noteCount,
-}: {
-  libraryId: string;
-  paperId: string;
-  noteCount: number;
-}) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState('');
-
-  const notesQuery = useQuery({
-    queryKey: ['paper-notes', paperId],
-    queryFn: () => api.listPaperNotes(paperId),
-    enabled: open,
-    retry: false,
-  });
-  const notes = notesQuery.data ?? [];
-
-  // 笔记增删改后：本身的列表 + 详情 note_count + 列表/搜索行 + 库笔记本
-  const refresh = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ['paper-notes', paperId] });
-    void queryClient.invalidateQueries({ queryKey: ['paper', libraryId, paperId] });
-    void queryClient.invalidateQueries({ queryKey: ['lib-papers', libraryId] });
-    void queryClient.invalidateQueries({ queryKey: ['lib-search', libraryId] });
-    void queryClient.invalidateQueries({ queryKey: ['project-notes', libraryId] });
-  }, [queryClient, libraryId, paperId]);
-
-  const createMutation = useMutation({
-    mutationFn: () => api.createPaperNote(paperId, draft.trim()),
-    onSuccess: () => {
-      toast(tr('笔记已保存', 'Note saved'), 'ok');
-      setDraft('');
-      refresh();
-    },
-    onError: (e) =>
-      toast(`${tr('保存失败：', 'Save failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
-  const count = notesQuery.data ? notes.length : noteCount;
-
-  return (
-    <div className="card" style={{ marginTop: 18, overflow: 'hidden' }}>
-      <div
-        className="row"
-        onClick={() => setOpen((o) => !o)}
-        style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
-      >
-        <span className="row gap6" style={{ fontSize: 12.5, fontWeight: 650 }}>
-          <Icon name="pen" size={12} style={{ color: 'var(--text-3)' }} />
-          {tr('我的笔记', 'My notes')}
-          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
-            · {count}
-          </span>
-        </span>
-        <Icon
-          name="chevDown"
-          size={14}
-          style={{ color: 'var(--text-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
-        />
-      </div>
-      {open && (
-        <div style={{ padding: '0 16px 14px' }}>
-          {notesQuery.isLoading ? (
-            <div className="empty" style={{ padding: 12 }}>
-              {tr('加载笔记…', 'Loading notes…')}
-            </div>
-          ) : notesQuery.isError ? (
-            <EmptyState
-              compact
-              icon="x"
-              title={tr('笔记暂时加载不出来', 'Notes failed to load')}
-              desc={tr('后端不可用或接口尚未就绪，稍后再试。', 'Backend unavailable or API not ready — try again later.')}
-            />
-          ) : notes.length === 0 ? (
-            <div className="empty" style={{ padding: '4px 0 12px', textAlign: 'left' }}>
-              {tr('还没有笔记，在下面写第一条。', 'No notes yet — write your first one below.')}
-            </div>
-          ) : (
-            notes.map((n) => <NoteCard key={n.id} note={n} canEdit onSaved={refresh} />)
-          )}
-          <textarea
-            className="textarea"
-            style={{ width: '100%', minHeight: 72, maxHeight: 200, fontSize: 12.5, resize: 'vertical' }}
-            placeholder={tr('记下想法、疑问或要点，支持 Markdown…', 'Jot down ideas, questions or key points — Markdown supported…')}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <div className="row" style={{ marginTop: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-              {tr('笔记只有你自己看得到。', 'Only you can see your notes.')}
-            </span>
-            <button
-              className="btn btn-primary sm"
-              disabled={createMutation.isPending || !draft.trim()}
-              onClick={() => createMutation.mutate()}
-            >
-              <Icon name="pen" size={13} />
-              {createMutation.isPending ? tr('保存中…', 'Saving…') : tr('保存笔记', 'Save note')}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function PaperDetailPane({
   libraryId,
   paperId,
@@ -336,30 +224,34 @@ function PaperDetailPane({
   const location = useLocation();
   const queryClient = useQueryClient();
   const [abstractOpen, setAbstractOpen] = useState(false);
-  const [conceptsOpen, setConceptsOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
+  const openReader = useCallback(() => {
+    setReaderPrint(false);
+    setReaderOpen(true);
+  }, []);
+  const openReaderForPrint = useCallback(() => {
+    setReaderPrint(true);
+    setReaderOpen(true);
+  }, []);
 
   // 库作用域取详情：锁定本库那份成员行，相关度/状态/wiki 不会串到该论文在别的库的副本
+  const detailKey = useMemo(() => ['paper', libraryId, paperId], [libraryId, paperId]);
   const { data: paper, isLoading, isError } = useQuery({
-    queryKey: ['paper', libraryId, paperId],
+    queryKey: detailKey,
     queryFn: () => api.getLibraryPaper(libraryId, paperId),
     retry: false,
   });
 
-  // 星标 / 阅读状态：个人维度，只读浏览也能改（PUT /papers/{id}/my-meta 对全员开放）
-  const metaMutation = useMutation({
-    mutationFn: (input: Partial<MyMeta>) => api.putMyMeta(paperId, input),
-    onSuccess: (meta) => {
-      queryClient.setQueryData<PaperDetail>(['paper', libraryId, paperId], (old) =>
-        old ? { ...old, starred: meta.starred, reading_status: meta.reading_status } : old,
-      );
-      void queryClient.invalidateQueries({ queryKey: ['lib-papers', libraryId] });
-      void queryClient.invalidateQueries({ queryKey: ['lib-search', libraryId] });
-    },
-    onError: (e) =>
-      toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
+  // 星标 / 阅读状态、笔记改动后要刷新的列表（库列表 + 库内搜索 + 库笔记本）
+  const listKeys = useMemo(
+    () => [['lib-papers', libraryId], ['lib-search', libraryId]],
+    [libraryId],
+  );
+  const noteKeys = useMemo(
+    () => [detailKey, ['lib-papers', libraryId], ['lib-search', libraryId], ['project-notes', libraryId]],
+    [detailKey, libraryId],
+  );
 
   /* —— 个人版解读：这个库没编译过这篇时，读/生成本人个人库条目里的个人版（与阅读页 InfoPanel 同一套 query key）——
      POST /papers/{id}/personal-wiki 不校验成员身份（内容池全平台可读），费用记个人额度；
@@ -406,7 +298,6 @@ function PaperDetailPane({
   // 换论文时收起本地开合状态（面板不随选中项重挂载，得自己收）
   useEffect(() => {
     setAbstractOpen(false);
-    setConceptsOpen(false);
     setReaderOpen(false);
     resetPersonalWiki();
   }, [paperId, resetPersonalWiki]);
@@ -486,10 +377,7 @@ function PaperDetailPane({
           <button
             className="btn btn-soft sm"
             title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
-            onClick={() => {
-              setReaderPrint(false);
-              setReaderOpen(true);
-            }}
+            onClick={openReader}
           >
             <Icon name="book" size={13} />
             {tr('阅览模式', 'Reading mode')}
@@ -522,41 +410,16 @@ function PaperDetailPane({
       </div>
 
       {/* —— 个人状态：星标 + 阅读状态（只读库里也是我自己的记录） —— */}
-      <div className="row gap12 wrap" style={{ marginTop: 12 }}>
-        <button
-          className="btn btn-ghost sm"
-          disabled={metaMutation.isPending}
-          onClick={() => metaMutation.mutate({ starred: !starred })}
-          style={starred ? { color: 'var(--warn-tx)' } : undefined}
-        >
-          <Icon name={starred ? 'starFill' : 'star'} size={13} />
-          {starred ? tr('已星标', 'Starred') : tr('加星标', 'Star')}
-        </button>
-        <span className="row gap8">
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-            {tr('阅读状态', 'Reading status')}
-          </span>
-          <Segmented<ReadingStatus>
-            options={READING_STATUS.map((m) => ({ v: m.v, label: tr(m.label, m.en) }))}
-            value={readingStatus}
-            onChange={(v) => metaMutation.mutate({ reading_status: v })}
-          />
-        </span>
-      </div>
+      <PaperMyMetaRow
+        paperId={paper.id}
+        starred={starred}
+        readingStatus={readingStatus}
+        detailKey={detailKey}
+        invalidateKeys={listKeys}
+      />
 
       {/* —— 标签（只读展示，编辑在文献工作台） —— */}
-      {(paper.tags?.length ?? 0) > 0 && (
-        <div className="row gap6 wrap" style={{ marginTop: 14 }}>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}>
-            {tr('标签', 'Tags')}
-          </span>
-          {paper.tags!.map((t) => (
-            <span key={t} className="tag">
-              {t}
-            </span>
-          ))}
-        </div>
-      )}
+      <PaperTagsRow tags={paper.tags} />
 
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
@@ -587,31 +450,7 @@ function PaperDetailPane({
       </div>
 
       {/* —— 概念 chips（过多时折叠） —— */}
-      {paper.concepts.length > 0 && (
-        <div className="row gap8 wrap" style={{ marginTop: 16 }}>
-          {(conceptsOpen ? paper.concepts : paper.concepts.slice(0, CONCEPT_CHIP_LIMIT)).map((c) => {
-            const meta = categoryMeta(c.category);
-            return (
-              <span
-                key={c.id}
-                className="wikilink"
-                style={{ background: meta.bg, color: meta.c, height: 24 }}
-                onClick={() => onOpenConcept(c.id)}
-              >
-                {c.name}
-                <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{tr(meta.zh, meta.en)}</span>
-              </span>
-            );
-          })}
-          {paper.concepts.length > CONCEPT_CHIP_LIMIT && (
-            <span className="chip" style={{ fontSize: 11 }} onClick={() => setConceptsOpen((o) => !o)}>
-              {conceptsOpen
-                ? tr('收起', 'Collapse')
-                : tr(`+${paper.concepts.length - CONCEPT_CHIP_LIMIT} 个概念`, `+${paper.concepts.length - CONCEPT_CHIP_LIMIT} concepts`)}
-            </span>
-          )}
-        </div>
-      )}
+      <ConceptChips concepts={paper.concepts} onOpen={(c) => onOpenConcept(c.id)} />
 
       {/* —— 摘要（折叠） —— */}
       {paper.abstract && (
@@ -657,7 +496,7 @@ function PaperDetailPane({
       )}
 
       {/* —— 我的笔记（个人维度，只读浏览也能写） —— */}
-      <MyNotesSection libraryId={libraryId} paperId={paper.id} noteCount={paper.note_count ?? 0} />
+      <PaperNotesSection paperId={paper.id} noteCount={paper.note_count ?? 0} invalidateKeys={noteKeys} />
 
       {/* —— 重要图片画廊（只读：不给提取/重新提取入口，那是管理员操作） —— */}
       <FiguresSection paper={paper} readOnly defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)} />
@@ -682,30 +521,7 @@ function PaperDetailPane({
                 </span>
                 <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
               </div>
-              <div className="row gap6">
-                <button
-                  className="btn btn-soft sm"
-                  title={tr('全屏专注阅读', 'Full-screen focused reading')}
-                  onClick={() => {
-                    setReaderPrint(false);
-                    setReaderOpen(true);
-                  }}
-                >
-                  <Icon name="book" size={13} />
-                  {tr('阅览模式', 'Reading mode')}
-                </button>
-                <button
-                  className="btn btn-ghost sm"
-                  title={tr('打开阅览页并唤起打印，另存为 PDF', 'Open the reader and print to save as PDF')}
-                  onClick={() => {
-                    setReaderPrint(true);
-                    setReaderOpen(true);
-                  }}
-                >
-                  <Icon name="download" size={13} />
-                  {tr('导出 PDF', 'Export PDF')}
-                </button>
-              </div>
+              <WikiHeaderActions onRead={openReader} onExport={openReaderForPrint} />
             </div>
             <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
           </>
@@ -734,30 +550,11 @@ function PaperDetailPane({
               >
                 {tr('个人版', 'Personal')}
               </span>
-              <div className="row gap6" style={{ marginLeft: 'auto' }}>
-                <button
-                  className="btn btn-soft sm"
-                  title={tr('全屏专注阅读', 'Full-screen focused reading')}
-                  onClick={() => {
-                    setReaderPrint(false);
-                    setReaderOpen(true);
-                  }}
-                >
-                  <Icon name="book" size={13} />
-                  {tr('阅览模式', 'Reading mode')}
-                </button>
-                <button
-                  className="btn btn-ghost sm"
-                  title={tr('打开阅览页并唤起打印，另存为 PDF', 'Open the reader and print to save as PDF')}
-                  onClick={() => {
-                    setReaderPrint(true);
-                    setReaderOpen(true);
-                  }}
-                >
-                  <Icon name="download" size={13} />
-                  {tr('导出 PDF', 'Export PDF')}
-                </button>
-              </div>
+              <WikiHeaderActions
+                onRead={openReader}
+                onExport={openReaderForPrint}
+                style={{ marginLeft: 'auto' }}
+              />
             </div>
             <Markdown source={personalWiki} onWikiLink={onWikiLink} renderFigure={renderFigure} />
           </>

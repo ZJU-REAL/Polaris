@@ -1,16 +1,36 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
-import { FigureEmbed, usePaperFigures } from '../../components/ui/FigureGallery';
+import {
+  FigureEmbed,
+  FiguresSection,
+  hasEmbeddedFigures,
+  usePaperFigures,
+} from '../../components/ui/FigureGallery';
+import { ScoreRing } from '../../components/ui/ScoreRing';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
-import { api, type LibraryEntry, type PaperAuthor, type Publication } from '../../lib/api';
+import {
+  api,
+  type LibraryEntry,
+  type PaperAuthor,
+  type Publication,
+  type ReadingStatus,
+} from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
+import { PaperReader } from '../wiki/PaperReader';
 import { AffiliationChips, AuthorLinks } from '../wiki/shared';
+import {
+  ConceptChips,
+  PaperMyMetaRow,
+  PaperNotesSection,
+  PaperTagsRow,
+  WikiHeaderActions,
+} from '../shared/PaperDetailBlocks';
 
 /* ============================================================
    我的文献库 · 右栏详情（三个 tab 共用）：
@@ -98,15 +118,31 @@ export function LibraryDetailPane({
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const [readerOpen, setReaderOpen] = useState(false);
+  // 阅览模式打开后是否直接唤起打印（「导出 PDF」一步直达）
+  const [readerPrint, setReaderPrint] = useState(false);
+  const openReader = useCallback(() => {
+    setReaderPrint(false);
+    setReaderOpen(true);
+  }, []);
+  const openReaderForPrint = useCallback(() => {
+    setReaderPrint(true);
+    setReaderOpen(true);
+  }, []);
 
   // 与文献追踪详情面板同一个 queryKey（['paper', id]），缓存互通
+  const detailKey = useMemo(() => ['paper', paperId], [paperId]);
   const paperQuery = useQuery({
-    queryKey: ['paper', paperId],
+    queryKey: detailKey,
     queryFn: () => api.getPaper(paperId ?? ''),
     enabled: paperId !== null,
     retry: false,
   });
   const paper = paperId !== null && paperQuery.isSuccess ? paperQuery.data : undefined;
+
+  // 星标 / 阅读状态、笔记改完刷新个人库列表（行上有星标与笔记数）
+  const listKeys = useMemo(() => [['library']], []);
+  const noteKeys = useMemo(() => [detailKey, ['library']], [detailKey]);
 
   // 论文已删（last_paper_id 为 null，或详情拉取失败）→ 拉条目详情取 wiki 快照
   const wantSnapshotWiki = entryId !== undefined && (paperId === null || paperQuery.isError);
@@ -176,6 +212,8 @@ export function LibraryDetailPane({
       navigate(topicLib ? libraryPath(topicLib.id, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
     [navigate, topicLib],
   );
+  // 概念 chip 与双链同一个落点（都按概念名去课题库里找）
+  const openConcept = useCallback((c: { name: string }) => onWikiLink(c.name), [onWikiLink]);
 
   if (paperId !== null && paperQuery.isLoading) {
     return <div className="empty" style={{ margin: 'auto' }}>{tr('加载论文详情…', 'Loading paper…')}</div>;
@@ -195,6 +233,7 @@ export function LibraryDetailPane({
   const abstract = paper?.abstract ?? snapshot.abstract ?? null;
   const tldr = paper?.tldr ?? snapshot.tldr ?? null;
   const arxivUrl = arxivId ? `https://arxiv.org/abs/${arxivId}` : null;
+  const readingStatus: ReadingStatus = paper?.reading_status ?? 'unread';
 
   return (
     <div
@@ -222,12 +261,19 @@ export function LibraryDetailPane({
         )}
       </div>
 
-      {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤列表） —— */}
-      <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
-        {title}
-      </h1>
-      <AuthorLinks authors={authors} onFilter={onFilterAuthor} />
-      <AffiliationChips affiliations={affiliations} onFilter={onFilterAffiliation} />
+      {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤列表）+ 相关度 —— */}
+      <div className="row" style={{ alignItems: 'flex-start', gap: 20 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
+            {title}
+          </h1>
+          <AuthorLinks authors={authors} onFilter={onFilterAuthor} />
+          <AffiliationChips affiliations={affiliations} onFilter={onFilterAffiliation} />
+        </div>
+        {alive && paper.relevance_score !== null && (
+          <ScoreRing value={paper.relevance_score} max={1} size={56} label={tr('相关度', 'Relevance')} />
+        )}
+      </div>
 
       {/* —— 操作：打开阅读页（仅活体论文）+ 外链 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
@@ -238,6 +284,16 @@ export function LibraryDetailPane({
           >
             <Icon name="file" size={13} />
             {tr('打开阅读页', 'Open reader')}
+          </button>
+        )}
+        {alive && (paper.wiki_content || personalWiki) && (
+          <button
+            className="btn btn-soft sm"
+            title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
+            onClick={openReader}
+          >
+            <Icon name="book" size={13} />
+            {tr('阅览模式', 'Reading mode')}
           </button>
         )}
         {alive &&
@@ -285,6 +341,20 @@ export function LibraryDetailPane({
         )}
       </div>
 
+      {/* —— 个人状态：星标 + 阅读状态（论文还在才有） —— */}
+      {alive && (
+        <PaperMyMetaRow
+          paperId={paper.id}
+          starred={paper.starred ?? false}
+          readingStatus={readingStatus}
+          detailKey={detailKey}
+          invalidateKeys={listKeys}
+        />
+      )}
+
+      {/* —— 标签（只读展示，编辑在文献工作台） —— */}
+      {alive && <PaperTagsRow tags={paper.tags} />}
+
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
         <MetaItem label="arxiv_id">
@@ -301,6 +371,9 @@ export function LibraryDetailPane({
           </MetaItem>
         )}
       </div>
+
+      {/* —— 概念 chips：点了跳所属课题库的概念页 —— */}
+      {alive && <ConceptChips concepts={paper.concepts} onOpen={openConcept} />}
 
       {/* —— TL;DR —— */}
       {tldr && (
@@ -332,6 +405,20 @@ export function LibraryDetailPane({
         </div>
       )}
 
+      {/* —— 我的笔记（只有自己看得到） —— */}
+      {alive && (
+        <PaperNotesSection paperId={paper.id} noteCount={paper.note_count ?? 0} invalidateKeys={noteKeys} />
+      )}
+
+      {/* —— 重要图片画廊（只读：提取/重新提取是库维护动作） —— */}
+      {alive && (
+        <FiguresSection
+          paper={paper}
+          readOnly
+          defaultCollapsed={hasEmbeddedFigures(paper.wiki_content ?? personalWiki, figures)}
+        />
+      )}
+
       {/* —— Wiki 正文（文献追踪同款 markdown 渲染） —— */}
       {alive && (
         <div style={{ marginTop: 22 }}>
@@ -345,6 +432,11 @@ export function LibraryDetailPane({
                   {tr('AI 图文介绍', 'AI intro')}
                 </span>
                 <CompileBadge model={paper.compiled_model} at={paper.compiled_at} />
+                <WikiHeaderActions
+                  onRead={openReader}
+                  onExport={openReaderForPrint}
+                  style={{ marginLeft: 'auto' }}
+                />
               </div>
               <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
             </>
@@ -370,6 +462,11 @@ export function LibraryDetailPane({
                 >
                   {tr('个人版', 'Personal')}
                 </span>
+                <WikiHeaderActions
+                  onRead={openReader}
+                  onExport={openReaderForPrint}
+                  style={{ marginLeft: 'auto' }}
+                />
               </div>
               <Markdown source={personalWiki} onWikiLink={onWikiLink} renderFigure={renderFigure} />
             </>
@@ -420,6 +517,18 @@ export function LibraryDetailPane({
           </div>
           <Markdown source={snapshotWiki} onWikiLink={onWikiLink} renderFigure={renderSnapshotFigure} />
         </div>
+      )}
+
+      {readerOpen && alive && (
+        <PaperReader
+          paper={paper}
+          /* 库版 wiki 不存在时阅览个人版（正文不在 paper 上，显式传入） */
+          wikiContent={paper.wiki_content ?? personalWiki}
+          renderFigure={renderFigure}
+          onWikiLink={onWikiLink}
+          autoPrint={readerPrint}
+          onClose={() => setReaderOpen(false)}
+        />
       )}
     </div>
   );

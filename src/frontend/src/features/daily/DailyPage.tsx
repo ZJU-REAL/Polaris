@@ -13,7 +13,14 @@ import {
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
-import { ApiError, api, type DailyPaperItem, type DailySort, type PaperDetail } from '../../lib/api';
+import {
+  ApiError,
+  api,
+  type DailyPaperItem,
+  type DailySort,
+  type PaperDetail,
+  type ReadingStatus,
+} from '../../lib/api';
 import { fmtTime } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { Markdown } from '../../lib/markdown';
@@ -26,12 +33,19 @@ import {
   AffiliationChips,
   AuthorLinks,
   FilterInput,
+  MetaItem,
   SearchInput,
   SemanticSwitch,
-  categoryMeta,
   saveBlob,
   useDebounced,
 } from '../wiki/shared';
+import {
+  ConceptChips,
+  PaperMyMetaRow,
+  PaperNotesSection,
+  PaperTagsRow,
+  WikiHeaderActions,
+} from '../shared/PaperDetailBlocks';
 import { DailyLikes } from './DailyLikes';
 import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
@@ -186,17 +200,33 @@ function DailyDetailPane({
   const [readerOpen, setReaderOpen] = useState(false);
   // 阅览模式打开后是否直接唤起打印（「导出 PDF」一步直达）
   const [readerPrint, setReaderPrint] = useState(false);
+  const openReader = useCallback(() => {
+    setReaderPrint(false);
+    setReaderOpen(true);
+  }, []);
+  const openReaderForPrint = useCallback(() => {
+    setReaderPrint(true);
+    setReaderOpen(true);
+  }, []);
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['daily-paper', entryId],
     queryFn: () => api.getDailyPaper(entryId),
     retry: false,
   });
 
-  // 换论文时关掉阅览模式（面板不再随选中项重挂载，本地开合状态要自己收）
-  useEffect(() => {
-    setReaderOpen(false);
-    setReaderPrint(false);
-  }, [entryId]);
+  /* 内容池里这篇的常规详情：星标 / 阅读状态 / 标签 / 笔记数 / TL;DR / doi 都在这上面
+     （每日详情是榜单视角，没有这些个人维度字段）。queryKey 与文献库、相关研究、
+     我的文献库同一个 ['paper', id]，缓存互通。 */
+  const poolId = paper?.paper_id ?? null;
+  const poolPaperQuery = useQuery({
+    queryKey: ['paper', poolId],
+    queryFn: () => api.getPaper(poolId ?? ''),
+    enabled: !!poolId,
+    retry: false,
+  });
+  const poolPaper = poolPaperQuery.data;
+  const poolKey = useMemo(() => ['paper', poolId], [poolId]);
+  const poolKeys = useMemo(() => [poolKey], [poolKey]);
 
   /* 正文 ![[fig:N]] 嵌入图（与文献库详情同款渲染）。
      每日详情返回的是 DailyPaperDetail（没有 figures 字段），图片按内容池 paper_id 单独拉一次。 */
@@ -231,10 +261,12 @@ function DailyDetailPane({
     ...(paper as unknown as PaperDetail),
     id: paper.paper_id,
     venue: null,
-    tldr: null,
-    concepts: [],
+    tldr: poolPaper?.tldr ?? null,
+    concepts: paper.concepts ?? [],
     figures,
   };
+  const starred = poolPaper?.starred ?? false;
+  const readingStatus: ReadingStatus = poolPaper?.reading_status ?? 'unread';
 
   return (
     <div className="scroll fadeup" key={paper.entry_id} style={{ overflowY: 'auto', flex: 1, padding: '26px 32px 60px' }}>
@@ -278,7 +310,7 @@ function DailyDetailPane({
       )}
 
       {/* —— 操作栏（对齐常规论文详情 PaperDetailPane） —— */}
-      <div className="row gap8 wrap" style={{ marginBottom: 18 }}>
+      <div className="row gap8 wrap">
         {paper.pdf_available ? (
           <button
             className="btn btn-primary sm"
@@ -337,10 +369,7 @@ function DailyDetailPane({
           <button
             className="btn btn-soft sm"
             title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
-            onClick={() => {
-              setReaderPrint(false);
-              setReaderOpen(true);
-            }}
+            onClick={openReader}
           >
             <Icon name="book" size={13} />
             {tr('阅览模式', 'Reading mode')}
@@ -356,8 +385,45 @@ function DailyDetailPane({
         <DailyLikes item={paper} />
       </div>
 
+      {/* —— 个人状态：星标 + 阅读状态（内容池维度，和文献库里是同一条记录） —— */}
+      {poolPaper && (
+        <PaperMyMetaRow
+          paperId={poolPaper.id}
+          starred={starred}
+          readingStatus={readingStatus}
+          detailKey={poolKey}
+        />
+      )}
+
+      {/* —— 标签（只读展示，编辑在文献工作台） —— */}
+      <PaperTagsRow tags={poolPaper?.tags} />
+
+      {/* —— frontmatter 风格元数据卡 —— */}
+      <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
+        <MetaItem label="arxiv_id">
+          {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
+        </MetaItem>
+        <MetaItem label="doi">
+          {poolPaper?.doi ? <span className="mono">{poolPaper.doi}</span> : <span className="muted">—</span>}
+        </MetaItem>
+        <MetaItem label="published">
+          {paper.published_at ? (
+            <span className="mono">{paper.published_at.slice(0, 10)}</span>
+          ) : (
+            <span className="muted">—</span>
+          )}
+        </MetaItem>
+        <MetaItem label={tr('编译时间', 'compiled at')}>
+          {paper.compiled_at ? (
+            <span className="mono">{fmtTime(paper.compiled_at)}</span>
+          ) : (
+            <span className="muted">{tr('未编译', 'not compiled')}</span>
+          )}
+        </MetaItem>
+      </div>
+
       {paper.abstract ? (
-        <div className="card card-pad" style={{ background: 'var(--surface-2)' }}>
+        <div className="card card-pad" style={{ background: 'var(--surface-2)', marginTop: 18 }}>
           <div className="row gap8" style={{ marginBottom: 8 }}>
             <Icon name="file" size={14} style={{ color: 'var(--accent)' }} />
             <span style={{ fontSize: 12, fontWeight: 700 }}>{tr('摘要', 'Abstract')}</span>
@@ -365,27 +431,41 @@ function DailyDetailPane({
           <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{paper.abstract}</p>
         </div>
       ) : (
-        <div className="empty" style={{ padding: 20 }}>{tr('这篇还没有摘要。', 'No abstract for this paper.')}</div>
+        <div className="empty" style={{ padding: 20, marginTop: 18 }}>
+          {tr('这篇还没有摘要。', 'No abstract for this paper.')}
+        </div>
+      )}
+
+      {/* —— TL;DR（来自内容池详情） —— */}
+      {poolPaper?.tldr && (
+        <div
+          style={{
+            marginTop: 18,
+            padding: '12px 16px',
+            borderRadius: 10,
+            background: 'var(--accent-soft)',
+            fontSize: 13,
+            lineHeight: 1.65,
+            color: 'var(--text)',
+          }}
+        >
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
+            TL;DR
+          </span>
+          {poolPaper.tldr}
+        </div>
       )}
 
       {/* —— 概念 chips（与库版同款；每日没有概念库 tab，故只展示不跳转） —— */}
-      {(paper.concepts?.length ?? 0) > 0 && (
-        <div className="row gap8 wrap" style={{ marginTop: 16 }}>
-          {paper.concepts!.map((c) => {
-            const meta = categoryMeta(c.category);
-            return (
-              <span
-                key={c.id}
-                className="pill sm"
-                style={{ background: meta.bg, color: meta.c, height: 24 }}
-                title={tr(meta.zh, meta.en)}
-              >
-                {c.name}
-                <span style={{ opacity: 0.6, marginLeft: 5, fontSize: '0.85em' }}>{tr(meta.zh, meta.en)}</span>
-              </span>
-            );
-          })}
-        </div>
+      <ConceptChips concepts={paper.concepts} />
+
+      {/* —— 我的笔记（只有自己看得到） —— */}
+      {poolPaper && (
+        <PaperNotesSection
+          paperId={poolPaper.id}
+          noteCount={poolPaper.note_count ?? 0}
+          invalidateKeys={poolKeys}
+        />
       )}
 
       {/* —— 重要图片画廊（只读：提取/重新提取是库维护动作，普通用户没权限） —— */}
@@ -414,30 +494,7 @@ function DailyDetailPane({
               </span>
               <CompileBadge model={paper.wiki_model ?? null} at={paper.compiled_at ?? null} />
             </div>
-            <div className="row gap6">
-              <button
-                className="btn btn-soft sm"
-                title={tr('全屏专注阅读', 'Full-screen focused reading')}
-                onClick={() => {
-                  setReaderPrint(false);
-                  setReaderOpen(true);
-                }}
-              >
-                <Icon name="book" size={13} />
-                {tr('阅览模式', 'Reading mode')}
-              </button>
-              <button
-                className="btn btn-ghost sm"
-                title={tr('打开阅览页并唤起打印，另存为 PDF', 'Open the reader and print to save as PDF')}
-                onClick={() => {
-                  setReaderPrint(true);
-                  setReaderOpen(true);
-                }}
-              >
-                <Icon name="download" size={13} />
-                {tr('导出 PDF', 'Export PDF')}
-              </button>
-            </div>
+            <WikiHeaderActions onRead={openReader} onExport={openReaderForPrint} />
           </div>
           <Markdown source={paper.wiki_content} renderFigure={renderFigure} />
         </div>
@@ -671,6 +728,8 @@ export function DailyPage() {
           void queryClient.invalidateQueries({ queryKey: ['daily-paper', entryId] });
           void queryClient.invalidateQueries({ queryKey: ['daily-papers'] }); // 列表行的 has_wiki 标记
           void queryClient.invalidateQueries({ queryKey: ['daily-liked'] });
+          // 编译会写回内容池论文（TL;DR / 概念 / 机构），详情面板右侧那份也要刷
+          void queryClient.invalidateQueries({ queryKey: ['paper'] });
         } catch (e) {
           if (e instanceof ApiError && e.status === 409) {
             toast(tr('已有人在生成，稍后刷新即可', 'Someone is already generating it, refresh later'), 'info');
@@ -1008,6 +1067,8 @@ export function DailyPage() {
           <div className="split-detail">
             {selectedId ? (
               <DailyDetailPane
+                /* 换论文就重挂载：阅览模式、概念折叠等本地开合状态自动归位 */
+                key={selectedId}
                 entryId={selectedId}
                 onCollect={openCollect}
                 downloading={downloadPending.has(selectedId)}

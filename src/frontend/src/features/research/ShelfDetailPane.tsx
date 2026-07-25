@@ -1,15 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
-import { FigureEmbed, usePaperFigures } from '../../components/ui/FigureGallery';
+import {
+  FigureEmbed,
+  FiguresSection,
+  hasEmbeddedFigures,
+  usePaperFigures,
+} from '../../components/ui/FigureGallery';
+import { ScoreRing } from '../../components/ui/ScoreRing';
 import { Markdown } from '../../lib/markdown';
-import { api, type ShelfItemRead, type ShelfWikiSource } from '../../lib/api';
+import { api, type ReadingStatus, type ShelfItemRead, type ShelfWikiSource } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { libraryPath, useLibraries } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
+import { PaperReader } from '../wiki/PaperReader';
 import { AffiliationChips, AuthorLinks } from '../wiki/shared';
+import {
+  ConceptChips,
+  PaperMyMetaRow,
+  PaperNotesSection,
+  PaperTagsRow,
+  WikiHeaderActions,
+} from '../shared/PaperDetailBlocks';
 
 /* ============================================================
    相关研究 · 右栏详情（与「我的文献库」LibraryDetailPane 同一版式）：
@@ -177,7 +191,7 @@ function NoteEditor({
     >
       <div className="row gap8">
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', letterSpacing: '0.04em' }}>
-          {tr('为什么相关', 'Why relevant')}
+          {tr('课题备注 · 为什么相关', 'Topic note · why relevant')}
         </span>
         <span className="mono" style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text-4)', flexShrink: 0 }}>
           {status}
@@ -262,14 +276,30 @@ export function ShelfDetailPane({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [readerOpen, setReaderOpen] = useState(false);
+  // 阅览模式打开后是否直接唤起打印（「导出 PDF」一步直达）
+  const [readerPrint, setReaderPrint] = useState(false);
+  const openReader = useCallback(() => {
+    setReaderPrint(false);
+    setReaderOpen(true);
+  }, []);
+  const openReaderForPrint = useCallback(() => {
+    setReaderPrint(true);
+    setReaderOpen(true);
+  }, []);
 
-  // 摘要 / TL;DR / 嵌图 / 编译信息来自论文详情（与阅读页、文献追踪同 queryKey 缓存互通）
+  // 摘要 / TL;DR / 嵌图 / 编译信息 / 星标 / 标签来自论文详情（与阅读页、文献追踪同 queryKey 缓存互通）
+  const detailKey = useMemo(() => ['paper', item.paper_id], [item.paper_id]);
   const paperQuery = useQuery({
-    queryKey: ['paper', item.paper_id],
+    queryKey: detailKey,
     queryFn: () => api.getPaper(item.paper_id),
     retry: false,
   });
   const paper = paperQuery.data;
+
+  // 星标 / 阅读状态改完刷新书架列表与检索结果；笔记只影响详情里的计数
+  const listKeys = useMemo(() => [['shelf'], ['shelf-search']], []);
+  const noteKeys = useMemo(() => [detailKey], [detailKey]);
 
   // 来源方向库名（列表小且 5 分钟缓存，直接查全量列表）
   const libsQuery = useLibraries({}, item.source_library_id !== null);
@@ -297,12 +327,19 @@ export function ShelfDetailPane({
       ),
     [navigate, item.source_library_id],
   );
+  // 概念 chip 与双链同一个落点（都按概念名去来源方向库找）
+  const openConcept = useCallback(
+    (c: { name: string }) => onWikiLink(c.name),
+    [onWikiLink],
+  );
 
   // 机构：书架条目自带（后端从内容池论文取）；旧后端没这个字段时退回论文详情
   const affiliations = item.affiliations ?? paper?.affiliations;
   const tldr = item.tldr ?? paper?.tldr ?? null;
   const abstract = paper?.abstract ?? null;
   const arxivUrl = item.arxiv_id ? `https://arxiv.org/abs/${item.arxiv_id}` : null;
+  const relevance = paper?.relevance_score ?? null;
+  const readingStatus: ReadingStatus = paper?.reading_status ?? 'unread';
 
   const wikiLabel =
     item.wiki_source === 'live'
@@ -326,12 +363,17 @@ export function ShelfDetailPane({
         )}
       </div>
 
-      {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤书架） —— */}
-      <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
-        {item.title}
-      </h1>
-      <AuthorLinks authors={item.authors} onFilter={onFilterAuthor} />
-      <AffiliationChips affiliations={affiliations} onFilter={onFilterAffiliation} />
+      {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤书架）+ 相关度 —— */}
+      <div className="row" style={{ alignItems: 'flex-start', gap: 20 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
+            {item.title}
+          </h1>
+          <AuthorLinks authors={item.authors} onFilter={onFilterAuthor} />
+          <AffiliationChips affiliations={affiliations} onFilter={onFilterAffiliation} />
+        </div>
+        {relevance !== null && <ScoreRing value={relevance} max={1} size={56} label={tr('相关度', 'Relevance')} />}
+      </div>
 
       {/* —— 操作行 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
@@ -342,6 +384,16 @@ export function ShelfDetailPane({
           <Icon name="file" size={13} />
           {tr('打开阅读页', 'Open reader')}
         </button>
+        {paper && item.wiki_content && (
+          <button
+            className="btn btn-soft sm"
+            title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
+            onClick={openReader}
+          >
+            <Icon name="book" size={13} />
+            {tr('阅览模式', 'Reading mode')}
+          </button>
+        )}
         {item.source_library_id ? (
           <button
             className="btn btn-ghost sm"
@@ -436,8 +488,31 @@ export function ShelfDetailPane({
         ) : null}
       </div>
 
-      {/* —— 课题备注：为什么相关（仅书架内论文） —— */}
+      {/* —— 个人状态：星标 + 阅读状态（跟文献库里是同一条记录） —— */}
+      {paper && (
+        <PaperMyMetaRow
+          paperId={item.paper_id}
+          starred={paper.starred ?? false}
+          readingStatus={readingStatus}
+          detailKey={detailKey}
+          invalidateKeys={listKeys}
+        />
+      )}
+
+      {/* —— 标签（只读展示，编辑在文献工作台） —— */}
+      <PaperTagsRow tags={paper?.tags} />
+
+      {/* —— 课题备注：为什么相关（仅书架内论文；这条是课题里公开的说明） —— */}
       {onShelf && <NoteEditor key={item.paper_id} note={item.note} pending={notePending} onSave={onSaveNote} />}
+
+      {/* —— 我的笔记（只有自己看得到，和上面的课题备注是两回事） —— */}
+      {paper && (
+        <PaperNotesSection
+          paperId={item.paper_id}
+          noteCount={paper.note_count ?? 0}
+          invalidateKeys={noteKeys}
+        />
+      )}
 
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
@@ -476,6 +551,12 @@ export function ShelfDetailPane({
         </MetaItem>
       </div>
 
+      {/* —— 概念 chips：点了跳来源方向库的概念页；手动添加的（无来源库）不可点 —— */}
+      <ConceptChips
+        concepts={paper?.concepts}
+        onOpen={item.source_library_id ? openConcept : undefined}
+      />
+
       {/* —— TL;DR —— */}
       {tldr && (
         <div
@@ -506,6 +587,15 @@ export function ShelfDetailPane({
         </div>
       )}
 
+      {/* —— 重要图片画廊（只读：提取/重新提取是库维护动作） —— */}
+      {paper && (
+        <FiguresSection
+          paper={paper}
+          readOnly
+          defaultCollapsed={hasEmbeddedFigures(item.wiki_content, figures)}
+        />
+      )}
+
       {/* —— wiki 正文（库版实时 > 个人版 > 快照，接口已解析好） —— */}
       {item.wiki_content ? (
         <div style={{ marginTop: 22 }}>
@@ -517,6 +607,13 @@ export function ShelfDetailPane({
               {wikiLabel}
             </span>
             {item.wiki_source === 'live' && <CompileBadge model={paper?.compiled_model} at={paper?.compiled_at} />}
+            {paper && (
+              <WikiHeaderActions
+                onRead={openReader}
+                onExport={openReaderForPrint}
+                style={{ marginLeft: 'auto' }}
+              />
+            )}
           </div>
           <Markdown source={item.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
         </div>
@@ -553,6 +650,18 @@ export function ShelfDetailPane({
             </button>
           )}
         </div>
+      )}
+
+      {readerOpen && paper && (
+        <PaperReader
+          paper={paper}
+          /* 书架里的正文可能是个人版或快照，不一定在 paper 上，显式传入 */
+          wikiContent={item.wiki_content}
+          renderFigure={renderFigure}
+          onWikiLink={onWikiLink}
+          autoPrint={readerPrint}
+          onClose={() => setReaderOpen(false)}
+        />
       )}
     </div>
   );
