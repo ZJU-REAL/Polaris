@@ -47,6 +47,7 @@ PIPELINE_KINDS = frozenset(
     {
         "wiki_bootstrap",
         "wiki_ingest",
+        "daily_feed_sync",
         "idea_forge",
         "idea_review",
         "paper_writing",
@@ -60,7 +61,8 @@ TEMPLATE_KINDS = frozenset({"idea_proposal"})
 # 建库 / 增量更新是文献库自己的事，与课题无关（课题只是关联库来用语料），
 # 所以它们在实验室工作台看，不进课题的任务列表。按 kind 判而不是按
 # library_id：库化改造前建的存量任务只挂了课题，没有 library_id。
-LIBRARY_KINDS = frozenset({"wiki_bootstrap", "wiki_ingest"})
+# 每日新论文抓取同理（更彻底：全实验室共享，两个作用域 id 都为空）。
+LIBRARY_KINDS = frozenset({"wiki_bootstrap", "wiki_ingest", "daily_feed_sync"})
 
 
 def mode_for_kind(kind: str) -> str:

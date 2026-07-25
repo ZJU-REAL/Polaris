@@ -102,8 +102,9 @@ async def get_voyage(
     """取航程；无访问权视为不存在（返回 None）。
 
     访问权：起源课题成员（项目作用域任务）∪ 可管理其方向库者（P9a 库化任务——独立库
-    无课题，鉴权走库级写权限：成员/策展人/admin）。库级鉴权需要 ``user``（角色/策展人
-    判定），故 API 层传完整 user；仅传 user_id 时退化为项目成员判定。
+    无课题，鉴权走库级写权限：成员/策展人/admin）∪ 平台管理员（平台级任务——两个作用
+    域 id 都为空，如每日新论文抓取）。库级鉴权需要 ``user``（角色/策展人判定），故 API
+    层传完整 user；仅传 user_id 时退化为项目成员判定 + 回查角色。
     """
     stmt = select(VoyageRun).where(VoyageRun.id == voyage_id)
     if with_steps:
@@ -123,6 +124,19 @@ async def get_voyage(
             session, user=user, library=library
         ):
             return run
+    if run.project_id is None and run.library_id is None:
+        # 平台级任务（每日新论文抓取）：既不属于课题也不属于库，上面两条白名单都不
+        # 命中——不放行的话 admin 也会 404，连带日志/SSE/取消/重试全失效。口径与订阅
+        # 分类管理、手动刷新、向量开关一致：仅平台 admin。
+        # 只传 user_id 的调用点回查一次角色（与 _visible_filter 的 is_admin 子句同口径）。
+        role = (
+            user.role
+            if user is not None
+            else (
+                await session.execute(select(User.role).where(User.id == user_id))
+            ).scalar_one_or_none()
+        )
+        return run if role == "admin" else None
     return None
 
 

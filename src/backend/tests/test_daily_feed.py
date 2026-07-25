@@ -421,9 +421,196 @@ async def test_categories_admin_and_refresh(client, queue_stub):
     )
     assert resp.status_code == 422
 
-    # 手动刷新入队（admin only）
+    # 手动刷新建任务 + 入队（admin only），返回 voyage_id 供前端跳任务详情
     resp = await client.post("/api/daily/refresh", headers=mh)
     assert resp.status_code == 403
     resp = await client.post("/api/daily/refresh", headers=ah)
     assert resp.status_code == 202
-    assert queue_stub.jobs and queue_stub.jobs[0][0] == "daily_feed_sync"
+    voyage_id = resp.json()["voyage_id"]
+    assert queue_stub.jobs == [("run_voyage", (voyage_id,), {})]
+
+    # 全局单例：上一次还在跑时再点 → 409
+    resp = await client.post("/api/daily/refresh", headers=ah)
+    assert resp.status_code == 409 and resp.json()["detail"] == "DAILY_FEED_RUNNING"
+
+
+# ---- 纳入任务系统（kind=daily_feed_sync）----
+
+
+async def test_daily_feed_voyage_is_platform_scoped_and_singleton(client):
+    """建出来的任务：kind 正确、两个作用域 id 都为空；在跑时再建 → 冲突。"""
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    async with get_sessionmaker()() as session:
+        run = await daily_feed.create_daily_feed_voyage(session, created_by=None)
+        assert run.kind == "daily_feed_sync"
+        assert run.project_id is None and run.library_id is None
+        assert run.budget == {"max_tokens": None}
+        run_id = run.id
+
+        with pytest.raises(daily_feed.DailyFeedConflictError):
+            await daily_feed.create_daily_feed_voyage(session, created_by=None)
+
+        # 终态后不再互斥
+        found = await daily_feed.find_running_daily_feed_voyage(session)
+        assert found is not None and found.id == run_id
+        found.status = "done"
+        await session.commit()
+        assert await daily_feed.find_running_daily_feed_voyage(session) is None
+        again = await daily_feed.create_daily_feed_voyage(session, created_by=None)
+        assert again.id != run_id
+
+
+async def test_daily_feed_plan_is_the_four_fixed_steps():
+    from app.agents.voyage.actions import known_actions
+    from app.agents.voyage.navigator import daily_feed_plan
+    from app.models.voyage import VoyageRun, mode_for_kind
+
+    assert mode_for_kind("daily_feed_sync") == "pipeline"
+    plan = daily_feed_plan(VoyageRun(kind="daily_feed_sync", goal="每日新论文抓取"))
+    assert [s["action"] for s in plan] == [
+        "daily.fetch",
+        "daily.upsert",
+        "daily.cleanup",
+        "daily.embed",
+    ]
+    assert all(s["checks"] == [{"kind": "no_error"}] for s in plan)
+    # 动作必须已注册（app.agents.voyage.__init__ 导入 actions_daily），否则引擎查不到表
+    assert {s["action"] for s in plan} <= known_actions()
+
+
+def _action_ctx():
+    """跑单个动作用的最小上下文（无 bus，ctx.log 静默）。"""
+    import app.agents.voyage  # noqa: F401  触发 actions_daily 注册
+    from app.agents.voyage.actions import ActionContext
+    from app.core.llm.router import LLMRouter
+    from app.models.voyage import VoyageRun
+
+    run = VoyageRun(kind="daily_feed_sync", goal="每日新论文抓取", status="executing", cursor=0)
+    run.id = uuid.uuid4()
+    return ActionContext(run=run, llm=LLMRouter(), checkpoint={})
+
+
+async def test_daily_actions_observation_shapes(client, monkeypatch):
+    """四个动作各自的 observation 形状 + 跨步骤用 checkpoint 传值。"""
+    from app.agents.voyage.actions import get_action
+    from app.core.db import get_sessionmaker
+    from app.models.daily_feed import DailyFeedEntry
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {
+                "cs.AI": [
+                    _rss_entry("2607.00061", "Voyage A"),
+                    _rss_entry("2607.00062", "Voyage B"),
+                ],
+                "cs.CL": [_rss_entry("2607.00061", "Voyage A", announce="cross")],
+                "cs.CV": [],
+            }
+        ),
+    )
+    ctx = _action_ctx()
+
+    obs = await get_action("daily.fetch")(ctx, {})
+    assert obs["categories"] == ["cs.AI", "cs.CL", "cs.CV"]
+    assert obs["fetched"] == 3
+    assert obs["per_category"] == {"cs.AI": 2, "cs.CL": 1, "cs.CV": 0}
+    assert "error" not in obs
+    assert ctx.checkpoint["daily_entries"]  # 条目交给下一步
+
+    obs = await get_action("daily.upsert")(ctx, {})
+    assert obs == {"created": 2, "merged": 1, "papers": 3}
+    touched = ctx.checkpoint["daily_touched_papers"]
+    assert len(touched) == 3 and all(isinstance(p, str) for p in touched)  # checkpoint 要可 JSON
+    assert "daily_entries" not in ctx.checkpoint
+
+    # 过期一条 → 清理这一步报出来
+    async with get_sessionmaker()() as session:
+        from sqlalchemy import select
+
+        entry = (await session.execute(select(DailyFeedEntry))).scalars().first()
+        entry.feed_date = entry.feed_date - dt.timedelta(days=8)
+        await session.commit()
+
+    obs = await get_action("daily.cleanup")(ctx, {})
+    assert obs == {"expired": 1}
+
+    # 开关默认关 → 跳过，且不算失败
+    obs = await get_action("daily.embed")(ctx, {})
+    assert obs == {"enabled": False, "embedded": 0, "failed": 0}
+    assert "error" not in obs
+
+
+async def test_daily_feed_voyage_end_to_end(client, monkeypatch):
+    """整条任务跑通：四步依次 passed、run 到 done、论文真的入了池。"""
+    from app.agents.voyage.engine import VoyageEngine
+    from app.core.db import get_sessionmaker
+    from app.core.llm.router import LLMRouter
+    from app.models.voyage import VoyageRun
+    from app.services import daily_feed
+    from tests.conftest import RecordingBus
+
+    await register_and_login(client)
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2607.00071", "E2E Paper")]}),
+    )
+
+    async with get_sessionmaker()() as session:
+        run = await daily_feed.create_daily_feed_voyage(session, created_by=None)
+        run_id = run.id
+
+    await VoyageEngine(event_bus=RecordingBus(), llm_router=LLMRouter()).run(run_id)
+
+    async with get_sessionmaker()() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        run = (
+            await session.execute(
+                select(VoyageRun)
+                .where(VoyageRun.id == run_id)
+                .options(selectinload(VoyageRun.steps))
+            )
+        ).scalar_one()
+        assert run.status == "done", run.status
+        assert run.mode == "pipeline"
+        assert [s.action for s in run.steps] == [
+            "daily.fetch",
+            "daily.upsert",
+            "daily.cleanup",
+            "daily.embed",
+        ]
+        assert all(s.status == "passed" for s in run.steps)
+
+    token = await register_and_login(client, email="e2e@example.com")
+    resp = await client.get(
+        "/api/daily/papers", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.json()["total"] == 1
+
+
+async def test_daily_fetch_reports_error_when_every_category_is_empty(client, monkeypatch):
+    """全分类颗粒无收 = 抓取多半挂了（客户端把异常兜底成 []）→ 这步必须失败。"""
+    from app.agents.voyage.actions import get_action
+    from app.agents.voyage.checks import run_deterministic_checks
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _StubArxiv({}))
+
+    ctx = _action_ctx()
+    obs = await get_action("daily.fetch")(ctx, {})
+    assert obs["fetched"] == 0
+    assert obs["error"]
+    # no_error 校验会判失败 → 任务进 paused_error（列表红色、可看日志、可重试）
+    verdict, _ = run_deterministic_checks(
+        [{"kind": "no_error"}], observation=obs, checkpoint=ctx.checkpoint
+    )
+    assert verdict is not None and verdict["passed"] is False

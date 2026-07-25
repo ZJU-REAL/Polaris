@@ -397,7 +397,14 @@ async def refresh(
     user: User = Depends(require_admin),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> dict[str, str]:
-    """手动触发一次同步（验证/补抓用）；job_id 按天去重防重复入队。"""
-    today = dt.datetime.now(dt.UTC).date().isoformat()
-    await queue.enqueue("daily_feed_sync", _job_id=f"daily-feed-manual-{today}")
-    return {"status": "queued"}
+    """手动触发一次抓取（验证/补抓用）：建任务 + 入队，返回 voyage_id 供跳转任务详情。
+
+    互斥是全局单例——已有一次抓取在跑就 409（比按天去重的 job_id 更准：同一天里
+    上一次失败后仍可立刻重来，而正在跑的绝不会被重复触发）。
+    """
+    try:
+        run = await daily_service.create_daily_feed_voyage(session, created_by=user.id)
+    except daily_service.DailyFeedConflictError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="DAILY_FEED_RUNNING") from e
+    await queue.enqueue("run_voyage", str(run.id))
+    return {"status": "queued", "voyage_id": str(run.id)}

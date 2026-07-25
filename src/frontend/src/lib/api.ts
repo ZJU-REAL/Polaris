@@ -4193,4 +4193,11 @@ export const api = {
   setDailyCategories(categories: string[]): Promise<{ categories: string[] }> {
     return requestJson<{ categories: string[] }>('/daily/categories', 'PUT', { categories });
   },
+  /**
+   * 手动触发一次每日新论文抓取（admin）。抓取在任务系统里跑，返回的 voyage_id
+   * 可直接跳任务详情看步骤与日志；409 detail=DAILY_FEED_RUNNING 表示已有一次在跑。
+   */
+  refreshDailyFeed(): Promise<{ status: string; voyage_id: string }> {
+    return request<{ status: string; voyage_id: string }>('/daily/refresh', { method: 'POST' });
+  },
 };

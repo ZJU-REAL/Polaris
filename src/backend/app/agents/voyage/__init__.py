@@ -5,6 +5,7 @@
 """
 
 from app.agents.voyage import (
+    actions_daily,  # noqa: F401  注册 daily.*（每日新论文抓取）动作
     actions_experiment,  # noqa: F401  注册 experiment.* 动作
     actions_ideas,  # noqa: F401  注册 forge.* / review.pair 等辩论动作
     actions_present,  # noqa: F401  注册 present.*（论文分享 PPT）动作

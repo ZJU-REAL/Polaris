@@ -34,6 +34,7 @@ from app.models.paper import Paper
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
+from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.services import projects as projects_service
 from app.services import topic_shelf as shelf_service
 from app.services import user_library
@@ -273,17 +274,38 @@ async def cleanup_expired(session: AsyncSession, *, today: dt.date | None = None
     return len(expired_ids)
 
 
-async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
-    """抓订阅分类的当天新公告入池 + 清理过期；幂等（同日重跑 created=0）。"""
-    categories = await get_categories(session)
-    today = _today_utc()
-    client = get_arxiv_client()
-    fetched = created = 0
-    touched: list[uuid.UUID] = []  # 本次同步涉及的池论文（开了自动建向量时补嵌用）
+async def fetch_new_by_category(
+    session: AsyncSession,
+) -> tuple[list[str], dict[str, list[dict[str, Any]]]]:
+    """抓订阅分类的当天新公告；返回 (分类列表, {分类: 条目列表})。
 
+    单个分类抓取/解析失败已在 arXiv 客户端内兜底成 []（不让整步崩），所以「某个分类
+    为空」是正常结果；调用方按「全部分类都空」判定这一步整体失败（见 daily.fetch）。
+    """
+    categories = await get_categories(session)
+    client = get_arxiv_client()
+    by_category: dict[str, list[dict[str, Any]]] = {}
     for category in categories:
-        entries = await client.fetch_new(category)  # 失败已在客户端兜底为 []
-        fetched += len(entries)
+        by_category[category] = await client.fetch_new(category)
+    return categories, by_category
+
+
+async def upsert_entries(
+    session: AsyncSession,
+    *,
+    by_category: dict[str, list[dict[str, Any]]],
+    today: dt.date | None = None,
+) -> dict[str, Any]:
+    """RSS 条目 → 全局内容池去重 + 建/合并推送 entry；返回 {created, merged, touched}。
+
+    同一篇多分类命中（cross-list）合并进 categories、不重复建行；paper_id 唯一约束
+    保证同日重跑幂等（created=0）。``touched`` 是本次涉及的池论文 id（补向量用）。
+    """
+    feed_date = today or _today_utc()
+    created = merged = 0
+    touched: list[uuid.UUID] = []
+
+    for category, entries in by_category.items():
         for entry in entries:
             title = (entry.get("title") or "").strip()
             arxiv_id = entry.get("arxiv_id")
@@ -315,7 +337,7 @@ async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
                 session.add(
                     DailyFeedEntry(
                         paper_id=paper.id,
-                        feed_date=today,
+                        feed_date=feed_date,
                         primary_category=category,
                         categories=[category],
                         announce_type=entry.get("announce_type") or "new",
@@ -325,29 +347,105 @@ async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
             elif category not in (row.categories or []):
                 # 同日另一分类命中（cross-list）：合并分类，不动 feed_date
                 row.categories = [*(row.categories or []), category]
+                merged += 1
 
-    expired = await cleanup_expired(session, today=today)
     await session.commit()
+    return {"created": created, "merged": merged, "touched": touched}
 
-    # 建向量（管理员开关，默认关）：只嵌本次涉及且还没向量的论文，费用记系统账。
-    # best-effort——嵌入出问题不影响同步本身的结果。
-    embedded = 0
+
+async def embed_touched_papers(
+    session: AsyncSession,
+    *,
+    paper_ids: list[uuid.UUID],
+    user_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """开了管理员开关才给本次涉及的池论文补建向量；返回 {enabled, embedded, failed}。
+
+    best-effort：向量化本来就是可选增强，失败只记日志并把原因放进 ``embed_error``
+    （不放 ``error``——那会让任务这一步判失败）。
+    """
     try:
-        if await get_daily_embed_enabled(session):
-            stats = await embed_papers_missing_vectors(session, paper_ids=touched)
-            embedded = stats["embedded"]
+        if not await get_daily_embed_enabled(session):
+            return {"enabled": False, "embedded": 0, "failed": 0}
+        stats = await embed_papers_missing_vectors(
+            session, paper_ids=paper_ids, user_id=user_id
+        )
+        return {"enabled": True, "embedded": stats["embedded"], "failed": stats["failed"]}
     except asyncio.CancelledError:
         raise
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         logger.warning("daily feed embedding step failed", exc_info=True)
+        return {"enabled": True, "embedded": 0, "failed": 0, "embed_error": str(e)}
 
+
+async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
+    """抓订阅分类的当天新公告入池 + 清理过期；幂等（同日重跑 created=0）。
+
+    直连入口（不建任务），供脚本/测试一把梭；线上走任务系统的 daily.* 四步动作
+    （app/agents/voyage/actions_daily.py），两条路径共用下面这几个步骤函数。
+    """
+    today = _today_utc()
+    categories, by_category = await fetch_new_by_category(session)
+    fetched = sum(len(v) for v in by_category.values())
+    stats = await upsert_entries(session, by_category=by_category, today=today)
+    expired = await cleanup_expired(session, today=today)
+    await session.commit()
+    embed = await embed_touched_papers(session, paper_ids=stats["touched"])
     return {
         "fetched": fetched,
-        "created": created,
+        "created": stats["created"],
         "expired": expired,
         "categories": categories,
-        "embedded": embedded,
+        "embedded": embed["embedded"],
     }
+
+
+# ---- 每日同步任务（voyage kind=daily_feed_sync） ----
+
+DAILY_FEED_VOYAGE_KIND = "daily_feed_sync"
+
+
+class DailyFeedConflictError(Exception):
+    """已有一个每日新论文抓取任务在跑（全局单例，无库/课题维度）。"""
+
+
+async def find_running_daily_feed_voyage(session: AsyncSession) -> VoyageRun | None:
+    """在跑的每日新论文抓取任务（全局唯一）；没有返回 None。"""
+    stmt = (
+        select(VoyageRun)
+        .where(
+            VoyageRun.kind == DAILY_FEED_VOYAGE_KIND,
+            VoyageRun.status.not_in(tuple(TERMINAL_STATUSES)),
+        )
+        .order_by(VoyageRun.created_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def create_daily_feed_voyage(
+    session: AsyncSession, *, created_by: uuid.UUID | None
+) -> VoyageRun:
+    """建一次「每日新论文抓取」任务（互斥检查），由调用方入队 run_voyage。
+
+    这个任务既不属于课题也不属于库（全实验室共享的每日推送），两个作用域 id 都为空；
+    可见性口径与订阅分类管理/手动刷新一致——仅平台管理员（services/voyages.py）。
+    只有最后一步「建立语义向量」可能花 token 且量很小，故不设 token 预算。
+    """
+    if await find_running_daily_feed_voyage(session) is not None:
+        raise DailyFeedConflictError(DAILY_FEED_VOYAGE_KIND)
+    run = VoyageRun(
+        kind=DAILY_FEED_VOYAGE_KIND,
+        goal=f"每日新论文抓取（{_today_utc().isoformat()}）",
+        status="planning",
+        cursor=0,
+        budget={"max_tokens": None},
+        created_by=created_by,
+    )
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+    return run
 
 
 # ---- 池浏览 ----

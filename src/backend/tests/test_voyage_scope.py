@@ -125,6 +125,89 @@ async def test_standalone_library_voyage_is_visible_to_its_curator(client):
         assert run_id not in {r.id for r in runs}
 
 
+async def test_platform_voyage_visible_and_openable_by_admin_only(client):
+    """每日新论文抓取：两个作用域 id 都为空 —— admin 列表看得到、详情页打得开。
+
+    详情鉴权原本是白名单式的（要么有 project_id 且是成员，要么有 library_id 且能管库），
+    平台级任务两条都不满足会直接 404，admin 也不例外 —— 那样日志/SSE/取消/重试全废。
+    """
+    admin_email = "vscope-daily-admin@example.com"
+    admin = await _hdr(client, admin_email)  # 第一个注册者占掉平台 admin 位
+    await _promote_admin(admin_email)
+    admin_id = await _user_id(admin_email)
+    member = await _hdr(client, "vscope-daily-member@example.com")
+    member_id = await _user_id("vscope-daily-member@example.com")
+
+    run_id = await _make_run(kind="daily_feed_sync")
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        assert run.project_id is None and run.library_id is None
+
+    async with get_sessionmaker()() as session:
+        admin_user = await session.get(User, admin_id)
+        member_user = await session.get(User, member_id)
+        # 列表：admin 看得到（is_admin 子句），普通成员看不到
+        runs = await voyages_service.list_voyages(session, user_id=admin_id)
+        assert run_id in {r.id for r in runs}
+        runs = await voyages_service.list_voyages(session, user_id=member_id)
+        assert run_id not in {r.id for r in runs}
+        # 详情：admin 拿得到，普通成员拿不到
+        assert (
+            await voyages_service.get_voyage(
+                session, voyage_id=run_id, user_id=admin_id, user=admin_user
+            )
+        ) is not None
+        assert (
+            await voyages_service.get_voyage(
+                session, voyage_id=run_id, user_id=member_id, user=member_user
+            )
+        ) is None
+        # 只传 user_id（不传 user）的调用点也要认得出 admin
+        assert (
+            await voyages_service.get_voyage(session, voyage_id=run_id, user_id=admin_id)
+        ) is not None
+        assert (
+            await voyages_service.get_voyage(session, voyage_id=run_id, user_id=member_id)
+        ) is None
+
+    # 走 HTTP 详情页：admin 200，普通成员 404
+    resp = await client.get(f"/api/voyages/{run_id}", headers=admin)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kind"] == "daily_feed_sync"
+    resp = await client.get(f"/api/voyages/{run_id}", headers=member)
+    assert resp.status_code == 404
+
+
+async def test_platform_voyage_stays_out_of_the_topic_list(client):
+    """课题任务列表不含每日新论文抓取——它是全实验室的事，不属于任何课题。
+
+    正常形态 project_id 就是空、本来也进不了课题列表；这里连「万一挂上了课题」也一并
+    拦住（判据是 kind，与建库/增量更新同款）。
+    """
+    admin_email = "vscope-daily-topic-admin@example.com"
+    await _hdr(client, admin_email)
+    await _promote_admin(admin_email)
+    admin_id = await _user_id(admin_email)
+    owner = await _hdr(client, "vscope-daily-owner@example.com")
+
+    resp = await client.post(
+        "/api/projects", json={"name": "每日任务不入课题", "statement": "s"}, headers=owner
+    )
+    assert resp.status_code == 201, resp.text
+    project_id = uuid.UUID(resp.json()["id"])
+
+    platform_run = await _make_run(kind="daily_feed_sync")
+    attached_run = await _make_run(kind="daily_feed_sync", project_id=project_id)
+
+    async with get_sessionmaker()() as session:
+        runs = await voyages_service.list_voyages(
+            session, user_id=admin_id, project_id=project_id
+        )
+    ids = {r.id for r in runs}
+    assert platform_run not in ids
+    assert attached_run not in ids
+
+
 async def test_new_ingest_voyage_carries_no_project(client):
     """新建的库任务不写 project_id：库任务归库，课题只是关联库来用语料。"""
     from app.schemas.ingest import IngestKnobs

@@ -95,6 +95,27 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
     ]
 
 
+def daily_feed_plan(run: VoyageRun) -> list[dict[str, Any]]:
+    """每日新论文抓取固定四步计划（app/agents/voyage/actions_daily.py）。"""
+    steps = [
+        ("抓取订阅分类的新论文", "daily.fetch", "订阅分类的当天新公告已抓到"),
+        ("去重入池", "daily.upsert", "新论文已入池，多分类命中已合并"),
+        ("清理过期推送", "daily.cleanup", "7 天外的推送与无人收藏的论文已清理"),
+        ("建立语义向量", "daily.embed", "开了自动建向量时，本次新论文已补上向量"),
+    ]
+    return [
+        {
+            "title": title,
+            "action": action,
+            "params": {},
+            "acceptance": acceptance,
+            "checks": [{"kind": "no_error"}],
+            "requires_gate": None,
+        }
+        for title, action, acceptance in steps
+    ]
+
+
 def forge_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """idea_forge 固定七步计划（docs/api-m3.md §1 + docs/api-idea2.md §1 信号升级）。"""
     steps = [
@@ -595,6 +616,8 @@ class Navigator:
             return demo_plan(run)
         if run.kind in WIKI_KINDS:
             return wiki_plan(run)
+        if run.kind == "daily_feed_sync":
+            return daily_feed_plan(run)
         if run.kind == "idea_forge":
             return forge_plan(run)
         if run.kind == "idea_review":

@@ -126,13 +126,21 @@ async def index_papers_fulltext_task(
         )
 
 
-async def daily_feed_sync(ctx: dict[str, Any]) -> dict[str, Any]:
-    """每日 01:30 cron（arXiv 约 00:00 UTC 发布新公告）：抓订阅分类的 New submissions
-    进每日论文池 + 清理 7 天外过期条目。admin 手动刷新走同一任务（见 api/daily.py）。"""
+async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
+    """每日 01:30 cron（arXiv 约 00:00 UTC 发布新公告）：建一次「每日新论文抓取」任务并入队。
+
+    抓取/入池/清理/建向量四步都在任务系统里跑（kind=daily_feed_sync），有计划、有步骤
+    状态、有日志，失败可见可重试。返回入队的 voyage id；已有任务在跑则跳过（返回 None）。
+    """
     from app.services import daily_feed as daily_feed_service
 
     async with get_sessionmaker()() as session:
-        return await daily_feed_service.sync_daily_feed(session)
+        try:
+            run = await daily_feed_service.create_daily_feed_voyage(session, created_by=None)
+        except daily_feed_service.DailyFeedConflictError:
+            return None  # 并发保护：查表与建 run 之间有 admin 手动触发
+    await ctx["redis"].enqueue_job("run_voyage", str(run.id))
+    return str(run.id)
 
 
 async def daily_publication_match(ctx: dict[str, Any]) -> int:
