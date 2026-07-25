@@ -1006,7 +1006,7 @@ export function PaperReviewPage() {
         title={tr('论文评审', 'Paper Review')}
         sub={
           currentProject
-            ? `${tr('当前课题', 'Current topic')}：${currentProject.name}`
+            ? undefined
             : projectsLoading
               ? tr('加载课题…', 'Loading topics…')
               : tr('选择一个课题', 'Pick a topic')

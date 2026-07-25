@@ -274,7 +274,7 @@ input {
 }
 
 .content { flex: 1; overflow-y: auto; }
-.page { max-width: 1180px; margin: 0 auto; padding: 30px 36px 80px; }
+.page { max-width: 1180px; margin: 0 auto; padding: 20px 36px 80px; }
 
 /* ============================================================
    Typography & primitives

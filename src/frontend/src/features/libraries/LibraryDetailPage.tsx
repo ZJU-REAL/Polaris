@@ -69,7 +69,7 @@ export function LibraryDetailPage() {
     <div className="page fadeup page-fill" style={{ maxWidth: 1360, paddingBottom: 24 }}>
       <PageHead
         eyebrow={tr('实验室 · 文献库', 'Lab · Library')}
-        title={`${tr('文献库', 'Library')} · ${lib.name}`}
+        title={lib.name}
         dense
         sub={lib.statement ?? undefined}
         right={

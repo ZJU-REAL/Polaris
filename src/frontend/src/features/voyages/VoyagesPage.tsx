@@ -326,7 +326,6 @@ export function VoyagesPage() {
       <PageHead
         eyebrow="Polaris · Voyages"
         title={tr('任务', 'Tasks')}
-        sub={tr('需要人工审批时任务会自动暂停，审批通过后继续执行。', 'Tasks pause automatically when they need approval, then resume once approved.')}
       />
       <VoyagesList showScopeSwitch />
     </div>

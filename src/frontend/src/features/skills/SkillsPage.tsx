@@ -944,7 +944,7 @@ export function SkillsPage() {
       <PageHead
         eyebrow="Polaris"
         title={tr('技能', 'Skills')}
-        sub={tr('为各环节 AI 定制判断标准、评审人设与流程模板', 'Custom criteria, reviewer personas and workflow templates for each stage')}
+        sub={tr('给各环节 AI 定制判断标准与流程模板', 'Custom criteria and workflow templates for each AI stage')}
         right={
           <>
             <Segmented
