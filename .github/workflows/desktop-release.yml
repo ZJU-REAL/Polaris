@@ -145,29 +145,35 @@ jobs:
         run: |
           ls -lh dist
           cat > notes.md <<'EOF'
-          ## 安装
+          ## Install
 
-          | 平台 | 下载 |
+          | Platform | Download |
           |---|---|
-          | macOS（Intel / Apple Silicon 通用） | `*-universal.dmg` 或 `*-universal-mac.zip` |
-          | Windows | `*.exe`（安装器）或 `*-win.zip`（免安装） |
-          | Linux | `*.AppImage` 或 `*.deb` |
+          | macOS (Intel and Apple Silicon) | `*-universal.dmg` or `*-universal-mac.zip` |
+          | Windows | `*.exe` (installer) or `*-win.zip` (portable) |
+          | Linux | `*.AppImage` or `*.deb` |
 
-          安装包**未经签名与公证**，首次打开需要放行一次：
+          These builds are **neither signed nor notarized**, so each platform needs to be
+          told once that the app is safe to run:
 
-          - **macOS**：`xattr -dr com.apple.quarantine /Applications/Polaris.app`，或右键 →
-            打开 → 仍要打开。用 zip 比 dmg 少一层隔离属性传播。
-          - **Windows**：SmartScreen 会拦，「更多信息 → 仍要运行」；或直接用 zip 免安装版。
-          - **Linux**：AppImage 需宿主有 `libnss3 libgtk-3-0 libasound2`；Ubuntu 24.04+ 的
-            AppArmor 限制或缺 SUID chrome-sandbox 时用 `--no-sandbox` 启动。
+          - **macOS**: `xattr -dr com.apple.quarantine /Applications/Polaris.app`, or
+            right-click → Open → Open anyway. The zip carries one less layer of quarantine
+            propagation than the dmg.
+          - **Windows**: SmartScreen will block it — choose More info → Run anyway, or use
+            the portable zip instead.
+          - **Linux**: AppImage needs `libnss3 libgtk-3-0 libasound2` on the host. Under
+            Ubuntu 24.04+ AppArmor restrictions, or without a SUID `chrome-sandbox`, start
+            it with `--no-sandbox`.
 
-          ## 首次使用
+          ## First run
 
-          启动后填写你所在实验室的 Polaris 服务器地址（会打 `/api/health` 校验）。
-          之后可从菜单 Server…（Cmd+,）切换。
+          The app asks for your lab's Polaris server address and validates it against
+          `/api/health`. You can change it later from the Server… menu item (Cmd+,).
 
-          **服务器需要部署含 CORS 白名单的后端版本**，否则桌面端登录会失败——桌面端页面在
-          `app://polaris`，每个请求都跨域，旧版本后端在生产模式下会拒绝预检。
+          **The server must be running a backend that whitelists the desktop origin**, or
+          login will fail. The desktop page is served from `app://polaris`, so every
+          request is cross-origin, and older backends reject the preflight in production
+          mode.
           EOF
           DRAFT=""
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
