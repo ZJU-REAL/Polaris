@@ -30,6 +30,7 @@ import { PublicationsTab, PUBLICATIONS_PAGE_SIZE } from './PublicationsTab';
 import { PersonalChatTab } from './PersonalChatTab';
 import { DailyLikedTab } from './DailyLikedTab';
 import { AuthorBindWizard } from './AuthorBindWizard';
+import { AddToLibraryModal } from './AddToLibraryModal';
 import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPane';
 
 /* ============================================================
@@ -282,6 +283,7 @@ export function LibraryPage() {
   const [page, setPage] = useState(1);
   const [clearOpen, setClearOpen] = useState(false);
   const [emptyTrashOpen, setEmptyTrashOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   // 多选（批量导出引用）：默认关闭，仅「我的收藏」可用；选中集合按论文 id 存
   // （last_paper_id，跨页/跨搜索都能带着走；导出端点按论文 id 精确取本人收藏）
@@ -486,7 +488,19 @@ export function LibraryPage() {
       className="page fadeup page-fill"
       style={{ maxWidth: 1360, paddingBottom: 24 }}
     >
-      <PageHead eyebrow="Polaris · My Library" title={tr('我的文献库', 'My Library')} dense />
+      <PageHead
+        eyebrow="Polaris · My Library"
+        title={tr('我的文献库', 'My Library')}
+        dense
+        right={
+          onLibraryTab ? (
+            <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
+              <Icon name="plus" size={13} />
+              {tr('添加文献', 'Add paper')}
+            </button>
+          ) : undefined
+        }
+      />
 
       {/* —— tab 行 —— */}
       <div className="row" style={{ marginBottom: 14 }}>
@@ -760,8 +774,8 @@ export function LibraryPage() {
                         ? tr('换个关键词或放宽高级检索条件。', 'Try another keyword or loosen the filters.')
                         : tab === 'saved'
                           ? tr(
-                              '在论文阅读页点右上角的书签按钮，就能把它收进这里。',
-                              'Tap the bookmark button on any paper reading page to save it here.',
+                              '点右上角「添加文献」，填 arXiv 编号 / DOI / BibTeX 就能直接加进来；在论文阅读页点右上角的书签按钮也能收进这里。',
+                              'Use “Add paper” in the top right — an arXiv ID, DOI or BibTeX entry is enough. You can also tap the bookmark button on any paper reading page.',
                             )
                           : tab === 'history'
                             ? tr(
@@ -772,6 +786,14 @@ export function LibraryPage() {
                                 '取消收藏的文献会先放进这里，随时可以召回。',
                                 'Papers you unsave land here and can be restored any time.',
                               )
+                    }
+                    action={
+                      tab === 'saved' && !q && !advActive ? (
+                        <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
+                          <Icon name="plus" size={13} />
+                          {tr('添加文献', 'Add paper')}
+                        </button>
+                      ) : undefined
                     }
                   />
                 ) : (
@@ -881,6 +903,18 @@ export function LibraryPage() {
           </div>
         )}
       </div>
+
+      {/* —— 添加文献（arXiv 编号 / DOI / BibTeX） —— */}
+      <AddToLibraryModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onAdded={(entry) => {
+          // 加进来的一律进「我的收藏」：切过去并选中，右栏直接看到这一条
+          setTab('saved');
+          setSelEntry(entry);
+          invalidate();
+        }}
+      />
 
       {/* —— 清空浏览记录确认 —— */}
       <ConfirmModal

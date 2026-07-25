@@ -7,6 +7,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { api, type ShelfImportInput } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { parsePaperRef } from '../../lib/paper-ref';
 import { SearchInput, useDebounced } from '../wiki/shared';
 
 /* ============================================================
@@ -25,19 +26,6 @@ const TABS: { v: AddTab; zh: string; en: string }[] = [
   { v: 'library', zh: '从文献库', en: 'From library' },
   { v: 'manual', zh: '手动添加', en: 'By arXiv / DOI' },
 ];
-
-/** 手动添加输入解析：DOI（10.xxx / doi.org 链接）之外一律按 arXiv 编号处理。 */
-function parseImportInput(raw: string): ShelfImportInput | null {
-  let v = raw.trim();
-  if (!v) return null;
-  if (v.includes('doi.org/')) v = v.slice(v.indexOf('doi.org/') + 'doi.org/'.length);
-  if (/^10\.\d{4,}/.test(v)) return { doi: v };
-  if (v.includes('arxiv.org/')) {
-    const seg = v.split('/').filter(Boolean);
-    v = (seg[seg.length - 1] ?? '').replace(/\.pdf$/, '');
-  }
-  return v ? { arxiv_id: v } : null;
-}
 
 export function AddPaperModal({
   open,
@@ -82,7 +70,7 @@ export function AddPaperModal({
   const results = searchQuery.data?.papers ?? [];
 
   const submitImport = () => {
-    const input = parseImportInput(importInput);
+    const input: ShelfImportInput | null = parsePaperRef(importInput);
     if (!input) {
       toast(tr('先输入 arXiv 编号或 DOI', 'Enter an arXiv ID or DOI first'), 'info');
       return;

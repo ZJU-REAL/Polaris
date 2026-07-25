@@ -84,6 +84,10 @@ A pool paper is created (deduped first) by one of:
 - **Manual add** (`POST /projects/{id}/papers`, `POST /libraries/{id}/papers`, shelf import): resolves
   metadata from arxiv / doi / bibtex, dedupes, creates the pool row (metadata only) + a membership,
   and hands the heavy work to a background task (below).
+- **Manual add into the personal library** (`POST /me/library/import`): same resolve-or-create pool
+  path as shelf import (`paper_import.resolve_or_create_pool_paper`) but **no membership row at
+  all** — the paper only gets a `user_library_entries` row (`saved=True`; an entry sitting in the
+  caller's trash is revived instead of duplicated). Login is the only requirement.
 - **Daily sync** (`services/daily_feed.py::sync_daily_feed`): fetches each category's new arXiv
   announcements into the pool as **lightweight rows — no PDF, no LLM** — plus a feed entry.
 - **Collect from the daily feed** (`POST /daily/collect`): distributes an existing pool paper into a

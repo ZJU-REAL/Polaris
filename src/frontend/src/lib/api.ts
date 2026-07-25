@@ -2281,6 +2281,9 @@ export interface LibraryState {
 /** 单条详情 = 列表条目字段 + wiki 快照正文（列表响应不含 wiki）。 */
 export type LibraryEntryDetail = LibraryEntry & { wiki_content: string | null };
 
+/** 手动添加的返回 = 条目 + 后台补全任务 id（论文已处理完整时为 null）。 */
+export type LibraryImportResult = LibraryEntry & { task_id: string | null };
+
 /** 个人库列表响应：分页条目 + 实际使用的检索模式（语义不支持时后端回退 keyword）。 */
 export type LibraryListResult = PageOf<LibraryEntry> & { mode_used: SearchMode };
 
@@ -4015,6 +4018,10 @@ export const api = {
   /** 收藏进我的文献库（按论文 id 或已有条目 id）。 */
   saveToLibrary(input: { paper_id: string } | { entry_id: string }): Promise<LibraryEntry> {
     return requestJson<LibraryEntry>('/me/library', 'POST', input);
+  },
+  /** 手动添加一篇文献到「我的收藏」：arXiv 编号 / DOI / BibTeX 三选一（平台已有的自动复用）。 */
+  importToLibrary(input: PaperImportInput): Promise<LibraryImportResult> {
+    return requestJson<LibraryImportResult>('/me/library/import', 'POST', input);
   },
   /** 移除条目：unsave=移入回收站（可召回）；purge=彻底删除。 */
   removeLibraryEntry(entryId: string, mode: 'unsave' | 'purge'): Promise<void> {

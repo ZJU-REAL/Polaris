@@ -42,6 +42,12 @@ class LibraryEntryDetail(LibraryEntryRead):
     wiki_content: str | None
 
 
+class LibraryImportRead(LibraryEntryRead):
+    """手动添加的响应：条目本身 + 后台补全任务 id（论文已处理完整时为 null）。"""
+
+    task_id: str | None = None
+
+
 class LibraryPage(BaseModel):
     items: list[LibraryEntryRead]
     total: int

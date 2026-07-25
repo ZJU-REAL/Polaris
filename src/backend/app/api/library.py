@@ -5,23 +5,29 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
+from app.core.redis import get_redis_dep
 from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.library import (
     LibraryEntryDetail,
     LibraryEntryRead,
+    LibraryImportRead,
     LibraryNoteUpdate,
     LibraryPage,
     LibrarySaveRequest,
     LibraryStateRead,
     LibraryVisitCreate,
 )
+from app.schemas.paper import PaperManualCreate
 from app.services import citations as citations_service
+from app.services import paper_enrich as paper_enrich_service
+from app.services import paper_import as paper_import_service
 from app.services import papers as papers_service
 from app.services import user_library as library_service
 
@@ -210,6 +216,43 @@ async def save_entry(
         entry = await _get_own_entry(session, body.entry_id, user)  # type: ignore[arg-type]
         entry = await library_service.set_saved(session, entry=entry, saved=True)
     return LibraryEntryRead.model_validate(entry)
+
+
+@router.post(
+    "/me/library/import", response_model=LibraryImportRead, status_code=status.HTTP_201_CREATED
+)
+async def import_entry(
+    body: PaperManualCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
+) -> LibraryImportRead:
+    """手动添加一篇文献到「我的收藏」：arXiv 编号 / DOI / BibTeX 三选一。
+
+    平台已有这篇时直接复用（不重复解析），没有才抓取解析入池（不进任何方向库）；同一篇
+    论文在本人回收站里时走「复活」而不是插新行（每人每篇只有一条）。新建或未处理完整时
+    启动后台补全任务（下载/抽取/向量化，无库不打分），回传 task_id 供前端显示进度。
+    """
+    try:
+        result = await paper_import_service.resolve_or_create_pool_paper(
+            session, arxiv_id=body.arxiv_id, doi=body.doi, bibtex=body.bibtex
+        )
+    except paper_import_service.ParseFailedError as e:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"PARSE_FAILED: {e}"
+        ) from e
+    # 收藏走个人库的既有路径：已有条目（含回收站里的）复活并置 saved，不会建第二行
+    entry = await library_service.save_paper(session, user_id=user.id, paper=result.paper)
+    task_id: str | None = None
+    if result.created or not paper_enrich_service.paper_processing_complete(result.paper):
+        task_id = await paper_enrich_service.launch_paper_enrichment(
+            redis=redis,
+            paper_id=result.paper.id,
+            user_id=user.id,
+            library_id=None,
+            project_id=None,
+        )
+    return LibraryImportRead.model_validate(entry).model_copy(update={"task_id": task_id})
 
 
 @router.get("/me/library/{entry_id}", response_model=LibraryEntryDetail)

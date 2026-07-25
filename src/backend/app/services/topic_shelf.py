@@ -22,9 +22,6 @@ from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
 from app.models.topic_shelf import TopicPaper
 from app.services import paper_import, user_library
-from app.services.dedup import dedup_key_for
-from app.services.libraries import find_pool_paper
-from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.papers import apply_paper_filters
 
 
@@ -450,47 +447,14 @@ async def import_to_shelf(
 ) -> ShelfImportResult:
     """个人补充入库：先按 dedup 查全局池，命中直接入架；未命中抓取解析入池后入架。
 
-    个人补充**不建任何 library_papers 成员行**（「在池但不在任何库」是合法状态，
-    §3.5）；解析计费按现有归因规则记调用用户。仅有标题且池中查不到时无法抓取
-    （paper_import.ParseFailedError → 路由映射 422）。新建池行只落元数据；PDF 下载/
-    全文抽取/向量化由后台任务补全（无 target，不打分）。
+    查池 / 抓取入池那段与个人库手动添加共用（paper_import.resolve_or_create_pool_paper，
+    不建任何 library_papers 成员行）；这里只负责把结果入架。解析失败抛
+    paper_import.ParseFailedError（路由映射 422）。
     """
-    created = False
-    normalized_arxiv = normalize_arxiv_id(arxiv_id) if arxiv_id else None
-    clean_doi = doi.strip().removeprefix("https://doi.org/") if doi else None
-    paper = await find_pool_paper(
-        session,
-        arxiv_id=normalized_arxiv,
-        doi=clean_doi,
-        dedup_key=dedup_key_for(arxiv_id=normalized_arxiv, doi=clean_doi, title=title),
+    result = await paper_import.resolve_or_create_pool_paper(
+        session, arxiv_id=arxiv_id, doi=doi, title=title
     )
-    if paper is None and title and title.strip():
-        # 标题兜底：池键掺年份/首作者，纯标题哈希未必命中 → 退回大小写不敏感精确匹配
-        stmt = select(Paper).where(func.lower(Paper.title) == title.strip().lower()).limit(1)
-        paper = (await session.execute(stmt)).scalars().first()
-    if paper is None:
-        if not (normalized_arxiv or clean_doi):
-            raise paper_import.ParseFailedError(
-                "按标题没有找到这篇论文，请提供 arXiv 编号或 DOI"
-            )
-        fields = await paper_import.resolve_fields(arxiv_id=arxiv_id, doi=doi)
-        # 解析出的规范 id 再查一次池（输入可能是版本号/别名）
-        paper = await find_pool_paper(
-            session,
-            arxiv_id=fields.get("arxiv_id"),
-            doi=fields.get("doi"),
-            dedup_key=dedup_key_for(
-                arxiv_id=fields.get("arxiv_id"),
-                doi=fields.get("doi"),
-                title=fields.get("title"),
-                year=fields.get("year"),
-                authors=fields.get("authors"),
-            ),
-        )
-        if paper is None:
-            paper = await paper_import.create_pool_paper_stub(session, fields=fields)
-            created = True
     item = await add_to_shelf(
-        session, project_id=project_id, paper_id=paper.id, user_id=user_id
+        session, project_id=project_id, paper_id=result.paper.id, user_id=user_id
     )
-    return ShelfImportResult(item=item, paper=paper, created=created)
+    return ShelfImportResult(item=item, paper=result.paper, created=result.created)

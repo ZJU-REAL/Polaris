@@ -7,10 +7,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.paper import Paper
-from app.services.dedup import pool_dedup_key
+from app.services.dedup import dedup_key_for, pool_dedup_key
 from app.services.libraries import (
     ensure_membership,
     find_pool_paper,
@@ -268,6 +269,57 @@ class ManualAddResult(NamedTuple):
 
     paper: Paper
     created: bool  # True=新建池行；False=池命中（论文已存在）
+
+
+async def resolve_or_create_pool_paper(
+    session: AsyncSession,
+    *,
+    arxiv_id: str | None = None,
+    doi: str | None = None,
+    bibtex: str | None = None,
+    title: str | None = None,
+) -> ManualAddResult:
+    """个人补充入库的公共链路：先查全局内容池，命中直接复用；未命中才抓取解析入池。
+
+    **不建任何 library_papers 成员行**（「在池但不在任何库」是合法状态，§3.5）；解析计费
+    按现有归因规则记调用用户。新建池行只落元数据，PDF 下载 / 全文抽取 / 向量化交给后台
+    任务 enrich_paper。仅给标题且池中查不到时无法抓取（ParseFailedError → 路由映射 422）。
+    课题书架 import 与个人库手动添加共用这一条链路；调用方负责收尾 commit。
+    """
+    normalized_arxiv = normalize_arxiv_id(arxiv_id) if arxiv_id else None
+    clean_doi = doi.strip().removeprefix("https://doi.org/") if doi else None
+    paper = await find_pool_paper(
+        session,
+        arxiv_id=normalized_arxiv,
+        doi=clean_doi,
+        dedup_key=dedup_key_for(arxiv_id=normalized_arxiv, doi=clean_doi, title=title),
+    )
+    if paper is None and title and title.strip():
+        # 标题兜底：池键掺年份/首作者，纯标题哈希未必命中 → 退回大小写不敏感精确匹配
+        stmt = select(Paper).where(func.lower(Paper.title) == title.strip().lower()).limit(1)
+        paper = (await session.execute(stmt)).scalars().first()
+    if paper is not None:
+        return ManualAddResult(paper=paper, created=False)
+    if not (normalized_arxiv or clean_doi or (bibtex and bibtex.strip())):
+        raise ParseFailedError("按标题没有找到这篇论文，请提供 arXiv 编号或 DOI")
+    fields = await resolve_fields(arxiv_id=arxiv_id, doi=doi, bibtex=bibtex)
+    # 解析出的规范 id 再查一次池（输入可能是版本号 / 别名，bibtex 里也可能带 DOI）
+    paper = await find_pool_paper(
+        session,
+        arxiv_id=fields.get("arxiv_id"),
+        doi=fields.get("doi"),
+        dedup_key=pool_dedup_key(
+            arxiv_id=fields.get("arxiv_id"),
+            doi=fields.get("doi"),
+            title=fields["title"],
+            year=fields.get("year"),
+            authors=fields.get("authors"),
+        ),
+    )
+    if paper is not None:
+        return ManualAddResult(paper=paper, created=False)
+    paper = await create_pool_paper_stub(session, fields=fields)
+    return ManualAddResult(paper=paper, created=True)
 
 
 async def add_manual_paper(
