@@ -207,6 +207,26 @@ void app.whenReady().then(async () => {
   }
   check('顶栏按钮不被拖拽区吞掉', topbar.btnRegion !== 'drag', `btn=${topbar.btnRegion}`);
 
+  // 收起态侧栏必须容得下交通灯：灯组在窗口坐标里占 x=18..70pt（见 window.ts 的
+  // trafficLightPosition），窄了灯就会压到主内容区上。侧栏要登录后才渲染，
+  // 这里注入同构 DOM 验规则本身。
+  const railPt = (await win.webContents.executeJavaScript(`(() => {
+    const host = document.createElement('div');
+    host.className = 'app nav-collapsed';
+    host.style.cssText = 'position:fixed;left:-9999px;top:0;display:flex';
+    host.innerHTML = '<div class="sidebar"></div>';
+    document.body.appendChild(host);
+    const w = host.querySelector('.sidebar').getBoundingClientRect().width;
+    host.remove();
+    return Math.round(w);
+  })()`)) as number;
+
+  if (isMac) {
+    check('收起态侧栏容得下交通灯（≥84pt）', railPt >= 84, `rail=${railPt}pt`);
+  } else {
+    check('非 macOS 收起态侧栏保持原宽', railPt < 84, `rail=${railPt}pt`);
+  }
+
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
 

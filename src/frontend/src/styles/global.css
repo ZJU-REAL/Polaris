@@ -104,8 +104,21 @@ input {
 }
 
 /* —— 收起态：图标轨道（只留图标，隐藏文字） ——
-   图标列中心恒为侧栏中线（66/2 = 33px），与展开态一致，收放不跳动。 */
+   图标列中心恒为**内容盒**中线（66/2 = 33px），与展开态一致，收放不跳动。 */
 .nav-collapsed .sidebar { width: 66px; }
+
+/* 桌面端（macOS）收起态要容得下交通灯。灯组在窗口坐标里占 x=18..70pt
+   （window.ts 把 trafficLightPosition 钉在 x:18，三个 12pt 按钮、20pt 中心间距），
+   而 66px 经 html{zoom:1.1} 渲染成 72.6pt，右侧只剩 2.6pt，灯几乎贴着分隔线。
+   80px = 88pt，灯组左右各留 18pt。
+
+   多出来的 14px 全部走右内边距（全局 box-sizing: border-box）：内容盒仍是 66px，
+   图标列中心一动不动——收放是瞬时的（.sidebar 无宽度过渡），content 若跟着变宽
+   居中就会硬跳 7pt，正是上面那条不变量要避免的。 */
+:root[data-desktop-platform='darwin'] .nav-collapsed .sidebar {
+  width: 80px;
+  padding-right: 14px;
+}
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
 .nav-collapsed .sb-brand { justify-content: center; margin: 14px 0 8px; } /* 垂直边距必须与展开态一致，否则收放跳位 */
 .nav-collapsed .sb-scroll { padding: 0 8px 14px; }
