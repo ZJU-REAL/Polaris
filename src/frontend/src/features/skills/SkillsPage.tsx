@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
@@ -941,11 +940,8 @@ export function SkillsPage() {
 
   return (
     <div className="page fadeup">
-      <PageHead
-        eyebrow="Polaris"
-        title={tr('技能', 'Skills')}
-        sub={tr('给各环节 AI 定制判断标准与流程模板', 'Custom criteria and workflow templates for each AI stage')}
-        right={
+      {/* —— 顶部一行：技能库 / 技能市场靠左，导入与新建靠右 —— */}
+      <div className="row page-tabs skills-top" style={{ marginBottom: 14 }}>
           <>
             <Segmented
               options={[
@@ -976,8 +972,7 @@ export function SkillsPage() {
               </>
             )}
           </>
-        }
-      />
+      </div>
 
       {view === 'market' && <MarketView />}
 
