@@ -37,10 +37,14 @@ html { zoom: 1.1; }
    只挑面包屑与中间的弹性空白，**不整条 .topbar 设 drag**：
    -webkit-app-region 会向下继承，而用户菜单/通知的下拉浮层就渲染在 .topbar
    内部（见上面 z-index 那段注释），整条设 drag 会让点浮层里的条目变成拖窗口。
-   这两块本身没有任何可交互元素，正好是需要能拖的地方。 */
+   这两块本身没有任何可交互元素，正好是需要能拖的地方。
+   还要 align-self: stretch：.topbar 是 align-items:center，而 .spacer 是个空 div，
+   默认高度为 0——拖拽区是条零高度的矩形，等于没有。撑满行高才真的抓得住。
+   .spacer 本来就没有内容，撑开不可见；.crumb 自身是 flex 居中，撑开后文字不动。 */
 :root[data-desktop-platform='darwin'] .topbar > .crumb,
 :root[data-desktop-platform='darwin'] .topbar > .spacer {
   -webkit-app-region: drag;
+  align-self: stretch;
 }
 body {
   font-family: var(--sans);

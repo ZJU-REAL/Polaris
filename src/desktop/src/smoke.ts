@@ -161,6 +161,32 @@ void app.whenReady().then(async () => {
   )) as string;
   check('顶部留白是拖拽区', dragRegion.trim() === 'drag', `app-region=${dragRegion}`);
 
+  // 主内容顶栏要登录后才存在，这里注入一份同构 DOM 来验规则本身。
+  // 重点是**高度**：.topbar 是 align-items:center，空的 .spacer 默认高度为 0，
+  // 光有 -webkit-app-region:drag 也抓不住——这正是第一版漏掉的地方。
+  const topbar = JSON.parse(
+    (await win.webContents.executeJavaScript(`(() => {
+      const bar = document.createElement('div');
+      bar.className = 'topbar';
+      bar.innerHTML = '<button class="icon-btn"></button><div class="crumb"><span>a</span></div><div class="spacer"></div>';
+      document.body.appendChild(bar);
+      const spacer = bar.querySelector('.spacer');
+      const crumb = bar.querySelector('.crumb');
+      const out = {
+        spacerH: Math.round(spacer.getBoundingClientRect().height),
+        crumbH: Math.round(crumb.getBoundingClientRect().height),
+        spacerRegion: getComputedStyle(spacer).getPropertyValue('-webkit-app-region').trim(),
+        btnRegion: getComputedStyle(bar.querySelector('.icon-btn')).getPropertyValue('-webkit-app-region').trim(),
+      };
+      bar.remove();
+      return JSON.stringify(out);
+    })()`)) as string,
+  ) as { spacerH: number; crumbH: number; spacerRegion: string; btnRegion: string };
+
+  check('顶栏空白是拖拽区', topbar.spacerRegion === 'drag', `region=${topbar.spacerRegion}`);
+  check('顶栏空白有可抓取的高度', topbar.spacerH >= 40, `spacer=${topbar.spacerH}px crumb=${topbar.crumbH}px`);
+  check('顶栏按钮不被拖拽区吞掉', topbar.btnRegion !== 'drag', `btn=${topbar.btnRegion}`);
+
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
 
