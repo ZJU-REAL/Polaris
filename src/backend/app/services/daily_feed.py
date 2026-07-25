@@ -654,8 +654,8 @@ async def compile_entry_wiki(
 ) -> DailyFeedEntry:
     """通用模板编译单篇解读（全实验室共享一份），写进 entry；费用记个人。
 
-    论文已有 PDF（典型：收录后被后台补全过）时先抽图 + 标注重要图，
-    与库版重新编译同款逻辑，产出图文解读；无 PDF 则纯文字。
+    每日池论文建池时不下 PDF，直接编译只能拿摘要产出纯文字稿；故先尽力补下 PDF
+    （幂等，失败则降级），再抽图 + 标注重要图，与库版重新编译同款逻辑产出图文解读。
     """
     from pathlib import Path
 
@@ -672,6 +672,23 @@ async def compile_entry_wiki(
         raise CompileInProgressError(str(entry_id))
     _COMPILING.add(entry_id)
     try:
+        # 没 PDF 就先抓一次（顺带抽全文/分块）：图文解读的前提。best-effort——
+        # 无 arxiv_id / 下载失败时照常往下走，产出纯文字稿而不是整体失败。
+        if not paper.pdf_path:
+            from app.services.papers import (
+                PdfFetchFailedError,
+                PdfSourceUnsupportedError,
+                fetch_pdf,
+            )
+
+            try:
+                paper = await fetch_pdf(session, paper, user_id=user_id)
+            except (PdfSourceUnsupportedError, PdfFetchFailedError):
+                logger.info("daily compile: no PDF for paper %s, text-only", paper.id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — 抓取异常不阻断编译
+                logger.warning("daily compile: fetch_pdf failed for %s", paper.id, exc_info=True)
         if paper.pdf_path and Path(paper.pdf_path).exists():
             # 从未提取过，或上一轮一张重要图都没选出来 → 重提候选（对齐 recompile_paper）
             if paper.figures is None or not any(f.get("important") for f in paper.figures):

@@ -164,12 +164,6 @@ function LibrariesCard() {
   );
 }
 
-/** 本地时区的 YYYY-MM-DD（每日新论文按日期字符串分桶）。 */
-function todayKey(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
 
 /** 每日新论文汇总卡：今日新增 / 近 7 天合计 + 最近 7 天迷你分布（单色柱，标签用文本色）。 */
 function DailyCard() {
@@ -182,8 +176,9 @@ function DailyCard() {
   });
 
   const days = useMemo(() => [...(data ?? [])].sort((a, b) => a.date.localeCompare(b.date)).slice(-7), [data]);
-  const today = todayKey();
-  const todayCount = days.find((d) => d.date === today)?.count ?? 0;
+  // 「最新一批」而非「今天」：arxiv 按 UTC 出批次，用本地日期匹配会在跨时区/周末显示 0
+  const today = days.length > 0 ? days[days.length - 1]!.date : '';
+  const todayCount = days.length > 0 ? days[days.length - 1]!.count : 0;
   const weekTotal = days.reduce((acc, d) => acc + d.count, 0);
   const max = Math.max(1, ...days.map((d) => d.count));
 
@@ -229,7 +224,7 @@ function DailyCard() {
           <div className="row gap20" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
             <div>
               <div className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>{todayCount}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>{tr('今天新增', 'New today')}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>{tr('最新一批', 'Latest batch')}</div>
             </div>
             <div>
               <div className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>{weekTotal}</div>
