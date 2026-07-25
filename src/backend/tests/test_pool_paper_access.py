@@ -142,3 +142,39 @@ async def test_pool_paper_hidden_from_others_and_write_paths(client):
     assert resp.status_code == 404
     async with get_sessionmaker()() as session:
         assert await session.get(Paper, uuid.UUID(paper_id)) is not None
+
+
+async def test_daily_feed_paper_readable_without_collecting(client):
+    """每日推送里的论文未被任何人收录时，任何登录用户仍可读（详情 / 阅读页取数）。
+
+    回归：每日详情点「阅读原文」曾报 PAPER_NOT_FOUND——池级兜底只认书架 / 个人库，
+    而未收录的每日论文两者都不在。
+    """
+    import datetime as dt
+
+    from app.models.daily_feed import DailyFeedEntry
+
+    paper_id = await _seed_pool_only_paper(title="Daily Only Paper", source="arxiv")
+    async with get_sessionmaker()() as session:
+        session.add(
+            DailyFeedEntry(
+                paper_id=uuid.UUID(paper_id),
+                feed_date=dt.datetime.now(dt.UTC).date(),
+                primary_category="cs.AI",
+            )
+        )
+        await session.commit()
+
+    # 任意登录用户（既没入架也没收藏）都能读到详情
+    token = await register_and_login(client, email="daily-reader@example.com")
+    resp = await client.get(f"/api/papers/{paper_id}", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["title"] == "Daily Only Paper"
+
+
+async def test_pool_paper_not_in_daily_feed_stays_hidden(client):
+    """不在每日推送、也没入架/收藏的池论文，对他人仍是 404（不放宽既有边界）。"""
+    paper_id = await _seed_pool_only_paper(title="Nobody's Paper")
+    token = await register_and_login(client, email="daily-stranger@example.com")
+    resp = await client.get(f"/api/papers/{paper_id}", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 404

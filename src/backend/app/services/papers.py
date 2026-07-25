@@ -312,13 +312,26 @@ async def list_papers(
     return [PaperView(paper, membership, project_id) for paper, membership in page_rows], int(total)
 
 
+async def _paper_in_daily_feed(session: AsyncSession, paper_id: uuid.UUID) -> bool:
+    """论文是否在当前每日推送里——每日池全实验室可读，登录用户即可读它。"""
+    from app.models.daily_feed import DailyFeedEntry
+
+    row = (
+        await session.execute(
+            select(DailyFeedEntry.id).where(DailyFeedEntry.paper_id == paper_id).limit(1)
+        )
+    ).first()
+    return row is not None
+
+
 async def _pool_paper_view(
     session: AsyncSession, *, paper_id: uuid.UUID, user_id: uuid.UUID, with_concepts: bool
 ) -> PaperView | None:
     """池级可见性兜底（P5b）：论文不在任何可见方向库，但个人链路可达时仍可读。
 
-    可达条件：该论文在请求者任一课题的相关研究书架上，或在其个人库条目里
-    （dedup 匹配）。返回的视角带**临时成员行**（不入 session、永不落库）：
+    可达条件：该论文在请求者任一课题的相关研究书架上、在其个人库条目里
+    （dedup 匹配），或仍在每日推送池里（每日推送全实验室可读，未收录也能读）。
+    返回的视角带**临时成员行**（不入 session、永不落库）：
     status=included、无判断字段；``project_id`` 取最早入架的课题（仅个人库
     可达时为 None）。只用于读路径——写成员行的端点不开启池级兜底。
     """
@@ -351,7 +364,8 @@ async def _pool_paper_view(
     topic_id = (await session.execute(stmt)).scalar_one_or_none()
     if topic_id is None:
         entry = await user_library.entry_for_paper(session, user_id=user_id, paper=paper)
-        if entry is None:
+        if entry is None and not await _paper_in_daily_feed(session, paper_id):
+            # 书架 / 个人库都不可达，也不在每日推送里 → 视为不存在
             return None
     membership = LibraryPaper(
         status="included", created_at=paper.created_at, updated_at=paper.updated_at
