@@ -572,7 +572,21 @@ export function ForgePage() {
               ? tr('加载课题…', 'Loading topics…')
               : tr('选择一个课题', 'Pick a topic')
         }
-        right={
+      />
+
+      {/* —— 顶部一行：视图标签在左，运行入口在右 —— */}
+      <div className="row page-tabs" style={{ marginBottom: 14 }}>
+        {pid && (
+          <Segmented<ViewMode>
+            value={view}
+            onChange={setView}
+            options={[
+              { v: 'active', label: tr('想法列表', 'Ideas') },
+              { v: 'trash', label: `${tr('回收站', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
+            ]}
+          />
+        )}
+        <div style={{ marginLeft: 'auto' }}>
           <div className="row gap8">
             <button className="btn btn-soft" disabled={!pid || running} onClick={() => setModalOpen(true)}>
               <Icon name="play" size={14} />
@@ -592,8 +606,8 @@ export function ForgePage() {
               )}
             </button>
           </div>
-        }
-      />
+        </div>
+      </div>
 
       {/* 待确认研究目标提示 */}
       {deep?.pending_gate_id && (
@@ -715,14 +729,6 @@ export function ForgePage() {
           </span>
           {pid && (
             <>
-              <Segmented<ViewMode>
-                value={view}
-                onChange={setView}
-                options={[
-                  { v: 'active', label: tr('想法列表', 'Ideas') },
-                  { v: 'trash', label: `${tr('回收站', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
-                ]}
-              />
               <button
                 className={`btn sm ${multiSelect ? 'btn-primary' : 'btn-soft'}`}
                 onClick={toggleMultiSelect}
