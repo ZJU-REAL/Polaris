@@ -22,6 +22,9 @@ import { readerFrom } from '../reading/shared';
 import {
   AdvancedPanel,
   AdvancedToggle,
+  AffiliationChips,
+  AuthorLinks,
+  FilterInput,
   SearchInput,
   SemanticSwitch,
   saveBlob,
@@ -160,6 +163,8 @@ function DailyDetailPane({
   compiling,
   onFetchPdf,
   onCompile,
+  onFilterAuthor,
+  onFilterAffiliation,
 }: {
   entryId: string;
   onCollect: (p: CollectPaperRef) => void;
@@ -169,6 +174,10 @@ function DailyDetailPane({
   compiling: boolean;
   onFetchPdf: (entryId: string) => void;
   onCompile: (entryId: string) => void;
+  /** 点作者 → 按该作者过滤列表 */
+  onFilterAuthor: (name: string) => void;
+  /** 点机构 chip → 按该机构过滤列表 */
+  onFilterAffiliation: (name: string) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -211,7 +220,6 @@ function DailyDetailPane({
     );
   }
 
-  const authors = paper.authors.map((a) => a.name).filter(Boolean).join(', ');
   // 「链接放 arxiv，不放标题」：优先原文 url，退回 arxiv abs 页
   const arxivHref = paper.url ?? (paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null);
   // PDF 不可用时的下载去处：arxiv pdf，无 arxiv_id 退回原文 url
@@ -258,9 +266,11 @@ function DailyDetailPane({
       <h1 style={{ fontSize: 21, fontWeight: 680, lineHeight: 1.3, margin: '2px 0 6px', letterSpacing: '-0.01em' }}>
         {paper.title}
       </h1>
-      {authors && <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 6 }}>{authors}</div>}
+      {/* 作者 / 机构都可点：点了按它过滤列表 */}
+      <AuthorLinks authors={paper.authors} onFilter={onFilterAuthor} />
+      <AffiliationChips affiliations={paper.affiliations} onFilter={onFilterAffiliation} />
       {paper.published_at && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginBottom: 14 }}>
+        <div style={{ fontSize: 11.5, color: 'var(--text-4)', margin: '6px 0 14px' }}>
           {tr('发布于', 'Published')} {fmtTime(paper.published_at)}
         </div>
       )}
@@ -454,8 +464,13 @@ export function DailyPage() {
   const [advOpen, setAdvOpen] = useState(true);
   const [category, setCategory] = useState('');
   const [announce, setAnnounce] = useState<AnnounceFilter>(DEFAULT_ANNOUNCE);
+  // 作者 / 机构：手填，或在右栏详情里点作者名、点机构 chip 带进来
+  const [authorInput, setAuthorInput] = useState('');
+  const [affiliationInput, setAffiliationInput] = useState('');
+  const author = useDebounced(authorInput.trim());
+  const affiliation = useDebounced(affiliationInput.trim());
   // 高级条件是否偏离默认（决定高级检索按钮上的小圆点）
-  const advActive = !!category || announce !== DEFAULT_ANNOUNCE;
+  const advActive = !!category || announce !== DEFAULT_ANNOUNCE || !!author || !!affiliation;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
@@ -465,11 +480,11 @@ export function DailyPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => setPage(1), [q, semanticOn, day, category, announce]);
+  useEffect(() => setPage(1), [q, semanticOn, day, category, announce, author, affiliation]);
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
-  }, [q, semanticOn, day, category, announce]);
+  }, [q, semanticOn, day, category, announce, author, affiliation]);
 
   const daysQuery = useQuery({
     queryKey: ['daily-days'],
@@ -509,6 +524,32 @@ export function DailyPage() {
     pickDay(dayIdx >= 0 && dayIdx < dates.length - 1 ? (dates[dayIdx + 1] ?? null) : null);
   };
 
+  // 点作者/机构 → 列表只留匹配的论文（走已有的高级检索），其余条件重置并展开面板；
+  // 日期放开到全部 7 天——只看当天的话，按作者/机构筛基本什么都剩不下
+  const applyAdvFilter = useCallback(
+    (patch: { author?: string; affiliation?: string }) => {
+      setSemanticOn(false);
+      setQInput('');
+      setAuthorInput(patch.author ?? '');
+      setAffiliationInput(patch.affiliation ?? '');
+      setCategory('');
+      setAnnounce('all');
+      setAdvOpen(true);
+      pickDay(null);
+      if (patch.author) {
+        toast(tr(`已筛选作者：${patch.author}`, `Filtered by author: ${patch.author}`), 'info');
+      } else if (patch.affiliation) {
+        toast(tr(`已筛选机构：${patch.affiliation}`, `Filtered by affiliation: ${patch.affiliation}`), 'info');
+      }
+    },
+    [pickDay],
+  );
+  const filterByAuthor = useCallback((name: string) => applyAdvFilter({ author: name }), [applyAdvFilter]);
+  const filterByAffiliation = useCallback(
+    (name: string) => applyAdvFilter({ affiliation: name }),
+    [applyAdvFilter],
+  );
+
   const categoriesQuery = useQuery({
     queryKey: ['daily-categories'],
     queryFn: () => api.getDailyCategories(),
@@ -519,7 +560,7 @@ export function DailyPage() {
   // 语义检索：只在有关键词时生效；结果按相关度排序、不分页
   const semantic = !!q && semanticOn;
   const listQuery = useQuery({
-    queryKey: ['daily-papers', semanticOn, page, q, day, category, announce],
+    queryKey: ['daily-papers', semanticOn, page, q, day, category, announce, author, affiliation],
     queryFn: () =>
       api.listDailyPapers({
         sort: semantic ? undefined : DAILY_SORT,
@@ -529,6 +570,8 @@ export function DailyPage() {
         date: day ?? undefined,
         category: category || undefined,
         announce: announce === 'all' ? undefined : announce,
+        author: author || undefined,
+        affiliation: affiliation || undefined,
         mode: semantic ? 'semantic' : undefined,
       }),
     retry: false,
@@ -678,14 +721,17 @@ export function DailyPage() {
                   open={advOpen}
                   active={advActive}
                   onToggle={() => setAdvOpen((o) => !o)}
-                  title={tr('高级检索：分类 / 类型', 'Advanced search: category / type')}
+                  title={tr(
+                    '高级检索：分类 / 类型 / 作者 / 机构',
+                    'Advanced search: category / type / author / affiliation',
+                  )}
                 />
                 <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
                   {total ? tr(`${total} 篇`, `${total}`) : ''}
                 </span>
               </div>
 
-              {/* 高级检索面板：分类 + 类型（日期步进和排序留在工具栏，它们是主导航） */}
+              {/* 高级检索面板：分类 + 类型 + 作者 / 机构（日期步进和排序留在工具栏，它们是主导航） */}
               {advOpen && (
                 <AdvancedPanel
                   onClear={
@@ -693,6 +739,8 @@ export function DailyPage() {
                       ? () => {
                           setCategory('');
                           setAnnounce(DEFAULT_ANNOUNCE);
+                          setAuthorInput('');
+                          setAffiliationInput('');
                         }
                       : undefined
                   }
@@ -730,20 +778,41 @@ export function DailyPage() {
                       {tr('更新', 'Updated')}
                     </span>
                   </div>
+                  <div className="row gap8">
+                    <FilterInput
+                      value={authorInput}
+                      onChange={setAuthorInput}
+                      placeholder={tr('作者姓名…', 'Author name…')}
+                    />
+                    <FilterInput
+                      value={affiliationInput}
+                      onChange={setAffiliationInput}
+                      placeholder={tr('发表机构…', 'Affiliation…')}
+                      title={tr(
+                        '机构信息要等这篇编译出解读后才有，没编译过的论文匹配不到',
+                        'Affiliations only exist after a paper has been compiled here',
+                      )}
+                    />
+                  </div>
                 </AdvancedPanel>
               )}
               {/* 面板收起时，把正在生效的分类/类型如实说一句（默认「只看新工作」也算），
                   免得筛选藏进面板后用户不知道列表被过滤过 */}
-              {!advOpen && (announce !== 'all' || !!category) && (
+              {!advOpen && (announce !== 'all' || !!category || !!author || !!affiliation) && (
                 <div
                   onClick={() => setAdvOpen(true)}
                   style={{ marginTop: 6, fontSize: 11, color: 'var(--text-4)', cursor: 'pointer', lineHeight: 1.5 }}
                   title={tr('点开高级检索改筛选条件', 'Open advanced search to change the filters')}
                 >
                   {tr('只看：', 'Showing: ')}
-                  {announce === 'new' ? tr('新工作', 'New') : announce === 'cross' ? tr('更新', 'Updated') : ''}
-                  {announce !== 'all' && category ? ' · ' : ''}
-                  {category}
+                  {[
+                    announce === 'new' ? tr('新工作', 'New') : announce === 'cross' ? tr('更新', 'Updated') : '',
+                    category,
+                    author,
+                    affiliation,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </div>
               )}
 
@@ -920,6 +989,8 @@ export function DailyPage() {
                 compiling={compilePending.has(selectedId)}
                 onFetchPdf={fetchPdf}
                 onCompile={compile}
+                onFilterAuthor={filterByAuthor}
+                onFilterAffiliation={filterByAffiliation}
               />
             ) : (
               <div className="empty" style={{ margin: 'auto' }}>

@@ -17,7 +17,6 @@ import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
-import { clickable } from '../../lib/a11y';
 import {
   ApiError,
   api,
@@ -38,6 +37,8 @@ import { PaperReader } from '../wiki/PaperReader';
 import {
   AdvancedPanel,
   AdvancedToggle,
+  AffiliationChips,
+  AuthorLinks,
   FilterInput,
   MetaItem,
   SearchInput,
@@ -65,9 +66,8 @@ type BrowseTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'notes' | 'govern' |
 
 const PAGE_SIZE = 20;
 
-/** 概念 / 机构 chips 默认最多展示数，超出折叠（与文献工作台一致） */
+/** 概念 chips 默认最多展示数，超出折叠（与文献工作台一致；机构 chips 见 AffiliationChips） */
 const CONCEPT_CHIP_LIMIT = 12;
-const AFFIL_CHIP_LIMIT = 6;
 
 /** 列表视图筛选（口径同文献工作台：全部 = 已纳入的文献） */
 type ViewFilter = 'all' | 'compiled' | 'starred';
@@ -337,7 +337,6 @@ function PaperDetailPane({
   const queryClient = useQueryClient();
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [conceptsOpen, setConceptsOpen] = useState(false);
-  const [affilsOpen, setAffilsOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
 
@@ -408,7 +407,6 @@ function PaperDetailPane({
   useEffect(() => {
     setAbstractOpen(false);
     setConceptsOpen(false);
-    setAffilsOpen(false);
     setReaderOpen(false);
     resetPersonalWiki();
   }, [paperId, resetPersonalWiki]);
@@ -469,43 +467,8 @@ function PaperDetailPane({
           <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
             {paper.title}
           </h1>
-          {paper.authors.length > 0 && (
-            <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
-              {paper.authors.map((a, i) => (
-                <span key={`${a.name}-${i}`}>
-                  {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
-                  <span
-                    className="author-link"
-                    title={tr(`只看 ${a.name} 的论文`, `Show only ${a.name}'s papers`)}
-                    {...clickable(() => onFilterAuthor(a.name))}
-                  >
-                    {a.name}
-                  </span>
-                </span>
-              ))}
-            </div>
-          )}
-          {(paper.affiliations?.length ?? 0) > 0 && (
-            <div className="row gap6 wrap" style={{ marginTop: 8 }}>
-              <Icon name="pin" size={11} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
-              {(affilsOpen ? paper.affiliations! : paper.affiliations!.slice(0, AFFIL_CHIP_LIMIT)).map((name) => (
-                <span
-                  key={name}
-                  className="chip"
-                  style={{ fontSize: 11 }}
-                  title={tr(`只看 ${name} 的论文`, `Show only papers from ${name}`)}
-                  {...clickable(() => onFilterAffiliation(name))}
-                >
-                  {name}
-                </span>
-              ))}
-              {paper.affiliations!.length > AFFIL_CHIP_LIMIT && (
-                <span className="chip" style={{ fontSize: 11 }} onClick={() => setAffilsOpen((o) => !o)}>
-                  {affilsOpen ? tr('收起', 'Collapse') : `+${paper.affiliations!.length - AFFIL_CHIP_LIMIT}`}
-                </span>
-              )}
-            </div>
-          )}
+          <AuthorLinks authors={paper.authors} onFilter={onFilterAuthor} />
+          <AffiliationChips affiliations={paper.affiliations} onFilter={onFilterAffiliation} />
         </div>
         {relevance !== null && <ScoreRing value={relevance} max={1} size={56} label={tr('相关度', 'Relevance')} />}
       </div>

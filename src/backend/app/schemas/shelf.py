@@ -13,6 +13,8 @@ class ShelfItemRead(BaseModel):
     paper_id: uuid.UUID
     title: str
     authors: list[dict[str, Any]] = []
+    # 发表机构（编译 wiki 时解析，OpenAlex 兜底；可能为空）——前端详情里可点即筛选
+    affiliations: list[str] = []
     year: int | None
     venue: str | None
     arxiv_id: str | None
@@ -33,6 +35,11 @@ class ShelfItemRead(BaseModel):
     @classmethod
     def _default_authors(cls, v: Any) -> Any:
         return v or []
+
+    @field_validator("affiliations", mode="before")
+    @classmethod
+    def _default_affiliations(cls, v: Any) -> list[str]:
+        return [str(x) for x in v] if isinstance(v, list) else []
 
 
 class ShelfPage(BaseModel):

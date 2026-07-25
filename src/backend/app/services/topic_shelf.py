@@ -97,6 +97,7 @@ def _item_dict(
         "paper_id": paper.id,
         "title": paper.title,
         "authors": paper.authors or [],
+        "affiliations": paper.affiliations or [],
         "year": paper.year,
         "venue": paper.venue,
         "arxiv_id": paper.arxiv_id,

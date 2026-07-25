@@ -30,8 +30,15 @@ import {
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { usePendingByPaper } from '../../lib/pending';
-import { clickable } from '../../lib/a11y';
-import { categoryMeta, MetaItem, saveBlob, SearchInput, useDebounced } from './shared';
+import {
+  AffiliationChips,
+  AuthorLinks,
+  categoryMeta,
+  MetaItem,
+  saveBlob,
+  SearchInput,
+  useDebounced,
+} from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
 import { AddToButton } from '../library/AddToPopover';
 import { PaperProgressModal } from '../library/PaperProgressModal';
@@ -897,9 +904,6 @@ function TagEditor({ paper, scopeId }: { paper: PaperDetail; scopeId: string }) 
 /** 概念 chips 默认最多展示数，超出折叠 */
 const CONCEPT_CHIP_LIMIT = 12;
 
-/** 机构 chips 默认最多展示数，超出折叠 */
-const AFFIL_CHIP_LIMIT = 6;
-
 function PaperDetailPane({
   paperId,
   pid,
@@ -933,7 +937,6 @@ function PaperDetailPane({
   const scopeId = libraryId ?? pid;
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [conceptsOpen, setConceptsOpen] = useState(false);
-  const [affilsOpen, setAffilsOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
 
@@ -986,7 +989,6 @@ function PaperDetailPane({
   useEffect(() => {
     setAbstractOpen(false);
     setConceptsOpen(false);
-    setAffilsOpen(false);
     setReaderOpen(false);
   }, [paperId]);
 
@@ -1051,53 +1053,8 @@ function PaperDetailPane({
           <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
             {paper.title}
           </h1>
-          {paper.authors.length > 0 && (
-            <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
-              {paper.authors.map((a, i) => (
-                <span key={`${a.name}-${i}`}>
-                  {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
-                  <span
-                    className="author-link"
-                    role="button"
-                    tabIndex={0}
-                    title={tr(`只看 ${a.name} 的论文`, `Show only ${a.name}'s papers`)}
-                    onClick={() => onFilterAuthor(a.name)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        onFilterAuthor(a.name);
-                      }
-                    }}
-                  >
-                    {a.name}
-                  </span>
-                </span>
-              ))}
-            </div>
-          )}
-          {(paper.affiliations?.length ?? 0) > 0 && (
-            <div className="row gap6 wrap" style={{ marginTop: 8 }}>
-              <Icon name="pin" size={11} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
-              {(affilsOpen ? paper.affiliations! : paper.affiliations!.slice(0, AFFIL_CHIP_LIMIT)).map((name) => (
-                <span
-                  key={name}
-                  className="chip"
-                  style={{ fontSize: 11 }}
-                  title={tr(`只看 ${name} 的论文`, `Show only papers from ${name}`)}
-                  {...clickable(() => onFilterAffiliation(name))}
-                >
-                  {name}
-                </span>
-              ))}
-              {paper.affiliations!.length > AFFIL_CHIP_LIMIT && (
-                <span className="chip" style={{ fontSize: 11 }} onClick={() => setAffilsOpen((o) => !o)}>
-                  {affilsOpen
-                    ? tr('收起', 'Collapse')
-                    : `+${paper.affiliations!.length - AFFIL_CHIP_LIMIT}`}
-                </span>
-              )}
-            </div>
-          )}
+          <AuthorLinks authors={paper.authors} onFilter={onFilterAuthor} />
+          <AffiliationChips affiliations={paper.affiliations} onFilter={onFilterAffiliation} />
         </div>
         {relevance !== null && (
           <ScoreRing value={relevance} max={1} size={56} label={tr('相关度', 'Relevance')} />

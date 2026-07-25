@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
-import type { ConceptCategory } from '../../lib/api';
+import type { ConceptCategory, PaperAuthor } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { clickable } from '../../lib/a11y';
 import { Icon } from '../../components/ui/Icon';
 import { Switch } from '../../components/ui/Switch';
 
@@ -241,6 +242,88 @@ export function FilterInput({
       placeholder={placeholder}
       title={title}
     />
+  );
+}
+
+/* ============================================================
+   论文详情头部：作者行 + 机构 chips（论文库 / 相关研究 / 个人库 / 每日新论文共用）。
+   给了 onFilter 就可点——点了按这个作者 / 机构过滤当前列表。
+   ============================================================ */
+
+/** 机构 chips 折叠阈值：超过这么多先收起来，点 +N 展开。 */
+export const AFFIL_CHIP_LIMIT = 6;
+
+/** 详情头的作者行：`·` 分隔；给了 onFilter 则每个名字可点。 */
+export function AuthorLinks({
+  authors,
+  onFilter,
+}: {
+  authors: PaperAuthor[];
+  onFilter?: (name: string) => void;
+}) {
+  if (authors.length === 0) return null;
+  return (
+    <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
+      {authors.map((a, i) => (
+        <span key={`${a.name}-${i}`}>
+          {i > 0 && <span style={{ color: 'var(--text-4)' }}> · </span>}
+          {onFilter ? (
+            <span
+              className="author-link"
+              title={tr(`只看 ${a.name} 的论文`, `Show only ${a.name}'s papers`)}
+              {...clickable(() => onFilter(a.name))}
+            >
+              {a.name}
+            </span>
+          ) : (
+            a.name
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** 详情头的机构 chips：超过 AFFIL_CHIP_LIMIT 个先折叠；给了 onFilter 则每个可点。 */
+export function AffiliationChips({
+  affiliations,
+  onFilter,
+}: {
+  affiliations: string[] | undefined;
+  onFilter?: (name: string) => void;
+}) {
+  // 展开态挂在「当前这组机构」上：详情面板不随选中论文重挂载，换一篇就自动收回去
+  const [openFor, setOpenFor] = useState<string | null>(null);
+  const sig = affiliations?.join('|') ?? '';
+  if (!affiliations || affiliations.length === 0) return null;
+  const open = openFor === sig;
+  const shown = open ? affiliations : affiliations.slice(0, AFFIL_CHIP_LIMIT);
+  return (
+    <div className="row gap6 wrap" style={{ marginTop: 8 }}>
+      <Icon name="pin" size={11} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
+      {shown.map((name) =>
+        onFilter ? (
+          <span
+            key={name}
+            className="chip"
+            style={{ fontSize: 11 }}
+            title={tr(`只看 ${name} 的论文`, `Show only papers from ${name}`)}
+            {...clickable(() => onFilter(name))}
+          >
+            {name}
+          </span>
+        ) : (
+          <span key={name} className="chip" style={{ fontSize: 11, cursor: 'default' }}>
+            {name}
+          </span>
+        ),
+      )}
+      {affiliations.length > AFFIL_CHIP_LIMIT && (
+        <span className="chip" style={{ fontSize: 11 }} {...clickable(() => setOpenFor(open ? null : sig))}>
+          {open ? tr('收起', 'Collapse') : `+${affiliations.length - AFFIL_CHIP_LIMIT}`}
+        </span>
+      )}
+    </div>
   );
 }
 

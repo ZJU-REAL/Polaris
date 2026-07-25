@@ -37,6 +37,8 @@ class DailyPaperItem(BaseModel):
     announce_type: Literal["new", "cross"]
     title: str
     authors: list[dict[str, Any]] = []
+    # 发表机构（池论文编译后才解析得到；未编译时为空）——前端详情里可点即筛选
+    affiliations: list[str] = []
     abstract: str | None
     year: int | None
     arxiv_id: str | None
@@ -53,6 +55,11 @@ class DailyPaperItem(BaseModel):
     @classmethod
     def _default_authors(cls, v: Any) -> Any:
         return v or []
+
+    @field_validator("affiliations", mode="before")
+    @classmethod
+    def _default_affiliations(cls, v: Any) -> list[str]:
+        return [str(x) for x in v] if isinstance(v, list) else []
 
 
 class DailyPaperDetail(DailyPaperItem):

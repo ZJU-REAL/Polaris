@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
@@ -252,20 +252,45 @@ export function LibraryPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // 高级检索：年份区间 / 作者 / venue（走后端）
+  // 高级检索：年份区间 / 作者 / 机构 / venue（走后端）
   const [advOpen, setAdvOpen] = useState(false);
   const [author, setAuthor] = useState('');
+  const [affiliation, setAffiliation] = useState('');
   const [venue, setVenue] = useState('');
   const [yearFrom, setYearFrom] = useState('');
   const [yearTo, setYearTo] = useState('');
 
-  const advActive = !!author.trim() || !!venue.trim() || !!yearFrom.trim() || !!yearTo.trim();
+  const advActive =
+    !!author.trim() || !!affiliation.trim() || !!venue.trim() || !!yearFrom.trim() || !!yearTo.trim();
   const clearAdvanced = () => {
     setAuthor('');
+    setAffiliation('');
     setVenue('');
     setYearFrom('');
     setYearTo('');
   };
+
+  // 点作者/机构 → 列表只留匹配的条目（走已有的高级检索），其余条件重置并展开面板
+  const applyAdvFilter = useCallback((patch: { author?: string; affiliation?: string }) => {
+    setSemanticOn(false);
+    setQInput('');
+    setAuthor(patch.author ?? '');
+    setAffiliation(patch.affiliation ?? '');
+    setVenue('');
+    setYearFrom('');
+    setYearTo('');
+    setAdvOpen(true);
+    if (patch.author) {
+      toast(tr(`已筛选作者：${patch.author}`, `Filtered by author: ${patch.author}`), 'info');
+    } else if (patch.affiliation) {
+      toast(tr(`已筛选机构：${patch.affiliation}`, `Filtered by affiliation: ${patch.affiliation}`), 'info');
+    }
+  }, []);
+  const filterByAuthor = useCallback((name: string) => applyAdvFilter({ author: name }), [applyAdvFilter]);
+  const filterByAffiliation = useCallback(
+    (name: string) => applyAdvFilter({ affiliation: name }),
+    [applyAdvFilter],
+  );
 
   // 双栏选中态：收藏/记录共用一份（同一种条目），「我发表的」单独一份。
   // 翻页/搜索/切 tab 都不清空——右栏基于选中时的快照继续展示，
@@ -282,7 +307,7 @@ export function LibraryPage() {
   // tab / 搜索词 / 检索模式 / 排序 / 高级条件变化时回到第一页
   useEffect(() => {
     setPage(1);
-  }, [tab, q, semanticOn, sort, author, venue, yearFrom, yearTo]);
+  }, [tab, q, semanticOn, sort, author, affiliation, venue, yearFrom, yearTo]);
 
   // 切 tab / 换搜索词 / 换检索模式时清空多选（避免选中集跨上下文残留）
   useEffect(() => {
@@ -294,7 +319,7 @@ export function LibraryPage() {
   const listQuery = useQuery({
     queryKey: [
       'library', tab, q, semantic, sort, page,
-      author.trim(), venue.trim(), yearFrom.trim(), yearTo.trim(),
+      author.trim(), affiliation.trim(), venue.trim(), yearFrom.trim(), yearTo.trim(),
     ],
     queryFn: () =>
       api.listLibrary({
@@ -306,6 +331,7 @@ export function LibraryPage() {
         size: semantic ? SEMANTIC_SIZE : PAGE_SIZE,
         // 语义态不叠加高级过滤（后端语义分支忽略），关键词态照常带上
         author: semantic ? undefined : author.trim() || undefined,
+        affiliation: semantic ? undefined : affiliation.trim() || undefined,
         venue: semantic ? undefined : venue.trim() || undefined,
         year_from: semantic ? undefined : parseYear(yearFrom),
         year_to: semantic ? undefined : parseYear(yearTo),
@@ -536,7 +562,10 @@ export function LibraryPage() {
                     open={advOpen}
                     active={advActive}
                     onToggle={() => setAdvOpen((o) => !o)}
-                    title={tr('高级检索：年份 / 作者 / 期刊会议', 'Advanced search: year / author / venue')}
+                    title={tr(
+                      '高级检索：年份 / 作者 / 机构 / 期刊会议',
+                      'Advanced search: year / author / affiliation / venue',
+                    )}
                   />
                 </div>
 
@@ -562,6 +591,15 @@ export function LibraryPage() {
                           placeholder={tr('期刊 / 会议…', 'Venue…')}
                         />
                       </div>
+                      <FilterInput
+                        value={affiliation}
+                        onChange={setAffiliation}
+                        placeholder={tr('发表机构…', 'Affiliation…')}
+                        title={tr(
+                          '机构信息在论文那边，源论文已被删除的条目匹配不到',
+                          'Affiliations live on the paper — entries whose source paper is gone will not match',
+                        )}
+                      />
                     </AdvancedPanel>
                   </div>
                 )}
@@ -741,6 +779,8 @@ export function LibraryPage() {
                   paperId={shownEntry.last_paper_id}
                   snapshot={entrySnapshot(shownEntry)}
                   entryId={shownEntry.id}
+                  onFilterAuthor={filterByAuthor}
+                  onFilterAffiliation={filterByAffiliation}
                 />
               ) : (
                 <PickHint />

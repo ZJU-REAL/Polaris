@@ -235,6 +235,7 @@ async def list_entries(
     year_from: int | None = None,
     year_to: int | None = None,
     author: str | None = None,
+    affiliation: str | None = None,
     venue: str | None = None,
 ) -> tuple[list[UserLibraryEntry], int]:
     stmt = select(UserLibraryEntry).where(UserLibraryEntry.user_id == user_id)
@@ -254,6 +255,16 @@ async def list_entries(
     # 高级检索：作者在 JSON 列上做文本包含匹配（同 q 里的作者匹配口径）
     if author:
         stmt = stmt.where(sa_cast(UserLibraryEntry.authors, SAText).ilike(f"%{author}%"))
+    # 机构：条目快照里没有机构字段，借软引用的活体论文（last_paper_id）匹配。
+    # 源论文已删的条目匹配不上——详情面板也只在论文还在时才显示机构，口径一致。
+    if affiliation:
+        stmt = stmt.where(
+            UserLibraryEntry.last_paper_id.in_(
+                select(Paper.id).where(
+                    sa_cast(Paper.affiliations, SAText).ilike(f"%{affiliation}%")
+                )
+            )
+        )
     if venue:
         stmt = stmt.where(UserLibraryEntry.venue.ilike(f"%{venue}%"))
     if year_from is not None:

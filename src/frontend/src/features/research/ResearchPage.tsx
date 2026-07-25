@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -62,6 +62,7 @@ function scoredToShelf(p: PaperRead & { score?: number | null }): ShelfItemRead 
     paper_id: p.id,
     title: p.title,
     authors: p.authors,
+    affiliations: p.affiliations,
     year: p.year,
     venue: p.venue,
     arxiv_id: p.arxiv_id,
@@ -382,6 +383,30 @@ export function ResearchPage() {
     setReadingStatus('');
     setStarred(false);
   };
+
+  // 点作者/机构 → 列表只留匹配的论文（走已有的高级检索），其余条件重置并展开面板
+  const applyAdvFilter = useCallback((patch: { author?: string; affiliation?: string }) => {
+    setSemanticOn(false);
+    setQInput('');
+    setAuthor(patch.author ?? '');
+    setAffiliation(patch.affiliation ?? '');
+    setYearFrom('');
+    setYearTo('');
+    setReadingStatus('');
+    setStarred(false);
+    setAdvOpen(true);
+    setSelId(null);
+    if (patch.author) {
+      toast(tr(`已筛选作者：${patch.author}`, `Filtered by author: ${patch.author}`), 'info');
+    } else if (patch.affiliation) {
+      toast(tr(`已筛选机构：${patch.affiliation}`, `Filtered by affiliation: ${patch.affiliation}`), 'info');
+    }
+  }, []);
+  const filterByAuthor = useCallback((name: string) => applyAdvFilter({ author: name }), [applyAdvFilter]);
+  const filterByAffiliation = useCallback(
+    (name: string) => applyAdvFilter({ affiliation: name }),
+    [applyAdvFilter],
+  );
 
   useEffect(() => {
     setPage(1);
@@ -963,6 +988,8 @@ export function ResearchPage() {
                 onShelf={!semantic || selectedOnShelf}
                 onAdd={() => addMutation.mutate(selected.paper_id)}
                 addPending={addMutation.isPending && addMutation.variables === selected.paper_id}
+                onFilterAuthor={filterByAuthor}
+                onFilterAffiliation={filterByAffiliation}
               />
             ) : !semantic && shelfQuery.isSuccess && items.length === 0 && !hasServerFilter ? (
               /* 书架为空 → 右栏放引导 */

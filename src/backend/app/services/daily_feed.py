@@ -404,6 +404,7 @@ def _entry_item(entry: DailyFeedEntry, paper: Paper, likes: dict[str, Any]) -> d
         "announce_type": entry.announce_type,
         "title": paper.title,
         "authors": paper.authors or [],
+        "affiliations": paper.affiliations or [],
         "abstract": paper.abstract,
         "year": paper.year,
         "arxiv_id": paper.arxiv_id,
@@ -448,12 +449,19 @@ async def list_papers(
     q: str | None = None,
     announce: str | None = None,
     category: str | None = None,
+    author: str | None = None,
+    affiliation: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     stmt = select(DailyFeedEntry, Paper).join(Paper, Paper.id == DailyFeedEntry.paper_id)
     if date is not None:
         stmt = stmt.where(DailyFeedEntry.feed_date == date)
     if q:
         stmt = stmt.where(Paper.title.ilike(f"%{q.strip()}%"))
+    # 作者 / 机构：在 JSON 列上做文本包含匹配（同 services/papers.apply_paper_filters 口径）
+    if author:
+        stmt = stmt.where(cast(Paper.authors, String).ilike(f"%{author}%"))
+    if affiliation:
+        stmt = stmt.where(cast(Paper.affiliations, String).ilike(f"%{affiliation}%"))
     if announce in ("new", "cross"):
         stmt = stmt.where(DailyFeedEntry.announce_type == announce)
     if category:
@@ -487,11 +495,13 @@ async def semantic_search_daily(
     date: dt.date | None = None,
     category: str | None = None,
     announce: str | None = None,
+    author: str | None = None,
+    affiliation: str | None = None,
 ) -> list[tuple[DailyFeedEntry, Paper, float]]:
     """池内向量检索（pgvector 余弦；仅 postgres，调用方先判 semantic_search_supported）。
 
     只召回已有向量的池论文——池论文默认不建向量（管理员开关），所以结果可能不全，
-    调用方需要如实告知前端。筛选条件与关键词列表一致（日期/分类/公告类型）。
+    调用方需要如实告知前端。筛选条件与关键词列表一致（日期/分类/公告类型/作者/机构）。
     """
     where = ["p.embedding IS NOT NULL"]
     params: dict[str, Any] = {"qv": json.dumps(query_vector), "k": limit}
@@ -507,6 +517,12 @@ async def semantic_search_daily(
         )
         params["category"] = category
         params["category_like"] = f'%"{category}"%'
+    if author:
+        where.append("CAST(p.authors AS text) ILIKE :author_like")
+        params["author_like"] = f"%{author}%"
+    if affiliation:
+        where.append("CAST(p.affiliations AS text) ILIKE :affiliation_like")
+        params["affiliation_like"] = f"%{affiliation}%"
     rows = (
         await session.execute(
             text(

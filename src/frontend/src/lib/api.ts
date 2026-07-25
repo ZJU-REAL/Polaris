@@ -965,6 +965,8 @@ export interface ShelfItemRead {
   paper_id: string;
   title: string;
   authors: PaperAuthor[];
+  /** 发表机构（编译 wiki 时解析；可能为空，旧后端可能缺字段） */
+  affiliations?: string[];
   year: number | null;
   venue: string | null;
   arxiv_id: string | null;
@@ -2355,6 +2357,8 @@ export interface DailyPaperItem {
   announce_type: 'new' | 'cross';
   title: string;
   authors: PaperAuthor[];
+  /** 发表机构（池论文编译后才解析；未编译为空，旧后端可能缺字段） */
+  affiliations?: string[];
   abstract: string | null;
   year: number | null;
   arxiv_id: string | null;
@@ -3927,6 +3931,8 @@ export const api = {
       year_from?: number;
       year_to?: number;
       author?: string;
+      /** 机构：条目快照没有机构字段，后端按条目软引用的活体论文匹配（源论文已删的匹配不到） */
+      affiliation?: string;
       venue?: string;
     },
   ): Promise<LibraryListResult> {
@@ -3940,6 +3946,7 @@ export const api = {
     if (opts.year_from != null) params.set('year_from', String(opts.year_from));
     if (opts.year_to != null) params.set('year_to', String(opts.year_to));
     if (opts.author) params.set('author', opts.author);
+    if (opts.affiliation) params.set('affiliation', opts.affiliation);
     if (opts.venue) params.set('venue', opts.venue);
     return request<LibraryListResult>(`/me/library?${params.toString()}`);
   },
@@ -4026,6 +4033,10 @@ export const api = {
       announce?: 'new' | 'cross';
       /** 订阅分类筛选，如 cs.AI；不传=全部分类 */
       category?: string;
+      /** 作者姓名（详情里点作者带上来）；两种检索方式都生效 */
+      author?: string;
+      /** 发表机构（详情里点机构 chip 带上来）；只有编译过的池论文才有机构元数据 */
+      affiliation?: string;
       /** 检索方式：keyword=字面匹配，semantic=向量检索（只覆盖已生成向量的论文） */
       mode?: SearchMode;
     } = {},
@@ -4038,6 +4049,8 @@ export const api = {
     if (opts.q) params.set('q', opts.q);
     if (opts.announce) params.set('announce', opts.announce);
     if (opts.category) params.set('category', opts.category);
+    if (opts.author) params.set('author', opts.author);
+    if (opts.affiliation) params.set('affiliation', opts.affiliation);
     if (opts.mode) params.set('mode', opts.mode);
     const qs = params.toString();
     return request<DailyPage>(`/daily/papers${qs ? `?${qs}` : ''}`);

@@ -54,6 +54,8 @@ async def list_library(
     year_from: int | None = Query(default=None),
     year_to: int | None = Query(default=None),
     author: str | None = Query(default=None),
+    # 机构：快照里没有，按条目软引用的活体论文匹配（源论文已删的条目匹配不到）
+    affiliation: str | None = Query(default=None),
     venue: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
@@ -97,6 +99,7 @@ async def list_library(
         year_from=year_from,
         year_to=year_to,
         author=author,
+        affiliation=affiliation,
         venue=venue,
     )
     return LibraryPage(

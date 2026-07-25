@@ -69,6 +69,8 @@ async def list_papers(
     q: str | None = Query(default=None),
     announce: str | None = Query(default=None, pattern="^(new|cross)$"),
     category: str | None = Query(default=None, max_length=32),
+    author: str | None = Query(default=None, max_length=200),
+    affiliation: str | None = Query(default=None, max_length=200),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DailyPage:
@@ -77,6 +79,8 @@ async def list_papers(
     mode=semantic 且有 q 时走论文向量检索（结果按相关度排序、不分页）；数据库不是
     postgres 或 provider 不支持嵌入时回退关键词，响应里 mode_used 如实反映。
     池论文默认不建向量（管理员开关），语义结果可能不全，覆盖度见 vector_ready/total。
+    author/affiliation 是详情面板里点作者、点机构带上来的过滤（JSON 文本包含匹配），
+    两种检索方式都生效。
     """
     mode_used = "keyword"
     items: list[dict] = []
@@ -91,6 +95,8 @@ async def list_papers(
                 date=date,
                 category=category,
                 announce=announce,
+                author=author,
+                affiliation=affiliation,
             )
             mode_used = "semantic"
             entry_by_paper = {paper.id: entry for entry, paper, _ in rows}
@@ -119,6 +125,8 @@ async def list_papers(
             q=q,
             announce=announce,
             category=category,
+            author=author,
+            affiliation=affiliation,
         )
         return DailyPage(items=items, total=total, page=page, size=size, mode_used=mode_used)
     ready, ready_total = await daily_service.embedding_coverage(session)

@@ -9,6 +9,7 @@ import { api, type ShelfItemRead, type ShelfWikiSource } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { libraryPath, useLibraries } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
+import { AffiliationChips, AuthorLinks } from '../wiki/shared';
 
 /* ============================================================
    相关研究 · 右栏详情（与「我的文献库」LibraryDetailPane 同一版式）：
@@ -235,6 +236,8 @@ export function ShelfDetailPane({
   onShelf = true,
   onAdd,
   addPending = false,
+  onFilterAuthor,
+  onFilterAffiliation,
 }: {
   item: ShelfItemRead;
   notePending: boolean;
@@ -252,6 +255,10 @@ export function ShelfDetailPane({
   onShelf?: boolean;
   onAdd?: () => void;
   addPending?: boolean;
+  /** 点作者 → 按该作者过滤列表；不传则作者名不可点 */
+  onFilterAuthor?: (name: string) => void;
+  /** 点机构 chip → 按该机构过滤列表；不传则 chips 不可点 */
+  onFilterAffiliation?: (name: string) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -291,7 +298,8 @@ export function ShelfDetailPane({
     [navigate, item.source_library_id],
   );
 
-  const authors = item.authors.map((a) => a.name).join(', ');
+  // 机构：书架条目自带（后端从内容池论文取）；旧后端没这个字段时退回论文详情
+  const affiliations = item.affiliations ?? paper?.affiliations;
   const tldr = item.tldr ?? paper?.tldr ?? null;
   const abstract = paper?.abstract ?? null;
   const arxivUrl = item.arxiv_id ? `https://arxiv.org/abs/${item.arxiv_id}` : null;
@@ -318,11 +326,12 @@ export function ShelfDetailPane({
         )}
       </div>
 
-      {/* —— 标题 + 作者 —— */}
+      {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤书架） —— */}
       <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
         {item.title}
       </h1>
-      {authors && <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>{authors}</div>}
+      <AuthorLinks authors={item.authors} onFilter={onFilterAuthor} />
+      <AffiliationChips affiliations={affiliations} onFilter={onFilterAffiliation} />
 
       {/* —— 操作行 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>

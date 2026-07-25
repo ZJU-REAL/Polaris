@@ -10,6 +10,7 @@ import { api, type LibraryEntry, type PaperAuthor, type Publication } from '../.
 import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
+import { AffiliationChips, AuthorLinks } from '../wiki/shared';
 
 /* ============================================================
    我的文献库 · 右栏详情（三个 tab 共用）：
@@ -81,12 +82,18 @@ export function LibraryDetailPane({
   paperId,
   snapshot,
   entryId,
+  onFilterAuthor,
+  onFilterAffiliation,
 }: {
   /** 活体论文 id；null = 快照条目（论文已删，只展示快照元数据）。 */
   paperId: string | null;
   snapshot: DetailSnapshot;
   /** 收藏/浏览记录条目 id；提供后论文已删时可回退到条目的 wiki 快照（发表 tab 不传）。 */
   entryId?: string;
+  /** 点作者 → 按该作者过滤列表；不传则作者名不可点 */
+  onFilterAuthor?: (name: string) => void;
+  /** 点机构 chip → 按该机构过滤列表；不传则 chips 不可点 */
+  onFilterAffiliation?: (name: string) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -177,7 +184,9 @@ export function LibraryDetailPane({
   // 详情拉不到（比如论文刚被删）时退回快照展示
   const alive = paper !== undefined;
   const title = paper?.title ?? snapshot.title;
-  const authors = (paper?.authors ?? snapshot.authors).map((a) => a.name).join(', ');
+  const authors = paper?.authors ?? snapshot.authors;
+  // 机构只有活体论文有（个人库条目快照不存机构）；论文被删的条目这一行自然消失
+  const affiliations = paper?.affiliations;
   const year = paper?.year ?? snapshot.year;
   const venue = paper?.venue ?? snapshot.venue;
   const arxivId = paper?.arxiv_id ?? snapshot.arxivId;
@@ -213,13 +222,12 @@ export function LibraryDetailPane({
         )}
       </div>
 
-      {/* —— 标题 + 作者 —— */}
+      {/* —— 标题 + 作者 + 机构（都可点：点了按它过滤列表） —— */}
       <h1 style={{ fontSize: 20, fontWeight: 680, lineHeight: 1.3, margin: '0 0 6px', letterSpacing: '-0.01em' }}>
         {title}
       </h1>
-      {authors && (
-        <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>{authors}</div>
-      )}
+      <AuthorLinks authors={authors} onFilter={onFilterAuthor} />
+      <AffiliationChips affiliations={affiliations} onFilter={onFilterAffiliation} />
 
       {/* —— 操作：打开阅读页（仅活体论文）+ 外链 —— */}
       <div className="row gap8 wrap" style={{ marginTop: 14 }}>
