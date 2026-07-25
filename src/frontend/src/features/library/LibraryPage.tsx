@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
@@ -592,22 +591,8 @@ export function LibraryPage() {
       className="page fadeup page-fill"
       style={{ maxWidth: 1360, paddingBottom: 24 }}
     >
-      <PageHead
-        eyebrow="Polaris · My Library"
-        title={tr('我的文献库', 'My Library')}
-        dense
-        right={
-          onLibraryTab ? (
-            <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
-              <Icon name="plus" size={13} />
-              {tr('添加文献', 'Add paper')}
-            </button>
-          ) : undefined
-        }
-      />
-
-      {/* —— tab 行 —— */}
-      <div className="row" style={{ marginBottom: 14 }}>
+      {/* —— tab 行：操作并在同一行右侧，顶部不再单占一行 —— */}
+      <div className="row page-tabs" style={{ marginBottom: 14 }}>
         <Segmented<PageTab>
           options={[
             { v: 'saved', label: tr('我的收藏', 'Saved') },
@@ -646,6 +631,16 @@ export function LibraryPage() {
           value={tab}
           onChange={setTab}
         />
+        {onLibraryTab && (
+          <button
+            className="btn btn-primary sm"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => setAddOpen(true)}
+          >
+            <Icon name="plus" size={13} />
+            {tr('添加文献', 'Add paper')}
+          </button>
+        )}
       </div>
 
       {/* —— 卡片容器（同文献追踪的论文库外壳） —— */}

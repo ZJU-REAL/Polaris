@@ -405,10 +405,12 @@ export function WriterPage() {
               : tr('选择一个课题', 'Pick a topic')
         }
         right={
-          <button className="btn btn-primary" disabled={!pid} onClick={() => setModalOpen(true)}>
-            <Icon name="plus" size={14} />
-            {tr('新建论文草稿', 'New manuscript')}
-          </button>
+          pid ? undefined : (
+            <button className="btn btn-primary" disabled onClick={() => setModalOpen(true)}>
+              <Icon name="plus" size={14} />
+              {tr('新建论文草稿', 'New manuscript')}
+            </button>
+          )
         }
       />
 
@@ -422,6 +424,10 @@ export function WriterPage() {
               { v: 'trash', label: `${tr('回收站', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
             ]}
           />
+          <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={() => setModalOpen(true)}>
+            <Icon name="plus" size={13} />
+            {tr('新建论文草稿', 'New manuscript')}
+          </button>
           <button
             className={`btn sm ${multiSelect ? 'btn-primary' : 'btn-soft'}`}
             onClick={toggleMultiSelect}

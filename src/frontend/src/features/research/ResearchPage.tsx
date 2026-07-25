@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -725,22 +724,8 @@ export function ResearchPage() {
       className="page fadeup page-fill"
       style={{ maxWidth: 1360, paddingBottom: 24 }}
     >
-      <PageHead
-        eyebrow="Polaris · Related Work"
-        title={tr('相关研究', 'Related Work')}
-        dense
-        right={
-          tab === 'list' ? (
-            <button className="btn btn-primary sm" onClick={() => setAddOpen(true)}>
-              <Icon name="plus" size={13} />
-              {tr('添加文献', 'Add paper')}
-            </button>
-          ) : undefined
-        }
-      />
-
-      {/* —— 页面级 tab：书架列表 / 相关研究对话 —— */}
-      <div className="row" style={{ marginBottom: 14 }}>
+      {/* —— 页面级 tab：书架列表 / 相关研究对话；操作并在同一行右侧 —— */}
+      <div className="row page-tabs" style={{ marginBottom: 14 }}>
         <Segmented<PageTab>
           options={[
             { v: 'list', label: tr('相关研究', 'Related work') },
@@ -749,6 +734,16 @@ export function ResearchPage() {
           value={tab}
           onChange={setTab}
         />
+        {tab === 'list' && (
+          <button
+            className="btn btn-primary sm"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => setAddOpen(true)}
+          >
+            <Icon name="plus" size={13} />
+            {tr('添加文献', 'Add paper')}
+          </button>
+        )}
       </div>
 
       {/* —— 卡片容器（列表用双栏；对话直接铺满） —— */}

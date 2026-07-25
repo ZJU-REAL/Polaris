@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
@@ -459,19 +458,7 @@ export function LibrariesPage() {
 
   return (
     <div className="page fadeup" style={{ maxWidth: 1200 }}>
-      <PageHead
-        eyebrow={tr('实验室', 'Lab')}
-        title={tr('文献库', 'Libraries')}
-        right={
-          canCreate ? (
-            <button className="btn btn-primary sm" onClick={() => setCreateOpen(true)}>
-              <Icon name="plus" size={13} />
-              {tr('新建文献库', 'New library')}
-            </button>
-          ) : null
-        }
-      />
-
+      {/* —— 筛选行：操作并在同一行右侧 —— */}
       <div className="row gap12" style={{ margin: '0 0 16px', flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="row gap8" style={{ alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('归属', 'Type')}</span>
@@ -490,6 +477,16 @@ export function LibrariesPage() {
             wrapStyle={{ width: 140 }}
           />
         </div>
+        {canCreate && (
+          <button
+            className="btn btn-primary sm"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => setCreateOpen(true)}
+          >
+            <Icon name="plus" size={13} />
+            {tr('新建文献库', 'New library')}
+          </button>
+        )}
         {admin && sorted.length > 0 && (
           <button
             className={`btn sm ${selectMode ? 'btn-primary' : 'btn-soft'}`}

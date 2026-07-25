@@ -2,7 +2,6 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { EmptyState } from '../../components/ui/EmptyState';
 import {
   FigureEmbed,
@@ -756,24 +755,8 @@ export function DailyPage() {
       className="page fadeup page-fill"
       style={{ maxWidth: 1360, paddingBottom: 24 }}
     >
-      <PageHead
-        eyebrow="Polaris · Daily Papers"
-        title={tr('每日新论文', 'Daily Papers')}
-        right={
-          (categoriesQuery.data?.categories.length ?? 0) > 0 ? (
-            <div className="row gap6 wrap" style={{ justifyContent: 'flex-end', maxWidth: 420 }}>
-              <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{tr('订阅分类', 'Subscribed')}</span>
-              {categoriesQuery.data?.categories.map((c) => (
-                <span key={c} className="pill sm mono" style={{ background: 'var(--surface-3)' }}>
-                  {c}
-                </span>
-              ))}
-            </div>
-          ) : undefined
-        }
-      />
-
-      <div className="row" style={{ marginBottom: 14 }}>
+      {/* —— 标签行：订阅分类并在同一行右侧 —— */}
+      <div className="row page-tabs" style={{ marginBottom: 14 }}>
         <Segmented<DailyView>
           options={[
             { v: 'papers', label: tr('论文', 'Papers') },
@@ -782,6 +765,19 @@ export function DailyPage() {
           value={view}
           onChange={setView}
         />
+        {(categoriesQuery.data?.categories.length ?? 0) > 0 && (
+          <div
+            className="row gap6 wrap"
+            style={{ marginLeft: 'auto', justifyContent: 'flex-end', maxWidth: 420 }}
+          >
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{tr('订阅分类', 'Subscribed')}</span>
+            {categoriesQuery.data?.categories.map((c) => (
+              <span key={c} className="pill sm mono" style={{ background: 'var(--surface-3)' }}>
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div
