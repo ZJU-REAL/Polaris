@@ -153,6 +153,14 @@ void app.whenReady().then(async () => {
     `top=${geom.brandTop} left=${geom.brandLeft}`,
   );
 
+  // 顶部留白必须是拖拽区：内容盖住了系统标题栏，不声明就拖不动窗口。
+  // （主内容区顶栏的 .crumb/.spacer 同理，但那要登录后才存在，smoke 覆盖不到。）
+  const dragRegion = (await win.webContents.executeJavaScript(
+    `getComputedStyle(document.querySelector('.auth-page'), '::before')
+       .getPropertyValue('-webkit-app-region')`,
+  )) as string;
+  check('顶部留白是拖拽区', dragRegion.trim() === 'drag', `app-region=${dragRegion}`);
+
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
 

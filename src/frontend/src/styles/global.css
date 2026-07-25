@@ -31,6 +31,17 @@ html { zoom: 1.1; }
   height: var(--titlebar-h);
   -webkit-app-region: drag;
 }
+
+/* 主内容区顶栏同理：它横跨窗口顶部，不给拖拽区的话那片空白按不动窗口。
+
+   只挑面包屑与中间的弹性空白，**不整条 .topbar 设 drag**：
+   -webkit-app-region 会向下继承，而用户菜单/通知的下拉浮层就渲染在 .topbar
+   内部（见上面 z-index 那段注释），整条设 drag 会让点浮层里的条目变成拖窗口。
+   这两块本身没有任何可交互元素，正好是需要能拖的地方。 */
+:root[data-desktop-platform='darwin'] .topbar > .crumb,
+:root[data-desktop-platform='darwin'] .topbar > .spacer {
+  -webkit-app-region: drag;
+}
 body {
   font-family: var(--sans);
   color: var(--text);
