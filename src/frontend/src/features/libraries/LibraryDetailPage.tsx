@@ -66,7 +66,7 @@ export function LibraryDetailPage() {
   const canManage = lib.can_manage;
 
   return (
-    <div className="page fadeup" style={{ maxWidth: 1360, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}>
+    <div className="page fadeup page-fill" style={{ maxWidth: 1360, paddingBottom: 24 }}>
       <PageHead
         eyebrow={tr('实验室 · 文献库', 'Lab · Library')}
         title={`${tr('文献库', 'Library')} · ${lib.name}`}

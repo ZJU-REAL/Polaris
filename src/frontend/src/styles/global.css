@@ -249,6 +249,16 @@ input {
 .h-title { font-size: 26px; font-weight: 680; letter-spacing: -0.02em; margin: 6px 0 0; line-height: 1.15; }
 .h-sub { font-size: 14px; color: var(--text-2); margin: 8px 0 0; max-width: 720px; line-height: 1.55; }
 .h-sub .en { color: var(--text-3); font-size: 13px; }
+/* 页头右侧操作区（原为组件内联样式，挪到这里以便窄屏覆盖） */
+.page-head-actions { flex-shrink: 0; margin-left: 16px; }
+
+/* —— 整屏「列表 + 详情」页（相关研究 / 我的文献库 / 每日新论文 / 公共库浏览）——
+   页面与卡片撑满视口高度，滚动发生在 .split 内部的两块里。原本这两组样式在
+   4-5 个页面里各写了一份内联，改成共享类以便窄屏统一解除高度锁定。 */
+.page-fill { display: flex; flex-direction: column; height: 100%; }
+.split-card {
+  overflow: hidden; display: flex; flex-direction: column; flex: 1; min-height: 480px;
+}
 .section-h { font-size: 13px; font-weight: 650; color: var(--text); display: flex; align-items: center; gap: 9px; }
 .mono { font-family: var(--mono); }
 .muted { color: var(--text-3); }
@@ -1099,6 +1109,25 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   .segmented::-webkit-scrollbar { display: none; }
   .segmented > button { flex-shrink: 0; white-space: nowrap; }
 
+  /* 双栏堆叠后的高度分配：1024 档只是改方向，容器仍被锁成视口高度，再切给
+     上下两块。像「每日新论文」这种列表区自带搜索/筛选/分页（合计 245px 固定
+     高度）的页面，44vh 里只剩 127px 放论文——一行。
+     手机上改成自然流：整页滚动，列表保留自身滚动但给到 70vh，详情在下方
+     按内容完整展开（内层 flex:1 的滚动容器在无确定高度的父级下会塌成 0，
+     所以显式解除）。 */
+  .page-fill { display: block; height: auto; }
+  .split-card { flex: none; overflow: visible; min-height: 0; }
+  .split { display: block; }
+  .split .split-list { max-height: 70vh; }
+  .split-detail { display: block; }
+  .split-detail > * { flex: none; overflow: visible; }
+
+  /* 页头（全站 17 个页面共用）：右侧操作区不压缩、标题 flex-basis 为 0，
+     同排会把标题挤成窄条逐字换行。窄屏改成标题在上、操作区在下。 */
+  .page-head { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-head-actions { margin-left: 0; flex-wrap: wrap; }
+  .h-title { font-size: 22px; }
+
   /* 端到端流水线：6 张阶段卡横排放不下，折行会在行末留下指向空处的箭头、
      且两行卡片高度不齐。窄屏改 3 列网格（卡片自动等高）并隐藏箭头连接线。 */
   .pipeline-flow {
@@ -1128,6 +1157,10 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   .chat-shell .chat-history {
     position: absolute; top: 0; left: 0; bottom: 0; z-index: 6;
     box-shadow: 6px 0 22px rgba(10, 22, 44, 0.14);
+  }
+  /* 浮层遮罩：压在历史栏之下、对话区之上 */
+  .chat-history-scrim {
+    position: absolute; inset: 0; z-index: 5; background: rgba(10, 22, 44, 0.2);
   }
 
   /* 命令面板 / 弹窗贴边留白 */

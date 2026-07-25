@@ -522,8 +522,8 @@ export function DailyPage() {
 
   return (
     <div
-      className="page fadeup"
-      style={{ maxWidth: 1360, display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 24 }}
+      className="page fadeup page-fill"
+      style={{ maxWidth: 1360, paddingBottom: 24 }}
     >
       <PageHead
         eyebrow="Polaris · Daily Papers"
@@ -554,8 +554,7 @@ export function DailyPage() {
       </div>
 
       <div
-        className="card"
-        style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 480 }}
+        className="card split-card"
       >
         {view === 'chat' ? (
           /* ======== 池对话：就最近 7 天的每日新论文问答 ======== */

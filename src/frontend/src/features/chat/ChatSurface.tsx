@@ -5,6 +5,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { api, skillKindLabel, type ChatTurn } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { useIsMobile } from '../../lib/useBreakpoint';
 import { useChatHistory } from './useChatHistory';
 import { Composer } from './Composer';
 import { CONTEXT_KIND_META, type ChatMsg, type ContextKind, type ContextRef, type MentionTarget } from './types';
@@ -73,6 +74,13 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   const { activeMsgs, commit } = history;
   const [streaming, setStreaming] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(cfg.defaultDrawerOpen ?? true);
+  // 手机上历史栏是盖在对话区上的浮层（窄屏塞不下 210px 的并排列），默认收起，
+  // 否则它会一直挡着对话内容；展开仍由标题栏按钮控制。回到宽屏恢复原默认。
+  const isMobile = useIsMobile();
+  const defaultDrawerOpen = cfg.defaultDrawerOpen ?? true;
+  useEffect(() => {
+    setDrawerOpen(isMobile ? false : defaultDrawerOpen);
+  }, [isMobile, defaultDrawerOpen]);
   const stopRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 是否「贴着底部」：用户往上滚离底部后暂停自动跟随，滚回底部再恢复
@@ -208,13 +216,31 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
 
   return (
     <div className={'chat-shell' + (drawerOpen ? '' : ' drawer-collapsed')}>
+      {/* 手机上历史栏浮在对话区之上，点它之外的地方也能收起 */}
+      {isMobile && drawerOpen && (
+        <div className="chat-history-scrim" onClick={() => setDrawerOpen(false)} />
+      )}
       {/* —— 历史抽屉 —— */}
       <div className="chat-history">
         <div className="chat-history-head">
           <span className="mono">{tr('历史对话', 'History')}</span>
-          <button className="chat-new-btn" title={tr('新建对话', 'New chat')} onClick={history.create}>
-            <Icon name="plus" size={13} />
-          </button>
+          <div className="row gap6">
+            <button className="chat-new-btn" title={tr('新建对话', 'New chat')} onClick={history.create}>
+              <Icon name="plus" size={13} />
+            </button>
+            {/* 手机上历史栏是浮层，会盖住对话区左上角那个切换按钮，
+                所以关闭入口必须放在浮层自己身上，否则打开后收不回去 */}
+            {isMobile && (
+              <button
+                className="chat-new-btn"
+                title={tr('收起历史', 'Hide history')}
+                aria-label={tr('收起历史', 'Hide history')}
+                onClick={() => setDrawerOpen(false)}
+              >
+                <Icon name="x" size={13} />
+              </button>
+            )}
+          </div>
         </div>
         <div className="chat-history-list scroll">
           {history.conversations.length === 0 ? (

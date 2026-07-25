@@ -620,8 +620,7 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
       </div>
 
       <div
-        className="card"
-        style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 480 }}
+        className="card split-card"
       >
         {tab === 'papers' ? (
           <PapersPane
