@@ -56,6 +56,12 @@ PIPELINE_KINDS = frozenset(
 )
 TEMPLATE_KINDS = frozenset({"idea_proposal"})
 
+# ---- 任务层级：库任务归实验室，其余归课题 ----
+# 建库 / 增量更新是文献库自己的事，与课题无关（课题只是关联库来用语料），
+# 所以它们在实验室工作台看，不进课题的任务列表。按 kind 判而不是按
+# library_id：库化改造前建的存量任务只挂了课题，没有 library_id。
+LIBRARY_KINDS = frozenset({"wiki_bootstrap", "wiki_ingest"})
+
 
 def mode_for_kind(kind: str) -> str:
     if kind in PIPELINE_KINDS:

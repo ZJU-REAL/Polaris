@@ -352,11 +352,12 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
         assert library.ingest_state["watermark"]
         assert library.ingest_state["last_run"]["voyage_id"] == run_id
 
+        # ingest 活动流归库（任务也归库）：按 library_id 查，不再挂课题
         activity_kinds = {
             a.kind
             for a in (
                 await session.execute(
-                    select(Activity).where(Activity.project_id == uuid.UUID(project_id))
+                    select(Activity).where(Activity.library_id == library.id)
                 )
             ).scalars()
         }
@@ -951,7 +952,7 @@ async def test_standalone_library_ingest_forbidden_for_stranger(client, queue_st
 
 
 async def test_project_ingest_run_carries_library_id(client, queue_stub, wiki_mocks):
-    """隐式库不回归：课题触发的 ingest 现在既带 project_id 也带 library_id（同库解析一致）。"""
+    """课题触发的 ingest 也只挂库：建库归实验室，不进课题的任务列表。"""
     project_id, headers = await _setup_project(client)
     resp = await client.post(
         f"/api/projects/{project_id}/ingest",
@@ -960,8 +961,9 @@ async def test_project_ingest_run_carries_library_id(client, queue_stub, wiki_mo
     )
     assert resp.status_code == 201, resp.text
     voyage = resp.json()
-    assert voyage["project_id"] == project_id
     assert voyage["library_id"] is not None
+    # 库任务不写 project_id —— 写了会混进课题的任务列表
+    assert voyage["project_id"] is None
 
     async with get_sessionmaker()() as session:
         from app.services.libraries import get_library_for_project
@@ -970,4 +972,4 @@ async def test_project_ingest_run_carries_library_id(client, queue_stub, wiki_mo
         assert voyage["library_id"] == str(library.id)
         run = await session.get(VoyageRun, uuid.UUID(voyage["id"]))
         assert run.library_id == library.id
-        assert run.project_id == uuid.UUID(project_id)
+        assert run.project_id is None

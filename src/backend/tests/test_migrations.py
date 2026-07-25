@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b3d81f6c05a9"  # 历史库的起源课题成员补成策展人
-PREV_REVISION = "a7f4c2e91b83"  # 相关研究书架 + 我的文献库 回收站（软删）
+HEAD_REVISION = "c5e2a90d41f7"  # 库任务归实验室：回填 library_id、清 project_id
+PREV_REVISION = "b3d81f6c05a9"  # 历史库的起源课题成员补成策展人
 
 
 def _make_config(db_path: Path) -> Config:
@@ -250,16 +250,18 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 本分支新增：书架 / 个人库回收站（软删）
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
     assert "trashed_at" in columns["user_library_entries"]
-    # 本分支新增：策展人回填的备份表（downgrade 据此精确回滚）
+    # 本分支新增：两张回滚备份表（策展人回填 / 库任务脱离课题）
     assert "_pr3_backfilled_curators" in columns["_tables"]
+    assert "_c5e2a90d_voyage_topic" in columns["_tables"]
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（a7f4c2e91b83，回收站）。
-    # 该步只回退策展人回填（删回填的行 + 备份表），其余结构不动。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（b3d81f6c05a9，策展人回填）。
+    # 该步只回退库任务脱离课题（还原 project_id + 删备份表），其余结构不动。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    # 回填回退后备份表消失；上一版的回收站列仍在
-    assert "_pr3_backfilled_curators" not in columns["_tables"]
+    # 本迁移的备份表消失；上一版的备份表与回收站列都还在
+    assert "_c5e2a90d_voyage_topic" not in columns["_tables"]
+    assert "_pr3_backfilled_curators" in columns["_tables"]
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
     assert "trashed_at" in columns["user_library_entries"]
     assert "email_verification_codes" in columns["_tables"]
@@ -313,10 +315,11 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    # 回收站列与回填备份表在重新 upgrade 后回归
+    # 回收站列与两张备份表在重新 upgrade 后回归
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
     assert "trashed_at" in columns["user_library_entries"]
     assert "_pr3_backfilled_curators" in columns["_tables"]
+    assert "_c5e2a90d_voyage_topic" in columns["_tables"]
     assert "project_id" not in columns["paper_notes"]
     assert "project_id" not in columns["paper_highlights"]
     assert "models" in columns["llm_providers"]

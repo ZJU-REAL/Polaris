@@ -86,20 +86,6 @@ def derive_budget(knobs: IngestKnobs) -> dict[str, Any]:
     return {"max_tokens": int(knobs.max_papers) * _TOKENS_PER_PAPER}
 
 
-async def find_running_ingest(session: AsyncSession, project_id: uuid.UUID) -> VoyageRun | None:
-    stmt = (
-        select(VoyageRun)
-        .where(
-            VoyageRun.project_id == project_id,
-            VoyageRun.kind.in_(WIKI_KINDS),
-            VoyageRun.status.not_in(tuple(TERMINAL_STATUSES)),
-        )
-        .order_by(VoyageRun.created_at.desc())
-        .limit(1)
-    )
-    return (await session.execute(stmt)).scalar_one_or_none()
-
-
 async def find_running_ingest_for_library(
     session: AsyncSession, library_id: uuid.UUID
 ) -> VoyageRun | None:
@@ -128,8 +114,10 @@ async def create_ingest_voyage(
 ) -> VoyageRun:
     """建 ingest voyage（互斥检查 + 库预算检查 + Activity 落记录），由调用方入队 run_voyage。
 
-    P9a：任务直接挂 ``library``。有起源课题的隐式库同时带上 ``project`` 以兼容活动流/
-    鉴权；管理员创建的独立库不传 project（run.project_id / activity.project_id 为空）。
+    任务只挂 ``library``：建库 / 增量更新是文献库自己的事，课题只是关联库来用
+    语料。``project`` 仅用来取展示名（有起源课题时用课题名更好认），不写进
+    run.project_id —— 写了会让库任务混进课题的任务列表，鉴权走库级写权限、
+    活动流走 activity.library_id，都不需要它。
     """
     if await find_running_ingest_for_library(session, library.id) is not None:
         raise IngestConflictError(str(library.id))
@@ -146,7 +134,6 @@ async def create_ingest_voyage(
         if mode == "bootstrap"
         else f"文献调研增量更新：{target_name}"
     )
-    project_id = project.id if project is not None else None
     run = VoyageRun(
         kind=kind,
         goal=goal,
@@ -154,14 +141,12 @@ async def create_ingest_voyage(
         cursor=0,
         checkpoint={"params": {"mode": mode, "knobs": knobs.model_dump()}},
         budget=budget,
-        project_id=project_id,
         library_id=library.id,
         created_by=created_by,
     )
     session.add(run)
     session.add(
         Activity(
-            project_id=project_id,
             library_id=library.id,
             actor=f"user:{created_by}" if created_by else "system:cron",
             kind="ingest.started",
@@ -261,7 +246,10 @@ async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any
     # P8a：水位线/last_run 权威源在库（library.ingest_state）
     library = await get_library_for_project(session, project.id)
     state = (library.ingest_state if library else None) or {}
-    running = await find_running_ingest(session, project.id)
+    # 互斥以库为准：库任务不写 project_id，按课题查已经查不到在跑的任务
+    running = (
+        await find_running_ingest_for_library(session, library.id) if library else None
+    )
     return {
         "watermark": state.get("watermark"),
         "last_run": await _resolve_last_run(session, state),
@@ -305,7 +293,9 @@ async def find_due_daily_projects(session: AsyncSession) -> list[Project]:
         state = library.ingest_state or {}
         if definition.get("cadence") != "daily" or not state.get("watermark"):
             continue
-        if await find_running_ingest(session, project.id) is not None:
+        # 互斥以库为准（库任务不写 project_id）——按课题查会漏掉在跑的任务，
+        # cron 会重复启动
+        if await find_running_ingest_for_library(session, library.id) is not None:
             continue
         due.append(project)
     return due

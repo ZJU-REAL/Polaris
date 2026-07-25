@@ -3,13 +3,14 @@
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.library_direction import DirectionLibraryCurator, TopicSourceLibrary
 from app.models.project import ProjectMember
 from app.models.user import User
-from app.models.voyage import TERMINAL_STATUSES, VoyageRun
+from app.models.voyage import LIBRARY_KINDS, TERMINAL_STATUSES, VoyageRun
 from app.schemas.voyage import VoyageCreate
 
 
@@ -38,19 +39,44 @@ async def create_voyage(
     return run
 
 
-def _member_filter(stmt, user_id: uuid.UUID):
-    return stmt.join(ProjectMember, ProjectMember.project_id == VoyageRun.project_id).where(
-        ProjectMember.user_id == user_id
+def _visible_filter(stmt, user_id: uuid.UUID):
+    """可见任务 = 我所在课题的任务 ∪ 我够得着的库的任务（课题关联的库 ∪ 我策展的库）。
+
+    库任务不能只靠 project_id 判：独立库的任务 project_id 为空，按课题成员 join
+    会把它们整个漏掉——而独立库是常态（P9c 起建课题不再自动建库）。
+    """
+    my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+    my_libraries = select(TopicSourceLibrary.library_id).where(
+        TopicSourceLibrary.topic_id.in_(my_projects)
+    )
+    my_curated = select(DirectionLibraryCurator.library_id).where(
+        DirectionLibraryCurator.user_id == user_id
+    )
+    is_admin = select(User.id).where(User.id == user_id, User.role == "admin").exists()
+    return stmt.where(
+        or_(
+            VoyageRun.project_id.in_(my_projects),
+            VoyageRun.library_id.in_(my_libraries),
+            VoyageRun.library_id.in_(my_curated),
+            is_admin,
+        )
     )
 
 
 async def list_voyages(
     session: AsyncSession, *, user_id: uuid.UUID, project_id: uuid.UUID | None = None
 ) -> Sequence[VoyageRun]:
-    """列出用户所在项目的航程（可按项目过滤）。"""
-    stmt = _member_filter(select(VoyageRun), user_id).order_by(VoyageRun.created_at.desc())
+    """列出用户够得着的任务；``project_id`` 只取该课题自己的任务。
+
+    按课题过滤时排除库任务（建库 / 增量更新）：那是文献库自己的事，在实验室
+    工作台看。判据是 kind 而不是 library_id —— 库化改造前建的存量任务只挂了
+    课题，没有 library_id，按后者判会把它们当成课题任务漏出来。
+    """
+    stmt = _visible_filter(select(VoyageRun), user_id).order_by(VoyageRun.created_at.desc())
     if project_id is not None:
-        stmt = stmt.where(VoyageRun.project_id == project_id)
+        stmt = stmt.where(
+            VoyageRun.project_id == project_id, VoyageRun.kind.not_in(LIBRARY_KINDS)
+        )
     return (await session.execute(stmt)).scalars().all()
 
 
