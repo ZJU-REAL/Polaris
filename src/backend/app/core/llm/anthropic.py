@@ -24,7 +24,7 @@ class AnthropicProvider(LLMProvider):
         api_key: str,
         *,
         client: httpx.AsyncClient | None = None,
-        timeout: float = 120.0,
+        timeout: float = 300.0,
     ) -> None:
         self._api_key = api_key
         self._client = client or httpx.AsyncClient(timeout=timeout)

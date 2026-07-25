@@ -39,7 +39,7 @@ from app.services import crdt_rooms, manuscript_versions
 from app.services import manuscripts as manuscripts_service
 from app.services.citations import build_bibtex_for
 
-COMPILE_TIMEOUT_SECONDS = 120.0
+COMPILE_TIMEOUT_SECONDS = 300.0
 TECTONIC_BIN = "tectonic"
 LATEXMK_BIN = "latexmk"
 MAIN_TEX = "main.tex"
