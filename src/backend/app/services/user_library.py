@@ -1,4 +1,8 @@
-"""个人文献库：浏览记录 upsert、收藏、列表检索（用户级，方向无关）。"""
+"""个人文献库：浏览记录 upsert、收藏、列表检索、回收站（用户级，方向无关）。
+
+回收站 = trashed_at 软删：取消收藏 / 删除条目落 trashed_at，条目从所有 tab（含
+浏览记录）里消失，可召回（回到收藏）、可彻底删除、可清空。
+"""
 
 import json
 import uuid
@@ -15,7 +19,7 @@ from app.models.paper import Paper
 from app.services.dedup import dedup_key_for
 
 LIBRARY_SORTS = ("recent", "title", "visits", "year")
-LIBRARY_TABS = ("saved", "history")
+LIBRARY_TABS = ("saved", "history", "trash")
 
 
 def dedup_key_for_paper(paper: Paper) -> str:
@@ -81,6 +85,8 @@ async def record_visit(
             setattr(entry, field, value)
     entry.visit_count = (entry.visit_count or 0) + 1  # 未 flush 的新对象默认值尚未生效
     entry.last_visited_at = utcnow()
+    # 又打开了 = 又要看它：条目出回收站（否则新增的浏览在任何 tab 里都看不到）
+    entry.trashed_at = None
     await session.commit()
     await session.refresh(entry)
     return entry
@@ -102,11 +108,37 @@ async def save_paper(
 async def set_saved(
     session: AsyncSession, *, entry: UserLibraryEntry, saved: bool
 ) -> UserLibraryEntry:
+    """收藏 / 取消收藏。
+
+    取消收藏 = 移入回收站（trashed_at 置位），条目从所有 tab 里消失但可召回；
+    收藏（含从回收站召回）反过来清 trashed_at。saved_at 语义不变（只标收藏时间）。
+    """
     entry.saved = saved
     entry.saved_at = utcnow() if saved else None
+    entry.trashed_at = None if saved else utcnow()
     await session.commit()
     await session.refresh(entry)
     return entry
+
+
+async def purge_trash(session: AsyncSession, *, user_id: uuid.UUID) -> int:
+    """清空回收站：彻底删除本人全部软删条目，返回删除条数。"""
+    rows = (
+        (
+            await session.execute(
+                select(UserLibraryEntry).where(
+                    UserLibraryEntry.user_id == user_id,
+                    UserLibraryEntry.trashed_at.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for entry in rows:
+        await session.delete(entry)
+    await session.commit()
+    return len(rows)
 
 
 async def set_personal_wiki(
@@ -149,12 +181,13 @@ async def personal_paper_ids(
 ) -> list[uuid.UUID]:
     """个人库里能跳回活体论文的 paper_id 集合（last_paper_id 非空）。
 
-    tab="saved" 只取收藏条目；否则取全部有软引用的条目。按收藏时间→建条目时间
-    倒序（新→旧），对齐 shelf_paper_ids 形态，供个人库对话按论文集合检索用。
+    tab="saved" 只取收藏条目；否则取全部有软引用的条目（回收站里的一律不算）。按收藏
+    时间→建条目时间倒序（新→旧），对齐 shelf_paper_ids 形态，供个人库对话按论文集合检索用。
     """
     stmt = select(UserLibraryEntry.last_paper_id).where(
         UserLibraryEntry.user_id == user_id,
         UserLibraryEntry.last_paper_id.is_not(None),
+        UserLibraryEntry.trashed_at.is_(None),
     )
     if tab == "saved":
         stmt = stmt.where(UserLibraryEntry.saved.is_(True))
@@ -209,15 +242,23 @@ async def purge_entry(session: AsyncSession, *, entry: UserLibraryEntry) -> None
 
 
 async def clear_history(session: AsyncSession, *, user_id: uuid.UUID) -> None:
-    """清空浏览记录：未收藏条目删除，已收藏条目保留但清零访问统计。"""
+    """清空浏览记录：未收藏条目删除，已收藏条目保留但清零访问统计。
+
+    回收站里的条目一律不动——它们已经不在浏览记录里，清历史不该顺手清空回收站。
+    """
     await session.execute(
         delete(UserLibraryEntry).where(
-            UserLibraryEntry.user_id == user_id, UserLibraryEntry.saved.is_(False)
+            UserLibraryEntry.user_id == user_id,
+            UserLibraryEntry.saved.is_(False),
+            UserLibraryEntry.trashed_at.is_(None),
         )
     )
     await session.execute(
         update(UserLibraryEntry)
-        .where(UserLibraryEntry.user_id == user_id)
+        .where(
+            UserLibraryEntry.user_id == user_id,
+            UserLibraryEntry.trashed_at.is_(None),
+        )
         .values(visit_count=0, last_visited_at=None)
     )
     await session.commit()
@@ -239,10 +280,17 @@ async def list_entries(
     venue: str | None = None,
 ) -> tuple[list[UserLibraryEntry], int]:
     stmt = select(UserLibraryEntry).where(UserLibraryEntry.user_id == user_id)
-    if tab == "saved":
-        stmt = stmt.where(UserLibraryEntry.saved.is_(True))
+    # 回收站条目只出现在 trash tab；收藏 / 浏览记录都不含（否则删掉的会从浏览记录漏回来）
+    if tab == "trash":
+        stmt = stmt.where(UserLibraryEntry.trashed_at.is_not(None))
+    elif tab == "saved":
+        stmt = stmt.where(
+            UserLibraryEntry.saved.is_(True), UserLibraryEntry.trashed_at.is_(None)
+        )
     else:  # history：看过的条目（收藏但从未打开过的不算浏览记录）
-        stmt = stmt.where(UserLibraryEntry.visit_count > 0)
+        stmt = stmt.where(
+            UserLibraryEntry.visit_count > 0, UserLibraryEntry.trashed_at.is_(None)
+        )
     if q:
         pattern = f"%{q}%"
         stmt = stmt.where(
@@ -271,7 +319,9 @@ async def list_entries(
         stmt = stmt.where(UserLibraryEntry.year.isnot(None), UserLibraryEntry.year >= year_from)
     if year_to is not None:
         stmt = stmt.where(UserLibraryEntry.year.isnot(None), UserLibraryEntry.year <= year_to)
-    if sort == "title":
+    if tab == "trash":  # 回收站固定按移入时间倒序（最近删的在前）
+        stmt = stmt.order_by(UserLibraryEntry.trashed_at.desc())
+    elif sort == "title":
         stmt = stmt.order_by(UserLibraryEntry.title.asc())
     elif sort == "visits":
         stmt = stmt.order_by(

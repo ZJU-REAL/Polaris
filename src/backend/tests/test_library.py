@@ -64,18 +64,22 @@ async def test_save_unsave_and_state(client):
     resp = await client.get("/api/me/library?tab=history", headers=headers)
     assert resp.json()["total"] == 0
 
-    # 取消收藏：条目保留（浏览过后进浏览记录）
+    # 取消收藏：条目进回收站（收藏与浏览记录都看不到，回收站里能看到）
     await client.post("/api/me/library/visits", json={"paper_id": paper_id}, headers=headers)
     resp = await client.delete(f"/api/me/library/{entry_id}?mode=unsave", headers=headers)
     assert resp.status_code == 204
     resp = await client.get("/api/me/library?tab=saved", headers=headers)
     assert resp.json()["total"] == 0
     resp = await client.get("/api/me/library?tab=history", headers=headers)
+    assert resp.json()["total"] == 0
+    resp = await client.get("/api/me/library?tab=trash", headers=headers)
     assert resp.json()["total"] == 1
 
     # 彻底删除
     resp = await client.delete(f"/api/me/library/{entry_id}?mode=purge", headers=headers)
     assert resp.status_code == 204
+    resp = await client.get("/api/me/library?tab=trash", headers=headers)
+    assert resp.json()["total"] == 0
     resp = await client.get("/api/me/library?tab=history", headers=headers)
     assert resp.json()["total"] == 0
 

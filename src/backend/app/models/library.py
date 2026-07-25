@@ -16,7 +16,8 @@ class UserLibraryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     papers 表按方向隔离且随方向级联删除，所以这里存元数据快照而非仅外键；
     last_paper_id 只是「跳回活体论文」的软引用（SET NULL）。
-    saved=false 的条目是纯浏览记录；收藏即置位 saved，取消收藏不删行。
+    saved=false 且未软删的条目是纯浏览记录；收藏即置位 saved，取消收藏不删行——
+    落 trashed_at 进回收站（可召回 / 彻底删除 / 清空）。
     """
 
     __tablename__ = "user_library_entries"
@@ -40,6 +41,9 @@ class UserLibraryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     wiki_content: Mapped[str | None] = mapped_column(Text)
     saved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 回收站：取消收藏 / 删除条目 = 软删（trashed_at 置位），可召回、可彻底删除、可清空。
+    # 软删条目不出现在任何 tab（含浏览记录），也不算「论文仍被引用」。
+    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     note: Mapped[str | None] = mapped_column(Text)
     visit_count: Mapped[int] = mapped_column(default=0, nullable=False)
     last_visited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -28,6 +28,8 @@ class ShelfItemRead(BaseModel):
     snapshot_at: datetime | None
     source_library_id: uuid.UUID | None
     added_at: datetime
+    # 非空 = 已移出书架、在课题回收站里（可召回 / 彻底删除）
+    trashed_at: datetime | None = None
     # 个人补充入架时启动的后台补全任务 id（下载/抽取/向量化）；无需补全时为 null。
     task_id: str | None = None
 

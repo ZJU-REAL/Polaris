@@ -6,6 +6,9 @@
   快照（P5b 三层解析；个人版 = 请求者本人 user_library_entries.wiki_content）；
 - 入架必入个人库（user_library_entries，saved=true，共享同一次快照写入）；
   移出书架不动个人库。
+
+移出书架是软删（trashed_at）：进课题回收站，可召回 / 彻底删除 / 清空。唯一键
+(topic_id, paper_id) 覆盖软删行，所以再次入架走「复活」而不是插新行。
 """
 
 import uuid
@@ -110,15 +113,25 @@ def _item_dict(
         "snapshot_at": row.snapshot_at,
         "source_library_id": row.source_library_id,
         "added_at": row.created_at,
+        "trashed_at": row.trashed_at,
     }
 
 
 async def _get_row(
-    session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    trashed: bool | None = False,
 ) -> TopicPaper | None:
+    """取书架行：trashed=False 只取在架的、True 只取回收站里的、None 两者都取。"""
     stmt = select(TopicPaper).where(
         TopicPaper.topic_id == project_id, TopicPaper.paper_id == paper_id
     )
+    if trashed is True:
+        stmt = stmt.where(TopicPaper.trashed_at.is_not(None))
+    elif trashed is False:
+        stmt = stmt.where(TopicPaper.trashed_at.is_(None))
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
@@ -151,6 +164,7 @@ async def list_shelf(
     reading_status: str | None = None,
     starred: bool | None = None,
     sort: str = "added",
+    trashed: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     """分页列书架，每条带解析后的 wiki 内容与来源状态。
 
@@ -158,11 +172,14 @@ async def list_shelf(
     q/author/affiliation/starred/reading_status 复用 :func:`apply_paper_filters`
     （只作用于内容池 Paper / 个人视角 PaperUserMeta，不触碰方向库）；
     year 范围就地作用于 ``Paper.year``。sort：added（默认，最新入架在前）/
-    year / relevance / title。"""
+    year / relevance / title。trashed=True 列回收站（固定按移出时间倒序）。"""
     base = (
         select(TopicPaper, Paper)
         .join(Paper, Paper.id == TopicPaper.paper_id)
-        .where(TopicPaper.topic_id == project_id)
+        .where(
+            TopicPaper.topic_id == project_id,
+            TopicPaper.trashed_at.is_not(None) if trashed else TopicPaper.trashed_at.is_(None),
+        )
     )
     # 复用论文库过滤器：传 None 的库相关参数（status/created_*）不会引用/join 方向库，
     # 故过滤只作用于 Paper 本体与请求者个人视角（PaperUserMeta），书架保持方向无关。
@@ -200,6 +217,8 @@ async def list_shelf(
         order = (relevance_sub.desc().nulls_last(), TopicPaper.created_at.desc())
     else:  # added（默认，最新入架在前）
         order = (TopicPaper.created_at.desc(),)
+    if trashed:  # 回收站只按移出时间倒序（最近移出在前）
+        order = (TopicPaper.trashed_at.desc(),)
 
     rows = (
         await session.execute(
@@ -226,13 +245,28 @@ async def list_shelf(
 
 
 async def shelf_paper_ids(session: AsyncSession, *, project_id: uuid.UUID) -> list[uuid.UUID]:
-    """书架全部 paper_id（前端标记「已入架」勾选态用）。"""
+    """在架的全部 paper_id（前端标记「已入架」勾选态用；回收站里的不算）。"""
     stmt = (
         select(TopicPaper.paper_id)
-        .where(TopicPaper.topic_id == project_id)
+        .where(TopicPaper.topic_id == project_id, TopicPaper.trashed_at.is_(None))
         .order_by(TopicPaper.created_at.desc())
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def _snapshot_source(
+    session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID
+) -> tuple[str | None, uuid.UUID | None]:
+    """入架瞬间可得的 (库版 wiki, 来源库 id)。
+
+    来源库溯源：本课题隐式库优先，其次提供快照 wiki 的库，再其次任一库；都没有 = 个人补充。
+    """
+    wiki_rows = await _wiki_rows_for(session, [paper_id])
+    live_wiki = _pick_live_wiki(wiki_rows, project_id)
+    own = next((r for r in wiki_rows if r.project_id == project_id), None)
+    with_wiki = next((r for r in wiki_rows if r.wiki_content), None)
+    source = own or with_wiki or (wiki_rows[0] if wiki_rows else None)
+    return live_wiki, source.library_id if source is not None else None
 
 
 async def add_to_shelf(
@@ -245,34 +279,45 @@ async def add_to_shelf(
 ) -> dict[str, Any]:
     """入架：落 wiki 快照 + 同步 upsert 个人库（saved，共享同一次快照）。
 
-    重复入架幂等：只更新 note（快照保持首次入架时的版本）。
+    重复入架幂等：只更新 note（快照保持首次入架时的版本）。曾被移出（回收站里）的
+    论文再次入架 = **复活那一行**——唯一键 (topic_id, paper_id) 覆盖软删行，插新行会撞键；
+    复活时清空回收站标记并按当下重取来源库 / 快照，等同一次全新入架。
     """
     paper = await session.get(Paper, paper_id)
     if paper is None:
         raise PaperNotFoundError(str(paper_id))
-    row = await _get_row(session, project_id=project_id, paper_id=paper_id)
-    if row is not None:
+    row = await _get_row(session, project_id=project_id, paper_id=paper_id, trashed=None)
+    if row is not None and row.trashed_at is None:
         if note is not None:
             row.note = note
         await session.commit()
         return await _item_of(session, row, paper, project_id, user_id)
 
-    wiki_rows = await _wiki_rows_for(session, [paper_id])
-    live_wiki = _pick_live_wiki(wiki_rows, project_id)
-    # 来源库溯源：本课题隐式库优先，其次提供快照 wiki 的库，再其次任一库；都没有 = 个人补充
-    own = next((r for r in wiki_rows if r.project_id == project_id), None)
-    with_wiki = next((r for r in wiki_rows if r.wiki_content), None)
-    source = own or with_wiki or (wiki_rows[0] if wiki_rows else None)
-    row = TopicPaper(
-        topic_id=project_id,
-        paper_id=paper_id,
-        source_library_id=source.library_id if source is not None else None,
-        wiki_snapshot=live_wiki,
-        snapshot_at=utcnow() if live_wiki is not None else None,
-        note=note,
-        added_by=user_id,
+    live_wiki, source_library_id = await _snapshot_source(
+        session, project_id=project_id, paper_id=paper_id
     )
-    session.add(row)
+    if row is not None:  # 回收站里的旧行复活
+        row.trashed_at = None
+        row.trashed_by = None
+        row.added_by = row.added_by or user_id
+        # 来源库按当下重取；论文已不在任何库时保留旧溯源（比抹成空更有信息量）
+        row.source_library_id = source_library_id or row.source_library_id
+        if live_wiki is not None:
+            row.wiki_snapshot = live_wiki
+            row.snapshot_at = utcnow()
+        if note is not None:
+            row.note = note
+    else:
+        row = TopicPaper(
+            topic_id=project_id,
+            paper_id=paper_id,
+            source_library_id=source_library_id,
+            wiki_snapshot=live_wiki,
+            snapshot_at=utcnow() if live_wiki is not None else None,
+            note=note,
+            added_by=user_id,
+        )
+        session.add(row)
     await session.flush()
     # 入架必入个人库（书架是个人库的课题投影）；save_paper 内部 commit 一并落书架行
     await user_library.save_paper(
@@ -326,14 +371,64 @@ async def refresh_snapshot(
 
 
 async def remove_from_shelf(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+) -> None:
+    """移出书架 = 软删（进课题回收站）；个人库条目与内容池行都不动。"""
+    row = await _get_row(session, project_id=project_id, paper_id=paper_id)
+    if row is None:
+        raise ShelfItemNotFoundError(str(paper_id))
+    row.trashed_at = utcnow()
+    row.trashed_by = user_id
+    await session.commit()
+
+
+async def restore_from_shelf(
+    session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID, user_id: uuid.UUID
+) -> dict[str, Any]:
+    """从回收站召回：清空回收站标记，条目原样回到书架（快照 / 备注都不动）。"""
+    row = await _get_row(session, project_id=project_id, paper_id=paper_id, trashed=True)
+    if row is None:
+        raise ShelfItemNotFoundError(str(paper_id))
+    row.trashed_at = None
+    row.trashed_by = None
+    await session.commit()
+    paper = await session.get(Paper, paper_id)
+    assert paper is not None  # 书架行外键保证
+    return await _item_of(session, row, paper, project_id, user_id)
+
+
+async def purge_from_shelf(
     session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID
 ) -> None:
-    """移出书架：只删书架行；个人库条目与内容池行都不动。"""
-    row = await _get_row(session, project_id=project_id, paper_id=paper_id)
+    """彻底删除一条书架行（在架的也可一步删净）；个人库条目与内容池行都不动。"""
+    row = await _get_row(session, project_id=project_id, paper_id=paper_id, trashed=None)
     if row is None:
         raise ShelfItemNotFoundError(str(paper_id))
     await session.delete(row)
     await session.commit()
+
+
+async def empty_shelf_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
+    """清空课题回收站：彻底删除该课题全部软删书架行，返回删除条数。"""
+    rows = (
+        (
+            await session.execute(
+                select(TopicPaper).where(
+                    TopicPaper.topic_id == project_id, TopicPaper.trashed_at.is_not(None)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        await session.delete(row)
+    await session.commit()
+    return len(rows)
 
 
 class ShelfImportResult(NamedTuple):

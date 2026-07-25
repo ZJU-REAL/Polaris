@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "49ddb68e7cf2"  # email_verification_codes 邮箱验证码表
-PREV_REVISION = "f2d34705e152"  # 每日新论文池（Daily Paper）
+HEAD_REVISION = "a7f4c2e91b83"  # 相关研究书架 + 我的文献库 回收站（软删）
+PREV_REVISION = "49ddb68e7cf2"  # email_verification_codes 邮箱验证码表
 
 
 def _make_config(db_path: Path) -> Config:
@@ -247,14 +247,20 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 本分支新增：课题 × 文献库关联表（P7 Step 1）
     assert "topic_source_libraries" in columns["_tables"]
     assert columns["topic_source_libraries"] == {"topic_id", "library_id", "created_at"}
+    # 本分支新增：书架 / 个人库回收站（软删）
+    assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
+    assert "trashed_at" in columns["user_library_entries"]
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（f2d34705e152，每日新论文池）。
-    # 该步只回退本迁移（删 email_verification_codes 表），其余结构不动。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（49ddb68e7cf2，邮箱验证码表）。
+    # 该步只回退本迁移（删两张表的回收站列），其余结构不动。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    # 本迁移回退后验证码表消失；更早的 is_public / users.settings / P9e statement 都还在
-    assert "email_verification_codes" not in columns["_tables"]
+    # 本迁移回退后回收站列消失；更早的验证码表 / is_public / users.settings 都还在
+    assert "trashed_at" not in columns["topic_papers"]
+    assert "trashed_by" not in columns["topic_papers"]
+    assert "trashed_at" not in columns["user_library_entries"]
+    assert "email_verification_codes" in columns["_tables"]
     assert "is_public" in columns["direction_libraries"]
     assert "settings" in columns["users"]
     assert "statement" in columns["projects"]
@@ -305,6 +311,9 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    # 回收站列在重新 upgrade 后回归
+    assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
+    assert "trashed_at" in columns["user_library_entries"]
     assert "project_id" not in columns["paper_notes"]
     assert "project_id" not in columns["paper_highlights"]
     assert "models" in columns["llm_providers"]

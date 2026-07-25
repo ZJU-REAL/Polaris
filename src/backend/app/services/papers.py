@@ -373,7 +373,11 @@ async def _pool_paper_view(
     stmt = (
         select(TopicPaper.topic_id)
         .join(ProjectMember, ProjectMember.project_id == TopicPaper.topic_id)
-        .where(TopicPaper.paper_id == paper_id, ProjectMember.user_id == user_id)
+        .where(
+            TopicPaper.paper_id == paper_id,
+            TopicPaper.trashed_at.is_(None),  # 回收站里的书架行不再是可达链路
+            ProjectMember.user_id == user_id,
+        )
         .order_by(TopicPaper.created_at)
         .limit(1)
     )
@@ -622,14 +626,18 @@ async def _delete_membership_rows(
 async def _paper_still_referenced(session: AsyncSession, paper: Paper) -> bool:
     """论文是否仍被任一「集合」引用——是则保留内容池本体。
 
-    集合 = 方向库成员 / 课题书架 / 个人文献库(仅 saved 收藏) / 每日推送 / 论著引用。个人库
-    既看软引用 last_paper_id，也看 dedup_key（论文曾被删过重加时软引用可能已断）；但只算
-    saved=True 的真收藏——saved=False 是纯浏览记录，不该让被删论文靠"看过一次"续命。派生
-    数据（笔记/划线/分块向量/个人元数据/标签关联/图片记录）不算集合，随本体级联清理。
+    集合 = 方向库成员 / 课题书架 / 个人文献库(仅 saved 收藏) / 每日推送 / 论著引用。书架与
+    个人库都只算「在架/在收藏」的行：回收站里的书架行（trashed_at 非空）不该让被删论文
+    续命。个人库既看软引用 last_paper_id，也看 dedup_key（论文曾被删过重加时软引用可能已
+    断）；但只算 saved=True 的真收藏——saved=False 是纯浏览记录（含回收站条目），不该让被
+    删论文靠"看过一次"续命。派生数据（笔记/划线/分块向量/个人元数据/标签关联/图片记录）
+    不算集合，随本体级联清理。
     """
     checks = (
         select(LibraryPaper.id).where(LibraryPaper.paper_id == paper.id),
-        select(TopicPaper.id).where(TopicPaper.paper_id == paper.id),
+        select(TopicPaper.id).where(
+            TopicPaper.paper_id == paper.id, TopicPaper.trashed_at.is_(None)
+        ),
         select(DailyFeedEntry.id).where(DailyFeedEntry.paper_id == paper.id),
         select(UserPublication.id).where(UserPublication.paper_id == paper.id),
         select(UserLibraryEntry.id).where(

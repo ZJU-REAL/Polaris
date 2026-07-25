@@ -47,7 +47,7 @@ async def _get_own_entry(session: AsyncSession, entry_id: uuid.UUID, user: User)
 
 @router.get("/me/library", response_model=LibraryPage)
 async def list_library(
-    tab: str = Query(default="history", pattern="^(saved|history)$"),
+    tab: str = Query(default="history", pattern="^(saved|history|trash)$"),
     q: str | None = Query(default=None),
     mode: str = Query(default="keyword", pattern="^(keyword|semantic)$"),
     sort: str = Query(default="recent", pattern="^(recent|title|visits|year)$"),
@@ -111,7 +111,7 @@ async def list_library(
     )
 
 
-# 注意：/visits 与 /state 必须注册在 /{entry_id} 之前，避免被路径参数抢占
+# 注意：/visits、/state、/trash/empty 必须注册在 /{entry_id} 之前，避免被路径参数抢占
 
 
 @router.post(
@@ -135,6 +135,16 @@ async def clear_history(
 ) -> None:
     """清空浏览记录：未收藏条目删除，已收藏条目保留但清零访问统计。"""
     await library_service.clear_history(session, user_id=user.id)
+
+
+@router.post("/me/library/trash/empty")
+async def empty_library_trash(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, int]:
+    """清空回收站：彻底删除本人全部已删除的条目，返回 {deleted}。"""
+    deleted = await library_service.purge_trash(session, user_id=user.id)
+    return {"deleted": deleted}
 
 
 @router.get("/me/library/state", response_model=LibraryStateRead)
@@ -213,6 +223,18 @@ async def get_entry_detail(
     return LibraryEntryDetail.model_validate(entry)
 
 
+@router.post("/me/library/{entry_id}/restore", response_model=LibraryEntryRead)
+async def restore_entry(
+    entry_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LibraryEntryRead:
+    """从回收站召回：出回收站并回到收藏（与「收藏一条已有条目」同一条路径）。"""
+    entry = await _get_own_entry(session, entry_id, user)
+    entry = await library_service.set_saved(session, entry=entry, saved=True)
+    return LibraryEntryRead.model_validate(entry)
+
+
 @router.patch("/me/library/{entry_id}", response_model=LibraryEntryRead)
 async def update_entry(
     entry_id: uuid.UUID,
@@ -234,7 +256,7 @@ async def remove_entry(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    """unsave=取消收藏（浏览记录保留）；purge=彻底删除该条目。"""
+    """unsave=取消收藏（条目移入回收站，可召回）；purge=彻底删除该条目。"""
     entry = await _get_own_entry(session, entry_id, user)
     if mode == "purge":
         await library_service.purge_entry(session, entry=entry)

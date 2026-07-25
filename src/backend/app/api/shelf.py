@@ -2,7 +2,8 @@
 
 成员鉴权与现有 projects 一致（非成员一律 404）。业务规则在
 services/topic_shelf.py：入架落 wiki 快照 + 同步 upsert 个人库；
-移出只删书架行；个人补充入库不建方向库成员行。
+移出只动书架行（软删进回收站，可召回 / 彻底删除 / 清空）；
+个人补充入库不建方向库成员行。
 """
 
 import uuid
@@ -50,6 +51,7 @@ async def list_shelf(
     reading_status: str | None = Query(default=None, pattern="^(unread|reading|read)$"),
     starred: bool | None = Query(default=None),
     sort: str = Query(default="added", pattern="^(added|year|relevance|title)$"),
+    trashed: bool = Query(default=False, description="true=列回收站（已移出的条目）"),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ShelfPage:
@@ -68,6 +70,7 @@ async def list_shelf(
         reading_status=reading_status,
         starred=starred,
         sort=sort,
+        trashed=trashed,
     )
     return ShelfPage(
         items=[ShelfItemRead.model_validate(i) for i in items],
@@ -86,6 +89,18 @@ async def list_shelf_ids(
     await _require_member(session, project_id, user)
     ids = await shelf_service.shelf_paper_ids(session, project_id=project_id)
     return ShelfIdsRead(paper_ids=ids)
+
+
+@router.post("/projects/{project_id}/shelf/trash/empty")
+async def empty_shelf_trash(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, int]:
+    """清空回收站：彻底删除本课题书架上全部已移出的条目，返回 {deleted}。"""
+    await _require_member(session, project_id, user)
+    deleted = await shelf_service.empty_shelf_trash(session, project_id=project_id)
+    return {"deleted": deleted}
 
 
 @router.post(
@@ -196,20 +211,44 @@ async def refresh_shelf_snapshot(
     return ShelfItemRead.model_validate(item)
 
 
+@router.post("/projects/{project_id}/shelf/{paper_id}/restore", response_model=ShelfItemRead)
+async def restore_to_shelf(
+    project_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ShelfItemRead:
+    """从回收站召回：条目原样回到书架（不在回收站里 → 404）。"""
+    await _require_member(session, project_id, user)
+    try:
+        item = await shelf_service.restore_from_shelf(
+            session, project_id=project_id, paper_id=paper_id, user_id=user.id
+        )
+    except shelf_service.ShelfItemNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SHELF_ITEM_NOT_FOUND") from None
+    return ShelfItemRead.model_validate(item)
+
+
 @router.delete(
     "/projects/{project_id}/shelf/{paper_id}", status_code=status.HTTP_204_NO_CONTENT
 )
 async def remove_from_shelf(
     project_id: uuid.UUID,
     paper_id: uuid.UUID,
+    hard: bool = Query(default=False, description="true=彻底删除（不进回收站）"),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    """移出书架：只删书架行，个人库条目不动。"""
+    """移出书架：默认软删进回收站（可召回），hard=true 彻底删除；个人库条目都不动。"""
     await _require_member(session, project_id, user)
     try:
-        await shelf_service.remove_from_shelf(
-            session, project_id=project_id, paper_id=paper_id
-        )
+        if hard:
+            await shelf_service.purge_from_shelf(
+                session, project_id=project_id, paper_id=paper_id
+            )
+        else:
+            await shelf_service.remove_from_shelf(
+                session, project_id=project_id, paper_id=paper_id, user_id=user.id
+            )
     except shelf_service.ShelfItemNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SHELF_ITEM_NOT_FOUND") from None

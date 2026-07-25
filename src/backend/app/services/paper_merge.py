@@ -158,6 +158,10 @@ async def merge_papers(
             existing.snapshot_at = row.snapshot_at
         if not existing.note and row.note:
             existing.note = row.note
+        # 一边在架一边在回收站 → 合并后在架（别让合并把还在书架上的条目变没）
+        if existing.trashed_at is not None and row.trashed_at is None:
+            existing.trashed_at = None
+            existing.trashed_by = None
         await session.delete(row)
         shelf_merged += 1
     report["topic_papers"] = {"repointed": shelf_repointed, "merged": shelf_merged}

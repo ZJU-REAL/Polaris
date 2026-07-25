@@ -756,7 +756,9 @@ async def entry_collections(
     topic_ids = (
         (
             await session.execute(
-                select(TopicPaper.topic_id).where(TopicPaper.paper_id == entry.paper_id)
+                select(TopicPaper.topic_id).where(
+                    TopicPaper.paper_id == entry.paper_id, TopicPaper.trashed_at.is_(None)
+                )
             )
         )
         .scalars()
@@ -859,7 +861,10 @@ async def collect_papers(
             existing = (
                 await session.execute(
                     select(TopicPaper.id).where(
-                        TopicPaper.topic_id == topic_id, TopicPaper.paper_id == paper.id
+                        TopicPaper.topic_id == topic_id,
+                        TopicPaper.paper_id == paper.id,
+                        # 回收站里的旧行不算「已入架」：add_to_shelf 会把它复活
+                        TopicPaper.trashed_at.is_(None),
                     )
                 )
             ).scalar_one_or_none()

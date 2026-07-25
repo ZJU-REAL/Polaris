@@ -22,6 +22,8 @@ class LibraryEntryRead(BaseModel):
     tldr: str | None
     saved: bool
     saved_at: datetime | None
+    # 非空 = 在回收站里（可召回 / 彻底删除）；回收站条目不出现在收藏与浏览记录
+    trashed_at: datetime | None = None
     note: str | None
     visit_count: int
     last_visited_at: datetime | None

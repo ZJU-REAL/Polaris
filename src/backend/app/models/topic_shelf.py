@@ -11,7 +11,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -25,6 +25,8 @@ class TopicPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "topic_papers"
     __table_args__ = (
         UniqueConstraint("topic_id", "paper_id", name="uq_topic_papers_topic_paper"),
+        # 默认列表按「课题 + 未删」取行，回收站按「课题 + 已删」取行
+        Index("ix_topic_papers_topic_trashed", "topic_id", "trashed_at"),
     )
 
     # 过渡期课题 = project（P5 拆出 Topic 实体后平移）
@@ -44,6 +46,13 @@ class TopicPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 课题语境的「为什么相关」备注
     note: Mapped[str | None] = mapped_column(Text)
     added_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    # 回收站：移出书架 = 软删（trashed_at 置位），可召回 / 彻底删除 / 清空。
+    # 唯一键 uq_topic_papers_topic_paper 覆盖软删行，故同一篇再次入架走「复活」
+    # （services/topic_shelf.py::add_to_shelf），不插新行。
+    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trashed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
 

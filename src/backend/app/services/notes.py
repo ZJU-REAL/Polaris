@@ -95,7 +95,9 @@ async def list_project_notes(
     library_ids = await get_source_library_ids(session, project_id)
     scope_conditions = [
         PaperNote.paper_id.in_(
-            select(TopicPaper.paper_id).where(TopicPaper.topic_id == project_id)
+            select(TopicPaper.paper_id).where(
+                TopicPaper.topic_id == project_id, TopicPaper.trashed_at.is_(None)
+            )
         )
     ]
     if library_ids:
