@@ -221,8 +221,52 @@ void app.whenReady().then(async () => {
     return Math.round(w);
   })()`)) as number;
 
+  // 收放时 logo 与 item 图标的包围盒必须逐像素不动。注意收起态 React 不渲染字标
+  // （见 AppShell），所以这里也要把它从布局里去掉，否则测的不是真实 DOM。
+  const anchors = JSON.parse(
+    (await win.webContents.executeJavaScript(`(() => {
+      const mk = (collapsed) => {
+        const host = document.createElement('div');
+        host.className = 'app' + (collapsed ? ' nav-collapsed' : '');
+        host.style.cssText = 'position:fixed;left:0;top:0;display:flex';
+        host.innerHTML =
+          '<div class="sidebar"><div class="sb-brand">' +
+          '<svg width="41" height="41" viewBox="0 0 41 41"></svg>' +
+          (collapsed ? '' : '<svg width="110" height="30" viewBox="0 0 110 30"></svg>') +
+          '</div><div class="sb-scroll"><a class="nav-item">' +
+          '<span class="nav-ic"><svg viewBox="0 0 18 18"></svg></span>' +
+          '<span class="nav-label">x</span></a></div></div>';
+        document.body.appendChild(host);
+        const r = (sel) => { const b = host.querySelector(sel).getBoundingClientRect();
+          return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };
+        const out = { rail: Math.round(host.querySelector('.sidebar').getBoundingClientRect().width),
+                      logo: r('.sb-brand svg'), icon: r('.nav-ic') };
+        host.remove();
+        return out;
+      };
+      return JSON.stringify({ open: mk(false), collapsed: mk(true) });
+    })()`)) as string,
+  ) as { open: { rail: number; logo: number[]; icon: number[] }; collapsed: { rail: number; logo: number[]; icon: number[] } };
+
+  const boxEq = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - (b[i] ?? 0)) <= 1);
+
   if (isMac) {
     check('收起态侧栏容得下交通灯（≥84pt）', railPt >= 84, `rail=${railPt}pt`);
+    check(
+      'logo 收放不位移不变形',
+      boxEq(anchors.open.logo, anchors.collapsed.logo),
+      `open=${anchors.open.logo} collapsed=${anchors.collapsed.logo}`,
+    );
+    check(
+      'item 图标收放不位移',
+      boxEq(anchors.open.icon, anchors.collapsed.icon),
+      `open=${anchors.open.icon} collapsed=${anchors.collapsed.icon}`,
+    );
+    check(
+      '收起态 logo 居中于轨道',
+      Math.abs(anchors.collapsed.logo[0]! + anchors.collapsed.logo[2]! / 2 - anchors.collapsed.rail / 2) <= 2,
+      `logo=${anchors.collapsed.logo} rail=${anchors.collapsed.rail}`,
+    );
   } else {
     check('非 macOS 收起态侧栏保持原宽', railPt < 84, `rail=${railPt}pt`);
   }

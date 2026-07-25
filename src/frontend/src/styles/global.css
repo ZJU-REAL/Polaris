@@ -120,13 +120,18 @@ input {
 :root[data-desktop-platform='darwin'] .app:not(.nav-collapsed) .sb-scroll { padding-left: 19px; }
 :root[data-desktop-platform='darwin'] .app:not(.nav-collapsed) .sb-nav-static { padding-left: 19px; }
 
-/* 收起态把图形标放大到 52px（占轨道 65%，与原来 41/66 的观感相当但更醒目）。
-   只在收起态放大：展开态是「图形标 + 30px 字标」并排，放大会压过字标；收起态
-   根本不渲染字标（见 AppShell 的注释），没有这个约束。 */
-:root[data-desktop-platform='darwin'] .nav-collapsed .sb-brand svg {
-  width: 52px;
-  height: 52px;
-}
+/* 图形标两态同尺寸、同坐标——**不要**在收起态放大它。尺寸一变，包围盒的四条边
+   就都动了，看起来就是「位置在跳」。
+
+   坐标是天然吻合的，不是凑出来的：图形标 41px，展开态 margin-left: 19.5px
+   → 中心 19.5 + 20.5 = 40px；收起态在 80px 轨道里居中 → 左边缘 (80-41)/2
+   = 19.5px → 中心同样 40px。同一个 19.5，两态自动重合。
+
+   item 图标放大到 21px（原 18px）。.nav-ic 的**宽度必须保持 24px**——它定义了
+   图标列的横向锚点（展开 19+9+12 = 40px，收起居中 = 40px），动了宽度就破锚。
+   高度补到 22px 容纳放大后的图形，两态一致所以不会在收放时跳。 */
+:root[data-desktop-platform='darwin'] .nav-ic { height: 22px; }
+:root[data-desktop-platform='darwin'] .nav-ic svg { width: 21px; height: 21px; }
 /* 收起态：图形标居中（字标由 React 直接不渲染，尺寸与展开态一致，不缩放） */
 .nav-collapsed .sb-brand { justify-content: center; margin: 14px 0 8px; } /* 垂直边距必须与展开态一致，否则收放跳位 */
 .nav-collapsed .sb-scroll { padding: 0 8px 14px; }
