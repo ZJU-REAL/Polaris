@@ -248,10 +248,17 @@ def dedupe_member_rows(
 
 
 def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
-    """用户可管理论文（其所属方向的库 ∪ 被任命管理的库 ∪ 平台 admin 全库）
-    的成员行：SELECT (Paper, LibraryPaper, project_id)。P6 起策展人/管理员与
-    成员同权（docs-dev/workspace-ia-redesign.md §5）。"""
+    """用户可见论文（其课题关联的库 ∪ 被任命策展的库 ∪ 平台 admin 全库）的
+    成员行：SELECT (Paper, LibraryPaper, project_id)。
+
+    「我课题的库」走关联表 ``topic_source_libraries`` —— 课题与库是多对多关联，
+    不是 project_id 回指。按 project_id 判会漏掉课题关联的独立库（那才是常态：
+    P9c 起建课题不再自动建库），也会算进已经不再关联的历史起源库。
+    """
     my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+    my_topic_libraries = select(TopicSourceLibrary.library_id).where(
+        TopicSourceLibrary.topic_id.in_(my_projects)
+    )
     my_curated = select(DirectionLibraryCurator.library_id).where(
         DirectionLibraryCurator.user_id == user_id
     )
@@ -262,7 +269,7 @@ def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
         .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
         .where(
             or_(
-                DirectionLibrary.project_id.in_(my_projects),
+                DirectionLibrary.id.in_(my_topic_libraries),
                 DirectionLibrary.id.in_(my_curated),
                 is_admin,
             )
