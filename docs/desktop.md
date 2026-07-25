@@ -156,7 +156,10 @@ and publishes a GitHub release.
   first launch still needs `xattr -dr com.apple.quarantine /Applications/Polaris.app` or
   right-click → Open.
 - **Windows**: prefer the portable zip, which bypasses SmartScreen's installer check.
-- **Linux**: AppImage needs `libnss3 libgtk-3-0 libasound2` on the host. Under Ubuntu
+- **Linux**: AppImage and deb. The deb maintainer comes from `author` in
+  `src/desktop/package.json` and **must include an email**, or electron-builder aborts —
+  a macOS-only build never exercises that path, so CI is where it surfaces.
+  AppImage needs `libnss3 libgtk-3-0 libasound2` on the host. Under Ubuntu
   24.04+ AppArmor restrictions, or without a SUID `chrome-sandbox`, it needs
   `--no-sandbox` — **document that, do not disable the sandbox in code**.
 

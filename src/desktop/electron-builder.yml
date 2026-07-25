@@ -48,4 +48,6 @@ linux:
   category: Science
   target:
     - target: AppImage
+    # deb 的 maintainer 取自 package.json 的 author，**必须带邮箱**，否则
+    # electron-builder 直接报错中止（只打 macOS 时碰不到这条，CI 才会暴露）。
     - target: deb
