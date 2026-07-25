@@ -25,6 +25,7 @@ from app.core.redis import get_redis_dep
 from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.paper import (
+    MyTagRead,
     PaperBatchIds,
     PaperChatRequest,
     PaperDetail,
@@ -34,6 +35,8 @@ from app.schemas.paper import (
     PaperManualCreate,
     PaperMyMetaRead,
     PaperMyMetaUpdate,
+    PaperMyTagsRead,
+    PaperMyTagsUpdate,
     PaperRead,
     PaperTagsUpdate,
     PaperUpdate,
@@ -65,10 +68,22 @@ async def _reads_with_extras(
     user_id: uuid.UUID,
     *,
     detail: bool = False,
+    library_ids: Sequence[uuid.UUID] | None = None,
 ) -> list[PaperRead]:
-    """ORM → schema，回填 tags/starred/reading_status/note_count（聚合查询，避免 N+1）。"""
+    """ORM → schema，回填 tags/my_tags/starred/reading_status/note_count（聚合查询，避免 N+1）。
+
+    library_ids = 本次浏览的库上下文（库标签按它过滤，见 paper_extras_map）；不传时按
+    每篇论文自己解析到的成员行所属库来算，池级可达的无库论文则不显示库标签。
+    """
     extras = await papers_service.paper_extras_map(
-        session, paper_ids=[p.id for p in papers], user_id=user_id
+        session,
+        paper_ids=[p.id for p in papers],
+        user_id=user_id,
+        library_ids=(
+            library_ids
+            if library_ids is not None
+            else [p.library_id for p in papers if p.library_id is not None]
+        ),
     )
     model = PaperDetail if detail else PaperRead
     return [model.model_validate(p).model_copy(update=extras[p.id]) for p in papers]
@@ -125,6 +140,7 @@ async def list_papers(
     status_filter: str | None = Query(default=None, alias="status"),
     q: str | None = Query(default=None),
     tag: str | None = Query(default=None),
+    my_tag: str | None = Query(default=None, description="按我的个人标签过滤"),
     starred: bool | None = Query(default=None),
     reading_status: str | None = Query(default=None, pattern="^(unread|reading|read)$"),
     author: str | None = Query(default=None, description="作者姓名（包含匹配）"),
@@ -148,6 +164,7 @@ async def list_papers(
         status=status_filter,
         q=q,
         tag=tag,
+        my_tag=my_tag,
         starred=starred,
         reading_status=reading_status,
         user_id=user.id,
@@ -161,8 +178,13 @@ async def list_papers(
         created_from=created_from,
         created_to=created_to,
     )
+    # 库标签按课题的关联库并集显示（与 tag 过滤同口径，翻页也稳定）
+    library_ids = await libraries_service.get_source_library_ids(session, project_id)
     return PaperListPage(
-        items=await _reads_with_extras(session, items, user.id), total=total, page=page, size=size
+        items=await _reads_with_extras(session, items, user.id, library_ids=library_ids),
+        total=total,
+        page=page,
+        size=size,
     )
 
 
@@ -749,6 +771,35 @@ async def set_paper_tags(
     paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
     await papers_service.set_paper_tags(session, paper, data.names)
     return await _paper_detail(session, paper, user.id)
+
+
+@router.get("/me/paper-tags", response_model=list[MyTagRead])
+async def list_my_paper_tags(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[MyTagRead]:
+    """我的所有个人标签（含标了几篇）——筛选下拉 / 输入建议用。"""
+    rows = await papers_service.list_user_paper_tags(session, user_id=user.id)
+    return [MyTagRead(**row) for row in rows]
+
+
+@router.put("/papers/{paper_id}/my-tags", response_model=PaperMyTagsRead)
+async def set_paper_my_tags(
+    paper_id: uuid.UUID,
+    data: PaperMyTagsUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperMyTagsRead:
+    """整组覆盖我给这篇打的个人标签（空数组=清空），只有我自己看得到。
+
+    可达口径同 my-meta（include_pool=True）：公共库 / 书架 / 个人库 / 每日推送里
+    读得到的论文都能打——个人标签不动共享资产，不需要库管理权限。
+    """
+    paper = await _get_member_paper(session, paper_id, user, include_pool=True)
+    names = await papers_service.set_user_paper_tags(
+        session, paper_id=paper.id, user_id=user.id, names=data.names
+    )
+    return PaperMyTagsRead(my_tags=names)
 
 
 @router.put("/papers/{paper_id}/my-meta", response_model=PaperMyMetaRead)

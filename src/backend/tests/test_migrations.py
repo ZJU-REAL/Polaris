@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c5e2a90d41f7"  # 库任务归实验室：回填 library_id、清 project_id
-PREV_REVISION = "b3d81f6c05a9"  # 历史库的起源课题成员补成策展人
+HEAD_REVISION = "c4a91e7b2f36"  # 个人标签表 user_paper_tags
+PREV_REVISION = "c5e2a90d41f7"  # 库任务归实验室：回填 library_id、清 project_id
 
 
 def _make_config(db_path: Path) -> Config:
@@ -40,6 +40,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_tags",
                     "paper_tag_links",
                     "paper_user_meta",
+                    "user_paper_tags",
                     "paper_highlights",
                     "manuscripts",
                     "manuscript_files",
@@ -250,18 +251,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 本分支新增：书架 / 个人库回收站（软删）
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
     assert "trashed_at" in columns["user_library_entries"]
-    # 本分支新增：两张回滚备份表（策展人回填 / 库任务脱离课题）
+    # 上一版的两张回滚备份表（策展人回填 / 库任务脱离课题）
     assert "_pr3_backfilled_curators" in columns["_tables"]
     assert "_c5e2a90d_voyage_topic" in columns["_tables"]
+    # 本分支新增：个人标签表（paper × user × name，与库标签完全独立）
+    assert "user_paper_tags" in columns["_tables"]
+    assert {"id", "user_id", "paper_id", "name"} <= columns["user_paper_tags"]
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（b3d81f6c05a9，策展人回填）。
-    # 该步只回退库任务脱离课题（还原 project_id + 删备份表），其余结构不动。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（c5e2a90d41f7，库任务归实验室）。
+    # 该步只删个人标签表，其余结构不动（库标签 paper_tags 一点不受影响）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    # 本迁移的备份表消失；上一版的备份表与回收站列都还在
-    assert "_c5e2a90d_voyage_topic" not in columns["_tables"]
-    assert "_pr3_backfilled_curators" in columns["_tables"]
+    # 个人标签表消失；库标签表与上一版的两张备份表、回收站列都还在
+    assert "user_paper_tags" not in columns["_tables"]
+    assert {"paper_tags", "paper_tag_links", "_pr3_backfilled_curators"} <= columns["_tables"]
+    assert "_c5e2a90d_voyage_topic" in columns["_tables"]
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
     assert "trashed_at" in columns["user_library_entries"]
     assert "email_verification_codes" in columns["_tables"]
@@ -315,7 +320,9 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
-    # 回收站列与两张备份表在重新 upgrade 后回归
+    # 个人标签表在重新 upgrade 后回归；回收站列与两张备份表也仍在
+    assert "user_paper_tags" in columns["_tables"]
+    assert {"id", "user_id", "paper_id", "name"} <= columns["user_paper_tags"]
     assert {"trashed_at", "trashed_by"} <= columns["topic_papers"]
     assert "trashed_at" in columns["user_library_entries"]
     assert "_pr3_backfilled_curators" in columns["_tables"]

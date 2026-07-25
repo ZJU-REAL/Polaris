@@ -29,7 +29,9 @@ import { tr } from '../../lib/i18n';
 import {
   ConceptChips,
   PaperMyMetaRow,
+  PaperMyTagsRow,
   PaperNotesSection,
+  PaperTagChips,
   PaperTagsRow,
   WikiHeaderActions,
 } from '../shared/PaperDetailBlocks';
@@ -102,7 +104,6 @@ const PaperRow = memo(function PaperRow({
   onClick: () => void;
   onToggleCheck: () => void;
 }) {
-  const tags = p.tags ?? [];
   return (
     <div
       onClick={onClick}
@@ -156,20 +157,7 @@ const PaperRow = memo(function PaperRow({
       <div className="row gap8" style={{ marginTop: 6 }}>
         <PaperStatusPill status={p.status} sm />
         <ReadingDot status={p.reading_status} />
-        {tags.slice(0, 2).map((t) => (
-          <span
-            key={t}
-            className="tag"
-            style={{ fontSize: 10, height: 17, padding: '0 6px', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', lineHeight: '17px' }}
-          >
-            {t}
-          </span>
-        ))}
-        {tags.length > 2 && (
-          <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
-            +{tags.length - 2}
-          </span>
-        )}
+        <PaperTagChips tags={p.tags} myTags={p.my_tags} />
         {(p.note_count ?? 0) > 0 && (
           <span
             className="row"
@@ -418,8 +406,14 @@ function PaperDetailPane({
         invalidateKeys={listKeys}
       />
 
-      {/* —— 标签（只读展示，编辑在文献工作台） —— */}
+      {/* —— 标签：库标签只读（编辑在文献工作台）+ 我的标签就地改 —— */}
       <PaperTagsRow tags={paper.tags} />
+      <PaperMyTagsRow
+        paperId={paper.id}
+        myTags={paper.my_tags}
+        detailKey={detailKey}
+        invalidateKeys={listKeys}
+      />
 
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
@@ -640,23 +634,24 @@ function PapersPane({
       toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  // —— 高级检索（作者 / 机构 / 年份区间 / 阅读状态 / 星标） ——
+  // —— 高级检索（作者 / 机构 / 年份区间 / 我的标签 / 阅读状态 / 星标） ——
   const [advOpen, setAdvOpen] = useState(false);
   const [advAuthor, setAdvAuthor] = useState('');
   const [advAffiliation, setAdvAffiliation] = useState('');
   const [advYearFrom, setAdvYearFrom] = useState('');
   const [advYearTo, setAdvYearTo] = useState('');
+  const [advMyTag, setAdvMyTag] = useState('');
   const [advReading, setAdvReading] = useState<'' | ReadingStatus>('');
   const [advStarred, setAdvStarred] = useState(false);
   const author = useDebounced(advAuthor.trim());
   const affiliation = useDebounced(advAffiliation.trim());
   const yearFrom = parseYear(advYearFrom);
   const yearTo = parseYear(advYearTo);
-  const advActive = !!(author || affiliation || yearFrom || yearTo || advReading || advStarred);
+  const advActive = !!(author || affiliation || yearFrom || yearTo || advMyTag || advReading || advStarred);
 
   useEffect(
     () => setPage(1),
-    [q, sort, semanticOn, view, tagFilter, author, affiliation, yearFrom, yearTo, advReading, advStarred],
+    [q, sort, semanticOn, view, tagFilter, author, affiliation, yearFrom, yearTo, advMyTag, advReading, advStarred],
   );
 
   // 点作者/机构 → 列表只留匹配的论文（走已有的高级检索），其余条件重置并展开面板
@@ -668,6 +663,7 @@ function PapersPane({
       setAdvAffiliation(patch.affiliation ?? '');
       setAdvYearFrom('');
       setAdvYearTo('');
+      setAdvMyTag('');
       setAdvReading('');
       setAdvStarred(false);
       setAdvOpen(true);
@@ -691,10 +687,14 @@ function PapersPane({
   });
   const libraryTags = tagsQuery.data ?? [];
 
+  // 我的标签（过滤下拉用；跨库共用一份，所以 queryKey 不带 libraryId）
+  const myTagsQuery = useQuery({ queryKey: ['my-tags'], queryFn: () => api.listMyTags(), retry: false });
+  const myTags = myTagsQuery.data ?? [];
+
   const semantic = !!q && semanticOn;
   const listQuery = useQuery({
     queryKey: [
-      'lib-papers', libraryId, view, tagFilter, q, sort, page,
+      'lib-papers', libraryId, view, tagFilter, advMyTag, q, sort, page,
       author, affiliation, yearFrom, yearTo, advReading, advStarred,
     ],
     queryFn: () => {
@@ -703,6 +703,7 @@ function PapersPane({
         status: vq.status,
         starred: vq.starred || advStarred || undefined,
         tag: tagFilter || undefined,
+        my_tag: advMyTag || undefined,
         q: q || undefined,
         sort,
         page,
@@ -758,7 +759,10 @@ function PapersPane({
               open={advOpen}
               active={advActive}
               onToggle={() => setAdvOpen((o) => !o)}
-              title={tr('高级检索：作者 / 机构 / 年份 / 阅读状态 / 星标', 'Advanced search: author / affiliation / year / reading status / starred')}
+              title={tr(
+                '高级检索：作者 / 机构 / 年份 / 我的标签 / 阅读状态 / 星标',
+                'Advanced search: author / affiliation / year / my tags / reading status / starred',
+              )}
             />
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
               {total ? tr(`${total} 篇`, `${total}`) : ''}
@@ -774,6 +778,7 @@ function PapersPane({
                         setAdvAffiliation('');
                         setAdvYearFrom('');
                         setAdvYearTo('');
+                        setAdvMyTag('');
                         setAdvReading('');
                         setAdvStarred(false);
                       }
@@ -799,6 +804,20 @@ function PapersPane({
                   onFrom={setAdvYearFrom}
                   onTo={setAdvYearTo}
                 />
+                <select
+                  className="input"
+                  style={{ height: 26, fontSize: 11.5, width: '100%', padding: '0 6px' }}
+                  value={advMyTag}
+                  onChange={(e) => setAdvMyTag(e.target.value)}
+                  title={tr('按我的标签过滤（只有你自己看得到）', 'Filter by my tag (only you can see these)')}
+                >
+                  <option value="">{tr('全部我的标签', 'All my tags')}</option>
+                  {myTags.map((t) => (
+                    <option key={t.name} value={t.name}>
+                      {t.name}（{t.paper_count}）
+                    </option>
+                  ))}
+                </select>
                 <div className="row gap6" style={{ alignItems: 'center' }}>
                   <select
                     className="input"

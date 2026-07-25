@@ -118,7 +118,11 @@ async def search(
             )
         )
     extras = await papers_service.paper_extras_map(
-        session, paper_ids=[p.id for p, _ in paper_rows], user_id=user.id
+        session,
+        paper_ids=[p.id for p, _ in paper_rows],
+        user_id=user.id,
+        # 库标签按课题的关联库并集显示（同论文列表口径）
+        library_ids=await libraries_service.get_source_library_ids(session, project_id),
     )
     papers = [
         ScoredPaper(**(PaperRead.model_validate(p).model_dump() | extras[p.id]), score=s)

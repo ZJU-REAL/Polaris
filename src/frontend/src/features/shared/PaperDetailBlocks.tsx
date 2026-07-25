@@ -85,15 +85,30 @@ export function PaperMyMetaRow({
   );
 }
 
-/* ---------------- 只读标签行 ---------------- */
+/* ---------------- 标签：库标签（只读）+ 我的标签（可编辑） ---------------- */
 
-/** 标签只读展示（编辑在文献工作台）。 */
+/* 两组标签是两回事，样式上一眼分开：
+   - 库标签＝实心底色（.tag 默认样式），整个文献库共用一套，编辑在文献工作台；
+   - 我的标签＝描边 + 强调色，只有自己看得到，哪儿都能改。 */
+
+/** 我的标签 chip 的描边样式（区别于实心的库标签）。 */
+const myTagStyle: CSSProperties = {
+  background: 'transparent',
+  borderColor: 'var(--accent-soft-2)',
+  color: 'var(--accent-text)',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+};
+
+/** 库标签只读展示（编辑在文献工作台）；没有标签就不占位。 */
 export function PaperTagsRow({ tags, style }: { tags: string[] | undefined; style?: CSSProperties }) {
   if (!tags || tags.length === 0) return null;
   return (
     <div className="row gap6 wrap" style={{ marginTop: 14, ...style }}>
-      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}>
-        {tr('标签', 'Tags')}
+      <span className="row gap6 mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}>
+        <Icon name="users" size={11} />
+        {tr('库标签', 'Library tags')}
       </span>
       {tags.map((t) => (
         <span key={t} className="tag">
@@ -101,6 +116,159 @@ export function PaperTagsRow({ tags, style }: { tags: string[] | undefined; styl
         </span>
       ))}
     </div>
+  );
+}
+
+/**
+ * 我的标签：就地增删，只有本人可见可改。
+ * 走 PUT /papers/{id}/my-tags（整组覆盖），可达口径同 my-meta——只读浏览、
+ * 每日新论文里也能打，不需要文献库的管理权限。
+ */
+export function PaperMyTagsRow({
+  paperId,
+  myTags,
+  detailKey,
+  invalidateKeys,
+  style,
+}: {
+  paperId: string;
+  myTags: string[] | undefined;
+  /** 详情 queryKey：给了就直接改缓存，改完立刻变，不用等列表刷新 */
+  detailKey?: QueryKey;
+  /** 改完要刷新的列表 / 搜索 queryKey */
+  invalidateKeys?: readonly QueryKey[];
+  style?: CSSProperties;
+}) {
+  const queryClient = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [value, setValue] = useState('');
+  const tags = myTags ?? [];
+
+  const putMutation = useMutation({
+    mutationFn: (names: string[]) => api.putMyTags(paperId, names),
+    onSuccess: (res) => {
+      if (detailKey) {
+        queryClient.setQueryData<{ my_tags?: string[] }>(detailKey, (old) =>
+          old ? { ...old, my_tags: res.my_tags } : old,
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ['my-tags'] });
+      for (const key of invalidateKeys ?? []) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
+    },
+    onError: (e) =>
+      toast(`${tr('标签更新失败：', 'Tag update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const commit = () => {
+    const name = value.trim();
+    setAdding(false);
+    setValue('');
+    if (!name || tags.includes(name)) return;
+    putMutation.mutate([...tags, name]);
+  };
+
+  return (
+    <div className="row gap6 wrap" style={{ marginTop: 10, ...style }}>
+      <span
+        className="row gap6 mono"
+        style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}
+        title={tr('只有你自己看得到', 'Only you can see these')}
+      >
+        <Icon name="bookmark" size={11} />
+        {tr('我的标签', 'My tags')}
+      </span>
+      {tags.map((t) => (
+        <span key={t} className="tag" style={myTagStyle}>
+          {t}
+          <span
+            title={tr('移除标签', 'Remove tag')}
+            style={{ cursor: 'pointer', display: 'inline-flex', opacity: 0.6 }}
+            onClick={() => putMutation.mutate(tags.filter((x) => x !== t))}
+          >
+            <Icon name="x" size={9} />
+          </span>
+        </span>
+      ))}
+      {adding ? (
+        <input
+          className="input"
+          autoFocus
+          style={{ height: 24, fontSize: 11.5, width: 120, padding: '0 8px' }}
+          placeholder={tr('标签名，回车确定', 'Tag name, Enter to confirm')}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit();
+            if (e.key === 'Escape') {
+              setAdding(false);
+              setValue('');
+            }
+          }}
+        />
+      ) : (
+        <span
+          className="chip"
+          style={{ fontSize: 11, height: 20, opacity: putMutation.isPending ? 0.5 : 1 }}
+          onClick={() => !putMutation.isPending && setAdding(true)}
+        >
+          <Icon name="plus" size={10} style={{ display: 'inline-block', verticalAlign: -1 }} />{' '}
+          {tr('加标签', 'Add tag')}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** 列表行里的标签小 chip：库标签实心 / 我的标签描边，最多各显 2 个。 */
+export function PaperTagChips({
+  tags,
+  myTags,
+  limit = 2,
+}: {
+  tags: string[] | undefined;
+  myTags: string[] | undefined;
+  limit?: number;
+}) {
+  const lib = tags ?? [];
+  const mine = myTags ?? [];
+  const hidden = Math.max(0, lib.length - limit) + Math.max(0, mine.length - limit);
+  const chipStyle: CSSProperties = {
+    fontSize: 10,
+    height: 17,
+    padding: '0 6px',
+    maxWidth: 90,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    display: 'inline-block',
+    lineHeight: '17px',
+  };
+  return (
+    <>
+      {lib.slice(0, limit).map((t) => (
+        <span key={`lib-${t}`} className="tag" style={chipStyle} title={tr(`库标签：${t}`, `Library tag: ${t}`)}>
+          {t}
+        </span>
+      ))}
+      {mine.slice(0, limit).map((t) => (
+        <span
+          key={`my-${t}`}
+          className="tag"
+          style={{ ...chipStyle, background: 'transparent', borderColor: 'var(--accent-soft-2)', color: 'var(--accent-text)' }}
+          title={tr(`我的标签：${t}`, `My tag: ${t}`)}
+        >
+          {t}
+        </span>
+      ))}
+      {hidden > 0 && (
+        <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+          +{hidden}
+        </span>
+      )}
+    </>
   );
 }
 

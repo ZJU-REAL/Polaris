@@ -675,8 +675,10 @@ export interface PaperRead {
   /** 编译所用模型名；未编译/存量数据为 null（旧后端可能缺失） */
   compiled_model?: string | null;
   /* —— 文献管理增强字段（docs/api-lit.md §5，后端未就绪时可能缺失，均可选容错） —— */
-  /** 项目级标签 */
+  /** 库标签（共享）：本次浏览的那个库里打的；没有库上下文时为空 */
   tags?: string[];
+  /** 我的标签：只有本人看得到、改得了，跟着论文本身走（换库浏览也在） */
+  my_tags?: string[];
   /** 当前用户是否星标 */
   starred?: boolean;
   /** 当前用户阅读状态（无记录默认 unread） */
@@ -790,6 +792,12 @@ export type PaperImportInput = { arxiv_id: string } | { doi: string } | { bibtex
 
 export interface TagRead {
   id: string;
+  name: string;
+  paper_count: number;
+}
+
+/** 「我的所有标签」一行；个人标签没有独立实体，所以只有名字 + 标了几篇。 */
+export interface MyTagRead {
   name: string;
   paper_count: number;
 }
@@ -2710,8 +2718,10 @@ export const api = {
       sort?: PaperSort;
       page?: number;
       size?: number;
-      /** 按标签名过滤 */
+      /** 按库标签名过滤 */
       tag?: string;
+      /** 按我的个人标签名过滤 */
+      my_tag?: string;
       /** 仅星标 */
       starred?: boolean;
       /** 按当前用户阅读状态过滤 */
@@ -2732,6 +2742,7 @@ export const api = {
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));
     if (opts.tag) params.set('tag', opts.tag);
+    if (opts.my_tag) params.set('my_tag', opts.my_tag);
     if (opts.starred) params.set('starred', 'true');
     if (opts.reading_status) params.set('reading_status', opts.reading_status);
     if (opts.author) params.set('author', opts.author);
@@ -2872,6 +2883,14 @@ export const api = {
   /** 整组覆盖论文标签；新名字自动建 tag；空数组=清空。 */
   putPaperTags(id: string, names: string[]): Promise<PaperDetail> {
     return requestJson<PaperDetail>(`/papers/${id}/tags`, 'PUT', { names });
+  },
+  /** 我的所有个人标签（含标了几篇），给筛选下拉 / 输入建议用。 */
+  listMyTags(): Promise<MyTagRead[]> {
+    return request<MyTagRead[]>('/me/paper-tags');
+  },
+  /** 整组覆盖我给这篇打的个人标签；空数组=清空。只要读得到这篇论文就能打。 */
+  putMyTags(id: string, names: string[]): Promise<{ my_tags: string[] }> {
+    return requestJson<{ my_tags: string[] }>(`/papers/${id}/my-tags`, 'PUT', { names });
   },
   /** 个人星标 / 阅读状态。 */
   putMyMeta(id: string, input: Partial<MyMeta>): Promise<MyMeta> {
@@ -3100,6 +3119,7 @@ export const api = {
       page?: number;
       size?: number;
       tag?: string;
+      my_tag?: string;
       starred?: boolean;
       reading_status?: ReadingStatus;
       author?: string;
@@ -3117,6 +3137,7 @@ export const api = {
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));
     if (opts.tag) params.set('tag', opts.tag);
+    if (opts.my_tag) params.set('my_tag', opts.my_tag);
     if (opts.starred) params.set('starred', 'true');
     if (opts.reading_status) params.set('reading_status', opts.reading_status);
     if (opts.author) params.set('author', opts.author);

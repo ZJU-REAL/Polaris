@@ -100,7 +100,10 @@ async def _paper_detail(
     session: AsyncSession, view: papers_service.PaperView, user_id: uuid.UUID
 ) -> PaperDetail:
     extras = await papers_service.paper_extras_map(
-        session, paper_ids=[view.id], user_id=user_id
+        session,
+        paper_ids=[view.id],
+        user_id=user_id,
+        library_ids=[view.library_id] if view.library_id is not None else None,
     )
     return PaperDetail.model_validate(view).model_copy(update=extras[view.id])
 
@@ -134,11 +137,14 @@ async def _get_visible_library(
 
 
 async def _reads_with_extras(
-    session: AsyncSession, papers: list, user_id: uuid.UUID
+    session: AsyncSession, papers: list, user_id: uuid.UUID, *, library_id: uuid.UUID
 ) -> list[PaperRead]:
-    """ORM → schema，回填 tags/starred/reading_status/note_count（个人维度，全员可用）。"""
+    """ORM → schema，回填 tags/my_tags/starred/reading_status/note_count（个人维度，全员可用）。
+
+    库标签只取本库那些（library_id）：一篇论文可能同时在多个库，不限定会串台。
+    """
     extras = await papers_service.paper_extras_map(
-        session, paper_ids=[p.id for p in papers], user_id=user_id
+        session, paper_ids=[p.id for p in papers], user_id=user_id, library_ids=[library_id]
     )
     return [PaperRead.model_validate(p).model_copy(update=extras[p.id]) for p in papers]
 
@@ -461,6 +467,7 @@ async def list_library_papers(
     status_filter: str | None = Query(default="library", alias="status"),
     q: str | None = Query(default=None),
     tag: str | None = Query(default=None),
+    my_tag: str | None = Query(default=None, description="按我的个人标签过滤"),
     starred: bool | None = Query(default=None),
     reading_status: str | None = Query(default=None, pattern="^(unread|reading|read)$"),
     author: str | None = Query(default=None),
@@ -488,6 +495,7 @@ async def list_library_papers(
         status=status_filter,
         q=q,
         tag=tag,
+        my_tag=my_tag,
         starred=starred,
         reading_status=reading_status,
         author=author,
@@ -502,7 +510,7 @@ async def list_library_papers(
         size=size,
     )
     return PaperListPage(
-        items=await _reads_with_extras(session, list(items), user.id),
+        items=await _reads_with_extras(session, list(items), user.id, library_id=library.id),
         total=total,
         page=page,
         size=size,
@@ -672,7 +680,7 @@ async def search_library(
             )
         )
     extras = await papers_service.paper_extras_map(
-        session, paper_ids=[p.id for p, _ in paper_rows], user_id=user.id
+        session, paper_ids=[p.id for p, _ in paper_rows], user_id=user.id, library_ids=[library.id]
     )
     papers = [
         ScoredPaper(**(PaperRead.model_validate(p).model_dump() | extras[p.id]), score=s)

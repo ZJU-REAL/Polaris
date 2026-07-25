@@ -42,6 +42,7 @@ import {
 import {
   ConceptChips,
   PaperMyMetaRow,
+  PaperMyTagsRow,
   PaperNotesSection,
   PaperTagsRow,
   WikiHeaderActions,
@@ -395,8 +396,11 @@ function DailyDetailPane({
         />
       )}
 
-      {/* —— 标签（只读展示，编辑在文献工作台） —— */}
+      {/* —— 标签：库标签只读（编辑在文献工作台）+ 我的标签就地改 —— */}
       <PaperTagsRow tags={poolPaper?.tags} />
+      {poolPaper && (
+        <PaperMyTagsRow paperId={poolPaper.id} myTags={poolPaper.my_tags} detailKey={poolKey} />
+      )}
 
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>

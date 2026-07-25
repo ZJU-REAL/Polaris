@@ -15,6 +15,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Table,
     Text,
@@ -181,6 +182,31 @@ class PaperUserMeta(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     reading_status: Mapped[str] = mapped_column(
         String(16), default="unread", nullable=False
     )  # unread | reading | read
+
+
+class UserPaperTag(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """个人标签（paper × user × name）：任何登录用户都能给自己可读的论文打，
+    只有本人可见可改。与库作用域的 PaperTag 完全独立——库标签是共享资产（整组
+    覆盖会盖掉别人打的），个人标签是私域。
+
+    扁平设计：名字内联在这张表上，不另建标签实体。个人标签没有跨用户共享语义，
+    不需要「改一处到处生效」，也就不需要库标签那套零引用回收
+    （对照 papers.prune_orphan_tags）。
+    """
+
+    __tablename__ = "user_paper_tags"
+    __table_args__ = (
+        UniqueConstraint("user_id", "paper_id", "name", name="uq_user_paper_tags"),
+        Index("ix_user_paper_tags_user_name", "user_id", "name"),  # 「我的所有标签」列表 / 按标签筛
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
 class Concept(UUIDPrimaryKeyMixin, TimestampMixin, Base):
