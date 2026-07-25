@@ -414,6 +414,33 @@ async def test_shelf_filters_by_personal_star_and_reading_status(client):
     assert sorted(await query(reading_status="unread")) == sorted([p2])
 
 
+async def test_shelf_filters_by_my_tag(client):
+    """我的标签（个人私域，与方向库标签无关）在书架上同样可筛。"""
+    project_id, headers = await _setup(client, name="shelf-my-tag")
+    p1 = await _seed_paper(project_id, title="Tagged One", status="scored")
+    p2 = await _seed_paper(project_id, title="Plain Two", status="scored")
+    for pid in (p1, p2):
+        await _shelve(client, headers, project_id, pid)
+    resp = await client.put(f"/api/papers/{p1}/my-tags", json={"names": ["精读"]}, headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    async def query(**params):
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        resp = await client.get(f"/api/projects/{project_id}/shelf?{qs}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        return [i["paper_id"] for i in body["items"]], body["total"]
+
+    got, total = await query(my_tag="精读")
+    assert got == [p1] and total == 1
+    got, total = await query(my_tag="没人用过")
+    assert got == [] and total == 0
+    # 清掉标签后就筛不到了（个人标签是私域，与方向库标签互不影响）
+    await client.put(f"/api/papers/{p1}/my-tags", json={"names": []}, headers=headers)
+    got, total = await query(my_tag="精读")
+    assert got == [] and total == 0
+
+
 async def test_shelf_requires_project_membership(client):
     project_id, headers = await _setup(client)
     paper_id = await _seed_paper(project_id, title="Members Only", status="scored")

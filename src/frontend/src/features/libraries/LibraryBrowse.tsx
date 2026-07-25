@@ -48,6 +48,8 @@ import {
   AuthorLinks,
   FilterInput,
   MetaItem,
+  MyTagField,
+  ReadingStatusField,
   SearchInput,
   SemanticSwitch,
   YearRangeField,
@@ -55,7 +57,7 @@ import {
   saveBlob,
   useDebounced,
 } from '../wiki/shared';
-import { READING_STATUS, ReadingDot, readerFrom } from '../reading/shared';
+import { ReadingDot, readerFrom } from '../reading/shared';
 import { AddToButton } from '../library/AddToPopover';
 
 // 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
@@ -687,10 +689,6 @@ function PapersPane({
   });
   const libraryTags = tagsQuery.data ?? [];
 
-  // 我的标签（过滤下拉用；跨库共用一份，所以 queryKey 不带 libraryId）
-  const myTagsQuery = useQuery({ queryKey: ['my-tags'], queryFn: () => api.listMyTags(), retry: false });
-  const myTags = myTagsQuery.data ?? [];
-
   const semantic = !!q && semanticOn;
   const listQuery = useQuery({
     queryKey: [
@@ -804,45 +802,17 @@ function PapersPane({
                   onFrom={setAdvYearFrom}
                   onTo={setAdvYearTo}
                 />
-                <select
-                  className="input"
-                  style={{ height: 26, fontSize: 11.5, width: '100%', padding: '0 6px' }}
-                  value={advMyTag}
-                  onChange={(e) => setAdvMyTag(e.target.value)}
-                  title={tr('按我的标签过滤（只有你自己看得到）', 'Filter by my tag (only you can see these)')}
-                >
-                  <option value="">{tr('全部我的标签', 'All my tags')}</option>
-                  {myTags.map((t) => (
-                    <option key={t.name} value={t.name}>
-                      {t.name}（{t.paper_count}）
-                    </option>
-                  ))}
-                </select>
-                <div className="row gap6" style={{ alignItems: 'center' }}>
-                  <select
-                    className="input"
-                    style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
-                    value={advReading}
-                    onChange={(e) => setAdvReading(e.target.value as '' | ReadingStatus)}
-                    title={tr('按阅读状态过滤', 'Filter by reading status')}
-                  >
-                    <option value="">{tr('读没读', 'Read?')}</option>
-                    {READING_STATUS.map((m) => (
-                      <option key={m.v} value={m.v}>
-                        {tr(m.label, m.en)}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="row gap6" style={{ cursor: 'pointer', userSelect: 'none', fontSize: 11.5, color: 'var(--text-2)' }}>
-                    <input
-                      type="checkbox"
-                      checked={advStarred}
-                      onChange={(e) => setAdvStarred(e.target.checked)}
-                      style={{ width: 14, height: 14, accentColor: 'var(--accent)' }}
-                    />
-                    {tr('仅看星标', 'Starred only')}
-                  </label>
-                </div>
+                <MyTagField value={advMyTag} onChange={setAdvMyTag} />
+                <ReadingStatusField value={advReading} onChange={setAdvReading} />
+                <label className="row gap6" style={{ cursor: 'pointer', userSelect: 'none', fontSize: 11.5, color: 'var(--text-2)' }}>
+                  <input
+                    type="checkbox"
+                    checked={advStarred}
+                    onChange={(e) => setAdvStarred(e.target.checked)}
+                    style={{ width: 14, height: 14, accentColor: 'var(--accent)' }}
+                  />
+                  {tr('仅看星标', 'Starred only')}
+                </label>
               </AdvancedPanel>
             </div>
           )}

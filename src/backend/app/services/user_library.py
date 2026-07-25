@@ -10,12 +10,12 @@ from typing import cast
 
 from sqlalchemy import Text as SAText
 from sqlalchemy import cast as sa_cast
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import delete, exists, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
 from app.models.library import UserLibraryEntry
-from app.models.paper import Paper
+from app.models.paper import Paper, PaperUserMeta, UserPaperTag
 from app.services.dedup import dedup_key_for
 
 LIBRARY_SORTS = ("recent", "title", "visits", "year")
@@ -278,7 +278,18 @@ async def list_entries(
     author: str | None = None,
     affiliation: str | None = None,
     venue: str | None = None,
+    reading_status: str | None = None,
+    starred: bool | None = None,
+    my_tag: str | None = None,
 ) -> tuple[list[UserLibraryEntry], int]:
+    """分页列个人库条目（tab 决定收藏 / 浏览记录 / 回收站），带高级检索过滤。
+
+    star / 阅读状态 / 我的标签这三项是论文维度的个人属性，条目快照里没有，只能靠
+    ``last_paper_id`` 软引用去查（同 affiliation 的口径）。**源论文已删（last_paper_id
+    为空）的条目一律筛不出来**——包括 reading_status=unread：没有论文就无从判断读没读，
+    把一堆无源快照按「未读」倒进结果里只会淹掉真正没读的论文。论文还在、只是从没标过
+    状态的，仍按「未读」算（沿用 papers.apply_paper_filters 的口径）。
+    """
     stmt = select(UserLibraryEntry).where(UserLibraryEntry.user_id == user_id)
     # 回收站条目只出现在 trash tab；收藏 / 浏览记录都不含（否则删掉的会从浏览记录漏回来）
     if tab == "trash":
@@ -315,6 +326,39 @@ async def list_entries(
         )
     if venue:
         stmt = stmt.where(UserLibraryEntry.venue.ilike(f"%{venue}%"))
+    # 星标 / 阅读状态 / 我的标签：同样是论文那边的个人属性，按 last_paper_id 软引用查；
+    # 源论文已删的条目（last_paper_id 为空）在这三个过滤下一律不出现。
+    if starred is not None:
+        starred_exists = exists().where(
+            PaperUserMeta.paper_id == UserLibraryEntry.last_paper_id,
+            PaperUserMeta.user_id == user_id,
+            PaperUserMeta.starred.is_(True),
+        )
+        stmt = stmt.where(
+            UserLibraryEntry.last_paper_id.is_not(None),
+            starred_exists if starred else ~starred_exists,
+        )
+    if reading_status:
+        status_sub = (
+            select(PaperUserMeta.reading_status)
+            .where(
+                PaperUserMeta.paper_id == UserLibraryEntry.last_paper_id,
+                PaperUserMeta.user_id == user_id,
+            )
+            .scalar_subquery()
+        )
+        stmt = stmt.where(
+            UserLibraryEntry.last_paper_id.is_not(None),
+            func.coalesce(status_sub, "unread") == reading_status,
+        )
+    if my_tag:
+        stmt = stmt.where(
+            exists().where(
+                UserPaperTag.paper_id == UserLibraryEntry.last_paper_id,
+                UserPaperTag.user_id == user_id,
+                UserPaperTag.name == my_tag,
+            )
+        )
     if year_from is not None:
         stmt = stmt.where(UserLibraryEntry.year.isnot(None), UserLibraryEntry.year >= year_from)
     if year_to is not None:

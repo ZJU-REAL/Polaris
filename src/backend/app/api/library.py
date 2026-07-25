@@ -63,6 +63,11 @@ async def list_library(
     # 机构：快照里没有，按条目软引用的活体论文匹配（源论文已删的条目匹配不到）
     affiliation: str | None = Query(default=None),
     venue: str | None = Query(default=None),
+    # 星标 / 阅读状态 / 我的标签：同机构，按条目软引用的活体论文匹配
+    # （源论文已删的条目一律筛不出来，含 reading_status=unread）
+    reading_status: str | None = Query(default=None, pattern="^(unread|reading|read)$"),
+    starred: bool | None = Query(default=None),
+    my_tag: str | None = Query(default=None, description="按我的标签过滤（只有本人可见）"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
@@ -107,6 +112,9 @@ async def list_library(
         author=author,
         affiliation=affiliation,
         venue=venue,
+        reading_status=reading_status,
+        starred=starred,
+        my_tag=my_tag,
     )
     return LibraryPage(
         items=[LibraryEntryRead.model_validate(e) for e in items],

@@ -160,14 +160,15 @@ async def list_shelf(
     year_to: int | None = None,
     reading_status: str | None = None,
     starred: bool | None = None,
+    my_tag: str | None = None,
     sort: str = "added",
     trashed: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     """分页列书架，每条带解析后的 wiki 内容与来源状态。
 
     个人版层按请求者（user_id）本人的个人库条目解析。高级检索的
-    q/author/affiliation/starred/reading_status 复用 :func:`apply_paper_filters`
-    （只作用于内容池 Paper / 个人视角 PaperUserMeta，不触碰方向库）；
+    q/author/affiliation/starred/reading_status/my_tag 复用 :func:`apply_paper_filters`
+    （只作用于内容池 Paper / 个人视角 PaperUserMeta、UserPaperTag，不触碰方向库）；
     year 范围就地作用于 ``Paper.year``。sort：added（默认，最新入架在前）/
     year / relevance / title。trashed=True 列回收站（固定按移出时间倒序）。"""
     base = (
@@ -179,7 +180,8 @@ async def list_shelf(
         )
     )
     # 复用论文库过滤器：传 None 的库相关参数（status/created_*）不会引用/join 方向库，
-    # 故过滤只作用于 Paper 本体与请求者个人视角（PaperUserMeta），书架保持方向无关。
+    # 故过滤只作用于 Paper 本体与请求者个人视角（PaperUserMeta / UserPaperTag），
+    # 书架保持方向无关（my_tag 是个人标签，同样不依赖库）。
     base = apply_paper_filters(
         base,
         status=None,
@@ -188,6 +190,7 @@ async def list_shelf(
         affiliation=affiliation,
         starred=starred,
         reading_status=reading_status,
+        my_tag=my_tag,
         user_id=user_id,
         created_from=None,
         created_to=None,

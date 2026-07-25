@@ -50,6 +50,7 @@ async def list_shelf(
     year_to: int | None = Query(default=None),
     reading_status: str | None = Query(default=None, pattern="^(unread|reading|read)$"),
     starred: bool | None = Query(default=None),
+    my_tag: str | None = Query(default=None, description="按我的标签过滤（只有本人可见）"),
     sort: str = Query(default="added", pattern="^(added|year|relevance|title)$"),
     trashed: bool = Query(default=False, description="true=列回收站（已移出的条目）"),
     session: AsyncSession = Depends(get_session),
@@ -69,6 +70,7 @@ async def list_shelf(
         year_to=year_to,
         reading_status=reading_status,
         starred=starred,
+        my_tag=my_tag,
         sort=sort,
         trashed=trashed,
     )

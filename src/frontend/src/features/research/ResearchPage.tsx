@@ -26,7 +26,9 @@ import {
   AdvancedPanel,
   AdvancedToggle,
   FilterInput,
+  MyTagField,
   parseYear,
+  ReadingStatusField,
   saveBlob,
   SearchInput,
   SemanticSwitch,
@@ -94,13 +96,6 @@ const FILTERS: { v: ShelfFilter; zh: string; en: string }[] = [
   { v: 'snapshot', zh: '快照解读', en: 'Snapshot wiki' },
   { v: 'none', zh: '暂无解读', en: 'No wiki' },
 ];
-const READING_FILTERS: { v: ReadingFilter; zh: string; en: string }[] = [
-  { v: '', zh: '全部', en: 'All' },
-  { v: 'unread', zh: '未读', en: 'Unread' },
-  { v: 'reading', zh: '在读', en: 'Reading' },
-  { v: 'read', zh: '已读', en: 'Read' },
-];
-
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -464,6 +459,7 @@ export function ResearchPage() {
   const [yearTo, setYearTo] = useState('');
   const [readingStatus, setReadingStatus] = useState<ReadingFilter>('');
   const [starred, setStarred] = useState(false);
+  const [myTag, setMyTag] = useState('');
 
   const advActive =
     !!author.trim() ||
@@ -471,7 +467,8 @@ export function ResearchPage() {
     !!yearFrom.trim() ||
     !!yearTo.trim() ||
     readingStatus !== '' ||
-    starred;
+    starred ||
+    !!myTag;
   // 是否有任何后端筛选（用于空态文案区分「没添加」vs「没匹配」）
   const hasServerFilter = !!q || advActive;
 
@@ -482,6 +479,7 @@ export function ResearchPage() {
     setYearTo('');
     setReadingStatus('');
     setStarred(false);
+    setMyTag('');
   };
 
   // 点作者/机构 → 列表只留匹配的论文（走已有的高级检索），其余条件重置并展开面板
@@ -494,6 +492,7 @@ export function ResearchPage() {
     setYearTo('');
     setReadingStatus('');
     setStarred(false);
+    setMyTag('');
     setAdvOpen(true);
     setSelId(null);
     if (patch.author) {
@@ -520,7 +519,7 @@ export function ResearchPage() {
   // 后端筛选/排序变化时回到第一页
   useEffect(() => {
     setPage(1);
-  }, [q, sort, author, affiliation, yearFrom, yearTo, readingStatus, starred]);
+  }, [q, sort, author, affiliation, yearFrom, yearTo, readingStatus, starred, myTag]);
 
   // 切换课题 / 搜索词 / 过滤 / 作用域时退出多选（对齐文献库 PapersTab）
   useEffect(() => {
@@ -544,6 +543,7 @@ export function ResearchPage() {
       yearTo.trim(),
       readingStatus,
       starred,
+      myTag,
     ],
     queryFn: () =>
       api.listShelf(pid, {
@@ -557,6 +557,7 @@ export function ResearchPage() {
         year_to: parseYear(yearTo),
         reading_status: readingStatus || undefined,
         starred: starred || undefined,
+        my_tag: myTag || undefined,
       }),
     enabled: !!pid && !semantic,
     retry: false,
@@ -806,8 +807,8 @@ export function ResearchPage() {
                   active={advActive}
                   onToggle={() => setAdvOpen((o) => !o)}
                   title={tr(
-                    '高级检索：作者 / 机构 / 年份 / 阅读状态',
-                    'Advanced search: author / affiliation / year / reading status',
+                    '高级检索：作者 / 机构 / 年份 / 我的标签 / 阅读状态 / 星标',
+                    'Advanced search: author / affiliation / year / my tags / reading status / starred',
                   )}
                 />
               </div>
@@ -835,20 +836,8 @@ export function ResearchPage() {
                     onFrom={setYearFrom}
                     onTo={setYearTo}
                   />
-                  <div className="row gap6 wrap" style={{ alignItems: 'center' }}>
-                    <span style={{ width: 52, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
-                      {tr('阅读状态', 'Reading')}
-                    </span>
-                    {READING_FILTERS.map((f) => (
-                      <span
-                        key={f.v || 'all'}
-                        className={`chip${readingStatus === f.v ? ' on' : ''}`}
-                        onClick={() => setReadingStatus(f.v)}
-                      >
-                        {tr(f.zh, f.en)}
-                      </span>
-                    ))}
-                  </div>
+                  <MyTagField value={myTag} onChange={setMyTag} />
+                  <ReadingStatusField value={readingStatus} onChange={setReadingStatus} />
                   <label
                     className="row gap6"
                     style={{ fontSize: 11.5, color: 'var(--text-2)', cursor: 'pointer', alignItems: 'center' }}

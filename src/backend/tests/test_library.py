@@ -6,7 +6,7 @@ import fakeredis.aioredis
 import httpx
 import pytest_asyncio
 import respx
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 
 from app.core.db import get_sessionmaker
 from app.models.library import UserLibraryEntry
@@ -239,6 +239,111 @@ async def test_library_advanced_filters_and_year_sort(client):
     # sort=year（降序）
     got, _ = await query(sort="year")
     assert got == ["New Paper", "Mid Paper", "Old Paper"]
+
+
+async def _orphan_entry(paper_id: str) -> None:
+    """删掉源论文，让指向它的条目只剩快照（last_paper_id 软引用置空）。"""
+    async with get_sessionmaker()() as session:
+        pid = uuid.UUID(paper_id)
+        await session.execute(
+            update(UserLibraryEntry)
+            .where(UserLibraryEntry.last_paper_id == pid)
+            .values(last_paper_id=None)
+        )
+        await session.execute(delete(LibraryPaper).where(LibraryPaper.paper_id == pid))
+        await session.execute(delete(Paper).where(Paper.id == pid))
+        await session.commit()
+
+
+async def test_library_filters_by_star_reading_status_and_my_tag(client):
+    """星标 / 阅读状态 / 我的标签：靠 last_paper_id 软引用查论文那边的个人属性。
+
+    源论文已删的条目在这三个过滤下一律筛不出来（含 reading_status=unread）。"""
+    token = await register_and_login(client, email="libpersonal@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id = await _make_project(client, headers, "lib-personal")
+    p_star = await _make_paper(project_id, title="Starred Paper", status="included")
+    p_plain = await _make_paper(project_id, title="Plain Paper", status="included")
+    p_gone = await _make_paper(project_id, title="Orphan Paper", status="included")
+    for pid in (p_star, p_plain, p_gone):
+        await client.post("/api/me/library/visits", json={"paper_id": pid}, headers=headers)
+    resp = await client.put(
+        f"/api/papers/{p_star}/my-meta",
+        json={"starred": True, "reading_status": "reading"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    resp = await client.put(
+        f"/api/papers/{p_star}/my-tags", json={"names": ["精读"]}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    await _orphan_entry(p_gone)
+
+    async def query(**params):
+        merged = {"tab": "history", **params}
+        qs = "&".join(f"{k}={v}" for k, v in merged.items())
+        resp = await client.get(f"/api/me/library?{qs}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        return [i["title"] for i in body["items"]], body["total"]
+
+    # 不加过滤时三条都在（只剩快照的那条照常列出）
+    got, total = await query()
+    assert sorted(got) == ["Orphan Paper", "Plain Paper", "Starred Paper"] and total == 3
+    # 星标
+    got, total = await query(starred="true")
+    assert got == ["Starred Paper"] and total == 1
+    # 未星标：只剩快照的条目判断不了，不算未星标
+    got, total = await query(starred="false")
+    assert got == ["Plain Paper"] and total == 1
+    # 阅读状态（没标过的论文算未读；只剩快照的条目同样排除）
+    got, _ = await query(reading_status="reading")
+    assert got == ["Starred Paper"]
+    got, total = await query(reading_status="unread")
+    assert got == ["Plain Paper"] and total == 1
+    got, total = await query(reading_status="read")
+    assert got == [] and total == 0
+    # 我的标签
+    got, total = await query(my_tag="精读")
+    assert got == ["Starred Paper"] and total == 1
+    got, total = await query(my_tag="没人用过")
+    assert got == [] and total == 0
+
+
+async def test_library_personal_filters_stack_with_trash_tab(client):
+    """三个新过滤与回收站 tab 正交：回收站里同样能按星标 / 阅读状态 / 我的标签筛。"""
+    token = await register_and_login(client, email="libtrashfilter@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id = await _make_project(client, headers, "lib-trash-filter")
+    p_star = await _make_paper(project_id, title="Trashed Starred", status="included")
+    p_plain = await _make_paper(project_id, title="Trashed Plain", status="included")
+    await client.put(
+        f"/api/papers/{p_star}/my-meta",
+        json={"starred": True, "reading_status": "read"},
+        headers=headers,
+    )
+    await client.put(f"/api/papers/{p_star}/my-tags", json={"names": ["回头看"]}, headers=headers)
+    for pid in (p_star, p_plain):  # 先收藏，再取消收藏（= 移入回收站）
+        await client.post("/api/me/library/visits", json={"paper_id": pid}, headers=headers)
+        resp = await client.post("/api/me/library", json={"paper_id": pid}, headers=headers)
+        entry_id = resp.json()["id"]
+        resp = await client.delete(f"/api/me/library/{entry_id}?mode=unsave", headers=headers)
+        assert resp.status_code == 204, resp.text
+
+    async def query(**params):
+        qs = "&".join(f"{k}={v}" for k, v in {"tab": "trash", **params}.items())
+        resp = await client.get(f"/api/me/library?{qs}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        return [i["title"] for i in resp.json()["items"]]
+
+    assert sorted(await query()) == ["Trashed Plain", "Trashed Starred"]
+    assert await query(starred="true") == ["Trashed Starred"]
+    assert await query(reading_status="read") == ["Trashed Starred"]
+    assert await query(reading_status="unread") == ["Trashed Plain"]
+    assert await query(my_tag="回头看") == ["Trashed Starred"]
+    # 收藏 tab 里这两条已经不在了（回收站条目不出现在其他 tab）
+    resp = await client.get("/api/me/library?tab=saved&starred=true", headers=headers)
+    assert resp.json()["total"] == 0
 
 
 async def test_clear_history_keeps_saved(client):

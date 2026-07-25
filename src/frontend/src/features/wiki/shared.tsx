@@ -1,9 +1,11 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
-import type { ConceptCategory, PaperAuthor } from '../../lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { api, type ConceptCategory, type PaperAuthor, type ReadingStatus } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { clickable } from '../../lib/a11y';
 import { Icon } from '../../components/ui/Icon';
 import { Switch } from '../../components/ui/Switch';
+import { READING_STATUS } from '../reading/shared';
 
 /* ============================================================
    Research Wiki 页共享：概念类别配色、Section、防抖 hook。
@@ -242,6 +244,68 @@ export function FilterInput({
       placeholder={placeholder}
       title={title}
     />
+  );
+}
+
+/** 高级检索：阅读状态过滤（左侧标签 + 全部/未读/在读/已读 chip 组）。
+    空串=不限，其余透传给后端 reading_status。 */
+export function ReadingStatusField({
+  value,
+  onChange,
+  label,
+}: {
+  value: '' | ReadingStatus;
+  onChange: (v: '' | ReadingStatus) => void;
+  label?: string;
+}) {
+  return (
+    <div className="row gap6 wrap" style={{ alignItems: 'center' }}>
+      <span style={{ width: 52, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
+        {label ?? tr('阅读状态', 'Reading')}
+      </span>
+      <span className={`chip${value === '' ? ' on' : ''}`} onClick={() => onChange('')}>
+        {tr('全部', 'All')}
+      </span>
+      {READING_STATUS.map((m) => (
+        <span
+          key={m.v}
+          className={`chip${value === m.v ? ' on' : ''}`}
+          onClick={() => onChange(m.v)}
+        >
+          {tr(m.label, m.en)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** 高级检索：我的标签下拉（自带标签清单查询；跨库共用一份缓存，空串=不限）。 */
+export function MyTagField({
+  value,
+  onChange,
+  title,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  title?: string;
+}) {
+  const myTagsQuery = useQuery({ queryKey: ['my-tags'], queryFn: () => api.listMyTags(), retry: false });
+  const myTags = myTagsQuery.data ?? [];
+  return (
+    <select
+      className="input"
+      style={{ height: 26, fontSize: 11.5, width: '100%', padding: '0 6px' }}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      title={title ?? tr('按我的标签过滤（只有你自己看得到）', 'Filter by my tag (only you can see these)')}
+    >
+      <option value="">{tr('全部我的标签', 'All my tags')}</option>
+      {myTags.map((t) => (
+        <option key={t.name} value={t.name}>
+          {t.name}（{t.paper_count}）
+        </option>
+      ))}
+    </select>
   );
 }
 

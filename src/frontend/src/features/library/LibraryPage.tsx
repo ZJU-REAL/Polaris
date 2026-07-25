@@ -12,6 +12,7 @@ import {
   type LibrarySort,
   type LibraryTab,
   type Publication,
+  type ReadingStatus,
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
@@ -19,7 +20,9 @@ import {
   AdvancedPanel,
   AdvancedToggle,
   FilterInput,
+  MyTagField,
   parseYear,
+  ReadingStatusField,
   SearchInput,
   SemanticSwitch,
   saveBlob,
@@ -290,22 +293,35 @@ export function LibraryPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // 高级检索：年份区间 / 作者 / 机构 / venue（走后端）
+  // 高级检索：年份区间 / 作者 / 机构 / 期刊会议 / 我的标签 / 阅读状态 / 星标（走后端）
   const [advOpen, setAdvOpen] = useState(false);
   const [author, setAuthor] = useState('');
   const [affiliation, setAffiliation] = useState('');
   const [venue, setVenue] = useState('');
   const [yearFrom, setYearFrom] = useState('');
   const [yearTo, setYearTo] = useState('');
+  const [myTag, setMyTag] = useState('');
+  const [readingStatus, setReadingStatus] = useState<'' | ReadingStatus>('');
+  const [starred, setStarred] = useState(false);
 
   const advActive =
-    !!author.trim() || !!affiliation.trim() || !!venue.trim() || !!yearFrom.trim() || !!yearTo.trim();
+    !!author.trim() ||
+    !!affiliation.trim() ||
+    !!venue.trim() ||
+    !!yearFrom.trim() ||
+    !!yearTo.trim() ||
+    !!myTag ||
+    readingStatus !== '' ||
+    starred;
   const clearAdvanced = () => {
     setAuthor('');
     setAffiliation('');
     setVenue('');
     setYearFrom('');
     setYearTo('');
+    setMyTag('');
+    setReadingStatus('');
+    setStarred(false);
   };
 
   // 点作者/机构 → 列表只留匹配的条目（走已有的高级检索），其余条件重置并展开面板
@@ -317,6 +333,9 @@ export function LibraryPage() {
     setVenue('');
     setYearFrom('');
     setYearTo('');
+    setMyTag('');
+    setReadingStatus('');
+    setStarred(false);
     setAdvOpen(true);
     if (patch.author) {
       toast(tr(`已筛选作者：${patch.author}`, `Filtered by author: ${patch.author}`), 'info');
@@ -345,7 +364,7 @@ export function LibraryPage() {
   // tab / 搜索词 / 检索模式 / 排序 / 高级条件变化时回到第一页
   useEffect(() => {
     setPage(1);
-  }, [tab, q, semanticOn, sort, author, affiliation, venue, yearFrom, yearTo]);
+  }, [tab, q, semanticOn, sort, author, affiliation, venue, yearFrom, yearTo, myTag, readingStatus, starred]);
 
   // 切 tab / 换搜索词 / 换检索模式时清空多选（避免选中集跨上下文残留）
   useEffect(() => {
@@ -358,6 +377,7 @@ export function LibraryPage() {
     queryKey: [
       'library', tab, q, semantic, sort, page,
       author.trim(), affiliation.trim(), venue.trim(), yearFrom.trim(), yearTo.trim(),
+      myTag, readingStatus, starred,
     ],
     queryFn: () =>
       api.listLibrary({
@@ -373,6 +393,9 @@ export function LibraryPage() {
         venue: semantic ? undefined : venue.trim() || undefined,
         year_from: semantic ? undefined : parseYear(yearFrom),
         year_to: semantic ? undefined : parseYear(yearTo),
+        my_tag: semantic ? undefined : myTag || undefined,
+        reading_status: semantic ? undefined : readingStatus || undefined,
+        starred: semantic ? undefined : starred || undefined,
       }),
     enabled: onLibraryTab,
     retry: false,
@@ -641,8 +664,8 @@ export function LibraryPage() {
                     active={advActive}
                     onToggle={() => setAdvOpen((o) => !o)}
                     title={tr(
-                      '高级检索：年份 / 作者 / 机构 / 期刊会议',
-                      'Advanced search: year / author / affiliation / venue',
+                      '高级检索：年份 / 作者 / 机构 / 期刊会议 / 我的标签 / 阅读状态 / 星标',
+                      'Advanced search: year / author / affiliation / venue / my tags / reading status / starred',
                     )}
                   />
                 </div>
@@ -678,6 +701,16 @@ export function LibraryPage() {
                           'Affiliations live on the paper — entries whose source paper is gone will not match',
                         )}
                       />
+                      {/* 我的标签 / 阅读状态 / 星标同样记在论文那边，源论文已删的条目匹配不到 */}
+                      <MyTagField value={myTag} onChange={setMyTag} />
+                      <ReadingStatusField value={readingStatus} onChange={setReadingStatus} />
+                      <label
+                        className="row gap6"
+                        style={{ fontSize: 11.5, color: 'var(--text-2)', cursor: 'pointer', alignItems: 'center' }}
+                      >
+                        <input type="checkbox" checked={starred} onChange={(e) => setStarred(e.target.checked)} />
+                        {tr('只看星标', 'Starred only')}
+                      </label>
                     </AdvancedPanel>
                   </div>
                 )}

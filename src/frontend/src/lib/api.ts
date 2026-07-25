@@ -3212,6 +3212,8 @@ export const api = {
       year_to?: number;
       reading_status?: ReadingStatus;
       starred?: boolean;
+      /** 我的标签（个人私域，只有本人可见） */
+      my_tag?: string;
       sort?: ShelfSort;
       /** true=只列回收站里的条目；默认 false=只列在架的 */
       trashed?: boolean;
@@ -3227,6 +3229,7 @@ export const api = {
     if (opts.year_to != null) params.set('year_to', String(opts.year_to));
     if (opts.reading_status) params.set('reading_status', opts.reading_status);
     if (opts.starred) params.set('starred', 'true');
+    if (opts.my_tag) params.set('my_tag', opts.my_tag);
     if (opts.sort) params.set('sort', opts.sort);
     if (opts.trashed) params.set('trashed', 'true');
     const qs = params.toString();
@@ -3998,6 +4001,10 @@ export const api = {
       /** 机构：条目快照没有机构字段，后端按条目软引用的活体论文匹配（源论文已删的匹配不到） */
       affiliation?: string;
       venue?: string;
+      /** 阅读状态 / 星标 / 我的标签：同机构，按软引用的活体论文匹配（源论文已删的匹配不到） */
+      reading_status?: ReadingStatus;
+      starred?: boolean;
+      my_tag?: string;
     },
   ): Promise<LibraryListResult> {
     const params = new URLSearchParams();
@@ -4012,6 +4019,9 @@ export const api = {
     if (opts.author) params.set('author', opts.author);
     if (opts.affiliation) params.set('affiliation', opts.affiliation);
     if (opts.venue) params.set('venue', opts.venue);
+    if (opts.reading_status) params.set('reading_status', opts.reading_status);
+    if (opts.starred) params.set('starred', 'true');
+    if (opts.my_tag) params.set('my_tag', opts.my_tag);
     return request<LibraryListResult>(`/me/library?${params.toString()}`);
   },
   /** 个人库引用导出：不传 ids 导出全部收藏，传 ids（论文 id）精确导出多选。 */
