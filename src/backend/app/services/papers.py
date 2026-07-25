@@ -100,6 +100,11 @@ class PaperView:
         return self.paper.id
 
     @property
+    def library_id(self) -> uuid.UUID | None:
+        """成员行所属库；池级兜底视角（合成的临时成员行）无库 → None。"""
+        return self.membership.library_id
+
+    @property
     def relevance_score(self) -> float | None:
         return self.membership.relevance_score
 

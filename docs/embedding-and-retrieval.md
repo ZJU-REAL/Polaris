@@ -51,8 +51,10 @@ In summary:
   - The add paths (`enrich_paper`, `fetch_pdf`) create chunk rows but only embed them when the user
     has the opt-in on; otherwise the chunk rows sit with `NULL` embeddings, to be filled later.
   - Manual rebuild endpoints (`/projects/{id}/shelf/index/rebuild`, `/library/index/rebuild`) require
-    the opt-in; `/projects/{id}/index/rebuild` (a direction library) is a synchronous maintenance
-    endpoint that returns `{indexed, embedded, skipped}`.
+    the opt-in; `/projects/{id}/index/rebuild` and `/libraries/{id}/index/rebuild` (a direction
+    library, topic- and library-scoped forms of the same maintenance action) are synchronous
+    maintenance endpoints that return `{indexed, embedded, skipped}`. The library-scoped form needs
+    manage rights on that library and works for standalone libraries (no origin topic).
 - **Daily-feed papers are embedded only when an admin turns it on.** `sync_daily_feed` builds
   lightweight rows with no LLM, so daily papers have no vector by default. The admin setting
   **`daily_feed_embed_enabled` (off by default)** makes each sync embed the papers it touched that

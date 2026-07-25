@@ -10,8 +10,9 @@ import json
 import re
 import uuid
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -209,6 +210,70 @@ async def embed_pending_chunks_for_papers(
         project_id=project_id,
         voyage_id=voyage_id,
     )
+
+
+async def rebuild_library_fulltext_index(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    llm: LLMRouter,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """重建某个库的全文分段索引（docs/api-lit.md §8）：给已有全文但缺分段的论文补分段并嵌入。
+
+    幂等：已有分段的论文跳过；新入库论文由 ingest 流水线自动处理，通常无需手动调用。
+    课题作用域与库作用域两个端点共用本函数（project_id 仅用于 LLM 用量记账归属）。
+    paper_chunks 表尚未迁移时 ``ProgrammingError`` 原样上抛，由路由层转 503。
+    """
+    chunked_ids = select(PaperChunk.paper_id)
+    papers = (
+        (
+            await session.execute(
+                select(Paper)
+                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                .where(
+                    LibraryPaper.library_id == library_id,
+                    Paper.full_text_path.is_not(None),
+                    Paper.id.not_in(chunked_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    indexed = 0
+    chunk_count = 0
+    for paper in papers:
+        n = await index_paper_fulltext(session, paper)
+        if n:
+            indexed += 1
+            chunk_count += n
+    await session.commit()
+    embedded, embed_error = await embed_pending_chunks(
+        session,
+        library_id=library_id,
+        llm=llm,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    total_chunks = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(PaperChunk)
+                .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
+                .where(LibraryPaper.library_id == library_id)
+            )
+        ).scalar_one()
+    )
+    return {
+        "papers_indexed": indexed,
+        "chunks_created": chunk_count,
+        "embedded": embedded,
+        "embed_error": embed_error,
+        "total_chunks": total_chunks,
+    }
 
 
 # ---- 检索 ----

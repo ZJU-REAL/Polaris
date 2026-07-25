@@ -31,7 +31,7 @@ type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes' | '
 export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: string }) {
   const navigate = useNavigate();
 
-  // 独立库（无起源课题）：集合级数据走 /libraries/{id}/* 端点，隐藏 PPT / 导出（均为课题域）。
+  // 独立库（无起源课题）：集合级数据与导出走 /libraries/{id}/* 端点；PPT 仍是课题域，隐藏。
   const standalone = !pid;
   const scopeId = standalone ? libraryId! : pid!;
   /** 传给各 Tab 的库作用域标识：仅独立库置位，课题库保持 undefined 走 project 端点。 */
@@ -168,14 +168,13 @@ export function WikiWorkbench({ pid, libraryId }: { pid?: string; libraryId?: st
             </span>
           )}
           {!standalone && (
-            <>
-              <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>
-                <Icon name="chart" size={13} />
-                {tr('论文分享 PPT', 'Paper sharing PPT')}
-              </button>
-              <ExportMenu pid={pid!} />
-            </>
+            <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>
+              <Icon name="chart" size={13} />
+              {tr('论文分享 PPT', 'Paper sharing PPT')}
+            </button>
           )}
+          {/* 导出：课题走 project 端点，独立库走库作用域端点（PPT 仍是课题域，独立库隐藏） */}
+          <ExportMenu pid={pid} libraryId={tabLibraryId} />
         </div>
       </div>
 

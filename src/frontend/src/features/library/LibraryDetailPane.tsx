@@ -168,13 +168,14 @@ export function LibraryDetailPane({
     [],
   );
 
-  // [[概念]] 双链 → 论文所属课题的 wiki（对齐阅读页的处理）
-  // 双链落点：论文所属课题的隐式库详情页（无课题上下文时退到库列表）
-  const topicLib = useTopicLibrary(paper?.project_id ?? null);
+  // [[概念]] 双链 → 论文所属文献库的概念页（对齐阅读页的处理；定位不到时退到库列表）。
+  // 库由后端直接给的 library_id 定位；旧后端没这个字段时退回「按起源课题反查库」
+  const topicLib = useTopicLibrary(paper?.library_id ? null : paper?.project_id ?? null);
+  const paperLibId = paper?.library_id ?? topicLib?.id ?? null;
   const onWikiLink = useCallback(
     (name: string) =>
-      navigate(topicLib ? libraryPath(topicLib.id, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
-    [navigate, topicLib],
+      navigate(paperLibId ? libraryPath(paperLibId, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
+    [navigate, paperLibId],
   );
 
   if (paperId !== null && paperQuery.isLoading) {
@@ -241,11 +242,11 @@ export function LibraryDetailPane({
           </button>
         )}
         {alive &&
-          (topicLib ? (
+          (paperLibId ? (
             <button
               className="btn btn-ghost sm"
               title={tr('打开这篇所在的方向文献库', 'Open the direction library this paper lives in')}
-              onClick={() => navigate(libraryPath(topicLib.id, `?paper=${paper.id}`))}
+              onClick={() => navigate(libraryPath(paperLibId, `?paper=${paper.id}`))}
             >
               <Icon name="book" size={13} />
               {tr('去文献库', 'Open library')}

@@ -21,7 +21,7 @@ from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Paper, PaperChunk
+from app.models.paper import Paper
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.graph import GraphResponse
@@ -433,60 +433,19 @@ async def rebuild_fulltext_index(
             "embed_error": None,
             "total_chunks": 0,
         }
-    chunked_ids = select(PaperChunk.paper_id)
     try:
-        papers = (
-            (
-                await session.execute(
-                    select(Paper)
-                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                    .where(
-                        LibraryPaper.library_id == library.id,
-                        Paper.full_text_path.is_not(None),
-                        Paper.id.not_in(chunked_ids),
-                    )
-                )
-            )
-            .scalars()
-            .all()
+        return await chunks_service.rebuild_library_fulltext_index(
+            session,
+            library_id=library.id,
+            llm=get_llm_router(),
+            user_id=user.id,
+            project_id=project_id,
         )
     except ProgrammingError as e:  # paper_chunks 表还没迁移
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="DB_MIGRATION_REQUIRED: 请先执行数据库迁移（make migrate）",
         ) from e
-    indexed = 0
-    chunk_count = 0
-    for paper in papers:
-        n = await chunks_service.index_paper_fulltext(session, paper)
-        if n:
-            indexed += 1
-            chunk_count += n
-    await session.commit()
-    embedded, embed_error = await chunks_service.embed_pending_chunks(
-        session,
-        library_id=library.id,
-        llm=get_llm_router(),
-        user_id=user.id,
-        project_id=project_id,
-    )
-    total_chunks = int(
-        (
-            await session.execute(
-                select(func.count())
-                .select_from(PaperChunk)
-                .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
-                .where(LibraryPaper.library_id == library.id)
-            )
-        ).scalar_one()
-    )
-    return {
-        "papers_indexed": indexed,
-        "chunks_created": chunk_count,
-        "embedded": embedded,
-        "embed_error": embed_error,
-        "total_chunks": total_chunks,
-    }
 
 
 @router.get("/projects/{project_id}/graph", response_model=GraphResponse)

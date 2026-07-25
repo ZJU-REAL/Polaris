@@ -38,6 +38,10 @@ class PaperRead(BaseModel):
     id: uuid.UUID
     # 本次访问解析出的课题上下文；池级可达（书架/个人库）的无库论文可为 null
     project_id: uuid.UUID | None
+    # 本次访问解析出的**文献库**（成员行所属库）；池级可达的无库论文为 null。
+    # 前端凭此定位「这篇属于哪个库」（返回文献库按钮 / [[双链]] 落点），不再靠
+    # project_id 反查——库与课题解耦后 project_id 只是历史溯源指针。
+    library_id: uuid.UUID | None = None
     title: str
     authors: list[AuthorRead] = []
     affiliations: list[str] = []  # 发表机构（LLM 从全文解析，OpenAlex 兜底；可能为空）

@@ -2,8 +2,9 @@
 
 方向库对全实验室可读：读端点只做登录校验、不做课题成员校验。
 治理端点（库定义编辑 / 策展人任命）按库级写权限校验：成员 ∪ 策展人 ∪ 平台 admin
-（策展人任命仅平台 admin）。批量写/管理入口（ingest、论文管理、概念补建等）仍走
-project 作用域端点（鉴权同样接入库级写权限助手）。
+（策展人任命仅平台 admin）。集合级写/管理入口（ingest、论文管理、概念补建、全文
+索引重建等）本文件都有库作用域版本（独立库靠它们获得同等能力）；同名的 project
+作用域端点仍在 papers/wiki/concepts 路由里，鉴权同样接入库级写权限助手。
 个人文献库路由在 ``app/api/library.py``（/me/library），勿混淆。
 """
 
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import (
@@ -56,6 +58,7 @@ from app.schemas.libraries import (
 from app.schemas.note import NotebookPage, NoteWithPaper
 from app.schemas.paper import (
     ConceptRead,
+    ConceptRelinkResult,
     PaperBatchIds,
     PaperChatRequest,
     PaperDetail,
@@ -68,6 +71,7 @@ from app.schemas.paper import (
     TagRead,
 )
 from app.schemas.voyage import VoyageRead
+from app.services import chunks as chunks_service
 from app.services import citations as citations_service
 from app.services import concepts as concepts_service
 from app.services import graph as graph_service
@@ -79,6 +83,7 @@ from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
 from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
+from app.services.wiki_export import build_obsidian_zip_for_libraries
 
 router = APIRouter(tags=["libraries"])
 
@@ -719,6 +724,29 @@ async def export_library_citations(
     )
 
 
+@router.get("/libraries/{library_id}/export/obsidian")
+async def export_library_obsidian(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """库作用域 Obsidian 笔记库导出（zip；独立方向库也可用；读端点全实验室可读）。
+
+    语料 = 本库在库论文（compiled/included）+ 本库概念；笔记只含请求者本人的。
+    与课题版同一套 vault 结构，只是范围换成单个库。
+    """
+    library = await _get_visible_library(session, library_id, user)
+    content = await build_obsidian_zip_for_libraries(
+        session, library_ids=[library.id], title=library.name, user_id=user.id
+    )
+    return Response(
+        content=content,
+        media_type="application/zip",
+        # 文件名固定 ASCII：库名多为中文，放进 Content-Disposition 会撞 latin-1 头编码
+        headers={"Content-Disposition": 'attachment; filename="polaris-library-wiki.zip"'},
+    )
+
+
 # ---- P9d 库级论文管理 / ingest 状态 / 图谱 / 对话 / 笔记（库工作台，含独立库） ----
 #
 # 说明：单篇写操作（改状态/软删召回/彻底删/重编译/标签）仍走 papers 路由的
@@ -831,6 +859,55 @@ async def get_library_ingest_state(
     library = await _get_visible_library(session, library_id, user)
     state = await ingest_service.library_ingest_state(session, library)
     return IngestStateRead(**state)
+
+
+@router.post("/libraries/{library_id}/concepts/relink", response_model=ConceptRelinkResult)
+async def relink_library_concepts(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ConceptRelinkResult:
+    """库作用域概念补建（可管理者）：对本库已编译论文重抽 [[双链]]、建缺失概念并补齐关联。
+
+    幂等；面向历史数据（编译过但概念上链没跑到的论文）。新概念定义分批调 LLM，
+    并回填此前留下的占位概念，失败降级为占位、不阻塞。计本库预算。
+    """
+    library = await _get_managed_library(session, library_id, user)
+    stats, _papers = await concepts_service.link_all_paper_concepts(
+        session,
+        library_id=library.id,
+        llm=get_llm_router(),
+        user_id=user.id,
+        project_id=library.project_id,
+        backfill=True,
+    )
+    return ConceptRelinkResult(**stats)
+
+
+@router.post("/libraries/{library_id}/index/rebuild")
+async def rebuild_library_fulltext_index(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """库作用域全文索引重建（可管理者）：给本库已有全文但缺分段的论文补分段并嵌入。
+
+    幂等：已有分段的论文跳过；新入库论文由建库流水线自动处理，通常无需手动调用。
+    """
+    library = await _get_managed_library(session, library_id, user)
+    try:
+        return await chunks_service.rebuild_library_fulltext_index(
+            session,
+            library_id=library.id,
+            llm=get_llm_router(),
+            user_id=user.id,
+            project_id=library.project_id,
+        )
+    except ProgrammingError as e:  # paper_chunks 表还没迁移
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="DB_MIGRATION_REQUIRED: 请先执行数据库迁移（make migrate）",
+        ) from e
 
 
 @router.get("/libraries/{library_id}/graph", response_model=GraphResponse)

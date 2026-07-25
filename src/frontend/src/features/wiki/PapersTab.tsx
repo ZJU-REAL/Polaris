@@ -313,10 +313,14 @@ function AddPaperModal({
 
 export function ExportMenu({
   pid,
+  libraryId,
   filters = {},
 }: {
-  pid: string;
-  /** 列表过滤条件，透传给引用导出；不传导出全部库内文献 */
+  /** 课题作用域（走 /projects/{pid}/export/*）；与 libraryId 二选一 */
+  pid?: string;
+  /** 库作用域（走 /libraries/{id}/export/*，独立库也可用）；优先于 pid */
+  libraryId?: string;
+  /** 列表过滤条件，透传给课题版引用导出；不传导出全部库内文献（库版不支持过滤） */
   filters?: { status?: PaperStatusFilter; tag?: string; starred?: boolean };
 }) {
   const [open, setOpen] = useState(false);
@@ -333,7 +337,8 @@ export function ExportMenu({
   }, [open]);
 
   const obsidianMutation = useMutation({
-    mutationFn: () => api.downloadObsidianExport(pid),
+    mutationFn: () =>
+      libraryId ? api.downloadLibraryObsidianExport(libraryId) : api.downloadObsidianExport(pid!),
     onSuccess: (blob) => {
       saveBlob(blob, 'polaris-wiki.zip');
       toast(tr('Obsidian 笔记库已导出', 'Obsidian vault exported'), 'ok');
@@ -343,7 +348,10 @@ export function ExportMenu({
   });
 
   const citationsMutation = useMutation({
-    mutationFn: (format: CitationFormat) => api.downloadCitations(pid, { format, ...filters }),
+    mutationFn: (format: CitationFormat) =>
+      libraryId
+        ? api.downloadLibraryCitations(libraryId, { format })
+        : api.downloadCitations(pid!, { format, ...filters }),
     onSuccess: (blob, format) => {
       saveBlob(blob, format === 'bibtex' ? 'polaris-references.bib' : 'polaris-references.json');
       toast(

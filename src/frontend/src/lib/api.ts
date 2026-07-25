@@ -646,6 +646,11 @@ export interface PaperRead {
   id: string;
   /** 本次访问解析出的课题上下文；书架/个人库可达的无库论文（个人补充）为 null */
   project_id: string | null;
+  /**
+   * 本次访问解析出的**文献库**（成员行所属库）；无库论文为 null（旧后端可能缺失）。
+   * 「这篇属于哪个库」直接看它——不要再用 project_id 反查库。
+   */
+  library_id?: string | null;
   title: string;
   authors: PaperAuthor[];
   /** 发表机构（OpenAlex 补充；可能为空） */
@@ -2908,6 +2913,12 @@ export const api = {
       method: 'POST',
     });
   },
+  /** 库作用域概念补建（独立库也可用；需该库管理权限）。 */
+  relinkLibraryConcepts(libraryId: string): Promise<ConceptRelinkResult> {
+    return request<ConceptRelinkResult>(`/libraries/${libraryId}/concepts/relink`, {
+      method: 'POST',
+    });
+  },
 
   // —— M2 · Search ——
   searchProject(
@@ -3239,6 +3250,10 @@ export const api = {
   rebuildFulltextIndex(projectId: string): Promise<RebuildIndexResult> {
     return request<RebuildIndexResult>(`/projects/${projectId}/index/rebuild`, { method: 'POST' });
   },
+  /** 库作用域全文索引重建（独立库也可用；需该库管理权限）。 */
+  rebuildLibraryFulltextIndex(libraryId: string): Promise<RebuildIndexResult> {
+    return request<RebuildIndexResult>(`/libraries/${libraryId}/index/rebuild`, { method: 'POST' });
+  },
   /** 可选全文索引：为本课题「相关研究」这批论文异步建全文索引（设置关时后端 409 INDEXING_DISABLED）。 */
   buildShelfIndex(projectId: string): Promise<QueuedIndexResult> {
     return requestJson<QueuedIndexResult>(`/projects/${projectId}/shelf/index/rebuild`, 'POST', {});
@@ -3251,6 +3266,10 @@ export const api = {
   // —— M2 · Obsidian 导出（zip blob） ——
   downloadObsidianExport(projectId: string): Promise<Blob> {
     return requestBlob(`/projects/${projectId}/export/obsidian`);
+  },
+  /** 库作用域 Obsidian 导出（独立库也可用；只读端点，全实验室可读）。 */
+  downloadLibraryObsidianExport(libraryId: string): Promise<Blob> {
+    return requestBlob(`/libraries/${libraryId}/export/obsidian`);
   },
 
   // —— M2 · Dashboard 统计 ——

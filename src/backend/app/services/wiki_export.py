@@ -15,6 +15,7 @@ import json
 import uuid
 import zipfile
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
@@ -107,20 +108,37 @@ def _inline_paper_figures(
 async def build_obsidian_zip(
     session: AsyncSession, project: Project, *, user_id: uuid.UUID
 ) -> bytes:
-    """构建 vault zip；笔记只导出请求者本人的（P5b 笔记 paper × author，仅作者可见）。"""
-    # 课题关联库并集：跨库同一论文按确定性视角归并（有 wiki 优先），再按相关性排序
+    """课题作用域导出：语料 = 课题关联库并集，标题取课题名。"""
     library_ids = await get_source_library_ids(session, project.id)
+    return await build_obsidian_zip_for_libraries(
+        session, library_ids=library_ids, title=project.name, user_id=user_id
+    )
+
+
+async def build_obsidian_zip_for_libraries(
+    session: AsyncSession,
+    *,
+    library_ids: Sequence[uuid.UUID],
+    title: str,
+    user_id: uuid.UUID,
+) -> bytes:
+    """构建 vault zip；笔记只导出请求者本人的（P5b 笔记 paper × author，仅作者可见）。
+
+    语料 = 给定库集合（课题版传关联库并集，库版传 ``[library_id]``，独立库同样可用）。
+    """
+    # 跨库同一论文按确定性视角归并（有 wiki 优先），再按相关性排序
+    ids = list(library_ids)
     paper_rows = (
         dedupe_member_rows(
             (
                 await session.execute(
-                    member_papers_stmt(library_ids)
+                    member_papers_stmt(ids)
                     .where(LibraryPaper.status.in_(("compiled", "included")))
                     .options(selectinload(Paper.concepts))
                 )
             ).all()
         )
-        if library_ids
+        if ids
         else []
     )
     paper_rows.sort(
@@ -135,7 +153,7 @@ async def build_obsidian_zip(
             (
                 await session.execute(
                     select(Concept)
-                    .where(Concept.library_id.in_(library_ids))
+                    .where(Concept.library_id.in_(ids))
                     .options(selectinload(Concept.papers))
                     .order_by(Concept.name)
                 )
@@ -143,7 +161,7 @@ async def build_obsidian_zip(
             .scalars()
             .all()
         )
-        if library_ids
+        if ids
         else []
     )
 
@@ -169,7 +187,7 @@ async def build_obsidian_zip(
         ]
 
         # index.md
-        index_lines = [f"# {project.name} · Research Wiki", ""]
+        index_lines = [f"# {title} · Research Wiki", ""]
         index_lines += ["## Papers", ""]
         index_lines += [f"- [[{slug}]] — {p.title}" for slug, p in paper_entries] or ["（暂无）"]
         index_lines += ["", "## Concepts", ""]

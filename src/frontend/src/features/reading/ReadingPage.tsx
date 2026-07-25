@@ -208,13 +208,15 @@ export function ReadingPage() {
     onError: (e) => toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  // 论文所属课题的隐式库：返回/双链跳转的落点（无课题上下文时退到库列表）
-  const topicLib = useTopicLibrary(paper?.project_id ?? null);
-  const libHref = (suffix: string) => (topicLib ? libraryPath(topicLib.id, suffix) : '/libraries');
+  // 论文所属文献库：返回/双链跳转的落点。后端直接给 library_id；旧后端没这个字段时
+  // 退回「按起源课题反查库」（库与课题解耦后 project_id 会清空，届时只剩库列表兜底）。
+  const topicLib = useTopicLibrary(paper?.library_id ? null : paper?.project_id ?? null);
+  const paperLibId = paper?.library_id ?? topicLib?.id ?? null;
+  const libHref = (suffix: string) => (paperLibId ? libraryPath(paperLibId, suffix) : '/libraries');
   const onWikiLink = useCallback(
     (name: string) =>
-      navigate(topicLib ? libraryPath(topicLib.id, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
-    [navigate, topicLib],
+      navigate(paperLibId ? libraryPath(paperLibId, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
+    [navigate, paperLibId],
   );
 
   const onHighlightClick = useCallback((hlId: string) => {
