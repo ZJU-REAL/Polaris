@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -920,7 +921,45 @@ async def export_arxiv(
     safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in manuscript.title)[:60] or "paper"
     headers = {"Content-Disposition": f'attachment; filename="{safe}-arxiv.tar.gz"'}
     if notes:
-        headers["X-Export-Notes"] = " | ".join(notes)
+        # HTTP 头只允许 latin-1，而提示是中文：直接塞会在 starlette 编码时 500。
+        # 百分号编码后回传，前端 decodeURIComponent 还原。
+        headers["X-Export-Notes"] = quote(" | ".join(notes))
+    return Response(content=data, media_type="application/gzip", headers=headers)
+
+
+@router.get("/manuscripts/{manuscript_id}/source-digest")
+async def source_digest(
+    manuscript_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, str]:
+    """稿件源码的内容指纹。
+
+    桌面端本地编译用它判断缓存的产物是否还新鲜——源变了 digest 就变，
+    不需要下载整个包就能知道要不要重编。
+    """
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    return {"digest": await latex_compile.build_source_digest(session, manuscript)}
+
+
+@router.get("/manuscripts/{manuscript_id}/source-bundle")
+async def source_bundle(
+    manuscript_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> Response:
+    """可编译的源码包（tar.gz），供桌面端本地编译。
+
+    与 arXiv 导出不同：不重编、不生成 .bbl，纯粹是当前源码的快照。
+    组装本身依赖 DB 与活跃 CRDT 房间，只能在服务端做——所以本地编译的形态是
+    「服务器组装 → 客户端下载 → 本地编译」，而不是客户端自己组装。
+
+    digest 放在文件名里，这样客户端从同一个响应里就能拿到，不需要读自定义响应头
+    （跨域时读自定义头还要额外配 expose_headers）。
+    """
+    manuscript = await _member_manuscript(session, manuscript_id, user, with_files=True)
+    data, digest = await latex_compile.build_source_bundle(session, manuscript)
+    headers = {"Content-Disposition": f'attachment; filename="source-{digest}.tar.gz"'}
     return Response(content=data, media_type="application/gzip", headers=headers)
 
 

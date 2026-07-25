@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -537,7 +538,8 @@ def latest_ok_pdf(manuscript: Manuscript) -> Path | None:
 # ---- arXiv 清洁包导出（源文件 + .bbl，剔除 aux/log/pdf 等编译副产物） ----
 
 # 打包时剔除的编译副产物后缀（.bbl 例外，arXiv 需要它且不一定跑 bibtex）
-_ARXIV_DROP_SUFFIXES = frozenset(
+# 确定无疑的编译中间产物，可以按后缀一刀切。
+_INTERMEDIATE_SUFFIXES = frozenset(
     {
         ".aux",
         ".log",
@@ -553,11 +555,85 @@ _ARXIV_DROP_SUFFIXES = frozenset(
         ".nav",
         ".snm",
         ".vrb",
-        ".pdf",
-        ".gz",  # synctex.gz 等
-        ".xml",  # .run.xml（biber）
     }
 )
+
+
+def _is_build_artifact(rel: str, main_stem: str | None) -> bool:
+    """是否是编译中间产物（打包时应剔除）。
+
+    .pdf / .gz / .xml 不能按后缀一刀切：.pdf 是 LaTeX 最常见的插图格式，
+    .gz 与 .xml 也可能是稿件自带的数据文件。只有编译产物本身该被剔除，
+    所以这三类按**文件名**精确匹配（main.pdf 只在包根目录才算产物；
+    figures/ 里的同名文件是插图）。
+    """
+    name = rel.rsplit("/", 1)[-1].lower()
+    if Path(name).suffix in _INTERMEDIATE_SUFFIXES:
+        return True
+    if name.endswith(".synctex.gz") or name.endswith(".run.xml"):
+        return True
+    return bool(main_stem) and "/" not in rel and name == f"{str(main_stem).lower()}.pdf"
+
+
+def _digest_of(workdir: Path, rels: list[str]) -> str:
+    """源码包内容指纹：路径 + 内容各自入哈希，路径排序保证稳定。
+
+    桌面端本地编译拿它当缓存 key——源变了 digest 就变，旧产物自然失效，
+    不需要任何额外的失效逻辑。
+    """
+    outer = hashlib.sha256()
+    for rel in rels:
+        outer.update(rel.encode("utf-8"))
+        outer.update(b"\0")
+        outer.update(hashlib.sha256((workdir / rel).read_bytes()).digest())
+        outer.update(b"\0")
+    return outer.hexdigest()
+
+
+async def _assemble_source_files(
+    session: AsyncSession, manuscript: Manuscript, workdir: Path
+) -> list[str]:
+    """只读组装稿件源码到 workdir，返回应当入包的相对路径（已排序、已剔除中间产物）。"""
+    await assemble_workdir(session, manuscript, workdir, take_snapshots=False)
+    main_name = _find_workdir_main(workdir)
+    main_stem = Path(main_name).stem if main_name else None
+    rels: list[str] = []
+    for path in sorted(workdir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(workdir).as_posix()
+        if _is_build_artifact(rel, main_stem):
+            continue
+        rels.append(rel)
+    return rels
+
+
+async def build_source_bundle(
+    session: AsyncSession, manuscript: Manuscript
+) -> tuple[bytes, str]:
+    """可编译的源码包（tar.gz）+ 内容指纹。
+
+    与 arXiv 导出的区别：不重编、不生成 .bbl——这是给桌面端拿去**本地编译**的输入。
+    组装本身深度依赖 DB 与活跃 CRDT 房间（见 assemble_workdir），所以只能在服务端做；
+    本地编译的正确形态是「服务器组装 bundle → 客户端下载 → 本地编译」。
+    """
+    buf = io.BytesIO()
+    with tempfile.TemporaryDirectory(prefix="polaris-bundle-") as tmp:
+        workdir = Path(tmp)
+        rels = await _assemble_source_files(session, manuscript, workdir)
+        digest = _digest_of(workdir, rels)
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for rel in rels:
+                tar.add(workdir / rel, arcname=rel)
+    return buf.getvalue(), digest
+
+
+async def build_source_digest(session: AsyncSession, manuscript: Manuscript) -> str:
+    """只算指纹不打包——客户端用它判断本地缓存的编译产物是否还新鲜。"""
+    with tempfile.TemporaryDirectory(prefix="polaris-digest-") as tmp:
+        workdir = Path(tmp)
+        rels = await _assemble_source_files(session, manuscript, workdir)
+        return _digest_of(workdir, rels)
 
 
 def _find_workdir_main(workdir: Path) -> str | None:
@@ -604,11 +680,19 @@ async def build_arxiv_tarball(
             if run.timed_out and not (workdir / f"{Path(main_name).stem}.bbl").is_file():
                 notes.append("生成 .bbl 超时；包内可能缺少 .bbl。")
 
+        main_stem = Path(main_name).stem if main_name else None
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             for path in sorted(workdir.rglob("*")):
-                if not path.is_file() or path.suffix.lower() in _ARXIV_DROP_SUFFIXES:
+                if not path.is_file():
                     continue
-                tar.add(path, arcname=path.relative_to(workdir).as_posix())
+                rel = path.relative_to(workdir).as_posix()
+                # .bbl 要留（arXiv 需要），其余中间产物剔除
+                if rel.lower().endswith(".bbl"):
+                    tar.add(path, arcname=rel)
+                    continue
+                if _is_build_artifact(rel, main_stem):
+                    continue
+                tar.add(path, arcname=rel)
     return buf.getvalue(), notes
 
 
