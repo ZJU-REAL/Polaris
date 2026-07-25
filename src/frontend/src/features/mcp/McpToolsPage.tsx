@@ -5,13 +5,14 @@ import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { tr } from '../../lib/i18n';
+import { portalUrl } from '../../lib/endpoint';
+import { copyText } from '../../lib/clipboard';
 import { api, getToken, type McpToolInfo } from '../../lib/api';
 
 function copy(text: string) {
-  navigator.clipboard
-    .writeText(text)
-    .then(() => toast(tr('已复制', 'Copied'), 'ok'))
-    .catch(() => toast(tr('复制失败', 'Copy failed'), 'error'));
+  void copyText(text).then((ok) =>
+    ok ? toast(tr('已复制', 'Copied'), 'ok') : toast(tr('复制失败', 'Copy failed'), 'error'),
+  );
 }
 
 const CODE_BOX: CSSProperties = {
@@ -110,7 +111,7 @@ export function McpToolsContent() {
   });
   const [filter, setFilter] = useState<'all' | 'library' | 'network'>('all');
 
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const origin = portalUrl();
   const httpUrl = `${origin}${data?.endpoint ?? '/mcp'}`;
   const token = getToken() ?? '';
 

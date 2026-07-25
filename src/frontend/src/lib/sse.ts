@@ -6,6 +6,7 @@
    ============================================================ */
 
 import { getToken, type TemplateDownloadProgress } from './api';
+import { apiBase } from './endpoint';
 
 export interface SseHandlers {
   /** 每收到一个完整事件调用（event 缺省为 "message"，data 为原始字符串）。 */
@@ -79,7 +80,7 @@ export function subscribeSse(path: string, handlers: SseHandlers): () => void {
         const headers: Record<string, string> = { Accept: 'text/event-stream' };
         const token = getToken();
         if (token) headers.Authorization = `Bearer ${token}`;
-        const res = await fetch(`/api${path}`, { headers, signal: ctrl.signal });
+        const res = await fetch(`${apiBase()}${path}`, { headers, signal: ctrl.signal });
         if (!res.ok) throw new Error(`SSE HTTP ${res.status}`);
         attempt = 0;
         handlers.onOpen?.();
@@ -135,7 +136,7 @@ export function postSse(path: string, body: unknown, handlers: PostSseHandlers):
       };
       const token = getToken();
       if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(`/api${path}`, {
+      const res = await fetch(`${apiBase()}${path}`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),

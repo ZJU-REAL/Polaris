@@ -15,6 +15,7 @@ import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
 import { McpToolsContent } from '../mcp/McpToolsPage';
 import { AcademicIdentitySection } from './AcademicIdentitySection';
 import { tr } from '../../lib/i18n';
+import { copyText } from '../../lib/clipboard';
 import { setTaskLogHistory, useTaskLogHistory } from '../../lib/prefs';
 import {
   ApiError,
@@ -3107,7 +3108,7 @@ function CreateCodeModal({ onClose }: { onClose: () => void }) {
       }),
     onSuccess: (rc) => {
       void queryClient.invalidateQueries({ queryKey: ['admin-reg-codes'] });
-      void navigator.clipboard?.writeText(rc.code).catch(() => {});
+      void copyText(rc.code);
       toast(tr(`已生成 ${rc.code}，已复制到剪贴板`, `Created ${rc.code} — copied to clipboard`), 'ok');
       onClose();
     },
@@ -3188,7 +3189,7 @@ export function CodesTab() {
   });
 
   const copy = (code: string) => {
-    void navigator.clipboard?.writeText(code).catch(() => {});
+    void copyText(code);
     toast(tr(`已复制 ${code}`, `Copied ${code}`), 'ok');
   };
 
