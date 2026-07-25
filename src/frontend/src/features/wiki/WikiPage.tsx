@@ -23,7 +23,8 @@ const PresentationModal = lazy(() =>
    文献库工作台（P5c 起挂在 /libraries/:id 的可管理者视图；原 /wiki 页面主体）
    Tab：论文库 / 概念库 / 图谱 / 文献对话 / 建库与同步 / 笔记，
    传入 libraryId 时追加「治理」（P6：库信息与预算 / 文献库管理员 / 重复论文）；
-   pid = 库背后课题 id（数据仍走 project 作用域端点，策展人与 admin 同权放行）。
+   数据一律走 /libraries/{id}/* 端点（策展人与 admin 放行）。pid 只是这个库当初
+   从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
    ============================================================ */
 
 type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes' | 'govern';
@@ -40,11 +41,14 @@ export function WikiWorkbench({
 }) {
   const navigate = useNavigate();
 
-  // 独立库（无起源课题）：集合级数据与导出走 /libraries/{id}/* 端点；PPT 仍是课题域，隐藏。
-  const standalone = !pid;
-  const scopeId = standalone ? libraryId! : pid!;
-  /** 传给各 Tab 的库作用域标识：仅独立库置位，课题库保持 undefined 走 project 端点。 */
-  const tabLibraryId = standalone ? libraryId : undefined;
+  // 集合级数据与导出一律走 /libraries/{id}/* 端点——库已与课题解耦，pid 只是
+  // 这个库当初从哪个课题建的，不再决定数据口径。
+  const libScope = !!libraryId;
+  const scopeId = libraryId ?? pid!;
+  /** 传给各 Tab 的库作用域标识：有库就置位。 */
+  const tabLibraryId = libraryId;
+  /** PPT 仍是课题域功能（要课题的研究方案做叙事），只对有起源课题的库显示。 */
+  const hasTopic = !!pid;
 
   const [tab, setTab] = useState<WikiTab>('papers');
   const [presentOpen, setPresentOpen] = useState(false);
@@ -95,7 +99,7 @@ export function WikiWorkbench({
   // —— ingest 状态（tab 计数 + Ingest 面板共用） ——
   const ingestQuery = useQuery({
     queryKey: ['ingest-state', scopeId],
-    queryFn: () => (standalone ? api.getLibraryIngestState(libraryId!) : api.getIngestState(pid!)),
+    queryFn: () => (libScope ? api.getLibraryIngestState(libraryId!) : api.getIngestState(pid!)),
     retry: false,
     refetchInterval: (q) => (q.state.data?.running_voyage_id ? 5_000 : 60_000),
   });
@@ -104,7 +108,7 @@ export function WikiWorkbench({
   const resolveQuery = useQuery({
     queryKey: ['concept-resolve', scopeId, pendingConceptName],
     queryFn: () =>
-      standalone
+      libScope
         ? api.listLibraryConcepts(libraryId!, { q: pendingConceptName ?? '' })
         : api.listConcepts(pid!, { q: pendingConceptName ?? '' }),
     enabled: !!pendingConceptName,
@@ -176,13 +180,13 @@ export function WikiWorkbench({
               {tr('文献任务运行中 →', 'Literature task running →')}
             </span>
           )}
-          {!standalone && (
+          {hasTopic && (
             <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>
               <Icon name="chart" size={13} />
               {tr('论文分享 PPT', 'Paper sharing PPT')}
             </button>
           )}
-          {/* 导出：课题走 project 端点，独立库走库作用域端点（PPT 仍是课题域，独立库隐藏） */}
+          {/* 导出走库作用域端点；没有库时（理论上不会发生）回落课题端点 */}
           <ExportMenu pid={pid} libraryId={tabLibraryId} />
         </div>
       </div>
@@ -245,7 +249,7 @@ export function WikiWorkbench({
         )}
       </div>
 
-      {!standalone && presentOpen && (
+      {hasTopic && presentOpen && (
         <Suspense fallback={null}>
           <PresentationModal
             projectId={pid!}

@@ -838,17 +838,17 @@ async def _is_project_member(
 async def can_manage_library(
     session: AsyncSession, *, user: User, library: DirectionLibrary
 ) -> bool:
-    """库级写权限（P10）：平台 admin ∪ 创建者（submitted_by）∪ 策展人 ∪ 背后课题成员。
+    """库级写权限：平台 admin ∪ 创建者（submitted_by）∪ 策展人。
 
     公共库全体 admin 都能管；个人库只创建者 + admin（策展人默认含创建者本人，仍适用）。
+
+    起源课题的成员**不再**因这层关系拿到管理权：库与课题解耦后 project_id 只是
+    「这个库当初从哪个课题建的」的历史指针，不是归属。此前靠这条在管库的人，由
+    迁移 b3d81f6c05a9 补成策展人保住权限。
     """
     if user.role == "admin":
         return True
     if library.submitted_by is not None and library.submitted_by == user.id:
-        return True
-    if library.project_id is not None and await _is_project_member(
-        session, project_id=library.project_id, user_id=user.id
-    ):
         return True
     return await is_library_curator(session, library_id=library.id, user_id=user.id)
 
