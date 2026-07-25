@@ -98,6 +98,18 @@ make desktop-dist          # 出当前平台安装包（未签名）
 `POLARIS_DEFAULT_SERVER_URL` 预填，避免把内网地址写进源码。换服务器从菜单
 「Server…」（Cmd+,）进入。
 
+### 本地打包排错
+
+- **`unable to execute hdiutil … Exit code: 16`**：上一次打包（或手工 `hdiutil attach`
+  验证）留下的 dmg 卷还挂着，新的一轮卸不掉它，于是只出 zip、不出 dmg。
+  `hdiutil detach -force "/Volumes/Polaris <版本>-<架构>"` 清掉再打。CI 每次都是干净
+  runner，不会遇到。
+- **`Application entry file "dist/main.cjs" … does not exist`**：直接调了
+  `npx electron-builder` 而没先构建。用 `npm run dist:mac`（它会先 `npm run build`），
+  或手动补一次 `npm run build`——注意 `npm run smoke` 只构建 preload/agent/smoke，
+  不含 main。
+- **打包产物启动后立刻退出（exit 0）**：单实例锁生效，说明已经有一个实例在跑。
+
 ### 未签名分发的注意事项
 
 - **macOS**：`identity: null` 只是「不用 Developer ID 签名」，它**不会**替你做 ad-hoc 签名。
