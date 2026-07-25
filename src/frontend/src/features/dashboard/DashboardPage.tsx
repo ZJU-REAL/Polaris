@@ -681,21 +681,21 @@ export function DashboardPage() {
             onNavigate={navigate}
           />
 
-          <div className="row gap16" style={{ marginBottom: 24 }}>
+          <div className="row gap16 dash-stats" style={{ marginBottom: 24 }}>
             {statCards.map((s) => (
               <StatCard key={s.label} {...s} />
             ))}
           </div>
 
-          <div className="row gap20" style={{ alignItems: 'flex-start' }}>
-            <div className="col gap20" style={{ flex: 1.5, minWidth: 0 }}>
+          <div className="row gap20 dash-main" style={{ alignItems: 'flex-start' }}>
+            <div className="col gap20 dash-primary">
               <FeaturedIdeaCard pid={currentProjectId} />
               <ActivityFeed
                 activities={statsQuery.data?.recent_activities ?? []}
                 error={statsQuery.isError}
               />
             </div>
-            <div style={{ flex: 1, minWidth: 0, position: 'sticky', top: 0 }}>
+            <div className="dash-side">
               <GatePreview gates={pendingGates} gatesError={gatesError} openGates={openGates} />
             </div>
           </div>

@@ -252,6 +252,10 @@ input {
 /* 页头右侧操作区（原为组件内联样式，挪到这里以便窄屏覆盖） */
 .page-head-actions { flex-shrink: 0; margin-left: 16px; }
 
+/* —— 课题工作台：指标卡行 + 主次两栏（原为内联样式，挪到这里以便窄屏覆盖）—— */
+.dash-primary { flex: 1.5; min-width: 0; }
+.dash-side { flex: 1; min-width: 0; position: sticky; top: 0; }
+
 /* —— 整屏「列表 + 详情」页（相关研究 / 我的文献库 / 每日新论文 / 公共库浏览）——
    页面与卡片撑满视口高度，滚动发生在 .split 内部的两块里。原本这两组样式在
    4-5 个页面里各写了一份内联，改成共享类以便窄屏统一解除高度锁定。 */
@@ -1121,6 +1125,15 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   .split .split-list { max-height: 70vh; }
   .split-detail { display: block; }
   .split-detail > * { flex: none; overflow: visible; }
+
+  /* 工作台：4 张指标卡是 flex:1，折行后每行分到的宽度不同、大小参差；
+     改 2×2 网格，四张卡等宽等高。 */
+  .dash-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 主次两栏（1.5:1）的 flex-basis 是 0，窄屏下只会一起压扁而不是换行，
+     两边内容都被挤到逐字断行；直接改上下单栏。 */
+  .dash-main { display: block; }
+  .dash-primary + .dash-side { margin-top: 20px; }
+  .dash-side { position: static; }
 
   /* 页头（全站 17 个页面共用）：右侧操作区不压缩、标题 flex-basis 为 0，
      同排会把标题挤成窄条逐字换行。窄屏改成标题在上、操作区在下。 */
