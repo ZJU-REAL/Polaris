@@ -17,6 +17,19 @@ BASE="$TMP/$(basename "$SVG").png"
 [ -f "$BASE" ] || { echo "qlmanage 未能渲染 SVG" >&2; exit 1; }
 sips -z 1024 1024 "$BASE" --out build/icon.png >/dev/null
 
+# qlmanage 把 SVG 渲染在**白底**上，不保留透明通道，四个圆角会变成白色楔形。
+# 这里按品牌标自身的几何（38 单位见方、圆角半径 3.8 = 10%）做一张圆角矩形蒙版，
+# 把形状外侧切成透明。内部的白色是 logo 本身，不受影响。
+python3 - <<'MASK'
+from PIL import Image, ImageDraw
+im = Image.open('build/icon.png').convert('RGBA')
+w, h = im.size
+mask = Image.new('L', (w, h), 0)
+ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=round(w * 3.8 / 38), fill=255)
+im.putalpha(mask)
+im.save('build/icon.png')
+MASK
+
 # macOS .icns
 ICONSET="$TMP/icon.iconset"
 mkdir -p "$ICONSET"
