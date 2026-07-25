@@ -55,7 +55,7 @@ class Manuscript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     review_passed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
-    # 软删除（垃圾箱）：非空即在垃圾箱，列表默认过滤掉；清空垃圾箱才真正删除
+    # 软删除（回收站）：非空即在回收站，列表默认过滤掉；清空回收站才真正删除
     trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # 置顶：非空即置顶，列表按 pinned_at 优先排在前面
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -56,7 +56,7 @@ CompileEngine = Literal["tectonic", "pdflatex", "xelatex", "lualatex"]
 
 
 class ManuscriptBatchAction(BaseModel):
-    """批量操作稿件：trash 移入垃圾箱 / restore 恢复 / delete 永久删除。"""
+    """批量操作稿件：trash 移入回收站 / restore 恢复 / delete 永久删除。"""
 
     action: Literal["trash", "restore", "delete"]
     ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
@@ -87,7 +87,7 @@ class ManuscriptRead(BaseModel):
     engine: str  # 编译器 tectonic | pdflatex | xelatex | lualatex
     status: str
     review_passed: bool  # M5-C：评审通过标记（submit 前置）
-    trashed_at: datetime | None = None  # 非空即在垃圾箱
+    trashed_at: datetime | None = None  # 非空即在回收站
     pinned_at: datetime | None = None  # 非空即置顶
     created_at: datetime
     updated_at: datetime

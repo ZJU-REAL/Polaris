@@ -241,7 +241,7 @@ async def papers_for_library_export(
     """库作用域导出对象：某方向库的在库成员论文（独立方向库也可用）。
 
     缺省 status in (compiled, included)；paper_ids 指定时按 id 精确导出（多选导出），
-    仍排除该库垃圾桶（excluded）与非成员。单库无需跨库归并（每篇至多一行）。
+    仍排除该库回收站（excluded）与非成员。单库无需跨库归并（每篇至多一行）。
     """
     library_ids = [library_id]
     stmt = apply_paper_filters(

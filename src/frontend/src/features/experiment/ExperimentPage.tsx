@@ -82,7 +82,7 @@ const ExperimentCard = memo(function ExperimentCard({
   const pct = expProgress(exp.status);
   const barColor =
     exp.status === 'failed' ? 'var(--danger)' : exp.status === 'cancelled' ? 'var(--text-4)' : exp.status === 'done' ? 'var(--ok)' : 'var(--accent)';
-  // 多选：整卡点击 = 切换选择；否则活动卡点击打开详情，垃圾箱卡不可点。
+  // 多选：整卡点击 = 切换选择；否则活动卡点击打开详情，回收站卡不可点。
   const activate = multiSelect ? onToggleSelect : isTrash ? undefined : onOpen;
   return (
     <div
@@ -158,7 +158,7 @@ const ExperimentCard = memo(function ExperimentCard({
           <div className="row" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
             <button
               className="btn btn-ghost sm"
-              title={tr('移入垃圾箱', 'Move to trash')}
+              title={tr('移入回收站', 'Move to trash')}
               style={{ color: 'var(--text-3)', padding: '0 7px', visibility: multiSelect ? 'hidden' : 'visible' }}
               onClick={(e) => {
                 e.stopPropagation();
@@ -270,7 +270,7 @@ export function ExperimentPage() {
     mutationFn: (id: string) => api.trashExperiment(id),
     onSuccess: () => {
       invalidateAll();
-      toast(tr('已移入垃圾箱', 'Moved to trash'), 'ok');
+      toast(tr('已移入回收站', 'Moved to trash'), 'ok');
     },
     onError: onMutError,
   });
@@ -296,7 +296,7 @@ export function ExperimentPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('已移入垃圾箱', 'Moved to trash')} · ${r.affected}`, 'ok');
+      toast(`${tr('已移入回收站', 'Moved to trash')} · ${r.affected}`, 'ok');
     },
     onError: onMutError,
   });
@@ -324,7 +324,7 @@ export function ExperimentPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('垃圾箱已清空', 'Trash emptied')} · ${r.affected}`, 'ok');
+      toast(`${tr('回收站已清空', 'Trash emptied')} · ${r.affected}`, 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
@@ -358,7 +358,7 @@ export function ExperimentPage() {
             onChange={setView}
             options={[
               { v: 'active', label: tr('实验列表', 'Experiments') },
-              { v: 'trash', label: `${tr('垃圾箱', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
+              { v: 'trash', label: `${tr('回收站', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
             ]}
           />
           <button
@@ -386,9 +386,9 @@ export function ExperimentPage() {
               style={{ marginLeft: 'auto', color: 'var(--danger)' }}
               onClick={() =>
                 setConfirm({
-                  title: tr('清空垃圾箱', 'Empty trash'),
+                  title: tr('清空回收站', 'Empty trash'),
                   message: tr(
-                    `将永久删除垃圾箱内全部 ${trashCount} 个实验，不可恢复。确定继续？`,
+                    `将永久删除回收站内全部 ${trashCount} 个实验，不可恢复。确定继续？`,
                     `This permanently deletes all ${trashCount} experiment(s) in the trash. This cannot be undone. Continue?`,
                   ),
                   confirmText: tr('清空', 'Empty'),
@@ -397,7 +397,7 @@ export function ExperimentPage() {
               }
             >
               <Icon name="trash" size={13} />
-              {tr('清空垃圾箱', 'Empty trash')}
+              {tr('清空回收站', 'Empty trash')}
             </button>
           )}
         </div>
@@ -411,7 +411,7 @@ export function ExperimentPage() {
         </div>
       ) : isLoading ? (
         <div className="card">
-          <div className="empty" style={{ padding: 60 }}>{view === 'trash' ? tr('加载垃圾箱…', 'Loading trash…') : tr('加载实验列表…', 'Loading experiments…')}</div>
+          <div className="empty" style={{ padding: 60 }}>{view === 'trash' ? tr('加载回收站…', 'Loading trash…') : tr('加载实验列表…', 'Loading experiments…')}</div>
         </div>
       ) : isError ? (
         <div className="card">
@@ -429,7 +429,7 @@ export function ExperimentPage() {
             <EmptyState
               compact
               icon="trash"
-              title={tr('垃圾箱是空的', 'Trash is empty')}
+              title={tr('回收站是空的', 'Trash is empty')}
               desc={tr('删除的实验会先进这里，可恢复或永久删除。', 'Deleted experiments land here first — restore them or delete permanently.')}
             />
           ) : (

@@ -407,7 +407,7 @@ async def update_manuscript(
 
 
 async def _manage_manuscript_project(session: AsyncSession, manuscript: Manuscript, user: User):
-    """稿件所属项目 + 管理权限校验（垃圾箱/删除用）。"""
+    """稿件所属项目 + 管理权限校验（回收站/删除用）。"""
     project = await projects_service.get_project(
         session, project_id=manuscript.project_id, user_id=user.id
     )
@@ -423,7 +423,7 @@ async def delete_manuscript(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    """默认移入垃圾箱（软删除）；permanent=true 永久删除。"""
+    """默认移入回收站（软删除）；permanent=true 永久删除。"""
     manuscript = await _member_manuscript(session, manuscript_id, user)
     await _manage_manuscript_project(session, manuscript, user)
     if permanent:
@@ -441,7 +441,7 @@ async def restore_manuscript(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ManuscriptRead:
-    """从垃圾箱恢复。"""
+    """从回收站恢复。"""
     manuscript = await _member_manuscript(session, manuscript_id, user)
     await _manage_manuscript_project(session, manuscript, user)
     await manuscripts_service.restore_manuscripts(
@@ -458,7 +458,7 @@ async def batch_manuscripts(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> BatchResult:
-    """批量：trash 移入垃圾箱 / restore 恢复 / delete 永久删除。仅项目管理者可操作。"""
+    """批量：trash 移入回收站 / restore 恢复 / delete 永久删除。仅项目管理者可操作。"""
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
@@ -485,7 +485,7 @@ async def empty_manuscript_trash(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> BatchResult:
-    """清空垃圾箱：永久删除该项目所有已在垃圾箱的稿件。"""
+    """清空回收站：永久删除该项目所有已在回收站的稿件。"""
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")

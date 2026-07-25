@@ -53,7 +53,7 @@ PAPER_SORTS = ("relevance", "-published_at")
 RERANK_CANDIDATES = 30
 RERANK_DOC_CHARS = 512
 
-# status 组别名：可见（检索到的全部，不含垃圾桶）/ 库内（相关性达标及之后）/
+# status 组别名：可见（检索到的全部，不含回收站）/ 库内（相关性达标及之后）/
 # 待编译（达标但未编译）/ 已编译（含人工纳入的历史数据）
 PAPER_STATUS_GROUPS: dict[str, tuple[str, ...]] = {
     "visible": ("candidate", "scored", "fetched", "compiled", "included"),
@@ -674,7 +674,7 @@ async def gc_orphan_papers(session: AsyncSession, paper_ids: Sequence[uuid.UUID]
 
 
 async def delete_paper(session: AsyncSession, view: PaperView) -> None:
-    """从当前方向库彻底移除一篇论文（垃圾桶里的「彻底删除」）。
+    """从当前方向库彻底移除一篇论文（回收站里的「彻底删除」）。
 
     删本库成员行与标签关联，收尾清理库内零引用标签；若这是该论文最后一处引用（别的
     库/书架/个人库/推送/论著都没有了），连内容池本体与落盘文件一并回收（孤儿清理）。
@@ -728,9 +728,9 @@ async def delete_papers(
 ) -> int:
     """批量删除项目库内论文（非本库的 id 忽略），返回处理数。
 
-    默认软删（移入垃圾桶 = 成员行 status excluded，可召回）；hard=True 删成员行。
+    默认软删（移入回收站 = 成员行 status excluded，可召回）；hard=True 删成员行。
     """
-    # 删除/垃圾桶是课题「自己那份库」的管理操作，落在起源库上（不动共享库）
+    # 删除/回收站是课题「自己那份库」的管理操作，落在起源库上（不动共享库）
     library = await get_library_for_project(session, project_id)
     if library is None:
         return 0
@@ -759,7 +759,7 @@ async def delete_library_papers(
 
 
 def restore_status_of(membership: LibraryPaper) -> str:
-    """垃圾桶召回后的状态：已编译回 compiled；打过分回 scored；否则按人工精选处理。"""
+    """回收站召回后的状态：已编译回 compiled；打过分回 scored；否则按人工精选处理。"""
     if membership.wiki_content:
         return "compiled"
     if membership.relevance_score is not None:
@@ -768,7 +768,7 @@ def restore_status_of(membership: LibraryPaper) -> str:
 
 
 async def restore_paper(session: AsyncSession, view: PaperView) -> PaperView:
-    """从垃圾桶召回（docs/api-lit.md §8.6）。"""
+    """从回收站召回（docs/api-lit.md §8.6）。"""
     view.membership.status = restore_status_of(view.membership)
     view.membership.trash_reason = None
     await session.commit()
@@ -799,7 +799,7 @@ async def _empty_trash_core(session: AsyncSession, *, library_id: uuid.UUID) -> 
 
 
 async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
-    """清空垃圾桶：彻底移除库内全部 excluded 成员行，返回删除数。"""
+    """清空回收站：彻底移除库内全部 excluded 成员行，返回删除数。"""
     library = await get_library_for_project(session, project_id)
     if library is None:
         return 0
@@ -807,7 +807,7 @@ async def empty_trash(session: AsyncSession, *, project_id: uuid.UUID) -> int:
 
 
 async def empty_library_trash(session: AsyncSession, *, library: Any) -> int:
-    """清空某方向库的垃圾桶（库工作台入口，含独立库）。"""
+    """清空某方向库的回收站（库工作台入口，含独立库）。"""
     return await _empty_trash_core(session, library_id=library.id)
 
 

@@ -625,7 +625,7 @@ export interface LlmCallLogDetail {
 
 export type PaperStatus = 'candidate' | 'scored' | 'excluded' | 'fetched' | 'compiled' | 'included';
 
-/** 状态组别名（docs/api-lit.md §8.5）：visible=检索到的全部（不含垃圾桶）；
+/** 状态组别名（docs/api-lit.md §8.5）：visible=检索到的全部（不含回收站）；
     library=库内（达标及之后）；pending_compile=待编译。 */
 export type PaperStatusFilter =
   | PaperStatus
@@ -659,7 +659,7 @@ export interface PaperRead {
   /** 0-1，未打分为 null */
   relevance_score: number | null;
   status: PaperStatus;
-  /** 垃圾桶原因（status=excluded 时有值）：irrelevant 相关性不足 | manual 手动删除 */
+  /** 回收站原因（status=excluded 时有值）：irrelevant 相关性不足 | manual 手动删除 */
   trash_reason?: 'irrelevant' | 'manual' | null;
   tldr: string | null;
   has_wiki: boolean;
@@ -1180,7 +1180,7 @@ export interface IdeaRead {
   /** 研究类型（method/benchmark/…）；草案通常为 null */
   research_type: string | null;
   created_at: string;
-  /** 软删除时间戳；null=活动，非 null=在垃圾箱 */
+  /** 软删除时间戳；null=活动，非 null=在回收站 */
   trashed_at?: string | null;
 }
 
@@ -1445,7 +1445,7 @@ export interface ExperimentRead {
   budget: ExperimentBudget | null;
   created_at: string;
   updated_at: string;
-  /** 软删除时间戳；null=活动，非 null=在垃圾箱 */
+  /** 软删除时间戳；null=活动，非 null=在回收站 */
   trashed_at?: string | null;
 }
 
@@ -1701,7 +1701,7 @@ export interface ManuscriptRead {
   review_passed?: boolean;
   created_at: string;
   updated_at: string;
-  /** 移入垃圾箱的时间；null / 缺失表示未删除（仍在活动列表）。 */
+  /** 移入回收站的时间；null / 缺失表示未删除（仍在活动列表）。 */
   trashed_at?: string | null;
   /** 置顶时间；非空即置顶（活动列表里置顶项排在最前）。 */
   pinned_at?: string | null;
@@ -2778,14 +2778,14 @@ export const api = {
   deletePaper(id: string): Promise<void> {
     return request<void>(`/papers/${id}`, { method: 'DELETE' });
   },
-  /** 批量删除：默认软删（移入垃圾桶，可召回）；hard=true 彻底删除。 */
+  /** 批量删除：默认软删（移入回收站，可召回）；hard=true 彻底删除。 */
   batchDeletePapers(projectId: string, paperIds: string[], hard = false): Promise<{ deleted: number }> {
     return requestJson<{ deleted: number }>(`/projects/${projectId}/papers/batch-delete`, 'POST', {
       paper_ids: paperIds,
       hard,
     });
   },
-  /** 从垃圾桶召回（已编译回 compiled、打过分回 scored、否则按人工精选）。 */
+  /** 从回收站召回（已编译回 compiled、打过分回 scored、否则按人工精选）。 */
   restorePaper(id: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/papers/${id}/restore`, { method: 'POST' });
   },
@@ -2796,7 +2796,7 @@ export const api = {
   deleteProjectPaper(projectId: string, paperId: string): Promise<void> {
     return request<void>(`/projects/${projectId}/papers/${paperId}`, { method: 'DELETE' });
   },
-  /** 清空垃圾桶：彻底删除项目内全部已删除论文。 */
+  /** 清空回收站：彻底删除项目内全部已删除论文。 */
   emptyTrash(projectId: string): Promise<{ deleted: number }> {
     return request<{ deleted: number }>(`/projects/${projectId}/trash/empty`, { method: 'POST' });
   },
@@ -3072,7 +3072,7 @@ export const api = {
   },
 
   // —— P9d · 独立库文献管理台（镜像 project 作用域的集合端点） ——
-  /** 库内论文（全过滤维度，同 listPapers）；status=excluded 为垃圾桶。 */
+  /** 库内论文（全过滤维度，同 listPapers）；status=excluded 为回收站。 */
   listLibraryPapersFull(
     id: string,
     opts: {
@@ -3125,14 +3125,14 @@ export const api = {
   importLibraryPaper(id: string, input: PaperImportInput): Promise<PaperDetail> {
     return requestJson<PaperDetail>(`/libraries/${id}/papers`, 'POST', input);
   },
-  /** 批量删除库内论文：默认软删（垃圾桶），hard=true 彻底删除。 */
+  /** 批量删除库内论文：默认软删（回收站），hard=true 彻底删除。 */
   batchDeleteLibraryPapers(id: string, paperIds: string[], hard = false): Promise<{ deleted: number }> {
     return requestJson<{ deleted: number }>(`/libraries/${id}/papers/batch-delete`, 'POST', {
       paper_ids: paperIds,
       hard,
     });
   },
-  /** 清空库垃圾桶：彻底删除库内全部已删除论文。 */
+  /** 清空库回收站：彻底删除库内全部已删除论文。 */
   emptyLibraryTrash(id: string): Promise<{ deleted: number }> {
     return request<{ deleted: number }>(`/libraries/${id}/trash/empty`, { method: 'POST' });
   },
@@ -3306,7 +3306,7 @@ export const api = {
   promoteIdea(id: string): Promise<GateRead> {
     return request<GateRead>(`/ideas/${id}/promote`, { method: 'POST' });
   },
-  /** 软删除：移入垃圾箱（仅 owner/admin，否则 403）。 */
+  /** 软删除：移入回收站（仅 owner/admin，否则 403）。 */
   trashIdea(id: string): Promise<void> {
     return request<void>(`/ideas/${id}`, { method: 'DELETE' });
   },
@@ -3314,11 +3314,11 @@ export const api = {
   deleteIdeaPermanent(id: string): Promise<void> {
     return request<void>(`/ideas/${id}?permanent=true`, { method: 'DELETE' });
   },
-  /** 从垃圾箱恢复（仅 owner/admin，否则 403）。 */
+  /** 从回收站恢复（仅 owner/admin，否则 403）。 */
   restoreIdea(id: string): Promise<IdeaRead> {
     return request<IdeaRead>(`/ideas/${id}/restore`, { method: 'POST' });
   },
-  /** 批量操作想法：trash=移入垃圾箱 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
+  /** 批量操作想法：trash=移入回收站 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
   batchIdeas(
     projectId: string,
     action: 'trash' | 'restore' | 'delete',
@@ -3330,7 +3330,7 @@ export const api = {
       { action, ids },
     );
   },
-  /** 清空垃圾箱：永久删除该研究方向下所有已软删除想法（仅 owner/admin，否则 403）。 */
+  /** 清空回收站：永久删除该研究方向下所有已软删除想法（仅 owner/admin，否则 403）。 */
   emptyIdeaTrash(projectId: string): Promise<{ affected: number }> {
     return request<{ affected: number }>(`/projects/${projectId}/ideas/trash/empty`, {
       method: 'POST',
@@ -3379,7 +3379,7 @@ export const api = {
   createExperiment(projectId: string, input: CreateExperimentInput): Promise<ExperimentRead> {
     return requestJson<ExperimentRead>(`/projects/${projectId}/experiments`, 'POST', input);
   },
-  /** 默认返回活动列表；opts.trashed=true 返回垃圾箱（已软删除的实验）。 */
+  /** 默认返回活动列表；opts.trashed=true 返回回收站（已软删除的实验）。 */
   listExperiments(projectId: string, opts?: { trashed?: boolean }): Promise<ExperimentRead[]> {
     const qs = opts?.trashed ? '?trashed=true' : '';
     return request<ExperimentRead[]>(`/projects/${projectId}/experiments${qs}`);
@@ -3387,7 +3387,7 @@ export const api = {
   getExperiment(id: string): Promise<ExperimentDetail> {
     return request<ExperimentDetail>(`/experiments/${id}`);
   },
-  /** 软删除：移入垃圾箱（仅 owner/admin，否则 403）。 */
+  /** 软删除：移入回收站（仅 owner/admin，否则 403）。 */
   trashExperiment(id: string): Promise<void> {
     return request<void>(`/experiments/${id}`, { method: 'DELETE' });
   },
@@ -3395,11 +3395,11 @@ export const api = {
   deleteExperimentPermanent(id: string): Promise<void> {
     return request<void>(`/experiments/${id}?permanent=true`, { method: 'DELETE' });
   },
-  /** 从垃圾箱恢复（仅 owner/admin，否则 403）。 */
+  /** 从回收站恢复（仅 owner/admin，否则 403）。 */
   restoreExperiment(id: string): Promise<ExperimentRead> {
     return request<ExperimentRead>(`/experiments/${id}/restore`, { method: 'POST' });
   },
-  /** 批量操作实验：trash=移入垃圾箱 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
+  /** 批量操作实验：trash=移入回收站 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
   batchExperiments(
     projectId: string,
     action: 'trash' | 'restore' | 'delete',
@@ -3411,7 +3411,7 @@ export const api = {
       { action, ids },
     );
   },
-  /** 清空垃圾箱：永久删除该研究方向下所有已软删除实验（仅 owner/admin，否则 403）。 */
+  /** 清空回收站：永久删除该研究方向下所有已软删除实验（仅 owner/admin，否则 403）。 */
   emptyExperimentTrash(projectId: string): Promise<{ affected: number }> {
     return request<{ affected: number }>(`/projects/${projectId}/experiments/trash/empty`, {
       method: 'POST',
@@ -3496,7 +3496,7 @@ export const api = {
   createManuscript(projectId: string, input: CreateManuscriptInput): Promise<ManuscriptRead> {
     return requestJson<ManuscriptRead>(`/projects/${projectId}/manuscripts`, 'POST', input);
   },
-  /** 默认返回活动列表；opts.trashed=true 返回垃圾箱（已软删除的稿件）。 */
+  /** 默认返回活动列表；opts.trashed=true 返回回收站（已软删除的稿件）。 */
   listManuscripts(projectId: string, opts?: { trashed?: boolean }): Promise<ManuscriptRead[]> {
     const qs = opts?.trashed ? '?trashed=true' : '';
     return request<ManuscriptRead[]>(`/projects/${projectId}/manuscripts${qs}`);
@@ -3514,7 +3514,7 @@ export const api = {
   deleteManuscript(id: string): Promise<void> {
     return request<void>(`/manuscripts/${id}`, { method: 'DELETE' });
   },
-  /** 软删除：移入垃圾箱（仅 owner/admin，否则 403）。 */
+  /** 软删除：移入回收站（仅 owner/admin，否则 403）。 */
   trashManuscript(id: string): Promise<void> {
     return request<void>(`/manuscripts/${id}`, { method: 'DELETE' });
   },
@@ -3522,11 +3522,11 @@ export const api = {
   deleteManuscriptPermanent(id: string): Promise<void> {
     return request<void>(`/manuscripts/${id}?permanent=true`, { method: 'DELETE' });
   },
-  /** 从垃圾箱恢复（仅 owner/admin，否则 403）。 */
+  /** 从回收站恢复（仅 owner/admin，否则 403）。 */
   restoreManuscript(id: string): Promise<ManuscriptRead> {
     return request<ManuscriptRead>(`/manuscripts/${id}/restore`, { method: 'POST' });
   },
-  /** 批量操作稿件：trash=移入垃圾箱 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
+  /** 批量操作稿件：trash=移入回收站 / restore=恢复 / delete=永久删除（仅 owner/admin，否则 403）。 */
   batchManuscripts(
     projectId: string,
     action: 'trash' | 'restore' | 'delete',
@@ -3538,7 +3538,7 @@ export const api = {
       { action, ids },
     );
   },
-  /** 清空垃圾箱：永久删除该研究方向下所有已软删除稿件（仅 owner/admin，否则 403）。 */
+  /** 清空回收站：永久删除该研究方向下所有已软删除稿件（仅 owner/admin，否则 403）。 */
   emptyManuscriptTrash(projectId: string): Promise<{ affected: number }> {
     return request<{ affected: number }>(`/projects/${projectId}/manuscripts/trash/empty`, {
       method: 'POST',

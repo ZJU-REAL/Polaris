@@ -39,7 +39,7 @@ class Idea(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     wins: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # candidate | under_review | promoted | rejected
     status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
-    # 软删除（垃圾箱）：非空即在垃圾箱，列表默认过滤
+    # 软删除（回收站）：非空即在回收站，列表默认过滤
     trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     parent_paper_ids: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     # 语义去重用：postgres pgvector(1024)，sqlite 回退 JSON（同 papers.embedding）

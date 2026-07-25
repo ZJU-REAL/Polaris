@@ -338,7 +338,7 @@ async def _managed_project_library_view(
     user: User,
     with_concepts: bool = False,
 ) -> papers_service.PaperView:
-    """课题写作用域下精确锁定起源库那份成员行（垃圾桶召回/彻底删除用）。
+    """课题写作用域下精确锁定起源库那份成员行（回收站召回/彻底删除用）。
 
     对照无库作用域的 ``/papers/{id}``：那条走跨库归并，会命中错误的库那份成员行。
     """
@@ -365,7 +365,7 @@ async def restore_project_paper(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
-    """从课题起源库的垃圾桶召回该篇（精确锁定本库成员行，不跨库归并）。"""
+    """从课题起源库的回收站召回该篇（精确锁定本库成员行，不跨库归并）。"""
     view = await _managed_project_library_view(
         session, project_id=project_id, paper_id=paper_id, user=user, with_concepts=True
     )
@@ -419,7 +419,7 @@ async def delete_paper(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    """彻底删除论文（垃圾桶里的「彻底删除」）：清理落盘文件，关联数据级联删除。"""
+    """彻底删除论文（回收站里的「彻底删除」）：清理落盘文件，关联数据级联删除。"""
     paper = await _get_member_paper(session, paper_id, user)
     await papers_service.delete_paper(session, paper)
 
@@ -430,7 +430,7 @@ async def restore_paper(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
-    """从垃圾桶召回：已编译回 compiled、打过分回 scored、否则按人工精选。"""
+    """从回收站召回：已编译回 compiled、打过分回 scored、否则按人工精选。"""
     paper = await _get_member_paper(session, paper_id, user, with_concepts=True)
     paper = await papers_service.restore_paper(session, paper)
     return await _paper_detail(session, paper, user.id)
@@ -445,7 +445,7 @@ async def batch_delete_papers(
 ) -> dict[str, int]:
     """批量删除项目内论文（非本项目的 id 忽略），返回 {deleted}。
 
-    默认软删（移入垃圾桶，可召回）；hard=true 彻底删除。
+    默认软删（移入回收站，可召回）；hard=true 彻底删除。
     """
     await _get_managed_project(session, project_id, user)
     deleted = await papers_service.delete_papers(
@@ -460,7 +460,7 @@ async def empty_trash(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, int]:
-    """清空垃圾桶：彻底删除项目内全部已删除论文。"""
+    """清空回收站：彻底删除项目内全部已删除论文。"""
     await _get_managed_project(session, project_id, user)
     deleted = await papers_service.empty_trash(session, project_id=project_id)
     return {"deleted": deleted}

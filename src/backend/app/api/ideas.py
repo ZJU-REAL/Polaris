@@ -173,7 +173,7 @@ async def list_ideas(
 
 
 async def _manage_idea_project(session: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
-    """项目 + 管理权限（垃圾箱/删除用）。"""
+    """项目 + 管理权限（回收站/删除用）。"""
     project = await _member_project(session, project_id, user)
     if not projects_service.can_manage_project(project, user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="OWNER_OR_ADMIN_REQUIRED")
@@ -187,7 +187,7 @@ async def delete_idea(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    """默认移入垃圾箱；permanent=true 永久删除（级联其实验）。仅项目管理者。"""
+    """默认移入回收站；permanent=true 永久删除（级联其实验）。仅项目管理者。"""
     idea = await _member_idea(session, idea_id, user)
     await _manage_idea_project(session, idea.project_id, user)
     if permanent:

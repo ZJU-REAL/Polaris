@@ -43,7 +43,7 @@ class ExperimentRead(BaseModel):
     workdir: str | None
     server_host: str | None
     budget: dict[str, Any] | None
-    trashed_at: datetime | None = None  # 非空即在垃圾箱
+    trashed_at: datetime | None = None  # 非空即在回收站
     created_at: datetime
     updated_at: datetime
 

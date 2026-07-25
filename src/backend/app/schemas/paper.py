@@ -49,7 +49,7 @@ class PaperRead(BaseModel):
     published_at: datetime | None
     relevance_score: float | None
     status: str
-    # 垃圾桶原因（status=excluded 时有值）：irrelevant 相关性不足 | manual 手动删除
+    # 回收站原因（status=excluded 时有值）：irrelevant 相关性不足 | manual 手动删除
     trash_reason: str | None = None
     tldr: str | None
     has_wiki: bool = False
@@ -146,7 +146,7 @@ class PaperBatchIds(BaseModel):
     """批量操作（删除/导出）的论文 id 列表。"""
 
     paper_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
-    # 批量删除：默认软删（移入垃圾桶，可召回）；true = 彻底删除
+    # 批量删除：默认软删（移入回收站，可召回）；true = 彻底删除
     hard: bool = False
 
 

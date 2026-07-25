@@ -102,7 +102,7 @@ async def list_experiments(
 
 
 async def _manage_exp_project(session: AsyncSession, project_id: uuid.UUID, user: User):
-    """项目 + 管理权限（垃圾箱/删除用）。"""
+    """项目 + 管理权限（回收站/删除用）。"""
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
@@ -118,11 +118,11 @@ async def delete_experiment(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    """默认移入垃圾箱；permanent=true 永久删除（删本地目录，远端 workdir 不动）。仅管理者。"""
+    """默认移入回收站；permanent=true 永久删除（删本地目录，远端 workdir 不动）。仅管理者。"""
     experiment, _ = await _member_experiment(session, experiment_id, user)
     await _manage_exp_project(session, experiment.project_id, user)
     if permanent:
-        # 先移入垃圾箱再清空（purge 只删已在垃圾箱的），保证本地目录也被清理
+        # 先移入回收站再清空（purge 只删已在回收站的），保证本地目录也被清理
         if experiment.trashed_at is None:
             await experiments_service.trash_experiments(
                 session, project_id=experiment.project_id, ids=[experiment.id]

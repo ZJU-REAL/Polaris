@@ -181,7 +181,7 @@ function PubRow({
   );
 }
 
-/** 发表列表的包裹容器：圆角描边，内部行用分隔线（同垃圾桶列表）。 */
+/** 发表列表的包裹容器：圆角描边，内部行用分隔线（同回收站列表）。 */
 function PubList({ children }: { children: ReactNode }) {
   return (
     <div style={{ border: '0.5px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>

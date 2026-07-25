@@ -523,7 +523,7 @@ async def initialize_structure(
 async def list_manuscripts(
     session: AsyncSession, *, project_id: uuid.UUID, trashed: bool = False
 ) -> list[Manuscript]:
-    """项目下的稿件；trashed=False 只列未删除（置顶优先），True 只列垃圾箱。"""
+    """项目下的稿件；trashed=False 只列未删除（置顶优先），True 只列回收站。"""
     cond = Manuscript.trashed_at.is_not(None) if trashed else Manuscript.trashed_at.is_(None)
     stmt = select(Manuscript).where(Manuscript.project_id == project_id, cond)
     if trashed:
@@ -546,7 +546,7 @@ async def _owned_manuscripts(
 async def trash_manuscripts(
     session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
 ) -> int:
-    """移入垃圾箱（软删除）；返回受影响数量。"""
+    """移入回收站（软删除）；返回受影响数量。"""
     rows = await _owned_manuscripts(session, project_id=project_id, ids=ids)
     now = datetime.now(UTC)
     n = 0
@@ -561,7 +561,7 @@ async def trash_manuscripts(
 async def restore_manuscripts(
     session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]
 ) -> int:
-    """从垃圾箱恢复；返回受影响数量。"""
+    """从回收站恢复；返回受影响数量。"""
     rows = await _owned_manuscripts(session, project_id=project_id, ids=ids)
     n = 0
     for m in rows:
@@ -578,8 +578,8 @@ async def purge_manuscripts(
     project_id: uuid.UUID,
     ids: list[uuid.UUID] | None = None,
 ) -> int:
-    """永久删除。ids=None → 清空该项目垃圾箱（删所有已在垃圾箱的稿件）；
-    否则只永久删除指定 id 中已在垃圾箱的稿件（避免误删未删除的）。返回删除数量。"""
+    """永久删除。ids=None → 清空该项目回收站（删所有已在回收站的稿件）；
+    否则只永久删除指定 id 中已在回收站的稿件（避免误删未删除的）。返回删除数量。"""
     if ids is None:
         rows = await list_manuscripts(session, project_id=project_id, trashed=True)
     else:

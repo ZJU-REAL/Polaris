@@ -473,7 +473,7 @@ async def list_library_papers(
     """库内论文（分页/检索/排序/过滤）。缺省只列相关性达标的（status=library 组别名）。
 
     过滤参数与课题论文列表一致（星标/阅读状态/标签/作者/机构/发表与入库时间）；
-    ``status=excluded`` 取该库垃圾桶。P9e 起标签是库作用域，独立库同样可用。
+    ``status=excluded`` 取该库回收站。P9e 起标签是库作用域，独立库同样可用。
     """
     library = await _get_visible_library(session, library_id, user)
     items, total = await papers_service.list_papers(
@@ -538,7 +538,7 @@ async def _managed_library_paper_view(
     user: User,
     with_concepts: bool = False,
 ) -> papers_service.PaperView:
-    """可管理者精确锁定本库那份成员行（垃圾桶召回/彻底删除用；不跨库归并）。"""
+    """可管理者精确锁定本库那份成员行（回收站召回/彻底删除用；不跨库归并）。"""
     library = await _get_managed_library(session, library_id, user)
     view = await papers_service.get_library_paper_view(
         session,
@@ -559,7 +559,7 @@ async def restore_library_paper(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> PaperDetail:
-    """从**指定库**的垃圾桶召回该篇（精确锁定本库成员行，不跨库归并）。"""
+    """从**指定库**的回收站召回该篇（精确锁定本库成员行，不跨库归并）。"""
     view = await _managed_library_paper_view(
         session, library_id=library_id, paper_id=paper_id, user=user, with_concepts=True
     )
@@ -687,7 +687,7 @@ async def export_library_citations(
     """库作用域引用导出：BibTeX / CSL-JSON（独立方向库也可用；读端点全实验室可读）。
 
     不传 ids 导出全库在库论文（缺省 status in compiled/included）；ids 指定时按 id
-    精确导出（多选导出），非成员/垃圾桶（excluded）不含。
+    精确导出（多选导出），非成员/回收站（excluded）不含。
     """
     library = await _get_visible_library(session, library_id, user)
     paper_ids: list[uuid.UUID] | None = None
@@ -803,7 +803,7 @@ async def empty_library_trash(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, int]:
-    """清空该库垃圾桶：彻底删除库内全部已删除论文成员行。"""
+    """清空该库回收站：彻底删除库内全部已删除论文成员行。"""
     library = await _get_managed_library(session, library_id, user)
     deleted = await papers_service.empty_library_trash(session, library=library)
     return {"deleted": deleted}

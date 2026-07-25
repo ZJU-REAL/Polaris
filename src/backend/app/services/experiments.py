@@ -254,7 +254,7 @@ async def restore_experiments(
 async def purge_experiments(
     session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID] | None = None
 ) -> int:
-    """永久删除。ids=None → 清空该项目垃圾箱。删本地目录（日志/图）；runs 走 DB 级联。
+    """永久删除。ids=None → 清空该项目回收站。删本地目录（日志/图）；runs 走 DB 级联。
     远端 workdir 不动（best-effort，避免误删共享服务器）。返回删除数量。"""
     if ids is None:
         rows = [

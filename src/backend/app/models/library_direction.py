@@ -100,7 +100,7 @@ class LibraryPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     wiki_content: Mapped[str | None] = mapped_column(Text)  # 库版图文解读 markdown
     # 状态流转同 PAPER_STATUSES：candidate → scored|excluded → fetched → compiled；included 人工纳入
     status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
-    # 进垃圾桶的原因（status=excluded 时有值）：irrelevant 相关性不足自动淘汰 | manual 手动删除
+    # 进回收站的原因（status=excluded 时有值）：irrelevant 相关性不足自动淘汰 | manual 手动删除
     trash_reason: Mapped[str | None] = mapped_column(String(16))
     scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     compiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

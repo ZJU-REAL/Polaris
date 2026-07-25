@@ -19,7 +19,7 @@ import { saveBlob } from '../wiki/shared';
 /* ============================================================
    /writer — Stage 04 · Paper Writer（M5-B）列表视图。
    项目内论文卡（标题 / 模板 / 状态 / 更新时间）+ 新建论文草稿。
-   支持多选批量删除、垃圾箱（软删除 / 恢复 / 永久删除 / 清空）。
+   支持多选批量删除、回收站（软删除 / 恢复 / 永久删除 / 清空）。
    ============================================================ */
 
 type ViewMode = 'active' | 'trash';
@@ -225,7 +225,7 @@ function ManuscriptCard({
               onClick={onExport}
               disabled={exporting}
             />
-            <CardAction icon="trash" title={tr('移入垃圾箱', 'Move to trash')} onClick={onTrash} />
+            <CardAction icon="trash" title={tr('移入回收站', 'Move to trash')} onClick={onTrash} />
           </div>
         </div>
       )}
@@ -312,7 +312,7 @@ export function WriterPage() {
     mutationFn: (id: string) => api.trashManuscript(id),
     onSuccess: () => {
       invalidateAll();
-      toast(tr('已移入垃圾箱', 'Moved to trash'), 'ok');
+      toast(tr('已移入回收站', 'Moved to trash'), 'ok');
     },
     onError: onMutError,
   });
@@ -356,7 +356,7 @@ export function WriterPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('已移入垃圾箱', 'Moved to trash')} · ${r.affected}`, 'ok');
+      toast(`${tr('已移入回收站', 'Moved to trash')} · ${r.affected}`, 'ok');
     },
     onError: onMutError,
   });
@@ -384,7 +384,7 @@ export function WriterPage() {
     onSuccess: (r) => {
       invalidateAll();
       clearSelection();
-      toast(`${tr('垃圾箱已清空', 'Trash emptied')} · ${r.affected}`, 'ok');
+      toast(`${tr('回收站已清空', 'Trash emptied')} · ${r.affected}`, 'ok');
     },
     onError: onMutError,
     onSettled: () => setConfirm(null),
@@ -419,7 +419,7 @@ export function WriterPage() {
             onChange={(v) => setView(v)}
             options={[
               { v: 'active', label: tr('论文列表', 'Manuscripts') },
-              { v: 'trash', label: `${tr('垃圾箱', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
+              { v: 'trash', label: `${tr('回收站', 'Trash')}${trashCount > 0 ? ` (${trashCount})` : ''}` },
             ]}
           />
           <button
@@ -447,9 +447,9 @@ export function WriterPage() {
               style={{ marginLeft: 'auto', color: 'var(--danger)' }}
               onClick={() =>
                 setConfirm({
-                  title: tr('清空垃圾箱', 'Empty trash'),
+                  title: tr('清空回收站', 'Empty trash'),
                   message: tr(
-                    `将永久删除垃圾箱内全部 ${trashCount} 篇论文草稿，不可恢复。确定继续？`,
+                    `将永久删除回收站内全部 ${trashCount} 篇论文草稿，不可恢复。确定继续？`,
                     `This permanently deletes all ${trashCount} manuscript(s) in the trash. This cannot be undone. Continue?`,
                   ),
                   confirmText: tr('清空', 'Empty'),
@@ -458,7 +458,7 @@ export function WriterPage() {
               }
             >
               <Icon name="trash" size={13} />
-              {tr('清空垃圾箱', 'Empty trash')}
+              {tr('清空回收站', 'Empty trash')}
             </button>
           )}
         </div>
@@ -490,7 +490,7 @@ export function WriterPage() {
             <EmptyState
               compact
               icon="trash"
-              title={tr('垃圾箱是空的', 'Trash is empty')}
+              title={tr('回收站是空的', 'Trash is empty')}
               desc={tr('删除的论文草稿会先进这里，可恢复或永久删除。', 'Deleted manuscripts land here first — restore them or delete permanently.')}
             />
           ) : (

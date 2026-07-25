@@ -402,7 +402,7 @@ async def _owned_ideas(
 
 
 async def trash_ideas(session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID]) -> int:
-    """移入垃圾箱（软删除）；返回受影响数量。"""
+    """移入回收站（软删除）；返回受影响数量。"""
     now = datetime.now(UTC)
     n = 0
     for idea in await _owned_ideas(session, project_id=project_id, ids=ids):
@@ -428,7 +428,7 @@ async def restore_ideas(
 async def purge_ideas(
     session: AsyncSession, *, project_id: uuid.UUID, ids: list[uuid.UUID] | None = None
 ) -> int:
-    """永久删除。ids=None → 清空该项目垃圾箱；否则只删指定 id 中已在垃圾箱的。
+    """永久删除。ids=None → 清空该项目回收站；否则只删指定 id 中已在回收站的。
     级联删除其实验（DB FK ondelete=CASCADE）。返回删除数量。"""
     if ids is None:
         rows = await list_ideas(session, project_id=project_id, trashed=True)

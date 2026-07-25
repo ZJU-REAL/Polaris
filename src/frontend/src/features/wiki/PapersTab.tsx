@@ -52,7 +52,7 @@ import { PaperProgressModal } from '../library/PaperProgressModal';
 const PAGE_SIZE = 20;
 
 /** 论文库视图（docs/api-lit.md §8.5）：全部 = 已纳入（相关性达标）的文献；
-    相关性不足的进垃圾桶，不显示不计数。 */
+    相关性不足的进回收站，不显示不计数。 */
 type ViewFilter = 'all' | 'compiled' | 'starred';
 
 // 模块级常量存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
@@ -62,7 +62,7 @@ const VIEW_FILTERS: { v: ViewFilter; zh: string; en: string; hintZh: string; hin
   { v: 'starred', zh: '已星标', en: 'Starred', hintZh: '我加了星标的文献', hintEn: 'Papers I starred' },
 ];
 
-/** 视图 → 列表查询参数（未纳入/垃圾桶文献一律不出现在论文库）。 */
+/** 视图 → 列表查询参数（未纳入/回收站文献一律不出现在论文库）。 */
 function viewQuery(view: ViewFilter): { status: PaperStatusFilter; starred?: boolean } {
   if (view === 'compiled') return { status: 'compiled_any' };
   if (view === 'starred') return { status: 'library', starred: true };
@@ -445,7 +445,7 @@ export function ExportMenu({
   );
 }
 
-/* ---------------- 垃圾桶 ---------------- */
+/* ---------------- 回收站 ---------------- */
 
 function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?: string; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -507,7 +507,7 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
   const emptyMutation = useMutation({
     mutationFn: () => (libraryId ? api.emptyLibraryTrash(libraryId) : api.emptyTrash(pid)),
     onSuccess: (res) => {
-      toast(tr(`垃圾桶已清空（${res.deleted} 篇）`, `Trash emptied (${res.deleted} papers)`), 'ok');
+      toast(tr(`回收站已清空（${res.deleted} 篇）`, `Trash emptied (${res.deleted} papers)`), 'ok');
       setConfirmEmpty(false);
       invalidate();
     },
@@ -521,7 +521,7 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
     <Modal
       open={open}
       onClose={onClose}
-      title={tr('垃圾桶', 'Trash')}
+      title={tr('回收站', 'Trash')}
       sub={tr(
         '相关性不足自动淘汰与手动删除的文献；召回后回到论文库',
         'Papers auto-dropped for low relevance or deleted manually; restoring puts them back in the library',
@@ -558,7 +558,7 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
                 onClick={() => setConfirmEmpty(true)}
               >
                 <Icon name="x" size={12} />
-                {tr('清空垃圾桶', 'Empty trash')}
+                {tr('清空回收站', 'Empty trash')}
               </button>
               <button className="btn btn-soft sm" onClick={onClose}>
                 {tr('关闭', 'Close')}
@@ -582,7 +582,7 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
       {trashQuery.isLoading ? (
         <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
       ) : allItems.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('垃圾桶是空的', 'Trash is empty')}</div>
+        <div className="empty" style={{ padding: 24 }}>{tr('回收站是空的', 'Trash is empty')}</div>
       ) : items.length === 0 ? (
         <div className="empty" style={{ padding: 24 }}>{tr('没有匹配的文献', 'No matching papers')}</div>
       ) : (
@@ -615,13 +615,13 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
   );
 }
 
-/** 垃圾桶原因标签：打分淘汰 = 不相关；否则视为手动删除（老数据缺字段时按分数推断）。 */
+/** 回收站原因标签：打分淘汰 = 不相关；否则视为手动删除（老数据缺字段时按分数推断）。 */
 function trashReasonOf(p: PaperRead): 'irrelevant' | 'manual' {
   if (p.trash_reason === 'manual' || p.trash_reason === 'irrelevant') return p.trash_reason;
   return p.relevance_score !== null ? 'irrelevant' : 'manual';
 }
 
-/** 垃圾桶列表行：与论文库 PaperRow 同款版式，标签换成删除原因，右侧召回/彻底删除。 */
+/** 回收站列表行：与论文库 PaperRow 同款版式，标签换成删除原因，右侧召回/彻底删除。 */
 function TrashRow({
   p,
   last,
@@ -960,7 +960,7 @@ function PaperDetailPane({
         ? api.batchDeleteLibraryPapers(libraryId, [paperId])
         : api.batchDeletePapers(scopeId, [paperId]),
     onSuccess: () => {
-      toast(tr('已移入垃圾桶，可在列表底部的垃圾桶中召回', 'Moved to trash — restore it from the trash any time'), 'ok');
+      toast(tr('已移入回收站，可在列表底部的回收站中召回', 'Moved to trash — restore it from the trash any time'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['paper', scopeId, paperId] });
       void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
       void queryClient.invalidateQueries({ queryKey: ['papers-trash', scopeId] });
@@ -1105,7 +1105,7 @@ function PaperDetailPane({
         <button
           className="btn btn-ghost sm"
           style={{ color: 'var(--danger-tx)' }}
-          title={tr('移入垃圾桶（可召回）', 'Move to trash (restorable)')}
+          title={tr('移入回收站（可召回）', 'Move to trash (restorable)')}
           disabled={deleteMutation.isPending}
           onClick={() => deleteMutation.mutate()}
         >
@@ -1432,7 +1432,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   const bulkDeleteMutation = useMutation({
     mutationFn: () => (libraryId ? api.batchDeleteLibraryPapers(libraryId, [...selected]) : api.batchDeletePapers(scopeId, [...selected])),
     onSuccess: (res) => {
-      toast(tr(`已把 ${res.deleted} 篇移入垃圾桶，可召回`, `Moved ${res.deleted} papers to trash — restorable`), 'ok');
+      toast(tr(`已把 ${res.deleted} 篇移入回收站，可召回`, `Moved ${res.deleted} papers to trash — restorable`), 'ok');
       if (selectedId && selected.has(selectedId)) onSelect('');
       setSelected(new Set());
       setSelectMode(false);
@@ -1655,11 +1655,11 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
             <span
               className="chip"
               style={{ marginLeft: 'auto', gap: 5 }}
-              title={tr('垃圾桶：已删除的文献，可召回或彻底删除', 'Trash: deleted papers — restore or delete forever')}
+              title={tr('回收站：已删除的文献，可召回或彻底删除', 'Trash: deleted papers — restore or delete forever')}
               onClick={() => setTrashOpen(true)}
             >
               <Icon name="trash" size={12} />
-              {tr('垃圾桶', 'Trash')}
+              {tr('回收站', 'Trash')}
             </span>
           </div>
           {/* 标签（库作用域，课题/独立库通用）/ 阅读状态过滤 */}
@@ -1858,7 +1858,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       {/* —— 添加文献 Modal —— */}
       <AddPaperModal pid={pid ?? ''} libraryId={libraryId} open={addOpen} onClose={() => setAddOpen(false)} onImported={onSelect} />
 
-      {/* —— 垃圾桶 —— */}
+      {/* —— 回收站 —— */}
       <TrashModal pid={pid ?? ''} libraryId={libraryId} open={trashOpen} onClose={() => setTrashOpen(false)} />
     </div>
   );
