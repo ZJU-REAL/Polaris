@@ -792,7 +792,12 @@ export function DailyPage() {
           {/* —— 右：详情 —— */}
           <div className="split-detail">
             {selectedId ? (
-              <DailyDetailPane entryId={selectedId} onCollect={openCollect} />
+              <DailyDetailPane
+                /* key：换论文时重挂载，避免上一篇的「下载中 / 编译中」状态串台 */
+                key={selectedId}
+                entryId={selectedId}
+                onCollect={openCollect}
+              />
             ) : (
               <div className="empty" style={{ margin: 'auto' }}>
                 {tr('选择论文查看详情', 'Select a paper to view details')}

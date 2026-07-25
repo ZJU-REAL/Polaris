@@ -499,7 +499,12 @@ function PapersPane({
 
       <div className="split-detail">
         {selectedId ? (
-          <PaperDetailPane paperId={selectedId} onWikiLink={onWikiLink} />
+          <PaperDetailPane
+            /* key：换论文时重挂载，避免上一篇的「编译中 / 下载中」状态串台 */
+            key={selectedId}
+            paperId={selectedId}
+            onWikiLink={onWikiLink}
+          />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
             {tr('从列表中选择一篇论文', 'Pick a paper from the list')}
