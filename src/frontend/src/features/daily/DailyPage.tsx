@@ -1,9 +1,15 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { EmptyState } from '../../components/ui/EmptyState';
+import {
+  FigureEmbed,
+  FiguresSection,
+  hasEmbeddedFigures,
+  usePaperFigures,
+} from '../../components/ui/FigureGallery';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { ApiError, api, type DailyPaperItem, type DailySort, type PaperDetail } from '../../lib/api';
@@ -167,6 +173,8 @@ function DailyDetailPane({
   const navigate = useNavigate();
   const location = useLocation();
   const [readerOpen, setReaderOpen] = useState(false);
+  // 阅览模式打开后是否直接唤起打印（「导出 PDF」一步直达）
+  const [readerPrint, setReaderPrint] = useState(false);
   const { data: paper, isLoading, isError } = useQuery({
     queryKey: ['daily-paper', entryId],
     queryFn: () => api.getDailyPaper(entryId),
@@ -174,7 +182,22 @@ function DailyDetailPane({
   });
 
   // 换论文时关掉阅览模式（面板不再随选中项重挂载，本地开合状态要自己收）
-  useEffect(() => setReaderOpen(false), [entryId]);
+  useEffect(() => {
+    setReaderOpen(false);
+    setReaderPrint(false);
+  }, [entryId]);
+
+  /* 正文 ![[fig:N]] 嵌入图（与文献库详情同款渲染）。
+     每日详情返回的是 DailyPaperDetail（没有 figures 字段），图片按内容池 paper_id 单独拉一次。 */
+  const figureRef = useMemo(() => (paper ? { id: paper.paper_id } : undefined), [paper]);
+  const figures = usePaperFigures(figureRef);
+  const renderFigure = useCallback(
+    (n: number) => {
+      const fig = figures.find((f) => f.index === n);
+      return fig && paper ? <FigureEmbed paperId={paper.paper_id} fig={fig} /> : null;
+    },
+    [figures, paper],
+  );
 
   if (isLoading) return <div className="empty">{tr('加载论文详情…', 'Loading paper…')}</div>;
   if (isError || !paper) {
@@ -199,6 +222,8 @@ function DailyDetailPane({
     id: paper.paper_id,
     venue: null,
     tldr: null,
+    concepts: [],
+    figures,
   };
 
   return (
@@ -300,7 +325,10 @@ function DailyDetailPane({
           <button
             className="btn btn-soft sm"
             title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
-            onClick={() => setReaderOpen(true)}
+            onClick={() => {
+              setReaderPrint(false);
+              setReaderOpen(true);
+            }}
           >
             <Icon name="book" size={13} />
             {tr('阅览模式', 'Reading mode')}
@@ -328,7 +356,14 @@ function DailyDetailPane({
         <div className="empty" style={{ padding: 20 }}>{tr('这篇还没有摘要。', 'No abstract for this paper.')}</div>
       )}
 
-      {/* —— AI 图文介绍：渲染风格对齐常规详情（同容器/字号/Markdown props） —— */}
+      {/* —— 重要图片画廊（只读：提取/重新提取是库维护动作，普通用户没权限） —— */}
+      <FiguresSection
+        paper={readerPaper}
+        readOnly
+        defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)}
+      />
+
+      {/* —— AI 图文介绍：渲染风格对齐文献库详情（同容器/字号/Markdown props） —— */}
       {paper.wiki_content ? (
         <div style={{ marginTop: 22 }}>
           <div
@@ -344,16 +379,32 @@ function DailyDetailPane({
             <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
               {tr('AI 图文介绍', 'AI intro')}
             </span>
-            <button
-              className="btn btn-soft sm"
-              title={tr('全屏专注阅读', 'Full-screen focused reading')}
-              onClick={() => setReaderOpen(true)}
-            >
-              <Icon name="book" size={13} />
-              {tr('阅览模式', 'Reading mode')}
-            </button>
+            <div className="row gap6">
+              <button
+                className="btn btn-soft sm"
+                title={tr('全屏专注阅读', 'Full-screen focused reading')}
+                onClick={() => {
+                  setReaderPrint(false);
+                  setReaderOpen(true);
+                }}
+              >
+                <Icon name="book" size={13} />
+                {tr('阅览模式', 'Reading mode')}
+              </button>
+              <button
+                className="btn btn-ghost sm"
+                title={tr('打开阅览页并唤起打印，另存为 PDF', 'Open the reader and print to save as PDF')}
+                onClick={() => {
+                  setReaderPrint(true);
+                  setReaderOpen(true);
+                }}
+              >
+                <Icon name="download" size={13} />
+                {tr('导出 PDF', 'Export PDF')}
+              </button>
+            </div>
           </div>
-          <Markdown source={paper.wiki_content} />
+          <Markdown source={paper.wiki_content} renderFigure={renderFigure} />
         </div>
       ) : (
         <EmptyState
@@ -370,7 +421,9 @@ function DailyDetailPane({
       {readerOpen && (
         <PaperReader
           paper={readerPaper}
-          renderFigure={() => null}
+          wikiContent={paper.wiki_content}
+          renderFigure={renderFigure}
+          autoPrint={readerPrint}
           onClose={() => setReaderOpen(false)}
         />
       )}
