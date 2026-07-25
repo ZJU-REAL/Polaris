@@ -15,26 +15,31 @@ trap 'rm -rf "$TMP"' EXIT
 qlmanage -t -s 1024 -o "$TMP" "$SVG" >/dev/null 2>&1
 BASE="$TMP/$(basename "$SVG").png"
 [ -f "$BASE" ] || { echo "qlmanage 未能渲染 SVG" >&2; exit 1; }
-sips -z 1024 1024 "$BASE" --out build/icon.png >/dev/null
+sips -z 1024 1024 "$BASE" --out "$TMP/square.png" >/dev/null
 
-# qlmanage 把 SVG 渲染在**白底**上，不保留透明通道，四个圆角会变成白色楔形。
-# 这里按品牌标自身的几何（38 单位见方、圆角半径 3.8 = 10%）做一张圆角矩形蒙版，
-# 把形状外侧切成透明。内部的白色是 logo 本身，不受影响。
-python3 - <<'MASK'
+# 两种形状，按平台分工：
+#   square.png  四边到底的纯方形（icon.svg 自己铺了整幅蓝底）→ 给 macOS。
+#     macOS 26 会把 app 图标放进系统统一的圆角容器里；如果我们自带圆角+透明角，
+#     系统会把它缩放着塞进容器，容器背景从四周露出来就是一圈灰边。给方形让系统
+#     自己切圆角，才不会有灰边。
+#   rounded.png 自带圆角、四角透明 → 给 Windows / Linux，它们不做遮罩。
+python3 - "$TMP" <<'SHAPES'
+import pathlib, sys
 from PIL import Image, ImageDraw
-im = Image.open('build/icon.png').convert('RGBA')
+tmp = pathlib.Path(sys.argv[1])
+im = Image.open(tmp / 'square.png').convert('RGBA')
 w, h = im.size
 mask = Image.new('L', (w, h), 0)
 ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=round(w * 3.8 / 38), fill=255)
 im.putalpha(mask)
-im.save('build/icon.png')
-MASK
+im.save('build/icon.png')  # Linux；Windows 的 .ico 也从这张切
+SHAPES
 
-# macOS .icns
+# macOS .icns —— 用方形源，让系统自己切圆角（见上）
 ICONSET="$TMP/icon.iconset"
 mkdir -p "$ICONSET"
 for size in 16 32 64 128 256 512 1024; do
-  sips -z $size $size build/icon.png --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+  sips -z $size $size "$TMP/square.png" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
 done
 # iconutil 要求的 @2x 命名
 for size in 16 32 128 256 512; do
