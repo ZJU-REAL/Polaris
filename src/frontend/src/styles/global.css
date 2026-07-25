@@ -1099,6 +1099,19 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   .segmented::-webkit-scrollbar { display: none; }
   .segmented > button { flex-shrink: 0; white-space: nowrap; }
 
+  /* 端到端流水线：6 张阶段卡横排放不下，折行会在行末留下指向空处的箭头、
+     且两行卡片高度不齐。窄屏改 3 列网格（卡片自动等高）并隐藏箭头连接线。 */
+  .pipeline-flow {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    /* 组件内联 gap 读这个变量：内联优先级高于样式表，直接在这里写 gap 不生效 */
+    --pipeline-gap: 10px;
+    /* 两行等高：否则带「下一步从这里继续」的那一行会明显更高 */
+    grid-auto-rows: 1fr;
+  }
+  .pipeline-arrow { display: none; }
+  /* 卡片只有 ~104px 宽，「下一步从这里继续」会在末尾掉一个孤字；均分两行 */
+  .pipeline-hint { text-wrap: balance; }
+
   /* —— 宽内容兜底 —— */
   .table-wrap > .table { min-width: 560px; }
   /* 任务列表行：徽标 + 标题 + 进度 130 + 耗时 78 + 状态 134 + 箭头，定宽列

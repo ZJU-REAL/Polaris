@@ -40,7 +40,11 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
           {tr('当前课题', 'Current topic')} · {directionLabel}
         </span>
       </div>
-      <div className="row" style={{ alignItems: 'stretch', gap: 0 }}>
+      {/* 窄屏改 3 列网格并隐藏箭头（见 global.css）：折行会在行末留下指向空处的
+          箭头，且两行卡片高度不齐；网格下卡片等高，顺序由 00-05 编号表达。
+          gap 走 CSS 变量而不是写死 0：内联样式优先级高于样式表，写死会让
+          窄屏网格的间隔失效，卡片彼此贴死。桌面仍是 0（间距由箭头列撑开）。 */}
+      <div className="row pipeline-flow" style={{ alignItems: 'stretch', gap: 'var(--pipeline-gap, 0px)' }}>
         {stages.map((s, idx) => (
           <Fragment key={s.key}>
             <div
@@ -90,20 +94,20 @@ export function PipelineFlow({ stages, directionLabel, onNavigate }: PipelineFlo
               </div>
               {s.running && (
                 <div
-                  className="pulse"
+                  className="pulse pipeline-hint"
                   style={{ marginTop: 6, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 600 }}
                 >
                   ● {tr('运行中', 'Running')}
                 </div>
               )}
               {s.stuck && !s.running && (
-                <div style={{ marginTop: 6, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 650 }}>
+                <div className="pipeline-hint" style={{ marginTop: 6, fontSize: 9.5, color: 'var(--accent-text)', fontWeight: 650 }}>
                   ▸ {tr('下一步从这里继续', 'Next step starts here')}
                 </div>
               )}
             </div>
             {idx < stages.length - 1 && (
-              <div className="row" style={{ alignItems: 'center', width: 26, justifyContent: 'center', flexShrink: 0 }}>
+              <div className="row pipeline-arrow" style={{ alignItems: 'center', width: 26, justifyContent: 'center', flexShrink: 0 }}>
                 <svg width="22" height="14" viewBox="0 0 22 14">
                   <path
                     d="M1 7h17M14 2l5 5-5 5"
