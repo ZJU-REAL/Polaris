@@ -1030,7 +1030,7 @@ export function PaperReviewPage() {
         />
         <div style={{ marginLeft: 'auto' }}>
           <button
-            className="btn btn-primary"
+            className="btn btn-primary sm"
             disabled={!msId || !!runningReview}
             title={
               !msId
@@ -1043,12 +1043,12 @@ export function PaperReviewPage() {
           >
             {runningReview ? (
               <>
-                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
                 {tr('评审中…', 'Reviewing…')}
               </>
             ) : (
               <>
-                <Icon name="shield" size={14} />
+                <Icon name="shield" size={13} />
                 {tr('发起同行评审', 'Start peer review')}
               </>
             )}

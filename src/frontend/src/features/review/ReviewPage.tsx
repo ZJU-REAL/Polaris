@@ -633,15 +633,15 @@ export function ReviewPage() {
           value={tab}
           onChange={setTab}
         />
-          <button className="btn btn-primary" disabled={!pid || !!runningVoyage} onClick={() => setModalOpen(true)}>
+          <button className="btn btn-primary sm" disabled={!pid || !!runningVoyage} onClick={() => setModalOpen(true)}>
             {runningVoyage ? (
               <>
-                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
                 {tr('运行中…', 'Running…')}
               </>
             ) : (
               <>
-                <Icon name="play" size={14} />
+                <Icon name="play" size={13} />
                 {tr('运行锦标赛', 'Run tournament')}
               </>
             )}

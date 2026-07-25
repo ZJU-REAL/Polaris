@@ -963,11 +963,11 @@ export function SkillsPage() {
                 e.target.value = '';
               }}
             />
-            <button className="btn btn-soft" disabled={importMutation.isPending} onClick={() => importInputRef.current?.click()}>
+            <button className="btn btn-soft sm" disabled={importMutation.isPending} onClick={() => importInputRef.current?.click()}>
               {tr('导入', 'Import')}
             </button>
-            <button className="btn btn-primary" onClick={() => setCreateOpen(true)}>
-              <Icon name="plus" size={14} /> {tr('新建技能', 'New skill')}
+            <button className="btn btn-primary sm" onClick={() => setCreateOpen(true)}>
+              <Icon name="plus" size={13} /> {tr('新建技能', 'New skill')}
             </button>
           </div>
         )}

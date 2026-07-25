@@ -588,19 +588,19 @@ export function ForgePage() {
         )}
         <div style={{ marginLeft: 'auto' }}>
           <div className="row gap8">
-            <button className="btn btn-soft" disabled={!pid || running} onClick={() => setModalOpen(true)}>
-              <Icon name="play" size={14} />
+            <button className="btn btn-soft sm" disabled={!pid || running} onClick={() => setModalOpen(true)}>
+              <Icon name="play" size={13} />
               {tr('运行 Idea Forge', 'Run Idea Forge')}
             </button>
-            <button className="btn btn-primary" disabled={!pid || running} onClick={() => openDeepDrawer()}>
+            <button className="btn btn-primary sm" disabled={!pid || running} onClick={() => openDeepDrawer()}>
               {running ? (
                 <>
-                  <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
                   {tr('运行中…', 'Running…')}
                 </>
               ) : (
                 <>
-                  <Icon name="sparkle" size={14} />
+                  <Icon name="sparkle" size={13} />
                   {tr('深度生成', 'Deep Dive')}
                 </>
               )}
