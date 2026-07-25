@@ -58,7 +58,10 @@ export const KIND_META: Record<string, KindMeta> = {
   wiki_ingest: { zh: '增量更新', en: 'Incremental sync', icon: 'refresh', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   idea_forge: { zh: '想法生成', en: 'Idea forge', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   idea_review: { zh: '评审锦标赛', en: 'Review tournament', icon: 'scale', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  idea_proposal: { zh: '方案细化', en: 'Proposal', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
   experiment: { zh: '实验', en: 'Experiment', icon: 'flask', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' },
+  paper_writing: { zh: '论文起草', en: 'Draft writing', icon: 'pen', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
+  paper_review: { zh: '论文评审', en: 'Paper review', icon: 'check', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' },
   presentation: { zh: '论文分享', en: 'Paper slides', icon: 'chart', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
   custom: { zh: '流程技能', en: 'Workflow skill', icon: 'sparkle', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   demo: { zh: '演示', en: 'Demo', icon: 'play', bg: 'var(--surface-3)', tx: 'var(--text-2)' },
@@ -68,8 +71,17 @@ function kindMeta(kind: string): KindMeta {
   return KIND_META[kind] ?? { zh: kind, icon: 'sparkle', bg: 'var(--surface-3)', tx: 'var(--text-2)' };
 }
 
+/* —— 任务层级：与后端 app/models/voyage.py 的 LIBRARY_KINDS 对应 ——
+   文献库任务（建库/增量更新）与每日新论文任务归实验室工作台，其余归课题。
+   课题工作台的类型筛选只列课题类型：那里根本不会出现库任务，列出来只会
+   选中后永远空列表。 */
+export const LIBRARY_TASK_KINDS = ['wiki_bootstrap', 'wiki_ingest'] as const;
+export const TOPIC_TASK_KINDS = Object.keys(KIND_META).filter(
+  (k) => !(LIBRARY_TASK_KINDS as readonly string[]).includes(k),
+);
+
 /** 类型徽章：图标 + 中文标签，低饱和语义底色。 */
-function KindBadge({ kind }: { kind: string }) {
+export function KindBadge({ kind }: { kind: string }) {
   const m = kindMeta(kind);
   return (
     <span className="pill sm" style={{ background: m.bg, color: m.tx, flexShrink: 0 }} title={kind}>
@@ -194,7 +206,16 @@ export function SkeletonRows() {
  *   （课题外的任务在 /lab 的「任务」标签按类型分组看），所以默认关闭。
  * - `labLink`：底部是否显示「课题外的任务在实验室工作台」引导（课题工作台用）。
  */
-export function VoyagesList({ showScopeSwitch = false, labLink = false }: { showScopeSwitch?: boolean; labLink?: boolean } = {}) {
+export function VoyagesList({
+  showScopeSwitch = false,
+  labLink = false,
+  kinds,
+}: {
+  showScopeSwitch?: boolean;
+  labLink?: boolean;
+  /** 类型筛选下拉列哪些类型；不传=全部。课题工作台传课题类型，实验室传库/每日类型。 */
+  kinds?: readonly string[];
+} = {}) {
   const { currentProjectId } = useProject();
 
   const [filter, setFilter] = useState<Filter>('all');
@@ -225,8 +246,8 @@ export function VoyagesList({ showScopeSwitch = false, labLink = false }: { show
               style={{ height: 33, fontSize: 12.5, fontWeight: 600, width: 128, color: kindFilter === 'all' ? 'var(--text-3)' : 'var(--text)' }}
             >
               <option value="all">{tr('全部类型', 'All types')}</option>
-              {Object.entries(KIND_META).map(([k, m]) => (
-                <option key={k} value={k}>{tr(m.zh, m.en)}</option>
+              {(kinds ?? Object.keys(KIND_META)).map((k) => (
+                <option key={k} value={k}>{tr(KIND_META[k]?.zh ?? k, KIND_META[k]?.en)}</option>
               ))}
             </select>
             {showScopeSwitch && (
@@ -269,7 +290,7 @@ export function VoyagesList({ showScopeSwitch = false, labLink = false }: { show
                 desc={
                   filter !== 'all' || kindFilter !== 'all'
                     ? tr('当前筛选条件下没有任务，换个筛选试试。', 'No tasks match the current filters — try different ones.')
-                    : tr('还没有任务。发起建库、想法生成、实验等操作后，任务会出现在这里。', 'No tasks yet. Tasks show up here once you start ingest, idea generation, experiments, and so on.')
+                    : tr('还没有任务。想法生成、实验、论文起草等操作发起后，任务会出现在这里。', 'No tasks yet. Tasks show up here once you start idea generation, experiments, draft writing, and so on.')
                 }
                 compact
               />

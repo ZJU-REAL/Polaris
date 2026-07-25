@@ -23,6 +23,7 @@ import {
   type VoyageStepRead,
 } from '../../lib/api';
 import { useTaskLogHistory } from '../../lib/prefs';
+import { KindBadge } from './VoyagesPage';
 
 /* ============================================================
    /voyages/:id — 任务详情：循环感知的活动状态 + 步骤时间线 + SSE 实时。
@@ -1656,12 +1657,22 @@ export function VoyageDetailPage() {
       <div className="row" style={{ alignItems: 'flex-start', marginBottom: 20 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="h-eyebrow row gap8">
+            {/* 返回按任务层级分流：库任务（建库/增量更新）归实验室工作台，
+                其余归课题工作台。库任务的 project_id 为空，跳课题会落到首页。 */}
             <span
               className="row gap6"
               style={{ cursor: 'pointer' }}
-              onClick={() => navigate(topicPath(voyage.project_id, 'voyages'))}
+              onClick={() =>
+                navigate(
+                  WIKI_RUN_KINDS.has(voyage.kind)
+                    ? '/lab?tab=tasks'
+                    : topicPath(voyage.project_id, 'voyages'),
+                )
+              }
             >
-              ← Voyages
+              {WIKI_RUN_KINDS.has(voyage.kind)
+                ? tr('← 实验室任务', '← Lab tasks')
+                : tr('← 课题任务', '← Topic tasks')}
             </span>
             <span className="mono" style={{ textTransform: 'none', color: 'var(--text-4)' }}>{voyage.id.slice(0, 8)}</span>
             {live && (
@@ -1673,7 +1684,7 @@ export function VoyageDetailPage() {
           </div>
           <h1 className="h-title" style={{ fontSize: 21 }}>{voyage.goal}</h1>
           <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
-            <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>{voyage.kind}</span>
+            <KindBadge kind={voyage.kind} />
             <StatusPill status={voyage.status} sm />
             {planAdjusted && (
               <span

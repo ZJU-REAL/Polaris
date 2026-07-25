@@ -5,7 +5,7 @@ import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { ProjectSettings } from '../projects/ProjectDetailPage';
-import { VoyagesList } from '../voyages/VoyagesPage';
+import { VoyagesList, TOPIC_TASK_KINDS } from '../voyages/VoyagesPage';
 import { PipelineFlow, type PipelineStage } from '../../components/ui/PipelineFlow';
 import { StatCard, type StatCardProps } from '../../components/ui/StatCard';
 import { StatusPill } from '../../components/ui/StatusPill';
@@ -710,7 +710,7 @@ export function DashboardPage() {
         ))}
 
       {/* 课题工作台只看本课题的任务；课题外任务在 /lab（底部引导链接） */}
-      {tab === 'tasks' && <VoyagesList labLink />}
+      {tab === 'tasks' && <VoyagesList labLink kinds={TOPIC_TASK_KINDS} />}
     </div>
   );
 }

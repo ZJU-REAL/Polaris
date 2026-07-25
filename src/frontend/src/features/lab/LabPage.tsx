@@ -14,6 +14,8 @@ import { useLibraries, libraryPath } from '../libraries/hooks';
 import {
   FILTERS,
   KIND_META,
+  LIBRARY_TASK_KINDS,
+  TOPIC_TASK_KINDS,
   SkeletonRows,
   VoyageRow,
   matchFilter,
@@ -484,9 +486,18 @@ function TasksTab() {
           style={{ height: 33, fontSize: 12.5, fontWeight: 600, width: 128, color: kindFilter === 'all' ? 'var(--text-3)' : 'var(--text)' }}
         >
           <option value="all">{tr('全部类型', 'All types')}</option>
-          {Object.entries(KIND_META).map(([k, m]) => (
-            <option key={k} value={k}>{tr(m.zh, m.en)}</option>
-          ))}
+          {/* 按任务层级分组：库任务与课题任务在实验室工作台都看得到，分开列
+              比一长串平铺好找。以后每日新论文进任务系统，在这里加一组即可。 */}
+          <optgroup label={tr('文献库任务', 'Library tasks')}>
+            {LIBRARY_TASK_KINDS.map((k) => (
+              <option key={k} value={k}>{tr(KIND_META[k]?.zh ?? k, KIND_META[k]?.en)}</option>
+            ))}
+          </optgroup>
+          <optgroup label={tr('课题任务', 'Topic tasks')}>
+            {TOPIC_TASK_KINDS.map((k) => (
+              <option key={k} value={k}>{tr(KIND_META[k]?.zh ?? k, KIND_META[k]?.en)}</option>
+            ))}
+          </optgroup>
         </select>
       </div>
 
