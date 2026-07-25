@@ -40,6 +40,7 @@ import {
   useDebounced,
 } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
+import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { AddToButton } from '../library/AddToPopover';
 import { PaperProgressModal } from '../library/PaperProgressModal';
 
@@ -455,11 +456,16 @@ export function ExportMenu({
 
 /* ---------------- 回收站 ---------------- */
 
-function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?: string; open: boolean; onClose: () => void }) {
+/** 回收站原因标签：打分淘汰 = 不相关；否则视为手动删除（老数据缺字段时按分数推断）。 */
+function trashReasonOf(p: PaperRead): 'irrelevant' | 'manual' {
+  if (p.trash_reason === 'manual' || p.trash_reason === 'irrelevant') return p.trash_reason;
+  return p.relevance_score !== null ? 'irrelevant' : 'manual';
+}
+
+/** 论文库回收站：弹窗外壳复用共享 TrashModal，端点与行映射留在这里。 */
+function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?: string; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const scopeId = libraryId ?? pid;
-  const [confirmEmpty, setConfirmEmpty] = useState(false);
-  const [trashQ, setTrashQ] = useState('');
 
   const trashQuery = useQuery({
     queryKey: ['papers-trash', scopeId],
@@ -470,16 +476,7 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
     enabled: open,
     retry: false,
   });
-  const allItems = trashQuery.data?.items ?? [];
-  // 桶内搜索：标题 / 作者（客户端过滤）
-  const kw = trashQ.trim().toLowerCase();
-  const items = kw
-    ? allItems.filter(
-        (p) =>
-          p.title.toLowerCase().includes(kw) ||
-          p.authors.some((a) => a.name.toLowerCase().includes(kw)),
-      )
-    : allItems;
+  const papers = useMemo(() => trashQuery.data?.items ?? [], [trashQuery.data]);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['papers-trash', scopeId] });
@@ -516,161 +513,24 @@ function TrashModal({ pid, libraryId, open, onClose }: { pid: string; libraryId?
     mutationFn: () => (libraryId ? api.emptyLibraryTrash(libraryId) : api.emptyTrash(pid)),
     onSuccess: (res) => {
       toast(tr(`回收站已清空（${res.deleted} 篇）`, `Trash emptied (${res.deleted} papers)`), 'ok');
-      setConfirmEmpty(false);
       invalidate();
     },
     onError: (e) =>
       toast(`${tr('清空失败：', 'Empty failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  const busy = restoreMutation.isPending || purgeMutation.isPending || emptyMutation.isPending;
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={tr('回收站', 'Trash')}
-      sub={tr(
-        '相关性不足自动淘汰与手动删除的文献；召回后回到论文库',
-        'Papers auto-dropped for low relevance or deleted manually; restoring puts them back in the library',
-      )}
-      width={680}
-      footer={
-        <>
-          {confirmEmpty ? (
-            <>
-              <span style={{ fontSize: 12, color: 'var(--danger-tx)', marginRight: 'auto' }}>
-                {tr(
-                  `将彻底删除全部 ${allItems.length} 篇及其文件，无法恢复`,
-                  `This permanently deletes all ${allItems.length} papers and their files — no undo`,
-                )}
-              </span>
-              <button className="btn btn-ghost sm" onClick={() => setConfirmEmpty(false)}>
-                {tr('取消', 'Cancel')}
-              </button>
-              <button
-                className="btn btn-primary sm"
-                style={{ background: 'var(--danger-tx)' }}
-                disabled={busy}
-                onClick={() => emptyMutation.mutate()}
-              >
-                {emptyMutation.isPending ? tr('清空中…', 'Emptying…') : tr('确认清空', 'Confirm empty')}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                className="btn btn-ghost sm"
-                style={{ color: 'var(--danger-tx)', marginRight: 'auto' }}
-                disabled={allItems.length === 0 || busy}
-                onClick={() => setConfirmEmpty(true)}
-              >
-                <Icon name="x" size={12} />
-                {tr('清空回收站', 'Empty trash')}
-              </button>
-              <button className="btn btn-soft sm" onClick={onClose}>
-                {tr('关闭', 'Close')}
-              </button>
-            </>
-          )}
-        </>
-      }
-    >
-      {/* 搜索区固定不随列表滚动：列表自带滚动容器，整体高度不超出 Modal 内容区 */}
-      <div className="row gap10" style={{ marginBottom: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <SearchInput value={trashQ} onChange={setTrashQ} placeholder={tr('搜索标题 / 作者…', 'Search title / author…')} />
-        </div>
-        <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>
-          {kw
-            ? tr(`${items.length} / ${allItems.length} 篇`, `${items.length} / ${allItems.length}`)
-            : tr(`${allItems.length} 篇`, `${allItems.length} papers`)}
-        </span>
-      </div>
-      {trashQuery.isLoading ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('加载中…', 'Loading…')}</div>
-      ) : allItems.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('回收站是空的', 'Trash is empty')}</div>
-      ) : items.length === 0 ? (
-        <div className="empty" style={{ padding: 24 }}>{tr('没有匹配的文献', 'No matching papers')}</div>
-      ) : (
-        <div
-          className="scroll"
-          style={{
-            maxHeight: '46vh',
-            overflowY: 'auto',
-            border: '0.5px solid var(--border)',
-            borderRadius: 10,
-          }}
-        >
-          {items.map((p, i) => (
-            <TrashRow key={p.id} p={p} last={i === items.length - 1} busy={busy}
-              onRestore={() => restoreMutation.mutate(p.id)}
-              onPurge={() => purgeMutation.mutate(p.id)}
-            />
-          ))}
-          {(trashQuery.data?.total ?? 0) > allItems.length && (
-            <div className="muted" style={{ fontSize: 11, textAlign: 'center', padding: 8 }}>
-              {tr(
-                `仅显示最近 ${allItems.length} 篇（共 ${trashQuery.data?.total} 篇）`,
-                `Showing the latest ${allItems.length} (of ${trashQuery.data?.total})`,
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-/** 回收站原因标签：打分淘汰 = 不相关；否则视为手动删除（老数据缺字段时按分数推断）。 */
-function trashReasonOf(p: PaperRead): 'irrelevant' | 'manual' {
-  if (p.trash_reason === 'manual' || p.trash_reason === 'irrelevant') return p.trash_reason;
-  return p.relevance_score !== null ? 'irrelevant' : 'manual';
-}
-
-/** 回收站列表行：与论文库 PaperRow 同款版式，标签换成删除原因，右侧召回/彻底删除。 */
-function TrashRow({
-  p,
-  last,
-  busy,
-  onRestore,
-  onPurge,
-}: {
-  p: PaperRead;
-  last: boolean;
-  busy: boolean;
-  onRestore: () => void;
-  onPurge: () => void;
-}) {
-  const reason = trashReasonOf(p);
-  return (
-    <div
-      className="row gap10"
-      style={{
-        padding: '12px 16px',
-        borderBottom: last ? 'none' : '0.5px solid var(--border)',
-        alignItems: 'flex-start',
-      }}
-    >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="row gap8" style={{ marginBottom: 5 }}>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
-            {p.arxiv_id ?? p.venue ?? '—'}
-          </span>
-          {p.year !== null && (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-              {p.year}
-            </span>
-          )}
-          {p.has_wiki && <Icon name="sparkle" size={11} style={{ color: 'var(--accent)' }} />}
-          <span style={{ marginLeft: 'auto' }}>
-            <RelevanceBar value={p.relevance_score} />
-          </span>
-        </div>
-        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>{p.title}</div>
-        <div className="row gap8" style={{ marginTop: 6 }}>
-          {reason === 'irrelevant' ? (
+  // 论文行 → 共享回收站行的展示模型（相关度条 + 删除原因标签 + tldr）
+  const items = useMemo<TrashItemView[]>(
+    () =>
+      papers.map((p) => ({
+        id: p.id,
+        code: p.arxiv_id ?? p.venue ?? '—',
+        year: p.year,
+        title: p.title,
+        leading: p.has_wiki ? <Icon name="sparkle" size={11} style={{ color: 'var(--accent)' }} /> : undefined,
+        aside: <RelevanceBar value={p.relevance_score} />,
+        tags:
+          trashReasonOf(p) === 'irrelevant' ? (
             <span className="pill sm" style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
               {tr('不相关', 'Irrelevant')}
             </span>
@@ -678,47 +538,36 @@ function TrashRow({
             <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
               {tr('手动删除', 'Deleted manually')}
             </span>
-          )}
-          {p.tldr && (
-            <span
-              style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: 11.5,
-                color: 'var(--text-3)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {p.tldr}
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="col" style={{ gap: 6, flexShrink: 0 }}>
-        <button
-          className="btn btn-soft sm"
-          style={{ height: 26 }}
-          disabled={busy}
-          title={tr('召回到论文库', 'Restore to the library')}
-          onClick={onRestore}
-        >
-          <Icon name="refresh" size={12} />
-          {tr('召回', 'Restore')}
-        </button>
-        <button
-          className="btn btn-ghost sm"
-          style={{ height: 26, color: 'var(--danger-tx)' }}
-          disabled={busy}
-          title={tr('彻底删除（连同文件，无法恢复）', 'Delete permanently (files included, no undo)')}
-          onClick={onPurge}
-        >
-          <Icon name="x" size={12} />
-          {tr('彻底删除', 'Delete forever')}
-        </button>
-      </div>
-    </div>
+          ),
+        desc: p.tldr,
+        searchText: [p.title, ...p.authors.map((a) => a.name)].join('\n'),
+      })),
+    [papers],
+  );
+
+  return (
+    <TrashModal
+      open={open}
+      onClose={onClose}
+      sub={tr(
+        '相关性不足自动淘汰与手动删除的文献；召回后回到论文库',
+        'Papers auto-dropped for low relevance or deleted manually; restoring puts them back in the library',
+      )}
+      items={items}
+      total={trashQuery.data?.total}
+      loading={trashQuery.isLoading}
+      busy={restoreMutation.isPending || purgeMutation.isPending || emptyMutation.isPending}
+      emptying={emptyMutation.isPending}
+      onRestore={(id) => restoreMutation.mutate(id)}
+      onPurge={(id) => purgeMutation.mutate(id)}
+      onEmpty={() => emptyMutation.mutate()}
+      emptyWarning={(n) =>
+        tr(
+          `将彻底删除全部 ${n} 篇及其文件，无法恢复`,
+          `This permanently deletes all ${n} papers and their files — no undo`,
+        )
+      }
+    />
   );
 }
 
@@ -1867,7 +1716,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
       <AddPaperModal pid={pid ?? ''} libraryId={libraryId} open={addOpen} onClose={() => setAddOpen(false)} onImported={onSelect} />
 
       {/* —— 回收站 —— */}
-      <TrashModal pid={pid ?? ''} libraryId={libraryId} open={trashOpen} onClose={() => setTrashOpen(false)} />
+      <PapersTrashModal pid={pid ?? ''} libraryId={libraryId} open={trashOpen} onClose={() => setTrashOpen(false)} />
     </div>
   );
 }

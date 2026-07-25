@@ -466,7 +466,10 @@ export function ShelfDetailPane({
         {onShelf ? (
           <button
             className="btn btn-ghost sm"
-            title={tr('移出相关研究（个人库收藏保留）', 'Remove from related work (kept in my library)')}
+            title={tr(
+              '移出相关研究，放进回收站，之后可以召回（个人库收藏保留）',
+              'Remove from related work — goes to the trash and can be restored (kept in my library)',
+            )}
             disabled={removePending}
             onClick={onRemove}
             style={{ marginLeft: 'auto', color: 'var(--danger-tx)' }}

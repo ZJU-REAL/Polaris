@@ -140,7 +140,9 @@ export function ReadingPage() {
         : api.saveToLibrary({ paper_id: id }).then(() => undefined),
     onSuccess: () => {
       toast(
-        libState?.saved ? tr('已从文献库移除', 'Removed from my library') : tr('已加入文献库', 'Added to my library'),
+        libState?.saved
+          ? tr('已移入回收站，可以召回', 'Moved to trash — you can restore it')
+          : tr('已加入文献库', 'Added to my library'),
         'ok',
       );
       void queryClient.invalidateQueries({ queryKey: ['library-state', id] });
@@ -167,7 +169,7 @@ export function ReadingPage() {
     onSuccess: () => {
       toast(
         shelved
-          ? tr('已移出相关研究（个人库收藏保留）', 'Removed from related work (kept in my library)')
+          ? tr('已移入回收站，可以召回（个人库收藏保留）', 'Moved to trash — you can restore it (still saved in my library)')
           : tr('已加入相关研究', 'Added to related work'),
         'ok',
       );
@@ -285,7 +287,11 @@ export function ReadingPage() {
         </div>
         <button
           className="icon-btn"
-          title={shelved ? tr('已在相关研究 · 点击移出', 'In related work · click to remove') : tr('加入相关研究', 'Add to related work')}
+          title={
+            shelved
+              ? tr('已在相关研究 · 点击移入回收站（可召回）', 'In related work · click to move to trash (restorable)')
+              : tr('加入相关研究', 'Add to related work')
+          }
           disabled={shelfMutation.isPending || shelfIdsQuery.isLoading}
           onClick={() => shelfMutation.mutate()}
           style={{ color: shelved ? 'var(--accent)' : 'var(--text-3)' }}
@@ -294,7 +300,11 @@ export function ReadingPage() {
         </button>
         <button
           className="icon-btn"
-          title={libSaved ? tr('从文献库移除', 'Remove from my library') : tr('加入文献库', 'Add to my library')}
+          title={
+            libSaved
+              ? tr('移入回收站（可在文献库里召回）', 'Move to trash (restorable from my library)')
+              : tr('加入文献库', 'Add to my library')
+          }
           disabled={libSaveMutation.isPending || libStateQuery.isLoading}
           onClick={() => libSaveMutation.mutate()}
           style={{ color: libSaved ? 'var(--accent)' : 'var(--text-3)' }}

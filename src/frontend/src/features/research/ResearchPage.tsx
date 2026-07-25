@@ -17,9 +17,11 @@ import {
   type ShelfSort,
   type ShelfWikiSource,
 } from '../../lib/api';
+import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { useProject } from '../../app/project';
 import { libraryPath } from '../libraries/hooks';
+import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import {
   AdvancedPanel,
   AdvancedToggle,
@@ -332,6 +334,103 @@ function LinkedLibrariesBar({
   );
 }
 
+/* ---------------- 回收站 ---------------- */
+
+/** 相关研究回收站：弹窗外壳复用共享 TrashModal，端点与行映射留在这里。
+    移出书架是软删，条目落在这里，可召回或彻底删除；个人库收藏全程不动。 */
+function ShelfTrashModal({ pid, open, onClose }: { pid: string; open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
+
+  const trashQuery = useQuery({
+    queryKey: ['shelf-trash', pid],
+    queryFn: () => api.listShelf(pid, { trashed: true, size: PAGE_SIZE }),
+    enabled: open && !!pid,
+    retry: false,
+  });
+  const trashed = useMemo(() => trashQuery.data?.items ?? [], [trashQuery.data]);
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['shelf-trash', pid] });
+    void queryClient.invalidateQueries({ queryKey: ['shelf', pid] });
+    void queryClient.invalidateQueries({ queryKey: ['shelf-ids', pid] });
+  };
+
+  const restoreMutation = useMutation({
+    mutationFn: (paperId: string) => api.restoreShelfItem(pid, paperId),
+    onSuccess: (item) => {
+      toast(`${tr('已召回：', 'Restored: ')}${item.title.slice(0, 30)}`, 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`${tr('召回失败：', 'Restore failed: ')}${errText(e)}`, 'error'),
+  });
+
+  const purgeMutation = useMutation({
+    mutationFn: (paperId: string) => api.removeFromShelf(pid, paperId, { hard: true }),
+    onSuccess: () => {
+      toast(tr('已彻底删除', 'Permanently deleted'), 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`${tr('删除失败：', 'Delete failed: ')}${errText(e)}`, 'error'),
+  });
+
+  const emptyMutation = useMutation({
+    mutationFn: () => api.emptyShelfTrash(pid),
+    onSuccess: (res) => {
+      toast(tr(`回收站已清空（${res.deleted} 篇）`, `Trash emptied (${res.deleted} papers)`), 'ok');
+      invalidate();
+    },
+    onError: (e) => toast(`${tr('清空失败：', 'Empty failed: ')}${errText(e)}`, 'error'),
+  });
+
+  const items = useMemo<TrashItemView[]>(
+    () =>
+      trashed.map((item) => {
+        const authors = item.authors.map((a) => a.name).join(', ');
+        return {
+          id: item.paper_id,
+          code: item.arxiv_id ?? item.venue ?? '—',
+          year: item.year,
+          title: item.title,
+          aside: (
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+              {tr(`${fmtRelative(item.trashed_at)} 移入`, `trashed ${fmtRelative(item.trashed_at)}`)}
+            </span>
+          ),
+          desc: item.tldr ?? (authors || null),
+          searchText: [item.title, authors].join('\n'),
+        };
+      }),
+    [trashed],
+  );
+
+  return (
+    <TrashModal
+      open={open}
+      onClose={onClose}
+      sub={tr(
+        '从相关研究移出的论文；召回后回到列表，个人库里的收藏一直都在',
+        'Papers removed from related work; restoring puts them back — your saved copies are untouched',
+      )}
+      items={items}
+      total={trashQuery.data?.total}
+      loading={trashQuery.isLoading}
+      busy={restoreMutation.isPending || purgeMutation.isPending || emptyMutation.isPending}
+      emptying={emptyMutation.isPending}
+      onRestore={(id) => restoreMutation.mutate(id)}
+      onPurge={(id) => purgeMutation.mutate(id)}
+      onEmpty={() => emptyMutation.mutate()}
+      emptyWarning={(n) =>
+        tr(
+          `将彻底删除回收站里的全部 ${n} 篇，无法恢复（个人库收藏不受影响）`,
+          `This permanently deletes all ${n} papers in the trash — no undo (your saved copies stay)`,
+        )
+      }
+      restoreHint={tr('召回到相关研究', 'Restore to related work')}
+      purgeHint={tr('彻底删除，无法再召回（个人库收藏不受影响）', 'Delete forever — cannot be restored (saved copies stay)')}
+    />
+  );
+}
+
 /* ---------------- 页面 ---------------- */
 
 export function ResearchPage() {
@@ -346,6 +445,7 @@ export function ResearchPage() {
   const [filter, setFilter] = useState<ShelfFilter>('all');
   const [selId, setSelId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   // 个人补充入架后若后端返回 task_id，弹出分阶段处理进度
   const [progress, setProgress] = useState<{ taskId: string; title: string } | null>(null);
 
@@ -570,12 +670,14 @@ export function ResearchPage() {
     onError: (e) => toast(`${tr('备注保存失败：', 'Failed to save note: ')}${errText(e)}`, 'error'),
   });
 
+  // 移出 = 软删：条目进回收站，可召回；个人库收藏不动
   const removeMutation = useMutation({
     mutationFn: (paperId: string) => api.removeFromShelf(pid, paperId),
     onSuccess: (_d, paperId) => {
-      toast(tr('已移出相关研究（个人库收藏保留）', 'Removed (still saved in my library)'), 'ok');
+      toast(tr('已移入回收站，可以召回（个人库收藏保留）', 'Moved to trash — you can restore it (still saved in my library)'), 'ok');
       setSelId((old) => (old === paperId ? null : old));
       invalidate();
+      void queryClient.invalidateQueries({ queryKey: ['shelf-trash', pid] });
     },
     onError: (e) => toast(`${tr('移除失败：', 'Failed to remove: ')}${errText(e)}`, 'error'),
   });
@@ -937,6 +1039,15 @@ export function ResearchPage() {
                   {tr('导出 BibTeX', 'Export BibTeX')}
                 </button>
               )}
+              <button
+                className="btn btn-ghost sm"
+                style={{ marginLeft: 'auto' }}
+                title={tr('回收站：移出的论文可以召回或彻底删除', 'Trash: removed papers — restore or delete forever')}
+                onClick={() => setTrashOpen(true)}
+              >
+                <Icon name="trash" size={13} />
+                {tr('回收站', 'Trash')}
+              </button>
             </div>
 
             {/* 底部分页栏（超过单页上限 100 才出现；语义结果不分页） */}
@@ -1038,6 +1149,9 @@ export function ResearchPage() {
         importPending={importMutation.isPending}
         onImport={(input) => importMutation.mutateAsync(input)}
       />
+
+      {/* —— 回收站（移出的论文：召回 / 彻底删除 / 清空） —— */}
+      <ShelfTrashModal pid={pid} open={trashOpen} onClose={() => setTrashOpen(false)} />
 
       {progress && (
         <PaperProgressModal

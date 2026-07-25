@@ -988,6 +988,8 @@ export interface ShelfItemRead {
   /** 来源方向库（个人补充为 null） */
   source_library_id: string | null;
   added_at: string;
+  /** 移入回收站的时间；在架条目为 null（旧后端可能缺字段） */
+  trashed_at?: string | null;
   /** 个人补充入架后若仍需分阶段后处理，返回可订阅进度的任务 id；已处理完整时为 null。 */
   task_id?: string | null;
 }
@@ -2245,7 +2247,7 @@ export interface FeedbackPatch {
 // 我的文献库（跨研究方向的个人收藏 + 浏览记录）— issue #108
 // ============================================================
 
-export type LibraryTab = 'saved' | 'history';
+export type LibraryTab = 'saved' | 'history' | 'trash';
 export type LibrarySort = 'recent' | 'title' | 'visits' | 'year';
 
 export interface LibraryEntry {
@@ -2267,6 +2269,8 @@ export interface LibraryEntry {
   /** 最近一次浏览对应的论文 id；为 null 表示源方向已删除，只能走外链 url。 */
   last_paper_id: string | null;
   created_at: string;
+  /** 移入回收站的时间；正常条目为 null（旧后端可能缺字段） */
+  trashed_at?: string | null;
 }
 
 export interface LibraryState {
@@ -3185,6 +3189,8 @@ export const api = {
       reading_status?: ReadingStatus;
       starred?: boolean;
       sort?: ShelfSort;
+      /** true=只列回收站里的条目；默认 false=只列在架的 */
+      trashed?: boolean;
     } = {},
   ): Promise<PageOf<ShelfItemRead>> {
     const params = new URLSearchParams();
@@ -3198,6 +3204,7 @@ export const api = {
     if (opts.reading_status) params.set('reading_status', opts.reading_status);
     if (opts.starred) params.set('starred', 'true');
     if (opts.sort) params.set('sort', opts.sort);
+    if (opts.trashed) params.set('trashed', 'true');
     const qs = params.toString();
     return request<PageOf<ShelfItemRead>>(`/projects/${projectId}/shelf${qs ? `?${qs}` : ''}`);
   },
@@ -3216,9 +3223,18 @@ export const api = {
   updateShelfNote(projectId: string, paperId: string, note: string | null): Promise<ShelfItemRead> {
     return requestJson<ShelfItemRead>(`/projects/${projectId}/shelf/${paperId}`, 'PATCH', { note });
   },
-  /** 移出书架：只删书架行，个人库收藏不动。 */
-  removeFromShelf(projectId: string, paperId: string): Promise<void> {
-    return request<void>(`/projects/${projectId}/shelf/${paperId}`, { method: 'DELETE' });
+  /** 移出书架：默认软删（移入回收站，可召回）；hard=true 才彻底删掉书架行。个人库收藏都不动。 */
+  removeFromShelf(projectId: string, paperId: string, opts: { hard?: boolean } = {}): Promise<void> {
+    const qs = opts.hard ? '?hard=true' : '';
+    return request<void>(`/projects/${projectId}/shelf/${paperId}${qs}`, { method: 'DELETE' });
+  },
+  /** 从回收站召回一篇，回到相关研究列表。 */
+  restoreShelfItem(projectId: string, paperId: string): Promise<ShelfItemRead> {
+    return request<ShelfItemRead>(`/projects/${projectId}/shelf/${paperId}/restore`, { method: 'POST' });
+  },
+  /** 清空相关研究回收站（彻底删除全部书架行）。 */
+  emptyShelfTrash(projectId: string): Promise<{ deleted: number }> {
+    return request<{ deleted: number }>(`/projects/${projectId}/shelf/trash/empty`, { method: 'POST' });
   },
   /** 手动刷新书架快照：从当前最优 wiki（库版 > 个人版）重拷；无来源 409。 */
   refreshShelfSnapshot(projectId: string, paperId: string): Promise<ShelfItemRead> {
@@ -4000,9 +4016,17 @@ export const api = {
   saveToLibrary(input: { paper_id: string } | { entry_id: string }): Promise<LibraryEntry> {
     return requestJson<LibraryEntry>('/me/library', 'POST', input);
   },
-  /** 移除条目：unsave=取消收藏但保留浏览记录；purge=彻底删除。 */
+  /** 移除条目：unsave=移入回收站（可召回）；purge=彻底删除。 */
   removeLibraryEntry(entryId: string, mode: 'unsave' | 'purge'): Promise<void> {
     return request<void>(`/me/library/${entryId}?mode=${mode}`, { method: 'DELETE' });
+  },
+  /** 从回收站召回一条，回到「我的收藏」。 */
+  restoreLibraryEntry(entryId: string): Promise<LibraryEntry> {
+    return request<LibraryEntry>(`/me/library/${entryId}/restore`, { method: 'POST' });
+  },
+  /** 清空个人库回收站（彻底删除全部回收站条目；浏览记录不受影响）。 */
+  emptyPersonalTrash(): Promise<{ deleted: number }> {
+    return request<{ deleted: number }>('/me/library/trash/empty', { method: 'POST' });
   },
 
   // —— 我发表的（作者信息绑定 + 发表同步，issue #109） ——
