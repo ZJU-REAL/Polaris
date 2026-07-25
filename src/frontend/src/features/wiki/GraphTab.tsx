@@ -704,9 +704,11 @@ const TREND_MAX_UNIT = 26; // 单篇论文的最大像素高：数据稀疏时�
 
 function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConcept: (id: string) => void }) {
   const [granularity, setGranularity] = useState<TimelineGranularity>('month');
-  // 起止时间（YYYY-MM，空=不限）。数据里实际有的月份才进选项，避免给出没有论文的空档。
+  // 起止时间（YYYY-MM，空=不限）：在图上横向拖动选出来的，不是下拉选的
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  // 拖选中的像素区间 [x0, x1]；null = 没在拖
+  const [brush, setBrush] = useState<{ x0: number; x1: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -883,6 +885,7 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
   const handleMove = (band: TrendBand, ti?: number) => (e: React.MouseEvent) => {
     const svg = svgRef.current;
     if (!svg || !geom) return;
+    if (brush) return; // 正在拖选：不弹提示，免得盖住选区
     const rect = svg.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -893,6 +896,55 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
       }
     }
     setHover({ band, ti: col, x, y });
+  };
+
+  // —— 在图上横向拖动选时间段 ——
+  // 与 hover 不冲突：只有按住左键移动才算拖选，此时不弹提示；单击不拖动 = 清除选择。
+  const svgX = (e: React.MouseEvent) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    return rect ? e.clientX - rect.left : 0;
+  };
+  /** 像素 x → 最近的时间桶下标 */
+  const colAt = (x: number) => {
+    if (!geom) return 0;
+    let col = 0;
+    for (let i = 1; i < geom.xs.length; i += 1) {
+      if (Math.abs((geom.xs[i] ?? 0) - x) < Math.abs((geom.xs[col] ?? 0) - x)) col = i;
+    }
+    return col;
+  };
+  /** 拖选区间 → 起止月份。年粒度下补成整年，避免选中 2025 却只过滤掉 2025-01。 */
+  const applyBrush = (x0: number, x1: number) => {
+    if (!geom || periods.length === 0) return;
+    const a = colAt(Math.min(x0, x1));
+    const b = colAt(Math.max(x0, x1));
+    const lo = periods[a];
+    const hi = periods[b];
+    if (!lo || !hi) return;
+    setFrom(granularity === 'year' ? `${lo}-01` : lo);
+    setTo(granularity === 'year' ? `${hi}-12` : hi);
+  };
+  const onBrushDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const x = svgX(e);
+    setBrush({ x0: x, x1: x });
+    setHover(null);
+  };
+  const onBrushMove = (e: React.MouseEvent) => {
+    if (!brush) return;
+    setBrush({ x0: brush.x0, x1: svgX(e) });
+  };
+  const onBrushUp = (e: React.MouseEvent) => {
+    if (!brush) return;
+    const x1 = svgX(e);
+    // 位移太小当成单击：清除已有选择，回到全部时间
+    if (Math.abs(x1 - brush.x0) < 6) {
+      setFrom('');
+      setTo('');
+    } else {
+      applyBrush(brush.x0, x1);
+    }
+    setBrush(null);
   };
 
   return (
@@ -944,45 +996,22 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
             )}
           </span>
         )}
-        {months.length > 1 && (
+        {(from || to) && (
           <span className="row gap6">
-            <select
-              className="input"
-              aria-label={tr('起始月份', 'From month')}
-              style={{ height: 28, fontSize: 12, padding: '0 6px' }}
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
+            <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+              {from || tr('最早', 'earliest')} → {to || tr('最新', 'latest')}
+            </span>
+            <button
+              className="btn btn-ghost sm"
+              onClick={() => { setFrom(''); setTo(''); }}
+              title={tr('回到全部时间', 'Back to all time')}
             >
-              <option value="">{tr('最早', 'Earliest')}</option>
-              {months.map((m) => (
-                <option key={m} value={m} disabled={!!to && m > to}>{m}</option>
-              ))}
-            </select>
-            <span className="muted" style={{ fontSize: 11 }}>→</span>
-            <select
-              className="input"
-              aria-label={tr('结束月份', 'To month')}
-              style={{ height: 28, fontSize: 12, padding: '0 6px' }}
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            >
-              <option value="">{tr('最新', 'Latest')}</option>
-              {months.map((m) => (
-                <option key={m} value={m} disabled={!!from && m < from}>{m}</option>
-              ))}
-            </select>
-            {(from || to) && (
-              <button
-                className="btn btn-ghost sm"
-                onClick={() => { setFrom(''); setTo(''); }}
-                title={tr('回到全部时间', 'Back to all time')}
-              >
-                {tr('全部', 'All')}
-              </button>
-            )}
+              {tr('全部', 'All')}
+            </button>
           </span>
         )}
         <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
+          {tr('图上横向拖动选时间段', 'Drag across the chart to pick a range')} ·{' '}
           {tr('块高 = 当期关联论文数', 'Block height = papers linked in that period')}
           {rest > 0
             ? tr(` · 只画前 ${bands.length} 个概念（另 ${rest} 个未显示）`, ` · top ${bands.length} concepts shown (${rest} more hidden)`)
@@ -1028,7 +1057,33 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
         ) : (
           geom && (
             <>
-              <svg ref={svgRef} width={size.w} height={size.h} style={{ display: 'block' }} onMouseLeave={() => setHover(null)}>
+              <svg
+                ref={svgRef}
+                width={size.w}
+                height={size.h}
+                style={{ display: 'block', cursor: brush ? 'ew-resize' : 'crosshair' }}
+                onMouseDown={onBrushDown}
+                onMouseMove={onBrushMove}
+                onMouseUp={onBrushUp}
+                onMouseLeave={() => {
+                  setHover(null);
+                  setBrush(null);
+                }}
+              >
+                {/* 拖选中的高亮区（不吃事件，避免打断拖动） */}
+                {brush && Math.abs(brush.x1 - brush.x0) >= 6 && (
+                  <rect
+                    x={Math.min(brush.x0, brush.x1)}
+                    y={0}
+                    width={Math.abs(brush.x1 - brush.x0)}
+                    height={size.h}
+                    fill="var(--accent)"
+                    opacity={0.12}
+                    stroke="var(--accent)"
+                    strokeOpacity={0.4}
+                    pointerEvents="none"
+                  />
+                )}
                 {/* 飘带（底层，半透明） */}
                 {geom.ribbons.map(({ bi, d }, i) => {
                   const band = bands[bi]!;
