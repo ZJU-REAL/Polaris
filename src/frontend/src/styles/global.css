@@ -10,6 +10,27 @@ html, body { margin: 0; padding: 0; height: 100%; }
 /* 全站等比放大 10%（用户反馈基准字号偏小）：
    组件字号均为 px 定值，zoom 统一缩放字体与间距，视觉比例不变 */
 html { zoom: 1.1; }
+
+/* —— 桌面端（macOS）标题栏留白 ——
+   外壳用 titleBarStyle: hiddenInset，系统把红黄绿三个交通灯直接叠在内容区
+   左上角，而页面从 y=0 开始画，侧栏品牌标与登录页品牌标会被压在下面。
+   这里给顶部留一条带子，由 main.tsx 在桌面端给 <html> 打 data-desktop-platform。
+
+   注意 html{zoom:1.1}：这里写的 px 会被放大 1.1 倍，而交通灯按窗口点定位、
+   不受 zoom 影响，所以要先除以 1.1——40 物理 px ÷ 1.1 ≈ 36.4px。
+   web 端与非 macOS 桌面端该变量恒为 0，所有 calc 退化成原值。 */
+:root { --titlebar-h: 0px; }
+:root[data-desktop-platform='darwin'] { --titlebar-h: 36.4px; }
+
+/* 让空出来的带子可以拖动窗口（内容盖住了系统标题栏区域，否则拖不动）。
+   只覆盖留白本身，不会挡住任何可点元素。 */
+:root[data-desktop-platform='darwin'] .sidebar::before,
+:root[data-desktop-platform='darwin'] .auth-page::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: var(--titlebar-h);
+  -webkit-app-region: drag;
+}
 body {
   font-family: var(--sans);
   color: var(--text);
@@ -58,6 +79,7 @@ input {
    ============================================================ */
 .sidebar {
   width: 248px; flex-shrink: 0;
+  padding-top: var(--titlebar-h); /* 桌面端给交通灯让位，web 端为 0 */
   background: var(--sidebar-bg);
   border-right: 0.5px solid var(--border-2);
   display: flex; flex-direction: column;
@@ -692,7 +714,7 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   padding: 24px clamp(24px, 9vw, 150px) 24px 24px;
 }
 .auth-brand {
-  position: absolute; top: 26px; left: 30px;
+  position: absolute; top: calc(26px + var(--titlebar-h)); left: 30px;
   display: flex; align-items: center; gap: 14px;
 }
 .auth-card {
@@ -1044,6 +1066,8 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   /* —— 关掉全局放大：手机屏本来就窄，放大 10% 等于凭空少 1/11 的宽度；
         关掉后媒体查询值与布局值一致，.split-detail 的反向抵消一并归 1 —— */
   html { zoom: 1; }
+  /* 这里 zoom 已关，带子按物理 px 直接给 */
+  :root[data-desktop-platform='darwin'] { --titlebar-h: 40px; }
   .split-detail { zoom: 1; }
 
   /* —— 触屏基建 —— */

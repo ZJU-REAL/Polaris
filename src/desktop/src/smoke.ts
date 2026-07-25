@@ -15,6 +15,7 @@
    ============================================================ */
 
 import { BrowserWindow, app } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { pingAgent, stopAgent } from './main/agent/supervisor';
@@ -129,6 +130,29 @@ void app.whenReady().then(async () => {
   )) as string;
   check('未配置服务器时进入配置页', /连接到服务器|Connect to a server/.test(title), `title=${title}`);
 
+  // macOS 的交通灯占据窗口左上角约 y=14..26（见 window.ts 的 trafficLightPosition），
+  // 页面左上角的品牌标必须落在这条带子下面，否则会被压住。
+  const geom = JSON.parse(
+    (await win.webContents.executeJavaScript(`(() => {
+      const el = document.querySelector('.auth-brand');
+      const r = el ? el.getBoundingClientRect() : null;
+      return JSON.stringify({
+        platformAttr: document.documentElement.dataset.desktopPlatform ?? null,
+        band: getComputedStyle(document.documentElement).getPropertyValue('--titlebar-h').trim(),
+        brandTop: r ? Math.round(r.top) : null,
+        brandLeft: r ? Math.round(r.left) : null,
+      });
+    })()`)) as string,
+  ) as { platformAttr: string | null; band: string; brandTop: number | null; brandLeft: number | null };
+
+  check('<html> 已标记桌面平台', geom.platformAttr === 'darwin', `attr=${geom.platformAttr}`);
+  check('标题栏留白变量已生效', geom.band !== '' && geom.band !== '0px', `--titlebar-h=${geom.band}`);
+  check(
+    '品牌标避开交通灯（top ≥ 34）',
+    geom.brandTop !== null && geom.brandTop >= 34,
+    `top=${geom.brandTop} left=${geom.brandLeft}`,
+  );
+
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
 
@@ -170,6 +194,12 @@ void app.whenReady().then(async () => {
     for (const m of consoleErrors.slice(0, 20)) console.log('  -', m);
   }
   check('渲染进程无 console 错误', consoleErrors.length === 0);
+
+  if (process.env.POLARIS_SMOKE_SHOT) {
+    const image = await win.webContents.capturePage();
+    await writeFile(process.env.POLARIS_SMOKE_SHOT, image.toPNG());
+    console.log(`\n已截图 → ${process.env.POLARIS_SMOKE_SHOT}`);
+  }
 
   console.log(problems.length ? `\n${problems.length} 项失败` : '\n全部通过');
   app.exit(problems.length ? 1 : 0);

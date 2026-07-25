@@ -53,6 +53,9 @@ export function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#ffffff',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // 把交通灯钉在这条 40px 留白带的垂直中心（(40-12)/2 = 14），不同 macOS 版本
+    // 的默认内缩量不一样，钉死才能和 global.css 的 --titlebar-h 对得上。
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 18, y: 14 } } : {}),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
