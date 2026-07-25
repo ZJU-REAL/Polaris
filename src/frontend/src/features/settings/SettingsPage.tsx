@@ -1235,7 +1235,7 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
           <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
           {tr('模型路由表', 'Model routing')}{' '}
           <span className="en-label" style={{ fontSize: 11 }}>
-            {tr('未单独设置的环节自动跟随「默认」；向量嵌入/重排序需单独配置', 'stages without their own row follow "Default"; embeddings/reranking need their own config')}
+            {tr('未单独设置的环节自动跟随默认；向量嵌入/重排序需单独配置', 'stages without their own row follow "Default"; embeddings/reranking need their own config')}
           </span>
         </span>
         <div className="row gap8">
@@ -1303,7 +1303,7 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
                           className="icon-btn"
                           style={{ width: 20, height: 20 }}
                           title={capability
-                            ? tr('清除设置，恢复「未设置」', 'Clear — back to "Not set"')
+                            ? tr('清除设置，恢复未设置', 'Clear — back to "Not set"')
                             : tr('清除单独设置，恢复跟随默认', 'Clear this override and follow default again')}
                           onClick={() => clearRow(stage)}
                         >
@@ -1629,7 +1629,7 @@ function AffiliationModeSection() {
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
         {tr(
-          '大模型从论文标题页解析每位作者所属机构的时机。选「编译 wiki 时抽取」会把机构解析折叠进精读编译那一次调用里，省下一次单独的大模型调用。（DOI 论文的机构由 OpenAlex 结构化数据直接给出，不受此设置影响。）',
+          '大模型从论文标题页解析每位作者所属机构的时机。选编译 wiki 时抽取会把机构解析折叠进精读编译那一次调用里，省下一次单独的大模型调用。（DOI 论文的机构由 OpenAlex 结构化数据直接给出，不受此设置影响。）',
           "When the model parses each author's affiliation from the title page. \"Extract while compiling\" folds it into the deep-reading compile call, saving a separate LLM call. (Affiliations for DOI papers come straight from OpenAlex and are unaffected.)",
         )}
       </div>
@@ -2097,7 +2097,7 @@ function LabLeaderboardSection() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
             {tr(
-              '打开后，全体成员都能在实验室工作台看到各人的 token 消耗排名。关闭后这一区只对管理员显示，成员仍然能在「设置」里看自己的用量。',
+              '打开后，全体成员都能在实验室工作台看到各人的 token 消耗排名。关闭后这一区只对管理员显示，成员仍然能在设置里看自己的用量。',
               'When on, every member sees each person’s token consumption ranking on the Lab workbench. When off, the section shows for admins only — members can still see their own usage under Settings.',
             )}
           </div>
@@ -3214,7 +3214,7 @@ function CreateCodeModal({ onClose }: { onClose: () => void }) {
         </>
       }
     >
-      <FormField label={tr('备注', 'Note')} hint={tr('可选，例如「2026 级新生」', 'Optional, e.g. "2026 cohort"')}>
+      <FormField label={tr('备注', 'Note')} hint={tr('可选，例如2026 级新生', 'Optional, e.g. "2026 cohort"')}>
         <input className="input" value={note} maxLength={255} onChange={(e) => setNote(e.target.value)} placeholder={tr('这批码发给谁 / 什么用途', 'Who / what it is for')} />
       </FormField>
       <FormField label={tr('有效期', 'Expiry')} hint={tr('过期后自动失效', 'Auto-expires when reached')}>

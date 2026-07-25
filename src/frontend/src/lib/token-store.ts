@@ -4,7 +4,7 @@
    web 端与桌面端都用浏览器存储（桌面端页面跑在 app://polaris 这个稳定
    origin 上，localStorage 正常持久化，登录态零改动）。
 
-   「记住密码」勾选与否决定 token 落在哪儿：
+   记住密码勾选与否决定 token 落在哪儿：
      勾选   → localStorage，关掉浏览器再回来仍是登录态
      不勾选 → sessionStorage，标签页关掉即失效
    读取时两处都看，所以切换偏好不会把已登录的人踢下线。

@@ -18,7 +18,7 @@ import { InclusionSettingsForm, ARXIV_ID_RE, type InclusionValue } from './Inclu
 /* ============================================================
    /libraries — 文献库列表（实验室区，P5c）
    卡片流：库名 / 方向陈述 / 论文·概念数 / 最近更新；
-   「我的课题关联的库」有标识；点击进 /libraries/:id 详情。
+   我的课题关联的库有标识；点击进 /libraries/:id 详情。
    平台管理员可在此新建独立共享文献库（与任何课题解耦）。
    ============================================================ */
 
@@ -409,7 +409,7 @@ export function LibrariesPage() {
       if (e instanceof ApiError && e.status === 409 && e.message.includes('LIBRARY_HAS_TOPICS')) {
         const ok = window.confirm(
           tr(
-            `文献库「${lib.name}」仍被课题关联，确定连同关联一起删除吗？`,
+            `文献库${lib.name}仍被课题关联，确定连同关联一起删除吗？`,
             `Library “${lib.name}” is still linked to topics — delete it together with those links?`,
           ),
         );
@@ -544,7 +544,7 @@ export function LibrariesPage() {
           title={tr('还没有文献库', 'No libraries yet')}
           desc={
             canCreate
-              ? tr('点右上「新建文献库」创建一个共享文献库。', 'Use “New library” at the top right to create a shared library.')
+              ? tr('点右上新建文献库创建一个共享文献库。', 'Use “New library” at the top right to create a shared library.')
               : tr('创建课题后会自动生成对应方向的文献库；先去建一个课题吧。', 'A direction library is created with each topic — create a topic first.')
           }
           action={
@@ -581,7 +581,7 @@ export function LibrariesPage() {
               onDelete={() => {
                 const ok = window.confirm(
                   tr(
-                    `确定删除文献库「${lib.name}」吗？此操作不可撤销。`,
+                    `确定删除文献库${lib.name}吗？此操作不可撤销。`,
                     `Delete library "${lib.name}"? This cannot be undone.`,
                   ),
                 );

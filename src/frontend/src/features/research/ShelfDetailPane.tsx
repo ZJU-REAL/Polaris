@@ -26,10 +26,10 @@ import {
 } from '../shared/PaperDetailBlocks';
 
 /* ============================================================
-   相关研究 · 右栏详情（与「我的文献库」LibraryDetailPane 同一版式）：
+   相关研究 · 右栏详情（与我的文献库LibraryDetailPane 同一版式）：
    - 顶部：解读状态徽标 + venue，标题 + 作者，主操作行
      （打开阅读页 / arXiv / 生成 wiki / 刷新快照 / 移出）；
-   - 课题备注「为什么相关」：多行编辑、停止输入后自动保存；
+   - 课题备注为什么相关：多行编辑、停止输入后自动保存；
    - frontmatter 风格元数据卡（含加入时间与来源）；
    - TL;DR / 摘要（摘要取自论文详情接口）；
    - wiki 正文：列表接口已按 库版实时 > 个人版 > 快照 解析好，
@@ -265,7 +265,7 @@ export function ShelfDetailPane({
   refreshing: boolean;
   onRefreshSnapshot: () => void;
   /** 是否已在相关研究书架内。false（语义检索命中的语料论文尚未收藏）时隐藏
-      备注 / 移出 / 生成解读等书架专属操作，改为「加入相关研究」。 */
+      备注 / 移出 / 生成解读等书架专属操作，改为加入相关研究。 */
   onShelf?: boolean;
   onAdd?: () => void;
   addPending?: boolean;

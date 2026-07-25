@@ -9,9 +9,9 @@ import { api, ApiError, type TemplateInfo } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
-   「上传论文模板」Modal：zip + 名称 + 说明 + 引擎 + 页数上限
+   上传论文模板Modal：zip + 名称 + 说明 + 引擎 + 页数上限
    → POST /manuscripts/templates（multipart）。
-   默认项目私有（传 pid）；勾「设为全平台可用」则不传 project_id（需平台管理员）。
+   默认项目私有（传 pid）；勾设为全平台可用则不传 project_id（需平台管理员）。
    成功后把新模板 id 回调给调用方（用于刷新列表并选中）。
    ============================================================ */
 

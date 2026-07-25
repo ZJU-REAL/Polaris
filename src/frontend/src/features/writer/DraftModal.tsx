@@ -10,7 +10,7 @@ import { tr } from '../../lib/i18n';
 import { DEFAULT_SECTIONS, sectionText } from './shared';
 
 /* ============================================================
-   「AI 起草」Modal：全部节 / 选节 checkbox + 备注 →
+   AI 起草Modal：全部节 / 选节 checkbox + 备注 →
    POST /manuscripts/{id}/draft（kind=paper_writing 的 AI 任务）。
    同稿件已有进行中任务时后端 409。
    ============================================================ */
@@ -237,7 +237,7 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
 
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
         {tr(
-          '起草时编辑器里会出现一个「✨ AI」光标，逐字把每一节写进正文、自动滚动跟随，你可以在旁边实时看着它写（也能随时在 AI 任务页取消）。每一节写完都会做真实性自检：引用必须在事实包文献里、图表只能用实验产出、正文数字必须能对上实验指标。',
+          '起草时编辑器里会出现一个✨ AI光标，逐字把每一节写进正文、自动滚动跟随，你可以在旁边实时看着它写（也能随时在 AI 任务页取消）。每一节写完都会做真实性自检：引用必须在事实包文献里、图表只能用实验产出、正文数字必须能对上实验指标。',
           'While drafting, a "✨ AI" cursor types each section into the manuscript character by character and auto-scrolls to follow — watch it write live (or cancel from the AI tasks page). Every finished section is fact-checked: citations must be in the fact pack, figures must come from experiment outputs, and numbers must match experiment metrics.',
         )}
       </div>

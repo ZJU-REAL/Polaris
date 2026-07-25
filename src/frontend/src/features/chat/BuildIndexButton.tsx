@@ -5,7 +5,7 @@ import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 
 /* ============================================================
-   「建立全文索引」按钮：仅当用户在设置里打开了「为论文建立全文索引」
+   建立全文索引按钮：仅当用户在设置里打开了为论文建立全文索引
    开关时才显示。点击后异步为对应文献批建全文索引，让文献对话检索更准。
    相关研究对话 / 个人文献库对话共用，只换 build 回调。
    ============================================================ */
@@ -43,7 +43,7 @@ export function BuildIndexButton({ build }: { build: () => Promise<BuildIndexRes
     onSuccess: (data) => toast(buildResultToast(data), 'ok'),
     onError: (e) => {
       if (e instanceof ApiError && e.status === 409) {
-        toast(tr('请先到设置里打开「为论文建立全文索引」', 'Enable the full-text index in Settings first'), 'error');
+        toast(tr('请先到设置里打开为论文建立全文索引', 'Enable the full-text index in Settings first'), 'error');
         return;
       }
       toast(`${tr('操作失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error');

@@ -8,7 +8,7 @@ import { assistManuscriptSse, type AssistInput } from '../../lib/sse';
    内联 AI 面板（编辑器下方停靠条）：
    - 润色 / 改写：对打开面板时捕获的选区操作；
    - 续写：从光标处向后续写；
-   - 结果流式展示，人看过后选择「替换选区 / 插到光标处 / 重试」，
+   - 结果流式展示，人看过后选择替换选区 / 插到光标处 / 重试，
      越界引用/图表以警告条提示（不阻断，人来定）。
    ============================================================ */
 
@@ -80,7 +80,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
   function start() {
     if (selectionMissing) return;
     if (mode === 'rewrite' && !instruction.trim()) {
-      toast('先写一句改写要求，比如「更简洁」「改成主动语态」', 'info');
+      toast('先写一句改写要求，比如更简洁改成主动语态', 'info');
       return;
     }
     setPhase('streaming');
@@ -193,7 +193,7 @@ export function AssistPanel({ manuscriptId, mode, view, onClose }: AssistPanelPr
 
       {selectionMissing ? (
         <div style={{ padding: '4px 14px 12px', fontSize: 12, color: 'var(--text-3)' }}>
-          先在编辑器里选中要{MODE_TEXT[mode]}的文字，再点上方的「AI {MODE_TEXT[mode]}」。
+          先在编辑器里选中要{MODE_TEXT[mode]}的文字，再点上方的AI {MODE_TEXT[mode]}。
         </div>
       ) : (
         <>

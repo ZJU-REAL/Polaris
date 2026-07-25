@@ -11,7 +11,7 @@ import { parsePaperRef } from '../../lib/paper-ref';
 import { SearchInput, useDebounced } from '../wiki/shared';
 
 /* ============================================================
-   相关研究 · 「添加文献」统一入口（弹窗，两个页签）：
+   相关研究 · 添加文献统一入口（弹窗，两个页签）：
    - 从文献库：检索当前课题关联的文献库，结果行内一键添加，
      已入架的显示勾选态；找不到时引导切到手动添加。
    - 手动添加：arXiv 编号 / DOI，平台自动查重（池里已有直接
@@ -120,7 +120,7 @@ export function AddPaperModal({
             <div className="empty" style={{ padding: '28px 14px' }}>{tr('搜索中…', 'Searching…')}</div>
           ) : results.length === 0 ? (
             <div className="empty" style={{ padding: '28px 14px' }}>
-              {tr('文献库里没搜到，试试「手动添加」页签', 'Nothing found — try the “By arXiv / DOI” tab')}
+              {tr('文献库里没搜到，试试手动添加页签', 'Nothing found — try the “By arXiv / DOI” tab')}
             </div>
           ) : (
             <div className="col" style={{ marginTop: 8 }}>

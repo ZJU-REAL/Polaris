@@ -9,7 +9,7 @@
    两条克制规则：
    1) 只在窗口失焦时补发。用户正看着屏幕时应用内 toast 已经够了，再弹一条系统
       通知是重复打扰。
-   2) 只发「需要人介入」与「终态」事件。像 manuscript.ai_writing 那种每个相位
+   2) 只发需要人介入与终态事件。像 manuscript.ai_writing 那种每个相位
       都推的进度事件绝不能进来，会刷屏。 */
 
 import { isDesktop } from './endpoint';

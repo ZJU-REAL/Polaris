@@ -18,7 +18,7 @@ import { LibraryPicker } from '../libraries/LibraryPicker';
 /* ============================================================
    /projects/:id — 课题设置：只留真正的课题属性
    （名称 / 课题定义 statement / 关联文献库 / 成员·邀请 / 删除课题）。
-   收录配置（rubric/锚点/关键词/arXiv 分类/节奏）已迁到文献库「收录设置」（P8）。
+   收录配置（rubric/锚点/关键词/arXiv 分类/节奏）已迁到文献库收录设置（P8）。
    ============================================================ */
 
 function SectionCard({ icon, zh, en, action, children }: {
@@ -85,7 +85,7 @@ function EditableText({ value, placeholder, onSave, saving }: {
 }
 
 /** 课题设置主体（接课题 id）：既作独立页 `/projects/:id` 的内容，
-    也被工作台「课题设置」标签以 `embedded` 内嵌（内嵌时不渲染大标题/eyebrow，避免与工作台页头重复）。 */
+    也被工作台课题设置标签以 `embedded` 内嵌（内嵌时不渲染大标题/eyebrow，避免与工作台页头重复）。 */
 export function ProjectSettings({ id, embedded = false }: { id: string; embedded?: boolean }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -354,7 +354,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
             <div style={{ fontSize: 13, color: 'var(--text-4)' }}>{tr('加载中…', 'Loading…')}</div>
           ) : sourceLibraries.length === 0 ? (
             <div style={{ fontSize: 13, color: 'var(--text-4)' }}>
-              {tr('尚未关联任何文献库；点右上「管理」添加。', 'No linked libraries yet — use “Manage” to add.')}
+              {tr('尚未关联任何文献库；点右上管理添加。', 'No linked libraries yet — use “Manage” to add.')}
             </div>
           ) : (
             <div className="col gap8">

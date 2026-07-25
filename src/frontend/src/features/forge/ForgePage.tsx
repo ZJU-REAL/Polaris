@@ -864,7 +864,7 @@ export function ForgePage() {
                 setConfirm({
                   title: tr('永久删除想法', 'Delete idea permanently'),
                   message: tr(
-                    `将永久删除「${idea.title}」，不可恢复。确定继续？`,
+                    `将永久删除${idea.title}，不可恢复。确定继续？`,
                     `This permanently deletes "${idea.title}". This cannot be undone. Continue?`,
                   ),
                   confirmText: tr('永久删除', 'Delete permanently'),

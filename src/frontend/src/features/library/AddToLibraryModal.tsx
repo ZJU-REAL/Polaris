@@ -10,9 +10,9 @@ import { parsePaperRef } from '../../lib/paper-ref';
 import { PaperProgressModal } from './PaperProgressModal';
 
 /* ============================================================
-   我的文献库 · 「添加文献」弹窗：
+   我的文献库 · 添加文献弹窗：
    arXiv 编号 / DOI（一个输入框自动识别，粘链接也行）或 BibTeX。
-   平台已有这篇时直接复用，没有才去抓取；添加进来的只进「我的收藏」，
+   平台已有这篇时直接复用，没有才去抓取；添加进来的只进我的收藏，
    不进任何公共文献库。需要下载/抽取时弹分阶段进度。
    ============================================================ */
 
@@ -57,7 +57,7 @@ export function AddToLibraryModal({
         // 还要下载正文 → 弹进度替代成功 toast，避免重复打扰
         setProgress({ taskId: entry.task_id, title: entry.title });
       } else {
-        toast(tr('已加进「我的收藏」', 'Added to your saved papers'), 'ok');
+        toast(tr('已加进我的收藏', 'Added to your saved papers'), 'ok');
       }
     },
     onError: (e) => {
@@ -80,7 +80,7 @@ export function AddToLibraryModal({
         width={520}
         title={tr('添加文献', 'Add paper')}
         sub={tr(
-          '加进「我的收藏」，只有你自己看得到。',
+          '加进我的收藏，只有你自己看得到。',
           'Goes into your saved papers — visible only to you.',
         )}
         footer={

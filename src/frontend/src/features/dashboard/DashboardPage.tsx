@@ -91,7 +91,7 @@ function buildNextSteps(
       ? {
           key: 'papers',
           done: hasPapers,
-          zh: '从关联文献库里挑选论文，充实课题的「相关研究」',
+          zh: '从关联文献库里挑选论文，充实课题的相关研究',
           en: "Pick papers from the linked libraries to fill the topic's related work",
           actionZh: '去相关研究挑选论文',
           actionEn: 'Pick related work',
@@ -485,7 +485,7 @@ function LiteratureCard({
       <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginBottom: 14 }}>
         {hasLinked
           ? tr('课题语料 = 关联文献库的并集；抓取论文在文献库里进行。', 'The topic corpus is the union of its linked libraries — papers are fetched inside the libraries.')
-          : tr('课题还没关联文献库；关联后即可从库里挑论文进「相关研究」。', 'No linked libraries yet — link one to pick papers into related work.')}
+          : tr('课题还没关联文献库；关联后即可从库里挑论文进相关研究。', 'No linked libraries yet — link one to pick papers into related work.')}
       </div>
       <div className="row gap8">
         {hasLinked ? (

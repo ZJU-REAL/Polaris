@@ -13,7 +13,7 @@ import { api, ApiError, type FigureInfo, type PaperDetail } from '../../lib/api'
    - FigureEmbed：wiki 正文 ![[fig:N]] 嵌入图（§6.6）：居中大图
      + 灰色图注，点击开 Lightbox
    - FiguresSection：wiki 详情 / 阅读页信息面板共用的小节封装
-     （有图显示画廊；没图但有 PDF 时显示「提取图片」按钮；
+     （有图显示画廊；没图但有 PDF 时显示提取图片按钮；
      正文已嵌图时可 defaultCollapsed 折叠，避免重复视觉）
    ============================================================ */
 
@@ -539,7 +539,7 @@ export function FiguresSection({
         toast(
           force
             ? tr(
-                `重新提取完成，找到 ${res.figures.length} 张图；如需更新正文插图请点「重新编译」`,
+                `重新提取完成，找到 ${res.figures.length} 张图；如需更新正文插图请点重新编译`,
                 `Re-extracted ${res.figures.length} figures; use “Recompile” to refresh in-text figures`,
               )
             : tr(`提取完成，找到 ${res.figures.length} 张图`, `Done — found ${res.figures.length} figures`),

@@ -126,7 +126,7 @@ export function ProjectWizardPage() {
             </div>
             <button className="btn btn-soft sm" onClick={() => navigate('/libraries')}>
               <Icon name="book" size={13} />
-              {tr('去「文献库」新建一个（需管理员审批）', 'Create one under Libraries (needs admin approval)')}
+              {tr('去文献库新建一个（需管理员审批）', 'Create one under Libraries (needs admin approval)')}
             </button>
           </div>
         ) : (

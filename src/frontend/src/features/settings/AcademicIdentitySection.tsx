@@ -10,10 +10,10 @@ import { tr } from '../../lib/i18n';
 import { errText, MultiValueInput } from '../library/AuthorBindWizard';
 
 /* ============================================================
-   设置页「学术身份」分区：纯表单管理署名信息
+   设置页学术身份分区：纯表单管理署名信息
    （多个姓名写法 + 多个机构 + 每日自动匹配开关）。
    保存后每天自动从文献库匹配你发表的论文，
-   列表在「文献库 → 我发表的」里查看。
+   列表在文献库 → 我发表的里查看。
    ============================================================ */
 
 export function AcademicIdentitySection() {
@@ -70,7 +70,7 @@ export function AcademicIdentitySection() {
       </div>
       <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
         {tr(
-          '填写论文署名用的姓名和机构，用来从文献库匹配你发表的论文；论文列表在「文献库 → 我发表的」里查看。',
+          '填写论文署名用的姓名和机构，用来从文献库匹配你发表的论文；论文列表在文献库 → 我发表的里查看。',
           'List the names and affiliations you publish under so we can match your publications from the library; see them under Library → My publications.',
         )}
       </div>
@@ -118,7 +118,7 @@ export function AcademicIdentitySection() {
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
                 {tr(
-                  '命中的论文会进「我发表的」待确认列表，由你确认是不是你的。',
+                  '命中的论文会进我发表的待确认列表，由你确认是不是你的。',
                   'Matched papers land in the to-confirm list under My publications for you to review.',
                 )}
               </div>

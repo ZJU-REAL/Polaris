@@ -533,7 +533,7 @@ export function WriterPage() {
                   setConfirm({
                     title: tr('永久删除论文草稿', 'Delete manuscript permanently'),
                     message: tr(
-                      `将永久删除「${m.title}」，不可恢复。确定继续？`,
+                      `将永久删除${m.title}，不可恢复。确定继续？`,
                       `This permanently deletes "${m.title}". This cannot be undone. Continue?`,
                     ),
                     confirmText: tr('永久删除', 'Delete permanently'),

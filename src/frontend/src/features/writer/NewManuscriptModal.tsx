@@ -12,7 +12,7 @@ import { tr } from '../../lib/i18n';
 import { TemplateUploadModal } from './TemplateUploadModal';
 
 /* ============================================================
-   「新建论文草稿」Modal：标题 + 模板画廊（GET /manuscripts/templates）
+   新建论文草稿Modal：标题 + 模板画廊（GET /manuscripts/templates）
    + 可选关联 idea（promoted）与 experiment（done）。
    创建成功后进入编辑工作台 /writer/:id。
    ============================================================ */

@@ -14,7 +14,7 @@ import type { ChatMsg, ContextRef } from '../chat/types';
 /* ============================================================
    阅读工作台 · AI 伴读面板：复用 ChatSurface 的壳
    （历史 / 技能条 / / 上下文 / @ 分享），
-   伴读特有：每条回答可「存为笔记」，分享附带本篇阅读链接。
+   伴读特有：每条回答可存为笔记，分享附带本篇阅读链接。
    ============================================================ */
 
 function SaveNoteButton({ content, paperId, pid }: { content: string; paperId: string; pid: string }) {

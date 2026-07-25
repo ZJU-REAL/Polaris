@@ -89,7 +89,7 @@ export function setBadgeCount(count: number): void {
 }
 
 /* —— 能力清单 ——
-   前端所有「走本地还是走远端」的判断只读这张表：绝不读 platform、绝不读版本号
+   前端所有走本地还是走远端的判断只读这张表：绝不读 platform、绝不读版本号
    做特判，否则第二期能力增删又要回来改前端。 */
 
 let manifest: CapabilityManifest | null = null;

@@ -15,7 +15,7 @@ import { categoryMeta, SearchInput } from './shared';
    - 主题 Topics：按概念聚类的分组网格；
    - 趋势 Trends：概念演化冲积图（alluvial），每期一列节点块按数量排名
      堆叠、相邻列间连飘带，块高 = 当期关联论文数。
-   全部视图共享「子主题」过滤：选中一个概念后只看它牵出的论文子图。
+   全部视图共享子主题过滤：选中一个概念后只看它牵出的论文子图。
    ============================================================ */
 
 type GraphView = 'network' | 'timeline' | 'topics' | 'trends';
@@ -704,6 +704,9 @@ const TREND_MAX_UNIT = 26; // 单篇论文的最大像素高：数据稀疏时�
 
 function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConcept: (id: string) => void }) {
   const [granularity, setGranularity] = useState<TimelineGranularity>('month');
+  // 起止时间（YYYY-MM，空=不限）。数据里实际有的月份才进选项，避免给出没有论文的空档。
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -717,11 +720,29 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
     return () => ro.disconnect();
   }, []);
 
+  // 数据里真实出现过的月份，升序；起止下拉的选项来源
+  const months = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of model.papers) {
+      const m = paperPeriod(p, 'month');
+      if (m) set.add(m);
+    }
+    return [...set].sort();
+  }, [model]);
+
   const data = useMemo(() => {
     // —— 概念 × 时间桶 → 关联论文数矩阵；只保留有论文的时间桶（离散列，跳过空档） ——
     const periodOfPaper = new Map<string, string | null>();
     let unknown = 0;
+    let filtered = 0;
     for (const p of model.papers) {
+      const month = paperPeriod(p, 'month');
+      // 起止按月份比较（字符串字典序对 YYYY-MM 成立）；日期不详的论文本来就进不了任何列
+      if (month && ((from && month < from) || (to && month > to))) {
+        periodOfPaper.set(p.id, null);
+        filtered += 1;
+        continue;
+      }
       const key = paperPeriod(p, granularity);
       periodOfPaper.set(p.id, key);
       if (key === null) unknown += 1;
@@ -748,7 +769,7 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
     const top = ranked.slice(0, TREND_BAND_LIMIT);
     const periods = [...new Set(top.flatMap((id) => [...perConcept.get(id)!.keys()]))].sort();
     if (periods.length === 0) {
-      return { bands: [] as TrendBand[], periods: [] as string[], unknown, rest: 0 };
+      return { bands: [] as TrendBand[], periods: [] as string[], unknown, rest: 0, filtered };
     }
 
     const byId = new Map(model.concepts.map((c) => [c.id, c]));
@@ -763,8 +784,8 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
         color: TREND_PALETTE[rank]!,
       };
     });
-    return { bands, periods, unknown, rest: ranked.length - top.length };
-  }, [model, granularity]);
+    return { bands, periods, unknown, rest: ranked.length - top.length, filtered };
+  }, [model, granularity, from, to]);
 
   // —— 冲积图几何：每列独立按当期数量排名堆叠，相邻列间连飘带 ——
   const geom = useMemo(() => {
@@ -885,6 +906,82 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
           value={granularity}
           onChange={setGranularity}
         />
+        {months.length > 1 && (
+          <span className="row gap6">
+            <select
+              className="input"
+              aria-label={tr('起始月份', 'From month')}
+              style={{ height: 28, fontSize: 12, padding: '0 6px' }}
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            >
+              <option value="">{tr('最早', 'Earliest')}</option>
+              {months.map((m) => (
+                <option key={m} value={m} disabled={!!to && m > to}>{m}</option>
+              ))}
+            </select>
+            <span className="muted" style={{ fontSize: 11 }}>→</span>
+            <select
+              className="input"
+              aria-label={tr('结束月份', 'To month')}
+              style={{ height: 28, fontSize: 12, padding: '0 6px' }}
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            >
+              <option value="">{tr('最新', 'Latest')}</option>
+              {months.map((m) => (
+                <option key={m} value={m} disabled={!!from && m < from}>{m}</option>
+              ))}
+            </select>
+            {(from || to) && (
+              <button
+                className="btn btn-ghost sm"
+                onClick={() => { setFrom(''); setTo(''); }}
+                title={tr('回到全部时间', 'Back to all time')}
+              >
+                {tr('全部', 'All')}
+              </button>
+            )}
+          </span>
+        )}
+        {months.length > 1 && (
+          <span className="row gap6">
+            <select
+              className="input"
+              aria-label={tr('起始月份', 'From month')}
+              style={{ height: 28, fontSize: 12, padding: '0 6px' }}
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            >
+              <option value="">{tr('最早', 'Earliest')}</option>
+              {months.map((m) => (
+                <option key={m} value={m} disabled={!!to && m > to}>{m}</option>
+              ))}
+            </select>
+            <span className="muted" style={{ fontSize: 11 }}>→</span>
+            <select
+              className="input"
+              aria-label={tr('结束月份', 'To month')}
+              style={{ height: 28, fontSize: 12, padding: '0 6px' }}
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            >
+              <option value="">{tr('最新', 'Latest')}</option>
+              {months.map((m) => (
+                <option key={m} value={m} disabled={!!from && m < from}>{m}</option>
+              ))}
+            </select>
+            {(from || to) && (
+              <button
+                className="btn btn-ghost sm"
+                onClick={() => { setFrom(''); setTo(''); }}
+                title={tr('回到全部时间', 'Back to all time')}
+              >
+                {tr('全部', 'All')}
+              </button>
+            )}
+          </span>
+        )}
         <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 'auto' }}>
           {tr('块高 = 当期关联论文数', 'Block height = papers linked in that period')}
           {rest > 0
@@ -1200,12 +1297,21 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
       {/* —— 视图 + 子主题工具栏 —— */}
       <div className="row gap8 wrap" style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)' }}>
         <Segmented<GraphView>
-          options={[
-            { v: 'network', label: tr('网络', 'Network') },
-            { v: 'timeline', label: tr('时间线', 'Timeline') },
-            { v: 'trends', label: tr('趋势', 'Trends') },
-            { v: 'topics', label: tr('主题', 'Topics') },
-          ]}
+          options={
+            // 实验室尺度只留网络与趋势：时间线按论文分列、主题按概念分组，
+            // 上千篇的量级下都只是把内容摊平，看不出东西。
+            scope === 'lab'
+              ? [
+                  { v: 'network' as const, label: tr('网络', 'Network') },
+                  { v: 'trends' as const, label: tr('趋势', 'Trends') },
+                ]
+              : [
+                  { v: 'network' as const, label: tr('网络', 'Network') },
+                  { v: 'timeline' as const, label: tr('时间线', 'Timeline') },
+                  { v: 'trends' as const, label: tr('趋势', 'Trends') },
+                  { v: 'topics' as const, label: tr('主题', 'Topics') },
+                ]
+          }
           value={view}
           onChange={setView}
         />
@@ -1246,7 +1352,7 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
               icon="layers"
               title={tr('节点太多，网络图会很卡', 'Too many nodes for the network view')}
               desc={tr(
-                `这一批有 ${model.nodes.length} 个节点。先用上面的「子主题」筛一下，或换「趋势」「时间线」「主题」视图看全量——它们是聚合的，不受节点数影响。`,
+                `这一批有 ${model.nodes.length} 个节点。先用上面的子主题筛一下，或换趋势时间线主题视图看全量——它们是聚合的，不受节点数影响。`,
                 `This batch has ${model.nodes.length} nodes. Narrow it down with the subtopic filter above, or use the Trends / Timeline / Topics views — they aggregate, so node count doesn't matter.`,
               )}
               action={

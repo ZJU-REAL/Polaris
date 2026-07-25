@@ -27,10 +27,10 @@ import { KindBadge } from './VoyagesPage';
 
 /* ============================================================
    /voyages/:id — 任务详情：循环感知的活动状态 + 步骤时间线 + SSE 实时。
-   体现背后 agent 的「规划 → 执行 → 校验 → 按结果调整计划」循环：
+   体现背后 agent 的规划 → 执行 → 校验 → 按结果调整计划循环：
    - 顶部显示当前活动的一句话（而非线性四段进度条）与执行方式徽标；
    - 步骤卡展示验收标准、判定理由、来源（第几次调整新增）、尝试记录；
-   - 时间线按 plan_history 插入「计划调整」分隔条目，解释为什么多出新步骤。
+   - 时间线按 plan_history 插入计划调整分隔条目，解释为什么多出新步骤。
    活动状态订阅 /voyages/{id}/events，事件与 TanStack Query 缓存合并。
    ============================================================ */
 
@@ -608,7 +608,7 @@ function PlanEventCard({ event }: { event: VoyagePlanEvent }) {
         {event.added > 0 && <span>{tr(`新增 ${event.added} 步`, `${event.added} step(s) added`)}</span>}
         {event.obsoleted > 0 && <span>{tr(`作废 ${event.obsoleted} 步`, `${event.obsoleted} step(s) dropped`)}</span>}
         {event.trigger_step && (
-          <span>{tr(`由「${event.trigger_step}」触发`, `Triggered by “${event.trigger_step}”`)}</span>
+          <span>{tr(`由${event.trigger_step}触发`, `Triggered by “${event.trigger_step}”`)}</span>
         )}
       </div>
     </div>

@@ -52,7 +52,7 @@ function CheckBox({ checked, onToggle, title }: { checked: boolean; onToggle: ()
 /* ============================================================
    /experiment — Stage 03 · Experiment Lab（M4）列表视图。
    实验卡（idea 标题 + status + 服务器 + 耗时 + 进度）+ 新建实验。
-   深链 ?new=<idea_id>（Review 页「发起实验」）自动开 Modal。
+   深链 ?new=<idea_id>（Review 页发起实验）自动开 Modal。
    ============================================================ */
 
 /* memo：列表页轮询刷新时避免未变卡片重渲染（回调只捕获稳定的 navigate 与 id） */
@@ -470,7 +470,7 @@ export function ExperimentPage() {
                   setConfirm({
                     title: tr('永久删除实验', 'Delete experiment permanently'),
                     message: tr(
-                      `将永久删除「${e.idea_title}」，不可恢复。确定继续？`,
+                      `将永久删除${e.idea_title}，不可恢复。确定继续？`,
                       `This permanently deletes "${e.idea_title}". This cannot be undone. Continue?`,
                     ),
                     confirmText: tr('永久删除', 'Delete permanently'),

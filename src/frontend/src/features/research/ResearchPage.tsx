@@ -41,11 +41,11 @@ import { ShelfChatTab } from './ShelfChatTab';
 import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
 
 /* ============================================================
-   /t/:topicId/research — 课题「相关研究」书架。
-   双栏主从布局对齐「我的文献库」：左栏紧凑论文行（排序 / 状态
+   /t/:topicId/research — 课题相关研究书架。
+   双栏主从布局对齐我的文献库：左栏紧凑论文行（排序 / 状态
    过滤 / 计数），右栏选中论文的完整详情（wiki 渲染、课题备注、
-   就地动作）；添加统一收进「添加论文」弹窗（从文献库 / 手动）。
-   入架同时自动收藏进「我的文献库」；移出书架不动个人库。
+   就地动作）；添加统一收进添加论文弹窗（从文献库 / 手动）。
+   入架同时自动收藏进我的文献库；移出书架不动个人库。
    ============================================================ */
 
 // 后端单页上限 100；排序/关键词/筛选走后端，wiki_source 状态过滤在页内完成
@@ -319,7 +319,7 @@ function LinkedLibrariesBar({
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.55, marginTop: 10 }}>
             {tr(
-              '这些库的论文并集就是课题的可用语料；下面「相关研究」是你从中手挑出来的一小撮，两个数不一样是正常的。',
+              '这些库的论文并集就是课题的可用语料；下面相关研究是你从中手挑出来的一小撮，两个数不一样是正常的。',
               'The union of these libraries is the corpus available to this topic; the related work below is the handful you hand-picked — the two counts differ by design.',
             )}
           </div>

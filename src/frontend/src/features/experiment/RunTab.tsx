@@ -18,7 +18,7 @@ import { tr } from '../../lib/i18n';
 import { stopReasonText } from './shared';
 
 /* ============================================================
-   Run Tab —「运行与迭代」：
+   Run Tab —运行与迭代：
    - 顶部主指标趋势（primary_value by seq，方向感知）+ 迭代状态条
    - 迭代时间线：每轮一卡（#seq、状态、主指标 + 与上轮差值、
      AI 决定徽章 improve/debug/stop、reflection 三字段折叠）

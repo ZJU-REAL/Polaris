@@ -11,7 +11,7 @@ import { tr } from '../../lib/i18n';
 import { errText } from './AuthorBindWizard';
 
 /* ============================================================
-   「我发表的」tab（issue #109）— 双栏布局的左栏：
+   我发表的tab（issue #109）— 双栏布局的左栏：
    署名摘要 + 立即扫描文献库 + 待确认（是我的 / 不是我的）
    + 已确认列表 + 手动添加；行样式对齐文献追踪的论文列表，
    行点击 = 选中（右栏详情由 LibraryPage 渲染）。
@@ -504,7 +504,7 @@ export function PublicationsTab({
               icon="file"
               title={tr('还没有已确认的发表', 'No confirmed publications yet')}
               desc={tr(
-                '点「立即扫描文献库」找找你的论文，或用「手动添加」补充。',
+                '点立即扫描文献库找找你的论文，或用手动添加补充。',
                 'Tap Scan library now to look for your papers, or add them manually.',
               )}
             />

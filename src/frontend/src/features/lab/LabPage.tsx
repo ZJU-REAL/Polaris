@@ -34,7 +34,7 @@ import {
      按可见库收敛）、AI 用量与排行榜（/lab/usage 系列）、跨库概念图谱
      （/lab/graph）、文献库与每日新论文汇总
    - 任务：全部可见任务按归属分组（课题任务 / 文献库任务 / 其它），
-     覆盖课题工作台看不到的「课题外任务」（VoyageRun.project_id 可为空）
+     覆盖课题工作台看不到的课题外任务（VoyageRun.project_id 可为空）
    ============================================================ */
 
 type LabTab = 'overview' | 'tasks';
@@ -111,7 +111,7 @@ function LibrariesCard() {
         <EmptyState
           icon="book"
           title={tr('还没有文献库', 'No libraries yet')}
-          desc={tr('新建一个文献库后，建库与同步任务会出现在「任务」标签里。', 'Create a library — its build and sync tasks will show up under the Tasks tab.')}
+          desc={tr('新建一个文献库后，建库与同步任务会出现在任务标签里。', 'Create a library — its build and sync tasks will show up under the Tasks tab.')}
           compact
           action={
             <Link className="btn btn-primary sm" to="/libraries">
@@ -733,7 +733,7 @@ function GraphCard({ libs }: { libs: DirectionLibrarySummary[] }) {
       icon="sparkle"
       title={tr('概念图谱', 'Concept graph')}
       hint={tr(
-        '默认看「趋势」：概念随时间的消长；也能切到网络、时间线、主题',
+        '默认看趋势：概念随时间的消长；也能切到网络、时间线、主题',
         'Defaults to Trends — how concepts rise and fall over time; Network, Timeline, and Topics are there too',
       )}
       action={

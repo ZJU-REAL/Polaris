@@ -10,7 +10,7 @@ import { BuildIndexButton } from '../chat/BuildIndexButton';
 import type { ChatMsg } from '../chat/types';
 
 /* ============================================================
-   相关研究对话 Tab：只就本课题「相关研究」里的这批论文做问答，
+   相关研究对话 Tab：只就本课题相关研究里的这批论文做问答，
    范围比整个文献库小、更贴题。壳复用 ChatSurface；来源清单
    容忍 status/relevance 为 null（scoped 场景后端可能不给）。
    ============================================================ */
@@ -83,14 +83,14 @@ export function ShelfChatTab({ pid }: ShelfChatTabProps) {
       title={tr('相关研究对话', 'Related work chat')}
       contextKinds={['paper', 'idea', 'experiment', 'concept']}
       hint={tr(
-        '只就本课题「相关研究」里的这批论文回答，问对比、归类、找空白都行；[n] 为引用来源编号。',
+        '只就本课题相关研究里的这批论文回答，问对比、归类、找空白都行；[n] 为引用来源编号。',
         'Answers stay within this topic’s related work; ask for comparisons, groupings or open problems. [n] marks a source number.',
       )}
       headerAction={<BuildIndexButton build={() => api.buildShelfIndex(pid)} />}
       emptyIcon="chat"
       emptyTitle={tr('和本课题的相关研究对话', 'Chat with this topic’s related work')}
       emptyDesc={tr(
-        '范围锁定在你加进「相关研究」的这批论文，比通用文献库更贴题；/ 放入指定论文，@ 分享给同事。',
+        '范围锁定在你加进相关研究的这批论文，比通用文献库更贴题；/ 放入指定论文，@ 分享给同事。',
         'Scoped to the papers you shelved as related work — closer to your topic than the whole library. Use / to pin papers, @ to share.',
       )}
       suggestions={SUGGESTIONS}

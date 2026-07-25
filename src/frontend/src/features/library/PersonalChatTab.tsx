@@ -10,7 +10,7 @@ import { BuildIndexButton } from '../chat/BuildIndexButton';
 import type { ChatMsg } from '../chat/types';
 
 /* ============================================================
-   个人文献库对话 Tab：就「我的收藏」这批个人文献做问答，
+   个人文献库对话 Tab：就我的收藏这批个人文献做问答，
    不绑任何课题（无 project 上下文）。壳复用 ChatSurface；
    来源清单容忍 status/relevance 为 null。
    ============================================================ */

@@ -2,7 +2,7 @@
    本地 / 远端路由表。
 
    lib/api.ts 有近 4000 行，但所有 REST 调用都收口在 request / requestBlob 两个
-   函数里，所以「这次调用走本地还是走服务器」只需要在那两处决策，**调用点一处
+   函数里，所以这次调用走本地还是走服务器只需要在那两处决策，**调用点一处
    都不用改**。备选方案（每个 call site 写 if、包一层 facade 重导出 200+ 方法、
    Proxy 包 api 对象）都要按能力数量反复改动，或者破坏类型推导。
 
@@ -44,7 +44,7 @@ interface Route {
 const ROUTES: Record<string, Route> = {};
 
 /* —— 熔断：同一能力连续失败若干次后，本会话内不再尝试 ——
-   否则本地进程崩了会变成「每次请求都先白等一轮再回落」。 */
+   否则本地进程崩了会变成每次请求都先白等一轮再回落。 */
 const FAILURE_LIMIT = 3;
 const failures = new Map<string, number>();
 

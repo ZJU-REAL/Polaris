@@ -39,12 +39,12 @@ import { entrySnapshot, LibraryDetailPane, pubSnapshot } from './LibraryDetailPa
 
 /* ============================================================
    /library — 我的文献库：
-   「我的收藏」+「浏览记录」+「我发表的」等 tab（回收站是列表
+   我的收藏+浏览记录+我发表的等 tab（回收站是列表
    底部操作行里的弹窗入口，与实验室文献库 / 相关研究一致）；
    双栏主从布局对齐文献追踪（Stage 00）的论文库：
    左栏列表（搜索/排序/分页/行操作），右栏选中条目的详情
    （活体论文展示 wiki，快照条目展示元数据 + 外链）。
-   「我发表的」未填署名信息时表单占满整卡，填好后同样双栏。
+   我发表的未填署名信息时表单占满整卡，填好后同样双栏。
    ============================================================ */
 
 const PAGE_SIZE = 20;
@@ -329,7 +329,7 @@ function PersonalTrashModal({ open, onClose }: { open: boolean; onClose: () => v
       open={open}
       onClose={onClose}
       sub={tr(
-        '取消收藏的文献放在这里；召回后回到「我的收藏」，清空浏览记录不会动这里',
+        '取消收藏的文献放在这里；召回后回到我的收藏，清空浏览记录不会动这里',
         'Papers you unsaved land here; restoring puts them back in Saved — clearing history leaves this alone',
       )}
       items={items}
@@ -346,7 +346,7 @@ function PersonalTrashModal({ open, onClose }: { open: boolean; onClose: () => v
           `This permanently deletes all ${n} entries in the trash — no undo`,
         )
       }
-      restoreHint={tr('召回到「我的收藏」', 'Restore to Saved')}
+      restoreHint={tr('召回到我的收藏', 'Restore to Saved')}
       purgeHint={tr('彻底删除，无法再召回', 'Delete forever — cannot be restored')}
     />
   );
@@ -857,7 +857,7 @@ export function LibraryPage() {
                         ? tr('换个关键词或放宽高级检索条件。', 'Try another keyword or loosen the filters.')
                         : tab === 'saved'
                           ? tr(
-                              '点右上角「添加文献」，填 arXiv 编号 / DOI / BibTeX 就能直接加进来；在论文阅读页点右上角的书签按钮也能收进这里。',
+                              '点右上角添加文献，填 arXiv 编号 / DOI / BibTeX 就能直接加进来；在论文阅读页点右上角的书签按钮也能收进这里。',
                               'Use “Add paper” in the top right — an arXiv ID, DOI or BibTeX entry is enough. You can also tap the bookmark button on any paper reading page.',
                             )
                           : tr(
@@ -1031,7 +1031,7 @@ export function LibraryPage() {
         onClose={() => setClearOpen(false)}
         title={tr('清空浏览记录？', 'Clear reading history?')}
         message={tr(
-          '将删除全部浏览记录；已收藏的文献留在「我的收藏」，回收站里的条目也不受影响。此操作不可撤销。',
+          '将删除全部浏览记录；已收藏的文献留在我的收藏，回收站里的条目也不受影响。此操作不可撤销。',
           'All reading history will be deleted. Saved papers stay in Saved and the trash is left alone. This cannot be undone.',
         )}
         confirmText={tr('清空', 'Clear')}
