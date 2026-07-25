@@ -63,6 +63,12 @@ const SAMPLE_TOPIC = {
 /** 判重用：两种语言的名字都算「已经有示例课题了」。 */
 const SAMPLE_NAMES = [SAMPLE_TOPIC.zh.name, SAMPLE_TOPIC.en.name];
 
+/** 示例课题绑定的文献库（按名字匹配可见库；没有就退回第一个公共库）。 */
+const SAMPLE_LIBRARY_NAMES = ['Recursive Self-Improvement', 'RSI'];
+
+/** 示例课题的相关研究里预置的三篇论文（arXiv id）。 */
+const SAMPLE_PAPER_IDS = ['2506.10943', '2505.03335', '2203.14465'];
+
 export function StartPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -86,19 +92,29 @@ export function StartPage() {
       return;
     }
     const preset = getLang() === 'en' ? SAMPLE_TOPIC.en : SAMPLE_TOPIC.zh;
-    const publicLib = (librariesQuery.data ?? []).find((l) => l.is_public && l.status === 'active');
+    // 语料优先绑 RSI 文献库（示例课题就是讲这个方向）；找不到才退回任一公共库
+    const visible = librariesQuery.data ?? [];
+    const active = visible.filter((l) => l.status === 'active');
+    const lib =
+      active.find((l) => SAMPLE_LIBRARY_NAMES.some((n) => l.name.toLowerCase().includes(n.toLowerCase()))) ??
+      active.find((l) => l.is_public);
     setCreatingSample(true);
     try {
       const created = await api.createProject({
         name: preset.name,
         statement: preset.statement,
-        source_library_ids: publicLib ? [publicLib.id] : [],
+        source_library_ids: lib ? [lib.id] : [],
       });
+      // 预置几篇代表作进「相关研究」：逐篇幂等导入，单篇失败不影响建课题
+      const seeded = await Promise.allSettled(
+        SAMPLE_PAPER_IDS.map((arxivId) => api.importToShelf(created.id, { arxiv_id: arxivId })),
+      );
+      const okCount = seeded.filter((r) => r.status === 'fulfilled').length;
       await queryClient.invalidateQueries({ queryKey: ['projects'] });
       toast(
-        publicLib
-          ? `${tr('示例课题已创建，语料来自：', 'Sample topic created, corpus from: ')}${publicLib.name}`
-          : tr('示例课题已创建', 'Sample topic created'),
+        `${tr('示例课题已创建', 'Sample topic created')}${
+          lib ? `${tr('，语料：', ', corpus: ')}${lib.name}` : ''
+        }${okCount > 0 ? tr(`，已放入 ${okCount} 篇论文`, `, ${okCount} papers added`) : ''}`,
         'ok',
       );
       openTopic(created.id);
@@ -130,12 +146,6 @@ export function StartPage() {
         <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>
           {tr('选择或创建课题', 'Pick or create a topic')}
         </h1>
-        <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 8, lineHeight: 1.6 }}>
-          {tr(
-            '课题是你做研究的空间。不着急建也行——文献库、每日新论文这些先逛着，随时回来建课题。',
-            'A topic is your research workspace. No rush — browse the libraries and daily papers first, and come back whenever you are ready.',
-          )}
-        </div>
       </div>
 
       {isLoading ? (
@@ -213,23 +223,10 @@ export function StartPage() {
             {creatingSample ? tr('创建中…', 'Creating…') : tr('创建示例课题', 'Create a sample topic')}
           </button>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 14, lineHeight: 1.6 }}>
-          {tr('想先看看长什么样？示例课题会带一个现成的文献库。', 'Want to see what it looks like first? The sample topic comes with a ready-made library.')}
-          <br />
-          {tr('拿到同事的邀请链接？直接打开即可加入。', 'Got an invite link from a teammate? Just open it to join.')}
-        </div>
       </div>
 
-      {/* —— 不用课题也能用的功能 —— */}
+      {/* —— 不依赖课题的功能入口 —— */}
       <div style={{ marginTop: 40 }}>
-        <div style={{ textAlign: 'center', marginBottom: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)' }}>
-            {tr('不用课题也能用', 'Works without a topic')}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 5 }}>
-            {tr('这几处随时可以进，和有没有课题无关。', 'These are always open to you, topic or not.')}
-          </div>
-        </div>
         <div
           style={{
             display: 'grid',
