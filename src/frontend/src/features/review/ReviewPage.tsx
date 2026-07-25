@@ -600,21 +600,6 @@ export function ReviewPage() {
               ? tr('加载课题…', 'Loading topics…')
               : tr('选择一个课题', 'Pick a topic')
         }
-        right={
-          <button className="btn btn-primary" disabled={!pid || !!runningVoyage} onClick={() => setModalOpen(true)}>
-            {runningVoyage ? (
-              <>
-                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                {tr('运行中…', 'Running…')}
-              </>
-            ) : (
-              <>
-                <Icon name="play" size={14} />
-                {tr('运行锦标赛', 'Run tournament')}
-              </>
-            )}
-          </button>
-        }
       />
 
       {runningVoyage && (
@@ -639,7 +624,7 @@ export function ReviewPage() {
         </div>
       )}
 
-      <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
+      <div className="row page-tabs" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <Segmented<ReviewTab>
           options={[
             { v: 'leaderboard', label: `${tr('排行榜', 'Leaderboard')}${rows.length ? ` · ${rows.length}` : ''}` },
@@ -648,6 +633,19 @@ export function ReviewPage() {
           value={tab}
           onChange={setTab}
         />
+          <button className="btn btn-primary" disabled={!pid || !!runningVoyage} onClick={() => setModalOpen(true)}>
+            {runningVoyage ? (
+              <>
+                <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                {tr('运行中…', 'Running…')}
+              </>
+            ) : (
+              <>
+                <Icon name="play" size={14} />
+                {tr('运行锦标赛', 'Run tournament')}
+              </>
+            )}
+          </button>
       </div>
 
       <div className="card" style={{ overflow: 'hidden', minHeight: 320 }}>
