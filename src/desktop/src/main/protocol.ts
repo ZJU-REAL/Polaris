@@ -58,7 +58,10 @@ function rendererRoot(): string {
  *   insertRule 注入样式，去掉编辑器和公式渲染会直接崩。
  */
 export function buildCsp(serverUrl: string): string {
-  const connect = new Set<string>(["'self'"]);
+  // blob: 必须显式列出：Chromium 里 'self' 不覆盖 blob: URL，而 pdf.js 标注阅读器
+  // 是 fetch(blob:…pdf) 取正文（走 connect-src），标准阅读器是 <iframe src=blob:>
+  // （走 frame-src）。少了这一项就只有标注阅读器打不开，且只在桌面端复现。
+  const connect = new Set<string>(["'self'", 'blob:']);
   if (serverUrl) {
     try {
       const u = new URL(serverUrl);

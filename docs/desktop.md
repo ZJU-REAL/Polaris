@@ -81,6 +81,7 @@ result and must not be recomputed remotely.
 |---|---|
 | `plugins: true` in `window.ts` | The manuscript PDF preview is an `<iframe src=blob:…pdf>` rendered by Chromium's built-in pdfium, not pdf.js. Electron disables plugins by default, so dropping this makes the preview blank |
 | `script-src 'wasm-unsafe-eval'` in the CSP | pdf.js ships openjpeg / qcms as WASM |
+| `blob:` in `connect-src` | The annotating reader hands pdf.js a `blob:` URL and pdf.js fetches it; `'self'` does not cover `blob:` in Chromium. Drop it and only that reader breaks — the standard reader is an `<iframe>` and goes through `frame-src` |
 | `style-src 'unsafe-inline'` in the CSP | CodeMirror's style-mod and KaTeX insert rules at runtime; without it the editor and formula rendering break |
 | `role: 'editMenu'` in `menu.ts` | Without it, Cmd+C/V/A/Z stop working in some controls on macOS |
 | Recreating the window after a server change | The preload injection and the CSP response header are both fixed at document load; `reload()` cannot refresh them |

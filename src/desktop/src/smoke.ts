@@ -47,6 +47,7 @@ void app.whenReady().then(async () => {
   check("style-src 放行 unsafe-inline（CodeMirror/KaTeX）", csp.includes("style-src 'self' 'unsafe-inline'"));
   check('connect-src 含服务器 https 源', csp.includes(SERVER_URL));
   check('connect-src 含服务器 wss 源', csp.includes('wss://polaris.example.edu'));
+  check("connect-src 放行 blob:（pdf.js 取正文）", /connect-src [^;]*\bblob:/.test(csp));
   check("worker-src 放行 blob:（pdf.js worker）", csp.includes("worker-src 'self' blob:"));
   check("frame-src 放行 blob:（写作页 PDF 预览）", csp.includes('frame-src blob:'));
 
