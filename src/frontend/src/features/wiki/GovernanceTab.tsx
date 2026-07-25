@@ -108,8 +108,8 @@ function DuplicatesCard({ libraryId }: { libraryId: string }) {
       </h3>
       <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
         {tr(
-          '同一篇论文可能因预印本 / 正式版等原因入库两次。确认后合并：保留更完整的一篇，另一篇的所有内容并入后删除（不可撤销）。',
-          'The same paper can be ingested twice (e.g. preprint vs published). Merging keeps the more complete row and folds the other into it — irreversible.',
+          '合并会保留更完整的一篇，另一篇的内容并入后删除，不可撤销。',
+          'Merging keeps the more complete row and folds the other into it, then deletes it — irreversible.',
         )}
       </p>
       {isLoading ? (
@@ -392,10 +392,7 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
       </div>
       <p className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
         {readOnly
-          ? tr(
-              '这个文献库按以下 arXiv 分类与关键词检索论文、按打分标准判定相关性（由文献库管理员维护）。',
-              'This library fetches papers by the arXiv categories and terms below and scores relevance against the rubric (maintained by library managers).',
-            )
+          ? tr('由文献库管理员维护，你只能查看。', 'Maintained by library managers — read-only for you.')
           : tr(
               '文献追踪按这里的 arXiv 分类与关键词检索、按打分标准判定相关性；留空则用默认分类、只按方向说明打分。',
               'Literature tracking searches by these arXiv categories and keywords and scores relevance against the rubric; leave empty to use default categories and statement-only scoring.',

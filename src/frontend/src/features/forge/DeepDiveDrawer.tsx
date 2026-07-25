@@ -137,15 +137,12 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
           <span style={{ fontSize: 15, fontWeight: 680 }}>{tr('深度生成', 'Deep Dive')}</span>
         </>
       }
-      sub={tr('AI 检索文献并起草完整研究方案，研究目标可在生成前人工确认。', 'The AI searches the literature and drafts a full proposal; the research goal can be confirmed by you first.')}
+      sub={tr('AI 检索文献并起草完整研究方案。', 'The AI searches the literature and drafts a full proposal.')}
     >
       <FormField
         label={tr('种子', 'Seed')}
         en="seed"
-        hint={tr(
-          '给 AI 一个探索起点：一段想法、一个概念、一篇论文，或把已有草案深化成完整研究方案。',
-          'Give the AI a starting point: a thought, a concept, a paper, or deepen an existing sketch into a full proposal.',
-        )}
+        hint={tr('给 AI 一个探索起点。', 'Give the AI a starting point.')}
       >
         <Segmented<DeepSeedType>
           options={SEED_TYPES.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))}
@@ -170,7 +167,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       {seedType === 'concept' && (
-        <FormField label={tr('选择概念', 'Pick a concept')} en="concept" hint={tr('从当前课题的概念库中选一个作为探索起点。', 'Pick one from this topic’s concept library as the starting point.')}>
+        <FormField label={tr('选择概念', 'Pick a concept')} en="concept">
           <div className="col gap8">
             <input
               className="input"
@@ -192,7 +189,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       {seedType === 'paper' && (
-        <FormField label={tr('选择论文', 'Pick a paper')} en="paper" hint={tr('从文献库中选一篇作为探索起点。', 'Pick one from the library as the starting point.')}>
+        <FormField label={tr('选择论文', 'Pick a paper')} en="paper">
           <div className="col gap8">
             <input
               className="input"
@@ -214,7 +211,7 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
       )}
 
       {seedType === 'idea' && (
-        <FormField label={tr('选择草案', 'Pick a sketch')} en="seed idea" hint={tr('把一份方向草案深化为完整研究方案，AI 会继承草案的依据文献继续探索。', 'Deepen a sketch into a full proposal; the AI inherits its evidence papers and keeps exploring.')}>
+        <FormField label={tr('选择草案', 'Pick a sketch')} en="seed idea" hint={tr('AI 会继承草案的依据文献继续探索。', 'The AI inherits the sketch’s evidence papers and keeps exploring.')}>
           <SelectMenu
             value={ideaId}
             placeholder={sketchesQuery.isLoading ? tr('加载中…', 'Loading…') : sketchesQuery.isError ? tr('（无法加载草案列表）', '(could not load sketches)') : sketches.length === 0 ? tr('（还没有草案，先运行一次想法生成）', '(no sketches yet — run idea generation first)') : tr('— 选择草案 —', '— pick a sketch —')}
@@ -233,8 +230,8 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
         label={tr('生成前人工确认研究目标', 'Confirm the research goal first')}
         en="confirm_goal"
         hint={tr(
-          'AI 构建好研究目标后先暂停等你确认（可附修改意见），确认后才继续起草方案。关闭则全程自动。',
-          'The AI pauses after building the research goal and waits for your confirmation (with optional feedback) before drafting. Turn off for fully automatic.',
+          'AI 构建好研究目标后暂停等你确认（可附修改意见），关闭则全程自动。',
+          'The AI pauses after building the research goal and waits for your confirmation (with optional feedback). Turn off for fully automatic.',
         )}
       >
         <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
@@ -258,8 +255,8 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
             label={tr('外部相似检索', 'External similarity search')}
             en="external_search"
             hint={tr(
-              '联网检索 Semantic Scholar / OpenAlex 做相似工作对比，新颖性核查更可靠；关闭则只查库内。',
-              'Searches Semantic Scholar / OpenAlex for similar work, making the novelty check more reliable; off means library-only.',
+              '联网检索 Semantic Scholar / OpenAlex 做相似工作对比；关闭则只查库内。',
+              'Searches Semantic Scholar / OpenAlex for similar work; off means library-only.',
             )}
           >
             <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
@@ -298,12 +295,6 @@ export function DeepDiveDrawer({ open, onClose, pid, initialSeedIdea }: DeepDive
           </>
         )}
       </button>
-      <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6, marginTop: 12 }}>
-        {tr(
-          '全过程：目标构建（AI 带文献工具探索）→ 目标确认（人工）→ 方案起草（相关工作 / 设计 / 实验计划 / 新颖性核查 / 风险）→ 多评审员评审与修订 → 入候选池。进度可在任务详情页实时查看。',
-          'Full flow: goal building (AI explores with literature tools) → goal confirmation (human) → proposal drafting (related work / design / experiment plan / novelty check / risks) → multi-reviewer review & revision → into the candidate pool. Watch progress live on the task page.',
-        )}
-      </div>
     </Drawer>
   );
 }

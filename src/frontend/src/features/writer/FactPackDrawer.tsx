@@ -62,7 +62,7 @@ export function FactPackDrawer({ open, onClose, manuscript, canInsert, onInsertC
           <span style={{ fontSize: 14.5, fontWeight: 660 }}>{tr('事实包', 'Fact pack')}</span>
         </>
       }
-      sub={tr('AI 起草只能引用这里的引文、图表和实验数字，防止编造。', 'AI drafting may only cite the references, figures and numbers listed here, to prevent fabrication.')}
+      sub={tr('AI 起草只能引用这里的引文、图表和实验数字。', 'AI drafting may only cite the references, figures and numbers listed here.')}
     >
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
         <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>

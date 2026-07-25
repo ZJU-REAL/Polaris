@@ -83,8 +83,8 @@ export function DailyChatTab() {
       emptyIcon="chat"
       emptyTitle={tr('和最近的新论文对话', 'Chat with the latest papers')}
       emptyDesc={tr(
-        '就池里最近 7 天的每日新论文提问：找热点、比方法、挑值得细读的都行。',
-        'Ask about the daily papers from the last 7 days — spot trends, compare methods, pick what to read.',
+        '找热点、比方法、挑值得细读的都行。',
+        'Spot trends, compare methods, pick what to read.',
       )}
       suggestions={SUGGESTIONS}
       placeholder={tr('就最近 7 天的新论文提问…', 'Ask about the last 7 days of new papers…')}

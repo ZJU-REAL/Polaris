@@ -507,8 +507,8 @@ function DailyDetailPane({
           icon="pen"
           title={tr('还没有 AI 介绍', 'No AI intro yet')}
           desc={tr(
-            '点上方的编译按钮，让 AI 精读这篇论文并生成图文介绍。',
-            'Hit the compile button above to have the AI read this paper and write an illustrated intro.',
+            '点上方的编译按钮生成。',
+            'Hit the compile button above to generate one.',
           )}
         />
       )}
@@ -977,8 +977,8 @@ export function DailyPage() {
                     filtered
                       ? tr('换个关键词或过滤条件试试。', 'Try a different keyword or filter.')
                       : tr(
-                          '今天还没有新论文。arxiv 周末不发布新提交。',
-                          'No new papers yet. arxiv does not announce on weekends.',
+                          'arxiv 周末不发布新提交。',
+                          'arxiv does not announce on weekends.',
                         )
                   }
                 />

@@ -329,7 +329,6 @@ function RunForgeModal({
           {tr('运行 Idea Forge', 'Run Idea Forge')}
         </>
       }
-      sub={tr('从知识库分析研究空白，生成并筛选候选想法。', 'Analyze research gaps in the knowledge base, then generate and filter candidate ideas.')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
@@ -830,13 +829,11 @@ export function ForgePage() {
               compact
               icon="trash"
               title={tr('回收站是空的', 'Trash is empty')}
-              desc={tr('删除的想法会先进这里，可恢复或永久删除。', 'Deleted ideas land here first — restore them or delete permanently.')}
             />
           ) : (
             <EmptyState
               icon="bulb"
               title={tr('候选池为空', 'The candidate pool is empty')}
-              desc={tr('运行一次想法生成，从知识库中分析研究空白并生成候选想法。', 'Run idea generation to analyze research gaps in the knowledge base and produce candidates.')}
               action={
                 <button className="btn btn-primary" disabled={running} onClick={() => setModalOpen(true)}>
                   <Icon name="play" size={14} />

@@ -46,7 +46,7 @@ export function AdminSettingsPage() {
         <EmptyState
           icon="shield"
           title={tr('无权访问', 'No access')}
-          desc={tr('这些设置只对管理员开放，个人设置请到设置页。', 'These settings are admin-only. Your own settings live on the Settings page.')}
+          desc={tr('这些设置只对管理员开放。', 'These settings are admin-only.')}
           action={<Link className="btn btn-soft" to="/settings">{tr('去个人设置', 'Go to settings')}</Link>}
         />
       ) : (

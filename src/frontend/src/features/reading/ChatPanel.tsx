@@ -152,8 +152,8 @@ export function ChatPanel({ paperId, pid }: { paperId: string; pid: string }) {
       emptyIcon="chat"
       emptyTitle={tr('问问 AI 这篇论文', 'Ask AI about this paper')}
       emptyDesc={tr(
-        '比如它解决了什么问题、方法核心、与前作差别；@ 可把推荐连同阅读链接分享给同事。',
-        'e.g. the problem, the core method, the difference from prior work; use @ to share with the read link.',
+        '比如它解决了什么问题、方法核心、与前作差别。',
+        'e.g. the problem, the core method, the difference from prior work.',
       )}
       placeholder={tr('针对这篇论文提问，或 @ 分享…', 'Ask about this paper, or @ to share…')}
       renderAssistant={(m: ChatMsg) => <Markdown source={m.content} style={{ fontSize: 12.5 }} />}

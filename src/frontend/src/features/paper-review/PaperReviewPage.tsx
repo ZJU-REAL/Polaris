@@ -185,10 +185,6 @@ function StartReviewModal({
           {tr('发起同行评审', 'Start peer review')}
         </>
       }
-      sub={tr(
-        '先自动核验全部引用、逐条查错，再由三位 AI 评审员从不同角度打分，最后汇总出结论',
-        'All citations are verified and facts checked automatically first, then three AI reviewers score from different angles and the results are aggregated into a conclusion',
-      )}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
@@ -212,8 +208,8 @@ function StartReviewModal({
         label={tr('评审员人设', 'Reviewer personas')}
         en="personas"
         hint={tr(
-          '每个人设是一位独立的 AI 评审员：名字 + 评审立场。默认三位可直接编辑或增删。',
-          'Each persona is an independent AI reviewer: a name plus a stance. Edit, add, or remove the three defaults directly.',
+          '每个人设是一位独立的 AI 评审员，默认三位可直接编辑或增删。',
+          'Each persona is an independent AI reviewer; edit, add, or remove the three defaults directly.',
         )}
       >
         <div className="col gap8">
@@ -817,7 +813,7 @@ function ReviewDiscussion({ sessionId }: { sessionId: string }) {
           </div>
         ) : messages.length === 0 ? (
           <div className="empty" style={{ padding: 24 }}>
-            {tr('还没有讨论 — 对评审意见有异议或补充，写在这里', 'No discussion yet — disagree with or add to the reviews here')}
+            {tr('还没有讨论', 'No discussion yet')}
           </div>
         ) : (
           messages.map((m) => <DiscussionBubble key={m.id} msg={m} />)
@@ -1112,10 +1108,7 @@ export function PaperReviewPage() {
               {tr('评审中', 'Reviewing')}
             </span>
             <span style={{ fontSize: 13.5, fontWeight: 650 }}>
-              {tr(
-                '同行评审进行中：核验引用 → 查错 → 评审员打分 → 汇总 — 点击看实时进度',
-                'Peer review in progress: citation check → fact check → reviewer scoring → aggregation — click for live progress',
-              )}
+              {tr('同行评审进行中 — 点击看实时进度', 'Peer review in progress — click for live progress')}
             </span>
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginLeft: 'auto' }}>
               {tr('任务', 'task')} {runningReview.id.slice(0, 8)}…
@@ -1138,8 +1131,8 @@ export function PaperReviewPage() {
             icon="pen"
             title={tr('还没有可评审的稿件', 'No reviewable manuscripts yet')}
             desc={tr(
-              '同行评审只对编译成功的稿件开放。先在论文撰写页完成编译，再回来发起评审。',
-              'Peer review only works on successfully compiled manuscripts. Compile on the Paper Writer page first, then come back.',
+              '同行评审只对编译成功的稿件开放。',
+              'Peer review only works on successfully compiled manuscripts.',
             )}
             action={
               <button className="btn btn-ghost" onClick={() => navigate(topicPath(pid, 'writer'))}>
@@ -1185,8 +1178,8 @@ export function PaperReviewPage() {
             icon="shield"
             title={tr('这篇稿件还没评审过', 'This manuscript has not been reviewed yet')}
             desc={tr(
-              '发起同行评审：自动核验每条引用、逐条查数字和说法的错误，再由三位不同立场的 AI 评审员打分，最后汇总出接收/拒稿建议。',
-              'Start a peer review: every citation is verified and numbers/claims are checked automatically, then three AI reviewers with different stances score the paper, aggregated into an accept/reject recommendation.',
+              '自动核验引用与数字，再由三位 AI 评审员打分，汇总出接收/拒稿建议。',
+              'Citations and numbers are checked automatically, then three AI reviewers score the paper and the results are aggregated into an accept/reject recommendation.',
             )}
             action={
               <button className="btn btn-primary" disabled={!!runningReview} onClick={() => setModalOpen(true)}>

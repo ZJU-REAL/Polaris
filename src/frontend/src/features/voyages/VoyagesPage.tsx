@@ -291,7 +291,7 @@ export function VoyagesList({
                 desc={
                   filter !== 'all' || kindFilter !== 'all'
                     ? tr('当前筛选条件下没有任务，换个筛选试试。', 'No tasks match the current filters — try different ones.')
-                    : tr('还没有任务。想法生成、实验、论文起草等操作发起后，任务会出现在这里。', 'No tasks yet. Tasks show up here once you start idea generation, experiments, draft writing, and so on.')
+                    : tr('想法生成、实验、论文起草等操作发起后，任务会出现在这里。', 'Tasks show up here once you start idea generation, experiments, draft writing, and so on.')
                 }
                 compact
               />

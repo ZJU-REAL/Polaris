@@ -308,7 +308,6 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
         open={linkOpen}
         onClose={() => setLinkOpen(false)}
         title={tr('管理关联文献库', 'Linked libraries')}
-        sub={tr('课题语料 = 所选文献库的并集；可全部不选。', 'The topic corpus is the union of the selected libraries — selecting none is allowed.')}
         width={600}
         footer={
           <>
@@ -347,9 +346,6 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
             </button>
           }
         >
-          <div className="field-hint" style={{ marginBottom: 10 }}>
-            {tr('课题语料 = 所有关联文献库的并集；想法生成、检索都跑在并集上。', 'The topic corpus is the union of all linked libraries — idea generation and search run over that union.')}
-          </div>
           {sourceLibraries === undefined ? (
             <div style={{ fontSize: 13, color: 'var(--text-4)' }}>{tr('加载中…', 'Loading…')}</div>
           ) : sourceLibraries.length === 0 ? (

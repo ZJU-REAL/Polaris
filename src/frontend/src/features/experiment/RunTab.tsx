@@ -447,7 +447,7 @@ export function RunTab({ exp, active }: { exp: ExperimentDetail; active: boolean
           <MetricChart series={[{ name: primary?.name ?? 'primary', points: primaryPoints }]} height={180} />
         ) : (
           <div className="empty" style={{ padding: 26, fontSize: 12.5 }}>
-            {tr('暂无主指标数据 · 每轮运行结束后系统会解析出主指标值画在这里', 'No primary metric data yet — each run’s value is parsed and plotted here once it finishes')}
+            {tr('暂无主指标数据', 'No primary metric data yet')}
           </div>
         )}
         <IterationStateBar exp={exp} runCount={runs.length} />
@@ -462,8 +462,8 @@ export function RunTab({ exp, active }: { exp: ExperimentDetail; active: boolean
         {runs.length === 0 ? (
           <div className="empty" style={{ padding: 28 }}>
             {tr(
-              '还没有运行记录 · 冒烟测试通过后开始自动迭代：每轮跑完 AI 会分析结果，决定继续改进、修错重试或停止',
-              'No runs yet — auto-iteration starts after the smoke test passes: the AI analyzes each run and decides to improve, debug or stop',
+              '还没有运行记录 · 冒烟测试通过后开始自动迭代',
+              'No runs yet — auto-iteration starts after the smoke test passes',
             )}
           </div>
         ) : (

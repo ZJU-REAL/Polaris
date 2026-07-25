@@ -91,7 +91,6 @@ export function TemplateUploadModal({ open, onClose, pid, onUploaded }: Template
           {tr('上传论文模板', 'Upload template')}
         </>
       }
-      sub={tr('上传一个含 .tex 的 zip 模板包，之后新建草稿时可选用', 'Upload a zip containing a .tex template; you can pick it when creating a manuscript')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>

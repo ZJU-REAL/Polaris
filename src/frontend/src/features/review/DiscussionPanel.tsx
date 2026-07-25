@@ -106,7 +106,7 @@ export function DiscussionPanel({ ideaId }: { ideaId: string }) {
           </div>
         ) : messages.length === 0 ? (
           <div className="empty" style={{ padding: 24 }}>
-            {tr('还没有讨论 — 说点什么，给 agent 评审提供人类视角', 'No discussion yet — say something to give the agent reviewers a human perspective')}
+            {tr('还没有讨论', 'No discussion yet')}
           </div>
         ) : (
           messages.map((m) => <DiscussionBubble key={m.id} msg={m} />)

@@ -88,7 +88,6 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
           {tr('运行评审锦标赛', 'Run review tournament')}
         </>
       }
-      sub={tr('候选想法两两配对辩论，按胜负更新排名。', 'Candidate ideas debate in pairs; rankings update by wins and losses.')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
@@ -121,10 +120,7 @@ function TournamentModal({ open, onClose, pid }: { open: boolean; onClose: () =>
       <FormField
         label={tr('评审人设', 'Reviewer personas')}
         en="personas"
-        hint={tr(
-          '每个人设是一个 agent 评审：名字 + 立场（stance）。默认三人设可直接编辑。',
-          'Each persona is one agent reviewer: a name plus a stance. The three defaults are editable.',
-        )}
+        hint={tr('每个人设是一位 AI 评审员，默认三位可直接编辑。', 'Each persona is one AI reviewer; the three defaults are editable.')}
       >
         <div className="col gap8">
           {personas.map((p, i) => (
@@ -448,7 +444,6 @@ function MatchesTab({
           compact
           icon="scale"
           title={tr('选择一个想法', 'Pick an idea')}
-          desc={tr('从上方下拉或排行榜点入，查看其全部辩论场次。', 'Pick from the dropdown above or click through from the leaderboard to see all its debates.')}
         />
       ) : sessionsQuery.isLoading ? (
         <div className="empty" style={{ padding: 30 }}>{tr('加载场次…', 'Loading matches…')}</div>
@@ -464,7 +459,6 @@ function MatchesTab({
           compact
           icon="scale"
           title={tr('暂无对局记录', 'No matches yet')}
-          desc={tr('运行一次评审后，这里会出现该想法的每场辩论。', 'Run a review and every debate for this idea will show up here.')}
         />
       ) : (
         <div className="row gap16" style={{ alignItems: 'flex-start' }}>

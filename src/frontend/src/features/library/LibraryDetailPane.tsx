@@ -301,7 +301,6 @@ export function LibraryDetailPane({
           (paperLibId ? (
             <button
               className="btn btn-ghost sm"
-              title={tr('打开这篇所在的方向文献库', 'Open the direction library this paper lives in')}
               onClick={() => navigate(libraryPath(paperLibId, `?paper=${paper.id}`))}
             >
               <Icon name="book" size={13} />
@@ -491,8 +490,8 @@ export function LibraryDetailPane({
             >
               <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
                 {tr(
-                  '这篇论文还没有解读。可以用 AI 生成一份个人版（使用你的模型额度）。',
-                  'No wiki for this paper yet. Generate a personal one with AI (uses your model quota).',
+                  '还没有解读，可以生成一份个人版（使用你的模型额度）。',
+                  'No wiki yet — generate a personal one (uses your model quota).',
                 )}
               </div>
               <button

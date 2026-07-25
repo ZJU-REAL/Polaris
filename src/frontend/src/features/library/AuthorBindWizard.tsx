@@ -143,8 +143,8 @@ export function AuthorBindWizard({
       </div>
       <p style={{ fontSize: 12.5, color: 'var(--text-2)', margin: '8px 0 16px', lineHeight: 1.6 }}>
         {tr(
-          '填写论文署名可能用到的姓名写法和机构，保存后每天会自动从文献库里匹配你发表的论文。',
-          'List the name spellings and affiliations you publish under. Once saved, we match your publications from the library daily.',
+          '保存后每天会自动从文献库里匹配你发表的论文。',
+          'Once saved, your publications are matched from the library daily.',
         )}
       </p>
 

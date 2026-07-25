@@ -181,7 +181,6 @@ function AddPaperModal({
       open={open}
       onClose={onClose}
       title={tr('添加文献', 'Add paper')}
-      sub={libraryId ? tr('手动把一篇论文加进这个文献库', 'Manually add a paper to this library') : tr('手动把一篇论文加进当前课题的论文库', 'Manually add a paper to this topic’s library')}
       width={520}
       footer={
         <>
@@ -233,12 +232,6 @@ function AddPaperModal({
                 setParseError(null);
               }}
             />
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr(
-                '填 arXiv 编号即可，标题、作者、摘要会自动抓取，并顺带下载 PDF。',
-                'Just the arXiv ID — title, authors, and abstract are fetched automatically, plus the PDF.',
-              )}
-            </div>
           </>
         ) : method === 'doi' ? (
           <>
@@ -253,10 +246,7 @@ function AddPaperModal({
               }}
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr(
-                '通过 DOI 反查论文信息（OpenAlex），适合期刊/会议论文。',
-                'Looks up paper metadata by DOI (OpenAlex) — good for journal/conference papers.',
-              )}
+              {tr('适合期刊 / 会议论文。', 'Best for journal and conference papers.')}
             </div>
           </>
         ) : (
@@ -551,8 +541,8 @@ function PapersTrashModal({ pid, libraryId, open, onClose }: { pid: string; libr
       open={open}
       onClose={onClose}
       sub={tr(
-        '相关性不足自动淘汰与手动删除的文献；召回后回到论文库',
-        'Papers auto-dropped for low relevance or deleted manually; restoring puts them back in the library',
+        '相关性不足自动淘汰与手动删除的文献',
+        'Papers auto-dropped for low relevance or deleted manually',
       )}
       items={items}
       total={trashQuery.data?.total}
@@ -610,7 +600,6 @@ const PaperRow = memo(function PaperRow({
           checked={checked}
           onClick={(e) => e.stopPropagation()}
           onChange={onToggleCheck}
-          title={tr('选中后可批量删除 / 导出', 'Select for bulk delete / export')}
           style={{ width: 13, height: 13, margin: 0, flexShrink: 0, accentColor: 'var(--accent)', cursor: 'pointer', visibility: selectMode ? 'visible' : 'hidden' }}
         />
         {p.starred && <Icon name="starFill" size={11} style={{ color: 'var(--warn-tx)', flexShrink: 0 }} />}
@@ -1091,10 +1080,7 @@ function PaperDetailPane({
             compact
             icon="pen"
             title={tr('还没有 AI 介绍', 'No AI intro yet')}
-            desc={tr(
-              '点上方的编译按钮，让 AI 精读这篇论文并生成图文介绍。',
-              'Hit the compile button above to have the AI read this paper and write an illustrated intro.',
-            )}
+            desc={tr('点上方的编译让 AI 精读并生成。', 'Use “Compile” above to have the AI read it and write one.')}
           />
         )}
       </div>
@@ -1328,7 +1314,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                 position: 'relative',
                 ...(advOpen || advActive ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {}),
               }}
-              title={tr('高级检索：作者 / 机构 / 发表时间 / 入库时间', 'Advanced search: author / affiliation / publish date / added date')}
+              title={tr('高级检索', 'Advanced search')}
               onClick={() => setAdvOpen((o) => !o)}
             >
               <Icon name="sliders" size={14} />
@@ -1370,10 +1356,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                   className="input"
                   style={{ flex: 1, minWidth: 0, height: 28, fontSize: 11.5 }}
                   placeholder={tr('发表机构…', 'Affiliation…')}
-                  title={tr(
-                    '需要论文元数据带有机构信息（入库时自动从 OpenAlex 补充）',
-                    'Needs affiliation metadata (auto-filled from OpenAlex on ingest)',
-                  )}
+                  title={tr('需要论文元数据带有机构信息', 'Needs affiliation metadata on the paper')}
                   value={advAffiliation}
                   onChange={(e) => setAdvAffiliation(e.target.value)}
                 />
@@ -1506,8 +1489,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
                 hasFilter
                   ? tr('换个关键词或过滤条件试试。', 'Try a different keyword or filter.')
                   : tr(
-                      '先到建库与同步页运行初始建库，或点上方的添加文献按钮手动添加。',
-                      'Run the initial library build under Ingest & sync, or add papers manually with the button above.',
+                      '先到建库与同步运行初始建库。',
+                      'Run the initial library build under “Ingest & sync”.',
                     )
               }
             />
@@ -1563,7 +1546,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
         >
           <button
             className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-            title={tr('开启后列表出现复选框，可批量删除 / 导出', 'Show checkboxes for bulk delete / export')}
+            title={tr('批量删除 / 导出', 'Bulk delete / export')}
             onClick={() => {
               setSelectMode((m) => !m);
               setSelected(new Set());
@@ -1598,7 +1581,6 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
           <button
             className="btn btn-ghost sm"
             style={{ marginLeft: 'auto' }}
-            title={tr('回收站：已删除的文献可以召回或彻底删除', 'Trash: deleted papers — restore or delete forever')}
             onClick={() => setTrashOpen(true)}
           >
             <Icon name="trash" size={13} />

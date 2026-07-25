@@ -124,7 +124,6 @@ const PaperRow = memo(function PaperRow({
           checked={checked}
           onClick={(e) => e.stopPropagation()}
           onChange={onToggleCheck}
-          title={tr('选中后可批量导出引用', 'Select for bulk citation export')}
           style={{
             width: 13,
             height: 13,
@@ -746,10 +745,7 @@ function PapersPane({
               open={advOpen}
               active={advActive}
               onToggle={() => setAdvOpen((o) => !o)}
-              title={tr(
-                '高级检索：范围 / 作者 / 机构 / 年份 / 我的标签 / 阅读状态',
-                'Advanced search: scope / author / affiliation / year / my tags / reading status',
-              )}
+              title={tr('高级检索', 'Advanced search')}
             />
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
               {total ? tr(`${total} 篇`, `${total}`) : ''}
@@ -794,10 +790,7 @@ function PapersPane({
                     value={advAffiliation}
                     onChange={setAdvAffiliation}
                     placeholder={tr('发表机构…', 'Affiliation…')}
-                    title={tr(
-                      '需要论文元数据带有机构信息（入库时自动从 OpenAlex 补充）',
-                      'Needs affiliation metadata (auto-filled from OpenAlex on ingest)',
-                    )}
+                    title={tr('需要论文元数据带有机构信息', 'Needs affiliation metadata on the paper')}
                   />
                 </div>
                 <YearRangeField
@@ -892,7 +885,7 @@ function PapersPane({
         >
           <button
             className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-            title={tr('开启后列表出现复选框，可批量导出引用', 'Show checkboxes for bulk citation export')}
+            title={tr('批量导出引用', 'Bulk citation export')}
             onClick={() => {
               setSelectMode((m) => !m);
               setSelected(new Set());

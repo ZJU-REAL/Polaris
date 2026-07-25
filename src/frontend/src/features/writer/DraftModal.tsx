@@ -126,8 +126,8 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
         </>
       }
       sub={tr(
-        'AI 按事实包写作：引用、图表、数字都只能来自事实包，逐节自检后经协同编辑实时写入。',
-        'AI writes from the fact pack: citations, figures and numbers may only come from it, each section is self-checked and written in via live collaborative editing.',
+        'AI 只会用事实包里的引用、图表和数字。',
+        'AI only uses the citations, figures and numbers in the fact pack.',
       )}
       footer={
         <>
@@ -221,7 +221,7 @@ export function DraftModal({ open, onClose, manuscript, onInitialized }: DraftMo
 
       <FormField
         label={tr('备注（可选）', 'Notes (optional)')}
-        hint={tr('给 AI 的额外要求，比如强调某个贡献点、写作口吻、篇幅取舍。', 'Extra instructions for the AI, e.g. which contribution to highlight, tone, or length trade-offs.')}
+        hint={tr('给 AI 的额外要求。', 'Extra instructions for the AI.')}
       >
         <textarea
           className="textarea"

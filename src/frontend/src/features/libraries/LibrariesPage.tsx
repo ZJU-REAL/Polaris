@@ -314,8 +314,8 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       onClose={onClose}
       title={tr('新建文献库', 'New library')}
       sub={tr(
-        '填好方向即可创建你的个人文献库，立即可用、无需审批；之后可在库详情里申请转为公共文献库。',
-        'Fill in the direction to create your personal library — ready to use immediately, no approval needed. You can later request to make it public from the library page.',
+        '创建后是你的个人文献库，之后可在库详情里申请转为公共文献库。',
+        'Created as your personal library — you can later request to make it public from the library page.',
       )}
       width={640}
       footer={
@@ -328,15 +328,15 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       }
     >
       <div style={{ marginTop: 4 }}>
-        <FormField label={tr('名称', 'Name')} hint={tr('将显示在文献库列表中', 'Shown in the library list')}>
+        <FormField label={tr('名称', 'Name')}>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)}
             placeholder={tr('如：稀疏注意力', 'e.g. Sparse attention')} />
         </FormField>
-        <FormField label={tr('一句话说明', 'Statement')} hint={tr('这个方向研究什么（必填，用于相关性打分）', 'What this direction studies (required, used for relevance scoring)')}>
+        <FormField label={tr('一句话说明', 'Statement')} hint={tr('必填，用于相关性打分', 'Required — used for relevance scoring')}>
           <textarea className="textarea" rows={2} value={statement} onChange={(e) => setStatement(e.target.value)}
             placeholder={tr('用一句话介绍这个文献库的方向', 'One sentence describing this library’s direction')} />
         </FormField>
-        <FormField label={tr('运行节奏', 'Cadence')} hint={tr('自动同步的运行频率', 'How often ingest runs')}>
+        <FormField label={tr('运行节奏', 'Cadence')}>
           <div>
             <Segmented options={CADENCES.map((c) => ({ v: c.v, label: tr(c.zh, c.en) }))}
               value={cadence as (typeof CADENCES)[number]['v']} onChange={(v) => setCadence(v)} />
@@ -544,8 +544,8 @@ export function LibrariesPage() {
           title={tr('还没有文献库', 'No libraries yet')}
           desc={
             canCreate
-              ? tr('点右上新建文献库创建一个共享文献库。', 'Use “New library” at the top right to create a shared library.')
-              : tr('创建课题后会自动生成对应方向的文献库；先去建一个课题吧。', 'A direction library is created with each topic — create a topic first.')
+              ? undefined
+              : tr('创建课题后会自动生成对应方向的文献库。', 'A direction library is created together with each topic.')
           }
           action={
             canCreate ? (

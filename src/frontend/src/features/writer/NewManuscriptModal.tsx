@@ -196,7 +196,6 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
           {tr('新建论文草稿', 'New manuscript')}
         </>
       }
-      sub={tr('从选定模板展开文件，并自动从关联实验与文献库组装事实包', 'Expands files from the chosen template and assembles a fact pack from the linked experiment and library')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
@@ -337,20 +336,20 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
           </div>
         )}
 
-        <div className="field-hint" style={{ marginTop: 6, color: isSeedSelected ? 'var(--accent-text, var(--accent))' : undefined }}>
-          {isSeedSelected
-            ? tr('请先等待模板下载完成，再创建草稿。', 'Please wait for the template to finish downloading before creating a manuscript.')
-            : selected?.unofficial
-              ? tr('该模板为平台内置的近似排版，非会议官方模板包，正式投稿前请换用官方模板核对格式。', 'This template is a built-in approximation, not an official venue package — switch to the official template and check formatting before submitting.')
-              : tr('选择用于展开论文文件结构的模板；也可上传自己的 zip 模板。', 'Pick a template to expand the manuscript file structure; you can also upload your own zip.')}
-        </div>
+        {(isSeedSelected || selected?.unofficial) && (
+          <div className="field-hint" style={{ marginTop: 6, color: isSeedSelected ? 'var(--accent-text, var(--accent))' : undefined }}>
+            {isSeedSelected
+              ? tr('请先等待模板下载完成，再创建草稿。', 'Please wait for the template to finish downloading before creating a manuscript.')
+              : tr('该模板不是会议官方模板包，投稿前请换官方模板核对格式。', 'Not the official venue package — switch to the official template and check formatting before submitting.')}
+          </div>
+        )}
       </div>
 
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
         <FormField
           label={tr('关联想法（可选）', 'Linked idea (optional)')}
           style={{ flex: 1, minWidth: 0 }}
-          hint={tr('论文事实包中研究想法分区的来源；仅列出已晋级的想法。', 'Source for the idea section of the fact pack; only promoted ideas are listed.')}
+          hint={tr('仅列出已晋级的想法。', 'Only promoted ideas are listed.')}
         >
           <SelectMenu
             value={ideaId}
@@ -364,7 +363,7 @@ export function NewManuscriptModal({ open, onClose, pid }: NewManuscriptModalPro
         <FormField
           label={tr('关联实验（可选）', 'Linked experiment (optional)')}
           style={{ flex: 1, minWidth: 0 }}
-          hint={tr('事实包的指标 / 图表 / 假设来源；仅列已完成实验。', 'Source of fact-pack metrics / figures / hypotheses; only finished experiments are listed.')}
+          hint={tr('仅列出已完成的实验。', 'Only finished experiments are listed.')}
         >
           <SelectMenu
             value={experimentId}

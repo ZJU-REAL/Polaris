@@ -436,13 +436,9 @@ export function PublicationsTab({
       {/* —— 待确认 —— */}
       {pendingCount > 0 && (
         <section>
-          <div className="section-h">{tr(`待确认（${pendingCount}）`, `To confirm (${pendingCount})`)}</div>
-          <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '4px 0 10px', lineHeight: 1.5 }}>
-            {tr(
-              '自动匹配到的、可能是你发表的论文，确认后会进入下面的列表。',
-              'Papers matched automatically that may be yours — confirm to add them to your list.',
-            )}
-          </p>
+          <div className="section-h" style={{ marginBottom: 10 }}>
+            {tr(`待确认（${pendingCount}）`, `To confirm (${pendingCount})`)}
+          </div>
           <PubList>
             {pending.map((pub, i) => (
               <PubRow
@@ -503,10 +499,6 @@ export function PublicationsTab({
               compact
               icon="file"
               title={tr('还没有已确认的发表', 'No confirmed publications yet')}
-              desc={tr(
-                '点立即扫描文献库找找你的论文，或用手动添加补充。',
-                'Tap Scan library now to look for your papers, or add them manually.',
-              )}
             />
           ) : (
             <PubList>

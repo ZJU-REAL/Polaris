@@ -374,8 +374,8 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
         >
           <Icon name="gate" size={15} />
           {tr(
-            '实验已暂停，等待算力预算审批：消耗真实算力前需人工确认方案与预算。',
-            'Experiment paused for compute budget approval: the plan and budget need a human sign-off before real compute is spent.',
+            '实验已暂停，等待算力预算审批。',
+            'Experiment paused for compute budget approval.',
           )}
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
             {tr('前往审批', 'Open approvals')}
@@ -389,10 +389,6 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
             compact
             icon="sparkle"
             title={exp.status === 'planning' ? tr('计划生成中…', 'Generating the plan…') : tr('计划尚未生成', 'Plan not generated yet')}
-            desc={tr(
-              '系统读入想法内容与相关文献后自动产出假设清单、复现策略与预算估计。',
-              'The system reads the idea and related papers, then produces hypotheses, a repro strategy and a budget estimate.',
-            )}
           />
         </div>
       ) : (
@@ -568,7 +564,6 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
           compact
           icon="server"
           title={tr('尚未关联任务', 'No linked task yet')}
-          desc={tr('实验创建后会入队一个 kind=experiment 的 voyage。', 'Creating an experiment queues a kind=experiment voyage.')}
         />
       </div>
     );
@@ -674,7 +669,7 @@ function ReportTab({ exp }: { exp: ExperimentDetail }) {
             desc={
               EXPERIMENT_TERMINAL.has(exp.status)
                 ? tr('该实验未产出报告。', 'This experiment produced no report.')
-                : tr('自动迭代结束后，AI 会汇总各轮指标、图表与日志生成 markdown 报告。', 'After the auto-iteration finishes, the AI summarizes metrics, figures and logs into a markdown report.')
+                : tr('自动迭代结束后会自动生成。', 'It is generated once the auto-iteration finishes.')
             }
           />
         </div>

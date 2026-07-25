@@ -234,7 +234,7 @@ export function HighlightsPanel({
             compact
             icon="pen"
             title="还没有划线"
-            desc="在左边 PDF 里选中句子，点弹出的颜色即可划线，之后能在这里加批注。"
+            desc="在左边 PDF 里选中句子，点弹出的颜色即可划线。"
           />
         ) : (
           highlights.map((h) => (

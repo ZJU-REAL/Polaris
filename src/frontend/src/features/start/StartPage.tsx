@@ -207,7 +207,7 @@ export function StartPage() {
       ) : (
         <div className="card" style={{ padding: '28px 24px', textAlign: 'center', marginBottom: 20 }}>
           <div style={{ fontSize: 13, color: 'var(--text-3)', lineHeight: 1.6 }}>
-            {tr('你还没有课题。只需名称和一句话描述，30 秒创建第一个课题。', 'You have no topics yet. With just a name and one sentence, your first topic is 30 seconds away.')}
+            {tr('你还没有课题，只需名称和一句话描述即可创建。', 'No topics yet — a name and one sentence is all it takes.')}
           </div>
         </div>
       )}

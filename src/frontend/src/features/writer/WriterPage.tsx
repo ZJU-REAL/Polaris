@@ -491,15 +491,14 @@ export function WriterPage() {
               compact
               icon="trash"
               title={tr('回收站是空的', 'Trash is empty')}
-              desc={tr('删除的论文草稿会先进这里，可恢复或永久删除。', 'Deleted manuscripts land here first — restore them or delete permanently.')}
             />
           ) : (
             <EmptyState
               icon="pen"
               title={tr('还没有论文草稿', 'No manuscripts yet')}
               desc={tr(
-                '新建一篇：选会议模板、关联已完成的实验，平台会自动组装事实包，AI 就能按真实结果起草。',
-                'Create one: pick a venue template and link a finished experiment — the platform assembles a fact pack so AI can draft from real results.',
+                '选一个会议模板新建，AI 会按关联实验的结果起草。',
+                'Pick a venue template to start — AI drafts from the linked experiment results.',
               )}
               action={
                 <button className="btn btn-primary" onClick={() => setModalOpen(true)}>

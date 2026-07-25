@@ -327,7 +327,7 @@ export function PaperNotesSection({
             />
           ) : notes.length === 0 ? (
             <div className="empty" style={{ padding: '4px 0 12px', textAlign: 'left' }}>
-              {tr('还没有笔记，在下面写第一条。', 'No notes yet — write your first one below.')}
+              {tr('还没有笔记。', 'No notes yet.')}
             </div>
           ) : (
             notes.map((n) => <NoteCard key={n.id} note={n} canEdit onSaved={refresh} />)

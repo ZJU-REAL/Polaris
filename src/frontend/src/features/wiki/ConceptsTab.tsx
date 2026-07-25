@@ -267,10 +267,7 @@ export function ConceptsTab({
               <button
                 className="icon-btn"
                 style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0 }}
-                title={tr(
-                  '从已编译论文提取概念：重抽正文 [[双链]]，补建缺失的概念和关联',
-                  'Extract concepts from compiled papers: re-scan [[wiki links]] and fill in missing concepts and links',
-                )}
+                title={tr('从已编译论文提取概念', 'Extract concepts from compiled papers')}
                 disabled={relinkMutation.isPending}
                 onClick={() => relinkMutation.mutate()}
               >
@@ -313,8 +310,8 @@ export function ConceptsTab({
                 q
                   ? tr('换个关键词试试。', 'Try a different keyword.')
                   : tr(
-                      '编译论文解读时会自动提取概念；已有解读的论文可以点下面按钮补一次。',
-                      'Concepts are extracted automatically when papers are compiled; use the button below to backfill compiled papers.',
+                      '编译论文解读时会自动提取概念。',
+                      'Concepts are extracted automatically when papers are compiled.',
                     )
               }
               action={

@@ -153,8 +153,8 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
               </div>
               <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
                 {tr(
-                  '全实验室可见、维护额度由管理员承担。转为个人库后仅归属人可见，其他成员将看不到。',
-                  'Visible to the whole lab, upkeep covered by admins. Making it personal hides it from everyone but its owner.',
+                  '转为个人库后仅归属人可见，其他成员将看不到。',
+                  'Making it personal hides it from everyone but its owner.',
                 )}
               </div>
             </div>
@@ -179,8 +179,8 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
               {tr(
-                '转为公共文献库后，本库归实验室所有、维护额度由管理员承担，你将成为该库的管理员（策展人）。',
-                'After going public it belongs to the lab, its upkeep budget is covered by admins, and you become its curator (admin).',
+                '转为公共文献库后，本库归实验室所有、维护额度由管理员承担，你将成为该库的管理员。',
+                'After going public it belongs to the lab, its upkeep budget is covered by admins, and you become its manager.',
               )}
             </div>
             {lib.review_note && (
@@ -224,10 +224,10 @@ function StatusBanner({ lib }: { lib: DirectionLibraryDetail }) {
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
             {pending
-              ? tr('转为公共文献库的申请正在等待管理员审批；期间本库仍照常可用。', 'The request to make this library public is awaiting an admin’s review; the library stays usable in the meantime.')
+              ? tr('等待管理员审批期间，本库仍照常可用。', 'The library stays usable while an admin reviews the request.')
               : lib.review_note
                 ? tr(`驳回理由：${lib.review_note}`, `Reason: ${lib.review_note}`)
-                : tr('未通过审批。可调整配置后请管理员重新审批。', 'Not approved. Adjust the config and ask an admin to review again.')}
+                : tr('可调整配置后请管理员重新审批。', 'Adjust the config and ask an admin to review again.')}
           </div>
         </div>
         {admin && (

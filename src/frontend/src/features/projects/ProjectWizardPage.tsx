@@ -72,21 +72,17 @@ export function ProjectWizardPage() {
       <PageHead
         eyebrow="Polaris · Topics"
         title={tr('新建课题', 'New topic')}
-        sub={tr(
-          '名称 + 一句话即可创建；再选几个文献库作为语料（可跳过，稍后在课题设置里加）。',
-          'Just a name and one sentence to create — then pick a few libraries as your corpus (optional, add later in topic settings).',
-        )}
       />
 
       {/* —— 名称 + 一句话 —— */}
       <div className="card card-pad" style={{ marginBottom: 12 }}>
-        <FormField label={tr('课题名称', 'Name')} hint={tr('将显示在侧栏与课题列表中', 'Shown in the sidebar and topic list')}>
+        <FormField label={tr('课题名称', 'Name')}>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)}
             placeholder={tr('如：LLM 自主科研智能体', 'e.g. LLM autonomous research agents')} />
         </FormField>
         <FormField
           label={tr('一句话定义', 'Statement')}
-          hint={tr('用一句话说清这个课题研究什么、为什么重要（可选）', 'One sentence on what this topic studies and why it matters (optional)')}
+          hint={tr('一句话说清研究什么（可选）', 'One sentence on what this topic studies (optional)')}
         >
           <textarea className="textarea" rows={3} value={statement} onChange={(e) => setStatement(e.target.value)}
             placeholder={tr('如：让 LLM agent 端到端完成从文献调研到论文的研究方法与系统', 'e.g. Methods and systems for LLM agents to go end-to-end from literature survey to paper')} />
@@ -109,8 +105,8 @@ export function ProjectWizardPage() {
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--text-3)', margin: '2px 0 12px', lineHeight: 1.6 }}>
           {tr(
-            '课题的语料 = 关联文献库的并集；文献库由文献库管理员维护，可全部不选跳过。',
-            'A topic’s corpus is the union of its linked libraries, maintained by library admins — you can skip this.',
+            '可以不选，稍后在课题设置里加。',
+            'Optional — you can add libraries later in topic settings.',
           )}
         </div>
         {librariesQuery.isLoading ? (

@@ -626,7 +626,6 @@ export function AppShell() {
             <span style={{ fontSize: 15, fontWeight: 680 }}>{tr('审批中心', 'Approvals')}</span>
           </>
         }
-        sub={tr('人工审批', 'Human-in-the-loop approvals')}
       >
         <div className="row" style={{ marginBottom: 10 }}>
           <span className="sb-section" style={{ padding: 0 }}>{tr('待处理', 'Pending')} · {pending.length}</span>

@@ -417,7 +417,7 @@ export function PdfReader({
           title="该论文还没有 PDF"
           desc={
             canFetch
-              ? '可以从 arXiv 自动下载一份，下载后就能在这里阅读、划线。'
+              ? undefined
               : '这篇论文不是 arXiv 来源，暂时不支持自动下载 PDF，可以通过右上角原文链接查看。'
           }
           action={

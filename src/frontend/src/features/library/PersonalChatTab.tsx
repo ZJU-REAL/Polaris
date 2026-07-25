@@ -86,8 +86,8 @@ export function PersonalChatTab() {
       emptyIcon="chat"
       emptyTitle={tr('和我收藏的文献对话', 'Chat with my saved papers')}
       emptyDesc={tr(
-        '跨课题地问我收藏的文献：找主题、比做法、理线索都行；/ 放入指定论文。',
-        'Ask across the papers you saved — find themes, compare methods, trace threads. Use / to pin papers.',
+        '跨课题地问我收藏的文献；输入 / 可指定某几篇。',
+        'Ask across the papers you saved; type / to pin specific ones.',
       )}
       suggestions={SUGGESTIONS}
       placeholder={tr('就我收藏的文献提问，或输入 / 放入上下文…', 'Ask about your saved papers, or type / for context…')}

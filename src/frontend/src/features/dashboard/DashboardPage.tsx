@@ -482,11 +482,11 @@ function LiteratureCard({
           </div>
         )}
       </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginBottom: 14 }}>
-        {hasLinked
-          ? tr('课题语料 = 关联文献库的并集；抓取论文在文献库里进行。', 'The topic corpus is the union of its linked libraries — papers are fetched inside the libraries.')
-          : tr('课题还没关联文献库；关联后即可从库里挑论文进相关研究。', 'No linked libraries yet — link one to pick papers into related work.')}
-      </div>
+      {!hasLinked && (
+        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginBottom: 14 }}>
+          {tr('课题还没关联文献库；关联后即可从库里挑论文进相关研究。', 'No linked libraries yet — link one to pick papers into related work.')}
+        </div>
+      )}
       <div className="row gap8">
         {hasLinked ? (
           <button className="btn btn-primary sm" onClick={() => onNavigate(topicPath(pid, 'research'))}>

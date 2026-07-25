@@ -1277,12 +1277,12 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
           desc={
             scope === 'lab'
               ? tr(
-                  '你能看到的文献库里还没有通过筛选并编译过的论文。任意一个库跑完初始建库后，这里会把全实验室的论文、作者、概念连成网络。',
-                  'None of the libraries you can see has screened and compiled papers yet. Once any library finishes its initial build, this links the whole lab’s papers, authors, and concepts.',
+                  '你能看到的文献库里还没有通过筛选并编译过的论文。',
+                  'None of the libraries you can see has screened and compiled papers yet.',
                 )
               : tr(
-                  '先运行初始建库让论文通过筛选并完成编译，图谱会自动把论文、作者、概念连成网络。',
-                  'Run the initial library build so papers get screened and compiled — the graph then links papers, authors, and concepts automatically.',
+                  '先运行初始建库，让论文通过筛选并完成编译。',
+                  'Run the initial library build so papers get screened and compiled.',
                 )
           }
         />
@@ -1321,7 +1321,7 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
           style={{ height: 28, fontSize: 12, maxWidth: 220, padding: '0 8px' }}
           value={focusConceptId}
           onChange={(e) => setFocusConceptId(e.target.value)}
-          title={tr('选一个概念，只看它牵出的论文子图', 'Pick a concept to see only the papers it links to')}
+          title={tr('只看某个概念牵出的论文', 'Show only the papers a concept links to')}
         >
           <option value="">{tr('全部主题', 'All topics')}</option>
           {conceptOptions.map((c) => (
@@ -1352,8 +1352,8 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
               icon="layers"
               title={tr('节点太多，网络图会很卡', 'Too many nodes for the network view')}
               desc={tr(
-                `这一批有 ${model.nodes.length} 个节点。先用上面的子主题筛一下，或换趋势时间线主题视图看全量——它们是聚合的，不受节点数影响。`,
-                `This batch has ${model.nodes.length} nodes. Narrow it down with the subtopic filter above, or use the Trends / Timeline / Topics views — they aggregate, so node count doesn't matter.`,
+                `这一批有 ${model.nodes.length} 个节点。用上面的子主题筛一下，或换趋势时间线主题视图。`,
+                `This batch has ${model.nodes.length} nodes. Narrow it down with the subtopic filter above, or switch to the Trends / Timeline / Topics views.`,
               )}
               action={
                 <button className="btn btn-soft" onClick={() => setForceNetwork(true)}>

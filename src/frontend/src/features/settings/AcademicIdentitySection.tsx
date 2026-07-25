@@ -64,15 +64,9 @@ export function AcademicIdentitySection() {
 
   return (
     <div className="card card-pad" style={{ maxWidth: 560, marginTop: 20 }}>
-      <div className="section-h" style={{ marginBottom: 4 }}>
+      <div className="section-h" style={{ marginBottom: 14 }}>
         <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
         {tr('学术身份', 'Academic identity')}
-      </div>
-      <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
-        {tr(
-          '填写论文署名用的姓名和机构，用来从文献库匹配你发表的论文；论文列表在文献库 → 我发表的里查看。',
-          'List the names and affiliations you publish under so we can match your publications from the library; see them under Library → My publications.',
-        )}
       </div>
 
       {profileQuery.isLoading ? (

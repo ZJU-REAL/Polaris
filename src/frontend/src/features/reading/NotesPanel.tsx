@@ -162,7 +162,6 @@ export function NotesPanel({ paperId, pid }: NotesPanelProps) {
             compact
             icon="pen"
             title={tr('还没有笔记', 'No notes yet')}
-            desc={tr('在下方写下第一条阅读笔记，支持 Markdown 格式。', 'Write your first reading note below — Markdown supported.')}
           />
         ) : (
           notes.map((n) => (

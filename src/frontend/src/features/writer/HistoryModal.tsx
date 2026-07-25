@@ -103,7 +103,7 @@ export function HistoryModal({ open, onClose, manuscriptId, file }: HistoryModal
           版本历史
         </>
       }
-      sub={`${file.path} · AI 写入前与每次编译自动存档，最多保留 50 份`}
+      sub={`${file.path} · 最多保留 50 份`}
       footer={
         <>
           <button className="btn btn-ghost sm" onClick={onClose}>

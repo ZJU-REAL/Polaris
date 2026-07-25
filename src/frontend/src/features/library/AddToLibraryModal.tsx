@@ -143,8 +143,8 @@ export function AddToLibraryModal({
               />
               <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
                 {tr(
-                  '编号或论文链接都行，标题、作者、摘要会自动抓取，有 PDF 的顺带下载。',
-                  'An ID or a paper link both work — title, authors and abstract are fetched automatically, plus the PDF when available.',
+                  '编号或论文链接都行，其余信息自动抓取。',
+                  'An ID or a paper link both work — the rest is fetched automatically.',
                 )}
               </div>
             </>
@@ -174,8 +174,8 @@ export function AddToLibraryModal({
           )}
           <div className="muted" style={{ fontSize: 11.5, marginTop: 10, lineHeight: 1.6 }}>
             {tr(
-              '平台上已经有这篇的话直接复用，不会重复解析；已经在回收站里的会重新回到收藏。',
-              'If the paper is already on the platform it is reused instead of parsed again; one that sits in your trash comes back to your saved papers.',
+              '已经在回收站里的会重新回到收藏。',
+              'A paper sitting in your trash comes back to your saved papers.',
             )}
           </div>
           {parseError && (

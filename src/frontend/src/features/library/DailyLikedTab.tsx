@@ -167,8 +167,8 @@ export function DailyLikedTab() {
               icon="heart"
               title={tr('还没有赞过的论文', 'No liked papers yet')}
               desc={tr(
-                '还没有赞过的论文。每日新论文只保留 7 天，过期后这里也会跟着清空。',
-                'No liked papers yet. Daily papers are kept for 7 days; expired ones disappear from here too.',
+                '每日新论文只保留 7 天，过期后这里也会跟着清空。',
+                'Daily papers are kept for 7 days; expired ones disappear from here too.',
               )}
             />
           ) : (

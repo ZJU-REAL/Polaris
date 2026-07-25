@@ -51,10 +51,7 @@ export function UnderConstruction(props: UnderConstructionProps) {
           </span>
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, margin: '14px 0 0' }}>
-          {tr(
-            `本模块为 M1 骨架占位页。当前仅提供导航与信息架构，功能实现排期见里程碑 ${milestone}（M2–M5 迭代交付）。以下为规划中的功能点：`,
-            `This module is an M1 skeleton placeholder — only navigation and information architecture for now. Implementation is scheduled for ${milestone} (delivered iteratively across M2–M5). Planned features:`,
-          )}
+          {tr('以下是规划中的功能点：', 'Planned features:')}
         </p>
       </div>
 

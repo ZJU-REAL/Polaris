@@ -356,7 +356,7 @@ export function LibraryChatTab({
       title={tr('文献对话', 'Library chat')}
       contextKinds={libraryId ? ['paper', 'concept'] : ['paper', 'idea', 'experiment', 'concept']}
       hint={tr(
-        '回答基于从整个文献库检索到的全文片段，可做跨文献对比与综合梳理；[n] 为引用来源编号。',
+        '回答基于从整个文献库检索到的全文片段；[n] 为引用来源编号。',
         'Answers are grounded in full-text passages from the whole library; [n] marks a source number.',
       )}
       headerAction={
@@ -376,8 +376,8 @@ export function LibraryChatTab({
       emptyIcon="chat"
       emptyTitle={tr('和整个文献库对话', 'Chat with the whole library')}
       emptyDesc={tr(
-        '跨文献的分析、比较、综合梳理都可以问；/ 放入指定论文，@ 分享推荐给同事或群。',
-        'Ask cross-paper questions; use / to pin papers, @ to share or recommend to teammates.',
+        '输入 / 可指定某几篇，@ 可分享给同事或群。',
+        'Type / to pin specific papers, @ to share with teammates.',
       )}
       suggestions={SUGGESTIONS}
       placeholder={tr('提问，或输入 / 放入上下文、@ 分享…', 'Ask, or type / for context, @ to share…')}

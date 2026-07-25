@@ -152,11 +152,11 @@ export function InclusionSettingsForm({
           )}
           {suggest.isPending ? tr('生成中…', 'Generating…') : tr('AI 自动生成', 'Auto-generate with AI')}
         </button>
-        <span className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
-          {canSuggest
-            ? tr('根据名称与说明推荐分类、关键词、锚点与打分标准', 'Suggests categories, keywords, anchors and rubric from the name & statement')
-            : tr('先填名称和描述', 'Fill in the name and statement first')}
-        </span>
+        {!canSuggest && (
+          <span className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+            {tr('先填名称和一句话说明', 'Fill in the name and statement first')}
+          </span>
+        )}
       </div>
       )}
 
@@ -248,11 +248,6 @@ export function InclusionSettingsForm({
             onBlur={() => { if (kwDraft.trim()) addKeywords(kwDraft); }}
             placeholder={tr('输入关键词后回车或逗号添加，如 agent', 'Type a term, press Enter or comma, e.g. agent')}
           />
-        )}
-        {!readOnly && (
-          <div className="field-hint">
-            {tr('文献追踪按这些关键词与上面的分类检索候选论文；留空则用默认分类。', 'Literature tracking searches candidates by these terms plus the categories above; leave empty for defaults.')}
-          </div>
         )}
       </div>
 

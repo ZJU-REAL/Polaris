@@ -111,7 +111,6 @@ function LibrariesCard() {
         <EmptyState
           icon="book"
           title={tr('还没有文献库', 'No libraries yet')}
-          desc={tr('新建一个文献库后，建库与同步任务会出现在任务标签里。', 'Create a library — its build and sync tasks will show up under the Tasks tab.')}
           compact
           action={
             <Link className="btn btn-primary sm" to="/libraries">
@@ -347,10 +346,7 @@ function IndexCard({ stats, isLoading, isError }: { stats?: LabStats; isLoading:
     <PanelCard
       icon="layers"
       title={tr('索引进度', 'Index coverage')}
-      hint={tr(
-        '论文的解读、全文分段与向量建到了什么程度——决定文献对话和语义检索能不能用',
-        'How far reading notes, full-text chunks, and embeddings have been built — this decides whether chat and semantic search work',
-      )}
+      hint={tr('决定文献对话和语义检索能不能用', 'Decides whether chat and semantic search work')}
     >
       {isLoading ? (
         <div className="col gap10" style={{ padding: '16px 18px' }}>
@@ -732,10 +728,6 @@ function GraphCard({ libs }: { libs: DirectionLibrarySummary[] }) {
     <PanelCard
       icon="sparkle"
       title={tr('概念图谱', 'Concept graph')}
-      hint={tr(
-        '默认看趋势：概念随时间的消长；也能切到网络、时间线、主题',
-        'Defaults to Trends — how concepts rise and fall over time; Network, Timeline, and Topics are there too',
-      )}
       action={
         <select
           className="input"
@@ -1032,7 +1024,7 @@ function TasksTab() {
             desc={
               filter !== 'all' || kindFilter !== 'all'
                 ? tr('当前筛选条件下没有任务，换个筛选试试。', 'No tasks match the current filters — try different ones.')
-                : tr('还没有任务。发起建库、想法生成、实验等操作后，任务会出现在这里。', 'No tasks yet. Tasks show up here once you start ingest, idea generation, experiments, and so on.')
+                : tr('发起建库、想法生成、实验等操作后，任务会出现在这里。', 'Tasks show up here once you start ingest, idea generation, experiments, and so on.')
             }
             compact
           />
@@ -1069,7 +1061,6 @@ export function LabPage() {
       <PageHead
         eyebrow="Polaris · Lab"
         title={tr('实验室工作台', 'Lab Workbench')}
-        sub={tr('实验室共享资源的总览，以及不属于任何课题的任务。', 'An overview of shared lab resources, plus tasks that belong to no topic.')}
       />
 
       <div style={{ marginBottom: 22 }}>

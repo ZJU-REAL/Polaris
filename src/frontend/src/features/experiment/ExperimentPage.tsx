@@ -430,7 +430,6 @@ export function ExperimentPage() {
               compact
               icon="trash"
               title={tr('回收站是空的', 'Trash is empty')}
-              desc={tr('删除的实验会先进这里，可恢复或永久删除。', 'Deleted experiments land here first — restore them or delete permanently.')}
             />
           ) : (
             <EmptyState

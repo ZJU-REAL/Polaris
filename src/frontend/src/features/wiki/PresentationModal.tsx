@@ -83,8 +83,8 @@ export function PresentationModal({
       width={640}
       title={tr('生成论文分享 PPT', 'Generate paper sharing PPT')}
       sub={tr(
-        '按实验室模板生成，可在技能页调整论文分享 PPT 制作技能的规范',
-        'Generated from the lab template — tweak the PPT skill rules on the Skills page',
+        '按实验室模板生成，模板规范可在技能页调整',
+        'Generated from the lab template — tweak the template rules on the Skills page',
       )}
       footer={
         <>
@@ -182,10 +182,7 @@ export function PresentationModal({
 
       <FormField
         label={tr('讲者备注', 'Speaker notes')}
-        hint={tr(
-          '可选：听众背景、要突出的侧重点，AI 会照顾到',
-          'Optional: audience background and points to highlight — the AI will take them into account',
-        )}
+        hint={tr('可选：听众背景、要突出的侧重点', 'Optional: audience background and points to highlight')}
       >
         <textarea
           className="textarea"

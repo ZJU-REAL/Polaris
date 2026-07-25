@@ -121,7 +121,6 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           {tr('新建实验', 'New experiment')}
         </>
       }
-      sub={tr('从已晋级的想法发起实验。', 'Start an experiment from a promoted idea.')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
@@ -203,7 +202,7 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           <input className="input mono" value={tr('2 轮', '2 runs')} disabled />
         </FormField>
       </div>
-      <FormField label={tr('GPU 提示（可选）', 'GPU hint (optional)')} en="gpu_hint" hint={tr('如 A100 / cuda:0，供计划阶段参考。', 'e.g. A100 / cuda:0 — used as a reference when planning.')}>
+      <FormField label={tr('GPU 提示（可选）', 'GPU hint (optional)')} en="gpu_hint" hint={tr('供计划阶段参考。', 'Used as a reference when planning.')}>
         <input className="input mono" value={gpuHint} onChange={(e) => setGpuHint(e.target.value)} placeholder={tr('如 1×A100', 'e.g. 1×A100')} />
       </FormField>
 
@@ -222,8 +221,8 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
             label={tr('评测模型（可选）', 'Eval model (optional)')}
             en="eval_model"
             hint={tr(
-              '实验代码将获得该模型的 API 访问（平台把接入点与密钥写入工作目录 llm_config.json），用于 ReAct 等 training-free 的 agentic 评测。',
-              'The experiment code gets API access to this model (endpoint and key written to llm_config.json in the workdir), for training-free agentic evals like ReAct.',
+              '实验代码将获得该模型的 API 访问，接入点与密钥写入工作目录 llm_config.json。',
+              'The experiment code gets API access to this model; endpoint and key are written to llm_config.json in the workdir.',
             )}
           >
             <input
@@ -247,8 +246,8 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
             label={tr('补充说明（可选）', 'Extra notes (optional)')}
             en="extra_notes"
             hint={tr(
-              '对实验的额外要求，会原文提供给计划与代码生成的 AI，比如指定数据集子集、评测协议、对比基线。',
-              'Extra requirements passed verbatim to the planning and code-writing AI, e.g. dataset subset, eval protocol, baselines to compare.',
+              '会原文提供给计划与代码生成的 AI。',
+              'Passed verbatim to the planning and code-writing AI.',
             )}
           >
             <textarea
@@ -264,8 +263,8 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
 
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
         {tr(
-          '消耗真实算力前会提交算力预算审批等待人工确认；超时/超预算自动 kill 并置 failed。进入自动迭代后，AI 每轮跑完会分析结果并决定继续改进、修错重试或停止；连续 2 轮主指标无提升也会自动停止。',
-          'Before real compute is spent, a budget approval is submitted for human sign-off; runs over time/budget are killed and marked failed. During auto-iteration the AI analyzes each run and decides to improve, debug or stop; it also stops after 2 runs in a row without metric gain.',
+          '消耗真实算力前会提交算力预算审批等待人工确认；超时或超预算会自动终止并标记失败。',
+          'Before real compute is spent, a budget approval is submitted for human sign-off; runs over time or budget are killed and marked failed.',
         )}
       </div>
     </Modal>

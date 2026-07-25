@@ -170,7 +170,6 @@ export function FeedbackWidget() {
             {tr('提交反馈', 'Send feedback')}
           </>
         }
-        sub={tr('缺陷、功能建议、界面体验都欢迎；截图可直接粘贴', 'Bugs, feature ideas, UI issues welcome; paste screenshots directly')}
         footer={
           <>
             <button className="btn btn-ghost" onClick={close}>{tr('取消', 'Cancel')}</button>

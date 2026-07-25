@@ -86,7 +86,6 @@ export function AddPaperModal({
       onClose={onClose}
       width={600}
       title={tr('添加文献', 'Add paper')}
-      sub={tr('加入这个课题的相关研究，可以连续添加多篇。', 'Add to related work for this topic — add several in a row.')}
     >
       <Segmented<AddTab> options={TABS.map((t) => ({ v: t.v, label: tr(t.zh, t.en) }))} value={tab} onChange={setTab} />
 
@@ -187,8 +186,8 @@ export function AddPaperModal({
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginTop: 10, lineHeight: 1.6 }}>
             {tr(
-              '会自动查重：平台已有这篇时直接复用，不会重复解析。文献库里没有的论文会自动抓取元数据和 PDF，只进这个课题的相关研究和你的个人文献库，不影响公共文献库。',
-              'Duplicates are detected automatically — papers already on the platform are reused without re-parsing. New papers are fetched (metadata + PDF) and go to this topic and your personal library only; the shared library is untouched.',
+              '自动查重；新论文只进这个课题和你的个人文献库，不影响公共文献库。',
+              'Duplicates are reused automatically; new papers go to this topic and your personal library only — the shared library is untouched.',
             )}
           </div>
         </div>

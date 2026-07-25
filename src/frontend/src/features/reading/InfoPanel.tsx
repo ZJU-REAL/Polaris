@@ -313,7 +313,7 @@ export function InfoPanel({
               compact
               icon="pen"
               title={tr('还没有 AI 精读页', 'No AI deep-read page yet')}
-              desc={tr('这篇论文还没被 AI 精读整理过（相关度不足，或还没运行初始建库 / 增量同步）。', 'This paper has not been deep-read by AI yet (relevance too low, or initial library build / incremental sync has not run).')}
+              desc={tr('可能是相关度不足，或还没运行初始建库 / 增量同步。', 'Possibly low relevance, or the initial library build / incremental sync has not run.')}
             />
             <div className="col" style={{ alignItems: 'center', gap: 6, marginTop: 10 }}>
               <button

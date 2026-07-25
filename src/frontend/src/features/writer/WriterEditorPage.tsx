@@ -75,7 +75,7 @@ function PdfPane({ msId, compile }: { msId: string; compile: CompileResult | nul
           compact
           icon="file"
           title={tr('还没有 PDF', 'No PDF yet')}
-          desc={tr('写好后点右上角的编译按钮或按 ⌘S，编译成功的 PDF 会出现在这里。', 'Click compile in the top bar or press ⌘S — a successful compile shows the PDF here.')}
+          desc={tr('点右上角的编译按钮或按 ⌘S 生成。', 'Click compile in the top bar, or press ⌘S.')}
         />
       </div>
     );

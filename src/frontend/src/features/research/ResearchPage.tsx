@@ -296,34 +296,26 @@ function LinkedLibrariesBar({
           </div>
         </div>
       ) : (
-        <>
-          <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-            {libs.map((lib) => (
-              <button
-                key={lib.id}
-                className="btn btn-soft sm"
-                style={{ maxWidth: 300 }}
-                title={lib.name}
-                onClick={() => onNavigate(libraryPath(lib.id))}
-              >
-                <Icon name="book" size={12} style={{ flexShrink: 0 }} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-                  {lib.name}
-                </span>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
-                  {tr(`${lib.paper_count} 篇`, `${lib.paper_count}`)}
-                </span>
-                <LibStatusBadge status={lib.status} />
-              </button>
-            ))}
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.55, marginTop: 10 }}>
-            {tr(
-              '这些库的论文并集就是课题的可用语料；下面相关研究是你从中手挑出来的一小撮，两个数不一样是正常的。',
-              'The union of these libraries is the corpus available to this topic; the related work below is the handful you hand-picked — the two counts differ by design.',
-            )}
-          </div>
-        </>
+        <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+          {libs.map((lib) => (
+            <button
+              key={lib.id}
+              className="btn btn-soft sm"
+              style={{ maxWidth: 300 }}
+              title={lib.name}
+              onClick={() => onNavigate(libraryPath(lib.id))}
+            >
+              <Icon name="book" size={12} style={{ flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                {lib.name}
+              </span>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
+                {tr(`${lib.paper_count} 篇`, `${lib.paper_count}`)}
+              </span>
+              <LibStatusBadge status={lib.status} />
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -403,8 +395,8 @@ function ShelfTrashModal({ pid, open, onClose }: { pid: string; open: boolean; o
       open={open}
       onClose={onClose}
       sub={tr(
-        '从相关研究移出的论文；召回后回到列表，个人库里的收藏一直都在',
-        'Papers removed from related work; restoring puts them back — your saved copies are untouched',
+        '个人库里的收藏不受影响',
+        'Your saved copies in my library are untouched',
       )}
       items={items}
       total={trashQuery.data?.total}
@@ -993,7 +985,6 @@ export function ResearchPage() {
                     compact
                     icon="pin"
                     title={tr('还没有添加论文', 'No papers yet')}
-                    desc={tr('这个课题直接依赖的论文会列在这里。', 'Papers this topic builds on will show up here.')}
                   />
                 )
               ) : visible.length === 0 ? (
@@ -1131,8 +1122,8 @@ export function ResearchPage() {
                   icon="pin"
                   title={tr('从文献库挑几篇开始', 'Start by picking a few papers')}
                   desc={tr(
-                    '把这个课题直接依赖的论文放进来，给每篇写一句为什么相关——后面的想法、实验、写作都会以这里为地基。',
-                    'Shelve the papers this topic builds on and note why each matters — ideas, experiments and writing all build on this.',
+                    '把课题直接依赖的论文放进来，写一句为什么相关。',
+                    'Shelve the papers this topic builds on, and note why each matters.',
                   )}
                   action={
                     <div className="row gap10" style={{ justifyContent: 'center' }}>

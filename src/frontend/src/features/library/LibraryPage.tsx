@@ -131,7 +131,7 @@ function EntryRow({
         title={
           entry.last_paper_id === null
             ? tr('源方向已删除，无法导出引用', 'Source deleted — cannot export citation')
-            : tr('选中后可批量删除 / 导出引用', 'Select for bulk delete / citation export')
+            : undefined
         }
         style={{
           width: 13,
@@ -329,8 +329,8 @@ function PersonalTrashModal({ open, onClose }: { open: boolean; onClose: () => v
       open={open}
       onClose={onClose}
       sub={tr(
-        '取消收藏的文献放在这里；召回后回到我的收藏，清空浏览记录不会动这里',
-        'Papers you unsaved land here; restoring puts them back in Saved — clearing history leaves this alone',
+        '取消收藏的文献放在这里；清空浏览记录不会动这里',
+        'Papers you unsaved land here; clearing reading history leaves this alone',
       )}
       items={items}
       total={trashQuery.data?.total}
@@ -735,10 +735,7 @@ export function LibraryPage() {
                     open={advOpen}
                     active={advActive}
                     onToggle={() => setAdvOpen((o) => !o)}
-                    title={tr(
-                      '高级检索：年份 / 作者 / 机构 / 期刊会议 / 我的标签 / 阅读状态 / 星标',
-                      'Advanced search: year / author / affiliation / venue / my tags / reading status / starred',
-                    )}
+                    title={tr('高级检索', 'Advanced search')}
                   />
                 </div>
 
@@ -857,8 +854,8 @@ export function LibraryPage() {
                         ? tr('换个关键词或放宽高级检索条件。', 'Try another keyword or loosen the filters.')
                         : tab === 'saved'
                           ? tr(
-                              '点右上角添加文献，填 arXiv 编号 / DOI / BibTeX 就能直接加进来；在论文阅读页点右上角的书签按钮也能收进这里。',
-                              'Use “Add paper” in the top right — an arXiv ID, DOI or BibTeX entry is enough. You can also tap the bookmark button on any paper reading page.',
+                              '在论文阅读页点书签按钮也能收进这里。',
+                              'Tapping the bookmark button on a paper reading page also saves it here.',
                             )
                           : tr(
                               '打开任意论文的阅读页后，会自动记录在这里。',
@@ -941,10 +938,7 @@ export function LibraryPage() {
                   <>
                     <button
                       className={'btn sm ' + (selectMode ? 'btn-primary' : 'btn-ghost')}
-                      title={tr(
-                        '开启后列表出现复选框，可批量删除 / 导出引用',
-                        'Show checkboxes for bulk delete / citation export',
-                      )}
+                      title={tr('批量删除 / 导出引用', 'Bulk delete / citation export')}
                       onClick={() => {
                         setSelectMode((m) => !m);
                         setSelected(new Map());
@@ -982,10 +976,6 @@ export function LibraryPage() {
                 <button
                   className="btn btn-ghost sm"
                   style={{ marginLeft: 'auto' }}
-                  title={tr(
-                    '回收站：取消收藏的文献可以召回或彻底删除',
-                    'Trash: unsaved papers — restore or delete forever',
-                  )}
                   onClick={() => setTrashOpen(true)}
                 >
                   <Icon name="trash" size={13} />

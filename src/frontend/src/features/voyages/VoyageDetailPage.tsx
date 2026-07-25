@@ -211,7 +211,7 @@ function ActivityBar({
       {status === 'paused_error' && (
         <div className="row gap8" style={{ marginTop: 12, padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger-tx)', borderRadius: 10, fontSize: 12.5 }}>
           <Icon name="x" size={14} />
-          {tr('任务因错误暂停：暂时性故障可直接重试；若是程序问题，修复后再重试，已完成的步骤不会重跑。', 'Task paused on an error. Retry directly for transient failures; for code issues, fix first then retry — finished steps will not rerun.')}
+          {tr('任务因错误暂停。重试会从断点继续，已完成的步骤不会重跑。', 'Task paused on an error. Retrying resumes from where it stopped — finished steps will not rerun.')}
           {onResume && (
             <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} disabled={resuming} onClick={onResume}>
               {resuming ? tr('重试中…', 'Retrying…') : tr('重试恢复', 'Retry & resume')}

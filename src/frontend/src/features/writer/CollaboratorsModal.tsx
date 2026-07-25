@@ -177,7 +177,6 @@ export function CollaboratorsModal({ open, onClose, manuscriptId }: Collaborator
           {tr('协作者', 'Collaborators')}
         </>
       }
-      sub={tr('管理谁能协同编辑这篇论文', 'Manage who can co-edit this manuscript')}
       footer={
         <button className="btn btn-ghost sm" onClick={onClose}>
           {tr('关闭', 'Close')}

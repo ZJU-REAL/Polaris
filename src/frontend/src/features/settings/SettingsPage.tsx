@@ -225,8 +225,8 @@ function ChatPrefsTab() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
             {tr(
-              '打开后可为你的相关研究/个人文献库的论文建立全文索引，让 AI 文献对话检索得更准（会消耗你的模型额度抓取和嵌入全文）。',
-              'When on, you can build a full-text index for the papers in your related work and personal library, so AI literature chat retrieves more accurately (it uses your model quota to fetch and embed the full text).',
+              '文献对话检索得更准；会消耗你的模型额度抓取和嵌入全文。',
+              'Literature chat retrieves more accurately; uses your model quota to fetch and embed the full text.',
             )}
           </div>
         </div>
@@ -257,12 +257,6 @@ function PreferencesTab() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div id="pref-task-log-history" style={{ fontSize: 13, lineHeight: 1.4 }}>
             {tr('任务终端展示历史日志', 'Show past logs in the task terminal')}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
-            {tr(
-              '打开任务详情时加载已保存的日志与大模型输出，刷新页面或任务结束后仍可回看。',
-              'Loads saved logs and model output when you open a task, so they survive a refresh or task completion.',
-            )}
           </div>
         </div>
         <Switch
@@ -473,7 +467,6 @@ function SshTab() {
         onClose={() => setModalOpen(false)}
         width={560}
         title={tr('添加 SSH 凭据', 'Add SSH credential')}
-        sub={tr('私钥加密存储，仅用于你自己的实验任务', 'Private key stored encrypted; used only for your own experiments')}
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setModalOpen(false)}>{tr('取消', 'Cancel')}</button>
@@ -1522,8 +1515,8 @@ function CallLogsSection() {
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
         {tr(
-          '开启后会记录每次 LLM API 调用的完整输入与输出（图片只存大小占位，不存原图），用于排查问题；注意存储占用，日志只保留最近 7 天。',
-          'When enabled, the full input and output of every LLM API call is recorded (images are stored as size placeholders only) for debugging. Mind the storage cost; logs are kept for 7 days only.',
+          '图片只存大小占位，不存原图；注意存储占用，日志只保留最近 7 天。',
+          'Images are stored as size placeholders only; mind the storage cost — logs are kept for 7 days.',
         )}
       </div>
 
@@ -1629,8 +1622,8 @@ function AffiliationModeSection() {
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.5 }}>
         {tr(
-          '大模型从论文标题页解析每位作者所属机构的时机。选编译 wiki 时抽取会把机构解析折叠进精读编译那一次调用里，省下一次单独的大模型调用。（DOI 论文的机构由 OpenAlex 结构化数据直接给出，不受此设置影响。）',
-          "When the model parses each author's affiliation from the title page. \"Extract while compiling\" folds it into the deep-reading compile call, saving a separate LLM call. (Affiliations for DOI papers come straight from OpenAlex and are unaffected.)",
+          '大模型从论文标题页解析作者机构的时机；DOI 论文的机构来自 OpenAlex，不受此设置影响。',
+          "When the model parses author affiliations from the title page. DOI papers get affiliations from OpenAlex and are unaffected.",
         )}
       </div>
       {isLoading ? (
@@ -1982,8 +1975,8 @@ function MyLlmTab() {
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, lineHeight: 1.5 }}>
                 {tr(
-                  '当前使用平台默认的 Provider 与路由表（见下方，只读）。你也可以取消接管，改用自己的 Provider 与密钥。',
-                  'You are using the platform default providers and routing (shown below, read-only). You may remove the takeover and use your own providers and keys instead.',
+                  '当前使用平台默认的 Provider 与路由表（见下方，只读）。',
+                  'You are using the platform default providers and routing (shown below, read-only).',
                 )}
               </div>
               <div style={{ marginTop: 12 }}>
@@ -2036,8 +2029,8 @@ function MyLlmTab() {
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, lineHeight: 1.5 }}>
               {tr(
-                '下面的 Provider 与路由表只对你自己生效（BYO key，后端只写不读）。配好后即可用自己的密钥调用模型。',
-                'The providers and routing below apply only to you (BYO key, write-only on the backend). Once set up, models are called with your own keys.',
+                '下面的 Provider 与路由表只对你自己生效（BYO key，后端只写不读）。',
+                'The providers and routing below apply only to you (BYO key, write-only on the backend).',
               )}
             </div>
           </div>
@@ -2097,8 +2090,8 @@ function LabLeaderboardSection() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
             {tr(
-              '打开后，全体成员都能在实验室工作台看到各人的 token 消耗排名。关闭后这一区只对管理员显示，成员仍然能在设置里看自己的用量。',
-              'When on, every member sees each person’s token consumption ranking on the Lab workbench. When off, the section shows for admins only — members can still see their own usage under Settings.',
+              '打开后全体成员都能看到各人的 token 消耗排名；关闭则只对管理员显示。',
+              'When on, every member sees each person’s token consumption ranking; when off, admins only.',
             )}
           </div>
         </div>
@@ -2503,8 +2496,8 @@ function DailyEmbedSection() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
             {tr(
-              '打开后，每天同步时会给新论文生成向量（会消耗嵌入额度）；打开后每日论文的语义检索才有数据，问答也能按正文片段回答。关闭时每日论文只能用关键词检索，问答只按摘要兜底。',
-              'When on, the daily sync generates embeddings for new papers (this consumes embedding quota). Only then does semantic search over daily papers have data, and chat can answer from body passages. When off, daily papers support keyword search only and chat falls back to abstracts.',
+              '每天同步时给新论文建向量，会消耗嵌入额度；关闭则每日论文只能用关键词检索。',
+              'The daily sync embeds new papers and consumes embedding quota; when off, daily papers support keyword search only.',
             )}
           </div>
         </div>
@@ -2528,8 +2521,8 @@ function DailyEmbedSection() {
       >
         <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45 }}>
           {tr(
-            '历史论文不会自动补建。点右边的按钮，给最近 7 天里还没有向量的每日论文补一遍，可能要跑几十秒。',
-            'Existing papers are not embedded automatically. Use the button to embed the daily papers from the past 7 days that still lack vectors — it may take tens of seconds.',
+            '历史论文不会自动补建，补一遍可能要跑几十秒。',
+            'Existing papers are not embedded automatically; a backfill may take tens of seconds.',
           )}
         </div>
         <button
@@ -2655,7 +2648,6 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       width={520}
       title={tr('添加用户', 'Add user')}
-      sub={tr('创建一个新账号并设定初始密码', 'Create a new account with an initial password')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>
@@ -3204,7 +3196,7 @@ function CreateCodeModal({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       width={440}
       title={tr('生成注册码', 'Generate registration code')}
-      sub={tr('把生成的码发给需要注册的人。可设置有效期与使用次数上限。', 'Share the code with people who need to register. You can cap its lifetime and number of uses.')}
+      sub={tr('生成后自动复制，发给需要注册的人。', 'Copied automatically once created — share it with people who need to register.')}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose}>{tr('取消', 'Cancel')}</button>

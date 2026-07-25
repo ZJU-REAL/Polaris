@@ -96,10 +96,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   } else if (!showing) {
     body = (
       <div className="empty" style={{ padding: 24 }}>
-        {tr(
-          '输入关键词，搜索当前课题下的论文、概念、想法、实验、AI 任务与论文稿',
-          'Type keywords to search papers, concepts, ideas, experiments, AI tasks and drafts in this topic',
-        )}
+        {tr('输入关键词开始搜索', 'Type keywords to search')}
       </div>
     );
   } else if (query.isLoading) {

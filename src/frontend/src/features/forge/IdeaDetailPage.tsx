@@ -329,13 +329,7 @@ function RevisionTimeline({ ideaId }: { ideaId: string }) {
         <Icon name="shield" size={14} style={{ color: 'var(--accent)' }} />
         {tr('评审修订记录', 'Review & revision history')}
       </span>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5, marginBottom: 14 }}>
-        {tr(
-          '深度生成时，多位 AI 评审员逐轮提出必须修改项，作者 AI 修订后重评（只读记录）。',
-          'During Deep Dive, multiple AI reviewers raise must-fix items each round; the author AI revises and is re-scored (read-only record).',
-        )}
-      </div>
-      <div className="scroll" style={{ maxHeight: 460, overflowY: 'auto' }}>
+      <div className="scroll" style={{ maxHeight: 460, overflowY: 'auto', marginTop: 14 }}>
         {sessions.map((s) => (
           <RevisionSessionBlock key={s.id} session={s} />
         ))}

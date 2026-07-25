@@ -203,13 +203,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
                 <span style={{ fontSize: 13.5, fontWeight: 650 }}>{tr('文献任务进行中', 'Literature task in progress')}</span>
                 <Icon name="arrow" size={14} style={{ marginLeft: 'auto', color: 'var(--accent-text)' }} />
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 8, lineHeight: 1.55 }}>
-                {tr(
-                  '点击查看任务实时进度（SSE 流式）。运行期间无法再次启动 ingest。',
-                  'Click to watch live progress (SSE stream). Ingest cannot be started again while it runs.',
-                )}
-              </div>
-              <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 6 }}>
+              <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 8 }}>
                 voyage {state.running_voyage_id.slice(0, 8)}…
               </div>
             </div>
@@ -315,8 +309,8 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 14px' }}>
               {tr(
-                '从上次同步时间之后抓取新论文并打分编译；已建库的项目每日也会由定时任务自动增量。',
-                'Fetch, score, and compile papers published since the last sync; built libraries also sync daily on a schedule.',
+                '抓取上次同步之后发表的新论文；已建库的文献库每天也会自动同步一次。',
+                'Fetches papers published since the last sync; built libraries also sync once a day automatically.',
               )}
             </p>
             <button className="btn btn-ghost" disabled={busy || !state?.watermark} onClick={runIncremental}>
@@ -343,8 +337,8 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
           </div>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 18px' }}>
             {tr(
-              '初始建库一次性回填近 N 个月文献并做参考文献扩展，AI 打分筛选后精读编译建立知识库。以下选项控制本次开销。',
-              'The initial build backfills the last N months of papers with reference expansion, then scores, filters, and compiles them into the library. These knobs control the cost of this run.',
+              '一次性回填近 N 个月文献并做参考文献扩展，打分筛选后精读编译；下面的选项控制本次开销。',
+              'Backfills the last N months with reference expansion, then scores, filters, and compiles; the knobs below control this run’s cost.',
             )}
           </p>
 
@@ -358,14 +352,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             step={1}
             onChange={setMonthsBack}
           />
-          <FormField
-            label={tr('最大化（不限篇数）', 'Maximize (no paper cap)')}
-            en="unlimited"
-            hint={tr(
-              '开启后检索篇数与编译篇数不设上限，抓取时间窗口内的全部相关论文。',
-              'When on, search and compile have no paper caps: every relevant paper in the window is processed.',
-            )}
-          >
+          <FormField label={tr('最大化（不限篇数）', 'Maximize (no paper cap)')} en="unlimited">
             <label className="row gap10" style={{ cursor: 'pointer', userSelect: 'none' }}>
               <input
                 type="checkbox"
@@ -499,12 +486,6 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
               <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
                 {tr('已有任务运行中，暂不可启动', 'A task is already running — cannot start another')}
               </span>
-            )}
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 12, lineHeight: 1.6 }}>
-            {tr(
-              '以 AI 任务呈现进度，支持断点续跑；同一项目同时只允许一个 ingest 任务。',
-              'Progress shows as an AI task and can resume from checkpoints; one ingest task per direction at a time.',
             )}
           </div>
         </div>
