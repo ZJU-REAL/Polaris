@@ -1,17 +1,28 @@
-# 桌面端发版：三平台出包并建 GitHub Release。
-# 与 desktop-build.yml 分工：那个在 PR 上只跑 smoke 做回归检查，本文件负责发版。
+# Packages the desktop client for all three platforms and publishes a GitHub
+# release. Counterpart to desktop-build.yml, which only runs the smoke test on
+# pull requests.
 #
-# 触发：push 版本 tag（v*，如 v1.0.0）时自动发版，tag 名即版本号；也可手动触发。
+# Triggered by pushing a version tag (v*, e.g. v1.0.0); the tag name is the
+# version. Manual dispatch is also supported and always produces a draft, since a
+# manual run is either a check that packaging still works or an ad-hoc build, and
+# neither should appear as a public release without review.
 #
-# 关于签名：**产物一律未签名**。macOS 侧由 electron-builder 的 afterPack 钩子补一个
-# ad-hoc 签名——不是锦上添花：electron-builder 改包会让 Electron 自带签名失效，
-# Apple Silicon 内核拒绝执行无有效签名的二进制，用户会看到「已损坏」。ad-hoc 只保证
-# 能启动，不等于公证（notarization），首次打开仍需绕 Gatekeeper，见 release 正文。
+# Signing: artifacts are unsigned. On macOS an electron-builder afterPack hook
+# applies an ad-hoc signature. This is not optional — repackaging invalidates the
+# signature the prebuilt Electron binary ships with, and the Apple Silicon kernel
+# refuses to execute a binary without a valid one, so users would see "damaged".
+# An ad-hoc signature only makes the bundle launchable; it is not notarization,
+# and first launch still requires clearing Gatekeeper as described in the notes.
 #
-# macOS 出 universal 单包（Intel + Apple Silicon 通吃），用户不必分辨自己的芯片。
-# 注意 @electron/universal 要求两个架构的非二进制文件逐字节相同才能 lipo 合并，
-# 所以 afterPack 钩子跳过 *-temp 目录、只给合并后的产物签名——逐架构签名会让
-# _CodeSignature/CodeResources 不一致，合并会直接报错。
+# Release notes are the fixed install and first-run guidance in this file followed
+# by a changelog GitHub generates from the pull requests merged since the previous
+# release. Nothing per-version is maintained by hand.
+#
+# macOS ships a single universal build so users need not identify their chip.
+# @electron/universal requires every non-binary file to be byte-identical across
+# the two architectures before it will merge them, so the afterPack hook skips the
+# *-temp directories and signs only the merged bundle; signing each architecture
+# separately leaves _CodeSignature/CodeResources differing and the merge aborts.
 name: desktop-release
 
 on:
@@ -21,11 +32,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "手动发版时的版本号（如 v0.2.0）"
+        description: "Version to build, e.g. v0.2.0"
         required: true
-
-# 手动触发一律发 draft：手动跑要么是验证三平台出包、要么是临时构建，
-# 都该先过目再公开。只有 push v* tag 才直接发布。
 
 jobs:
   build:
@@ -67,7 +75,9 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      # 让安装包文件名带上真实版本号（electron-builder 读 package.json 的 version）
+      # electron-builder takes the version from package.json, so stamp it from the
+      # tag rather than shipping installers permanently named after the checked-in
+      # version.
       - name: Stamp version
         shell: bash
         run: |
@@ -86,15 +96,17 @@ jobs:
           npm ci --prefix src/desktop
           npm run build --prefix src/desktop
 
-      # 发版前先验一遍，避免把加载不起来的包发出去（Linux 侧代表全平台的 renderer 行为）
-      - name: Smoke (linux only)
+      # Gate packaging on the smoke test so a bundle that cannot load is never
+      # published. The renderer behaves identically across platforms, so running it
+      # once on Linux is sufficient.
+      - name: Smoke test (Linux only)
         if: matrix.name == 'linux'
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2t64 || \
           sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2
-          # chrome-sandbox 必须 setuid root，否则 Electron FATAL 中止
+          # Electron aborts unless chrome-sandbox is setuid root; see desktop-build.yml
           sudo chown root:root src/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 src/desktop/node_modules/electron/dist/chrome-sandbox
           cd src/desktop && xvfb-run -a npm run smoke
@@ -104,7 +116,8 @@ jobs:
         working-directory: src/desktop
         run: npx electron-builder ${{ matrix.args }} --publish never
 
-      # 只收安装包本身：release/ 下还有 *-unpacked 目录与 .blockmap，不必上传
+      # Collect installers only; release/ also holds *-unpacked directories and
+      # .blockmap files that need not be uploaded.
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.name }}
@@ -179,7 +192,11 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             DRAFT="--draft"
           fi
+          # notes.md is prepended to the changelog GitHub derives from the pull
+          # requests merged since the previous release, so the install guidance
+          # stays fixed while the per-version content maintains itself.
           gh release create "${{ steps.meta.outputs.tag }}" $DRAFT \
             --title "Polaris ${{ steps.meta.outputs.tag }}" \
             --notes-file notes.md \
+            --generate-notes \
             dist/*

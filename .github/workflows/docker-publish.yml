@@ -1,13 +1,16 @@
-# 发布：build 并 push 镜像到 Docker Hub。
-# 与 docker-build.yml 分工：那个在 PR 上只 build 做回归检查，本文件负责发版推送。
+# Builds and pushes the image stack to Docker Hub. Counterpart to
+# docker-build.yml, which only builds on pull requests as a regression check.
 #
-# 触发：push 版本 tag（v*，如 v1.0.0）时自动发布，tag 名即镜像 tag；也可手动触发。
-# 架构：ubuntu-latest 是 x86_64，普通 docker build 出 amd64 镜像（覆盖多数服务器）。
-#       texbase 本地建好后 api/worker 直接 FROM 它，无需把 texbase 也推 registry。
+# Triggered by pushing a version tag (v*, e.g. v1.0.0); the tag name becomes the
+# image tag. Manual dispatch is also supported.
 #
-# 需要的仓库 Secrets（Settings → Secrets and variables → Actions）：
-#   DOCKERHUB_USERNAME  Docker Hub 用户名（同时用作镜像命名空间）
-#   DOCKERHUB_TOKEN     Docker Hub Personal Access Token（Read & Write）
+# Architecture: ubuntu-latest runners are x86_64, so a plain docker build produces
+# amd64 images, which covers most deployment targets. texbase is built locally and
+# consumed by the api and worker Dockerfiles via FROM, so it is never pushed.
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   DOCKERHUB_USERNAME  Docker Hub account, also used as the image namespace
+#   DOCKERHUB_TOKEN     Docker Hub personal access token with read and write access
 name: docker-publish
 
 on:
@@ -17,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "手动发布时的镜像 tag（如 v1.0.0）"
+        description: "Image tag to publish, e.g. v1.0.0"
         required: true
         default: "latest"
 
@@ -42,7 +45,8 @@ jobs:
       - name: Log in to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "$NS" --password-stdin
 
-      # texbase 只进本地 daemon（不 push）；api/worker 的 Dockerfile 默认 FROM polaris-texbase:latest
+      # Stays in the local daemon; the api and worker Dockerfiles default to
+      # FROM polaris-texbase:latest.
       - name: Build texbase (base image, local only)
         run: docker build -f docker/Dockerfile.texbase -t polaris-texbase:latest docker/
 

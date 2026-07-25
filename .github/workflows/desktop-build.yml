@@ -1,12 +1,15 @@
-# 桌面端的 PR 回归检查（不发版）：在 Linux 上真实加载一遍 SPA。
-# 与 desktop-release.yml 分工：那个负责 tag 发版出包，本文件只在 PR 上把关。
+# Regression check for the desktop client (no packaging): loads the SPA under the
+# custom app:// scheme and fails on CSP violations, console errors or a renderer
+# that does not mount. Counterpart to desktop-release.yml, which packages and
+# publishes on a tag.
 #
-# 为什么值得跑：桌面端和网页端是同一份前端代码，但桌面端多了 CSP、自定义
-# app:// 协议、preload 注入这几层约束。网页端改动（引入 CDN 字体/外链脚本/
-# 新 Worker/新 WebSocket 端点）在浏览器里完全正常，却会被桌面端的 CSP 拦掉。
-# smoke 会真的把页面加载起来并检查 CSP 违规与 console 报错，正好探这类问题。
+# The web app and the desktop client share a single frontend codebase, but the
+# client adds a Content Security Policy, a custom protocol and preload injection.
+# A CDN font, an external script, a new worker or a new WebSocket endpoint all
+# work in a browser and are blocked in the packaged app, so a frontend-only change
+# can break the client. The path filter therefore covers both trees.
 #
-# Linux 上 Electron 需要虚拟显示，所以走 xvfb-run。
+# Electron requires a display on Linux, so the smoke test runs under xvfb.
 name: desktop-build
 
 on:
@@ -32,8 +35,8 @@ jobs:
             src/frontend/package-lock.json
             src/desktop/package-lock.json
 
-      # Electron 在 Linux 上的运行时依赖（headless 也需要）
-      - name: Install system deps
+      # Shared libraries Electron links against, plus xvfb for the virtual display.
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2t64 || \
@@ -52,16 +55,17 @@ jobs:
       - name: Typecheck shell
         run: npm run lint --prefix src/desktop
 
-      # Electron 的 chrome-sandbox 必须是 setuid root，npm 装出来的不是，直接跑会
-      # FATAL 中止。这里修权限而不是加 --no-sandbox：沙箱该开着（docs/desktop.md
-      # 里对用户也是这么说的，CI 不该自己开例外）。
+      # Electron aborts at startup unless the SUID sandbox helper is owned by root
+      # with mode 4755, which is not how npm installs it. The permissions are
+      # corrected rather than passing --no-sandbox, because docs/desktop.md tells
+      # users not to disable the sandbox and CI should not exempt itself.
       - name: Fix chrome-sandbox permissions
         run: |
           sudo chown root:root src/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 src/desktop/node_modules/electron/dist/chrome-sandbox
 
-      # 真实加载 app://polaris 下的 SPA：协议路由、SPA fallback、CSP、preload
-      # 注入、React 挂载、本地 agent 管道，退出码非 0 即失败
-      - name: Smoke
+      # Covers protocol routing, SPA fallback, CSP contents, preload injection,
+      # renderer mount and the local agent pipe. A non-zero exit fails the job.
+      - name: Smoke test
         working-directory: src/desktop
         run: xvfb-run -a npm run smoke
