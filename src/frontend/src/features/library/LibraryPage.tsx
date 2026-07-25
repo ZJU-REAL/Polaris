@@ -12,7 +12,6 @@ import {
   type LibrarySort,
   type LibraryTab,
   type Publication,
-  type SearchMode,
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
@@ -22,6 +21,7 @@ import {
   FilterInput,
   parseYear,
   SearchInput,
+  SemanticSwitch,
   saveBlob,
   useDebounced,
   YearRangeField,
@@ -241,7 +241,8 @@ export function LibraryPage() {
   const [tab, setTab] = useState<PageTab>('saved');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
-  const [scope, setScope] = useState<SearchMode>('keyword');
+  // 语义检索开关（true=按意思检索；只有「我的收藏」支持）
+  const [semanticOn, setSemanticOn] = useState(false);
   const [sort, setSort] = useState<LibrarySort>('recent');
   const [page, setPage] = useState(1);
   const [clearOpen, setClearOpen] = useState(false);
@@ -276,18 +277,18 @@ export function LibraryPage() {
 
   // 语义检索：仅「我的收藏」+ 有关键词时生效（浏览记录是流水，不做语义）；
   // 语义态不分页、高级过滤置灰（后端按向量相似度返回一组结果）
-  const semantic = tab === 'saved' && scope === 'semantic' && !!q;
+  const semantic = tab === 'saved' && semanticOn && !!q;
 
   // tab / 搜索词 / 检索模式 / 排序 / 高级条件变化时回到第一页
   useEffect(() => {
     setPage(1);
-  }, [tab, q, scope, sort, author, venue, yearFrom, yearTo]);
+  }, [tab, q, semanticOn, sort, author, venue, yearFrom, yearTo]);
 
   // 切 tab / 换搜索词 / 换检索模式时清空多选（避免选中集跨上下文残留）
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
-  }, [tab, q, scope]);
+  }, [tab, q, semanticOn]);
 
   const onLibraryTab = tab !== 'publications' && tab !== 'chat' && tab !== 'liked';
   const listQuery = useQuery({
@@ -512,7 +513,24 @@ export function LibraryPage() {
                   <SearchInput
                     value={qInput}
                     onChange={setQInput}
-                    placeholder={tr('搜索标题 / 作者…', 'Search title / authors…')}
+                    placeholder={
+                      semanticOn && tab === 'saved'
+                        ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
+                        : tr('搜索标题 / 作者…', 'Search title / authors…')
+                    }
+                  />
+                  <SemanticSwitch
+                    checked={semanticOn && tab === 'saved'}
+                    onChange={setSemanticOn}
+                    disabled={tab !== 'saved'}
+                    title={
+                      tab === 'saved'
+                        ? tr(
+                            '按语义相似度检索收藏（需已生成向量）',
+                            'Semantic search over saved papers (needs embeddings)',
+                          )
+                        : tr('浏览记录是流水，只支持关键词检索', 'History is a raw log — keyword search only')
+                    }
                   />
                   <AdvancedToggle
                     open={advOpen}
@@ -548,26 +566,7 @@ export function LibraryPage() {
                   </div>
                 )}
 
-                {/* 关键词 / 语义 检索模式切换（语义仅「我的收藏」有意义） */}
-                {tab === 'saved' && (
-                  <div className="row gap6 wrap" style={{ marginTop: 10 }}>
-                    <span
-                      className={`chip${scope === 'keyword' ? ' on' : ''}`}
-                      onClick={() => setScope('keyword')}
-                    >
-                      {tr('关键词', 'Keyword')}
-                    </span>
-                    <span
-                      className={`chip${scope === 'semantic' ? ' on' : ''}`}
-                      onClick={() => setScope('semantic')}
-                      title={tr('按语义相似度检索收藏（需已生成向量）', 'Semantic search over saved papers (needs embeddings)')}
-                    >
-                      {tr('语义检索', 'Semantic')}
-                    </span>
-                  </div>
-                )}
-
-                <div className="row gap8" style={{ marginTop: 10 }}>
+                <div className="row gap8" style={{ marginTop: 10, ...(semantic ? { opacity: 0.45, pointerEvents: 'none' as const } : {}) }}>
                   <Segmented<LibrarySort>
                     options={SORTS.map((s) => ({ v: s.v, label: tr(s.zh, s.en) }))}
                     value={sort}

@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import type { ConceptCategory } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { Icon } from '../../components/ui/Icon';
+import { Switch } from '../../components/ui/Switch';
 
 /* ============================================================
    Research Wiki 页共享：概念类别配色、Section、防抖 hook。
@@ -84,6 +85,48 @@ export function SearchInput({
       placeholder={placeholder ?? tr('搜索…', 'Search…')}
       type="search"
     />
+  );
+}
+
+/** 语义检索开关（搜索框右边、高级检索按钮左边）：短标签 + Switch。
+    四处检索条统一用它，别各写各的 chip。关掉=关键词字面匹配，打开=按意思找。 */
+export function SemanticSwitch({
+  checked,
+  onChange,
+  disabled,
+  title,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  /** 悬浮说明（如「浏览记录不支持语义检索」）；不传给默认解释 */
+  title?: string;
+}) {
+  const labelId = `${useId()}-semantic`;
+  return (
+    <div
+      className="row gap6"
+      style={{ flexShrink: 0, opacity: disabled ? 0.5 : 1 }}
+      title={
+        title ??
+        tr('打开后按意思检索，而不是字面匹配关键词', 'Search by meaning instead of literal keyword matching')
+      }
+    >
+      <span
+        id={labelId}
+        onClick={() => !disabled && onChange(!checked)}
+        style={{
+          fontSize: 11.5,
+          whiteSpace: 'nowrap',
+          userSelect: 'none',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          color: checked ? 'var(--accent-text)' : 'var(--text-3)',
+        }}
+      >
+        {tr('语义检索', 'Semantic')}
+      </span>
+      <Switch checked={checked} onChange={onChange} disabled={disabled} aria-labelledby={labelId} />
+    </div>
   );
 }
 

@@ -27,6 +27,7 @@ import {
   parseYear,
   saveBlob,
   SearchInput,
+  SemanticSwitch,
   useDebounced,
   YearRangeField,
 } from '../wiki/shared';
@@ -51,8 +52,6 @@ type ShelfFilter = 'all' | ShelfWikiSource;
 type PageTab = 'list' | 'chat';
 /** 阅读状态筛选：空串=不限；其余透传给后端 reading_status。 */
 type ReadingFilter = '' | ReadingStatus;
-/** 搜索作用域：关键词（后端书架过滤）/ 语义检索（课题语料向量召回）。 */
-type SearchScope = 'keyword' | 'semantic';
 
 /** 语义检索命中的 ScoredPaper（课题语料，未必已入书架）映射成书架行需要的最小字段。
     note / wiki_content / snapshot_at / source_library_id 语义结果里没有，按缺省填；
@@ -352,7 +351,8 @@ export function ResearchPage() {
   // 关键词 + 高级检索条件（走后端）
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
-  const [scope, setScope] = useState<SearchScope>('keyword');
+  // 语义检索开关（true=课题语料向量召回，false=关键词书架过滤）
+  const [semanticOn, setSemanticOn] = useState(false);
   // 多选导出：默认关闭，底部「多选」按钮开启后行首出现复选框
   const [selectMode, setSelectMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
@@ -388,7 +388,7 @@ export function ResearchPage() {
     setSelId(null);
     setFilter('all');
     setQInput('');
-    setScope('keyword');
+    setSemanticOn(false);
     clearAdvanced();
   }, [pid]);
 
@@ -401,10 +401,10 @@ export function ResearchPage() {
   useEffect(() => {
     setCheckedIds(new Set());
     setSelectMode(false);
-  }, [pid, q, scope, filter, sort]);
+  }, [pid, q, semanticOn, filter, sort]);
 
-  // 语义检索：有查询词且作用域为语义时激活；结果替换列表、不分页、置灰其余过滤
-  const semantic = !!q && scope === 'semantic';
+  // 语义检索：有查询词且开关打开时激活；结果替换列表、不分页、置灰其余过滤
+  const semantic = !!q && semanticOn;
 
   const shelfQuery = useQuery({
     queryKey: [
@@ -664,10 +664,15 @@ export function ResearchPage() {
                   value={qInput}
                   onChange={setQInput}
                   placeholder={
-                    scope === 'semantic'
+                    semanticOn
                       ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
                       : tr('搜索标题 / 作者…', 'Search title / authors…')
                   }
+                />
+                <SemanticSwitch
+                  checked={semanticOn}
+                  onChange={setSemanticOn}
+                  title={tr('打开后用自然语言在课题语料里语义召回', 'Semantic recall over the topic corpus')}
                 />
                 <AdvancedToggle
                   open={advOpen}
@@ -678,20 +683,6 @@ export function ResearchPage() {
                     'Advanced search: author / affiliation / year / reading status',
                   )}
                 />
-              </div>
-
-              {/* 关键词 / 语义检索切换（对齐文献库 LibraryBrowse） */}
-              <div className="row gap6 wrap" style={{ marginTop: 8 }}>
-                <span className={`chip${scope === 'keyword' ? ' on' : ''}`} onClick={() => setScope('keyword')}>
-                  {tr('关键词', 'Keyword')}
-                </span>
-                <span
-                  className={`chip${scope === 'semantic' ? ' on' : ''}`}
-                  title={tr('用自然语言在课题语料里语义召回', 'Semantic recall over the topic corpus')}
-                  onClick={() => setScope('semantic')}
-                >
-                  {tr('语义检索', 'Semantic')}
-                </span>
               </div>
 
               {advOpen && (
@@ -795,7 +786,7 @@ export function ResearchPage() {
                     title={tr('语义检索失败', 'Semantic search failed')}
                     desc={tr('后端暂时不可用，稍后再试或改用关键词。', 'Backend unavailable — retry later or switch to keyword.')}
                     action={
-                      <button className="btn btn-soft sm" onClick={() => setScope('keyword')}>
+                      <button className="btn btn-soft sm" onClick={() => setSemanticOn(false)}>
                         {tr('改用关键词', 'Use keyword')}
                       </button>
                     }

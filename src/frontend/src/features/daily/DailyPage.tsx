@@ -12,7 +12,14 @@ import { tr } from '../../lib/i18n';
 import { Markdown } from '../../lib/markdown';
 import { PaperReader } from '../wiki/PaperReader';
 import { readerFrom } from '../reading/shared';
-import { SearchInput, saveBlob, useDebounced } from '../wiki/shared';
+import {
+  AdvancedPanel,
+  AdvancedToggle,
+  SearchInput,
+  SemanticSwitch,
+  saveBlob,
+  useDebounced,
+} from '../wiki/shared';
 import { DailyLikes } from './DailyLikes';
 import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
@@ -392,19 +399,25 @@ function DailyDetailPane({
 
 type DailyView = 'papers' | 'chat';
 type AnnounceFilter = 'all' | 'new' | 'cross';
-type SearchScope = 'keyword' | 'semantic';
+
+// 类型筛选默认值：只看新工作（高级检索面板里的「恢复默认」也回到这个值）
+const DEFAULT_ANNOUNCE: AnnounceFilter = 'new';
 
 export function DailyPage() {
   const [view, setView] = useState<DailyView>('papers');
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
-  const [scope, setScope] = useState<SearchScope>('keyword');
+  // 语义检索开关（true=按意思检索，false=关键词字面匹配）
+  const [semanticOn, setSemanticOn] = useState(false);
   const [sort, setSort] = useState<DailySort>('likes');
   const [page, setPage] = useState(1);
-  // —— 高级过滤：日期（null=全部 7 天，默认落在最新一天）/ 订阅分类（''=全部）/ 类型 ——
+  // —— 日期（null=全部 7 天，默认落在最新一天）留在工具栏；分类 / 类型收进高级检索面板 ——
   const [day, setDay] = useState<string | null>(null);
+  const [advOpen, setAdvOpen] = useState(false);
   const [category, setCategory] = useState('');
-  const [announce, setAnnounce] = useState<AnnounceFilter>('new');
+  const [announce, setAnnounce] = useState<AnnounceFilter>(DEFAULT_ANNOUNCE);
+  // 高级条件是否偏离默认（决定高级检索按钮上的小圆点）
+  const advActive = !!category || announce !== DEFAULT_ANNOUNCE;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
@@ -414,11 +427,11 @@ export function DailyPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => setPage(1), [q, scope, sort, day, category, announce]);
+  useEffect(() => setPage(1), [q, semanticOn, sort, day, category, announce]);
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
-  }, [q, scope, day, category, announce]);
+  }, [q, semanticOn, day, category, announce]);
 
   const daysQuery = useQuery({
     queryKey: ['daily-days'],
@@ -466,9 +479,9 @@ export function DailyPage() {
   });
 
   // 语义检索：只在有关键词时生效；结果按相关度排序、不分页
-  const semantic = !!q && scope === 'semantic';
+  const semantic = !!q && semanticOn;
   const listQuery = useQuery({
-    queryKey: ['daily-papers', scope, sort, page, q, day, category, announce],
+    queryKey: ['daily-papers', semanticOn, sort, page, q, day, category, announce],
     queryFn: () =>
       api.listDailyPapers({
         sort: semantic ? undefined : sort,
@@ -484,7 +497,7 @@ export function DailyPage() {
     placeholderData: keepPreviousData,
   });
   // 默认口径（当天 + 新工作）之外还加了条件才算「筛过」——空列表时给的话术不一样
-  const filtered = !!q || !!category || announce !== 'new' || (day !== null && day !== latestDate);
+  const filtered = !!q || advActive || (day !== null && day !== latestDate);
   const items = listQuery.data?.items ?? [];
   const total = listQuery.data?.total ?? 0;
   const pages = semantic ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -568,21 +581,86 @@ export function DailyPage() {
                 <SearchInput
                   value={qInput}
                   onChange={setQInput}
-                  placeholder={tr('搜标题 / 摘要 / 作者…', 'Search title / abstract / authors…')}
+                  placeholder={
+                    semanticOn
+                      ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
+                      : tr('搜标题 / 摘要 / 作者…', 'Search title / abstract / authors…')
+                  }
+                />
+                <SemanticSwitch checked={semanticOn} onChange={setSemanticOn} />
+                <AdvancedToggle
+                  open={advOpen}
+                  active={advActive}
+                  onToggle={() => setAdvOpen((o) => !o)}
+                  title={tr('高级检索：分类 / 类型', 'Advanced search: category / type')}
                 />
                 <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
                   {total ? tr(`${total} 篇`, `${total}`) : ''}
                 </span>
               </div>
-              {/* 检索方式：关键词字面匹配 / 语义检索（按意思找） */}
-              <div className="row gap6 wrap" style={{ marginTop: 10 }}>
-                <span className={`chip${scope === 'keyword' ? ' on' : ''}`} onClick={() => setScope('keyword')}>
-                  {tr('关键词', 'Keyword')}
-                </span>
-                <span className={`chip${scope === 'semantic' ? ' on' : ''}`} onClick={() => setScope('semantic')}>
-                  {tr('语义检索', 'Semantic')}
-                </span>
-              </div>
+
+              {/* 高级检索面板：分类 + 类型（日期步进和排序留在工具栏，它们是主导航） */}
+              {advOpen && (
+                <AdvancedPanel
+                  onClear={
+                    advActive
+                      ? () => {
+                          setCategory('');
+                          setAnnounce(DEFAULT_ANNOUNCE);
+                        }
+                      : undefined
+                  }
+                >
+                  <div className="row gap6" style={{ alignItems: 'center' }}>
+                    <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
+                      {tr('分类', 'Category')}
+                    </span>
+                    <select
+                      className="input mono"
+                      style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11, padding: '0 6px' }}
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      title={tr('只看某个订阅分类的论文', 'Only papers in one subscribed category')}
+                    >
+                      <option value="">{tr('全部分类', 'All categories')}</option>
+                      {(categoriesQuery.data?.categories ?? []).map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="row gap6 wrap" style={{ alignItems: 'center' }}>
+                    <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
+                      {tr('类型', 'Type')}
+                    </span>
+                    <span className={`chip${announce === 'all' ? ' on' : ''}`} onClick={() => setAnnounce('all')}>
+                      {tr('全部', 'All')}
+                    </span>
+                    <span className={`chip${announce === 'new' ? ' on' : ''}`} onClick={() => setAnnounce('new')}>
+                      {tr('新工作', 'New')}
+                    </span>
+                    <span className={`chip${announce === 'cross' ? ' on' : ''}`} onClick={() => setAnnounce('cross')}>
+                      {tr('更新', 'Updated')}
+                    </span>
+                  </div>
+                </AdvancedPanel>
+              )}
+              {/* 面板收起时，把正在生效的分类/类型如实说一句（默认「只看新工作」也算），
+                  免得筛选藏进面板后用户不知道列表被过滤过 */}
+              {!advOpen && (announce !== 'all' || !!category) && (
+                <div
+                  onClick={() => setAdvOpen(true)}
+                  style={{ marginTop: 6, fontSize: 11, color: 'var(--text-4)', cursor: 'pointer', lineHeight: 1.5 }}
+                  title={tr('点开高级检索改筛选条件', 'Open advanced search to change the filters')}
+                >
+                  {tr('只看：', 'Showing: ')}
+                  {announce === 'new' ? tr('新工作', 'New') : announce === 'cross' ? tr('更新', 'Updated') : ''}
+                  {announce !== 'all' && category ? ' · ' : ''}
+                  {category}
+                </div>
+              )}
+
               {semantic && (
                 <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-4)', lineHeight: 1.5 }}>
                   {tr(
@@ -623,19 +701,8 @@ export function DailyPage() {
                 >
                   {tr('按时间', 'Newest')}
                 </span>
-                <span style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px', flexShrink: 0 }} />
-                {/* 类型筛选：全部 / 新工作(new) / 更新(cross) */}
-                <span className={`chip${announce === 'all' ? ' on' : ''}`} onClick={() => setAnnounce('all')}>
-                  {tr('全部', 'All')}
-                </span>
-                <span className={`chip${announce === 'new' ? ' on' : ''}`} onClick={() => setAnnounce('new')}>
-                  {tr('新工作', 'New')}
-                </span>
-                <span className={`chip${announce === 'cross' ? ' on' : ''}`} onClick={() => setAnnounce('cross')}>
-                  {tr('更新', 'Updated')}
-                </span>
               </div>
-              {/* —— 日期步进 + 订阅分类下拉 —— */}
+              {/* —— 日期步进（主导航，不收进高级检索） —— */}
               <div className="row gap6 wrap" style={{ marginTop: 8 }}>
                 <button
                   className="btn btn-ghost sm"
@@ -664,20 +731,6 @@ export function DailyPage() {
                 >
                   {tr('后一天', 'Next day')} ›
                 </button>
-                <div style={{ flex: 1 }} />
-                <select
-                  className="input mono"
-                  style={{ height: 24, fontSize: 11, padding: '0 4px', maxWidth: 128, flexShrink: 0 }}
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                >
-                  <option value="">{tr('全部分类', 'All categories')}</option>
-                  {(categoriesQuery.data?.categories ?? []).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
               </div>
             </div>
 

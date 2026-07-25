@@ -19,6 +19,7 @@ import {
   AdvancedToggle,
   FilterInput,
   SearchInput,
+  SemanticSwitch,
   YearRangeField,
   parseYear,
   saveBlob,
@@ -37,7 +38,6 @@ const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m
    ============================================================ */
 
 type BrowseTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'notes' | 'govern' | 'ingest';
-type SearchScope = 'keyword' | 'semantic';
 
 const PAGE_SIZE = 20;
 
@@ -227,7 +227,8 @@ function PapersPane({
 }) {
   const [qInput, setQInput] = useState('');
   const q = useDebounced(qInput.trim());
-  const [scope, setScope] = useState<SearchScope>('keyword');
+  // 语义检索开关（true=按意思检索，false=关键词字面匹配）
+  const [semanticOn, setSemanticOn] = useState(false);
   const [sort, setSort] = useState<PaperSort>('relevance');
   const [page, setPage] = useState(1);
 
@@ -265,10 +266,10 @@ function PapersPane({
 
   useEffect(
     () => setPage(1),
-    [q, sort, scope, author, affiliation, yearFrom, yearTo, advReading, advStarred],
+    [q, sort, semanticOn, author, affiliation, yearFrom, yearTo, advReading, advStarred],
   );
 
-  const semantic = !!q && scope === 'semantic';
+  const semantic = !!q && semanticOn;
   const listQuery = useQuery({
     queryKey: [
       'lib-papers', libraryId, q, sort, page,
@@ -317,8 +318,13 @@ function PapersPane({
             <SearchInput
               value={qInput}
               onChange={setQInput}
-              placeholder={tr('搜库内论文：标题 / 摘要 / 解读…', 'Search papers: title / abstract / wiki…')}
+              placeholder={
+                semanticOn
+                  ? tr('语义检索（自然语言描述）…', 'Semantic search (natural language)…')
+                  : tr('搜库内论文：标题 / 摘要 / 解读…', 'Search papers: title / abstract / wiki…')
+              }
             />
+            <SemanticSwitch checked={semanticOn} onChange={setSemanticOn} />
             <AdvancedToggle
               open={advOpen}
               active={advActive}
@@ -392,14 +398,11 @@ function PapersPane({
               </AdvancedPanel>
             </div>
           )}
-          <div className="row gap6 wrap" style={{ marginTop: 10 }}>
-            <span className={`chip${scope === 'keyword' ? ' on' : ''}`} onClick={() => setScope('keyword')}>
-              {tr('关键词', 'Keyword')}
-            </span>
-            <span className={`chip${scope === 'semantic' ? ' on' : ''}`} onClick={() => setScope('semantic')}>
-              {tr('语义检索', 'Semantic')}
-            </span>
-            <span style={{ flex: 1 }} />
+          {/* 排序（语义检索按相关度返回，排序无效 → 置灰） */}
+          <div
+            className="row gap6 wrap"
+            style={{ marginTop: 10, justifyContent: 'flex-end', ...(semantic ? { opacity: 0.45, pointerEvents: 'none' as const } : {}) }}
+          >
             <span
               className={`chip${sort === 'relevance' ? ' on' : ''}`}
               onClick={() => setSort('relevance')}
