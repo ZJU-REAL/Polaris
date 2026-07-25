@@ -31,6 +31,7 @@ from app.models.paper import (
     PaperNote,
     PaperTag,
     PaperUserMeta,
+    UserPaperTag,
     paper_tag_links,
 )
 from app.models.project import ProjectMember
@@ -162,6 +163,7 @@ def apply_paper_filters(
     status: str | None = None,
     q: str | None = None,
     tag: str | None = None,
+    my_tag: str | None = None,
     starred: bool | None = None,
     reading_status: str | None = None,
     user_id: uuid.UUID | None = None,
@@ -215,6 +217,14 @@ def apply_paper_filters(
                 .where(PaperTag.library_id.in_(library_ids), PaperTag.name == tag)
             )
         )
+    if my_tag:
+        stmt = stmt.where(
+            exists().where(
+                UserPaperTag.paper_id == Paper.id,
+                UserPaperTag.user_id == user_id,
+                UserPaperTag.name == my_tag,
+            )
+        )
     if starred is not None:
         starred_exists = exists().where(
             PaperUserMeta.paper_id == Paper.id,
@@ -240,6 +250,7 @@ async def list_papers(
     status: str | None = None,
     q: str | None = None,
     tag: str | None = None,
+    my_tag: str | None = None,
     starred: bool | None = None,
     reading_status: str | None = None,
     user_id: uuid.UUID | None = None,
@@ -267,6 +278,7 @@ async def list_papers(
         status=status,
         q=q,
         tag=tag,
+        my_tag=my_tag,
         starred=starred,
         reading_status=reading_status,
         user_id=user_id,
@@ -462,26 +474,51 @@ async def set_paper_status(session: AsyncSession, view: PaperView, status: str) 
 
 
 async def paper_extras_map(
-    session: AsyncSession, *, paper_ids: Sequence[uuid.UUID], user_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    paper_ids: Sequence[uuid.UUID],
+    user_id: uuid.UUID,
+    library_ids: Sequence[uuid.UUID] | None = None,
 ) -> dict[uuid.UUID, dict[str, Any]]:
-    """批量取论文的 tags / starred / reading_status / note_count（3 条聚合查询，避免 N+1）。
+    """批量取论文的 tags / my_tags / starred / reading_status / note_count（聚合查询，避免 N+1）。
 
-    note_count 是请求者本人的笔记数（P5b 起笔记 paper × author，仅作者可见）。"""
+    - ``tags`` 是**库标签**（共享），只取本次浏览上下文 ``library_ids`` 里的那些：一篇论文
+      可能同时在多个库，不限定就会把别的库打的标签串到这里来。没有库上下文（书架 /
+      个人库 / 每日推送这类池级可达的论文）时不显示库标签——无从归属，也不该把别人库
+      的整理口径漏出去。
+    - ``my_tags`` 是请求者自己的个人标签（user_paper_tags），与库无关，任何上下文都显示。
+    - ``note_count`` 是请求者本人的笔记数（P5b 起笔记 paper × author，仅作者可见）。
+    """
     extras: dict[uuid.UUID, dict[str, Any]] = {
-        pid: {"tags": [], "starred": False, "reading_status": "unread", "note_count": 0}
+        pid: {
+            "tags": [],
+            "my_tags": [],
+            "starred": False,
+            "reading_status": "unread",
+            "note_count": 0,
+        }
         for pid in paper_ids
     }
     if not extras:
         return extras
     ids = list(extras.keys())
-    tag_rows = await session.execute(
-        select(paper_tag_links.c.paper_id, PaperTag.name)
-        .join(PaperTag, PaperTag.id == paper_tag_links.c.tag_id)
-        .where(paper_tag_links.c.paper_id.in_(ids))
-        .order_by(PaperTag.name)
+    if library_ids:
+        tag_rows = await session.execute(
+            select(paper_tag_links.c.paper_id, PaperTag.name)
+            .join(PaperTag, PaperTag.id == paper_tag_links.c.tag_id)
+            .where(paper_tag_links.c.paper_id.in_(ids), PaperTag.library_id.in_(library_ids))
+            .order_by(PaperTag.name)
+        )
+        for pid, name in tag_rows.all():
+            if name not in extras[pid]["tags"]:  # 多库上下文里同名标签只算一次
+                extras[pid]["tags"].append(name)
+    my_tag_rows = await session.execute(
+        select(UserPaperTag.paper_id, UserPaperTag.name)
+        .where(UserPaperTag.paper_id.in_(ids), UserPaperTag.user_id == user_id)
+        .order_by(UserPaperTag.name)
     )
-    for pid, name in tag_rows.all():
-        extras[pid]["tags"].append(name)
+    for pid, name in my_tag_rows.all():
+        extras[pid]["my_tags"].append(name)
     note_rows = await session.execute(
         select(PaperNote.paper_id, func.count())
         .where(PaperNote.paper_id.in_(ids), PaperNote.author_id == user_id)
@@ -563,6 +600,40 @@ async def list_library_tags(
         .order_by(PaperTag.name)
     )
     return [{"id": tid, "name": name, "paper_count": int(count)} for tid, name, count in rows]
+
+
+async def set_user_paper_tags(
+    session: AsyncSession, *, paper_id: uuid.UUID, user_id: uuid.UUID, names: list[str]
+) -> list[str]:
+    """整组覆盖某人给某篇打的**个人标签**（空数组=清空），返回排序后的标签名。
+
+    与库标签的整组覆盖（:func:`set_paper_tags`）互不影响：这里只删改
+    (user_id, paper_id) 这一格，别人给同一篇打的个人标签、以及库标签都不动。
+    名字内联存，删掉最后一处引用就没了，不需要额外的零引用回收。
+    """
+    cleaned = list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
+    await session.execute(
+        delete(UserPaperTag).where(
+            UserPaperTag.paper_id == paper_id, UserPaperTag.user_id == user_id
+        )
+    )
+    for name in cleaned:
+        session.add(UserPaperTag(paper_id=paper_id, user_id=user_id, name=name))
+    await session.commit()
+    return sorted(cleaned)
+
+
+async def list_user_paper_tags(
+    session: AsyncSession, *, user_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """「我的所有标签」（含标了几篇），按名称排序——给前端的筛选下拉 / 输入建议用。"""
+    rows = await session.execute(
+        select(UserPaperTag.name, func.count(UserPaperTag.paper_id))
+        .where(UserPaperTag.user_id == user_id)
+        .group_by(UserPaperTag.name)
+        .order_by(UserPaperTag.name)
+    )
+    return [{"name": name, "paper_count": int(count)} for name, count in rows]
 
 
 async def upsert_paper_user_meta(

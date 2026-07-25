@@ -20,6 +20,7 @@ import { AffiliationChips, AuthorLinks } from '../wiki/shared';
 import {
   ConceptChips,
   PaperMyMetaRow,
+  PaperMyTagsRow,
   PaperNotesSection,
   PaperTagsRow,
   WikiHeaderActions,
@@ -502,8 +503,16 @@ export function ShelfDetailPane({
         />
       )}
 
-      {/* —— 标签（只读展示，编辑在文献工作台） —— */}
+      {/* —— 标签：库标签只读（编辑在文献工作台）+ 我的标签就地改 —— */}
       <PaperTagsRow tags={paper?.tags} />
+      {paper && (
+        <PaperMyTagsRow
+          paperId={item.paper_id}
+          myTags={paper.my_tags}
+          detailKey={detailKey}
+          invalidateKeys={listKeys}
+        />
+      )}
 
       {/* —— 课题备注：为什么相关（仅书架内论文；这条是课题里公开的说明） —— */}
       {onShelf && <NoteEditor key={item.paper_id} note={item.note} pending={notePending} onSave={onSaveNote} />}

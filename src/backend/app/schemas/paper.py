@@ -61,7 +61,8 @@ class PaperRead(BaseModel):
     compiled_at: datetime | None = None  # wiki 编译时间；未编译为 null
     compiled_model: str | None = None  # 编译所用模型名；未编译/存量数据为 null
     # 以下字段不来自 ORM 属性，由 service 层聚合查询后回填（见 papers.paper_extras_map）
-    tags: list[str] = []
+    tags: list[str] = []  # 库标签（共享）：本次浏览的库里打的；无库上下文时为空
+    my_tags: list[str] = []  # 个人标签：只有本人看得到、改得了
     starred: bool = False  # 当前用户视角
     reading_status: str = "unread"  # 当前用户视角：unread | reading | read
     note_count: int = 0
@@ -162,6 +163,23 @@ class PaperTagsUpdate(BaseModel):
 
 class TagRead(BaseModel):
     id: uuid.UUID
+    name: str
+    paper_count: int = 0
+
+
+class PaperMyTagsUpdate(BaseModel):
+    """整组覆盖当前用户对这篇的个人标签；空数组=清空。"""
+
+    names: list[str]
+
+
+class PaperMyTagsRead(BaseModel):
+    my_tags: list[str] = []
+
+
+class MyTagRead(BaseModel):
+    """「我的所有标签」一行（个人标签没有独立实体，所以只有名字 + 篇数）。"""
+
     name: str
     paper_count: int = 0
 

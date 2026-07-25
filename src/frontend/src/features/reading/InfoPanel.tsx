@@ -14,6 +14,7 @@ import { clickable } from '../../lib/a11y';
 import { api, type PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { topicPath } from '../../app/project';
+import { PaperMyTagsRow, PaperTagsRow } from '../shared/PaperDetailBlocks';
 
 /* ============================================================
    阅读工作台 · 论文信息面板（PaperDetailPane 的精简版）：
@@ -181,16 +182,9 @@ export function InfoPanel({
         </MetaItem>
       </div>
 
-      {/* —— 标签 —— */}
-      {(paper.tags?.length ?? 0) > 0 && (
-        <div className="row gap6 wrap" style={{ marginTop: 12 }}>
-          {paper.tags!.map((t) => (
-            <span key={t} className="tag">
-              {t}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* —— 标签：库标签只读（编辑在文献工作台）+ 我的标签边读边打 —— */}
+      <PaperTagsRow tags={paper.tags} style={{ marginTop: 12 }} />
+      <PaperMyTagsRow paperId={paper.id} myTags={paper.my_tags} detailKey={['paper', paper.id]} />
 
       {/* —— 概念 chips —— */}
       {paper.concepts.length > 0 && (

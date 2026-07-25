@@ -25,6 +25,7 @@ from app.models.paper import (
     PaperNote,
     PaperTag,
     PaperUserMeta,
+    UserPaperTag,
     paper_concepts,
     paper_tag_links,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "User",
     "UserAuthorProfile",
     "UserLibraryEntry",
+    "UserPaperTag",
     "UserPublication",
     "UUIDPrimaryKeyMixin",
     "VoyageRun",

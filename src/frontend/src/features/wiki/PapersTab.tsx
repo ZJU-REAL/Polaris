@@ -40,6 +40,7 @@ import {
   useDebounced,
 } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
+import { PaperMyTagsRow, PaperTagChips } from '../shared/PaperDetailBlocks';
 import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { AddToButton } from '../library/AddToPopover';
 import { PaperProgressModal } from '../library/PaperProgressModal';
@@ -590,7 +591,6 @@ const PaperRow = memo(function PaperRow({
   onClick: () => void;
   onToggleCheck: () => void;
 }) {
-  const tags = p.tags ?? [];
   return (
     <div
       onClick={onClick}
@@ -636,20 +636,7 @@ const PaperRow = memo(function PaperRow({
       <div className="row gap8" style={{ marginTop: 6 }}>
         <PaperStatusPill status={p.status} sm />
         <ReadingDot status={p.reading_status} />
-        {tags.slice(0, 2).map((t) => (
-          <span
-            key={t}
-            className="tag"
-            style={{ fontSize: 10, height: 17, padding: '0 6px', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', lineHeight: '17px' }}
-          >
-            {t}
-          </span>
-        ))}
-        {tags.length > 2 && (
-          <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
-            +{tags.length - 2}
-          </span>
-        )}
+        <PaperTagChips tags={p.tags} myTags={p.my_tags} />
         {(p.note_count ?? 0) > 0 && (
           <span
             className="row"
@@ -682,7 +669,7 @@ const PaperRow = memo(function PaperRow({
   prev.p === next.p && prev.active === next.active && prev.checked === next.checked && prev.selectMode === next.selectMode,
 );
 
-/* ---------------- 标签就地编辑 ---------------- */
+/* ---------------- 库标签就地编辑（共享资产：同库的人看到同一套） ---------------- */
 
 function TagEditor({ paper, scopeId }: { paper: PaperDetail; scopeId: string }) {
   const queryClient = useQueryClient();
@@ -711,8 +698,13 @@ function TagEditor({ paper, scopeId }: { paper: PaperDetail; scopeId: string }) 
 
   return (
     <div className="row gap6 wrap" style={{ marginTop: 14 }}>
-      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}>
-        {tr('标签', 'Tags')}
+      <span
+        className="row gap6 mono"
+        style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}
+        title={tr('整个文献库共用一套，同库的人都看得到', 'Shared across the library — everyone in it sees these')}
+      >
+        <Icon name="users" size={11} />
+        {tr('库标签', 'Library tags')}
       </span>
       {tags.map((t) => (
         <span key={t} className="tag" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -746,10 +738,10 @@ function TagEditor({ paper, scopeId }: { paper: PaperDetail; scopeId: string }) 
       ) : (
         <span
           className="chip"
-          style={{ fontSize: 11, opacity: putMutation.isPending ? 0.5 : 1 }}
+          style={{ fontSize: 11, height: 20, opacity: putMutation.isPending ? 0.5 : 1 }}
           onClick={() => !putMutation.isPending && setAdding(true)}
         >
-          <Icon name="plus" size={10} style={{ display: 'inline-block', verticalAlign: -1 }} /> {tr('标签', 'Tag')}
+          <Icon name="plus" size={10} style={{ display: 'inline-block', verticalAlign: -1 }} /> {tr('加标签', 'Add tag')}
         </span>
       )}
     </div>
@@ -1018,8 +1010,14 @@ function PaperDetailPane({
         </span>
       </div>
 
-      {/* —— 标签（就地编辑；库作用域，课题/独立库通用） —— */}
+      {/* —— 标签：库标签（库作用域，同库的人共用）+ 我的标签（只有自己看得到） —— */}
       <TagEditor paper={paper} scopeId={scopeId} />
+      <PaperMyTagsRow
+        paperId={paper.id}
+        myTags={paper.my_tags}
+        detailKey={['paper', scopeId, paper.id]}
+        invalidateKeys={[['papers', scopeId]]}
+      />
 
       {/* —— frontmatter 风格元数据卡 —— */}
       <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
@@ -1209,6 +1207,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
 
   // —— 文献管理增强过滤器 ——
   const [tagFilter, setTagFilter] = useState('');
+  const [myTagFilter, setMyTagFilter] = useState('');
   const [readingFilter, setReadingFilter] = useState<'' | ReadingStatus>('');
   const [addOpen, setAddOpen] = useState(false);
   // 高级检索（作者/机构/发表时间/入库时间）
@@ -1264,7 +1263,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
-  }, [scopeId, view, q, tagFilter, readingFilter]);
+  }, [scopeId, view, q, tagFilter, myTagFilter, readingFilter]);
 
   // 重新编译：同步等着（约 1 分钟），用户很可能切走再切回来。
   // 进行中状态按 paper id 记在列表页这一层：详情面板换论文不会丢，多篇同时编译也各记各的。
@@ -1324,15 +1323,20 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   });
   const projectTags = tagsQuery.data ?? [];
 
+  // —— 我的标签（过滤下拉用；跨库共用一份，所以 queryKey 不带 scopeId） ——
+  const myTagsQuery = useQuery({ queryKey: ['my-tags'], queryFn: () => api.listMyTags(), retry: false });
+  const myTags = myTagsQuery.data ?? [];
+
   // —— 关键词/浏览：分页列表 ——
   const listQuery = useInfiniteQuery({
-    queryKey: ['papers', scopeId, view, q, sort, tagFilter, readingFilter, author, affiliation, advPubFrom, advPubTo, advCreatedFrom, advCreatedTo],
+    queryKey: ['papers', scopeId, view, q, sort, tagFilter, myTagFilter, readingFilter, author, affiliation, advPubFrom, advPubTo, advCreatedFrom, advCreatedTo],
     queryFn: ({ pageParam }) => {
       const opts = {
         ...viewQuery(view),
         q: q || undefined,
         sort,
         tag: tagFilter || undefined,
+        my_tag: myTagFilter || undefined,
         reading_status: readingFilter || undefined,
         author: author || undefined,
         affiliation: affiliation || undefined,
@@ -1371,7 +1375,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   const isError = semanticActive ? semQuery.isError : listQuery.isError;
   const fallbackNotice = semanticActive && semQuery.data && semQuery.data.mode_used === 'keyword';
 
-  const hasFilter = !!q || view !== 'all' || !!tagFilter || !!readingFilter || advActive;
+  const hasFilter = !!q || view !== 'all' || !!tagFilter || !!myTagFilter || !!readingFilter || advActive;
 
   // 列表变化后自动选中第一篇
   const firstId = papers[0]?.id ?? null;
@@ -1519,18 +1523,32 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               {tr('回收站', 'Trash')}
             </span>
           </div>
-          {/* 标签（库作用域，课题/独立库通用）/ 阅读状态过滤 */}
+          {/* 库标签（库作用域，课题/独立库通用）/ 我的标签 / 阅读状态过滤 */}
           <div className="row gap6" style={{ marginTop: 8, ...filterDisabled }}>
             <select
               className="input"
               style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
               value={tagFilter}
               onChange={(e) => setTagFilter(e.target.value)}
-              title={tr('按标签过滤', 'Filter by tag')}
+              title={tr('按库标签过滤（同库的人共用一套）', 'Filter by library tag (shared across the library)')}
             >
-              <option value="">{tr('全部标签', 'All tags')}</option>
+              <option value="">{tr('全部库标签', 'All library tags')}</option>
               {projectTags.map((t) => (
                 <option key={t.id} value={t.name}>
+                  {t.name}（{t.paper_count}）
+                </option>
+              ))}
+            </select>
+            <select
+              className="input"
+              style={{ height: 26, fontSize: 11.5, flex: 1, minWidth: 0, padding: '0 6px' }}
+              value={myTagFilter}
+              onChange={(e) => setMyTagFilter(e.target.value)}
+              title={tr('按我的标签过滤（只有你自己看得到）', 'Filter by my tag (only you can see these)')}
+            >
+              <option value="">{tr('全部我的标签', 'All my tags')}</option>
+              {myTags.map((t) => (
+                <option key={t.name} value={t.name}>
                   {t.name}（{t.paper_count}）
                 </option>
               ))}
