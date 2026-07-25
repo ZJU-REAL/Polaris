@@ -152,6 +152,8 @@ export const router = createBrowserRouter([
       { path: 'projects/:id', element: <ProjectSettingsRedirect /> },
       { path: 'join/:token', element: page(() => import('../features/projects/JoinPage'), 'JoinPage') },
       { path: 'library', element: page(() => import('../features/library/LibraryPage'), 'LibraryPage') },
+      // 实验室工作台：实验室资源概况 + 全部任务（含 project_id 为空的课题外任务）
+      { path: 'lab', element: page(() => import('../features/lab/LabPage'), 'LabPage') },
       // 实验室区：共享方向文献库（全实验室可读，无需课题）
       { path: 'libraries', element: page(() => import('../features/libraries/LibrariesPage'), 'LibrariesPage') },
       { path: 'libraries/:id', element: page(() => import('../features/libraries/LibraryDetailPage'), 'LibraryDetailPage') },

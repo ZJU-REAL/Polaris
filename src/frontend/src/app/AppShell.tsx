@@ -90,6 +90,7 @@ function crumbFor(pathname: string): [string, string] {
     '/skills': ['Polaris', tr('技能', 'Skills')],
     '/settings': ['Polaris', tr('设置', 'Settings')],
     '/admin': ['Polaris', tr('管理', 'Manage')],
+    '/lab': ['Polaris', tr('实验室工作台', 'Lab Workbench')],
   };
   return table[p] ?? ['Polaris', '—'];
 }
@@ -590,6 +591,16 @@ export function AppShell() {
             <span>{tr('搜索论文 / 想法 / 实验…', 'Search papers / ideas / experiments…')}</span>
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
           </div>
+          {/* 实验室工作台入口（所有登录用户可见）：实验室资源概况 + 课题外任务 */}
+          <button
+            className="icon-btn"
+            onClick={() => navigate('/lab')}
+            title={tr('实验室工作台', 'Lab Workbench')}
+            aria-label={tr('实验室工作台', 'Lab Workbench')}
+            style={location.pathname === '/lab' ? { color: 'var(--accent)', background: 'var(--surface-2)' } : undefined}
+          >
+            <Icon name="flask" size={16} />
+          </button>
           {/* 管理员设置入口（仅管理员可见） */}
           {isAdmin(me) && (
             <button

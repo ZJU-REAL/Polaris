@@ -389,7 +389,10 @@ export interface VoyageRead {
   cursor: number | null;
   budget: Record<string, unknown> | null;
   usage: Record<string, unknown> | null;
-  project_id: string;
+  /** 归属课题；课题外任务（独立文献库的建库/同步等）为 null */
+  project_id: string | null;
+  /** 归属文献库；课题任务为 null */
+  library_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

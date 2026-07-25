@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
@@ -16,9 +16,9 @@ import { tr } from '../../lib/i18n';
    迷你进度条/耗时/状态）。任务由建库/想法/实验等业务动作发起。
    ============================================================ */
 
-type Filter = 'all' | 'active' | 'paused' | 'done' | 'failed';
+export type Filter = 'all' | 'active' | 'paused' | 'done' | 'failed';
 
-const FILTERS: { v: Filter; zh: string; en: string }[] = [
+export const FILTERS: { v: Filter; zh: string; en: string }[] = [
   { v: 'all', zh: '全部', en: 'All' },
   { v: 'active', zh: '进行中', en: 'Active' },
   { v: 'paused', zh: '等待中', en: 'Waiting' },
@@ -29,7 +29,7 @@ const FILTERS: { v: Filter; zh: string; en: string }[] = [
 /** 正在推进中的状态（列表行左缘蓝条 + 淡蓝底 + 进度条动画）。 */
 const RUNNING_STATUSES: ReadonlySet<string> = new Set(['planning', 'executing', 'verifying', 'replanning']);
 
-function matchFilter(v: VoyageRead, f: Filter): boolean {
+export function matchFilter(v: VoyageRead, f: Filter): boolean {
   switch (f) {
     case 'all':
       return true;
@@ -53,7 +53,7 @@ interface KindMeta {
   tx: string;
 }
 
-const KIND_META: Record<string, KindMeta> = {
+export const KIND_META: Record<string, KindMeta> = {
   wiki_bootstrap: { zh: '初始建库', en: 'Initial library build', icon: 'book', bg: 'var(--info-bg)', tx: 'var(--info-tx)' },
   wiki_ingest: { zh: '增量更新', en: 'Incremental sync', icon: 'refresh', bg: 'var(--accent-soft)', tx: 'var(--accent-text)' },
   idea_forge: { zh: '想法生成', en: 'Idea forge', icon: 'bulb', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' },
@@ -114,8 +114,58 @@ function StepProgress({ v }: { v: VoyageRead }) {
   );
 }
 
+/**
+ * 任务列表的一行：类型徽章 / 目标 + id + 相对时间 / 进度 / 耗时 / 状态。
+ * 课题工作台「任务」标签与实验室工作台「任务」标签共用（外层各自套 .table-wrap）。
+ */
+export function VoyageRow({ v, first }: { v: VoyageRead; first?: boolean }) {
+  const navigate = useNavigate();
+  const active = !VOYAGE_TERMINAL.has(v.status);
+  const running = RUNNING_STATUSES.has(v.status);
+  return (
+    <div
+      className={`voyage-row${running ? ' running' : ''}`}
+      onClick={() => navigate(`/voyages/${v.id}`)}
+      style={{ borderTop: first ? 'none' : '0.5px solid var(--border)' }}
+    >
+      <KindBadge kind={v.kind} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          title={v.goal}
+          style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
+          {v.goal}
+        </div>
+        <div className="row gap8" style={{ marginTop: 4 }}>
+          <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{v.id.slice(0, 8)}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }} title={fmtFullTime(v.created_at)}>
+            · {fmtRelative(v.created_at)}
+          </span>
+        </div>
+      </div>
+      <span style={{ width: 130, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+        <StepProgress v={v} />
+      </span>
+      <span
+        className="mono"
+        style={{
+          fontSize: 11.5, color: 'var(--text-3)', width: 78, flexShrink: 0,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
+        }}
+      >
+        <Icon name="clock" size={11} />
+        {fmtDuration(v.created_at, active ? null : v.updated_at)}
+      </span>
+      <span style={{ width: 134, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+        <StatusPill status={v.status} sm />
+      </span>
+      <Icon name="chevron" size={14} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
+    </div>
+  );
+}
+
 /** 加载骨架：shimmer 行，占位结构与真实行一致。 */
-function SkeletonRows() {
+export function SkeletonRows() {
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       {[0, 1, 2, 3].map((i) => (
@@ -138,9 +188,13 @@ function SkeletonRows() {
   );
 }
 
-/** 任务列表主体（过滤条 + 列表）：无自身 PageHead / 页壳，供工作台「任务」标签内嵌。 */
-export function VoyagesList() {
-  const navigate = useNavigate();
+/**
+ * 任务列表主体（过滤条 + 列表）：无自身 PageHead / 页壳，供工作台「任务」标签内嵌。
+ * - `showScopeSwitch`：是否显示「当前课题 / 全部课题」切换器。课题工作台里固定看本课题
+ *   （课题外的任务在 /lab 的「任务」标签按类型分组看），所以默认关闭。
+ * - `labLink`：底部是否显示「课题外的任务在实验室工作台」引导（课题工作台用）。
+ */
+export function VoyagesList({ showScopeSwitch = false, labLink = false }: { showScopeSwitch?: boolean; labLink?: boolean } = {}) {
   const { currentProjectId } = useProject();
 
   const [filter, setFilter] = useState<Filter>('all');
@@ -175,15 +229,19 @@ export function VoyagesList() {
                 <option key={k} value={k}>{tr(m.zh, m.en)}</option>
               ))}
             </select>
-            <div style={{ flex: 1 }} />
-            <Segmented
-              options={[
-                { v: 'current' as const, label: tr('当前课题', 'Current topic') },
-                { v: 'all' as const, label: tr('全部课题', 'All topics') },
-              ]}
-              value={scope}
-              onChange={setScope}
-            />
+            {showScopeSwitch && (
+              <>
+                <div style={{ flex: 1 }} />
+                <Segmented
+                  options={[
+                    { v: 'current' as const, label: tr('当前课题', 'Current topic') },
+                    { v: 'all' as const, label: tr('全部课题', 'All topics') },
+                  ]}
+                  value={scope}
+                  onChange={setScope}
+                />
+              </>
+            )}
           </div>
 
           {isLoading ? (
@@ -220,52 +278,20 @@ export function VoyagesList() {
             <div className="card" style={{ overflow: 'hidden' }}>
               {/* 行内定宽列合计放不下窄屏，整块横滚而不是把中间的标题列挤成 0 宽 */}
               <div className="table-wrap">
-              {voyages.map((v, i) => {
-                const active = !VOYAGE_TERMINAL.has(v.status);
-                const running = RUNNING_STATUSES.has(v.status);
-                return (
-                  <div
-                    key={v.id}
-                    className={`voyage-row${running ? ' running' : ''}`}
-                    onClick={() => navigate(`/voyages/${v.id}`)}
-                    style={{ borderTop: i > 0 ? '0.5px solid var(--border)' : 'none' }}
-                  >
-                    <KindBadge kind={v.kind} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        title={v.goal}
-                        style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      >
-                        {v.goal}
-                      </div>
-                      <div className="row gap8" style={{ marginTop: 4 }}>
-                        <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{v.id.slice(0, 8)}</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-3)' }} title={fmtFullTime(v.created_at)}>
-                          · {fmtRelative(v.created_at)}
-                        </span>
-                      </div>
-                    </div>
-                    <span style={{ width: 130, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-                      <StepProgress v={v} />
-                    </span>
-                    <span
-                      className="mono"
-                      style={{
-                        fontSize: 11.5, color: 'var(--text-3)', width: 78, flexShrink: 0,
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
-                      }}
-                    >
-                      <Icon name="clock" size={11} />
-                      {fmtDuration(v.created_at, active ? null : v.updated_at)}
-                    </span>
-                    <span style={{ width: 134, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-                      <StatusPill status={v.status} sm />
-                    </span>
-                    <Icon name="chevron" size={14} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
-                  </div>
-                );
-              })}
+                {voyages.map((v, i) => (
+                  <VoyageRow key={v.id} v={v} first={i === 0} />
+                ))}
               </div>
+            </div>
+          )}
+
+          {labLink && (
+            <div className="row gap6" style={{ marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
+              <Icon name="flask" size={13} style={{ flexShrink: 0 }} />
+              <span>{tr('这里只看当前课题的任务；课题外的任务（建库、每日新论文等）在', 'Only this topic’s tasks are listed here. Tasks outside topics (library builds, daily papers, …) live in the')}</span>
+              <Link to="/lab?tab=tasks" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                {tr('实验室工作台', 'Lab Workbench')}
+              </Link>
             </div>
           )}
     </>
@@ -280,7 +306,7 @@ export function VoyagesPage() {
         title={tr('任务', 'Tasks')}
         sub={tr('需要人工审批时任务会自动暂停，审批通过后继续执行。', 'Tasks pause automatically when they need approval, then resume once approved.')}
       />
-      <VoyagesList />
+      <VoyagesList showScopeSwitch />
     </div>
   );
 }

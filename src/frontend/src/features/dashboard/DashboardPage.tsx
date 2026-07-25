@@ -709,7 +709,8 @@ export function DashboardPage() {
           <div className="empty" style={{ padding: 60 }}>{tr('请先选择一个课题', 'Pick a topic first')}</div>
         ))}
 
-      {tab === 'tasks' && <VoyagesList />}
+      {/* 课题工作台只看本课题的任务；课题外任务在 /lab（底部引导链接） */}
+      {tab === 'tasks' && <VoyagesList labLink />}
     </div>
   );
 }
