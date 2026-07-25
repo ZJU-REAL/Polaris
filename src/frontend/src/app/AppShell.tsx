@@ -40,7 +40,7 @@ const NAV_LAB: NavEntry[] = [
 ];
 
 const NAV_MAIN: NavEntry[] = [
-  { icon: 'dashboard', zh: '工作台', en: 'Workbench' },
+  { icon: 'dashboard', zh: '课题工作台', en: 'Topic Workbench' },
   { sub: 'research', icon: 'pin', zh: '相关研究', en: 'Related Work' },
 ];
 
@@ -65,7 +65,7 @@ function crumbFor(pathname: string): [string, string] {
   // 课题作用域路径统一去掉 /t/<topicId> 前缀后按旧表匹配
   const scoped = /^\/t\/[^/]+(\/.*)?$/.exec(pathname);
   const p = scoped ? (scoped[1] ?? '/') : pathname;
-  if (p === '/') return ['Polaris', tr('工作台', 'Workbench')];
+  if (p === '/') return ['Polaris', tr('课题工作台', 'Topic Workbench')];
   if (p === '/start') return ['Polaris', tr('选择课题', 'Pick a topic')];
   if (p === '/projects/new') return [tr('课题', 'Topics'), tr('新建课题', 'New topic')];
   if (p.startsWith('/projects/')) return [tr('课题', 'Topics'), tr('课题设置', 'Topic settings')];
