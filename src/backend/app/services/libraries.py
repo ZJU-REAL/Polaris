@@ -25,7 +25,7 @@ from app.models.library_direction import (
     LibraryPaper,
     TopicSourceLibrary,
 )
-from app.models.paper import Paper, PaperWiki, paper_concepts
+from app.models.paper import CONCEPT_STATUS_ACTIVE, Concept, Paper, PaperWiki, paper_concepts
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 
@@ -321,14 +321,19 @@ async def _library_stats(
     for lib_id, count, compiled_at in paper_rows.all():
         paper_counts[lib_id] = int(count)
         last_compiled[lib_id] = compiled_at
-    # 概念是全平台一份、不属于任何库：库的概念数 = 库内论文关联到的概念去重计数
+    # 概念是全平台一份、不属于任何库：库的概念数 = 库内论文关联到的**正式**概念去重计数
+    # （候选词条不对用户可见，也就不该计入库卡片上的概念数）
     concept_rows = await session.execute(
         select(
             LibraryPaper.library_id,
             func.count(func.distinct(paper_concepts.c.concept_id)),
         )
         .join(paper_concepts, paper_concepts.c.paper_id == LibraryPaper.paper_id)
-        .where(LibraryPaper.library_id.in_(library_ids))
+        .join(Concept, Concept.id == paper_concepts.c.concept_id)
+        .where(
+            LibraryPaper.library_id.in_(library_ids),
+            Concept.status == CONCEPT_STATUS_ACTIVE,
+        )
         .group_by(LibraryPaper.library_id)
     )
     concept_counts = {lib_id: int(count) for lib_id, count in concept_rows.all()}
@@ -422,7 +427,6 @@ async def list_libraries_overview(
     paper_counts, last_compiled, concept_counts = await _library_stats(
         session, [lib.id for lib in libraries]
     )
-    my_projects = await _my_project_ids(session, user.id)
     my_linked = await _my_linked_library_ids(session, user.id)
     my_curated = await _my_curated_library_ids(session, user.id)
     owner_names = await _owner_names(session, (lib.submitted_by for lib in libraries))
@@ -441,11 +445,8 @@ async def list_libraries_overview(
             _overview_dict(
                 lib,
                 my_linked=my_linked,
-                can_manage=(
-                    user.role == "admin"
-                    or lib.id in my_curated
-                    or lib.submitted_by == user.id
-                    or (lib.project_id is not None and lib.project_id in my_projects)
+                can_manage=can_manage_library_row(
+                    user=user, library=lib, curated_ids=my_curated
                 ),
                 paper_count=paper_counts.get(lib.id, 0),
                 concept_count=concept_counts.get(lib.id, 0),
@@ -493,7 +494,6 @@ async def source_libraries_overview(
     libraries = await get_source_libraries(session, topic_id)
     ids = [lib.id for lib in libraries]
     paper_counts, last_compiled, concept_counts = await _library_stats(session, ids)
-    my_projects = await _my_project_ids(session, user.id)
     my_linked = await _my_linked_library_ids(session, user.id)
     my_curated = await _my_curated_library_ids(session, user.id)
     owner_names = await _owner_names(session, (lib.submitted_by for lib in libraries))
@@ -501,11 +501,8 @@ async def source_libraries_overview(
         _overview_dict(
             lib,
             my_linked=my_linked,
-            can_manage=(
-                user.role == "admin"
-                or lib.id in my_curated
-                or lib.submitted_by == user.id
-                or (lib.project_id is not None and lib.project_id in my_projects)
+            can_manage=can_manage_library_row(
+                user=user, library=lib, curated_ids=my_curated
             ),
             paper_count=paper_counts.get(lib.id, 0),
             concept_count=concept_counts.get(lib.id, 0),
@@ -866,6 +863,23 @@ async def can_manage_library(
     if library.submitted_by is not None and library.submitted_by == user.id:
         return True
     return await is_library_curator(session, library_id=library.id, user_id=user.id)
+
+
+def can_manage_library_row(
+    *, user: User, library: DirectionLibrary, curated_ids: set[uuid.UUID]
+) -> bool:
+    """:func:`can_manage_library` 的同步批量版：规则一字不差，只是策展人判定由
+    调用方一次查好（``curated_ids`` = 该用户策展的全部库 id）。
+
+    列表页逐库 await 会变成 N 次查询，所以有这个版本；但规则**只能有一份**——
+    两处各写各的正是此前「同一个库在列表里能管、点进详情不能管」的来源。
+    改动规则时两个函数一起改。
+    """
+    if user.role == "admin":
+        return True
+    if library.submitted_by is not None and library.submitted_by == user.id:
+        return True
+    return library.id in curated_ids
 
 
 async def get_managed_project(
