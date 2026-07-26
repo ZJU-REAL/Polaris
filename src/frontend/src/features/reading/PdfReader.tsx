@@ -192,7 +192,15 @@ export function PdfReader({
   jumpTarget,
 }: PdfReaderProps) {
   const queryClient = useQueryClient();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // 用回调 ref 而不是裸 useRef：滚动容器不是一挂载就存在的（论文原本没有 PDF、
+  // 点「获取 PDF」后 pdf_available 才翻 true，容器这时才出现）。effect 只依赖 mode
+  // 的话不会重跑，pageWidth 停在 0，一页都不渲染——表现就是整片深色背景。
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const attachScroll = useCallback((el: HTMLDivElement | null) => {
+    scrollRef.current = el;
+    setScrollEl(el);
+  }, []);
   const pageWrapRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [numPages, setNumPages] = useState(0);
   const [pageWidth, setPageWidth] = useState(0);
@@ -258,21 +266,21 @@ export function PdfReader({
 
   // 容器宽度 → 页宽（划线归一化存储，宽度变化自动跟随，无需重存）
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = scrollEl;
     if (!el) return;
     const measure = () => setPageWidth(Math.max(280, el.clientWidth - 28));
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [mode]); // 从标准模式切回时容器重新挂载，需重新测量并观察
+  }, [scrollEl, mode]); // 容器每次挂载都要重新测量并观察
 
   // 触控板双指捏合 / Ctrl(⌘)+滚轮 缩放：浏览器默认会整页缩放，这里拦下来只缩放 PDF。
   // 捏合手势在浏览器里表现为 ctrlKey=true 的 wheel 事件；必须用 passive:false 才能 preventDefault。
   // 每个 wheel 事件都改 scale 会让 react-pdf 每秒重渲染整页画布几十次而卡顿——这里改成
   // 离散步进：攒够一定手势量才跳一档（±ZOOM_STEP），缩放变「一档一档」但不再卡。
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = scrollEl;
     if (!el || mode !== 'annotate') return;
     const WHEEL_THRESHOLD = 45; // 累积 deltaY 达到此值才跳一档
     const onWheel = (e: WheelEvent) => {
@@ -288,7 +296,7 @@ export function PdfReader({
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [mode]);
+  }, [scrollEl, mode]);
 
   // 换论文：渲染集合与页高缓存都要清掉，否则新文档沿用旧页高、占位块高度全错
   useEffect(() => {
@@ -300,7 +308,7 @@ export function PdfReader({
   // 视口观察：页容器进出可视区（上下各留一屏余量）时增减渲染集合
   const pageObserver = useRef<IntersectionObserver | null>(null);
   useEffect(() => {
-    const root = scrollRef.current;
+    const root = scrollEl;
     if (!root || mode !== 'annotate') return;
     const io = new IntersectionObserver(
       (entries) => {
@@ -329,7 +337,7 @@ export function PdfReader({
       io.disconnect();
       pageObserver.current = null;
     };
-  }, [mode, numPages]);
+  }, [scrollEl, mode, numPages]);
 
   const fetchPdfMutation = useMutation({
     mutationFn: () => api.requestPaperPdf(paper.id),
@@ -594,7 +602,7 @@ export function PdfReader({
         )
       ) : (
     <div
-      ref={scrollRef}
+      ref={attachScroll}
       className="scroll"
       onMouseUp={onMouseUp}
       onMouseDown={() => setPending(null)}
