@@ -197,6 +197,10 @@ export function PdfReader({
   const [mode, setMode] = useState<ReaderMode>('annotate'); // 标注阅读器 / 标准浏览器
   const [url, setUrl] = useState<string | null>(null);
   const [loadPct, setLoadPct] = useState<number | null>(null); // 整包下载时的进度，null = 还没有进度事件
+  // 只渲染视口附近的页：每挂一个 <Page> 就要取那一页的数据，全挂等于把整份 PDF 下完，
+  // 分段加载就白做了。未渲染的页留一个等高占位块，滚动条长度和跳转位置都不受影响。
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set([1]));
+  const pageHeights = useRef<Map<number, number>>(new Map()); // 渲染过的实际高度，占位块照它来
   const [pending, setPending] = useState<Pending | null>(null);
   const [pendingStyle, setPendingStyle] = useState<HighlightStyle>('highlight');
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -282,6 +286,47 @@ export function PdfReader({
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [mode]);
+
+  // 换论文：渲染集合与页高缓存都要清掉，否则新文档沿用旧页高、占位块高度全错
+  useEffect(() => {
+    setVisiblePages(new Set([1]));
+    pageHeights.current.clear();
+    setNumPages(0);
+  }, [paper.id]);
+
+  // 视口观察：页容器进出可视区（上下各留一屏余量）时增减渲染集合
+  const pageObserver = useRef<IntersectionObserver | null>(null);
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || mode !== 'annotate') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        setVisiblePages((prev) => {
+          const next = new Set(prev);
+          let changed = false;
+          for (const e of entries) {
+            const n = Number((e.target as HTMLElement).dataset.page);
+            if (!n) continue;
+            if (e.isIntersecting && !next.has(n)) {
+              next.add(n);
+              changed = true;
+            } else if (!e.isIntersecting && next.has(n) && n !== 1) {
+              next.delete(n);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      },
+      { root, rootMargin: '150% 0px' },
+    );
+    pageObserver.current = io;
+    for (const el of pageWrapRefs.current.values()) io.observe(el);
+    return () => {
+      io.disconnect();
+      pageObserver.current = null;
+    };
+  }, [mode, numPages]);
 
   const fetchPdfMutation = useMutation({
     mutationFn: () => api.requestPaperPdf(paper.id),
@@ -581,24 +626,34 @@ export function PdfReader({
             return (
               <div
                 key={pageNo}
+                data-page={pageNo}
                 ref={(el) => {
-                  if (el) pageWrapRefs.current.set(pageNo, el);
-                  else pageWrapRefs.current.delete(pageNo);
+                  if (el) {
+                    pageWrapRefs.current.set(pageNo, el);
+                    pageObserver.current?.observe(el);
+                  } else pageWrapRefs.current.delete(pageNo);
                 }}
                 style={{ position: 'relative', width: renderWidth, margin: '0 auto 14px', boxShadow: '0 2px 10px rgba(0,0,0,0.4)' }}
               >
-                <Page
-                  pageNumber={pageNo}
-                  width={renderWidth}
-                  renderTextLayer
-                  renderAnnotationLayer={false}
-                  loading={
-                    <div
-                      className="pulse"
-                      style={{ width: renderWidth, height: renderWidth * 1.29, background: 'var(--surface-3)' }}
-                    />
-                  }
-                />
+                {visiblePages.has(pageNo) ? (
+                  <Page
+                    pageNumber={pageNo}
+                    width={renderWidth}
+                    renderTextLayer
+                    renderAnnotationLayer={false}
+                    onRenderSuccess={({ height }) => pageHeights.current.set(pageNo, height)}
+                    loading={
+                      <div
+                        className="pulse"
+                        style={{ width: renderWidth, height: pageHeights.current.get(pageNo) ?? renderWidth * 1.29, background: 'var(--surface-3)' }}
+                      />
+                    }
+                  />
+                ) : (
+                  <div
+                    style={{ width: renderWidth, height: pageHeights.current.get(pageNo) ?? renderWidth * 1.29, background: 'var(--surface-3)' }}
+                  />
+                )}
                 {/* 标注覆盖层：容器不吃事件，标注单独可点。按样式渲染高亮块/下划线/波浪线 */}
                 <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
                   {pageHls.map((h) => {
