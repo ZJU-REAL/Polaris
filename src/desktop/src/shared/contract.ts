@@ -72,6 +72,8 @@ export interface UpdateInfo {
   contract?: number;
   downloadUrl?: string;
   downloadSize?: number;
+  /** 整包安装器地址；热更新装不上时退回它。 */
+  installerUrl?: string;
 }
 
 /** 服务器连通性探测结果（打 GET {url}/api/health）。 */

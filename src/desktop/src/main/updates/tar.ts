@@ -50,10 +50,18 @@ export function extractTarGz(archive: Buffer, destination: string): string[] {
     const size = readOctal(header, 124, 12);
     const typeflag = readString(header, 156, 1) || '0';
     const prefix = readString(header, 345, 155);
-    const rel = prefix ? `${prefix}/${name}` : name;
+    const raw = prefix ? `${prefix}/${name}` : name;
     offset += BLOCK;
 
-    if (!rel) throw new Error('tar: empty entry name');
+    if (!raw) throw new Error('tar: empty entry name');
+    // CI 用 `tar -C dist .` 打包，条目名形如 ./index.html、./pdfjs/，且**第一条就是
+    // "./" 目标目录自身**。去掉 ./ 前缀与结尾斜杠得到规范相对路径；归一化后为空
+    // 说明这条就是根目录，跳过即可——不是错误。
+    const rel = raw.replace(/^\.\/+/, '').replace(/\/+$/, '');
+    if (!rel) {
+      offset += Math.ceil(size / BLOCK) * BLOCK;
+      continue;
+    }
     if (size < 0 || size > MAX_FILE_BYTES) throw new Error(`tar: entry too large: ${rel}`);
     total += size;
     if (total > MAX_TOTAL_BYTES) throw new Error('tar: archive exceeds size limit');

@@ -100,6 +100,7 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       contract: rendererAsset ? Number(RENDERER_RE.exec(rendererAsset.name)![2]) : CONTRACT_VERSION,
       downloadUrl: asset.browser_download_url,
       downloadSize: asset.size,
+      installerUrl: installer?.browser_download_url,
     };
     return cached;
   } catch {
@@ -140,19 +141,29 @@ export function applyUpdate(): { jobId: string } {
     try {
       const data = await download(info.downloadUrl!, jobId, info.downloadSize ?? 0);
 
+      let payload = data;
       if (info.kind === 'hot') {
-        log(jobId, 'installing renderer update');
-        stageRenderer(data, { version: info.latestVersion!, contract: info.contract! });
-        finish(jobId, { kind: 'hot', reloaded: true, version: info.latestVersion });
-        // 换界面即完成更新：重新加载窗口就跑在新版本上了
-        getWindow()?.webContents.reload();
-        return;
+        try {
+          log(jobId, 'installing renderer update');
+          stageRenderer(data, { version: info.latestVersion!, contract: info.contract! });
+          finish(jobId, { kind: 'hot', reloaded: true, version: info.latestVersion });
+          // 换界面即完成更新：重新加载窗口就跑在新版本上了
+          getWindow()?.webContents.reload();
+          return;
+        } catch (err) {
+          // 界面包装不上就退回整包更新，别让用户卡在「更新失败」上。坏包、旧客户端
+          // 的解包器有 bug、契约声明与实际内容不符——都归到这条路上。
+          if (!info.installerUrl) throw err;
+          log(jobId, `renderer update failed (${String(err)}), falling back to installer`);
+          payload = await download(info.installerUrl, jobId, 0);
+        }
       }
 
       const dir = join(app.getPath('userData'), 'updates');
       mkdirSync(dir, { recursive: true });
-      const file = join(dir, info.downloadUrl!.split('/').pop() ?? 'update');
-      writeFileSync(file, data);
+      const source = payload === data ? info.downloadUrl! : info.installerUrl!;
+      const file = join(dir, source.split('/').pop() ?? 'update');
+      writeFileSync(file, payload);
       finish(jobId, { kind: 'full', reloaded: false, path: file, version: info.latestVersion });
 
       if (process.platform === 'win32') {

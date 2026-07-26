@@ -70,8 +70,10 @@ export function stageRenderer(archive: Buffer, expected: RendererMeta): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
 
-  const files = extractTarGz(archive, dir);
-  if (!files.includes('index.html')) {
+  extractTarGz(archive, dir);
+  // 查文件系统而不是查返回的路径列表：条目名的形态（./ 前缀、子目录写法）
+  // 取决于打包命令，不该让它决定更新包是否被接受。
+  if (!existsSync(join(dir, 'index.html'))) {
     rmSync(dir, { recursive: true, force: true });
     throw new Error('update package has no index.html');
   }

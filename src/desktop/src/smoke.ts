@@ -391,6 +391,31 @@ void app.whenReady().then(async () => {
   }
   check('正常包可解出文件', extracted.includes('meta.json'), `files=${extracted.join(',')}`);
 
+  // CI 用 `tar -C dist .` 打包，条目名带 ./ 前缀。第一版漏了这个形态，导致
+  // index.html 的存在性检查永远失败、热更新必然被拒——只有对着真实产物才查得出来。
+  let dotted: string[] = [];
+  try {
+    dotted = extractTarGz(
+      gzip(Buffer.concat([tarEntry('./index.html', '<html></html>'), Buffer.alloc(1024)])),
+      scratch,
+    );
+  } catch (err) {
+    dotted = [`threw: ${String(err)}`];
+  }
+  check('./ 前缀的条目名被归一化', dotted.includes('index.html'), `files=${dotted.join(',')}`);
+
+  // 同一条命令的第一个条目是 "./" 目录本身，归一化后为空——必须跳过而不是报错。
+  let withRoot: string[] = [];
+  try {
+    withRoot = extractTarGz(
+      gzip(Buffer.concat([tarEntry('./', '', '5'), tarEntry('./index.html', 'x'), Buffer.alloc(1024)])),
+      scratch,
+    );
+  } catch (err) {
+    withRoot = [`threw: ${String(err)}`];
+  }
+  check('根目录条目 "./" 被跳过而非报错', withRoot.includes('index.html'), `files=${withRoot.join(',')}`);
+
   const rejects = (label: string, archive: Buffer) => {
     let threw = false;
     try {
