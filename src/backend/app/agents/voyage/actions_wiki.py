@@ -920,7 +920,7 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             voyage_id=ctx.run.id,
         )
         created = int(stats["concepts_created"])
-        new_names = list(stats["new_concepts"])
+        promoted_names = list(stats["promoted_concepts"])
         new_links = int(stats["links_created"])
 
         # embedding：编译完成且尚无向量的论文批量嵌入（provider 不支持则跳过）
@@ -986,10 +986,15 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     return {
         "papers": len(papers),
         "concepts_created": created,
-        "new_concepts": new_names[:_OBS_LIST_CAP],
         "links_created": new_links,
         "links_removed": int(stats["links_removed"]),
         "concepts_removed": int(stats["concepts_removed"]),
+        # 新词条先记候选（不可见、不生成定义），被 ≥2 篇论文用到才复核转正进概念库；
+        # 面向用户的「新增概念」报的是转正数，不是 concepts_created
+        "concepts_promoted": int(stats["concepts_promoted"]),
+        "new_concepts": promoted_names[:_OBS_LIST_CAP],
+        # 复核时被判定「根本不是概念」而下架的（fig:1、编号、半句话……）
+        "concepts_rejected": int(stats["concepts_rejected"]),
         "embedded": embedded,
         "embed_error": embed_error,
         "chunks_embedded": chunks_embedded,

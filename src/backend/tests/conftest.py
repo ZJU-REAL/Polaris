@@ -149,10 +149,15 @@ async def add_paper(session, *, project_id, **fields):
 
     兼容旧单表口径：status/relevance_score 等判断字段自动落成员行，
     wiki_content/compiled_model 落论文级唯一解读行 paper_wikis。
+    ``concepts=[Concept, ...]`` 直接写 paper_concepts 关联（Paper.concepts 关系是只读的
+    ——它只展示已转正的概念，写关联一律走关联表）。
     """
-    from app.models.library_direction import LibraryPaper
-    from app.models.paper import PaperWiki, new_paper
+    from sqlalchemy.orm.attributes import set_committed_value
 
+    from app.models.library_direction import LibraryPaper
+    from app.models.paper import PaperWiki, new_paper, paper_concepts
+
+    concepts = fields.pop("concepts", None) or []
     member_kwargs = {k: fields.pop(k) for k in list(fields) if k in _MEMBERSHIP_FIELDS}
     member_kwargs.setdefault("status", "candidate")
     wiki_kwargs = {_WIKI_FIELDS[k]: fields.pop(k) for k in list(fields) if k in _WIKI_FIELDS}
@@ -162,6 +167,12 @@ async def add_paper(session, *, project_id, **fields):
     session.add(paper)
     await session.flush()
     session.add(LibraryPaper(library_id=library.id, paper_id=paper.id, **member_kwargs))
+    for concept in concepts:
+        await session.execute(
+            paper_concepts.insert().values(paper_id=paper.id, concept_id=concept.id)
+        )
+    # 关系是只读的，预置成「已加载」省掉异步惰性加载（同 new_paper 对 wiki 的处理）
+    set_committed_value(paper, "concepts", [c for c in concepts if c.status == "active"])
     if wiki_kwargs.get("content"):
         wiki = PaperWiki(paper_id=paper.id, **wiki_kwargs)
         if compiled_at is not None:
@@ -239,10 +250,14 @@ async def add_concept(session, *, project_id, paper_id=None, **fields):
     """建概念（全平台一份，不挂库）；给了 paper_id 就挂到那篇论文上。
 
     「库有哪些概念」按库内论文的关联推导，所以要让概念出现在某个库/课题作用域里，
-    必须关联一篇该库的论文。"""
-    from app.models.paper import Concept, paper_concepts
+    必须关联一篇该库的论文。
+
+    默认建**已转正**（status=active）的概念——造数据的用意基本都是「这个词条已经在
+    概念库里了」。要造候选（还没被第 2 篇论文引用、不对用户可见）显式传 status。"""
+    from app.models.paper import CONCEPT_STATUS_ACTIVE, Concept, paper_concepts
 
     await ensure_project_library(session, project_id)
+    fields.setdefault("status", CONCEPT_STATUS_ACTIVE)
     concept = Concept(**fields)
     session.add(concept)
     await session.flush()

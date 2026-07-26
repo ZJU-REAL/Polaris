@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, paper_concepts
+from app.models.paper import CONCEPT_STATUS_ACTIVE, Concept, paper_concepts
 from app.services.concepts import wiki_slug
 from app.services.libraries import dedupe_member_rows, get_source_library_ids, member_papers_stmt
 
@@ -136,7 +136,11 @@ async def _graph_for_library_ids(
             await session.execute(
                 select(paper_concepts.c.paper_id, Concept)
                 .join(Concept, Concept.id == paper_concepts.c.concept_id)
-                .where(paper_concepts.c.paper_id.in_(paper_ids))
+                .where(
+                    paper_concepts.c.paper_id.in_(paper_ids),
+                    # 候选概念（只有一篇论文用到）不进图：图上全是单点噪声就没法看了
+                    Concept.status == CONCEPT_STATUS_ACTIVE,
+                )
             )
         ).all()
         concept_counts: dict[uuid.UUID, int] = {}

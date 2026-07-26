@@ -213,21 +213,49 @@ This is the part that is easy to get wrong when reading the code from the outsid
 prompt anywhere that asks a model for "the list of concepts in this paper."** What happens is:
 
 1. The Librarian, while writing the article, marks terms inline as `[[name]]` because the system
-   prompt told it to (section 1.3).
-2. `extract_wikilinks()` (`app/services/concepts.py:66`) runs `WIKILINK_RE` (`concepts.py:35`) over
-   the stored markdown and returns the de-duplicated, order-preserving list of names. The regex
-   accepts `[[name]]`, `[[name|alias]]` and `[[name#anchor]]`, keeping only the name part, and skips
-   any match preceded by `!` so that `![[fig:N]]` embeds are not mistaken for concepts.
+   prompt told it to (section 1.3). The prompt caps this at 5–8 marks per article and asks for
+   *cross-paper* terms only — a benchmark, dataset or model codename the paper itself coined is not
+   to be marked unless it is already standard vocabulary.
+2. `extract_wikilinks()` (`app/services/concepts.py`) runs `WIKILINK_RE` over the stored markdown
+   and returns the de-duplicated, order-preserving list of names. The regex accepts `[[name]]`,
+   `[[name|alias]]` and `[[name#anchor]]`, keeping only the name part, and skips any match preceded
+   by `!` (whitespace tolerated) so that `![[fig:N]]` embeds are not mistaken for concepts.
+   Extraction judges nothing else: whether a name deserves an entry is a judgement call, and it is
+   made later (2.1.1).
 3. Each name is looked up in `concepts` **by exact name, platform-wide**. If a row exists — because
    any other paper in any other library already produced that term — it is reused as is. Only names
    with no row are new.
-4. Only for those genuinely new names does an LLM get called, and only to write a one-sentence
-   definition and pick a category.
+4. New names are inserted as `status = "candidate"` — no LLM call at all, not even for a definition.
 
-So the vocabulary is decided by the writing model as a side effect of writing, and the definition
-model never gets to invent, merge or drop a term. Two consequences follow directly: the concept set
-is exactly as good as the Librarian's habit of marking things up, and a term's definition is written
-once, by whoever's compile first mentioned it, and is then shared by every later paper that uses it.
+So the vocabulary is proposed by the writing model as a side effect of writing, and gated afterwards.
+
+### 2.1.1 The gate: two papers, then a verdict
+
+Marking is cheap for the model and 89% of the entries it produced were cited by exactly one paper —
+almost all of them names that paper had coined. Two filters run *after* extraction, and neither one
+deletes anything:
+
+- **Threshold (deterministic).** A concept stays `candidate` until `paper_concepts` shows
+  `CONCEPT_PROMOTION_MIN_PAPERS = 2` distinct papers. Candidates are linked normally but are
+  invisible everywhere a user could see a concept (list, graph, search, export, lab stats,
+  `[[wikilink]]` resolution, concept detail → 404). A `[[link]]` to a candidate reads as "not in the
+  knowledge base yet", which is exactly what it is — the second citing paper makes it appear, with
+  no human step.
+- **Validity (a judgement, so: the model).** Reaching the threshold triggers
+  `promote_ready_concepts()`, which asks the `extract` stage — in the same call that writes the
+  definition — whether each name is a meaningful academic concept at all. `fig:1`, `Figure 2`, bare
+  numbers, sentence fragments come back `valid: false` and land in `status = "rejected"`, a terminal
+  state that is never re-judged. This is what catches the junk the threshold cannot: `fig:1` is
+  mis-marked by dozens of papers, so it clears "2 papers" easily.
+
+Because the definition call and the validity call are the same call, the gate is close to free: only
+concepts that already cleared the threshold ever cost a token, versus one definition per name before.
+If the verdict cannot be obtained (no LLM configured, call failure, name missing from the response)
+the concept is **promoted anyway** with a placeholder definition and `validated_at` left null, so a
+timeout can never silently kill a real concept; the next sync re-judges it.
+
+A term's definition is still written once, by whoever's compile pushed it over the threshold, and is
+then shared by every later paper that uses it.
 
 ### 2.2 Definitions: batched, on the small model
 
@@ -244,10 +272,11 @@ strong model; `extract` is for short structured JSON (author↔affiliation parsi
 definitions, the library-setup wizard) where a small model is enough. Getting this backwards is an
 easy and expensive mistake, so: **compiling is `librarian`, defining is `extract`.**
 
-The prompt (`CONCEPT_DEF_SYSTEM_PROMPT`, `concepts.py:27`) asks for a single JSON object
-`{"concepts": [{name, definition, category}]}`. The response is parsed by slicing from the first `{`
-to the last `}`, which tolerates fenced code blocks and stray prose. Categories are clamped to the
-fixed set `method | architecture | methodology | problem | metric | dataset | other` by
+The prompt (`CONCEPT_DEF_SYSTEM_PROMPT`) asks for a single JSON object
+`{"concepts": [{name, valid, definition, category}]}` — the verdict of 2.1.1 rides along with the
+definition. The response is parsed by slicing from the first `{` to the last `}`, which tolerates
+fenced code blocks and stray prose. Categories are clamped to the fixed set
+`method | architecture | methodology | problem | metric | dataset | other` by
 `normalize_category()` — anything unrecognised becomes `other`.
 
 **Retry.** A batch that returns nothing usable (call error, rate limit, unparseable JSON) is retried
@@ -263,12 +292,16 @@ more than the sentence. Its definition becomes `placeholder_definition(name)`, l
 followed by `（定义待补充）` (`concepts.py:56`), and `is_placeholder_definition()` detects it later by
 that suffix.
 
-Backfilling happens inside `link_all_paper_concepts()` (`concepts.py:324`), the whole-library pass:
+Backfilling happens in `review_active_concepts()`, called at the end of the whole-library pass
+`link_all_paper_concepts()`:
 
-- It gathers the placeholder concepts in scope — those already linked to a paper of *this* library,
-  plus any concept whose name appears in this round's wikilinks (i.e. is about to be linked)
-  (`concepts.py:377-390`). Other libraries' placeholders are left for their own syncs; a nightly
-  library sync should not redefine the whole platform.
+- It gathers the **active** concepts in scope that need a second look — those already linked to a
+  paper of *this* library, plus any concept whose name appears in this round's wikilinks (i.e. is
+  about to be linked). "Needs a second look" means either a placeholder definition, or
+  `validated_at IS NULL` (never judged — which is how every entry that predates the gate looks, and
+  where the `fig:1`-style junk hides). Other libraries' entries are left for their own syncs; a
+  nightly library sync should not redefine the whole platform. An entry judged invalid here is
+  moved to `rejected` and disappears from the library, without deleting a row.
 - **Manual relink** (`backfill=True`) retries all of them.
 - **The automatic step inside a task** (`backfill=False`) retries only the `_AUTO_BACKFILL_CAP = 60`
   oldest (`concepts.py:52`, `concepts.py:397`). This is the compromise: an occasional failed batch
@@ -294,21 +327,25 @@ Both pass `backfill=True`. What the pass actually does, in order:
    which has a `paper_wikis` row (an inner join — no wiki, nothing to extract)
    (`concepts.py:351-361`).
 2. Extract wikilinks from each, union the names, look them all up by name, create the missing ones
-   (with definitions, batched, placeholders on failure).
+   as candidates (no definition, no LLM call).
 3. Insert the missing `(paper_id, concept_id)` pairs. Existing pairs are skipped, so it is fully
    idempotent and safe to run repeatedly.
 4. **Prune stale links.** For each paper whose wiki text is non-empty, delete the links to concepts
    the current text no longer mentions. A paper with an empty or missing wiki is skipped entirely,
    so a failed compile can never silently strip a paper's concepts.
 5. **Sweep orphans** — see below.
+6. **Promote and review** — candidates that reached two papers are judged and promoted (2.1.1), then
+   active entries needing a second look are re-judged (2.3). Both happen after the link work has been
+   committed, so no LLM call is made while a write transaction is open.
 
 You need it when a wiki exists but the linking never ran: historical data, papers compiled from the
 daily feed, papers whose compile succeeded in a run that died before `wiki.link_concepts`, or an
 older definition batch that left placeholders you now want filled.
 
-The single-paper equivalent, `link_paper_concepts()` (`concepts.py:496`), runs automatically after a
-manual recompile and does the same thing for one paper: extract, reuse-or-create, link, then remove
-the links the new text dropped and delete any concept that was left with zero references. It also
+The single-paper equivalent, `link_paper_concepts()`, runs automatically after a manual recompile and
+does the same thing for one paper: extract, reuse-or-create as candidates, link, remove the links the
+new text dropped, delete any concept that was left with zero references, then promote whichever of
+this paper's concepts just reached two papers. It also
 returns immediately when `paper.wiki_content` is falsy — same anti-footgun as step 4.
 
 ### 2.5 Orphans
@@ -323,6 +360,8 @@ Two things about the standard deliberately:
   `excluded`; the membership and the `paper_concepts` rows survive, so the concept survives too, and
   recalling the paper restores everything. There is a test pinning this
   (`tests/test_concepts_relink.py::test_relink_keeps_concepts_referenced_by_trash_papers`).
+- **A rejected concept is not an orphan.** Its `paper_concepts` rows stay, so it is never collected;
+  it simply stays invisible for good. Nothing about this gate deletes data.
 - **Scope differs by caller.** `link_paper_concepts()` passes `candidate_ids` — only the concepts it
   just unlinked from this paper are considered. `link_all_paper_concepts()` passes nothing, which
   means a single library's relink runs an **unscoped, whole-table** orphan sweep. That is how orphans
@@ -358,8 +397,10 @@ Related by `Paper.wiki` (`uselist=False`, `lazy="selectin"`, `cascade="all, dele
 | --- | --- |
 | `name` | indexed, not unique — uniqueness is enforced on the slug |
 | `slug` | **globally unique** (`uq_concepts_slug`) |
-| `definition` | the one-sentence LLM definition, or a placeholder |
+| `definition` | the one-sentence LLM definition, or a placeholder; **null while the entry is still a candidate** — definitions are only written at promotion (2.1.1) |
 | `category` | one of the seven fixed values, or null |
+| `status` | `candidate` (default — fewer than two citing papers, invisible) / `active` (in the concept library) / `rejected` (judged not to be a concept; terminal). Every read path that a user can reach filters on `active` |
+| `validated_at` | when the model last confirmed the name is a real concept. Null means never judged — the state every entry that predates the gate was left in by the migration, and the trigger for a re-judge on the next sync |
 | `wiki_content` | a long-form markdown body for the concept itself. **Nothing writes it.** It is read by the concept detail response and by the Obsidian export (`app/services/wiki_export.py:235`), so it renders if it ever gets populated, but no code path produces it today |
 
 There is no `library_id`. Slugs come from `wiki_slug()` (`concepts.py:82`): lowercase, keep word

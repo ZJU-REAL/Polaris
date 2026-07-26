@@ -380,15 +380,28 @@ async def test_compile_entry_and_collect(client, monkeypatch):
 async def test_compile_entry_links_concepts_without_library(client, monkeypatch):
     """每日推送编译也要上链概念：论文不属于任何库照建词条，费用记平台级（library_id 空）。
 
-    再编译一次能把被清掉的关联补回来——存量论文重新编译即可，不用迁移。"""
+    编译两篇：概念要被 2 篇论文提到才转正、才生成定义（fake librarian 每篇都标同样的
+    两个双链）。再编译一次能把被清掉的关联补回来——存量论文重新编译即可，不用迁移。"""
     token = await register_and_login(client, email="daily-concepts@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.00061", "Concept Me")]})
-    item = (await client.get("/api/daily/papers", headers=headers)).json()["items"][0]
+    await _run_sync(
+        monkeypatch,
+        {
+            "cs.AI": [
+                _rss_entry("2607.00061", "Concept Me"),
+                _rss_entry("2607.00062", "Concept Me Too"),
+            ]
+        },
+    )
+    items = (await client.get("/api/daily/papers", headers=headers)).json()["items"]
+    item = items[0]
 
-    resp = await client.post(f"/api/daily/papers/{item['entry_id']}/compile", headers=headers)
-    assert resp.status_code == 200, resp.text
-    assert "[[" in resp.json()["wiki_content"]  # 正文里有双链
+    for entry in items:
+        resp = await client.post(
+            f"/api/daily/papers/{entry['entry_id']}/compile", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        assert "[[" in resp.json()["wiki_content"]  # 正文里有双链
 
     from sqlalchemy import delete, select
 
@@ -415,6 +428,8 @@ async def test_compile_entry_links_concepts_without_library(client, monkeypatch)
 
     concepts = await _linked_concepts()
     assert {c.name for c in concepts} == {"Agent", "强化学习"}  # fake librarian 的双链
+    # 两篇都提到 → 转正，且转正那一刻才生成定义
+    assert all(c.status == "active" for c in concepts)
     assert all(not c.definition.endswith("（定义待补充）") for c in concepts)  # 定义真的要到了
 
     async with get_sessionmaker()() as session:

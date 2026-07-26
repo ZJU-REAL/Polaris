@@ -352,8 +352,8 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
     case 'wiki.link_concepts':
       return {
         text: tr(
-          `从编译的介绍中整理概念：新增 ${num(obs.concepts_created)} 个概念，建立 ${num(obs.links_created)} 条论文—概念关联`,
-          `Organized concepts from the compiled intros: ${num(obs.concepts_created)} new concepts, ${num(obs.links_created)} paper–concept links`,
+          `从编译的介绍中整理概念：收录 ${num(obs.concepts_promoted)} 个概念（被 2 篇以上论文提到的才收录），建立 ${num(obs.links_created)} 条论文—概念关联`,
+          `Organized concepts from the compiled intros: ${num(obs.concepts_promoted)} concepts added (only those cited by 2+ papers), ${num(obs.links_created)} paper–concept links`,
         ),
         papers: [],
         concepts: namesOf(obs.new_concepts),
@@ -476,7 +476,7 @@ function WikiRunSummary({ steps }: { steps: VoyageStepRead[] }) {
   if (search || snowball) stats.push({ label: tr('新收录论文', 'New papers'), value: num(search?.inserted) + num(snowball?.inserted) });
   if (score) stats.push({ label: tr('通过筛选', 'Passed screening'), value: num(score.succeeded) - num(score.excluded) });
   if (compile) stats.push({ label: tr('已编译', 'Compiled'), value: num(compile.succeeded) });
-  if (link) stats.push({ label: tr('新增概念', 'New concepts'), value: num(link.concepts_created) });
+  if (link) stats.push({ label: tr('新增概念', 'New concepts'), value: num(link.concepts_promoted) });
   if (stats.length === 0) return null;
 
   return (

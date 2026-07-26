@@ -10,7 +10,7 @@ from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
 from app.models.library_direction import DirectionLibrary, LibraryPaper
-from app.models.paper import Concept, paper_concepts
+from app.models.paper import CONCEPT_STATUS_ACTIVE, Concept, paper_concepts
 from app.models.user import User
 from app.schemas.paper import (
     ConceptDetail,
@@ -130,7 +130,9 @@ async def get_concept(
     （每日推送 / 个人库 / 直接访问）点进来就列全平台的。不属于任何库的概念照常打开。
     """
     concept = await session.get(Concept, concept_id)
-    if concept is None:
+    # 候选词条（还只有一篇论文用到）按「不存在」处理：它还不是正式概念，等第二篇论文
+    # 引用它就自动转正出现，不需要人工干预
+    if concept is None or concept.status != CONCEPT_STATUS_ACTIVE:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONCEPT_NOT_FOUND")
     project_id: uuid.UUID | None = None
     scope_library_id = library_id  # 只在显式带库时过滤关联论文

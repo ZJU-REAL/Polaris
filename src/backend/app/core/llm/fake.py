@@ -20,6 +20,8 @@ _PLAN_EDIT_MARKER = "POLARIS_PLAN_EDIT"  # 计划编辑（loop 失败回灌，na
 _VERDICT_MARKER = '"passed"'
 _RELEVANCE_MARKER = '"score"'
 _CONCEPTS_MARKER = "概念列表："
+# fake 的「这不是概念」判据（替身规则，见 _respond_concepts）：图/表引用形态
+_FAKE_FIGURE_REF_RE = re.compile(r"^(?:fig|figure|tab|table|eq)\s*[:：]", re.IGNORECASE)
 _AFFILIATIONS_MARKER = "POLARIS_AUTHOR_AFFIL"  # 逐位作者机构解析（affiliations.py 专门调用）
 _AFFIL_COMPILE_MARKER = "POLARIS_AFFILIATIONS"  # on_compile 折叠进 wiki 编译的机构定界块请求
 # on_compile 模式下 librarian 编译输出附带的确定性机构定界块（与 FULL_TEXT 对齐）
@@ -391,7 +393,12 @@ class FakeProvider(LLMProvider):
 
     @staticmethod
     def _respond_concepts(last_user: str) -> str:
-        """概念定义批量请求：从「概念列表：[...]」提取名称，逐个返回假定义。"""
+        """概念判定 + 定义批量请求：从「概念列表：[...]」提取名称，逐个给假判定与假定义。
+
+        真模型是按语义判「这名字算不算学术概念」；fake 用一条最粗的确定性规则替身——
+        图表引用（fig:1 / table:2）和不含字母汉字的名字（纯编号、纯符号）判无效，
+        其余一律有效。测试要的是「无效会被下架、有效会转正」这条链路，不是判得多准。
+        """
         names: list[str] = []
         idx = last_user.find(_CONCEPTS_MARKER)
         start = last_user.find("[", idx)
@@ -402,19 +409,22 @@ class FakeProvider(LLMProvider):
                 names = [str(n) for n in parsed if isinstance(n, str)]
             except json.JSONDecodeError:
                 names = []
-        return json.dumps(
-            {
-                "concepts": [
-                    {
-                        "name": n,
-                        "definition": f"{n} 的一句话定义（fake）",
-                        "category": "method",
-                    }
-                    for n in names
-                ]
-            },
-            ensure_ascii=False,
-        )
+        out = []
+        for n in names:
+            junk = bool(_FAKE_FIGURE_REF_RE.match(n.strip())) or not re.search(
+                r"[^\W\d_]", n, re.UNICODE
+            )
+            out.append(
+                {"name": n, "valid": False}
+                if junk
+                else {
+                    "name": n,
+                    "valid": True,
+                    "definition": f"{n} 的一句话定义（fake）",
+                    "category": "method",
+                }
+            )
+        return json.dumps({"concepts": out}, ensure_ascii=False)
 
     @staticmethod
     def _respond_gaps() -> str:

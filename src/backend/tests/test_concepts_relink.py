@@ -58,11 +58,13 @@ async def test_relink_creates_concepts_and_links(client):
     assert body["papers"] == 2
     assert body["concepts_created"] == 3
     assert body["links_created"] == 4  # A:2 + B:2（强化学习共享一个概念）
-    assert set(body["new_concepts"]) == {"自我博弈", "强化学习", "课程学习"}
+    # 转正门槛：只有被两篇论文都提到的「强化学习」进概念库，另外两个留在候选
+    assert body["concepts_promoted"] == 1
+    assert body["promoted_concepts"] == ["强化学习"]
 
     resp = await client.get(f"/api/projects/{project_id}/concepts", headers=headers)
     counts = {c["name"]: c["paper_count"] for c in resp.json()}
-    assert counts == {"自我博弈": 1, "强化学习": 2, "课程学习": 1}
+    assert counts == {"强化学习": 2}
 
 
 async def test_relink_is_idempotent(client):
@@ -156,7 +158,7 @@ async def test_relink_removes_stale_links_and_orphan_concepts(client):
     assert body["concepts_created"] == 0 and body["links_created"] == 0
 
     counts = await _concept_counts(client, project_id, headers)
-    assert counts == {"强化学习": 2, "课程学习": 1}
+    assert counts == {"强化学习": 2}  # 课程学习只有 B 一篇 → 仍是候选，不可见
 
 
 async def test_relink_keeps_concepts_referenced_by_trash_papers(client):
@@ -210,8 +212,9 @@ async def test_link_paper_concepts_syncs_after_recompile(client):
     assert created == 1 and linked == 1  # 新概念（llm=None → 占位定义）
 
     counts = await _concept_counts(client, project_id, headers)
-    # 自我博弈只被 A 引用过 → 词条删除；强化学习仍被 A/B 共享；课程学习仍挂 B
-    assert counts == {"强化学习": 2, "课程学习": 1, "新概念": 1}
+    # 自我博弈只被 A 引用过 → 词条删除；强化学习仍被 A/B 共享而可见；
+    # 新概念/课程学习各只有一篇引用 → 候选，不进概念库
+    assert counts == {"强化学习": 2}
 
 
 async def test_link_paper_concepts_empty_content_keeps_links(client):
@@ -226,25 +229,29 @@ async def test_link_paper_concepts_empty_content_keeps_links(client):
         assert await link_paper_concepts(session, paper, membership) == (0, 0)
 
     counts = await _concept_counts(client, project_id, headers)
-    assert counts == {"自我博弈": 1, "强化学习": 2, "课程学习": 1}
+    assert counts == {"强化学习": 2}  # 单篇引用的两个仍是候选
 
 
 async def test_link_paper_concepts_without_membership(client):
-    """池内论文（不属于任何库）也能上链：不传成员行 → 记账落平台级，不报错。"""
+    """池内论文（不属于任何库）也能上链：不传成员行 → 记账落平台级，不报错。
+
+    定义调用发生在转正那一刻，所以造两篇都提到同一个概念的池内论文。"""
     from app.core.llm.router import LLMRouter
     from app.models.llm_config import LLMUsage
     from app.models.paper import Concept, new_paper
 
     await register_and_login(client, email="pool-link@example.com")
-    async with get_sessionmaker()() as session:
-        paper = new_paper(title="Pool Paper", abstract="a", source="manual")
-        session.add(paper)
-        await session.flush()
-        paper.wiki = PaperWiki(content="本文用 [[池内概念]] 做实验。")
-        await session.commit()
-        created, linked = await link_paper_concepts(session, paper, llm=LLMRouter())
-        paper_id = paper.id
-    assert (created, linked) == (1, 1)
+    paper_ids = []
+    for i in range(2):
+        async with get_sessionmaker()() as session:
+            paper = new_paper(title=f"Pool Paper {i}", abstract="a", source="manual")
+            session.add(paper)
+            await session.flush()
+            paper.wiki = PaperWiki(content="本文用 [[池内概念]] 做实验。")
+            await session.commit()
+            created, linked = await link_paper_concepts(session, paper, llm=LLMRouter())
+            paper_ids.append(paper.id)
+        assert (created, linked) == (1 if i == 0 else 0, 1)
 
     async with get_sessionmaker()() as session:
         names = (
@@ -252,15 +259,21 @@ async def test_link_paper_concepts_without_membership(client):
                 await session.execute(
                     select(Concept.name)
                     .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
-                    .where(paper_concepts.c.paper_id == paper_id)
+                    .where(paper_concepts.c.paper_id == paper_ids[0])
                 )
             )
             .scalars()
             .all()
         )
         assert names == ["池内概念"]
+        # 第一篇只建候选、不调 LLM；第二篇让它转正，这时才有定义调用（记平台级）
         usage = (await session.execute(select(LLMUsage))).scalars().all()
         assert usage and all(row.library_id is None for row in usage)
+        concept = (
+            await session.execute(select(Concept).where(Concept.name == "池内概念"))
+        ).scalar_one()
+        assert concept.status == "active"
+        assert concept.definition == "池内概念 的一句话定义（fake）"
 
 
 async def test_relink_requires_membership(client):

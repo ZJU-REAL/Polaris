@@ -72,9 +72,11 @@ async def _add_member(
 
 
 async def _add_concept(*, name, slug, paper_id=None) -> uuid.UUID:
-    """建概念（全平台一份）；给了 paper_id 就挂到那篇论文上（库作用域由论文推导）。"""
+    """建**已转正**的概念（全平台一份）；给了 paper_id 就挂到那篇论文上（库作用域由论文推导）。
+
+    候选概念不对用户可见，也就不进这些统计/图谱，故造数据一律直接给 active。"""
     async with get_sessionmaker()() as session:
-        concept = Concept(name=name, slug=slug, category="method")
+        concept = Concept(name=name, slug=slug, category="method", status="active")
         session.add(concept)
         await session.flush()
         if paper_id is not None:

@@ -36,6 +36,21 @@ EmbeddingVariant = JSON().with_variant(Vector(EMBEDDING_DIM), "postgresql")
 # →(下载全文) fetched →(Librarian 编译) compiled；included/excluded 亦可人工覆盖
 PAPER_STATUSES = ("candidate", "scored", "excluded", "fetched", "compiled", "included")
 
+# 概念的把关状态（Concept.status，见 services/concepts.py）：
+# candidate = 刚从解读里抽出来、还只有 1 篇论文用到，不对用户可见、也不花钱写定义；
+# active    = 被 ≥2 篇论文用到、且模型判定确实是个学术概念，进概念库；
+# rejected  = 模型判定它根本不是概念（图表引用 fig:1、编号 12、半句话……）。
+# candidate 与 rejected 的区别：前者是「还没够格」，引用涨上来会转正；后者是终态，
+# 不再复判——判过一次就别再为它花钱。
+CONCEPT_STATUS_CANDIDATE = "candidate"
+CONCEPT_STATUS_ACTIVE = "active"
+CONCEPT_STATUS_REJECTED = "rejected"
+CONCEPT_STATUSES = (
+    CONCEPT_STATUS_CANDIDATE,
+    CONCEPT_STATUS_ACTIVE,
+    CONCEPT_STATUS_REJECTED,
+)
+
 paper_concepts = Table(
     "paper_concepts",
     Base.metadata,
@@ -76,8 +91,16 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     chunk_embedding_model: Mapped[str | None] = mapped_column(String(128))
     chunk_embedding_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # 这篇论文的概念（论文详情 / 导出 / agent 工具的展示口径）：**只给转正概念**。
+    # 候选词条（还只有这一篇论文用到，多半是这篇自己起的 benchmark / 模型代号）不对
+    # 用户可见，过滤放在关系本身上，所有读路径一处收口。关联的增删一律直接写
+    # paper_concepts（services/concepts.py），没有任何地方经这个关系写，故 viewonly。
     concepts: Mapped[list["Concept"]] = relationship(
-        secondary=paper_concepts, back_populates="papers"
+        secondary=paper_concepts,
+        primaryjoin=lambda: Paper.id == paper_concepts.c.paper_id,
+        secondaryjoin=lambda: (Concept.id == paper_concepts.c.concept_id)
+        & (Concept.status == CONCEPT_STATUS_ACTIVE),
+        viewonly=True,
     )
     # 唯一解读（PaperWiki）；selectin 随论文一起取，读路径无需显式 join
     wiki: Mapped["PaperWiki | None"] = relationship(
@@ -283,6 +306,11 @@ class Concept(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     相同；解读统一成论文级之后更没有归属可言（每日推送的论文不属于任何库）。
     「某个库有哪些概念」不再存，一律推导：库的论文（library_papers）→ 关联概念
     （paper_concepts）→ 去重，见 services/concepts.py::library_concept_ids。
+
+    ``status`` 是入库把关：解读里标出来的词先记 candidate，被第 2 篇论文用到才复核转正
+    成 active。只标一次的绝大多数是这篇论文自己起的名字（benchmark / 数据集 / 模型代号），
+    留在候选里既不进概念库也不花钱写定义；转正复核时模型判定「根本不是概念」的
+    （fig:1、编号、半句话）落 rejected 终态。
     """
 
     __tablename__ = "concepts"
@@ -290,9 +318,21 @@ class Concept(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     slug: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
-    definition: Mapped[str | None] = mapped_column(Text)  # LLM 一句话定义
+    definition: Mapped[str | None] = mapped_column(Text)  # LLM 一句话定义（转正后才生成）
     # method | architecture | methodology | problem | metric | dataset | other
     category: Mapped[str | None] = mapped_column(String(64))
     wiki_content: Mapped[str | None] = mapped_column(Text)  # markdown
+    # candidate（默认，不可见）| active（转正，进概念库）| rejected（不是概念，终态）
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=CONCEPT_STATUS_CANDIDATE,
+        server_default=CONCEPT_STATUS_CANDIDATE,
+        nullable=False,
+    )
+    # 最近一次由模型判定「确实是个学术概念」的时间。为空 = 还没判过：门槛改造之前
+    # 存量转正的那批就是空的，下一次概念同步会连同定义一起复核一遍（判完不再复判）。
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    papers: Mapped[list[Paper]] = relationship(secondary=paper_concepts, back_populates="concepts")
+    # 概念的关联论文（概念详情 / 导出）：这里不按状态过滤——能拿到这个概念说明它已经
+    # 可见了，它的论文清单就是全部关联。写关联同样不经这个关系，故 viewonly。
+    papers: Mapped[list[Paper]] = relationship(secondary=paper_concepts, viewonly=True)

@@ -225,7 +225,11 @@ export function ConceptsTab({
   const relinkMutation = useMutation({
     mutationFn: () => (libraryId ? api.relinkLibraryConcepts(libraryId) : api.relinkConcepts(pid!)),
     onSuccess: (r) => {
-      if (r.concepts_created === 0 && r.links_created === 0) {
+      // 报「收录了几个」而不是「新建了几个」：新建的绝大多数是还没够格的候选词条
+      const dropped = r.concepts_rejected
+        ? tr(`，清掉 ${r.concepts_rejected} 个不是概念的词条`, `, removed ${r.concepts_rejected} non-concept entries`)
+        : '';
+      if (r.concepts_promoted === 0 && r.links_created === 0 && r.concepts_rejected === 0) {
         toast(
           tr(`已检查 ${r.papers} 篇论文，概念关联都是全的`, `Checked ${r.papers} papers — concept links all complete`),
           'info',
@@ -233,8 +237,8 @@ export function ConceptsTab({
       } else {
         toast(
           tr(
-            `新建 ${r.concepts_created} 个概念，补上 ${r.links_created} 条论文关联`,
-            `Created ${r.concepts_created} concepts, added ${r.links_created} paper links`,
+            `收录 ${r.concepts_promoted} 个概念（被 2 篇以上论文提到的才收录），补上 ${r.links_created} 条论文关联${dropped}`,
+            `Added ${r.concepts_promoted} concepts (only those cited by 2+ papers), ${r.links_created} paper links${dropped}`,
           ),
           'ok',
         );

@@ -9,8 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c4e7b2a91f38"  # 分段来源标记 + 向量构建元信息
-CONCEPTS_REVISION = "b6c2f81d4a09"  # 概念统一到论文级（本次 head 的 down_revision）
+HEAD_REVISION = "a9f1c62b70d5"  # 概念转正门槛（concepts.status）
+INDEX_META_REVISION = "c4e7b2a91f38"  # 分段来源标记 + 向量构建元信息
+CONCEPTS_REVISION = "b6c2f81d4a09"  # 概念统一到论文级
 PREV_REVISION = "a7d0c9e51b34"  # 解读统一到 paper_wikis
 
 
@@ -287,8 +288,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 本分支新增：概念统一到论文级（去 library_id，slug 全局唯一）+ 两张回滚留档表
     assert "library_id" not in columns["concepts"]
     assert {"concepts_pre_unify", "paper_concepts_pre_unify"} <= columns["_tables"]
+    # 本分支新增：概念转正门槛（candidate / active）
+    assert "status" in columns["concepts"]
 
-    # 最新 revision 可往返：先退掉本次的分段来源标记与向量元信息列。
+    # 最新 revision 可往返：先退掉本次的概念状态列。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == INDEX_META_REVISION
+    assert "status" not in columns["concepts"]
+
+    # 再退一步：分段来源标记与向量元信息列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == CONCEPTS_REVISION

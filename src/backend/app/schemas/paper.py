@@ -286,6 +286,13 @@ class ConceptRelinkResult(BaseModel):
     # 同步清理：删除的陈旧关联数 / 删除的零引用概念数（引用计数含回收站论文）
     links_removed: int = 0
     concepts_removed: int = 0
+    # 本次转正的概念：新词条先记候选，被 ≥2 篇论文用到才复核进概念库并生成定义
+    # （concepts_created 里绝大多数是还看不见的候选，前端要报数就报这个）
+    concepts_promoted: int = 0
+    promoted_concepts: list[str] = []
+    # 本次被判定「根本不是概念」而下架的（fig:1、编号、半句话……）
+    concepts_rejected: int = 0
+    rejected_concepts: list[str] = []
 
 
 class ScoredPaper(PaperRead):

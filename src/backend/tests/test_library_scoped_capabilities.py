@@ -92,6 +92,12 @@ async def test_standalone_library_obsidian_export(client):
         title="Planning with Tree Search",
         wiki="本文提出 [[树搜索]]，结合 [[强化学习]] 训练。",
     )
+    # 概念要被 2 篇论文提到才转正进概念库，故第二篇也用同样两个双链
+    await _seed_paper(
+        lib_id,
+        title="Tree Search Revisited",
+        wiki="继续讨论 [[树搜索]] 与 [[强化学习]]。",
+    )
     await _seed_paper(lib_id, title="Trashed paper", status="excluded")
     # 概念页要有内容 → 先补建概念
     resp = await client.post(f"/api/libraries/{lib_id}/concepts/relink", headers=creator)
@@ -108,7 +114,7 @@ async def test_standalone_library_obsidian_export(client):
         index = zf.read("index.md").decode()
         assert "独立库 · Research Wiki" in index
         paper_pages = [n for n in names if n.startswith("papers/") and n.endswith(".md")]
-        assert len(paper_pages) == 1  # 垃圾桶论文不导出
+        assert len(paper_pages) == 2  # 垃圾桶论文不导出
         body = zf.read(paper_pages[0]).decode()
         assert "[[树搜索]]" in body  # 双链原样保留
         concept_pages = [n for n in names if n.startswith("concepts/")]
@@ -180,7 +186,8 @@ async def test_standalone_library_concepts_relink(client):
 
     resp = await client.get(f"/api/libraries/{lib_id}/concepts", headers=creator)
     counts = {c["name"]: c["paper_count"] for c in resp.json()}
-    assert counts == {"自我博弈": 1, "强化学习": 2, "课程学习": 1}
+    # 只有两篇都提到的「强化学习」转正进概念库，另外两个留在候选
+    assert counts == {"强化学习": 2}
 
     # 幂等
     resp = await client.post(f"/api/libraries/{lib_id}/concepts/relink", headers=creator)

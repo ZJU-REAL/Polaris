@@ -3,6 +3,16 @@
 概念是论文级的（``concepts`` 无归属库、slug 全局唯一）：谁编译出这个词条都用同一行。
 「某个库有哪些概念」不存，一律按 ``library_concept_ids`` 推导——库的论文 →
 关联概念 → 去重。
+
+入库把关（两道）：
+① 转正门槛（:data:`CONCEPT_PROMOTION_MIN_PAPERS`，确定性）——新概念先记 candidate，
+   被第 2 篇论文用到才复核转正。只有一篇论文用的词绝大多数是那篇自己起的名字
+   （benchmark / 数据集 / 模型代号），留在候选里不进概念库；**定义也推迟到转正时才生成**，
+   不为一次性专有名词花 token。关联（``paper_concepts``）照常建，只是候选不对用户可见。
+② 有效性判定（判断性任务，走 LLM）——转正时本来就要调模型写定义，顺带让它判断这个名字
+   到底是不是个学术概念。图表引用（``fig:1``）、编号（``12``）、半句话这类判为无效，
+   落 ``rejected`` 终态，不进概念库也不再复判。门槛拦不住 ``fig:1`` 这种被几十篇论文
+   各标一次的垃圾，正好由这一步兜住；判定失败则降级为「照常转正」，不阻塞。
 """
 
 import asyncio
@@ -19,15 +29,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
+from app.models.base import utcnow
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, Paper, PaperWiki, paper_concepts
+from app.models.paper import (
+    CONCEPT_STATUS_ACTIVE,
+    CONCEPT_STATUS_CANDIDATE,
+    CONCEPT_STATUS_REJECTED,
+    Concept,
+    Paper,
+    PaperWiki,
+    paper_concepts,
+)
 
 logger = logging.getLogger(__name__)
 
 CONCEPT_DEF_SYSTEM_PROMPT = """\
-你是 Librarian，为研究 wiki 的新概念词条给出一句话中文定义与类别。
+你是 Librarian，为研究 wiki 的概念词条做两件事：判断这个名字是不是一个有意义的学术概念，
+是的话再给出一句话中文定义与类别。
+下列情况一律判为无效（valid=false，definition 留空）：
+- 图表 / 公式 / 章节引用：fig:1、Figure 2、table:3、eq:4、Section 5；
+- 编号或纯数字、纯符号：1、12、35、---；
+- 不成词的片段、半句话、整句叙述，或明显是解读正文被误标进双链的内容；
+- 与学术无关的通用词。
+判断只看名字本身：拿不准但确实是领域术语（方法、架构、任务/问题、指标、数据集、模型族）
+的，判为有效。
 只输出一个 JSON 对象，不要输出任何其他文字，格式：
-{"concepts": [{"name": "概念名", "definition": "一句话定义", \
+{"concepts": [{"name": "原样回抄的名字", "valid": true, "definition": "一句话定义", \
 "category": "method|architecture|methodology|problem|metric|dataset|other"}]}
 """
 
@@ -45,6 +72,10 @@ CONCEPT_CATEGORIES = (
 )
 
 _SLUG_STRIP_RE = re.compile(r"[^\w一-鿿]+", re.UNICODE)
+
+# 转正门槛：被这么多篇论文引用的概念才进概念库。
+# 1 篇 = 多半是这篇论文自己起的名字（benchmark / 数据集 / 模型代号），不是跨论文复现的概念。
+CONCEPT_PROMOTION_MIN_PAPERS = 2
 
 # 概念定义按批调用 LLM：一次塞几百个会让响应被 max_tokens 截断 → JSON 解析失败 → 整批占位。
 _DEF_BATCH_SIZE = 40
@@ -66,12 +97,16 @@ def is_placeholder_definition(text: str | None) -> bool:
 def extract_wikilinks(markdown: str) -> list[str]:
     """解析 [[..]] 双链，返回去重（保序）的概念名列表。
 
-    跳过 ``![[...]]`` 嵌入标记（如图文 wiki 的 ``![[fig:N]]``，docs/api-lit.md §6.6）。
+    跳过 ``![[...]]`` 嵌入标记（如图文 wiki 的 ``![[fig:N]]``，docs/api-lit.md §6.6）；
+    感叹号与括号之间夹了空格的 ``! [[fig:3]]`` 也算嵌入标记（模型偶尔这么写）。
+    「这名字配不配当概念」不在这里判——那是判断题，交给转正时的有效性判定
+    （见 :func:`promote_ready_concepts`），这里只做确定性的解析。
     """
     markdown = markdown or ""
     seen: dict[str, None] = {}
     for match in WIKILINK_RE.finditer(markdown):
-        if match.start() > 0 and markdown[match.start() - 1] == "!":
+        before = markdown[: match.start()].rstrip(" \t")
+        if before.endswith("!"):
             continue  # 嵌入（图片）标记不是概念双链
         name = match.group(1).strip()
         if name:
@@ -102,11 +137,19 @@ def normalize_category(raw: Any) -> str:
 
 
 def library_concept_ids(library_ids: Sequence[uuid.UUID]) -> Select:
-    """「这些库有哪些概念」的 concept_id 子查询：库的论文 → 关联概念（去重由 IN 保证）。"""
+    """「这些库有哪些**正式**概念」的 concept_id 子查询：库的论文 → 关联概念（去重由 IN 保证）。
+
+    候选概念（还没被第 2 篇论文用到）不算数——所有以库/课题为作用域的读路径
+    （概念列表、搜索、导出、图谱统计、agent 工具、idea 种子校验）都经此收口。
+    """
     return (
         select(paper_concepts.c.concept_id)
         .join(LibraryPaper, LibraryPaper.paper_id == paper_concepts.c.paper_id)
-        .where(LibraryPaper.library_id.in_(list(library_ids)))
+        .join(Concept, Concept.id == paper_concepts.c.concept_id)
+        .where(
+            LibraryPaper.library_id.in_(list(library_ids)),
+            Concept.status == CONCEPT_STATUS_ACTIVE,
+        )
     )
 
 
@@ -142,13 +185,15 @@ async def find_by_name(session: AsyncSession, name: str) -> list[Concept]:
     """平台级按名字查概念（[[双链]] 解析用）：名字精确匹配（忽略大小写），
     再退一步按 slug 匹配（吃掉空格/连接符的写法差异）。
 
-    概念全平台一份，正常至多命中一条；空结果 = 还没入库。
+    概念全平台一份，正常至多命中一条；空结果 = 还没入库。候选概念按「还没入库」处理
+    ——它确实还不是正式词条，等第二篇论文引用它就自动出现，不需要人工干预。
     """
     needle = name.strip()
     if not needle:
         return []
     stmt = select(Concept).where(
-        or_(func.lower(Concept.name) == needle.lower(), Concept.slug == wiki_slug(needle))
+        Concept.status == CONCEPT_STATUS_ACTIVE,
+        or_(func.lower(Concept.name) == needle.lower(), Concept.slug == wiki_slug(needle)),
     )
     return list((await session.execute(stmt)).scalars().all())
 
@@ -183,7 +228,7 @@ async def papers_of_concept(
 async def related_concepts(
     session: AsyncSession, concept: Concept, limit: int = 10
 ) -> list[tuple[Concept, int]]:
-    """相关概念 = 与本概念共现于同一论文的概念，按共现次数取 top N。"""
+    """相关概念 = 与本概念共现于同一论文的正式概念，按共现次数取 top N（候选不出现）。"""
     pc_self = paper_concepts.alias("pc_self")
     pc_other = paper_concepts.alias("pc_other")
     cooccur = func.count().label("cooccur")
@@ -191,7 +236,11 @@ async def related_concepts(
         select(Concept, cooccur)
         .join(pc_other, pc_other.c.concept_id == Concept.id)
         .join(pc_self, pc_self.c.paper_id == pc_other.c.paper_id)
-        .where(pc_self.c.concept_id == concept.id, Concept.id != concept.id)
+        .where(
+            pc_self.c.concept_id == concept.id,
+            Concept.id != concept.id,
+            Concept.status == CONCEPT_STATUS_ACTIVE,
+        )
         .group_by(Concept.id)
         .order_by(cooccur.desc(), Concept.name)
         .limit(limit)
@@ -208,7 +257,8 @@ async def fetch_concept_definitions(
     library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> dict[str, dict[str, str]]:
-    """向 LLM 要概念的一句话定义与类别；分批调用避免响应截断，失败的批重试一次后用占位兜底。"""
+    """向 LLM 要「是不是概念」的判定 + 一句话定义与类别；分批调用避免响应截断，
+    失败的批重试一次；仍失败则该批返回不到结果，调用方按「判不了就照常放行」降级。"""
     out: dict[str, dict[str, str]] = {}
     for i in range(0, len(names), _DEF_BATCH_SIZE):
         chunk = names[i : i + _DEF_BATCH_SIZE]
@@ -243,7 +293,7 @@ async def _fetch_definitions_batch(
     library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> dict[str, dict[str, str]]:
-    """单批（≤_DEF_BATCH_SIZE 个）定义调用；失败返回空 dict（调用方用占位定义兜底）。"""
+    """单批（≤_DEF_BATCH_SIZE 个）判定 + 定义调用；失败返回空 dict（调用方兜底）。"""
     if not names:
         return {}
     try:
@@ -271,6 +321,104 @@ async def _fetch_definitions_batch(
     except Exception:  # noqa: BLE001 — 定义失败用占位，不阻塞上链
         logger.warning("concept definition fetch failed", exc_info=True)
         return {}
+
+
+async def _new_candidate_concept(session: AsyncSession, name: str) -> Concept:
+    """建新词条：一律先记候选——不对用户可见，也**不生成定义**（转正时才花那次调用）。"""
+    concept = Concept(
+        name=name, slug=await _free_slug(session, name), status=CONCEPT_STATUS_CANDIDATE
+    )
+    session.add(concept)
+    return concept
+
+
+async def promote_ready_concepts(
+    session: AsyncSession,
+    *,
+    concept_ids: Sequence[uuid.UUID],
+    llm: LLMRouter | None = None,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+) -> tuple[list[Concept], list[Concept]]:
+    """把够门槛的候选概念复核转正（每次上链后调用），返回 (转正的, 判为无效的)。
+
+    门槛 = 关联论文数 ≥ :data:`CONCEPT_PROMOTION_MIN_PAPERS`（引用计数不分论文 status，
+    与孤儿清理同口径）。够门槛的才向 LLM 要「是不是概念」的判定 + 一句话定义——89% 的
+    概念只被一篇论文用到，给它们提前花这次调用是纯浪费。判为无效的落 rejected 终态
+    （``fig:1`` 这种被几十篇论文各标一次的垃圾就死在这里）；判不了（无 LLM / 调用失败）
+    则照常转正、定义留占位，由后续复核自愈，不阻塞。不 commit，由调用方提交。
+    """
+    ids = list(dict.fromkeys(concept_ids))
+    if not ids:
+        return [], []
+    counts = (
+        await session.execute(
+            select(paper_concepts.c.concept_id, func.count())
+            .where(paper_concepts.c.concept_id.in_(ids))
+            .group_by(paper_concepts.c.concept_id)
+        )
+    ).all()
+    ready = [cid for cid, n in counts if int(n) >= CONCEPT_PROMOTION_MIN_PAPERS]
+    if not ready:
+        return [], []
+    rows = list(
+        (
+            await session.execute(
+                select(Concept).where(
+                    Concept.id.in_(ready), Concept.status == CONCEPT_STATUS_CANDIDATE
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return [], []
+
+    verdicts: dict[str, dict[str, Any]] = {}
+    if llm is not None:
+        verdicts = await fetch_concept_definitions(
+            llm,
+            [c.name for c in rows],
+            user_id=user_id,
+            project_id=project_id,
+            library_id=library_id,
+            voyage_id=voyage_id,
+        )
+    promoted, rejected = [], []
+    for concept in rows:
+        if _apply_verdict(concept, verdicts.get(concept.name)):
+            promoted.append(concept)
+        else:
+            rejected.append(concept)
+    await session.flush()
+    return promoted, rejected
+
+
+def _apply_verdict(concept: Concept, meta: dict[str, Any] | None) -> bool:
+    """把一条判定结果写到词条上，返回它是否留在概念库（True=有效）。
+
+    ``meta`` 为空 = 这次没判成（无 LLM / 调用失败 / 模型漏回这个名字）：按「放行」处理
+    ——宁可暂时多留一个词条，也不能让一次超时把真概念误杀成终态。定义留占位，
+    ``validated_at`` 不落，下次同步会再判一次。
+    """
+    if meta is not None and meta.get("valid") is False:
+        concept.status = CONCEPT_STATUS_REJECTED
+        concept.validated_at = utcnow()  # 终态，判过就不再复判
+        return False
+    if meta is not None:
+        concept.validated_at = utcnow()  # 判过了：下次同步不必再为它花一次
+    definition = str((meta or {}).get("definition") or "")
+    if definition and not is_placeholder_definition(definition):
+        concept.definition = definition
+        concept.category = normalize_category((meta or {}).get("category"))
+    elif not concept.definition:
+        concept.definition = placeholder_definition(concept.name)
+        concept.category = normalize_category(concept.category)
+    concept.status = CONCEPT_STATUS_ACTIVE
+    return True
 
 
 async def delete_orphan_concepts(
@@ -334,12 +482,13 @@ async def link_all_paper_concepts(
     """全库概念上链（voyage wiki.link_concepts 步骤与手动补建端点共用）：
 
     对项目内全部已编译论文（compiled/included 且已有解读）抽 [[双链]]，
-    缺失概念建词条（新概念分批调 LLM 拿定义，失败占位）、补齐 paper_concepts
-    关联；已存在的概念与关联跳过，幂等可重跑。
+    缺失概念建**候选**词条（不生成定义）、补齐 paper_concepts 关联；已存在的概念与
+    关联跳过，幂等可重跑。
 
     建链完成后做同步收尾：①清除扫描范围内每篇论文正文已不再引用的陈旧关联
     （正文为空的论文跳过，不误删）；②删除项目内所有零引用概念（引用计数不分
-    论文 status，回收站论文的引用也算）。
+    论文 status，回收站论文的引用也算）；③把够门槛（≥2 篇论文引用）的候选概念转正，
+    **这时才**给它们生成定义。
 
     占位概念回填：``backfill=True``（手动补建端点）回填全部占位概念；
     ``backfill=False``（voyage 自动步骤）也做**有上限**的回填——每次最多取
@@ -372,63 +521,11 @@ async def link_all_paper_concepts(
     )
     by_name = {c.name: c for c in existing}
     new_names = [n for n in all_names if n not in by_name]
-    # 占位回填的范围：本库论文已关联到的概念 + 本轮正文引用到的同名概念（马上就要关联
-    # 上）。别的库自己那摊占位由它们自己的同步补，不在这里连带刷。
-    scoped = (
-        (
-            await session.execute(
-                select(Concept).where(
-                    or_(
-                        Concept.id.in_(library_concept_ids([library_id])),
-                        Concept.name.in_(all_names),
-                    )
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    # 回填：定义调用失败留下的占位概念重新要定义。手动补建全量;自动步骤取最老的一批
-    # (上限 _AUTO_BACKFILL_CAP),让偶发失败随每日同步自愈而不至于每天重刷几百个。
-    all_placeholders = sorted(
-        (c for c in scoped if is_placeholder_definition(c.definition)),
-        key=lambda c: (c.created_at is None, c.created_at or c.name),
-    )
-    placeholder_concepts = all_placeholders if backfill else all_placeholders[:_AUTO_BACKFILL_CAP]
-    names_to_define = new_names + [c.name for c in placeholder_concepts]
-
-    definitions: dict[str, dict[str, str]] = {}
-    if names_to_define and llm is not None:
-        definitions = await fetch_concept_definitions(
-            llm,
-            names_to_define,
-            user_id=user_id,
-            project_id=project_id,
-            library_id=library_id,  # 概念定义是库侧编译成本，记方向库账（P6）
-            voyage_id=voyage_id,
-        )
 
     created = 0
     for name in new_names:
-        meta = definitions.get(name) or {}
-        concept = Concept(
-            name=name,
-            slug=await _free_slug(session, name),
-            definition=str(meta.get("definition") or placeholder_definition(name)),
-            category=normalize_category(meta.get("category")),
-        )
-        session.add(concept)
-        by_name[name] = concept
+        by_name[name] = await _new_candidate_concept(session, name)
         created += 1
-
-    backfilled = 0
-    for concept in placeholder_concepts:
-        meta = definitions.get(concept.name) or {}
-        definition = str(meta["definition"]) if meta.get("definition") else None
-        if definition and not is_placeholder_definition(definition):
-            concept.definition = definition
-            concept.category = normalize_category(meta.get("category"))
-            backfilled += 1
     await session.flush()
 
     existing_pairs = (
@@ -479,8 +576,49 @@ async def link_all_paper_concepts(
             links_removed += len(stale)
     # 同步收尾②：删除零引用概念（含回收站论文的引用都算数，只删真孤儿）
     concepts_removed = await delete_orphan_concepts(session)
+    # 先落上面的建链/清理，再做转正：转正要调 LLM 拿定义，那期间不该压着写事务
+    # （记账写入用的是另一条连接，压着事务在 sqlite 上直接死锁）
+    await session.commit()
+    # 同步收尾③：转正——本轮扫到的论文所关联的候选概念里，够 2 篇的转正并补定义。
+    # 取全部关联（不止本轮新建的）：陈旧关联刚被清掉、或上一轮转正因故没跑到的，
+    # 都能在下次同步里自愈。
+    linked_ids = (
+        (
+            await session.execute(
+                select(paper_concepts.c.concept_id)
+                .where(paper_concepts.c.paper_id.in_(list(links_by_paper)))
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+        if links_by_paper
+        else []
+    )
+    promoted, rejected = await promote_ready_concepts(
+        session,
+        concept_ids=list(linked_ids),
+        llm=llm,
+        user_id=user_id,
+        project_id=project_id,
+        library_id=library_id,
+        voyage_id=voyage_id,
+    )
+    # 同步收尾④：复核库内正式概念——补齐占位定义 + 判定「还没判过」的老词条
+    # （门槛改造之前存量转正的那批 validated_at 为空，正是 fig:1 这类垃圾的藏身处）
+    backfilled, rejected_old = await review_active_concepts(
+        session,
+        library_id=library_id,
+        extra_names=all_names,
+        llm=llm,
+        limit=None if backfill else _AUTO_BACKFILL_CAP,
+        user_id=user_id,
+        project_id=project_id,
+        voyage_id=voyage_id,
+    )
     await session.commit()
 
+    rejected += rejected_old
     stats = {
         "papers": len(papers),
         "concepts_created": created,
@@ -489,8 +627,81 @@ async def link_all_paper_concepts(
         "concepts_backfilled": backfilled,
         "links_removed": links_removed,
         "concepts_removed": concepts_removed,
+        "concepts_promoted": len(promoted),
+        "promoted_concepts": sorted(c.name for c in promoted),
+        "concepts_rejected": len(rejected),
+        "rejected_concepts": sorted(c.name for c in rejected),
     }
     return stats, list(papers)
+
+
+async def review_active_concepts(
+    session: AsyncSession,
+    *,
+    library_id: uuid.UUID,
+    extra_names: Sequence[str] = (),
+    llm: LLMRouter | None = None,
+    limit: int | None = None,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+) -> tuple[int, list[Concept]]:
+    """复核库内的正式概念，返回 (补齐定义数, 判为无效而下架的概念)。
+
+    两种要复核的：①定义还是占位的（此前调用失败/截断留下的）；②``validated_at`` 为空的
+    ——门槛改造之前存量就转正的那批，从没被判过是不是概念，``fig:1`` 这类高引用垃圾就藏
+    在里面。两者共用同一次调用（本来就要问定义，顺带问有效性），判为无效的落 rejected。
+
+    ``limit`` 给出时只取最老的那批（voyage 自动步骤用，免得一次刷几百个）；手动补建传
+    None 做全量。范围是本库论文关联到的概念 + ``extra_names``（本轮正文引用到的同名词条）
+    ——别的库自己那摊由它们自己的同步复核。不 commit，由调用方提交。
+    """
+    scoped = (
+        (
+            await session.execute(
+                select(Concept).where(
+                    Concept.status == CONCEPT_STATUS_ACTIVE,
+                    or_(
+                        Concept.id.in_(library_concept_ids([library_id])),
+                        Concept.name.in_(list(extra_names)) if extra_names else False,
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    pending = sorted(
+        (
+            c
+            for c in scoped
+            if c.validated_at is None or is_placeholder_definition(c.definition)
+        ),
+        key=lambda c: (c.created_at is None, c.created_at or c.name),
+    )
+    if limit is not None:
+        pending = pending[:limit]
+    if not pending or llm is None:
+        return 0, []
+
+    verdicts = await fetch_concept_definitions(
+        llm,
+        [c.name for c in pending],
+        user_id=user_id,
+        project_id=project_id,
+        library_id=library_id,  # 概念定义是库侧编译成本，记方向库账（P6）
+        voyage_id=voyage_id,
+    )
+    backfilled = 0
+    rejected: list[Concept] = []
+    for concept in pending:
+        was_placeholder = is_placeholder_definition(concept.definition)
+        if not _apply_verdict(concept, verdicts.get(concept.name)):
+            rejected.append(concept)
+        elif was_placeholder and not is_placeholder_definition(concept.definition):
+            backfilled += 1
+    await session.flush()
+    return backfilled, rejected
 
 
 async def link_paper_concepts(
@@ -504,10 +715,13 @@ async def link_paper_concepts(
 ) -> tuple[int, int]:
     """单篇概念上链（手动编译/重编译/每日推送编译后调用，docs/api-lit.md §6.6）——同步语义：
 
-    从这篇论文的解读正文抽 [[双链]] → 缺失概念建词条（全平台一份，已有同名的直接复用；
-    LLM 定义，失败占位）→ 建关联；再删除该论文上新正文已不引用的陈旧关联，被解除关联
-    且再无任何论文引用的概念一并删除。正文为空/None 时直接返回，不做任何删除（防误删）。
-    返回 (新建概念数, 新建关联数)。调用方无需再 commit（本函数自行提交）。
+    从这篇论文的解读正文抽 [[双链]] → 缺失概念建**候选**词条（全平台一份，已有同名的
+    直接复用；候选不生成定义）→ 建关联；再删除该论文上新正文已不引用的陈旧关联，被解除
+    关联且再无任何论文引用的概念一并删除；最后把够门槛（≥2 篇论文引用）的候选送去复核，
+    模型判定确实是概念的转正并生成定义，判为无效的落 rejected。
+    正文为空/None 时直接返回，不做任何删除（防误删）。
+    返回 (新建概念数, 新建关联数)——新建的都是候选，用户还看不到，直到第二篇论文引用它。
+    调用方无需再 commit（本函数自行提交）。
     membership / project_id 仅用于 LLM 用量记账归属：概念与库无关，不属于任何库的论文
     （每日推送里直接编译的）照样上链，费用记平台级（library_id 空）+ 触发的人。
     """
@@ -524,23 +738,9 @@ async def link_paper_concepts(
     by_name = {c.name: c for c in existing}
     new_names = [n for n in names if n not in by_name]
 
-    definitions: dict[str, dict[str, str]] = {}
-    if new_names and llm is not None:
-        definitions = await fetch_concept_definitions(
-            llm, new_names, user_id=user_id, project_id=project_id, library_id=library_id
-        )
-
     created = 0
     for name in new_names:
-        meta = definitions.get(name) or {}
-        concept = Concept(
-            name=name,
-            slug=await _free_slug(session, name),
-            definition=str(meta.get("definition") or placeholder_definition(name)),
-            category=normalize_category(meta.get("category")),
-        )
-        session.add(concept)
-        by_name[name] = concept
+        by_name[name] = await _new_candidate_concept(session, name)
         created += 1
     await session.flush()
 
@@ -569,5 +769,16 @@ async def link_paper_concepts(
     target_ids = {by_name[name].id for name in names if name in by_name}
     stale = await _remove_stale_paper_links(session, paper.id, target_ids)
     await delete_orphan_concepts(session, candidate_ids=stale)
+    # 先落建链/清理再转正：转正要调 LLM 判定 + 拿定义，那期间不该压着写事务
+    await session.commit()
+    # 转正：这篇引用到的候选概念里，够 2 篇论文的送去复核，有效的转正并生成定义
+    await promote_ready_concepts(
+        session,
+        concept_ids=list(target_ids),
+        llm=llm,
+        user_id=user_id,
+        project_id=project_id,
+        library_id=library_id,
+    )
     await session.commit()
     return created, linked

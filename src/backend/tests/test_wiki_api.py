@@ -5,11 +5,11 @@ import uuid
 import zipfile
 from datetime import UTC, datetime
 
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 
 from app.core.db import get_sessionmaker
 from app.models.activity import Activity
-from app.models.paper import Paper, paper_concepts
+from app.models.paper import Concept, Paper, paper_concepts
 from tests.conftest import add_concept, add_paper, register_and_login
 
 
@@ -385,7 +385,10 @@ async def test_export_citations_by_ids(client):
 
 
 async def test_recompile_links_new_concepts(client):
-    """手动编译后自动做单篇概念上链：新 [[双链]] 建词条并关联（修复"概念尚未入库"）。"""
+    """手动编译后自动做单篇概念上链：新 [[双链]] 建词条并关联（修复"概念尚未入库"）。
+
+    新词条先记候选：Agent 已被 p1 用过，这次算第 2 篇 → 进概念库；只有这一篇提到的
+    「强化学习」留在候选，关联照建但还不对用户可见。"""
     project_id, headers, ids = await _setup(client)
 
     resp = await client.post(f"/api/papers/{ids['p2']}/recompile", headers=headers)
@@ -393,13 +396,30 @@ async def test_recompile_links_new_concepts(client):
     detail = resp.json()
     assert "[[强化学习]]" in detail["wiki_content"]  # fake librarian 输出
 
-    # 概念已建（强化学习为新词条，Agent 已存在不重复建）并关联到论文
     resp = await client.get(f"/api/projects/{project_id}/concepts", headers=headers)
     names = {c["name"] for c in resp.json()}
-    assert "强化学习" in names and "Agent" in names
+    assert "Agent" in names and "强化学习" not in names
     resp = await client.get(f"/api/papers/{ids['p2']}", headers=headers)
-    linked = {c["name"] for c in resp.json()["concepts"]}
-    assert {"Agent", "强化学习"} <= linked
+    assert {c["name"] for c in resp.json()["concepts"]} == {"Agent"}
+
+    # 候选词条与关联照常建（不生成定义），等第二篇论文引用它就自动转正
+    async with get_sessionmaker()() as session:
+        concept = (
+            await session.execute(select(Concept).where(Concept.name == "强化学习"))
+        ).scalar_one()
+        assert concept.status == "candidate" and concept.definition is None
+        linked = (
+            (
+                await session.execute(
+                    select(paper_concepts.c.paper_id).where(
+                        paper_concepts.c.concept_id == concept.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [str(pid) for pid in linked] == [ids["p2"]]
 
 
 async def test_search_hides_deleted_papers(client):

@@ -17,7 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, Paper, PaperChunk, paper_concepts
+from app.models.paper import (
+    CONCEPT_STATUS_ACTIVE,
+    Concept,
+    Paper,
+    PaperChunk,
+    paper_concepts,
+)
 from app.models.project import Project
 from app.services import chunks as chunks_service
 from app.services.libraries import (
@@ -273,7 +279,11 @@ async def build_messages_for_libraries(
             await session.execute(
                 select(paper_concepts.c.paper_id, Concept.name)
                 .join(Concept, Concept.id == paper_concepts.c.concept_id)
-                .where(paper_concepts.c.paper_id.in_([p.id for p, _ in entries]))
+                .where(
+                    paper_concepts.c.paper_id.in_([p.id for p, _ in entries]),
+                    # 只给正式概念：候选词条点开是「还没入库」，不该出现在回答的双链里
+                    Concept.status == CONCEPT_STATUS_ACTIVE,
+                )
             )
         ).all()
         for paper_id, name in concept_rows:
@@ -389,7 +399,11 @@ async def build_scoped_messages(
             await session.execute(
                 select(paper_concepts.c.paper_id, Concept.name)
                 .join(Concept, Concept.id == paper_concepts.c.concept_id)
-                .where(paper_concepts.c.paper_id.in_([p.id for p, _ in entries]))
+                .where(
+                    paper_concepts.c.paper_id.in_([p.id for p, _ in entries]),
+                    # 只给正式概念：候选词条点开是「还没入库」，不该出现在回答的双链里
+                    Concept.status == CONCEPT_STATUS_ACTIVE,
+                )
             )
         ).all()
         for paper_id, name in concept_rows:

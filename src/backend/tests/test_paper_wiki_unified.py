@@ -230,6 +230,14 @@ async def test_concept_shared_across_libraries_and_scoped_by_papers(client):
             status="compiled",
             wiki_content="讲 [[大语言模型]] 与 [[检索增强]]。",
         )
+        # 概念要被 2 篇论文提到才转正进概念库，故 A 库放两篇都讲「检索增强」的
+        await add_paper(
+            session,
+            project_id=uuid.UUID(project_a),
+            title="Paper In A2",
+            status="compiled",
+            wiki_content="接着讲 [[检索增强]]。",
+        )
         await add_paper(
             session,
             project_id=uuid.UUID(project_b),
@@ -284,7 +292,7 @@ async def test_pool_only_paper_concepts_open_without_library(client):
         paper = new_paper(title="Pool Only", abstract="a", source="manual")
         session.add(paper)
         await session.flush()
-        concept = Concept(name="池内概念", slug="pool-concept", definition="d")
+        concept = Concept(name="池内概念", slug="pool-concept", definition="d", status="active")
         session.add(concept)
         await session.flush()
         await session.execute(
@@ -305,7 +313,11 @@ async def test_lookup_concept_by_name_platform_wide(client):
     token = await register_and_login(client, email="concept-lookup@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     async with get_sessionmaker()() as session:
-        session.add(Concept(name="思维链", slug="思维链", definition="d", category="method"))
+        session.add(
+            Concept(
+                name="思维链", slug="思维链", definition="d", category="method", status="active"
+            )
+        )
         await session.commit()
 
     resp = await client.get("/api/concepts?name=思维链", headers=headers)
@@ -326,18 +338,26 @@ async def test_lookup_concept_is_exact_not_substring(client):
     async with get_sessionmaker()() as session:
         session.add_all(
             [
-                Concept(name="Attention", slug="attention", definition="d", category="method"),
+                Concept(
+                    name="Attention",
+                    slug="attention",
+                    definition="d",
+                    category="method",
+                    status="active",
+                ),
                 Concept(
                     name="Flash Attention",
                     slug="flash-attention",
                     definition="d",
                     category="method",
+                    status="active",
                 ),
                 Concept(
                     name="Self-Attention",
                     slug="self-attention",
                     definition="d",
                     category="method",
+                    status="active",
                 ),
             ]
         )

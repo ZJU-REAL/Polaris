@@ -223,8 +223,7 @@ async def test_recompile_with_pdf_full_flow(client):
         membership = await membership_of(session, project_id=project_id, paper_id=paper_id)
         wiki = await wiki_of(session, paper_id=membership.paper_id)
         assert wiki is not None and wiki.model == "fake-default"  # 编译模型落解读行
-        # LLMUsage 记账归属 project：annotate + 编译走 librarian（多模态），
-        # 概念定义走 extract（纯文本短 JSON）
+        # LLMUsage 记账归属 project：annotate + 编译走 librarian（多模态）
         rows = (
             (await session.execute(select(LLMUsage).where(LLMUsage.stage == "librarian")))
             .scalars()
@@ -232,13 +231,14 @@ async def test_recompile_with_pdf_full_flow(client):
         )
         assert len(rows) == 2
         assert all(str(r.project_id) == project_id for r in rows)
+        # 概念定义（stage=extract）推迟到转正时才调：这一篇标出来的双链都只有它一篇
+        # 用到，全是候选，没有定义调用
         extract_rows = (
             (await session.execute(select(LLMUsage).where(LLMUsage.stage == "extract")))
             .scalars()
             .all()
         )
-        assert len(extract_rows) == 1
-        assert all(str(r.project_id) == project_id for r in extract_rows)
+        assert extract_rows == []
 
     # 再跑一次：覆盖 wiki_content，仍成功（重跑 annotate + 编译）
     resp = await client.post(f"/api/papers/{paper_id}/recompile", headers=headers)

@@ -860,9 +860,16 @@ export interface ConceptDetail extends ConceptRead {
 /** 全库概念补建结果（POST /projects/{id}/concepts/relink）。 */
 export interface ConceptRelinkResult {
   papers: number;
+  /** 新建的词条数——都是候选（要被 2 篇论文提到才收录），用户还看不见 */
   concepts_created: number;
   links_created: number;
   new_concepts: string[];
+  /** 本次收录进概念库的（被 2 篇以上论文提到、且确认是学术概念） */
+  concepts_promoted: number;
+  promoted_concepts: string[];
+  /** 本次判定「不是概念」而下架的（图号、编号、半句话……） */
+  concepts_rejected: number;
+  rejected_concepts: string[];
 }
 
 // ============================================================
