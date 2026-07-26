@@ -3,11 +3,11 @@
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.library_direction import DirectionLibraryCurator, TopicSourceLibrary
+from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator
 from app.models.project import ProjectMember
 from app.models.user import User
 from app.models.voyage import LIBRARY_KINDS, TERMINAL_STATUSES, VoyageRun
@@ -40,24 +40,33 @@ async def create_voyage(
 
 
 def _visible_filter(stmt, user_id: uuid.UUID):
-    """可见任务 = 我所在课题的任务 ∪ 我够得着的库的任务（课题关联的库 ∪ 我策展的库）。
+    """可见任务 = 我所在课题的任务 ∪ 我能管的库的任务 ∪ 我自己发起的任务（∪ admin 全部）。
 
+    这是 :func:`can_view_voyage` 的 SQL 镜像——列表里能看到的，点进去必须打得开。
     库任务不能只靠 project_id 判：独立库的任务 project_id 为空，按课题成员 join
     会把它们整个漏掉——而独立库是常态（P9c 起建课题不再自动建库）。
+
+    「课题关联了某个库」不给可见性：关联只是拿它的语料，管不了它的建库任务
+    （库级写权限 = 创建者/策展人/admin，见 libraries.can_manage_library）。
     """
     my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
-    my_libraries = select(TopicSourceLibrary.library_id).where(
-        TopicSourceLibrary.topic_id.in_(my_projects)
-    )
     my_curated = select(DirectionLibraryCurator.library_id).where(
         DirectionLibraryCurator.user_id == user_id
     )
+    my_libraries = select(DirectionLibrary.id).where(
+        or_(DirectionLibrary.submitted_by == user_id, DirectionLibrary.id.in_(my_curated))
+    )
     is_admin = select(User.id).where(User.id == user_id, User.role == "admin").exists()
+    # 「我发起的」只对有作用域的任务生效：平台级任务（两个 id 都为空）恒为 admin-only。
+    mine_scoped = and_(
+        VoyageRun.created_by == user_id,
+        or_(VoyageRun.project_id.is_not(None), VoyageRun.library_id.is_not(None)),
+    )
     return stmt.where(
         or_(
             VoyageRun.project_id.in_(my_projects),
             VoyageRun.library_id.in_(my_libraries),
-            VoyageRun.library_id.in_(my_curated),
+            mine_scoped,
             is_admin,
         )
     )
@@ -91,6 +100,41 @@ async def _is_project_member(
     return row.first() is not None
 
 
+async def can_view_voyage(
+    session: AsyncSession, *, run: VoyageRun, user: User
+) -> bool:
+    """能否查看某个任务（详情/日志/SSE/取消/重试的统一口径）。
+
+    - 平台管理员：全部；
+    - 平台级任务（两个作用域 id 都为空，如每日新论文抓取）：仅平台管理员，口径与
+      订阅分类管理、手动刷新、向量开关一致；
+    - 我发起的任务（``created_by``）：自己点的那次运行，哪怕后来不再是该库策展人也看得到；
+    - 课题作用域任务：课题成员；
+    - 库作用域任务：能管这个库的人（创建者/策展人/admin，见 libraries.can_manage_library）。
+
+    :func:`_visible_filter` 是它的 SQL 镜像，两边必须一起改。
+    """
+    if user.role == "admin":
+        return True
+    if run.project_id is None and run.library_id is None:
+        return False
+    if run.created_by is not None and run.created_by == user.id:
+        return True
+    if run.project_id is not None and await _is_project_member(
+        session, project_id=run.project_id, user_id=user.id
+    ):
+        return True
+    if run.library_id is not None:
+        from app.services.libraries import can_manage_library, get_library
+
+        library = await get_library(session, run.library_id)
+        if library is not None and await can_manage_library(
+            session, user=user, library=library
+        ):
+            return True
+    return False
+
+
 async def get_voyage(
     session: AsyncSession,
     *,
@@ -99,12 +143,9 @@ async def get_voyage(
     with_steps: bool = False,
     user: User | None = None,
 ) -> VoyageRun | None:
-    """取航程；无访问权视为不存在（返回 None）。
+    """取航程；无访问权视为不存在（返回 None）。访问权见 :func:`can_view_voyage`。
 
-    访问权：起源课题成员（项目作用域任务）∪ 可管理其方向库者（P9a 库化任务——独立库
-    无课题，鉴权走库级写权限：成员/策展人/admin）∪ 平台管理员（平台级任务——两个作用
-    域 id 都为空，如每日新论文抓取）。库级鉴权需要 ``user``（角色/策展人判定），故 API
-    层传完整 user；仅传 user_id 时退化为项目成员判定 + 回查角色。
+    鉴权要完整 ``user``（角色/创建者/策展人判定），只传 ``user_id`` 的调用点回查一次。
     """
     stmt = select(VoyageRun).where(VoyageRun.id == voyage_id)
     if with_steps:
@@ -112,32 +153,11 @@ async def get_voyage(
     run = (await session.execute(stmt)).scalar_one_or_none()
     if run is None:
         return None
-    if run.project_id is not None and await _is_project_member(
-        session, project_id=run.project_id, user_id=user_id
-    ):
-        return run
-    if run.library_id is not None and user is not None:
-        from app.services.libraries import can_manage_library, get_library
-
-        library = await get_library(session, run.library_id)
-        if library is not None and await can_manage_library(
-            session, user=user, library=library
-        ):
-            return run
-    if run.project_id is None and run.library_id is None:
-        # 平台级任务（每日新论文抓取）：既不属于课题也不属于库，上面两条白名单都不
-        # 命中——不放行的话 admin 也会 404，连带日志/SSE/取消/重试全失效。口径与订阅
-        # 分类管理、手动刷新、向量开关一致：仅平台 admin。
-        # 只传 user_id 的调用点回查一次角色（与 _visible_filter 的 is_admin 子句同口径）。
-        role = (
-            user.role
-            if user is not None
-            else (
-                await session.execute(select(User.role).where(User.id == user_id))
-            ).scalar_one_or_none()
-        )
-        return run if role == "admin" else None
-    return None
+    if user is None:
+        user = await session.get(User, user_id)
+        if user is None:
+            return None
+    return run if await can_view_voyage(session, run=run, user=user) else None
 
 
 async def cancel_voyage(session: AsyncSession, run: VoyageRun) -> VoyageRun:

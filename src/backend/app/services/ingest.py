@@ -12,6 +12,7 @@ from app.models.activity import Activity
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import PAPER_STATUSES
 from app.models.project import Project
+from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.ingest import IngestKnobs
 from app.services.libraries import get_library_for_project, library_definition
@@ -227,8 +228,19 @@ def next_daily_sync_at(library: DirectionLibrary | None) -> datetime | None:
     return candidate
 
 
+async def _can_open(session: AsyncSession, run: VoyageRun | None, user: User) -> bool:
+    """这个人能否打开该任务的详情页（与 voyages 详情鉴权同一口径）。
+
+    库能看不等于库的任务能看：只读访客看得到「正在建库」，但点不开任务详情。
+    前端据此把状态渲染成纯文字而不是链接，免得点进去 404。
+    """
+    from app.services.voyages import can_view_voyage
+
+    return run is not None and await can_view_voyage(session, run=run, user=user)
+
+
 async def _resolve_last_run(
-    session: AsyncSession, state: dict[str, Any]
+    session: AsyncSession, state: dict[str, Any], user: User
 ) -> dict[str, Any] | None:
     """从 ingest_state 里的 last_run 摘要补上当前 voyage 状态（水位线权威源在库）。"""
     last_run_raw = state.get("last_run") or None
@@ -239,10 +251,13 @@ async def _resolve_last_run(
         "voyage_id": last_run_raw["voyage_id"],
         "status": voyage.status if voyage else "unknown",
         "finished_at": last_run_raw.get("finished_at"),
+        "can_open": await _can_open(session, voyage, user),
     }
 
 
-async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any]:
+async def ingest_state(
+    session: AsyncSession, project: Project, *, user: User
+) -> dict[str, Any]:
     # P8a：水位线/last_run 权威源在库（library.ingest_state）
     library = await get_library_for_project(session, project.id)
     state = (library.ingest_state if library else None) or {}
@@ -252,15 +267,16 @@ async def ingest_state(session: AsyncSession, project: Project) -> dict[str, Any
     )
     return {
         "watermark": state.get("watermark"),
-        "last_run": await _resolve_last_run(session, state),
+        "last_run": await _resolve_last_run(session, state, user),
         "paper_counts": await paper_counts(session, project.id),
         "running_voyage_id": running.id if running else None,
+        "can_open_running_voyage": await _can_open(session, running, user),
         "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
     }
 
 
 async def library_ingest_state(
-    session: AsyncSession, library: DirectionLibrary
+    session: AsyncSession, library: DirectionLibrary, *, user: User
 ) -> dict[str, Any]:
     """某方向库的 ingest 状态（水位线/上次同步/计数/在跑任务/下次同步），库工作台用。
 
@@ -271,9 +287,10 @@ async def library_ingest_state(
     running = await find_running_ingest_for_library(session, library.id)
     return {
         "watermark": state.get("watermark"),
-        "last_run": await _resolve_last_run(session, state),
+        "last_run": await _resolve_last_run(session, state, user),
         "paper_counts": await library_paper_counts(session, library.id),
         "running_voyage_id": running.id if running else None,
+        "can_open_running_voyage": await _can_open(session, running, user),
         "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
     }
 

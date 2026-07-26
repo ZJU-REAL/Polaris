@@ -27,6 +27,8 @@ class IngestLastRun(BaseModel):
     voyage_id: uuid.UUID
     status: str
     finished_at: datetime | None
+    # 请求者能否打开这个任务的详情页（库可读不等于任务可见）；false 时前端只显示状态、不给跳转
+    can_open: bool = False
 
 
 class PaperCounts(BaseModel):
@@ -48,6 +50,8 @@ class IngestStateRead(BaseModel):
     last_run: IngestLastRun | None
     paper_counts: PaperCounts
     running_voyage_id: uuid.UUID | None
+    # 请求者能否打开在跑任务的详情页；false 时前端只显示「运行中」文字、不给跳转
+    can_open_running_voyage: bool = False
     # 下一次自动同步时间（cadence=daily 且已完成初始建库才有）
     next_sync_at: str | None = None
 

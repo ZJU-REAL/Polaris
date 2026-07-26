@@ -62,5 +62,5 @@ async def get_ingest_state(
     project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
-    state = await ingest_service.ingest_state(session, project)
+    state = await ingest_service.ingest_state(session, project, user=user)
     return IngestStateRead(**state)

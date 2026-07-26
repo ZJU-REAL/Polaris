@@ -171,15 +171,23 @@ export function WikiWorkbench({
           onChange={setTab}
         />
         <div className="row gap8">
+          {/* 无权打开任务详情时只报状态、不给跳转（点了会 404） */}
           {ingestQuery.data?.running_voyage_id && tab !== 'ingest' && (
-            <span
-              className="pill hoverable"
-              style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
-              onClick={() => navigate(`/voyages/${ingestQuery.data?.running_voyage_id ?? ''}`)}
-            >
-              <span className="dot pulse" />
-              {tr('文献任务运行中 →', 'Literature task running →')}
-            </span>
+            ingestQuery.data.can_open_running_voyage ? (
+              <span
+                className="pill hoverable"
+                style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}
+                onClick={() => navigate(`/voyages/${ingestQuery.data?.running_voyage_id ?? ''}`)}
+              >
+                <span className="dot pulse" />
+                {tr('文献任务运行中 →', 'Literature task running →')}
+              </span>
+            ) : (
+              <span className="pill" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
+                <span className="dot pulse" />
+                {tr('文献任务运行中', 'Literature task running')}
+              </span>
+            )
           )}
           {hasTopic && (
             <button className="btn btn-ghost sm" onClick={() => setPresentOpen(true)}>

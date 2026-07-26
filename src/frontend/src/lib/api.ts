@@ -1147,6 +1147,8 @@ export interface IngestLastRun {
   voyage_id: string;
   status: string;
   finished_at: string | null;
+  /** 能否打开该任务详情（库可读不等于任务可见）；false 时只显示状态、不给跳转 */
+  can_open?: boolean;
 }
 
 export interface PaperCounts {
@@ -1169,6 +1171,8 @@ export interface IngestState {
   last_run: IngestLastRun | null;
   paper_counts: PaperCounts;
   running_voyage_id: string | null;
+  /** 能否打开在跑任务的详情（无权限时只显示状态、不给跳转） */
+  can_open_running_voyage?: boolean;
   /** 下一次自动同步时间（ISO）；cadence 非 daily 或未完成初始建库为 null */
   next_sync_at?: string | null;
 }

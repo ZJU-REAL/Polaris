@@ -867,7 +867,7 @@ async def get_library_ingest_state(
 ) -> IngestStateRead:
     """该库的建库/同步状态：上次同步时间、抓取进度计数、在跑任务、下次自动同步（可管理者）。"""
     library = await _get_visible_library(session, library_id, user)
-    state = await ingest_service.library_ingest_state(session, library)
+    state = await ingest_service.library_ingest_state(session, library, user=user)
     return IngestStateRead(**state)
 
 

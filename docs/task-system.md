@@ -212,42 +212,48 @@ scope columns are null because the daily feed is shared by the whole lab.
 clauses:
 
 1. `project_id` is one of the topics I am a member of (`project_members`);
-2. `library_id` is one of the libraries linked by a topic I am a member of
-   (`topic_source_libraries`);
-3. `library_id` is one of the libraries I curate (`direction_library_curators`);
+2. `library_id` is one of the libraries I can manage — I created it (`direction_libraries
+   .submitted_by`) or I curate it (`direction_library_curators`);
+3. I started this run myself (`voyage_runs.created_by`) **and** the run has a scope (at least one of
+   `project_id` / `library_id` is set);
 4. I am a platform admin (`users.role == "admin"`) — then everything is visible.
 
-Clauses 2 and 3 exist because a library task's `project_id` is deliberately left empty
+Clause 2 exists because a library task's `project_id` is deliberately left empty
 (`create_ingest_voyage` sets only `library_id`, so library tasks do not pollute topic task lists).
 Filtering by topic membership alone would hide them entirely, and standalone libraries with no origin
-topic are the normal case.
+topic are the normal case. Merely *linking* a library to a topic (`topic_source_libraries`) grants
+nothing here: the link means the topic consumes the library's papers, not that its members run it.
 
 Then, if `project_id` is passed as a query parameter, the list is additionally narrowed to that
 topic's own tasks **and library kinds are excluded** — those belong in the lab workspace.
 
 Note what this means for a platform-level task: `daily_feed_sync` runs have both scope ids null, so
-clauses 1–3 can never match. Only clause 4 does. **Non-admins do not see the daily fetch task at
-all.**
+clauses 1–3 can never match (clause 3 is explicitly scoped for this reason). Only clause 4 does.
+**Non-admins do not see the daily fetch task at all.**
 
-### 3.2 The detail (`get_voyage`)
+### 3.2 The detail (`can_view_voyage`)
 
-Detail, logs, SSE, cancel and retry all go through `get_voyage()`, which is stricter and checks three
-whitelists in order. No access is reported as `404 VOYAGE_NOT_FOUND`, not `403` — existence is not
-leaked.
+Detail, logs, SSE, cancel and retry all go through `get_voyage()` → `can_view_voyage()`. No access is
+reported as `404 VOYAGE_NOT_FOUND`, not `403` — existence is not leaked.
 
-1. **Topic-scoped run** (`project_id` set): the caller must be a member of that topic.
-2. **Library-scoped run** (`library_id` set): the caller must pass `can_manage_library()` — i.e. be a
-   platform admin, the creator, or a curator of that library. Note this is a *write*-level check, and
-   it is stricter than the list filter: being a member of a topic that merely links the library gets
-   you the row in the list, but not the detail page.
-3. **Platform-level run** (both scope ids null): platform admins only. Without this branch even an
-   admin would get a 404 on the daily fetch task, taking its logs, SSE stream, cancel and retry down
-   with it. The rule matches the rest of the daily feed's admin surface (managing subscribed
-   categories, manual refresh, the embedding toggle).
+1. **Platform admin**: everything.
+2. **Platform-level run** (both scope ids null, i.e. the daily fetch): admins only, so this returns
+   false for everyone else — including whoever started it. Without clause 1 even an admin would get a
+   404 there, taking its logs, SSE stream, cancel and retry down with it. The rule matches the rest of
+   the daily feed's admin surface (managing subscribed categories, manual refresh, the embedding
+   toggle).
+3. **I started it** (`created_by`): the run I kicked off stays open to me even if I later lose
+   curatorship of that library.
+4. **Topic-scoped run** (`project_id` set): the caller must be a member of that topic.
+5. **Library-scoped run** (`library_id` set): the caller must pass `can_manage_library()` — i.e. be a
+   platform admin, the creator, or a curator of that library.
 
-The library branch needs the full `User` object (for role and curator lookup), so the API layer
-always passes `user=`. Call sites that only have a `user_id` degrade to topic-membership plus a
-role lookup.
+`_visible_filter()` is the SQL mirror of this predicate and the two must be changed together:
+anything you can see in the list must open. (They used to diverge — the list counted tasks of
+libraries merely linked to my topic, the detail required library write access, so those rows 404ed.)
+
+`can_view_voyage()` needs the full `User` object (role, creator, curator lookups); `get_voyage()`
+loads it when the call site only has a `user_id`.
 
 ### 3.3 Cancel and retry
 
@@ -616,9 +622,13 @@ log. Once the network is back, `POST /voyages/{id}/resume` resets that step to `
 on. If it dies at step 5 instead, steps 1–4 are `passed` and are not redone — the crawl and the
 scoring are not repeated.
 
-**Visibility.** `project_id` is null, so this run never appears in a topic's task list. It is visible
-in the list to anyone in a topic that links the library, to its curators, and to admins; the detail
-page additionally requires manage rights on the library (creator / curator / admin).
+**Visibility.** `project_id` is null, so this run never appears in a topic's task list. List and
+detail use the same rule (§3): whoever can manage the library (creator / curator / admin), plus
+whoever started this particular run. Linking the library to a topic does not let its members open the
+task. A read-only visitor still sees "running" on the library page — `GET /libraries/{id}/ingest/
+state` returns `running_voyage_id` together with `can_open_running_voyage` (and `last_run.can_open`),
+and the frontend renders plain text instead of a link when those are false, rather than sending
+someone into a 404.
 
 ### 5.2 Daily new papers — `daily_feed_sync`
 

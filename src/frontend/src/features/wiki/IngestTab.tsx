@@ -121,6 +121,8 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
   const [unlimited, setUnlimited] = useState(false);
 
   const running = !!state?.running_voyage_id;
+  // 库可读 ≠ 库的任务可见：无权打开详情就不给跳转（见后端 can_open_running_voyage）
+  const canOpenRunning = !!state?.can_open_running_voyage;
 
   const ingestMutation = useMutation({
     mutationFn: (input: { mode: IngestMode; knobs: IngestKnobs }) =>
@@ -188,11 +190,11 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
       <div className="row gap20" style={{ alignItems: 'flex-start' }}>
         {/* —— 左：状态 —— */}
         <div className="col gap16" style={{ flex: 1, minWidth: 0 }}>
-          {/* 进行中航程 */}
+          {/* 进行中航程；无权打开详情时只显示状态、不给跳转（点了会 404） */}
           {running && state?.running_voyage_id && (
             <div
-              className="card card-pad hoverable"
-              onClick={() => navigate(`/voyages/${state.running_voyage_id}`)}
+              className={canOpenRunning ? 'card card-pad hoverable' : 'card card-pad'}
+              onClick={canOpenRunning ? () => navigate(`/voyages/${state.running_voyage_id}`) : undefined}
               style={{ borderColor: 'var(--accent-soft-2)', background: 'var(--accent-soft)' }}
             >
               <div className="row gap10">
@@ -201,7 +203,9 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
                   {tr('运行中', 'Running')}
                 </span>
                 <span style={{ fontSize: 13.5, fontWeight: 650 }}>{tr('文献任务进行中', 'Literature task in progress')}</span>
-                <Icon name="arrow" size={14} style={{ marginLeft: 'auto', color: 'var(--accent-text)' }} />
+                {canOpenRunning && (
+                  <Icon name="arrow" size={14} style={{ marginLeft: 'auto', color: 'var(--accent-text)' }} />
+                )}
               </div>
               <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 8 }}>
                 voyage {state.running_voyage_id.slice(0, 8)}…
@@ -273,8 +277,12 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{tr('上次运行', 'Last run')}</div>
                 {state?.last_run ? (
                   <div
-                    className="row gap10 hoverable"
-                    onClick={() => navigate(`/voyages/${state.last_run?.voyage_id ?? ''}`)}
+                    className={state.last_run.can_open ? 'row gap10 hoverable' : 'row gap10'}
+                    onClick={
+                      state.last_run.can_open
+                        ? () => navigate(`/voyages/${state.last_run?.voyage_id ?? ''}`)
+                        : undefined
+                    }
                     style={{
                       border: '0.5px solid var(--border)',
                       borderRadius: 9,
@@ -289,7 +297,9 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
                     <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginLeft: 'auto' }}>
                       {state.last_run.voyage_id.slice(0, 8)}…
                     </span>
-                    <Icon name="chevron" size={13} style={{ color: 'var(--text-4)' }} />
+                    {state.last_run.can_open && (
+                      <Icon name="chevron" size={13} style={{ color: 'var(--text-4)' }} />
+                    )}
                   </div>
                 ) : (
                   <span className="muted" style={{ fontSize: 12.5 }}>{tr('暂无运行记录', 'No runs yet')}</span>
