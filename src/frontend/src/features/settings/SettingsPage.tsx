@@ -222,12 +222,12 @@ function ChatPrefsTab() {
       <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div id="pref-chat-fulltext" style={{ fontSize: 13, lineHeight: 1.4 }}>
-            {tr('为论文建立全文索引', 'Build a full-text index for papers')}
+            {tr('让文献对话能引用论文正文', 'Let literature chat cite the paper body')}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
             {tr(
-              '文献对话检索得更准；会消耗你的模型额度抓取和嵌入全文。',
-              'Literature chat retrieves more accurately; uses your model quota to fetch and embed the full text.',
+              '关掉后对话仍能找到论文，但只匹配得到标题和摘要，引不出正文细节。会消耗你的模型额度抓取和嵌入全文。',
+              'When off, chat can still find papers but only matches their title and abstract, never details from the body. Uses your model quota to fetch and embed the full text.',
             )}
           </div>
         </div>
@@ -1662,12 +1662,12 @@ function PaperEmbeddingSection() {
       <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div id="paper-embedding-toggle" style={{ fontSize: 13, lineHeight: 1.4 }}>
-            {tr('为入库的论文建立向量', 'Build vectors for papers as they are added')}
+            {tr('让论文能被语义搜索找到', 'Let papers be found by semantic search')}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
             {tr(
-              '所有入库方式都适用（建库、手动添加、每日推送）。这是全平台的总开关，关掉后语义检索只能找到已经建过向量的论文，一般不用动。',
-              'Applies to every way papers are added (library builds, manual adds, daily papers). This is the platform-wide switch; when off, semantic search only finds papers that already have vectors. Rarely needs changing.',
+              '索引标题、作者与摘要，所有入库方式都适用（建库、手动添加、每日推送）。这是全平台的总开关，关掉后语义搜索和文献对话都会失效，一般不用动。',
+              'Indexes title, authors and abstract, for every way papers are added (library builds, manual adds, daily papers). This is the platform-wide switch; when off, both semantic search and literature chat stop working. Rarely needs changing.',
             )}
           </div>
         </div>

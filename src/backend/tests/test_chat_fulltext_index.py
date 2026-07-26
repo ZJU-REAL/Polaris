@@ -233,3 +233,50 @@ async def test_personal_index_rebuild_gated(client, queue_stub):
     assert func_name == "index_papers_fulltext_task"
     assert args[0] == "personal"
     assert args[2] is None
+
+
+async def test_project_index_rebuild_gated(client):
+    """课题作用域批量重建同样过门控——此前漏了，用户关掉开关换这个入口照样烧额度。"""
+    project_id, headers = await _project(client)
+
+    # 开关默认开：没设置过也能建
+    resp = await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    await _disable_index(client, headers)
+    resp = await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "INDEXING_DISABLED"
+
+    await _enable_index(client, headers)
+    resp = await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+
+async def test_library_index_rebuild_gated(client):
+    """库作用域批量重建同样过门控（与课题/个人库/书架同一口径）。
+
+    鉴权先于门控：无权管理的人拿到的仍是 403，不因自己关了开关就变成 409——
+    否则这个端点会把「你管不了这个库」说成「你没开索引」，误导排查方向。
+    """
+    from tests.test_library_scoped_capabilities import _hdr, _setup
+
+    creator, _admin, lib_id = await _setup(client, prefix="idxgate")
+
+    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator)
+    assert resp.status_code == 200, resp.text
+
+    await _disable_index(client, creator)
+    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "INDEXING_DISABLED"
+
+    # 关着开关的陌生人拿 403（鉴权先跑），不是 409
+    stranger = await _hdr(client, "idxgate-stranger@example.com")
+    await _disable_index(client, stranger)
+    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=stranger)
+    assert resp.status_code == 403
+
+    await _enable_index(client, creator)
+    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator)
+    assert resp.status_code == 200, resp.text
