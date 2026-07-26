@@ -281,6 +281,14 @@ input {
 .crumb .sep { color: var(--text-4); }
 .topbar .spacer { flex: 1; }
 
+/* 更新提示：箭头按钮右上角的小圆点（区别于审批的数字 badge） */
+.update-badge { position: relative; }
+.update-badge .dot-badge {
+  position: absolute; top: 5px; right: 5px;
+  width: 7px; height: 7px; min-width: 0; padding: 0;
+  border-radius: 50%; background: var(--accent);
+}
+
 .searchbox {
   display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 11px;
   background: var(--surface-2); border: 0.5px solid var(--border-2); border-radius: 8px;

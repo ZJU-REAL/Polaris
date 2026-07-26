@@ -6,6 +6,7 @@ import { PolarisMark, PolarisWordmark } from '../components/ui/PolarisLogo';
 import { Drawer } from '../components/ui/Drawer';
 import { GateCard, gateTitle } from '../components/ui/GateCard';
 import { ToastHost, toast } from '../components/ui/Toast';
+import { UpdateBadge } from '../components/ui/UpdateBadge';
 import { useAuth } from './auth';
 import { topicPath, useProject } from './project';
 import { SearchPalette } from './SearchPalette';
@@ -606,6 +607,7 @@ export function AppShell() {
           )}
           <LangToggle />
           <FeedbackWidget />
+          <UpdateBadge />
           <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
             <Icon name="bell" size={16} />
             {pending.length > 0 && <span className="badge">{pending.length}</span>}

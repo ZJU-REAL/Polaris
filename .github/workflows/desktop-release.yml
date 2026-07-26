@@ -111,6 +111,21 @@ jobs:
           sudo chmod 4755 src/desktop/node_modules/electron/dist/chrome-sandbox
           cd src/desktop && xvfb-run -a npm run smoke
 
+      # The renderer ships separately so a frontend-only release can be applied
+      # without reinstalling: the client swaps this bundle in and reloads. The
+      # contract version in the filename tells the client whether its preload is
+      # new enough to run it — see src/desktop/src/main/updates.
+      # Built once, on Linux, since the bundle is platform-independent.
+      - name: Package renderer update
+        if: matrix.name == 'linux'
+        shell: bash
+        run: |
+          CONTRACT=$(grep -oE 'CONTRACT_VERSION = [0-9]+' src/desktop/src/shared/contract.ts | grep -oE '[0-9]+')
+          VERSION="${{ steps.meta.outputs.version }}"
+          echo "{\"version\":\"$VERSION\",\"contract\":$CONTRACT}" > src/frontend/dist/meta.json
+          mkdir -p src/desktop/release
+          tar -czf "src/desktop/release/renderer-$VERSION-c$CONTRACT.tar.gz" -C src/frontend/dist .
+
       - name: Package
         shell: bash
         working-directory: src/desktop
@@ -128,6 +143,7 @@ jobs:
             src/desktop/release/*.exe
             src/desktop/release/*.AppImage
             src/desktop/release/*.deb
+            src/desktop/release/renderer-*.tar.gz
 
   release:
     needs: build

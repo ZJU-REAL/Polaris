@@ -21,6 +21,8 @@ import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { stagedRendererDir } from './updates/renderer-store';
+
 export const APP_SCHEME = 'app';
 export const APP_HOST = 'polaris';
 export const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
@@ -43,6 +45,10 @@ export function registerAppScheme(): void {
 }
 
 function rendererRoot(): string {
+  // 热更新装好的界面优先——这就是「免重启更新」的落点：换目录 + reload。
+  // 契约版本不匹配时 stagedRendererDir() 会返回 null，自动回落包内资源。
+  const staged = stagedRendererDir();
+  if (staged) return staged;
   // 打包后 electron-builder 把 src/frontend/dist 放进 resources/renderer；
   // 本地 `npm run dev` 直接读同仓库的 frontend 构建产物。
   return app.isPackaged
@@ -89,9 +95,9 @@ export function buildCsp(serverUrl: string): string {
 }
 
 export function handleAppProtocol(getServerUrl: () => string): void {
-  const root = normalize(rendererRoot());
-
   protocol.handle(APP_SCHEME, async (request) => {
+    // 每次请求重新解析：热更新切换目录后无需重启协议处理器
+    const root = normalize(rendererRoot());
     const url = new URL(request.url);
     const pathname = decodeURIComponent(url.pathname);
     let filePath = normalize(join(root, pathname));

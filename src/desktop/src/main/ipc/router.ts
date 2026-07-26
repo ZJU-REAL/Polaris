@@ -20,6 +20,7 @@ import {
   type RpcRequest,
 } from '../../shared/contract';
 import { capabilityManifest } from '../capabilities';
+import { applyUpdate, checkForUpdate } from '../updates';
 import * as host from './methods.host';
 import * as local from './methods.local';
 
@@ -49,6 +50,8 @@ const HANDLERS: Record<MethodName, Handler> = {
   'host.copyText': (p) => host.copyText(asString(p, 'text')),
   'host.setBadgeCount': (p) => host.setBadgeCount(asNumber(p, 'count')),
   'host.capabilities': () => capabilityManifest(),
+  'host.update.check': () => checkForUpdate(),
+  'host.update.apply': () => applyUpdate(),
   // local.* 一期全部走到 agent 再以 ERR_CAPABILITY_UNAVAILABLE 结束（见 methods.local.ts）
   'local.latex.compile': (p) => local.latexCompile(p),
   'local.fs.pickFolder': (p) => local.pickFolder(p),

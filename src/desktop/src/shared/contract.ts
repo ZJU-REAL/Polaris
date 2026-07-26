@@ -58,6 +58,22 @@ export interface LatexCompileInput {
   engine: 'tectonic' | 'pdflatex' | 'xelatex' | 'lualatex';
 }
 
+/** 更新检查结果。available=false 时其余字段无意义。 */
+export interface UpdateInfo {
+  available: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  /** release 正文，直接当 markdown 渲染。 */
+  notes?: string;
+  publishedAt?: string;
+  /** hot=换界面即可、免重启；full=要装安装器。 */
+  kind?: 'hot' | 'full';
+  /** 该更新要求的 IPC 契约版本。 */
+  contract?: number;
+  downloadUrl?: string;
+  downloadSize?: number;
+}
+
 /** 服务器连通性探测结果（打 GET {url}/api/health）。 */
 export type ServerProbe =
   | { ok: true; version: string }
@@ -76,6 +92,10 @@ export interface Methods {
   /** Dock/任务栏角标（待审批数）。Windows 需 overlay icon，一期不做，静默忽略。 */
   'host.setBadgeCount': { params: { count: number }; result: void };
   'host.capabilities': { params: void; result: CapabilityManifest };
+  /** 查有没有新版本。失败一律当作「没有更新」，不打扰用户。 */
+  'host.update.check': { params: void; result: UpdateInfo };
+  /** 下载并应用上一次检查到的更新；进度走 job.* 事件。 */
+  'host.update.apply': { params: void; result: JobHandle };
 
   /* ---- local.*：第二期的本地计算能力 ----
      现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把

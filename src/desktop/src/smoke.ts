@@ -15,12 +15,16 @@
    ============================================================ */
 
 import { BrowserWindow, app } from 'electron';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 import { pingAgent, stopAgent } from './main/agent/supervisor';
 import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
+import { extractTarGz } from './main/updates/tar';
 import { APP_INDEX, buildCsp, handleAppProtocol, registerAppScheme } from './main/protocol';
 
 const SERVER_URL = 'https://polaris.example.edu';
@@ -313,6 +317,50 @@ void app.whenReady().then(async () => {
     for (const m of consoleErrors.slice(0, 20)) console.log('  -', m);
   }
   check('渲染进程无 console 错误', consoleErrors.length === 0);
+
+  // 更新包是从网络下载的，解包器按不可信输入处理。这段跑在主进程里，可以直接
+  // 调到解包函数，所以把安全边界直接测了，而不是只测「功能能用」。
+  console.log('\n更新包解包（安全边界）');
+  const tarEntry = (name: string, body: string, typeflag = '0'): Buffer => {
+    const header = Buffer.alloc(512);
+    header.write(name, 0, 100, 'utf8');
+    header.write('000644 \0', 100, 8, 'utf8');
+    header.write(body.length.toString(8).padStart(11, '0') + ' ', 124, 12, 'utf8');
+    header.write(typeflag, 156, 1, 'utf8');
+    const data = Buffer.alloc(Math.ceil(body.length / 512) * 512);
+    data.write(body, 0, 'utf8');
+    return Buffer.concat([header, data]);
+  };
+  const gzip = (b: Buffer) => gzipSync(b);
+  const scratch = mkdtempSync(join(tmpdir(), 'polaris-tar-'));
+
+  const okArchive = gzip(Buffer.concat([tarEntry('meta.json', '{}'), Buffer.alloc(1024)]));
+  let extracted: string[] = [];
+  try {
+    extracted = extractTarGz(okArchive, scratch);
+  } catch (err) {
+    extracted = [`threw: ${String(err)}`];
+  }
+  check('正常包可解出文件', extracted.includes('meta.json'), `files=${extracted.join(',')}`);
+
+  const rejects = (label: string, archive: Buffer) => {
+    let threw = false;
+    try {
+      extractTarGz(archive, scratch);
+    } catch {
+      threw = true;
+    }
+    check(label, threw);
+  };
+  rejects(
+    '拒绝路径穿越条目（../evil）',
+    gzip(Buffer.concat([tarEntry('../evil.txt', 'x'), Buffer.alloc(1024)])),
+  );
+  rejects(
+    '拒绝软链条目（可绕过路径检查）',
+    gzip(Buffer.concat([tarEntry('link', '', '2'), Buffer.alloc(1024)])),
+  );
+  rmSync(scratch, { recursive: true, force: true });
 
   if (process.env.POLARIS_SMOKE_SHOT) {
     const image = await win.webContents.capturePage();

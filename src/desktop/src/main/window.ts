@@ -2,6 +2,7 @@ import { BrowserWindow, screen, shell } from 'electron';
 import { join } from 'node:path';
 
 import { APP_INDEX, APP_ORIGIN } from './protocol';
+import { clearStagedRenderer, stagedRendererDir } from './updates/renderer-store';
 import { readConfig, writeConfig, type WindowState } from './store';
 
 let current: BrowserWindow | null = null;
@@ -92,6 +93,15 @@ export function createWindow(): BrowserWindow {
   // 当前不需要摄像头/麦克风/定位等任何权限，默认全拒。
   win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
     callback(false);
+  });
+
+  // 热更新装上的界面若加载不起来，退回包内自带的那份再重来一次。
+  // 只挡主框架的失败；子资源 404 由协议处理器各自处理，不该整窗回滚。
+  win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    if (!isMainFrame || !stagedRendererDir()) return;
+    console.error(`[polaris] 界面加载失败（${code} ${desc} ${url}），回滚到内置版本`);
+    clearStagedRenderer();
+    void win.loadURL(APP_INDEX);
   });
 
   win.on('close', () => persistBounds(win));

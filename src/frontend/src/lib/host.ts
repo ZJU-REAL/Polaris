@@ -118,6 +118,35 @@ export async function invokeHost(method: string, params?: unknown): Promise<unkn
   return await b.invoke(method, params);
 }
 
+/* —— 应用更新 —— */
+
+export interface UpdateInfo {
+  available: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  notes?: string;
+  publishedAt?: string;
+  /** hot=换界面即可、免重启；full=要装安装器。 */
+  kind?: 'hot' | 'full';
+  contract?: number;
+  downloadUrl?: string;
+  downloadSize?: number;
+}
+
+/** 查有没有新版本；web 端返回 null。主进程失败时返回 available:false，不抛错。 */
+export async function checkUpdate(): Promise<UpdateInfo | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('host.update.check')) as UpdateInfo;
+}
+
+/** 下载并应用更新，返回 JobHandle；进度经 job.* 事件推送（用 invokeJob 更方便）。 */
+export async function applyUpdate(): Promise<{ jobId: string } | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('host.update.apply')) as { jobId: string };
+}
+
 /** 订阅宿主事件，返回取消订阅函数（web 端返回 no-op）。 */
 export function onHostEvent(handler: (event: HostEvent) => void): () => void {
   const b = bridge();
