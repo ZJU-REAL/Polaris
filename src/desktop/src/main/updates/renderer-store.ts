@@ -20,6 +20,7 @@ import { join } from 'node:path';
 
 import { CONTRACT_VERSION } from '../../shared/contract';
 import { extractTarGz } from './tar';
+import { stagedSupersedes } from './version';
 
 /** 更新包里必须带的元信息，解包后校验。 */
 export interface RendererMeta {
@@ -57,11 +58,27 @@ export function stagedRendererDir(): string | null {
   const p = readPointer();
   if (!p) return null;
   if (p.contract > CONTRACT_VERSION) return null;
+  // 整包更新后包内自带的界面可能已经反超，那份旧的必须让位并就地清掉，
+  // 否则新外壳会一直提供旧界面。
+  if (!stagedSupersedes(p.version, app.getVersion())) {
+    clearStagedRenderer();
+    return null;
+  }
   return p.dir;
 }
 
 export function stagedVersion(): string | null {
   return readPointer()?.version ?? null;
+}
+
+/**
+ * 用户眼前这份界面的版本。更新检查与「关于」都必须用它而不是 `app.getVersion()`：
+ * 热更新不换外壳，外壳版本装完新界面也不会变。
+ */
+export function effectiveVersion(): string {
+  const staged = stagedVersion();
+  const shell = app.getVersion();
+  return staged && stagedSupersedes(staged, shell) ? staged : shell;
 }
 
 /** 解包并启用一份新界面。抛错即视为失败，调用方不应切换。 */

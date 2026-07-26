@@ -2,6 +2,7 @@ import { app, clipboard, net, shell } from 'electron';
 
 import type { HostInfo, ServerProbe } from '../../shared/contract';
 import { readConfig, writeConfig } from '../store';
+import { effectiveVersion } from '../updates/renderer-store';
 import { recreateWindow } from '../window';
 
 const PROBE_TIMEOUT_MS = 5_000;
@@ -10,7 +11,7 @@ export function hostInfo(): HostInfo {
   return {
     serverUrl: readConfig().serverUrl,
     platform: process.platform as HostInfo['platform'],
-    appVersion: app.getVersion(),
+    appVersion: effectiveVersion(),
   };
 }
 

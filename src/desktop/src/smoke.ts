@@ -25,6 +25,7 @@ import { pingAgent, stopAgent } from './main/agent/supervisor';
 import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
 import { extractTarGz } from './main/updates/tar';
+import { compareVersions, stagedSupersedes } from './main/updates/version';
 import { APP_INDEX, buildCsp, handleAppProtocol, registerAppScheme } from './main/protocol';
 
 const SERVER_URL = 'https://polaris.example.edu';
@@ -434,6 +435,14 @@ void app.whenReady().then(async () => {
     gzip(Buffer.concat([tarEntry('link', '', '2'), Buffer.alloc(1024)])),
   );
   rmSync(scratch, { recursive: true, force: true });
+
+  console.log('\n[版本比较]');
+  check('版本序：patch/minor/major', compareVersions('0.3.2', '0.3.1') > 0 && compareVersions('0.3.10', '0.3.9') > 0 && compareVersions('0.4.0', '0.3.99') > 0);
+  check('正式版高于同号预发布', compareVersions('0.3.1', '0.3.1-win-test') > 0 && compareVersions('0.3.1', '0.3.1') === 0);
+  // 热更新只换界面，外壳版本不动。装完 0.3.2 后若仍拿外壳的 0.3.1 去比，
+  // 同一个更新会被无限提示——这两条就是防这个的。
+  check('热更装上的新界面参与版本比较', stagedSupersedes('0.3.2', '0.3.1'));
+  check('整包更新反超后旧界面失效', !stagedSupersedes('0.3.2', '0.4.0') && !stagedSupersedes('0.3.2', '0.3.2'));
 
   if (process.env.POLARIS_SMOKE_SHOT) {
     const image = await win.webContents.capturePage();

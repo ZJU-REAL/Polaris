@@ -21,7 +21,8 @@ import { join } from 'node:path';
 import { CONTRACT_VERSION, type UpdateInfo } from '../../shared/contract';
 import { fail, finish, log, progress, startJob } from '../ipc/events';
 import { getWindow } from '../window';
-import { stageRenderer } from './renderer-store';
+import { effectiveVersion, stageRenderer } from './renderer-store';
+import { compareVersions } from './version';
 
 const REPO = 'ZJU-REAL/Polaris';
 const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -41,25 +42,6 @@ interface Release {
   assets: Asset[];
 }
 
-/** 只比较 major.minor.patch；带后缀的（如 0.2.1-win-test）视为该版本的预发布，更低。 */
-function compareVersions(a: string, b: string): number {
-  const parse = (v: string) => {
-    const [core, pre] = v.replace(/^v/, '').split('-', 2);
-    const nums = (core ?? '').split('.').map((n) => parseInt(n, 10) || 0);
-    return { nums, pre: pre ?? '' };
-  };
-  const x = parse(a);
-  const y = parse(b);
-  for (let i = 0; i < 3; i += 1) {
-    const d = (x.nums[i] ?? 0) - (y.nums[i] ?? 0);
-    if (d !== 0) return d > 0 ? 1 : -1;
-  }
-  if (x.pre === y.pre) return 0;
-  if (!x.pre) return 1; // 正式版 > 预发布
-  if (!y.pre) return -1;
-  return x.pre > y.pre ? 1 : -1;
-}
-
 function installerFor(assets: Asset[]): Asset | undefined {
   const match = (re: RegExp) => assets.find((a) => re.test(a.name));
   if (process.platform === 'darwin') return match(/universal\.dmg$/) ?? match(/\.dmg$/);
@@ -70,7 +52,7 @@ function installerFor(assets: Asset[]): Asset | undefined {
 let cached: UpdateInfo | null = null;
 
 export async function checkForUpdate(): Promise<UpdateInfo> {
-  const currentVersion = app.getVersion();
+  const currentVersion = effectiveVersion();
   const base: UpdateInfo = { available: false, currentVersion };
   try {
     const res = await net.fetch(RELEASES_URL, {
