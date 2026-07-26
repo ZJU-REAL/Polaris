@@ -48,14 +48,17 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 // 模块级常量，避免每次 render 生成新对象触发 react-pdf 重新加载。
 // cMap / 标准字体数据必须提供，否则 pdf.js 画不出字形、整页空白（资源由 vite
 // copyPdfAssets 插件从 pdfjs-dist 拷到 public/pdfjs 下，见 vite.config.ts）。
-// disableAutoFetch：只取当前要渲染的那几段，不在后台把整份 PDF 拉完。25MB 的论文
-// 走校外代理约 0.5MB/s，整包下载要等 45 秒才出第一页；按需取段后首屏是几百 KB。
+// 只取当前要渲染的那几段，不在后台把整份 PDF 拉完。25MB 的论文走校外代理约
+// 0.5MB/s，整包下载要等 45 秒才出第一页；按需取段后首屏是几百 KB。
+// 两个开关必须成对：disableAutoFetch 只是不主动补取缺失分段，disableStream 若不关，
+// pdf.js 仍会顺着整份文件流式读到底——实测同样渲染 3 页，关掉后传输量 8.70MB → 3.76MB。
 // 服务端不支持 Range 时 pdf.js 自动退回整包下载，行为与改造前一致。
 const PDF_OPTIONS = {
   cMapUrl: '/pdfjs/cmaps/',
   cMapPacked: true,
   standardFontDataUrl: '/pdfjs/standard_fonts/',
   disableAutoFetch: true,
+  disableStream: true,
   rangeChunkSize: 262144,
 };
 
