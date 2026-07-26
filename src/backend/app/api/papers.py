@@ -30,6 +30,8 @@ from app.schemas.paper import (
     PaperDetail,
     PaperFigure,
     PaperFiguresResponse,
+    PaperIndexRebuild,
+    PaperIndexStatusRead,
     PaperListPage,
     PaperManualCreate,
     PaperMyMetaRead,
@@ -46,6 +48,7 @@ from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
 from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
+from app.services import paper_index as paper_index_service
 from app.services import paper_wiki as paper_wiki_service
 from app.services import papers as papers_service
 from app.services import wiki_compile as wiki_compile_service
@@ -600,6 +603,55 @@ async def recompile_paper(
         logger.warning("recompile failed for paper %s", paper_id, exc_info=True)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="COMPILE_FAILED") from e
     return await _paper_detail(session, paper, user.id)
+
+
+# ---- 索引状态与手动重建（docs/api-lit.md §9） ----
+
+
+@router.get("/papers/{paper_id}/index-status", response_model=PaperIndexStatusRead)
+async def get_paper_index_status(
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperIndexStatusRead:
+    """这篇论文的论文级向量与分块向量各自建没建、何时建的、用的哪个模型。
+
+    只读，权限与看论文本身一致（能看到就能看状态）。"""
+    view = await _get_member_paper(session, paper_id, user, include_pool=True)
+    status_ = await paper_index_service.get_index_status(session, view.paper)
+    return PaperIndexStatusRead.model_validate(status_, from_attributes=True)
+
+
+@router.post("/papers/{paper_id}/index/rebuild", response_model=PaperIndexStatusRead)
+async def rebuild_paper_index(
+    paper_id: uuid.UUID,
+    data: PaperIndexRebuild | None = None,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_task),
+) -> PaperIndexStatusRead:
+    """手动重建这篇论文的向量（有就覆盖，没有就新建），同步返回重建后的状态。
+
+    权限取「能看到这篇论文 + 有大模型使用权限」（require_llm_task），与重编译
+    （POST /papers/{id}/recompile）同一口径：都花 token、都是谁都能重跑以最新为准，
+    没有理由在这里额外要管理权——单篇重建的花费是一次嵌入调用，比重编译低一个量级，
+    而配额与锁定用户由 require_llm_task 统一挡住。
+    """
+    body = data or PaperIndexRebuild()
+    targets = {t for t, on in (("paper", body.paper_vector), ("chunks", body.chunks)) if on}
+    if not targets:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="NOTHING_TO_REBUILD")
+    view = await _get_member_paper(session, paper_id, user, include_pool=True)
+    try:
+        status_ = await paper_index_service.rebuild_index(
+            session,
+            view.paper,
+            llm=get_llm_router(),
+            targets=targets,
+            user_id=user.id,
+        )
+    except paper_index_service.IndexRebuildFailedError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"INDEX_REBUILD_FAILED:{e}") from e
+    return PaperIndexStatusRead.model_validate(status_, from_attributes=True)
 
 
 # ---- AI 伴读（docs/api-lit.md §3，SSE 流） ----

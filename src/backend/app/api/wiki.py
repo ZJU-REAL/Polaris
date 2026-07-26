@@ -351,8 +351,9 @@ async def chat_with_personal_library(
 
 
 def _require_fulltext_index_enabled(user: User) -> None:
-    """可选全文索引门控：用户未在设置里开启 → 409。"""
-    if user.setting("chat_fulltext_index") is not True:
+    """全文索引门控：用户在设置里**显式关掉**才 409（默认开，与 chunks
+    .user_wants_fulltext_index 同一口径）。"""
+    if user.setting("chat_fulltext_index") is False:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="INDEXING_DISABLED")
 
 
@@ -435,6 +436,7 @@ async def rebuild_fulltext_index(
             "papers_indexed": 0,
             "chunks_created": 0,
             "embedded": 0,
+            "abstract_vectors_copied": 0,
             "embed_error": None,
             "total_chunks": 0,
         }

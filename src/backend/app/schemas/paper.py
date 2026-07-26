@@ -121,6 +121,33 @@ class PaperDetail(PaperRead):
         return v or []
 
 
+class VectorStatusRead(BaseModel):
+    """一种向量的状态（前端红绿点 + 悬浮显示构建时间与模型名）。"""
+
+    built: bool
+    built_at: datetime | None = None  # 存量数据没记过，为 null
+    model: str | None = None  # 构建所用嵌入模型名；存量数据为 null
+
+
+class PaperIndexStatusRead(BaseModel):
+    """单篇论文的索引状态（docs/api-lit.md §9）。"""
+
+    paper_vector: VectorStatusRead  # 论文级向量（标题+作者+摘要）
+    chunk_vector: VectorStatusRead  # 分块向量（文献对话检索底座）
+    chunk_count: int = 0
+    embedded_chunk_count: int = 0
+    has_fulltext: bool = False
+    # 分段来源：fulltext=按 PDF 全文切 | abstract=无全文时的标题+摘要兜底块 | null=还没分段
+    chunk_source: str | None = None
+
+
+class PaperIndexRebuild(BaseModel):
+    """要重建哪些向量；默认两种都建。"""
+
+    paper_vector: bool = True
+    chunks: bool = True
+
+
 class PaperUpdate(BaseModel):
     """人工纳入/排除。"""
 

@@ -68,6 +68,13 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 图片文件落 <data_dir>/papers/<paper_id>/figures/fig_<index>.png（路径不出 API）
     figures: Mapped[list[Any] | None] = mapped_column(JSONVariant)
     embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
+    # 论文级向量的构建元信息（前端索引状态悬浮显示）；存量数据 / 未建为 null
+    embedding_model: Mapped[str | None] = mapped_column(String(128))
+    embedding_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 分块向量最近一次补齐的元信息（分段本身在 paper_chunks，元信息汇总记这里，
+    # 避免在上百万分段行上各存一份时间/模型名）
+    chunk_embedding_model: Mapped[str | None] = mapped_column(String(128))
+    chunk_embedding_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     concepts: Mapped[list["Concept"]] = relationship(
         secondary=paper_concepts, back_populates="papers"
@@ -124,11 +131,20 @@ def new_paper(**fields: Any) -> Paper:
     return paper
 
 
-class PaperChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """论文全文分段（文献问答 / idea 生成的检索底座）。
+# 分段来源：fulltext=从 PDF 全文切分 | abstract=无全文时用标题+摘要兜底的单块
+CHUNK_SOURCES = ("fulltext", "abstract")
 
-    入库抽全文后确定性切分（services/chunks.py），embedding 由
-    wiki.link_concepts 步骤批量补齐（provider 不支持时留空，检索降级关键词）。
+
+class PaperChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """论文分段（文献问答 / idea 生成的检索底座）。
+
+    有全文时按全文确定性切分（services/chunks.py）；没有全文的论文退化为一个
+    「标题 + 摘要」块，保证每篇论文对检索都存在（否则每日推送这类不下 PDF 的
+    论文对文献对话完全不可见）。embedding 由 wiki.link_concepts 步骤批量补齐
+    （provider 不支持时留空，检索降级关键词）。
+
+    ``source`` 区分两类块：拿到 PDF 后重建分段会把摘要块整体替换为全文块，
+    「这篇有没有全文索引」也靠它判断（不能只看有没有分段行）。
     """
 
     __tablename__ = "paper_chunks"
@@ -139,6 +155,10 @@ class PaperChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     seq: Mapped[int] = mapped_column(nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    # 存量分段都来自全文，故 server_default="fulltext"
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="fulltext", server_default="fulltext"
+    )
     embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
 
 

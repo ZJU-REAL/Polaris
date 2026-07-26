@@ -15,6 +15,7 @@ import { citationExportItems, ExportDropdown } from '../../components/ui/ExportD
 import { PaperReader } from './PaperReader';
 import { readerFrom } from '../reading/shared';
 import { toast } from '../../components/ui/Toast';
+import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import {
@@ -887,6 +888,9 @@ function PaperDetailPane({
           ) : (
             <span className="muted">{tr('未编译', 'not compiled')}</span>
           )}
+        </MetaItem>
+        <MetaItem label={tr('检索索引', 'search index')}>
+          <PaperIndexStatusRow paperId={paper.id} />
         </MetaItem>
       </div>
 

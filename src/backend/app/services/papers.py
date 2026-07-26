@@ -935,23 +935,24 @@ async def fetch_pdf(
         paper.full_text_path = str(txt_path)
     except Exception:  # noqa: BLE001 — 抽取失败降级：仅有 PDF、无全文
         logger.warning("full text extraction failed for paper %s", paper.id, exc_info=True)
-    # 全文分段索引（文献问答底座）；失败不影响 PDF 落盘。无块才切，避免重切丢已补的块向量
-    if paper.full_text_path:
-        from app.services.chunks import index_paper_fulltext, paper_has_chunks
+    # 分段索引（文献问答底座）；失败不影响 PDF 落盘。抽到全文就按全文切（替换掉此前的
+    # 摘要兜底块）；已有全文块则不重切，避免丢已补的块向量
+    from app.services.chunks import ensure_paper_chunks
 
-        try:
-            if not await paper_has_chunks(session, paper.id):
-                await index_paper_fulltext(session, paper)
-        except Exception:  # noqa: BLE001
-            logger.warning("chunk indexing failed for paper %s", paper.id, exc_info=True)
-    # 论文级向量（此路径原先不建）：embedding 为空才补，best-effort，不影响 PDF 落盘
+    try:
+        await ensure_paper_chunks(session, paper)
+    except Exception:  # noqa: BLE001
+        logger.warning("chunk indexing failed for paper %s", paper.id, exc_info=True)
+    # 论文级向量（此路径原先不建）：embedding 为空、且管理员没关总闸才补。
+    # best-effort，不影响 PDF 落盘
     if paper.embedding is None:
-        from app.services.paper_enrich import embed_paper
+        from app.services.paper_enrich import embed_paper, paper_embedding_enabled
 
-        try:
-            await embed_paper(paper, user_id=user_id, project_id=project_id)
-        except Exception:  # noqa: BLE001 — provider 不支持嵌入等：降级为无向量
-            logger.warning("paper embedding failed for paper %s", paper.id, exc_info=True)
+        if await paper_embedding_enabled(session):
+            try:
+                await embed_paper(paper, user_id=user_id, project_id=project_id)
+            except Exception:  # noqa: BLE001 — provider 不支持嵌入等：降级为无向量
+                logger.warning("paper embedding failed for paper %s", paper.id, exc_info=True)
     # 发表机构：on_add 模式下全文到手后 LLM 从标题页逐位作者解析机构（此路径原先不补
     # 机构）；on_compile 模式跳过，改由 wiki 编译折叠抽取。失败不影响主流程
     if not paper.affiliations and paper.full_text_path:
@@ -968,26 +969,34 @@ async def fetch_pdf(
             )
             apply_author_affiliations(paper, mapping)
     await session.commit()
-    # 块向量受用户开关：开启才嵌（关时块行留着，待重建/开开关再补）。best-effort，内部自 commit
-    if paper.full_text_path:
-        from app.services.chunks import (
-            embed_pending_chunks_for_papers,
-            user_wants_fulltext_index,
-        )
+    # 摘要兜底块的向量 = 论文级向量的拷贝（零 token，不受任何开关控制）
+    from app.services.chunks import sync_abstract_chunk_vectors
 
-        if await user_wants_fulltext_index(session, user_id):
-            from app.core.llm.router import get_llm_router
+    try:
+        if await sync_abstract_chunk_vectors(session, paper_ids=[paper.id]):
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("abstract chunk vector sync failed for %s", paper.id, exc_info=True)
 
-            try:
-                await embed_pending_chunks_for_papers(
-                    session,
-                    paper_ids=[paper.id],
-                    llm=get_llm_router(),
-                    user_id=user_id,
-                    project_id=project_id,
-                )
-            except Exception:  # noqa: BLE001
-                logger.warning("chunk embed failed for paper %s", paper.id, exc_info=True)
+    # 块向量受用户开关（默认开）：关掉时块行留着，待重建/开开关再补。best-effort，内部自 commit
+    from app.services.chunks import (
+        embed_pending_chunks_for_papers,
+        user_wants_fulltext_index,
+    )
+
+    if await user_wants_fulltext_index(session, user_id):
+        from app.core.llm.router import get_llm_router
+
+        try:
+            await embed_pending_chunks_for_papers(
+                session,
+                paper_ids=[paper.id],
+                llm=get_llm_router(),
+                user_id=user_id,
+                project_id=project_id,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("chunk embed failed for paper %s", paper.id, exc_info=True)
     await session.refresh(paper)
     return paper
 

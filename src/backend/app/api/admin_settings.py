@@ -1,4 +1,4 @@
-"""管理端全局设置路由（仅 role=admin）：机构抽取模式、每日新论文自动建向量等。"""
+"""管理端全局设置路由（仅 role=admin）：机构抽取模式、论文级向量总闸等。"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,14 +9,15 @@ from app.schemas.admin_settings import (
     AffiliationModeRead,
     AffiliationModeUpdate,
     DailyEmbedBackfillResult,
-    DailyEmbedRead,
-    DailyEmbedUpdate,
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
+    PaperEmbeddingRead,
+    PaperEmbeddingUpdate,
 )
 from app.services import affiliations as affiliations_service
 from app.services import daily_feed as daily_service
 from app.services import lab as lab_service
+from app.services import paper_enrich as paper_enrich_service
 
 router = APIRouter(
     prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(require_admin)]
@@ -44,19 +45,22 @@ async def set_affiliation_mode(
     return AffiliationModeRead(mode=mode)
 
 
-@router.get("/daily-embed", response_model=DailyEmbedRead)
-async def get_daily_embed(session: AsyncSession = Depends(get_session)) -> DailyEmbedRead:
-    """每日新论文是否自动建向量（关着时每日语义检索只能命中已建向量的论文）。"""
-    return DailyEmbedRead(enabled=await daily_service.get_daily_embed_enabled(session))
+@router.get("/paper-embedding", response_model=PaperEmbeddingRead)
+async def get_paper_embedding(session: AsyncSession = Depends(get_session)) -> PaperEmbeddingRead:
+    """平台是否给论文建论文级向量（默认开，平台级总闸）。
+
+    前身是 /daily-embed（默认关、只管每日推送）；默认关意味着推送来的论文在语义检索里
+    根本搜不到，而只管一条路径也名不副实，故改名并扩到所有入库入口。"""
+    return PaperEmbeddingRead(enabled=await paper_enrich_service.paper_embedding_enabled(session))
 
 
-@router.put("/daily-embed", response_model=DailyEmbedRead)
-async def set_daily_embed(
-    payload: DailyEmbedUpdate,
+@router.put("/paper-embedding", response_model=PaperEmbeddingRead)
+async def set_paper_embedding(
+    payload: PaperEmbeddingUpdate,
     session: AsyncSession = Depends(get_session),
-) -> DailyEmbedRead:
-    return DailyEmbedRead(
-        enabled=await daily_service.set_daily_embed_enabled(session, payload.enabled)
+) -> PaperEmbeddingRead:
+    return PaperEmbeddingRead(
+        enabled=await paper_enrich_service.set_paper_embedding_enabled(session, payload.enabled)
     )
 
 

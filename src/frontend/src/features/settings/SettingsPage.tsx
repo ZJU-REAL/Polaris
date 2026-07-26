@@ -232,7 +232,8 @@ function ChatPrefsTab() {
           </div>
         </div>
         <Switch
-          checked={me.settings?.chat_fulltext_index ?? false}
+          /* 默认开：没设置过等同开启（与后端 user_wants_fulltext_index 同一口径） */
+          checked={me.settings?.chat_fulltext_index !== false}
           onChange={(v) => chatIndexMutation.mutate(v)}
           disabled={chatIndexMutation.isPending}
           aria-labelledby="pref-chat-fulltext"
@@ -1628,11 +1629,70 @@ function AffiliationModeSection() {
   );
 }
 
+/** 论文级向量的平台总闸（默认开）。管的是所有入库入口，不只是每日推送。 */
+function PaperEmbeddingSection() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['paper-embedding-enabled'],
+    queryFn: () => api.getPaperEmbeddingEnabled(),
+    retry: false,
+  });
+  const enabled = data?.enabled ?? true; // 默认开
+
+  const toggleMutation = useMutation({
+    mutationFn: (next: boolean) => api.setPaperEmbeddingEnabled(next),
+    onSuccess: (r) => {
+      toast(
+        r.enabled
+          ? tr('已开启：入库的论文都会建向量', 'Enabled — papers get vectors as they are added')
+          : tr('已关闭：新入库的论文不再建向量', 'Disabled — newly added papers get no vectors'),
+        'ok',
+      );
+      queryClient.setQueryData(['paper-embedding-enabled'], r);
+    },
+    onError: (e) => toast(`${tr('设置失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 20 }}>
+      <div className="section-h" style={{ marginBottom: 6 }}>
+        <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('论文向量', 'Paper vectors')}
+      </div>
+      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div id="paper-embedding-toggle" style={{ fontSize: 13, lineHeight: 1.4 }}>
+            {tr('为入库的论文建立向量', 'Build vectors for papers as they are added')}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
+            {tr(
+              '所有入库方式都适用（建库、手动添加、每日推送）。这是全平台的总开关，关掉后语义检索只能找到已经建过向量的论文，一般不用动。',
+              'Applies to every way papers are added (library builds, manual adds, daily papers). This is the platform-wide switch; when off, semantic search only finds papers that already have vectors. Rarely needs changing.',
+            )}
+          </div>
+        </div>
+        <Switch
+          checked={enabled}
+          onChange={(v) => toggleMutation.mutate(v)}
+          disabled={isLoading || isError || toggleMutation.isPending}
+          aria-labelledby="paper-embedding-toggle"
+        />
+      </div>
+      {isError && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 10 }}>
+          {tr('无法加载该设置（后端不可用或无权限）', 'Failed to load this setting (backend unavailable or no permission)')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function LlmTab() {
   return (
     <>
       <ProvidersSection adapter={adminLlmAdapter} />
       <RoutesSection adapter={adminLlmAdapter} />
+      <PaperEmbeddingSection />
       <AffiliationModeSection />
       <CallLogsSection />
     </>
@@ -2424,30 +2484,8 @@ function DailyCategoriesSection() {
   );
 }
 
-/** 每日论文是否随同步建向量 + 给最近 7 天缺向量的论文补建。 */
+/** 给最近 7 天缺向量的每日论文补建向量（新论文同步时已自动建，这里只补历史）。 */
 function DailyEmbedSection() {
-  const queryClient = useQueryClient();
-  const settingQuery = useQuery({
-    queryKey: ['daily-embed-enabled'],
-    queryFn: () => api.getDailyEmbedEnabled(),
-    retry: false,
-  });
-  const enabled = settingQuery.data?.enabled ?? false;
-
-  const toggleMutation = useMutation({
-    mutationFn: (next: boolean) => api.setDailyEmbedEnabled(next),
-    onSuccess: (r) => {
-      toast(
-        r.enabled
-          ? tr('已开启：以后每天同步的新论文都会建向量', 'Enabled — new papers will be embedded on each daily sync')
-          : tr('已关闭：每天同步不再建向量', 'Disabled — the daily sync will no longer embed papers'),
-        'ok',
-      );
-      void queryClient.invalidateQueries({ queryKey: ['daily-embed-enabled'] });
-    },
-    onError: (e) => toast(`${tr('设置失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
   const backfillMutation = useMutation({
     mutationFn: () => api.backfillDailyEmbeddings(),
     onSuccess: (r) => {
@@ -2468,40 +2506,11 @@ function DailyEmbedSection() {
         {tr('每日论文向量', 'Daily paper embeddings')}
       </div>
 
-      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div id="daily-embed-toggle" style={{ fontSize: 13, lineHeight: 1.4 }}>
-            {tr('为每日论文建立向量', 'Embed daily papers')}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
-            {tr(
-              '每天同步时给新论文建向量，会消耗嵌入额度；关闭则每日论文只能用关键词检索。',
-              'The daily sync embeds new papers and consumes embedding quota; when off, daily papers support keyword search only.',
-            )}
-          </div>
-        </div>
-        <Switch
-          checked={enabled}
-          onChange={(v) => toggleMutation.mutate(v)}
-          disabled={settingQuery.isLoading || settingQuery.isError || toggleMutation.isPending}
-          aria-labelledby="daily-embed-toggle"
-        />
-      </div>
-
-      {settingQuery.isError && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 10 }}>
-          {tr('无法加载该设置（后端不可用或无权限）', 'Failed to load this setting (backend unavailable or no permission)')}
-        </div>
-      )}
-
-      <div
-        className="row gap8"
-        style={{ alignItems: 'center', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}
-      >
+      <div className="row gap8" style={{ alignItems: 'center', marginTop: 12 }}>
         <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45 }}>
           {tr(
-            '历史论文不会自动补建，补一遍可能要跑几十秒。',
-            'Existing papers are not embedded automatically; a backfill may take tens of seconds.',
+            '每天同步的新论文都会自动建向量。更早入库的论文不会自动补，补一遍可能要跑几十秒。',
+            'Papers from each daily sync are embedded automatically. Older papers are not; a backfill may take tens of seconds.',
           )}
         </div>
         <button

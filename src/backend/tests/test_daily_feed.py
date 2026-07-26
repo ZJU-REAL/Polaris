@@ -423,7 +423,9 @@ async def test_compile_entry_links_concepts_without_library(client, monkeypatch)
         rows = (await session.execute(select(LLMUsage))).scalars().all()
         assert rows and all(r.library_id is None for r in rows)  # 记账落平台级，不摊给某个库
         assert any(r.stage == "extract" for r in rows)  # 概念定义那次调用记在触发人名下
-        assert all(r.user_id is not None for r in rows)
+        # 编译/上链这些有发起人的调用都记在人名下；每日同步那步的向量化是定时任务
+        # 发起的系统级调用，本来就没有「人」，记平台账（user_id 空）
+        assert all(r.user_id is not None for r in rows if r.stage != "embedding")
 
         # 存量（编译过但没上链）的路径：清掉关联后重新编译能补回来
         await session.execute(delete(paper_concepts).where(paper_concepts.c.paper_id == paper_id))
@@ -609,9 +611,9 @@ async def test_daily_actions_observation_shapes(client, monkeypatch):
     obs = await get_action("daily.cleanup")(ctx, {})
     assert obs == {"expired": 1}
 
-    # 开关默认关 → 跳过，且不算失败
+    # 无条件建：论文级向量 + 无全文时的摘要兜底块（不再有管理员开关）
     obs = await get_action("daily.embed")(ctx, {})
-    assert obs == {"enabled": False, "embedded": 0, "failed": 0}
+    assert obs == {"enabled": True, "embedded": 1, "failed": 0, "chunked": 1}
     assert "error" not in obs
 
 

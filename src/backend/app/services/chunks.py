@@ -1,8 +1,10 @@
-"""论文全文分段索引（文献知识底座，不 import fastapi）。
+"""论文分段索引（文献知识底座，不 import fastapi）。
 
 - 切分：确定性代码，按段落边界贪心打包到 ~CHUNK_TARGET_CHARS，超长段硬切带重叠；
+- 兜底：没有全文的论文退化成一个「标题 + 摘要」块（source="abstract"），保证每篇
+  论文对检索都存在——否则每日推送这类不下 PDF 的论文对文献对话完全不可见；
 - 嵌入：wiki.link_concepts 步骤批量补齐（provider 不支持时留空）；
-- 检索：postgres 走 pgvector 余弦，其他方言 / 无向量时降级关键词打分。
+- 检索：postgres 走 pgvector 余弦，其他方言 / 无向量时降级关键词打分（两类块不区分）。
 支撑文献库对话（services/library_chat.py）与后续 idea 生成等知识服务。
 """
 
@@ -17,6 +19,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.router import LLMRouter
+from app.models.base import utcnow
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperChunk
 
@@ -57,9 +60,24 @@ def split_text(full_text: str) -> list[str]:
     return chunks[:MAX_CHUNKS_PER_PAPER]
 
 
-async def replace_chunks(session: AsyncSession, paper: Paper, full_text: str) -> int:
-    """重建一篇论文的分段（旧分段删除；embedding 留空待批量补齐）。调用方负责 commit。
+def abstract_chunk_text(paper: Paper) -> str:
+    """没有全文时的兜底块文本 = 论文级向量的文本口径（标题 + 作者 + 摘要，截 2000 字）。
 
+    刻意与 ``paper_embedding_text`` 用同一份文本：兜底块的向量是**直接拷贝**论文级
+    向量的（见 :func:`sync_abstract_chunk_vectors`），文本口径不一致的话，块里写的
+    和向量表达的就不是一回事，检索命中后给模型的片段会对不上。
+    """
+    from app.services.paper_enrich import paper_embedding_text
+
+    return paper_embedding_text(paper).strip()
+
+
+async def replace_chunks(
+    session: AsyncSession, paper: Paper, full_text: str, *, source: str = "fulltext"
+) -> int:
+    """重建一篇论文的分段（旧分段**全部**删除；embedding 留空待批量补齐）。调用方负责 commit。
+
+    先删后建，所以拿到 PDF 后重建全文分段会把此前的摘要兜底块一并替换掉。
     入库前再清洗一遍控制字符：磁盘上历史抽取的 txt 可能仍带 0x00，postgres UTF8 会拒绝。
     """
     from app.services.literature.pdf_extract import sanitize_text
@@ -67,7 +85,7 @@ async def replace_chunks(session: AsyncSession, paper: Paper, full_text: str) ->
     await session.execute(delete(PaperChunk).where(PaperChunk.paper_id == paper.id))
     chunks = split_text(sanitize_text(full_text))
     for seq, chunk_text in enumerate(chunks):
-        session.add(PaperChunk(paper_id=paper.id, seq=seq, text=chunk_text))
+        session.add(PaperChunk(paper_id=paper.id, seq=seq, text=chunk_text, source=source))
     return len(chunks)
 
 
@@ -79,26 +97,116 @@ async def index_paper_fulltext(session: AsyncSession, paper: Paper) -> int:
     return await replace_chunks(session, paper, full_text)
 
 
-async def paper_has_chunks(session: AsyncSession, paper_id: uuid.UUID) -> bool:
-    """该论文是否已有分段行。用于「无块才切」——避免重切丢已补的块向量。"""
-    row = (
-        await session.execute(
-            select(PaperChunk.id).where(PaperChunk.paper_id == paper_id).limit(1)
+async def index_paper_abstract(session: AsyncSession, paper: Paper) -> int:
+    """无全文兜底：用标题+作者+摘要建**单个**块（source="abstract"）。调用方负责 commit。
+
+    向量**直接拷贝论文级向量**，不另调嵌入接口——两者文本口径完全相同，再算一遍纯属
+    浪费 token，还会让同一篇论文的两个向量出现细微差别。论文级向量此刻还没建好
+    （嵌入接口当时失败、或管理员关了总闸）就先留空，等下次
+    :func:`sync_abstract_chunk_vectors` 补上，不报错。
+
+    连标题都没有（脏数据）返回 0。已有的分段先删——调用方只在「没有全文块」时才走
+    到这里，删掉的至多是上一版摘要块。
+    """
+    text = abstract_chunk_text(paper)
+    if not text:
+        return 0
+    await session.execute(delete(PaperChunk).where(PaperChunk.paper_id == paper.id))
+    chunk = PaperChunk(
+        paper_id=paper.id, seq=0, text=text[:CHUNK_MAX_CHARS], source="abstract"
+    )
+    # 只在真有向量时才赋值：sqlite 分支 embedding 是 JSON 列，显式写 None 会存成
+    # JSON 'null' 而不是 SQL NULL，之后 `embedding IS NULL` 就再也筛不到这一行了。
+    if paper.embedding is not None:
+        chunk.embedding = paper.embedding
+        paper.chunk_embedding_at = paper.embedding_at
+        paper.chunk_embedding_model = paper.embedding_model
+    session.add(chunk)
+    return 1
+
+
+async def sync_abstract_chunk_vectors(
+    session: AsyncSession, *, paper_ids: list[uuid.UUID]
+) -> int:
+    """把论文级向量拷进还没有向量的摘要兜底块，返回补上的块数。调用方负责 commit。
+
+    零 token 开销，所以不受任何开关控制——摘要块的存在与否决定了这篇论文能不能被
+    文献对话检索到，不该因为用户关了「全文索引」（那管的是花钱建全文块向量）就退回
+    「整篇论文搜不到」。论文级向量必须先建好，故所有调用点都排在嵌入之后。
+    """
+    if not paper_ids:
+        return 0
+    rows = (
+        (
+            await session.execute(
+                select(PaperChunk, Paper)
+                .join(Paper, Paper.id == PaperChunk.paper_id)
+                .where(
+                    PaperChunk.paper_id.in_(list(set(paper_ids))),
+                    PaperChunk.source == "abstract",
+                    PaperChunk.embedding.is_(None),
+                    Paper.embedding.is_not(None),
+                )
+            )
         )
-    ).first()
-    return row is not None
+        .all()
+    )
+    for chunk, paper in rows:
+        chunk.embedding = paper.embedding
+        paper.chunk_embedding_at = paper.embedding_at
+        paper.chunk_embedding_model = paper.embedding_model
+    return len(rows)
+
+
+async def ensure_paper_chunks(session: AsyncSession, paper: Paper) -> int:
+    """确保论文有可检索分段，返回**新建**的块数（已就绪返回 0）。调用方负责 commit。
+
+    所有入库路径共用的统一入口：
+    - 有全文且尚无全文块 → 按全文切（顺带替换掉此前的摘要兜底块）；
+    - 有全文且已有全文块 → 不动（重切会丢已补的块向量）；
+    - 无全文且完全没有块 → 建一个「标题 + 摘要」兜底块。
+
+    注意判据是「有没有**全文**块」而不是「有没有块」：摘要兜底块一旦存在，按后者
+    判断的话这篇论文就再也拿不到全文分段了。
+    """
+    if paper.full_text_path and Path(paper.full_text_path).exists():
+        if await paper_has_chunks(session, paper.id, source="fulltext"):
+            return 0
+        return await index_paper_fulltext(session, paper)
+    if await paper_has_chunks(session, paper.id):
+        return 0
+    return await index_paper_abstract(session, paper)
+
+
+async def paper_has_chunks(
+    session: AsyncSession, paper_id: uuid.UUID, *, source: str | None = None
+) -> bool:
+    """该论文是否已有分段行（给了 source 就只看该来源的）。
+
+    用于「无块才切」——避免重切丢已补的块向量。
+    """
+    stmt = select(PaperChunk.id).where(PaperChunk.paper_id == paper_id)
+    if source is not None:
+        stmt = stmt.where(PaperChunk.source == source)
+    return (await session.execute(stmt.limit(1))).first() is not None
 
 
 async def user_wants_fulltext_index(
     session: AsyncSession, user_id: uuid.UUID | None
 ) -> bool:
-    """该用户是否开启了「为论文建立全文索引」（chat_fulltext_index）。user_id 空→False。"""
+    """该用户是否要为论文建分块向量（chat_fulltext_index）。**默认开**。
+
+    只有显式关掉（设置里存了 False）才不建；没设置过、查不到用户、以及无 user_id
+    的系统调用都按开处理——不建分块向量等于这篇论文对文献对话不可检索，那是坏默认。
+    """
     if user_id is None:
-        return False
+        return True
     from app.models.user import User
 
     user = await session.get(User, user_id)
-    return bool(user is not None and user.setting("chat_fulltext_index") is True)
+    if user is None:
+        return True
+    return user.setting("chat_fulltext_index") is not False
 
 
 async def _embed_chunks(
@@ -111,8 +219,12 @@ async def _embed_chunks(
     library_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> tuple[int, str | None]:
-    """分批嵌入给定的待补分段（调用方负责选出 pending），返回 (成功条数, 错误说明|None)。"""
+    """分批嵌入给定的待补分段（调用方负责选出 pending），返回 (成功条数, 错误说明|None)。
+
+    顺带把「分块向量建于何时、用的哪个模型」记到所属论文行上（前端索引状态展示用）。
+    """
     embedded = 0
+    model = await llm.model_name("embedding", user_id)
     for i in range(0, len(pending), EMBED_BATCH):
         batch = pending[i : i + EMBED_BATCH]
         try:
@@ -130,8 +242,28 @@ async def _embed_chunks(
         for chunk, vector in zip(batch, vectors, strict=True):
             chunk.embedding = vector
             embedded += 1
+        await _touch_chunk_embedding_meta(
+            session, {c.paper_id for c in batch}, model=model
+        )
         await session.commit()
     return embedded, None
+
+
+async def _touch_chunk_embedding_meta(
+    session: AsyncSession, paper_ids: set[uuid.UUID], *, model: str | None
+) -> None:
+    """记下这批论文的分块向量构建时间与模型名（调用方负责 commit）。"""
+    if not paper_ids:
+        return
+    now = utcnow()
+    papers = (
+        (await session.execute(select(Paper).where(Paper.id.in_(list(paper_ids)))))
+        .scalars()
+        .all()
+    )
+    for paper in papers:
+        paper.chunk_embedding_at = now
+        paper.chunk_embedding_model = model
 
 
 async def embed_pending_chunks(
@@ -154,7 +286,10 @@ async def embed_pending_chunks(
                 select(PaperChunk)
                 .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
                 .where(
-                    LibraryPaper.library_id == library_id, PaperChunk.embedding.is_(None)
+                    LibraryPaper.library_id == library_id,
+                    PaperChunk.embedding.is_(None),
+                    # 摘要兜底块的向量靠拷贝论文级向量（零开销），不走嵌入接口
+                    PaperChunk.source == "fulltext",
                 )
                 .order_by(PaperChunk.created_at, PaperChunk.seq)
                 .limit(limit)
@@ -194,7 +329,12 @@ async def embed_pending_chunks_for_papers(
         (
             await session.execute(
                 select(PaperChunk)
-                .where(PaperChunk.paper_id.in_(paper_ids), PaperChunk.embedding.is_(None))
+                .where(
+                    PaperChunk.paper_id.in_(paper_ids),
+                    PaperChunk.embedding.is_(None),
+                    # 摘要兜底块的向量靠拷贝论文级向量（零开销），不走嵌入接口
+                    PaperChunk.source == "fulltext",
+                )
                 .order_by(PaperChunk.created_at, PaperChunk.seq)
                 .limit(limit)
             )
@@ -220,23 +360,20 @@ async def rebuild_library_fulltext_index(
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """重建某个库的全文分段索引（docs/api-lit.md §8）：给已有全文但缺分段的论文补分段并嵌入。
+    """重建某个库的分段索引（docs/api-lit.md §8）：给缺分段的论文补分段并嵌入。
 
-    幂等：已有分段的论文跳过；新入库论文由 ingest 流水线自动处理，通常无需手动调用。
-    课题作用域与库作用域两个端点共用本函数（project_id 仅用于 LLM 用量记账归属）。
+    幂等：已有全文分段的论文跳过；没有全文的论文补一个「标题 + 摘要」兜底块，
+    这样整库论文都能被文献对话检索到。新入库论文由 ingest 流水线自动处理，
+    通常无需手动调用。课题作用域与库作用域两个端点共用本函数
+    （project_id 仅用于 LLM 用量记账归属）。
     paper_chunks 表尚未迁移时 ``ProgrammingError`` 原样上抛，由路由层转 503。
     """
-    chunked_ids = select(PaperChunk.paper_id)
     papers = (
         (
             await session.execute(
                 select(Paper)
                 .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                .where(
-                    LibraryPaper.library_id == library_id,
-                    Paper.full_text_path.is_not(None),
-                    Paper.id.not_in(chunked_ids),
-                )
+                .where(LibraryPaper.library_id == library_id)
             )
         )
         .scalars()
@@ -245,7 +382,7 @@ async def rebuild_library_fulltext_index(
     indexed = 0
     chunk_count = 0
     for paper in papers:
-        n = await index_paper_fulltext(session, paper)
+        n = await ensure_paper_chunks(session, paper)
         if n:
             indexed += 1
             chunk_count += n
@@ -257,6 +394,11 @@ async def rebuild_library_fulltext_index(
         user_id=user_id,
         project_id=project_id,
     )
+    # 摘要兜底块不走嵌入接口，向量拷论文级向量（论文级向量也还没建的就先留空）
+    copied = await sync_abstract_chunk_vectors(
+        session, paper_ids=[p.id for p in papers]
+    )
+    await session.commit()
     total_chunks = int(
         (
             await session.execute(
@@ -270,7 +412,9 @@ async def rebuild_library_fulltext_index(
     return {
         "papers_indexed": indexed,
         "chunks_created": chunk_count,
+        # embedded 只数「花了嵌入调用的全文块」；摘要块的向量是拷来的，单列 copied
         "embedded": embedded,
+        "abstract_vectors_copied": copied,
         "embed_error": embed_error,
         "total_chunks": total_chunks,
     }

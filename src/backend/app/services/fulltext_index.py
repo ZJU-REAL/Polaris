@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.router import LLMRouter
 from app.models.paper import Paper, PaperChunk
-from app.services.chunks import embed_pending_chunks_for_papers, index_paper_fulltext
+from app.services.chunks import embed_pending_chunks_for_papers, ensure_paper_chunks
 from app.services.papers import (
     PdfFetchFailedError,
     PdfSourceUnsupportedError,
@@ -43,9 +43,12 @@ async def index_papers_fulltext(
         if paper is None:
             skipped += 1
             continue
-        # 已建分段的论文不重建（index_paper_fulltext 会删旧分段，会连带丢已有向量）
+        # 已建**全文**分段的论文不重建（重切会连带丢已有向量）。判据不能是「有没有
+        # 分段」——没全文的论文有个摘要兜底块，按那个判会让它永远拿不到全文分段。
         existing = await session.scalar(
-            select(func.count()).select_from(PaperChunk).where(PaperChunk.paper_id == pid)
+            select(func.count())
+            .select_from(PaperChunk)
+            .where(PaperChunk.paper_id == pid, PaperChunk.source == "fulltext")
         )
         if existing:
             skipped += 1
@@ -62,9 +65,10 @@ async def index_papers_fulltext(
                 skipped += 1
                 continue
         try:
-            n = await index_paper_fulltext(session, paper)
+            # fetch_pdf 内部可能已经建好全文分段，ensure 在那种情况下返回 0 不重复切
+            n = await ensure_paper_chunks(session, paper)
         except Exception:  # noqa: BLE001 — 单篇分段异常不打断批处理
-            logger.warning("index_paper_fulltext failed for paper %s", pid, exc_info=True)
+            logger.warning("chunk indexing failed for paper %s", pid, exc_info=True)
             await session.rollback()
             skipped += 1
             continue

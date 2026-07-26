@@ -50,8 +50,8 @@ export function BuildIndexButton({ build }: { build: () => Promise<BuildIndexRes
     },
   });
 
-  // 未开启开关时不显示按钮
-  if (me?.settings?.chat_fulltext_index !== true) return null;
+  // 开关默认开，只有显式关掉才藏起按钮
+  if (me?.settings?.chat_fulltext_index === false) return null;
 
   return (
     <button
