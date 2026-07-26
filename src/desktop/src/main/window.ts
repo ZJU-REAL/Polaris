@@ -97,14 +97,16 @@ export function createWindow(): BrowserWindow {
     // 把交通灯钉在这条 40px 留白带的垂直中心（(40-12)/2 = 14），不同 macOS 版本
     // 的默认内缩量不一样，钉死才能和 global.css 的 --titlebar-h 对得上。
     ...(isMac ? { trafficLightPosition: { x: 18, y: 14 } } : {}),
-    // Windows 的最小化/最大化/关闭画在右上角。高度与 --titlebar-h 的 40 窗口点
-    // 对齐，配色取自 tokens.css（--app-bg / --text-2），否则按钮区会是一块白底。
+    // Windows 的最小化/最大化/关闭画在右上角，与顶栏同一行（顶栏右端由 CSS 的
+    // --winctl-w 留出等宽空位）。配色取自 tokens.css，否则按钮区会是一块白底。
     ...(isWin
       ? {
           titleBarOverlay: {
             color: '#f7f9fc',
             symbolColor: '#59637a',
-            height: 40,
+            // 与顶栏等高，按钮才会和铃铛排在同一行：顶栏是 52px CSS，
+            // 经 html{zoom:1.1} 渲染成约 57 个窗口点。
+            height: 57,
           },
         }
       : {}),

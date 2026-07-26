@@ -276,36 +276,53 @@ void app.whenReady().then(async () => {
     check('非 macOS 收起态侧栏保持原宽', railPt < 84, `rail=${railPt}pt`);
   }
 
-  // Windows 的窗口控件覆盖在右上角，页面靠 .app 的顶部留白避让。smoke 跑在
-  // macOS/Linux 上，所以这里临时把平台属性改成 win32 来验规则本身——CSS 完全由
-  // 属性驱动，与进程真实平台无关。
+  // Windows 的窗口控件排在顶栏右端（与铃铛同一行），页面靠 --winctl-w 留出等宽
+  // 空位。smoke 跑在 macOS/Linux 上，这里临时把平台属性改成 win32 来验规则本身
+  // ——CSS 完全由属性驱动，与进程真实平台无关。
   const winReserve = JSON.parse(
     (await win.webContents.executeJavaScript(`(() => {
       const root = document.documentElement;
       const prev = { p: root.dataset.desktopPlatform, t: root.dataset.desktopTitlebar };
       const host = document.createElement('div');
-      host.className = 'app';
-      host.style.cssText = 'position:fixed;left:0;top:0;width:600px;height:300px;display:flex';
-      host.innerHTML = '<div class="sidebar"></div><div style="flex:1"><div class="topbar"></div></div>';
+      host.style.cssText = 'position:fixed;left:0;top:0;width:800px';
+      host.innerHTML = '<div class="topbar"><div class="crumb">c</div><div class="spacer"></div>' +
+        '<button class="icon-btn" id="probe-bell">b</button></div>';
       document.body.appendChild(host);
-      const top = () => Math.round(host.querySelector('.topbar').getBoundingClientRect().top);
-      const drag = () => getComputedStyle(host, '::before').getPropertyValue('-webkit-app-region').trim();
+      const bar = host.querySelector('.topbar');
+      const bell = host.querySelector('#probe-bell');
+      const read = () => ({
+        top: Math.round(bar.getBoundingClientRect().top),
+        padRight: Math.round(parseFloat(getComputedStyle(bar).paddingRight)),
+        bellGap: Math.round(bar.getBoundingClientRect().right - bell.getBoundingClientRect().right),
+        drag: getComputedStyle(host.querySelector('.spacer')).getPropertyValue('-webkit-app-region').trim(),
+      });
+      const web = read();
       root.dataset.desktopPlatform = 'win32';
       root.dataset.desktopTitlebar = 'overlay';
-      const out = { topbarTop: top(), drag: drag() };
+      const win32 = read();
       if (prev.p) root.dataset.desktopPlatform = prev.p; else delete root.dataset.desktopPlatform;
       if (prev.t) root.dataset.desktopTitlebar = prev.t; else delete root.dataset.desktopTitlebar;
       host.remove();
-      return JSON.stringify(out);
+      return JSON.stringify({ web, win32 });
     })()`)) as string,
-  ) as { topbarTop: number; drag: string };
+  ) as { web: { padRight: number }; win32: { top: number; padRight: number; bellGap: number; drag: string } };
 
   check(
-    'Windows 顶栏避开窗口控件覆盖层',
-    winReserve.topbarTop >= 36,
-    `topbarTop=${winReserve.topbarTop}px`,
+    'Windows 顶栏不下移（控件与铃铛同一行）',
+    winReserve.win32.top === 0,
+    `top=${winReserve.win32.top}px`,
   );
-  check('Windows 顶部留白可拖窗口', winReserve.drag === 'drag', `app-region=${winReserve.drag}`);
+  check(
+    'Windows 顶栏右端为控件留位',
+    winReserve.win32.bellGap > 100,
+    `bellGap=${winReserve.win32.bellGap}px padRight=${winReserve.win32.padRight}px`,
+  );
+  check('Windows 顶栏可拖窗口', winReserve.win32.drag === 'drag', `region=${winReserve.win32.drag}`);
+  check(
+    'web 端顶栏留位不变',
+    winReserve.web.padRight === 22,
+    `padRight=${winReserve.web.padRight}px`,
+  );
 
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
