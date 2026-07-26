@@ -36,6 +36,7 @@ import {
   AffiliationChips,
   AuthorLinks,
   categoryMeta,
+  MetaFold,
   MetaItem,
   saveBlob,
   SearchInput,
@@ -864,8 +865,8 @@ function PaperDetailPane({
         invalidateKeys={[['papers', scopeId]]}
       />
 
-      {/* —— frontmatter 风格元数据卡 —— */}
-      <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
+      {/* —— frontmatter 风格元信息（默认折叠）；编译时间在下方 AI 图文介绍那行已有 —— */}
+      <MetaFold>
         <MetaItem label="arxiv_id">{paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}</MetaItem>
         <MetaItem label="doi">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
         <MetaItem label="published">
@@ -881,14 +882,7 @@ function PaperDetailPane({
         <MetaItem label={tr('入库时间', 'added at')}>
           <span className="mono">{fmtTime(paper.created_at)}</span>
         </MetaItem>
-        <MetaItem label={tr('编译时间', 'compiled at')}>
-          {paper.compiled_at ? (
-            <span className="mono">{fmtTime(paper.compiled_at)}</span>
-          ) : (
-            <span className="muted">{tr('未编译', 'not compiled')}</span>
-          )}
-        </MetaItem>
-      </div>
+      </MetaFold>
 
       {/* —— 概念 chips（过多时折叠） —— */}
       {paper.concepts.length > 0 && (

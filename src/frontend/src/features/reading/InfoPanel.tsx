@@ -13,6 +13,7 @@ import { type PaperConceptRef, type PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { topicPath } from '../../app/project';
 import { PaperMyTagsRow } from '../shared/PaperDetailBlocks';
+import { MetaFold } from '../wiki/shared';
 
 /* ============================================================
    阅读工作台 · 论文信息面板（PaperDetailPane 的精简版）：
@@ -132,8 +133,8 @@ export function InfoPanel({
         </a>
       )}
 
-      {/* —— 元数据卡 —— */}
-      <div className="card" style={{ margin: '14px 0 0', background: 'var(--surface-2)', padding: '10px 14px' }}>
+      {/* —— 元信息（默认折叠） —— */}
+      <MetaFold style={{ margin: '14px 0 0' }}>
         <MetaItem label="arxiv_id">
           {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
         </MetaItem>
@@ -153,7 +154,7 @@ export function InfoPanel({
         <MetaItem label="ingested">
           <span className="mono">{fmtTime(paper.created_at)}</span>
         </MetaItem>
-      </div>
+      </MetaFold>
 
       {/* —— 我的标签：边读边打，只有自己看得到 —— */}
       {/* 库标签的界面入口已移除，个人标签取代了它；后端端点与数据保留。 */}

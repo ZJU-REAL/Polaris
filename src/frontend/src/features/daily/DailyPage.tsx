@@ -35,6 +35,7 @@ import {
   AffiliationChips,
   AuthorLinks,
   FilterInput,
+  MetaFold,
   MetaItem,
   SearchInput,
   SemanticSwitch,
@@ -409,8 +410,8 @@ function DailyDetailPane({
         <PaperMyTagsRow paperId={poolPaper.id} myTags={poolPaper.my_tags} detailKey={poolKey} />
       )}
 
-      {/* —— frontmatter 风格元数据卡 —— */}
-      <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
+      {/* —— frontmatter 风格元信息（默认折叠）；编译时间在下方 AI 图文介绍那行已有 —— */}
+      <MetaFold>
         <MetaItem label="arxiv_id">
           {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
         </MetaItem>
@@ -424,14 +425,7 @@ function DailyDetailPane({
             <span className="muted">—</span>
           )}
         </MetaItem>
-        <MetaItem label={tr('编译时间', 'compiled at')}>
-          {paper.compiled_at ? (
-            <span className="mono">{fmtTime(paper.compiled_at)}</span>
-          ) : (
-            <span className="muted">{tr('未编译', 'not compiled')}</span>
-          )}
-        </MetaItem>
-      </div>
+      </MetaFold>
 
       {paper.abstract ? (
         <div className="card card-pad" style={{ background: 'var(--surface-2)', marginTop: 18 }}>

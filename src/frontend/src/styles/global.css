@@ -66,6 +66,10 @@ html { zoom: 1.1; }
   -webkit-app-region: drag;
   align-self: stretch;
 }
+/* 面包屑的上级段是链接，落在拖拽区里会点不动 —— 单独还原成可点。 */
+:root[data-desktop-platform='darwin'] .topbar > .crumb a {
+  -webkit-app-region: no-drag;
+}
 body {
   font-family: var(--sans);
   color: var(--text);
@@ -297,8 +301,20 @@ input {
   position: relative; z-index: 20;
 }
 .crumb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-3); }
-.crumb b { color: var(--text); font-weight: 600; }
+/* 末段可能是实体名（如库名），过长时截断，别把顶栏右侧挤没 */
+.crumb b {
+  color: var(--text); font-weight: 600;
+  max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .crumb .sep { color: var(--text-4); }
+/* 上级段可点：负外边距让 hover 底色贴着文字长出来，不撑开行 */
+.crumb a {
+  color: inherit; text-decoration: none; border-radius: 6px;
+  padding: 2px 5px; margin: -2px -5px; transition: background .12s, color .12s;
+}
+.crumb a:hover { color: var(--accent-text); background: var(--surface-2); }
+/* 刷新按钮紧挨面包屑，不被中间的弹性空白推走 */
+.crumb-refresh { flex-shrink: 0; margin-left: -4px; }
 .topbar .spacer { flex: 1; }
 
 /* 更新提示：箭头按钮右上角的小圆点（区别于审批的数字 badge） */
@@ -1217,9 +1233,9 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
     padding-left: max(12px, env(safe-area-inset-left));
     padding-right: max(12px, env(safe-area-inset-right));
   }
-  /* 面包屑只留当前页，去掉上级与分隔符 */
+  /* 面包屑只留当前页，去掉上级链接与分隔符 */
   .crumb { min-width: 0; }
-  .crumb > span { display: none; }
+  .crumb > *:not(b) { display: none; }
   .crumb b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* 搜索框收成图标按钮（不改 DOM，只藏文字） */
   .searchbox {

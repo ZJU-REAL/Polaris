@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { PageHead } from '../../components/ui/PageHead';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { api, isAdmin, type DirectionLibraryDetail } from '../../lib/api';
@@ -67,18 +66,7 @@ export function LibraryDetailPage() {
 
   return (
     <div className="page fadeup page-fill" style={{ maxWidth: 1360, paddingBottom: 24 }}>
-      <PageHead
-        eyebrow={tr('实验室 · 文献库', 'Lab · Library')}
-        title={lib.name}
-        dense
-        sub={lib.statement ?? undefined}
-        right={
-          <button className="btn btn-ghost" onClick={() => navigate('/libraries')}>
-            <Icon name="chevron" size={13} style={{ transform: 'rotate(180deg)' }} />
-            {tr('全部文献库', 'All libraries')}
-          </button>
-        }
-      />
+      {/* 库名与返回入口都在顶栏面包屑里（实验室 › 文献库 › 库名），页面不再单占一行 */}
       <StatusBanner lib={lib} />
       {canManage ? (
         <WikiWorkbench pid={lib.project_id ?? undefined} libraryId={lib.id} canManage={canManage} />

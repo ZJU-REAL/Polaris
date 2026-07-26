@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon, type IconName } from '../components/ui/Icon';
 import { PolarisMark, PolarisWordmark } from '../components/ui/PolarisLogo';
@@ -33,6 +33,13 @@ interface NavEntry {
   en: string;
 }
 
+/** 侧栏三个分组的标题：面包屑第一段直接复用，保证两处永远对得上。 */
+const NAV_GROUPS = {
+  lab: { zh: '实验室', en: 'Lab' },
+  topic: { zh: '课题研究', en: 'Topic' },
+  personal: { zh: '个人', en: 'Personal' },
+} as const;
+
 // 实验室级导航：跨课题的公共资产（P5c 起为共享方向文献库列表）
 const NAV_LAB: NavEntry[] = [
   { to: '/lab', icon: 'flask', zh: '实验室工作台', en: 'Lab Workbench' },
@@ -43,6 +50,12 @@ const NAV_LAB: NavEntry[] = [
 const NAV_MAIN: NavEntry[] = [
   { icon: 'dashboard', zh: '课题工作台', en: 'Topic Workbench' },
   { sub: 'research', icon: 'pin', zh: '相关研究', en: 'Related Work' },
+];
+
+// 个人区：跨课题的个人页面（设置入口在底部头像菜单里，不重复占位）
+const NAV_PERSONAL: NavEntry[] = [
+  { to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' },
+  { to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' },
 ];
 
 const NAV_PIPE: NavEntry[] = [
@@ -62,39 +75,86 @@ const FEATURE_BY_SUB: Record<string, string> = {
   'paper-review': 'paper_review',
 };
 
-function crumbFor(pathname: string): [string, string] {
-  // 课题作用域路径统一去掉 /t/<topicId> 前缀后按旧表匹配
+/** 面包屑一段；没有 to = 当前页（最后一段），不可点。 */
+interface Crumb {
+  label: string;
+  to?: string;
+}
+
+/**
+ * 侧栏条目 → 面包屑段：文案与跳转都取自 NAV_* 那一份定义，
+ * key 用条目的 to（实验室 / 个人）或 sub（课题作用域），课题工作台的 key 是空串。
+ */
+function navCrumb(key: string, pid: string | null): Crumb {
+  const entry = [...NAV_LAB, ...NAV_MAIN, ...NAV_PIPE, ...NAV_PERSONAL].find(
+    (n) => (n.to ?? n.sub ?? '') === key,
+  );
+  if (!entry) return { label: '—' };
+  return { label: tr(entry.zh, entry.en), to: entry.to ?? topicPath(pid, entry.sub) };
+}
+
+/**
+ * 当前路径 → 面包屑层级（分组 › 侧栏条目 › 当前实体），与侧栏三组保持一致。
+ * 分组段指向该组的落地页（实验室工作台 / 课题工作台 / 我的文献库）。
+ * libName：文献库详情页的库名（列表缓存里已有，取不到时退回通用文案）。
+ */
+function crumbsFor(pathname: string, pid: string | null, libName?: string | null): Crumb[] {
+  const lab: Crumb = { label: tr(NAV_GROUPS.lab.zh, NAV_GROUPS.lab.en), to: '/lab' };
+  const topic: Crumb = {
+    label: tr(NAV_GROUPS.topic.zh, NAV_GROUPS.topic.en),
+    to: pid ? topicPath(pid) : '/start',
+  };
+  const personal: Crumb = { label: tr(NAV_GROUPS.personal.zh, NAV_GROUPS.personal.en), to: '/library' };
+  const e = (key: string) => navCrumb(key, pid);
+
+  // 课题作用域路径统一去掉 /t/<topicId> 前缀后按同一张表匹配
   const scoped = /^\/t\/[^/]+(\/.*)?$/.exec(pathname);
   const p = scoped ? (scoped[1] ?? '/') : pathname;
-  if (p === '/') return ['Polaris', tr('课题工作台', 'Topic Workbench')];
-  if (p === '/start') return ['Polaris', tr('选择课题', 'Pick a topic')];
-  if (p === '/projects/new') return [tr('课题', 'Topics'), tr('新建课题', 'New topic')];
-  if (p.startsWith('/projects/')) return [tr('课题', 'Topics'), tr('课题设置', 'Topic settings')];
-  if (p === '/voyages') return ['Polaris', tr('任务', 'Tasks')];
-  if (p.startsWith('/voyages/')) return [tr('任务', 'Tasks'), tr('任务详情', 'Task detail')];
-  if (p.startsWith('/papers/')) return [tr('文献库', 'Libraries'), tr('论文阅读', 'Paper reading')];
-  if (p === '/libraries') return [tr('实验室', 'Lab'), tr('文献库', 'Libraries')];
-  if (p === '/daily') return [tr('实验室', 'Lab'), tr('每日新论文', 'Daily Papers')];
-  if (p.startsWith('/libraries/')) return [tr('文献库', 'Libraries'), tr('库详情', 'Library detail')];
-  if (p.startsWith('/ideas/')) return [tr('想法生成', 'Idea Forge'), tr('想法详情', 'Idea detail')];
-  if (p.startsWith('/join/')) return [tr('课题', 'Topics'), tr('接受邀请', 'Accept invite')];
-  if (p.startsWith('/experiment/')) return [tr('实验搭建', 'Experiment Lab'), tr('实验详情', 'Experiment detail')];
-  if (p.startsWith('/writer/')) return [tr('论文撰写', 'Paper Writer'), tr('编辑工作台', 'Editor workspace')];
-  const table: Record<string, [string, string]> = {
-    '/wiki': [tr('实验室', 'Lab'), tr('文献库', 'Libraries')],
-    '/research': [tr('课题研究', 'Topic'), tr('相关研究', 'Related Work')],
-    '/forge': ['Stage 01', tr('想法生成', 'Idea Forge')],
-    '/review': ['Stage 02', tr('想法评审', 'Idea Review')],
-    '/experiment': ['Stage 03', tr('实验搭建', 'Experiment Lab')],
-    '/writer': ['Stage 04', tr('论文撰写', 'Paper Writer')],
-    '/paper-review': ['Stage 05', tr('论文评审', 'Paper Review')],
-    '/library': ['Polaris', tr('我的文献库', 'My Library')],
-    '/skills': ['Polaris', tr('技能', 'Skills')],
-    '/settings': ['Polaris', tr('设置', 'Settings')],
-    '/admin': ['Polaris', tr('管理', 'Manage')],
-    '/lab': [tr('实验室', 'Lab'), tr('实验室工作台', 'Lab Workbench')],
-  };
-  return table[p] ?? ['Polaris', '—'];
+
+  const trail = ((): Crumb[] => {
+    // —— 课题研究组 ——
+    if (p === '/') return [topic, e('')];
+    if (p === '/research') return [topic, e('research')];
+    if (p === '/forge') return [topic, e('forge')];
+    if (p === '/review') return [topic, e('review')];
+    if (p === '/experiment') return [topic, e('experiment')];
+    if (p === '/writer') return [topic, e('writer')];
+    if (p === '/paper-review') return [topic, e('paper-review')];
+    if (p.startsWith('/ideas/')) return [topic, e('forge'), { label: tr('想法详情', 'Idea detail') }];
+    if (p.startsWith('/experiment/')) return [topic, e('experiment'), { label: tr('实验详情', 'Experiment detail') }];
+    if (p.startsWith('/writer/')) return [topic, e('writer'), { label: tr('编辑工作台', 'Editor workspace') }];
+    // 任务已并入课题工作台的「任务」标签
+    if (p === '/voyages') return [topic, e(''), { label: tr('任务', 'Tasks') }];
+    if (p.startsWith('/voyages/'))
+      return [
+        topic,
+        { ...e(''), to: topicPath(pid) + '?tab=tasks' },
+        { label: tr('任务详情', 'Task detail') },
+      ];
+    if (p === '/start') return [topic, { label: tr('选择课题', 'Pick a topic') }];
+    if (p === '/projects/new') return [topic, { label: tr('新建课题', 'New topic') }];
+    if (p.startsWith('/projects/')) return [topic, { label: tr('课题设置', 'Topic settings') }];
+    if (p.startsWith('/join/')) return [topic, { label: tr('接受邀请', 'Accept invite') }];
+
+    // —— 实验室组 ——
+    if (p === '/lab') return [lab, e('/lab')];
+    if (p === '/libraries' || p === '/wiki') return [lab, e('/libraries')];
+    if (p.startsWith('/libraries/'))
+      return [lab, e('/libraries'), { label: libName || tr('文献库详情', 'Library') }];
+    if (p === '/daily') return [lab, e('/daily')];
+    if (p.startsWith('/papers/')) return [lab, e('/libraries'), { label: tr('论文阅读', 'Paper reading') }];
+    if (p.startsWith('/concepts/')) return [lab, e('/libraries'), { label: tr('概念', 'Concept') }];
+
+    // —— 个人区 ——
+    if (p === '/library') return [personal, e('/library')];
+    if (p === '/skills') return [personal, e('/skills')];
+    if (p === '/settings') return [personal, { label: tr('设置', 'Settings') }];
+    if (p === '/admin') return [{ label: tr('管理', 'Manage') }];
+    return [{ label: 'Polaris' }];
+  })();
+
+  // 最后一段是当前页：去掉链接
+  return trail.map((c, i) => (i === trail.length - 1 ? { label: c.label } : c));
 }
 
 /** AppShell 通过 Outlet context 暴露给子页面的能力。 */
@@ -494,7 +554,29 @@ export function AppShell() {
     setBadgeCount(pending.length);
   }, [pending.length]);
 
-  const [c1, c2] = crumbFor(location.pathname);
+  // —— 面包屑（层级同侧栏）：文献库详情页多取一段库名，走详情页同一份缓存，不额外发请求 ——
+  const { currentProjectId } = useProject();
+  const crumbLibraryId = /^\/libraries\/([^/]+)$/.exec(location.pathname)?.[1] ?? null;
+  const { data: crumbLibrary } = useQuery({
+    queryKey: ['library', crumbLibraryId],
+    queryFn: () => api.getLibrary(crumbLibraryId ?? ''),
+    enabled: !!crumbLibraryId,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const crumbs = crumbsFor(location.pathname, currentProjectId, crumbLibrary?.name);
+
+  // —— 刷新：让所有查询失效并重取（保留页面状态，不整页重载） ——
+  const [refreshing, setRefreshing] = useState(false);
+  async function refreshData() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await queryClient.invalidateQueries();
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const ctx: ShellContext = { pendingGates: pending, gatesError: pendingQuery.isError, openGates };
 
@@ -518,12 +600,12 @@ export function AppShell() {
         {/* —— 实验室 + 课题研究两组（平面分组，只靠 eyebrow + 间距区分，不加分隔线）。
             放在滚动区之外：课题切换器的下拉菜单要能向右溢出到主列上 —— */}
         <div className="sb-nav-static">
-          <div className="sb-section">{tr('实验室', 'Lab')}</div>
+          <div className="sb-section">{tr(NAV_GROUPS.lab.zh, NAV_GROUPS.lab.en)}</div>
           {NAV_LAB.map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
           ))}
 
-          <div className="sb-section">{tr('课题研究', 'Topic')}</div>
+          <div className="sb-section">{tr(NAV_GROUPS.topic.zh, NAV_GROUPS.topic.en)}</div>
           <TopicSwitcher collapsed={navCollapsed && !isMobile} />
           {NAV_MAIN.map((n) => (
             <NavItem key={n.sub ?? n.to ?? 'home'} n={n} />
@@ -539,9 +621,10 @@ export function AppShell() {
 
         {/* —— 个人区：跨课题的个人页面（设置入口在底部头像菜单里，不重复占位） —— */}
         <div className="sb-scroll scroll">
-          <div className="sb-section">{tr('个人', 'Personal')}</div>
-          <NavItem n={{ to: '/library', icon: 'bookmark', zh: '我的文献库', en: 'My Library' }} />
-          <NavItem n={{ to: '/skills', icon: 'sparkle', zh: '技能', en: 'Skills' }} />
+          <div className="sb-section">{tr(NAV_GROUPS.personal.zh, NAV_GROUPS.personal.en)}</div>
+          {NAV_PERSONAL.map((n) => (
+            <NavItem key={n.to} n={n} />
+          ))}
         </div>
         <div className="sb-foot">
           <UserMenu me={me} collapsed={navCollapsed && !isMobile} />
@@ -582,10 +665,22 @@ export function AppShell() {
             <Icon name="sidebar" size={16} />
           </button>
           <div className="crumb">
-            <span>{c1}</span>
-            <span className="sep">›</span>
-            <b>{c2}</b>
+            {crumbs.map((c, i) => (
+              <Fragment key={`${c.label}-${i}`}>
+                {i > 0 && <span className="sep">›</span>}
+                {c.to ? <Link to={c.to}>{c.label}</Link> : <b>{c.label}</b>}
+              </Fragment>
+            ))}
           </div>
+          <button
+            className="icon-btn crumb-refresh"
+            onClick={() => void refreshData()}
+            disabled={refreshing}
+            title={tr('刷新本页数据', 'Reload this page’s data')}
+            aria-label={tr('刷新本页数据', 'Reload this page’s data')}
+          >
+            <Icon name="refresh" size={15} style={refreshing ? { animation: 'spin 1s linear infinite' } : undefined} />
+          </button>
           <div className="spacer" />
           <div className="searchbox" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSearchOpen(true); }}>

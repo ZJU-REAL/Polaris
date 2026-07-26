@@ -16,7 +16,7 @@ import { tr } from '../../lib/i18n';
 import { libraryPath, useLibraries } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
 import { PaperReader } from '../wiki/PaperReader';
-import { AffiliationChips, AuthorLinks, usePoolConceptNav } from '../wiki/shared';
+import { AffiliationChips, AuthorLinks, MetaFold, usePoolConceptNav } from '../wiki/shared';
 import {
   ConceptChips,
   PaperMyMetaRow,
@@ -409,8 +409,8 @@ export function ShelfDetailPane({
         />
       )}
 
-      {/* —— frontmatter 风格元数据卡 —— */}
-      <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
+      {/* —— frontmatter 风格元信息（默认折叠） —— */}
+      <MetaFold>
         <MetaItem label="arxiv_id">
           {item.arxiv_id ? <span className="mono">{item.arxiv_id}</span> : <span className="muted">—</span>}
         </MetaItem>
@@ -444,7 +444,7 @@ export function ShelfDetailPane({
             tr('手动添加', 'Added manually')
           )}
         </MetaItem>
-      </div>
+      </MetaFold>
 
       {/* —— 概念 chips：点了进不限库的概念页 —— */}
       <ConceptChips concepts={paper?.concepts} onOpen={openConcept} />

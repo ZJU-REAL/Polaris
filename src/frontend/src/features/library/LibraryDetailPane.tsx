@@ -22,7 +22,7 @@ import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
 import { PaperReader } from '../wiki/PaperReader';
-import { AffiliationChips, AuthorLinks, usePoolConceptNav } from '../wiki/shared';
+import { AffiliationChips, AuthorLinks, MetaFold, usePoolConceptNav } from '../wiki/shared';
 import {
   ConceptChips,
   PaperMyMetaRow,
@@ -327,8 +327,8 @@ export function LibraryDetailPane({
         />
       )}
 
-      {/* —— frontmatter 风格元数据卡 —— */}
-      <div className="card card-pad" style={{ margin: '18px 0 0', background: 'var(--surface-2)', padding: '14px 18px' }}>
+      {/* —— frontmatter 风格元信息（默认折叠） —— */}
+      <MetaFold>
         <MetaItem label="arxiv_id">
           {arxivId ? <span className="mono">{arxivId}</span> : <span className="muted">—</span>}
         </MetaItem>
@@ -342,7 +342,7 @@ export function LibraryDetailPane({
             <span className="mono">{snapshot.citedByCount}</span>
           </MetaItem>
         )}
-      </div>
+      </MetaFold>
 
       {/* —— 概念 chips：点了跳所属课题库的概念页 —— */}
       {alive && <ConceptChips concepts={paper.concepts} onOpen={openConcept} />}

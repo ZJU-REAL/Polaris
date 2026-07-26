@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, type ConceptCategory, type PaperAuthor, type ReadingStatus } from '../../lib/api';
@@ -124,6 +124,36 @@ export function MetaItem({ label, children }: { label: string; children: ReactNo
       <span style={{ fontSize: 12.5, color: 'var(--text-2)', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>
         {children}
       </span>
+    </div>
+  );
+}
+
+/**
+ * 元信息折叠块：论文详情四处面板（论文库 / 只读库 / 阅读页 / 个人库 / 相关研究）共用的
+ * frontmatter 卡外壳。默认收起——这些字段查证时才看，别占着首屏。
+ */
+export function MetaFold({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="card"
+      style={{ margin: '18px 0 0', background: 'var(--surface-2)', overflow: 'hidden', ...style }}
+    >
+      <div
+        className="row"
+        {...clickable(() => setOpen((o) => !o))}
+        style={{ padding: '9px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
+      >
+        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
+          {tr('元信息', 'Metadata')}
+        </span>
+        <Icon
+          name="chevDown"
+          size={13}
+          style={{ color: 'var(--text-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+        />
+      </div>
+      {open && <div style={{ padding: '0 16px 10px' }}>{children}</div>}
     </div>
   );
 }
