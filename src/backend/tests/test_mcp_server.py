@@ -149,6 +149,119 @@ async def test_catalog_endpoint(client):
     assert (await client.get("/api/mcp/tools")).status_code == 401
 
 
+async def test_invoke_tool(client):
+    """POST /api/mcp/tools/{name}/invoke：页面上的「试运行」，走的是真实 MCP 调用路径。"""
+    project_id, headers = await _setup(client, email="invoke@example.com")
+
+    resp = await client.post(
+        "/api/mcp/tools/search_papers/invoke",
+        json={"project_id": project_id, "arguments": {"query": "retrieval", "mode": "keyword"}},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["is_error"] is False
+    assert body["duration_ms"] >= 0
+    payload = json.loads(body["content"][0]["text"])
+    assert any(p["title"] == "MCP retrieval paper" for p in payload["results"])
+
+
+async def test_invoke_reports_tool_error(client):
+    """工具自己报错（缺参数）→ is_error，错误消息原样回给页面。"""
+    project_id, headers = await _setup(client, email="invoke-err@example.com")
+
+    resp = await client.post(
+        "/api/mcp/tools/search_papers/invoke",
+        json={"project_id": project_id, "arguments": {}},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["is_error"] is True
+    assert "query" in body["content"][0]["text"]
+
+
+async def test_invoke_unknown_tool_and_auth(client):
+    project_id, headers = await _setup(client, email="invoke-404@example.com")
+    resp = await client.post(
+        "/api/mcp/tools/no_such_tool/invoke",
+        json={"project_id": project_id, "arguments": {}},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+    # 需登录
+    resp = await client.post(
+        "/api/mcp/tools/search_papers/invoke",
+        json={"project_id": project_id, "arguments": {}},
+    )
+    assert resp.status_code == 401
+
+
+async def test_invoke_cross_project_denied(client):
+    """试运行同样过成员校验：拿别人的课题 id 一律当作不存在。"""
+    project_a, _ = await _setup(client, email="invoke-a@example.com")
+    _, headers_b = await _setup(client, email="invoke-b@example.com")
+
+    resp = await client.post(
+        "/api/mcp/tools/search_papers/invoke",
+        json={"project_id": project_a, "arguments": {"query": "retrieval"}},
+        headers=headers_b,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["is_error"] is True
+    assert "无权访问" in body["content"][0]["text"]
+
+
+async def test_selfcheck(client):
+    """POST /api/mcp/selfcheck：把工具跑一遍，报告哪些还能用、哪些已失效。"""
+    project_id, headers = await _setup(client, email="selfcheck@example.com")
+
+    resp = await client.post("/api/mcp/selfcheck", json={"project_id": project_id}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    by_name = {r["name"]: r for r in body["results"]}
+
+    # 底层重构把工具搞挂了 → 这里会红：任何工具都不许 error
+    broken = {n: r["detail"] for n, r in by_name.items() if r["status"] == "error"}
+    assert not broken, f"MCP 工具已失效：{broken}"
+
+    assert body["summary"]["total"] == len(by_name)
+    assert body["summary"]["ok"] >= 5
+    # 库内检索类工具有论文样本 → 必须真跑过
+    assert by_name["search_papers"]["status"] == "ok"
+    assert by_name["search_papers"]["arguments"]["query"]
+    assert by_name["get_paper"]["status"] == "ok"
+    # 联网工具默认不实测
+    assert by_name["external_search"]["status"] == "skipped"
+    # 没有稿件 → 跳过并说明原因，不算失败
+    assert by_name["get_fact_pack"]["status"] == "skipped"
+    assert "稿件" in by_name["get_fact_pack"]["detail"]
+    # 没有图片 → 取图类工具跳过
+    assert by_name["get_paper_figure"]["status"] == "skipped"
+
+
+async def test_selfcheck_names_and_cross_project(client):
+    """names 过滤只跑指定工具；非成员课题直接 404（报告里带样本 id，不能泄露）。"""
+    project_a, headers_a = await _setup(client, email="sc-a@example.com")
+    _, headers_b = await _setup(client, email="sc-b@example.com")
+
+    resp = await client.post(
+        "/api/mcp/selfcheck",
+        json={"project_id": project_a, "names": ["list_concepts"]},
+        headers=headers_a,
+    )
+    assert resp.status_code == 200, resp.text
+    assert [r["name"] for r in resp.json()["results"]] == ["list_concepts"]
+
+    resp = await client.post(
+        "/api/mcp/selfcheck",
+        json={"project_id": project_a, "names": ["list_concepts"]},
+        headers=headers_b,
+    )
+    assert resp.status_code == 404, resp.text
+
+
 async def test_unknown_method(client):
     _, headers = await _setup(client)
     resp = await client.post(

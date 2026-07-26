@@ -133,3 +133,26 @@ The read-only tool registry in `app/tools/` is the single source of truth for re
 both by the internal agent loop and by the external MCP server in `app/mcp/`. Adding a tool is a
 single handler in `app/tools/`; it then becomes visible to both consumers. See the tool layer in
 [Core Concepts](concepts.md#the-mcp-read-only-tool-layer).
+
+### Testing the tools
+
+Tool handlers call into `services/*`, so a refactor there (changed signature, dropped field, new
+table layout) does not break imports — it breaks the tool at call time. Two endpoints exist to catch
+that, both routed through `app/mcp/dispatch.call_tool`, the exact path external MCP clients take:
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /api/mcp/tools/{name}/invoke` | Runs one tool with arguments you supply and returns the raw MCP content blocks (text plus inline images), so you see what a client would see. |
+| `POST /api/mcp/selfcheck` | Collects sample data from a topic (a paper, a figure, a concept, an idea, an experiment, a manuscript), fills each tool's required arguments, and runs the whole catalog, reporting `ok` / `error` / `skipped` per tool. |
+
+Both live behind the **Settings → MCP** page: a topic picker, a one-click self-check that badges
+every tool card, and a per-tool "try it" panel prefilled with the self-check's sample arguments.
+
+Sample arguments are chosen to keep a self-check cheap and deterministic: filter-style optional
+parameters are left unset, `mode` is pinned to `keyword` so no embedding call is made, and figure
+tools render at 512 px. Network tools are skipped unless `include_network` is set, since they really
+call Semantic Scholar and OpenAlex. A tool whose required argument has no sample in that topic (no
+manuscript yet, no extracted figures) is reported as `skipped`, not as a failure.
+
+`tests/test_mcp_server.py::test_selfcheck` runs the same self-check against the test fixtures and
+fails if any tool reports `error`, so tool rot surfaces in CI rather than in a client.
