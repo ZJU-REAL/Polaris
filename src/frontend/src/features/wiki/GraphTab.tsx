@@ -9,7 +9,8 @@ import { tr } from '../../lib/i18n';
 import { categoryMeta, SearchInput } from './shared';
 
 /* ============================================================
-   知识图谱 Tab：论文 / 作者 / 概念的可探查网络，三种视图：
+   知识图谱 Tab：论文 / 作者 / 概念的可探查网络，四种视图（实验室尺度只给
+   趋势与主题两个聚合视图，网络与时间线在上千节点下读不出东西）：
    - 网络 Network：canvas 力导向（分层径向初始 + 碰撞防重叠），自由探索；
    - 时间线 Timeline：按发表年份分列的整齐排布；
    - 主题 Topics：按概念聚类的分组网格；
@@ -697,6 +698,17 @@ interface TrendBlock {
   y1: number;
 }
 
+/** 冲积图默认只看近半年：时间跨度一长，每列就被压成细线，趋势反而读不出来。 */
+const TREND_DEFAULT_MONTHS = 6;
+
+/** 今天往前推 n 个月的 YYYY-MM。 */
+function monthsAgo(n: number): string {
+  const d = new Date();
+  d.setDate(1); // 先归月初：31 日直接减月份会溢出到下个月（如 8-31 减 6 得 3-3）
+  d.setMonth(d.getMonth() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 const TREND_NODE_W = 10; // 节点块宽
 const TREND_GAP = 3; // 同列块间留白（代替描边做分隔）
 const TREND_MIN_H = 3; // 计数 = 1 也要看得见
@@ -707,6 +719,7 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
   // 起止时间（YYYY-MM，空=不限）：在图上横向拖动选出来的，不是下拉选的
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const didInitRange = useRef(false);
   // 拖选中的像素区间 [x0, x1]；null = 没在拖
   const [brush, setBrush] = useState<{ x0: number; x1: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -731,6 +744,17 @@ function TrendsView({ model, onFocusConcept }: { model: GraphModel; onFocusConce
     }
     return [...set].sort();
   }, [model]);
+
+  // 默认落到近半年。只做一次：用户点过「全部」之后就该一直是全部，不能被数据刷新拽回来。
+  // 起始值必须吸附到数据里真实存在的月份——下拉的 option 只有这些，塞一个算出来的
+  // 月份会让它显示成空值。数据整体都早于半年前时不设默认：宁可显示全部，也不给空图。
+  useEffect(() => {
+    if (didInitRange.current || months.length === 0) return;
+    didInitRange.current = true;
+    const cutoff = monthsAgo(TREND_DEFAULT_MONTHS);
+    const snapped = months.find((m) => m >= cutoff);
+    if (snapped && snapped !== months[0]) setFrom(snapped);
+  }, [months]);
 
   const data = useMemo(() => {
     // —— 概念 × 时间桶 → 关联论文数矩阵；只保留有论文的时间桶（离散列，跳过空档） ——
@@ -1298,6 +1322,12 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
     setForceNetwork(false);
   }, [scopeId]);
 
+  // 实验室尺度没有网络/时间线这两个视图；状态若停在上面（组件复用、以后改默认值）
+  // 会渲染出一个标签栏上根本选不中的视图，兜回趋势。
+  useEffect(() => {
+    if (scope === 'lab' && (view === 'network' || view === 'timeline')) setView('trends');
+  }, [scope, view]);
+
   const model = useMemo(() => (data ? buildModel(data, focusConceptId) : null), [data, focusConceptId]);
 
   // 子主题下拉：全部概念按关联论文数排序
@@ -1353,12 +1383,12 @@ export function GraphTab({ pid, libraryId, scope, onOpenPaper, onOpenConcept }: 
       <div className="row gap8 wrap" style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)' }}>
         <Segmented<GraphView>
           options={
-            // 实验室尺度只留网络与趋势：时间线按论文分列、主题按概念分组，
-            // 上千篇的量级下都只是把内容摊平，看不出东西。
+            // 实验室尺度只留趋势与主题两个聚合视图。网络图在上千节点下是一团糊，
+            // 时间线按论文分列同样只是把内容摊平——都看不出东西。
             scope === 'lab'
               ? [
-                  { v: 'network' as const, label: tr('网络', 'Network') },
                   { v: 'trends' as const, label: tr('趋势', 'Trends') },
+                  { v: 'topics' as const, label: tr('主题', 'Topics') },
                 ]
               : [
                   { v: 'network' as const, label: tr('网络', 'Network') },
