@@ -10,6 +10,7 @@ import {
   usePaperFigures,
 } from '../../components/ui/FigureGallery';
 import { CompileBadge } from '../../components/ui/CompileBadge';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
@@ -39,6 +40,7 @@ import {
   SemanticSwitch,
   saveBlob,
   useDebounced,
+  usePoolConceptNav,
 } from '../wiki/shared';
 import {
   ConceptChips,
@@ -201,6 +203,8 @@ function DailyDetailPane({
   const [readerOpen, setReaderOpen] = useState(false);
   // 阅览模式打开后是否直接唤起打印（「导出 PDF」一步直达）
   const [readerPrint, setReaderPrint] = useState(false);
+  // 已有解读时重新编译要先确认：解读每篇只有一份，重编即覆盖，旧版本找不回来
+  const [recompileConfirm, setRecompileConfirm] = useState(false);
   const openReader = useCallback(() => {
     setReaderPrint(false);
     setReaderOpen(true);
@@ -240,6 +244,9 @@ function DailyDetailPane({
     },
     [figures, paper],
   );
+
+  // 每日推送是池级上下文：概念一律进不限库的概念页
+  const { openConcept, openConceptByName } = usePoolConceptNav();
 
   if (isLoading) return <div className="empty">{tr('加载论文详情…', 'Loading paper…')}</div>;
   if (isError || !paper) {
@@ -352,7 +359,7 @@ function DailyDetailPane({
               : tr('AI 精读并编译图文介绍', 'Have the AI read and compile an illustrated intro')
           }
           disabled={compiling}
-          onClick={() => onCompile(paper.entry_id)}
+          onClick={() => (paper.has_wiki ? setRecompileConfirm(true) : onCompile(paper.entry_id))}
         >
           {compiling ? (
             <>
@@ -460,8 +467,8 @@ function DailyDetailPane({
         </div>
       )}
 
-      {/* —— 概念 chips（与库版同款；每日没有概念库 tab，故只展示不跳转） —— */}
-      <ConceptChips concepts={paper.concepts} />
+      {/* —— 概念 chips（与库版同款；点了进不限库的概念页） —— */}
+      <ConceptChips concepts={paper.concepts} onOpen={openConcept} />
 
       {/* —— 我的笔记（只有自己看得到） —— */}
       {poolPaper && (
@@ -500,7 +507,7 @@ function DailyDetailPane({
             </div>
             <WikiHeaderActions onRead={openReader} onExport={openReaderForPrint} />
           </div>
-          <Markdown source={paper.wiki_content} renderFigure={renderFigure} />
+          <Markdown source={paper.wiki_content} onWikiLink={openConceptByName} renderFigure={renderFigure} />
         </div>
       ) : (
         <EmptyState
@@ -518,11 +525,29 @@ function DailyDetailPane({
         <PaperReader
           paper={readerPaper}
           wikiContent={paper.wiki_content}
+          onWikiLink={openConceptByName}
           renderFigure={renderFigure}
           autoPrint={readerPrint}
           onClose={() => setReaderOpen(false)}
         />
       )}
+
+      {/* 覆盖确认：解读每篇一份，重编会顶掉现有那份，且没有历史版本 */}
+      <ConfirmModal
+        open={recompileConfirm}
+        onClose={() => setRecompileConfirm(false)}
+        title={tr('重新编译解读', 'Recompile the wiki')}
+        message={tr(
+          `现有解读由 ${paper.compiled_by_name ?? '未知用户'} 在 ${paper.compiled_at ? fmtTime(paper.compiled_at) : '未知时间'} 用 ${paper.wiki_model ?? '未知模型'} 编译，重新编译会覆盖它，旧的找不回来。`,
+          `The current wiki was compiled by ${paper.compiled_by_name ?? 'an unknown user'} at ${paper.compiled_at ? fmtTime(paper.compiled_at) : 'an unknown time'} with ${paper.wiki_model ?? 'an unknown model'}. Recompiling overwrites it — the old one cannot be recovered.`,
+        )}
+        confirmText={tr('重新编译', 'Recompile')}
+        danger
+        onConfirm={() => {
+          setRecompileConfirm(false);
+          onCompile(paper.entry_id);
+        }}
+      />
     </div>
   );
 }

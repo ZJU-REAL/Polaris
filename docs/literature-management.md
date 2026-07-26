@@ -42,13 +42,22 @@ The pool row (`models/paper.py::Paper`) is the single source of truth for a pape
   `venue`, `arxiv_id`, `doi`, `url`, `published_at`, `dedup_key`, `source`.
 - Derived artifacts (presence = "this step ran"): `pdf_path`, `full_text_path`, `figures` (JSON),
   `embedding` (paper-level vector), `tldr`, `relevance_score` is **not** here (it is per-collection).
-- Child tables, all `ON DELETE CASCADE` from the pool paper: `paper_chunks` (full-text chunks +
-  chunk vectors), `paper_concepts` links, figures rows, `paper_notes`, `paper_highlights`,
-  `paper_user_meta` (per-user reading status / star), library tag links (`paper_tag_links`), personal
-  tags (`user_paper_tags`).
+- Child tables, all `ON DELETE CASCADE` from the pool paper: `paper_wikis` (the paper's single
+  compiled intro), `paper_chunks` (full-text chunks + chunk vectors), `paper_concepts` links, figures
+  rows, `paper_notes`, `paper_highlights`, `paper_user_meta` (per-user reading status / star), library
+  tag links (`paper_tag_links`), personal tags (`user_paper_tags`).
 
-The pool has **no per-collection state** on it. Status, relevance, per-library wiki, and trash flags
-live on the membership rows.
+The pool has **no per-collection state** on it. Status, relevance, and trash flags live on the
+membership rows.
+
+**One paper, one wiki.** The compiled intro lives in `paper_wikis` (`paper_id` unique) and is shared
+platform-wide: `content`, `model`, `compiled_by`, and `updated_at` (= "compiled at"). It used to be
+per-library (`library_papers.wiki_content`) and per-surface (daily feed, personal snapshots), which
+only produced duplicate compiles and "the same paper reads differently depending on where you opened
+it". The compile prompt therefore carries **no library statement or rubric** — the output is a
+generic intro. Anyone may recompile; the row is overwritten and the last compile wins (there is no
+history, so the UI confirms before overwriting). The old columns still exist but are no longer read
+or written.
 
 ### The four collections
 
@@ -56,10 +65,13 @@ All four reference the same pool paper; they differ in ownership, scope, and wha
 
 | Collection | Table / model | Scope & ownership | Per-row state |
 | --- | --- | --- | --- |
-| **Direction library** | `library_papers` / `LibraryPaper` | A public lab-wide library or a personal one; has a definition, anchors, scoring rubric, ingest cadence | `status` (`candidate`→`scored`/`excluded`→`fetched`→`compiled`; `included` = manual), `relevance_score`, `tldr_note`, `wiki_content` (per-library compiled intro), `trash_reason`, `scored_at`, `compiled_at`, `compiled_model`, tags |
-| **Topic related-work shelf** | `topic_papers` / `TopicPaper` | A topic's reading list ("相关研究") | `source_library_id`, `wiki_snapshot` (copied from a live library wiki at add time) + `snapshot_at`, `note`, `added_by`, `trashed_at` / `trashed_by` |
-| **Personal library** | `user_library_entries` / `UserLibraryEntry` | One user's saved papers + browsing history | `dedup_key`, `saved` + `saved_at`, `trashed_at`, snapshot of title/authors/etc., `last_paper_id` (soft link to the live pool paper, `SET NULL`), personal `wiki_content` snapshot, `note`, `visit_count` / `last_visited_at` |
-| **Daily feed** | `daily_feed_entries` / `DailyFeedEntry` | Lab-wide daily arXiv feed, rolling 7-day window (`DAILY_FEED_RETENTION_DAYS = 7`) | `feed_date`, `primary_category`, `categories`, `announce_type` (`new`/`cross`), shared `wiki_content` + `wiki_model` |
+| **Direction library** | `library_papers` / `LibraryPaper` | A public lab-wide library or a personal one; has a definition, anchors, scoring rubric, ingest cadence | `status` (`candidate`→`scored`/`excluded`→`fetched`→`compiled`; `included` = manual), `relevance_score`, `tldr_note`, `trash_reason`, `scored_at`, tags |
+| **Topic related-work shelf** | `topic_papers` / `TopicPaper` | A topic's reading list ("相关研究") | `source_library_id`, `note`, `added_by`, `trashed_at` / `trashed_by` |
+| **Personal library** | `user_library_entries` / `UserLibraryEntry` | One user's saved papers + browsing history | `dedup_key`, `saved` + `saved_at`, `trashed_at`, snapshot of title/authors/etc., `last_paper_id` (soft link to the live pool paper, `SET NULL`), `note`, `visit_count` / `last_visited_at` |
+| **Daily feed** | `daily_feed_entries` / `DailyFeedEntry` | Lab-wide daily arXiv feed, rolling 7-day window (`DAILY_FEED_RETENTION_DAYS = 7`) | `feed_date`, `primary_category`, `categories`, `announce_type` (`new`/`cross`) |
+
+All four read the paper's wiki from `paper_wikis`; none of them stores a copy. (The retired
+`wiki_content` / `wiki_snapshot` columns are still on the tables, holding pre-migration data.)
 
 Key relationships:
 
@@ -178,10 +190,17 @@ vector (`Paper.embedding`) is always produced by the add / ingest paths; the chu
 ### 8. Compile the wiki · 9. Link concepts · 10. Score relevance
 
 - **Compile** (`wiki_compile.compile_paper`): an LLM reads the full text (or abstract) + figures and
-  writes the illustrated markdown intro. For a direction library the result is stored on the
-  membership's `wiki_content`; daily papers store it on the feed entry.
+  writes the illustrated markdown intro. The result is upserted into `paper_wikis` — one row per
+  paper, whichever surface triggered the compile (library ingest, `POST /papers/{id}/recompile`, or
+  `POST /daily/papers/{entry_id}/compile`).
 - **Link concepts** (ingest `wiki.link_concepts`): extracts/links canonical concepts and, in the same
-  step, fills any missing paper-level and chunk embeddings.
+  step, fills any missing paper-level and chunk embeddings. Concepts are paper-level too: one row per
+  concept platform-wide (`concepts.slug` unique, no `library_id`). "Which concepts does this library
+  have" is derived, never stored — `library_papers ⋈ paper_concepts`
+  (`services/concepts.py::library_concept_ids`). `GET /concepts/{id}` takes an optional `library_id`
+  that scopes the *related papers* list; the entry itself is always the same one. `GET /concepts?name=`
+  resolves a `[[wikilink]]` platform-wide (used from pool-level surfaces: daily feed, personal
+  library, the reader).
 - **Score** (`relevance.py`): an LLM scores the paper against the library's definition, writing
   `relevance_score` on the membership. Ingest scores `candidate` rows. A manual add scores against
   whichever library the target resolves to — the library itself for `POST /libraries/{id}/papers`,
@@ -254,7 +273,7 @@ Three consequences that are easy to get wrong:
   the exception — see the GC rules below.)
 - **Re-adding a trashed paper revives the original row; it never inserts a second one.** On the
   shelf, `add_to_shelf` reloads the existing row ignoring the trash flag, clears `trashed_at` /
-  `trashed_by`, and re-resolves the source library and wiki snapshot — the unique constraint on
+  `trashed_by`, and re-resolves the source library — the unique constraint on
   `(topic_id, paper_id)` covers trashed rows, so a plain insert would collide anyway. In the personal
   library, `save_paper` finds the entry by `dedup_key` and clears `trashed_at`; merely *visiting* the
   paper (`record_visit`) also un-trashes it.

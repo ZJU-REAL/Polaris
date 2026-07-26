@@ -83,13 +83,9 @@ async def test_shelved_pool_paper_full_reading_chain(client):
     resp = await client.get(f"/api/me/library/state?paper_id={paper_id}", headers=headers)
     assert resp.status_code == 200 and resp.json()["saved"] is True  # 入架已代收藏
 
-    # 个人 wiki 编译后，书架解析出 personal
-    resp = await client.post(
-        f"/api/papers/{paper_id}/personal-wiki", json={"topic_id": project_id}, headers=headers
-    )
-    assert resp.status_code == 200, resp.text
+    # 池内论文还没编译过 → 书架条目的解读为空（不再有个人版/快照兜底）
     resp = await client.get(f"/api/projects/{project_id}/shelf", headers=headers)
-    assert resp.json()["items"][0]["wiki_source"] == "personal"
+    assert resp.json()["items"][0]["wiki_content"] is None
 
 
 async def test_pool_paper_visible_via_personal_library_after_shelf_removal(client):

@@ -374,9 +374,11 @@ async def compile_entry(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_llm_task),
 ) -> DailyCompileResult:
-    """按需编译单篇解读（通用模板，全实验室共享一份）；进行中 → 409。"""
+    """按需编译单篇解读（全平台一份，写 paper_wikis）；进行中 → 409。
+
+    已有解读也能再编译：覆盖同一行，以最新一次为准。"""
     try:
-        entry = await daily_service.compile_entry_wiki(session, entry_id=entry_id, user_id=user.id)
+        wiki = await daily_service.compile_entry_wiki(session, entry_id=entry_id, user_id=user.id)
     except daily_service.DailyEntryNotFoundError as exc:
         raise _NOT_FOUND from exc
     except daily_service.CompileInProgressError:
@@ -386,9 +388,7 @@ async def compile_entry(
     except Exception as e:  # noqa: BLE001 — LLM 空响应/调用失败等 → 502
         logger.warning("daily wiki compile failed for entry %s", entry_id, exc_info=True)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="COMPILE_FAILED") from e
-    return DailyCompileResult(
-        entry_id=entry_id, wiki_content=entry.wiki_content or "", model=entry.wiki_model
-    )
+    return DailyCompileResult(entry_id=entry_id, wiki_content=wiki.content, model=wiki.model)
 
 
 @router.post("/refresh", status_code=status.HTTP_202_ACCEPTED)

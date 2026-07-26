@@ -15,6 +15,7 @@ import {
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
+import { usePoolConceptNav } from '../wiki/shared';
 import { NotesPanel } from './NotesPanel';
 import { HighlightsPanel } from './HighlightsPanel';
 import { PdfReader, type JumpTarget } from './PdfReader';
@@ -210,16 +211,13 @@ export function ReadingPage() {
     onError: (e) => toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  // 论文所属文献库：返回/双链跳转的落点。后端直接给 library_id；旧后端没这个字段时
+  // 论文所属文献库：「回文献库」这类跳转的落点。后端直接给 library_id；旧后端没这个字段时
   // 退回「按起源课题反查库」（库与课题解耦后 project_id 会清空，届时只剩库列表兜底）。
   const topicLib = useTopicLibrary(paper?.library_id ? null : paper?.project_id ?? null);
   const paperLibId = paper?.library_id ?? topicLib?.id ?? null;
   const libHref = (suffix: string) => (paperLibId ? libraryPath(paperLibId, suffix) : '/libraries');
-  const onWikiLink = useCallback(
-    (name: string) =>
-      navigate(paperLibId ? libraryPath(paperLibId, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
-    [navigate, paperLibId],
-  );
+  // 阅读页按论文 id 取数、与课题无关，是池级上下文：概念一律进不限库的概念页
+  const { openConcept, openConceptByName } = usePoolConceptNav();
 
   const onHighlightClick = useCallback((hlId: string) => {
     setActiveHl(hlId);
@@ -409,7 +407,7 @@ export function ReadingPage() {
             ) : panel === 'chat' ? (
               <ChatPanel paperId={paper.id} pid={paper.project_id ?? ''} />
             ) : (
-              <InfoPanel paper={paper} onWikiLink={onWikiLink} />
+              <InfoPanel paper={paper} onWikiLink={openConceptByName} onOpenConcept={openConcept} />
             )}
               </div>
             </>

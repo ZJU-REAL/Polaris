@@ -222,16 +222,18 @@ async def test_figures_api_extract_annotate_idempotent_force(client):
     assert resp.status_code == 200 and resp.json()["figures"] == figures
     assert await _librarian_usage_count() == 2
 
-    # 非项目成员也可读（P5c：库成员论文全员可读；extract 已有 figures 幂等直返）
+    # 非项目成员：读得到图，但抽图是写操作，要对论文所在库有管理权
     other = await register_and_login(client, email="fig-outsider@example.com")
     other_headers = {"Authorization": f"Bearer {other}"}
-    for method, url in (
-        ("GET", f"/api/papers/{paper_id}/figures"),
-        ("GET", f"/api/papers/{paper_id}/figures/0/image"),
-        ("POST", f"/api/papers/{paper_id}/extract-figures"),
+    for url in (
+        f"/api/papers/{paper_id}/figures",
+        f"/api/papers/{paper_id}/figures/0/image",
     ):
-        resp = await client.request(method, url, headers=other_headers)
+        resp = await client.get(url, headers=other_headers)
         assert resp.status_code == 200, url
+    # 抽图对他不可见（无管理权按不存在处理，不泄漏论文是否存在）
+    resp = await client.post(f"/api/papers/{paper_id}/extract-figures", headers=other_headers)
+    assert resp.status_code == 404
 
 
 # ---- annotate_figures：fake 路径 + 失败降级 ----

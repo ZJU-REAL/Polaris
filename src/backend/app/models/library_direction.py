@@ -1,9 +1,9 @@
 """方向文献库：实验室层的文献策展单元（P4；P7 起课题/库解耦）。
 
 `papers` 是全局内容池（按 dedup_key 全平台唯一，只存论文本体：元数据/全文/图/embedding）；
-方向对论文的「归属 + 判断」（相关性分、状态流转、库版 wiki 解读）全部落在成员表
-`library_papers` 上——同一篇论文可以同时属于多个方向库，各自打分编译互不干扰，
-删库只删成员行，内容池行永不删除。
+方向对论文的「归属 + 判断」（相关性分、状态流转）落在成员表 `library_papers` 上——
+同一篇论文可以同时属于多个方向库，各自打分互不干扰，删库只删成员行，内容池行永不
+删除。解读不分方向：每篇论文全平台一份，存 `paper_wikis`（models/paper.py）。
 
 P7 起课题（`Project`）与库多对多关联（`TopicSourceLibrary`）：库不再是课题的附属物，
 `project_id` 语义降级为「起源课题」溯源（ondelete SET NULL——删课题不删库）；
@@ -97,14 +97,16 @@ class LibraryPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     relevance_score: Mapped[float | None]  # LLM 对照方向 rubric 的打分
     tldr_note: Mapped[str | None] = mapped_column(Text)  # 库视角一句话概括（可选）
-    wiki_content: Mapped[str | None] = mapped_column(Text)  # 库版图文解读 markdown
+    # 退役列（解读已统一到 paper_wikis，每篇论文一份、不再按库分版本）：只留存量
+    # 数据，代码不再读写；删列待确认稳定后另做迁移。
+    wiki_content: Mapped[str | None] = mapped_column(Text)
     # 状态流转同 PAPER_STATUSES：candidate → scored|excluded → fetched → compiled；included 人工纳入
     status: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False)
     # 进回收站的原因（status=excluded 时有值）：irrelevant 相关性不足自动淘汰 | manual 手动删除
     trash_reason: Mapped[str | None] = mapped_column(String(16))
     scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 退役列（编译时间/模型随解读走 paper_wikis）：同上，只留存量数据。
     compiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # 编译 wiki_content 实际用到的模型名（取自 LLM 返回结果）
     compiled_model: Mapped[str | None] = mapped_column(String(255))
 
     paper: Mapped[Paper] = relationship()

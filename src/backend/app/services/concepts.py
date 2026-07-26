@@ -1,4 +1,9 @@
-"""概念库业务逻辑：wikilink 解析、slug、单篇上链、列表/详情查询（不 import fastapi）。"""
+"""概念库业务逻辑：wikilink 解析、slug、单篇上链、列表/详情查询（不 import fastapi）。
+
+概念是论文级的（``concepts`` 无归属库、slug 全局唯一）：谁编译出这个词条都用同一行。
+「某个库有哪些概念」不存，一律按 ``library_concept_ids`` 推导——库的论文 →
+关联概念 → 去重。
+"""
 
 import asyncio
 import hashlib
@@ -9,13 +14,13 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import delete, exists, func, insert, select
+from sqlalchemy import Select, delete, exists, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, Paper, paper_concepts
+from app.models.paper import Concept, Paper, PaperWiki, paper_concepts
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +85,29 @@ def wiki_slug(name: str) -> str:
     return slug or hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
 
 
+async def _free_slug(session: AsyncSession, name: str) -> str:
+    """给新概念取一个没被占用的 slug（全局唯一；撞了加随机后缀）。"""
+    slug = wiki_slug(name)
+    taken = (
+        await session.execute(select(Concept.slug).where(Concept.slug.like(f"{slug}%")))
+    ).scalars().all()
+    if slug not in set(taken):
+        return slug
+    return f"{slug}-{uuid.uuid4().hex[:6]}"
+
+
 def normalize_category(raw: Any) -> str:
     value = str(raw or "").strip().lower()
     return value if value in CONCEPT_CATEGORIES else "other"
+
+
+def library_concept_ids(library_ids: Sequence[uuid.UUID]) -> Select:
+    """「这些库有哪些概念」的 concept_id 子查询：库的论文 → 关联概念（去重由 IN 保证）。"""
+    return (
+        select(paper_concepts.c.concept_id)
+        .join(LibraryPaper, LibraryPaper.paper_id == paper_concepts.c.paper_id)
+        .where(LibraryPaper.library_id.in_(list(library_ids)))
+    )
 
 
 async def list_concepts(
@@ -93,14 +118,16 @@ async def list_concepts(
     q: str | None = None,
 ) -> list[tuple[Concept, int]]:
     """方向库并集概念列表（附 paper_count）。传单库时给 ``[library_id]``；课题作用域
-    传关联库并集。空列表 = 无语料，返回空。"""
+    传关联库并集。空列表 = 无语料，返回空。
+
+    paper_count 是**全平台**引用数（概念本身是全平台一份），与详情页口径一致。"""
     if not library_ids:
         return []
     paper_count = func.count(paper_concepts.c.paper_id).label("paper_count")
     stmt = (
         select(Concept, paper_count)
         .outerjoin(paper_concepts, paper_concepts.c.concept_id == Concept.id)
-        .where(Concept.library_id.in_(library_ids))
+        .where(Concept.id.in_(library_concept_ids(library_ids)))
         .group_by(Concept.id)
         .order_by(paper_count.desc(), Concept.name)
     )
@@ -111,18 +138,45 @@ async def list_concepts(
     return [(concept, int(count)) for concept, count in (await session.execute(stmt)).all()]
 
 
+async def find_by_name(session: AsyncSession, name: str) -> list[Concept]:
+    """平台级按名字查概念（[[双链]] 解析用）：名字精确匹配（忽略大小写），
+    再退一步按 slug 匹配（吃掉空格/连接符的写法差异）。
+
+    概念全平台一份，正常至多命中一条；空结果 = 还没入库。
+    """
+    needle = name.strip()
+    if not needle:
+        return []
+    stmt = select(Concept).where(
+        or_(func.lower(Concept.name) == needle.lower(), Concept.slug == wiki_slug(needle))
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def paper_count_of(session: AsyncSession, concept_id: uuid.UUID) -> int:
     stmt = select(func.count()).where(paper_concepts.c.concept_id == concept_id)
     return int((await session.execute(stmt)).scalar_one())
 
 
-async def papers_of_concept(session: AsyncSession, concept_id: uuid.UUID) -> list[Paper]:
+async def papers_of_concept(
+    session: AsyncSession, concept_id: uuid.UUID, *, library_id: uuid.UUID | None = None
+) -> list[Paper]:
+    """关联到这个概念的论文。
+
+    ``library_id`` 给出时只列该库内的（从库的上下文点进概念时用）；不给就是全平台
+    ——词条本身永远是同一份，按库变化的只有这份论文清单。"""
     stmt = (
         select(Paper)
         .join(paper_concepts, paper_concepts.c.paper_id == Paper.id)
         .where(paper_concepts.c.concept_id == concept_id)
         .order_by(Paper.published_at.desc().nulls_last(), Paper.created_at.desc())
     )
+    if library_id is not None:
+        stmt = stmt.where(
+            Paper.id.in_(
+                select(LibraryPaper.paper_id).where(LibraryPaper.library_id == library_id)
+            )
+        )
     return list((await session.execute(stmt)).scalars().all())
 
 
@@ -221,21 +275,18 @@ async def _fetch_definitions_batch(
 
 async def delete_orphan_concepts(
     session: AsyncSession,
-    library_id: uuid.UUID,
     *,
     candidate_ids: set[uuid.UUID] | None = None,
 ) -> int:
-    """删除库内零引用概念（paper_concepts 计数，含回收站论文的引用），返回删除数。
+    """删除零引用概念（paper_concepts 计数，含回收站论文的引用），返回删除数。
 
+    概念是全平台一份，孤儿判定也就是全平台口径：任何论文都不再引用才删。
     ``candidate_ids`` 给出时只在这些概念里找孤儿（单篇同步后的定向检查）；
-    不给时全库扫描。不 commit，由调用方提交。
+    不给时全表扫描。不 commit，由调用方提交。
     """
     if candidate_ids is not None and not candidate_ids:
         return 0
-    stmt = delete(Concept).where(
-        Concept.library_id == library_id,
-        ~exists().where(paper_concepts.c.concept_id == Concept.id),
-    )
+    stmt = delete(Concept).where(~exists().where(paper_concepts.c.concept_id == Concept.id))
     if candidate_ids is not None:
         stmt = stmt.where(Concept.id.in_(list(candidate_ids)))
     result = await session.execute(stmt.execution_options(synchronize_session="fetch"))
@@ -243,24 +294,18 @@ async def delete_orphan_concepts(
 
 
 async def _remove_stale_paper_links(
-    session: AsyncSession,
-    paper_id: uuid.UUID,
-    keep_concept_ids: set[uuid.UUID],
-    *,
-    library_id: uuid.UUID,
+    session: AsyncSession, paper_id: uuid.UUID, keep_concept_ids: set[uuid.UUID]
 ) -> set[uuid.UUID]:
-    """删除该论文上不在 ``keep_concept_ids`` 里的**本库**概念关联，返回被解除的概念 id。
+    """删除该论文上不在 ``keep_concept_ids`` 里的概念关联，返回被解除的概念 id。
 
-    只动 library_id 库的概念——同一篇内容池论文可能同时挂着其他方向库的概念链。
+    关联全部来自这篇论文解读正文里的 [[双链]]（论文级唯一一份），正文没有的就是陈旧的。
     """
     stale = {
         cid
         for (cid,) in (
             await session.execute(
-                select(paper_concepts.c.concept_id)
-                .join(Concept, Concept.id == paper_concepts.c.concept_id)
-                .where(
-                    paper_concepts.c.paper_id == paper_id, Concept.library_id == library_id
+                select(paper_concepts.c.concept_id).where(
+                    paper_concepts.c.paper_id == paper_id
                 )
             )
         ).all()
@@ -288,7 +333,7 @@ async def link_all_paper_concepts(
 ) -> tuple[dict[str, Any], list[Paper]]:
     """全库概念上链（voyage wiki.link_concepts 步骤与手动补建端点共用）：
 
-    对项目内全部已编译论文（compiled/included 且有 wiki_content）抽 [[双链]]，
+    对项目内全部已编译论文（compiled/included 且已有解读）抽 [[双链]]，
     缺失概念建词条（新概念分批调 LLM 拿定义，失败占位）、补齐 paper_concepts
     关联；已存在的概念与关联跳过，幂等可重跑。
 
@@ -307,30 +352,46 @@ async def link_all_paper_concepts(
         await session.execute(
             select(Paper, LibraryPaper)
             .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .join(PaperWiki, PaperWiki.paper_id == Paper.id)  # 有解读的才有双链可抽
             .where(
                 LibraryPaper.library_id == library_id,
                 LibraryPaper.status.in_(("compiled", "included")),
-                LibraryPaper.wiki_content.is_not(None),
             )
         )
     ).all()
     papers = [paper for paper, _ in rows]
-    wiki_by_paper = {paper.id: membership.wiki_content for paper, membership in rows}
+    wiki_by_paper = {paper.id: paper.wiki_content for paper, _ in rows}
     links_by_paper = {pid: extract_wikilinks(wiki or "") for pid, wiki in wiki_by_paper.items()}
     all_names = sorted({name for names in links_by_paper.values() for name in names})
 
+    # 概念全平台一份：按名字查全表（别的库先建过同名词条，这里直接复用）
     existing = (
-        (await session.execute(select(Concept).where(Concept.library_id == library_id)))
+        (await session.execute(select(Concept).where(Concept.name.in_(all_names))))
         .scalars()
         .all()
     )
     by_name = {c.name: c for c in existing}
-    slugs = {c.slug for c in existing}
     new_names = [n for n in all_names if n not in by_name]
+    # 占位回填的范围：本库论文已关联到的概念 + 本轮正文引用到的同名概念（马上就要关联
+    # 上）。别的库自己那摊占位由它们自己的同步补，不在这里连带刷。
+    scoped = (
+        (
+            await session.execute(
+                select(Concept).where(
+                    or_(
+                        Concept.id.in_(library_concept_ids([library_id])),
+                        Concept.name.in_(all_names),
+                    )
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     # 回填：定义调用失败留下的占位概念重新要定义。手动补建全量;自动步骤取最老的一批
     # (上限 _AUTO_BACKFILL_CAP),让偶发失败随每日同步自愈而不至于每天重刷几百个。
     all_placeholders = sorted(
-        (c for c in existing if is_placeholder_definition(c.definition)),
+        (c for c in scoped if is_placeholder_definition(c.definition)),
         key=lambda c: (c.created_at is None, c.created_at or c.name),
     )
     placeholder_concepts = all_placeholders if backfill else all_placeholders[:_AUTO_BACKFILL_CAP]
@@ -349,15 +410,10 @@ async def link_all_paper_concepts(
 
     created = 0
     for name in new_names:
-        slug = wiki_slug(name)
-        if slug in slugs:
-            slug = f"{slug}-{uuid.uuid4().hex[:6]}"
-        slugs.add(slug)
         meta = definitions.get(name) or {}
         concept = Concept(
-            library_id=library_id,
             name=name,
-            slug=slug,
+            slug=await _free_slug(session, name),
             definition=str(meta.get("definition") or placeholder_definition(name)),
             category=normalize_category(meta.get("category")),
         )
@@ -375,17 +431,13 @@ async def link_all_paper_concepts(
             backfilled += 1
     await session.flush()
 
-    # 只看本库概念的既有关联（同一篇论文可能挂着其他库的概念链，不参与也不误删）
     existing_pairs = (
         {
             (pid, cid)
             for pid, cid in (
                 await session.execute(
-                    select(paper_concepts.c.paper_id, paper_concepts.c.concept_id)
-                    .join(Concept, Concept.id == paper_concepts.c.concept_id)
-                    .where(
-                        paper_concepts.c.paper_id.in_(list(links_by_paper)),
-                        Concept.library_id == library_id,
+                    select(paper_concepts.c.paper_id, paper_concepts.c.concept_id).where(
+                        paper_concepts.c.paper_id.in_(list(links_by_paper))
                     )
                 )
             ).all()
@@ -425,8 +477,8 @@ async def link_all_paper_concepts(
                 )
             )
             links_removed += len(stale)
-    # 同步收尾②：删除库内零引用概念（含回收站论文的引用都算数，只删真孤儿）
-    concepts_removed = await delete_orphan_concepts(session, library_id)
+    # 同步收尾②：删除零引用概念（含回收站论文的引用都算数，只删真孤儿）
+    concepts_removed = await delete_orphan_concepts(session)
     await session.commit()
 
     stats = {
@@ -452,23 +504,22 @@ async def link_paper_concepts(
 ) -> tuple[int, int]:
     """单篇概念上链（手动编译/重编译后调用，docs/api-lit.md §6.6）——同步语义：
 
-    从成员行 wiki_content 抽 [[双链]] → 缺失概念建词条（LLM 定义，失败占位）→ 建关联；
-    再删除该论文上新正文已不引用的**本库**陈旧关联，被解除关联且全库（含回收站论文）
-    再无引用的概念一并删除。正文为空/None 时直接返回，不做任何删除（防误删）。
+    从这篇论文的解读正文抽 [[双链]] → 缺失概念建词条（全平台一份，已有同名的直接复用；
+    LLM 定义，失败占位）→ 建关联；再删除该论文上新正文已不引用的陈旧关联，被解除关联
+    且再无任何论文引用的概念一并删除。正文为空/None 时直接返回，不做任何删除（防误删）。
     返回 (新建概念数, 新建关联数)。调用方无需再 commit（本函数自行提交）。
     project_id 仅用于 LLM 用量记账归属。
     """
-    if not membership.wiki_content:
+    if not paper.wiki_content:
         return 0, 0
-    library_id = membership.library_id
-    names = extract_wikilinks(membership.wiki_content)
+    library_id = membership.library_id  # 仅用于 LLM 用量记账（P6）
+    names = extract_wikilinks(paper.wiki_content)
     existing = (
-        (await session.execute(select(Concept).where(Concept.library_id == library_id)))
+        (await session.execute(select(Concept).where(Concept.name.in_(names))))
         .scalars()
         .all()
     )
     by_name = {c.name: c for c in existing}
-    slugs = {c.slug for c in existing}
     new_names = [n for n in names if n not in by_name]
 
     definitions: dict[str, dict[str, str]] = {}
@@ -479,15 +530,10 @@ async def link_paper_concepts(
 
     created = 0
     for name in new_names:
-        slug = wiki_slug(name)
-        if slug in slugs:
-            slug = f"{slug}-{uuid.uuid4().hex[:6]}"
-        slugs.add(slug)
         meta = definitions.get(name) or {}
         concept = Concept(
-            library_id=library_id,
             name=name,
-            slug=slug,
+            slug=await _free_slug(session, name),
             definition=str(meta.get("definition") or placeholder_definition(name)),
             category=normalize_category(meta.get("category")),
         )
@@ -500,10 +546,8 @@ async def link_paper_concepts(
         cid
         for (cid,) in (
             await session.execute(
-                select(paper_concepts.c.concept_id)
-                .join(Concept, Concept.id == paper_concepts.c.concept_id)
-                .where(
-                    paper_concepts.c.paper_id == paper.id, Concept.library_id == library_id
+                select(paper_concepts.c.concept_id).where(
+                    paper_concepts.c.paper_id == paper.id
                 )
             )
         ).all()
@@ -519,11 +563,9 @@ async def link_paper_concepts(
         existing_pairs.add(concept.id)
         linked += 1
 
-    # 同步收尾：删除新正文已不引用的本库陈旧关联；被解除关联且再无引用的概念删词条
+    # 同步收尾：删除新正文已不引用的陈旧关联；被解除关联且再无引用的概念删词条
     target_ids = {by_name[name].id for name in names if name in by_name}
-    stale = await _remove_stale_paper_links(
-        session, paper.id, target_ids, library_id=library_id
-    )
-    await delete_orphan_concepts(session, library_id, candidate_ids=stale)
+    stale = await _remove_stale_paper_links(session, paper.id, target_ids)
+    await delete_orphan_concepts(session, candidate_ids=stale)
     await session.commit()
     return created, linked

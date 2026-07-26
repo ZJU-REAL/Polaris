@@ -71,9 +71,10 @@ async def _add_member(
         return paper_id
 
 
-async def _add_concept(*, library_id, name, slug, paper_id=None) -> uuid.UUID:
+async def _add_concept(*, name, slug, paper_id=None) -> uuid.UUID:
+    """建概念（全平台一份）；给了 paper_id 就挂到那篇论文上（库作用域由论文推导）。"""
     async with get_sessionmaker()() as session:
-        concept = Concept(library_id=library_id, name=name, slug=slug, category="method")
+        concept = Concept(name=name, slug=slug, category="method")
         session.add(concept)
         await session.flush()
         if paper_id is not None:
@@ -128,10 +129,11 @@ async def test_lab_stats_excludes_other_users_personal_library(client):
     personal_lib = await _make_library(
         name="私人方向", is_public=False, owner_email="lab-stranger@example.com"
     )
-    await _add_member(library_ids=[public_lib], title="公开论文")
-    await _add_member(library_ids=[personal_lib], title="私人论文")
-    await _add_concept(library_id=public_lib, name="Agent", slug="agent")
-    await _add_concept(library_id=personal_lib, name="Secret", slug="secret")
+    public_paper = await _add_member(library_ids=[public_lib], title="公开论文")
+    personal_paper = await _add_member(library_ids=[personal_lib], title="私人论文")
+    # 概念全平台一份；「哪个库有它」按库内论文的关联推导，故挂到各自库的论文上
+    await _add_concept(name="Agent", slug="agent", paper_id=public_paper)
+    await _add_concept(name="Secret", slug="secret", paper_id=personal_paper)
 
     # 第三方（既非归属人也非管理员）：只看得到公共库那一份
     third = await _hdr(client, "lab-third@example.com")
@@ -242,8 +244,8 @@ async def test_lab_graph_unions_visible_libraries(client):
     lib_b = await _make_library(name="图谱乙", is_public=True)
     paper_a = await _add_member(library_ids=[lib_a], title="甲库论文")
     paper_b = await _add_member(library_ids=[lib_b], title="乙库论文")
-    await _add_concept(library_id=lib_a, name="Agent", slug="agent", paper_id=paper_a)
-    await _add_concept(library_id=lib_b, name="Planner", slug="planner", paper_id=paper_b)
+    await _add_concept(name="Agent", slug="agent", paper_id=paper_a)
+    await _add_concept(name="Planner", slug="planner", paper_id=paper_b)
 
     # 不传 library_id：两个库的并集
     resp = await client.get("/api/lab/graph", headers=headers)

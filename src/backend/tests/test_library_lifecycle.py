@@ -13,8 +13,9 @@ from sqlalchemy import func, select
 
 from app.core.db import get_sessionmaker
 from app.models.library_direction import DirectionLibrary, LibraryPaper, TopicSourceLibrary
-from app.models.paper import Concept, Paper
+from app.models.paper import Concept, Paper, paper_concepts
 from app.services import libraries as libraries_service
+from app.services.concepts import library_concept_ids
 from tests.conftest import (
     add_concept,
     add_paper,
@@ -99,8 +100,11 @@ async def test_delete_project_keeps_library_and_content_orphans_association(clie
             relevance_score=0.8,
             wiki_content="# 解读",
         )
-        await add_concept(
+        concept = await add_concept(
             session, project_id=project_id, name="X", slug="x", definition="定义"
+        )
+        await session.execute(
+            paper_concepts.insert().values(paper_id=paper.id, concept_id=concept.id)
         )
         await session.commit()
         paper_id = paper.id
@@ -121,9 +125,10 @@ async def test_delete_project_keeps_library_and_content_orphans_association(clie
             )
         ).scalar_one_or_none()
         assert membership is not None
+        # 概念是全平台一份，按库内论文的关联推导
         concept_count = (
             await session.execute(
-                select(Concept).where(Concept.library_id == library_id)
+                select(Concept).where(Concept.id.in_(library_concept_ids([library_id])))
             )
         ).scalars().all()
         assert len(concept_count) == 1

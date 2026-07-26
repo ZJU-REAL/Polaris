@@ -18,7 +18,7 @@ from app.services.literature.pdf_extract import (
     save_pdf,
 )
 from app.services.wiki_compile import compile_paper, strip_invalid_figure_markers
-from tests.conftest import add_paper, membership_of, register_and_login
+from tests.conftest import add_paper, membership_of, register_and_login, wiki_of
 
 
 def _transparent_png_bytes(width: int = 400, height: int = 300) -> bytes:
@@ -132,7 +132,7 @@ async def test_compile_paper_multimodal_inserts_marker(app):
     )
     figure_path(str(paper.id), 0).write_bytes(_opaque_png_bytes(40, 30))
 
-    compiled = await compile_paper(paper, statement="研究方向", llm=LLMRouter())
+    compiled = await compile_paper(paper, llm=LLMRouter())
     content = compiled.content
     assert "![[fig:0]]" in content  # fake：多模态编译插入图片标记
     assert "[[Agent]]" in content  # 双链仍在
@@ -161,7 +161,7 @@ async def test_compile_paper_strips_invalid_markers(app):
     router = LLMRouter()
     router._providers[("fake", None, "")] = _InvalidMarkerLibrarian()
 
-    content = (await compile_paper(paper, statement="研究方向", llm=router)).content
+    content = (await compile_paper(paper, llm=router)).content
     assert "![[fig:0]]" in content  # 有效标记保留
     assert "fig:99" not in content and "看这张不存在的图" not in content  # 整行剥除
     assert "结尾段落。" in content  # 其余行不受影响
@@ -221,8 +221,8 @@ async def test_recompile_with_pdf_full_flow(client):
     ]
     async with get_sessionmaker()() as session:
         membership = await membership_of(session, project_id=project_id, paper_id=paper_id)
-        assert membership.compiled_at is not None
-        assert membership.compiled_model == "fake-default"  # 编译所用模型落库
+        wiki = await wiki_of(session, paper_id=membership.paper_id)
+        assert wiki is not None and wiki.model == "fake-default"  # 编译模型落解读行
         # LLMUsage 记账归属 project：annotate + 编译走 librarian（多模态），
         # 概念定义走 extract（纯文本短 JSON）
         rows = (
@@ -359,7 +359,7 @@ async def test_compile_paper_retries_when_figures_not_used(app):
     router = LLMRouter()
     router._providers[("fake", None, "")] = provider
 
-    content = (await compile_paper(paper, statement="研究方向", llm=router)).content
+    content = (await compile_paper(paper, llm=router)).content
     assert provider.compile_calls == 2  # 首稿无标记 → 重试一次
     assert "![[fig:" not in content and content.strip()  # 重试仍无标记 → 纯文字稿兜底
 

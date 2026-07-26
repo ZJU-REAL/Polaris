@@ -600,7 +600,7 @@ with `checks: [{"kind": "no_error"}]`, no approvals:
 | 2 | `wiki.snowball` | Expands through references (Semantic Scholar). |
 | 3 | `wiki.score_relevance` | Scores each candidate against the library definition with an LLM, one paper per session, and moves it to `scored` or `excluded`. |
 | 4 | `wiki.fetch_extract` | Downloads PDFs and extracts full text for the top N, plus figures; degrades to abstract-only on failure. |
-| 5 | `wiki.compile` | Writes the illustrated per-paper intro into the membership row's `wiki_content`. |
+| 5 | `wiki.compile` | Writes the illustrated per-paper intro into `paper_wikis` (one row per paper, shared platform-wide). |
 | 6 | `wiki.link_concepts` | Extracts and links canonical concepts, and fills in any missing paper-level and chunk vectors. |
 | 7 | `wiki.update_watermark` | Writes `library.ingest_state = {watermark, last_run: {voyage_id, finished_at}}` and an `ingest.completed` activity row. |
 

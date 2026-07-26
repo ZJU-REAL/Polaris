@@ -1,7 +1,7 @@
 """课题「相关研究」书架路由（P5a）：/projects/{pid}/shelf。
 
 成员鉴权与现有 projects 一致（非成员一律 404）。业务规则在
-services/topic_shelf.py：入架落 wiki 快照 + 同步 upsert 个人库；
+services/topic_shelf.py：入架记来源库 + 同步 upsert 个人库；
 移出只动书架行（软删进回收站，可召回 / 彻底删除 / 清空）；
 个人补充入库不建方向库成员行。
 """
@@ -184,32 +184,10 @@ async def update_shelf_note(
     await _require_member(session, project_id, user)
     try:
         item = await shelf_service.update_note(
-            session, project_id=project_id, paper_id=paper_id, user_id=user.id, note=body.note
+            session, project_id=project_id, paper_id=paper_id, note=body.note
         )
     except shelf_service.ShelfItemNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SHELF_ITEM_NOT_FOUND") from None
-    return ShelfItemRead.model_validate(item)
-
-
-@router.post(
-    "/projects/{project_id}/shelf/{paper_id}/refresh-snapshot", response_model=ShelfItemRead
-)
-async def refresh_shelf_snapshot(
-    project_id: uuid.UUID,
-    paper_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> ShelfItemRead:
-    """手动刷新快照：从当前可得的最优 wiki（库版 > 个人版）重拷；无来源 409。"""
-    await _require_member(session, project_id, user)
-    try:
-        item = await shelf_service.refresh_snapshot(
-            session, project_id=project_id, paper_id=paper_id, user_id=user.id
-        )
-    except shelf_service.ShelfItemNotFoundError:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SHELF_ITEM_NOT_FOUND") from None
-    except shelf_service.NoWikiSourceError:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="NO_WIKI_SOURCE") from None
     return ShelfItemRead.model_validate(item)
 
 
@@ -224,7 +202,7 @@ async def restore_to_shelf(
     await _require_member(session, project_id, user)
     try:
         item = await shelf_service.restore_from_shelf(
-            session, project_id=project_id, paper_id=paper_id, user_id=user.id
+            session, project_id=project_id, paper_id=paper_id
         )
     except shelf_service.ShelfItemNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SHELF_ITEM_NOT_FOUND") from None

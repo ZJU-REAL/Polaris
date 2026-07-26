@@ -131,7 +131,7 @@ async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
             "tldr": paper.tldr,
             "abstract": (paper.abstract or "")[:2000] or None,
             "concepts": [c.name for c in paper.concepts],
-            "has_wiki": bool(membership.wiki_content),
+            "has_wiki": paper.wiki is not None,
             "has_fulltext": bool(paper.full_text_path),
         }
 

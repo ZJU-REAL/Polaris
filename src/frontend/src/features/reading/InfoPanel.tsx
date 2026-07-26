@@ -1,17 +1,15 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import { PaperStatusPill } from '../../components/ui/StatusPill';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
-import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import { clickable } from '../../lib/a11y';
-import { api, type PaperDetail } from '../../lib/api';
+import { type PaperConceptRef, type PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { topicPath } from '../../app/project';
 import { PaperMyTagsRow } from '../shared/PaperDetailBlocks';
@@ -37,43 +35,18 @@ function MetaItem({ label, children }: { label: string; children: React.ReactNod
 export function InfoPanel({
   paper,
   onWikiLink,
+  onOpenConcept,
 }: {
   paper: PaperDetail;
-  /** [[概念]] 双链与概念 chips 点击 → 按名称跳 wiki 概念库 */
+  /** 正文里的 [[概念]] 双链 → 按名称打开概念页 */
   onWikiLink: WikiLinkHandler;
+  /** 概念 chip 自带 id，直接按 id 打开概念页（不用再按名字查一次） */
+  onOpenConcept: (concept: PaperConceptRef) => void;
 }) {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const [abstractOpen, setAbstractOpen] = useState(false);
   const arxivUrl = paper.arxiv_id ? `https://arxiv.org/abs/${paper.arxiv_id}` : null;
   const extUrl = arxivUrl ?? paper.url;
-
-  // —— 个人版 wiki（P5b）：没有库版解读时，读本人个人库条目里的个人编译版 ——
-  const libStateQuery = useQuery({
-    queryKey: ['library-state', paper.id],
-    queryFn: () => api.getLibraryState(paper.id),
-    enabled: !paper.wiki_content,
-    retry: false,
-  });
-  const entryId = libStateQuery.data?.entry_id ?? null;
-  const entryQuery = useQuery({
-    queryKey: ['library-entry', entryId],
-    queryFn: () => api.getLibraryEntry(entryId!),
-    enabled: !paper.wiki_content && !!entryId,
-    retry: false,
-  });
-  const personalWiki = paper.wiki_content ? null : (entryQuery.data?.wiki_content ?? null);
-  const generateMutation = useMutation({
-    mutationFn: () => api.compilePersonalWiki(paper.id, paper.project_id),
-    onSuccess: () => {
-      toast(tr('个人版解读已生成', 'Personal wiki generated'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['library-state', paper.id] });
-      void queryClient.invalidateQueries({ queryKey: ['library-entry'] });
-      void queryClient.invalidateQueries({ queryKey: ['library'] });
-    },
-    onError: (e) =>
-      toast(`${tr('生成失败：', 'Failed to generate: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
 
   // 正文 ![[fig:N]] 嵌入图（docs/api-lit.md §6.6）
   const figures = usePaperFigures(paper);
@@ -195,7 +168,7 @@ export function InfoPanel({
       {paper.concepts.length > 0 && (
         <div className="row gap6 wrap" style={{ marginTop: 12 }}>
           {paper.concepts.map((c) => (
-            <span key={c.id} className="wikilink" style={{ height: 22 }} {...clickable(() => onWikiLink(c.name))}>
+            <span key={c.id} className="wikilink" style={{ height: 22 }} {...clickable(() => onOpenConcept(c))}>
               {c.name}
             </span>
           ))}
@@ -257,7 +230,7 @@ export function InfoPanel({
         defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)}
       />
 
-      {/* —— Wiki 正文（含 ![[fig:N]] 嵌入图）：库版 > 个人版 > 生成入口 —— */}
+      {/* —— Wiki 正文（含 ![[fig:N]] 嵌入图）：解读每篇一份，接口直接给 —— */}
       <div style={{ marginTop: 18 }}>
         {paper.wiki_content ? (
           <>
@@ -277,58 +250,13 @@ export function InfoPanel({
               style={{ fontSize: 12.5 }}
             />
           </>
-        ) : personalWiki ? (
-          <>
-            <div
-              className="row gap8"
-              style={{ paddingBottom: 8, marginBottom: 12, borderBottom: '0.5px solid var(--border)' }}
-            >
-              <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-                {tr('AI 图文介绍', 'AI intro')}
-              </span>
-              <span
-                className="mono"
-                title={tr('公共库里没有这篇的解读，这是你自己生成的个人版。', 'No shared library wiki; this is the personal version you generated.')}
-                style={{
-                  fontSize: 10,
-                  color: 'var(--accent-text)',
-                  background: 'var(--accent-soft)',
-                  padding: '1px 7px',
-                  borderRadius: 999,
-                }}
-              >
-                {tr('个人版', 'Personal')}
-              </span>
-            </div>
-            <Markdown
-              source={personalWiki}
-              onWikiLink={onWikiLink}
-              renderFigure={renderFigure}
-              style={{ fontSize: 12.5 }}
-            />
-          </>
         ) : (
-          <>
-            <EmptyState
-              compact
-              icon="pen"
-              title={tr('还没有 AI 精读页', 'No AI deep-read page yet')}
-              desc={tr('可能是相关度不足，或还没运行初始建库 / 增量同步。', 'Possibly low relevance, or the initial library build / incremental sync has not run.')}
-            />
-            <div className="col" style={{ alignItems: 'center', gap: 6, marginTop: 10 }}>
-              <button
-                className="btn btn-soft sm"
-                disabled={generateMutation.isPending || libStateQuery.isLoading || entryQuery.isLoading}
-                onClick={() => generateMutation.mutate()}
-              >
-                <Icon name="sparkle" size={12} />
-                {generateMutation.isPending ? tr('生成中…（约 1 分钟）', 'Generating… (~1 min)') : tr('生成 wiki', 'Generate wiki')}
-              </button>
-              <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-                {tr('将使用你的模型额度，生成个人版解读。', 'Uses your model quota to generate a personal wiki.')}
-              </span>
-            </div>
-          </>
+          <EmptyState
+            compact
+            icon="pen"
+            title={tr('这篇还没有 AI 解读', 'No AI wiki for this paper yet')}
+            desc={tr('可能是相关度不足，或还没运行初始建库 / 增量同步。', 'Possibly low relevance, or the initial library build / incremental sync has not run.')}
+          />
         )}
       </div>
     </div>

@@ -8,6 +8,7 @@ import { RelevanceBar } from '../../components/ui/RelevanceBar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
+import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
@@ -629,6 +630,8 @@ function PaperDetailPane({
   const [conceptsOpen, setConceptsOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
+  // 已有解读时重新编译要先确认：解读每篇只有一份，重编即覆盖，旧版本找不回来
+  const [recompileConfirm, setRecompileConfirm] = useState(false);
 
   // 作用域读：锁定当前库/课题那份成员行，避免同一论文属多个库时读到跨库归并的错行
   // （相关度/状态/wiki）。queryKey 带 scope 隔离不同库的缓存。
@@ -680,6 +683,7 @@ function PaperDetailPane({
     setAbstractOpen(false);
     setConceptsOpen(false);
     setReaderOpen(false);
+    setRecompileConfirm(false);
   }, [paperId]);
 
   // 正文 ![[fig:N]] 嵌入图（docs/api-lit.md §6.6）
@@ -765,7 +769,7 @@ function PaperDetailPane({
               : tr('AI 精读并编译图文介绍', 'Have the AI read and compile an illustrated intro')
           }
           disabled={compiling}
-          onClick={() => onRecompile(paperId)}
+          onClick={() => (paper.has_wiki ? setRecompileConfirm(true) : onRecompile(paperId))}
         >
           {compiling ? (
             <>
@@ -1029,6 +1033,23 @@ function PaperDetailPane({
           onClose={() => setReaderOpen(false)}
         />
       )}
+
+      {/* 覆盖确认：解读每篇一份，重编会顶掉现有那份，且没有历史版本 */}
+      <ConfirmModal
+        open={recompileConfirm}
+        onClose={() => setRecompileConfirm(false)}
+        title={tr('重新编译解读', 'Recompile the wiki')}
+        message={tr(
+          `现有解读由 ${paper.compiled_by_name ?? '未知用户'} 在 ${paper.compiled_at ? fmtTime(paper.compiled_at) : '未知时间'} 用 ${paper.compiled_model ?? '未知模型'} 编译，重新编译会覆盖它，旧的找不回来。`,
+          `The current wiki was compiled by ${paper.compiled_by_name ?? 'an unknown user'} at ${paper.compiled_at ? fmtTime(paper.compiled_at) : 'an unknown time'} with ${paper.compiled_model ?? 'an unknown model'}. Recompiling overwrites it — the old one cannot be recovered.`,
+        )}
+        confirmText={tr('重新编译', 'Recompile')}
+        danger
+        onConfirm={() => {
+          setRecompileConfirm(false);
+          onRecompile(paperId);
+        }}
+      />
     </div>
   );
 }

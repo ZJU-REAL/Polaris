@@ -146,6 +146,9 @@ export const router = createBrowserRouter([
       // 阅读页按论文 id 取数，文献库 / 每日新论文的论文都可读，与课题无关：
       // 放在守卫外，否则没有任何课题的用户点「阅读原文」会被重定向去建课题。
       { path: 'papers/:id/read', element: page(() => import('../features/reading/ReadingPage'), 'ReadingPage') },
+      // 概念页同理按 id 取数：概念是论文级的平台实体，不属于任何课题；
+      // `?library=` 可选，带上就只列该库里关联的论文（从库的上下文点进来时带）。
+      { path: 'concepts/:id', element: page(() => import('../features/wiki/ConceptPage'), 'ConceptPage') },
       { path: 'start', element: page(() => import('../features/start/StartPage'), 'StartPage') },
       { path: 'projects/new', element: page(() => import('../features/projects/ProjectWizardPage'), 'ProjectWizardPage') },
       // 课题设置已并入工作台「课题设置」标签：/projects/:id → /t/:id?tab=settings

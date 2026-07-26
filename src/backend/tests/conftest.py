@@ -106,13 +106,12 @@ INVITE_CODE = "test-invite"
 # 判断字段落 library_papers 成员行（其余入 Paper 内容池行）
 _MEMBERSHIP_FIELDS = (
     "relevance_score",
-    "wiki_content",
     "status",
     "trash_reason",
     "scored_at",
-    "compiled_at",
-    "compiled_model",
 )
+# 解读落 paper_wikis（每篇论文一份）：旧口径的 wiki_content / compiled_model 映射过去
+_WIKI_FIELDS = {"wiki_content": "content", "compiled_model": "model"}
 
 
 async def ensure_project_library(session, project_id):
@@ -146,22 +145,45 @@ async def ensure_project_library(session, project_id):
 
 
 async def add_paper(session, *, project_id, **fields):
-    """测试造数据统一入口：建内容池 Paper + 起源库成员行，返回 Paper。
+    """测试造数据统一入口：建内容池 Paper + 起源库成员行（+ 可选解读），返回 Paper。
 
-    兼容旧单表口径：status/relevance_score/wiki_content 等判断字段自动落成员行。
+    兼容旧单表口径：status/relevance_score 等判断字段自动落成员行，
+    wiki_content/compiled_model 落论文级唯一解读行 paper_wikis。
     """
     from app.models.library_direction import LibraryPaper
-    from app.models.paper import Paper
+    from app.models.paper import PaperWiki, new_paper
 
     member_kwargs = {k: fields.pop(k) for k in list(fields) if k in _MEMBERSHIP_FIELDS}
     member_kwargs.setdefault("status", "candidate")
+    wiki_kwargs = {_WIKI_FIELDS[k]: fields.pop(k) for k in list(fields) if k in _WIKI_FIELDS}
+    compiled_at = fields.pop("compiled_at", None)
     library = await ensure_project_library(session, project_id)
-    paper = Paper(**fields)
+    paper = new_paper(**fields)
     session.add(paper)
     await session.flush()
     session.add(LibraryPaper(library_id=library.id, paper_id=paper.id, **member_kwargs))
+    if wiki_kwargs.get("content"):
+        wiki = PaperWiki(paper_id=paper.id, **wiki_kwargs)
+        if compiled_at is not None:
+            wiki.created_at = wiki.updated_at = compiled_at
+        session.add(wiki)
+        paper.wiki = wiki
     await session.flush()
     return paper
+
+
+async def wiki_of(session, *, paper_id):
+    """取论文的唯一解读行 PaperWiki（断言解读内容/模型/编译者用；没有则 None）。"""
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.models.paper import PaperWiki
+
+    pid = paper_id if isinstance(paper_id, _uuid.UUID) else _uuid.UUID(str(paper_id))
+    return (
+        await session.execute(select(PaperWiki).where(PaperWiki.paper_id == pid))
+    ).scalar_one_or_none()
 
 
 async def membership_of(session, *, project_id, paper_id):
@@ -197,27 +219,37 @@ async def project_paper_rows(session, *, project_id):
 
 
 async def project_concepts(session, *, project_id):
-    """某课题起源库的概念列表。"""
+    """某课题起源库的概念列表（概念不属于库：按库内论文的关联推导，同后端口径）。"""
     from sqlalchemy import select
 
     from app.models.paper import Concept
+    from app.services.concepts import library_concept_ids
 
     library = await ensure_project_library(session, project_id)
     return list(
         (
-            await session.execute(select(Concept).where(Concept.library_id == library.id))
+            await session.execute(
+                select(Concept).where(Concept.id.in_(library_concept_ids([library.id])))
+            )
         ).scalars()
     )
 
 
-async def add_concept(session, *, project_id, **fields):
-    """建课题起源库概念（旧 Concept(project_id=...) 口径的替代）。"""
-    from app.models.paper import Concept
+async def add_concept(session, *, project_id, paper_id=None, **fields):
+    """建概念（全平台一份，不挂库）；给了 paper_id 就挂到那篇论文上。
 
-    library = await ensure_project_library(session, project_id)
-    concept = Concept(library_id=library.id, **fields)
+    「库有哪些概念」按库内论文的关联推导，所以要让概念出现在某个库/课题作用域里，
+    必须关联一篇该库的论文。"""
+    from app.models.paper import Concept, paper_concepts
+
+    await ensure_project_library(session, project_id)
+    concept = Concept(**fields)
     session.add(concept)
     await session.flush()
+    if paper_id is not None:
+        await session.execute(
+            paper_concepts.insert().values(paper_id=paper_id, concept_id=concept.id)
+        )
     return concept
 
 

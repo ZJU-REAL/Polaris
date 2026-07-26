@@ -16,6 +16,7 @@ from app.core.db import get_sessionmaker
 from app.models.paper import Concept, Paper
 from app.services import concepts as concepts_service
 from app.services import papers as papers_service
+from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids, membership_for_project
 from app.services.paper_review import relevant_excerpt
 from app.services.papers import PaperView
@@ -220,14 +221,13 @@ async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         library_ids = await get_source_library_ids(session, ctx.project_id)
         if not library_ids:
             return {"name": name, "found": False, "note": "概念库中没有该概念"}
-        stmt = select(Concept).where(
-            Concept.library_id.in_(library_ids), Concept.name.ilike(name)
-        )
+        scoped = library_concept_ids(library_ids)
+        stmt = select(Concept).where(Concept.id.in_(scoped), Concept.name.ilike(name))
         concept = (await session.execute(stmt)).scalars().first()
         if concept is None:  # 精确不中再模糊
             stmt = (
                 select(Concept)
-                .where(Concept.library_id.in_(library_ids), Concept.name.ilike(f"%{name}%"))
+                .where(Concept.id.in_(scoped), Concept.name.ilike(f"%{name}%"))
                 .order_by(Concept.name)
             )
             concept = (await session.execute(stmt)).scalars().first()

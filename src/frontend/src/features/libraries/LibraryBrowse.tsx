@@ -1,6 +1,6 @@
 import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import {
@@ -19,7 +19,6 @@ import { toast } from '../../components/ui/Toast';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import {
-  ApiError,
   api,
   type CitationFormat,
   type PaperRead,
@@ -212,7 +211,6 @@ function PaperDetailPane({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const queryClient = useQueryClient();
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
@@ -243,54 +241,11 @@ function PaperDetailPane({
     [detailKey, libraryId],
   );
 
-  /* —— 个人版解读：这个库没编译过这篇时，读/生成本人个人库条目里的个人版（与阅读页 InfoPanel 同一套 query key）——
-     POST /papers/{id}/personal-wiki 不校验成员身份（内容池全平台可读），费用记个人额度；
-     已有库版 wiki 时后端返回 409，所以入口只在 !wiki_content 时出现。 */
-  const needPersonal = !!paper && !paper.wiki_content;
-  const libStateQuery = useQuery({
-    queryKey: ['library-state', paperId],
-    queryFn: () => api.getLibraryState(paperId),
-    enabled: needPersonal,
-    retry: false,
-  });
-  const entryId = libStateQuery.data?.entry_id ?? null;
-  const entryQuery = useQuery({
-    queryKey: ['library-entry', entryId],
-    queryFn: () => api.getLibraryEntry(entryId!),
-    enabled: needPersonal && !!entryId,
-    retry: false,
-  });
-  const personalWikiMutation = useMutation({
-    mutationFn: () => api.compilePersonalWiki(paperId, paper?.project_id ?? null),
-    onSuccess: () => {
-      toast(tr('个人版解读已生成', 'Personal wiki generated'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['library-state', paperId] });
-      void queryClient.invalidateQueries({ queryKey: ['library-entry'] });
-      void queryClient.invalidateQueries({ queryKey: ['library'] });
-    },
-    onError: (e) => {
-      // 409：这期间这篇已经有库版解读了 —— 刷新详情就能看到公共库那份
-      if (e instanceof ApiError && e.status === 409) {
-        void queryClient.invalidateQueries({ queryKey: ['paper', libraryId, paperId] });
-        toast(tr('这篇已经有公共库的解读了，正在刷新。', 'This paper already has a shared library wiki — refreshing.'), 'info');
-        return;
-      }
-      toast(`${tr('生成失败：', 'Failed to generate: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
-    },
-  });
-  /* 优先用个人库条目里的正文；刚生成完条目还没刷新到时先用返回值兜底。
-     面板不随选中项重挂载 → mutation 状态会跨论文残留，用 paper_id 兜住 + 换论文时 reset。 */
-  const justGenerated =
-    personalWikiMutation.data?.paper_id === paperId ? personalWikiMutation.data.wiki_content : null;
-  const personalWiki = needPersonal ? entryQuery.data?.wiki_content ?? justGenerated : null;
-  const resetPersonalWiki = personalWikiMutation.reset;
-
   // 换论文时收起本地开合状态（面板不随选中项重挂载，得自己收）
   useEffect(() => {
     setAbstractOpen(false);
     setReaderOpen(false);
-    resetPersonalWiki();
-  }, [paperId, resetPersonalWiki]);
+  }, [paperId]);
 
   // 正文 ![[fig:N]] 嵌入图（与文献追踪同款渲染；图片端点对全员开放）
   const figures = usePaperFigures(paper);
@@ -521,57 +476,11 @@ function PaperDetailPane({
             </div>
             <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
           </>
-        ) : personalWiki ? (
-          <>
-            <div
-              className="row gap8"
-              style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
-            >
-              <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-                {tr('AI 图文介绍', 'AI intro')}
-              </span>
-              <span
-                className="mono"
-                title={tr(
-                  '这个库里没有这篇的解读，这是你自己生成的个人版。',
-                  'This library has no wiki for the paper; this is the personal version you generated.',
-                )}
-                style={{
-                  fontSize: 10,
-                  color: 'var(--accent-text)',
-                  background: 'var(--accent-soft)',
-                  padding: '1px 7px',
-                  borderRadius: 999,
-                }}
-              >
-                {tr('个人版', 'Personal')}
-              </span>
-              <WikiHeaderActions
-                onRead={openReader}
-                onExport={openReaderForPrint}
-                style={{ marginLeft: 'auto' }}
-              />
-            </div>
-            <Markdown source={personalWiki} onWikiLink={onWikiLink} renderFigure={renderFigure} />
-          </>
         ) : (
           <div className="col" style={{ alignItems: 'center', gap: 8, padding: '18px 20px' }}>
             <div className="empty" style={{ padding: 0 }}>
-              {tr('这篇还没有 AI 图文介绍。', 'No AI intro for this paper yet.')}
+              {tr('这篇还没有 AI 解读。', 'No AI wiki for this paper yet.')}
             </div>
-            <button
-              className="btn btn-soft sm"
-              disabled={personalWikiMutation.isPending || libStateQuery.isLoading || entryQuery.isLoading}
-              onClick={() => personalWikiMutation.mutate()}
-            >
-              <Icon name="sparkle" size={12} />
-              {personalWikiMutation.isPending
-                ? tr('生成中…（约 1 分钟）', 'Generating… (~1 min)')
-                : tr('生成我的解读', 'Generate my wiki')}
-            </button>
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-              {tr('将使用你的模型额度，生成只有你能看到的个人版解读。', 'Uses your model quota to generate a personal wiki only you can see.')}
-            </span>
           </div>
         )}
       </div>
@@ -579,8 +488,7 @@ function PaperDetailPane({
       {readerOpen && (
         <PaperReader
           paper={paper}
-          /* 库版 wiki 不存在时阅览个人版（正文不在 paper 上，显式传入） */
-          wikiContent={paper.wiki_content ?? personalWiki}
+          wikiContent={paper.wiki_content}
           renderFigure={renderFigure}
           onWikiLink={onWikiLink}
           onFilterAuthor={(name) => {

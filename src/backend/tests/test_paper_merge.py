@@ -164,7 +164,7 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
             )
         ).scalar_one()
         assert member_a.status == "compiled"
-        assert member_a.wiki_content and "[[Attention]]" in member_a.wiki_content
+        assert keep.wiki_content and "[[Attention]]" in keep.wiki_content
         assert member_a.relevance_score == 0.8
         # B 库成员行 repoint 到 keep
         member_b = (

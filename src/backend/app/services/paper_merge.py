@@ -5,7 +5,7 @@
 
 约定：
 - 冲突表（同库 / 同课题 / 同用户已各有一行）按「keep 行优先、缺项用 drop 补」合并；
-- keep 行缺全文 / 图 / 元数据时从 drop 行搬运（chunks 仅在 keep 无分段时整体迁移）；
+- keep 行缺全文 / 图 / 元数据 / 解读时从 drop 行搬运（chunks 仅在 keep 无分段时整体迁移）；
 - drop 的 dedup_key 无法与 keep 并存（UNIQUE），随行删除并写进返回报告；
 - 全程一个事务，最后统一 commit；paper 不存在或 keep==drop 抛 ValueError。
 """
@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import LibraryPaper
@@ -24,6 +25,7 @@ from app.models.paper import (
     PaperHighlight,
     PaperNote,
     PaperUserMeta,
+    PaperWiki,
     paper_concepts,
     paper_tag_links,
 )
@@ -48,14 +50,11 @@ _FILLABLE_PAPER_FIELDS = (
     "authors",
 )
 
-# 成员行上的判断字段：同库冲突时 keep 缺则补
+# 成员行上的判断字段：同库冲突时 keep 缺则补（解读不在成员行上，另行合并）
 _FILLABLE_MEMBERSHIP_FIELDS = (
     "relevance_score",
     "tldr_note",
-    "wiki_content",
     "scored_at",
-    "compiled_at",
-    "compiled_model",
 )
 
 # 阅读状态推进序（冲突时取两边更靠后的）
@@ -136,6 +135,25 @@ async def merge_papers(
         await session.delete(membership)
         lib_merged += 1
     report["library_memberships"] = {"repointed": lib_repointed, "merged": lib_merged}
+
+    # ---- 1b. paper_wikis：一篇一份，keep 没有解读时把 drop 的搬过来 ----
+    keep_wiki = (
+        await session.execute(select(PaperWiki).where(PaperWiki.paper_id == keep_id))
+    ).scalar_one_or_none()
+    drop_wiki = (
+        await session.execute(select(PaperWiki).where(PaperWiki.paper_id == drop_id))
+    ).scalar_one_or_none()
+    wiki_moved = False
+    if drop_wiki is not None:
+        if keep_wiki is None:
+            drop_wiki.paper_id = keep_id
+            set_committed_value(keep, "wiki", drop_wiki)
+            wiki_moved = True
+        else:  # 两边都有 → 保留 keep 的那份（drop 行随论文删除）
+            await session.delete(drop_wiki)
+        # 从 drop 上摘掉：否则删 drop 时 delete-orphan 会把刚搬走的那行一并删掉
+        set_committed_value(drop, "wiki", None)
+    report["wiki_moved"] = wiki_moved
 
     # ---- 2. topic_papers：同课题冲突保留 keep 行（缺快照/备注则补），否则 repoint ----
     keep_shelf = {
@@ -284,7 +302,7 @@ def _candidate_row(paper: Paper, membership: LibraryPaper, chunk_count: int) -> 
         "doi": paper.doi,
         "status": membership.status,
         "chunk_count": chunk_count,
-        "has_wiki": bool(membership.wiki_content),
+        "has_wiki": paper.wiki is not None,
         "created_at": paper.created_at,
     }
 

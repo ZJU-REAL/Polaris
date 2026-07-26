@@ -25,7 +25,7 @@ from app.models.library_direction import (
     LibraryPaper,
     TopicSourceLibrary,
 )
-from app.models.paper import Concept, Paper
+from app.models.paper import Paper, PaperWiki, paper_concepts
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 
@@ -159,7 +159,7 @@ async def membership_for_project(
 ) -> LibraryPaper | None:
     """课题关联库并集里该论文的成员行（工具层「论文是否在本课题语料内」的统一检查）。
 
-    跨库同一论文取确定性视角（有 wiki 优先、其次相关性高，见 ``membership_rank``）；
+    跨库同一论文取确定性视角（相关性高的库优先，见 ``membership_rank``）；
     课题没有任何关联库或论文不在其中 → None（视为不在语料内，不报错）。
     """
     library_ids = await get_source_library_ids(session, project_id)
@@ -223,11 +223,12 @@ def member_papers_stmt(library_ids: Sequence[uuid.UUID]) -> Select:
     )
 
 
-def membership_rank(membership: LibraryPaper) -> tuple[int, float, str]:
-    """跨库同一论文的确定性视角优先级（越小越优）：有 wiki 优先、其次相关性分高、
-    再次 library_id 稳定序（docs-dev/workspace-ia-redesign.md §3.4 展示优先级）。"""
+def membership_rank(membership: LibraryPaper) -> tuple[float, str]:
+    """跨库同一论文的确定性视角优先级（越小越优）：相关性分高的库优先，
+    再次 library_id 稳定序。
+
+    解读不参与排序——每篇论文只有一份解读（``paper_wikis``），换哪个库的视角都一样。"""
     return (
-        0 if membership.wiki_content else 1,
         -(membership.relevance_score if membership.relevance_score is not None else -1e18),
         str(membership.library_id),
     )
@@ -305,8 +306,10 @@ async def _library_stats(
 
     if not library_ids:
         return {}, {}, {}
+    # 最近编译时间取解读行（论文级唯一一份）的 updated_at：库内任一论文被重编译都算
     paper_rows = await session.execute(
-        select(LibraryPaper.library_id, func.count(), func.max(LibraryPaper.compiled_at))
+        select(LibraryPaper.library_id, func.count(), func.max(PaperWiki.updated_at))
+        .outerjoin(PaperWiki, PaperWiki.paper_id == LibraryPaper.paper_id)
         .where(
             LibraryPaper.library_id.in_(library_ids),
             LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
@@ -318,10 +321,15 @@ async def _library_stats(
     for lib_id, count, compiled_at in paper_rows.all():
         paper_counts[lib_id] = int(count)
         last_compiled[lib_id] = compiled_at
+    # 概念是全平台一份、不属于任何库：库的概念数 = 库内论文关联到的概念去重计数
     concept_rows = await session.execute(
-        select(Concept.library_id, func.count())
-        .where(Concept.library_id.in_(library_ids))
-        .group_by(Concept.library_id)
+        select(
+            LibraryPaper.library_id,
+            func.count(func.distinct(paper_concepts.c.concept_id)),
+        )
+        .join(paper_concepts, paper_concepts.c.paper_id == LibraryPaper.paper_id)
+        .where(LibraryPaper.library_id.in_(library_ids))
+        .group_by(LibraryPaper.library_id)
     )
     concept_counts = {lib_id: int(count) for lib_id, count in concept_rows.all()}
     return paper_counts, last_compiled, concept_counts

@@ -27,7 +27,7 @@ from app.core.db import get_sessionmaker
 from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.library_direction import DirectionLibrary, LibraryPaper
-from app.models.paper import Paper, PaperChunk
+from app.models.paper import Paper, PaperChunk, new_paper
 from app.services.affiliations import (
     apply_author_affiliations,
     extract_author_affiliations_llm,
@@ -47,6 +47,7 @@ from app.services.literature import get_arxiv_client, get_openalex_client, get_s
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.paper_enrich import paper_embedding_text
+from app.services.paper_wiki import upsert_wiki
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
 from app.services.relevance import build_relevance_context, score_paper_relevance
 from app.services.wiki_compile import compile_paper
@@ -303,7 +304,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 return False
 
             def make_paper() -> Paper:
-                return Paper(
+                return new_paper(
                     source=source,
                     arxiv_id=aid,
                     doi=entry.get("doi"),
@@ -467,7 +468,7 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                         title: str = title,
                         authors: list[Any] | None = authors,
                     ) -> Paper:
-                        return Paper(
+                        return new_paper(
                             source="semantic_scholar",
                             arxiv_id=aid,
                             doi=ext.get("DOI"),
@@ -793,7 +794,6 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
         library = await _resolve_library(session, ctx)
         if library is None:
             raise ValueError(f"library not found for run: {ctx.run.id}")
-        statement = library_definition(library).get("statement") or library.name
         billing_user_id = _ingest_billing_owner(library)
         # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）。外层只查 id，每篇
         # 编译在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
@@ -851,7 +851,6 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             collect_affs = affil_mode == "on_compile" and not paper.affiliations
             compiled = await compile_paper(
                 paper,
-                statement=statement,
                 llm=ctx.llm,
                 user_id=billing_user_id,
                 project_id=project_id,
@@ -860,9 +859,15 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
                 extra_guidance=guidance,
                 collect_affiliations=collect_affs,
             )
-            membership.wiki_content = compiled.content
-            membership.compiled_at = utcnow()
-            membership.compiled_model = compiled.model or None
+            # 解读全平台一份：写 paper_wikis（已有则覆盖成本次结果）。编译者记发起
+            # 本次同步的人（公共库的账记系统，billing_user_id 为空，但人是有的）
+            await upsert_wiki(
+                session,
+                paper=paper,
+                content=compiled.content,
+                model=compiled.model or None,
+                compiled_by=ctx.run.created_by,
+            )
             membership.status = "compiled"
             if compiled.author_affiliations and not paper.affiliations:
                 apply_author_affiliations(paper, compiled.author_affiliations)

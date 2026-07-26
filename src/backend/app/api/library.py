@@ -28,6 +28,7 @@ from app.schemas.paper import PaperManualCreate
 from app.services import citations as citations_service
 from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
+from app.services import paper_wiki as paper_wiki_service
 from app.services import papers as papers_service
 from app.services import user_library as library_service
 
@@ -269,9 +270,15 @@ async def get_entry_detail(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> LibraryEntryDetail:
-    """单条详情（含 wiki 快照）：源论文删除后前端右栏回退用。"""
+    """单条详情（含这篇论文的解读）：解读按 last_paper_id 现查 paper_wikis，
+    源论文已删（软引用为空）或还没编译过 → wiki_content 为 null。"""
     entry = await _get_own_entry(session, entry_id, user)
-    return LibraryEntryDetail.model_validate(entry)
+    wiki = (
+        await paper_wiki_service.content_for(session, entry.last_paper_id)
+        if entry.last_paper_id is not None
+        else None
+    )
+    return LibraryEntryDetail.model_validate(entry).model_copy(update={"wiki_content": wiki})
 
 
 @router.post("/me/library/{entry_id}/restore", response_model=LibraryEntryRead)

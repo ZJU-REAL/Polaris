@@ -1,8 +1,8 @@
-"""论文内容池（全局）、概念（wiki 词条）、笔记 / 标签 / 个人阅读状态与其关联表。
+"""论文内容池（全局）、解读、概念（wiki 词条）、笔记 / 标签 / 个人阅读状态与其关联表。
 
 P4 起 ``papers`` 是全平台共享的内容池（按 dedup_key 唯一，只存论文本体）；
-方向对论文的归属与判断字段（相关性分 / 状态 / 库版 wiki）在
-``library_papers``（models/library_direction.py）。"""
+方向对论文的归属与判断字段（相关性分 / 状态）在 ``library_papers``
+（models/library_direction.py）。解读不分方向——每篇论文一份，见 :class:`PaperWiki`。"""
 
 import uuid
 from datetime import datetime
@@ -22,6 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
@@ -71,10 +72,56 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     concepts: Mapped[list["Concept"]] = relationship(
         secondary=paper_concepts, back_populates="papers"
     )
+    # 唯一解读（PaperWiki）；selectin 随论文一起取，读路径无需显式 join
+    wiki: Mapped["PaperWiki | None"] = relationship(
+        back_populates="paper", uselist=False, lazy="selectin", cascade="all, delete-orphan"
+    )
 
     @property
     def pdf_available(self) -> bool:
         return bool(self.pdf_path)
+
+    @property
+    def wiki_content(self) -> str | None:
+        """解读正文（没有解读为 None）——全平台唯一一份，见 :class:`PaperWiki`。"""
+        return self.wiki.content if self.wiki is not None else None
+
+
+class PaperWiki(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """论文解读：每篇论文一份，全平台共享。
+
+    早期按方向库分版本存在 library_papers.wiki_content，但同一篇论文在不同库
+    里的解读实际都是通用解读，分版本只带来重复编译与「同一篇看到不同内容」。
+    编译输入不带任何库的方向陈述/rubric，产出即通用解读；谁都能重新编译，
+    以最新一次为准（覆盖本行，compiled_by 一并更新）。
+    """
+
+    __tablename__ = "paper_wikis"
+    __table_args__ = (UniqueConstraint("paper_id", name="uq_paper_wikis_paper"),)
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)  # 图文解读 markdown
+    model: Mapped[str | None] = mapped_column(String(128))  # 编译实际所用模型名
+    # 最后一次编译的人（存量迁移数据无从得知，留空）
+    compiled_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    paper: Mapped[Paper] = relationship(back_populates="wiki")
+
+
+def new_paper(**fields: Any) -> Paper:
+    """建内容池论文行（写路径统一入口）。
+
+    顺带把 ``wiki`` 标成「已加载且为空」——新论文当然还没有解读；不标的话，
+    落库后第一次读 ``paper.wiki_content`` 会触发一次隐式懒加载，异步 session 下
+    直接抛 MissingGreenlet。
+    """
+    paper = Paper(**fields)
+    set_committed_value(paper, "wiki", None)
+    return paper
 
 
 class PaperChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -210,12 +257,17 @@ class UserPaperTag(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class Concept(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    __tablename__ = "concepts"
-    __table_args__ = (UniqueConstraint("library_id", "slug", name="uq_concepts_library_slug"),)
+    """概念词条：全平台一份，slug 全局唯一。
 
-    library_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("direction_libraries.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    早期按方向库分版本（concepts.library_id），同一个词在每个库各存一份、定义还各不
+    相同；解读统一成论文级之后更没有归属可言（每日推送的论文不属于任何库）。
+    「某个库有哪些概念」不再存，一律推导：库的论文（library_papers）→ 关联概念
+    （paper_concepts）→ 去重，见 services/concepts.py::library_concept_ids。
+    """
+
+    __tablename__ = "concepts"
+    __table_args__ = (UniqueConstraint("slug", name="uq_concepts_slug"),)
+
     name: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     slug: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     definition: Mapped[str | None] = mapped_column(Text)  # LLM 一句话定义

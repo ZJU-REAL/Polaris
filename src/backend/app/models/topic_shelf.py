@@ -1,8 +1,7 @@
 """课题「相关研究」书架（P5a）。
 
-书架三层策略（docs-dev/workspace-ia-redesign.md §3.4）：论文本体纯引用（paper_id
-指向全局内容池，永不复制）；库级 wiki 会漂移/消失 → 入架时落快照兜底，展示时
-库版实时优先；个人备注挂在书架行的 note 上。
+论文本体与解读都是纯引用（paper_id 指向全局内容池；解读读 paper_wikis，每篇一份），
+个人备注挂在书架行的 note 上。
 
 过渡期（P5a）课题 = project，topic_id 直接外键 projects；P5 引入独立 Topic 实体后
 随外键平移。入架必入个人库（user_library_entries），由 services/topic_shelf.py 保证。
@@ -40,7 +39,8 @@ class TopicPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_library_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("direction_libraries.id", ondelete="SET NULL")
     )
-    # 入架时可得的库版 wiki 快照（markdown）；展示优先级：库版实时 > 快照
+    # 退役列（解读已统一到 paper_wikis，每篇一份、书架直接引用）：只留存量数据，
+    # 代码不再读写；删列待确认稳定后另做迁移。
     wiki_snapshot: Mapped[str | None] = mapped_column(Text)
     snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 课题语境的「为什么相关」备注

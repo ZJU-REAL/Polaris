@@ -24,6 +24,7 @@ from app.models.system_setting import SystemSetting
 from app.models.user import User
 from app.services import graph as graph_service
 from app.services.chunks import chunk_vector_search_supported
+from app.services.concepts import library_concept_ids
 from app.services.libraries import library_visible_to
 from app.services.papers import PAPER_STATUS_GROUPS
 
@@ -95,7 +96,9 @@ async def lab_stats(session: AsyncSession, user: User) -> dict[str, Any]:
         )
         concepts = await _count(
             session,
-            select(func.count()).select_from(Concept).where(Concept.library_id.in_(library_ids)),
+            select(func.count())
+            .select_from(Concept)
+            .where(Concept.id.in_(library_concept_ids(library_ids))),
         )
         # 库内论文 id 子查询：分段与向量统计都挂在它上面（同样天然去重）
         member_ids = (

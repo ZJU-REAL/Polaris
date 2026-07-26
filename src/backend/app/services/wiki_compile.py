@@ -17,9 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter, get_llm_router
-from app.models.base import utcnow
 from app.models.paper import Paper
-from app.models.project import Project
 from app.services.affiliations import (
     AFFIL_COMPILE_INSTRUCTION,
     apply_author_affiliations,
@@ -33,6 +31,7 @@ from app.services.figure_annotate import (
     important_figures_with_bytes,
 )
 from app.services.literature.pdf_extract import extract_figures
+from app.services.paper_wiki import upsert_wiki
 from app.services.papers import PaperView
 
 FULLTEXT_PROMPT_CHARS = 24000
@@ -104,10 +103,10 @@ def _figure_prompt_section(selected: list[tuple[dict[str, Any], bytes]]) -> str:
     return "\n".join(lines)
 
 
-def build_compile_prompt(paper: Paper, *, statement: str | None) -> tuple[str, list[bytes]]:
+def build_compile_prompt(paper: Paper) -> tuple[str, list[bytes]]:
     """组装编译 user prompt 与随附图片（无重要图时 images 为空 → 纯文字编译）。
 
-    statement 为空 = 通用模板（个人版 wiki，无方向侧重）：不带「研究方向」行。"""
+    只喂论文本身：解读全平台唯一一份，不带任何库的方向陈述 / rubric 侧重。"""
     body: str | None = None
     source = "abstract"
     if paper.full_text_path and Path(paper.full_text_path).exists():
@@ -115,10 +114,8 @@ def build_compile_prompt(paper: Paper, *, statement: str | None) -> tuple[str, l
         source = "full_text"
     body = (body or paper.abstract or "（无正文）")[:FULLTEXT_PROMPT_CHARS]
     authors = "、".join(a.get("name", "") for a in (paper.authors or []) if isinstance(a, dict))
-    direction_line = f"研究方向：{statement}\n" if statement else ""
     prompt = (
-        direction_line
-        + f"标题：{paper.title}\n"
+        f"标题：{paper.title}\n"
         f"作者：{authors or '未知'}\n"
         f"年份/发表：{paper.year or '未知'} {paper.venue or ''}\n"
         f"正文来源：{source}\n"
@@ -146,7 +143,6 @@ class CompiledWiki:
 async def compile_paper(
     paper: Paper,
     *,
-    statement: str | None,
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
@@ -157,6 +153,8 @@ async def compile_paper(
 ) -> CompiledWiki:
     """图文编译一篇论文，返回校验过标记的 wiki markdown 与所用模型（调用方负责落库）。
 
+    产出是通用解读（每篇论文全平台一份），prompt 里不带任何库的方向侧重；
+    library_id / project_id 只用于 LLM 用量记账。
     模型名取自 LLM 实际返回结果（CompletionResult.model），而非路由表配置，
     避免路由中途被改导致记录偏差。
     extra_guidance：追加到 system prompt 的补充指引（wiki.compile 注入点的项目技能）。
@@ -165,7 +163,7 @@ async def compile_paper(
     让它残留进 wiki，也绝不因解析失败让编译失败。
     """
     llm = llm or get_llm_router()
-    user_prompt, images = build_compile_prompt(paper, statement=statement)
+    user_prompt, images = build_compile_prompt(paper)
     if collect_affiliations:
         user_prompt += AFFIL_COMPILE_INSTRUCTION
     valid = {int(f["index"]) for f in (paper.figures or [])}
@@ -215,17 +213,13 @@ async def recompile_paper(
     *,
     user_id: uuid.UUID | None = None,
 ) -> PaperView:
-    """重跑筛选注释 + 图文编译，覆盖成员行 wiki_content 并落库（docs/api-lit.md §6.6）。
+    """重跑筛选注释 + 图文编译，覆盖这篇论文的唯一解读并落库（docs/api-lit.md §6.6）。
 
     无 PDF 时跳过图片、仅重写文字；status：scored/fetched 升为 compiled，其余不动。
     """
     llm = get_llm_router()
     paper = view.paper
     membership = view.membership
-    project = await session.get(Project, view.project_id) if view.project_id else None
-    statement = (project.statement if project else None) or (
-        project.name if project else paper.title
-    )
     project_id = view.project_id
 
     if paper.pdf_path and Path(paper.pdf_path).exists():
@@ -251,16 +245,19 @@ async def recompile_paper(
     collect_affs = mode == "on_compile" and not paper.affiliations
     compiled = await compile_paper(
         paper,
-        statement=statement,
         llm=llm,
         user_id=user_id,
         project_id=project_id,
-        library_id=membership.library_id,  # 库版重编译记方向库账（P6）
+        library_id=membership.library_id,  # 从库里发起的重编译记方向库账（P6）
         collect_affiliations=collect_affs,
     )
-    membership.wiki_content = compiled.content
-    membership.compiled_at = utcnow()
-    membership.compiled_model = compiled.model or None
+    await upsert_wiki(
+        session,
+        paper=paper,
+        content=compiled.content,
+        model=compiled.model or None,
+        compiled_by=user_id,
+    )
     if membership.status in ("scored", "fetched"):
         membership.status = "compiled"
     if compiled.author_affiliations and not paper.affiliations:

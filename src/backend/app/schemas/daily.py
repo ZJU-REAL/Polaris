@@ -67,9 +67,10 @@ class DailyPaperItem(BaseModel):
 class DailyPaperDetail(DailyPaperItem):
     wiki_content: str | None = None
     pdf_available: bool = False
-    # 解读的编译模型与时间（编译徽标；wiki_model 在 entry 上，时间取 entry 最后更新）
+    # 解读的编译模型 / 时间 / 编译者（都取 paper_wikis 那份；编译徽标 + 覆盖提示用）
     wiki_model: str | None = None
     compiled_at: datetime | None = None
+    compiled_by_name: str | None = None
     # 论文已上链的概念（与库版详情同款 chips；池论文无库成员行，概念仍挂在论文上）
     concepts: list[PaperConceptRead] = []
 

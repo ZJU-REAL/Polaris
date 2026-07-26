@@ -300,7 +300,7 @@ async def test_compile_paper_collects_and_strips_block():
         + "POLARIS_AFFILIATIONS>>>\n"
     )
     llm = _StubLLM(content)
-    compiled = await compile_paper(paper, statement=None, llm=llm, collect_affiliations=True)
+    compiled = await compile_paper(paper, llm=llm, collect_affiliations=True)
     assert isinstance(compiled, CompiledWiki)
     assert "POLARIS_AFFILIATIONS" not in compiled.content  # 绝不残留进 wiki
     assert compiled.content == _WIKI_BODY
@@ -320,9 +320,7 @@ async def test_compile_paper_bad_block_still_clean():
     content = (
         _WIKI_BODY + '\n<<<POLARIS_AFFILIATIONS\n[{"name": oops OOPS]\nPOLARIS_AFFILIATIONS>>>\n'
     )
-    compiled = await compile_paper(
-        paper, statement=None, llm=_StubLLM(content), collect_affiliations=True
-    )
+    compiled = await compile_paper(paper, llm=_StubLLM(content), collect_affiliations=True)
     assert "POLARIS_AFFILIATIONS" not in compiled.content  # 坏 JSON 也剥净
     assert compiled.content == _WIKI_BODY
     assert compiled.author_affiliations is None  # 解析失败 → None，wiki 照常
@@ -331,7 +329,7 @@ async def test_compile_paper_bad_block_still_clean():
 async def test_compile_paper_no_collect_leaves_prompt_clean():
     paper = Paper(title="Affil Paper", abstract="some abstract")
     llm = _StubLLM(_WIKI_BODY)
-    compiled = await compile_paper(paper, statement=None, llm=llm, collect_affiliations=False)
+    compiled = await compile_paper(paper, llm=llm, collect_affiliations=False)
     assert compiled.author_affiliations is None
     assert affil_service.AFFIL_COMPILE_INSTRUCTION not in llm.calls[0]["messages"][1].content
 

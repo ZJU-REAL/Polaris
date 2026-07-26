@@ -518,7 +518,7 @@ async def _own_gate_comment(ctx: ActionContext) -> str:
 
 
 async def _grounding_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]]:
-    """goal.grounding 引用的库内论文，返回 (Paper, 本方向库版 wiki) 对。"""
+    """goal.grounding 引用的库内论文，返回 (Paper, 解读) 对。"""
     goal = _goal(ctx)
     ids = [uuid.UUID(g["paper_id"]) for g in goal.get("grounding") or []]
     if not ids:
@@ -536,7 +536,7 @@ async def _grounding_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]
             if library_ids
             else []
         )
-    by_id = {p.id: (p, m.wiki_content) for p, m in rows}
+    by_id = {p.id: (p, p.wiki_content) for p, _ in rows}
     return [by_id[i] for i in ids if i in by_id]
 
 

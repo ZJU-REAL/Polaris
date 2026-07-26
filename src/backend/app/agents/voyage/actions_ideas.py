@@ -32,10 +32,11 @@ from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, Paper, paper_concepts
+from app.models.paper import Concept, Paper, PaperWiki, paper_concepts
 from app.models.project import Project
 from app.models.review import ReviewMessage, ReviewSession
 from app.schemas.idea import FORGE_SIGNALS
+from app.services.concepts import library_concept_ids
 from app.services.libraries import (
     dedupe_member_rows,
     get_source_library_ids,
@@ -192,16 +193,15 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
     knobs = _forge_knobs(ctx)
     async with get_sessionmaker()() as session:
         project = await _get_project(session, ctx)
-        # 课题关联库并集：跨库同一论文按确定性视角归并（有 wiki 优先），再按相关性截断
+        # 课题关联库并集：跨库同一论文按确定性视角归并，再按相关性截断
         library_ids = await get_source_library_ids(session, project.id)
         rows = (
             dedupe_member_rows(
                 (
                     await session.execute(
-                        member_papers_stmt(library_ids).where(
-                            LibraryPaper.status.in_(("compiled", "included")),
-                            LibraryPaper.wiki_content.is_not(None),
-                        )
+                        member_papers_stmt(library_ids)
+                        .join(PaperWiki, PaperWiki.paper_id == Paper.id)
+                        .where(LibraryPaper.status.in_(("compiled", "included")))
                     )
                 ).all()
             )
@@ -216,13 +216,13 @@ async def forge_read_context(ctx: ActionContext, params: dict[str, Any]) -> dict
         )
         rows = rows[: int(knobs["max_context_papers"])]
         papers = [p for p, _ in rows]
-        wiki_of = {p.id: m.wiki_content for p, m in rows}
+        wiki_of = {p.id: p.wiki_content for p, _ in rows}
         concept_names = (
             (
                 (
                     await session.execute(
                         select(Concept.name)
-                        .where(Concept.library_id.in_(library_ids))
+                        .where(Concept.id.in_(library_concept_ids(library_ids)))
                         .order_by(Concept.name)
                         .limit(100)
                     )
@@ -295,7 +295,7 @@ async def _concept_paper_map(
         await session.execute(
             select(Concept.id, Concept.name, Concept.category, paper_concepts.c.paper_id)
             .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
-            .where(Concept.library_id.in_(library_ids))
+            .where(Concept.id.in_(library_concept_ids(library_ids)))
         )
     ).all()
     result: dict[uuid.UUID, tuple[str, str, set[uuid.UUID]]] = {}
@@ -354,7 +354,10 @@ async def _trend_concepts(session: AsyncSession, project_id: uuid.UUID) -> list[
                 (LibraryPaper.paper_id == Paper.id)
                 & (LibraryPaper.library_id.in_(library_ids)),
             )
-            .where(Concept.library_id.in_(library_ids), LibraryPaper.created_at >= cutoff)
+            .where(
+                Concept.id.in_(library_concept_ids(library_ids)),
+                LibraryPaper.created_at >= cutoff,
+            )
         )
     ).all()
     # 跨库并集：同一 (概念名, 论文) 只计一次（论文可能在多个关联库、概念各库一份）

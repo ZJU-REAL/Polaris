@@ -409,18 +409,20 @@ async def test_wiki_snapshot_and_detail_endpoint(client):
     resp = await client.get("/api/me/library?tab=history", headers=headers)
     assert "wiki_content" not in resp.json()["items"][0]
 
-    # 详情端点带 wiki 快照；源论文删除后快照仍在
+    # 详情端点带这篇论文的解读（现查 paper_wikis）
     resp = await client.get(f"/api/me/library/{entry['id']}", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["wiki_content"] == "# 摘要\n这是 wiki。"
 
+    # 论文被删 → 解读随论文消失（软引用置空），条目本身与元数据快照还在
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, uuid.UUID(paper_id))
         await session.delete(paper)
         await session.commit()
     resp = await client.get(f"/api/me/library/{entry['id']}", headers=headers)
     assert resp.json()["last_paper_id"] is None
-    assert resp.json()["wiki_content"] == "# 摘要\n这是 wiki。"
+    assert resp.json()["wiki_content"] is None
+    assert resp.json()["title"] == "Wiki Paper"
 
 
 # ---- 手动添加（POST /me/library/import）：arXiv 编号 / DOI / BibTeX 三选一 ----

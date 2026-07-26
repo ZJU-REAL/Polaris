@@ -716,6 +716,8 @@ export interface PaperDetail extends PaperRead {
   abstract: string | null;
   /** markdown，双链为 [[概念名]] */
   wiki_content: string | null;
+  /** 最后一次编译解读的人；存量数据/用户已删为 null（重新编译前的覆盖提示用） */
+  compiled_by_name?: string | null;
   pdf_available: boolean;
   concepts: PaperConceptRef[];
   /** 论文图片列表（后端未就绪时可能缺失） */
@@ -832,10 +834,10 @@ export type ConceptCategory =
 
 export interface ConceptRead {
   id: string;
-  /** 概念所属库回指的课题；共享库（无课题回指）为 null */
+  /** 本次访问的作用域课题；概念本身不属于任何课题/库，可能为 null */
   project_id: string | null;
-  /** 概念所属文献库（跨库图谱据此跳回它所在的库） */
-  library_id: string;
+  /** 落点文献库（用到这个概念的论文所在的库），供「点进去回哪个库」；可能为 null */
+  library_id: string | null;
   name: string;
   category: ConceptCategory;
   /** 一句话定义 */
@@ -972,9 +974,6 @@ export interface SearchResult {
 // P5a · 课题「相关研究」书架 — /projects/{pid}/shelf
 // ============================================================
 
-/** 书架条目 wiki 来源：live=库版实时 | personal=本人个人编译版 | snapshot=只剩入架快照 | none=没有解读。 */
-export type ShelfWikiSource = 'live' | 'personal' | 'snapshot' | 'none';
-
 /** 书架排序：added=添加时间 | year=年份 | relevance=相关度 | title=标题（默认 added）。 */
 export type ShelfSort = 'added' | 'year' | 'relevance' | 'title';
 
@@ -992,11 +991,10 @@ export interface ShelfItemRead {
   tldr: string | null;
   /** 课题语境的「为什么相关」备注 */
   note: string | null;
-  wiki_source: ShelfWikiSource;
-  /** 解析后的 wiki：库版实时 > 个人版 > 快照；none 时为 null */
+  /** 这篇论文有没有解读（语义检索映射出来的行只有这个信号，正文为 null） */
+  has_wiki?: boolean;
+  /** 这篇论文的解读（全平台唯一一份）；没有编译过为 null */
   wiki_content: string | null;
-  /** 入架落快照的时间；没快照为 null */
-  snapshot_at: string | null;
   /** 来源方向库（个人补充为 null） */
   source_library_id: string | null;
   added_at: string;
@@ -1004,13 +1002,6 @@ export interface ShelfItemRead {
   trashed_at?: string | null;
   /** 个人补充入架后若仍需分阶段后处理，返回可订阅进度的任务 id；已处理完整时为 null。 */
   task_id?: string | null;
-}
-
-/** 个人版 wiki 按需编译结果（P5b）。 */
-export interface PersonalWikiRead {
-  paper_id: string;
-  wiki_content: string;
-  model: string | null;
 }
 
 /** 个人补充入库：arXiv 编号 / DOI / 标题至少给一个。 */
@@ -2449,6 +2440,8 @@ export interface DailyPaperDetail extends DailyPaperItem {
   /** 解读的编译模型与时间（编译徽标；未编译时为 null） */
   wiki_model?: string | null;
   compiled_at?: string | null;
+  /** 最后一次编译的人；存量数据/用户已删为 null（重新编译前的覆盖提示用） */
+  compiled_by_name?: string | null;
   /** 论文已上链的概念（与库版详情同款 chips） */
   concepts?: PaperConceptRef[];
 }
@@ -2979,8 +2972,16 @@ export const api = {
     const qs = params.toString();
     return request<ConceptRead[]>(`/projects/${projectId}/concepts${qs ? `?${qs}` : ''}`);
   },
-  getConcept(id: string): Promise<ConceptDetail> {
-    return request<ConceptDetail>(`/concepts/${id}`);
+  /** 平台级按名字查概念（不带库作用域）：池级上下文的 [[双链]] 用它解析。
+      概念全平台唯一，命中至多一条；空数组 = 这个概念还没入库。 */
+  lookupConcept(name: string): Promise<ConceptRead[]> {
+    return request<ConceptRead[]>(`/concepts?name=${encodeURIComponent(name)}`);
+  },
+  /** 概念详情。词条本身全平台一份；给了 libraryId 就只列该库内关联到它的论文
+      （从库的上下文点进来时带上），不给就是全平台。 */
+  getConcept(id: string, libraryId?: string | null): Promise<ConceptDetail> {
+    const qs = libraryId ? `?library_id=${encodeURIComponent(libraryId)}` : '';
+    return request<ConceptDetail>(`/concepts/${id}${qs}`);
   },
   /** 全库概念补建：对已编译论文重抽 [[双链]]、建缺失概念并补齐关联（幂等）。 */
   relinkConcepts(projectId: string): Promise<ConceptRelinkResult> {
@@ -3331,18 +3332,6 @@ export const api = {
   /** 清空相关研究回收站（彻底删除全部书架行）。 */
   emptyShelfTrash(projectId: string): Promise<{ deleted: number }> {
     return request<{ deleted: number }>(`/projects/${projectId}/shelf/trash/empty`, { method: 'POST' });
-  },
-  /** 手动刷新书架快照：从当前最优 wiki（库版 > 个人版）重拷；无来源 409。 */
-  refreshShelfSnapshot(projectId: string, paperId: string): Promise<ShelfItemRead> {
-    return request<ShelfItemRead>(`/projects/${projectId}/shelf/${paperId}/refresh-snapshot`, {
-      method: 'POST',
-    });
-  },
-  /** 个人版 wiki 按需编译（无库版解读的论文；费用记个人额度）。 */
-  compilePersonalWiki(paperId: string, topicId?: string | null): Promise<PersonalWikiRead> {
-    return requestJson<PersonalWikiRead>(`/papers/${paperId}/personal-wiki`, 'POST', {
-      topic_id: topicId ?? null,
-    });
   },
 
   // —— M2 · Ingest ——

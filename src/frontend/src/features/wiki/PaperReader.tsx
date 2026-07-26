@@ -29,7 +29,7 @@ export function PaperReader({
   onClose: () => void;
   /** 打开后自动唤起打印对话框（「导出 PDF」一步直达） */
   autoPrint?: boolean;
-  /** 正文覆写：库版 wiki 不在 paper 上时（如个人版解读）传进来阅览 */
+  /** 正文覆写：正文不在 paper 上（如书架条目自带解读）时传进来阅览 */
   wikiContent?: string | null;
 }) {
   // 打开即打印：等一帧让正文（含图）渲染完再唤起打印

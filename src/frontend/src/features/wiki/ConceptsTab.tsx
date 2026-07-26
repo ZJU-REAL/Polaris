@@ -85,20 +85,26 @@ function ConceptRow({ c, active, onClick }: { c: ConceptRead; active: boolean; o
   );
 }
 
-function ConceptDetailPane({
+/** 概念详情正文。库内概念库 tab 与独立概念页 `/concepts/:id` 共用同一个组件，
+    差别只在带不带 libraryId（带＝该库视角，不带＝全平台视角）。 */
+export function ConceptDetailPane({
   conceptId,
+  libraryId,
   onOpenPaper,
   onOpenConcept,
   onWikiLink,
 }: {
   conceptId: string;
+  /** 当前所在的库；带上后关联论文只列这个库里的（词条本身全平台一份）。 */
+  libraryId?: string;
   onOpenPaper: (id: string) => void;
   onOpenConcept: (id: string) => void;
   onWikiLink: WikiLinkHandler;
 }) {
   const { data: concept, isLoading, isError } = useQuery({
-    queryKey: ['concept', conceptId],
-    queryFn: () => api.getConcept(conceptId),
+    // 库作用域进 key：换库要重新拉（关联论文那段不一样）
+    queryKey: ['concept', conceptId, libraryId ?? null],
+    queryFn: () => api.getConcept(conceptId, libraryId),
     retry: false,
   });
 
@@ -341,6 +347,7 @@ export function ConceptsTab({
         {selectedId ? (
           <ConceptDetailPane
             conceptId={selectedId}
+            libraryId={libraryId}
             onOpenPaper={onOpenPaper}
             onOpenConcept={onSelect}
             onWikiLink={onWikiLink}

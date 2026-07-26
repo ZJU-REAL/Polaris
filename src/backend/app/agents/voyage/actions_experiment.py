@@ -43,6 +43,7 @@ from app.models.base import utcnow
 from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment, ExperimentRun
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
+from app.models.paper import Paper, PaperWiki
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import VoyageRun
 from app.services import experiments as experiments_service
@@ -881,10 +882,9 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 dedupe_member_rows(
                     (
                         await session.execute(
-                            member_papers_stmt(library_ids).where(
-                                LibraryPaper.status.in_(("compiled", "included")),
-                                LibraryPaper.wiki_content.is_not(None),
-                            )
+                            member_papers_stmt(library_ids)
+                            .join(PaperWiki, PaperWiki.paper_id == Paper.id)
+                            .where(LibraryPaper.status.in_(("compiled", "included")))
                         )
                     ).all()
                 )
@@ -897,7 +897,7 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                     pm[1].created_at,
                 )
             )
-            rows = [(p.title, m.wiki_content) for p, m in member_rows[:_WIKI_CONTEXT_PAPERS]]
+            rows = [(p.title, p.wiki_content) for p, _ in member_rows[:_WIKI_CONTEXT_PAPERS]]
             wiki_context = (
                 "\n\n".join(
                     f"### {title}\n{(wiki or '')[:_WIKI_EXCERPT_CHARS]}" for title, wiki in rows

@@ -59,7 +59,7 @@ async def _seed_paper(project_id, **fields):
         return str(paper.id)
 
 
-async def test_add_to_shelf_snapshots_wiki_and_saves_to_personal_library(client):
+async def test_add_to_shelf_reads_paper_wiki_and_saves_to_personal_library(client):
     project_id, headers = await _setup(client)
     paper_id = await _seed_paper(
         project_id,
@@ -78,9 +78,7 @@ async def test_add_to_shelf_snapshots_wiki_and_saves_to_personal_library(client)
     body = resp.json()
     assert body["paper_id"] == paper_id
     assert body["note"] == "跟我的课题相关"
-    assert body["wiki_source"] == "live"
-    assert body["wiki_content"] == "# 库版解读"
-    assert body["snapshot_at"] is not None
+    assert body["wiki_content"] == "# 库版解读"  # 论文级唯一那份
     assert body["source_library_id"] is not None
 
     async with get_sessionmaker()() as session:
@@ -89,9 +87,8 @@ async def test_add_to_shelf_snapshots_wiki_and_saves_to_personal_library(client)
                 select(TopicPaper).where(TopicPaper.paper_id == uuid.UUID(paper_id))
             )
         ).scalar_one()
-        assert row.wiki_snapshot == "# 库版解读"
         assert str(row.topic_id) == project_id
-        # 入架必入个人库：saved 且共享同一次快照
+        # 入架必入个人库
         entry = (
             await session.execute(
                 select(UserLibraryEntry).where(
@@ -100,7 +97,6 @@ async def test_add_to_shelf_snapshots_wiki_and_saves_to_personal_library(client)
             )
         ).scalar_one()
         assert entry.saved is True
-        assert entry.wiki_content == "# 库版解读"
 
 
 async def test_add_is_idempotent_and_updates_note(client):
@@ -120,17 +116,17 @@ async def test_add_is_idempotent_and_updates_note(client):
     page = resp.json()
     assert page["total"] == 1
     assert page["items"][0]["note"] == "second"
-    assert page["items"][0]["wiki_source"] == "none"
 
     # ids 端点：勾选态用
     resp = await client.get(f"/api/projects/{project_id}/shelf/ids", headers=headers)
     assert resp.json()["paper_ids"] == [paper_id]
 
 
-async def test_snapshot_fallback_after_library_removal(client):
+async def test_wiki_survives_library_removal(client):
+    """解读挂在论文上：从方向库剔除成员行后，书架条目照样读得到。"""
     project_id, headers = await _setup(client)
     paper_id = await _seed_paper(
-        project_id, title="Vanishing Paper", status="compiled", wiki_content="# 快照兜底"
+        project_id, title="Vanishing Paper", status="compiled", wiki_content="# 论文解读"
     )
     resp = await client.post(
         f"/api/projects/{project_id}/shelf", json={"paper_id": paper_id}, headers=headers
@@ -144,10 +140,7 @@ async def test_snapshot_fallback_after_library_removal(client):
         await session.commit()
 
     resp = await client.get(f"/api/projects/{project_id}/shelf", headers=headers)
-    item = resp.json()["items"][0]
-    assert item["wiki_source"] == "snapshot"
-    assert item["wiki_content"] == "# 快照兜底"
-    assert item["snapshot_at"] is not None
+    assert resp.json()["items"][0]["wiki_content"] == "# 论文解读"
 
 
 async def test_note_patch_and_remove_keeps_personal_library(client):
@@ -209,7 +202,6 @@ async def test_import_pool_hit_shelves_without_library_membership(client):
     body = resp.json()
     assert body["paper_id"] == paper_id
     # 本课题库没有该论文 → 快照取自他库的 wiki
-    assert body["wiki_source"] == "live"
     assert body["wiki_content"] == "# 他库解读"
 
     async with get_sessionmaker()() as session:
@@ -240,7 +232,6 @@ async def test_import_miss_fetches_and_creates_pool_only_paper(client, lit_clien
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["title"] == "Personal Supplement Paper"
-    assert body["wiki_source"] == "none"
     assert body["source_library_id"] is None  # 个人补充：不挂任何来源库
     paper_id = body["paper_id"]
 

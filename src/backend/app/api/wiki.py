@@ -110,7 +110,7 @@ async def search(
             ScoredConcept(
                 id=concept.id,
                 project_id=project_id,
-                library_id=concept.library_id,
+                library_id=None,  # 概念不属于任何库；课题作用域已由 project_id 给出
                 name=concept.name,
                 category=concept.category,
                 definition=concept.definition,

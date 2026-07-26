@@ -16,6 +16,7 @@ from app.models.manuscript import Manuscript
 from app.models.paper import Concept, Paper
 from app.models.voyage import VoyageRun
 from app.schemas.search import GlobalSearchHit
+from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids
 
 _SNIPPET_CHARS = 120
@@ -81,7 +82,7 @@ async def global_search(
                 await session.execute(
                     select(Concept)
                     .where(
-                        Concept.library_id.in_(library_ids),
+                        Concept.id.in_(library_concept_ids(library_ids)),
                         or_(Concept.name.ilike(pattern), Concept.definition.ilike(pattern)),
                     )
                     .order_by(Concept.updated_at.desc())

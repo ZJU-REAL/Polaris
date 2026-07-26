@@ -148,7 +148,6 @@ async def test_shelf_readd_after_trash_revives_row(client):
     assert body["note"] == "复活后备注"
     assert body["trashed_at"] is None
     assert body["source_library_id"] == first_source  # 来源库按当下重取，仍是本课题库
-    assert body["wiki_source"] == "live"
 
     async with get_sessionmaker()() as session:
         rows = (

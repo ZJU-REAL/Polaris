@@ -39,6 +39,7 @@ from tests.conftest import (
     project_concepts,
     project_paper_rows,
     register_and_login,
+    wiki_of,
 )
 
 DEFINITION = {
@@ -314,10 +315,11 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
         assert len(compiled_rows) == 3
         for p, m in compiled_rows:
             assert m.relevance_score is not None and m.relevance_score >= 0.6
-            assert m.scored_at is not None and m.compiled_at is not None
-            assert m.compiled_model == "fake-default"  # 编译所用模型落库（voyage 路径）
+            assert m.scored_at is not None
+            wiki = await wiki_of(session, paper_id=m.paper_id)
+            assert wiki is not None and wiki.model == "fake-default"  # 编译模型落解读行
             assert p.tldr
-            assert "[[Agent]]" in m.wiki_content  # 双链
+            assert "[[Agent]]" in wiki.content  # 双链
             assert p.full_text_path and p.pdf_path  # PDF 已抽全文
             assert p.embedding is not None and len(p.embedding) == EMBEDDING_DIM
             # 管线顺带提取论文图（小图被滤），compile 后由 fake VLM 注释

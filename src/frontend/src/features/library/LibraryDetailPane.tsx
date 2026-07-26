@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import {
@@ -10,7 +10,6 @@ import {
   usePaperFigures,
 } from '../../components/ui/FigureGallery';
 import { ScoreRing } from '../../components/ui/ScoreRing';
-import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import {
   api,
@@ -23,7 +22,7 @@ import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
 import { PaperReader } from '../wiki/PaperReader';
-import { AffiliationChips, AuthorLinks } from '../wiki/shared';
+import { AffiliationChips, AuthorLinks, usePoolConceptNav } from '../wiki/shared';
 import {
   ConceptChips,
   PaperMyMetaRow,
@@ -117,7 +116,6 @@ export function LibraryDetailPane({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const queryClient = useQueryClient();
   const [readerOpen, setReaderOpen] = useState(false);
   // 阅览模式打开后是否直接唤起打印（「导出 PDF」一步直达）
   const [readerPrint, setReaderPrint] = useState(false);
@@ -155,35 +153,6 @@ export function LibraryDetailPane({
   const snapshotWiki =
     wantSnapshotWiki && entryQuery.isSuccess ? entryQuery.data.wiki_content : null;
 
-  // —— 个人版 wiki（对齐阅读页 InfoPanel）：活体论文没有库版解读时，读本人个人库
-  //    条目里的个人编译版；没有则可现场生成（后端 /papers/{id}/personal-wiki，算个人额度）——
-  const needPersonal = paperQuery.isSuccess && !paperQuery.data.wiki_content;
-  const libStateQuery = useQuery({
-    queryKey: ['library-state', paperId],
-    queryFn: () => api.getLibraryState(paperId ?? ''),
-    enabled: needPersonal && paperId !== null && entryId === undefined,
-    retry: false,
-  });
-  const personalEntryId = entryId ?? libStateQuery.data?.entry_id ?? null;
-  const personalEntryQuery = useQuery({
-    queryKey: ['library-entry', personalEntryId],
-    queryFn: () => api.getLibraryEntry(personalEntryId ?? ''),
-    enabled: needPersonal && !!personalEntryId,
-    retry: false,
-  });
-  const personalWiki = needPersonal ? (personalEntryQuery.data?.wiki_content ?? null) : null;
-  const generateMutation = useMutation({
-    mutationFn: () => api.compilePersonalWiki(paperId ?? '', paperQuery.data?.project_id ?? null),
-    onSuccess: () => {
-      toast(tr('个人版解读已生成', 'Personal wiki generated'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['library-state', paperId] });
-      void queryClient.invalidateQueries({ queryKey: ['library-entry'] });
-      void queryClient.invalidateQueries({ queryKey: ['library'] });
-    },
-    onError: (e) =>
-      toast(`${tr('生成失败：', 'Failed to generate: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
   // 正文 ![[fig:N]] 嵌入图（同文献追踪）
   const figures = usePaperFigures(paper);
   const renderFigure = useCallback(
@@ -204,17 +173,12 @@ export function LibraryDetailPane({
     [],
   );
 
-  // [[概念]] 双链 → 论文所属文献库的概念页（对齐阅读页的处理；定位不到时退到库列表）。
-  // 库由后端直接给的 library_id 定位；旧后端没这个字段时退回「按起源课题反查库」
+  // 「去文献库」按钮的落点：后端直接给的 library_id；旧后端没这个字段时按起源课题反查
   const topicLib = useTopicLibrary(paper?.library_id ? null : paper?.project_id ?? null);
   const paperLibId = paper?.library_id ?? topicLib?.id ?? null;
-  const onWikiLink = useCallback(
-    (name: string) =>
-      navigate(paperLibId ? libraryPath(paperLibId, `?concept=${encodeURIComponent(name)}`) : '/libraries'),
-    [navigate, paperLibId],
-  );
-  // 概念 chip 与双链同一个落点（都按概念名去课题库里找）
-  const openConcept = useCallback((c: { name: string }) => onWikiLink(c.name), [onWikiLink]);
+
+  // 我的文献库是池级上下文：概念一律进不限库的概念页
+  const { openConcept, openConceptByName } = usePoolConceptNav();
 
   if (paperId !== null && paperQuery.isLoading) {
     return <div className="empty" style={{ margin: 'auto' }}>{tr('加载论文详情…', 'Loading paper…')}</div>;
@@ -287,7 +251,7 @@ export function LibraryDetailPane({
             {tr('打开阅读页', 'Open reader')}
           </button>
         )}
-        {alive && (paper.wiki_content || personalWiki) && (
+        {alive && paper.wiki_content && (
           <button
             className="btn btn-soft sm"
             title={tr('全屏阅览图文介绍，可导出 PDF', 'Full-screen reading view, exportable to PDF')}
@@ -423,7 +387,7 @@ export function LibraryDetailPane({
         <FiguresSection
           paper={paper}
           readOnly
-          defaultCollapsed={hasEmbeddedFigures(paper.wiki_content ?? personalWiki, figures)}
+          defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)}
         />
       )}
 
@@ -446,40 +410,9 @@ export function LibraryDetailPane({
                   style={{ marginLeft: 'auto' }}
                 />
               </div>
-              <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
-            </>
-          ) : personalWiki ? (
-            <>
-              <div
-                className="row gap8"
-                style={{ paddingBottom: 10, marginBottom: 16, borderBottom: '0.5px solid var(--border)' }}
-              >
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em' }}>
-                  {tr('AI 图文介绍', 'AI intro')}
-                </span>
-                <span
-                  className="mono"
-                  title={tr('公共库里没有这篇的解读，这是你自己生成的个人版。', 'No shared library wiki; this is the personal version you generated.')}
-                  style={{
-                    fontSize: 10,
-                    color: 'var(--accent-text)',
-                    background: 'var(--accent-soft)',
-                    padding: '1px 7px',
-                    borderRadius: 999,
-                  }}
-                >
-                  {tr('个人版', 'Personal')}
-                </span>
-                <WikiHeaderActions
-                  onRead={openReader}
-                  onExport={openReaderForPrint}
-                  style={{ marginLeft: 'auto' }}
-                />
-              </div>
-              <Markdown source={personalWiki} onWikiLink={onWikiLink} renderFigure={renderFigure} />
+              <Markdown source={paper.wiki_content} onWikiLink={openConceptByName} renderFigure={renderFigure} />
             </>
           ) : (
-            // 没有库版、也没有个人版 → 提供现场生成（个人版，算个人额度）
             <div
               style={{
                 padding: '18px 20px',
@@ -489,24 +422,8 @@ export function LibraryDetailPane({
               }}
             >
               <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
-                {tr(
-                  '还没有解读，可以生成一份个人版（使用你的模型额度）。',
-                  'No wiki yet — generate a personal one (uses your model quota).',
-                )}
+                {tr('这篇还没有 AI 解读。', 'No AI wiki for this paper yet.')}
               </div>
-              <button
-                className="btn btn-soft sm"
-                style={{ marginTop: 10 }}
-                disabled={
-                  generateMutation.isPending || libStateQuery.isLoading || personalEntryQuery.isLoading
-                }
-                onClick={() => generateMutation.mutate()}
-              >
-                <Icon name="sparkle" size={13} />
-                {generateMutation.isPending
-                  ? tr('生成中…（约 1 分钟）', 'Generating… (~1 min)')
-                  : tr('生成 wiki', 'Generate wiki')}
-              </button>
             </div>
           )}
         </div>
@@ -523,17 +440,16 @@ export function LibraryDetailPane({
               {tr('AI 图文介绍（快照）', 'AI intro (snapshot)')}
             </span>
           </div>
-          <Markdown source={snapshotWiki} onWikiLink={onWikiLink} renderFigure={renderSnapshotFigure} />
+          <Markdown source={snapshotWiki} onWikiLink={openConceptByName} renderFigure={renderSnapshotFigure} />
         </div>
       )}
 
       {readerOpen && alive && (
         <PaperReader
           paper={paper}
-          /* 库版 wiki 不存在时阅览个人版（正文不在 paper 上，显式传入） */
-          wikiContent={paper.wiki_content ?? personalWiki}
+          wikiContent={paper.wiki_content}
           renderFigure={renderFigure}
-          onWikiLink={onWikiLink}
+          onWikiLink={openConceptByName}
           autoPrint={readerPrint}
           onClose={() => setReaderOpen(false)}
         />

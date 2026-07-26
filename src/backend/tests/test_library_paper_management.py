@@ -265,9 +265,7 @@ async def test_standalone_graph(client):
     creator, _admin, lib_id = await _setup(client, prefix="p9d-graph")
     p1 = await _seed_paper(lib_id, title="Graph paper", status="compiled", wiki="x")
     async with get_sessionmaker()() as session:
-        concept = Concept(
-            library_id=uuid.UUID(lib_id), name="Planning", slug="planning", category="method"
-        )
+        concept = Concept(name="Planning", slug="planning", category="method")
         session.add(concept)
         await session.flush()
         await session.execute(

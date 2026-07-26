@@ -1,8 +1,9 @@
 """论文库与检索业务逻辑（不 import fastapi）。
 
-P4 起 ``papers`` 是全局内容池：方向维度的归属/判断（status、相关性分、库版 wiki）
-在 ``library_papers`` 成员行上。API 形状不变（仍收 project_id），这里解析到隐式库后
-以 (Paper, LibraryPaper) 联查，并用 :class:`PaperView` 还原旧单表字段口径给 schema。
+P4 起 ``papers`` 是全局内容池：方向维度的归属/判断（status、相关性分）在
+``library_papers`` 成员行上，解读则是论文级唯一一份（``paper_wikis``）。API 形状不变
+（仍收 project_id），这里解析到隐式库后以 (Paper, LibraryPaper) 联查，并用
+:class:`PaperView` 还原旧单表字段口径给 schema。
 """
 
 import asyncio
@@ -31,12 +32,14 @@ from app.models.paper import (
     PaperNote,
     PaperTag,
     PaperUserMeta,
+    PaperWiki,
     UserPaperTag,
     paper_tag_links,
 )
 from app.models.project import ProjectMember
 from app.models.publication import UserPublication
 from app.models.topic_shelf import TopicPaper
+from app.services import concepts as concepts_service
 from app.services.libraries import (
     dedupe_member_rows,
     get_library_for_project,
@@ -78,10 +81,10 @@ class PdfFetchFailedError(Exception):
 class PaperView:
     """内容池论文 + 库成员行的合并视角（字段口径与旧单表 Paper 一致）。
 
-    本体字段（id/title/authors/pdf_path/…）透传 Paper；判断字段
-    （status/relevance_score/wiki_content/…）取成员行；``project_id`` 为本次
-    访问解析出的方向（过渡期 = 成员行所属隐式库回指的 project）。
-    ``created_at`` 口径 = 加入本方向库的时间（成员行 created_at）。
+    本体字段（id/title/authors/pdf_path/…）与解读（wiki_content/compiled_*）透传
+    Paper——解读全平台一份，不随方向变；方向维度的判断字段（status/relevance_score/…）
+    取成员行；``project_id`` 为本次访问解析出的方向（过渡期 = 成员行所属隐式库回指的
+    project）。``created_at`` 口径 = 加入本方向库的时间（成员行 created_at）。
     """
 
     __slots__ = ("paper", "membership", "project_id")
@@ -123,19 +126,20 @@ class PaperView:
 
     @property
     def compiled_at(self) -> datetime | None:
-        return self.membership.compiled_at
+        """最后一次编译解读的时间（解读行的 updated_at）。"""
+        return self.paper.wiki.updated_at if self.paper.wiki is not None else None
 
     @property
     def compiled_model(self) -> str | None:
-        return self.membership.compiled_model
+        return self.paper.wiki.model if self.paper.wiki is not None else None
 
     @property
     def wiki_content(self) -> str | None:
-        return self.membership.wiki_content
+        return self.paper.wiki_content
 
     @property
     def has_wiki(self) -> bool:
-        return bool(self.membership.wiki_content)
+        return self.paper.wiki is not None
 
     @property
     def created_at(self) -> datetime:
@@ -268,7 +272,7 @@ async def list_papers(
     （课题成员视角 = 关联库并集，P7）。project_id 兼作 PaperView 的课题上下文回填。
 
     单库（含课题只关联一个库的常见情形）走 SQL 分页快路径；课题关联多库时跨库
-    同一论文按确定性视角归并（有 wiki 优先），Python 侧排序 + 分页保证可移植。"""
+    同一论文按确定性视角归并（相关性分高者优先），Python 侧排序 + 分页保证可移植。"""
     library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
     if not library_ids:
         return [], 0
@@ -362,7 +366,7 @@ async def _pool_paper_view(
     # P5c 公共方向库全实验室可读：论文在任一**公共**库有成员行时，任何登录用户可读；
     # 个人库（is_public=false）只对归属人放行，与 library_visible_to 的口径一致——
     # 否则别人私有个人库里的论文可被任意用户凭 paper_id 读到。
-    # 视角取确定性成员行（优先有 wiki 解读的，其次最早入库的）；无课题上下文
+    # 视角取确定性成员行（最早入库的那份）；无课题上下文
     # （project_id=None：伴读不带参考检索、LLM 记账归个人）。
     from app.models.library_direction import DirectionLibrary
 
@@ -376,7 +380,7 @@ async def _pool_paper_view(
                 DirectionLibrary.submitted_by == user_id,
             ),
         )
-        .order_by(LibraryPaper.wiki_content.is_(None), LibraryPaper.created_at)
+        .order_by(LibraryPaper.created_at)
         .limit(1)
     )
     shared = (await session.execute(shared_stmt)).scalars().first()
@@ -415,15 +419,15 @@ async def get_paper_for_user(
 ) -> PaperView | None:
     """取论文（含成员行视角）；用户任一所属方向的库里都没有时视为不存在。
 
-    论文同时在多个可见方向库时取一个确定性视角：优先有 wiki 解读的成员行，
-    其次最早加入的（跨方向复用的论文以先入库方向的解读为主视角）。
+    论文同时在多个可见方向库时取一个确定性视角：最早加入的那个方向
+    （解读不随方向变，跨库只影响 status / 相关性分这类判断字段）。
     include_pool=True（只给读路径用）时再走池级兜底：书架 / 个人库可达的
     无库论文也可读（见 :func:`_pool_paper_view`）。
     """
     stmt = (
         user_visible_paper_stmt(user_id)
         .where(Paper.id == paper_id)
-        .order_by(LibraryPaper.wiki_content.is_(None), LibraryPaper.created_at)
+        .order_by(LibraryPaper.created_at)
         .limit(1)
     )
     if with_concepts:
@@ -842,18 +846,18 @@ async def delete_library_papers(
     )
 
 
-def restore_status_of(membership: LibraryPaper) -> str:
+def restore_status_of(view: PaperView) -> str:
     """回收站召回后的状态：已编译回 compiled；打过分回 scored；否则按人工精选处理。"""
-    if membership.wiki_content:
+    if view.has_wiki:
         return "compiled"
-    if membership.relevance_score is not None:
+    if view.membership.relevance_score is not None:
         return "scored"
     return "included"
 
 
 async def restore_paper(session: AsyncSession, view: PaperView) -> PaperView:
     """从回收站召回（docs/api-lit.md §8.6）。"""
-    view.membership.status = restore_status_of(view.membership)
+    view.membership.status = restore_status_of(view)
     view.membership.trash_reason = None
     await session.commit()
     await session.refresh(view.membership)
@@ -1056,7 +1060,7 @@ async def keyword_search_papers(
     limit: int,
     user_id: uuid.UUID | None = None,
 ) -> list[tuple[PaperView, float]]:
-    """关键词检索：title/abstract/库版 wiki/我的笔记内容 ilike，按命中位置给启发式分。
+    """关键词检索：title/abstract/解读正文/我的笔记内容 ilike，按命中位置给启发式分。
 
     只检索库内文献（相关性达标）：已删除（excluded）/未筛选（candidate）不出现。
     笔记仅作者本人可见（P5b），故只有传 user_id（用户检索入口）才并入笔记命中；
@@ -1069,7 +1073,7 @@ async def keyword_search_papers(
     hits = [
         Paper.title.ilike(pattern),
         Paper.abstract.ilike(pattern),
-        LibraryPaper.wiki_content.ilike(pattern),
+        Paper.id.in_(select(PaperWiki.paper_id).where(PaperWiki.content.ilike(pattern))),
     ]
     if user_id is not None:
         hits.append(
@@ -1114,7 +1118,10 @@ async def keyword_search_concepts(
         return []
     stmt = (
         select(Concept)
-        .where(Concept.library_id.in_(library_ids), Concept.name.ilike(f"%{q}%"))
+        .where(
+            Concept.id.in_(concepts_service.library_concept_ids(library_ids)),
+            Concept.name.ilike(f"%{q}%"),
+        )
         .order_by(Concept.name)
         .limit(limit)
     )

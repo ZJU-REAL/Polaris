@@ -106,6 +106,8 @@ class PaperFiguresResponse(BaseModel):
 class PaperDetail(PaperRead):
     abstract: str | None
     wiki_content: str | None
+    # 最后一次编译解读的人（显示名）；存量数据 / 用户已删为 null。重新编译前提示用
+    compiled_by_name: str | None = None
     pdf_available: bool = False
     concepts: list[PaperConceptRead] = []
     figures: list[PaperFigure] = []
@@ -214,10 +216,10 @@ class ConceptRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    # 概念所属库回指的课题；共享库（无课题回指）为 None
+    # 概念本身不属于任何库（全平台一份）；下面两个是**本次访问的作用域**，供前端
+    # 「点进去回哪个库」用：列表按请求的课题/库回填，详情按用到它的论文推导，可为空。
     project_id: uuid.UUID | None
-    # 概念所属文献库（跨库场景下据此跳回它所在的库）
-    library_id: uuid.UUID
+    library_id: uuid.UUID | None = None
     name: str
     category: str | None
     definition: str | None
@@ -272,15 +274,3 @@ class SearchResponse(BaseModel):
     concepts: list[ScoredConcept]
     mode_used: Literal["keyword", "semantic"]
     reranked: bool = False  # semantic 模式下 rerank 是否成功（失败降级为纯向量分）
-
-
-class PersonalWikiRequest(BaseModel):
-    """个人版 wiki 按需编译（P5b）：可选带课题，statement 作为侧重提示 + 用量归因。"""
-
-    topic_id: uuid.UUID | None = None
-
-
-class PersonalWikiRead(BaseModel):
-    paper_id: uuid.UUID
-    wiki_content: str
-    model: str | None = None

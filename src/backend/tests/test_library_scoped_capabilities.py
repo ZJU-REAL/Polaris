@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Paper
+from app.models.paper import PaperWiki, new_paper
 from app.models.user import User
 from tests.conftest import register_and_login
 
@@ -58,7 +58,7 @@ async def _seed_paper(
     full_text_path=None,
 ):
     async with get_sessionmaker()() as session:
-        paper = Paper(
+        paper = new_paper(
             title=title,
             abstract=f"{title} abstract",
             authors=[{"name": "Alice"}],
@@ -74,9 +74,10 @@ async def _seed_paper(
                 paper_id=paper.id,
                 status=status,
                 relevance_score=relevance,
-                wiki_content=wiki,
             )
         )
+        if wiki:  # 解读是论文级唯一一份
+            session.add(PaperWiki(paper_id=paper.id, content=wiki))
         await session.commit()
         return str(paper.id)
 

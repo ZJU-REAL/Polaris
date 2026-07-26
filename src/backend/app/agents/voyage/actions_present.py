@@ -128,7 +128,7 @@ async def _complete_json(
 
 
 async def _load_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]]:
-    """按 params.paper_ids 加载库内论文，返回 (Paper, 本方向库版 wiki) 对（保持传入顺序）。"""
+    """按 params.paper_ids 加载库内论文，返回 (Paper, 解读) 对（保持传入顺序）。"""
     ids = [uuid.UUID(str(i)) for i in _params(ctx).get("paper_ids") or []]
     async with get_sessionmaker()() as session:
         library_ids = await get_source_library_ids(session, ctx.run.project_id)
@@ -143,7 +143,7 @@ async def _load_papers(ctx: ActionContext) -> list[tuple[Paper, str | None]]:
             if library_ids
             else []
         )
-    by_id = {p.id: (p, m.wiki_content) for p, m in rows}
+    by_id = {p.id: (p, p.wiki_content) for p, _ in rows}
     ordered = [by_id[i] for i in ids if i in by_id]
     if not ordered:
         raise ValueError("presentation: no papers found for given paper_ids")

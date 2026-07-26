@@ -5,10 +5,17 @@ import uuid
 from sqlalchemy import insert, select
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper, paper_concepts
+from app.models.paper import Paper, PaperWiki, paper_concepts
 from app.services.concepts import link_paper_concepts, placeholder_definition
 
-from .conftest import add_concept, add_paper, membership_of, project_concepts, register_and_login
+from .conftest import (
+    add_concept,
+    add_paper,
+    membership_of,
+    project_concepts,
+    register_and_login,
+    wiki_of,
+)
 
 
 async def _setup(client):
@@ -111,12 +118,19 @@ async def test_relink_backfills_placeholder_definitions(client):
 
 
 async def _set_wiki_content(project_id: str, title: str, content) -> uuid.UUID:
+    """改写这篇论文的解读正文（论文级唯一一份；content=None 表示删掉解读）。"""
     async with get_sessionmaker()() as session:
         paper = (
             await session.execute(select(Paper).where(Paper.title == title))
         ).scalar_one()
-        membership = await membership_of(session, project_id=project_id, paper_id=paper.id)
-        membership.wiki_content = content
+        wiki = await wiki_of(session, paper_id=paper.id)
+        if content is None:
+            if wiki is not None:
+                await session.delete(wiki)
+        elif wiki is None:
+            session.add(PaperWiki(paper_id=paper.id, content=content))
+        else:
+            wiki.content = content
         await session.commit()
         return paper.id
 

@@ -41,7 +41,8 @@ class DailyFeedEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     categories: Mapped[Any] = mapped_column(JSONVariant, nullable=False, default=list)
     # arxiv 公告类型：new（新提交）| cross（转投/交叉列表）
     announce_type: Mapped[str] = mapped_column(String(16), nullable=False, default="new")
-    # 共享单篇解读（P2 编译产物）；收录时拷贝进目标库成员行
+    # 退役列（解读已统一到 papers.wiki / paper_wikis，每篇一份）：只留存量数据，
+    # 代码不再读写；删列待确认稳定后另做迁移。
     wiki_content: Mapped[str | None] = mapped_column(Text)
     wiki_model: Mapped[str | None] = mapped_column(String(128))
 

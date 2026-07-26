@@ -22,7 +22,6 @@ from typing import Any
 from sqlalchemy import String, cast, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.base import utcnow
 from app.models.daily_feed import (
     DAILY_FEED_RETENTION_DAYS,
     DEFAULT_DAILY_CATEGORIES,
@@ -30,14 +29,14 @@ from app.models.daily_feed import (
     DailyFeedLike,
 )
 from app.models.library_direction import DirectionLibrary, LibraryPaper
-from app.models.paper import Paper
+from app.models.paper import Paper, PaperWiki, new_paper
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
+from app.services import paper_wiki, user_library
 from app.services import projects as projects_service
 from app.services import topic_shelf as shelf_service
-from app.services import user_library
 from app.services.dedup import pool_dedup_key
 from app.services.libraries import can_manage_library, ensure_membership, find_pool_paper
 from app.services.literature import get_arxiv_client
@@ -65,7 +64,7 @@ class DailyEntryNotFoundError(Exception):
 
 
 class CompileInProgressError(Exception):
-    """同一 entry 的解读编译已在进行中（进程内防抖，语义同 personal_wiki）。"""
+    """同一 entry 的解读编译已在进行中（进程内防抖）。"""
 
 
 class InvalidCategoryError(Exception):
@@ -226,7 +225,7 @@ async def embedding_coverage(
 def _make_pool_paper(entry: dict[str, Any]) -> Paper:
     """RSS entry → 轻量内容池 Paper（不下 PDF、不补机构——feed 量大，重活留给收录后）。"""
     aid = entry.get("arxiv_id")
-    return Paper(
+    return new_paper(
         source="arxiv",
         dedup_key=pool_dedup_key(
             arxiv_id=aid,
@@ -508,7 +507,7 @@ def _entry_item(entry: DailyFeedEntry, paper: Paper, likes: dict[str, Any]) -> d
         "arxiv_id": paper.arxiv_id,
         "url": paper.url,
         "published_at": paper.published_at,
-        "has_wiki": bool(entry.wiki_content),
+        "has_wiki": paper.wiki is not None,
         **likes,
     }
 
@@ -661,11 +660,17 @@ async def get_entry_item(
     assert paper is not None  # 外键保证
     likes = await _likes_by_entry(session, [entry.id], user_id=user_id)
     item = _entry_item(entry, paper, likes[entry.id])
-    item["wiki_content"] = entry.wiki_content
+    # 解读走论文级唯一那份（paper_wikis）：库里编译过的这里直接能看到，反之亦然
+    item["wiki_content"] = paper.wiki_content
     item["pdf_available"] = paper.pdf_available
-    # 编译徽标：模型在 entry 上，时间用 entry 最后更新（仅在有解读时才有意义）
-    item["wiki_model"] = entry.wiki_model
-    item["compiled_at"] = entry.updated_at if entry.wiki_content else None
+    item["wiki_model"] = paper.wiki.model if paper.wiki is not None else None
+    item["compiled_at"] = paper.wiki.updated_at if paper.wiki is not None else None
+    # 编译者显示名：重新编译会覆盖，前端据此提示（人被删 / 存量数据留空）
+    names = await paper_wiki.compiler_names(
+        session, [paper.wiki.compiled_by if paper.wiki is not None else None]
+    )
+    compiled_by = paper.wiki.compiled_by if paper.wiki is not None else None
+    item["compiled_by_name"] = names.get(compiled_by) if compiled_by else None
     item["concepts"] = [
         {"id": c.id, "name": c.name, "category": c.category} for c in (paper.concepts or [])
     ]
@@ -774,16 +779,19 @@ async def fetch_entry_pdf(
 
 async def compile_entry_wiki(
     session: AsyncSession, *, entry_id: uuid.UUID, user_id: uuid.UUID
-) -> DailyFeedEntry:
-    """通用模板编译单篇解读（全实验室共享一份），写进 entry；费用记个人。
+) -> PaperWiki:
+    """编译这篇论文的解读并写进 paper_wikis（全平台一份）；费用记个人。
 
+    任何人都能编译，已编译过的也能再编译——覆盖同一行，以最新一次为准
+    （compiled_by 一并更新）；只有「同一篇正在编译中」才拒（CompileInProgressError）。
     每日池论文建池时不下 PDF，直接编译只能拿摘要产出纯文字稿；故先尽力补下 PDF
-    （幂等，失败则降级），再抽图 + 标注重要图，与库版重新编译同款逻辑产出图文解读。
+    （幂等，失败则降级），再抽图 + 标注重要图，与单篇重新编译同款逻辑产出图文解读。
     """
     from pathlib import Path
 
     from app.services.figure_annotate import annotate_figures
     from app.services.literature.pdf_extract import extract_figures
+    from app.services.paper_wiki import upsert_wiki
     from app.services.wiki_compile import compile_paper
 
     entry = await session.get(DailyFeedEntry, entry_id)
@@ -822,14 +830,18 @@ async def compile_entry_wiki(
             if paper.figures:
                 await annotate_figures(paper, paper.figures, user_id=user_id)
             await session.commit()
-        compiled = await compile_paper(paper, statement=None, user_id=user_id)
+        compiled = await compile_paper(paper, user_id=user_id)
     finally:
         _COMPILING.discard(entry_id)
-    entry.wiki_content = compiled.content
-    entry.wiki_model = compiled.model or None
+    wiki = await upsert_wiki(
+        session,
+        paper=paper,
+        content=compiled.content,
+        model=compiled.model or None,
+        compiled_by=user_id,
+    )
     await session.commit()
-    await session.refresh(entry)
-    return entry
+    return wiki
 
 
 # ---- 收录到各类库 ----
@@ -883,24 +895,10 @@ async def collect_papers(
 ) -> list[dict[str, Any]]:
     """把一批论文分发进方向库 / 课题书架 / 个人库；逐目标返回结果，无权只标记不失败。
 
-    entry 已有共享解读（wiki_content）时顺带拷贝进目标（方向库成员行 / 书架快照 /
-    个人库条目），让解读在 entry 7 天过期后于目标库存活。
+    解读不用跟着搬：每篇论文一份存 paper_wikis，entry 7 天过期后照样读得到。
     """
     papers = [p for pid in paper_ids if (p := await session.get(Paper, pid)) is not None]
     results: list[dict[str, Any]] = []
-    wiki_rows = (
-        (
-            await session.execute(
-                select(DailyFeedEntry).where(
-                    DailyFeedEntry.paper_id.in_([p.id for p in papers]),
-                    DailyFeedEntry.wiki_content.is_not(None),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    entry_wiki = {e.paper_id: e for e in wiki_rows}
 
     for library_id in direction_library_ids:
         library = await session.get(DirectionLibrary, library_id)
@@ -917,16 +915,8 @@ async def collect_papers(
             continue
         added = skipped = 0
         for paper in papers:
-            wiki = entry_wiki.get(paper.id)
-            extra: dict[str, Any] = {}
-            if wiki is not None:
-                extra = {
-                    "wiki_content": wiki.wiki_content,
-                    "compiled_at": utcnow(),
-                    "compiled_model": wiki.wiki_model,
-                }
             _, created = await ensure_membership(
-                session, library_id=library_id, paper_id=paper.id, status="included", **extra
+                session, library_id=library_id, paper_id=paper.id, status="included"
             )
             added += int(created)
             skipped += int(not created)
@@ -972,20 +962,6 @@ async def collect_papers(
             await shelf_service.add_to_shelf(
                 session, project_id=topic_id, paper_id=paper.id, user_id=user.id
             )
-            wiki = entry_wiki.get(paper.id)
-            if wiki is not None:
-                # 书架行没有库版快照时用共享解读兜底（add_to_shelf 只取库版 wiki）
-                row = (
-                    await session.execute(
-                        select(TopicPaper).where(
-                            TopicPaper.topic_id == topic_id, TopicPaper.paper_id == paper.id
-                        )
-                    )
-                ).scalar_one_or_none()
-                if row is not None and row.wiki_snapshot is None:
-                    row.wiki_snapshot = wiki.wiki_content
-                    row.snapshot_at = utcnow()
-                    await session.commit()
             added += 1
         results.append(
             {
@@ -1004,11 +980,7 @@ async def collect_papers(
             if existing is not None and existing.saved:
                 skipped += 1
                 continue
-            saved_entry = await user_library.save_paper(session, user_id=user.id, paper=paper)
-            wiki = entry_wiki.get(paper.id)
-            if wiki is not None and not saved_entry.wiki_content:
-                saved_entry.wiki_content = wiki.wiki_content
-                await session.commit()
+            await user_library.save_paper(session, user_id=user.id, paper=paper)
             added += 1
         results.append(
             {

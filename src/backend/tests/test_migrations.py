@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b7f3d21c8a05"  # llm_usage.created_at 索引
-PREV_REVISION = "c4a91e7b2f36"  # 个人标签表 user_paper_tags
+HEAD_REVISION = "b6c2f81d4a09"  # 概念统一到论文级（concepts 去 library_id）
+PREV_REVISION = "a7d0c9e51b34"  # 解读统一到 paper_wikis
 
 
 def _make_config(db_path: Path) -> Config:
@@ -66,6 +66,10 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "feedback",
                     "feedback_images",
                     "user_library_entries",
+                    "concepts",
+                    "paper_wikis",
+                    "library_papers",
+                    "daily_feed_entries",
                     "user_publications",
                     "topic_papers",
                     "llm_usage",
@@ -268,13 +272,26 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"id", "user_id", "paper_id", "name"} <= columns["user_paper_tags"]
     # 本分支新增：用量面板按时间窗聚合用的 llm_usage.created_at 索引
     assert "ix_llm_usage_created_at" in _index_names(db_path, "llm_usage")
+    # 本分支新增：论文级唯一解读表（原列一律保留，只是不再读写）
+    assert "paper_wikis" in columns["_tables"]
+    assert {"paper_id", "content", "model", "compiled_by"} <= columns["paper_wikis"]
+    assert "wiki_content" in columns["library_papers"]  # 存量列保留，可回滚
+    assert "wiki_content" in columns["daily_feed_entries"]
+    assert "wiki_snapshot" in columns["topic_papers"]
+    # 本分支新增：概念统一到论文级（去 library_id，slug 全局唯一）+ 两张回滚留档表
+    assert "library_id" not in columns["concepts"]
+    assert {"concepts_pre_unify", "paper_concepts_pre_unify"} <= columns["_tables"]
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（c4a91e7b2f36，个人标签表）。
-    # 该步只删 llm_usage 上的索引，任何表/列都不动。
+    # 最新 revision 可往返：downgrade 一步落到 down_revision（a7d0c9e51b34，解读统一）。
+    # 概念退回按库分版本：library_id 列回来、留档表清掉、被合并的行与关联还原。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREV_REVISION
-    assert "ix_llm_usage_created_at" not in _index_names(db_path, "llm_usage")
+    assert "library_id" in columns["concepts"]
+    assert "concepts_pre_unify" not in columns["_tables"]
+    assert "paper_concepts_pre_unify" not in columns["_tables"]
+    assert "paper_wikis" in columns["_tables"]  # 只退一步：解读表仍在
+    assert "ix_llm_usage_created_at" in _index_names(db_path, "llm_usage")
     # 个人标签表与上一版的两张备份表、回收站列都还在
     assert "user_paper_tags" in columns["_tables"]
     assert {"paper_tags", "paper_tag_links", "_pr3_backfilled_curators"} <= columns["_tables"]

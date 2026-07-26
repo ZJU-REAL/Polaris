@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { Avatar } from '../../components/ui/Avatar';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { PageHead } from '../../components/ui/PageHead';
-import { toast } from '../../components/ui/Toast';
 import { Segmented } from '../../components/ui/Segmented';
 import { StatCard } from '../../components/ui/StatCard';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -14,6 +13,7 @@ import { fmtFullTime, fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { stageLabel } from '../../lib/stageLabels';
 import { useLibraries, libraryPath } from '../libraries/hooks';
+import { conceptPath } from '../wiki/shared';
 
 // 图谱体量大且不是首屏必需：按需加载（与文献库工作台同样处理）
 const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m.GraphTab })));
@@ -715,17 +715,13 @@ function GraphCard({ libs }: { libs: DirectionLibrarySummary[] }) {
   const [libraryId, setLibraryId] = useState('');
 
   const openPaper = useCallback((id: string) => navigate(`/papers/${id}/read`), [navigate]);
-  // 概念属于某个具体的库，先问后端它在哪个库，再跳到那个库的概念页
+  /* 图谱选了具体的库＝人就在这个库的上下文里：进那个库的概念库 tab（库视角，
+     关联论文只列这个库里的）；选「全部文献库」是跨库的池级视角，进不限库的概念页。
+     概念可能不属于任何库（比如只有每日推送的论文用到），后者照样打得开。 */
   const openConcept = useCallback(
-    async (id: string) => {
-      try {
-        const concept = await api.getConcept(id);
-        navigate(`${libraryPath(concept.library_id)}?conceptId=${id}`);
-      } catch {
-        toast(tr('打不开这个概念（后端不可用）', 'Could not open this concept (backend unavailable)'), 'error');
-      }
-    },
-    [navigate],
+    (id: string) =>
+      navigate(libraryId ? `${libraryPath(libraryId)}?conceptId=${id}` : conceptPath(id)),
+    [navigate, libraryId],
   );
 
   return (

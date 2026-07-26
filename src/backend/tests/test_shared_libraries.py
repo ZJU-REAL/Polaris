@@ -33,9 +33,11 @@ async def _setup_library(client, *, email="lib-owner@example.com", name="共享�
             status="excluded",
             trash_reason="manual",
         )
+        # 概念全平台一份；「这个库有它」按库内论文的关联推导，故挂到库里那篇论文上
         await add_concept(
             session,
             project_id=project_id,
+            paper_id=paper.id,
             name="Agent",
             slug="agent",
             category="method",

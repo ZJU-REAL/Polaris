@@ -2,13 +2,13 @@
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ShelfItemRead(BaseModel):
-    """书架条目：论文元数据 + 备注 + 解析后的 wiki（库版实时 > 个人版 > 快照）。"""
+    """书架条目：论文元数据 + 课题备注 + 这篇论文的解读（全平台唯一一份，没有为 null）。"""
 
     paper_id: uuid.UUID
     title: str
@@ -22,10 +22,8 @@ class ShelfItemRead(BaseModel):
     url: str | None
     tldr: str | None
     note: str | None
-    # live=库版实时可得 | personal=本人个人编译版 | snapshot=只剩入架快照 | none=没有解读
-    wiki_source: Literal["live", "personal", "snapshot", "none"]
+    has_wiki: bool = False
     wiki_content: str | None
-    snapshot_at: datetime | None
     source_library_id: uuid.UUID | None
     added_at: datetime
     # 非空 = 已移出书架、在课题回收站里（可召回 / 彻底删除）

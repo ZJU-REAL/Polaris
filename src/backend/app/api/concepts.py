@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
-from app.models.library_direction import DirectionLibrary
-from app.models.paper import Concept
+from app.models.library_direction import DirectionLibrary, LibraryPaper
+from app.models.paper import Concept, paper_concepts
 from app.models.user import User
 from app.schemas.paper import (
     ConceptDetail,
@@ -27,17 +27,43 @@ router = APIRouter(tags=["concepts"])
 
 
 def _concept_read(
-    concept: Concept, paper_count: int, project_id: uuid.UUID | None
+    concept: Concept,
+    paper_count: int,
+    project_id: uuid.UUID | None,
+    library_id: uuid.UUID | None = None,
 ) -> ConceptRead:
+    """概念出参。
+
+    概念本身不属于任何库（全平台一份）；project_id / library_id 是**本次访问的作用域**
+    ——列表按调用方的课题/库回填，详情按「用到这个概念的论文在哪个库」推导，供前端
+    「点进去回哪个库」用，都可能为空。"""
     return ConceptRead(
         id=concept.id,
         project_id=project_id,
-        library_id=concept.library_id,
+        library_id=library_id,
         name=concept.name,
         category=concept.category,
         definition=concept.definition,
         paper_count=paper_count,
     )
+
+
+@router.get("/concepts", response_model=list[ConceptRead])
+async def lookup_concepts(
+    name: str = Query(min_length=1, description="概念名（精确匹配，忽略大小写/连接符差异）"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[ConceptRead]:
+    """平台级按名字查概念（不带库作用域）。
+
+    池级上下文（每日推送 / 个人库 / 阅读页）的 [[双链]] 用它解析：概念全平台唯一，
+    命中至多一条；空结果 = 这个概念还没入库。作用域字段一律为空（本就没有库语境）。
+    """
+    concepts = await concepts_service.find_by_name(session, name)
+    return [
+        _concept_read(c, await concepts_service.paper_count_of(session, c.id), None)
+        for c in concepts
+    ]
 
 
 @router.get("/projects/{project_id}/concepts", response_model=list[ConceptRead])
@@ -91,22 +117,47 @@ async def relink_concepts(
 @router.get("/concepts/{concept_id}", response_model=ConceptDetail)
 async def get_concept(
     concept_id: uuid.UUID,
+    library_id: uuid.UUID | None = Query(
+        default=None, description="库作用域：只列该库内关联到这个概念的论文；不传=全平台"
+    ),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> ConceptDetail:
-    # P5c：方向库全实验室可读，概念详情不做课题成员校验（登录即可）
-    stmt = (
-        select(Concept, DirectionLibrary.project_id)
-        .join(DirectionLibrary, DirectionLibrary.id == Concept.library_id)
-        .where(Concept.id == concept_id)
-    )
-    row = (await session.execute(stmt)).first()
-    if row is None:
+    """概念详情（登录即可读；P5c 方向库全实验室可读）。
+
+    词条本身（名称/定义/slug）永远是同一份，按库变化的只有「关联论文」：
+    从库的上下文点进来（带 library_id）就只列该库里关联它的论文，从池级上下文
+    （每日推送 / 个人库 / 直接访问）点进来就列全平台的。不属于任何库的概念照常打开。
+    """
+    concept = await session.get(Concept, concept_id)
+    if concept is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONCEPT_NOT_FOUND")
-    concept, project_id = row
-    papers = await concepts_service.papers_of_concept(session, concept.id)
+    project_id: uuid.UUID | None = None
+    scope_library_id = library_id  # 只在显式带库时过滤关联论文
+    if library_id is not None:
+        library = await libraries_service.get_library(session, library_id)
+        if library is None or not libraries_service.library_visible_to(library, user):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+        project_id = library.project_id
+    else:
+        # 没给作用域时给个落点库（用到它的论文所在、最早入库的那个），供前端跳回；
+        # 概念只挂在池内论文（如每日推送）上时为空。关联论文仍是全平台范围。
+        scope = (
+            await session.execute(
+                select(LibraryPaper.library_id, DirectionLibrary.project_id)
+                .join(paper_concepts, paper_concepts.c.paper_id == LibraryPaper.paper_id)
+                .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
+                .where(paper_concepts.c.concept_id == concept_id)
+                .order_by(LibraryPaper.created_at)
+                .limit(1)
+            )
+        ).first()
+        library_id, project_id = scope if scope is not None else (None, None)
+    papers = await concepts_service.papers_of_concept(
+        session, concept.id, library_id=scope_library_id
+    )
     related = await concepts_service.related_concepts(session, concept)
-    base = _concept_read(concept, len(papers), project_id)
+    base = _concept_read(concept, len(papers), project_id, library_id)
     return ConceptDetail(
         **base.model_dump(),
         wiki_content=concept.wiki_content,

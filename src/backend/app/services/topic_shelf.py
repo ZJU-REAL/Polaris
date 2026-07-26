@@ -2,10 +2,9 @@
 
 三条铁律（docs-dev/workspace-ia-redesign.md §3.4/§3.6）：
 - 论文本体纯引用（paper_id 指向全局内容池）；
-- 库版 wiki 引用为主、入架落快照兜底：展示优先级 库版实时 > 个人编译版 >
-  快照（P5b 三层解析；个人版 = 请求者本人 user_library_entries.wiki_content）；
-- 入架必入个人库（user_library_entries，saved=true，共享同一次快照写入）；
-  移出书架不动个人库。
+- 解读纯引用：读 ``paper_wikis``（每篇论文全平台一份），查不到就是没有解读——
+  不再有「库版 / 个人版 / 快照」的优先级链；
+- 入架必入个人库（user_library_entries，saved=true）；移出书架不动个人库。
 
 移出书架是软删（trashed_at）：进课题回收站，可召回 / 彻底删除 / 清空。唯一键
 (topic_id, paper_id) 覆盖软删行，所以再次入架走「复活」而不是插新行。
@@ -33,66 +32,8 @@ class ShelfItemNotFoundError(Exception):
     """课题书架上没有这篇论文。"""
 
 
-class NoWikiSourceError(Exception):
-    """刷新快照时没有任何可用的 wiki 来源（库版 / 个人版都没有）。"""
-
-
-class _SnapshotPaper:
-    """给个人库快照用的论文视图：本体字段透传 Paper + 书架解析出的 wiki。"""
-
-    __slots__ = ("_paper", "wiki_content")
-
-    def __init__(self, paper: Paper, wiki_content: str | None) -> None:
-        self._paper = paper
-        self.wiki_content = wiki_content
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(object.__getattribute__(self, "_paper"), name)
-
-
-async def _wiki_rows_for(
-    session: AsyncSession, paper_ids: list[uuid.UUID]
-) -> list[Any]:
-    """论文在各方向库的成员行概览：(paper_id, library_id, project_id, wiki_content)。"""
-    if not paper_ids:
-        return []
-    stmt = (
-        select(
-            LibraryPaper.paper_id,
-            LibraryPaper.library_id,
-            DirectionLibrary.project_id,
-            LibraryPaper.wiki_content,
-        )
-        .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
-        .where(LibraryPaper.paper_id.in_(paper_ids))
-    )
-    return list((await session.execute(stmt)).all())
-
-
-def _pick_live_wiki(rows: list[Any], project_id: uuid.UUID) -> str | None:
-    """从成员行里挑当前可得的库版 wiki：本课题隐式库优先，其次任一有 wiki 的库。"""
-    own = next((r for r in rows if r.project_id == project_id and r.wiki_content), None)
-    if own is not None:
-        return own.wiki_content
-    other = next((r for r in rows if r.wiki_content), None)
-    return other.wiki_content if other is not None else None
-
-
-def _item_dict(
-    row: TopicPaper, paper: Paper, live_wiki: str | None, personal_wiki: str | None
-) -> dict[str, Any]:
-    """书架条目出参：wiki 展示优先级 库版实时 > 个人版 > 快照；source 标注来源状态。
-
-    个人库条目的 wiki 字段身兼两职（个人编译版 / 浏览与入架时的库版快照），
-    与书架快照内容相同时按快照标注（带日期更诚实），不同才算「个人版」。"""
-    if live_wiki is not None:
-        wiki_source, wiki_content = "live", live_wiki
-    elif personal_wiki is not None and personal_wiki != row.wiki_snapshot:
-        wiki_source, wiki_content = "personal", personal_wiki
-    elif row.wiki_snapshot:
-        wiki_source, wiki_content = "snapshot", row.wiki_snapshot
-    else:
-        wiki_source, wiki_content = "none", None
+def _item_dict(row: TopicPaper, paper: Paper) -> dict[str, Any]:
+    """书架条目出参（解读取论文级唯一那份，没有则为 null）。"""
     return {
         "paper_id": paper.id,
         "title": paper.title,
@@ -105,9 +46,8 @@ def _item_dict(
         "url": paper.url,
         "tldr": paper.tldr,
         "note": row.note,
-        "wiki_source": wiki_source,
-        "wiki_content": wiki_content,
-        "snapshot_at": row.snapshot_at,
+        "has_wiki": paper.wiki is not None,
+        "wiki_content": paper.wiki_content,
         "source_library_id": row.source_library_id,
         "added_at": row.created_at,
         "trashed_at": row.trashed_at,
@@ -132,20 +72,6 @@ async def _get_row(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def _item_of(
-    session: AsyncSession,
-    row: TopicPaper,
-    paper: Paper,
-    project_id: uuid.UUID,
-    user_id: uuid.UUID,
-) -> dict[str, Any]:
-    wiki_rows = await _wiki_rows_for(session, [paper.id])
-    personal = await user_library.personal_wiki_map(session, user_id=user_id, papers=[paper])
-    return _item_dict(
-        row, paper, _pick_live_wiki(wiki_rows, project_id), personal.get(paper.id)
-    )
-
-
 async def list_shelf(
     session: AsyncSession,
     *,
@@ -164,9 +90,9 @@ async def list_shelf(
     sort: str = "added",
     trashed: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
-    """分页列书架，每条带解析后的 wiki 内容与来源状态。
+    """分页列书架，每条带这篇论文的解读（没有则为 null）。
 
-    个人版层按请求者（user_id）本人的个人库条目解析。高级检索的
+    高级检索的
     q/author/affiliation/starred/reading_status/my_tag 复用 :func:`apply_paper_filters`
     （只作用于内容池 Paper / 个人视角 PaperUserMeta、UserPaperTag，不触碰方向库）；
     year 范围就地作用于 ``Paper.year``。sort：added（默认，最新入架在前）/
@@ -225,23 +151,7 @@ async def list_shelf(
             base.order_by(*order).offset((page - 1) * size).limit(size)
         )
     ).all()
-    wiki_rows = await _wiki_rows_for(session, [paper.id for _, paper in rows])
-    by_paper: dict[uuid.UUID, list[Any]] = {}
-    for r in wiki_rows:
-        by_paper.setdefault(r.paper_id, []).append(r)
-    personal = await user_library.personal_wiki_map(
-        session, user_id=user_id, papers=[paper for _, paper in rows]
-    )
-    items = [
-        _item_dict(
-            row,
-            paper,
-            _pick_live_wiki(by_paper.get(paper.id, []), project_id),
-            personal.get(paper.id),
-        )
-        for row, paper in rows
-    ]
-    return items, int(total)
+    return [_item_dict(row, paper) for row, paper in rows], int(total)
 
 
 async def shelf_paper_ids(session: AsyncSession, *, project_id: uuid.UUID) -> list[uuid.UUID]:
@@ -254,19 +164,19 @@ async def shelf_paper_ids(session: AsyncSession, *, project_id: uuid.UUID) -> li
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def _snapshot_source(
+async def _source_library_id(
     session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID
-) -> tuple[str | None, uuid.UUID | None]:
-    """入架瞬间可得的 (库版 wiki, 来源库 id)。
-
-    来源库溯源：本课题隐式库优先，其次提供快照 wiki 的库，再其次任一库；都没有 = 个人补充。
-    """
-    wiki_rows = await _wiki_rows_for(session, [paper_id])
-    live_wiki = _pick_live_wiki(wiki_rows, project_id)
-    own = next((r for r in wiki_rows if r.project_id == project_id), None)
-    with_wiki = next((r for r in wiki_rows if r.wiki_content), None)
-    source = own or with_wiki or (wiki_rows[0] if wiki_rows else None)
-    return live_wiki, source.library_id if source is not None else None
+) -> uuid.UUID | None:
+    """入架时的来源库溯源：本课题隐式库优先，其次任一含这篇论文的库；都没有 = 个人补充。"""
+    stmt = (
+        select(LibraryPaper.library_id, DirectionLibrary.project_id)
+        .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
+        .where(LibraryPaper.paper_id == paper_id)
+    )
+    rows = list((await session.execute(stmt)).all())
+    own = next((r for r in rows if r.project_id == project_id), None)
+    source = own or (rows[0] if rows else None)
+    return source.library_id if source is not None else None
 
 
 async def add_to_shelf(
@@ -277,11 +187,11 @@ async def add_to_shelf(
     user_id: uuid.UUID,
     note: str | None = None,
 ) -> dict[str, Any]:
-    """入架：落 wiki 快照 + 同步 upsert 个人库（saved，共享同一次快照）。
+    """入架：记来源库 + 同步 upsert 个人库（saved）。
 
-    重复入架幂等：只更新 note（快照保持首次入架时的版本）。曾被移出（回收站里）的
-    论文再次入架 = **复活那一行**——唯一键 (topic_id, paper_id) 覆盖软删行，插新行会撞键；
-    复活时清空回收站标记并按当下重取来源库 / 快照，等同一次全新入架。
+    重复入架幂等：只更新 note。曾被移出（回收站里）的论文再次入架 = **复活那一行**
+    ——唯一键 (topic_id, paper_id) 覆盖软删行，插新行会撞键；复活时清空回收站标记
+    并按当下重取来源库，等同一次全新入架。
     """
     paper = await session.get(Paper, paper_id)
     if paper is None:
@@ -291,9 +201,9 @@ async def add_to_shelf(
         if note is not None:
             row.note = note
         await session.commit()
-        return await _item_of(session, row, paper, project_id, user_id)
+        return _item_dict(row, paper)
 
-    live_wiki, source_library_id = await _snapshot_source(
+    source_library_id = await _source_library_id(
         session, project_id=project_id, paper_id=paper_id
     )
     if row is not None:  # 回收站里的旧行复活
@@ -302,9 +212,6 @@ async def add_to_shelf(
         row.added_by = row.added_by or user_id
         # 来源库按当下重取；论文已不在任何库时保留旧溯源（比抹成空更有信息量）
         row.source_library_id = source_library_id or row.source_library_id
-        if live_wiki is not None:
-            row.wiki_snapshot = live_wiki
-            row.snapshot_at = utcnow()
         if note is not None:
             row.note = note
     else:
@@ -312,18 +219,14 @@ async def add_to_shelf(
             topic_id=project_id,
             paper_id=paper_id,
             source_library_id=source_library_id,
-            wiki_snapshot=live_wiki,
-            snapshot_at=utcnow() if live_wiki is not None else None,
             note=note,
             added_by=user_id,
         )
         session.add(row)
     await session.flush()
     # 入架必入个人库（书架是个人库的课题投影）；save_paper 内部 commit 一并落书架行
-    await user_library.save_paper(
-        session, user_id=user_id, paper=_SnapshotPaper(paper, live_wiki)
-    )
-    return await _item_of(session, row, paper, project_id, user_id)
+    await user_library.save_paper(session, user_id=user_id, paper=paper)
+    return _item_dict(row, paper)
 
 
 async def update_note(
@@ -331,7 +234,6 @@ async def update_note(
     *,
     project_id: uuid.UUID,
     paper_id: uuid.UUID,
-    user_id: uuid.UUID,
     note: str | None,
 ) -> dict[str, Any]:
     row = await _get_row(session, project_id=project_id, paper_id=paper_id)
@@ -341,33 +243,7 @@ async def update_note(
     await session.commit()
     paper = await session.get(Paper, paper_id)
     assert paper is not None  # 书架行外键保证
-    return await _item_of(session, row, paper, project_id, user_id)
-
-
-async def refresh_snapshot(
-    session: AsyncSession,
-    *,
-    project_id: uuid.UUID,
-    paper_id: uuid.UUID,
-    user_id: uuid.UUID,
-) -> dict[str, Any]:
-    """手动刷新书架快照：从当前可得的最优 wiki（库版 > 个人版）重拷。
-
-    两个来源都没有 → NoWikiSourceError（路由映射 409）。"""
-    row = await _get_row(session, project_id=project_id, paper_id=paper_id)
-    if row is None:
-        raise ShelfItemNotFoundError(str(paper_id))
-    paper = await session.get(Paper, paper_id)
-    assert paper is not None  # 书架行外键保证
-    live = _pick_live_wiki(await _wiki_rows_for(session, [paper_id]), project_id)
-    personal = await user_library.personal_wiki_map(session, user_id=user_id, papers=[paper])
-    best = live or personal.get(paper_id)
-    if best is None:
-        raise NoWikiSourceError(str(paper_id))
-    row.wiki_snapshot = best
-    row.snapshot_at = utcnow()
-    await session.commit()
-    return await _item_of(session, row, paper, project_id, user_id)
+    return _item_dict(row, paper)
 
 
 async def remove_from_shelf(
@@ -387,9 +263,9 @@ async def remove_from_shelf(
 
 
 async def restore_from_shelf(
-    session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID, user_id: uuid.UUID
+    session: AsyncSession, *, project_id: uuid.UUID, paper_id: uuid.UUID
 ) -> dict[str, Any]:
-    """从回收站召回：清空回收站标记，条目原样回到书架（快照 / 备注都不动）。"""
+    """从回收站召回：清空回收站标记，条目原样回到书架（备注不动）。"""
     row = await _get_row(session, project_id=project_id, paper_id=paper_id, trashed=True)
     if row is None:
         raise ShelfItemNotFoundError(str(paper_id))
@@ -398,7 +274,7 @@ async def restore_from_shelf(
     await session.commit()
     paper = await session.get(Paper, paper_id)
     assert paper is not None  # 书架行外键保证
-    return await _item_of(session, row, paper, project_id, user_id)
+    return _item_dict(row, paper)
 
 
 async def purge_from_shelf(

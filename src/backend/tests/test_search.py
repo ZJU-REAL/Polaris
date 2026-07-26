@@ -22,22 +22,30 @@ async def _setup(client):
 
     async with get_sessionmaker()() as session:
         idea = Idea(project_id=pid, title="Graph retrieval idea", summary="用图检索增强 RAG")
+        graph_paper = await add_paper(
+            session,
+            project_id=pid,
+            title="Graph Retrieval for LLMs",
+            tldr="graph-based retrieval",
+            status="included",
+        )
         session.add_all(
             [
-                await add_paper(session,
-                    project_id=pid,
-                    title="Graph Retrieval for LLMs",
-                    tldr="graph-based retrieval",
-                    status="included",
-                ),
+                graph_paper,
                 await add_paper(
                     session,
                     project_id=pid,
                     title="Excluded graph paper",
                     status="excluded",
                 ),
-                await add_concept(session,
-                    project_id=pid, name="Graph RAG", slug="graph-rag", definition="图增强检索"
+                # 概念按「库内论文关联到它」进课题作用域（概念本身不属于任何库）
+                await add_concept(
+                    session,
+                    project_id=pid,
+                    paper_id=graph_paper.id,
+                    name="Graph RAG",
+                    slug="graph-rag",
+                    definition="图增强检索",
                 ),
                 idea,
                 VoyageRun(project_id=pid, kind="wiki_bootstrap", goal="graph literature survey"),

@@ -37,9 +37,9 @@ class LibraryEntryRead(BaseModel):
 
 
 class LibraryEntryDetail(LibraryEntryRead):
-    """单条详情：多带 wiki 快照（列表响应不含，避免撑爆）。"""
+    """单条详情：多带这篇论文的解读（列表响应不含，避免撑爆）。"""
 
-    wiki_content: str | None
+    wiki_content: str | None = None
 
 
 class LibraryImportRead(LibraryEntryRead):

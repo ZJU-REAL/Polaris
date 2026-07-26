@@ -318,8 +318,8 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
     assert resp.json()["results"][0]["forbidden"] is True
 
 
-async def test_compile_entry_and_collect_copies_wiki(client, monkeypatch):
-    """单篇解读编译（fake LLM）落 entry；收录时拷进方向库成员行 / 书架快照 / 个人库条目。"""
+async def test_compile_entry_and_collect(client, monkeypatch):
+    """单篇解读编译（fake LLM）落 paper_wikis；收录进方向库 / 书架 / 个人库后照样读得到。"""
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     project_id, library_id = await make_project_with_library(client, headers, name="wiki-proj")
@@ -359,11 +359,22 @@ async def test_compile_entry_and_collect_copies_wiki(client, monkeypatch):
         membership = (
             await session.execute(select(LibraryPaper).where(LibraryPaper.library_id == library_id))
         ).scalar_one()
-        assert membership.wiki_content and membership.compiled_at is not None
+        assert membership.status == "included"
         shelf_row = (await session.execute(select(TopicPaper))).scalar_one()
-        assert shelf_row.wiki_snapshot
+        assert shelf_row.paper_id == uuid.UUID(paper_id)
         personal = (await session.execute(select(UserLibraryEntry))).scalar_one()
-        assert personal.wiki_content
+        assert personal.saved is True
+
+    # 解读只有一份：库 / 书架 / 个人库三条路径读到的都是它
+    resp = await client.get(f"/api/papers/{paper_id}", headers=headers)
+    wiki = resp.json()["wiki_content"]
+    assert wiki and wiki.strip()
+    resp = await client.get(f"/api/projects/{project_id}/shelf", headers=headers)
+    assert resp.json()["items"][0]["wiki_content"] == wiki
+    entry_resp = await client.get("/api/me/library?tab=saved", headers=headers)
+    lib_entry_id = entry_resp.json()["items"][0]["id"]
+    resp = await client.get(f"/api/me/library/{lib_entry_id}", headers=headers)
+    assert resp.json()["wiki_content"] == wiki
 
 
 async def test_daily_pool_chat_sse(client, monkeypatch):

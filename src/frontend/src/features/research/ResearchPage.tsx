@@ -16,7 +16,6 @@ import {
   type ShelfImportInput,
   type ShelfItemRead,
   type ShelfSort,
-  type ShelfWikiSource,
 } from '../../lib/api';
 import { fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
@@ -39,7 +38,7 @@ import {
 import { AddPaperModal } from './AddPaperModal';
 import { PaperProgressModal } from '../library/PaperProgressModal';
 import { ShelfChatTab } from './ShelfChatTab';
-import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
+import { shelfHasWiki, ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
 
 /* ============================================================
    /t/:topicId/research — 课题相关研究书架。
@@ -49,19 +48,19 @@ import { ShelfDetailPane, WikiBadge } from './ShelfDetailPane';
    入架同时自动收藏进我的文献库；移出书架不动个人库。
    ============================================================ */
 
-// 后端单页上限 100；排序/关键词/筛选走后端，wiki_source 状态过滤在页内完成
+// 后端单页上限 100；排序/关键词/筛选走后端，解读状态过滤在页内完成
 const PAGE_SIZE = 100;
 
-type ShelfFilter = 'all' | ShelfWikiSource;
+type ShelfFilter = 'all' | 'has_wiki' | 'no_wiki';
 /** 页面级 tab：书架列表 / 相关研究对话 */
 type PageTab = 'list' | 'chat';
 /** 阅读状态筛选：空串=不限；其余透传给后端 reading_status。 */
 type ReadingFilter = '' | ReadingStatus;
 
 /** 语义检索命中的 ScoredPaper（课题语料，未必已入书架）映射成书架行需要的最小字段。
-    note / wiki_content / snapshot_at / source_library_id 语义结果里没有，按缺省填；
-    wiki_source 用 has_wiki 粗略推断（有解读→库版徽标，没有→暂无）。行/详情只作展示用，
-    真正的备注/移出/生成走 (pid, paper_id) 幂等接口，不依赖这些映射字段。 */
+    note / wiki_content / source_library_id 语义结果里没有，按缺省填（有没有解读看 has_wiki，
+    正文得进详情才拉）。行/详情只作展示用，真正的备注/移出走 (pid, paper_id) 幂等接口，
+    不依赖这些映射字段。 */
 function scoredToShelf(p: PaperRead & { score?: number | null }): ShelfItemRead {
   return {
     paper_id: p.id,
@@ -75,9 +74,8 @@ function scoredToShelf(p: PaperRead & { score?: number | null }): ShelfItemRead 
     url: p.url,
     tldr: p.tldr,
     note: null,
-    wiki_source: p.has_wiki ? 'live' : 'none',
+    has_wiki: p.has_wiki,
     wiki_content: null,
-    snapshot_at: null,
     source_library_id: null,
     added_at: p.created_at,
   };
@@ -92,10 +90,8 @@ const SORTS: { v: ShelfSort; zh: string; en: string }[] = [
 ];
 const FILTERS: { v: ShelfFilter; zh: string; en: string }[] = [
   { v: 'all', zh: '全部状态', en: 'All statuses' },
-  { v: 'live', zh: '库版解读', en: 'Library wiki' },
-  { v: 'personal', zh: '个人版解读', en: 'Personal wiki' },
-  { v: 'snapshot', zh: '快照解读', en: 'Snapshot wiki' },
-  { v: 'none', zh: '暂无解读', en: 'No wiki' },
+  { v: 'has_wiki', zh: '已有解读', en: 'Has wiki' },
+  { v: 'no_wiki', zh: '暂无解读', en: 'No wiki' },
 ];
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -176,7 +172,7 @@ function ShelfRow({
           </span>
         )}
         <span style={{ marginLeft: 'auto' }} />
-        <WikiBadge source={item.wiki_source} compact />
+        <WikiBadge hasWiki={shelfHasWiki(item)} compact />
       </div>
 
       <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>{item.title}</div>
@@ -580,9 +576,12 @@ export function ResearchPage() {
   const items = useMemo(() => data?.items ?? [], [data]);
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.size)) : 1;
 
-  // 后端已排序/筛选；wiki_source 状态过滤留在页内完成（后端无此参数）
+  // 后端已排序/筛选；解读状态过滤留在页内完成（后端无此参数）
   const visible = useMemo(
-    () => (filter === 'all' ? items : items.filter((i) => i.wiki_source === filter)),
+    () =>
+      filter === 'all'
+        ? items
+        : items.filter((i) => (filter === 'has_wiki' ? shelfHasWiki(i) : !shelfHasWiki(i))),
     [items, filter],
   );
 
@@ -667,25 +666,6 @@ export function ResearchPage() {
       void queryClient.invalidateQueries({ queryKey: ['shelf-trash', pid] });
     },
     onError: (e) => toast(`${tr('移除失败：', 'Failed to remove: ')}${errText(e)}`, 'error'),
-  });
-
-  // 个人版 wiki 按需生成（wiki_source=none 的论文；费用记个人额度）
-  const generateMutation = useMutation({
-    mutationFn: (paperId: string) => api.compilePersonalWiki(paperId, pid),
-    onSuccess: () => {
-      toast(tr('个人版解读已生成', 'Personal wiki generated'), 'ok');
-      invalidate();
-    },
-    onError: (e) => toast(`${tr('生成失败：', 'Failed to generate: ')}${errText(e)}`, 'error'),
-  });
-
-  const refreshSnapshotMutation = useMutation({
-    mutationFn: (paperId: string) => api.refreshShelfSnapshot(pid, paperId),
-    onSuccess: () => {
-      toast(tr('快照已刷新', 'Snapshot refreshed'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['shelf', pid] });
-    },
-    onError: (e) => toast(`${tr('刷新失败：', 'Failed to refresh: ')}${errText(e)}`, 'error'),
   });
 
   // 多选导出：把勾选的 paper_id 子集导出引用（course 作用域，复用文献库同一端点）
@@ -1059,12 +1039,6 @@ export function ResearchPage() {
                 onSaveNote={(note) => noteMutation.mutate({ paperId: selected.paper_id, note })}
                 removePending={removeMutation.isPending}
                 onRemove={() => removeMutation.mutate(selected.paper_id)}
-                generating={generateMutation.isPending && generateMutation.variables === selected.paper_id}
-                onGenerateWiki={() => generateMutation.mutate(selected.paper_id)}
-                refreshing={
-                  refreshSnapshotMutation.isPending && refreshSnapshotMutation.variables === selected.paper_id
-                }
-                onRefreshSnapshot={() => refreshSnapshotMutation.mutate(selected.paper_id)}
                 onShelf={!semantic || selectedOnShelf}
                 onAdd={() => addMutation.mutate(selected.paper_id)}
                 addPending={addMutation.isPending && addMutation.variables === selected.paper_id}

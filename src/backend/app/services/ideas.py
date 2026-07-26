@@ -11,12 +11,13 @@ from app.models.activity import Activity
 from app.models.gate import Gate
 from app.models.idea import IDEA_STATUSES, Idea
 from app.models.library_direction import LibraryPaper
-from app.models.paper import Concept, Paper
+from app.models.paper import Concept, Paper, paper_concepts
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.idea import DeepIdeaRequest, ForgeKnobs
 from app.schemas.review import TournamentRequest
+from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids
 
 # 同项目 idea 类 voyage 互斥（docs/api-m3.md §1 + docs/api-idea2.md §2）
@@ -197,7 +198,15 @@ async def _validate_seed(
         if concept is None:
             raise InvalidSeedError(value)
         library_ids = await get_source_library_ids(session, project_id)
-        if concept.library_id not in set(library_ids):
+        # 概念不属于任何库：在不在本课题语料内 = 有没有本课题库里的论文用到它
+        in_corpus = bool(library_ids) and (
+            await session.execute(
+                library_concept_ids(library_ids)
+                .where(paper_concepts.c.concept_id == concept.id)
+                .limit(1)
+            )
+        ).first() is not None
+        if not in_corpus:
             raise InvalidSeedError(value)
         return f"概念「{concept.name}」"
     if seed_type == "idea":

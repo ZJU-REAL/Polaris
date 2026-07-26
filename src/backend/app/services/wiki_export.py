@@ -26,7 +26,7 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import Concept, Paper, PaperNote
 from app.models.project import Project
 from app.models.user import User
-from app.services.concepts import wiki_slug
+from app.services.concepts import library_concept_ids, wiki_slug
 from app.services.libraries import (
     dedupe_member_rows,
     get_source_library_ids,
@@ -153,7 +153,7 @@ async def build_obsidian_zip_for_libraries(
             (
                 await session.execute(
                     select(Concept)
-                    .where(Concept.library_id.in_(ids))
+                    .where(Concept.id.in_(library_concept_ids(ids)))
                     .options(selectinload(Concept.papers))
                     .order_by(Concept.name)
                 )
@@ -208,7 +208,7 @@ async def build_obsidian_zip_for_libraries(
                     "concepts": [c.name for c in paper.concepts],
                 }
             )
-            body = membership.wiki_content or (paper.abstract or "（尚未编译 wiki 页）")
+            body = paper.wiki_content or (paper.abstract or "（尚未编译 wiki 页）")
             if paper.figures:
                 body, extra_figure_lines = _inline_paper_figures(zf, paper, slug, body)
                 if extra_figure_lines:

@@ -10,7 +10,7 @@ from typing import Any, NamedTuple
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.paper import Paper
+from app.models.paper import Paper, new_paper
 from app.services.dedup import dedup_key_for, pool_dedup_key
 from app.services.libraries import (
     ensure_membership,
@@ -166,7 +166,7 @@ async def create_pool_paper(
         external_ids["arxiv"] = fields["arxiv_id"]
     if fields.get("doi"):
         external_ids["doi"] = fields["doi"]
-    paper = Paper(
+    paper = new_paper(
         source="manual",
         dedup_key=pool_dedup_key(
             arxiv_id=fields.get("arxiv_id"),
@@ -238,7 +238,7 @@ async def create_pool_paper_stub(
         external_ids["arxiv"] = fields["arxiv_id"]
     if fields.get("doi"):
         external_ids["doi"] = fields["doi"]
-    paper = Paper(
+    paper = new_paper(
         source="manual",
         dedup_key=pool_dedup_key(
             arxiv_id=fields.get("arxiv_id"),
