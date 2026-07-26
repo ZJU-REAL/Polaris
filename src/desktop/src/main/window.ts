@@ -1,6 +1,7 @@
 import { BrowserWindow, screen, shell } from 'electron';
 import { join } from 'node:path';
 
+import { IPC_CHANNEL_EVENT } from '../shared/contract';
 import { APP_INDEX, APP_ORIGIN } from './protocol';
 import { clearStagedRenderer, stagedRendererDir } from './updates/renderer-store';
 import { readConfig, writeConfig, type WindowState } from './store';
@@ -51,7 +52,10 @@ const isWin = process.platform === 'win32';
 /**
  * 非 macOS 去掉了菜单栏（见 menu.ts），随之丢掉的是菜单绑定的快捷键。
  * 剪贴板类（Ctrl+C/V/X/A/Z）由 Chromium 在渲染层直接处理，不受影响；
- * 这里只补回重载、开发者工具与缩放这几个挂在菜单上的。
+ * 这里补回挂在菜单上的那些。
+ *
+ * Ctrl+, 尤其不能漏：它是「换服务器」的**唯一**入口（菜单里的 Server…）。
+ * 少了它，用户在 Windows 上只能靠删 %APPDATA%\polaris-desktop 才能改地址。
  */
 function installKeyboardShortcuts(win: BrowserWindow): void {
   if (isMac) return;
@@ -68,6 +72,9 @@ function installKeyboardShortcuts(win: BrowserWindow): void {
       return fire(() => win.webContents.toggleDevTools());
     }
     if (!ctrl) return;
+    if (key === ',') {
+      return fire(() => win.webContents.send(IPC_CHANNEL_EVENT, { type: 'host.openServerSetup' }));
+    }
     const zoom = win.webContents.getZoomLevel();
     if (key === '=' || key === '+') return fire(() => win.webContents.setZoomLevel(zoom + 0.5));
     if (key === '-') return fire(() => win.webContents.setZoomLevel(zoom - 0.5));
