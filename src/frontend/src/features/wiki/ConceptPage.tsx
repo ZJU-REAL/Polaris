@@ -6,7 +6,7 @@ import { toast } from '../../components/ui/Toast';
 import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { ConceptDetailPane } from './ConceptsTab';
-import { conceptPath } from './shared';
+import { conceptPath, pickConceptByName } from './shared';
 
 /* ============================================================
    /concepts/:id — 概念页。概念是平台级实体（论文级上链，不属于任何课题），
@@ -32,7 +32,7 @@ export function ConceptPage() {
   const onWikiLink = useCallback(
     async (name: string) => {
       try {
-        const hit = (await api.lookupConcept(name))[0];
+        const hit = pickConceptByName(await api.lookupConcept(name), name);
         if (!hit) {
           toast(tr(`概念「${name}」还没入库`, `“${name}” is not in the knowledge base yet`), 'info');
           return;

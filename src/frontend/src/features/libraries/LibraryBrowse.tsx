@@ -54,6 +54,7 @@ import {
   SemanticSwitch,
   YearRangeField,
   parseYear,
+  pickConceptByName,
   saveBlob,
   useDebounced,
 } from '../wiki/shared';
@@ -888,10 +889,10 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
     setPendingConceptName(name);
   }, []);
 
-  // [[概念名]] → 概念 id（库端点解析）
+  // [[概念名]] → 概念 id：概念全平台一份，走平台级按名查（不限本库），命中后仍留在本库视角
   const resolveQuery = useQuery({
-    queryKey: ['lib-concept-resolve', libraryId, pendingConceptName],
-    queryFn: () => api.listLibraryConcepts(libraryId, { q: pendingConceptName ?? '' }),
+    queryKey: ['concept-resolve', pendingConceptName],
+    queryFn: () => api.lookupConcept(pendingConceptName ?? ''),
     enabled: !!pendingConceptName,
     retry: false,
   });
@@ -903,13 +904,15 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
       return;
     }
     if (!resolveQuery.data) return;
-    const name = pendingConceptName.toLowerCase();
-    const hit = resolveQuery.data.find((c) => c.name.toLowerCase() === name) ?? resolveQuery.data[0];
+    const hit = pickConceptByName(resolveQuery.data, pendingConceptName);
     if (hit) {
       setConceptId(hit.id);
       setTab('concepts');
     } else {
-      toast(tr(`概念 ${pendingConceptName} 尚未入库`, `Concept ${pendingConceptName} is not in the library yet`), 'info');
+      toast(
+        tr(`概念「${pendingConceptName}」还没入库`, `“${pendingConceptName}” is not in the knowledge base yet`),
+        'info',
+      );
     }
     setPendingConceptName(null);
   }, [pendingConceptName, resolveQuery.data, resolveQuery.isError]);

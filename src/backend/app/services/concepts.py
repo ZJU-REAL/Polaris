@@ -496,23 +496,25 @@ async def link_all_paper_concepts(
 async def link_paper_concepts(
     session: AsyncSession,
     paper: Paper,
-    membership: LibraryPaper,
+    membership: LibraryPaper | None = None,
     *,
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
 ) -> tuple[int, int]:
-    """单篇概念上链（手动编译/重编译后调用，docs/api-lit.md §6.6）——同步语义：
+    """单篇概念上链（手动编译/重编译/每日推送编译后调用，docs/api-lit.md §6.6）——同步语义：
 
     从这篇论文的解读正文抽 [[双链]] → 缺失概念建词条（全平台一份，已有同名的直接复用；
     LLM 定义，失败占位）→ 建关联；再删除该论文上新正文已不引用的陈旧关联，被解除关联
     且再无任何论文引用的概念一并删除。正文为空/None 时直接返回，不做任何删除（防误删）。
     返回 (新建概念数, 新建关联数)。调用方无需再 commit（本函数自行提交）。
-    project_id 仅用于 LLM 用量记账归属。
+    membership / project_id 仅用于 LLM 用量记账归属：概念与库无关，不属于任何库的论文
+    （每日推送里直接编译的）照样上链，费用记平台级（library_id 空）+ 触发的人。
     """
     if not paper.wiki_content:
         return 0, 0
-    library_id = membership.library_id  # 仅用于 LLM 用量记账（P6）
+    # 仅用于 LLM 用量记账（P6）：从库里发起的记那个库的账，池级路径记平台级
+    library_id = membership.library_id if membership is not None else None
     names = extract_wikilinks(paper.wiki_content)
     existing = (
         (await session.execute(select(Concept).where(Concept.name.in_(names))))

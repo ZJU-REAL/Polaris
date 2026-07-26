@@ -229,6 +229,40 @@ async def test_link_paper_concepts_empty_content_keeps_links(client):
     assert counts == {"自我博弈": 1, "强化学习": 2, "课程学习": 1}
 
 
+async def test_link_paper_concepts_without_membership(client):
+    """池内论文（不属于任何库）也能上链：不传成员行 → 记账落平台级，不报错。"""
+    from app.core.llm.router import LLMRouter
+    from app.models.llm_config import LLMUsage
+    from app.models.paper import Concept, new_paper
+
+    await register_and_login(client, email="pool-link@example.com")
+    async with get_sessionmaker()() as session:
+        paper = new_paper(title="Pool Paper", abstract="a", source="manual")
+        session.add(paper)
+        await session.flush()
+        paper.wiki = PaperWiki(content="本文用 [[池内概念]] 做实验。")
+        await session.commit()
+        created, linked = await link_paper_concepts(session, paper, llm=LLMRouter())
+        paper_id = paper.id
+    assert (created, linked) == (1, 1)
+
+    async with get_sessionmaker()() as session:
+        names = (
+            (
+                await session.execute(
+                    select(Concept.name)
+                    .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
+                    .where(paper_concepts.c.paper_id == paper_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert names == ["池内概念"]
+        usage = (await session.execute(select(LLMUsage))).scalars().all()
+        assert usage and all(row.library_id is None for row in usage)
+
+
 async def test_relink_requires_membership(client):
     project_id, _ = await _setup(client)
     other = await register_and_login(client, email="bob@example.com")

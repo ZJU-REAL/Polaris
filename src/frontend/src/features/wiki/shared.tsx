@@ -36,6 +36,29 @@ export function categoryMeta(cat: string): CategoryMeta {
   return CONCEPT_CATEGORY[cat as ConceptCategory] ?? CONCEPT_CATEGORY.other;
 }
 
+/** 概念名归一化：小写 + 非字母数字折叠成 '-'（与后端 slug 同口径），
+    吃掉「self attention / self-attention」这类写法差异。 */
+function normalizeConceptName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * `[[双链]]` 解析结果里挑哪一条：名字精确匹配（忽略大小写）优先，再退一步比归一化名
+ * （空格/连接符写法差异）。都不中就是「还没入库」——绝不拿子串结果凑数，
+ * 否则 `[[attention]]` 会跳去「flash attention」。
+ */
+export function pickConceptByName<T extends { name: string }>(list: T[], name: string): T | null {
+  const needle = name.trim().toLowerCase();
+  const exact = list.find((c) => c.name.trim().toLowerCase() === needle);
+  if (exact) return exact;
+  const slug = normalizeConceptName(name);
+  return list.find((c) => normalizeConceptName(c.name) === slug) ?? null;
+}
+
 /**
  * 概念页路径：`/concepts/<id>`。
  * - 带 libraryId（从某个库的上下文点进来）→ 关联论文只列这个库里的；
@@ -63,7 +86,7 @@ export function usePoolConceptNav() {
   const openConceptByName = useCallback(
     async (name: string) => {
       try {
-        const hit = (await api.lookupConcept(name))[0];
+        const hit = pickConceptByName(await api.lookupConcept(name), name);
         if (!hit) {
           toast(tr(`概念「${name}」还没入库`, `“${name}” is not in the knowledge base yet`), 'info');
           return;

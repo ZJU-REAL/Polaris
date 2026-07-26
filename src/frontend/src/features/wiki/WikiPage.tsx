@@ -8,6 +8,7 @@ import { api } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { ExportMenu, PapersTab, type AdvSearchSeed } from './PapersTab';
 import { ConceptsTab } from './ConceptsTab';
+import { pickConceptByName } from './shared';
 import { LibraryChatTab } from './LibraryChatTab';
 import { IngestTab } from './IngestTab';
 import { NotesTab } from './NotesTab';
@@ -109,12 +110,10 @@ export function WikiWorkbench({
   });
 
   // —— [[概念名]] → 概念 id 解析 ——
+  // 概念全平台一份，一律走平台级按名查（不限本库）；命中后仍留在当前库视角展示。
   const resolveQuery = useQuery({
-    queryKey: ['concept-resolve', scopeId, pendingConceptName],
-    queryFn: () =>
-      libScope
-        ? api.listLibraryConcepts(libraryId!, { q: pendingConceptName ?? '' })
-        : api.listConcepts(pid!, { q: pendingConceptName ?? '' }),
+    queryKey: ['concept-resolve', pendingConceptName],
+    queryFn: () => api.lookupConcept(pendingConceptName ?? ''),
     enabled: !!pendingConceptName,
     retry: false,
   });
@@ -126,15 +125,13 @@ export function WikiWorkbench({
       return;
     }
     if (!resolveQuery.data) return;
-    const name = pendingConceptName.toLowerCase();
-    const hit =
-      resolveQuery.data.find((c) => c.name.toLowerCase() === name) ?? resolveQuery.data[0];
+    const hit = pickConceptByName(resolveQuery.data, pendingConceptName);
     if (hit) {
       setConceptId(hit.id);
       setTab('concepts');
     } else {
       toast(
-        tr(`概念 ${pendingConceptName} 尚未入库`, `Concept ${pendingConceptName} is not in the library yet`),
+        tr(`概念「${pendingConceptName}」还没入库`, `“${pendingConceptName}” is not in the knowledge base yet`),
         'info',
       );
     }

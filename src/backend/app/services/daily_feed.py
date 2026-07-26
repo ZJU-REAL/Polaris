@@ -786,9 +786,13 @@ async def compile_entry_wiki(
     （compiled_by 一并更新）；只有「同一篇正在编译中」才拒（CompileInProgressError）。
     每日池论文建池时不下 PDF，直接编译只能拿摘要产出纯文字稿；故先尽力补下 PDF
     （幂等，失败则降级），再抽图 + 标注重要图，与单篇重新编译同款逻辑产出图文解读。
+    编译完就地上链概念（与重新编译同款）：概念与库无关，池里的论文不属于任何库也照建，
+    否则解读里的 [[双链]] 全点不开。
     """
     from pathlib import Path
 
+    from app.core.llm.router import get_llm_router
+    from app.services.concepts import link_paper_concepts
     from app.services.figure_annotate import annotate_figures
     from app.services.literature.pdf_extract import extract_figures
     from app.services.paper_wiki import upsert_wiki
@@ -841,6 +845,9 @@ async def compile_entry_wiki(
         compiled_by=user_id,
     )
     await session.commit()
+    # 单篇概念上链：正文里的 [[双链]] 建词条并关联。不传成员行 → 记账落平台级
+    # （library_id 空）+ 触发编译的人，不把费用摊给某个不相干的库。
+    await link_paper_concepts(session, paper, llm=get_llm_router(), user_id=user_id)
     return wiki
 
 

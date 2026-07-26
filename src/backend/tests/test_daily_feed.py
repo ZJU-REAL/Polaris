@@ -377,6 +377,64 @@ async def test_compile_entry_and_collect(client, monkeypatch):
     assert resp.json()["wiki_content"] == wiki
 
 
+async def test_compile_entry_links_concepts_without_library(client, monkeypatch):
+    """每日推送编译也要上链概念：论文不属于任何库照建词条，费用记平台级（library_id 空）。
+
+    再编译一次能把被清掉的关联补回来——存量论文重新编译即可，不用迁移。"""
+    token = await register_and_login(client, email="daily-concepts@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.00061", "Concept Me")]})
+    item = (await client.get("/api/daily/papers", headers=headers)).json()["items"][0]
+
+    resp = await client.post(f"/api/daily/papers/{item['entry_id']}/compile", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert "[[" in resp.json()["wiki_content"]  # 正文里有双链
+
+    from sqlalchemy import delete, select
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import LibraryPaper
+    from app.models.llm_config import LLMUsage
+    from app.models.paper import Concept, paper_concepts
+
+    paper_id = uuid.UUID(item["paper_id"])
+
+    async def _linked_concepts() -> list[Concept]:
+        async with get_sessionmaker()() as session:
+            return list(
+                (
+                    await session.execute(
+                        select(Concept)
+                        .join(paper_concepts, paper_concepts.c.concept_id == Concept.id)
+                        .where(paper_concepts.c.paper_id == paper_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+    concepts = await _linked_concepts()
+    assert {c.name for c in concepts} == {"Agent", "强化学习"}  # fake librarian 的双链
+    assert all(not c.definition.endswith("（定义待补充）") for c in concepts)  # 定义真的要到了
+
+    async with get_sessionmaker()() as session:
+        # 这篇论文不属于任何库，上链照样发生
+        assert (await session.execute(select(LibraryPaper))).scalars().all() == []
+        rows = (await session.execute(select(LLMUsage))).scalars().all()
+        assert rows and all(r.library_id is None for r in rows)  # 记账落平台级，不摊给某个库
+        assert any(r.stage == "extract" for r in rows)  # 概念定义那次调用记在触发人名下
+        assert all(r.user_id is not None for r in rows)
+
+        # 存量（编译过但没上链）的路径：清掉关联后重新编译能补回来
+        await session.execute(delete(paper_concepts).where(paper_concepts.c.paper_id == paper_id))
+        await session.commit()
+    assert await _linked_concepts() == []
+
+    resp = await client.post(f"/api/daily/papers/{item['entry_id']}/compile", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert {c.name for c in await _linked_concepts()} == {"Agent", "强化学习"}
+
+
 async def test_daily_pool_chat_sse(client, monkeypatch):
     """池对话：scope = 池内全部论文，摘要级降级（无索引），sources → delta* → done。"""
     token = await register_and_login(client)

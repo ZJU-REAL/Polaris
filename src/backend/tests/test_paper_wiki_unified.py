@@ -315,3 +315,44 @@ async def test_lookup_concept_by_name_platform_wide(client):
 
     resp = await client.get("/api/concepts?name=还没入库的词", headers=headers)
     assert resp.status_code == 200 and resp.json() == []
+
+
+async def test_lookup_concept_is_exact_not_substring(client):
+    """按名字查是精确匹配：[[attention]] 不能命中「flash attention」。
+
+    写法差异（空格/连接符）仍靠 slug 兜住，这是归一化不是子串。"""
+    token = await register_and_login(client, email="concept-exact@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    async with get_sessionmaker()() as session:
+        session.add_all(
+            [
+                Concept(name="Attention", slug="attention", definition="d", category="method"),
+                Concept(
+                    name="Flash Attention",
+                    slug="flash-attention",
+                    definition="d",
+                    category="method",
+                ),
+                Concept(
+                    name="Self-Attention",
+                    slug="self-attention",
+                    definition="d",
+                    category="method",
+                ),
+            ]
+        )
+        await session.commit()
+
+    # 精确（忽略大小写）：只回本尊，不带出「flash attention」
+    resp = await client.get("/api/concepts?name=attention", headers=headers)
+    assert [c["name"] for c in resp.json()] == ["Attention"]
+
+    # 子串不算命中
+    resp = await client.get("/api/concepts?name=flash", headers=headers)
+    assert resp.json() == []
+    resp = await client.get("/api/concepts?name=Attention 机制", headers=headers)
+    assert resp.json() == []
+
+    # 空格 / 连接符写法差异按 slug 归一化后仍能对上
+    resp = await client.get("/api/concepts?name=self attention", headers=headers)
+    assert [c["name"] for c in resp.json()] == ["Self-Attention"]
