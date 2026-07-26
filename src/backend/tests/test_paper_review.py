@@ -61,7 +61,7 @@ async def _clean_crdt():
 def _stub_tectonic(monkeypatch):
     """假 tectonic：用 pymupdf 产出真实可渲染的 main.pdf（评审渲染步骤走真路径）。"""
 
-    def ok_run(binary: str, workdir: Path) -> TectonicRun:
+    def ok_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
         import pymupdf
 
         doc = pymupdf.open()
@@ -72,8 +72,10 @@ def _stub_tectonic(monkeypatch):
         (workdir / "main.log").write_text("", encoding="utf-8")
         return TectonicRun(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(latex_compile, "_find_tectonic", lambda: "/usr/bin/tectonic")
-    monkeypatch.setattr(latex_compile, "_run_tectonic", ok_run)
+    monkeypatch.setattr(
+        latex_compile, "_resolve_engine", lambda requested: ("tectonic", "/usr/bin/tectonic")
+    )
+    monkeypatch.setattr(latex_compile, "_run_engine", ok_run)
 
 
 def _make_engine() -> tuple[VoyageEngine, RecordingBus]:

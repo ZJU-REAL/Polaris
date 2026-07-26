@@ -23,13 +23,15 @@ async def _clean_crdt():
 
 @pytest_asyncio.fixture(autouse=True)
 def _stub_tectonic(monkeypatch):
-    def ok_run(binary: str, workdir: Path) -> TectonicRun:
+    def ok_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
         (workdir / "main.pdf").write_bytes(b"%PDF stub")
         (workdir / "main.log").write_text("", encoding="utf-8")
         return TectonicRun(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(latex_compile, "_find_tectonic", lambda: "/usr/bin/tectonic")
-    monkeypatch.setattr(latex_compile, "_run_tectonic", ok_run)
+    monkeypatch.setattr(
+        latex_compile, "_resolve_engine", lambda requested: ("tectonic", "/usr/bin/tectonic")
+    )
+    monkeypatch.setattr(latex_compile, "_run_engine", ok_run)
 
 
 async def _setup(client):
