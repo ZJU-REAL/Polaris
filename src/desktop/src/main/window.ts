@@ -45,6 +45,36 @@ function persistBounds(win: BrowserWindow): void {
   writeConfig({ window: { x: b.x, y: b.y, width: b.width, height: b.height, maximized } });
 }
 
+const isMac = process.platform === 'darwin';
+const isWin = process.platform === 'win32';
+
+/**
+ * 非 macOS 去掉了菜单栏（见 menu.ts），随之丢掉的是菜单绑定的快捷键。
+ * 剪贴板类（Ctrl+C/V/X/A/Z）由 Chromium 在渲染层直接处理，不受影响；
+ * 这里只补回重载、开发者工具与缩放这几个挂在菜单上的。
+ */
+function installKeyboardShortcuts(win: BrowserWindow): void {
+  if (isMac) return;
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const ctrl = input.control || input.meta;
+    const key = input.key.toLowerCase();
+    const fire = (fn: () => void) => {
+      fn();
+      event.preventDefault();
+    };
+    if (key === 'f5' || (ctrl && key === 'r')) return fire(() => win.webContents.reload());
+    if (key === 'f12' || (ctrl && input.shift && key === 'i')) {
+      return fire(() => win.webContents.toggleDevTools());
+    }
+    if (!ctrl) return;
+    const zoom = win.webContents.getZoomLevel();
+    if (key === '=' || key === '+') return fire(() => win.webContents.setZoomLevel(zoom + 0.5));
+    if (key === '-') return fire(() => win.webContents.setZoomLevel(zoom - 0.5));
+    if (key === '0') return fire(() => win.webContents.setZoomLevel(0));
+  });
+}
+
 export function createWindow(): BrowserWindow {
   const config = readConfig();
   const win = new BrowserWindow({
@@ -53,10 +83,24 @@ export function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     backgroundColor: '#ffffff',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // 沉浸式标题栏：macOS 与 Windows 都不要系统标题栏，窗口控件以覆盖层形式
+    // 画在内容之上。Linux 的窗口管理器差异太大（有的根本不画覆盖层），保持原生
+    // 标题栏，稳妥。
+    titleBarStyle: isMac ? 'hiddenInset' : isWin ? 'hidden' : 'default',
     // 把交通灯钉在这条 40px 留白带的垂直中心（(40-12)/2 = 14），不同 macOS 版本
     // 的默认内缩量不一样，钉死才能和 global.css 的 --titlebar-h 对得上。
-    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 18, y: 14 } } : {}),
+    ...(isMac ? { trafficLightPosition: { x: 18, y: 14 } } : {}),
+    // Windows 的最小化/最大化/关闭画在右上角。高度与 --titlebar-h 的 40 窗口点
+    // 对齐，配色取自 tokens.css（--app-bg / --text-2），否则按钮区会是一块白底。
+    ...(isWin
+      ? {
+          titleBarOverlay: {
+            color: '#f7f9fc',
+            symbolColor: '#59637a',
+            height: 40,
+          },
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -94,6 +138,8 @@ export function createWindow(): BrowserWindow {
   win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
     callback(false);
   });
+
+  installKeyboardShortcuts(win);
 
   // 热更新装上的界面若加载不起来，退回包内自带的那份再重来一次。
   // 只挡主框架的失败；子资源 404 由协议处理器各自处理，不该整窗回滚。

@@ -67,7 +67,7 @@ export function ServerSetupPage({ onCancel }: { onCancel?: () => void }) {
         <PolarisWordmark height={32} />
       </div>
 
-      <div style={{ position: 'absolute', top: 18, right: 20 }}>
+      <div className="auth-lang">
         <LangToggle />
       </div>
 

@@ -20,12 +20,12 @@ html { zoom: 1.1; }
    不受 zoom 影响，所以要先除以 1.1——40 物理 px ÷ 1.1 ≈ 36.4px。
    web 端与非 macOS 桌面端该变量恒为 0，所有 calc 退化成原值。 */
 :root { --titlebar-h: 0px; }
-:root[data-desktop-platform='darwin'] { --titlebar-h: 36.4px; }
+:root[data-desktop-titlebar='overlay'] { --titlebar-h: 36.4px; }
 
 /* 让空出来的带子可以拖动窗口（内容盖住了系统标题栏区域，否则拖不动）。
    只覆盖留白本身，不会挡住任何可点元素。 */
 :root[data-desktop-platform='darwin'] .sidebar::before,
-:root[data-desktop-platform='darwin'] .auth-page::before {
+:root[data-desktop-titlebar='overlay'] .auth-page::before {
   content: '';
   position: absolute; top: 0; left: 0; right: 0;
   height: var(--titlebar-h);
@@ -106,6 +106,24 @@ input {
 /* —— 收起态：图标轨道（只留图标，隐藏文字） ——
    图标列中心恒为**内容盒**中线（66/2 = 33px），与展开态一致，收放不跳动。 */
 .nav-collapsed .sidebar { width: 66px; }
+
+/* —— Windows 沉浸式标题栏 ——
+   窗口控件（最小化/最大化/关闭）以覆盖层画在**右上角**，而内容仍从 y=0 开始，
+   会压住顶栏右侧的搜索框与那排按钮。macOS 的交通灯在左上角、正好落在侧栏上，
+   所以那边只需给侧栏留白；Windows 的按钮在主内容列上方，只能整个应用下移。
+
+   .app 是 fixed inset:0 的外壳，给它加 padding-top 就把侧栏与主列一起推下去，
+   空出来的带子正好容纳覆盖层按钮。 */
+:root[data-desktop-platform='win32'] .app { padding-top: var(--titlebar-h); }
+/* 让这条空带子能拖动窗口。原生按钮画在网页内容之上，所以覆盖它也不会挡住点击。 */
+:root[data-desktop-platform='win32'] .app::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: var(--titlebar-h);
+  -webkit-app-region: drag;
+}
+/* 登录/配置页是独立的 fixed 浮层，不在 .app 内，右上角的语言切换要单独避让。 */
+:root[data-desktop-platform='win32'] .auth-lang { top: calc(18px + var(--titlebar-h)); }
 
 /* —— 桌面端（macOS）收起态轨道 ——
    要容得下交通灯：灯组在窗口坐标里占 x=18..70pt（window.ts 把 trafficLightPosition
@@ -770,6 +788,7 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
     radial-gradient(120% 130% at 20% 0%, #f2f5fa 0%, #e3eaf4 45%, #d3deef 100%);
   padding: 24px clamp(24px, 9vw, 150px) 24px 24px;
 }
+.auth-lang { position: absolute; top: 18px; right: 20px; }
 .auth-brand {
   position: absolute; top: calc(26px + var(--titlebar-h)); left: 30px;
   display: flex; align-items: center; gap: 14px;
@@ -1039,13 +1058,13 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
    最左侧的「退出阅览」按钮，点不到。把留白加在顶栏自身而不是外层容器上——
    打印时顶栏 display:none，这条留白也跟着消失，不会在导出的 PDF 顶部留白条。
    height 用 calc 补偿：全局 box-sizing 是 border-box，只加 padding 会压缩内容高度。 */
-:root[data-desktop-platform='darwin'] .paper-reader-topbar {
+:root[data-desktop-titlebar='overlay'] .paper-reader-topbar {
   position: relative;
   height: calc(52px + var(--titlebar-h));
   padding-top: var(--titlebar-h);
 }
 /* 留白本身可拖窗口（内容盖住了系统标题栏区域） */
-:root[data-desktop-platform='darwin'] .paper-reader-topbar::before {
+:root[data-desktop-titlebar='overlay'] .paper-reader-topbar::before {
   content: '';
   position: absolute; top: 0; left: 0; right: 0;
   height: var(--titlebar-h);
@@ -1162,7 +1181,7 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
         关掉后媒体查询值与布局值一致，.split-detail 的反向抵消一并归 1 —— */
   html { zoom: 1; }
   /* 这里 zoom 已关，带子按物理 px 直接给 */
-  :root[data-desktop-platform='darwin'] { --titlebar-h: 40px; }
+  :root[data-desktop-titlebar='overlay'] { --titlebar-h: 40px; }
   .split-detail { zoom: 1; }
 
   /* —— 触屏基建 —— */

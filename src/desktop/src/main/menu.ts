@@ -18,6 +18,14 @@ function openServerSetup(): void {
 export function installMenu(): void {
   const isMac = process.platform === 'darwin';
 
+  // 非 macOS：整条菜单栏都去掉。Windows/Linux 的菜单是画在窗口内部的，留着就
+  // 破坏沉浸式外观，而 macOS 的菜单在系统栏、且不注册会让 Cmd+C/V 失效，必须保留。
+  // 非 macOS 丢掉的快捷键由 window.ts 的 installKeyboardShortcuts 补回。
+  if (!isMac) {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
   const serverItem: MenuItemConstructorOptions = {
     label: 'Server…',
     accelerator: 'CmdOrCtrl+,',

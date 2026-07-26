@@ -276,6 +276,37 @@ void app.whenReady().then(async () => {
     check('非 macOS 收起态侧栏保持原宽', railPt < 84, `rail=${railPt}pt`);
   }
 
+  // Windows 的窗口控件覆盖在右上角，页面靠 .app 的顶部留白避让。smoke 跑在
+  // macOS/Linux 上，所以这里临时把平台属性改成 win32 来验规则本身——CSS 完全由
+  // 属性驱动，与进程真实平台无关。
+  const winReserve = JSON.parse(
+    (await win.webContents.executeJavaScript(`(() => {
+      const root = document.documentElement;
+      const prev = { p: root.dataset.desktopPlatform, t: root.dataset.desktopTitlebar };
+      const host = document.createElement('div');
+      host.className = 'app';
+      host.style.cssText = 'position:fixed;left:0;top:0;width:600px;height:300px;display:flex';
+      host.innerHTML = '<div class="sidebar"></div><div style="flex:1"><div class="topbar"></div></div>';
+      document.body.appendChild(host);
+      const top = () => Math.round(host.querySelector('.topbar').getBoundingClientRect().top);
+      const drag = () => getComputedStyle(host, '::before').getPropertyValue('-webkit-app-region').trim();
+      root.dataset.desktopPlatform = 'win32';
+      root.dataset.desktopTitlebar = 'overlay';
+      const out = { topbarTop: top(), drag: drag() };
+      if (prev.p) root.dataset.desktopPlatform = prev.p; else delete root.dataset.desktopPlatform;
+      if (prev.t) root.dataset.desktopTitlebar = prev.t; else delete root.dataset.desktopTitlebar;
+      host.remove();
+      return JSON.stringify(out);
+    })()`)) as string,
+  ) as { topbarTop: number; drag: string };
+
+  check(
+    'Windows 顶栏避开窗口控件覆盖层',
+    winReserve.topbarTop >= 36,
+    `topbarTop=${winReserve.topbarTop}px`,
+  );
+  check('Windows 顶部留白可拖窗口', winReserve.drag === 'drag', `app-region=${winReserve.drag}`);
+
   const secure = (await win.webContents.executeJavaScript('window.isSecureContext')) as boolean;
   check('secure context（clipboard / Notification 可用）', secure === true);
 
