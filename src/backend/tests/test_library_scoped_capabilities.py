@@ -139,16 +139,19 @@ async def test_standalone_library_index_rebuild(client):
         txt = txt_dir / f"p{i}.txt"
         txt.write_text("规划方法的细节。" * 300, encoding="utf-8")
         await _seed_paper(lib_id, title=title, full_text_path=str(txt))
-    # 没有全文的论文不参与
+    # 没有全文的论文也参与：拿不到全文就建「标题 + 摘要」兜底块，
+    # 否则这篇论文对文献对话完全不可检索
     await _seed_paper(lib_id, title="No fulltext")
 
     resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["papers_indexed"] == 2
+    assert body["papers_indexed"] == 3
     assert body["chunks_created"] > 0
     assert body["total_chunks"] == body["chunks_created"]
-    assert body["embedded"] == body["chunks_created"] and body["embed_error"] is None
+    # 两篇有全文的按全文切、走嵌入接口；第三篇只有一个摘要兜底块，向量拷论文级向量
+    # （这里论文级向量也还没建，故先留空），不占嵌入调用
+    assert body["embedded"] == body["chunks_created"] - 1 and body["embed_error"] is None
 
     # 幂等：再跑不重复建
     resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator)

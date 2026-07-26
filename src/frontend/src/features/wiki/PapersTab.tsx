@@ -15,6 +15,7 @@ import { citationExportItems, ExportDropdown } from '../../components/ui/ExportD
 import { PaperReader } from './PaperReader';
 import { readerFrom } from '../reading/shared';
 import { toast } from '../../components/ui/Toast';
+import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import {
@@ -881,6 +882,9 @@ function PaperDetailPane({
         </MetaItem>
         <MetaItem label={tr('入库时间', 'added at')}>
           <span className="mono">{fmtTime(paper.created_at)}</span>
+        </MetaItem>
+        <MetaItem label={tr('检索索引', 'search index')}>
+          <PaperIndexStatusRow paperId={paper.id} />
         </MetaItem>
       </MetaFold>
 

@@ -35,12 +35,12 @@ def _write_fulltext() -> str:
 
 
 async def _user(client, email: str, *, index_on: bool):
+    """开关默认开，所以「关」这一路要显式 PATCH False，不能靠不设置。"""
     token = await register_and_login(client, email=email)
     headers = {"Authorization": f"Bearer {token}"}
-    if index_on:
-        await client.patch(
-            "/api/users/me/settings", json={"chat_fulltext_index": True}, headers=headers
-        )
+    await client.patch(
+        "/api/users/me/settings", json={"chat_fulltext_index": index_on}, headers=headers
+    )
     me = (await client.get("/api/users/me", headers=headers)).json()
     return uuid.UUID(me["id"]), headers
 

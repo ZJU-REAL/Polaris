@@ -4,6 +4,7 @@ import { Icon } from '../../components/ui/Icon';
 import { CompileBadge } from '../../components/ui/CompileBadge';
 import { PaperStatusPill } from '../../components/ui/StatusPill';
 import { RelevanceBar } from '../../components/ui/RelevanceBar';
+import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { FigureEmbed, FiguresSection, hasEmbeddedFigures, usePaperFigures } from '../../components/ui/FigureGallery';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
@@ -153,6 +154,9 @@ export function InfoPanel({
         </MetaItem>
         <MetaItem label="ingested">
           <span className="mono">{fmtTime(paper.created_at)}</span>
+        </MetaItem>
+        <MetaItem label={tr('索引', 'index')}>
+          <PaperIndexStatusRow paperId={paper.id} />
         </MetaItem>
       </MetaFold>
 

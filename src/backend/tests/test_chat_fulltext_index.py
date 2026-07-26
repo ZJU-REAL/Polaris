@@ -121,10 +121,25 @@ async def _enable_index(client, headers):
     assert resp.status_code == 200
 
 
+async def _disable_index(client, headers):
+    resp = await client.patch(
+        "/api/users/me/settings", json={"chat_fulltext_index": False}, headers=headers
+    )
+    assert resp.status_code == 200
+
+
 async def test_shelf_index_rebuild_gated(client, queue_stub):
     project_id, headers = await _project(client)
 
-    # 设置关 → 409
+    # 开关默认开：没设置过也能建
+    resp = await client.post(
+        f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    queue_stub.jobs.clear()
+
+    # 显式关掉才 409
+    await _disable_index(client, headers)
     resp = await client.post(
         f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers
     )
@@ -197,6 +212,13 @@ async def test_personal_index_rebuild_gated(client, queue_stub):
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
 
+    # 开关默认开：没设置过也能建
+    resp = await client.post("/api/library/index/rebuild", headers=headers)
+    assert resp.status_code == 200, resp.text
+    queue_stub.jobs.clear()
+
+    # 显式关掉才 409
+    await _disable_index(client, headers)
     resp = await client.post("/api/library/index/rebuild", headers=headers)
     assert resp.status_code == 409
     assert resp.json()["detail"] == "INDEXING_DISABLED"

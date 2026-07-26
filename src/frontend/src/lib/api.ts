@@ -562,8 +562,8 @@ export interface AffiliationModeRead {
   mode: AffiliationMode;
 }
 
-/** 每日论文是否随同步建立向量（关闭时每日的语义检索没有数据）。 */
-export interface DailyEmbedSetting {
+/** 平台是否给论文建论文级向量（管理员总闸，默认开）。 */
+export interface PaperEmbeddingSetting {
   enabled: boolean;
 }
 /** 补建历史向量的结果计数。 */
@@ -1041,6 +1041,26 @@ export interface QueuedIndexResult {
   queued: number;
   indexable: number;
   no_fulltext: number;
+}
+
+/** 一种向量的状态：建没建、什么时候建的、用的哪个模型（存量数据没记过，为 null）。 */
+export interface VectorStatus {
+  built: boolean;
+  built_at: string | null;
+  model: string | null;
+}
+
+/** 单篇论文的索引状态（docs/api-lit.md §9）。 */
+export interface PaperIndexStatus {
+  /** 论文级向量：标题+作者+摘要一条，语义检索用 */
+  paper_vector: VectorStatus;
+  /** 分块向量：分段各一条，文献对话检索用 */
+  chunk_vector: VectorStatus;
+  chunk_count: number;
+  embedded_chunk_count: number;
+  has_fulltext: boolean;
+  /** fulltext=按 PDF 全文切 | abstract=无全文时的标题+摘要兜底块 | null=还没分段 */
+  chunk_source: 'fulltext' | 'abstract' | null;
 }
 
 // ============================================================
@@ -2843,6 +2863,20 @@ export const api = {
   recompilePaper(id: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/papers/${id}/recompile`, { method: 'POST' });
   },
+  /** 这篇论文的两种向量各自建没建、何时建的、用的哪个模型（只读，权限同看论文）。 */
+  getPaperIndexStatus(id: string): Promise<PaperIndexStatus> {
+    return request<PaperIndexStatus>(`/papers/${id}/index-status`);
+  },
+  /** 手动重建这篇论文的向量（有就覆盖，没有就新建）；同步返回重建后的状态。需大模型使用权限。 */
+  rebuildPaperIndex(
+    id: string,
+    targets: { paper_vector?: boolean; chunks?: boolean } = {},
+  ): Promise<PaperIndexStatus> {
+    return requestJson<PaperIndexStatus>(`/papers/${id}/index/rebuild`, 'POST', {
+      paper_vector: targets.paper_vector ?? true,
+      chunks: targets.chunks ?? true,
+    });
+  },
   /** 删除论文（清理落盘文件，笔记/标签/分段级联删除）。 */
   deletePaper(id: string): Promise<void> {
     return request<void>(`/papers/${id}`, { method: 'DELETE' });
@@ -3849,12 +3883,12 @@ export const api = {
   setAffiliationMode(mode: AffiliationMode): Promise<AffiliationModeRead> {
     return requestJson<AffiliationModeRead>('/admin/settings/affiliation-mode', 'PUT', { mode });
   },
-  /** 每日论文是否建立向量（admin）。关闭时每日只有关键词检索。 */
-  getDailyEmbedEnabled(): Promise<DailyEmbedSetting> {
-    return request<DailyEmbedSetting>('/admin/settings/daily-embed');
+  /** 平台是否给论文建论文级向量（admin 总闸，默认开）。关掉后语义检索只能命中已有向量的论文。 */
+  getPaperEmbeddingEnabled(): Promise<PaperEmbeddingSetting> {
+    return request<PaperEmbeddingSetting>('/admin/settings/paper-embedding');
   },
-  setDailyEmbedEnabled(enabled: boolean): Promise<DailyEmbedSetting> {
-    return requestJson<DailyEmbedSetting>('/admin/settings/daily-embed', 'PUT', { enabled });
+  setPaperEmbeddingEnabled(enabled: boolean): Promise<PaperEmbeddingSetting> {
+    return requestJson<PaperEmbeddingSetting>('/admin/settings/paper-embedding', 'PUT', { enabled });
   },
   /** 实验室概况页的用量排行榜是否对普通成员可见（admin，默认开）。 */
   getLabLeaderboardEnabled(): Promise<LabLeaderboardSetting> {

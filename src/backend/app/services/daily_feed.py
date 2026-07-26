@@ -22,6 +22,7 @@ from typing import Any
 from sqlalchemy import String, cast, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.base import utcnow
 from app.models.daily_feed import (
     DAILY_FEED_RETENTION_DAYS,
     DEFAULT_DAILY_CATEGORIES,
@@ -46,9 +47,10 @@ logger = logging.getLogger(__name__)
 
 CATEGORIES_SETTING_KEY = "daily_feed_categories"
 
-# 每日池论文是否自动建向量（管理员开关，默认关——每天上百篇，开了才花嵌入调用）
-EMBED_ENABLED_SETTING_KEY = "daily_feed_embed_enabled"
-DEFAULT_EMBED_ENABLED = False
+# 注：论文级向量的管理员开关已升格为平台总闸并改名（daily_feed_embed_enabled →
+# paper_embedding_enabled，默认从关改成开），见 services/paper_enrich.py。
+# 默认关意味着每日推送的论文连论文级向量都没有、语义检索里根本搜不到；而只管每日推送
+# 这一条路径也名不副实。本模块只管调用总闸，不再自己存开关。旧键的存量值不再读。
 
 # 批量嵌入的每批条数（与 chunks.EMBED_BATCH 对齐）
 EMBED_BATCH = 32
@@ -108,23 +110,6 @@ async def set_categories(session: AsyncSession, categories: list[str]) -> list[s
     return cleaned
 
 
-async def get_daily_embed_enabled(session: AsyncSession) -> bool:
-    """每日池论文是否自动建向量（默认关；非法存量值回落默认）。"""
-    row = await session.get(SystemSetting, EMBED_ENABLED_SETTING_KEY)
-    value = row.value if row is not None else None
-    return value if isinstance(value, bool) else DEFAULT_EMBED_ENABLED
-
-
-async def set_daily_embed_enabled(session: AsyncSession, enabled: bool) -> bool:
-    row = await session.get(SystemSetting, EMBED_ENABLED_SETTING_KEY)
-    if row is None:
-        session.add(SystemSetting(key=EMBED_ENABLED_SETTING_KEY, value=bool(enabled)))
-    else:
-        row.value = bool(enabled)
-    await session.commit()
-    return bool(enabled)
-
-
 # ---- 池论文向量（语义检索/池对话底座） ----
 
 
@@ -142,7 +127,10 @@ async def embed_papers_missing_vectors(
     if not paper_ids:
         return {"embedded": 0, "skipped": 0, "failed": 0}
     from app.core.llm.router import get_llm_router
-    from app.services.paper_enrich import paper_embedding_text
+    from app.services.paper_enrich import paper_embedding_enabled, paper_embedding_text
+
+    if not await paper_embedding_enabled(session):  # 管理员拉了总闸
+        return {"embedded": 0, "skipped": len(set(paper_ids)), "failed": 0}
 
     rows = (
         (await session.execute(select(Paper).where(Paper.id.in_(list(set(paper_ids))))))
@@ -171,10 +159,14 @@ async def embed_papers_missing_vectors(
             stats["failed"] += len(batch)
             continue
         try:
+            model = await llm.model_name("embedding", user_id)
+            now = utcnow()
             for (paper_id, _), vector in zip(batch, vectors, strict=True):
                 paper = await session.get(Paper, paper_id)
                 if paper is not None:
                     paper.embedding = vector
+                    paper.embedding_at = now
+                    paper.embedding_model = model
             await session.commit()
             stats["embedded"] += len(batch)
         except asyncio.CancelledError:
@@ -358,23 +350,67 @@ async def embed_touched_papers(
     paper_ids: list[uuid.UUID],
     user_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """开了管理员开关才给本次涉及的池论文补建向量；返回 {enabled, embedded, failed}。
+    """给本次涉及的池论文建分段兜底块 + 论文级向量；返回 {enabled, embedded, failed, chunked}。
+
+    每日推送的论文抓取时不下 PDF，一篇全文都没有，过去又受一个默认关着的管理员开关
+    管着，于是这些论文既没有分段也没有论文级向量——对文献对话完全不存在。现在无条件
+    建（``enabled`` 恒为 True，保留字段是为了不动调用方与既有 observation 口径）。
 
     best-effort：向量化本来就是可选增强，失败只记日志并把原因放进 ``embed_error``
     （不放 ``error``——那会让任务这一步判失败）。
     """
     try:
-        if not await get_daily_embed_enabled(session):
-            return {"enabled": False, "embedded": 0, "failed": 0}
+        chunked = await ensure_chunks_for_papers(session, paper_ids=paper_ids)
         stats = await embed_papers_missing_vectors(
             session, paper_ids=paper_ids, user_id=user_id
         )
-        return {"enabled": True, "embedded": stats["embedded"], "failed": stats["failed"]}
+        # 兜底块的向量 = 刚建好的论文级向量的拷贝（零 token），故排在嵌入之后
+        from app.services.chunks import sync_abstract_chunk_vectors
+
+        await sync_abstract_chunk_vectors(session, paper_ids=paper_ids)
+        await session.commit()
+        return {
+            "enabled": True,
+            "embedded": stats["embedded"],
+            "failed": stats["failed"],
+            "chunked": chunked,
+        }
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
         logger.warning("daily feed embedding step failed", exc_info=True)
         return {"enabled": True, "embedded": 0, "failed": 0, "embed_error": str(e)}
+
+
+async def ensure_chunks_for_papers(
+    session: AsyncSession, *, paper_ids: list[uuid.UUID]
+) -> int:
+    """给这批论文补可检索分段（没有全文→标题+摘要单块），返回新建了分段的篇数。
+
+    每日推送不下 PDF，这里建出来的基本都是摘要兜底块；日后真抓了 PDF，
+    ``ensure_paper_chunks`` 会用全文块把它整体替换掉。
+    """
+    if not paper_ids:
+        return 0
+    from app.services.chunks import ensure_paper_chunks
+
+    rows = (
+        (await session.execute(select(Paper).where(Paper.id.in_(list(set(paper_ids))))))
+        .scalars()
+        .all()
+    )
+    chunked = 0
+    for paper in rows:
+        try:
+            if await ensure_paper_chunks(session, paper):
+                chunked += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 单篇分段失败不打断整批
+            logger.warning("daily chunk indexing failed for paper %s", paper.id, exc_info=True)
+            await session.rollback()
+    await session.commit()
+    return chunked
 
 
 async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:

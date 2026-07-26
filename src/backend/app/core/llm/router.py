@@ -230,6 +230,19 @@ class LLMRouter:
                     route = _FALLBACK_ROUTE
         return self._provider_for(route), route
 
+    async def model_name(self, stage: str, user_id: uuid.UUID | None = None) -> str | None:
+        """该环节实际会用到的模型名；未配置/不可用时 None（调用方只用于展示）。
+
+        ``embed()`` 只返回向量，模型名留在路由里；要把「这批向量是谁建的」记进库
+        （papers.embedding_model 等）就得单独问一次。resolve 有 60s 路由缓存，
+        额外开销可忽略。
+        """
+        try:
+            _, route = await self.resolve(stage, user_id)
+        except (NotImplementedError, LLMNotConfiguredError):
+            return None
+        return route.model
+
     async def _record_usage(
         self,
         *,

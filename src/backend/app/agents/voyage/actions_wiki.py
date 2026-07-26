@@ -27,13 +27,18 @@ from app.core.db import get_sessionmaker
 from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.library_direction import DirectionLibrary, LibraryPaper
-from app.models.paper import Paper, PaperChunk, new_paper
+from app.models.paper import Paper, new_paper
 from app.services.affiliations import (
     apply_author_affiliations,
     extract_author_affiliations_llm,
     get_affiliation_extraction_mode,
 )
-from app.services.chunks import embed_pending_chunks, index_paper_fulltext
+from app.services.chunks import (
+    embed_pending_chunks,
+    ensure_paper_chunks,
+    sync_abstract_chunk_vectors,
+    user_wants_fulltext_index,
+)
 from app.services.concepts import link_all_paper_concepts
 from app.services.dedup import pool_dedup_key
 from app.services.figure_annotate import annotate_figures, figures_annotated
@@ -46,7 +51,7 @@ from app.services.libraries import (
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
-from app.services.paper_enrich import paper_embedding_text
+from app.services.paper_enrich import paper_embedding_enabled, paper_embedding_text
 from app.services.paper_wiki import upsert_wiki
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
 from app.services.relevance import build_relevance_context, score_paper_relevance
@@ -733,27 +738,17 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     raise
                 except Exception:  # noqa: BLE001 — 机构补充尽力而为
                     logger.warning("affiliation enrich failed for %s", paper.id, exc_info=True)
-            # 全文分段索引（文献问答/idea 生成的知识底座）；失败不影响主流程。
-            # 内容池命中的论文可能已有分段（其他方向建的），有则直接复用不重建
-            if paper.full_text_path:
-                try:
-                    has_chunks = bool(
-                        (
-                            await session.execute(
-                                select(PaperChunk.id)
-                                .where(PaperChunk.paper_id == paper.id)
-                                .limit(1)
-                            )
-                        ).first()
-                    )
-                    if not has_chunks:
-                        await index_paper_fulltext(session, paper)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:  # noqa: BLE001
-                    failed.append(
-                        {"id": str(paper.id), "error": f"chunks: {type(e).__name__}: {e}"}
-                    )
+            # 分段索引（文献问答/idea 生成的知识底座）；失败不影响主流程。
+            # 有全文按全文切、没全文建「标题 + 摘要」兜底块；内容池命中的论文可能已有
+            # 全文分段（其他方向建的），有则直接复用不重建
+            try:
+                await ensure_paper_chunks(session, paper)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                failed.append(
+                    {"id": str(paper.id), "error": f"chunks: {type(e).__name__}: {e}"}
+                )
             # 顺带提取候选图（基础信息 caption=null；筛选注释在 wiki.compile 后做）；
             # 失败不影响全文流程
             if paper.pdf_path and paper.figures is None:
@@ -932,6 +927,9 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         embedded = 0
         embed_error: str | None = None
         pending = [p for p in papers if p.embedding is None]
+        if pending and not await paper_embedding_enabled(session):
+            pending = []  # 管理员拉了论文级向量的总闸
+            embed_error = "paper embeddings disabled by administrator"
         if pending:
             # 文本口径与手动补全/每日池共用（services/paper_enrich.paper_embedding_text）
             texts = [paper_embedding_text(p) for p in pending]
@@ -943,8 +941,12 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                     library_id=library.id,
                     voyage_id=ctx.run.id,
                 )
+                embed_model = await ctx.llm.model_name("embedding", billing_user_id)
+                now = utcnow()
                 for paper, vector in zip(pending, vectors, strict=True):
                     paper.embedding = vector
+                    paper.embedding_at = now
+                    paper.embedding_model = embed_model
                     embedded += 1
                 await session.commit()
             except asyncio.CancelledError:
@@ -954,20 +956,32 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             except Exception as e:  # noqa: BLE001 — 嵌入失败不影响上链结果
                 embed_error = f"{type(e).__name__}: {e}"
 
-        # 全文分段向量：补齐缺失的 chunk embedding（文献问答检索底座）。
+        # 摘要兜底块的向量 = 论文级向量的拷贝（零 token，不受任何开关控制），排在嵌入之后
+        await sync_abstract_chunk_vectors(session, paper_ids=[p.id for p in papers])
+        await session.commit()
+
+        # 分段向量：补齐缺失的 chunk embedding（文献问答检索底座）。受**发起人**的
+        # 「全文索引」开关控制（默认开）——与手动添加论文那条路径同一个开关，
+        # 免得同一个用户在两条路径上得到不一样的结果。公共库的账记系统（billing_user_id
+        # 为空），但发起人是有的，故开关按 ctx.run.created_by 取。
         # 最大化模式放开单次 2000 段的默认上限（否则大批量编译后向量长期欠账）
-        embed_kwargs: dict[str, Any] = (
-            {"limit": _UNLIMITED_CHUNK_SENTINEL} if _unlimited(_knobs(ctx)) else {}
-        )
-        chunks_embedded, chunk_embed_error = await embed_pending_chunks(
-            session,
-            library_id=library.id,
-            llm=ctx.llm,
-            user_id=billing_user_id,
-            project_id=ctx.run.project_id,
-            voyage_id=ctx.run.id,
-            **embed_kwargs,
-        )
+        chunks_embedded = 0
+        chunk_embed_error: str | None = None
+        if await user_wants_fulltext_index(session, ctx.run.created_by):
+            embed_kwargs: dict[str, Any] = (
+                {"limit": _UNLIMITED_CHUNK_SENTINEL} if _unlimited(_knobs(ctx)) else {}
+            )
+            chunks_embedded, chunk_embed_error = await embed_pending_chunks(
+                session,
+                library_id=library.id,
+                llm=ctx.llm,
+                user_id=billing_user_id,
+                project_id=ctx.run.project_id,
+                voyage_id=ctx.run.id,
+                **embed_kwargs,
+            )
+        else:
+            chunk_embed_error = "fulltext index disabled by user setting"
 
     return {
         "papers": len(papers),

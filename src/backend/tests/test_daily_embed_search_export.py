@@ -1,4 +1,4 @@
-"""每日新论文：论文级向量口径统一 + 自动建向量开关 / 补建 + 语义检索回退 + 引用导出。"""
+"""每日新论文：论文级向量口径统一 + 无条件建向量/分段 + 补建 + 语义检索回退 + 引用导出。"""
 
 import json
 import uuid
@@ -80,27 +80,18 @@ async def _papers_in_pool() -> list[Paper]:
         return list(rows)
 
 
-async def test_sync_embeds_only_when_enabled_and_only_missing(client, monkeypatch):
-    headers = await _admin_headers(client)
+async def test_sync_embeds_every_paper_and_only_missing(client, monkeypatch):
+    """每日推送的论文一律建论文级向量（不再受管理员开关管），且幂等只补缺失的。"""
     feed = {"cs.AI": [_rss_entry("2607.10001", "Alpha"), _rss_entry("2607.10002", "Beta")]}
 
-    # 开关默认关 → 同步不建向量
-    resp = await client.get("/api/admin/settings/daily-embed", headers=headers)
-    assert resp.status_code == 200 and resp.json()["enabled"] is False
+    # 无需任何开关：同步即建向量，文本口径 = 标题+作者+摘要
     result = await _run_sync(monkeypatch, feed)
-    assert result["created"] == 2 and result["embedded"] == 0
-    assert all(p.embedding is None for p in await _papers_in_pool())
-
-    # 开开关 → 再同步（无新论文）也会补上缺的向量，文本口径 = 标题+作者+摘要
-    resp = await client.put(
-        "/api/admin/settings/daily-embed", json={"enabled": True}, headers=headers
-    )
-    assert resp.status_code == 200 and resp.json()["enabled"] is True
-    result = await _run_sync(monkeypatch, feed)
-    assert result["created"] == 0 and result["embedded"] == 2
+    assert result["created"] == 2 and result["embedded"] == 2
     papers = await _papers_in_pool()
     for paper in papers:
         assert paper.embedding == fake_embedding(paper_embedding_text(paper))
+        assert paper.embedding_at is not None  # 构建时间记下了
+        assert paper.embedding_model  # 模型名记下了
 
     # 已有向量的不重嵌（哨兵向量原样保留）
     sentinel = [0.5] * len(papers[0].embedding)
@@ -115,16 +106,35 @@ async def test_sync_embeds_only_when_enabled_and_only_missing(client, monkeypatc
         assert row.embedding == pytest.approx(sentinel)
 
 
+async def test_daily_papers_get_abstract_chunk(client, monkeypatch):
+    """每日推送不下 PDF，论文靠「标题 + 摘要」兜底块进入文献对话的检索范围。"""
+    from app.models.paper import PaperChunk
+
+    await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.10009", "Delta")]})
+    papers = await _papers_in_pool()
+    assert papers and all(p.full_text_path is None for p in papers)
+    async with get_sessionmaker()() as session:
+        chunks = (
+            (
+                await session.execute(
+                    select(PaperChunk).where(PaperChunk.paper_id == papers[0].id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(chunks) == 1  # 无全文 → 单个兜底块
+    assert chunks[0].source == "abstract"
+    assert papers[0].title in chunks[0].text
+
+
 async def test_backfill_counts(client, monkeypatch):
     headers = await _admin_headers(client)
-    await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.10003", "Gamma")]})  # 开关关，无向量
+    # 同步已把向量建好，故补建端点这里全是「已有」
+    await _run_sync(monkeypatch, {"cs.AI": [_rss_entry("2607.10003", "Gamma")]})
 
     resp = await client.post("/api/admin/settings/daily-embed/backfill", headers=headers)
     assert resp.status_code == 200
-    assert resp.json()["embedded"] == 1 and resp.json()["skipped"] == 0
-
-    # 幂等：再补一次全是已有
-    resp = await client.post("/api/admin/settings/daily-embed/backfill", headers=headers)
     assert resp.json() == {"embedded": 0, "skipped": 1, "failed": 0}
 
     # 非 admin 无权

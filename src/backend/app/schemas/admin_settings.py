@@ -15,13 +15,13 @@ class AffiliationModeUpdate(BaseModel):
     mode: AffiliationMode
 
 
-class DailyEmbedRead(BaseModel):
-    """每日新论文是否自动建向量（开了才能做语义检索；默认关）。"""
+class PaperEmbeddingRead(BaseModel):
+    """平台是否给论文建论文级向量（默认开）。关掉后语义检索只能命中已有向量的论文。"""
 
     enabled: bool
 
 
-class DailyEmbedUpdate(BaseModel):
+class PaperEmbeddingUpdate(BaseModel):
     enabled: bool
 
 

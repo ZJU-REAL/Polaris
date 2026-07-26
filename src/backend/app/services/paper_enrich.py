@@ -17,6 +17,7 @@ from pathlib import Path
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.base import utcnow
 from app.models.library_direction import DirectionLibrary
 from app.models.paper import Paper
 
@@ -27,6 +28,34 @@ STAGES = ["download", "extract", "embed", "score"]
 
 # 论文级向量的文本上限（字符）
 EMBED_TEXT_MAX_CHARS = 2000
+
+# 论文级向量的平台总闸（管理员开关，**默认开**）：关掉后所有入库入口都不建论文级向量。
+# 前身是 daily_feed_embed_enabled（默认关、只管每日推送那一条路径）——默认关意味着
+# 推送来的论文在语义检索里根本搜不到，而只管一条路径又名不副实。旧键的存量值不迁移，
+# 读不到就取新默认（开）。
+PAPER_EMBEDDING_SETTING_KEY = "paper_embedding_enabled"
+DEFAULT_PAPER_EMBEDDING_ENABLED = True
+
+
+async def paper_embedding_enabled(session: AsyncSession) -> bool:
+    """平台是否建论文级向量（默认开；非法存量值回落默认）。"""
+    from app.models.system_setting import SystemSetting
+
+    row = await session.get(SystemSetting, PAPER_EMBEDDING_SETTING_KEY)
+    value = row.value if row is not None else None
+    return value if isinstance(value, bool) else DEFAULT_PAPER_EMBEDDING_ENABLED
+
+
+async def set_paper_embedding_enabled(session: AsyncSession, enabled: bool) -> bool:
+    from app.models.system_setting import SystemSetting
+
+    row = await session.get(SystemSetting, PAPER_EMBEDDING_SETTING_KEY)
+    if row is None:
+        session.add(SystemSetting(key=PAPER_EMBEDDING_SETTING_KEY, value=bool(enabled)))
+    else:
+        row.value = bool(enabled)
+    await session.commit()
+    return bool(enabled)
 
 _OWNER_TTL_SECONDS = 600  # paper_task_owner 归属 key 存活时间
 
@@ -70,17 +99,21 @@ async def embed_paper(
 ) -> None:
     """为论文生成 Paper.embedding（文本口径见 paper_embedding_text）。
 
+    顺带记下构建时间与所用模型名（前端索引状态悬浮显示）。
     provider 不支持嵌入时抛 NotImplementedError（调用方按 skipped 处理）。
     """
     from app.core.llm.router import get_llm_router
 
-    vectors = await get_llm_router().embed(
+    llm = get_llm_router()
+    vectors = await llm.embed(
         [paper_embedding_text(paper)],
         user_id=user_id,
         project_id=project_id,
         library_id=library_id,
     )
     paper.embedding = vectors[0]
+    paper.embedding_at = utcnow()
+    paper.embedding_model = await llm.model_name("embedding", user_id)
 
 
 async def enrich_paper(
@@ -149,23 +182,20 @@ async def enrich_paper(
             paper = await _rollback_and_reload()
             await emit("extract", "error", f"{type(e).__name__}: {e}")
 
-    # 全文分块（文献问答底座）：抽到全文后就地建块，无块才切（避免重切丢已补的块向量）。
+    # 分块（文献问答底座）：有全文按全文切，没全文也建一个「标题 + 摘要」兜底块，
+    # 保证这篇论文对文献对话可检索。已有全文块则不重切（避免丢已补的块向量）。
     # 不单列可见进度阶段（STAGES 保持 download/extract/embed/score 不变）；块向量按用户开关
     # 在下面 embed 阶段之后补。best-effort：失败记日志、回滚重取，不阻断后续阶段。
-    if paper.full_text_path:
-        from app.services.chunks import index_paper_fulltext, paper_has_chunks
+    from app.services.chunks import ensure_paper_chunks
 
-        try:
-            if not await paper_has_chunks(session, paper_id):
-                await index_paper_fulltext(session, paper)
-                await session.commit()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "enrich chunk indexing failed for paper %s", paper_id, exc_info=True
-            )
-            paper = await _rollback_and_reload()
+    try:
+        if await ensure_paper_chunks(session, paper):
+            await session.commit()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.warning("enrich chunk indexing failed for paper %s", paper_id, exc_info=True)
+        paper = await _rollback_and_reload()
 
     # 作者↔机构：on_add 模式下全文到手且尚无机构时 LLM 补（非独立阶段，best-effort，不发
     # 事件）；on_compile 模式跳过，改由 wiki 编译折叠抽取
@@ -194,6 +224,8 @@ async def enrich_paper(
     await emit("embed", "running")
     if paper.embedding is not None:
         await emit("embed", "skipped", "already embedded")
+    elif not await paper_embedding_enabled(session):
+        await emit("embed", "skipped", "paper embeddings disabled by administrator")
     else:
         try:
             await embed_paper(
@@ -213,6 +245,19 @@ async def enrich_paper(
             logger.warning("enrich embed failed for paper %s", paper_id, exc_info=True)
             paper = await _rollback_and_reload()
             await emit("embed", "error", f"{type(e).__name__}: {e}")
+
+    # 摘要兜底块的向量 = 论文级向量的拷贝（零 token），故排在 embed 之后、不受开关控制。
+    # best-effort：拷不上就留空，下次补建时一起补。
+    try:
+        from app.services.chunks import sync_abstract_chunk_vectors
+
+        if await sync_abstract_chunk_vectors(session, paper_ids=[paper_id]):
+            await session.commit()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.warning("abstract chunk vector sync failed for %s", paper_id, exc_info=True)
+        paper = await _rollback_and_reload()
 
     # 块向量：仅当用户开启全文索引开关时补（开关关只留块行，等重建/开开关再补）。
     # best-effort，不影响 embed 阶段判定；不发独立进度事件。

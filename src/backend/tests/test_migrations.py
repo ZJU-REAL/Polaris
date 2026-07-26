@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b6c2f81d4a09"  # 概念统一到论文级（concepts 去 library_id）
+HEAD_REVISION = "c4e7b2a91f38"  # 分段来源标记 + 向量构建元信息
+CONCEPTS_REVISION = "b6c2f81d4a09"  # 概念统一到论文级（本次 head 的 down_revision）
 PREV_REVISION = "a7d0c9e51b34"  # 解读统一到 paper_wikis
 
 
@@ -67,6 +68,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "feedback_images",
                     "user_library_entries",
                     "concepts",
+                    "paper_chunks",
                     "paper_wikis",
                     "library_papers",
                     "daily_feed_entries",
@@ -94,6 +96,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
     assert "embedding" in columns["papers"]  # sqlite 分支 JSON variant 列保留
+    # 分段来源标记 + 两种向量各自的构建时间/模型名
+    assert "source" in columns["paper_chunks"]
+    assert {"embedding_model", "embedding_at"} <= columns["papers"]
+    assert {"chunk_embedding_model", "chunk_embedding_at"} <= columns["papers"]
     # M3 列仍在
     assert {"score_rationale", "matches", "wins", "embedding"} <= columns["ideas"]
     assert "payload" in columns["review_sessions"]
@@ -282,7 +288,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "library_id" not in columns["concepts"]
     assert {"concepts_pre_unify", "paper_concepts_pre_unify"} <= columns["_tables"]
 
-    # 最新 revision 可往返：downgrade 一步落到 down_revision（a7d0c9e51b34，解读统一）。
+    # 最新 revision 可往返：先退掉本次的分段来源标记与向量元信息列。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == CONCEPTS_REVISION
+    assert "source" not in columns["paper_chunks"]
+    assert not {"embedding_model", "embedding_at"} & columns["papers"]
+    assert not {"chunk_embedding_model", "chunk_embedding_at"} & columns["papers"]
+
+    # 再退一步落到 a7d0c9e51b34（解读统一）。
     # 概念退回按库分版本：library_id 列回来、留档表清掉、被合并的行与关联还原。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
