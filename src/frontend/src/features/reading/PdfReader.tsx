@@ -196,6 +196,7 @@ export function PdfReader({
   const [scale, setScale] = useState(1); // 缩放倍率（1 = 适应宽度）
   const [mode, setMode] = useState<ReaderMode>('annotate'); // 标注阅读器 / 标准浏览器
   const [url, setUrl] = useState<string | null>(null);
+  const [loadPct, setLoadPct] = useState<number | null>(null); // 整包下载时的进度，null = 还没有进度事件
   const [pending, setPending] = useState<Pending | null>(null);
   const [pendingStyle, setPendingStyle] = useState<HighlightStyle>('highlight');
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -555,9 +556,15 @@ export function PdfReader({
         file={pdfSource}
         options={PDF_OPTIONS}
         onLoadSuccess={({ numPages: n }) => setNumPages(n)}
+        onLoadProgress={({ loaded, total }) =>
+          setLoadPct(total > 0 ? Math.min(99, Math.floor((loaded / total) * 100)) : null)
+        }
         loading={
+          // 网络慢时整份 PDF 可能要几分钟，不报进度的话跟卡死没有区别
           <div className="muted" style={{ textAlign: 'center', padding: 40, color: '#cbd5e1' }}>
-            正在解析 PDF…
+            {loadPct == null
+              ? tr('正在解析 PDF…', 'Loading the PDF…')
+              : tr(`正在加载 PDF… ${loadPct}%`, `Loading the PDF… ${loadPct}%`)}
           </div>
         }
         error={
