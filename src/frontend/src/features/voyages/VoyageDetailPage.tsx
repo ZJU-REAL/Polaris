@@ -1028,9 +1028,20 @@ function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvents: Voya
           </span>
         )}
       </div>
-      {/* 判定理由：通过与否都展示（通过时用弱色） */}
+      {/* 判定理由：通过与否都展示（通过时用弱色）。
+          reason 是后端原样透传的错误文本，可能整段是一条没有断点的长 URL
+          （如 arXiv 检索失败时的 query 串）。overflow-wrap 默认 normal 时这种
+          token 会直接溢出盒子而不是换行，把卡片撑破，故显式允许任意位置断行。 */}
       {step.verdict?.reason && (
-        <div style={{ marginTop: 8, fontSize: 12, color: step.verdict.passed ? 'var(--text-3)' : 'var(--danger-tx)', lineHeight: 1.5 }}>
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 12,
+            color: step.verdict.passed ? 'var(--text-3)' : 'var(--danger-tx)',
+            lineHeight: 1.5,
+            overflowWrap: 'anywhere',
+          }}
+        >
           {tr('判定理由：', 'Verdict: ')}
           {step.verdict.reason}
         </div>
@@ -1048,7 +1059,8 @@ function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvents: Voya
           style={{ marginTop: 10, padding: '8px 12px', background: 'var(--accent-soft)', color: 'var(--accent-text)', borderRadius: 8, fontSize: 12.5, lineHeight: 1.5, alignItems: 'flex-start' }}
         >
           <Icon name="compass" size={13} style={{ flexShrink: 0, marginTop: 2 }} />
-          <span style={{ minWidth: 0 }}>{signalText}</span>
+          {/* 同上：signalText 会拼进 observation.error 的原文 */}
+          <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{signalText}</span>
         </div>
       )}
       {friendly && <WikiStepSummary friendly={friendly} />}

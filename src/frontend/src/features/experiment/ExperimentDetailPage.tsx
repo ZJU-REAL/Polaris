@@ -624,8 +624,10 @@ function SetupTab({ exp }: { exp: ExperimentDetail }) {
                         {fmtTime(s.started_at)} · {s.finished_at ? `${tr('耗时', 'took')} ${fmtDuration(s.started_at, s.finished_at)}` : tr('进行中', 'in progress')}
                       </div>
                     )}
+                    {/* 同任务详情页：reason 可能是一整条没有断点的长 URL，
+                        默认 overflow-wrap 下会溢出盒子而不是换行 */}
                     {s.verdict && !s.verdict.passed && s.verdict.reason && (
-                      <div style={{ marginTop: 7, fontSize: 12, color: 'var(--danger-tx)', lineHeight: 1.5 }}>
+                      <div style={{ marginTop: 7, fontSize: 12, color: 'var(--danger-tx)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
                         {tr('自动校验：', 'Auto check: ')}{s.verdict.reason}
                       </div>
                     )}
