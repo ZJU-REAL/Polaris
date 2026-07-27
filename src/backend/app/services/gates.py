@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
 from app.models.gate import Gate
-from app.models.project import ProjectMember
+from app.models.project import Project
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.gate import GateCreate
+from app.services.projects import in_my_projects
 
 
 class GateAlreadyDecidedError(Exception):
@@ -28,11 +29,13 @@ async def list_gates(
     status: str | None = "pending",
     project_id: uuid.UUID | None = None,
 ) -> Sequence[Gate]:
-    """列出用户所在项目的闸门。status: pending | decided（=approved/rejected）。"""
+    """列出用户所在项目的闸门（平台管理员看全部）。
+
+    status: pending | decided（=approved/rejected）。
+    """
     stmt = (
         select(Gate)
-        .join(ProjectMember, ProjectMember.project_id == Gate.project_id)
-        .where(ProjectMember.user_id == user_id)
+        .where(in_my_projects(Gate.project_id, user_id))
         .order_by(Gate.created_at.desc())
     )
     if status == "decided":
@@ -48,11 +51,16 @@ async def get_gate(session: AsyncSession, gate_id: uuid.UUID) -> Gate | None:
     return await session.get(Gate, gate_id)
 
 
-async def is_project_member(
+async def can_access_project(
     session: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID
 ) -> bool:
-    stmt = select(ProjectMember.user_id).where(
-        ProjectMember.project_id == project_id, ProjectMember.user_id == user_id
+    """能否在这个课题里操作：课题成员，或平台管理员（最高权限）。
+
+    审批闸门、跑技能、开报告都用它。原来只认成员身份，管理员在自己没参与的
+    课题里会被挡——与「管理员看得到这些课题和它们的任务」自相矛盾。
+    """
+    stmt = select(Project.id).where(
+        Project.id == project_id, in_my_projects(Project.id, user_id)
     )
     return (await session.execute(stmt)).first() is not None
 

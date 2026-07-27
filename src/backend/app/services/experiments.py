@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.models.activity import Activity
 from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment, ExperimentRun
 from app.models.idea import Idea
-from app.models.project import Project, ProjectMember
+from app.models.project import Project
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.experiment import (
@@ -30,6 +30,7 @@ from app.schemas.experiment import (
     ExperimentRunRead,
 )
 from app.services import ssh_exec
+from app.services.projects import in_my_projects
 
 logger = logging.getLogger("polaris.experiments")
 
@@ -278,12 +279,14 @@ async def purge_experiments(
 async def get_experiment_for_user(
     session: AsyncSession, *, experiment_id: uuid.UUID, user_id: uuid.UUID
 ) -> tuple[Experiment, str] | None:
-    """取实验（含 runs）；非项目成员视为不存在（返回 None）。"""
+    """取实验（含 runs）；非项目成员视为不存在（平台管理员够得着全部课题）。"""
     stmt = (
         select(Experiment, Idea.title)
         .join(Idea, Idea.id == Experiment.idea_id)
-        .join(ProjectMember, ProjectMember.project_id == Experiment.project_id)
-        .where(Experiment.id == experiment_id, ProjectMember.user_id == user_id)
+        .where(
+            Experiment.id == experiment_id,
+            in_my_projects(Experiment.project_id, user_id),
+        )
         .options(selectinload(Experiment.runs))
     )
     row = (await session.execute(stmt)).first()

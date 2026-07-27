@@ -9,6 +9,7 @@ import uuid
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
+from app.models.idea import Idea
 from app.models.library_direction import (
     DirectionLibrary,
     DirectionLibraryCurator,
@@ -359,6 +360,90 @@ async def test_ingest_state_says_whether_the_task_can_be_opened(client):
 
     resp = await client.get(f"/api/libraries/{lib_id}/ingest/state", headers=owner)
     assert resp.json()["can_open_running_voyage"] is True
+
+
+async def test_admin_sees_every_topic_that_owns_a_task_it_can_see(client):
+    """管理员看得到全平台任务，就必须看得到这些任务所属的课题——两边口径要一致。
+
+    任务列表对 admin 是全平台可见的，但 ``GET /projects`` 原来只列本人参与的课题：
+    实验室工作台拿任务的 project_id 回查那份列表查空，分组标题就成了「未知课题」。
+    """
+    admin_email = "vscope-name-admin@example.com"
+    admin = await _hdr(client, admin_email)
+    await _promote_admin(admin_email)
+    owner = await _hdr(client, "vscope-name-owner@example.com")
+
+    resp = await client.post(
+        "/api/projects", json={"name": "别人的课题", "statement": "s"}, headers=owner
+    )
+    assert resp.status_code == 201, resp.text
+    project_id = uuid.UUID(resp.json()["id"])
+    run_id = await _make_run(kind="idea_forge", project_id=project_id)
+
+    # 任务看得到
+    resp = await client.get("/api/voyages", headers=admin)
+    assert resp.status_code == 200, resp.text
+    assert str(run_id) in {v["id"] for v in resp.json()}
+
+    # 它所属的课题也看得到（名字查得到），且点得开
+    resp = await client.get("/api/projects", headers=admin)
+    assert resp.status_code == 200, resp.text
+    listed = {p["id"]: p["name"] for p in resp.json()}
+    assert listed.get(str(project_id)) == "别人的课题"
+    resp = await client.get(f"/api/projects/{project_id}", headers=admin)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "别人的课题"
+
+
+async def test_admin_can_open_content_inside_a_topic_it_has_not_joined(client):
+    """admin 是最高权限：别人课题里的想法，列表看得到、点得开；普通外人两样都不行。"""
+    admin_email = "vscope-content-admin@example.com"
+    admin = await _hdr(client, admin_email)
+    await _promote_admin(admin_email)
+    owner = await _hdr(client, "vscope-content-owner@example.com")
+    stranger = await _hdr(client, "vscope-content-stranger@example.com")
+
+    resp = await client.post(
+        "/api/projects", json={"name": "带想法的课题", "statement": "s"}, headers=owner
+    )
+    assert resp.status_code == 201, resp.text
+    project_id = uuid.UUID(resp.json()["id"])
+
+    async with get_sessionmaker()() as session:
+        idea = Idea(project_id=project_id, title="别人课题里的想法")
+        session.add(idea)
+        await session.commit()
+        idea_id = idea.id
+
+    resp = await client.get(f"/api/projects/{project_id}/ideas", headers=admin)
+    assert resp.status_code == 200, resp.text
+    assert str(idea_id) in {i["id"] for i in resp.json()}
+    assert (await client.get(f"/api/ideas/{idea_id}", headers=admin)).status_code == 200
+
+    assert (
+        await client.get(f"/api/projects/{project_id}/ideas", headers=stranger)
+    ).status_code == 404
+    assert (await client.get(f"/api/ideas/{idea_id}", headers=stranger)).status_code == 404
+
+
+async def test_non_member_still_sees_no_topic_they_have_no_right_to(client):
+    """没权限的不展示：普通用户的课题列表里没有别人的课题，详情也打不开。"""
+    admin_email = "vscope-noleak-admin@example.com"
+    await _hdr(client, admin_email)
+    await _promote_admin(admin_email)
+    owner = await _hdr(client, "vscope-noleak-owner@example.com")
+    stranger = await _hdr(client, "vscope-noleak-stranger@example.com")
+
+    resp = await client.post(
+        "/api/projects", json={"name": "不该外泄的课题", "statement": "s"}, headers=owner
+    )
+    assert resp.status_code == 201, resp.text
+    project_id = resp.json()["id"]
+
+    resp = await client.get("/api/projects", headers=stranger)
+    assert resp.status_code == 200, resp.text
+    assert project_id not in {p["id"] for p in resp.json()}
+    assert (await client.get(f"/api/projects/{project_id}", headers=stranger)).status_code == 404
 
 
 async def test_new_ingest_voyage_carries_no_project(client):

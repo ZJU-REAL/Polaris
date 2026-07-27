@@ -45,7 +45,7 @@ async def create_presentation(
     user: User = Depends(require_llm_task),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
-    if not await gates_service.is_project_member(session, project_id, user.id):
+    if not await gates_service.can_access_project(session, project_id, user.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     if data.mode == "single" and len(data.paper_ids) != 1:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SINGLE_NEEDS_ONE_PAPER")

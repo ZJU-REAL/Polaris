@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project, ProjectInvite, ProjectMember
@@ -32,12 +32,40 @@ async def _unique_slug(session: AsyncSession, base: str) -> str:
     return slug
 
 
+def is_admin_expr(user_id: uuid.UUID):
+    """SQL 层的「这个人是平台管理员吗」。
+
+    这些查询只拿得到 user_id、拿不到 User 对象，所以用 exists 子查询就地判；
+    写法与 voyages._visible_filter、libraries.user_visible_paper_stmt 一致。
+    """
+    return select(User.id).where(User.id == user_id, User.role == "admin").exists()
+
+
+def in_my_projects(project_id_col, user_id: uuid.UUID):
+    """「这条记录所属的课题我够得着吗」——课题作用域读取口的统一条件。
+
+    够得着 = 我是该课题成员，或我是平台管理员（最高权限，全实验室可见可操作）。
+    课题下的东西（想法/实验/稿件/闸门/书架论文……）一律用这一条判，口径必须一致：
+    某处漏了 admin 分支，就会出现「列表里看得到、点进去 404」或「有任务却查不到
+    课题名字」这类前后不一致。
+    """
+    return or_(
+        project_id_col.in_(
+            select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
+        ),
+        is_admin_expr(user_id),
+    )
+
+
 async def list_projects(session: AsyncSession, user_id: uuid.UUID) -> Sequence[Project]:
-    """列出用户参与（作为成员）的全部项目。"""
+    """列出用户够得着的课题：本人参与的；平台管理员看全部。
+
+    管理员必须看到全部——否则跟「任务列表对管理员是全平台可见」对不上：
+    实验室工作台拿任务的 project_id 回查这份列表，查空就把归属显示成「未知课题」。
+    """
     stmt = (
         select(Project)
-        .join(ProjectMember, ProjectMember.project_id == Project.id)
-        .where(ProjectMember.user_id == user_id)
+        .where(in_my_projects(Project.id, user_id))
         .order_by(Project.created_at.desc())
     )
     return (await session.execute(stmt)).scalars().all()
@@ -78,11 +106,13 @@ async def create_project(
 async def get_project(
     session: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID
 ) -> Project | None:
-    """取项目；非成员视为不存在（返回 None）。"""
-    stmt = (
-        select(Project)
-        .join(ProjectMember, ProjectMember.project_id == Project.id)
-        .where(Project.id == project_id, ProjectMember.user_id == user_id)
+    """取项目；非成员视为不存在（返回 None）。平台管理员够得着全部课题。
+
+    列表看得到的，点进去必须打得开——这是 :func:`list_projects` 的单条镜像，
+    两边一起改。课题作用域的读取口（想法/实验/闸门等）大多经由这里鉴权。
+    """
+    stmt = select(Project).where(
+        Project.id == project_id, in_my_projects(Project.id, user_id)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 

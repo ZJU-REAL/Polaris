@@ -71,19 +71,22 @@ async def test_patch_project_permissions(client):
     )
     assert resp.status_code == 403
 
-    # 非成员（即使 admin）看不到 → 404；加入后 admin 可管理
-    resp = await client.patch(
-        f"/api/projects/{project_id}", json={"name": "x"}, headers=admin_headers
-    )
-    assert resp.status_code == 404
-    resp = await client.post(
-        f"/api/projects/{project_id}/members",
-        json={"email": "root@example.com", "role": "member"},
-        headers=owner_headers,
-    )
-    assert resp.status_code == 204
+    # 平台 admin 是最高权限：不用加进课题也看得到、改得动
+    #（口径与任务列表 / 文献库一致；原来要求先把自己加成成员才行）
+    resp = await client.get(f"/api/projects/{project_id}", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
     resp = await client.patch(
         f"/api/projects/{project_id}", json={"name": "admin 改"}, headers=admin_headers
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     assert resp.json()["name"] == "admin 改"
+
+    # 对照：既不是成员也不是 admin 的人，连详情都拿不到（404，不泄露存在性）
+    stranger_token = await register_and_login(client, email="stranger2@example.com")
+    stranger_headers = {"Authorization": f"Bearer {stranger_token}"}
+    resp = await client.get(f"/api/projects/{project_id}", headers=stranger_headers)
+    assert resp.status_code == 404
+    resp = await client.patch(
+        f"/api/projects/{project_id}", json={"name": "x"}, headers=stranger_headers
+    )
+    assert resp.status_code == 404

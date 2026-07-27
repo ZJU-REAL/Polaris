@@ -28,7 +28,7 @@ from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
 from app.models.manuscript import Manuscript, ManuscriptFile
-from app.models.project import Project, ProjectMember
+from app.models.project import Project
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.manuscript import ManuscriptCreate
 from app.services.citations import DEFAULT_EXPORT_STATUSES, assign_citation_keys
@@ -37,6 +37,7 @@ from app.services.libraries import (
     get_source_library_ids,
     member_papers_stmt,
 )
+from app.services.projects import in_my_projects
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "assets" / "templates"
 TEMPLATE_KEYS = ("neurips2026", "iclr2026", "acl")
@@ -602,11 +603,9 @@ async def get_manuscript_for_user(
     user_id: uuid.UUID,
     with_files: bool = False,
 ) -> Manuscript | None:
-    """取稿件；非项目成员视为不存在（返回 None）。"""
-    stmt = (
-        select(Manuscript)
-        .join(ProjectMember, ProjectMember.project_id == Manuscript.project_id)
-        .where(Manuscript.id == manuscript_id, ProjectMember.user_id == user_id)
+    """取稿件；非项目成员视为不存在（平台管理员够得着全部课题）。"""
+    stmt = select(Manuscript).where(
+        Manuscript.id == manuscript_id, in_my_projects(Manuscript.project_id, user_id)
     )
     if with_files:
         stmt = stmt.options(selectinload(Manuscript.files))
@@ -616,12 +615,14 @@ async def get_manuscript_for_user(
 async def get_file_for_user(
     session: AsyncSession, *, file_id: uuid.UUID, user_id: uuid.UUID
 ) -> ManuscriptFile | None:
-    """取稿件文件；非项目成员视为不存在（返回 None）。CRDT WS on_connect 也用。"""
+    """取稿件文件；非项目成员视为不存在（平台管理员够得着全部课题）。CRDT WS on_connect 也用。"""
     stmt = (
         select(ManuscriptFile)
         .join(Manuscript, Manuscript.id == ManuscriptFile.manuscript_id)
-        .join(ProjectMember, ProjectMember.project_id == Manuscript.project_id)
-        .where(ManuscriptFile.id == file_id, ProjectMember.user_id == user_id)
+        .where(
+            ManuscriptFile.id == file_id,
+            in_my_projects(Manuscript.project_id, user_id),
+        )
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 

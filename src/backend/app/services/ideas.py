@@ -19,6 +19,7 @@ from app.schemas.idea import DeepIdeaRequest, ForgeKnobs
 from app.schemas.review import TournamentRequest
 from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids
+from app.services.projects import in_my_projects
 
 # 同项目 idea 类 voyage 互斥（docs/api-m3.md §1 + docs/api-idea2.md §2）
 IDEA_VOYAGE_KINDS = ("idea_forge", "idea_review", "idea_proposal")
@@ -392,11 +393,9 @@ async def list_ideas(
 async def get_idea_for_user(
     session: AsyncSession, *, idea_id: uuid.UUID, user_id: uuid.UUID
 ) -> Idea | None:
-    """取 idea；非项目成员视为不存在。"""
-    stmt = (
-        select(Idea)
-        .join(ProjectMember, ProjectMember.project_id == Idea.project_id)
-        .where(Idea.id == idea_id, ProjectMember.user_id == user_id)
+    """取 idea；非项目成员视为不存在（平台管理员够得着全部课题）。"""
+    stmt = select(Idea).where(
+        Idea.id == idea_id, in_my_projects(Idea.project_id, user_id)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 

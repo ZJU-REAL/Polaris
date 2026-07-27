@@ -48,7 +48,7 @@ async def _get_visible_skill(session: AsyncSession, skill_id: uuid.UUID, user: U
 
 
 async def _require_member(session: AsyncSession, project_id: uuid.UUID, user: User) -> None:
-    if not await gates_service.is_project_member(session, project_id, user.id):
+    if not await gates_service.can_access_project(session, project_id, user.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
 
 
@@ -370,7 +370,7 @@ async def enable_project_skill(
 
 async def _get_member_enable_row(session: AsyncSession, enable_id: uuid.UUID, user: User):
     row = await skills_service.get_project_skill(session, enable_id)
-    if row is None or not await gates_service.is_project_member(session, row.project_id, user.id):
+    if row is None or not await gates_service.can_access_project(session, row.project_id, user.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_SKILL_NOT_FOUND")
     return row
 
