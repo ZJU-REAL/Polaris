@@ -605,7 +605,12 @@ async def test_daily_actions_observation_shapes(client, monkeypatch):
     obs = await get_action("daily.fetch")(ctx, {})
     assert obs["categories"] == ["cs.AI", "cs.CL", "cs.CV"]
     assert obs["fetched"] == 3
-    assert obs["per_category"] == {"cs.AI": 2, "cs.CL": 1, "cs.CV": 0}
+    assert obs["per_category"] == {
+        "cs.AI": {"count": 2, "status": "ok", "detail": None},
+        "cs.CL": {"count": 1, "status": "ok", "detail": None},
+        "cs.CV": {"count": 0, "status": "ok", "detail": None},
+    }
+    assert obs["failed_categories"] == []
     assert "error" not in obs
     assert ctx.checkpoint["daily_entries"]  # 条目交给下一步
 
@@ -682,8 +687,42 @@ async def test_daily_feed_voyage_end_to_end(client, monkeypatch):
     assert resp.json()["total"] == 1
 
 
-async def test_daily_fetch_reports_error_when_every_category_is_empty(client, monkeypatch):
-    """全分类颗粒无收 = 抓取多半挂了（客户端把异常兜底成 []）→ 这步必须失败。"""
+async def test_daily_fetch_fails_when_any_category_errors(client, monkeypatch):
+    """**任一分类抓失败就报错**，不是「全都空才报」。
+
+    部分失败下当天那个分类的论文会永久缺失（RSS 只公告一次、每日池只留一周），而全
+    实验室的文献库都靠这个池供料——静默残缺比整体失败更危险。
+    """
+    from app.agents.voyage.actions import get_action
+    from app.agents.voyage.checks import run_deterministic_checks
+    from app.services import daily_feed
+
+    class _PartlyBroken:
+        async def fetch_new(self, category: str):
+            if category == "cs.AI":
+                raise RuntimeError("429 Too Many Requests")
+            return [_rss_entry("2607.00099", "Fine")]
+
+    await register_and_login(client)
+    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _PartlyBroken())
+
+    ctx = _action_ctx()
+    obs = await get_action("daily.fetch")(ctx, {})
+    assert obs["failed_categories"] == ["cs.AI"]
+    assert obs["per_category"]["cs.AI"]["status"] == "error"
+    assert "429" in obs["per_category"]["cs.AI"]["detail"]
+    # 其余分类照常抓到，不受影响
+    assert obs["per_category"]["cs.CL"]["status"] == "ok"
+    assert obs["error"]
+
+    verdict, _ = run_deterministic_checks(
+        [{"kind": "no_error"}], observation=obs, checkpoint=ctx.checkpoint
+    )
+    assert verdict is not None and verdict["passed"] is False
+
+
+async def test_daily_fetch_notes_but_does_not_fail_on_a_quiet_day(client, monkeypatch):
+    """全部分类都抓成功但一篇没有：周末/节假日属正常，给提示而不是报错。"""
     from app.agents.voyage.actions import get_action
     from app.agents.voyage.checks import run_deterministic_checks
     from app.services import daily_feed
@@ -694,9 +733,58 @@ async def test_daily_fetch_reports_error_when_every_category_is_empty(client, mo
     ctx = _action_ctx()
     obs = await get_action("daily.fetch")(ctx, {})
     assert obs["fetched"] == 0
-    assert obs["error"]
-    # no_error 校验会判失败 → 任务进 paused_error（列表红色、可看日志、可重试）
+    assert obs["failed_categories"] == []
+    assert "error" not in obs
+    assert obs["note"]
+
     verdict, _ = run_deterministic_checks(
         [{"kind": "no_error"}], observation=obs, checkpoint=ctx.checkpoint
     )
-    assert verdict is not None and verdict["passed"] is False
+    assert verdict is None or verdict["passed"] is True
+
+
+
+
+async def test_sync_status_reports_failed_categories(client, monkeypatch):
+    """同步状况要能把「某分类抓失败」摆到界面上，而不是只留在任务日志里。"""
+    from app.core.db import get_sessionmaker
+    from app.models.voyage import VoyageRun, VoyageStep
+    from app.services import daily_feed
+
+    await register_and_login(client)
+
+    async with get_sessionmaker()() as session:
+        run = VoyageRun(kind="daily_feed_sync", status="paused_error", goal="每日抓取")
+        session.add(run)
+        await session.flush()
+        session.add(
+            VoyageStep(
+                run_id=run.id,
+                seq=0,
+                title="抓取",
+                action="daily.fetch",
+                status="failed",
+                observation={
+                    "per_category": {
+                        "cs.AI": {"count": 0, "status": "error", "detail": "429"},
+                        "cs.CL": {"count": 12, "status": "ok", "detail": None},
+                    },
+                    "failed_categories": ["cs.AI"],
+                },
+            )
+        )
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        status = await daily_feed.sync_status(session)
+    assert status["failed_categories"] == ["cs.AI"]
+    assert status["last_run_status"] == "paused_error"
+    assert status["per_category"]["cs.CL"]["count"] == 12
+    assert status["stale"] is True  # 池子里一条 entry 都没有
+
+    resp = await client.get(
+        "/api/daily/sync-status",
+        headers={"Authorization": f"Bearer {await register_and_login(client, email='v@e.com')}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["failed_categories"] == ["cs.AI"]

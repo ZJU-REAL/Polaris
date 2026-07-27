@@ -169,13 +169,19 @@ async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
 
 
 @respx.mock
-async def test_arxiv_fetch_new_network_error_returns_empty(cache_redis):
+async def test_arxiv_fetch_new_raises_after_exhausted_retries(cache_redis):
+    """RSS 失败原样上抛，**不再吞成 []**。
+
+    吞掉的话「被限流」和「今天确实没有新论文」就成了同一个结果，而每日池是所有
+    文献库的唯一供给——静默的空池等于全实验室当天颗粒无收却无人知晓。
+    """
     route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(
         return_value=httpx.Response(503)
     )
     client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0, max_retries=2)
-    assert await client.fetch_new("cs.CL") == []  # 失败容错，不抛
-    assert route.call_count == 2  # 503 会重试，耗尽后才吞成 []
+    with pytest.raises(ArxivRateLimitedError):
+        await client.fetch_new("cs.CL")
+    assert route.call_count == 2
     await client.aclose()
 
 

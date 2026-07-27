@@ -555,6 +555,48 @@ const DEFAULT_ANNOUNCE: AnnounceFilter = 'new';
 // 列表固定按点赞排序（没有排序切换 UI）；语义检索时后端按相关度排，忽略这个值
 const DAILY_SORT: DailySort = 'likes';
 
+/** 每日池的同步状况。池子是所有文献库的唯一供给——抓取失败会让全实验室当天颗粒无收，
+    所以状态要摆在页面上，而不是只躺在任务日志里等人去翻。 */
+function SyncStatusPill() {
+  const navigate = useNavigate();
+  const { data } = useQuery({
+    queryKey: ['daily-sync-status'],
+    queryFn: () => api.getDailySyncStatus(),
+    retry: false,
+    refetchInterval: 60_000,
+  });
+  if (!data) return null;
+
+  const failed = data.failed_categories;
+  const bad = failed.length > 0;
+  const stale = data.stale && !bad;
+  if (!bad && !stale) {
+    return (
+      <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 10 }}>
+        {tr(`已更新至 ${data.latest_feed_date ?? '—'}`, `Updated to ${data.latest_feed_date ?? '—'}`)}
+      </span>
+    );
+  }
+  const label = bad
+    ? tr(`${failed.join('、')} 抓取失败`, `${failed.join(', ')} failed to fetch`)
+    : tr(`论文池已停更（最新 ${data.latest_feed_date ?? '无'}）`, `Feed is stale (latest ${data.latest_feed_date ?? 'none'})`);
+  return (
+    <span
+      className={data.last_run_id ? 'pill sm hoverable' : 'pill sm'}
+      style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)', marginLeft: 10 }}
+      title={
+        bad
+          ? tr('这些分类当天的新论文不会进池，各文献库也就收不到', 'Those categories will not enter the pool today, so no library will receive them')
+          : tr('每日抓取已超过一天没有成功', 'The daily fetch has not succeeded for more than a day')
+      }
+      onClick={data.last_run_id ? () => navigate(`/voyages/${data.last_run_id}`) : undefined}
+    >
+      {label}
+      {data.last_run_id ? ' →' : ''}
+    </span>
+  );
+}
+
 export function DailyPage() {
   const queryClient = useQueryClient();
   const [view, setView] = useState<DailyView>('papers');
@@ -784,6 +826,7 @@ export function DailyPage() {
           value={view}
           onChange={setView}
         />
+        <SyncStatusPill />
         {(categoriesQuery.data?.categories.length ?? 0) > 0 && (
           <div
             className="row gap6 wrap"

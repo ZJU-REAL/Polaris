@@ -96,7 +96,8 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
   const queryClient = useQueryClient();
   const scopeId = libraryId ?? pid ?? '';
 
-  // 无 include 关键词时 arXiv 检索会退化成无差别抓取（空转烧钱），前端禁止启动。
+  // 无 include 关键词时 arXiv 检索会退化成无差别抓取（空转烧钱），前端禁止启动**初始建库**。
+  // 增量同步不受此限：它从每日论文池按方向语义粗排，关键词不参与筛选，没配也能跑。
   const { projects } = useProject();
   const project = libraryId ? undefined : projects.find((p) => p.id === pid);
   // 库作用域：真读该库 definition 的 include 关键词是否为空（拿不到库定义时不误报）。
@@ -160,7 +161,9 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
     },
   });
 
-  const busy = running || ingestMutation.isPending || noKeywords;
+  // 建库要关键词（拼 arXiv 检索式），增量同步不要——别把同步一起锁死
+  const busy = running || ingestMutation.isPending;
+  const bootstrapBusy = busy || noKeywords;
 
   function runBootstrap() {
     ingestMutation.mutate({
@@ -319,8 +322,8 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 14px' }}>
               {tr(
-                '抓取上次同步之后发表的新论文；已建库的文献库每天也会自动同步一次。',
-                'Fetches papers published since the last sync; built libraries also sync once a day automatically.',
+                '从每日论文池里挑出与本库方向相关的新论文，打分后自动入库；本步骤不再检索 arXiv。已建库的文献库每天都会自动同步一次。',
+                'Picks papers relevant to this library from the daily pool and adds the ones that score well; this step no longer queries arXiv. Built libraries sync once a day automatically.',
               )}
             </p>
             <button className="btn btn-ghost" disabled={busy || !state?.watermark} onClick={runIncremental}>
@@ -479,7 +482,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             </div>
           )}
           <div className="row gap10" style={{ marginTop: 6 }}>
-            <button className="btn btn-primary" disabled={busy} onClick={runBootstrap}>
+            <button className="btn btn-primary" disabled={bootstrapBusy} onClick={runBootstrap}>
               {ingestMutation.isPending ? (
                 <>
                   <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />

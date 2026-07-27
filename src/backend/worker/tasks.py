@@ -11,6 +11,7 @@
   评审员×3/聚合在 actions_review + services/paper_review 内部）
 """
 
+import logging
 import uuid
 from typing import Any
 
@@ -18,10 +19,12 @@ from app.agents.voyage import VoyageEngine
 from app.core.db import get_sessionmaker
 from app.core.events import EventBus
 from app.core.redis import get_redis
+from app.models.project import Project
 from app.schemas.ingest import IngestKnobs
 from app.services import ingest as ingest_service
-from app.services import libraries as libraries_service
 from app.services import publications as publications_service
+
+logger = logging.getLogger(__name__)
 
 
 async def ping_task(ctx: dict[str, Any], message: str = "ping") -> str:
@@ -65,17 +68,30 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
 
 
 async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
-    """每日 03:00 cron：对 cadence=daily 且已 bootstrap（有水位线）的项目入队增量 ingest。
+    """每日 03:00 cron：给 cadence=daily 且已 bootstrap 的**文献库**入队增量 ingest。
+
+    按库选而不是按课题选：独立库（project_id 为空）在按课题遍历的老写法里一个都进不来。
+
+    每个库单独兜异常。以前只捕获 IngestConflictError，于是一个库超月度预算抛
+    LibraryBudgetExhaustedError 就会打断整个循环，**排在它后面的库当天全都不同步**，
+    而且只在 arq 日志里留个异常，界面上完全无感。
 
     返回本次入队的 voyage id 列表（arq 结果可查）。
     """
     enqueued: list[str] = []
     async with get_sessionmaker()() as session:
-        projects = await ingest_service.find_due_daily_projects(session)
-        for project in projects:
-            library = await libraries_service.get_library_for_project(session, project.id)
-            if library is None:
-                continue  # 无语料库（理论上 find_due 已过滤，双保险）
+        # 先回收长期卡住的 paused_error：它们会把所在库一直挡在互斥判定外面
+        reclaimed = await ingest_service.reclaim_stale_paused_ingests(session)
+        if reclaimed:
+            logger.warning("reclaimed %d stale paused ingest run(s)", len(reclaimed))
+
+        libraries = await ingest_service.find_due_daily_libraries(session)
+        for library in libraries:
+            project = (
+                await session.get(Project, library.project_id)
+                if library.project_id is not None
+                else None
+            )
             try:
                 run = await ingest_service.create_ingest_voyage(
                     session,
@@ -87,6 +103,13 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
                 )
             except ingest_service.IngestConflictError:
                 continue  # 并发保护：查表与建 run 之间有人手动触发
+            except ingest_service.LibraryBudgetExhaustedError:
+                logger.warning("daily ingest skipped, budget exhausted: %s", library.id)
+                continue
+            except Exception:  # noqa: BLE001 — 单个库出问题不能拖垮当天其余的库
+                logger.exception("daily ingest failed to start for library %s", library.id)
+                await session.rollback()
+                continue
             await ctx["redis"].enqueue_job("run_voyage", str(run.id))
             enqueued.append(str(run.id))
     return enqueued

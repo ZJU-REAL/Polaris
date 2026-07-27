@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
@@ -29,6 +29,7 @@ from app.models.base import utcnow
 from app.models.daily_feed import DailyFeedEntry
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, new_paper
+from app.models.voyage import VoyageStep
 from app.services.affiliations import (
     apply_author_affiliations,
     extract_author_affiliations_llm,
@@ -1092,7 +1093,21 @@ async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         # 水位线权威源在库（P8a）：写 library.ingest_state；起源课题 project.ingest_state
         # 不再是权威（overview「上次同步时间」读库）。
         state = dict((library.ingest_state if library else None) or {})
-        watermark = ctx.checkpoint.get("watermark_candidate") or state.get("watermark")
+        previous = state.get("watermark")
+
+        # 预算耗尽时引擎会把剩余步骤置 obsolete，再拿最后一个待办步骤当隐式收尾——
+        # 而本流水线的最后一步正是这里。那种情况下推进水位线等于「一篇没处理，却宣布
+        # 这段时间已经看过了」，下次同步会直接跳过这批论文。所以截断时保持原水位线。
+        truncated = (
+            await session.scalar(
+                select(func.count())
+                .select_from(VoyageStep)
+                .where(VoyageStep.run_id == ctx.run.id, VoyageStep.status == "obsolete")
+            )
+        ) or 0
+        watermark = previous if truncated else (
+            ctx.checkpoint.get("watermark_candidate") or previous
+        )
         finished_at = utcnow().isoformat()
         state["watermark"] = watermark
         state["last_run"] = {"voyage_id": str(ctx.run.id), "finished_at": finished_at}
@@ -1100,21 +1115,31 @@ async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             library.ingest_state = state
 
         compiled_count = int(ctx.checkpoint.get("compiled_count") or 0)
+        message = (
+            f"文献调研被预算截断：本次编译 {compiled_count} 篇，水位线未推进"
+            if truncated
+            else f"文献调研完成：本次编译 {compiled_count} 篇 wiki 页"
+        )
         session.add(
             Activity(
                 project_id=ctx.run.project_id,
                 library_id=library.id if library is not None else None,
                 actor="agent:librarian",
                 kind="ingest.completed",
-                message=f"文献调研完成：本次编译 {compiled_count} 篇 wiki 页",
+                message=message,
                 payload={
                     "voyage_id": str(ctx.run.id),
                     "mode": _mode(ctx),
                     "compiled": compiled_count,
                     "watermark": watermark,
+                    "truncated": bool(truncated),
                 },
             )
         )
         await session.commit()
 
-    return {"watermark": watermark, "compiled": int(ctx.checkpoint.get("compiled_count") or 0)}
+    return {
+        "watermark": watermark,
+        "compiled": int(ctx.checkpoint.get("compiled_count") or 0),
+        "truncated": bool(truncated),
+    }

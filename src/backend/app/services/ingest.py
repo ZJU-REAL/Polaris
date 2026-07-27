@@ -15,7 +15,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.ingest import IngestKnobs
-from app.services.libraries import get_library_for_project, library_definition
+from app.services.libraries import get_library_for_project
 
 # 预算从 knobs 派生：每篇编译预留的 token 额度（打分+编译+概念定义+验证）
 _TOKENS_PER_PAPER = 20_000
@@ -207,17 +207,15 @@ DAILY_SYNC_UTC_MINUTE = 0
 
 
 def next_daily_sync_at(library: DirectionLibrary | None) -> datetime | None:
-    """下一次自动同步时间：cadence=daily 且已完成初始建库才有；否则 None。
+    """下一次自动同步时间：完成初始建库的库都有；未建库返回 None。
 
-    P8a：节奏/水位线权威源在库（library.definition.cadence / library.ingest_state）。
+    同步节奏不再可配置——每日论文池每天更新且只保留一周，任何比「每天」更稀疏的
+    节奏都意味着永久漏抓，而界面上只表现为「一直没有新论文」。
     """
-    from app.services.libraries import library_definition
-
     if library is None:
         return None
-    definition = library_definition(library)
     state = library.ingest_state or {}
-    if definition.get("cadence") != "daily" or not state.get("watermark"):
+    if not state.get("watermark"):
         return None
     now = datetime.now(UTC)
     candidate = now.replace(
@@ -295,24 +293,63 @@ async def library_ingest_state(
     }
 
 
-async def find_due_daily_projects(session: AsyncSession) -> list[Project]:
-    """每日增量对象：active、cadence=daily、已 bootstrap（有水位线）、无 ingest 在跑。"""
-    projects = (
-        (await session.execute(select(Project).where(Project.status == "active"))).scalars().all()
+# paused_error 不是终态，所以一个失败的任务会被互斥判定当成「还在跑」，把该库从每日
+# cron 里永久踢出去——生产上四个库就是这样静默停摆的。超过这个时长仍未被人处理的，
+# 由 cron 自动取消回收；留一天窗口是给人手动 resume 的机会。
+STALE_PAUSED_HOURS = 24
+
+
+async def reclaim_stale_paused_ingests(session: AsyncSession) -> list[uuid.UUID]:
+    """把长期无人处理的 paused_error 文献任务置为 cancelled，返回被回收的 id。
+
+    不这样做的话，一次瞬时故障（arXiv 429、LLM 超时）就等于让这个库再也不自动同步。
+    每日池只保留 7 天，那意味着永久漏抓，而界面上只表现为「一直没有新论文」。
+    """
+    cutoff = datetime.now(UTC) - timedelta(hours=STALE_PAUSED_HOURS)
+    runs = (
+        (
+            await session.execute(
+                select(VoyageRun).where(
+                    VoyageRun.kind.in_(WIKI_KINDS),
+                    VoyageRun.status == "paused_error",
+                    VoyageRun.updated_at < cutoff,
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
-    due: list[Project] = []
-    for project in projects:
-        # P8a：节奏/水位线读起源库（project.definition 不再是权威源）
-        library = await get_library_for_project(session, project.id)
-        if library is None:
-            continue
-        definition = library_definition(library)
+    for run in runs:
+        run.status = "cancelled"
+    if runs:
+        await session.commit()
+    return [run.id for run in runs]
+
+
+async def find_due_daily_libraries(session: AsyncSession) -> list[DirectionLibrary]:
+    """每日增量的对象，**直接按文献库选**：active、已 bootstrap、无任务在跑。
+
+    以前是遍历 Project 再找库，于是 ``project_id`` 为空的独立库一个都进不来——生产上
+    11 个活跃库里有 6 个是独立库，全靠人工点击才会同步。另外那条路径也没检查库的
+    ``status``，pending/rejected 但留有历史水位线的库照样会被 cron 拉起来。
+    """
+    libraries = (
+        (
+            await session.execute(
+                select(DirectionLibrary).where(DirectionLibrary.status == "active")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    due: list[DirectionLibrary] = []
+    for library in libraries:
         state = library.ingest_state or {}
-        if definition.get("cadence") != "daily" or not state.get("watermark"):
+        if not state.get("watermark"):
             continue
-        # 互斥以库为准（库任务不写 project_id）——按课题查会漏掉在跑的任务，
-        # cron 会重复启动
         if await find_running_ingest_for_library(session, library.id) is not None:
             continue
-        due.append(project)
+        due.append(library)
     return due
+
+

@@ -2583,6 +2583,17 @@ export interface DailyCollectionsRead {
   in_personal: boolean;
 }
 
+/** 每日论文池的同步状况。池子是所有文献库的唯一供给，抓失败=全实验室当天颗粒无收。 */
+export interface DailySyncStatus {
+  latest_feed_date: string | null;
+  stale: boolean;
+  last_run_id: string | null;
+  last_run_status: string | null;
+  last_run_at: string | null;
+  per_category: Record<string, { count: number; status: string; detail: string | null }>;
+  failed_categories: string[];
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -4392,6 +4403,10 @@ export const api = {
    * 手动触发一次每日新论文抓取（admin）。抓取在任务系统里跑，返回的 voyage_id
    * 可直接跳任务详情看步骤与日志；409 detail=DAILY_FEED_RUNNING 表示已有一次在跑。
    */
+  /** 每日论文池的同步状况（全员可读）：最新一天、是否过期、各分类成败。 */
+  getDailySyncStatus(): Promise<DailySyncStatus> {
+    return request<DailySyncStatus>('/daily/sync-status');
+  },
   refreshDailyFeed(): Promise<{ status: string; voyage_id: string }> {
     return request<{ status: string; voyage_id: string }>('/daily/refresh', { method: 'POST' });
   },

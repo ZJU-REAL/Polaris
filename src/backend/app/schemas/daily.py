@@ -144,3 +144,16 @@ class DailyCategoriesRead(BaseModel):
 
 class DailyCategoriesUpdate(BaseModel):
     categories: list[str] = Field(min_length=1)
+
+
+class DailySyncStatus(BaseModel):
+    """每日论文池的同步健康状况（每日页顶部展示）。"""
+
+    latest_feed_date: str | None = None
+    stale: bool = False
+    last_run_id: str | None = None
+    last_run_status: str | None = None
+    last_run_at: str | None = None
+    # {分类: {count, status, detail}}
+    per_category: dict[str, Any] = Field(default_factory=dict)
+    failed_categories: list[str] = Field(default_factory=list)

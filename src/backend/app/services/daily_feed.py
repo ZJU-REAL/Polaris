@@ -34,7 +34,7 @@ from app.models.paper import Paper, PaperWiki, new_paper
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
-from app.models.voyage import TERMINAL_STATUSES, VoyageRun
+from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep
 from app.services import paper_wiki, user_library
 from app.services import projects as projects_service
 from app.services import topic_shelf as shelf_service
@@ -263,18 +263,37 @@ async def cleanup_expired(session: AsyncSession, *, today: dt.date | None = None
 
 async def fetch_new_by_category(
     session: AsyncSession,
-) -> tuple[list[str], dict[str, list[dict[str, Any]]]]:
-    """抓订阅分类的当天新公告；返回 (分类列表, {分类: 条目列表})。
+) -> tuple[list[str], dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
+    """抓订阅分类的当天新公告；返回 (分类列表, {分类: 条目}, {分类: 状态})。
 
-    单个分类抓取/解析失败已在 arXiv 客户端内兜底成 []（不让整步崩），所以「某个分类
-    为空」是正常结果；调用方按「全部分类都空」判定这一步整体失败（见 daily.fetch）。
+    **逐个分类记录成败**：一个分类抓失败不影响其余分类，但必须如实报出来。以前的
+    做法是让客户端把异常吞成 []，于是「cs.AI 被限流」和「cs.AI 今天没有新论文」在
+    上层完全无法区分——只有全部分类都空时才会报错，部分失败则悄悄丢掉那一天那个
+    分类的全部论文。每日池是所有文献库的唯一供给，这种丢失是补不回来的。
+
+    状态取值：``ok``（抓到了，可能是 0 篇——周末/无公告是正常的）、``error``。
     """
     categories = await get_categories(session)
     client = get_arxiv_client()
     by_category: dict[str, list[dict[str, Any]]] = {}
+    statuses: dict[str, dict[str, Any]] = {}
     for category in categories:
-        by_category[category] = await client.fetch_new(category)
-    return categories, by_category
+        try:
+            entries = await client.fetch_new(category)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — 单分类失败不打断其余分类
+            logger.warning("daily feed RSS failed for %s", category, exc_info=True)
+            by_category[category] = []
+            statuses[category] = {
+                "count": 0,
+                "status": "error",
+                "detail": f"{type(e).__name__}: {e}"[:200],
+            }
+            continue
+        by_category[category] = entries
+        statuses[category] = {"count": len(entries), "status": "ok", "detail": None}
+    return categories, by_category, statuses
 
 
 async def upsert_entries(
@@ -416,7 +435,7 @@ async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
     （app/agents/voyage/actions_daily.py），两条路径共用下面这几个步骤函数。
     """
     today = _today_utc()
-    categories, by_category = await fetch_new_by_category(session)
+    categories, by_category, _statuses = await fetch_new_by_category(session)
     fetched = sum(len(v) for v in by_category.values())
     stats = await upsert_entries(session, by_category=by_category, today=today)
     expired = await cleanup_expired(session, today=today)
@@ -1032,3 +1051,49 @@ async def collect_papers(
         )
 
     return results
+
+
+async def sync_status(session: AsyncSession) -> dict[str, Any]:
+    """每日论文池的同步健康状况（给用户看的，不是给运维看的）。
+
+    每日池现在是所有文献库的唯一供给：池子空了，全实验室当天什么都收不到。所以
+    「上次同步是什么时候、有没有分类失败、池子是不是过期了」必须摆在界面上，而不是
+    只躺在任务日志里等人去翻。
+
+    ``stale`` 的判据是「最新的一天不是今天也不是昨天」：arXiv 周末不公告，只差一天
+    属正常，差两天以上才值得提醒。
+    """
+    run = (
+        await session.execute(
+            select(VoyageRun)
+            .where(VoyageRun.kind == DAILY_FEED_VOYAGE_KIND)
+            .order_by(VoyageRun.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    per_category: dict[str, Any] = {}
+    failed: list[str] = []
+    if run is not None:
+        step = (
+            await session.execute(
+                select(VoyageStep)
+                .where(VoyageStep.run_id == run.id, VoyageStep.action == "daily.fetch")
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        obs = (step.observation if step is not None else None) or {}
+        per_category = obs.get("per_category") or {}
+        failed = list(obs.get("failed_categories") or [])
+
+    latest = await session.scalar(select(func.max(DailyFeedEntry.feed_date)))
+    today = dt.datetime.now(dt.UTC).date()
+    return {
+        "latest_feed_date": latest.isoformat() if latest else None,
+        "stale": bool(latest is None or (today - latest).days > 1),
+        "last_run_id": str(run.id) if run is not None else None,
+        "last_run_status": run.status if run is not None else None,
+        "last_run_at": run.created_at.isoformat() if run is not None else None,
+        "per_category": per_category,
+        "failed_categories": failed,
+    }

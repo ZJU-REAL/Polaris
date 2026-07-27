@@ -295,6 +295,20 @@ function wikiStepFriendly(action: string, obs: Record<string, unknown>): WikiSte
   const failedCount = Array.isArray(obs.failed) ? obs.failed.length : 0;
   switch (action) {
     case 'wiki.search_candidates':
+      // 候选来源随模式而变：建库检索 arXiv，增量只从每日论文池里挑（观测字段完全不同，
+      // 没有 found/window_since）。按 source 分支，否则同步任务会显示「检索到 — 篇」。
+      if (obs.source === 'daily_feed') {
+        return {
+          text: tr(
+            `每日论文池 ${num(obs.feed_total)} 篇 → 按方向粗排 ${num(obs.after_vector_rank)} 篇 →`
+              + ` 已在库 ${num(obs.already_in_library)} 篇 → 新收录 ${num(obs.inserted)} 篇`,
+            `Daily pool ${num(obs.feed_total)} → ranked ${num(obs.after_vector_rank)} →`
+              + ` ${num(obs.already_in_library)} already in library → ${num(obs.inserted)} newly added`,
+          ),
+          papers: briefsOf(obs.new_papers),
+          papersTotal: num(obs.inserted),
+        };
+      }
       return {
         text: tr(
           `从 arXiv 检索到 ${num(obs.found)} 篇，去重后新收录 ${num(obs.inserted)} 篇`,

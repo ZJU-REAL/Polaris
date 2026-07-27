@@ -30,12 +30,17 @@ logger = logging.getLogger(__name__)
 @register("daily.fetch")
 async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
-        categories, by_category = await daily_feed_service.fetch_new_by_category(session)
+        categories, by_category, statuses = await daily_feed_service.fetch_new_by_category(
+            session
+        )
 
-    per_category = {c: len(entries) for c, entries in by_category.items()}
-    fetched = sum(per_category.values())
-    for category, count in per_category.items():
-        await ctx.log(f"{category}：抓到 {count} 篇")
+    fetched = sum(s["count"] for s in statuses.values())
+    failed = [c for c, s in statuses.items() if s["status"] == "error"]
+    for category, state in statuses.items():
+        if state["status"] == "error":
+            await ctx.log(f"{category}：抓取失败 —— {state['detail']}", level="error")
+        else:
+            await ctx.log(f"{category}：抓到 {state['count']} 篇")
 
     # 条目原样带给下一步（daily.upsert）：重抓一次既多打一遍 arXiv，也可能拿到不同结果
     ctx.checkpoint["daily_entries"] = by_category
@@ -43,15 +48,20 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "categories": categories,
         "fetched": fetched,
-        "per_category": per_category,
+        "per_category": statuses,
+        "failed_categories": failed,
     }
-    if categories and fetched == 0:
-        # 单个分类为空是正常的（周末/当天无公告），但全部分类都空基本只有一种解释：
-        # arXiv 抓不动了（客户端已把异常兜底成 []）。报错而不是假装成功。
+    if failed:
+        # **任一分类失败就报错**，不是「全都空才报」。部分失败下当天那个分类的论文会
+        # 永久缺失（RSS 只公告一次，每日池只留一周），而全实验室的文献库都靠这个池
+        # 供料——静默残缺比整体失败更危险。
         result["error"] = (
-            f"{len(categories)} 个订阅分类都没抓到新论文，"
-            "多半是 arXiv 暂时不可用或分类配置有误；稍后重试"
+            f"{len(failed)} 个分类抓取失败：{'、'.join(failed)}；"
+            "当天这些分类的新论文不会进池，请重试"
         )
+    elif categories and fetched == 0:
+        # 全部分类都抓成功但一篇没有：周末/节假日是正常的，仍提示一句便于对照
+        result["note"] = "所有订阅分类今天都没有新公告（周末或节假日时属正常）"
     return result
 
 

@@ -52,12 +52,6 @@ function CheckBox({ checked, onToggle, title }: { checked: boolean; onToggle: ()
   );
 }
 
-const CADENCES = [
-  { v: 'daily', zh: '每日', en: 'Daily' },
-  { v: 'weekly', zh: '每周', en: 'Weekly' },
-  { v: 'manual', zh: '手动', en: 'Manual' },
-] as const;
-
 // 过滤栏：归属类型（全部/个人/公共）与生命周期状态（全部/待审批/已驳回）候选。
 const TYPE_OPTIONS = [
   { v: 'all', zh: '全部', en: 'All' },
@@ -249,7 +243,6 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [statement, setStatement] = useState('');
-  const [cadence, setCadence] = useState<string>('daily');
   const [incl, setIncl] = useState<InclusionValue>(EMPTY_INCLUSION);
 
   const badAnchors = incl.anchors.filter(
@@ -303,7 +296,6 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       ...(anchors.length > 0 ? { anchors } : {}),
       ...(keywords ? { keywords } : {}),
       ...(rubric.length > 0 ? { rubric } : {}),
-      cadence,
     });
   }
 
@@ -334,12 +326,6 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
         <FormField label={tr('一句话说明', 'Statement')} hint={tr('必填，用于相关性打分', 'Required — used for relevance scoring')}>
           <textarea className="textarea" rows={2} value={statement} onChange={(e) => setStatement(e.target.value)}
             placeholder={tr('用一句话介绍这个文献库的方向', 'One sentence describing this library’s direction')} />
-        </FormField>
-        <FormField label={tr('运行节奏', 'Cadence')}>
-          <div>
-            <Segmented options={CADENCES.map((c) => ({ v: c.v, label: tr(c.zh, c.en) }))}
-              value={cadence as (typeof CADENCES)[number]['v']} onChange={(v) => setCadence(v)} />
-          </div>
         </FormField>
         <div className="hr" style={{ margin: '4px 0 16px' }} />
         <InclusionSettingsForm

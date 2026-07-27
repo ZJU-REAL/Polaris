@@ -73,8 +73,15 @@ IDEA_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """文献 ingest 固定七步计划（docs/api-m2.md §7）；knobs 从 checkpoint.params 读。"""
+    # 候选来源随模式而变：建库检索 arXiv 历史，增量只吃每日论文池（不碰 arXiv）。
+    # 步骤标题跟着变，否则任务详情页会把「从每日池筛选」写成「检索 arXiv」。
+    first = (
+        ("检索候选（arXiv）", "wiki.search_candidates", "候选论文已入库")
+        if run.kind == "wiki_bootstrap"
+        else ("从每日论文池筛选候选", "wiki.search_candidates", "候选论文已入库")
+    )
     steps = [
-        ("检索候选（arXiv）", "wiki.search_candidates", "候选论文已入库"),
+        first,
         ("参考文献扩展（Semantic Scholar）", "wiki.snowball", "参考文献扩展完成"),
         ("相关性打分（LLM）", "wiki.score_relevance", "候选论文已全部打分或排除"),
         ("下载 PDF + 抽全文", "wiki.fetch_extract", "top-N 论文全文就绪（失败降级摘要）"),
@@ -101,7 +108,7 @@ def daily_feed_plan(run: VoyageRun) -> list[dict[str, Any]]:
         ("抓取订阅分类的新论文", "daily.fetch", "订阅分类的当天新公告已抓到"),
         ("去重入池", "daily.upsert", "新论文已入池，多分类命中已合并"),
         ("清理过期推送", "daily.cleanup", "7 天外的推送与无人收藏的论文已清理"),
-        ("建立语义向量", "daily.embed", "开了自动建向量时，本次新论文已补上向量"),
+        ("建立语义向量", "daily.embed", "本次新论文已补上向量"),
     ]
     return [
         {

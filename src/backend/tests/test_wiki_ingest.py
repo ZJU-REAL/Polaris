@@ -794,25 +794,60 @@ async def test_unlimited_bootstrap_uncapped(client, queue_stub, wiki_mocks_big):
         assert compiled == total  # 全部编译落库，无一截断
 
 
-async def test_daily_cron_project_selection(client, queue_stub, wiki_mocks):
-    """cadence=daily 且已 bootstrap（有水位线）的项目才进入每日增量。"""
+async def test_project_backed_library_is_due_for_daily_cron(client, queue_stub, wiki_mocks):
+    """有起源课题的库也走同一条按库选表的路径；未建库（无水位线）时不选。
+
+    同步节奏不再参与判断——每日论文池只留一周，比「每天」更稀疏的节奏必然漏抓。
+    """
     project_id, headers = await _setup_project(client)
     async with get_sessionmaker()() as session:
-        due = await ingest_service.find_due_daily_projects(session)
-        assert due == []  # 尚未 bootstrap（无水位线）
+        assert await ingest_service.find_due_daily_libraries(session) == []  # 尚未 bootstrap
 
     resp = await client.post(
         f"/api/projects/{project_id}/ingest",
         json={"mode": "bootstrap", "knobs": KNOBS},
         headers=headers,
     )
-    run_id = uuid.UUID(resp.json()["id"])
     engine, _ = _make_engine()
-    await engine.run(run_id)
+    await engine.run(uuid.UUID(resp.json()["id"]))
 
     async with get_sessionmaker()() as session:
-        due = await ingest_service.find_due_daily_projects(session)
-        assert [p.id for p in due] == [uuid.UUID(project_id)]
+        due = await ingest_service.find_due_daily_libraries(session)
+        assert len(due) == 1
+        assert due[0].project_id == uuid.UUID(project_id)
+
+
+async def test_cadence_no_longer_excludes_a_library(client, queue_stub, wiki_mocks):
+    """存量库里遗留的 cadence=weekly/manual 不再让它掉出每日同步。
+
+    这些库以前压根没有 cron，只能人工点；配上每日池 7 天保留期就是永久漏抓。
+    """
+    token = await register_and_login(client, email="legacy-cadence@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("legacy-cadence@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-周更")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    # 模拟存量数据：definition 里还留着 weekly
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        library.cadence = "weekly"
+        library.definition = {**(library.definition or {}), "cadence": "weekly"}
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        due = await ingest_service.find_due_daily_libraries(session)
+        assert [str(lib.id) for lib in due] == [library_id]
+        # 「下次自动同步」也不再因为 cadence 而显示为空
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        assert ingest_service.next_daily_sync_at(library) is not None
 
 
 # ---- P9a：任务系统库化（VoyageRun 可挂方向库，独立库可直接触发抓取） ----
@@ -1006,3 +1041,248 @@ async def test_project_ingest_run_carries_library_id(client, queue_stub, wiki_mo
         run = await session.get(VoyageRun, uuid.UUID(voyage["id"]))
         assert run.library_id == library.id
         assert run.project_id is None
+
+
+# ---- 每日 cron 的可达性与健壮性 ----
+
+
+async def test_standalone_library_is_due_for_daily_cron(client, queue_stub, wiki_mocks):
+    """独立库（project_id=NULL）也要进每日 cron。
+
+    以前 cron 遍历的是 Project 再反查库，独立库一个都进不来——生产上 11 个活跃库里
+    有 6 个是独立库，全靠人工点击才会同步。每日池只留 7 天，漏点就是永久漏抓。
+    """
+    token = await register_and_login(client, email="due-standalone@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("due-standalone@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-cron")
+
+    async with get_sessionmaker()() as session:
+        assert await ingest_service.find_due_daily_libraries(session) == []  # 还没建库
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    async with get_sessionmaker()() as session:
+        due = await ingest_service.find_due_daily_libraries(session)
+        assert [str(lib.id) for lib in due] == [library_id]
+
+
+async def test_non_active_library_is_not_due(client, queue_stub, wiki_mocks):
+    """库 status 不是 active 就不该被 cron 拉起来——老的按课题选表压根没查这个字段。"""
+    token = await register_and_login(client, email="due-inactive@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("due-inactive@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-停用")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        library.status = "rejected"
+        await session.commit()
+        assert await ingest_service.find_due_daily_libraries(session) == []
+
+
+async def test_stale_paused_run_is_reclaimed_and_unblocks_the_library(
+    client, queue_stub, wiki_mocks
+):
+    """卡了一天的 paused_error 由 cron 回收，该库随即恢复可同步。
+
+    paused_error 不在 TERMINAL_STATUSES 里，互斥判定把它当「还在跑」，于是一次瞬时
+    故障（arXiv 429、LLM 超时）就让这个库**永久**退出每日同步。生产上四个库正是如此。
+    """
+    import datetime as dt
+
+    token = await register_and_login(client, email="stale-paused@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("stale-paused@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-卡住")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    # 造一个一天前就卡住的增量任务
+    async with get_sessionmaker()() as session:
+        stale = VoyageRun(
+            kind="wiki_ingest",
+            status="paused_error",
+            library_id=uuid.UUID(library_id),
+            goal="卡住的同步",
+        )
+        session.add(stale)
+        await session.flush()
+        stale.updated_at = dt.datetime.now(dt.UTC) - dt.timedelta(hours=48)
+        await session.commit()
+        stale_id = stale.id
+
+    async with get_sessionmaker()() as session:
+        assert await ingest_service.find_due_daily_libraries(session) == [], "卡住时不该被选中"
+
+    async with get_sessionmaker()() as session:
+        reclaimed = await ingest_service.reclaim_stale_paused_ingests(session)
+        assert reclaimed == [stale_id]
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, stale_id)
+        assert run.status == "cancelled"
+        due = await ingest_service.find_due_daily_libraries(session)
+        assert [str(lib.id) for lib in due] == [library_id], "回收后该库应恢复可同步"
+
+
+async def test_recent_paused_run_is_left_alone(client, queue_stub, wiki_mocks):
+    """刚失败的任务不回收——留一天窗口给人手动 resume。"""
+    token = await register_and_login(client, email="fresh-paused@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("fresh-paused@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-刚卡住")
+
+    async with get_sessionmaker()() as session:
+        fresh = VoyageRun(
+            kind="wiki_ingest",
+            status="paused_error",
+            library_id=uuid.UUID(library_id),
+            goal="刚失败",
+        )
+        session.add(fresh)
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        assert await ingest_service.reclaim_stale_paused_ingests(session) == []
+
+
+async def test_over_budget_library_does_not_stop_the_others(client, queue_stub, wiki_mocks):
+    """一个库超预算不能拖垮当天其余的库。
+
+    老写法只捕获 IngestConflictError，LibraryBudgetExhaustedError 会穿透整个循环，
+    排在后面的库当天全都不同步，而且只在 arq 日志里留个异常，界面上完全无感。
+    """
+    from worker.tasks import daily_wiki_ingest
+
+    token = await register_and_login(client, email="budget-cron@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("budget-cron@example.com")
+
+    lib_ids = []
+    for name in ("独立库-超预算", "独立库-正常"):
+        lib_id = await _create_standalone_library(client, headers, name=name)
+        resp = await client.post(
+            f"/api/libraries/{lib_id}/ingest/run",
+            json={"mode": "bootstrap", "knobs": KNOBS},
+            headers=headers,
+        )
+        engine, _ = _make_engine()
+        await engine.run(uuid.UUID(resp.json()["id"]))
+        lib_ids.append(lib_id)
+    broke_id, healthy_id = lib_ids
+
+    # 第一个库月度预算压到 1 token —— bootstrap 已经用掉不止这些，必然耗尽
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(broke_id))
+        library.monthly_budget = 1
+        await session.commit()
+
+    class _Redis:
+        def __init__(self) -> None:
+            self.jobs: list[tuple] = []
+
+        async def enqueue_job(self, name, *args, **kwargs):
+            self.jobs.append((name, args))
+
+    redis = _Redis()
+    enqueued = await daily_wiki_ingest({"redis": redis})
+
+    # 超预算的那个被跳过，正常的那个照常入队
+    async with get_sessionmaker()() as session:
+        runs = {
+            str(r.library_id): r
+            for r in (
+                await session.execute(
+                    select(VoyageRun).where(VoyageRun.id.in_([uuid.UUID(i) for i in enqueued]))
+                )
+            )
+            .scalars()
+            .all()
+        }
+    assert healthy_id in runs, "正常的库必须仍被入队"
+    assert broke_id not in runs
+    assert len(redis.jobs) == len(enqueued) == 1
+
+
+async def test_truncated_run_does_not_advance_the_watermark(client, queue_stub, wiki_mocks):
+    """被预算截断的运行不推进水位线。
+
+    预算是在**步骤之间**检查的：打分跑完把预算烧光，引擎就把剩余步骤置 obsolete，
+    再拿最后一个待办步骤当隐式收尾——而本流水线的最后一步正是 update_watermark。
+    推进水位线等于「一篇没处理，却宣布这段时间已经看过了」，下次同步直接跳过这批论文。
+    """
+    from app.agents.voyage.actions import ActionContext
+    from app.agents.voyage.actions_wiki import update_watermark
+    from app.models.voyage import VoyageStep
+
+    token = await register_and_login(client, email="truncated@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("truncated@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-截断")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        original = library.ingest_state["watermark"]
+        assert original
+
+        # 造一个被预算截断的增量运行：有步骤被置 obsolete
+        run = VoyageRun(
+            kind="wiki_ingest",
+            status="executing",
+            library_id=uuid.UUID(library_id),
+            goal="截断的同步",
+        )
+        session.add(run)
+        await session.flush()
+        session.add(
+            VoyageStep(
+                run_id=run.id, action="wiki.compile", title="编译", status="obsolete", seq=0
+            )
+        )
+        await session.commit()
+        run_id = run.id
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        ctx = ActionContext(
+            run=run,
+            llm=LLMRouter(),
+            checkpoint={"watermark_candidate": "2099-01-01T00:00:00+00:00"},
+        )
+        result = await update_watermark(ctx, {})
+
+    assert result["truncated"] is True
+    assert result["watermark"] == original, "截断的运行不该推进水位线"
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        assert library.ingest_state["watermark"] == original

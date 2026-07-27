@@ -25,11 +25,6 @@ function fromDefinition(def: ProjectDefinition | null): InclusionValue {
    - 重复论文候选与合并（不可撤销）。
    ============================================================ */
 
-const CADENCES: { v: string; zh: string; en: string }[] = [
-  { v: '', zh: '手动同步', en: 'Manual' },
-  { v: 'daily', zh: '每天自动同步', en: 'Daily' },
-];
-
 export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: string; readOnly?: boolean }) {
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -259,21 +254,18 @@ function LibraryInfoCard({
   const queryClient = useQueryClient();
   const [name, setName] = useState(lib.name);
   const [statement, setStatement] = useState(lib.statement ?? '');
-  const [cadence, setCadence] = useState(lib.cadence ?? '');
   const [budget, setBudget] = useState(lib.monthly_budget == null ? '' : String(lib.monthly_budget));
 
   // 库切换 / 保存后回填
   useEffect(() => {
     setName(lib.name);
     setStatement(lib.statement ?? '');
-    setCadence(lib.cadence ?? '');
     setBudget(lib.monthly_budget == null ? '' : String(lib.monthly_budget));
   }, [lib]);
 
   const dirty =
     name !== lib.name ||
     statement !== (lib.statement ?? '') ||
-    cadence !== (lib.cadence ?? '') ||
     budget !== (lib.monthly_budget == null ? '' : String(lib.monthly_budget));
 
   const save = useMutation({
@@ -281,7 +273,6 @@ function LibraryInfoCard({
       api.updateLibrary(lib.id, {
         name: name.trim() || lib.name,
         statement: statement.trim() || null,
-        cadence: cadence || null,
         monthly_budget: budget.trim() === '' ? null : Math.max(0, Math.floor(Number(budget))),
       }),
     onSuccess: () => {
@@ -340,14 +331,6 @@ function LibraryInfoCard({
         </label>
         {!readOnly && (
         <div className="row gap12" style={{ flexWrap: 'wrap' }}>
-          <label className="col gap6" style={{ minWidth: 180 }}>
-            <span className="muted" style={{ fontSize: 12 }}>{tr('同步节奏', 'Sync cadence')}</span>
-            <select className="input" value={cadence} onChange={(e) => setCadence(e.target.value)}>
-              {CADENCES.map((c) => (
-                <option key={c.v} value={c.v}>{tr(c.zh, c.en)}</option>
-              ))}
-            </select>
-          </label>
           <label className="col gap6" style={{ minWidth: 220 }}>
             <span className="muted" style={{ fontSize: 12 }}>
               {tr('每月 AI 预算（token 数，留空 = 不限）', 'Monthly AI budget (tokens, empty = unlimited)')}

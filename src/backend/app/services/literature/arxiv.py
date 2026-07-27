@@ -345,23 +345,19 @@ class ArxivClient:
 
         只返回 announce_type ∈ {new, cross} 的条目（replace/replace-cross 是旧论文更新，
         已在解析时剔除）；字段与 ``search`` 返回的 entry 对齐，便于复用入库逻辑。
-        网络/解析失败一律记 warning 并返回 []（不能让整步崩），且不写缓存以便下次重试。
-        限流已在 :meth:`_request` 里重试过，走到这里的失败是真失败。
 
-        .. warning::
-           返回 [] 把「限流」和「今天确实没有新论文」压成了同一个结果，调用方无法区分。
-           库同步改为消费每日池之后，这个静默失败会放大成「全实验室当天颗粒无收」——
-           待办：改成带状态的返回值，见方案 A3。
+        **失败原样上抛**（限流已在 :meth:`_request` 里重试过，走到这里是真失败）。
+        这里曾经把任何异常吞成 []，于是「被限流」和「今天确实没有新论文」变成同一个
+        结果，谁都分不出来。每日池是所有文献库的唯一供给，一次静默的空池等于全实验室
+        当天颗粒无收却无人知晓——由调用方按分类记录成败，见
+        :func:`app.services.daily_feed.fetch_new_by_category`。
+        失败不写缓存，下次重试。
         """
         key = cache_key("arxiv", "rss_new", {"category": category})
         if (cached := await self._rss_cache.get(key)) is not None:
             return cached
-        try:
-            resp = await self._request(RSS_URL_TEMPLATE.format(category=category))
-            entries = _parse_rss(resp.text)
-        except Exception:  # noqa: BLE001 — 新鲜源尽力而为；CancelledError 是 BaseException 不在此
-            logger.warning("arxiv RSS fetch/parse failed for %s", category, exc_info=True)
-            return []
+        resp = await self._request(RSS_URL_TEMPLATE.format(category=category))
+        entries = _parse_rss(resp.text)
         await self._rss_cache.set(key, entries)
         return entries
 

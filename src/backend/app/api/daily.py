@@ -36,6 +36,7 @@ from app.schemas.daily import (
     DailyLikeState,
     DailyPage,
     DailyPaperDetail,
+    DailySyncStatus,
 )
 from app.schemas.paper import PaperChatRequest
 from app.services import citations as citations_service
@@ -293,6 +294,19 @@ async def collect(
         if task_id:
             tasks.append(DailyCollectTask(paper_id=paper_id, task_id=task_id))
     return DailyCollectResponse(results=results, tasks=tasks)
+
+
+@router.get("/sync-status", response_model=DailySyncStatus)
+async def get_sync_status(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DailySyncStatus:
+    """每日论文池的同步状况（全员可读）。
+
+    池子是所有文献库的唯一供给，抓取失败会让全实验室当天颗粒无收——所以这个状态要
+    摆在每日页上，而不是只留在任务日志里。
+    """
+    return DailySyncStatus(**await daily_service.sync_status(session))
 
 
 @router.get("/categories", response_model=DailyCategoriesRead)
