@@ -395,3 +395,47 @@ def test_split_text_after_sanitize_has_no_nul():
 
     chunks = split_text(sanitize_text("para1 with \x00 nul\n\npara2" * 100))
     assert chunks and all("\x00" not in c for c in chunks)
+
+
+async def test_min_interval_limiter_gate_is_shared_across_instances(cache_redis):
+    """两个**独立**的限流器实例共享同一个 Redis 闸门。
+
+    这正是生产上的形状：api 与 worker 是两个容器、各建一个客户端，进程内的间隔管不到
+    对方，于是 arXiv 看到的实际速率是设定值的两倍。
+    """
+    import time as _time
+
+    a = MinIntervalLimiter(0.2, redis=cache_redis)
+    b = MinIntervalLimiter(0.2, redis=cache_redis)
+    await a.acquire()
+    start = _time.monotonic()
+    await b.acquire()  # 必须等 a 的闸门到期
+    assert _time.monotonic() - start >= 0.1
+
+
+async def test_min_interval_limiter_falls_back_when_redis_is_down(cache_redis):
+    """Redis 故障时降级为进程内间隔，而不是阻断抓取。"""
+    import time as _time
+
+    class _Broken:
+        async def set(self, *a, **k):
+            raise RuntimeError("redis down")
+
+        async def pttl(self, *a, **k):
+            raise RuntimeError("redis down")
+
+    limiter = MinIntervalLimiter(0.2, redis=_Broken())
+    await limiter.acquire()
+    start = _time.monotonic()
+    await limiter.acquire()  # 走进程内那条，仍然限速
+    assert _time.monotonic() - start >= 0.1
+
+
+async def test_penalize_extends_the_shared_gate(cache_redis):
+    """惩罚要跨进程生效：另一个实例也得等。"""
+    a = MinIntervalLimiter(0.05, redis=cache_redis)
+    b = MinIntervalLimiter(0.05, redis=cache_redis)
+    await a.penalize(2.0)
+    ttl = await cache_redis.pttl("lit:arxiv:gate")
+    assert ttl > 1000
+    assert b._interval > 0  # b 会在 acquire 时撞上这个闸门

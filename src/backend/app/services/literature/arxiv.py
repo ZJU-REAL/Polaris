@@ -237,7 +237,8 @@ class ArxivClient:
         self._cache = ResponseCache(redis)
         # RSS 新鲜源用独立的短 TTL 缓存（3h），跨用户/项目共享当天新公告
         self._rss_cache = ResponseCache(redis, ttl=_RSS_CACHE_TTL)
-        self._limiter = MinIntervalLimiter(min_interval)
+        # 闸门放 Redis 上，让 api 与 worker 两个进程共享同一个间隔（见 MinIntervalLimiter）
+        self._limiter = MinIntervalLimiter(min_interval, redis=redis)
         self._page_size = page_size
         self._max_retries = max(1, max_retries)
         self._backoff_base = backoff_base

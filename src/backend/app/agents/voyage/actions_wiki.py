@@ -1116,7 +1116,7 @@ async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[s
 
         compiled_count = int(ctx.checkpoint.get("compiled_count") or 0)
         message = (
-            f"文献调研被预算截断：本次编译 {compiled_count} 篇，水位线未推进"
+            f"文献调研被预算截断：本次编译 {compiled_count} 篇；进度未记录，下次会重新处理"
             if truncated
             else f"文献调研完成：本次编译 {compiled_count} 篇 wiki 页"
         )
