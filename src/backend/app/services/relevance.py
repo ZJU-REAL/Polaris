@@ -43,19 +43,55 @@ def _extract_json(content: str) -> Any:
     return json.loads(content[start : end + 1])
 
 
+def _include_keywords(definition: dict[str, Any]) -> list[str]:
+    """库配置里的收录关键词（``keywords.include``），去空去重、保序。"""
+    raw = (definition.get("keywords") or {}).get("include") or []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in raw:
+        kw = str(item).strip()
+        if kw and kw.lower() not in seen:
+            seen.add(kw.lower())
+            out.append(kw)
+    return out
+
+
 def build_relevance_context(definition: dict[str, Any] | None, name: str) -> str:
     """按库 definition 组打分 context（P8a：库为收录配置权威源）；rubric / questions
-    缺失时只用 statement。``name`` 是 statement 缺失时的兜底方向名（库名）。"""
+    缺失时只用 statement。``name`` 是 statement 缺失时的兜底方向名（库名）。
+
+    关键词也要给模型看：一句话方向描述不是人人写得好，但关键词大家都列得出来，
+    方向的真实意图常常主要落在关键词上。只有 statement 的话会漏掉这部分意图。
+    """
     definition = definition if isinstance(definition, dict) else {}
     rubric = definition.get("rubric") or []
     questions = definition.get("questions") or []
     statement = definition.get("statement") or name
+    keywords = _include_keywords(definition)
     lines = [f"研究方向：{statement}"]
+    if keywords:
+        lines.append(f"关注的关键词：{'、'.join(keywords)}")
     if rubric:
         lines.append(f"评分标准（rubric）：{json.dumps(rubric, ensure_ascii=False)}")
     if questions:
         lines.append(f"研究问题：{json.dumps(questions, ensure_ascii=False)}")
     return "\n".join(lines)
+
+
+def build_direction_query(definition: dict[str, Any] | None, name: str) -> str:
+    """把方向拼成一段用于**向量检索**的查询文本：方向描述 + 关键词。
+
+    与 :func:`build_relevance_context` 分开是因为用途不同——那份是给模型读的评判依据，
+    带 rubric 与研究问题；这份是拿去算相似度的，只要能代表方向的语义即可，掺进评分
+    标准反而会把向量拉偏（rubric 讲的是「怎么打分」，不是「研究什么」）。
+
+    关键词权重不低：statement 写得含糊时，关键词往往是方向意图的主要载体。
+    """
+    definition = definition if isinstance(definition, dict) else {}
+    statement = (definition.get("statement") or name or "").strip()
+    keywords = _include_keywords(definition)
+    parts = [p for p in (statement, "、".join(keywords)) if p]
+    return "。".join(parts)
 
 
 async def score_paper_relevance(

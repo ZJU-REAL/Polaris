@@ -2262,7 +2262,6 @@ export interface McpToolParam {
   type: string;
   enum: string[] | null;
   description: string | null;
-  default?: unknown;
 }
 export interface McpToolInfo {
   name: string;
@@ -2276,41 +2275,6 @@ export interface McpToolsCatalog {
   protocol_version: string;
   endpoint: string;
   tools: McpToolInfo[];
-}
-
-/** 试运行返回的一块内容：外部 MCP 客户端收到的原样 content block。 */
-export interface McpContentBlock {
-  type: string;
-  text?: string;
-  data?: string;
-  mimeType?: string;
-}
-export interface McpInvokeResult {
-  name: string;
-  is_error: boolean;
-  duration_ms: number;
-  content: McpContentBlock[];
-  truncated: boolean;
-}
-
-export type McpCheckStatus = 'ok' | 'error' | 'skipped';
-/** 单个工具的自检结论。 */
-export interface McpToolCheck {
-  name: string;
-  network: boolean;
-  status: McpCheckStatus;
-  duration_ms?: number;
-  arguments?: Record<string, unknown> | null;
-  detail?: string | null;
-  preview?: string | null;
-  images?: number;
-}
-export interface McpSelfCheckReport {
-  project_id: string;
-  include_network: boolean;
-  samples: Record<string, string | number | null>;
-  summary: { total: number; ok: number; error: number; skipped: number };
-  results: McpToolCheck[];
 }
 
 // ============================================================
@@ -4050,24 +4014,9 @@ export const api = {
     return requestJson<EffectiveTestResult>('/me/llm/test-effective', 'POST', input);
   },
 
-  // —— MCP 只读工具目录 / 试运行 / 自检（docs/development.md「Testing the tools」） ——
+  // —— MCP 只读工具目录（docs/api-mcp.md） ——
   listMcpTools(): Promise<McpToolsCatalog> {
     return request<McpToolsCatalog>('/mcp/tools');
-  },
-  /** 试运行单个工具：返回外部 MCP 客户端会收到的 content。 */
-  invokeMcpTool(
-    name: string,
-    input: { project_id: string; arguments: Record<string, unknown> },
-  ): Promise<McpInvokeResult> {
-    return requestJson<McpInvokeResult>(`/mcp/tools/${encodeURIComponent(name)}/invoke`, 'POST', input);
-  },
-  /** 一键自检：用课题里的真实数据把工具跑一遍。 */
-  selfCheckMcpTools(input: {
-    project_id: string;
-    include_network?: boolean;
-    names?: string[];
-  }): Promise<McpSelfCheckReport> {
-    return requestJson<McpSelfCheckReport>('/mcp/selfcheck', 'POST', input);
   },
 
   // —— Skills · 技能（docs/skill-system.md §4） ——

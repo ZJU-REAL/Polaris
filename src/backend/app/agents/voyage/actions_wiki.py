@@ -13,7 +13,6 @@
 
 import asyncio
 import logging
-import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,9 +22,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
+from app.agents.voyage.actions_ideas import cosine_similarity
 from app.core.db import get_sessionmaker
 from app.models.activity import Activity
 from app.models.base import utcnow
+from app.models.daily_feed import DailyFeedEntry
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, new_paper
 from app.services.affiliations import (
@@ -54,7 +55,11 @@ from app.services.literature.pdf_extract import extract_figures, extract_full_te
 from app.services.paper_enrich import paper_embedding_enabled, paper_embedding_text
 from app.services.paper_wiki import upsert_wiki
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
-from app.services.relevance import build_relevance_context, score_paper_relevance
+from app.services.relevance import (
+    build_direction_query,
+    build_relevance_context,
+    score_paper_relevance,
+)
 from app.services.wiki_compile import compile_paper
 
 logger = logging.getLogger(__name__)
@@ -83,11 +88,6 @@ _UNLIMITED_CHUNK_SENTINEL = 1_000_000
 def _unlimited(knobs: dict[str, Any]) -> bool:
     return bool(knobs.get("unlimited"))
 
-
-# 增量同步回看窗口：arXiv 关键词检索索引对新论文有约 3-5 天滞后（近 2 天窗口常搜到 0），
-# 只回看 1 天会永远漏掉「延迟才被索引」的论文。放宽到 14 天，去重（arxiv_id/doi/title）
-# 会跳过已入库的，故重叠扫描几乎零成本。
-_INCREMENTAL_LOOKBACK_DAYS = 14
 
 # observation 里给用户看的论文/概念清单上限（避免 observation JSON 过大）
 _OBS_LIST_CAP = 30
@@ -238,23 +238,117 @@ async def _pool_paper_or_new(
 
 # ---- 1. 检索候选（arXiv） ----
 
-_WS_RE = re.compile(r"\s+")
+async def _rank_feed_by_similarity(
+    ctx: ActionContext, *, direction: str, papers: list[Paper], limit: int
+) -> tuple[list[Paper], bool]:
+    """按与研究方向的向量相似度给每日池论文粗排，取前 ``limit``。
 
+    ``direction`` 由 :func:`build_direction_query` 组好（方向描述 + 收录关键词）——
+    只用 statement 的话，方向描述写得含糊的库会被排得很差，而关键词恰恰是这类库表达
+    意图的主要方式。
 
-def _normalize_kw(text: str) -> str:
-    """归一化用于宽松子串匹配：小写、连字符→空格、压缩空白。
+    返回 (排序后的论文, 是否真的排过序)。**这是排序不是过滤**——嵌入不可用时原样返回，
+    宁可多送几篇去打分，也不能因为向量缺失让这个库一篇都收不到。
 
-    这样 "Computer-Use Agents" 与关键词 "Computer Use Agent" 能互相命中。
+    在 Python 里算余弦而不是走 pgvector：每日池只有几百行，跨 sqlite/postgres 一致，
+    测试路径不用特判。
     """
-    return _WS_RE.sub(" ", text.lower().replace("-", " ")).strip()
+    with_vec = [p for p in papers if p.embedding is not None]
+    if not with_vec or not direction.strip():
+        return papers[:limit], False
+    try:
+        vectors = await ctx.llm.embed(
+            [direction[:2000]],
+            user_id=ctx.run.created_by,
+            project_id=ctx.run.project_id,
+            library_id=ctx.run.library_id,
+            voyage_id=ctx.run.id,
+        )
+    except Exception:  # noqa: BLE001 — provider 不支持嵌入等：退回不排序
+        logger.warning("feed ranking embed failed for library %s", ctx.run.library_id)
+        return papers[:limit], False
+    scored = [(cosine_similarity(vectors[0], list(p.embedding)), p) for p in with_vec]
+    scored.sort(key=lambda x: -x[0])
+    ranked = [p for _, p in scored]
+    # 没建向量的排在后面而不是丢掉（同上：粗排不该有排除语义）
+    ranked.extend(p for p in papers if p.embedding is None)
+    return ranked[:limit], True
 
 
-def _keyword_match(entry: dict[str, Any], includes_norm: list[str]) -> bool:
-    """标题+摘要归一化后，任一关键词（已归一化）作为子串命中即留；无关键词则全留。"""
-    if not includes_norm:
-        return True
-    hay = _normalize_kw(f"{entry.get('title') or ''} {entry.get('abstract') or ''}")
-    return any(kw in hay for kw in includes_norm)
+async def _collect_from_daily_feed(
+    ctx: ActionContext,
+    session: AsyncSession,
+    *,
+    library: DirectionLibrary,
+    direction: str,
+    limit: int,
+) -> dict[str, Any]:
+    """增量同步的候选来源：每日论文池，不碰 arXiv。
+
+    取**整张 daily_feed_entries**、不加时间窗——``cleanup_expired`` 已经保证这张表里
+    只有保留期内的行，表本身就是那个窗口。全量重扫是有意的：上次同步失败/欠费/被暂停
+    之后，下一次会自动把落下的补上，不会「漏一天就永久丢失」。
+
+    重复送打分由 :func:`_existing_keys` 挡掉——它不按 status 过滤，所以昨天已判
+    ``excluded`` 的论文今天不会再花一次 LLM。
+
+    **不按分类、也不按关键词筛。** 收录设置里的分类和关键词只在建库时用来构造 arXiv
+    检索式；同步时一律由相关度打分决定去留。两者都是硬门槛，配窄了会让库悄无声息地
+    颗粒无收，而「0 篇」和「今天确实没有相关论文」在界面上无法区分。
+    """
+    rows = (
+        (
+            await session.execute(
+                select(Paper, DailyFeedEntry.feed_date)
+                .join(DailyFeedEntry, DailyFeedEntry.paper_id == Paper.id)
+                .order_by(DailyFeedEntry.feed_date.desc())
+            )
+        )
+        .all()
+    )
+    feed_papers = [p for p, _ in rows]
+    feed_latest = max((d for _, d in rows), default=None)
+
+    ranked, did_rank = await _rank_feed_by_similarity(
+        ctx, direction=direction, papers=feed_papers, limit=limit
+    )
+
+    arxiv_ids, dois, titles = await _existing_keys(session, library.id)
+    selected: list[Paper] = []
+    already = 0
+    for paper in ranked:
+        aid = paper.arxiv_id
+        title = (paper.title or "").strip()
+        doi = (paper.doi or "").lower() or None
+        if not title:
+            continue
+        if (aid and aid in arxiv_ids) or (doi and doi in dois) or title.lower() in titles:
+            already += 1
+            continue
+        # 论文已经在内容池里（每日推送建的就是池论文），只需要补一条成员行。
+        # 以 created 为准而不是只信上面的去重集合：那三个集合按 arxiv_id/doi/标题建，
+        # 标题为空的存量论文一个都进不去，只靠集合会把「早就在库里」误报成新增。
+        _, created = await ensure_membership(
+            session, library_id=library.id, paper_id=paper.id, status="candidate"
+        )
+        if not created:
+            already += 1
+            continue
+        if aid:
+            arxiv_ids.add(aid)
+        if doi:
+            dois.add(doi)
+        titles.add(title.lower())
+        selected.append(paper)
+
+    return {
+        "feed_total": len(feed_papers),
+        "feed_ranked": did_rank,
+        "after_vector_rank": len(ranked),
+        "already_in_library": already,
+        "selected": selected,
+        "feed_latest_date": feed_latest.isoformat() if feed_latest else None,
+    }
 
 
 @register("wiki.search_candidates")
@@ -268,6 +362,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             raise ValueError(f"library not found for project: {ctx.run.project_id}")
         # P8a：收录配置读库自身 definition（不再读起源课题 project.definition）
         definition = library_definition(library)
+        direction_query = build_direction_query(definition, library.name)
         keywords_def = definition.get("keywords") or {}
         # 稀疏 definition 容忍：无 arxiv_categories 时回退默认 cs.* 分类
         categories = list(keywords_def.get("arxiv_categories") or []) or list(
@@ -275,18 +370,37 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         )
         include = list(keywords_def.get("include") or [])
 
-        # 水位线权威源在库（P8a）：library.ingest_state.watermark
-        watermark = _parse_iso((library.ingest_state or {}).get("watermark"))
-        if mode == "incremental" and watermark is not None:
-            # 回看窗口覆盖 arXiv 关键词索引滞后，防止近几天的新论文被漏抓
-            since = watermark - timedelta(days=_INCREMENTAL_LOOKBACK_DAYS)
-        else:
-            since = now - timedelta(days=30 * int(knobs["months_back"]))
-
         if _unlimited(knobs):
             limit = _UNLIMITED_SENTINEL  # 窗口内全量抓取（哨兵防失控）
         else:
             limit = min(_MAX_CANDIDATES_CAP, max(int(knobs["max_papers"]) * 3, 10))
+
+        # —— 增量同步：候选一律来自每日论文池，不访问 arXiv ——
+        # arXiv 检索是限流的主要来源（生产上三个库同步就是死在这个调用的 429 上），
+        # 而每日推送本来就每天把新论文抓进内容池了，同一批论文没有理由抓第二遍。
+        if mode == "incremental":
+            feed = await _collect_from_daily_feed(
+                ctx, session, library=library, direction=direction_query, limit=limit
+            )
+            new_papers = feed.pop("selected")
+            await session.flush()
+            brief = _paper_brief(new_papers)
+            await session.commit()
+            ctx.checkpoint["watermark_candidate"] = now.isoformat()
+            await ctx.log(
+                f"每日池 {feed['feed_total']} 篇 → 粗排取 {feed['after_vector_rank']}"
+                f" → 已在库 {feed['already_in_library']} → 送打分 {len(new_papers)}"
+            )
+            return {
+                "source": "daily_feed",
+                "mode": mode,
+                "inserted": len(new_papers),
+                "new_papers": brief,
+                **feed,
+            }
+
+        # —— 建库：仍走 arXiv 检索（每日池只有 RSS 当天公告、没有历史，回填不了）——
+        since = now - timedelta(days=30 * int(knobs["months_back"]))
         entries = await get_arxiv_client().search(
             categories=categories, keywords=include, since=since, until=now, limit=limit
         )
@@ -345,27 +459,8 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             new_papers.append(paper)
             return True
 
-        # 补漏层：关键词检索的日期窗口（索引有 3-5 天滞后，故靠 RSS 补新鲜）
         for entry in entries:
             await _try_insert(entry, "arxiv")
-
-        # 新鲜源：分类 RSS /new 当天公告（即时无滞后），仅增量模式补最新论文
-        rss_found = 0
-        rss_matched = 0
-        rss_inserted = 0
-        rss_categories: list[str] = []
-        if mode == "incremental":
-            includes_norm = [n for k in include if (n := _normalize_kw(k))]
-            for cat in categories:
-                rss_entries = await get_arxiv_client().fetch_new(cat)
-                rss_categories.append(cat)
-                rss_found += len(rss_entries)
-                for entry in rss_entries:
-                    if not _keyword_match(entry, includes_norm):
-                        continue
-                    rss_matched += 1
-                    if await _try_insert(entry, "arxiv"):
-                        rss_inserted += 1
 
         await session.flush()  # 拿到新论文 id，供 observation 清单
         brief = _paper_brief(new_papers)
@@ -374,15 +469,12 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
     # 新水位线 = 本次检索时刻，由 wiki.update_watermark 落库
     ctx.checkpoint["watermark_candidate"] = now.isoformat()
     return {
+        "source": "arxiv",
         "found": len(entries),
         "inserted": len(new_papers),
         "new_papers": brief,
         "window_since": since.isoformat(),
         "mode": mode,
-        "rss_found": rss_found,
-        "rss_matched": rss_matched,
-        "rss_inserted": rss_inserted,
-        "rss_categories": rss_categories,
     }
 
 

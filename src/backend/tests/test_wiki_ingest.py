@@ -21,7 +21,7 @@ from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.llm_config import LLMUsage
-from app.models.paper import EMBEDDING_DIM, paper_concepts
+from app.models.paper import EMBEDDING_DIM, new_paper, paper_concepts
 from app.models.user import User
 from app.models.voyage import VoyageRun
 from app.services import ingest as ingest_service
@@ -397,12 +397,11 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert detail2["status"] == "done"
     assert detail2["steps"][0]["observation"]["mode"] == "incremental"
     assert detail2["steps"][0]["observation"]["inserted"] == 0  # 去重
-    # 增量回看窗口 = 水位线 − 14 天（覆盖 arXiv 关键词索引滞后，防漏抓近几天新论文）
-    from datetime import datetime, timedelta
-
-    watermark_dt = datetime.fromisoformat(state["watermark"])
-    since_dt = datetime.fromisoformat(detail2["steps"][0]["observation"]["window_since"])
-    assert watermark_dt - since_dt == timedelta(days=14)
+    # 增量的候选来自每日论文池，不再检索 arXiv，所以没有时间窗这回事
+    obs2 = detail2["steps"][0]["observation"]
+    assert obs2["source"] == "daily_feed"
+    assert "window_since" not in obs2
+    assert obs2["feed_total"] == 0  # 本测试没往每日池放东西
     async with get_sessionmaker()() as session:
         assert len(await project_paper_rows(session, project_id=project_id)) == 4
 
@@ -553,23 +552,20 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
         assert sorted(m.status for _, m in rows) == ["compiled", "compiled", "excluded"]
 
 
-def test_rss_loose_keyword_filter():
-    """宽松关键词过滤：连字符变体命中、无关滤除、无关键词全留（确定性单元测试）。"""
-    from app.agents.voyage.actions_wiki import _keyword_match, _normalize_kw
+async def test_incremental_pulls_from_daily_feed_without_arxiv(client, queue_stub, wiki_mocks):
+    """增量同步只吃每日论文池——**arXiv 全线 429 也要跑通**。
 
-    includes = [_normalize_kw(k) for k in ["Computer Use Agent"]]
-    hit = {"title": "Computer-Use Agents at Scale", "abstract": "results"}
-    miss = {"title": "Basket Weaving", "abstract": "nothing relevant"}
-    assert _keyword_match(hit, includes) is True  # 连字符 vs 空格变体命中
-    assert _keyword_match(miss, includes) is False  # 无关滤除
-    assert _keyword_match(miss, []) is True  # 无关键词 → 全留给 LLM 打分
+    这是整个改动的意义所在：生产上三个库同步就是死在检索接口的 429 上。所以这里
+    先 bootstrap（走 arXiv，正常响应），再把所有 arXiv 路由改成 429，然后跑增量，
+    要求它照样 done、照样把每日池里的新论文收进来。
+    """
+    import datetime as dt
 
+    from app.models.daily_feed import DailyFeedEntry
 
-async def test_incremental_rss_fresh_layer(client, queue_stub, wiki_mocks):
-    """增量同步的 RSS 新鲜源：announce_type 过滤、版本号归一化、宽松关键词过滤、三方去重。"""
     project_id, headers = await _setup_project(client)
 
-    # 先 bootstrap 建立水位线与存量论文（2406.00001 等入库）
+    # bootstrap 建立水位线与存量论文（此时 arXiv 是通的）
     resp = await client.post(
         f"/api/projects/{project_id}/ingest",
         json={"mode": "bootstrap", "knobs": KNOBS},
@@ -578,9 +574,43 @@ async def test_incremental_rss_fresh_layer(client, queue_stub, wiki_mocks):
     engine, _ = _make_engine()
     await engine.run(uuid.UUID(resp.json()["id"]))
 
-    # 仅本测试给 wiki_mocks 路由追加 RSS 新鲜源（bootstrap 不走 RSS，故此前无需）
-    wiki_mocks.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(
-        return_value=httpx.Response(200, text=ARXIV_RSS)
+    # 每日池里放两篇新论文 + 一篇与存量重复的（去重要挡掉它）
+    async with get_sessionmaker()() as session:
+        rows = await project_paper_rows(session, project_id=project_id)
+        existing_aid = next(p.arxiv_id for p, _ in rows if p.arxiv_id)
+        existing_id = next(p.id for p, _ in rows if p.arxiv_id == existing_aid)
+        feed_ids = []
+        for i, title in enumerate(["Feed Agent Paper", "Feed Distillation Paper"]):
+            paper = new_paper(
+                source="arxiv",
+                arxiv_id=f"2607.9000{i}",
+                title=title,
+                abstract="research agents and planning",
+                year=2026,
+                published_at=dt.datetime(2026, 7, 20, tzinfo=dt.UTC),
+            )
+            session.add(paper)
+            await session.flush()
+            feed_ids.append(paper.id)
+            session.add(
+                DailyFeedEntry(
+                    paper_id=paper.id, feed_date=dt.date(2026, 7, 20), primary_category="cs.AI"
+                )
+            )
+        # 已在库的论文也进池：必须被去重挡住，不能重复送打分
+        session.add(
+            DailyFeedEntry(
+                paper_id=existing_id, feed_date=dt.date(2026, 7, 20), primary_category="cs.AI"
+            )
+        )
+        await session.commit()
+
+    # arXiv 全线限流：检索、RSS、按 id 取元数据统统 429
+    arxiv_route = wiki_mocks.get(url__regex=r"https://(export\.)?arxiv\.org/.*").mock(
+        return_value=httpx.Response(429)
+    )
+    rss_route = wiki_mocks.get(url__regex=r"https://rss\.arxiv\.org/.*").mock(
+        return_value=httpx.Response(429)
     )
 
     resp2 = await client.post(
@@ -593,28 +623,29 @@ async def test_incremental_rss_fresh_layer(client, queue_stub, wiki_mocks):
 
     detail = (await client.get(f"/api/voyages/{resp2.json()['id']}", headers=headers)).json()
     assert detail["status"] == "done", detail
+
     obs = detail["steps"][0]["observation"]
+    assert obs["source"] == "daily_feed"
     assert obs["mode"] == "incremental"
-    # API 窗口检索的 3 篇全去重（已在 bootstrap 入库）→ 新增全部来自 RSS
-    assert obs["rss_found"] == 4  # 6 条 item 中 4 条 new/cross（replace/replace-cross 跳过）
-    assert obs["rss_matched"] == 3  # 宽松关键词过滤：篮子编织被滤除
-    assert obs["rss_inserted"] == 2  # 3 命中里 2406.00001 与存量重复被去重
-    assert obs["inserted"] == 2  # 本步入库总数 = RSS 新增
-    assert "cs.LG" in obs["rss_categories"]
+    assert obs["feed_total"] == 3  # 池里 3 条（含 1 条与存量重复）
+    assert obs["already_in_library"] == 1  # 重复那条被去重挡下，不重复打分
+    assert obs["inserted"] == 2
+
+    # 候选来源不再有 RSS，那套字段整体消失
+    assert "rss_found" not in obs
+
+    # 第一步一次 arXiv 都没打（PDF 下载在后续步骤，与候选来源无关）
+    assert rss_route.call_count == 0
 
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
         by_aid = {p.arxiv_id: m.status for p, m in rows}
-        # 版本号已归一化（无 v1/v2 后缀），新鲜论文入库
-        assert "2607.30001" in by_aid
-        assert "2607.30002" in by_aid
-        # replace / replace-cross（旧论文更新）与无关论文未入库
-        assert "2607.30003" not in by_aid
-        assert "2607.30004" not in by_aid
-        assert "2607.30005" not in by_aid
-        # 与存量重复的 arxiv_id 未产生第二条记录
-        dup_count = sum(1 for p, _ in rows if p.arxiv_id == "2406.00001")
-        assert dup_count == 1
+        assert "2607.90000" in by_aid
+        assert "2607.90001" in by_aid
+        # 与存量重复的没有产生第二条成员行
+        assert sum(1 for p, _ in rows if p.arxiv_id == existing_aid) == 1
+
+    assert arxiv_route.call_count >= 0  # 保留句柄，避免 respx 未使用路由告警
 
 
 # ---- 最大化模式（knobs.unlimited）：不限篇数 + 不限预算 ----
