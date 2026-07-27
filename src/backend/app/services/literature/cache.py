@@ -105,3 +105,15 @@ class MinIntervalLimiter:
             if wait > 0:
                 await asyncio.sleep(wait)
             self._last = time.monotonic()
+
+    async def penalize(self, seconds: float) -> None:
+        """被限流后把「上次请求时刻」往后推，让**共享这个限流器的所有协程**一起等。
+
+        只让撞上 429 的那个协程 sleep 是不够的：限流器是整个客户端共享的，别的协程
+        照样会在 3 秒后继续打过去，等于没退避。推 ``_last`` 才能把惩罚摊到所有人身上。
+        interval<=0（测试）时是 no-op，保持限流器整体关闭的语义。
+        """
+        if self._interval <= 0 or seconds <= 0:
+            return
+        async with self._lock:
+            self._last = max(self._last, time.monotonic() + seconds)

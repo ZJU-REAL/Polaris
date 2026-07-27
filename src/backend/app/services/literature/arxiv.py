@@ -1,15 +1,18 @@
 """arXiv Atom API 客户端：分类+关键词搜索（日期窗口、分页）、按 id 批量取元数据、PDF 下载。
 
-礼貌限速：官方建议请求间隔 3 秒（缓存命中不占限速额度）。
+礼貌限速：官方建议请求间隔 3 秒（缓存命中不占限速额度）。被限流时按 ``Retry-After``
+或指数退避重试，见 :meth:`ArxivClient._request`——所有出网请求都走那一个出口。
 
 另含分类 RSS「新鲜源」（``fetch_new``）：``rss.arxiv.org/rss/{category}`` 返回当天新公告，
 即时无滞后——用于绕开关键词检索索引 3-5 天的滞后（增量同步搜不到最新论文的根因）。
 """
 
+import asyncio
 import logging
+import random
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -46,6 +49,41 @@ _RSS_CACHE_TTL = 3 * 3600
 _RSS_KEEP_TYPES = frozenset({"new", "cross"})
 
 _VERSION_RE = re.compile(r"v\d+$")
+
+# 值得重试的状态码。429 是标准限流；**403 也算**——arXiv 历史上对它认为过量的客户端
+# 直接返 403 而不是 429，当成永久失败会让整批论文白白丢掉。5xx 是服务端抖动。
+# 其余 4xx（如检索串写错的 400）立即抛，不能烧四次退避去撞同一堵墙。
+_RETRY_STATUSES = frozenset({403, 429, 500, 502, 503, 504})
+# 单次退避上限：Retry-After 可能给出很大的值，voyage 任务不能被一个响应头挂住半天
+_MAX_BACKOFF_SECONDS = 120.0
+
+
+class ArxivError(RuntimeError):
+    """arXiv 请求失败（重试后仍未成功）。"""
+
+
+class ArxivRateLimitedError(ArxivError):
+    """被 arXiv 限流，且重试次数耗尽。"""
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    """解析 Retry-After：整数秒或 HTTP-date 两种形式都要认，解不出返回 None。"""
+    raw = (resp.headers.get("Retry-After") or "").strip()
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(int(raw)))
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return max(0.0, (dt - datetime.now(UTC)).total_seconds())
 
 
 def normalize_arxiv_id(raw: str) -> str:
@@ -185,23 +223,88 @@ class ArxivClient:
         redis: Redis | None = None,
         min_interval: float = 3.0,
         page_size: int = 100,
+        max_retries: int = 4,
+        backoff_base: float = 2.0,
     ) -> None:
+        settings = get_settings()
         self._client = client or httpx.AsyncClient(
-            proxy=get_settings().outbound_proxy or None, timeout=30.0, follow_redirects=True
+            proxy=settings.outbound_proxy or None,
+            timeout=30.0,
+            follow_redirects=True,
+            # arXiv 对不表明身份的客户端限得更狠，给一个能联系到人的 UA
+            headers={"User-Agent": f"Polaris/1.0 (+mailto:{settings.openalex_mailto})"},
         )
         self._cache = ResponseCache(redis)
         # RSS 新鲜源用独立的短 TTL 缓存（3h），跨用户/项目共享当天新公告
         self._rss_cache = ResponseCache(redis, ttl=_RSS_CACHE_TTL)
         self._limiter = MinIntervalLimiter(min_interval)
         self._page_size = page_size
+        self._max_retries = max(1, max_retries)
+        self._backoff_base = backoff_base
+
+    async def _request(self, url: str, *, params: dict[str, Any] | None = None) -> httpx.Response:
+        """所有 arXiv 请求的唯一出口：限速 + 遇限流/超时退避重试。
+
+        重试覆盖两类失败，都是生产上实际见过的：``export.arxiv.org`` 返回 **429**
+        （三个库同步任务因此停在第一步），以及 ``ReadTimeout``（一个建库任务因此中断）。
+
+        退避优先听 ``Retry-After``，没有就指数退避 + **full jitter**（api 与 worker 是两个
+        进程、各自独立重试，加满抖动才能把它们错开）。退避的同时 ``penalize`` 共享限流器，
+        否则同进程里别的协程会接着打过去，等于没退避。
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries):
+            await self._limiter.acquire()
+            retry_after: float | None = None
+            try:
+                resp = await self._client.get(url, params=params)
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                # 生产上真实见过 ReadTimeout 让整个建库任务停在第一步。超时和连接错误
+                # 与限流同属「过一会儿再试就好」，同样重试。
+                last_exc = e
+                logger.warning("arxiv request failed (%s): %s", type(e).__name__, url)
+            else:
+                if resp.status_code not in _RETRY_STATUSES:
+                    resp.raise_for_status()
+                    return resp
+                retry_after = _retry_after_seconds(resp)
+                last_exc = httpx.HTTPStatusError(
+                    f"{resp.status_code} from arXiv", request=resp.request, response=resp
+                )
+                # 生产上 arXiv 返回的是 429（实测），响应头留档以便后续调整判据
+                logger.warning(
+                    "arxiv throttled: status=%s url=%s attempt=%s/%s retry_after=%s headers=%s",
+                    resp.status_code,
+                    url,
+                    attempt + 1,
+                    self._max_retries,
+                    retry_after,
+                    dict(resp.headers),
+                )
+            delay = (
+                min(_MAX_BACKOFF_SECONDS, retry_after)
+                if retry_after is not None
+                else random.uniform(0, min(_MAX_BACKOFF_SECONDS, self._backoff_base * 2**attempt))
+            )
+            logger.warning(
+                "arxiv retry in %.1fs (attempt %s/%s): %s",
+                delay,
+                attempt + 1,
+                self._max_retries,
+                url,
+            )
+            await self._limiter.penalize(delay)
+            await asyncio.sleep(delay)
+        raise ArxivRateLimitedError(
+            f"arXiv unavailable after {self._max_retries} attempts"
+            f" ({type(last_exc).__name__}): {url}"
+        ) from last_exc
 
     async def _query(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         key = cache_key("arxiv", "query", params)
         if (cached := await self._cache.get(key)) is not None:
             return cached
-        await self._limiter.acquire()
-        resp = await self._client.get(API_URL, params=params)
-        resp.raise_for_status()
+        resp = await self._request(API_URL, params=params)
         root = ET.fromstring(resp.text)
         entries = [_parse_entry(e) for e in root.findall("atom:entry", _NS)]
         await self._cache.set(key, entries)
@@ -243,14 +346,18 @@ class ArxivClient:
         只返回 announce_type ∈ {new, cross} 的条目（replace/replace-cross 是旧论文更新，
         已在解析时剔除）；字段与 ``search`` 返回的 entry 对齐，便于复用入库逻辑。
         网络/解析失败一律记 warning 并返回 []（不能让整步崩），且不写缓存以便下次重试。
+        限流已在 :meth:`_request` 里重试过，走到这里的失败是真失败。
+
+        .. warning::
+           返回 [] 把「限流」和「今天确实没有新论文」压成了同一个结果，调用方无法区分。
+           库同步改为消费每日池之后，这个静默失败会放大成「全实验室当天颗粒无收」——
+           待办：改成带状态的返回值，见方案 A3。
         """
         key = cache_key("arxiv", "rss_new", {"category": category})
         if (cached := await self._rss_cache.get(key)) is not None:
             return cached
         try:
-            await self._limiter.acquire()
-            resp = await self._client.get(RSS_URL_TEMPLATE.format(category=category))
-            resp.raise_for_status()
+            resp = await self._request(RSS_URL_TEMPLATE.format(category=category))
             entries = _parse_rss(resp.text)
         except Exception:  # noqa: BLE001 — 新鲜源尽力而为；CancelledError 是 BaseException 不在此
             logger.warning("arxiv RSS fetch/parse failed for %s", category, exc_info=True)
@@ -267,9 +374,7 @@ class ArxivClient:
 
     async def download_pdf(self, arxiv_id: str) -> bytes:
         """下载 PDF 原始字节（不缓存，交由调用方落盘）。"""
-        await self._limiter.acquire()
-        resp = await self._client.get(pdf_url(arxiv_id))
-        resp.raise_for_status()
+        resp = await self._request(pdf_url(arxiv_id))
         return resp.content
 
     async def aclose(self) -> None:

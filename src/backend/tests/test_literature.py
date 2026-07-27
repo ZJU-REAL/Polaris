@@ -2,10 +2,17 @@
 
 import fakeredis.aioredis
 import httpx
+import pytest
 import pytest_asyncio
 import respx
 
-from app.services.literature.arxiv import ArxivClient, build_search_query, normalize_arxiv_id
+from app.services.literature.arxiv import (
+    ArxivClient,
+    ArxivRateLimitedError,
+    build_search_query,
+    normalize_arxiv_id,
+)
+from app.services.literature.cache import MinIntervalLimiter
 from app.services.literature.openalex import OpenAlexClient
 from app.services.literature.semantic_scholar import SemanticScholarClient
 
@@ -163,10 +170,124 @@ async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
 
 @respx.mock
 async def test_arxiv_fetch_new_network_error_returns_empty(cache_redis):
-    respx.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(return_value=httpx.Response(503))
-    client = ArxivClient(redis=cache_redis, min_interval=0)
+    route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(
+        return_value=httpx.Response(503)
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0, max_retries=2)
     assert await client.fetch_new("cs.CL") == []  # 失败容错，不抛
+    assert route.call_count == 2  # 503 会重试，耗尽后才吞成 []
     await client.aclose()
+
+
+# ---- 限流重试（arXiv 429/403）----
+
+
+@respx.mock
+async def test_arxiv_retries_on_429_then_succeeds(cache_redis):
+    """429 带 Retry-After（整数秒）→ 退避后重试 → 拿到正常结果。"""
+    route = respx.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "0"}),
+            httpx.Response(200, text=ARXIV_FEED),
+        ]
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0)
+    results = await client.search(categories=["cs.LG"], limit=10)
+    assert len(results) == 2
+    assert route.call_count == 2
+    await client.aclose()
+
+
+@respx.mock
+async def test_arxiv_retry_after_accepts_http_date(cache_redis):
+    """Retry-After 也可能是 HTTP-date；过去的时间点等价于「立刻可重试」。"""
+    route = respx.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}),
+            httpx.Response(200, text=ARXIV_FEED),
+        ]
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0)
+    assert len(await client.search(categories=["cs.LG"], limit=10)) == 2
+    assert route.call_count == 2
+    await client.aclose()
+
+
+@respx.mock
+async def test_arxiv_403_is_retried(cache_redis):
+    """arXiv 对它认为过量的客户端历史上返 403 而非 429——当成永久失败会白丢整批论文。"""
+    route = respx.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
+        side_effect=[httpx.Response(403), httpx.Response(200, text=ARXIV_FEED)]
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0)
+    assert len(await client.search(categories=["cs.LG"], limit=10)) == 2
+    assert route.call_count == 2
+    await client.aclose()
+
+
+@respx.mock
+async def test_arxiv_raises_after_exhausting_retries(cache_redis):
+    route = respx.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
+        return_value=httpx.Response(429)
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0, max_retries=3)
+    with pytest.raises(ArxivRateLimitedError):
+        await client.search(categories=["cs.LG"], limit=10)
+    assert route.call_count == 3
+    await client.aclose()
+
+
+@respx.mock
+async def test_arxiv_client_error_is_not_retried(cache_redis):
+    """400（检索式写错）要立刻失败，不能烧四次退避去撞同一堵墙。"""
+    route = respx.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
+        return_value=httpx.Response(400)
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0)
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.search(categories=["cs.LG"], limit=10)
+    assert route.call_count == 1
+    await client.aclose()
+
+
+@respx.mock
+async def test_arxiv_retries_on_read_timeout(cache_redis):
+    """生产上见过 ReadTimeout 让整个建库任务停在第一步——超时同样要重试。"""
+    route = respx.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
+        side_effect=[httpx.ReadTimeout("timed out"), httpx.Response(200, text=ARXIV_FEED)]
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0)
+    assert len(await client.search(categories=["cs.LG"], limit=10)) == 2
+    assert route.call_count == 2
+    await client.aclose()
+
+
+@respx.mock
+async def test_download_pdf_retries_on_429(cache_redis):
+    """PDF 下载是 arXiv 流量的大头，必须同样享受重试。"""
+    route = respx.get(url__regex=r"https://arxiv\.org/pdf/.*").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "0"}),
+            httpx.Response(200, content=b"%PDF-1.7 stub"),
+        ]
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0)
+    assert await client.download_pdf("2406.00001") == b"%PDF-1.7 stub"
+    assert route.call_count == 2
+    await client.aclose()
+
+
+async def test_min_interval_limiter_penalize():
+    """penalize 把惩罚摊给共享限流器的所有协程；interval=0 时整体关闭，是 no-op。"""
+    limiter = MinIntervalLimiter(0.05)
+    await limiter.acquire()
+    before = limiter._last
+    await limiter.penalize(5.0)
+    assert limiter._last >= before + 4.9
+
+    off = MinIntervalLimiter(0)
+    await off.penalize(5.0)
+    assert off._last == 0.0
 
 
 @respx.mock
