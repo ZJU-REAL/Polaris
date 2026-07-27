@@ -1,4 +1,7 @@
-"""可选全文索引（Part B）：个人设置开关 + 按 scope 批量建全文索引 + 入队门控。"""
+"""全文索引：按 scope 批量建索引 + 入队。
+
+开关（个人设置 chat_fulltext_index）已废除——向量是检索的承重结构，不再可关。
+"""
 
 import tempfile
 import uuid
@@ -12,34 +15,7 @@ from app.models.paper import PaperChunk
 from app.services.fulltext_index import index_papers_fulltext
 from tests.conftest import add_paper, register_and_login
 
-# ---- 1. PATCH /users/me/settings ----
-
-
-async def test_patch_settings_and_read_back(client):
-    token = await register_and_login(client)
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # 缺省未设置
-    me = (await client.get("/api/users/me", headers=headers)).json()
-    assert me.get("settings") in (None, {})
-
-    resp = await client.patch(
-        "/api/users/me/settings", json={"chat_fulltext_index": True}, headers=headers
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["settings"]["chat_fulltext_index"] is True
-
-    me = (await client.get("/api/users/me", headers=headers)).json()
-    assert me["settings"]["chat_fulltext_index"] is True
-
-    # 关回去也能读到
-    resp = await client.patch(
-        "/api/users/me/settings", json={"chat_fulltext_index": False}, headers=headers
-    )
-    assert resp.json()["settings"]["chat_fulltext_index"] is False
-
-
-# ---- 3/4. 索引服务 ----
+# ---- 索引服务 ----
 
 
 async def _project(client):
@@ -111,47 +87,14 @@ async def test_index_papers_fulltext_builds_chunks_and_skips_no_source(client):
     assert again["skipped"] == 2
 
 
-# ---- 6. 入队端点 + 409 门控 ----
+# ---- 入队端点 ----
 
 
-async def _enable_index(client, headers):
-    resp = await client.patch(
-        "/api/users/me/settings", json={"chat_fulltext_index": True}, headers=headers
-    )
-    assert resp.status_code == 200
-
-
-async def _disable_index(client, headers):
-    resp = await client.patch(
-        "/api/users/me/settings", json={"chat_fulltext_index": False}, headers=headers
-    )
-    assert resp.status_code == 200
-
-
-async def test_shelf_index_rebuild_gated(client, queue_stub):
+async def test_shelf_index_rebuild_enqueues(client, queue_stub):
+    """书架批量建索引：直接入队，没有任何开关能拦住它。"""
     project_id, headers = await _project(client)
 
-    # 开关默认开：没设置过也能建
-    resp = await client.post(
-        f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers
-    )
-    assert resp.status_code == 200, resp.text
-    queue_stub.jobs.clear()
-
-    # 显式关掉才 409
-    await _disable_index(client, headers)
-    resp = await client.post(
-        f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers
-    )
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "INDEXING_DISABLED"
-    assert queue_stub.jobs == []
-
-    # 设置开 → 200 + 入队
-    await _enable_index(client, headers)
-    resp = await client.post(
-        f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers
-    )
+    resp = await client.post(f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers)
     assert resp.status_code == 200, resp.text
     assert "queued" in resp.json()
     assert len(queue_stub.jobs) == 1
@@ -164,7 +107,6 @@ async def test_shelf_index_rebuild_gated(client, queue_stub):
 async def test_shelf_index_rebuild_reports_indexable_counts(client, queue_stub):
     """返回体含 indexable / no_fulltext：书架上有全文的计入 indexable，其余计跳过。"""
     project_id, headers = await _project(client)
-    await _enable_index(client, headers)
 
     txt_dir = Path(tempfile.mkdtemp(prefix="polaris-idx-"))
     txt = txt_dir / "p.txt"
@@ -200,7 +142,6 @@ async def test_shelf_index_rebuild_reports_indexable_counts(client, queue_stub):
 
 async def test_shelf_index_rebuild_requires_member(client, queue_stub):
     _, headers = await _project(client)
-    await _enable_index(client, headers)
     resp = await client.post(
         f"/api/projects/{uuid.uuid4()}/shelf/index/rebuild", headers=headers
     )
@@ -208,75 +149,32 @@ async def test_shelf_index_rebuild_requires_member(client, queue_stub):
     assert queue_stub.jobs == []
 
 
-async def test_personal_index_rebuild_gated(client, queue_stub):
+async def test_personal_index_rebuild_enqueues(client, queue_stub):
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 开关默认开：没设置过也能建
     resp = await client.post("/api/library/index/rebuild", headers=headers)
     assert resp.status_code == 200, resp.text
-    queue_stub.jobs.clear()
-
-    # 显式关掉才 409
-    await _disable_index(client, headers)
-    resp = await client.post("/api/library/index/rebuild", headers=headers)
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "INDEXING_DISABLED"
-    assert queue_stub.jobs == []
-
-    await _enable_index(client, headers)
-    resp = await client.post("/api/library/index/rebuild", headers=headers)
-    assert resp.status_code == 200, resp.text
-    assert "queued" in resp.json()
     assert len(queue_stub.jobs) == 1
     func_name, args, _ = queue_stub.jobs[0]
     assert func_name == "index_papers_fulltext_task"
     assert args[0] == "personal"
-    assert args[2] is None
 
 
-async def test_project_index_rebuild_gated(client):
-    """课题作用域批量重建同样过门控——此前漏了，用户关掉开关换这个入口照样烧额度。"""
-    project_id, headers = await _project(client)
+async def test_no_rebuild_endpoint_is_gated_anymore(client, queue_stub):
+    """四个批量重建入口都不再有 409 门控——开关没了，就没有「未开启」这回事。
 
-    # 开关默认开：没设置过也能建
-    resp = await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
-    assert resp.status_code == 200, resp.text
-
-    await _disable_index(client, headers)
-    resp = await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "INDEXING_DISABLED"
-
-    await _enable_index(client, headers)
-    resp = await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
-    assert resp.status_code == 200, resp.text
-
-
-async def test_library_index_rebuild_gated(client):
-    """库作用域批量重建同样过门控（与课题/个人库/书架同一口径）。
-
-    鉴权先于门控：无权管理的人拿到的仍是 403，不因自己关了开关就变成 409——
-    否则这个端点会把「你管不了这个库」说成「你没开索引」，误导排查方向。
+    #183 曾把门控补齐到这四个入口；现在开关整体废除，门控随之下线。
     """
-    from tests.test_library_scoped_capabilities import _hdr, _setup
+    project_id, headers = await _project(client)
+    from tests.test_library_scoped_capabilities import _setup
 
-    creator, _admin, lib_id = await _setup(client, prefix="idxgate")
+    creator, _admin, lib_id = await _setup(client, prefix="nogate")
 
-    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator)
-    assert resp.status_code == 200, resp.text
-
-    await _disable_index(client, creator)
-    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator)
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "INDEXING_DISABLED"
-
-    # 关着开关的陌生人拿 403（鉴权先跑），不是 409
-    stranger = await _hdr(client, "idxgate-stranger@example.com")
-    await _disable_index(client, stranger)
-    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=stranger)
-    assert resp.status_code == 403
-
-    await _enable_index(client, creator)
-    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator)
-    assert resp.status_code == 200, resp.text
+    for resp in (
+        await client.post(f"/api/projects/{project_id}/shelf/index/rebuild", headers=headers),
+        await client.post("/api/library/index/rebuild", headers=headers),
+        await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers),
+        await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=creator),
+    ):
+        assert resp.status_code == 200, resp.text

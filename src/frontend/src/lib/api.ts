@@ -149,7 +149,6 @@ export interface UserRead {
   token_quota?: number | null;
   features?: Record<string, boolean> | null;
   /** 用户个人设置（后端可能暂未返回，可选） */
-  settings?: { chat_fulltext_index?: boolean } | null;
 }
 
 export interface UsageSummary {
@@ -562,10 +561,6 @@ export interface AffiliationModeRead {
   mode: AffiliationMode;
 }
 
-/** 平台是否给论文建论文级向量（管理员总闸，默认开）。 */
-export interface PaperEmbeddingSetting {
-  enabled: boolean;
-}
 /** 补建历史向量的结果计数。 */
 export interface DailyEmbedBackfillResult {
   embedded: number;
@@ -2643,10 +2638,6 @@ export const api = {
   updateMe(input: { display_name?: string }): Promise<UserRead> {
     return requestJson<UserRead>('/users/me', 'PATCH', input);
   },
-  /** 个人设置：文献对话是否为论文建立全文索引。 */
-  updateMySettings(input: { chat_fulltext_index: boolean }): Promise<UserRead> {
-    return requestJson<UserRead>('/users/me/settings', 'PATCH', input);
-  },
   setUsername(username: string): Promise<UserRead> {
     return requestJson<UserRead>('/users/me/username', 'PATCH', { username });
   },
@@ -3975,13 +3966,6 @@ export const api = {
   },
   setAffiliationMode(mode: AffiliationMode): Promise<AffiliationModeRead> {
     return requestJson<AffiliationModeRead>('/admin/settings/affiliation-mode', 'PUT', { mode });
-  },
-  /** 平台是否给论文建论文级向量（admin 总闸，默认开）。关掉后语义检索只能命中已有向量的论文。 */
-  getPaperEmbeddingEnabled(): Promise<PaperEmbeddingSetting> {
-    return request<PaperEmbeddingSetting>('/admin/settings/paper-embedding');
-  },
-  setPaperEmbeddingEnabled(enabled: boolean): Promise<PaperEmbeddingSetting> {
-    return requestJson<PaperEmbeddingSetting>('/admin/settings/paper-embedding', 'PUT', { enabled });
   },
   /** 实验室概况页的用量排行榜是否对普通成员可见（admin，默认开）。 */
   getLabLeaderboardEnabled(): Promise<LabLeaderboardSetting> {

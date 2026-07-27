@@ -38,7 +38,6 @@ from app.services.chunks import (
     embed_pending_chunks,
     ensure_paper_chunks,
     sync_abstract_chunk_vectors,
-    user_wants_fulltext_index,
 )
 from app.services.concepts import link_all_paper_concepts
 from app.services.dedup import pool_dedup_key
@@ -52,7 +51,7 @@ from app.services.libraries import (
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
-from app.services.paper_enrich import paper_embedding_enabled, paper_embedding_text
+from app.services.paper_enrich import paper_embedding_text
 from app.services.paper_wiki import upsert_wiki
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
 from app.services.relevance import (
@@ -1019,9 +1018,6 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         embedded = 0
         embed_error: str | None = None
         pending = [p for p in papers if p.embedding is None]
-        if pending and not await paper_embedding_enabled(session):
-            pending = []  # 管理员拉了论文级向量的总闸
-            embed_error = "paper embeddings disabled by administrator"
         if pending:
             # 文本口径与手动补全/每日池共用（services/paper_enrich.paper_embedding_text）
             texts = [paper_embedding_text(p) for p in pending]
@@ -1052,28 +1048,20 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         await sync_abstract_chunk_vectors(session, paper_ids=[p.id for p in papers])
         await session.commit()
 
-        # 分段向量：补齐缺失的 chunk embedding（文献问答检索底座）。受**发起人**的
-        # 「全文索引」开关控制（默认开）——与手动添加论文那条路径同一个开关，
-        # 免得同一个用户在两条路径上得到不一样的结果。公共库的账记系统（billing_user_id
-        # 为空），但发起人是有的，故开关按 ctx.run.created_by 取。
+        # 分段向量：补齐缺失的 chunk embedding（文献问答检索底座）。
         # 最大化模式放开单次 2000 段的默认上限（否则大批量编译后向量长期欠账）
-        chunks_embedded = 0
-        chunk_embed_error: str | None = None
-        if await user_wants_fulltext_index(session, ctx.run.created_by):
-            embed_kwargs: dict[str, Any] = (
-                {"limit": _UNLIMITED_CHUNK_SENTINEL} if _unlimited(_knobs(ctx)) else {}
-            )
-            chunks_embedded, chunk_embed_error = await embed_pending_chunks(
-                session,
-                library_id=library.id,
-                llm=ctx.llm,
-                user_id=billing_user_id,
-                project_id=ctx.run.project_id,
-                voyage_id=ctx.run.id,
-                **embed_kwargs,
-            )
-        else:
-            chunk_embed_error = "fulltext index disabled by user setting"
+        embed_kwargs: dict[str, Any] = (
+            {"limit": _UNLIMITED_CHUNK_SENTINEL} if _unlimited(_knobs(ctx)) else {}
+        )
+        chunks_embedded, chunk_embed_error = await embed_pending_chunks(
+            session,
+            library_id=library.id,
+            llm=ctx.llm,
+            user_id=billing_user_id,
+            project_id=ctx.run.project_id,
+            voyage_id=ctx.run.id,
+            **embed_kwargs,
+        )
 
     return {
         "papers": len(papers),

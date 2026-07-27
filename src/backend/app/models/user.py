@@ -34,8 +34,9 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     token_quota: Mapped[int | None] = mapped_column(BigInteger)
     # 功能权限：{feature: bool}；None/缺键 = 允许
     features: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
-    # 用户个人设置：{key: value}（如 chat_fulltext_index=bool 开启文献对话全文索引）；
-    # 与 features（admin 权限位）分开，None/缺键 = 未设置。
+    # 用户个人设置：{key: value}。与 features（admin 权限位）分开，None/缺键 = 未设置。
+    # 目前没有任何设置项在读它——chat_fulltext_index 已废除（向量是检索的承重结构，
+    # 不再可关），存量值留在库里不清理也不读。列本身保留给后续设置项。
     settings: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
 
     @property

@@ -11,13 +11,10 @@ from app.schemas.admin_settings import (
     DailyEmbedBackfillResult,
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
-    PaperEmbeddingRead,
-    PaperEmbeddingUpdate,
 )
 from app.services import affiliations as affiliations_service
 from app.services import daily_feed as daily_service
 from app.services import lab as lab_service
-from app.services import paper_enrich as paper_enrich_service
 
 router = APIRouter(
     prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(require_admin)]
@@ -43,25 +40,6 @@ async def set_affiliation_mode(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_AFFILIATION_MODE:{exc.mode}"
         ) from exc
     return AffiliationModeRead(mode=mode)
-
-
-@router.get("/paper-embedding", response_model=PaperEmbeddingRead)
-async def get_paper_embedding(session: AsyncSession = Depends(get_session)) -> PaperEmbeddingRead:
-    """平台是否给论文建论文级向量（默认开，平台级总闸）。
-
-    前身是 /daily-embed（默认关、只管每日推送）；默认关意味着推送来的论文在语义检索里
-    根本搜不到，而只管一条路径也名不副实，故改名并扩到所有入库入口。"""
-    return PaperEmbeddingRead(enabled=await paper_enrich_service.paper_embedding_enabled(session))
-
-
-@router.put("/paper-embedding", response_model=PaperEmbeddingRead)
-async def set_paper_embedding(
-    payload: PaperEmbeddingUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> PaperEmbeddingRead:
-    return PaperEmbeddingRead(
-        enabled=await paper_enrich_service.set_paper_embedding_enabled(session, payload.enabled)
-    )
 
 
 @router.post("/daily-embed/backfill", response_model=DailyEmbedBackfillResult)

@@ -15,16 +15,6 @@ class AffiliationModeUpdate(BaseModel):
     mode: AffiliationMode
 
 
-class PaperEmbeddingRead(BaseModel):
-    """平台是否给论文建论文级向量（默认开）。关掉后语义检索只能命中已有向量的论文。"""
-
-    enabled: bool
-
-
-class PaperEmbeddingUpdate(BaseModel):
-    enabled: bool
-
-
 class LabLeaderboardSettingRead(BaseModel):
     """用量排行榜是否对普通成员可见（默认开；关掉后只有管理员看得到）。"""
 

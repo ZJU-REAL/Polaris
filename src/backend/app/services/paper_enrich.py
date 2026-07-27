@@ -33,29 +33,6 @@ EMBED_TEXT_MAX_CHARS = 2000
 # 前身是 daily_feed_embed_enabled（默认关、只管每日推送那一条路径）——默认关意味着
 # 推送来的论文在语义检索里根本搜不到，而只管一条路径又名不副实。旧键的存量值不迁移，
 # 读不到就取新默认（开）。
-PAPER_EMBEDDING_SETTING_KEY = "paper_embedding_enabled"
-DEFAULT_PAPER_EMBEDDING_ENABLED = True
-
-
-async def paper_embedding_enabled(session: AsyncSession) -> bool:
-    """平台是否建论文级向量（默认开；非法存量值回落默认）。"""
-    from app.models.system_setting import SystemSetting
-
-    row = await session.get(SystemSetting, PAPER_EMBEDDING_SETTING_KEY)
-    value = row.value if row is not None else None
-    return value if isinstance(value, bool) else DEFAULT_PAPER_EMBEDDING_ENABLED
-
-
-async def set_paper_embedding_enabled(session: AsyncSession, enabled: bool) -> bool:
-    from app.models.system_setting import SystemSetting
-
-    row = await session.get(SystemSetting, PAPER_EMBEDDING_SETTING_KEY)
-    if row is None:
-        session.add(SystemSetting(key=PAPER_EMBEDDING_SETTING_KEY, value=bool(enabled)))
-    else:
-        row.value = bool(enabled)
-    await session.commit()
-    return bool(enabled)
 
 _OWNER_TTL_SECONDS = 600  # paper_task_owner 归属 key 存活时间
 
@@ -224,8 +201,6 @@ async def enrich_paper(
     await emit("embed", "running")
     if paper.embedding is not None:
         await emit("embed", "skipped", "already embedded")
-    elif not await paper_embedding_enabled(session):
-        await emit("embed", "skipped", "paper embeddings disabled by administrator")
     else:
         try:
             await embed_paper(
@@ -259,28 +234,23 @@ async def enrich_paper(
         logger.warning("abstract chunk vector sync failed for %s", paper_id, exc_info=True)
         paper = await _rollback_and_reload()
 
-    # 块向量：仅当用户开启全文索引开关时补（开关关只留块行，等重建/开开关再补）。
-    # best-effort，不影响 embed 阶段判定；不发独立进度事件。
-    from app.services.chunks import embed_pending_chunks_for_papers, user_wants_fulltext_index
+    # 块向量：抓到全文就一定建。best-effort，不影响 embed 阶段判定；不发独立进度事件。
+    from app.core.llm.router import get_llm_router
+    from app.services.chunks import embed_pending_chunks_for_papers
 
-    if await user_wants_fulltext_index(session, user_id):
-        from app.core.llm.router import get_llm_router
-
-        try:
-            await embed_pending_chunks_for_papers(
-                session,
-                paper_ids=[paper_id],
-                llm=get_llm_router(),
-                user_id=user_id,
-                project_id=project_id,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "enrich chunk embed failed for paper %s", paper_id, exc_info=True
-            )
-            paper = await _rollback_and_reload()
+    try:
+        await embed_pending_chunks_for_papers(
+            session,
+            paper_ids=[paper_id],
+            llm=get_llm_router(),
+            user_id=user_id,
+            project_id=project_id,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.warning("enrich chunk embed failed for paper %s", paper_id, exc_info=True)
+        paper = await _rollback_and_reload()
 
     # ---- score ----
     await emit("score", "running")

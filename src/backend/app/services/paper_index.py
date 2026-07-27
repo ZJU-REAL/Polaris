@@ -25,7 +25,7 @@ from app.services.chunks import (
     index_paper_abstract,
     replace_chunks,
 )
-from app.services.paper_enrich import embed_paper, paper_embedding_enabled
+from app.services.paper_enrich import embed_paper
 
 logger = logging.getLogger(__name__)
 
@@ -104,16 +104,13 @@ async def rebuild_index(
     errors: list[str] = []
 
     if "paper" in targets:
-        if not await paper_embedding_enabled(session):
-            errors.append("paper: 管理员已关闭论文级向量")
-        else:
-            try:
-                await embed_paper(paper, user_id=user_id, project_id=project_id)
-                await session.commit()
-            except Exception as e:  # noqa: BLE001 — provider 不支持嵌入等：记下继续
-                logger.warning("paper embedding rebuild failed for %s", paper.id, exc_info=True)
-                await session.rollback()
-                errors.append(f"paper: {type(e).__name__}: {e}")
+        try:
+            await embed_paper(paper, user_id=user_id, project_id=project_id)
+            await session.commit()
+        except Exception as e:  # noqa: BLE001 — provider 不支持嵌入等：记下继续
+            logger.warning("paper embedding rebuild failed for %s", paper.id, exc_info=True)
+            await session.rollback()
+            errors.append(f"paper: {type(e).__name__}: {e}")
 
     if "chunks" in targets:
         try:

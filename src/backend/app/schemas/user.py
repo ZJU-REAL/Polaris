@@ -23,12 +23,6 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     settings: dict[str, Any] | None = None
 
 
-class UserSettingsUpdate(BaseModel):
-    """本人个人设置更新（当前仅文献对话全文索引开关）。"""
-
-    chat_fulltext_index: bool
-
-
 class UserSearchResult(BaseModel):
     """平台用户查找结果（加协作者用，不含敏感字段）。"""
 

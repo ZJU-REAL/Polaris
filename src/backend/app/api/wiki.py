@@ -350,18 +350,6 @@ async def chat_with_personal_library(
     return _chat_stream_response(messages, sources, user_id=user_id, project_id=None)
 
 
-def require_fulltext_index_enabled(user: User) -> None:
-    """全文索引门控：用户在设置里**显式关掉**才 409（默认开，与 chunks
-    .user_wants_fulltext_index 同一口径）。
-
-    所有**批量**建索引/重建索引的端点都要过这一道（含 libraries.py 的库作用域版本），
-    否则用户关掉开关后，换个入口点一下照样烧额度。单篇的手动重建按钮不过——那是
-    用户当场指定这一篇，与「要不要自动建」是两回事。
-    """
-    if user.setting("chat_fulltext_index") is False:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="INDEXING_DISABLED")
-
-
 async def _count_with_fulltext(
     session: AsyncSession, paper_ids: list[uuid.UUID]
 ) -> int:
@@ -388,10 +376,9 @@ async def rebuild_shelf_fulltext_index(
 ) -> dict[str, Any]:
     """可选全文索引：对课题相关研究书架上的论文批量建全文索引（抓 PDF→分段→嵌入）。
 
-    需先在个人设置里开启（未开 → 409 INDEXING_DISABLED）。长任务走 worker。
+    长任务走 worker。
     """
     await _member_project(session, project_id, user)
-    require_fulltext_index_enabled(user)
     paper_ids = await shelf_paper_ids(session, project_id=project_id)
     indexable = await _count_with_fulltext(session, paper_ids)
     await queue.enqueue("index_papers_fulltext_task", "shelf", str(user.id), str(project_id))
@@ -410,9 +397,8 @@ async def rebuild_personal_fulltext_index(
 ) -> dict[str, Any]:
     """可选全文索引：对本人收藏的个人库论文批量建全文索引（抓 PDF→分段→嵌入）。
 
-    需先在个人设置里开启（未开 → 409 INDEXING_DISABLED）。长任务走 worker。
+    长任务走 worker。
     """
-    require_fulltext_index_enabled(user)
     paper_ids = await personal_paper_ids(session, user_id=user.id, tab="saved")
     indexable = await _count_with_fulltext(session, paper_ids)
     await queue.enqueue("index_papers_fulltext_task", "personal", str(user.id), None)
@@ -432,10 +418,8 @@ async def rebuild_fulltext_index(
     """重建全文分段索引（docs/api-lit.md §8）：给已有全文但缺分段的论文补分段并嵌入。
 
     幂等：已有分段的论文跳过；新入库论文由 ingest 流水线自动处理，通常无需手动调用。
-    需先在个人设置里开启（未开 → 409 INDEXING_DISABLED）。
     """
     await _member_project(session, project_id, user)
-    require_fulltext_index_enabled(user)
     # 分段重建是「某具体库」的维护写操作（计库预算），落在课题起源库上
     library = await get_library_for_project(session, project_id)
     if library is None:

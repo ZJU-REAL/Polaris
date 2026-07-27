@@ -30,7 +30,6 @@ from app.api.auth import (
     require_llm_chat,
     require_llm_task,
 )
-from app.api.wiki import require_fulltext_index_enabled
 from app.core.db import get_session
 from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
@@ -904,11 +903,8 @@ async def rebuild_library_fulltext_index(
     """库作用域全文索引重建（可管理者）：给本库已有全文但缺分段的论文补分段并嵌入。
 
     幂等：已有分段的论文跳过；新入库论文由建库流水线自动处理，通常无需手动调用。
-    需先在个人设置里开启（未开 → 409 INDEXING_DISABLED），与个人库/书架/课题
-    那三个批量重建端点同一口径。
     """
     library = await _get_managed_library(session, library_id, user)
-    require_fulltext_index_enabled(user)
     try:
         return await chunks_service.rebuild_library_fulltext_index(
             session,

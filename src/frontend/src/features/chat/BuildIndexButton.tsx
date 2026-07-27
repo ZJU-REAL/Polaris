@@ -1,13 +1,12 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { ApiError, api } from '../../lib/api';
+import { useMutation } from '@tanstack/react-query';
 import { tr } from '../../lib/i18n';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
 
 /* ============================================================
-   建立全文索引按钮：仅当用户在设置里打开了为论文建立全文索引
-   开关时才显示。点击后异步为对应文献批建全文索引，让文献对话检索更准。
+   建立全文索引按钮：点击后异步为对应文献批建全文索引，让文献对话检索更准。
    相关研究对话 / 个人文献库对话共用，只换 build 回调。
+   （全文索引不再是可配置项——向量是检索的承重结构，所以按钮恒显示。）
    ============================================================ */
 
 /** 建索引端点返回：异步走 {queued, indexable, no_fulltext}，同步库场景走 {indexed, skipped}。 */
@@ -36,22 +35,15 @@ function buildResultToast(data: BuildIndexResult): string {
 }
 
 export function BuildIndexButton({ build }: { build: () => Promise<BuildIndexResult> }) {
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
-
   const mutation = useMutation({
     mutationFn: build,
     onSuccess: (data) => toast(buildResultToast(data), 'ok'),
     onError: (e) => {
-      if (e instanceof ApiError && e.status === 409) {
-        toast(tr('请先到设置里打开为论文建立全文索引', 'Enable the full-text index in Settings first'), 'error');
-        return;
-      }
       toast(`${tr('操作失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error');
     },
   });
 
   // 开关默认开，只有显式关掉才藏起按钮
-  if (me?.settings?.chat_fulltext_index === false) return null;
 
   return (
     <button

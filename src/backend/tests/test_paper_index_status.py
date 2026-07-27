@@ -36,14 +36,9 @@ def _write_fulltext(text: str = "规划方法的实现细节与实验。") -> st
     return str(txt)
 
 
-async def _user(client, email: str, *, index_on: bool | None = None):
+async def _user(client, email: str):
     token = await register_and_login(client, email=email)
     headers = {"Authorization": f"Bearer {token}"}
-    if index_on is not None:
-        resp = await client.patch(
-            "/api/users/me/settings", json={"chat_fulltext_index": index_on}, headers=headers
-        )
-        assert resp.status_code == 200
     me = (await client.get("/api/users/me", headers=headers)).json()
     return uuid.UUID(me["id"]), headers
 
@@ -236,34 +231,6 @@ async def test_abstract_chunk_vector_filled_in_later(client):
     assert chunks[0].embedding == pytest.approx(sentinel)
 
 
-async def test_abstract_chunk_vector_not_gated_by_user_switch(client, fake_redis):
-    """用户关掉全文索引开关，摘要块的向量照样有——拷贝不花钱，不该卡在开关后面。
-
-    否则关掉开关的用户又回到「这篇论文完全搜不到」的老问题。
-    """
-    user_id, headers = await _user(client, "abs-optout@example.com", index_on=False)
-    project_id, _ = await make_project_with_library(client, headers, name="abs-optout")
-    async with get_sessionmaker()() as session:
-        paper = await add_paper(
-            session,
-            project_id=uuid.UUID(project_id),
-            title="No Fulltext And Index Off",
-            abstract="Still searchable.",
-            doi="10.1/absoptout",
-        )
-        await session.commit()
-        paper_id = paper.id
-
-    await _run_enrich(paper_id, user_id=user_id)
-
-    async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, paper_id)
-        chunks = await _chunks(session, paper_id)
-    assert len(chunks) == 1 and chunks[0].source == "abstract"
-    assert paper.embedding is not None
-    assert chunks[0].embedding == pytest.approx(paper.embedding), "关了开关也得有摘要级索引"
-
-
 async def test_library_rebuild_copies_instead_of_embedding_abstract(client):
     """整库重建时摘要块也不花嵌入调用：向量拷论文级向量，用 abstract_vectors_copied 计数。"""
     _, headers = await _user(client, "librebuild@example.com")
@@ -298,60 +265,6 @@ async def test_library_rebuild_copies_instead_of_embedding_abstract(client):
 # ---- 1c. 论文级向量的管理员总闸（默认开） ----
 
 
-async def _set_paper_embedding(client, headers, enabled: bool):
-    resp = await client.put(
-        "/api/admin/settings/paper-embedding", json={"enabled": enabled}, headers=headers
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()
-
-
-async def test_paper_embedding_switch_defaults_on(client):
-    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}  # 首个用户=admin
-    resp = await client.get("/api/admin/settings/paper-embedding", headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["enabled"] is True
-
-
-async def test_admin_can_switch_off_paper_embedding(client, fake_redis):
-    """总闸关掉 → 论文级向量不建；摘要块也就没有向量可拷（如实反映，不报错）。"""
-    admin_token = await register_and_login(client)
-    headers = {"Authorization": f"Bearer {admin_token}"}
-    assert (await _set_paper_embedding(client, headers, False))["enabled"] is False
-
-    me = (await client.get("/api/users/me", headers=headers)).json()
-    user_id = uuid.UUID(me["id"])
-    project_id, _ = await make_project_with_library(client, headers, name="switch-off")
-    async with get_sessionmaker()() as session:
-        paper = await add_paper(
-            session,
-            project_id=uuid.UUID(project_id),
-            title="Admin Turned It Off",
-            abstract="No vectors for me.",
-            doi="10.1/switchoff",
-        )
-        await session.commit()
-        paper_id = paper.id
-
-    await _run_enrich(paper_id, user_id=user_id)
-
-    async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, paper_id)
-        chunks = await _chunks(session, paper_id)
-    assert paper.embedding is None, "总闸关了就不该建论文级向量"
-    assert len(chunks) == 1 and chunks[0].embedding is None  # 没有向量可拷
-
-    # 状态端点如实反映
-    resp = await client.get(f"/api/papers/{paper_id}/index-status", headers=headers)
-    body = resp.json()
-    assert body["paper_vector"]["built"] is False
-    assert body["chunk_vector"]["built"] is False
-    assert body["chunk_source"] == "abstract"
-
-
-# ---- 2. 分块向量的用户开关：默认开 ----
-
-
 async def _run_enrich(paper_id, *, user_id):
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, paper_id)
@@ -374,32 +287,35 @@ async def _seed_for_enrich(client, headers, *, name: str, email_key: str) -> uui
         return paper.id
 
 
-async def test_chunk_vectors_built_by_default(client, fake_redis):
-    """用户没碰过设置 → 开关默认开 → 块向量照建。"""
-    user_id, headers = await _user(client, "default-on@example.com")  # 不 PATCH 设置
-    paper_id = await _seed_for_enrich(client, headers, name="default-on", email_key="defon")
+async def test_vectors_are_always_built(client, fake_redis):
+    """论文级向量与块向量都没有开关，入库就一定建。
 
-    await _run_enrich(paper_id, user_id=user_id)
-
-    async with get_sessionmaker()() as session:
-        chunks = await _chunks(session, paper_id)
-    assert chunks
-    assert all(c.embedding is not None for c in chunks), "默认开：块向量必须建出来"
-
-
-async def test_chunk_vectors_skipped_when_user_opts_out(client, fake_redis):
-    """用户显式关掉 → 块行留着但不嵌；论文级向量不受这个开关影响，照常建。"""
-    user_id, headers = await _user(client, "opt-out@example.com", index_on=False)
-    paper_id = await _seed_for_enrich(client, headers, name="opt-out", email_key="optout")
+    这两者曾经各有一个开关（管理员的 paper_embedding_enabled、用户的
+    chat_fulltext_index），都已废除：库同步靠向量相似度粗排每日论文池，向量成了检索的
+    承重结构——关掉任何一个都会让同步瞎掉，而界面上只会显示「0 篇」，无从察觉。
+    """
+    user_id, headers = await _user(client, "always-on@example.com")
+    paper_id = await _seed_for_enrich(client, headers, name="always-on", email_key="alwayson")
 
     await _run_enrich(paper_id, user_id=user_id)
 
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, paper_id)
         chunks = await _chunks(session, paper_id)
+    assert paper.embedding is not None, "论文级向量必须建"
     assert chunks
-    assert all(c.embedding is None for c in chunks), "关掉开关就不该花嵌入调用"
-    assert paper.embedding is not None, "论文级向量不受全文索引开关管"
+    assert all(c.embedding is not None for c in chunks), "块向量必须建"
+
+
+async def test_no_endpoint_can_turn_paper_embedding_off(client):
+    """管理员总闸连同端点一起下线了——留着入口就等于留着把检索关瞎的办法。"""
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}  # 首个用户=admin
+    assert (await client.get("/api/admin/settings/paper-embedding", headers=headers)).status_code == 404
+    assert (
+        await client.put(
+            "/api/admin/settings/paper-embedding", json={"enabled": False}, headers=headers
+        )
+    ).status_code == 404
 
 
 # ---- 3. 状态端点 ----

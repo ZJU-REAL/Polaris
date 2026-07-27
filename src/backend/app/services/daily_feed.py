@@ -48,7 +48,6 @@ logger = logging.getLogger(__name__)
 CATEGORIES_SETTING_KEY = "daily_feed_categories"
 
 # 注：论文级向量的管理员开关已升格为平台总闸并改名（daily_feed_embed_enabled →
-# paper_embedding_enabled，默认从关改成开），见 services/paper_enrich.py。
 # 默认关意味着每日推送的论文连论文级向量都没有、语义检索里根本搜不到；而只管每日推送
 # 这一条路径也名不副实。本模块只管调用总闸，不再自己存开关。旧键的存量值不再读。
 
@@ -127,10 +126,7 @@ async def embed_papers_missing_vectors(
     if not paper_ids:
         return {"embedded": 0, "skipped": 0, "failed": 0}
     from app.core.llm.router import get_llm_router
-    from app.services.paper_enrich import paper_embedding_enabled, paper_embedding_text
-
-    if not await paper_embedding_enabled(session):  # 管理员拉了总闸
-        return {"embedded": 0, "skipped": len(set(paper_ids)), "failed": 0}
+    from app.services.paper_enrich import paper_embedding_text
 
     rows = (
         (await session.execute(select(Paper).where(Paper.id.in_(list(set(paper_ids))))))

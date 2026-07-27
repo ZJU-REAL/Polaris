@@ -1,4 +1,4 @@
-"""三路径统一「分块 + 论文级向量」，块向量受 chat_fulltext_index 开关控制。
+"""三路径统一「分块 + 论文级向量」：抓到全文就一定建块向量，没有开关。
 
 覆盖 enrich_paper（手动添加 / Daily 收录）与 papers.fetch_pdf（抓取 PDF）：
 - 抽到全文即分块（无块才切，不重切丢已补向量）；
@@ -34,13 +34,9 @@ def _write_fulltext() -> str:
     return str(txt)
 
 
-async def _user(client, email: str, *, index_on: bool):
-    """开关默认开，所以「关」这一路要显式 PATCH False，不能靠不设置。"""
+async def _user(client, email: str):
     token = await register_and_login(client, email=email)
     headers = {"Authorization": f"Bearer {token}"}
-    await client.patch(
-        "/api/users/me/settings", json={"chat_fulltext_index": index_on}, headers=headers
-    )
     me = (await client.get("/api/users/me", headers=headers)).json()
     return uuid.UUID(me["id"]), headers
 
@@ -70,30 +66,9 @@ async def _run_enrich(paper_id, *, user_id):
 # ---- enrich_paper：分块 + 论文级向量 + 块向量受开关 ----
 
 
-async def test_enrich_chunks_but_leaves_block_vectors_when_index_off(client, fake_redis):
-    """开关关：抽到全文→建块 + 论文级向量，但块行 embedding 留空。"""
-    user_id, headers = await _user(client, "off@example.com", index_on=False)
-    project_id, _ = await make_project_with_library(client, headers, name="enrich-off")
-    async with get_sessionmaker()() as session:
-        paper = await add_paper(
-            session, project_id=uuid.UUID(project_id), title="Off",
-            doi="10.1/off", full_text_path=_write_fulltext(),
-        )
-        await session.commit()
-        paper_id = paper.id
-
-    await _run_enrich(paper_id, user_id=user_id)
-
-    async with get_sessionmaker()() as session:
-        paper = await session.get(paper_enrich.Paper, paper_id)
-        assert paper.embedding is not None  # 论文级向量照常
-        assert await _n_chunks(session, paper_id) > 0  # 已分块
-        assert await _n_embedded(session, paper_id) == 0  # 开关关：块向量不补
-
-
-async def test_enrich_embeds_blocks_when_index_on(client, fake_redis):
-    """开关开：块行被嵌入。"""
-    user_id, headers = await _user(client, "on@example.com", index_on=True)
+async def test_enrich_embeds_blocks(client, fake_redis):
+    """抽到全文 → 建块 + 论文级向量 + 块向量，一步不落（没有开关可以拦下任何一步）。"""
+    user_id, headers = await _user(client, "on@example.com")
     project_id, _ = await make_project_with_library(client, headers, name="enrich-on")
     async with get_sessionmaker()() as session:
         paper = await add_paper(
@@ -113,7 +88,7 @@ async def test_enrich_embeds_blocks_when_index_on(client, fake_redis):
 
 async def test_enrich_does_not_reslice_existing_chunks(client, fake_redis):
     """已有块的论文再 enrich 不重切（无块才切），保住已补的块向量。"""
-    user_id, headers = await _user(client, "keep@example.com", index_on=True)
+    user_id, headers = await _user(client, "keep@example.com")
     project_id, _ = await make_project_with_library(client, headers, name="enrich-keep")
     async with get_sessionmaker()() as session:
         paper = await add_paper(
@@ -153,7 +128,7 @@ async def test_fetch_pdf_builds_paper_vector_and_gated_blocks(client, fake_redis
         respx.get(url__regex=r"https://arxiv\.org/pdf/.*").mock(
             return_value=httpx.Response(200, content=b"%PDF-1.4 not-a-real-pdf")
         )
-        user_id, headers = await _user(client, "fetch@example.com", index_on=True)
+        user_id, headers = await _user(client, "fetch@example.com")
         project_id, _ = await make_project_with_library(client, headers, name="fetch")
         # 预置全文（extract 抽不出也不影响；chunk 走已有 full_text_path）
         async with get_sessionmaker()() as session:

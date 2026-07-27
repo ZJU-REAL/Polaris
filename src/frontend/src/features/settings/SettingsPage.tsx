@@ -200,50 +200,6 @@ function PersonalTab() {
   );
 }
 
-// ---------------- 文献对话（全文索引开关） ----------------
-
-function ChatPrefsTab() {
-  const queryClient = useQueryClient();
-  const { data: me, isLoading, isError } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
-  const chatIndexMutation = useMutation({
-    mutationFn: (v: boolean) => api.updateMySettings({ chat_fulltext_index: v }),
-    onSuccess: (_, v) => {
-      toast(v ? tr('已开启全文索引', 'Full-text index enabled') : tr('已关闭全文索引', 'Full-text index disabled'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['me'] });
-    },
-    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
-  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
-  if (isError || !me) return <div className="empty">{tr('无法加载用户信息（后端不可用）', 'Failed to load user info (backend unavailable)')}</div>;
-
-  return (
-    <div className="card" style={{ maxWidth: 560, padding: '14px 18px' }}>
-      <div className="section-h">{tr('文献对话', 'Literature chat')}</div>
-      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div id="pref-chat-fulltext" style={{ fontSize: 13, lineHeight: 1.4 }}>
-            {tr('让文献对话能引用论文正文', 'Let literature chat cite the paper body')}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
-            {tr(
-              '关掉后对话仍能找到论文，但只匹配得到标题和摘要，引不出正文细节。会消耗你的模型额度抓取和嵌入全文。',
-              'When off, chat can still find papers but only matches their title and abstract, never details from the body. Uses your model quota to fetch and embed the full text.',
-            )}
-          </div>
-        </div>
-        <Switch
-          /* 默认开：没设置过等同开启（与后端 user_wants_fulltext_index 同一口径） */
-          checked={me.settings?.chat_fulltext_index !== false}
-          onChange={(v) => chatIndexMutation.mutate(v)}
-          disabled={chatIndexMutation.isPending}
-          aria-labelledby="pref-chat-fulltext"
-        />
-      </div>
-    </div>
-  );
-}
-
 // ---------------- 界面偏好（本地，存 localStorage） ----------------
 
 function PreferencesTab() {
@@ -1865,70 +1821,11 @@ function AffiliationModeSection() {
   );
 }
 
-/** 论文级向量的平台总闸（默认开）。管的是所有入库入口，不只是每日推送。 */
-function PaperEmbeddingSection() {
-  const queryClient = useQueryClient();
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['paper-embedding-enabled'],
-    queryFn: () => api.getPaperEmbeddingEnabled(),
-    retry: false,
-  });
-  const enabled = data?.enabled ?? true; // 默认开
-
-  const toggleMutation = useMutation({
-    mutationFn: (next: boolean) => api.setPaperEmbeddingEnabled(next),
-    onSuccess: (r) => {
-      toast(
-        r.enabled
-          ? tr('已开启：入库的论文都会建向量', 'Enabled — papers get vectors as they are added')
-          : tr('已关闭：新入库的论文不再建向量', 'Disabled — newly added papers get no vectors'),
-        'ok',
-      );
-      queryClient.setQueryData(['paper-embedding-enabled'], r);
-    },
-    onError: (e) => toast(`${tr('设置失败', 'Failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
-  return (
-    <div className="card card-pad" style={{ marginTop: 20 }}>
-      <div className="section-h" style={{ marginBottom: 6 }}>
-        <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('论文向量', 'Paper vectors')}
-      </div>
-      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div id="paper-embedding-toggle" style={{ fontSize: 13, lineHeight: 1.4 }}>
-            {tr('让论文能被语义搜索找到', 'Let papers be found by semantic search')}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginTop: 2 }}>
-            {tr(
-              '索引标题、作者与摘要，所有入库方式都适用（建库、手动添加、每日推送）。这是全平台的总开关，关掉后语义搜索和文献对话都会失效，一般不用动。',
-              'Indexes title, authors and abstract, for every way papers are added (library builds, manual adds, daily papers). This is the platform-wide switch; when off, both semantic search and literature chat stop working. Rarely needs changing.',
-            )}
-          </div>
-        </div>
-        <Switch
-          checked={enabled}
-          onChange={(v) => toggleMutation.mutate(v)}
-          disabled={isLoading || isError || toggleMutation.isPending}
-          aria-labelledby="paper-embedding-toggle"
-        />
-      </div>
-      {isError && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 10 }}>
-          {tr('无法加载该设置（后端不可用或无权限）', 'Failed to load this setting (backend unavailable or no permission)')}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function LlmTab() {
   return (
     <>
       <ProvidersSection adapter={adminLlmAdapter} />
       <RoutesSection adapter={adminLlmAdapter} />
-      <PaperEmbeddingSection />
       <AffiliationModeSection />
       <CallLogsSection />
     </>
@@ -2585,7 +2482,7 @@ function MyUsageTab() {
 // ---------------- 页面 ----------------
 
 /** 普通用户设置的标签页（管理员那组在 /admin，见 AdminSettingsPage）。 */
-type Tab = 'personal' | 'chat' | 'prefs' | 'bots' | 'ssh' | 'mymodels' | 'myusage' | 'mcp';
+type Tab = 'personal' | 'prefs' | 'bots' | 'ssh' | 'mymodels' | 'myusage' | 'mcp';
 
 /** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
 export const ADMIN_TABS = ['llm', 'daily', 'usage', 'users', 'codes', 'feedback'] as const;
@@ -3590,7 +3487,7 @@ export function CodesTab() {
   );
 }
 
-const PERSONAL_TABS: Tab[] = ['personal', 'chat', 'prefs', 'bots', 'ssh', 'mymodels', 'myusage', 'mcp'];
+const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'bots', 'ssh', 'mymodels', 'myusage', 'mcp'];
 
 export function SettingsPage() {
   // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
@@ -3607,7 +3504,6 @@ export function SettingsPage() {
 
   const items: { v: Tab; label: string }[] = [
     { v: 'personal', label: tr('个人信息', 'Profile') },
-    { v: 'chat', label: tr('文献对话', 'Literature chat') },
     { v: 'prefs', label: tr('界面偏好', 'Interface') },
     { v: 'bots', label: tr('群机器人', 'Group bots') },
     { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
@@ -3623,7 +3519,6 @@ export function SettingsPage() {
         <Segmented options={items} value={tab} onChange={setTab} />
       </div>
       {tab === 'personal' && <PersonalTab />}
-      {tab === 'chat' && <ChatPrefsTab />}
       {tab === 'prefs' && <PreferencesTab />}
       {tab === 'bots' && <ChatBotsTab />}
       {tab === 'ssh' && <SshTab />}

@@ -191,24 +191,6 @@ async def paper_has_chunks(
     return (await session.execute(stmt.limit(1))).first() is not None
 
 
-async def user_wants_fulltext_index(
-    session: AsyncSession, user_id: uuid.UUID | None
-) -> bool:
-    """该用户是否要为论文建分块向量（chat_fulltext_index）。**默认开**。
-
-    只有显式关掉（设置里存了 False）才不建；没设置过、查不到用户、以及无 user_id
-    的系统调用都按开处理——不建分块向量等于这篇论文对文献对话不可检索，那是坏默认。
-    """
-    if user_id is None:
-        return True
-    from app.models.user import User
-
-    user = await session.get(User, user_id)
-    if user is None:
-        return True
-    return user.setting("chat_fulltext_index") is not False
-
-
 async def _embed_chunks(
     session: AsyncSession,
     pending: list[PaperChunk],
