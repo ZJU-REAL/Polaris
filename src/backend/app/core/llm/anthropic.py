@@ -4,16 +4,26 @@
 """
 
 import json
+import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import httpx
 
-from app.core.llm.base import CompletionResult, LLMProvider, Message
+from app.core.llm.base import CompletionResult, EffortLevel, LLMProvider, Message
+
+logger = logging.getLogger("polaris.llm")
 
 _API_URL = "https://api.anthropic.com/v1/messages"
 _API_VERSION = "2023-06-01"
 _DEFAULT_MAX_TOKENS = 4096
+# 老模型不认 output_config.effort（该参数只在 4.6+ 上 GA）；命中即去掉重试一次
+_EFFORT_REJECT_MARKERS = ("effort", "output_config")
+
+
+def _rejects_effort(body: str) -> bool:
+    low = body.lower()
+    return any(marker in low for marker in _EFFORT_REJECT_MARKERS)
 
 
 class AnthropicProvider(LLMProvider):
@@ -39,7 +49,12 @@ class AnthropicProvider(LLMProvider):
         temperature: float | None,
         max_tokens: int | None,
         stream: bool,
+        images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
     ) -> dict[str, Any]:
+        if images:
+            # TODO：Anthropic 原生 image block 支持
+            raise NotImplementedError("anthropic provider does not support image inputs yet")
         # Anthropic 的 system 提示是顶层参数，不在 messages 里
         system_parts = [m.content for m in messages if m.role == "system"]
         payload: dict[str, Any] = {
@@ -52,6 +67,9 @@ class AnthropicProvider(LLMProvider):
         }
         if system_parts:
             payload["system"] = "\n\n".join(system_parts)
+        if effort is not None:
+            # Anthropic 的推理档位在 output_config 里，不是顶层参数
+            payload["output_config"] = {"effort": effort}
         return payload
 
     async def complete(
@@ -62,16 +80,26 @@ class AnthropicProvider(LLMProvider):
         temperature: float | None = None,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
     ) -> CompletionResult:
         # TODO(M2): 重试/限速/错误分类
-        if images:
-            # TODO：Anthropic 原生 image block 支持
-            raise NotImplementedError("anthropic provider does not support image inputs yet")
         resp = await self._client.post(
             _API_URL,
             headers=self._headers(),
-            json=self._payload(messages, model, temperature, max_tokens, stream=False),
+            json=self._payload(
+                messages, model, temperature, max_tokens, stream=False, images=images, effort=effort
+            ),
         )
+        if effort is not None and resp.status_code == 400 and _rejects_effort(resp.text):
+            # 该模型不认这个档位：去掉参数重试一次，别让配错档位打断整个环节
+            logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试", model, effort)
+            resp = await self._client.post(
+                _API_URL,
+                headers=self._headers(),
+                json=self._payload(
+                    messages, model, temperature, max_tokens, stream=False, images=images
+                ),
+            )
         resp.raise_for_status()
         data = resp.json()
         text = "".join(block.get("text", "") for block in data.get("content", []))
@@ -90,6 +118,7 @@ class AnthropicProvider(LLMProvider):
         temperature: float | None = None,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
     ) -> AsyncIterator[str]:
         # TODO(M2): 处理 message_delta 中的 usage / stop_reason
         async with self._client.stream(
@@ -97,7 +126,7 @@ class AnthropicProvider(LLMProvider):
             _API_URL,
             headers=self._headers(),
             json=self._payload(
-                messages, model, temperature, max_tokens, stream=True, images=images
+                messages, model, temperature, max_tokens, stream=True, images=images, effort=effort
             ),
         ) as resp:
             resp.raise_for_status()

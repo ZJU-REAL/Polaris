@@ -71,3 +71,20 @@ Beyond the provider keys above, Polaris routes each research stage to a specific
 through a DB-backed routing table, editable from the admin panel. This lets cheap models handle
 scoring while strong models handle idea debate and paper drafting. All calls go through the single
 `app/core/llm/` abstraction; see [Architecture](architecture.md#the-llm-abstraction-and-model-routing).
+
+### Reasoning effort
+
+Each route can also carry a **reasoning effort** — how much the model is allowed to think before
+answering. Leave it unset (the default) and Polaris sends no effort parameter at all, so the model
+uses its own default; existing routes are unaffected. Levels are `none`, `minimal`, `low`, `medium`,
+`high`, `xhigh`, `max`, sent as `reasoning_effort` to OpenAI-compatible endpoints and as
+`output_config.effort` to the native Anthropic API.
+
+Support varies by model, and not every level is valid on every model that accepts the parameter —
+a model may accept `low` but reject `minimal`. Polaris does not keep a per-model whitelist. If the
+server rejects the request because of the effort parameter, the call is retried once without it and
+a warning is logged, so an effort set on a model that cannot use it degrades to the model's default
+instead of breaking the stage. Embedding and rerank routes have no effort setting.
+
+Lower effort on high-volume mechanical stages (relevance scoring, extraction) cuts both cost and
+latency; raise it on stages where correctness matters more than spend (self-verification, review).

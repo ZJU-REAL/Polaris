@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from app.core.llm.base import CompletionResult, LLMProvider, Message, RerankResult
+from app.core.llm.base import CompletionResult, EffortLevel, LLMProvider, Message, RerankResult
 
 logger = logging.getLogger("polaris.llm")
 
@@ -21,6 +21,21 @@ _BACKOFF_BASE_SECONDS = 3.0
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 # 部分中转强制流式：非流式请求返回 400 + 该提示，此时自动改走流式并聚合
 _FORCE_STREAM_MARKER = "stream must be set to true"
+# 模型/中转不认 reasoning_effort（非推理模型、老版中转、或该模型不支持所配档位）时的
+# 400 特征。命中即去掉该参数重试一次——配错档位不该让整个环节挂掉。
+_EFFORT_REJECT_MARKERS = ("reasoning_effort", "reasoning.effort", "effort")
+
+
+class _EffortUnsupported(RuntimeError):
+    """服务端明确因 reasoning_effort 拒绝了请求；调用方去掉该参数重试。"""
+
+
+def _rejects_effort(status_code: int, body: str) -> bool:
+    """400 且错误信息提到 effort —— 仅在本次确实发了该参数时才做此判断。"""
+    if status_code != 400:
+        return False
+    low = body.lower()
+    return any(marker in low for marker in _EFFORT_REJECT_MARKERS)
 
 
 def _retry_delay(resp: httpx.Response, attempt: int) -> float:
@@ -84,6 +99,7 @@ class OpenAICompatProvider(LLMProvider):
         max_tokens: int | None,
         stream: bool,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
     ) -> dict[str, Any]:
         payload_messages: list[dict[str, Any]] = [
             {"role": m.role, "content": m.content} for m in messages
@@ -108,6 +124,8 @@ class OpenAICompatProvider(LLMProvider):
         }
         if temperature is not None:  # 新款 Claude 等模型已弃用该参数，None 则不发送
             payload["temperature"] = temperature
+        if effort is not None:  # 推理模型的思考深度；非推理模型/中转不认时不要发
+            payload["reasoning_effort"] = effort
         # Anthropic 系模型（经 LiteLLM 等代理）强制要求 max_tokens，缺省给足额度
         payload["max_tokens"] = max_tokens if max_tokens is not None else 8192
         return payload
@@ -120,13 +138,34 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float | None = None,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
+    ) -> CompletionResult:
+        try:
+            return await self._complete_once(
+                messages, model, temperature, max_tokens, images, effort
+            )
+        except _EffortUnsupported as e:
+            # 该模型不吃这个档位：去掉参数重试一次，别让配错档位打断整个环节
+            logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试：%s", model, effort, e)
+            return await self._complete_once(messages, model, temperature, max_tokens, images, None)
+
+    async def _complete_once(
+        self,
+        messages: Sequence[Message],
+        model: str,
+        temperature: float | None,
+        max_tokens: int | None,
+        images: list[bytes] | None,
+        effort: EffortLevel | None,
     ) -> CompletionResult:
         payload = self._payload(
-            messages, model, temperature, max_tokens, stream=False, images=images
+            messages, model, temperature, max_tokens, stream=False, images=images, effort=effort
         )
         resp = await self._post_with_retry(f"{self._base_url}/chat/completions", payload)
         if resp.status_code >= 400:
             body = resp.text[:500]
+            if effort is not None and _rejects_effort(resp.status_code, body):
+                raise _EffortUnsupported(body)
             if resp.status_code == 400 and _FORCE_STREAM_MARKER in body.lower():
                 # 强制流式的中转：自动改用流式请求并聚合成非流式结果
                 logger.info(
@@ -154,7 +193,14 @@ class OpenAICompatProvider(LLMProvider):
             headers=self._headers(),
             json=payload,
         ) as resp:
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                # 流式响应体要显式读出来才能看到错误内容
+                body = (await resp.aread()).decode(errors="replace")[:500]
+                if payload.get("reasoning_effort") is not None and _rejects_effort(
+                    resp.status_code, body
+                ):
+                    raise _EffortUnsupported(body)
+                resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data:"):
                     continue
@@ -195,18 +241,35 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float | None = None,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
     ) -> AsyncIterator[str]:
         # TODO(M2): usage 统计、错误恢复
         payload = self._payload(
-            messages, model, temperature, max_tokens, stream=True, images=images
+            messages, model, temperature, max_tokens, stream=True, images=images, effort=effort
         )
-        async for data in self._stream_chunks(payload):
-            choices = data.get("choices") or []
-            if not choices:
-                continue
-            delta = choices[0].get("delta") or {}
-            if content := delta.get("content"):
-                yield content
+        emitted = False
+        try:
+            async for data in self._stream_chunks(payload):
+                choices = data.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                if content := delta.get("content"):
+                    emitted = True
+                    yield content
+        except _EffortUnsupported as e:
+            # effort 是在首个 token 之前被拒的，重试不会重复输出；真吐过内容就不冒这个险
+            if emitted:
+                raise
+            logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试：%s", model, effort, e)
+            payload.pop("reasoning_effort", None)
+            async for data in self._stream_chunks(payload):
+                choices = data.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                if content := delta.get("content"):
+                    yield content
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
         resp = await self._post_with_retry(

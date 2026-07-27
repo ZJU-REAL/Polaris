@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.llm.base import EffortLevel
+
 ProviderKind = Literal["openai_compat", "anthropic", "fake"]
 
 
@@ -44,6 +46,9 @@ class RouteItem(BaseModel):
     provider_id: uuid.UUID
     model: str = Field(min_length=1, max_length=255)
     temperature: float | None = None  # None = 用 provider 默认
+    # 推理档位；None = 不发送该参数（用模型默认）。某个模型具体支持哪几档由服务端校验，
+    # 这里只挡明显非法的取值。
+    effort: EffortLevel | None = None
 
 
 TestCapability = Literal["chat", "embedding", "rerank"]

@@ -438,3 +438,39 @@ async def test_usage_aggregation(client):
     # user 过滤（无匹配 → 空）
     resp = await client.get(f"/api/admin/llm/usage?user_id={user_id}", headers=admin)
     assert resp.json() == []
+
+
+async def test_routes_effort_roundtrip_and_validation(client):
+    """effort 可存可读；未配为 None（= 不发该参数）；非法档位 422。"""
+    admin, _ = await _admin_and_member(client)
+    resp = await client.post(
+        "/api/admin/llm/providers", json={"name": "fake", "kind": "fake"}, headers=admin
+    )
+    provider_id = resp.json()["id"]
+
+    resp = await client.put(
+        "/api/admin/llm/routes",
+        json=[
+            {"stage": "default", "provider_id": provider_id, "model": "m"},
+            {"stage": "relevance", "provider_id": provider_id, "model": "m", "effort": "low"},
+            {"stage": "sextant", "provider_id": provider_id, "model": "m", "effort": "xhigh"},
+        ],
+        headers=admin,
+    )
+    assert resp.status_code == 200, resp.text
+    got = {r["stage"]: r for r in resp.json()}
+    assert got["default"]["effort"] is None
+    assert got["relevance"]["effort"] == "low"
+    assert got["sextant"]["effort"] == "xhigh"
+
+    # 读回来还在
+    got = {r["stage"]: r for r in (await client.get("/api/admin/llm/routes", headers=admin)).json()}
+    assert got["sextant"]["effort"] == "xhigh"
+
+    # 非法档位被 schema 挡掉
+    resp = await client.put(
+        "/api/admin/llm/routes",
+        json=[{"stage": "default", "provider_id": provider_id, "model": "m", "effort": "turbo"}],
+        headers=admin,
+    )
+    assert resp.status_code == 422

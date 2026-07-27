@@ -157,6 +157,7 @@ async def replace_routes(
                 provider_id=item.provider_id,
                 model=item.model,
                 temperature=item.temperature,
+                effort=item.effort,
             )
         )
     await session.commit()

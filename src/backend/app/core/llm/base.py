@@ -7,8 +7,14 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
+from typing import Literal
 
 Role = str  # "system" | "user" | "assistant"
+
+# 推理档位（思考深度）。取值取 OpenAI 与 Anthropic 两家的并集，具体模型支持哪些子集
+# 由服务端校验（各家对不支持的档位会返回明确的 400，比在这里硬编码白名单更靠谱）。
+EffortLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+EFFORT_LEVELS: tuple[str, ...] = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 @dataclass(slots=True)
@@ -47,11 +53,13 @@ class LLMProvider(ABC):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
     ) -> CompletionResult:
         """一次性补全，返回完整结果。
 
         ``images``：可选 PNG 字节列表（多模态输入，附在最后一条 user 消息上）；
         不支持视觉输入的 provider 抛 NotImplementedError。
+        ``effort``：推理档位，None = 不发送该参数（用模型默认）。
         """
 
     @abstractmethod
@@ -63,11 +71,13 @@ class LLMProvider(ABC):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
     ) -> AsyncIterator[str]:
         """流式补全，逐段 yield 文本增量（用于 SSE 转发）。
 
         ``images``：可选多模态输入（同 complete）；支持多模态流式的 provider 附在
         最后一条 user 消息上，其余忽略。
+        ``effort``：推理档位，None = 不发送该参数（用模型默认）。
         """
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:

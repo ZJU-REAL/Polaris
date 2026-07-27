@@ -43,6 +43,16 @@ STREAM_CHUNKS = [
 
 FORCE_STREAM_400 = httpx.Response(400, json={"detail": "Stream must be set to true"})
 
+# 非流式成功响应（effort 透传用例不关心内容，只查 payload）
+NON_STREAM_OK = {
+    "id": "c2",
+    "model": "gpt-5.6-sol",
+    "choices": [
+        {"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+    ],
+    "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+}
+
 
 def _stream_response() -> httpx.Response:
     return httpx.Response(
@@ -133,4 +143,131 @@ async def test_stream_still_yields_deltas():
         c async for c in provider.stream([Message(role="user", content="hi")], model="gpt-5.6-sol")
     ]
     assert "".join(got) == "Hello world"
+    await provider.aclose()
+
+
+@respx.mock
+async def test_effort_sent_as_reasoning_effort():
+    """route 上配了 effort 时，payload 带 reasoning_effort（codex-relay 等推理中转认这个字段）。"""
+    route = respx.post(CHAT_URL).mock(return_value=httpx.Response(200, json=NON_STREAM_OK))
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    await provider.complete(
+        [Message(role="user", content="hi")], model="gpt-5.6-sol", effort="xhigh"
+    )
+    body = json.loads(route.calls[0].request.content)
+    assert body["reasoning_effort"] == "xhigh"
+    await provider.aclose()
+
+
+@respx.mock
+async def test_effort_omitted_when_unset():
+    """不配 effort 就完全不发该字段——非推理模型/老中转收到会 400。"""
+    route = respx.post(CHAT_URL).mock(return_value=httpx.Response(200, json=NON_STREAM_OK))
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    await provider.complete([Message(role="user", content="hi")], model="gpt-5.6-sol")
+    assert "reasoning_effort" not in json.loads(route.calls[0].request.content)
+    await provider.aclose()
+
+
+@respx.mock
+async def test_effort_survives_force_stream_fallback():
+    """强制流式的中转（codex-relay 就是）：回退重试时 effort 不能丢。"""
+    route = respx.post(CHAT_URL).mock(side_effect=[FORCE_STREAM_400, _stream_response()])
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    result = await provider.complete(
+        [Message(role="user", content="hi")], model="gpt-5.6-sol", effort="low"
+    )
+    assert result.content == "Hello world"
+    second = json.loads(route.calls[1].request.content)
+    assert second["stream"] is True
+    assert second["reasoning_effort"] == "low"
+    await provider.aclose()
+
+
+@respx.mock
+async def test_effort_sent_on_stream():
+    route = respx.post(CHAT_URL).mock(return_value=_stream_response())
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    chunks = [
+        c
+        async for c in provider.stream(
+            [Message(role="user", content="hi")], model="gpt-5.6-sol", effort="high"
+        )
+    ]
+    assert "".join(chunks) == "Hello world"
+    assert json.loads(route.calls[0].request.content)["reasoning_effort"] == "high"
+    await provider.aclose()
+
+
+@respx.mock
+async def test_effort_rejected_falls_back_without_it():
+    """模型不支持所配档位时去掉 effort 重试一次，环节不挂。"""
+    reject = httpx.Response(
+        400,
+        json={
+            "error": {
+                "message": "Unsupported value: 'xhigh' is not supported with the 'gpt-4o' model.",
+                "param": "reasoning.effort",
+            }
+        },
+    )
+    route = respx.post(CHAT_URL).mock(
+        side_effect=[reject, httpx.Response(200, json=NON_STREAM_OK)]
+    )
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    result = await provider.complete(
+        [Message(role="user", content="hi")], model="gpt-4o", effort="xhigh"
+    )
+    assert result.content == "ok"
+    assert route.call_count == 2
+    assert json.loads(route.calls[0].request.content)["reasoning_effort"] == "xhigh"
+    assert "reasoning_effort" not in json.loads(route.calls[1].request.content)
+    await provider.aclose()
+
+
+@respx.mock
+async def test_unrelated_400_is_not_swallowed_as_effort_problem():
+    """与 effort 无关的 400 照常抛错，不能被降级逻辑吞掉。"""
+    route = respx.post(CHAT_URL).mock(
+        return_value=httpx.Response(400, json={"error": {"message": "model not found"}})
+    )
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    with pytest.raises(RuntimeError, match="model not found"):
+        await provider.complete(
+            [Message(role="user", content="hi")], model="nope", effort="high"
+        )
+    assert route.call_count == 1  # 没有重试
+    await provider.aclose()
+
+
+@respx.mock
+async def test_effort_rejected_on_forced_stream_relay():
+    """强制流式 + 不支持该档位：先回退流式，再去掉 effort，最终仍拿到结果。"""
+    reject = httpx.Response(400, json={"error": {"message": "unsupported reasoning_effort"}})
+    route = respx.post(CHAT_URL).mock(
+        side_effect=[FORCE_STREAM_400, reject, FORCE_STREAM_400, _stream_response()]
+    )
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    result = await provider.complete(
+        [Message(role="user", content="hi")], model="gpt-5.6-sol", effort="max"
+    )
+    assert result.content == "Hello world"
+    assert "reasoning_effort" not in json.loads(route.calls[-1].request.content)
+    await provider.aclose()
+
+
+@respx.mock
+async def test_effort_rejected_on_stream_retries_without_it():
+    reject = httpx.Response(400, json={"error": {"message": "unsupported reasoning_effort"}})
+    route = respx.post(CHAT_URL).mock(side_effect=[reject, _stream_response()])
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    chunks = [
+        c
+        async for c in provider.stream(
+            [Message(role="user", content="hi")], model="gpt-4o", effort="xhigh"
+        )
+    ]
+    assert "".join(chunks) == "Hello world"
+    assert route.call_count == 2
+    assert "reasoning_effort" not in json.loads(route.calls[1].request.content)
     await provider.aclose()

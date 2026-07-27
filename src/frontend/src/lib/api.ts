@@ -499,11 +499,20 @@ export interface LlmProviderInput {
   models?: string[];
 }
 
+/** 推理档位；与后端 app/core/llm/base.py 的 EFFORT_LEVELS 对齐 */
+export type LlmEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export const LLM_EFFORT_LEVELS: LlmEffort[] = [
+  'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+];
+
 export interface LlmRoute {
   stage: string;
   provider_id: string;
   model: string;
   temperature?: number | null;
+  /** null / 缺省 = 不发送该参数，用模型默认档位 */
+  effort?: LlmEffort | null;
 }
 
 export type LlmTestCapability = 'chat' | 'embedding' | 'rerank';

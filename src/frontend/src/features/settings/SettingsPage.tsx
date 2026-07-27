@@ -25,10 +25,12 @@ import {
   type AdminUserRead,
   type AffiliationMode,
   type ChatBotPlatform,
+  LLM_EFFORT_LEVELS,
   type EffectiveTestResult,
   type LlmCallLogRow,
   type LlmProviderInput,
   type LlmProviderKind,
+  type LlmEffort,
   type LlmProviderRead,
   type LlmRoute,
   type LlmSelfConfig,
@@ -1206,6 +1208,8 @@ interface RouteDraft {
   provider_id: string;
   model: string;
   temperature: string;
+  /** '' = 不发送该参数，用模型默认档位 */
+  effort: string;
 }
 
 // ---- 模型组合框：自由输入 + 候选下拉（面板视觉复用 components/ui/SelectMenu） ----
@@ -1317,6 +1321,7 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
         provider_id: r.provider_id,
         model: r.model,
         temperature: r.temperature === null || r.temperature === undefined ? '' : String(r.temperature),
+        effort: r.effort ?? '',
       };
     }
     setRows(next);
@@ -1334,6 +1339,7 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
           provider_id: r.provider_id,
           model: r.model.trim(),
           ...(t !== '' && Number.isFinite(Number(t)) ? { temperature: Number(t) } : {}),
+          ...(r.effort ? { effort: r.effort as LlmEffort } : {}),
         });
       }
       return adapter.putRoutes(routes);
@@ -1346,7 +1352,7 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
   });
 
   const defaultRow = rows['default'];
-  const emptyDraftRow: RouteDraft = { provider_id: '', model: '', temperature: '' };
+  const emptyDraftRow: RouteDraft = { provider_id: '', model: '', temperature: '', effort: '' };
 
   // 编辑「跟随默认」的行时，以 default 的值为底稿转成显式设置；
   // 能力型环节不跟随默认，底稿从空开始
@@ -1427,6 +1433,15 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
               <th style={{ width: 170 }}>provider</th>
               <th>model</th>
               <th style={{ width: 90 }}>temperature</th>
+              <th
+                style={{ width: 110 }}
+                title={tr(
+                  '思考深度。留空即不发送该参数，用模型自带的默认档位；模型不支持所选档位时会自动去掉该参数重试，不会让环节失败。',
+                  'How hard the model thinks. Leave empty to send nothing and use the model default; if the model rejects the level, the call is retried without it instead of failing.',
+                )}
+              >
+                effort
+              </th>
               <th style={{ width: 130 }}>{tr('模型状态', 'Model status')}</th>
             </tr>
           </thead>
@@ -1509,6 +1524,19 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
                       placeholder={tr('默认', 'default')}
                       inputMode="decimal"
                       onChange={(e) => setRow(stage, { temperature: e.target.value })}
+                    />
+                  </td>
+                  <td>
+                    <SelectMenu
+                      style={{ height: 32 }}
+                      muted={follows}
+                      disabled={capability}
+                      value={capability ? '' : shown.effort}
+                      options={[
+                        { value: '', label: tr('模型默认', 'Model default') },
+                        ...LLM_EFFORT_LEVELS.map((e) => ({ value: e, label: e })),
+                      ]}
+                      onChange={(v) => setRow(stage, { effort: v })}
                     />
                   </td>
                   <td>

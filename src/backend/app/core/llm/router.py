@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.llm import call_log
 from app.core.llm.anthropic import AnthropicProvider
-from app.core.llm.base import CompletionResult, LLMProvider, Message
+from app.core.llm.base import CompletionResult, EffortLevel, LLMProvider, Message
 from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.security import decrypt_secret
@@ -79,6 +79,7 @@ class ResolvedRoute:
     model: str
     temperature: float | None
     provider_name: str = "fake"  # 管理端 provider 名称（调用日志用）
+    effort: EffortLevel | None = None  # 推理档位，None = 不发送该参数（用模型默认）
 
 
 # 无 DB 路由时的兜底：确定性 fake provider
@@ -89,6 +90,7 @@ _FALLBACK_ROUTE = ResolvedRoute(
     model="fake-default",
     temperature=0.0,
     provider_name="fake",
+    effort=None,
 )
 
 
@@ -149,6 +151,7 @@ class LLMRouter:
                     model=route.model,
                     temperature=route.temperature,
                     provider_name=provider.name,
+                    effort=route.effort,
                 )
         return routes
 
@@ -333,6 +336,7 @@ class LLMRouter:
         temperature: float | None = None,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
         user_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
         library_id: uuid.UUID | None = None,
@@ -340,6 +344,7 @@ class LLMRouter:
     ) -> CompletionResult:
         provider, route = await self.resolve(stage, user_id)
         temp = route.temperature if temperature is None else temperature
+        eff = route.effort if effort is None else effort
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         try:
@@ -347,11 +352,13 @@ class LLMRouter:
             # 多模态（带图，如 wiki 精读编译）也走流式——图片附在请求上、正文照常逐段吐。
             if self.event_bus is not None and voyage_id is not None and stage in STREAM_STAGES:
                 result = await self._stream_and_broadcast(
-                    stage, provider, route, messages, temp, max_tokens, voyage_id, images
+                    stage, provider, route, messages, temp, max_tokens, voyage_id, images, eff
                 )
             else:
-                # images 仅在提供时透传（兼容未声明该参数的 provider 子类/测试替身）
+                # images/effort 仅在提供时透传（兼容未声明这些参数的 provider 子类/测试替身）
                 extra: dict[str, Any] = {"images": images} if images else {}
+                if eff is not None:
+                    extra["effort"] = eff
                 result = await provider.complete(
                     messages, model=route.model, temperature=temp, max_tokens=max_tokens, **extra
                 )
@@ -411,6 +418,7 @@ class LLMRouter:
         max_tokens: int | None,
         voyage_id: uuid.UUID,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
     ) -> CompletionResult:
         """流式补全并把 token 增量节流广播成 llm_delta 事件，返回拼好的完整结果。
 
@@ -435,12 +443,14 @@ class LLMRouter:
 
         await self.event_bus.publish_voyage_event(voyage_id, "llm_start", {"stage": stage})
         try:
+            stream_extra: dict[str, Any] = {"effort": effort} if effort is not None else {}
             async for chunk in provider.stream(
                 messages,
                 model=route.model,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 images=images,
+                **stream_extra,
             ):
                 collected.append(chunk)
                 buf.append(chunk)
@@ -613,6 +623,7 @@ class LLMRouter:
         *,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        effort: EffortLevel | None = None,
         user_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
         library_id: uuid.UUID | None = None,
@@ -622,12 +633,15 @@ class LLMRouter:
         log_enabled = await call_log.logging_enabled()
         started_at = time.monotonic()
         collected: list[str] = []
+        eff = route.effort if effort is None else effort
+        extra: dict[str, Any] = {"effort": eff} if eff is not None else {}
         try:
             async for chunk in provider.stream(
                 messages,
                 model=route.model,
                 temperature=route.temperature if temperature is None else temperature,
                 max_tokens=max_tokens,
+                **extra,
             ):
                 collected.append(chunk)
                 yield chunk

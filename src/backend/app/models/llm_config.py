@@ -82,6 +82,9 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)  # None=不传该参数
+    # 推理档位（none/minimal/low/medium/high/xhigh/max，见 core/llm/base.py）。
+    # None=不传该参数，用模型默认；具体模型支持哪些档位由服务端校验。
+    effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     provider: Mapped[LLMProviderConfig] = relationship(back_populates="routes")
 

@@ -11,7 +11,7 @@ import math
 import re
 from collections.abc import AsyncIterator, Sequence
 
-from app.core.llm.base import CompletionResult, LLMProvider, Message, RerankResult
+from app.core.llm.base import CompletionResult, EffortLevel, LLMProvider, Message, RerankResult
 
 # 与 navigator.py / sextant.py / actions_wiki.py / actions_ideas.py /
 # services/projects.py 的 prompt 对齐的识别标记
@@ -106,6 +106,7 @@ class FakeProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,  # 确定性替身不做推理，收下即忽略
     ) -> CompletionResult:
         full_text = "\n".join(m.content for m in messages)
         if images and _PAPER_REVIEWER_MARKER in full_text:
@@ -166,6 +167,7 @@ class FakeProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,  # 同 complete，忽略
     ) -> AsyncIterator[str]:
         # images 仅在提供时透传（兼容未声明该参数的测试 provider 替身）
         extra = {"images": images} if images else {}

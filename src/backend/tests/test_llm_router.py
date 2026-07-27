@@ -4,7 +4,8 @@ import pytest
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
-from app.core.llm.base import Message
+from app.core.llm.base import CompletionResult, Message
+from app.core.llm.fake import FakeProvider
 from app.core.llm.router import STAGES, STREAM_STAGES, LLMRouter
 from app.core.security import encrypt_secret
 from app.models.llm_config import LLMProviderConfig, LLMUsage, ModelRoute
@@ -151,3 +152,61 @@ def test_mask_api_key():
     assert mask_api_key("") == ""
     assert mask_api_key("short") == "***"
     assert mask_api_key("sk-abcdef1234567890abcd") == "sk-...abcd"
+
+
+async def test_route_effort_reaches_provider(app):
+    """路由表上配的 effort 透传给 provider；显式传参覆盖路由默认。"""
+    async with get_sessionmaker()() as session:
+        provider = LLMProviderConfig(name="fake-db", kind="fake", enabled=True)
+        session.add(provider)
+        await session.flush()
+        session.add(
+            ModelRoute(
+                stage="default", provider_id=provider.id, model="fake-db-model", effort="high"
+            )
+        )
+        await session.commit()
+
+    router = LLMRouter()
+    _, route = await router.resolve("default")
+    assert route.effort == "high"
+
+    seen: list[str | None] = []
+
+    class _Recorder(FakeProvider):
+        async def complete(self, messages, **kwargs):  # type: ignore[override]
+            seen.append(kwargs.get("effort"))
+            return await super().complete(messages, **kwargs)
+
+    router._providers[("fake", None, "fake-db-model")] = _Recorder()
+    router._provider_for = lambda r: router._providers[("fake", None, "fake-db-model")]  # type: ignore[assignment]
+
+    await router.complete("default", [Message(role="user", content="hi")])
+    await router.complete("default", [Message(role="user", content="hi")], effort="low")
+    assert seen == ["high", "low"]
+
+
+async def test_route_without_effort_sends_nothing(app):
+    """未配 effort 的路由不给 provider 传该参数（老 provider 替身也不会因此炸掉）。"""
+    async with get_sessionmaker()() as session:
+        provider = LLMProviderConfig(name="fake-db", kind="fake", enabled=True)
+        session.add(provider)
+        await session.flush()
+        session.add(ModelRoute(stage="default", provider_id=provider.id, model="fake-db-model"))
+        await session.commit()
+
+    seen_kwargs: list[dict] = []
+
+    class _LegacyProvider(FakeProvider):
+        """故意不声明 effort 形参：模拟未跟进新接口的 provider 子类/测试替身。"""
+
+        async def complete(self, messages, *, model, temperature=0.7, max_tokens=None):  # type: ignore[override]
+            seen_kwargs.append({"model": model, "temperature": temperature})
+            return CompletionResult(content="ok", model=model)
+
+    router = LLMRouter()
+    legacy = _LegacyProvider()
+    router._provider_for = lambda r: legacy  # type: ignore[assignment]
+    result = await router.complete("default", [Message(role="user", content="hi")])
+    assert result.content == "ok"
+    assert len(seen_kwargs) == 1
