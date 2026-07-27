@@ -104,13 +104,16 @@ def _migrate_existing_vectors(bind: sa.Connection, is_postgres: bool) -> None:
         ).scalar()
         or UNKNOWN_MODEL
     )
-    params = {"fallback": fallback, "dim": LEGACY_DIM}
+    # suffix 与 dim 必须是两个参数：同一个参数既参与字符串拼接又要塞进 integer 列时，
+    # postgres 会按第一次出现把它推断成 text，之后插 integer 列直接 DatatypeMismatch。
+    # （sqlite 类型宽松，不会暴露这个问题。）
+    params = {"fallback": fallback, "dim": LEGACY_DIM, "suffix": f"@{LEGACY_DIM}"}
 
     bind.execute(
         sa.text(
             "INSERT INTO paper_vectors "
             "(paper_id, space, dim, embedding, model, text_version, built_at) "
-            "SELECT p.id, COALESCE(p.embedding_model, :fallback) || '@' || :dim, :dim, "
+            "SELECT p.id, COALESCE(p.embedding_model, :fallback) || :suffix, :dim, "
             "p.embedding, COALESCE(p.embedding_model, :fallback), 1, "
             f"COALESCE(p.embedding_at, {now}) "
             "FROM papers p "
@@ -123,7 +126,7 @@ def _migrate_existing_vectors(bind: sa.Connection, is_postgres: bool) -> None:
             "INSERT INTO paper_chunk_vectors "
             "(chunk_id, space, dim, embedding, model, text_version, built_at) "
             "SELECT c.id, "
-            "COALESCE(p.chunk_embedding_model, p.embedding_model, :fallback) || '@' || :dim, "
+            "COALESCE(p.chunk_embedding_model, p.embedding_model, :fallback) || :suffix, "
             ":dim, c.embedding, "
             "COALESCE(p.chunk_embedding_model, p.embedding_model, :fallback), 1, "
             f"COALESCE(p.chunk_embedding_at, p.embedding_at, {now}) "
