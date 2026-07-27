@@ -312,7 +312,8 @@ async def test_vectors_are_always_built(client, fake_redis):
 async def test_no_endpoint_can_turn_paper_embedding_off(client):
     """管理员总闸连同端点一起下线了——留着入口就等于留着把检索关瞎的办法。"""
     headers = {"Authorization": f"Bearer {await register_and_login(client)}"}  # 首个用户=admin
-    assert (await client.get("/api/admin/settings/paper-embedding", headers=headers)).status_code == 404
+    resp = await client.get("/api/admin/settings/paper-embedding", headers=headers)
+    assert resp.status_code == 404
     assert (
         await client.put(
             "/api/admin/settings/paper-embedding", json={"enabled": False}, headers=headers

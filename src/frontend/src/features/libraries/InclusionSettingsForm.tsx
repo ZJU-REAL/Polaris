@@ -19,6 +19,8 @@ export const ARXIV_ID_RE = /^(\d{4}\.\d{4,5}(v\d+)?|[a-z-]+\/\d{7}(v\d+)?)$/i;
 export interface InclusionValue {
   arxiv_categories: string[];
   include: string[];
+  /** 排除关键词：命中即挡在门外。与 include 不同，它在每日同步时也硬过滤。 */
+  exclude: string[];
   rubric: RubricDimension[];
   anchors: AnchorPaper[];
 }
@@ -54,10 +56,12 @@ export function InclusionSettingsForm({
   readOnly,
 }: InclusionSettingsFormProps) {
   const { arxiv_categories, include, rubric, anchors } = value;
+  const exclude = value.exclude ?? [];
   const patch = (p: Partial<InclusionValue>) => onChange({ ...value, ...p });
 
   const [customCat, setCustomCat] = useState('');
   const [kwDraft, setKwDraft] = useState('');
+  const [exDraft, setExDraft] = useState('');
 
   // —— AI 自动生成 ——
   const canSuggest = name.trim().length > 0 && statement.trim().length > 0;
@@ -78,6 +82,12 @@ export function InclusionSettingsForm({
       onChange({
         arxiv_categories: cats,
         include: inc,
+        exclude: [
+          ...exclude,
+          ...(d.keywords.exclude ?? []).filter(
+            (x) => x.trim() && !new Set(exclude.map((y) => y.toLowerCase())).has(x.trim().toLowerCase()),
+          ),
+        ],
         rubric: showRubric ? rub : rubric,
         anchors: showAnchors ? anc : anchors,
       });
@@ -96,20 +106,22 @@ export function InclusionSettingsForm({
     setCustomCat('');
   }
 
-  // —— 检索关键词 chips ——
-  function addKeywords(raw: string) {
+  // —— 关键词 chips（包括 / 排除共用一套增删） ——
+  function addKeywords(field: 'include' | 'exclude', raw: string) {
     const parts = raw.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
     if (parts.length === 0) return;
-    const seen = new Set(include.map((x) => x.toLowerCase()));
-    const next = [...include];
+    const current = field === 'include' ? include : exclude;
+    const seen = new Set(current.map((x) => x.toLowerCase()));
+    const next = [...current];
     for (const p of parts) {
       if (!seen.has(p.toLowerCase())) { next.push(p); seen.add(p.toLowerCase()); }
     }
-    patch({ include: next });
-    setKwDraft('');
+    patch({ [field]: next } as Partial<InclusionValue>);
+    if (field === 'include') setKwDraft(''); else setExDraft('');
   }
-  function removeKeyword(k: string) {
-    patch({ include: include.filter((x) => x !== k) });
+  function removeKeyword(field: 'include' | 'exclude', k: string) {
+    const current = field === 'include' ? include : exclude;
+    patch({ [field]: current.filter((x) => x !== k) } as Partial<InclusionValue>);
   }
 
   // —— 锚点论文 ——
@@ -206,7 +218,7 @@ export function InclusionSettingsForm({
 
       {/* —— 检索关键词 chips —— */}
       <div className="col gap6">
-        <BlockLabel zh="检索关键词" en="Search terms" />
+        <BlockLabel zh="包括关键词" en="Include terms" />
         {include.length > 0 ? (
           <div className="row gap6 wrap">
             {include.map((k) => (
@@ -216,7 +228,7 @@ export function InclusionSettingsForm({
                   <button
                     type="button"
                     aria-label={tr('删除', 'Remove')}
-                    onClick={() => removeKeyword(k)}
+                    onClick={() => removeKeyword('include', k)}
                     style={{ display: 'inline-flex', background: 'none', border: 'none', padding: 0, marginLeft: 2, cursor: 'pointer', color: 'inherit' }}
                   >
                     <Icon name="x" size={11} />
@@ -235,18 +247,70 @@ export function InclusionSettingsForm({
             onChange={(e) => {
               const v = e.target.value;
               // 输入逗号即时成词
-              if (/[,，]/.test(v)) addKeywords(v);
+              if (/[,，]/.test(v)) addKeywords('include', v);
               else setKwDraft(v);
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); addKeywords(kwDraft); }
+              if (e.key === 'Enter') { e.preventDefault(); addKeywords('include', kwDraft); }
               else if (e.key === 'Backspace' && !kwDraft && include.length > 0) {
                 e.preventDefault();
-                removeKeyword(include[include.length - 1]!);
+                removeKeyword('include', include[include.length - 1]!);
               }
             }}
-            onBlur={() => { if (kwDraft.trim()) addKeywords(kwDraft); }}
+            onBlur={() => { if (kwDraft.trim()) addKeywords('include', kwDraft); }}
             placeholder={tr('输入关键词后回车或逗号添加，如 agent', 'Type a term, press Enter or comma, e.g. agent')}
+          />
+        )}
+      </div>
+
+      {/* —— 排除关键词 chips —— */}
+      <div className="col gap6">
+        <BlockLabel zh="排除关键词" en="Exclude terms" />
+        <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+          {tr(
+            '命中就不收，检索、打分、每日同步三处都生效。用来挡掉和本方向撞词的其他领域，宁缺毋滥。',
+            'Matching papers are never admitted — in search, in scoring, and in the daily sync. Use it for other fields that share vocabulary with yours; keep it short.',
+          )}
+        </div>
+        {exclude.length > 0 ? (
+          <div className="row gap6 wrap">
+            {exclude.map((k) => (
+              <span key={k} className="chip" style={{ gap: 4, cursor: 'default' }}>
+                {k}
+                {!readOnly && (
+                  <button
+                    type="button"
+                    aria-label={tr('删除', 'Remove')}
+                    onClick={() => removeKeyword('exclude', k)}
+                    style={{ display: 'inline-flex', background: 'none', border: 'none', padding: 0, marginLeft: 2, cursor: 'pointer', color: 'inherit' }}
+                  >
+                    <Icon name="x" size={11} />
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        ) : readOnly ? (
+          <div className="muted" style={{ fontSize: 12.5 }}>{tr('未设排除关键词', 'No exclude terms set')}</div>
+        ) : null}
+        {!readOnly && (
+          <input
+            className="input"
+            value={exDraft}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (/[,，]/.test(v)) addKeywords('exclude', v);
+              else setExDraft(v);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); addKeywords('exclude', exDraft); }
+              else if (e.key === 'Backspace' && !exDraft && exclude.length > 0) {
+                e.preventDefault();
+                removeKeyword('exclude', exclude[exclude.length - 1]!);
+              }
+            }}
+            onBlur={() => { if (exDraft.trim()) addKeywords('exclude', exDraft); }}
+            placeholder={tr('输入后回车或逗号添加，如 speech recognition', 'Type a term, press Enter or comma')}
           />
         )}
       </div>

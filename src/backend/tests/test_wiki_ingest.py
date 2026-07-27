@@ -1,6 +1,6 @@
 """wiki ingest 全流程测试：respx mock 文献 API + fake LLM，直接驱动 VoyageEngine。
 
-覆盖：bootstrap 冷启动全链路（候选→雪球→打分→全文→编译→概念→水位线）、
+覆盖：检索模式全链路（检索→打分→全文→编译→概念→记录进度）、锚点扩展模式、
 并发 409、断点恢复不重复打分（fake LLM 调用计数）、增量续跑、每日 cron 选表。
 """
 
@@ -21,7 +21,7 @@ from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.llm_config import LLMUsage
-from app.models.paper import new_paper, paper_concepts
+from app.models.paper import Paper, new_paper, paper_concepts
 from app.models.user import User
 from app.models.voyage import VoyageRun
 from app.services import ingest as ingest_service
@@ -299,21 +299,20 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
     obs0 = detail["steps"][0]["observation"]
     assert obs0["found"] == 3 and obs0["inserted"] == 3
-    assert detail["steps"][1]["observation"]["inserted"] == 1  # 雪球 1 篇
 
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
-        assert len(rows) == 4  # 3 arXiv 候选 + 1 雪球
+        assert len(rows) == 3  # 检索模式只有 arXiv 候选，引文扩展是另一个模式
         by_status = {}
         for p, m in rows:
             by_status.setdefault(m.status, []).append((p, m))
         assert len(by_status.get("excluded", [])) == 1  # "irrelevant" 论文被排除
         assert by_status["excluded"][0][0].arxiv_id == "2406.00003"
         compiled_rows = by_status.get("compiled", [])
-        assert len(compiled_rows) == 3
+        assert len(compiled_rows) == 2
         for p, m in compiled_rows:
             assert m.relevance_score is not None and m.relevance_score >= 0.6
             assert m.scored_at is not None
@@ -347,7 +346,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
         links = int(
             (await session.execute(select(func.count()).select_from(paper_concepts))).scalar_one()
         )
-        assert links == 6  # 3 篇编译论文 × 2 概念
+        assert links == 4  # 2 篇编译论文 × 2 概念
 
         # P8a：水位线权威源在库（library.ingest_state），不再写起源课题
         from app.services.libraries import get_library_for_project
@@ -375,12 +374,12 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert state["last_run"]["voyage_id"] == run_id
     assert state["last_run"]["status"] == "done"
     counts = state["paper_counts"]
-    assert counts["compiled"] == 3 and counts["excluded"] == 1 and counts["total"] == 4
+    assert counts["compiled"] == 2 and counts["excluded"] == 1 and counts["total"] == 3
 
     # papers API 上能看到编译结果
     resp = await client.get(f"/api/projects/{project_id}/papers?status=compiled", headers=headers)
     body = resp.json()
-    assert body["total"] == 3
+    assert body["total"] == 2
     assert all(item["has_wiki"] for item in body["items"])
 
     # 增量续跑：水位线窗口 + 全量去重，不产生新论文
@@ -405,7 +404,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert "window_since" not in obs2
     assert obs2["feed_total"] == 0  # 本测试没往每日池放东西
     async with get_sessionmaker()() as session:
-        assert len(await project_paper_rows(session, project_id=project_id)) == 4
+        assert len(await project_paper_rows(session, project_id=project_id)) == 3
 
 
 class _CrashOnNthRelevance(FakeProvider):
@@ -444,27 +443,22 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
     with pytest.raises(asyncio.CancelledError):
         await engine.run(run_id)
 
-    assert await _relevance_call_count() == 3  # 崩溃前 3 篇成功打分（并发，非串行的 1）
+    assert await _relevance_call_count() == 2  # 崩溃前 2 篇成功打分（并发，非串行的 1）
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
         scored = sum(1 for _, m in rows if m.status in ("scored", "excluded"))
-        assert scored == 3  # 逐篇 commit：崩溃前的进度已落库
+        assert scored == 2  # 逐篇 commit：崩溃前的进度已落库
 
     # resume：从断点续跑到 done，总打分调用数 == 论文数（无重复）
     engine2, _ = _make_engine()
     await engine2.resume(run_id)
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     assert resp.json()["status"] == "done"
-    assert await _relevance_call_count() == 4  # 4 篇论文各打分一次
+    assert await _relevance_call_count() == 3  # 3 篇论文各打分一次
 
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
-        assert sorted(m.status for _, m in rows) == [
-            "compiled",
-            "compiled",
-            "compiled",
-            "excluded",
-        ]
+        assert sorted(m.status for _, m in rows) == ["compiled", "compiled", "excluded"]
 
 
 class _BreakOneRelevance(FakeProvider):
@@ -504,11 +498,11 @@ async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_moc
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
-    score_obs = detail["steps"][2]["observation"]  # 0 检索 / 1 雪球 / 2 打分
+    score_obs = detail["steps"][1]["observation"]  # 0 检索 / 1 打分
     assert len(score_obs["failed"]) == 1  # 恰好坏掉的那一篇进 failed
     assert score_obs["failed"][0]["error"].startswith("ValueError")
-    assert score_obs["succeeded"] == 3  # 其余 3 篇并发打分照常完成（4 候选 − 1 失败）
-    assert score_obs["processed"] == 4
+    assert score_obs["succeeded"] == 2  # 其余 2 篇并发打分照常完成（3 候选 − 1 失败）
+    assert score_obs["processed"] == 3
 
     async with get_sessionmaker()() as session:
         by_status: dict[str, int] = {}
@@ -517,7 +511,7 @@ async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_moc
         # 失败打分的那篇仍是 candidate（下次续跑会重试），其余照常推进
         assert by_status.get("candidate", 0) == 1
         assert by_status.get("excluded", 0) == 1  # irrelevant 篮子编织论文
-        assert by_status.get("compiled", 0) == 2  # 两篇通过阈值的论文成功编译
+        assert by_status.get("compiled", 0) == 1  # 通过阈值且未失败的那篇成功编译
 
 
 async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks):
@@ -545,12 +539,12 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
     assert detail["steps"][0]["observation"]["inserted"] == 3  # 默认分类兜底后仍能检索
 
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
-        # 无锚点论文 → 雪球 0 篇；3 候选：2 编译 + 1 排除（无 rubric 时打分只用 statement）
+        # 3 候选：2 编译 + 1 排除（无 rubric 时打分只用 statement）
         assert sorted(m.status for _, m in rows) == ["compiled", "compiled", "excluded"]
 
 
@@ -773,21 +767,20 @@ async def test_unlimited_bootstrap_uncapped(client, queue_stub, wiki_mocks_big):
 
     detail = (await client.get(f"/api/voyages/{voyage['id']}", headers=headers)).json()
     assert detail["status"] == "done", detail  # 未因预算暂停
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
 
     # 检索：分页抓到全部 210 条（旧逻辑 limit=min(200, 10*3)=30）
     obs0 = detail["steps"][0]["observation"]
     assert obs0["found"] == _BIG_N and obs0["inserted"] == _BIG_N
-    # 雪球：锚点扩展 1 篇（上限放开后不受 max_papers*2 影响）
-    assert detail["steps"][1]["observation"]["inserted"] == 1
-    total = _BIG_N + 1
-    # 打分：211 篇全部处理（旧逻辑截 200）
-    score_obs = detail["steps"][2]["observation"]
+    # 检索模式不含引文扩展（那是 snowball 模式），所以总数就是检索到的篇数
+    total = _BIG_N
+    # 打分：210 篇全部处理（旧逻辑截 200）
+    score_obs = detail["steps"][1]["observation"]
     assert score_obs["processed"] == total and score_obs["succeeded"] == total
     assert score_obs["excluded"] == 0  # 全部相关（fake 打 0.88 ≥ 0.6）
-    # 抽取/编译：211 篇全部进入（旧逻辑截 min(compile_top_n=5, max_papers=10)=5）
-    assert detail["steps"][3]["observation"]["processed"] == total
-    compile_obs = detail["steps"][4]["observation"]
+    # 抽取/编译：210 篇全部进入（旧逻辑截 min(compile_top_n=5, max_papers=10)=5）
+    assert detail["steps"][2]["observation"]["processed"] == total
+    compile_obs = detail["steps"][3]["observation"]
     assert compile_obs["processed"] == total and compile_obs["succeeded"] == total
 
     async with get_sessionmaker()() as session:
@@ -923,7 +916,7 @@ async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_
 
     detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
     assert detail["status"] == "done", detail
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 7
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
 
     async with get_sessionmaker()() as session:
         library = await session.get(DirectionLibrary, uuid.UUID(library_id))
@@ -931,7 +924,7 @@ async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_
         assert library.ingest_state["watermark"]
         assert library.ingest_state["last_run"]["voyage_id"] == run_id
 
-        # 库版论文：3 arXiv 候选 + 1 雪球，3 篇编译
+        # 库版论文：3 arXiv 候选，3 篇编译
         members = (
             (
                 await session.execute(
@@ -941,8 +934,8 @@ async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_
             .scalars()
             .all()
         )
-        assert len(members) == 4
-        assert sum(1 for m in members if m.status == "compiled") == 3
+        assert len(members) == 3
+        assert sum(1 for m in members if m.status == "compiled") == 2
         assert sum(1 for m in members if m.status == "excluded") == 1
 
         # 库级用量归因：ingest 全程 LLM 调用（打分/图注/编译/概念定义/向量化）记到库上
@@ -1288,3 +1281,183 @@ async def test_truncated_run_does_not_advance_the_watermark(client, queue_stub, 
     async with get_sessionmaker()() as session:
         library = await session.get(DirectionLibrary, uuid.UUID(library_id))
         assert library.ingest_state["watermark"] == original
+
+
+# ---- 三种收集模式 ----
+
+
+def test_search_query_puts_exclusions_behind_andnot():
+    from app.services.literature.arxiv import build_search_query
+
+    q = build_search_query(["cs.AI"], ["agent"], exclude=["speech recognition"])
+    assert q.startswith('(cat:cs.AI) AND (all:"agent")')
+    assert 'ANDNOT all:"speech recognition"' in q
+    # 没有排除词就不该多出尾巴
+    assert "ANDNOT" not in build_search_query(["cs.AI"], ["agent"])
+
+
+async def test_snowball_mode_skips_the_arxiv_search(client, queue_stub, wiki_mocks):
+    """锚点扩展模式只走引文扩展，不检索 arXiv——想补一轮引文不必连带再搜一次。"""
+    token = await register_and_login(client, email="mode-snowball@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("mode-snowball@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-锚点")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "snowball", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    detail = (await client.get(f"/api/voyages/{resp.json()['id']}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    assert detail["steps"][0]["action"] == "wiki.snowball"
+    assert "锚点" in detail["steps"][0]["title"]
+    assert [s["action"] for s in detail["steps"]] == [
+        "wiki.snowball",
+        "wiki.score_relevance",
+        "wiki.fetch_extract",
+        "wiki.compile",
+        "wiki.link_concepts",
+        "wiki.update_watermark",
+    ]
+
+
+async def test_search_mode_uses_given_terms_and_time_range(client, queue_stub, wiki_mocks):
+    """检索模式：本次指定的查询词与时间范围要真的进检索式。"""
+    token = await register_and_login(client, email="mode-search@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("mode-search@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-检索")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={
+            "mode": "search",
+            "knobs": KNOBS,
+            "query_terms": ["world model"],
+            "time_range": "1w",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    detail = (await client.get(f"/api/voyages/{resp.json()['id']}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    assert detail["steps"][0]["action"] == "wiki.search_candidates"
+
+    calls = [
+        str(c.request.url)
+        for c in wiki_mocks.calls
+        if "export.arxiv.org" in str(c.request.url)
+    ]
+    assert calls, "检索模式必须真的打了 arXiv 检索接口"
+    assert "world+model" in calls[0] or "world%20model" in calls[0]
+    # 一周窗口：起始日期应当离今天很近（而不是默认的半年）
+    import re as _re
+
+    lo = _re.search(r"submittedDate%3A%5B(\d{8})", calls[0])
+    assert lo, calls[0]
+    from datetime import UTC, datetime, timedelta
+
+    since = datetime.strptime(lo.group(1), "%Y%m%d").replace(tzinfo=UTC)
+    assert datetime.now(UTC) - since < timedelta(days=10)
+
+
+async def test_legacy_bootstrap_mode_still_works(client, queue_stub, wiki_mocks):
+    """存量调用传的 bootstrap 折算成 search，不报错、不改变步骤形状。"""
+    project_id, headers = await _setup_project(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+    detail = (await client.get(f"/api/voyages/{resp.json()['id']}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    assert detail["steps"][0]["action"] == "wiki.search_candidates"
+
+
+async def test_exclude_terms_filter_the_daily_feed_sync(client, queue_stub, wiki_mocks):
+    """排除关键词在每日池同步时**硬过滤**，并把滤掉的篇数报进观测。
+
+    与「包括关键词」区别对待：include 配窄了会让库悄无声息颗粒无收，所以同步时不拿它
+    筛；exclude 是用户明确说「我不要这个」，漏掉它是失职。
+    """
+    import datetime as dt
+
+    from app.models.daily_feed import DailyFeedEntry
+
+    token = await register_and_login(client, email="excl@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("excl@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-排除词")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "search", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        definition = dict(library.definition or {})
+        definition["keywords"] = {
+            **(definition.get("keywords") or {}),
+            "exclude": ["speech recognition"],
+        }
+        library.definition = definition
+        for i, title in enumerate(["Planning Agents", "Speech Recognition at Scale"]):
+            paper = new_paper(
+                source="arxiv",
+                arxiv_id=f"2607.7000{i}",
+                title=title,
+                abstract="research",
+                year=2026,
+                published_at=dt.datetime(2026, 7, 20, tzinfo=dt.UTC),
+            )
+            session.add(paper)
+            await session.flush()
+            session.add(
+                DailyFeedEntry(
+                    paper_id=paper.id, feed_date=dt.date(2026, 7, 20), primary_category="cs.AI"
+                )
+            )
+        await session.commit()
+
+    resp2 = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "incremental", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine2, _ = _make_engine()
+    await engine2.run(uuid.UUID(resp2.json()["id"]))
+
+    detail = (await client.get(f"/api/voyages/{resp2.json()['id']}", headers=headers)).json()
+    obs = detail["steps"][0]["observation"]
+    assert obs["feed_total"] == 2
+    assert obs["excluded_by_terms"] == 1  # 命中排除词的那篇被挡下，且报了出来
+    assert obs["inserted"] == 1
+
+    async with get_sessionmaker()() as session:
+        titles = set(
+            (
+                await session.execute(
+                    select(Paper.title)
+                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                    .where(LibraryPaper.library_id == uuid.UUID(library_id))
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert "Speech Recognition at Scale" not in titles

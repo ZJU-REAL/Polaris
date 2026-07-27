@@ -202,7 +202,9 @@ def build_search_query(
     keywords: list[str],
     since: datetime | None = None,
     until: datetime | None = None,
+    exclude: list[str] | None = None,
 ) -> str:
+    """拼 arXiv 检索式。``exclude`` 走 ANDNOT，直接在检索端把不想要的挡掉。"""
     parts: list[str] = []
     if categories:
         parts.append("(" + " OR ".join(f"cat:{c}" for c in categories) + ")")
@@ -212,7 +214,11 @@ def build_search_query(
         lo = since.strftime("%Y%m%d%H%M") if since else "000001010000"
         hi = until.strftime("%Y%m%d%H%M") if until else "999912312359"
         parts.append(f"submittedDate:[{lo} TO {hi}]")
-    return " AND ".join(parts) if parts else "all:*"
+    query = " AND ".join(parts) if parts else "all:*"
+    terms = [t for t in (exclude or []) if str(t).strip()]
+    if terms:
+        query += "".join(f' ANDNOT all:"{t}"' for t in terms)
+    return query
 
 
 class ArxivClient:
@@ -318,10 +324,11 @@ class ArxivClient:
         keywords: list[str] | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        exclude: list[str] | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """分类+关键词搜索（日期窗口），自动翻页至 limit。"""
-        query = build_search_query(categories or [], keywords or [], since, until)
+        """分类+关键词搜索（日期窗口、可排除词），自动翻页至 limit。"""
+        query = build_search_query(categories or [], keywords or [], since, until, exclude)
         results: list[dict[str, Any]] = []
         start = 0
         while len(results) < limit:

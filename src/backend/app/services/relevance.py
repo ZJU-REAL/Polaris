@@ -56,6 +56,19 @@ def _include_keywords(definition: dict[str, Any]) -> list[str]:
     return out
 
 
+def _exclude_keywords(definition: dict[str, Any]) -> list[str]:
+    """库配置里的排除关键词（``keywords.exclude``），去空去重、保序。"""
+    raw = (definition.get("keywords") or {}).get("exclude") or []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in raw:
+        kw = str(item).strip()
+        if kw and kw.lower() not in seen:
+            seen.add(kw.lower())
+            out.append(kw)
+    return out
+
+
 def build_relevance_context(definition: dict[str, Any] | None, name: str) -> str:
     """按库 definition 组打分 context（P8a：库为收录配置权威源）；rubric / questions
     缺失时只用 statement。``name`` 是 statement 缺失时的兜底方向名（库名）。
@@ -68,9 +81,13 @@ def build_relevance_context(definition: dict[str, Any] | None, name: str) -> str
     questions = definition.get("questions") or []
     statement = definition.get("statement") or name
     keywords = _include_keywords(definition)
+    excluded = _exclude_keywords(definition)
     lines = [f"研究方向：{statement}"]
     if keywords:
         lines.append(f"关注的关键词：{'、'.join(keywords)}")
+    if excluded:
+        # 明确说出不要什么，比只说要什么更能压住边缘命中
+        lines.append(f"明确不收的方向：{'、'.join(excluded)}")
     if rubric:
         lines.append(f"评分标准（rubric）：{json.dumps(rubric, ensure_ascii=False)}")
     if questions:

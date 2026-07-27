@@ -252,6 +252,8 @@ export interface AnchorPaper {
 export interface KeywordSpec {
   arxiv_categories?: string[];
   include?: string[];
+  /** 排除关键词：命中即不收；检索、打分、每日同步三处都生效。 */
+  exclude?: string[];
   synonyms?: Record<string, string[]>;
 }
 
@@ -1186,7 +1188,9 @@ export interface LabLeaderboardSetting {
 // M2 · Ingest（冷启动 / 增量同步，复用 Voyage）
 // ============================================================
 
-export type IngestMode = 'bootstrap' | 'incremental';
+/** 收集模式：search=按查询词检索 arXiv，snowball=从锚点论文扩展，incremental=每日池自动同步。
+    bootstrap 是 search 的旧名，仅入口兼容。 */
+export type IngestMode = 'search' | 'snowball' | 'incremental' | 'bootstrap';
 
 export interface IngestKnobs {
   /** bootstrap 回填月数（3-24） */
@@ -2632,6 +2636,18 @@ export interface DailySyncStatus {
   failed_categories: string[];
 }
 
+/** 检索模式的时间范围档位。 */
+export type IngestTimeRange = '1w' | '3m' | '6m' | '1y';
+
+export interface IngestStart {
+  mode: IngestMode;
+  knobs?: IngestKnobs;
+  /** search 模式的查询词；留空则用库配置里的「包括关键词」 */
+  query_terms?: string[];
+  /** search 模式的时间范围；给了就覆盖 knobs.months_back */
+  time_range?: IngestTimeRange;
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -3205,7 +3221,7 @@ export const api = {
    * 供建库与收录设置的「AI 自动生成」按钮调用；结果填进表单供用户修改后保存。
    */
   suggestLibraryDefinition(input: { name: string; statement: string }): Promise<{
-    keywords: { arxiv_categories: string[]; include: string[] };
+    keywords: { arxiv_categories: string[]; include: string[]; exclude?: string[] };
     rubric: RubricDimension[];
     anchors: AnchorPaper[];
   }> {
@@ -3220,7 +3236,7 @@ export const api = {
     return requestJson<DirectionLibraryDetail>(`/libraries/${id}/reject`, 'POST', { note: note ?? null });
   },
   /** 对某个方向库直接触发抓取（P9a；仅 status=active 且预算内，可管理者）。 */
-  startLibraryIngest(id: string, input: { mode: IngestMode; knobs?: IngestKnobs }): Promise<VoyageRead> {
+  startLibraryIngest(id: string, input: IngestStart): Promise<VoyageRead> {
     return requestJson<VoyageRead>(`/libraries/${id}/ingest/run`, 'POST', input);
   },
   /** 课题当前关联的文献库摘要（顺序 = 关联建立时间）。 */
@@ -3489,7 +3505,7 @@ export const api = {
   },
 
   // —— M2 · Ingest ——
-  startIngest(projectId: string, input: { mode: IngestMode; knobs?: IngestKnobs }): Promise<VoyageRead> {
+  startIngest(projectId: string, input: IngestStart): Promise<VoyageRead> {
     return requestJson<VoyageRead>(`/projects/${projectId}/ingest`, 'POST', input);
   },
   getIngestState(projectId: string): Promise<IngestState> {

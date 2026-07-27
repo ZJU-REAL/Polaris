@@ -85,7 +85,7 @@ async def test_suggest_definition_bad_json_returns_empty():
             name="X", statement="Y", llm=_StubLLM(content)
         )
         assert result == {
-            "keywords": {"arxiv_categories": [], "include": []},
+            "keywords": {"arxiv_categories": [], "include": [], "exclude": []},
             "rubric": [],
             "anchors": [],
         }
@@ -97,7 +97,7 @@ async def test_suggest_definition_missing_fields_are_structurally_complete():
         name="X", statement="", llm=_StubLLM('{"keywords": {"include": ["a"]}}')
     )
     assert result == {
-        "keywords": {"arxiv_categories": [], "include": ["a"]},
+        "keywords": {"arxiv_categories": [], "include": ["a"], "exclude": []},
         "rubric": [],
         "anchors": [],
     }
@@ -107,7 +107,7 @@ async def test_suggest_definition_llm_error_returns_empty():
     llm = _StubLLM(error=RuntimeError("boom"))
     result = await libraries_service.suggest_definition(name="X", statement="Y", llm=llm)
     assert result == {
-        "keywords": {"arxiv_categories": [], "include": []},
+        "keywords": {"arxiv_categories": [], "include": [], "exclude": []},
         "rubric": [],
         "anchors": [],
     }
@@ -154,7 +154,7 @@ async def test_suggest_endpoint_bad_json_returns_empty_200(client, monkeypatch):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json() == {
-        "keywords": {"arxiv_categories": [], "include": []},
+        "keywords": {"arxiv_categories": [], "include": [], "exclude": []},
         "rubric": [],
         "anchors": [],
     }

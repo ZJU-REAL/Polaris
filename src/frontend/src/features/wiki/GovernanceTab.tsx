@@ -12,6 +12,7 @@ function fromDefinition(def: ProjectDefinition | null): InclusionValue {
   return {
     arxiv_categories: d.keywords?.arxiv_categories ?? [],
     include: d.keywords?.include ?? [],
+    exclude: d.keywords?.exclude ?? [],
     rubric: d.rubric ?? [],
     anchors: d.anchor_papers ?? [],
   };
@@ -326,7 +327,10 @@ function LibraryInfoCard({
             value={statement}
             disabled={readOnly}
             onChange={(e) => setStatement(e.target.value)}
-            placeholder={tr('这个方向关注什么问题', 'What this direction is about')}
+            placeholder={tr(
+              '例：研究长时程运行的 LLM 智能体。关注记忆压缩、错误恢复、长期一致性评测；偏重方法与系统设计，不收纯 prompt 工程和纯应用报告。',
+              'e.g. Long-running LLM agents. Focus on memory compaction, error recovery and long-horizon consistency evaluation; methods and system design rather than prompt engineering or application reports.',
+            )}
           />
         </label>
         {!readOnly && (

@@ -518,6 +518,7 @@ async def source_libraries_overview(
 
 _SUGGEST_MAX_TOKENS = 2048
 _SUGGEST_MAX_CATEGORIES = 12
+_SUGGEST_MAX_EXCLUDES = 20
 _SUGGEST_MAX_KEYWORDS = 30
 _SUGGEST_MAX_RUBRIC = 6
 _SUGGEST_MAX_ANCHORS = 8
@@ -530,7 +531,8 @@ SUGGEST_DEFINITION_SYSTEM_PROMPT = """\
 {
   "keywords": {
     "arxiv_categories": ["cs.CL", "cs.AI", "cs.LG"],
-    "include": ["retrieval-augmented generation", "in-context learning"]
+    "include": ["retrieval-augmented generation", "in-context learning"],
+    "exclude": ["speech recognition", "protein folding"]
   },
   "rubric": [
     {"name": "任务相关性", "description": "论文直接研究该方向核心任务时得高分", "weight": 0.4}
@@ -543,6 +545,8 @@ SUGGEST_DEFINITION_SYSTEM_PROMPT = """\
 - arxiv_categories：从名称/描述推断的相关 arXiv 分类代码（如 cs.CL、cs.AI、cs.LG、stat.ML 等），\
 最相关的在前，最多 12 个；
 - include：英文为主的检索关键词/术语，覆盖该方向核心概念、方法名、任务名，最多 30 个；
+- exclude：容易和该方向撞词、但明确不该收录的术语（如同名的其他领域用法），最多 20 个；\
+拿不准就给空列表，宁缺毋滥——排除词会直接把论文挡在门外；
 - rubric：3-5 条相关性打分维度，每条含 name（简短中文维度名）、description（什么样的论文在\
 这一维得高分）、weight（0-1 之间的小数，各条 weight 之和约等于 1）；
 - anchors：3-6 篇该方向的代表性锚点论文，每条含 title（英文原题）、arxiv_id（可留空或省略，\
@@ -553,7 +557,11 @@ SUGGEST_DEFINITION_SYSTEM_PROMPT = """\
 
 def _empty_suggestion() -> dict[str, Any]:
     """结构完整的空兜底（解析失败/调用失败时返回，字段与成功时同形）。"""
-    return {"keywords": {"arxiv_categories": [], "include": []}, "rubric": [], "anchors": []}
+    return {
+        "keywords": {"arxiv_categories": [], "include": [], "exclude": []},
+        "rubric": [],
+        "anchors": [],
+    }
 
 
 def _coerce_str_list(value: Any, *, cap: int) -> list[str]:
@@ -651,6 +659,7 @@ def _parse_suggestion(content: str) -> dict[str, Any]:
                 keywords.get("arxiv_categories"), cap=_SUGGEST_MAX_CATEGORIES
             ),
             "include": _coerce_str_list(keywords.get("include"), cap=_SUGGEST_MAX_KEYWORDS),
+            "exclude": _coerce_str_list(keywords.get("exclude"), cap=_SUGGEST_MAX_EXCLUDES),
         },
         "rubric": _coerce_rubric(data.get("rubric")),
         "anchors": _coerce_anchors(data.get("anchors")),

@@ -65,7 +65,7 @@ class LibraryCreate(BaseModel):
     monthly_budget: int | None = Field(default=None, ge=0)
     rubric: Any | None = None
     anchors: list[Any] | None = None
-    keywords: dict[str, Any] | None = None  # {arxiv_categories, include, synonyms}
+    keywords: dict[str, Any] | None = None  # {arxiv_categories, include, exclude, synonyms}
 
 
 class SuggestDefinitionRequest(BaseModel):
@@ -83,6 +83,7 @@ class SuggestedKeywords(BaseModel):
 
     arxiv_categories: list[str] = Field(default_factory=list)  # arXiv 分类代码
     include: list[str] = Field(default_factory=list)  # 检索关键词/术语
+    exclude: list[str] = Field(default_factory=list)  # 排除关键词（命中即不收）
 
 
 class SuggestedRubricDimension(BaseModel):
@@ -136,7 +137,7 @@ class DirectionLibraryUpdate(BaseModel):
     monthly_budget: int | None = Field(default=None, ge=0)
     rubric: Any | None = None
     anchors: list[Any] | None = None
-    keywords: dict[str, Any] | None = None  # {arxiv_categories, include, synonyms}
+    keywords: dict[str, Any] | None = None  # {arxiv_categories, include, exclude, synonyms}
     goals: list[Any] | None = None
     in_scope: list[Any] | None = None
     out_of_scope: list[Any] | None = None

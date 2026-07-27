@@ -230,7 +230,7 @@ function LibraryCard({
   );
 }
 
-const EMPTY_INCLUSION: InclusionValue = { arxiv_categories: [], include: [], rubric: [], anchors: [] };
+const EMPTY_INCLUSION: InclusionValue = { arxiv_categories: [], include: [], exclude: [], rubric: [], anchors: [] };
 
 /**
  * 新建文献库弹窗（P9b：任意登录用户可建）。名称 + 一句话说明必填；
@@ -325,7 +325,16 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
         </FormField>
         <FormField label={tr('一句话说明', 'Statement')} hint={tr('必填，用于相关性打分', 'Required — used for relevance scoring')}>
           <textarea className="textarea" rows={2} value={statement} onChange={(e) => setStatement(e.target.value)}
-            placeholder={tr('用一句话介绍这个文献库的方向', 'One sentence describing this library’s direction')} />
+            placeholder={tr(
+              '例：研究长时程运行的 LLM 智能体。关注记忆压缩、错误恢复、长期一致性评测；偏重方法与系统设计，不收纯 prompt 工程和纯应用报告。',
+              'e.g. Long-running LLM agents. Focus on memory compaction, error recovery and long-horizon consistency evaluation; methods and system design rather than prompt engineering or application reports.',
+            )} />
+          <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 4 }}>
+            {tr(
+              '写清四件事效果最好：研究对象、关注的子问题、偏重什么、明确不要什么。这段描述既用来自动挑论文，也用来给论文打分，写得越具体收得越准。',
+              'Four things help most: the subject, the sub-problems you care about, what you favour, and what you explicitly do not want. This text both selects and scores papers, so specifics pay off.',
+            )}
+          </div>
         </FormField>
         <div className="hr" style={{ margin: '4px 0 16px' }} />
         <InclusionSettingsForm

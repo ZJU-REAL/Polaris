@@ -422,6 +422,8 @@ async def start_library_ingest(
             project=project,
             mode=data.mode,
             knobs=data.knobs,
+            query_terms=data.query_terms,
+            time_range=data.time_range,
             created_by=user.id,
         )
     except ingest_service.IngestConflictError as e:

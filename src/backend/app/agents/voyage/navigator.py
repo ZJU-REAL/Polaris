@@ -72,22 +72,34 @@ IDEA_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 
 
 def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
-    """文献 ingest 固定七步计划（docs/api-m2.md §7）；knobs 从 checkpoint.params 读。"""
-    # 候选来源随模式而变：建库检索 arXiv 历史，增量只吃每日论文池（不碰 arXiv）。
-    # 步骤标题跟着变，否则任务详情页会把「从每日池筛选」写成「检索 arXiv」。
-    first = (
-        ("检索候选（arXiv）", "wiki.search_candidates", "候选论文已入库")
-        if run.kind == "wiki_bootstrap"
-        else ("从每日论文池筛选候选", "wiki.search_candidates", "候选论文已入库")
-    )
+    """文献收集计划：每种模式只跑自己需要的步骤（docs/api-m2.md §7）。
+
+    以前三种来源焊成一条七步流水线，想只补一轮引文就得连带再检索一次 arXiv。现在按
+    ``checkpoint.params.mode`` 分叉，共用后五步（打分→取全文→编译→概念→记录进度）：
+
+    - ``search``：按查询词走 arXiv 检索 API；
+    - ``snowball``：从锚点论文出发走引用/参考；
+    - ``incremental``：从每日论文池按方向挑，不访问 arXiv。
+    """
+    params = (run.checkpoint or {}).get("params") or {}
+    mode = params.get("mode") or ("incremental" if run.kind == "wiki_ingest" else "search")
+    if mode == "bootstrap":  # 存量任务的旧名
+        mode = "search"
+
+    if mode == "snowball":
+        first = ("从锚点论文扩展（Semantic Scholar）", "wiki.snowball", "引用/参考已扩展")
+    elif mode == "incremental":
+        first = ("从每日论文池筛选候选", "wiki.search_candidates", "候选论文已入库")
+    else:
+        first = ("按查询词检索 arXiv", "wiki.search_candidates", "候选论文已入库")
+
     steps = [
         first,
-        ("参考文献扩展（Semantic Scholar）", "wiki.snowball", "参考文献扩展完成"),
         ("相关性打分（LLM）", "wiki.score_relevance", "候选论文已全部打分或排除"),
         ("下载 PDF + 抽全文", "wiki.fetch_extract", "top-N 论文全文就绪（失败降级摘要）"),
         ("Librarian 编译 wiki 页", "wiki.compile", "top-N 论文已生成中文 wiki markdown"),
         ("概念上链 + embedding", "wiki.link_concepts", "双链概念已 upsert 并关联论文"),
-        ("记录同步进度", "wiki.update_watermark", "项目 ingest_state 已更新"),
+        ("记录收集进度", "wiki.update_watermark", "文献库同步状态已更新"),
     ]
     return [
         {

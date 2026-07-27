@@ -9,11 +9,17 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
-import { api, ApiError, type IngestKnobs, type IngestMode, type IngestState } from '../../lib/api';
+import {
+  api,
+  ApiError,
+  type IngestStart,
+  type IngestState,
+  type IngestTimeRange,
+} from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
-   冷启动 / 增量同步 Tab：
+   文献收集 Tab：
    - ingest 状态（水位线 / 论文计数 / 上次运行 / 进行中航程）
    - bootstrap 成本旋钮表单 → POST /ingest {mode:"bootstrap"}
    - 增量同步按钮 → {mode:"incremental"}
@@ -108,15 +114,17 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
     enabled: !!libraryId && !readOnly,
     retry: false,
   });
+  const anchorCount = libDef?.definition?.anchor_papers?.length ?? 0;
   const noKeywords = libraryId
     ? !!libDef && (libDef.definition?.keywords?.include?.length ?? 0) === 0
     : !!project;
 
   // —— 成本旋钮（bootstrap） ——
-  const [monthsBack, setMonthsBack] = useState(6);
   const [maxPapers, setMaxPapers] = useState(50);
   const [threshold, setThreshold] = useState(0.6);
-  const [snowballDepth, setSnowballDepth] = useState<'0' | '1' | '2'>('1');
+  const [hops, setHops] = useState<'1' | '2' | '3'>('1');
+  const [queryTerms, setQueryTerms] = useState('');
+  const [timeRange, setTimeRange] = useState<IngestTimeRange>('6m');
   const [compileTopN, setCompileTopN] = useState(20);
   // 最大化模式：不限检索/编译篇数（仅 bootstrap 表单，增量同步不受影响）
   const [unlimited, setUnlimited] = useState(false);
@@ -126,13 +134,16 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
   const canOpenRunning = !!state?.can_open_running_voyage;
 
   const ingestMutation = useMutation({
-    mutationFn: (input: { mode: IngestMode; knobs: IngestKnobs }) =>
+    mutationFn: (input: IngestStart) =>
       libraryId ? api.startLibraryIngest(libraryId, input) : api.startIngest(scopeId, input),
     onSuccess: (v, input) => {
       toast(
-        input.mode === 'bootstrap'
-          ? tr('初始建库已开始，跳转任务详情…', 'Initial library build started — opening task detail…')
-          : tr('增量同步已开始，跳转任务详情…', 'Incremental sync started — opening task detail…'),
+        {
+          search: tr('检索入库已开始，跳转任务详情…', 'Search started — opening task detail…'),
+          snowball: tr('锚点扩展已开始，跳转任务详情…', 'Anchor expansion started — opening task detail…'),
+          incremental: tr('同步已开始，跳转任务详情…', 'Sync started — opening task detail…'),
+          bootstrap: tr('检索入库已开始，跳转任务详情…', 'Search started — opening task detail…'),
+        }[input.mode],
         'ok',
       );
       void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
@@ -165,14 +176,29 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
   const busy = running || ingestMutation.isPending;
   const bootstrapBusy = busy || noKeywords;
 
-  function runBootstrap() {
+  /** 模式一：按查询词检索 arXiv。查询词留空时后端退回库里的「包括关键词」。 */
+  function runSearch() {
     ingestMutation.mutate({
-      mode: 'bootstrap',
+      mode: 'search',
       knobs: {
-        months_back: monthsBack,
         max_papers: maxPapers,
         relevance_threshold: threshold,
-        snowball_depth: Number(snowballDepth),
+        compile_top_n: compileTopN,
+        unlimited,
+      },
+      query_terms: queryTerms.split(/[,，]/).map((x) => x.trim()).filter(Boolean),
+      time_range: timeRange,
+    });
+  }
+
+  /** 模式二：从锚点论文出发走引用/参考。不检索 arXiv。 */
+  function runSnowball() {
+    ingestMutation.mutate({
+      mode: 'snowball',
+      knobs: {
+        max_papers: maxPapers,
+        relevance_threshold: threshold,
+        snowball_depth: Number(hops),
         compile_top_n: compileTopN,
         unlimited,
       },
@@ -345,26 +371,43 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
           <div className="row gap10" style={{ marginBottom: 6 }}>
             <span className="section-h">
               <Icon name="play" size={15} style={{ color: 'var(--accent)' }} />
-              {tr('初始建库', 'Initial library build')}
+              {tr('按查询词检索入库', 'Search and admit')}
             </span>
           </div>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 18px' }}>
             {tr(
-              '一次性回填近 N 个月文献并做参考文献扩展，打分筛选后精读编译；下面的选项控制本次开销。',
-              'Backfills the last N months with reference expansion, then scores, filters, and compiles; the knobs below control this run’s cost.',
+              '按查询词走 arXiv 检索，打分筛选后精读编译。建库和日后扩充都用它；下面的选项控制本次开销。',
+              'Searches arXiv by query terms, then scores, filters and compiles. Used both to build a library and to expand it later; the knobs below control this run’s cost.',
             )}
           </p>
 
-          <KnobRange
-            label={tr('回填月数', 'Months back')}
-            en="months_back"
-            hint={tr('从今天往回抓取候选论文的时间窗口（3-24 个月）。', 'How far back from today to fetch candidate papers (3-24 months).')}
-            value={monthsBack}
-            min={3}
-            max={24}
-            step={1}
-            onChange={setMonthsBack}
-          />
+          <FormField
+            label={tr('查询词', 'Query terms')}
+            en="query_terms"
+            hint={tr(
+              '留空就用收录设置里的「包括关键词」。多个词用逗号分隔。',
+              'Leave empty to use the library’s include terms. Separate multiple terms with commas.',
+            )}
+          >
+            <input
+              className="input"
+              value={queryTerms}
+              onChange={(e) => setQueryTerms(e.target.value)}
+              placeholder={tr('如 world model, video prediction', 'e.g. world model, video prediction')}
+            />
+          </FormField>
+          <FormField label={tr('时间范围', 'Time range')} en="time_range">
+            <Segmented<IngestTimeRange>
+              options={[
+                { v: '1w', label: tr('近一周', '1 week') },
+                { v: '3m', label: tr('近三个月', '3 months') },
+                { v: '6m', label: tr('近半年', '6 months') },
+                { v: '1y', label: tr('近一年', '1 year') },
+              ]}
+              value={timeRange}
+              onChange={setTimeRange}
+            />
+          </FormField>
           <FormField label={tr('最大化（不限篇数）', 'Maximize (no paper cap)')} en="unlimited">
             <label className="row gap10" style={{ cursor: 'pointer', userSelect: 'none' }}>
               <input
@@ -423,21 +466,6 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             format={(v) => v.toFixed(2)}
             onChange={setThreshold}
           />
-          <FormField
-            label={tr('参考文献扩展层数', 'Reference expansion depth')}
-            en="snowball_depth"
-            hint={tr('沿引用关系扩展检索的层数；0 为不扩展。', 'How many hops to expand along citations; 0 disables expansion.')}
-          >
-            <Segmented<'0' | '1' | '2'>
-              options={[
-                { v: '0', label: tr('0 · 关', '0 · off') },
-                { v: '1', label: tr('1 层', '1 hop') },
-                { v: '2', label: tr('2 层', '2 hops') },
-              ]}
-              value={snowballDepth}
-              onChange={setSnowballDepth}
-            />
-          </FormField>
           <KnobRange
             label={tr('最大编译篇数', 'Max compiled papers')}
             en="compile_top_n"
@@ -482,7 +510,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             </div>
           )}
           <div className="row gap10" style={{ marginTop: 6 }}>
-            <button className="btn btn-primary" disabled={bootstrapBusy} onClick={runBootstrap}>
+            <button className="btn btn-primary" disabled={bootstrapBusy} onClick={runSearch}>
               {ingestMutation.isPending ? (
                 <>
                   <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
@@ -491,7 +519,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
               ) : (
                 <>
                   <Icon name="play" size={14} />
-                  {tr('运行初始建库', 'Run initial library build')}
+                  {tr('开始检索入库', 'Run search')}
                 </>
               )}
             </button>
@@ -500,6 +528,57 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
                 {tr('已有任务运行中，暂不可启动', 'A task is already running — cannot start another')}
               </span>
             )}
+          </div>
+
+          {/* —— 模式二：从锚点论文扩展 —— */}
+          <div className="hr" style={{ margin: '20px 0 16px' }} />
+          <div className="row gap10" style={{ marginBottom: 6 }}>
+            <span className="section-h">
+              <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
+              {tr('从锚点论文扩展', 'Expand from anchor papers')}
+            </span>
+          </div>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 14px' }}>
+            {tr(
+              '从收录设置里的锚点论文出发，沿引用与参考文献往外走，打分筛选后精读编译。不检索 arXiv。',
+              'Walks citations and references outward from the library’s anchor papers, then scores, filters and compiles. Does not query arXiv.',
+            )}
+          </p>
+          <FormField
+            label={tr('跳数', 'Hops')}
+            en="snowball_depth"
+            hint={tr(
+              '沿引用关系往外走几层。每多一跳调用量成倍增长，3 跳很重，先试 1 跳。',
+              'How many hops to walk. Each hop multiplies the API calls — 3 is heavy, start with 1.',
+            )}
+          >
+            <Segmented<'1' | '2' | '3'>
+              options={[
+                { v: '1', label: tr('1 跳', '1 hop') },
+                { v: '2', label: tr('2 跳', '2 hops') },
+                { v: '3', label: tr('3 跳', '3 hops') },
+              ]}
+              value={hops}
+              onChange={setHops}
+            />
+          </FormField>
+          {!anchorCount && (
+            <div style={{ fontSize: 11.5, color: 'var(--text-4)', margin: '4px 0 10px' }}>
+              {tr(
+                '这个文献库还没有锚点论文，先去收录设置添加几篇代表作。',
+                'This library has no anchor papers yet — add a few in inclusion settings first.',
+              )}
+            </div>
+          )}
+          <div className="row gap10" style={{ marginTop: 6 }}>
+            <button
+              className="btn btn-ghost"
+              disabled={busy || !anchorCount}
+              onClick={runSnowball}
+            >
+              <Icon name="layers" size={14} />
+              {tr('开始锚点扩展', 'Run anchor expansion')}
+            </button>
           </div>
         </div>
         )}

@@ -31,6 +31,7 @@ from app.models.daily_feed import DailyFeedEntry
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, new_paper
 from app.models.voyage import VoyageStep
+from app.schemas.ingest import TIME_RANGE_DAYS
 from app.services.affiliations import (
     apply_author_affiliations,
     extract_author_affiliations_llm,
@@ -155,12 +156,16 @@ def _knobs(ctx: ActionContext) -> dict[str, Any]:
 
 
 def _mode(ctx: ActionContext) -> str:
+    """本次运行的收集模式：``search`` | ``snowball`` | ``incremental``。
+
+    ``bootstrap`` 是 ``search`` 的旧名；存量任务的 checkpoint 里还写着它。
+    """
     mode = _params(ctx).get("mode")
-    return (
-        mode
-        if mode in ("bootstrap", "incremental")
-        else ("bootstrap" if ctx.run.kind == "wiki_bootstrap" else "incremental")
-    )
+    if mode == "bootstrap":
+        return "search"
+    if mode in ("search", "snowball", "incremental"):
+        return mode
+    return "incremental" if ctx.run.kind == "wiki_ingest" else "search"
 
 
 async def _resolve_library(
@@ -302,6 +307,7 @@ async def _collect_from_daily_feed(
     *,
     library: DirectionLibrary,
     direction: str,
+    exclude: list[str],
     limit: int,
 ) -> dict[str, Any]:
     """增量同步的候选来源：每日论文池，不碰 arXiv。
@@ -313,9 +319,12 @@ async def _collect_from_daily_feed(
     重复送打分由 :func:`_existing_keys` 挡掉——它不按 status 过滤，所以昨天已判
     ``excluded`` 的论文今天不会再花一次 LLM。
 
-    **不按分类、也不按关键词筛。** 收录设置里的分类和关键词只在建库时用来构造 arXiv
-    检索式；同步时一律由相关度打分决定去留。两者都是硬门槛，配窄了会让库悄无声息地
-    颗粒无收，而「0 篇」和「今天确实没有相关论文」在界面上无法区分。
+    **不按分类、也不按「包括关键词」筛**：它们只在检索模式下用来构造 arXiv 查询。两者
+    都是硬门槛，配窄了会让库悄无声息颗粒无收，而「0 篇」和「今天确实没有相关论文」在
+    界面上无法区分。
+
+    **「排除关键词」是例外，这里会硬过滤。** 那是用户明确说「我不要这个」，漏掉它是
+    失职而不是保守；过滤掉多少篇会记进观测，不至于无声无息。
     """
     rows = (
         (
@@ -329,6 +338,18 @@ async def _collect_from_daily_feed(
     )
     feed_papers = [p for p, _ in rows]
     feed_latest = max((d for _, d in rows), default=None)
+
+    excluded_by_terms = 0
+    if exclude:
+        norm = [e.lower() for e in exclude if e.strip()]
+        kept: list[Paper] = []
+        for paper in feed_papers:
+            hay = f"{paper.title or ''} {paper.abstract or ''}".lower()
+            if any(term in hay for term in norm):
+                excluded_by_terms += 1
+                continue
+            kept.append(paper)
+        feed_papers = kept
 
     ranked, did_rank = await _rank_feed_by_similarity(
         ctx, session, direction=direction, papers=feed_papers, limit=limit
@@ -363,7 +384,8 @@ async def _collect_from_daily_feed(
         selected.append(paper)
 
     return {
-        "feed_total": len(feed_papers),
+        "feed_total": len(rows),
+        "excluded_by_terms": excluded_by_terms,
         "feed_ranked": did_rank,
         "after_vector_rank": len(ranked),
         "already_in_library": already,
@@ -390,6 +412,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             DEFAULT_ARXIV_CATEGORIES
         )
         include = list(keywords_def.get("include") or [])
+        # 排除词与包括词不同：包括词配窄了会让库悄无声息收不到东西，所以同步时不拿它筛；
+        # 排除词是用户明确说「我不要这个」，漏掉它反而是失职，三条路径一律生效。
+        exclude = list(keywords_def.get("exclude") or [])
 
         if _unlimited(knobs):
             limit = _UNLIMITED_SENTINEL  # 窗口内全量抓取（哨兵防失控）
@@ -401,7 +426,8 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         # 而每日推送本来就每天把新论文抓进内容池了，同一批论文没有理由抓第二遍。
         if mode == "incremental":
             feed = await _collect_from_daily_feed(
-                ctx, session, library=library, direction=direction_query, limit=limit
+                ctx, session, library=library, direction=direction_query,
+                exclude=exclude, limit=limit,
             )
             new_papers = feed.pop("selected")
             await session.flush()
@@ -420,10 +446,19 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 **feed,
             }
 
-        # —— 建库：仍走 arXiv 检索（每日池只有 RSS 当天公告、没有历史，回填不了）——
-        since = now - timedelta(days=30 * int(knobs["months_back"]))
+        # —— 检索模式：走 arXiv 检索 API（每日池只有当天公告、没有历史，回填不了）——
+        # 查询词优先用本次指定的；没指定就退回库配置里的「包括关键词」
+        params = _params(ctx)
+        terms = [t for t in (params.get("query_terms") or []) if str(t).strip()] or include
+        days = TIME_RANGE_DAYS.get(str(params.get("time_range") or ""))
+        since = now - timedelta(days=days or 30 * int(knobs["months_back"]))
         entries = await get_arxiv_client().search(
-            categories=categories, keywords=include, since=since, until=now, limit=limit
+            categories=categories,
+            keywords=terms,
+            exclude=exclude,
+            since=since,
+            until=now,
+            limit=limit,
         )
 
         arxiv_ids, dois, titles = await _existing_keys(session, library.id)

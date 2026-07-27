@@ -21,6 +21,22 @@ from app.services.libraries import get_library_for_project
 _TOKENS_PER_PAPER = 20_000
 
 
+#: 三种收集模式。search/snowball 是人主动发起的两条补充路径，incremental 是每天自动
+#: 从每日论文池挑。``bootstrap`` 是 ``search`` 的旧名，只做入口兼容，不再往下传。
+MODE_LABELS: dict[str, str] = {
+    "search": "按查询词检索入库",
+    "snowball": "从锚点论文扩展",
+    "incremental": "每日自动同步",
+}
+
+
+def normalize_mode(mode: str) -> str:
+    """把存量的 ``bootstrap`` 折算成 ``search``；未知值一律按 ``search`` 处理。"""
+    if mode == "bootstrap":
+        return "search"
+    return mode if mode in MODE_LABELS else "search"
+
+
 class IngestConflictError(Exception):
     """同一项目已有 ingest voyage 在跑。"""
 
@@ -112,6 +128,8 @@ async def create_ingest_voyage(
     mode: str,
     knobs: IngestKnobs,
     created_by: uuid.UUID | None,
+    query_terms: list[str] | None = None,
+    time_range: str | None = None,
 ) -> VoyageRun:
     """建 ingest voyage（互斥检查 + 库预算检查 + Activity 落记录），由调用方入队 run_voyage。
 
@@ -128,19 +146,25 @@ async def create_ingest_voyage(
         monthly_budget=library.monthly_budget,
         budget=derive_budget(knobs),
     )
-    kind = "wiki_bootstrap" if mode == "bootstrap" else "wiki_ingest"
+    mode = normalize_mode(mode)
+    # 手动的两种模式（search/snowball）沿用 wiki_bootstrap 这个 kind：它们都是"人主动去
+    # 拉一批"，与自动的每日同步区分开即可；kind 是存量数据的形状，不为了新名字去迁移。
+    kind = "wiki_ingest" if mode == "incremental" else "wiki_bootstrap"
     target_name = project.name if project is not None else library.name
-    goal = (
-        f"文献调研初始建库：{target_name}"
-        if mode == "bootstrap"
-        else f"文献调研增量更新：{target_name}"
-    )
+    goal = f"{MODE_LABELS[mode]}：{target_name}"
     run = VoyageRun(
         kind=kind,
         goal=goal,
         status="planning",
         cursor=0,
-        checkpoint={"params": {"mode": mode, "knobs": knobs.model_dump()}},
+        checkpoint={
+            "params": {
+                "mode": mode,
+                "knobs": knobs.model_dump(),
+                "query_terms": query_terms or None,
+                "time_range": time_range,
+            }
+        },
         budget=budget,
         library_id=library.id,
         created_by=created_by,
@@ -151,7 +175,7 @@ async def create_ingest_voyage(
             library_id=library.id,
             actor=f"user:{created_by}" if created_by else "system:cron",
             kind="ingest.started",
-            message=f"文献调研{'初始建库' if mode == 'bootstrap' else '增量更新'}已启动",
+            message=f"{MODE_LABELS[mode]}已启动",
             payload={"mode": mode, "knobs": knobs.model_dump()},
         )
     )
