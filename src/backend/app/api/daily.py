@@ -44,6 +44,7 @@ from app.services import daily_feed as daily_service
 from app.services import library_chat as library_chat_service
 from app.services import paper_enrich as paper_enrich_service
 from app.services import papers as papers_service
+from app.services.embedding import embed_query
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +89,11 @@ async def list_papers(
     total = 0
     if mode == "semantic" and q and q.strip() and papers_service.semantic_search_supported(session):
         try:
-            vectors = await get_llm_router().embed([q.strip()], user_id=user.id)
+            vector, space = await embed_query(session, q.strip(), user_id=user.id)
             rows = await daily_service.semantic_search_daily(
                 session,
-                query_vector=vectors[0],
+                query_vector=vector,
+                space=space,
                 limit=max(papers_service.RERANK_CANDIDATES, size),
                 date=date,
                 category=category,
@@ -282,7 +284,7 @@ async def collect(
     tasks: list[DailyCollectTask] = []
     for paper_id in payload.paper_ids:
         paper = await session.get(Paper, paper_id)
-        if paper is None or paper_enrich_service.paper_processing_complete(paper):
+        if paper is None or await paper_enrich_service.paper_processing_complete(session, paper):
             continue
         task_id = await paper_enrich_service.launch_paper_enrichment(
             redis=redis,

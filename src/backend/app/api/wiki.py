@@ -41,6 +41,7 @@ from app.services import libraries as libraries_service
 from app.services import library_chat as library_chat_service
 from app.services import papers as papers_service
 from app.services import stats as stats_service
+from app.services.embedding import embed_query
 from app.services.libraries import get_library_for_project
 from app.services.topic_shelf import shelf_paper_ids
 from app.services.user_library import personal_paper_ids
@@ -76,11 +77,14 @@ async def search(
     paper_rows: list = []
     if mode == "semantic" and papers_service.semantic_search_supported(session):
         try:
-            vectors = await get_llm_router().embed([q], user_id=user.id, project_id=project_id)
+            vector, space = await embed_query(
+                session, q, user_id=user.id, project_id=project_id
+            )
             candidates = await papers_service.semantic_search_papers(
                 session,
                 project_id=project_id,
-                query_vector=vectors[0],
+                query_vector=vector,
+                space=space,
                 limit=max(papers_service.RERANK_CANDIDATES, limit),
             )
             mode_used = "semantic"

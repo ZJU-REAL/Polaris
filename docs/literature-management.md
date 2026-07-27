@@ -18,7 +18,7 @@ paper. This keeps content, files, and vectors shared, and makes cross-collection
 
 ```mermaid
 flowchart TD
-    POOL["Content pool — papers\n(metadata, pdf_path, full_text_path, embedding, figures)"]
+    POOL["Content pool — papers\n(metadata, pdf_path, full_text_path, figures)\nvectors in paper_vectors"]
     DL["Direction library\nlibrary_papers (LibraryPaper)"]
     SH["Topic related-work shelf\ntopic_papers (TopicPaper)"]
     PL["Personal library\nuser_library_entries (UserLibraryEntry)"]
@@ -41,7 +41,9 @@ The pool row (`models/paper.py::Paper`) is the single source of truth for a pape
 - Metadata: `title`, `authors` (`[{name, affiliations}]`), `affiliations`, `abstract`, `year`,
   `venue`, `arxiv_id`, `doi`, `url`, `published_at`, `dedup_key`, `source`.
 - Derived artifacts (presence = "this step ran"): `pdf_path`, `full_text_path`, `figures` (JSON),
-  `embedding` (paper-level vector), `tldr`, `relevance_score` is **not** here (it is per-collection).
+  `tldr`; the paper-level vector lives in `paper_vectors` (one row per paper × embedding space, see
+  [Embedding & Retrieval](embedding-and-retrieval.md#embedding-spaces)). `relevance_score` is **not**
+  here (it is per-collection).
 - Child tables, all `ON DELETE CASCADE` from the pool paper: `paper_wikis` (the paper's single
   compiled intro), `paper_chunks` (full-text chunks + chunk vectors), `paper_concepts` links, figures
   rows, `paper_notes`, `paper_highlights`, `paper_user_meta` (per-user reading status / star), library
@@ -176,8 +178,9 @@ A pool paper is created (deduped first) by one of:
 ### 5. Paper-level embedding · 6. Chunk embedding
 
 See [Embedding & Retrieval](embedding-and-retrieval.md) for the details. In short: the paper-level
-vector (`Paper.embedding`) is always produced by the add / ingest paths; the chunk vectors
-(`PaperChunk.embedding`) are heavier and are **gated by the per-user `chat_fulltext_index` opt-in**.
+vector (`paper_vectors`) is always produced by the add / ingest paths; the chunk vectors
+(`paper_chunk_vectors`) are heavier. Both are stamped with the embedding space they belong to, and
+"already embedded" always means "in the currently active space".
 
 ### 7. Extract figures
 
@@ -219,18 +222,18 @@ vector (`Paper.embedding`) is always produced by the add / ingest paths; the chu
 | Download PDF | ✓ | ✓ (arxiv) | ✓ | — | — |
 | Extract full text | ✓ | ✓ | ✓ | — | — |
 | Chunk | ✓ | ✓ | ✓ | — | — |
-| Paper-level embedding | ✓ | ✓ | ✓ | — | admin opt-in |
-| Chunk embedding | ✓ | user opt-in | user opt-in | — | — |
+| Paper-level embedding | ✓ | ✓ | ✓ | — | ✓ |
+| Chunk embedding | ✓ | ✓ | ✓ | — | — |
 | Extract figures | ✓ | — | — | ✓ (lazy) | — |
 | Compile wiki | ✓ | — | — | ✓ | — |
 | Score relevance | ✓ | ✓ (with target) | — | — | — |
 | Author affiliations | ✓ | `on_add` only | `on_add` only | ✓ (other modes) | — |
 
-"user opt-in" = only when that user's `chat_fulltext_index` setting is on. "admin opt-in" = only when
-`daily_feed_embed_enabled` is on (off by default); see
-[Embedding & Retrieval](embedding-and-retrieval.md). "with target" = a scoring target library was
+"with target" = a scoring target library was
 supplied — a personal-library import has none, so nothing is scored. All of these steps are
-idempotent — an existing PDF, chunk set, or vector is never redone. `enrich_paper` publishes its
+idempotent — an existing PDF, chunk set, or vector is never redone; for vectors, "existing" means
+"present in the active embedding space", so switching the embedding model makes them due again (see
+[Embedding & Retrieval](embedding-and-retrieval.md#embedding-spaces)). `enrich_paper` publishes its
 progress as the stages `download` → `extract` → `embed` → `score`; chunking and affiliation
 extraction happen inline without their own stage event.
 

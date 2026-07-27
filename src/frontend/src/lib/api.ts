@@ -577,6 +577,32 @@ export interface DailyEmbedBackfillResult {
   failed: number;
 }
 
+/** 库里的一批向量：出自哪个模型、多少维、有多少条。 */
+export interface EmbeddingSpaceItem {
+  key: string;
+  model: string;
+  dim: number;
+  papers: number;
+  chunks: number;
+  ideas: number;
+  /** 检索当前用的就是这一批 */
+  active: boolean;
+}
+
+export interface EmbeddingSpaceStatus {
+  active: EmbeddingSpaceItem | null;
+  /** 路由表里现在配的向量模型 */
+  routed_model: string | null;
+  /** 配的模型已经不是建库那个了：新向量一律拒绝写入，需要确认换用 */
+  mismatched: boolean;
+  spaces: EmbeddingSpaceItem[];
+}
+
+export interface EmbeddingSpaceAdoptResult {
+  active: EmbeddingSpaceItem;
+  previous: string | null;
+}
+
 export interface LlmCallLogRow {
   id: string;
   created_at: string;
@@ -1056,9 +1082,12 @@ export interface QueuedIndexResult {
 
 /** 一种向量的状态：建没建、什么时候建的、用的哪个模型（存量数据没记过，为 null）。 */
 export interface VectorStatus {
+  /** 当前向量模型下是否已建（换过模型的话，旧向量不算） */
   built: boolean;
   built_at: string | null;
   model: string | null;
+  /** 建过、但出自换掉的旧模型，检索用不上，等重建 */
+  stale?: boolean;
 }
 
 /** 单篇论文的索引状态（docs/api-lit.md §9）。 */
@@ -3997,6 +4026,14 @@ export const api = {
   /** 给最近 7 天里还没有向量的每日论文补建向量（可能耗时几十秒）。 */
   backfillDailyEmbeddings(): Promise<DailyEmbedBackfillResult> {
     return request<DailyEmbedBackfillResult>('/admin/settings/daily-embed/backfill', { method: 'POST' });
+  },
+  /** 当前向量模型 + 库里各批向量的规模（admin）。 */
+  getEmbeddingSpace(): Promise<EmbeddingSpaceStatus> {
+    return request<EmbeddingSpaceStatus>('/admin/settings/embedding-space');
+  },
+  /** 确认换用路由表里当前的向量模型（换模型后必须调一次，admin）。 */
+  adoptEmbeddingSpace(): Promise<EmbeddingSpaceAdoptResult> {
+    return request<EmbeddingSpaceAdoptResult>('/admin/settings/embedding-space/adopt', { method: 'POST' });
   },
   putLlmCallLogSettings(enabled: boolean): Promise<LlmCallLogSettings> {
     return requestJson<LlmCallLogSettings>('/admin/llm/call-logs/settings', 'PUT', { enabled });

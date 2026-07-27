@@ -122,11 +122,17 @@ class PaperDetail(PaperRead):
 
 
 class VectorStatusRead(BaseModel):
-    """一种向量的状态（前端红绿点 + 悬浮显示构建时间与模型名）。"""
+    """一种向量的状态（前端红绿点 + 悬浮显示构建时间与模型名）。
+
+    ``built`` 只认**当前向量模型**建的向量。换过模型之后旧向量检索用不上，此时
+    ``built=false, stale=true``——前端据此显示「待重建」黄点，与「从没建过」的红点
+    区别开，否则换完模型满屏红点，看着像数据丢了。
+    """
 
     built: bool
     built_at: datetime | None = None  # 存量数据没记过，为 null
     model: str | None = None  # 构建所用嵌入模型名；存量数据为 null
+    stale: bool = False  # 建过、但出自换掉的旧模型，等重建
 
 
 class PaperIndexStatusRead(BaseModel):

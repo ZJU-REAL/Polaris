@@ -21,6 +21,7 @@ from sqlalchemy import Text as SAText
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.embedding_space import EmbeddingSpace
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.daily_feed import DailyFeedEntry
@@ -943,12 +944,12 @@ async def fetch_pdf(
         await ensure_paper_chunks(session, paper)
     except Exception:  # noqa: BLE001
         logger.warning("chunk indexing failed for paper %s", paper.id, exc_info=True)
-    # 论文级向量：缺就补。best-effort，不影响 PDF 落盘
-    if paper.embedding is None:
-        from app.services.paper_enrich import embed_paper
+    # 论文级向量：激活空间下缺就补。best-effort，不影响 PDF 落盘
+    from app.services.paper_enrich import embed_paper, has_current_paper_vector
 
+    if not await has_current_paper_vector(session, paper):
         try:
-            await embed_paper(paper, user_id=user_id, project_id=project_id)
+            await embed_paper(session, paper, user_id=user_id, project_id=project_id)
         except Exception:  # noqa: BLE001 — provider 不支持嵌入等：降级为无向量
             logger.warning("paper embedding failed for paper %s", paper.id, exc_info=True)
     # 发表机构：on_add 模式下全文到手后 LLM 从标题页逐位作者解析机构（此路径原先不补
@@ -1140,9 +1141,14 @@ async def semantic_search_papers(
     project_id: uuid.UUID | None = None,
     library_id: uuid.UUID | None = None,
     query_vector: list[float],
+    space: EmbeddingSpace,
     limit: int,
 ) -> list[tuple[PaperView, float]]:
-    """pgvector 余弦检索（仅 postgres；调用方需先判 semantic_search_supported）。"""
+    """pgvector 余弦检索（仅 postgres；调用方需先判 semantic_search_supported）。
+
+    只跟 ``space`` 这一个向量空间里的论文比较——别的空间的向量出自别的模型，
+    余弦值没有可比性。
+    """
     library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
     if not library_ids:
         return []
@@ -1151,15 +1157,21 @@ async def semantic_search_papers(
     rows = (
         await session.execute(
             text(
-                "SELECT DISTINCT p.id, 1 - (p.embedding <=> CAST(:qv AS vector)) AS score "
-                "FROM papers p "
+                "SELECT DISTINCT p.id, 1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
+                "FROM paper_vectors v "
+                "JOIN papers p ON p.id = v.paper_id "
                 "JOIN library_papers lp ON lp.paper_id = p.id "
                 "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
-                "WHERE p.embedding IS NOT NULL "
+                "WHERE v.space = :space "
                 "ORDER BY score DESC "
                 "LIMIT :k"
             ),
-            {"qv": qv, "libs": [str(lid) for lid in library_ids], "k": limit},
+            {
+                "qv": qv,
+                "libs": [str(lid) for lid in library_ids],
+                "k": limit,
+                "space": space.key,
+            },
         )
     ).all()
     if not rows:

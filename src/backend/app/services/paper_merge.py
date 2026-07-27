@@ -31,6 +31,7 @@ from app.models.paper import (
 )
 from app.models.publication import UserPublication
 from app.models.topic_shelf import TopicPaper
+from app.models.vectors import PaperVector
 
 # 内容池行上「keep 缺则用 drop 补」的字段（判断性字段在成员行，另行处理）
 _FILLABLE_PAPER_FIELDS = (
@@ -45,7 +46,7 @@ _FILLABLE_PAPER_FIELDS = (
     "full_text_path",
     "tldr",
     "figures",
-    "embedding",
+    # 向量不在这张表上（paper_vectors，每个空间一行），按空间逐个补，见 _merge_paper_vectors
     "affiliations",
     "authors",
 )
@@ -61,6 +62,41 @@ _FILLABLE_MEMBERSHIP_FIELDS = (
 _READING_ORDER = {"unread": 0, "reading": 1, "read": 2}
 # 成员行状态推进序（excluded/included 人工态不参与自动升级）
 _STATUS_ORDER = {"candidate": 0, "scored": 1, "fetched": 2, "compiled": 3}
+
+
+async def _merge_paper_vectors(
+    session: AsyncSession, *, keep_id: uuid.UUID, drop_id: uuid.UUID
+) -> int:
+    """把 drop 独有空间的论文级向量搬给 keep，返回搬了几条。
+
+    按**空间**逐个补：keep 在某个空间下已经有向量就保留自己的（它是这一行的主体），
+    只有 keep 缺、drop 有的空间才搬过来。剩下的 drop 向量随 drop 行级联删除。
+    """
+    keep_spaces = set(
+        (
+            await session.execute(
+                select(PaperVector.space).where(PaperVector.paper_id == keep_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    moved = 0
+    rows = (
+        (
+            await session.execute(
+                select(PaperVector).where(PaperVector.paper_id == drop_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        if row.space in keep_spaces:
+            continue
+        row.paper_id = keep_id
+        moved += 1
+    return moved
 
 
 async def _repoint_associations(
@@ -272,6 +308,10 @@ async def merge_papers(
             or 0
         )
     report["chunks_moved"] = chunks_moved
+    # 分段向量以 chunk_id 为键，随分段一起搬走，不用单独处理；论文级向量按空间补
+    report["vectors_moved"] = await _merge_paper_vectors(
+        session, keep_id=keep_id, drop_id=drop_id
+    )
 
     # ---- 8. 内容池行缺项回填（keep 缺 → 用 drop 的） ----
     filled: list[str] = []

@@ -15,12 +15,15 @@ import respx
 from sqlalchemy import func, select
 
 from app.core.db import get_sessionmaker
+from app.core.embedding_space import active_space
 from app.models.paper import PaperChunk
+from app.models.vectors import PaperChunkVector
 from app.services import paper_enrich
 from app.services.literature import reset_clients, set_clients
 from app.services.literature.arxiv import ArxivClient
 from app.services.literature.openalex import OpenAlexClient
 from tests.conftest import add_paper, make_project_with_library, register_and_login
+from tests.vector_helpers import get_paper_vector, set_chunk_vector
 
 
 async def _noop_emit(stage: str, status: str, detail: str | None = None) -> None:
@@ -48,10 +51,15 @@ async def _n_chunks(session, paper_id):
 
 
 async def _n_embedded(session, paper_id):
+    """激活空间下已建向量的分段数（向量在侧表，见 app/models/vectors.py）。"""
+    space = await active_space(session)
+    if space is None:
+        return 0
     return await session.scalar(
         select(func.count())
-        .select_from(PaperChunk)
-        .where(PaperChunk.paper_id == paper_id, PaperChunk.embedding.is_not(None))
+        .select_from(PaperChunkVector)
+        .join(PaperChunk, PaperChunk.id == PaperChunkVector.chunk_id)
+        .where(PaperChunk.paper_id == paper_id, PaperChunkVector.space == space.key)
     )
 
 
@@ -98,8 +106,10 @@ async def test_enrich_does_not_reslice_existing_chunks(client, fake_redis):
         await session.commit()
         paper_id = paper.id
         # 预置一个「手工块」并打上可辨识向量
-        session.add(PaperChunk(paper_id=paper_id, seq=0, text="手工块", embedding=[0.5] * 1024))
+        chunk = PaperChunk(paper_id=paper_id, seq=0, text="手工块")
+        session.add(chunk)
         await session.commit()
+        await set_chunk_vector(session, chunk.id, [0.5] * 1024)
 
     await _run_enrich(paper_id, user_id=user_id)
 
@@ -148,7 +158,7 @@ async def test_fetch_pdf_builds_paper_vector_and_gated_blocks(client, fake_redis
         async with get_sessionmaker()() as session:
             paper = await session.get(paper_enrich.Paper, paper_id)
             assert paper.pdf_path  # 下载落盘
-            assert paper.embedding is not None  # 新增：论文级向量
+            assert await get_paper_vector(session, paper_id) is not None  # 论文级向量
             n = await _n_chunks(session, paper_id)
             assert n > 0
             assert await _n_embedded(session, paper_id) == n  # 开关开→块被嵌

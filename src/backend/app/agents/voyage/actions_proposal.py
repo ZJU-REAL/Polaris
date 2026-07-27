@@ -35,6 +35,7 @@ from app.agents.voyage.actions_ideas import (
 )
 from app.agents.voyage.tool_loop import run_tool_loop
 from app.core.db import get_sessionmaker
+from app.core.embedding_space import EmbeddingSpace
 from app.core.llm.base import Message
 from app.models.activity import Activity
 from app.models.gate import Gate
@@ -42,6 +43,12 @@ from app.models.idea import RESEARCH_TYPES, Idea
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.models.review import ReviewMessage, ReviewSession
+from app.services.embedding import (
+    embed_documents,
+    embed_query,
+    paper_vectors,
+    upsert_idea_vector,
+)
 from app.services.libraries import (
     dedupe_member_rows,
     get_source_library_ids,
@@ -755,49 +762,68 @@ async def proposal_experiments(ctx: ActionContext, params: dict[str, Any]) -> di
 
 
 async def _internal_similar(ctx: ActionContext, query_text: str) -> list[dict[str, Any]]:
-    """库内相似论文：embedding 余弦 top-k；embedding 不可用降级关键词检索。"""
+    """库内相似论文：向量余弦 top-k；向量不可用降级关键词检索。
+
+    postgres 上交给 pgvector 在库里排（原先是把全库论文向量拉进内存逐条算余弦，
+    库一大就是一次全表扫描 + 上万次 Python 浮点运算）；sqlite 没有 pgvector，
+    仍走内存路径，但只取激活空间下的向量。
+    """
+    from app.services.papers import semantic_search_papers, semantic_search_supported
+
     async with get_sessionmaker()() as session:
         library_ids = await get_source_library_ids(session, ctx.run.project_id)
-        papers = (
-            (
-                (
-                    await session.execute(
-                        select(Paper)
-                        .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                        .where(
-                            LibraryPaper.library_id.in_(library_ids),
-                            Paper.embedding.is_not(None),
-                        )
-                        .distinct()
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            if library_ids
-            else []
-        )
-        if papers:
+        if library_ids:
             try:
-                vectors = await ctx.llm.embed(
-                    [query_text[:2000]],
+                vector, space = await embed_query(
+                    session,
+                    query_text[:2000],
                     user_id=ctx.run.created_by,
                     project_id=ctx.run.project_id,
                     voyage_id=ctx.run.id,
                 )
-                scored = [(cosine_similarity(vectors[0], list(p.embedding)), p) for p in papers]
-                scored.sort(key=lambda x: -x[0])
-                return [
-                    {
-                        "paper_id": str(p.id),
-                        "title": p.title,
-                        "similarity": round(score, 3),
-                        "tldr": p.tldr or (p.abstract or "")[:200],
-                    }
-                    for score, p in scored[:_INTERNAL_SIMILAR_K]
-                ]
             except NotImplementedError:
-                pass
+                vector, space = None, None
+            if vector is not None and space is not None:
+                if semantic_search_supported(session):
+                    rows = await semantic_search_papers(
+                        session,
+                        project_id=ctx.run.project_id,
+                        query_vector=vector,
+                        space=space,
+                        limit=_INTERNAL_SIMILAR_K,
+                    )
+                    scored = [(score, view.paper) for view, score in rows]
+                else:
+                    papers = (
+                        (
+                            await session.execute(
+                                select(Paper)
+                                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                                .where(LibraryPaper.library_id.in_(library_ids))
+                                .distinct()
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    known = await paper_vectors(session, [p.id for p in papers], space)
+                    scored = [
+                        (cosine_similarity(vector, known[p.id]), p)
+                        for p in papers
+                        if p.id in known
+                    ]
+                    scored.sort(key=lambda x: -x[0])
+                    scored = scored[:_INTERNAL_SIMILAR_K]
+                if scored:
+                    return [
+                        {
+                            "paper_id": str(p.id),
+                            "title": p.title,
+                            "similarity": round(score, 3),
+                            "tldr": p.tldr or (p.abstract or "")[:200],
+                        }
+                        for score, p in scored
+                    ]
         from app.services.papers import keyword_search_papers
 
         goal = _goal(ctx)
@@ -1103,21 +1129,23 @@ async def proposal_assemble(ctx: ActionContext, params: dict[str, Any]) -> dict[
         except ValueError:
             seed_idea_id = None
 
-    embedding = None
-    try:
-        vectors = await ctx.llm.embed(
-            [f"{meta['title']}\n{meta['summary']}"[:2000]],
-            user_id=ctx.run.created_by,
-            project_id=ctx.run.project_id,
-            voyage_id=ctx.run.id,
-        )
-        embedding = vectors[0]
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001 — 嵌入失败不阻塞入库
-        pass
-
     async with get_sessionmaker()() as session:
+        embedding: list[float] | None = None
+        space: EmbeddingSpace | None = None
+        try:
+            vectors, space = await embed_documents(
+                session,
+                [f"{meta['title']}\n{meta['summary']}"[:2000]],
+                user_id=ctx.run.created_by,
+                project_id=ctx.run.project_id,
+                voyage_id=ctx.run.id,
+            )
+            embedding = vectors[0]
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 嵌入失败不阻塞入库
+            embedding, space = None, None
+
         idea = Idea(
             project_id=ctx.run.project_id,
             title=meta["title"],
@@ -1132,10 +1160,11 @@ async def proposal_assemble(ctx: ActionContext, params: dict[str, Any]) -> dict[
             evidence=evidence,
             seed_idea_id=seed_idea_id,
             parent_paper_ids=[g["paper_id"] for g in goal.get("grounding") or []],
-            embedding=embedding,
         )
         session.add(idea)
         await session.flush()
+        if embedding is not None and space is not None:
+            await upsert_idea_vector(session, idea.id, embedding, space)
         idea_id = str(idea.id)
         session.add(
             Activity(

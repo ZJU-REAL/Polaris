@@ -70,6 +70,13 @@ _ROUTE_CACHE_TTL = 60.0
 # （关键词检索/向量分兜底等既有路径）。
 _CAPABILITY_STAGES = frozenset({"embedding", "rerank"})
 
+# 只走全局配置的环节：忽略调用方传的 user_id，一律用 owner=NULL 的路由。
+# 嵌入在此——论文/分段/想法的向量是全平台共享的一份数据，每个自管用户各用各的
+# 模型建向量，池子里就会混进互不可比的坐标系；更要命的是查询向量也会跟着变，
+# 维度恰好相同时不报任何错，只是排序全乱。所以嵌入模型不给用户自选。
+# rerank 不在此列：它是逐条打分，不涉及跨调用可比性，各用各的没有问题。
+GLOBAL_ONLY_STAGES = frozenset({"embedding"})
+
 
 @dataclass(slots=True, frozen=True)
 class ResolvedRoute:
@@ -175,9 +182,14 @@ class LLMRouter:
         self._self_managed[user_id] = (flag, now)
         return flag
 
-    async def _effective_owner(self, user_id: uuid.UUID | None) -> uuid.UUID | None:
-        """自管用户 → 用自己的配置；否则（含无 user_id 的系统调用）→ 全局(admin)。"""
-        if user_id is None:
+    async def _effective_owner(
+        self, user_id: uuid.UUID | None, stage: str | None = None
+    ) -> uuid.UUID | None:
+        """自管用户 → 用自己的配置；否则（含无 user_id 的系统调用）→ 全局(admin)。
+
+        ``GLOBAL_ONLY_STAGES`` 里的环节例外：无条件用全局配置。
+        """
+        if user_id is None or stage in GLOBAL_ONLY_STAGES:
             return None
         return user_id if await self._is_self_managed(user_id) else None
 
@@ -204,7 +216,8 @@ class LLMRouter:
 
         owner 由 user 的接管状态决定：自管用户用自己的 owner=user 配置（admin 的
         对他失效——即"配好前不可用"）；被接管用户及无 user_id 的系统调用用
-        全局(owner=NULL, admin)配置。
+        全局(owner=NULL, admin)配置。``GLOBAL_ONLY_STAGES``（嵌入）不吃这一套，
+        无论谁调都用全局配置。
 
         能力型环节（``_CAPABILITY_STAGES``）不回退 default：对话模型没有
         embedding/rerank 能力，回退只会产生无意义调用；未显式配置时抛
@@ -214,7 +227,7 @@ class LLMRouter:
         静默回退演示用 fake provider；仅当显式开启
         ``settings.llm_fake_fallback``（测试套件 / 无 key 演示）才回退 fake。
         """
-        owner_id = await self._effective_owner(user_id)
+        owner_id = await self._effective_owner(user_id, stage)
         routes = await self._get_routes(owner_id)
         route = routes.get(stage)
         if route is None:

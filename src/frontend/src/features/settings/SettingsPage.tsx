@@ -917,6 +917,8 @@ const MODELS_COLLAPSED = 3;
 interface LlmAdapter {
   /** query 缓存命名空间：admin 全局 'llm'，用户自管 'my-llm' */
   keyRoot: string;
+  /** 是否全局配置：向量嵌入只由管理员统一设置，个人配置里不出现这一行 */
+  global?: boolean;
   listProviders: () => Promise<LlmProviderRead[]>;
   createProvider: (input: LlmProviderInput) => Promise<LlmProviderRead>;
   patchProvider: (id: string, input: Partial<LlmProviderInput>) => Promise<LlmProviderRead>;
@@ -928,6 +930,7 @@ interface LlmAdapter {
 
 const adminLlmAdapter: LlmAdapter = {
   keyRoot: 'llm',
+  global: true,
   listProviders: () => api.listLlmProviders(),
   createProvider: (input) => api.createLlmProvider(input),
   patchProvider: (id, input) => api.patchLlmProvider(id, input),
@@ -1197,6 +1200,13 @@ const PRIMARY_STAGES: string[] = ['default', 'embedding', 'rerank'];
 /** 能力型环节：不跟随「默认」（对话模型没有嵌入/重排能力），未设置即为「未设置」。 */
 const CAPABILITY_STAGES = new Set(['embedding', 'rerank']);
 
+/**
+ * 只能由管理员统一设置的环节。向量嵌入在此：论文向量是全平台共享的一份数据，
+ * 每个人各用各的模型建向量，池子里就会混进互不可比的向量，检索排序会悄悄变乱
+ * （维度恰好一样时连报错都没有）。个人配置里直接不显示这一行，后端也会拒收。
+ */
+const GLOBAL_ONLY_STAGES = new Set(['embedding']);
+
 /** 按环节推断测试能力：embedding → embedding，rerank → rerank，其余 chat。 */
 function capabilityOf(stage: string): LlmTestCapability {
   if (stage === 'embedding') return 'embedding';
@@ -1331,6 +1341,8 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
     mutationFn: () => {
       const routes: LlmRoute[] = [];
       for (const stage of LLM_STAGES) {
+        // 个人路由表里不提交只能全局设置的环节（后端会 400）
+        if (!adapter.global && GLOBAL_ONLY_STAGES.has(stage)) continue;
         const r = rows[stage];
         if (!r || !r.provider_id || !r.model.trim()) continue;
         const t = r.temperature.trim();
@@ -1392,10 +1404,12 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
     }
   };
 
-  // 常驻行固定在顶部；展开区只包含其余环节（embedding/rerank 不重复出现）
-  const visibleStages: string[] = showAll
-    ? [...PRIMARY_STAGES, ...LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s))]
-    : PRIMARY_STAGES;
+  // 常驻行固定在顶部；展开区只包含其余环节（embedding/rerank 不重复出现）。
+  // 个人配置里去掉只能全局设置的环节（向量嵌入）——那一行填了也不会生效。
+  const allowed = (stage: string) => adapter.global || !GLOBAL_ONLY_STAGES.has(stage);
+  const visibleStages: string[] = (
+    showAll ? [...PRIMARY_STAGES, ...LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s))] : PRIMARY_STAGES
+  ).filter(allowed);
   // 收起态下有显式设置的隐藏行数（提示用）
   const hiddenExplicitCount = LLM_STAGES.filter((s) => !PRIMARY_STAGES.includes(s) && rows[s]).length;
 
@@ -1406,7 +1420,9 @@ function RoutesSection({ adapter }: { adapter: LlmAdapter }) {
           <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
           {tr('模型路由表', 'Model routing')}{' '}
           <span className="en-label" style={{ fontSize: 11 }}>
-            {tr('未单独设置的环节自动跟随默认；向量嵌入/重排序需单独配置', 'stages without their own row follow "Default"; embeddings/reranking need their own config')}
+            {adapter.global
+              ? tr('未单独设置的环节自动跟随默认；向量嵌入/重排序需单独配置', 'stages without their own row follow "Default"; embeddings/reranking need their own config')
+              : tr('未单独设置的环节自动跟随默认；重排序需单独配置，向量嵌入由管理员统一设置', 'stages without their own row follow "Default"; reranking needs its own config, embeddings are set centrally by the admin')}
           </span>
         </span>
         <div className="row gap8">
@@ -1849,11 +1865,107 @@ function AffiliationModeSection() {
   );
 }
 
+/**
+ * 向量模型现状 + 换模型后的确认入口（admin）。
+ *
+ * 不同模型建出来的向量互相不能比，所以全平台同一时刻只认一批向量。换了模型之后
+ * 必须在这里确认一次：确认前新向量一律不写（不能把两个模型的向量混进一个池子），
+ * 确认后检索改认新的一批，旧的留在库里，随时可以切回去。
+ */
+function EmbeddingSpaceSection() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['admin', 'embedding-space'],
+    queryFn: () => api.getEmbeddingSpace(),
+    retry: false,
+  });
+
+  const adoptMutation = useMutation({
+    mutationFn: () => api.adoptEmbeddingSpace(),
+    onSuccess: (r) => {
+      toast(
+        tr(`已改用 ${r.active.model}（${r.active.dim} 维）`, `Now using ${r.active.model} (${r.active.dim}-dim)`),
+        'ok',
+      );
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'embedding-space'] });
+    },
+    onError: (e) => toast(`${tr('切换失败', 'Switch failed')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const active = data?.active ?? null;
+  const others = (data?.spaces ?? []).filter((s) => !s.active);
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 20 }}>
+      <div className="section-h" style={{ marginBottom: 6 }}>
+        <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('向量模型', 'Embedding model')}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, marginBottom: 12 }}>
+        {tr(
+          '语义检索靠向量。不同模型建出来的向量互相不能比，所以全平台只认一批。换模型后要在这里确认一次，确认后旧向量搜不到了，各处点「重新建立索引」逐步补回来。',
+          'Semantic search runs on vectors. Vectors from different models are not comparable, so the platform uses one batch at a time. After changing the model, confirm it here; the old vectors stop being searchable and are rebuilt gradually via "rebuild index".',
+        )}
+      </div>
+
+      {data?.mismatched && (
+        <div className="field-hint" style={{ marginBottom: 10, color: 'var(--warn-tx)' }}>
+          {tr(
+            `路由表里配的是 ${data.routed_model}，但现有向量出自 ${active?.model}。确认之前不会建任何新向量。`,
+            `Routing says ${data.routed_model}, but the existing vectors come from ${active?.model}. No new vectors are built until you confirm.`,
+          )}
+        </div>
+      )}
+
+      <div className="row gap8" style={{ alignItems: 'center' }}>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
+          {active ? (
+            <>
+              <span className="mono">{active.model}</span>
+              <span style={{ color: 'var(--text-3)' }}>
+                {tr(
+                  ` · ${active.dim} 维 · 论文 ${active.papers} · 分段 ${active.chunks} · 想法 ${active.ideas}`,
+                  ` · ${active.dim}-dim · ${active.papers} papers · ${active.chunks} segments · ${active.ideas} ideas`,
+                )}
+              </span>
+            </>
+          ) : (
+            <span style={{ color: 'var(--text-3)' }}>
+              {tr('还没建过任何向量（第一次建索引时按模型实际维度自动确定）', 'No vectors yet — the first build sets the dimension from the model itself')}
+            </span>
+          )}
+        </div>
+        <button
+          className={data?.mismatched ? 'btn btn-primary sm' : 'btn btn-soft sm'}
+          disabled={adoptMutation.isPending || (!data?.routed_model)}
+          title={tr(
+            '确认改用路由表里当前的向量模型；旧向量保留，可以再切回来',
+            'Switch to the embedding model currently in the routing table; old vectors are kept and you can switch back',
+          )}
+          onClick={() => adoptMutation.mutate()}
+        >
+          <Icon name="check" size={12} />
+          {adoptMutation.isPending ? tr('切换中…', 'Switching…') : tr('确认换用当前模型', 'Use current model')}
+        </button>
+      </div>
+
+      {others.length > 0 && (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-3)' }}>
+          {tr('库里还留着：', 'Also kept: ')}
+          {others.map((s) => `${s.model}（${s.papers}）`).join('、')}
+          {tr('——旧向量不占检索，切回该模型即可重新用上。', ' — not searchable now; switch back to that model to use them again.')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function LlmTab() {
   return (
     <>
       <ProvidersSection adapter={adminLlmAdapter} />
       <RoutesSection adapter={adminLlmAdapter} />
+      <EmbeddingSpaceSection />
       <AffiliationModeSection />
       <CallLogsSection />
     </>

@@ -10,12 +10,22 @@ import { Icon } from './Icon';
  *
  * 红绿点鼠标悬浮显示构建时间与所用模型（存量数据没记过这两项，就只说建过了）。
  * 「构建 / 重新构建」按钮的文案随有没有索引切换——已有就是重建（覆盖旧向量）。
+ *
+ * 「待重建」（黄点）是换过向量模型之后的状态：向量还在，但出自旧模型，检索用不上
+ * 它了。与「从没建过」分开显示，否则换完模型满屏红点，看着像数据丢了。
  */
 
 function dotTitle(label: string, s: VectorStatus | undefined, note?: string): string {
   const head = (() => {
+    const when = s?.built_at ? fmtFullTime(s.built_at) : null;
+    if (s?.stale) {
+      const by = s.model ? tr(`（旧模型 ${s.model}）`, ` (old model ${s.model})`) : '';
+      return tr(
+        `${label}：待重建${by}——向量模型换过了，现有向量搜不了，重建一次即可`,
+        `${label}: needs rebuild${by} — the embedding model changed, so the existing vector is unusable; rebuild it`,
+      );
+    }
     if (!s?.built) return tr(`${label}：未构建`, `${label}: not built`);
-    const when = s.built_at ? fmtFullTime(s.built_at) : null;
     if (s.model && when) {
       return tr(`${label}：${when} 由 ${s.model} 构建`, `${label}: built ${when} by ${s.model}`);
     }
@@ -40,7 +50,14 @@ function Dot({
   partial?: boolean;
 }) {
   const built = !!status?.built;
-  const color = !built ? 'var(--danger)' : partial ? 'var(--warn)' : 'var(--ok)';
+  // 待重建也走黄点：有东西但当前用不上，和「从没建过」的红点区别开
+  const color = status?.stale
+    ? 'var(--warn)'
+    : !built
+      ? 'var(--danger)'
+      : partial
+        ? 'var(--warn)'
+        : 'var(--ok)';
   return (
     <span
       className="row gap6"

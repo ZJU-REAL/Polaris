@@ -18,8 +18,10 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.embedding_space import active_space
 from app.core.llm.router import LLMRouter
 from app.models.paper import Paper, PaperChunk
+from app.models.vectors import PaperChunkVector, PaperVector
 from app.services.chunks import (
     embed_pending_chunks_for_papers,
     index_paper_abstract,
@@ -36,11 +38,17 @@ class IndexRebuildFailedError(Exception):
 
 @dataclass
 class VectorStatus:
-    """一种向量的状态：有没有、什么时候建的、用的哪个模型。"""
+    """一种向量的状态：有没有、什么时候建的、用的哪个模型。
+
+    ``built`` 只看**当前激活空间**：换了嵌入模型之后，旧空间的向量对检索不可见，
+    这里就该显示「未建」。``stale`` 区分「从来没建过」和「建过但属于旧模型、等着
+    重建」——前端据此显示不同的提示，免得用户以为数据丢了。
+    """
 
     built: bool
     built_at: datetime | None
     model: str | None
+    stale: bool = False
 
 
 @dataclass
@@ -54,33 +62,62 @@ class PaperIndexStatus:
 
 
 async def get_index_status(session: AsyncSession, paper: Paper) -> PaperIndexStatus:
-    """查一篇论文的两种向量状态（两条聚合查询，不读向量本体）。"""
+    """查一篇论文的两种向量状态（只读元信息，不取向量本体）。"""
+    space = await active_space(session)
     row = (
         await session.execute(
-            select(
-                func.count(PaperChunk.id),
-                func.count(PaperChunk.embedding),  # count(col) 不计 NULL
-                func.max(PaperChunk.source),
-            ).where(PaperChunk.paper_id == paper.id)
+            select(func.count(PaperChunk.id), func.max(PaperChunk.source)).where(
+                PaperChunk.paper_id == paper.id
+            )
         )
     ).one()
-    chunk_count, embedded_count, source = int(row[0]), int(row[1]), row[2]
+    chunk_count, source = int(row[0]), row[1]
+
+    paper_rows = (
+        (
+            await session.execute(
+                select(PaperVector).where(PaperVector.paper_id == paper.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    chunk_rows = (
+        (
+            await session.execute(
+                select(PaperChunkVector)
+                .join(PaperChunk, PaperChunk.id == PaperChunkVector.chunk_id)
+                .where(PaperChunk.paper_id == paper.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    current_chunk_rows = [
+        v for v in chunk_rows if space is not None and v.space == space.key
+    ]
     return PaperIndexStatus(
-        paper_vector=VectorStatus(
-            built=paper.embedding is not None,
-            built_at=paper.embedding_at,
-            model=paper.embedding_model,
-        ),
-        chunk_vector=VectorStatus(
-            built=embedded_count > 0,
-            built_at=paper.chunk_embedding_at,
-            model=paper.chunk_embedding_model,
-        ),
+        paper_vector=_vector_status(paper_rows, space),
+        chunk_vector=_vector_status(chunk_rows, space),
         chunk_count=chunk_count,
-        embedded_chunk_count=embedded_count,
+        embedded_chunk_count=len(current_chunk_rows),
         has_fulltext=bool(paper.full_text_path),
         chunk_source=source,
     )
+
+
+def _vector_status(rows: list, space) -> VectorStatus:
+    """把若干空间的向量行折成一个状态：优先报激活空间那条，否则报「等待重建」。"""
+    current = [v for v in rows if space is not None and v.space == space.key]
+    if current:
+        newest = max(current, key=lambda v: v.built_at)
+        return VectorStatus(built=True, built_at=newest.built_at, model=newest.model)
+    if rows:  # 只有别的空间的向量：建过，但当前模型下不可用
+        newest = max(rows, key=lambda v: v.built_at)
+        return VectorStatus(
+            built=False, built_at=newest.built_at, model=newest.model, stale=True
+        )
+    return VectorStatus(built=False, built_at=None, model=None)
 
 
 async def rebuild_index(
@@ -105,7 +142,7 @@ async def rebuild_index(
 
     if "paper" in targets:
         try:
-            await embed_paper(paper, user_id=user_id, project_id=project_id)
+            await embed_paper(session, paper, user_id=user_id, project_id=project_id)
             await session.commit()
         except Exception as e:  # noqa: BLE001 — provider 不支持嵌入等：记下继续
             logger.warning("paper embedding rebuild failed for %s", paper.id, exc_info=True)

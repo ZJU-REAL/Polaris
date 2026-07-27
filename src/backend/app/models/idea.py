@@ -9,7 +9,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.paper import EmbeddingVariant
 
 # 状态流转：candidate →(锦标赛) under_review →(闸门批准) promoted；人工可置 rejected
 IDEA_STATUSES = ("candidate", "under_review", "promoted", "rejected")
@@ -42,8 +41,7 @@ class Idea(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 软删除（回收站）：非空即在回收站，列表默认过滤
     trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     parent_paper_ids: Mapped[list[Any] | None] = mapped_column(JSONVariant)
-    # 语义去重用：postgres pgvector(1024)，sqlite 回退 JSON（同 papers.embedding）
-    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
+    # 语义去重用的向量存 idea_vectors（每个空间一行），不在这张表上
     # ---- Idea 2.0（docs/api-idea2.md §7） ----
     # sketch | proposal
     depth: Mapped[str] = mapped_column(String(16), default="sketch", nullable=False)

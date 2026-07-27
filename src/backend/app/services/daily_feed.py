@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import String, cast, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.base import utcnow
+from app.core.embedding_space import EmbeddingSpace, active_space
 from app.models.daily_feed import (
     DAILY_FEED_RETENTION_DAYS,
     DEFAULT_DAILY_CATEGORIES,
@@ -34,6 +34,7 @@ from app.models.paper import Paper, PaperWiki, new_paper
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
+from app.models.vectors import PaperVector
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep
 from app.services import paper_wiki, user_library
 from app.services import projects as projects_service
@@ -120,12 +121,17 @@ async def embed_papers_missing_vectors(
 ) -> dict[str, int]:
     """给定论文中还没有向量的批量嵌入（幂等：已有向量的一律不动）。
 
+    「已有向量」按**激活空间**算：换了嵌入模型之后这些论文都算缺向量，会重新建。
     best-effort：整批失败只记日志并继续下一批；provider 不支持嵌入直接停手。
     返回 {embedded, skipped(已有向量), failed(嵌入未成功)}。
     """
     if not paper_ids:
         return {"embedded": 0, "skipped": 0, "failed": 0}
-    from app.core.llm.router import get_llm_router
+    from app.services.embedding import (
+        embed_documents,
+        papers_with_vector,
+        upsert_paper_vector,
+    )
     from app.services.paper_enrich import paper_embedding_text
 
     rows = (
@@ -133,17 +139,24 @@ async def embed_papers_missing_vectors(
         .scalars()
         .all()
     )
-    pending = [p for p in rows if p.embedding is None]
+    space = await active_space(session)
+    done = (
+        await papers_with_vector(session, [p.id for p in rows], space)
+        if space is not None
+        else set()
+    )
+    pending = [p for p in rows if p.id not in done]
     stats = {"embedded": 0, "skipped": len(rows) - len(pending), "failed": 0}
     if not pending:
         return stats
     # 先把文本与 id 取出来：失败回滚会让 ORM 实例过期，之后再读属性会触发意外 IO
     items = [(p.id, paper_embedding_text(p)) for p in pending]
-    llm = get_llm_router()
     for i in range(0, len(items), EMBED_BATCH):
         batch = items[i : i + EMBED_BATCH]
         try:
-            vectors = await llm.embed([t for _, t in batch], user_id=user_id)
+            vectors, batch_space = await embed_documents(
+                session, [t for _, t in batch], user_id=user_id
+            )
         except asyncio.CancelledError:
             raise
         except NotImplementedError:
@@ -155,14 +168,8 @@ async def embed_papers_missing_vectors(
             stats["failed"] += len(batch)
             continue
         try:
-            model = await llm.model_name("embedding", user_id)
-            now = utcnow()
             for (paper_id, _), vector in zip(batch, vectors, strict=True):
-                paper = await session.get(Paper, paper_id)
-                if paper is not None:
-                    paper.embedding = vector
-                    paper.embedding_at = now
-                    paper.embedding_model = model
+                await upsert_paper_vector(session, paper_id, vector, batch_space)
             await session.commit()
             stats["embedded"] += len(batch)
         except asyncio.CancelledError:
@@ -194,7 +201,11 @@ async def backfill_embeddings(
 async def embedding_coverage(
     session: AsyncSession, *, today: dt.date | None = None
 ) -> tuple[int, int]:
-    """(有向量的池论文数, 池论文总数)——语义检索结果覆盖度提示用。"""
+    """(有向量的池论文数, 池论文总数)——语义检索结果覆盖度提示用。
+
+    「有向量」按**激活空间**算：刚换过嵌入模型时覆盖率会如实掉下来，前端照此提示，
+    而不是拿旧空间的向量数充数。
+    """
     cutoff = (today or _today_utc()) - dt.timedelta(days=DAILY_FEED_RETENTION_DAYS - 1)
     base = (
         select(func.count())
@@ -203,7 +214,16 @@ async def embedding_coverage(
         .where(DailyFeedEntry.feed_date >= cutoff)
     )
     total = (await session.execute(base)).scalar_one()
-    ready = (await session.execute(base.where(Paper.embedding.is_not(None)))).scalar_one()
+    space = await active_space(session)
+    if space is None:
+        return 0, int(total)
+    ready = (
+        await session.execute(
+            base.join(PaperVector, PaperVector.paper_id == Paper.id).where(
+                PaperVector.space == space.key
+            )
+        )
+    ).scalar_one()
     return int(ready), int(total)
 
 
@@ -639,6 +659,7 @@ async def semantic_search_daily(
     session: AsyncSession,
     *,
     query_vector: list[float],
+    space: EmbeddingSpace,
     limit: int,
     date: dt.date | None = None,
     category: str | None = None,
@@ -648,11 +669,15 @@ async def semantic_search_daily(
 ) -> list[tuple[DailyFeedEntry, Paper, float]]:
     """池内向量检索（pgvector 余弦；仅 postgres，调用方先判 semantic_search_supported）。
 
-    只召回已有向量的池论文——池论文默认不建向量（管理员开关），所以结果可能不全，
-    调用方需要如实告知前端。筛选条件与关键词列表一致（日期/分类/公告类型/作者/机构）。
+    只召回**在给定空间下**已有向量的池论文，所以结果可能不全，调用方需要如实告知
+    前端。筛选条件与关键词列表一致（日期/分类/公告类型/作者/机构）。
     """
-    where = ["p.embedding IS NOT NULL"]
-    params: dict[str, Any] = {"qv": json.dumps(query_vector), "k": limit}
+    where = ["v.space = :space"]
+    params: dict[str, Any] = {
+        "qv": json.dumps(query_vector),
+        "k": limit,
+        "space": space.key,
+    }
     if date is not None:
         where.append("e.feed_date = :feed_date")
         params["feed_date"] = date
@@ -674,9 +699,10 @@ async def semantic_search_daily(
     rows = (
         await session.execute(
             text(
-                "SELECT e.id AS entry_id, 1 - (p.embedding <=> CAST(:qv AS vector)) AS score "
+                "SELECT e.id AS entry_id, 1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
                 "FROM daily_feed_entries e "
                 "JOIN papers p ON p.id = e.paper_id "
+                "JOIN paper_vectors v ON v.paper_id = p.id "
                 f"WHERE {' AND '.join(where)} "
                 "ORDER BY score DESC "
                 "LIMIT :k"

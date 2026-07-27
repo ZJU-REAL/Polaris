@@ -162,7 +162,8 @@ async def import_to_shelf(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"PARSE_FAILED: {e}"
         ) from e
     task_id: str | None = None
-    if result.created or not paper_enrich_service.paper_processing_complete(result.paper):
+    already_done = await paper_enrich_service.paper_processing_complete(session, result.paper)
+    if result.created or not already_done:
         task_id = await paper_enrich_service.launch_paper_enrichment(
             redis=redis,
             paper_id=result.paper.id,

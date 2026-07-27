@@ -13,6 +13,7 @@ from app.models.paper import Paper, PaperChunk
 from app.services import chunks as chunks_service
 from app.services import graph as graph_service
 from app.services import search as search_service
+from app.services.embedding import embed_query
 from app.services.libraries import get_source_library_ids, membership_for_project
 from app.tools.context import ToolContext
 from app.tools.registry import tool
@@ -52,14 +53,19 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
             and chunks_service.chunk_vector_search_supported(session)
         ):
             try:
-                vectors = await ctx.llm.embed(
-                    [query],
+                vector, space = await embed_query(
+                    session,
+                    query,
                     user_id=ctx.user_id,
                     project_id=ctx.project_id,
                     voyage_id=ctx.voyage_id,
                 )
                 rows = await chunks_service.semantic_search_chunks(
-                    session, library_ids=library_ids, query_vector=vectors[0], limit=k
+                    session,
+                    library_ids=library_ids,
+                    query_vector=vector,
+                    space=space,
+                    limit=k,
                 )
                 used_mode = "semantic"
             except Exception:  # noqa: BLE001 — embedding 服务挂了也要能用，降级到关键词

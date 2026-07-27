@@ -21,6 +21,12 @@ from app.models.paper import Paper, PaperChunk
 from app.services import paper_enrich
 from app.services.chunks import ensure_paper_chunks, keyword_search_chunks
 from tests.conftest import add_paper, make_project_with_library, register_and_login
+from tests.vector_helpers import (
+    get_chunk_vector,
+    get_paper_vector,
+    set_chunk_vector,
+    set_paper_vector,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -154,13 +160,10 @@ async def test_existing_fulltext_chunks_are_not_resliced(client):
         )
         await session.commit()
         paper_id = paper.id
-        session.add(
-            PaperChunk(
-                paper_id=paper_id, seq=0, text="手工全文块", source="fulltext",
-                embedding=[0.5] * 1024,
-            )
-        )
+        chunk = PaperChunk(paper_id=paper_id, seq=0, text="手工全文块", source="fulltext")
+        session.add(chunk)
         await session.commit()
+        await set_chunk_vector(session, chunk.id, [0.5] * 1024)
 
         assert await ensure_paper_chunks(session, paper) == 0
         chunks = await _chunks(session, paper_id)
@@ -183,20 +186,17 @@ async def test_abstract_chunk_copies_paper_vector(client):
             abstract="The chunk vector must be a copy.",
             doi="10.1/copyvec",
         )
-        paper.embedding = sentinel
-        paper.embedding_model = "sentinel-model"
         await session.commit()
         paper_id = paper.id
+        await set_paper_vector(session, paper_id, sentinel)
 
         await ensure_paper_chunks(session, paper)
         await session.commit()
 
         chunks = await _chunks(session, paper_id)
-        paper = await session.get(Paper, paper_id)
+        copied = await get_chunk_vector(session, chunks[0].id)
     assert len(chunks) == 1 and chunks[0].source == "abstract"
-    assert chunks[0].embedding == pytest.approx(sentinel), "摘要块向量应是论文级向量的拷贝"
-    # 元信息也跟着论文级向量走（本来就是同一份向量）
-    assert paper.chunk_embedding_model == "sentinel-model"
+    assert copied == pytest.approx(sentinel), "摘要块向量应是论文级向量的拷贝"
 
 
 async def test_abstract_chunk_vector_filled_in_later(client):
@@ -216,19 +216,19 @@ async def test_abstract_chunk_vector_filled_in_later(client):
         await session.commit()
         paper_id = paper.id
 
-        await ensure_paper_chunks(session, paper)  # 此刻 paper.embedding still None
+        await ensure_paper_chunks(session, paper)  # 此刻还没有论文级向量
         await session.commit()
-        assert (await _chunks(session, paper_id))[0].embedding is None
+        chunk_id = (await _chunks(session, paper_id))[0].id
+        assert await get_chunk_vector(session, chunk_id) is None
 
         # 论文级向量后来建好了
         sentinel = [0.375] * 1024
-        paper.embedding = sentinel
-        await session.commit()
+        await set_paper_vector(session, paper_id, sentinel)
         assert await sync_abstract_chunk_vectors(session, paper_ids=[paper_id]) == 1
         await session.commit()
 
-        chunks = await _chunks(session, paper_id)
-    assert chunks[0].embedding == pytest.approx(sentinel)
+        filled = await get_chunk_vector(session, chunk_id)
+    assert filled == pytest.approx(sentinel)
 
 
 async def test_library_rebuild_copies_instead_of_embedding_abstract(client):
@@ -244,9 +244,9 @@ async def test_library_rebuild_copies_instead_of_embedding_abstract(client):
             abstract="Copied vector please.",
             doi="10.1/librebuild",
         )
-        paper.embedding = sentinel  # 论文级向量已就位
         await session.commit()
         paper_id = paper.id
+        await set_paper_vector(session, paper_id, sentinel)  # 论文级向量已就位
 
     resp = await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -258,8 +258,9 @@ async def test_library_rebuild_copies_instead_of_embedding_abstract(client):
 
     async with get_sessionmaker()() as session:
         chunks = await _chunks(session, paper_id)
+        copied = await get_chunk_vector(session, chunks[0].id)
     assert chunks[0].source == "abstract"
-    assert chunks[0].embedding == pytest.approx(sentinel), "向量应是论文级向量的拷贝"
+    assert copied == pytest.approx(sentinel), "向量应是论文级向量的拷贝"
 
 
 # ---- 1c. 论文级向量的管理员总闸（默认开） ----
@@ -300,11 +301,12 @@ async def test_vectors_are_always_built(client, fake_redis):
     await _run_enrich(paper_id, user_id=user_id)
 
     async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, paper_id)
+        paper_vector = await get_paper_vector(session, paper_id)
         chunks = await _chunks(session, paper_id)
-    assert paper.embedding is not None, "论文级向量必须建"
+        chunk_vectors = [await get_chunk_vector(session, c.id) for c in chunks]
+    assert paper_vector is not None, "论文级向量必须建"
     assert chunks
-    assert all(c.embedding is not None for c in chunks), "块向量必须建"
+    assert all(v is not None for v in chunk_vectors), "块向量必须建"
 
 
 async def test_no_endpoint_can_turn_paper_embedding_off(client):
@@ -330,7 +332,12 @@ async def test_index_status_reports_time_and_model(client, fake_redis):
     resp = await client.get(f"/api/papers/{paper_id}/index-status", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["paper_vector"] == {"built": False, "built_at": None, "model": None}
+    assert body["paper_vector"] == {
+        "built": False,
+        "built_at": None,
+        "model": None,
+        "stale": False,
+    }
     assert body["chunk_vector"]["built"] is False
 
     await _run_enrich(paper_id, user_id=user_id)
@@ -382,11 +389,9 @@ async def test_manual_rebuild_overwrites_existing_vectors(client, fake_redis):
 
     sentinel = [0.25] * 1024
     async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, paper_id)
-        paper.embedding = sentinel
+        await set_paper_vector(session, paper_id, sentinel)
         for chunk in await _chunks(session, paper_id):
-            chunk.embedding = sentinel
-        await session.commit()
+            await set_chunk_vector(session, chunk.id, sentinel)
 
     resp = await client.post(f"/api/papers/{paper_id}/index/rebuild", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -396,11 +401,12 @@ async def test_manual_rebuild_overwrites_existing_vectors(client, fake_redis):
     assert body["embedded_chunk_count"] == body["chunk_count"] > 0
 
     async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, paper_id)
+        paper_vector = await get_paper_vector(session, paper_id)
         chunks = await _chunks(session, paper_id)
-    assert paper.embedding != pytest.approx(sentinel), "论文级向量应被重建覆盖"
-    assert all(c.embedding is not None for c in chunks)
-    assert all(c.embedding != pytest.approx(sentinel) for c in chunks), "块向量应被重建覆盖"
+        chunk_vectors = [await get_chunk_vector(session, c.id) for c in chunks]
+    assert paper_vector != pytest.approx(sentinel), "论文级向量应被重建覆盖"
+    assert all(v is not None for v in chunk_vectors)
+    assert all(v != pytest.approx(sentinel) for v in chunk_vectors), "块向量应被重建覆盖"
 
 
 async def test_manual_rebuild_only_paper_vector(client, fake_redis):
@@ -412,8 +418,7 @@ async def test_manual_rebuild_only_paper_vector(client, fake_redis):
     sentinel = [0.25] * 1024
     async with get_sessionmaker()() as session:
         for chunk in await _chunks(session, paper_id):
-            chunk.embedding = sentinel
-        await session.commit()
+            await set_chunk_vector(session, chunk.id, sentinel)
 
     resp = await client.post(
         f"/api/papers/{paper_id}/index/rebuild",
@@ -424,7 +429,8 @@ async def test_manual_rebuild_only_paper_vector(client, fake_redis):
 
     async with get_sessionmaker()() as session:
         chunks = await _chunks(session, paper_id)
-    assert all(c.embedding == pytest.approx(sentinel) for c in chunks), "没请求重建就别动"
+        chunk_vectors = [await get_chunk_vector(session, c.id) for c in chunks]
+    assert all(v == pytest.approx(sentinel) for v in chunk_vectors), "没请求重建就别动"
 
 
 async def test_manual_rebuild_builds_index_from_scratch(client, fake_redis):

@@ -14,14 +14,16 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy import text as sa_text
+from sqlalchemy import true as sa_true
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.embedding_space import EmbeddingSpace, active_space
 from app.core.llm.router import LLMRouter
-from app.models.base import utcnow
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperChunk
+from app.models.vectors import PaperChunkVector
 
 CHUNK_TARGET_CHARS = 1200
 CHUNK_MAX_CHARS = 1600  # 超过则硬切
@@ -115,14 +117,30 @@ async def index_paper_abstract(session: AsyncSession, paper: Paper) -> int:
     chunk = PaperChunk(
         paper_id=paper.id, seq=0, text=text[:CHUNK_MAX_CHARS], source="abstract"
     )
-    # 只在真有向量时才赋值：sqlite 分支 embedding 是 JSON 列，显式写 None 会存成
-    # JSON 'null' 而不是 SQL NULL，之后 `embedding IS NULL` 就再也筛不到这一行了。
-    if paper.embedding is not None:
-        chunk.embedding = paper.embedding
-        paper.chunk_embedding_at = paper.embedding_at
-        paper.chunk_embedding_model = paper.embedding_model
     session.add(chunk)
+    await session.flush()  # 拿到 chunk.id 才能给它挂向量
+    await _copy_paper_vector_to_chunk(session, paper_id=paper.id, chunk_id=chunk.id)
     return 1
+
+
+async def _copy_paper_vector_to_chunk(
+    session: AsyncSession, *, paper_id: uuid.UUID, chunk_id: uuid.UUID
+) -> bool:
+    """把论文级向量原样拷给摘要兜底块（同空间内的拷贝，连空间标识一起带走）。
+
+    论文级向量此刻还没建好就返回 False，等 :func:`sync_abstract_chunk_vectors` 补。
+    """
+    from app.services.embedding import paper_vectors, upsert_chunk_vector
+
+    space = await active_space(session)
+    if space is None:
+        return False
+    vectors = await paper_vectors(session, [paper_id], space)
+    vector = vectors.get(paper_id)
+    if vector is None:
+        return False
+    await upsert_chunk_vector(session, chunk_id, vector, space)
+    return True
 
 
 async def sync_abstract_chunk_vectors(
@@ -131,31 +149,44 @@ async def sync_abstract_chunk_vectors(
     """把论文级向量拷进还没有向量的摘要兜底块，返回补上的块数。调用方负责 commit。
 
     零 token 开销，所以不受任何开关控制——摘要块的存在与否决定了这篇论文能不能被
-    文献对话检索到，不该因为用户关了「全文索引」（那管的是花钱建全文块向量）就退回
-    「整篇论文搜不到」。论文级向量必须先建好，故所有调用点都排在嵌入之后。
+    文献对话检索到。论文级向量必须先建好，故所有调用点都排在嵌入之后。
+
+    「还没有向量」按**激活空间**算：换了嵌入模型之后，摘要块要在新空间里重新拿到
+    一份拷贝，旧空间那份对检索已经不可见。
     """
     if not paper_ids:
         return 0
-    rows = (
+    from app.services.embedding import chunks_with_vector, paper_vectors, upsert_chunk_vector
+
+    space = await active_space(session)
+    if space is None:
+        return 0
+    ids = list(set(paper_ids))
+    chunks = list(
         (
             await session.execute(
-                select(PaperChunk, Paper)
-                .join(Paper, Paper.id == PaperChunk.paper_id)
-                .where(
-                    PaperChunk.paper_id.in_(list(set(paper_ids))),
-                    PaperChunk.source == "abstract",
-                    PaperChunk.embedding.is_(None),
-                    Paper.embedding.is_not(None),
+                select(PaperChunk).where(
+                    PaperChunk.paper_id.in_(ids), PaperChunk.source == "abstract"
                 )
             )
         )
+        .scalars()
         .all()
     )
-    for chunk, paper in rows:
-        chunk.embedding = paper.embedding
-        paper.chunk_embedding_at = paper.embedding_at
-        paper.chunk_embedding_model = paper.embedding_model
-    return len(rows)
+    if not chunks:
+        return 0
+    done = await chunks_with_vector(session, [c.id for c in chunks], space)
+    vectors = await paper_vectors(session, [c.paper_id for c in chunks], space)
+    copied = 0
+    for chunk in chunks:
+        if chunk.id in done:
+            continue
+        vector = vectors.get(chunk.paper_id)
+        if vector is None:
+            continue
+        await upsert_chunk_vector(session, chunk.id, vector, space)
+        copied += 1
+    return copied
 
 
 async def ensure_paper_chunks(session: AsyncSession, paper: Paper) -> int:
@@ -203,14 +234,17 @@ async def _embed_chunks(
 ) -> tuple[int, str | None]:
     """分批嵌入给定的待补分段（调用方负责选出 pending），返回 (成功条数, 错误说明|None)。
 
-    顺带把「分块向量建于何时、用的哪个模型」记到所属论文行上（前端索引状态展示用）。
+    向量连同所属空间写进 paper_chunk_vectors。``llm`` 参数保留只为签名兼容，实际
+    走 services/embedding.py 的统一入口（嵌入模型全局统一，不看调用方是谁）。
     """
+    from app.services.embedding import embed_documents, upsert_chunk_vector
+
     embedded = 0
-    model = await llm.model_name("embedding", user_id)
     for i in range(0, len(pending), EMBED_BATCH):
         batch = pending[i : i + EMBED_BATCH]
         try:
-            vectors = await llm.embed(
+            vectors, space = await embed_documents(
+                session,
                 [c.text[:2000] for c in batch],
                 user_id=user_id,
                 project_id=project_id,
@@ -222,30 +256,24 @@ async def _embed_chunks(
         except Exception as e:  # noqa: BLE001 — 嵌入失败不影响主流程
             return embedded, f"{type(e).__name__}: {e}"
         for chunk, vector in zip(batch, vectors, strict=True):
-            chunk.embedding = vector
+            await upsert_chunk_vector(session, chunk.id, vector, space)
             embedded += 1
-        await _touch_chunk_embedding_meta(
-            session, {c.paper_id for c in batch}, model=model
-        )
         await session.commit()
     return embedded, None
 
 
-async def _touch_chunk_embedding_meta(
-    session: AsyncSession, paper_ids: set[uuid.UUID], *, model: str | None
-) -> None:
-    """记下这批论文的分块向量构建时间与模型名（调用方负责 commit）。"""
-    if not paper_ids:
-        return
-    now = utcnow()
-    papers = (
-        (await session.execute(select(Paper).where(Paper.id.in_(list(paper_ids)))))
-        .scalars()
-        .all()
+def missing_chunk_vector(space: EmbeddingSpace | None):
+    """「这个分段在激活空间下还没有向量」的 WHERE 条件。
+
+    还没有激活空间（平台一条向量都没建过）时所有分段都算缺——第一批嵌入会把空间
+    定下来。
+    """
+    if space is None:
+        return sa_true()
+    return ~exists().where(
+        PaperChunkVector.chunk_id == PaperChunk.id,
+        PaperChunkVector.space == space.key,
     )
-    for paper in papers:
-        paper.chunk_embedding_at = now
-        paper.chunk_embedding_model = model
 
 
 async def embed_pending_chunks(
@@ -262,6 +290,7 @@ async def embed_pending_chunks(
 
     project_id 仅用于 LLM 用量记账归属。
     """
+    space = await active_space(session)
     pending = list(
         (
             await session.execute(
@@ -269,7 +298,7 @@ async def embed_pending_chunks(
                 .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
                 .where(
                     LibraryPaper.library_id == library_id,
-                    PaperChunk.embedding.is_(None),
+                    missing_chunk_vector(space),
                     # 摘要兜底块的向量靠拷贝论文级向量（零开销），不走嵌入接口
                     PaperChunk.source == "fulltext",
                 )
@@ -307,13 +336,14 @@ async def embed_pending_chunks_for_papers(
     """
     if not paper_ids:
         return 0, None
+    space = await active_space(session)
     pending = list(
         (
             await session.execute(
                 select(PaperChunk)
                 .where(
                     PaperChunk.paper_id.in_(paper_ids),
-                    PaperChunk.embedding.is_(None),
+                    missing_chunk_vector(space),
                     # 摘要兜底块的向量靠拷贝论文级向量（零开销），不走嵌入接口
                     PaperChunk.source == "fulltext",
                 )
@@ -414,6 +444,7 @@ async def semantic_search_chunks(
     *,
     library_ids: list[uuid.UUID] | None = None,
     query_vector: list[float],
+    space: EmbeddingSpace,
     limit: int,
     paper_ids: list[uuid.UUID] | None = None,
 ) -> list[tuple[PaperChunk, float]]:
@@ -423,6 +454,9 @@ async def semantic_search_chunks(
     传 paper_ids 时把检索限制在这些论文内（伴读引用指定文献用）。
     library_ids 为空/None 且给了 paper_ids 时走「纯 paper_ids、不 join 库」分支
     （课题相关研究 / 个人库对话按论文集合直接检索）。
+
+    ``space`` 限定只跟同一个向量空间的分段比较——别的空间的向量出自别的模型，
+    算出来的余弦是噪声。调用方给的 query_vector 也必须来自这个空间。
     """
     qv = json.dumps(query_vector)
     if not library_ids and paper_ids:
@@ -431,13 +465,15 @@ async def semantic_search_chunks(
             "qv": qv,
             "pids": [str(p) for p in paper_ids],
             "k": limit,
+            "space": space.key,
         }
         rows = (
             await session.execute(
                 sa_text(
-                    "SELECT c.id, 1 - (c.embedding <=> CAST(:qv AS vector)) AS score "
-                    "FROM paper_chunks c "
-                    "WHERE c.embedding IS NOT NULL "
+                    "SELECT c.id, 1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
+                    "FROM paper_chunk_vectors v "
+                    "JOIN paper_chunks c ON c.id = v.chunk_id "
+                    "WHERE v.space = :space "
                     "AND c.paper_id = ANY(CAST(:pids AS uuid[])) "
                     "ORDER BY score DESC "
                     "LIMIT :k"
@@ -450,6 +486,7 @@ async def semantic_search_chunks(
             "qv": qv,
             "libs": [str(lid) for lid in (library_ids or [])],
             "k": limit,
+            "space": space.key,
         }
         paper_filter = ""
         if paper_ids:
@@ -458,11 +495,12 @@ async def semantic_search_chunks(
         rows = (
             await session.execute(
                 sa_text(
-                    "SELECT DISTINCT c.id, 1 - (c.embedding <=> CAST(:qv AS vector)) AS score "
-                    "FROM paper_chunks c "
+                    "SELECT DISTINCT c.id, 1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
+                    "FROM paper_chunk_vectors v "
+                    "JOIN paper_chunks c ON c.id = v.chunk_id "
                     "JOIN library_papers lp ON lp.paper_id = c.paper_id "
                     "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
-                    "WHERE c.embedding IS NOT NULL "
+                    "WHERE v.space = :space "
                     f"{paper_filter}"
                     "ORDER BY score DESC "
                     "LIMIT :k"

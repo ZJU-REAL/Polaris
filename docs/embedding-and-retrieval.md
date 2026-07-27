@@ -11,9 +11,9 @@ never mixed: a query is compared only against vectors of the same kind.
 
 | | Paper-level embedding | Chunk embedding |
 | --- | --- | --- |
-| Column | `papers.embedding` (one vector per paper) | `paper_chunks.embedding` (one per ~1200-char chunk, ≤120/paper) |
+| Table | `paper_vectors` (one row per paper × space) | `paper_chunk_vectors` (one per ~1200-char chunk × space) |
 | Text embedded | title + authors + abstract (see below) | the chunk's full-text slice (truncated to 2000 chars) |
-| Model / dim | BGE-M3, 1024-dim | BGE-M3, 1024-dim |
+| Model / dim | whatever the active space says (see below) | same active space |
 | Purpose | Paper-level semantic search; similarity / dedup | Fine-grained retrieval for literature chat (find the relevant passage) |
 | Cost | Cheap (one vector, batched) | Heavy (dozens of vectors per paper; needs the full text) |
 
@@ -30,12 +30,49 @@ the daily-feed batch.
 
 Author names are part of the text so that "find work by X" style queries land. The previous formula
 was `title + tldr + abstract`, which was inconsistent in practice because `tldr` only exists on
-compiled papers. Existing vectors are deliberately **not** re-embedded: the difference is dominated
-by title + abstract, so search stays usable while old vectors converge naturally as papers are
-recompiled or re-indexed.
+compiled papers. Vectors built under the older formula are deliberately **not** re-embedded: the
+difference is dominated by title + abstract, so search stays usable while old vectors converge
+naturally as papers are recompiled or re-indexed. A formula change is not a space change — the
+vectors stay comparable — so it is tracked by `text_version` on the row rather than by the space key.
 
-The **query** side embeds the user's search text as-is (`get_llm_router().embed([q])`); the
+The **query** side embeds the user's search text as-is (`embedding.py::embed_query`); the
 query-vs-document asymmetry is normal — only the document formula needs to be consistent.
+
+## Embedding spaces
+
+Vectors from different models live in unrelated coordinate systems: a cosine between them is
+noise. When the dimensions differ, Postgres errors out and the caller degrades to keyword search.
+**When the dimensions happen to match, nothing errors at all** — the ranking is simply wrong, and
+neither the caller nor the user can tell. That silent mode is what this design exists to prevent.
+
+So every vector row carries a **space** — `<model>@<dim>`, e.g. `bge-m3@1024` — and every read
+filters on it. Vectors of different spaces cannot meet in one comparison, structurally.
+
+- **One active space at a time.** `system_settings.embedding_active_space` names it. Retrieval reads
+  only that space; coverage counters (`/lab` stats, the daily-feed `vector_ready/vector_total`, the
+  per-paper index dots) count only that space, so switching models makes coverage drop honestly
+  instead of counting vectors that retrieval can no longer use.
+- **The dimension is never hardcoded.** The first successful embed defines the active space from the
+  model's *actual* returned dimension, and `paper_vectors.embedding` is a dimension-less pgvector
+  column. Moving to a 4096-dim model needs no migration and no code change (issue #191).
+- **The embedding model is global.** `embedding` is in `router.GLOBAL_ONLY_STAGES`, so a
+  self-managed user's route is ignored for it and `/me/llm/routes` rejects the stage outright. The
+  paper pool is shared; per-user embedding models would mix incomparable vectors into it *and* make
+  each user's query vector land in a different space from the documents.
+- **Writes go through one gate.** `services/embedding.py::embed_documents` resolves the space,
+  validates every returned vector's dimension, and raises `EmbeddingSpaceMismatchError` rather than
+  storing anything questionable — on SQLite the JSON column would otherwise swallow it silently.
+- **Changing the model is an explicit act.** Once the routed model differs from the active space,
+  embedding calls refuse to run. An admin confirms via
+  `POST /admin/settings/embedding-space/adopt`, which probes the model for its real dimension and
+  switches the active space. Old vectors are left in place: they stop being searchable, and adopting
+  the previous model again is a complete rollback. `GET /admin/settings/embedding-space` reports the
+  active space, the routed model, `mismatched`, and the row counts of every space in the database.
+- **Rebuilding is the existing machinery.** Every "rebuild index" entry point (per paper, per
+  library, per topic, personal library, daily backfill) treats "no vector in the active space" as
+  missing, so they refill the new space incrementally. A paper that has vectors only in an old space
+  reports `built=false, stale=true`, which the UI shows as "needs rebuild" (amber) rather than
+  "never built" (red).
 
 ## When each vector is built
 
@@ -64,6 +101,10 @@ In summary:
   never breaks the sync). Chunk vectors are not built for daily papers — they have no full text.
 
 ## Retrieval
+
+All five pgvector queries join the vector side table and filter `WHERE v.space = :space`; the query
+vector passed in must come from that same space (`embed_query` returns the pair together, so callers
+cannot mismatch them by accident).
 
 Postgres with pgvector is required for vector search: `semantic_search_supported(session)` and
 `chunk_vector_search_supported(session)` return true only on `postgresql`. On SQLite (tests / no
@@ -131,7 +172,10 @@ is shared by the shelf, personal-library and daily chats and changing it must no
 - **Two granularities, kept separate.** Paper-level for "which paper", chunk-level for "which
   passage". Never compare across kinds.
 - **One document formula.** All paper-level vectors use the same `paper_embedding_text`; otherwise the
-  space is inconsistent. Existing vectors are left to converge rather than force a costly re-embed.
+  space is inconsistent. The formula's version is stored per row (`text_version`) so a future change
+  can drive a selective rebuild; it does not affect comparability, so it is not part of the space key.
+- **Never compare across spaces, and never guess.** Every read filters by the active space; every
+  write validates the dimension. A vector whose provenance cannot be established is not stored.
 - **Idempotent and skip-aware.** Never re-download, re-slice, or re-embed something that already
   exists (`pdf_path` / existing chunks / `embedding IS NOT NULL`). Collecting an already-embedded
   daily paper into a library skips the embed step and only does the missing work.

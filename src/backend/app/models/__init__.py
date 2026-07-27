@@ -39,6 +39,7 @@ from app.models.ssh_credential import SSHCredential
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
+from app.models.vectors import IdeaVector, PaperChunkVector, PaperVector
 from app.models.voyage import VoyageRun, VoyageStep
 
 __all__ = [
@@ -56,6 +57,7 @@ __all__ = [
     "FeedbackImage",
     "Gate",
     "Idea",
+    "IdeaVector",
     "LLMCallLog",
     "LibraryPaper",
     "LLMProviderConfig",
@@ -67,10 +69,12 @@ __all__ = [
     "ModelRoute",
     "Paper",
     "PaperChunk",
+    "PaperChunkVector",
     "PaperHighlight",
     "PaperNote",
     "PaperTag",
     "PaperUserMeta",
+    "PaperVector",
     "Project",
     "ProjectInvite",
     "ProjectMember",

@@ -19,7 +19,7 @@ from app.core.llm.anthropic import AnthropicProvider
 from app.core.llm.base import LLMProvider, Message
 from app.core.llm.fake import FakeProvider
 from app.core.llm.openai_compat import OpenAICompatProvider
-from app.core.llm.router import STAGES, get_llm_router
+from app.core.llm.router import GLOBAL_ONLY_STAGES, STAGES, get_llm_router
 from app.core.security import decrypt_secret, encrypt_secret
 from app.models.base import utcnow
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
@@ -137,11 +137,21 @@ async def list_routes(
 async def replace_routes(
     session: AsyncSession, items: Sequence[RouteItem], owner_id: uuid.UUID | None = None
 ) -> Sequence[ModelRoute]:
-    """整表覆盖某 owner 的路由。stage 必须合法且不重复，provider 必须属于同一 owner。"""
+    """整表覆盖某 owner 的路由。stage 必须合法且不重复，provider 必须属于同一 owner。
+
+    个人路由表里不接受嵌入环节：向量是全平台共享的一份数据，每个人各用各的模型
+    建向量，池子里就会混进互不可比的坐标系（见 core/llm/router.py 的
+    ``GLOBAL_ONLY_STAGES``）。传了也不会生效，所以直接拒绝而不是静默丢弃。
+    """
     seen: set[str] = set()
     for item in items:
         if item.stage not in STAGES:
             raise InvalidRouteError(f"unknown stage: {item.stage}")
+        if owner_id is not None and item.stage in GLOBAL_ONLY_STAGES:
+            raise InvalidRouteError(
+                f"stage '{item.stage}' is set centrally by the admin and cannot be "
+                "configured per user"
+            )
         if item.stage in seen:
             raise InvalidRouteError(f"duplicate stage: {item.stage}")
         seen.add(item.stage)

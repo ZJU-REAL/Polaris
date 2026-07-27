@@ -16,6 +16,7 @@ from app.models.llm_config import LLMUsage
 from app.models.paper import Concept, Paper, PaperChunk, paper_concepts
 from app.models.user import User
 from tests.conftest import register_and_login
+from tests.vector_helpers import set_chunk_vector, set_paper_vector
 
 
 async def _hdr(client, email):
@@ -50,19 +51,21 @@ async def _add_member(
     """建（或复用）一篇内容池论文并登记到若干库；可选顺带造全文分段与向量。"""
     async with get_sessionmaker()() as session:
         if paper_id is None:
-            paper = Paper(title=title, embedding=[0.1] * 4 if embedded else None)
+            paper = Paper(title=title)
             session.add(paper)
             await session.flush()
+            chunk_ids = []
             for seq in range(chunks):
-                session.add(
-                    PaperChunk(
-                        paper_id=paper.id,
-                        seq=seq,
-                        text=f"{title} chunk {seq}",
-                        embedding=[0.1] * 4 if embedded else None,
-                    )
-                )
+                chunk = PaperChunk(paper_id=paper.id, seq=seq, text=f"{title} chunk {seq}")
+                session.add(chunk)
+                await session.flush()
+                chunk_ids.append(chunk.id)
             paper_id = paper.id
+            await session.commit()
+            if embedded:
+                await set_paper_vector(session, paper_id)
+                for chunk_id in chunk_ids:
+                    await set_chunk_vector(session, chunk_id)
         for library_id in library_ids:
             session.add(
                 LibraryPaper(library_id=library_id, paper_id=paper_id, status=status)

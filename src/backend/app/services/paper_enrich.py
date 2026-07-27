@@ -17,7 +17,7 @@ from pathlib import Path
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.base import utcnow
+from app.core.embedding_space import active_space
 from app.models.library_direction import DirectionLibrary
 from app.models.paper import Paper
 
@@ -47,16 +47,23 @@ _TASKS: dict[str, asyncio.Task] = {}
 Emit = Callable[..., Awaitable[None]]
 
 
-def paper_processing_complete(paper: Paper) -> bool:
-    """论文是否已处理完整（PDF + 全文 + 向量都在）——完整则无需再启动补全任务。"""
-    return bool(paper.pdf_path and paper.full_text_path and paper.embedding is not None)
+async def paper_processing_complete(session: AsyncSession, paper: Paper) -> bool:
+    """论文是否已处理完整（PDF + 全文 + 当前空间下的向量都在）——完整则无需再补全。
+
+    「有向量」按**激活空间**算：换了嵌入模型之后，旧空间的向量对检索已经不可见，
+    这篇论文就该重新走一遍补全，而不是因为库里还留着旧向量就认为它已就绪。
+    """
+    if not (paper.pdf_path and paper.full_text_path):
+        return False
+    return await has_current_paper_vector(session, paper)
 
 
 def paper_embedding_text(paper: Paper) -> str:
     """论文级向量的统一文本口径：标题 + 作者名 + 摘要（截断 EMBED_TEXT_MAX_CHARS 字）。
 
-    三处生成 Paper.embedding 的地方共用（手动添加补全、ingest 上链批量、每日池批量），
+    三处生成论文级向量的地方共用（手动添加补全、ingest 上链批量、每日池批量），
     保证同一批向量在同一口径下可比。作者名进文本是为了「找某人的工作」这类检索。
+    口径若要改，同时把 services/embedding.py 的 TEXT_VERSION +1。
     """
     names: list[str] = []
     for item in paper.authors or []:
@@ -67,30 +74,39 @@ def paper_embedding_text(paper: Paper) -> str:
     return "\n".join(parts)[:EMBED_TEXT_MAX_CHARS]
 
 
+async def has_current_paper_vector(session: AsyncSession, paper: Paper) -> bool:
+    """这篇论文在激活空间下已有论文级向量？（没有激活空间 = 还没建过任何向量）"""
+    space = await active_space(session)
+    if space is None:
+        return False
+    from app.services.embedding import papers_with_vector
+
+    return bool(await papers_with_vector(session, [paper.id], space))
+
+
 async def embed_paper(
+    session: AsyncSession,
     paper: Paper,
     *,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
     library_id: uuid.UUID | None = None,
 ) -> None:
-    """为论文生成 Paper.embedding（文本口径见 paper_embedding_text）。
+    """为论文建论文级向量（文本口径见 paper_embedding_text）。调用方负责 commit。
 
-    顺带记下构建时间与所用模型名（前端索引状态悬浮显示）。
-    provider 不支持嵌入时抛 NotImplementedError（调用方按 skipped 处理）。
+    向量写进 paper_vectors 并带上所属空间。provider 不支持嵌入时抛
+    NotImplementedError（调用方按 skipped 处理）。
     """
-    from app.core.llm.router import get_llm_router
+    from app.services.embedding import embed_documents, upsert_paper_vector
 
-    llm = get_llm_router()
-    vectors = await llm.embed(
+    vectors, space = await embed_documents(
+        session,
         [paper_embedding_text(paper)],
         user_id=user_id,
         project_id=project_id,
         library_id=library_id,
     )
-    paper.embedding = vectors[0]
-    paper.embedding_at = utcnow()
-    paper.embedding_model = await llm.model_name("embedding", user_id)
+    await upsert_paper_vector(session, paper.id, vectors[0], space)
 
 
 async def enrich_paper(
@@ -199,11 +215,12 @@ async def enrich_paper(
 
     # ---- embed ----
     await emit("embed", "running")
-    if paper.embedding is not None:
+    if await has_current_paper_vector(session, paper):
         await emit("embed", "skipped", "already embedded")
     else:
         try:
             await embed_paper(
+                session,
                 paper,
                 user_id=user_id,
                 project_id=project_id,

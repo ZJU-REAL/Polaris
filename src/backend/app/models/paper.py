@@ -8,9 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    JSON,
     Boolean,
     Column,
     DateTime,
@@ -27,10 +25,8 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.core.db import Base
 from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
-EMBEDDING_DIM = 1024  # BGE-M3（lab LiteLLM /v1/embeddings）
-
-# postgres 用 pgvector（语义检索），sqlite 等回退 JSON 存 list（仅存不查）
-EmbeddingVariant = JSON().with_variant(Vector(EMBEDDING_DIM), "postgresql")
+# 向量不在这张表上：论文级向量存 paper_vectors、分段向量存 paper_chunk_vectors，
+# 各自带「向量空间」标识（app/models/vectors.py、app/core/embedding_space.py）。
 
 # 论文在方向库内的状态流转（LibraryPaper.status）：candidate →(打分) scored | excluded
 # →(下载全文) fetched →(Librarian 编译) compiled；included/excluded 亦可人工覆盖
@@ -82,14 +78,6 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 提取的论文图列表：[{index, page, width, height, caption: str|null, important: bool}]，
     # 图片文件落 <data_dir>/papers/<paper_id>/figures/fig_<index>.png（路径不出 API）
     figures: Mapped[list[Any] | None] = mapped_column(JSONVariant)
-    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
-    # 论文级向量的构建元信息（前端索引状态悬浮显示）；存量数据 / 未建为 null
-    embedding_model: Mapped[str | None] = mapped_column(String(128))
-    embedding_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # 分块向量最近一次补齐的元信息（分段本身在 paper_chunks，元信息汇总记这里，
-    # 避免在上百万分段行上各存一份时间/模型名）
-    chunk_embedding_model: Mapped[str | None] = mapped_column(String(128))
-    chunk_embedding_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # 这篇论文的概念（论文详情 / 导出 / agent 工具的展示口径）：**只给转正概念**。
     # 候选词条（还只有这一篇论文用到，多半是这篇自己起的 benchmark / 模型代号）不对
@@ -168,6 +156,8 @@ class PaperChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     ``source`` 区分两类块：拿到 PDF 后重建分段会把摘要块整体替换为全文块，
     「这篇有没有全文索引」也靠它判断（不能只看有没有分段行）。
+
+    向量存 paper_chunk_vectors（每段每空间一行），不在这张表上。
     """
 
     __tablename__ = "paper_chunks"
@@ -182,7 +172,6 @@ class PaperChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source: Mapped[str] = mapped_column(
         String(16), nullable=False, default="fulltext", server_default="fulltext"
     )
-    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVariant)
 
 
 READING_STATUSES = ("unread", "reading", "read")

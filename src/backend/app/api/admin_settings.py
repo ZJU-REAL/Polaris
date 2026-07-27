@@ -9,11 +9,15 @@ from app.schemas.admin_settings import (
     AffiliationModeRead,
     AffiliationModeUpdate,
     DailyEmbedBackfillResult,
+    EmbeddingSpaceAdoptResult,
+    EmbeddingSpaceItem,
+    EmbeddingSpaceStatus,
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
 )
 from app.services import affiliations as affiliations_service
 from app.services import daily_feed as daily_service
+from app.services import embedding as embedding_service
 from app.services import lab as lab_service
 
 router = APIRouter(
@@ -49,6 +53,63 @@ async def backfill_daily_embed(
     """给当前窗口内还没有向量的每日论文一次性补建（开开关后补齐历史用）。费用记系统账。"""
     stats = await daily_service.backfill_embeddings(session)
     return DailyEmbedBackfillResult(**stats)
+
+
+@router.get("/embedding-space", response_model=EmbeddingSpaceStatus)
+async def get_embedding_space(
+    session: AsyncSession = Depends(get_session),
+) -> EmbeddingSpaceStatus:
+    """当前向量模型 + 库里各向量空间的规模。
+
+    ``mismatched=true`` 表示路由表里的嵌入模型已经不是建库时那个了：此时新向量一律
+    拒绝写入（不能让两个模型的向量混进同一个池子），需要 adopt 确认换用新模型。
+    """
+    inventory = await embedding_service.space_inventory(session)
+    spaces = [EmbeddingSpaceItem(**item) for item in inventory]
+    active = next((s for s in spaces if s.active), None)
+    model = await embedding_service.routed_model()
+    return EmbeddingSpaceStatus(
+        active=active,
+        routed_model=model,
+        mismatched=bool(active and model and active.model != model),
+        spaces=spaces,
+    )
+
+
+@router.post("/embedding-space/adopt", response_model=EmbeddingSpaceAdoptResult)
+async def adopt_embedding_space(
+    session: AsyncSession = Depends(get_session),
+) -> EmbeddingSpaceAdoptResult:
+    """确认换用路由表里当前的嵌入模型（换模型后必须调一次）。
+
+    现场探一次模型拿到它的实际维度，据此定义新的激活空间。旧向量留在库里不动，
+    检索覆盖率会掉下来，用各处的「重新建立索引」把新空间补齐即可；adopt 回旧模型
+    就是回滚。
+    """
+    try:
+        space, previous = await embedding_service.adopt_routed_model(session)
+    except Exception as exc:  # noqa: BLE001 — 探测要真打一次模型，上游不可达也在此收口
+        # 探不到维度就不能定义空间，硬切过去只会让之后每次嵌入都失败
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"EMBEDDING_NOT_AVAILABLE:{type(exc).__name__}: {exc}",
+        ) from exc
+    items = await embedding_service.space_inventory(session)
+    current = next(
+        (item for item in items if item["key"] == space.key),
+        {
+            "key": space.key,
+            "model": space.model,
+            "dim": space.dim,
+            "papers": 0,
+            "chunks": 0,
+            "ideas": 0,
+            "active": True,
+        },
+    )
+    return EmbeddingSpaceAdoptResult(
+        active=EmbeddingSpaceItem(**current), previous=previous
+    )
 
 
 @router.get("/lab-leaderboard", response_model=LabLeaderboardSettingRead)

@@ -31,3 +31,36 @@ class DailyEmbedBackfillResult(BaseModel):
     embedded: int
     skipped: int
     failed: int = 0
+
+
+class EmbeddingSpaceItem(BaseModel):
+    """库里出现过的一个向量空间及其规模。"""
+
+    key: str
+    model: str
+    dim: int
+    papers: int
+    chunks: int
+    ideas: int
+    active: bool
+
+
+class EmbeddingSpaceStatus(BaseModel):
+    """当前向量模型与库里各空间的分布。
+
+    ``routed_model`` 是路由表里配的嵌入模型；它与 ``active`` 的模型不一致时，
+    说明管理员换过模型而索引还没重建——此时所有嵌入调用都会拒绝执行，直到
+    调用 adopt 接口确认换用新模型（旧向量保留，可切回）。
+    """
+
+    active: EmbeddingSpaceItem | None = None
+    routed_model: str | None = None
+    mismatched: bool = False
+    spaces: list[EmbeddingSpaceItem] = []
+
+
+class EmbeddingSpaceAdoptResult(BaseModel):
+    """切换激活空间的结果：切到哪个、原先是哪个。"""
+
+    active: EmbeddingSpaceItem
+    previous: str | None = None

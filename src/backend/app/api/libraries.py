@@ -83,6 +83,7 @@ from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
 from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
+from app.services.embedding import embed_query
 from app.services.wiki_export import build_obsidian_zip_for_libraries
 
 router = APIRouter(tags=["libraries"])
@@ -639,12 +640,13 @@ async def search_library(
     paper_rows: list = []
     if mode == "semantic" and papers_service.semantic_search_supported(session):
         try:
-            vectors = await get_llm_router().embed([q], user_id=user.id)
+            vector, space = await embed_query(session, q, user_id=user.id)
             candidates = await papers_service.semantic_search_papers(
                 session,
                 library_id=library.id,
                 project_id=library.project_id,
-                query_vector=vectors[0],
+                query_vector=vector,
+                space=space,
                 limit=max(papers_service.RERANK_CANDIDATES, limit),
             )
             mode_used = "semantic"
@@ -801,7 +803,8 @@ async def add_library_paper_manually(
         ) from e
     paper_id, user_id, project_id = result.paper.id, user.id, library.project_id
     task_id: str | None = None
-    if result.created or not paper_enrich_service.paper_processing_complete(result.paper):
+    already_done = await paper_enrich_service.paper_processing_complete(session, result.paper)
+    if result.created or not already_done:
         task_id = await paper_enrich_service.launch_paper_enrichment(
             redis=redis,
             paper_id=paper_id,

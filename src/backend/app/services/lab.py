@@ -13,15 +13,17 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import String, and_, cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.embedding_space import active_space
 from app.models.base import utcnow
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.llm_config import LLMUsage
 from app.models.paper import Concept, Paper, PaperChunk
 from app.models.system_setting import SystemSetting
 from app.models.user import User
+from app.models.vectors import PaperChunkVector, PaperVector
 from app.services import graph as graph_service
 from app.services.chunks import chunk_vector_search_supported
 from app.services.concepts import library_concept_ids
@@ -41,15 +43,7 @@ async def _count(session: AsyncSession, stmt) -> int:
     return int((await session.execute(stmt)).scalar_one())
 
 
-def _has_vector(session: AsyncSession, column):
-    """「向量已建」判定。
-
-    postgres 上是 pgvector 列，NULL 判定就够；sqlite 上是 JSON 列，SQLAlchemy 会把
-    Python None 存成字面量 ``null``，只判 IS NOT NULL 会把没建向量的也算进来。
-    """
-    if session.get_bind().dialect.name == "postgresql":
-        return column.is_not(None)
-    return and_(column.is_not(None), cast(column, String) != "null")
+# 「向量已建」不再需要方言特判：向量在侧表里，有行即已建（embedding 列 NOT NULL）。
 
 
 # ---- 可见库集合 ----
@@ -118,19 +112,35 @@ async def lab_stats(session: AsyncSession, user: User) -> dict[str, Any]:
             .select_from(PaperChunk)
             .where(PaperChunk.paper_id.in_(member_ids)),
         )
-        chunks_with_embedding = await _count(
-            session,
-            select(func.count())
-            .select_from(PaperChunk)
-            .where(
-                PaperChunk.paper_id.in_(member_ids), _has_vector(session, PaperChunk.embedding)
-            ),
+        # 覆盖率按**激活空间**算：换了嵌入模型后如实掉下来，等重建补回，
+        # 而不是拿旧模型建的、检索已经用不上的向量充数。
+        space = await active_space(session)
+        chunks_with_embedding = (
+            await _count(
+                session,
+                select(func.count())
+                .select_from(PaperChunkVector)
+                .join(PaperChunk, PaperChunk.id == PaperChunkVector.chunk_id)
+                .where(
+                    PaperChunk.paper_id.in_(member_ids),
+                    PaperChunkVector.space == space.key,
+                ),
+            )
+            if space is not None
+            else 0
         )
-        papers_with_embedding = await _count(
-            session,
-            select(func.count())
-            .select_from(Paper)
-            .where(Paper.id.in_(member_ids), _has_vector(session, Paper.embedding)),
+        papers_with_embedding = (
+            await _count(
+                session,
+                select(func.count())
+                .select_from(PaperVector)
+                .where(
+                    PaperVector.paper_id.in_(member_ids),
+                    PaperVector.space == space.key,
+                ),
+            )
+            if space is not None
+            else 0
         )
 
     return {

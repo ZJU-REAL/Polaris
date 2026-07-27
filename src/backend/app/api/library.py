@@ -31,6 +31,7 @@ from app.services import paper_import as paper_import_service
 from app.services import paper_wiki as paper_wiki_service
 from app.services import papers as papers_service
 from app.services import user_library as library_service
+from app.services.embedding import embed_query
 
 router = APIRouter(tags=["library"])
 
@@ -80,11 +81,12 @@ async def list_library(
         session
     ):
         try:
-            vectors = await get_llm_router().embed([q], user_id=user.id)
+            vector, space = await embed_query(session, q, user_id=user.id)
             candidates = await library_service.semantic_saved_entries(
                 session,
                 user_id=user.id,
-                query_vector=vectors[0],
+                query_vector=vector,
+                space=space,
                 limit=max(papers_service.RERANK_CANDIDATES, size),
             )
             ranked, _reranked = await papers_service.rerank_paper_rows(
@@ -253,7 +255,8 @@ async def import_entry(
     # 收藏走个人库的既有路径：已有条目（含回收站里的）复活并置 saved，不会建第二行
     entry = await library_service.save_paper(session, user_id=user.id, paper=result.paper)
     task_id: str | None = None
-    if result.created or not paper_enrich_service.paper_processing_complete(result.paper):
+    already_done = await paper_enrich_service.paper_processing_complete(session, result.paper)
+    if result.created or not already_done:
         task_id = await paper_enrich_service.launch_paper_enrichment(
             redis=redis,
             paper_id=result.paper.id,

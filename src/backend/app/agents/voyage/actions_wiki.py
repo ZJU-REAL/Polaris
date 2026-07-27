@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.voyage.actions import ActionContext, register
 from app.agents.voyage.actions_ideas import cosine_similarity
 from app.core.db import get_sessionmaker
+from app.core.embedding_space import active_space
 from app.models.activity import Activity
 from app.models.base import utcnow
 from app.models.daily_feed import DailyFeedEntry
@@ -42,6 +43,13 @@ from app.services.chunks import (
 )
 from app.services.concepts import link_all_paper_concepts
 from app.services.dedup import pool_dedup_key
+from app.services.embedding import (
+    embed_documents,
+    embed_query,
+    paper_vectors,
+    papers_with_vector,
+    upsert_paper_vector,
+)
 from app.services.figure_annotate import annotate_figures, figures_annotated
 from app.services.libraries import (
     ensure_membership,
@@ -239,7 +247,12 @@ async def _pool_paper_or_new(
 # ---- 1. 检索候选（arXiv） ----
 
 async def _rank_feed_by_similarity(
-    ctx: ActionContext, *, direction: str, papers: list[Paper], limit: int
+    ctx: ActionContext,
+    session: AsyncSession,
+    *,
+    direction: str,
+    papers: list[Paper],
+    limit: int,
 ) -> tuple[list[Paper], bool]:
     """按与研究方向的向量相似度给每日池论文粗排，取前 ``limit``。
 
@@ -250,28 +263,36 @@ async def _rank_feed_by_similarity(
     返回 (排序后的论文, 是否真的排过序)。**这是排序不是过滤**——嵌入不可用时原样返回，
     宁可多送几篇去打分，也不能因为向量缺失让这个库一篇都收不到。
 
+    只跟激活空间下的论文向量比：方向向量与论文向量必须出自同一个模型，否则这个粗排
+    就是在按噪声挑论文，而且不会有任何报错。
+
     在 Python 里算余弦而不是走 pgvector：每日池只有几百行，跨 sqlite/postgres 一致，
     测试路径不用特判。
     """
-    with_vec = [p for p in papers if p.embedding is not None]
-    if not with_vec or not direction.strip():
+    if not direction.strip():
         return papers[:limit], False
     try:
-        vectors = await ctx.llm.embed(
-            [direction[:2000]],
+        vector, space = await embed_query(
+            session,
+            direction[:2000],
             user_id=ctx.run.created_by,
             project_id=ctx.run.project_id,
             library_id=ctx.run.library_id,
             voyage_id=ctx.run.id,
         )
-    except Exception:  # noqa: BLE001 — provider 不支持嵌入等：退回不排序
+    except Exception:  # noqa: BLE001 — provider 不支持嵌入 / 尚无向量空间：退回不排序
         logger.warning("feed ranking embed failed for library %s", ctx.run.library_id)
         return papers[:limit], False
-    scored = [(cosine_similarity(vectors[0], list(p.embedding)), p) for p in with_vec]
+    vectors = await paper_vectors(session, [p.id for p in papers], space)
+    if not vectors:
+        return papers[:limit], False
+    scored = [
+        (cosine_similarity(vector, vectors[p.id]), p) for p in papers if p.id in vectors
+    ]
     scored.sort(key=lambda x: -x[0])
     ranked = [p for _, p in scored]
     # 没建向量的排在后面而不是丢掉（同上：粗排不该有排除语义）
-    ranked.extend(p for p in papers if p.embedding is None)
+    ranked.extend(p for p in papers if p.id not in vectors)
     return ranked[:limit], True
 
 
@@ -310,7 +331,7 @@ async def _collect_from_daily_feed(
     feed_latest = max((d for _, d in rows), default=None)
 
     ranked, did_rank = await _rank_feed_by_similarity(
-        ctx, direction=direction, papers=feed_papers, limit=limit
+        ctx, session, direction=direction, papers=feed_papers, limit=limit
     )
 
     arxiv_ids, dois, titles = await _existing_keys(session, library.id)
@@ -1015,27 +1036,30 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         promoted_names = list(stats["promoted_concepts"])
         new_links = int(stats["links_created"])
 
-        # embedding：编译完成且尚无向量的论文批量嵌入（provider 不支持则跳过）
+        # embedding：编译完成且在激活空间下尚无向量的论文批量嵌入（不支持则跳过）
         embedded = 0
         embed_error: str | None = None
-        pending = [p for p in papers if p.embedding is None]
+        space = await active_space(session)
+        done = (
+            await papers_with_vector(session, [p.id for p in papers], space)
+            if space is not None
+            else set()
+        )
+        pending = [p for p in papers if p.id not in done]
         if pending:
             # 文本口径与手动补全/每日池共用（services/paper_enrich.paper_embedding_text）
             texts = [paper_embedding_text(p) for p in pending]
             try:
-                vectors = await ctx.llm.embed(
+                vectors, batch_space = await embed_documents(
+                    session,
                     texts,
                     user_id=billing_user_id,
                     project_id=ctx.run.project_id,
                     library_id=library.id,
                     voyage_id=ctx.run.id,
                 )
-                embed_model = await ctx.llm.model_name("embedding", billing_user_id)
-                now = utcnow()
                 for paper, vector in zip(pending, vectors, strict=True):
-                    paper.embedding = vector
-                    paper.embedding_at = now
-                    paper.embedding_model = embed_model
+                    await upsert_paper_vector(session, paper.id, vector, batch_space)
                     embedded += 1
                 await session.commit()
             except asyncio.CancelledError:

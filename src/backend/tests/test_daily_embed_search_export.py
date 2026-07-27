@@ -10,9 +10,11 @@ from app.core.db import get_sessionmaker
 from app.core.llm.fake import fake_embedding
 from app.models.daily_feed import DailyFeedEntry
 from app.models.paper import Paper
+from app.models.vectors import PaperVector
 from app.services.paper_enrich import paper_embedding_text
 from tests.conftest import register_and_login
 from tests.test_daily_feed import _rss_entry, _run_sync
+from tests.vector_helpers import get_paper_vector, set_paper_vector
 
 pytestmark = pytest.mark.asyncio
 
@@ -63,8 +65,14 @@ async def test_embed_paper_uses_shared_text(client):
     from app.services.paper_enrich import embed_paper
 
     paper = _paper()
-    await embed_paper(paper)
-    assert paper.embedding == fake_embedding(paper_embedding_text(paper))
+    async with get_sessionmaker()() as session:
+        session.add(paper)
+        await session.flush()
+        await embed_paper(session, paper)
+        await session.commit()
+        assert await get_paper_vector(session, paper.id) == fake_embedding(
+            paper_embedding_text(paper)
+        )
 
 
 # ---- 2. 每日池建向量：开关 + 幂等 + 补建 ----
@@ -88,22 +96,25 @@ async def test_sync_embeds_every_paper_and_only_missing(client, monkeypatch):
     result = await _run_sync(monkeypatch, feed)
     assert result["created"] == 2 and result["embedded"] == 2
     papers = await _papers_in_pool()
-    for paper in papers:
-        assert paper.embedding == fake_embedding(paper_embedding_text(paper))
-        assert paper.embedding_at is not None  # 构建时间记下了
-        assert paper.embedding_model  # 模型名记下了
+    async with get_sessionmaker()() as session:
+        for paper in papers:
+            row = await session.execute(
+                select(PaperVector).where(PaperVector.paper_id == paper.id)
+            )
+            vector_row = row.scalar_one()
+            assert list(vector_row.embedding) == fake_embedding(paper_embedding_text(paper))
+            assert vector_row.built_at is not None  # 构建时间记下了
+            assert vector_row.model  # 模型名记下了
+            assert vector_row.space  # 属于哪个向量空间也记下了
 
     # 已有向量的不重嵌（哨兵向量原样保留）
-    sentinel = [0.5] * len(papers[0].embedding)
+    sentinel = [0.5] * 1024
     async with get_sessionmaker()() as session:
-        row = await session.get(Paper, papers[0].id)
-        row.embedding = sentinel
-        await session.commit()
+        await set_paper_vector(session, papers[0].id, sentinel)
     result = await _run_sync(monkeypatch, feed)
     assert result["embedded"] == 0
     async with get_sessionmaker()() as session:
-        row = await session.get(Paper, papers[0].id)
-        assert row.embedding == pytest.approx(sentinel)
+        assert await get_paper_vector(session, papers[0].id) == pytest.approx(sentinel)
 
 
 async def test_daily_papers_get_abstract_chunk(client, monkeypatch):

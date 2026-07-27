@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
 from app.core.db import get_sessionmaker
+from app.core.embedding_space import EmbeddingSpace
 from app.core.llm.base import Message
 from app.models.activity import Activity
 from app.models.base import utcnow
@@ -37,6 +38,7 @@ from app.models.project import Project
 from app.models.review import ReviewMessage, ReviewSession
 from app.schemas.idea import FORGE_SIGNALS
 from app.services.concepts import library_concept_ids
+from app.services.embedding import embed_documents, idea_vectors, upsert_idea_vector
 from app.services.libraries import (
     dedupe_member_rows,
     get_source_library_ids,
@@ -710,20 +712,23 @@ async def forge_dedup(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
         return {"candidates": 0, "dropped": 0}
 
     cand_texts = [_idea_text(c["title"], c.get("summary")) for c in candidates]
-    try:
-        cand_vectors = await ctx.llm.embed(
-            cand_texts,
-            user_id=ctx.run.created_by,
-            project_id=ctx.run.project_id,
-            voyage_id=ctx.run.id,
-        )
-    except NotImplementedError:
-        # embedding 路由不可用：跳过去重（记录原因），全部候选放行
-        ctx.checkpoint["forge_dedup_done"] = True
-        return {"candidates": len(candidates), "dropped": 0, "skipped_reason": "no embedding"}
-
-    # 库内既有 idea：无向量的现场补嵌并落库
+    # 候选与库内既有想法的向量必须出自同一个模型，否则下面的阈值判定毫无意义——
+    # 所以两批都走统一入口，并且只跟激活空间下的既有向量比。
     async with get_sessionmaker()() as session:
+        try:
+            cand_vectors, space = await embed_documents(
+                session,
+                cand_texts,
+                user_id=ctx.run.created_by,
+                project_id=ctx.run.project_id,
+                voyage_id=ctx.run.id,
+            )
+        except NotImplementedError:
+            # embedding 路由不可用：跳过去重（记录原因），全部候选放行
+            ctx.checkpoint["forge_dedup_done"] = True
+            return {"candidates": len(candidates), "dropped": 0, "skipped_reason": "no embedding"}
+
+        # 库内既有 idea：激活空间下无向量的现场补嵌并落库
         existing = (
             (
                 await session.execute(
@@ -735,26 +740,29 @@ async def forge_dedup(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             .scalars()
             .all()
         )
-        pending = [i for i in existing if i.embedding is None]
+        known = await idea_vectors(session, [i.id for i in existing], space)
+        pending = [i for i in existing if i.id not in known]
         if pending:
             try:
-                vectors = await ctx.llm.embed(
+                vectors, _ = await embed_documents(
+                    session,
                     [_idea_text(i.title, i.summary) for i in pending],
                     user_id=ctx.run.created_by,
                     project_id=ctx.run.project_id,
                     voyage_id=ctx.run.id,
                 )
                 for idea, vector in zip(pending, vectors, strict=True):
-                    idea.embedding = vector
+                    await upsert_idea_vector(session, idea.id, vector, space)
+                    known[idea.id] = vector
                 await session.commit()
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 — 既有 idea 补嵌失败则跳过比对
-                pass
+                await session.rollback()
         existing_entries = [
-            (f"库内想法「{i.title}」", _idea_text(i.title, i.summary), list(i.embedding))
+            (f"库内想法「{i.title}」", _idea_text(i.title, i.summary), known[i.id])
             for i in existing
-            if i.embedding is not None
+            if i.id in known
         ]
 
     async def confirmed_duplicate(text: str, other_text: str, cosine: float) -> tuple[bool, float]:
@@ -820,24 +828,24 @@ async def forge_persist(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     survivors = [c for c in candidates if not c.get("duplicate")]
     parent_paper_ids = list(_context(ctx).get("paper_ids") or [])
 
-    embeddings: list[list[float] | None] = [None] * len(survivors)
-    if survivors:
-        try:
-            embeddings = list(
-                await ctx.llm.embed(
+    inserted_ids: list[str] = []
+    async with get_sessionmaker()() as session:
+        embeddings: list[list[float] | None] = [None] * len(survivors)
+        space: EmbeddingSpace | None = None
+        if survivors:
+            try:
+                embeddings, space = await embed_documents(
+                    session,
                     [_idea_text(c["title"], c.get("summary")) for c in survivors],
                     user_id=ctx.run.created_by,
                     project_id=ctx.run.project_id,
                     voyage_id=ctx.run.id,
                 )
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 — 嵌入失败不阻塞入库（含 NotImplementedError）
-            embeddings = [None] * len(survivors)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — 嵌入失败不阻塞入库（含 NotImplementedError）
+                embeddings, space = [None] * len(survivors), None
 
-    inserted_ids: list[str] = []
-    async with get_sessionmaker()() as session:
         for cand, vector in zip(survivors, embeddings, strict=True):
             idea = Idea(
                 project_id=ctx.run.project_id,
@@ -850,10 +858,11 @@ async def forge_persist(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
                 depth="sketch",
                 evidence=cand.get("evidence"),
                 parent_paper_ids=parent_paper_ids,
-                embedding=vector,
             )
             session.add(idea)
             await session.flush()
+            if vector is not None and space is not None:
+                await upsert_idea_vector(session, idea.id, vector, space)
             inserted_ids.append(str(idea.id))
         session.add(
             Activity(

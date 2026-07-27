@@ -148,7 +148,8 @@ async def add_paper(session, *, project_id, **fields):
     """测试造数据统一入口：建内容池 Paper + 起源库成员行（+ 可选解读），返回 Paper。
 
     兼容旧单表口径：status/relevance_score 等判断字段自动落成员行，
-    wiki_content/compiled_model 落论文级唯一解读行 paper_wikis。
+    wiki_content/compiled_model 落论文级唯一解读行 paper_wikis，
+    ``embedding=[...]`` 落向量侧表 paper_vectors（激活空间，见 tests/vector_helpers.py）。
     ``concepts=[Concept, ...]`` 直接写 paper_concepts 关联（Paper.concepts 关系是只读的
     ——它只展示已转正的概念，写关联一律走关联表）。
     """
@@ -158,6 +159,7 @@ async def add_paper(session, *, project_id, **fields):
     from app.models.paper import PaperWiki, new_paper, paper_concepts
 
     concepts = fields.pop("concepts", None) or []
+    embedding = fields.pop("embedding", None)
     member_kwargs = {k: fields.pop(k) for k in list(fields) if k in _MEMBERSHIP_FIELDS}
     member_kwargs.setdefault("status", "candidate")
     wiki_kwargs = {_WIKI_FIELDS[k]: fields.pop(k) for k in list(fields) if k in _WIKI_FIELDS}
@@ -180,6 +182,10 @@ async def add_paper(session, *, project_id, **fields):
         session.add(wiki)
         paper.wiki = wiki
     await session.flush()
+    if embedding is not None:
+        from tests.vector_helpers import set_paper_vector
+
+        await set_paper_vector(session, paper.id, list(embedding))
     return paper
 
 

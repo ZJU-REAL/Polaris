@@ -9,7 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "510f6bde2233"  # 模型路由推理档位（model_routes.effort）
+HEAD_REVISION = "929c05a03745"  # 删除主表向量列（向量已搬进侧表）
+VECTOR_TABLES_REVISION = "5d8ebd5cb100"  # 向量侧表建表 + 存量搬迁
+EFFORT_REVISION = "510f6bde2233"  # 模型路由推理档位（model_routes.effort）
 CHAT_BOT_REVISION = "d4e8b71c2a90"  # 每用户群机器人 Webhook 配置
 CONCEPT_STATUS_REVISION = "a9f1c62b70d5"  # 概念转正门槛（concepts.status）
 INDEX_META_REVISION = "c4e7b2a91f38"  # 分段来源标记 + 向量构建元信息
@@ -72,6 +74,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "user_library_entries",
                     "concepts",
                     "paper_chunks",
+                    "paper_vectors",
                     "paper_wikis",
                     "library_papers",
                     "daily_feed_entries",
@@ -100,13 +103,19 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
     assert "effort" in columns["model_routes"]  # 推理档位可配（NULL = 用模型默认）
-    assert "embedding" in columns["papers"]  # sqlite 分支 JSON variant 列保留
-    # 分段来源标记 + 两种向量各自的构建时间/模型名
-    assert "source" in columns["paper_chunks"]
-    assert {"embedding_model", "embedding_at"} <= columns["papers"]
-    assert {"chunk_embedding_model", "chunk_embedding_at"} <= columns["papers"]
+    # 向量搬进三张侧表，主表上的向量列与元信息列一并删除
+    assert {"paper_vectors", "paper_chunk_vectors", "idea_vectors"} <= columns["_tables"]
+    assert {"paper_id", "space", "dim", "embedding", "model", "built_at"} <= columns[
+        "paper_vectors"
+    ]
+    assert "embedding" not in columns["papers"]
+    assert not {"embedding_model", "embedding_at"} & columns["papers"]
+    assert not {"chunk_embedding_model", "chunk_embedding_at"} & columns["papers"]
+    assert "embedding" not in columns["paper_chunks"]
+    assert "embedding" not in columns["ideas"]
+    assert "source" in columns["paper_chunks"]  # 分段来源标记
     # M3 列仍在
-    assert {"score_rationale", "matches", "wins", "embedding"} <= columns["ideas"]
+    assert {"score_rationale", "matches", "wins"} <= columns["ideas"]
     assert "payload" in columns["review_sessions"]
     assert "author_name" in columns["review_messages"]
     assert "agent_persona" not in columns["review_messages"]
@@ -304,7 +313,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "last_delivered_at",
     } <= columns["chat_bot_configs"]
 
-    # 最新 revision 可往返：先退掉推理档位列。
+    # 最新 revision 可往返：先把主表向量列加回来（数据不搬回，见迁移 docstring）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == VECTOR_TABLES_REVISION
+    assert "embedding" in columns["papers"]
+    assert {"embedding_model", "chunk_embedding_model"} <= columns["papers"]
+    assert "paper_vectors" in columns["_tables"]  # 只退一步：侧表还在
+
+    # 再退掉三张侧表。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == EFFORT_REVISION
+    assert not {"paper_vectors", "paper_chunk_vectors", "idea_vectors"} & columns["_tables"]
+    assert "embedding" in columns["ideas"]
+
+    # 再退掉推理档位列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == CHAT_BOT_REVISION

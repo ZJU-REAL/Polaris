@@ -227,7 +227,8 @@ async def add_paper_manually(
     paper_id, user_id = result.paper.id, user.id
     # 后台补全：新建或未处理完整时启动（含针对起源库 definition 的打分）
     task_id: str | None = None
-    if result.created or not paper_enrich_service.paper_processing_complete(result.paper):
+    already_done = await paper_enrich_service.paper_processing_complete(session, result.paper)
+    if result.created or not already_done:
         library = await libraries_service.get_library_for_project(session, project_id)
         task_id = await paper_enrich_service.launch_paper_enrichment(
             redis=redis,

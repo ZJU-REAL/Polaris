@@ -17,6 +17,7 @@ from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.idea import Idea
 from tests.conftest import RecordingBus, add_concept, add_paper, register_and_login
+from tests.vector_helpers import get_idea_vector
 
 DEFINITION = {"statement": "自动化科研 agent 的方法研究"}
 
@@ -133,7 +134,8 @@ async def test_forge_full_pipeline(client, queue_stub):
             assert all(0 <= v <= 10 for v in idea.scores.values())
             assert set(idea.score_rationale) == set(idea.scores)
             assert sorted(idea.parent_paper_ids) == sorted(paper_ids)
-            assert idea.embedding is not None and len(idea.embedding) == EMBEDDING_DIM
+            vector = await get_idea_vector(session, idea.id)
+            assert vector is not None and len(vector) == EMBEDDING_DIM
             assert "## 动机" in idea.content and "## 风险" in idea.content
             assert idea.depth == "sketch"
             assert idea.evidence and idea.evidence[0]["source"] == "signal"

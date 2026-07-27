@@ -16,12 +16,12 @@ from sqlalchemy import func, select
 
 from app.agents.voyage.engine import VoyageEngine
 from app.core.db import get_sessionmaker
-from app.core.llm.fake import FakeProvider
+from app.core.llm.fake import EMBEDDING_DIM, FakeProvider
 from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.llm_config import LLMUsage
-from app.models.paper import EMBEDDING_DIM, new_paper, paper_concepts
+from app.models.paper import new_paper, paper_concepts
 from app.models.user import User
 from app.models.voyage import VoyageRun
 from app.services import ingest as ingest_service
@@ -41,6 +41,7 @@ from tests.conftest import (
     register_and_login,
     wiki_of,
 )
+from tests.vector_helpers import get_paper_vector
 
 DEFINITION = {
     "statement": "自动化科研 agent 的方法研究",
@@ -321,7 +322,8 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
             assert p.tldr
             assert "[[Agent]]" in wiki.content  # 双链
             assert p.full_text_path and p.pdf_path  # PDF 已抽全文
-            assert p.embedding is not None and len(p.embedding) == EMBEDDING_DIM
+            vector = await get_paper_vector(session, p.id)
+            assert vector is not None and len(vector) == EMBEDDING_DIM
             # 管线顺带提取论文图（小图被滤），compile 后由 fake VLM 注释
             assert p.figures == [
                 {

@@ -26,6 +26,7 @@ from app.models.paper import (
 )
 from app.models.project import Project
 from app.services import chunks as chunks_service
+from app.services.embedding import embed_query
 from app.services.libraries import (
     dedupe_member_rows,
     get_source_library_ids,
@@ -87,17 +88,20 @@ async def _retrieve_chunks(
 ) -> list[tuple[PaperChunk, float]]:
     """向量检索优先（postgres + embedding 可用），否则关键词降级；任何失败都不上抛。
 
-    典型失败：paper_chunks 表未迁移、embedding provider 挂了、向量维度不匹配——
-    统一 rollback 后逐级降级（向量 → 关键词 → 空，空由调用方走论文摘要兜底）。
-    传 paper_ids 时把检索限制在这些论文内（伴读引用指定文献用）。
+    典型失败：paper_chunks 表未迁移、embedding provider 挂了、平台还没建过向量、
+    管理员换了嵌入模型而索引尚未重建——统一 rollback 后逐级降级（向量 → 关键词 →
+    空，空由调用方走论文摘要兜底）。传 paper_ids 时把检索限制在这些论文内。
     """
     if chunks_service.chunk_vector_search_supported(session):
         try:
-            vectors = await llm.embed([question], user_id=user_id, project_id=project_id)
+            vector, space = await embed_query(
+                session, question, user_id=user_id, project_id=project_id
+            )
             rows = await chunks_service.semantic_search_chunks(
                 session,
                 library_ids=library_ids,
-                query_vector=vectors[0],
+                query_vector=vector,
+                space=space,
                 limit=MAX_CHUNKS,
                 paper_ids=paper_ids,
             )

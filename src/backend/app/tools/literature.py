@@ -17,6 +17,7 @@ from app.models.paper import Concept, Paper
 from app.services import concepts as concepts_service
 from app.services import papers as papers_service
 from app.services.concepts import library_concept_ids
+from app.services.embedding import embed_query
 from app.services.libraries import get_source_library_ids, membership_for_project
 from app.services.paper_review import relevant_excerpt
 from app.services.papers import PaperView
@@ -95,14 +96,19 @@ async def search_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
         used_mode = "keyword"
         if mode == "semantic" and papers_service.semantic_search_supported(session):
             try:
-                vectors = await ctx.llm.embed(
-                    [query],
+                vector, space = await embed_query(
+                    session,
+                    query,
                     user_id=ctx.user_id,
                     project_id=ctx.project_id,
                     voyage_id=ctx.voyage_id,
                 )
                 rows = await papers_service.semantic_search_papers(
-                    session, project_id=ctx.project_id, query_vector=vectors[0], limit=k
+                    session,
+                    project_id=ctx.project_id,
+                    query_vector=vector,
+                    space=space,
+                    limit=k,
                 )
                 used_mode = "semantic"
             except Exception:  # noqa: BLE001 — embedding 服务挂了也要能用，降级到关键词
