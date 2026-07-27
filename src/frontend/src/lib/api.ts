@@ -1496,6 +1496,39 @@ export interface SshSysinfo {
 }
 
 // ============================================================
+// 群机器人（每用户私有配置；只做单向 Webhook 推送）
+// ============================================================
+
+export type ChatBotPlatform = 'dingtalk' | 'feishu';
+
+export interface ChatBotConfigRead {
+  platform: ChatBotPlatform;
+  configured: boolean;
+  has_secret: boolean;
+  updated_at: string | null;
+  last_delivered_at: string | null;
+}
+
+export interface ChatBotConfigInput {
+  /** 可填完整官方 Webhook，或其中的 access_token / hook id。 */
+  robot_id: string;
+  /** 开启机器人「签名校验」时填写；明文只在本次请求中出现。 */
+  secret?: string;
+}
+
+export interface ChatBotMessageInput {
+  title?: string;
+  text: string;
+  link?: string;
+}
+
+export interface ChatBotDeliveryRead {
+  platform: ChatBotPlatform;
+  delivered: boolean;
+  parts: number;
+}
+
+// ============================================================
 // M4 · Experiments（实验，与 kind=experiment 的 voyage 1:1）
 // ============================================================
 
@@ -3519,6 +3552,23 @@ export const api = {
   },
   postSessionMessage(sessionId: string, content: string): Promise<ReviewMessageRead> {
     return requestJson<ReviewMessageRead>(`/sessions/${sessionId}/messages`, 'POST', { content });
+  },
+
+  // —— 群机器人：本人配置 + 单向推送 ——
+  listChatBotConfigs(): Promise<ChatBotConfigRead[]> {
+    return request<ChatBotConfigRead[]>('/chat-bots');
+  },
+  saveChatBotConfig(platform: ChatBotPlatform, input: ChatBotConfigInput): Promise<ChatBotConfigRead> {
+    return requestJson<ChatBotConfigRead>(`/chat-bots/${platform}`, 'PUT', input);
+  },
+  deleteChatBotConfig(platform: ChatBotPlatform): Promise<void> {
+    return request<void>(`/chat-bots/${platform}`, { method: 'DELETE' });
+  },
+  testChatBotConfig(platform: ChatBotPlatform): Promise<ChatBotDeliveryRead> {
+    return request<ChatBotDeliveryRead>(`/chat-bots/${platform}/test`, { method: 'POST' });
+  },
+  sendChatBotMessage(platform: ChatBotPlatform, input: ChatBotMessageInput): Promise<ChatBotDeliveryRead> {
+    return requestJson<ChatBotDeliveryRead>(`/chat-bots/${platform}/messages`, 'POST', input);
   },
 
   // —— M4 · SSH 凭据 ——

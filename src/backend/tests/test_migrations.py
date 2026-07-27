@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a9f1c62b70d5"  # 概念转正门槛（concepts.status）
+HEAD_REVISION = "d4e8b71c2a90"  # 每用户群机器人 Webhook 配置
+CONCEPT_STATUS_REVISION = "a9f1c62b70d5"  # 概念转正门槛（concepts.status）
 INDEX_META_REVISION = "c4e7b2a91f38"  # 分段来源标记 + 向量构建元信息
 CONCEPTS_REVISION = "b6c2f81d4a09"  # 概念统一到论文级
 PREV_REVISION = "a7d0c9e51b34"  # 解读统一到 paper_wikis
@@ -80,6 +81,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "activities",
                     "direction_libraries",
                     "projects",
+                    "chat_bot_configs",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -290,8 +292,24 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"concepts_pre_unify", "paper_concepts_pre_unify"} <= columns["_tables"]
     # 本分支新增：概念转正门槛（candidate / active）
     assert "status" in columns["concepts"]
+    # 每用户群机器人配置：token / secret 只存密文，用户 × 平台唯一约束由迁移创建。
+    assert "chat_bot_configs" in columns["_tables"]
+    assert {
+        "user_id",
+        "platform",
+        "robot_id_encrypted",
+        "secret_encrypted",
+        "last_delivered_at",
+    } <= columns["chat_bot_configs"]
 
-    # 最新 revision 可往返：先退掉本次的概念状态列。
+    # 最新 revision 可往返：先退掉群机器人配置表。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == CONCEPT_STATUS_REVISION
+    assert "chat_bot_configs" not in columns["_tables"]
+    assert "status" in columns["concepts"]
+
+    # 再退掉概念状态列。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == INDEX_META_REVISION
@@ -372,6 +390,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    assert "chat_bot_configs" in columns["_tables"]
     # 索引回归；个人标签表、回收站列与两张备份表也仍在
     assert "ix_llm_usage_created_at" in _index_names(db_path, "llm_usage")
     assert "user_paper_tags" in columns["_tables"]

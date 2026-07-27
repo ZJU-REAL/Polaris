@@ -24,6 +24,7 @@ import {
   api,
   type AdminUserRead,
   type AffiliationMode,
+  type ChatBotPlatform,
   type EffectiveTestResult,
   type LlmCallLogRow,
   type LlmProviderInput,
@@ -266,6 +267,241 @@ function PreferencesTab() {
           onChange={setTaskLogHistory}
           aria-labelledby="pref-task-log-history"
         />
+      </div>
+    </div>
+  );
+}
+
+// ---------------- 群机器人（单向 Webhook 推送） ----------------
+
+const CHAT_BOT_PLATFORMS: ChatBotPlatform[] = ['dingtalk', 'feishu'];
+const CHAT_BOT_META: Record<ChatBotPlatform, {
+  zh: string;
+  en: string;
+  idZh: string;
+  idEn: string;
+  placeholder: string;
+  docs: string;
+}> = {
+  dingtalk: {
+    zh: '钉钉机器人',
+    en: 'DingTalk bot',
+    idZh: '机器人 ID / Webhook',
+    idEn: 'Bot ID / Webhook',
+    placeholder: 'https://oapi.dingtalk.com/robot/send?access_token=…',
+    docs: 'https://open.dingtalk.com/document/orgapp/custom-robot-access',
+  },
+  feishu: {
+    zh: '飞书机器人',
+    en: 'Feishu bot',
+    idZh: '机器人 ID / Webhook',
+    idEn: 'Bot ID / Webhook',
+    placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/…',
+    docs: 'https://open.feishu.cn/document/ukTMukTMukTM/ucTM5YjL3ETO24yNxkjN',
+  },
+};
+
+interface ChatBotDraft {
+  robot_id: string;
+  secret: string;
+}
+
+const EMPTY_CHAT_BOT_DRAFTS: Record<ChatBotPlatform, ChatBotDraft> = {
+  dingtalk: { robot_id: '', secret: '' },
+  feishu: { robot_id: '', secret: '' },
+};
+
+function chatBotError(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.message === 'INVALID_CHAT_BOT_ID') {
+      return tr('机器人 ID / Webhook 格式不正确，请粘贴官方地址', 'Invalid bot ID / Webhook; paste the official URL');
+    }
+    if (e.message === 'CHAT_BOT_NOT_CONFIGURED') {
+      return tr('机器人尚未配置', 'Bot is not configured');
+    }
+    if (e.message.startsWith('CHAT_BOT_DELIVERY_FAILED')) {
+      return tr('推送失败，请检查机器人 ID、Secret 和群安全设置', 'Delivery failed; check the bot ID, secret, and group security settings');
+    }
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+function ChatBotsTab() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['chat-bots'],
+    queryFn: () => api.listChatBotConfigs(),
+    retry: false,
+  });
+  const [drafts, setDrafts] = useState<Record<ChatBotPlatform, ChatBotDraft>>(
+    EMPTY_CHAT_BOT_DRAFTS,
+  );
+
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['chat-bots'] });
+  const saveMutation = useMutation({
+    mutationFn: (platform: ChatBotPlatform) => {
+      const draft = drafts[platform];
+      return api.saveChatBotConfig(platform, {
+        robot_id: draft.robot_id.trim(),
+        ...(draft.secret.trim() ? { secret: draft.secret.trim() } : {}),
+      });
+    },
+    onSuccess: (_, platform) => {
+      setDrafts((current) => ({ ...current, [platform]: { robot_id: '', secret: '' } }));
+      invalidate();
+      toast(tr(`${CHAT_BOT_META[platform].zh}配置已加密保存`, `${CHAT_BOT_META[platform].en} configuration saved encrypted`), 'ok');
+    },
+    onError: (e) => toast(`${tr('保存失败', 'Save failed')}：${chatBotError(e)}`, 'error'),
+  });
+  const testMutation = useMutation({
+    mutationFn: (platform: ChatBotPlatform) => api.testChatBotConfig(platform),
+    onSuccess: (_, platform) => {
+      invalidate();
+      toast(tr(`测试消息已发送到${CHAT_BOT_META[platform].zh}群`, `Test message sent to the ${CHAT_BOT_META[platform].en} group`), 'ok');
+    },
+    onError: (e) => toast(`${tr('测试失败', 'Test failed')}：${chatBotError(e)}`, 'error'),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (platform: ChatBotPlatform) => api.deleteChatBotConfig(platform),
+    onSuccess: (_, platform) => {
+      invalidate();
+      toast(tr(`${CHAT_BOT_META[platform].zh}配置已删除`, `${CHAT_BOT_META[platform].en} configuration deleted`), 'ok');
+    },
+    onError: (e) => toast(`${tr('删除失败', 'Delete failed')}：${chatBotError(e)}`, 'error'),
+  });
+
+  if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
+  if (isError || !data) {
+    return (
+      <div className="empty">
+        {tr('无法加载群机器人配置', 'Failed to load bot configurations')}
+        <div style={{ marginTop: 10 }}>
+          <button className="btn btn-soft sm" onClick={() => void refetch()}>{tr('重试', 'Retry')}</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 760 }}>
+      <div className="card card-pad" style={{ marginBottom: 14 }}>
+        <div className="section-h">{tr('群机器人单向推送', 'One-way group bot delivery')}</div>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.65, marginTop: 6 }}>
+          {tr(
+            '在钉钉或飞书目标群中添加“自定义机器人”，开启“签名校验”，然后把 Webhook（或其中的机器人 ID）和 Secret 填在下面。之后在文献对话或 AI 伴读里输入 @ 并选择机器人，Polaris 会在回答完成后直接推送到群；群成员无需再 @ 机器人。',
+            'Add a custom bot to the target DingTalk or Feishu group, enable signature verification, then enter its Webhook (or bot ID) and secret below. In literature chat or AI reading, type @ and select the bot; Polaris pushes the completed answer directly to the group, with no need to mention the bot there.',
+          )}
+        </div>
+      </div>
+
+      <div className="col gap14">
+        {CHAT_BOT_PLATFORMS.map((platform) => {
+          const meta = CHAT_BOT_META[platform];
+          const config = data.find((item) => item.platform === platform);
+          const draft = drafts[platform];
+          const busy =
+            (saveMutation.isPending && saveMutation.variables === platform) ||
+            (testMutation.isPending && testMutation.variables === platform) ||
+            (deleteMutation.isPending && deleteMutation.variables === platform);
+          return (
+            <div key={platform} className="card card-pad">
+              <div className="row gap10" style={{ marginBottom: 14, alignItems: 'center' }}>
+                <Icon name="chat" size={16} style={{ color: 'var(--accent)' }} />
+                <span className="section-h">{tr(meta.zh, meta.en)}</span>
+                <span
+                  className="pill sm"
+                  style={config?.configured
+                    ? { background: 'var(--ok-bg)', color: 'var(--ok-tx)' }
+                    : { background: 'var(--surface-3)', color: 'var(--text-3)' }}
+                >
+                  {config?.configured
+                    ? tr(config.has_secret ? '已配置 · 已加签' : '已配置 · 未加签', config.has_secret ? 'Configured · signed' : 'Configured · unsigned')
+                    : tr('未配置', 'Not configured')}
+                </span>
+                <a href={meta.docs} target="_blank" rel="noreferrer noopener" className="btn btn-ghost sm" style={{ marginLeft: 'auto' }}>
+                  {tr('官方配置说明', 'Official setup guide')}
+                </a>
+              </div>
+
+              <FormField
+                label={tr(meta.idZh, meta.idEn)}
+                hint={tr(
+                  '推荐直接粘贴完整 Webhook；后端只保存提取出的 ID，并拒绝非官方域名。已配置的值不会回传，更新时请重新填写。',
+                  'Paste the full Webhook. The backend stores only the extracted ID and rejects non-official hosts. Saved values are write-only; re-enter them to update.',
+                )}
+              >
+                <input
+                  className="input mono"
+                  value={draft.robot_id}
+                  onChange={(e) => setDrafts((current) => ({
+                    ...current,
+                    [platform]: { ...current[platform], robot_id: e.target.value },
+                  }))}
+                  placeholder={config?.configured ? tr('已加密保存；填写新值可替换', 'Saved encrypted; enter a new value to replace') : meta.placeholder}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </FormField>
+              <FormField
+                label={tr('签名 Secret', 'Signing secret')}
+                hint={tr(
+                  '推荐在机器人安全设置中开启“签名校验”并填写。若机器人没有开启签名校验，可留空。',
+                  'Recommended: enable signature verification in the bot security settings and enter the secret. Leave blank only if signing is disabled for the bot.',
+                )}
+              >
+                <input
+                  className="input mono"
+                  type="password"
+                  value={draft.secret}
+                  onChange={(e) => setDrafts((current) => ({
+                    ...current,
+                    [platform]: { ...current[platform], secret: e.target.value },
+                  }))}
+                  placeholder={config?.has_secret ? tr('已加密保存', 'Saved encrypted') : tr('可选', 'Optional')}
+                  autoComplete="new-password"
+                />
+              </FormField>
+
+              <div className="row gap8" style={{ justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                {config?.last_delivered_at && (
+                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)', marginRight: 'auto' }}>
+                    {tr('最近发送', 'Last sent')}：{fmtTime(config.last_delivered_at)}
+                  </span>
+                )}
+                {config?.configured && (
+                  <>
+                    <button
+                      className="btn btn-soft sm"
+                      disabled={busy}
+                      title={tr('会向目标群实际发送一条测试消息', 'Sends a real test message to the target group')}
+                      onClick={() => testMutation.mutate(platform)}
+                    >
+                      {testMutation.isPending && testMutation.variables === platform ? tr('发送中…', 'Sending…') : tr('发送测试消息', 'Send test message')}
+                    </button>
+                    <button
+                      className="btn btn-ghost sm"
+                      disabled={busy}
+                      onClick={() => {
+                        if (window.confirm(tr(`删除${meta.zh}配置？`, `Delete the ${meta.en} configuration?`))) {
+                          deleteMutation.mutate(platform);
+                        }
+                      }}
+                    >
+                      {tr('删除配置', 'Delete')}
+                    </button>
+                  </>
+                )}
+                <button
+                  className="btn btn-primary sm"
+                  disabled={busy || draft.robot_id.trim() === ''}
+                  onClick={() => saveMutation.mutate(platform)}
+                >
+                  {saveMutation.isPending && saveMutation.variables === platform ? tr('保存中…', 'Saving…') : tr('保存配置', 'Save')}
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -2349,7 +2585,7 @@ function MyUsageTab() {
 // ---------------- 页面 ----------------
 
 /** 普通用户设置的标签页（管理员那组在 /admin，见 AdminSettingsPage）。 */
-type Tab = 'personal' | 'chat' | 'prefs' | 'ssh' | 'mymodels' | 'myusage' | 'mcp';
+type Tab = 'personal' | 'chat' | 'prefs' | 'bots' | 'ssh' | 'mymodels' | 'myusage' | 'mcp';
 
 /** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
 export const ADMIN_TABS = ['llm', 'daily', 'usage', 'users', 'codes', 'feedback'] as const;
@@ -3354,7 +3590,7 @@ export function CodesTab() {
   );
 }
 
-const PERSONAL_TABS: Tab[] = ['personal', 'chat', 'prefs', 'ssh', 'mymodels', 'myusage', 'mcp'];
+const PERSONAL_TABS: Tab[] = ['personal', 'chat', 'prefs', 'bots', 'ssh', 'mymodels', 'myusage', 'mcp'];
 
 export function SettingsPage() {
   // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
@@ -3373,6 +3609,7 @@ export function SettingsPage() {
     { v: 'personal', label: tr('个人信息', 'Profile') },
     { v: 'chat', label: tr('文献对话', 'Literature chat') },
     { v: 'prefs', label: tr('界面偏好', 'Interface') },
+    { v: 'bots', label: tr('群机器人', 'Group bots') },
     { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
     { v: 'mymodels', label: tr('我的模型', 'My LLM') },
     { v: 'myusage', label: tr('用量', 'Usage') },
@@ -3388,6 +3625,7 @@ export function SettingsPage() {
       {tab === 'personal' && <PersonalTab />}
       {tab === 'chat' && <ChatPrefsTab />}
       {tab === 'prefs' && <PreferencesTab />}
+      {tab === 'bots' && <ChatBotsTab />}
       {tab === 'ssh' && <SshTab />}
       {tab === 'mymodels' && <MyLlmTab />}
       {tab === 'myusage' && <MyUsageTab />}

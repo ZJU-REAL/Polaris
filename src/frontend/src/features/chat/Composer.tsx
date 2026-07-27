@@ -62,6 +62,14 @@ export function Composer({
   const [hi, setHi] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
+  const botConfigsQ = useQuery({
+    queryKey: ['chat-bots'],
+    queryFn: () => api.listChatBotConfigs(),
+    enabled: menu?.type === 'mention',
+    retry: false,
+    staleTime: 60_000,
+  });
+
   // —— / 选择器候选：按需拉取真实列表 ——
   const slashOpen = menu?.type === 'slash';
   const papersQ = useQuery({
@@ -124,10 +132,17 @@ export function Composer({
         label: m.display_name || m.email || tr('成员', 'Member'),
         sub: m.email ?? undefined,
       }));
-    const all = [...users, ...BOTS];
+    const bots = BOTS.map((bot) => {
+      const config = botConfigsQ.data?.find((item) => item.platform === bot.kind);
+      const status = config?.configured
+        ? tr('已配置', 'Configured')
+        : tr('未配置 · 请先到设置页填写', 'Not configured · set it up in Settings');
+      return { ...bot, sub: `${bot.sub} · ${status}` };
+    });
+    const all = [...users, ...bots];
     const q = menu.query.toLowerCase();
     return all.filter((t) => !q || t.label.toLowerCase().includes(q) || (t.sub ?? '').toLowerCase().includes(q));
-  }, [menu, currentProject?.members]);
+  }, [menu, currentProject?.members, botConfigsQ.data]);
 
   const menuLen = slashOpen ? slashItems.length : mentionItems.length;
   useEffect(() => {

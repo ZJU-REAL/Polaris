@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
-import { api, skillKindLabel, type ChatTurn } from '../../lib/api';
+import { ApiError, api, skillKindLabel, type ChatTurn } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useIsMobile } from '../../lib/useBreakpoint';
 import { useChatHistory } from './useChatHistory';
@@ -69,6 +69,18 @@ function recommendPrompt(context: ContextRef[], shareLink?: string | null): stri
   ].filter(Boolean).join('\n\n');
 }
 
+function robotShareError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.message === 'CHAT_BOT_NOT_CONFIGURED') {
+      return tr('尚未配置该机器人，请先到“设置 → 群机器人”填写 ID 和 Secret', 'This bot is not configured. Add its ID and secret under Settings → Group bots.');
+    }
+    if (error.message.startsWith('CHAT_BOT_DELIVERY_FAILED')) {
+      return tr('机器人拒绝了推送，请检查 ID、Secret 与群安全设置', 'The bot rejected delivery. Check its ID, secret, and group security settings.');
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function ChatSurface(cfg: ChatSurfaceConfig) {
   const history = useChatHistory(cfg.surfaceKey);
   const { activeMsgs, commit } = history;
@@ -85,7 +97,7 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 是否「贴着底部」：用户往上滚离底部后暂停自动跟随，滚回底部再恢复
   const stickBottomRef = useRef(true);
-  // 提交后待发的分享目标（回答完成时触发桩投递提示）
+  // 提交后待发的分享目标（回答完成时触发平台用户提示或群机器人真实投递）
   const pendingShareRef = useRef<MentionTarget | null>(null);
 
   const skillsQ = useQuery({
@@ -114,26 +126,46 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   };
 
-  const finishStream = (failed: boolean, fallbackText?: string) => {
+  const finishStream = (failed: boolean, fallbackText?: string, deliverShare = true) => {
     setStreaming(false);
     stopRef.current = null;
-    commit(
-      withLastAssistant(activeMsgsRef.current, (last) => ({
-        ...last,
-        done: true,
-        failed: failed || undefined,
-        content: last.content || fallbackText || '',
-      })),
-    );
-    // 桩投递：回答完成后提示「已排队，后端待接」
+    const finalMsgs = withLastAssistant(activeMsgsRef.current, (last) => ({
+      ...last,
+      done: true,
+      failed: failed || undefined,
+      content: last.content || fallbackText || '',
+    }));
+    activeMsgsRef.current = finalMsgs;
+    commit(finalMsgs);
     const share = pendingShareRef.current;
     pendingShareRef.current = null;
-    if (share && !failed) {
+    if (share && !failed && deliverShare) {
       const link = cfg.shareLink ? tr('，已附论文链接', ' with paper link') : '';
-      toast(
-        tr(`已排队分享给 ${share.label}${link}（后端待接）`, `Queued to share with ${share.label}${link} (backend pending)`),
-        'ok',
-      );
+      if (share.kind === 'user') {
+        // 平台成员私信不在本次群机器人单向推送范围内，保留原有提示。
+        toast(
+          tr(`已排队分享给 ${share.label}${link}（成员分享后端待接）`, `Queued to share with ${share.label}${link} (member delivery pending)`),
+          'info',
+        );
+        return;
+      }
+      const assistant = finalMsgs[finalMsgs.length - 1];
+      const text = assistant?.role === 'assistant' ? assistant.content.trim() : '';
+      if (!text) {
+        toast(tr('回答为空，未向群机器人推送', 'The answer was empty, so nothing was sent to the group bot.'), 'error');
+        return;
+      }
+      toast(tr(`正在推送给 ${share.label}…`, `Sending to ${share.label}…`), 'info');
+      void api.sendChatBotMessage(share.kind, {
+        title: tr('Polaris AI 分享', 'Shared from Polaris AI'),
+        text,
+        ...(cfg.shareLink ? { link: cfg.shareLink } : {}),
+      }).then((result) => {
+        const parts = result.parts > 1 ? tr(`（${result.parts} 条）`, ` (${result.parts} messages)`) : '';
+        toast(tr(`已分享给 ${share.label}${link}${parts}`, `Shared with ${share.label}${link}${parts}`), 'ok');
+      }).catch((error: unknown) => {
+        toast(`${tr('分享失败', 'Share failed')}：${robotShareError(error)}`, 'error');
+      });
     }
   };
 
@@ -203,7 +235,8 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
 
   const stop = () => {
     stopRef.current?.();
-    finishStream(false);
+    // 人工停止只结束本地生成，不把不完整回答发到外部群。
+    finishStream(false, undefined, false);
   };
 
   const questionFor = (idx: number): string => {
