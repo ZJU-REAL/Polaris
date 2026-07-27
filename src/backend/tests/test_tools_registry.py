@@ -8,6 +8,8 @@ import app.tools as tools
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.idea import Idea
+from app.services import chunks as chunks_service
+from app.services import papers as papers_service
 from app.tools import ToolContext
 from tests.conftest import add_concept, add_paper
 
@@ -72,6 +74,64 @@ async def test_run_tool_unknown_and_bad_args():
         await tools.run_tool(ctx, "nope", {})
     with pytest.raises(ValueError, match="JSON 对象"):
         await tools.run_tool(ctx, "search_papers", ["not", "a", "dict"])  # type: ignore[arg-type]
+
+
+async def test_search_tools_fall_back_when_embedding_is_down(client, monkeypatch):
+    """embedding 服务挂了 → 语义检索降级到关键词，而不是整个工具报错。
+
+    线上真出过：embedding 机器不可达，router 重试 4 次后抛 RuntimeError，
+    search_chunks / find_figures 直接失败（各卡 48s）。库内检索本来就有关键词兜底，
+    不该因为向量那一路挂了就整个不能用。
+    """
+    project_id = await _project(client, email="embed-down@example.com")
+    async with get_sessionmaker()() as session:
+        session.add(
+            await add_paper(
+                session,
+                project_id=project_id,
+                source="manual",
+                title="Retrieval Augmented Agents",
+                abstract="retrieval augmented generation for research agents",
+                status="compiled",
+            )
+        )
+        await session.commit()
+
+    # 假装向量检索可用（sqlite 本来会直接走关键词，测不到降级路径）
+    monkeypatch.setattr(papers_service, "semantic_search_supported", lambda session: True)
+    monkeypatch.setattr(chunks_service, "chunk_vector_search_supported", lambda session: True)
+
+    async def _embedding_down(*args, **kwargs):
+        raise RuntimeError("openai_compat 请求 embeddings 重试 4 次后仍失败")
+
+    monkeypatch.setattr(LLMRouter, "embed", _embedding_down)
+    ctx = _ctx(project_id)
+
+    res = await tools.run_tool(ctx, "search_papers", {"query": "retrieval", "mode": "semantic"})
+    assert res["mode"] == "keyword"
+    assert any("Retrieval" in p["title"] for p in res["results"])
+
+    res = await tools.run_tool(ctx, "search_chunks", {"query": "retrieval"})
+    assert res["mode"] == "keyword"
+
+    # find_figures 内部复用 search_papers，同样不该被 embedding 拖垮
+    res = await tools.run_tool(ctx, "find_figures", {"query": "retrieval"})
+    assert res["figures"] == []
+
+
+async def test_search_chunks_keyword_mode_skips_embedding(client, monkeypatch):
+    """mode=keyword 时压根不碰 embedding —— 自检就是靠这个保持便宜、确定。"""
+    project_id = await _project(client, email="chunks-keyword@example.com")
+
+    monkeypatch.setattr(chunks_service, "chunk_vector_search_supported", lambda session: True)
+
+    async def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("mode=keyword 不该调用 embedding")
+
+    monkeypatch.setattr(LLMRouter, "embed", _must_not_be_called)
+
+    res = await tools.run_tool(_ctx(project_id), "search_chunks", {"query": "x", "mode": "keyword"})
+    assert res["mode"] == "keyword"
 
 
 # ---- 端到端：库内只读工具（走真实 DB，离线 fake LLM） ----

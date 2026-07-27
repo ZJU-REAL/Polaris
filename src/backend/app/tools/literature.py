@@ -105,7 +105,7 @@ async def search_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                     session, project_id=ctx.project_id, query_vector=vectors[0], limit=k
                 )
                 used_mode = "semantic"
-            except NotImplementedError:
+            except Exception:  # noqa: BLE001 — embedding 服务挂了也要能用，降级到关键词
                 rows = []
         if not rows:  # semantic 不可用/无召回 → 关键词降级
             rows = await papers_service.keyword_search_papers(

@@ -145,14 +145,25 @@ that, both routed through `app/mcp/dispatch.call_tool`, the exact path external 
 | `POST /api/mcp/tools/{name}/invoke` | Runs one tool with arguments you supply and returns the raw MCP content blocks (text plus inline images), so you see what a client would see. |
 | `POST /api/mcp/selfcheck` | Collects sample data from a topic (a paper, a figure, a concept, an idea, an experiment, a manuscript), fills each tool's required arguments, and runs the whole catalog, reporting `ok` / `error` / `skipped` per tool. |
 
-Both live behind the **Settings → MCP** page: a topic picker, a one-click self-check that badges
-every tool card, and a per-tool "try it" panel prefilled with the self-check's sample arguments.
+Both live behind the **Settings → MCP** page, which has two views:
+
+- **Tool catalog** — every tool as a card, badged with its self-check result, each with an inline
+  "try it" panel prefilled with the self-check's sample arguments.
+- **Playground** — a searchable tool list plus a full debugging panel: a schema-generated argument
+  form or hand-written JSON, the response rendered exactly as a client receives it (text and inline
+  images), the equivalent JSON-RPC `tools/call` request (copyable, to replay from your own client),
+  and this session's call history, where clicking an entry replays its arguments and result.
 
 Sample arguments are chosen to keep a self-check cheap and deterministic: filter-style optional
 parameters are left unset, `mode` is pinned to `keyword` so no embedding call is made, and figure
 tools render at 512 px. Network tools are skipped unless `include_network` is set, since they really
 call Semantic Scholar and OpenAlex. A tool whose required argument has no sample in that topic (no
 manuscript yet, no extracted figures) is reported as `skipped`, not as a failure.
+
+`search_papers`, `search_chunks`, and `find_figures` all take `mode` (`keyword` | `semantic`), and
+all three fall back to keyword search when the embedding call fails for any reason — the embedding
+service being unreachable degrades result quality, it does not take the tool down. Without that
+fallback a dead embedding host turned into a ~48s retry storm and a red self-check.
 
 `tests/test_mcp_server.py::test_selfcheck` runs the same self-check against the test fixtures and
 fails if any tool reports `error`, so tool rot surfaces in CI rather than in a client.

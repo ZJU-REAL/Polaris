@@ -28,6 +28,7 @@ _MAX_K = 12
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "检索问题/关键词"},
+            "mode": {"type": "string", "enum": ["keyword", "semantic"], "default": "semantic"},
             "k": {"type": "integer", "minimum": 1, "maximum": _MAX_K, "default": 6},
         },
         "required": ["query"],
@@ -39,12 +40,17 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     if not query:
         raise ValueError("search_chunks 需要非空 query")
     k = min(_MAX_K, max(1, int(args.get("k") or 6)))
+    mode = str(args.get("mode") or "semantic")
 
     async with get_sessionmaker()() as session:
         library_ids = await get_source_library_ids(session, ctx.project_id)
         rows: list[tuple[PaperChunk, float]] = []
         used_mode = "keyword"
-        if library_ids and chunks_service.chunk_vector_search_supported(session):
+        if (
+            mode == "semantic"
+            and library_ids
+            and chunks_service.chunk_vector_search_supported(session)
+        ):
             try:
                 vectors = await ctx.llm.embed(
                     [query],
@@ -56,7 +62,7 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                     session, library_ids=library_ids, query_vector=vectors[0], limit=k
                 )
                 used_mode = "semantic"
-            except NotImplementedError:
+            except Exception:  # noqa: BLE001 — embedding 服务挂了也要能用，降级到关键词
                 rows = []
         if not rows and library_ids:
             rows = await chunks_service.keyword_search_chunks(

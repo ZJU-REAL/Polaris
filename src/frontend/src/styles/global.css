@@ -1206,6 +1206,9 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   * { -webkit-tap-highlight-color: transparent; }
   .content { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 
+  /* MCP 调试台：工具清单 + 调试区在窄屏上下堆叠（覆盖组件里的两列内联样式） */
+  .mcp-playground { grid-template-columns: minmax(0, 1fr) !important; }
+
   /* —— 侧栏改覆盖式抽屉（配合 AppShell 的 .app.nav-open）——
         脱离 flex 流，主列独占全宽；默认滑出屏外，不占位也不可点。 */
   .sidebar {

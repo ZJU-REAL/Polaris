@@ -204,6 +204,7 @@ async def get_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> ToolResul
         "properties": {
             "query": {"type": "string", "description": "主题关键词，如 检索增强 方法图"},
             "kind": {"type": "string", "enum": FIGURE_KINDS, "description": "只找某类型（可选）"},
+            "mode": {"type": "string", "enum": ["keyword", "semantic"], "default": "semantic"},
             "k": {"type": "integer", "minimum": 1, "maximum": 20, "description": "最多图数,默认8"},
         },
         "required": ["query"],
@@ -216,9 +217,10 @@ async def find_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]
         raise ValueError("find_figures 需要非空 query")
     kind = str(args.get("kind") or "").strip() or None
     k = max(1, min(20, int(args.get("k") or 8)))
+    mode = str(args.get("mode") or "semantic")
 
-    # 复用库内论文检索，再从命中论文里收重要图
-    search = await _search_papers(ctx, {"query": query, "k": 8})
+    # 复用库内论文检索，再从命中论文里收重要图（mode 透传：keyword 不碰 embedding）
+    search = await _search_papers(ctx, {"query": query, "k": 8, "mode": mode})
     paper_ids = [uuid.UUID(p["paper_id"]) for p in search.get("results", [])]
     out: list[dict[str, Any]] = []
     async with get_sessionmaker()() as session:

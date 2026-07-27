@@ -10,6 +10,7 @@ import { copyText } from '../../lib/clipboard';
 import { useProject } from '../../app/project';
 import { api, getToken, type McpToolCheck, type McpToolInfo } from '../../lib/api';
 import { ToolRunner } from './ToolRunner';
+import { McpPlayground } from './McpPlayground';
 
 function copy(text: string) {
   void copyText(text).then((ok) =>
@@ -195,6 +196,7 @@ export function McpToolsContent() {
     retry: false,
   });
   const [filter, setFilter] = useState<'all' | 'library' | 'network' | 'failed'>('all');
+  const [view, setView] = useState<'catalog' | 'playground'>('catalog');
 
   const { projects, currentProjectId } = useProject();
   const [pickedProjectId, setPickedProjectId] = useState<string | null>(null);
@@ -370,29 +372,45 @@ export function McpToolsContent() {
         )}
       </div>
 
-      {/* 工具目录 */}
+      {/* 工具目录 / 调试台 */}
       <div className="row wrap gap8" style={{ marginBottom: 14, alignItems: 'center' }}>
-        <strong style={{ fontSize: 14 }}>{tr('工具目录', 'Tool catalog')}</strong>
-        {data && <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>{tools.length}</span>}
-        <div style={{ marginLeft: 'auto' }}>
-          <Segmented
-            options={[
-              { v: 'all', label: tr('全部', 'All') },
-              { v: 'library', label: tr('库内', 'Library') },
-              { v: 'network', label: tr('联网', 'Network') },
-              ...(report && report.summary.error > 0
-                ? [{ v: 'failed' as const, label: tr('失效', 'Broken') }]
-                : []),
-            ]}
-            value={filter}
-            onChange={setFilter}
-          />
-        </div>
+        <Segmented
+          options={[
+            { v: 'catalog', label: tr('工具目录', 'Tool catalog') },
+            { v: 'playground', label: tr('调试台', 'Playground') },
+          ]}
+          value={view}
+          onChange={setView}
+        />
+        {data && (
+          <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+            {tools.length}
+          </span>
+        )}
+        {view === 'catalog' && (
+          <div style={{ marginLeft: 'auto' }}>
+            <Segmented
+              options={[
+                { v: 'all', label: tr('全部', 'All') },
+                { v: 'library', label: tr('库内', 'Library') },
+                { v: 'network', label: tr('联网', 'Network') },
+                ...(report && report.summary.error > 0
+                  ? [{ v: 'failed' as const, label: tr('失效', 'Broken') }]
+                  : []),
+              ]}
+              value={filter}
+              onChange={setFilter}
+            />
+          </div>
+        )}
       </div>
 
       {isLoading && <EmptyState icon="server" title={tr('加载中…', 'Loading…')} />}
       {isError && <EmptyState icon="server" title={tr('加载失败', 'Failed to load')} />}
-      {data && (
+      {data && view === 'playground' && (
+        <McpPlayground tools={tools} projectId={projectId} checks={checks} />
+      )}
+      {data && view === 'catalog' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))', gap: 12 }}>
           {shown.map((t) => (
             <ToolCard key={t.name} t={t} check={checks.get(t.name)} projectId={projectId} />

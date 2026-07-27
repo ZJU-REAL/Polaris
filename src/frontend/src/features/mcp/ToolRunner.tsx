@@ -7,9 +7,12 @@ import { api, type McpInvokeResult, type McpToolInfo, type McpToolParam } from '
 /* ============================================================
    单个 MCP 工具的试运行面板：填参数 → 运行 → 看外部客户端会收到的内容。
    走 POST /mcp/tools/{name}/invoke，与真实 MCP 调用同一条路径。
+
+   表单控件、参数转换与结果渲染在这里定义并导出，调试台（McpPlayground）复用同一套，
+   保证「卡片里试一下」和「调试台里试一下」跑出来的东西逐字一致。
    ============================================================ */
 
-const RESULT_BOX: CSSProperties = {
+export const RESULT_BOX: CSSProperties = {
   fontFamily: 'var(--mono)',
   fontSize: 11.5,
   lineHeight: 1.55,
@@ -26,7 +29,7 @@ const RESULT_BOX: CSSProperties = {
 };
 
 /** 把表单里的字符串按参数类型还原成 JSON 值；空串 = 不传该参数。 */
-function coerce(params: McpToolParam[], raw: Record<string, string>): Record<string, unknown> {
+export function coerce(params: McpToolParam[], raw: Record<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const p of params) {
     const value = (raw[p.name] ?? '').trim();
@@ -41,7 +44,7 @@ function coerce(params: McpToolParam[], raw: Record<string, string>): Record<str
 }
 
 /** 自检给出的样例参数 → 表单初值（数字/布尔转成字符串）。 */
-function toFormValues(args: Record<string, unknown> | null | undefined): Record<string, string> {
+export function toFormValues(args: Record<string, unknown> | null | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(args ?? {})) {
     if (v === null || v === undefined) continue;
@@ -50,7 +53,7 @@ function toFormValues(args: Record<string, unknown> | null | undefined): Record<
   return out;
 }
 
-function ParamField({
+export function ParamField({
   param,
   value,
   onChange,
@@ -98,7 +101,7 @@ function ParamField({
 }
 
 /** 结果区：文本块原样展示，图片块转 data URL 预览。 */
-function ResultView({ result }: { result: McpInvokeResult }) {
+export function ResultView({ result }: { result: McpInvokeResult }) {
   const texts = result.content.filter((b) => b.type === 'text');
   const images = result.content.filter((b) => b.type === 'image' && b.data);
   return (
