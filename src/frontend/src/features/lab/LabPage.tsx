@@ -8,7 +8,14 @@ import { Segmented } from '../../components/ui/Segmented';
 import { StatCard } from '../../components/ui/StatCard';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
-import { api, isAdmin, type DirectionLibrarySummary, type LabStats, type VoyageRead } from '../../lib/api';
+import {
+  api,
+  isAdmin,
+  type DailyIngestStatus,
+  type DirectionLibrarySummary,
+  type LabStats,
+  type VoyageRead,
+} from '../../lib/api';
 import { fmtFullTime, fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 import { stageLabel } from '../../lib/stageLabels';
@@ -175,6 +182,51 @@ function LibrariesCard() {
 }
 
 
+/** 一个库今天的收录情况：状态点 + 名字 + 「扫 N → 收 M」。点进去看那轮任务详情。 */
+function IngestRow({ row }: { row: DailyIngestStatus }) {
+  const running = !['done', 'failed', 'cancelled', 'paused_error'].includes(row.status);
+  const broken = row.status === 'failed' || row.status === 'paused_error';
+  const dot = running ? 'var(--accent)' : broken ? 'var(--danger)' : 'var(--ok)';
+  return (
+    <Link
+      to={`/voyages/${row.voyage_id}`}
+      className="row gap8"
+      style={{
+        alignItems: 'center', padding: '6px 0', textDecoration: 'none',
+        color: 'inherit', borderTop: '0.5px solid var(--border)',
+      }}
+      title={tr(
+        `扫过 ${row.feed_total} 篇，送评 ${row.candidates} 篇，收下 ${row.admitted} 篇，淘汰 ${row.rejected} 篇，编译 ${row.compiled} 篇`,
+        `${row.feed_total} scanned, ${row.candidates} scored, ${row.admitted} kept, ${row.rejected} dropped, ${row.compiled} compiled`,
+      )}
+    >
+      <span
+        style={{
+          width: 6, height: 6, borderRadius: '50%', background: dot, flexShrink: 0,
+          animation: running ? 'pulse 1.4s ease-in-out infinite' : undefined,
+        }}
+      />
+      <span style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {row.library_name}
+      </span>
+      {running ? (
+        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+          {tr('同步中', 'Syncing')}
+        </span>
+      ) : broken ? (
+        <span className="mono" style={{ fontSize: 10.5, color: 'var(--danger)' }}>
+          {tr('未完成', 'Unfinished')}
+        </span>
+      ) : (
+        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+          {row.feed_total} → <span style={{ color: 'var(--text-1)', fontWeight: 650 }}>{row.admitted}</span>
+        </span>
+      )}
+      <Icon name="chevron" size={11} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
+    </Link>
+  );
+}
+
 /** 每日新论文汇总卡：今日新增 / 近 7 天合计 + 最近 7 天迷你分布（单色柱，标签用文本色）。 */
 function DailyCard() {
   const { data, isLoading, isError } = useQuery({
@@ -184,6 +236,30 @@ function DailyCard() {
     retry: false,
     staleTime: 60_000,
   });
+  // 保留天数由管理员配置，别写死
+  const retentionQuery = useQuery({
+    queryKey: ['daily-retention'],
+    queryFn: () => api.getDailyRetention(),
+    retry: false,
+    staleTime: 300_000,
+  });
+  const retentionDays = retentionQuery.data?.days ?? 14;
+  // 今天各库的收录情况：抓取成功但一篇没收，和压根没触发同步，看起来是一样的
+  const ingestQuery = useQuery({
+    queryKey: ['daily-ingest-status'],
+    queryFn: () => api.listDailyIngestStatus(),
+    retry: false,
+    staleTime: 30_000,
+    // 有库还在同步时自动刷新，跑完就停
+    refetchInterval: (query) => {
+      const rows = query.state.data ?? [];
+      const busy = rows.some(
+        (r) => !['done', 'failed', 'cancelled', 'paused_error'].includes(r.status),
+      );
+      return busy ? 15_000 : false;
+    },
+  });
+  const ingestRows = ingestQuery.data ?? [];
 
   const days = useMemo(() => [...(data ?? [])].sort((a, b) => a.date.localeCompare(b.date)).slice(-7), [data]);
   // 「最新一批」而非「今天」：arxiv 按 UTC 出批次，用本地日期匹配会在跨时区/周末显示 0
@@ -201,7 +277,10 @@ function DailyCard() {
             {tr('每日新论文', 'Daily Papers')}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
-            {tr('arXiv 每日新提交，保留最近 7 天', 'New arXiv submissions, last 7 days kept')}
+            {tr(
+              `arXiv 每日新提交，保留最近 ${retentionDays} 天`,
+              `New arXiv submissions, last ${retentionDays} days kept`,
+            )}
           </div>
         </div>
         <Link className="btn btn-soft sm" to="/daily">
@@ -279,6 +358,35 @@ function DailyCard() {
                 </div>
               </Link>
             ))}
+          </div>
+
+          {/* 今天各库收了什么。列表只到「扫了多少 → 收了多少」，完整漏斗在 title 里，
+              点进去是那轮任务详情——这里是概览，不该把五个数字都摊在卡片上。 */}
+          <div style={{ marginTop: 16 }}>
+            <div className="row gap6" style={{ alignItems: 'baseline', marginBottom: 4 }}>
+              <span style={{ fontSize: 11.5, color: 'var(--text-2)', fontWeight: 600 }}>
+                {tr('文献库自动收录', 'Auto-collected into libraries')}
+              </span>
+              <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                {tr('今天', 'today')}
+              </span>
+            </div>
+            {ingestQuery.isLoading ? (
+              <div className="skel" style={{ height: 44, width: '100%' }} />
+            ) : ingestRows.length === 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--text-4)', padding: '6px 0' }}>
+                {tr(
+                  '今天还没有文献库同步过。每日抓取跑完会自动触发。',
+                  'No library has synced today. The daily fetch triggers it once the pool is ready.',
+                )}
+              </div>
+            ) : (
+              <div className="col">
+                {ingestRows.map((row) => (
+                  <IngestRow key={row.library_id} row={row} />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
