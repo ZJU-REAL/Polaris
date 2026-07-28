@@ -2993,6 +2993,8 @@ export const api = {
       published_to?: string;
       created_from?: string;
       created_to?: string;
+      /** 只看从每日论文池自动收录的（今日新收录视图） */
+      daily_only?: boolean;
     } = {},
   ): Promise<PageOf<PaperRead>> {
     const params = new URLSearchParams();
@@ -3011,6 +3013,7 @@ export const api = {
     if (opts.published_to) params.set('published_to', opts.published_to);
     if (opts.created_from) params.set('created_from', opts.created_from);
     if (opts.created_to) params.set('created_to', opts.created_to);
+    if (opts.daily_only) params.set('daily_only', 'true');
     const qs = params.toString();
     return request<PageOf<PaperRead>>(`/projects/${projectId}/papers${qs ? `?${qs}` : ''}`);
   },
@@ -3410,6 +3413,8 @@ export const api = {
       published_to?: string;
       created_from?: string;
       created_to?: string;
+      /** 只看从每日论文池自动收录的（今日新收录视图） */
+      daily_only?: boolean;
     } = {},
   ): Promise<PageOf<PaperRead>> {
     const params = new URLSearchParams();
@@ -3428,6 +3433,7 @@ export const api = {
     if (opts.published_to) params.set('published_to', opts.published_to);
     if (opts.created_from) params.set('created_from', opts.created_from);
     if (opts.created_to) params.set('created_to', opts.created_to);
+    if (opts.daily_only) params.set('daily_only', 'true');
     const qs = params.toString();
     return request<PageOf<PaperRead>>(`/libraries/${id}/papers${qs ? `?${qs}` : ''}`);
   },

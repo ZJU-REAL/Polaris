@@ -178,6 +178,7 @@ def apply_paper_filters(
     published_to: datetime | None = None,
     created_from: datetime | None = None,
     created_to: datetime | None = None,
+    daily_only: bool = False,
 ) -> Select:
     """论文列表 / 引用导出共用的过滤条件（作用于已 join 成员表的语句）。
 
@@ -214,6 +215,9 @@ def apply_paper_filters(
         stmt = stmt.where(LibraryPaper.created_at >= created_from)
     if created_to:
         stmt = stmt.where(LibraryPaper.created_at <= created_to)
+    if daily_only:
+        # 「今日新收录」只认从每日论文池自动进来的：手动加的、引文扩展来的不算
+        stmt = stmt.where(Paper.id.in_(select(DailyFeedEntry.paper_id)))
     if tag and library_ids:
         stmt = stmt.where(
             Paper.id.in_(
@@ -268,6 +272,7 @@ async def list_papers(
     published_to: datetime | None = None,
     created_from: datetime | None = None,
     created_to: datetime | None = None,
+    daily_only: bool = False,
 ) -> tuple[Sequence[PaperView], int]:
     """库内论文列表。入口二选一：library_id（单库读视图/库工作台）或 project_id
     （课题成员视角 = 关联库并集，P7）。project_id 兼作 PaperView 的课题上下文回填。
@@ -293,6 +298,7 @@ async def list_papers(
         published_to=published_to,
         created_from=created_from,
         created_to=created_to,
+        daily_only=daily_only,
     )
 
     if len(library_ids) == 1:

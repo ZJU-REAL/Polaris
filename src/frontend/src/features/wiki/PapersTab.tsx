@@ -44,7 +44,7 @@ import {
   useDebounced,
 } from './shared';
 import { READING_STATUS, ReadingDot } from '../reading/shared';
-import { PaperMyTagChips, PaperMyTagsRow } from '../shared/PaperDetailBlocks';
+import { PaperMyTagChips, PaperMyTagsRow, PaperNotesSection } from '../shared/PaperDetailBlocks';
 import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { AddToButton } from '../library/AddToPopover';
 import { PaperProgressModal } from '../library/PaperProgressModal';
@@ -59,19 +59,42 @@ const PAGE_SIZE = 20;
 
 /** 论文库视图（docs/api-lit.md §8.5）：全部 = 已纳入（相关性达标）的文献；
     相关性不足的进回收站，不显示不计数。 */
-type ViewFilter = 'all' | 'compiled' | 'starred';
+type ViewFilter = 'all' | 'compiled' | 'starred' | 'today';
 
 // 模块级常量存 zh/en 两份文案，渲染处再 tr（import 时求值不会随语言切换更新）
 const VIEW_FILTERS: { v: ViewFilter; zh: string; en: string; hintZh: string; hintEn: string }[] = [
   { v: 'all', zh: '全部', en: 'All', hintZh: '已纳入知识库的全部文献', hintEn: 'Every paper included in the library' },
   { v: 'compiled', zh: '已编译', en: 'Compiled', hintZh: 'AI 已精读编译出介绍', hintEn: 'Papers the AI has compiled an intro for' },
   { v: 'starred', zh: '已星标', en: 'Starred', hintZh: '我加了星标的文献', hintEn: 'Papers I starred' },
+  {
+    v: 'today',
+    zh: '今日新收录',
+    en: 'New today',
+    hintZh: '今天从每日论文自动收录进来的',
+    hintEn: 'Collected from the daily papers today',
+  },
 ];
 
+/** 今天 00:00（本地）的 ISO 串——「今日新收录」按入库时间卡这条线。 */
+function startOfToday(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
 /** 视图 → 列表查询参数（未纳入/回收站文献一律不出现在论文库）。 */
-function viewQuery(view: ViewFilter): { status: PaperStatusFilter; starred?: boolean } {
+function viewQuery(view: ViewFilter): {
+  status: PaperStatusFilter;
+  starred?: boolean;
+  created_from?: string;
+  daily_only?: boolean;
+} {
   if (view === 'compiled') return { status: 'compiled_any' };
   if (view === 'starred') return { status: 'library', starred: true };
+  // 今日新收录：今天入库 + 来自每日论文池（手动加的、引文扩展来的不算）
+  if (view === 'today') {
+    return { status: 'library', created_from: startOfToday(), daily_only: true };
+  }
   return { status: 'library' };
 }
 
@@ -628,7 +651,6 @@ function PaperDetailPane({
   const location = useLocation();
   const queryClient = useQueryClient();
   const scopeId = libraryId ?? pid;
-  const [abstractOpen, setAbstractOpen] = useState(false);
   const [conceptsOpen, setConceptsOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
@@ -680,9 +702,9 @@ function PaperDetailPane({
       toast(`${tr('更新失败：', 'Update failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
   });
 
-  // 换论文时收起本地开合状态（面板不再随选中项重挂载，得自己收）
+  // 换论文时收起本地开合状态（面板不再随选中项重挂载，得自己收）。
+  // 折叠块的开合在 MetaFold 内部，用 key={paperId} 让它随论文重挂载即可。
   useEffect(() => {
-    setAbstractOpen(false);
     setConceptsOpen(false);
     setReaderOpen(false);
     setRecompileConfirm(false);
@@ -868,25 +890,6 @@ function PaperDetailPane({
         invalidateKeys={[['papers', scopeId]]}
       />
 
-      {/* —— frontmatter 风格元信息（默认折叠）；编译时间在下方 AI 图文介绍那行已有 —— */}
-      <MetaFold>
-        <MetaItem label="arxiv_id">{paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}</MetaItem>
-        <MetaItem label="doi">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
-        <MetaItem label="published">
-          {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
-        </MetaItem>
-        <MetaItem label="relevance">
-          {relevance !== null ? (
-            <RelevanceBar value={relevance} width={140} />
-          ) : (
-            <span className="muted">{tr('未打分', 'not scored')}</span>
-          )}
-        </MetaItem>
-        <MetaItem label={tr('入库时间', 'added at')}>
-          <span className="mono">{fmtTime(paper.created_at)}</span>
-        </MetaItem>
-      </MetaFold>
-
       {/* —— 概念 chips（过多时折叠） —— */}
       {paper.concepts.length > 0 && (
         <div className="row gap8 wrap" style={{ marginTop: 16 }}>
@@ -914,27 +917,30 @@ function PaperDetailPane({
         </div>
       )}
 
-      {/* —— 摘要（折叠） —— */}
-      {paper.abstract && (
-        <div className="card" style={{ marginTop: 18, overflow: 'hidden' }}>
-          <div
-            className="row"
-            onClick={() => setAbstractOpen((o) => !o)}
-            style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
-          >
-            <span style={{ fontSize: 12.5, fontWeight: 650 }}>{tr('摘要', 'Abstract')}</span>
-            <Icon
-              name="chevDown"
-              size={14}
-              style={{ color: 'var(--text-3)', transform: abstractOpen ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
-            />
-          </div>
-          {abstractOpen && (
-            <div style={{ padding: '0 16px 14px', fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-2)' }}>
-              {paper.abstract}
-            </div>
+      {/* —— frontmatter 风格元信息（默认折叠）；编译时间在下方 AI 图文介绍那行已有 —— */}
+      <MetaFold key={`meta-${paperId}`}>
+        <MetaItem label="arxiv_id">{paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}</MetaItem>
+        <MetaItem label="doi">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
+        <MetaItem label="published">
+          {paper.published_at ? <span className="mono">{paper.published_at.slice(0, 10)}</span> : <span className="muted">—</span>}
+        </MetaItem>
+        <MetaItem label="relevance">
+          {relevance !== null ? (
+            <RelevanceBar value={relevance} width={140} />
+          ) : (
+            <span className="muted">{tr('未打分', 'not scored')}</span>
           )}
-        </div>
+        </MetaItem>
+        <MetaItem label={tr('入库时间', 'added at')}>
+          <span className="mono">{fmtTime(paper.created_at)}</span>
+        </MetaItem>
+      </MetaFold>
+
+      {/* —— 摘要（折叠，与元信息 / 我的笔记同款） —— */}
+      {paper.abstract && (
+        <MetaFold key={`abs-${paperId}`} label={tr('摘要', 'Abstract')}>
+          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{paper.abstract}</div>
+        </MetaFold>
       )}
 
       {/* —— TL;DR —— */}
@@ -956,6 +962,13 @@ function PaperDetailPane({
           {paper.tldr}
         </div>
       )}
+
+      {/* —— 我的笔记（只有自己看得到；与其余四处详情面板同一顺序） —— */}
+      <PaperNotesSection
+        paperId={paper.id}
+        noteCount={paper.note_count ?? 0}
+        invalidateKeys={[['papers'], ['paper', paper.id]]}
+      />
 
       {/* —— 重要图片画廊（有图显示；正文已嵌图时默认折叠，避免重复视觉） —— */}
       <FiguresSection paper={paper} defaultCollapsed={hasEmbeddedFigures(paper.wiki_content, figures)} />
@@ -1178,8 +1191,9 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
   const listQuery = useInfiniteQuery({
     queryKey: ['papers', scopeId, view, q, sort, myTagFilter, readingFilter, author, affiliation, advPubFrom, advPubTo, advCreatedFrom, advCreatedTo],
     queryFn: ({ pageParam }) => {
+      const vq = viewQuery(view);
       const opts = {
-        ...viewQuery(view),
+        ...vq,
         q: q || undefined,
         sort,
         my_tag: myTagFilter || undefined,
@@ -1188,7 +1202,8 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
         affiliation: affiliation || undefined,
         published_from: advPubFrom ? `${advPubFrom}T00:00:00Z` : undefined,
         published_to: advPubTo ? `${advPubTo}T23:59:59Z` : undefined,
-        created_from: advCreatedFrom ? `${advCreatedFrom}T00:00:00Z` : undefined,
+        // 高级检索里显式选了入库日期就以它为准；没选则沿用视图自带的（今日新收录）
+        created_from: advCreatedFrom ? `${advCreatedFrom}T00:00:00Z` : vq.created_from,
         created_to: advCreatedTo ? `${advCreatedTo}T23:59:59Z` : undefined,
         page: pageParam,
         size: PAGE_SIZE,
@@ -1216,6 +1231,20 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
     if (semanticActive) return semQuery.data?.papers ?? [];
     return listQuery.data?.pages.flatMap((p) => p.items) ?? [];
   }, [semanticActive, semQuery.data, listQuery.data]);
+
+  // 「今日新收录」的顶行说明：这批是什么时候进来的。取最早/最晚的入库时间，
+  // 一次同步的论文时间挨得很近，所以多数时候就是一个时刻。
+  const fmtClock = (ms: number) =>
+    new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const todayRange = useMemo(() => {
+    if (view !== 'today' || papers.length === 0) return null;
+    const times = papers
+      .map((p) => (p.created_at ? new Date(p.created_at).getTime() : 0))
+      .filter((t) => t > 0)
+      .sort((a, b) => a - b);
+    if (times.length === 0) return null;
+    return { first: times[0]!, last: times[times.length - 1]! };
+  }, [view, papers]);
 
   const isLoading = semanticActive ? semQuery.isLoading : listQuery.isLoading;
   const isError = semanticActive ? semQuery.isError : listQuery.isError;
@@ -1357,6 +1386,44 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
               </span>
             ))}
           </div>
+          {view === 'today' && (
+            <div
+              className="row gap6"
+              style={{
+                marginTop: 8, padding: '6px 9px', borderRadius: 6,
+                background: 'var(--bg-2)', fontSize: 11, color: 'var(--text-3)',
+                alignItems: 'baseline', flexWrap: 'wrap',
+              }}
+            >
+              <Icon name="refresh" size={11} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
+              {todayRange ? (
+                <span>
+                  {tr(
+                    `${papers.length} 篇于今天 ${fmtClock(todayRange.first)}${
+                      fmtClock(todayRange.last) === fmtClock(todayRange.first)
+                        ? ''
+                        : `–${fmtClock(todayRange.last)}`
+                    } 从每日论文自动收录`,
+                    `${papers.length} papers auto-collected from the daily feed today at ${fmtClock(
+                      todayRange.first,
+                    )}${
+                      fmtClock(todayRange.last) === fmtClock(todayRange.first)
+                        ? ''
+                        : `–${fmtClock(todayRange.last)}`
+                    }`,
+                  )}
+                </span>
+              ) : (
+                <span>
+                  {tr(
+                    '今天还没有从每日论文自动收录进来的文献。',
+                    'Nothing has been auto-collected from the daily feed today.',
+                  )}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* 我的标签 / 阅读状态过滤（库标签的界面入口已移除） */}
           <div className="row gap6" style={{ marginTop: 8, ...filterDisabled }}>
             <select

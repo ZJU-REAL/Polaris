@@ -416,6 +416,9 @@ function DailyDetailPane({
         <PaperMyTagsRow paperId={poolPaper.id} myTags={poolPaper.my_tags} detailKey={poolKey} />
       )}
 
+      {/* —— 概念 chips（与库版同款；点了进不限库的概念页） —— */}
+      <ConceptChips concepts={paper.concepts} onOpen={openConcept} />
+
       {/* —— frontmatter 风格元信息（默认折叠）；编译时间在下方 AI 图文介绍那行已有 —— */}
       <MetaFold>
         <MetaItem label="arxiv_id">
@@ -434,14 +437,10 @@ function DailyDetailPane({
       </MetaFold>
 
       {/* 摘要默认折叠，复用元信息那套折叠块的样式，两者视觉一致 */}
-      {paper.abstract ? (
+      {paper.abstract && (
         <MetaFold label={tr('摘要', 'Abstract')}>
           <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{paper.abstract}</p>
         </MetaFold>
-      ) : (
-        <div className="empty" style={{ padding: 20, marginTop: 18 }}>
-          {tr('这篇还没有摘要。', 'No abstract for this paper.')}
-        </div>
       )}
 
       {/* —— TL;DR（来自内容池详情） —— */}
@@ -463,9 +462,6 @@ function DailyDetailPane({
           {poolPaper.tldr}
         </div>
       )}
-
-      {/* —— 概念 chips（与库版同款；点了进不限库的概念页） —— */}
-      <ConceptChips concepts={paper.concepts} onOpen={openConcept} />
 
       {/* —— 我的笔记（只有自己看得到） —— */}
       {poolPaper && (

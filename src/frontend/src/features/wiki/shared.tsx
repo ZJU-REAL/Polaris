@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type ConceptCategory, type PaperAuthor, type ReadingStatus } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { clickable } from '../../lib/a11y';
-import { Icon } from '../../components/ui/Icon';
+import { Icon, type IconName } from '../../components/ui/Icon';
 import { Switch } from '../../components/ui/Switch';
 import { toast } from '../../components/ui/Toast';
 import { READING_STATUS } from '../reading/shared';
@@ -129,42 +129,52 @@ export function MetaItem({ label, children }: { label: string; children: ReactNo
 }
 
 /**
- * 元信息折叠块：论文详情四处面板（论文库 / 只读库 / 阅读页 / 个人库 / 相关研究）共用的
- * frontmatter 卡外壳。默认收起——这些字段查证时才看，别占着首屏。
+ * 详情面板的折叠块：论文详情四处面板（每日新论文 / 文献库 / 我的文献库 / 相关文献）
+ * 共用的卡外壳。元信息 / 摘要 / 我的笔记 一律用它，样式与「我的笔记」对齐，
+ * 默认全部收起——这些内容查证时才看，别占着首屏。
  */
 export function MetaFold({
   children,
   style,
   label,
+  icon,
+  count,
   defaultOpen = false,
 }: {
   children: ReactNode;
   style?: CSSProperties;
-  /** 折叠块标题，默认「元信息」。摘要等同类折叠块复用同一套样式，保持视觉一致。 */
+  /** 折叠块标题，默认「元信息」。 */
   label?: string;
+  /** 标题左侧的小图标（与「我的笔记」的笔形图标同位）。 */
+  icon?: IconName;
+  /** 标题右侧的计数（如笔记条数）；不传则不显示。 */
+  count?: number;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div
-      className="card"
-      style={{ margin: '18px 0 0', background: 'var(--surface-2)', overflow: 'hidden', ...style }}
-    >
+    <div className="card" style={{ marginTop: 18, overflow: 'hidden', ...style }}>
       <div
         className="row"
         {...clickable(() => setOpen((o) => !o))}
-        style={{ padding: '9px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
+        style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
       >
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
+        <span className="row gap6" style={{ fontSize: 12.5, fontWeight: 650 }}>
+          {icon && <Icon name={icon} size={12} style={{ color: 'var(--text-3)' }} />}
           {label ?? tr('元信息', 'Metadata')}
+          {count !== undefined && (
+            <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>
+              · {count}
+            </span>
+          )}
         </span>
         <Icon
           name="chevDown"
-          size={13}
+          size={14}
           style={{ color: 'var(--text-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
         />
       </div>
-      {open && <div style={{ padding: '0 16px 10px' }}>{children}</div>}
+      {open && <div style={{ padding: '0 16px 14px' }}>{children}</div>}
     </div>
   );
 }
