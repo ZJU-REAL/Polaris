@@ -24,6 +24,7 @@ from app.core.llm.router import get_llm_router
 from app.core.redis import get_redis_dep
 from app.models.user import User
 from app.schemas.paper import (
+    CollectingLibraryRead,
     MyTagRead,
     PaperBatchIds,
     PaperChatRequest,
@@ -41,6 +42,7 @@ from app.schemas.paper import (
     PaperRead,
     PaperTagsUpdate,
     PaperUpdate,
+    ResolvedPaperRead,
     TagRead,
 )
 from app.services import figure_annotate as figure_service
@@ -413,6 +415,35 @@ async def delete_project_paper(
     await papers_service.delete_paper(session, view)
 
 
+@router.get("/papers/resolve", response_model=ResolvedPaperRead)
+async def resolve_paper_meta(
+    arxiv_id: str = Query(min_length=1),
+    _: User = Depends(current_active_user),
+) -> ResolvedPaperRead:
+    """按 arXiv id 取论文题目等元数据（锚点论文填表用：填 id，题目自动补上）。
+
+    只读 arXiv，不入库、不建向量——纯粹是让人确认「填的这个 id 是不是想要的那篇」。
+    解析不出返回 422，前端保留 id、题目留空即可。
+    """
+    from app.services import paper_import as paper_import_service
+
+    try:
+        fields = await paper_import_service.resolve_fields(arxiv_id=arxiv_id)
+    except paper_import_service.ParseFailedError as e:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ARXIV_ID_NOT_RESOLVED"
+        ) from e
+    return ResolvedPaperRead(
+        arxiv_id=str(fields.get("arxiv_id") or arxiv_id),
+        title=str(fields.get("title") or ""),
+        year=fields.get("year"),
+        authors=[
+            str(a.get("name") if isinstance(a, dict) else a)
+            for a in (fields.get("authors") or [])
+        ][:8],
+    )
+
+
 @router.get("/papers/{paper_id}", response_model=PaperDetail)
 async def get_paper(
     paper_id: uuid.UUID,
@@ -607,6 +638,21 @@ async def recompile_paper(
 
 
 # ---- 索引状态与手动重建（docs/api-lit.md §9） ----
+
+
+@router.get("/papers/{paper_id}/libraries", response_model=list[CollectingLibraryRead])
+async def get_collecting_libraries(
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[CollectingLibraryRead]:
+    """这篇论文被哪些文献库收录了，带各自的相关度分。
+
+    只列对请求者可见的库（个人库不外泄），且只算真正进了库的状态。
+    """
+    await _get_member_paper(session, paper_id, user, include_pool=True)
+    rows = await papers_service.collecting_libraries(session, paper_id, user)
+    return [CollectingLibraryRead(**row) for row in rows]
 
 
 @router.get("/papers/{paper_id}/index-status", response_model=PaperIndexStatusRead)

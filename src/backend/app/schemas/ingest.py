@@ -14,11 +14,11 @@ TIME_RANGE_DAYS: dict[str, int] = {"1w": 7, "3m": 90, "6m": 180, "1y": 365}
 
 class IngestKnobs(BaseModel):
     months_back: int = Field(default=6, ge=1, le=36)  # 检索模式回溯月数（由 time_range 换算）
-    max_papers: int = Field(default=50, ge=1, le=500)  # 本次最多精读编译篇数（成本上限）
-    relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    max_papers: int = Field(default=150, ge=1, le=500)  # 本次最多检索/打分的篇数（成本上限）
+    relevance_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
     # 锚点扩展的跳数。每多一跳，Semantic Scholar 的调用量成倍涨，3 跳已经很重
     snowball_depth: int = Field(default=1, ge=0, le=3)
-    compile_top_n: int = Field(default=20, ge=1, le=200)  # 打分后精读编译前 N 篇
+    compile_top_n: int = Field(default=50, ge=1, le=200)  # 打分后精读编译前 N 篇
     # 最大化模式：True 时检索/打分/抽取/编译不设篇数上限（max_papers/compile_top_n 被忽略，
     # 仅保留极高安全哨兵防失控），token 预算也不设限。默认 False，向后兼容。
     unlimited: bool = False

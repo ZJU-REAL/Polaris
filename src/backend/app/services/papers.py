@@ -1220,3 +1220,40 @@ async def rerank_paper_rows(
         logger.warning("rerank failed, falling back to vector scores", exc_info=True)
         return rows[:limit], False
     return [(rows[i][0], score) for i, score in ranked[:limit]], True
+
+
+async def collecting_libraries(
+    session: AsyncSession, paper_id: uuid.UUID, user: Any
+) -> list[dict[str, Any]]:
+    """这篇论文被哪些**对该用户可见**的文献库收录了，带相关度分。
+
+    只算真正进了库的状态（scored 及之后）——candidate 是还没打分、excluded 是打分没
+    过，两者都不算"收录"，混进来会让人以为库里有这篇。
+
+    可见性按 P10 口径过滤：个人库只对归属人与 admin 可见，不能经这个接口泄漏出去。
+    """
+    from app.models.library_direction import DirectionLibrary, LibraryPaper
+    from app.services.libraries import library_visible_to
+
+    rows = (
+        await session.execute(
+            select(DirectionLibrary, LibraryPaper.status, LibraryPaper.relevance_score)
+            .join(LibraryPaper, LibraryPaper.library_id == DirectionLibrary.id)
+            .where(
+                LibraryPaper.paper_id == paper_id,
+                LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+            )
+            .order_by(LibraryPaper.relevance_score.desc().nulls_last())
+        )
+    ).all()
+    return [
+        {
+            "library_id": lib.id,
+            "name": lib.name,
+            "is_public": lib.is_public,
+            "status": status,
+            "relevance_score": score,
+        }
+        for lib, status, score in rows
+        if library_visible_to(lib, user)
+    ]

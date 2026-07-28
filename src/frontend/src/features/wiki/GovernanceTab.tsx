@@ -436,7 +436,6 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
         name={lib.name}
         statement={lib.statement ?? ''}
         showRubric
-        showAnchors
         readOnly={readOnly}
       />
     </section>

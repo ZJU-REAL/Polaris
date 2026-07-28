@@ -124,7 +124,10 @@ async def test_cleanup_expired_keeps_paper_and_membership(client, monkeypatch):
 
     async with get_sessionmaker()() as session:
         entry = await session.get(DailyFeedEntry, uuid.UUID(entry_id))
-        entry.feed_date = entry.feed_date - dt.timedelta(days=8)
+        # 比保留期更早才算过期（保留期默认 14 天，且管理员可改）
+        from app.services.daily_feed import DEFAULT_RETENTION_DAYS
+
+        entry.feed_date = entry.feed_date - dt.timedelta(days=DEFAULT_RETENTION_DAYS + 1)
         await session.commit()
 
     result = await _run_sync(monkeypatch, {"cs.AI": []})
@@ -642,7 +645,10 @@ async def test_daily_actions_observation_shapes(client, monkeypatch):
         from sqlalchemy import select
 
         entry = (await session.execute(select(DailyFeedEntry))).scalars().first()
-        entry.feed_date = entry.feed_date - dt.timedelta(days=8)
+        # 比保留期更早才算过期（保留期默认 14 天，且管理员可改）
+        from app.services.daily_feed import DEFAULT_RETENTION_DAYS
+
+        entry.feed_date = entry.feed_date - dt.timedelta(days=DEFAULT_RETENTION_DAYS + 1)
         await session.commit()
 
     obs = await get_action("daily.cleanup")(ctx, {})
@@ -1025,3 +1031,67 @@ async def test_probe_failure_does_not_block_fetching(client, monkeypatch):
     async with get_sessionmaker()() as session:
         fresh, seen = await daily_feed.todays_batch_available(session)
     assert fresh is True and seen is None
+
+
+async def test_retention_defaults_to_two_weeks_and_is_configurable(client):
+    """保留期默认 14 天，管理员可改。
+
+    它不只是「每日页显示几天」：每日池同时是**库同步的取数窗口**（同步全量重扫），
+    所以保留期就是一个文献库最多能漏几天还能自愈。
+    """
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    admin = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    resp = await client.get("/api/daily/retention", headers=admin)
+    assert resp.status_code == 200 and resp.json() == {"days": 14}
+
+    resp = await client.put("/api/daily/retention", json={"days": 21}, headers=admin)
+    assert resp.status_code == 200 and resp.json() == {"days": 21}
+    async with get_sessionmaker()() as session:
+        assert await daily_feed.get_retention_days(session) == 21
+
+    other = {"Authorization": f"Bearer {await register_and_login(client, email='r2@e.com')}"}
+    assert (
+        await client.put("/api/daily/retention", json={"days": 3}, headers=other)
+    ).status_code == 403
+
+
+async def test_cleanup_uses_the_configured_retention(client, monkeypatch):
+    """改了保留期，清理的截止线跟着走——两者读同一个设置。"""
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.models.daily_feed import DailyFeedEntry
+    from app.models.paper import new_paper
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    today = dt.datetime.now(dt.UTC).date()
+    async with get_sessionmaker()() as session:
+        for i, age in enumerate((3, 10, 20)):
+            paper = new_paper(source="arxiv", arxiv_id=f"2607.66{i:03d}", title=f"P{age}")
+            session.add(paper)
+            await session.flush()
+            session.add(
+                DailyFeedEntry(
+                    paper_id=paper.id,
+                    feed_date=today - dt.timedelta(days=age),
+                    primary_category="cs.AI",
+                )
+            )
+        await session.commit()
+
+    # 默认 14 天：20 天前那条过期，10 天前的留下
+    async with get_sessionmaker()() as session:
+        expired = await daily_feed.cleanup_expired(session)
+        await session.commit()
+    assert expired == 1
+
+    # 收紧到 7 天：10 天前那条也该被清掉
+    async with get_sessionmaker()() as session:
+        await daily_feed.set_retention_days(session, 7)
+    async with get_sessionmaker()() as session:
+        expired = await daily_feed.cleanup_expired(session)
+        await session.commit()
+    assert expired == 1

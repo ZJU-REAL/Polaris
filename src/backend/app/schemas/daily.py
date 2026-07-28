@@ -169,3 +169,23 @@ class DailySyncTimeRead(BaseModel):
 class DailySyncTimeUpdate(BaseModel):
     hour: int = Field(ge=0, le=23)
     minute: int = Field(ge=0, le=59)
+
+
+class DailyRetentionRead(BaseModel):
+    """每日论文池保留天数。这张表也是库同步的取数窗口。"""
+
+    days: int = Field(ge=1, le=90)
+
+
+class DailyRetentionUpdate(BaseModel):
+    days: int = Field(ge=1, le=90)
+
+
+class LibrarySyncScopeRead(BaseModel):
+    """库同步每次扫描每日池的范围。"""
+
+    scope: Literal["since_last", "daily", "full"]
+
+
+class LibrarySyncScopeUpdate(BaseModel):
+    scope: Literal["since_last", "daily", "full"]

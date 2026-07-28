@@ -2666,6 +2666,23 @@ export interface IngestStart {
   time_range?: IngestTimeRange;
 }
 
+/** 按 arXiv id 解析出的论文元数据（锚点填表用，不入库）。 */
+export interface ResolvedPaper {
+  arxiv_id: string;
+  title: string;
+  year: number | null;
+  authors: string[];
+}
+
+/** 收录了某篇论文的文献库（带相关度分）。 */
+export interface CollectingLibrary {
+  library_id: string;
+  name: string;
+  is_public: boolean;
+  status: string;
+  relevance_score: number | null;
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -4491,6 +4508,14 @@ export const api = {
   /** 每日论文池的同步状况（全员可读）：最新一天、是否过期、各分类成败。 */
   getDailySyncStatus(): Promise<DailySyncStatus> {
     return request<DailySyncStatus>('/daily/sync-status');
+  },
+  /** 按 arXiv id 取题目等元数据（只读 arXiv，不入库）。解析不出为 422。 */
+  /** 这篇论文被哪些文献库收录了（只列可见的库）。 */
+  getCollectingLibraries(paperId: string): Promise<CollectingLibrary[]> {
+    return request<CollectingLibrary[]>(`/papers/${paperId}/libraries`);
+  },
+  resolvePaperByArxivId(arxivId: string): Promise<ResolvedPaper> {
+    return request<ResolvedPaper>(`/papers/resolve?arxiv_id=${encodeURIComponent(arxivId)}`);
   },
   refreshDailyFeed(): Promise<{ status: string; voyage_id: string }> {
     return request<{ status: string; voyage_id: string }>('/daily/refresh', { method: 'POST' });

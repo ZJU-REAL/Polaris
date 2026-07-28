@@ -36,9 +36,13 @@ from app.schemas.daily import (
     DailyLikeState,
     DailyPage,
     DailyPaperDetail,
+    DailyRetentionRead,
+    DailyRetentionUpdate,
     DailySyncStatus,
     DailySyncTimeRead,
     DailySyncTimeUpdate,
+    LibrarySyncScopeRead,
+    LibrarySyncScopeUpdate,
 )
 from app.schemas.paper import PaperChatRequest
 from app.services import citations as citations_service
@@ -318,6 +322,56 @@ async def get_sync_status(
     摆在每日页上，而不是只留在任务日志里。
     """
     return DailySyncStatus(**await daily_service.sync_status(session))
+
+
+@router.get("/sync-scope", response_model=LibrarySyncScopeRead)
+async def get_sync_scope(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LibrarySyncScopeRead:
+    """库同步每次扫描每日池的范围（全员可读）。"""
+    return LibrarySyncScopeRead(scope=await daily_service.get_sync_scope(session))
+
+
+@router.put("/sync-scope", response_model=LibrarySyncScopeRead)
+async def set_sync_scope(
+    payload: LibrarySyncScopeUpdate,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_admin),
+) -> LibrarySyncScopeRead:
+    """改扫描范围（admin）。
+
+    - ``since_last``（默认）：从这个库**上次成功同步**那天算起。正常情况下就是当天
+      那批（和 daily 一样省），漏了几天会自动多扫几天（和 full 一样能自愈）。
+    - ``daily``：只扫当天。最省，但某次同步失败落下的论文**永久错过**——arXiv 不会
+      再给第二次。
+    - ``full``：扫整张每日池表。最稳，代价是每次重复排序几千篇早就处理过的。
+    """
+    return LibrarySyncScopeRead(scope=await daily_service.set_sync_scope(session, payload.scope))
+
+
+@router.get("/retention", response_model=DailyRetentionRead)
+async def get_retention(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DailyRetentionRead:
+    """每日池保留天数（全员可读）。"""
+    return DailyRetentionRead(days=await daily_service.get_retention_days(session))
+
+
+@router.put("/retention", response_model=DailyRetentionRead)
+async def set_retention(
+    payload: DailyRetentionUpdate,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_admin),
+) -> DailyRetentionRead:
+    """改保留天数（admin）。
+
+    这不只是「每日页显示几天」：每日池同时是**库同步的取数窗口**，同步会全量重扫它。
+    所以保留期也就是「一个文献库最多能漏几天还能自愈」——掉出窗口的论文永久错过，
+    arXiv 那边不会再给第二次。调小要谨慎。
+    """
+    return DailyRetentionRead(days=await daily_service.set_retention_days(session, payload.days))
 
 
 @router.get("/sync-time", response_model=DailySyncTimeRead)

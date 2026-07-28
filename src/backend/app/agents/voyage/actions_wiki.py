@@ -75,14 +75,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_KNOBS: dict[str, Any] = {
     "months_back": 6,
-    "max_papers": 50,
-    "relevance_threshold": 0.6,
+    "max_papers": 150,
+    "relevance_threshold": 0.8,
     "snowball_depth": 1,
-    "compile_top_n": 20,
+    "compile_top_n": 50,
     "unlimited": False,
 }
 
-_MAX_CANDIDATES_CAP = 200
+# 检索/打分的安全上限。这是防失控的天花板，不是常规取数口径——常规口径是用户填的
+# 「最大检索篇数」（max_papers，上限 500）。
+_MAX_CANDIDATES_CAP = 500
 
 # 最大化模式（knobs.unlimited=True）的安全哨兵：检索/打分/抽取/编译均按「窗口内全量」
 # 处理，不再受 max_papers/compile_top_n/_MAX_CANDIDATES_CAP 截断；此哨兵只防真正失控
@@ -326,16 +328,30 @@ async def _collect_from_daily_feed(
     **「排除关键词」是例外，这里会硬过滤。** 那是用户明确说「我不要这个」，漏掉它是
     失职而不是保守；过滤掉多少篇会记进观测，不至于无声无息。
     """
-    rows = (
-        (
-            await session.execute(
-                select(Paper, DailyFeedEntry.feed_date)
-                .join(DailyFeedEntry, DailyFeedEntry.paper_id == Paper.id)
-                .order_by(DailyFeedEntry.feed_date.desc())
-            )
-        )
-        .all()
+    # 扫描范围（管理员可配，默认 since_last）：
+    # - since_last：从本库上次成功同步那天算起。正常就是当天那批（省），漏了几天会
+    #   自动多扫几天（能自愈）——这两件事本来要在 daily 和 full 之间二选一。
+    # - daily：只扫当天。最省，但漏掉的永久错过（arXiv 不会再给第二次）。
+    # - full：扫整张表。最稳，代价是重复排序几千篇早就处理过的。
+    from app.services.daily_feed import get_sync_scope
+
+    scope = await get_sync_scope(session)
+    stmt = (
+        select(Paper, DailyFeedEntry.feed_date)
+        .join(DailyFeedEntry, DailyFeedEntry.paper_id == Paper.id)
+        .order_by(DailyFeedEntry.feed_date.desc())
     )
+    since_day: Any = None
+    if scope == "daily":
+        since_day = datetime.now(UTC).date()
+        stmt = stmt.where(DailyFeedEntry.feed_date == since_day)
+    elif scope == "since_last":
+        last = _parse_iso(((library.ingest_state or {}).get("last_run") or {}).get("finished_at"))
+        # 没有上次记录（首次同步）就按全量走：宁可多扫一轮，也不能开局就漏
+        if last is not None:
+            since_day = last.astimezone(UTC).date()
+            stmt = stmt.where(DailyFeedEntry.feed_date >= since_day)
+    rows = (await session.execute(stmt)).all()
     feed_papers = [p for p, _ in rows]
     feed_latest = max((d for _, d in rows), default=None)
 
@@ -385,6 +401,8 @@ async def _collect_from_daily_feed(
 
     return {
         "feed_total": len(rows),
+        "feed_scope": scope,
+        "feed_since": since_day.isoformat() if since_day else None,
         "excluded_by_terms": excluded_by_terms,
         "feed_ranked": did_rank,
         "after_vector_rank": len(ranked),
@@ -419,7 +437,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         if _unlimited(knobs):
             limit = _UNLIMITED_SENTINEL  # 窗口内全量抓取（哨兵防失控）
         else:
-            limit = min(_MAX_CANDIDATES_CAP, max(int(knobs["max_papers"]) * 3, 10))
+            # 「最大检索篇数」就是检索上限本身。以前是 min(200, max_papers*3)，填 150
+            # 实际会检索 200——旋钮名和行为对不上，用户按名字调参就调不准。
+            limit = max(1, min(_MAX_CANDIDATES_CAP, int(knobs["max_papers"])))
 
         # —— 增量同步：候选一律来自每日论文池，不访问 arXiv ——
         # arXiv 检索是限流的主要来源（生产上三个库同步就是死在这个调用的 429 上），

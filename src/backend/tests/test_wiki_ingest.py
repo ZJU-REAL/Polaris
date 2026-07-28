@@ -254,6 +254,13 @@ async def _setup_project(client):
     return project_id, headers
 
 
+def _today():
+    """每日池条目一律用今天：库同步默认只看「上次同步以来」的窗口。"""
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.UTC).date()
+
+
 def _make_engine() -> tuple[VoyageEngine, RecordingBus]:
     bus = RecordingBus()
     return VoyageEngine(event_bus=bus, llm_router=LLMRouter()), bus
@@ -583,20 +590,21 @@ async def test_incremental_pulls_from_daily_feed_without_arxiv(client, queue_stu
                 title=title,
                 abstract="research agents and planning",
                 year=2026,
-                published_at=dt.datetime(2026, 7, 20, tzinfo=dt.UTC),
+                published_at=dt.datetime.now(dt.UTC),
             )
             session.add(paper)
             await session.flush()
             feed_ids.append(paper.id)
+            # 用今天：库同步默认只看「上次同步以来」的窗口，固定的过去日期会被筛掉
             session.add(
                 DailyFeedEntry(
-                    paper_id=paper.id, feed_date=dt.date(2026, 7, 20), primary_category="cs.AI"
+                    paper_id=paper.id, feed_date=_today(), primary_category="cs.AI"
                 )
             )
         # 已在库的论文也进池：必须被去重挡住，不能重复送打分
         session.add(
             DailyFeedEntry(
-                paper_id=existing_id, feed_date=dt.date(2026, 7, 20), primary_category="cs.AI"
+                paper_id=existing_id, feed_date=_today(), primary_category="cs.AI"
             )
         )
         await session.commit()
@@ -731,7 +739,8 @@ def test_unlimited_knobs_and_budget_semantics():
 
     # 预算：unlimited → max_tokens=None；默认模式派生公式不变
     assert ingest_service.derive_budget(knobs) == {"max_tokens": None}
-    assert ingest_service.derive_budget(IngestKnobs()) == {"max_tokens": 50 * 20_000}
+    # 预算按「最大检索篇数」派生（上限而非开销；真正花钱的是编译那部分）
+    assert ingest_service.derive_budget(IngestKnobs()) == {"max_tokens": 150 * 20_000}
 
     # 引擎语义：max_tokens 为 None（falsy）不触发预算暂停，用量再大也不算超限
     run = VoyageRun(
@@ -1423,13 +1432,13 @@ async def test_exclude_terms_filter_the_daily_feed_sync(client, queue_stub, wiki
                 title=title,
                 abstract="research",
                 year=2026,
-                published_at=dt.datetime(2026, 7, 20, tzinfo=dt.UTC),
+                published_at=dt.datetime.now(dt.UTC),
             )
             session.add(paper)
             await session.flush()
             session.add(
                 DailyFeedEntry(
-                    paper_id=paper.id, feed_date=dt.date(2026, 7, 20), primary_category="cs.AI"
+                    paper_id=paper.id, feed_date=_today(), primary_category="cs.AI"
                 )
             )
         await session.commit()
@@ -1461,3 +1470,134 @@ async def test_exclude_terms_filter_the_daily_feed_sync(client, queue_stub, wiki
             .all()
         )
     assert "Speech Recognition at Scale" not in titles
+
+
+async def test_sync_scope_defaults_to_today_only(client, queue_stub, wiki_mocks):
+    """库同步默认只扫当天新入池的论文；管理员可切到扫全池。
+
+    同步由每日抓取跑完后触发，新论文本就只有那一批。扫全池的代价是重复排序几千篇
+    早就处理过的；它的价值在自愈——上次失败落下的还能补回来，所以留作可选。
+    """
+    import datetime as dt
+
+    from app.models.daily_feed import DailyFeedEntry
+    from app.services import daily_feed
+
+    token = await register_and_login(client, email="scope@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("scope@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-范围")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "search", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    today = dt.datetime.now(dt.UTC).date()
+    async with get_sessionmaker()() as session:
+        for i, day in enumerate((today, today - dt.timedelta(days=3))):
+            paper = new_paper(
+                source="arxiv", arxiv_id=f"2607.8100{i}", title=f"Feed {i}", abstract="research"
+            )
+            session.add(paper)
+            await session.flush()
+            session.add(
+                DailyFeedEntry(paper_id=paper.id, feed_date=day, primary_category="cs.AI")
+            )
+        await session.commit()
+
+    async def run_sync() -> dict:
+        r = await client.post(
+            f"/api/libraries/{library_id}/ingest/run",
+            json={"mode": "incremental", "knobs": KNOBS},
+            headers=headers,
+        )
+        eng, _ = _make_engine()
+        await eng.run(uuid.UUID(r.json()["id"]))
+        detail = (await client.get(f"/api/voyages/{r.json()['id']}", headers=headers)).json()
+        return detail["steps"][0]["observation"]
+
+    # 默认 since_last：上次同步是刚才那次建库，所以窗口从今天起 → 只看当天那条
+    obs = await run_sync()
+    assert obs["feed_scope"] == "since_last"
+    assert obs["feed_total"] == 1
+
+    async with get_sessionmaker()() as session:
+        await daily_feed.set_sync_scope(session, "daily")
+    obs = await run_sync()
+    assert obs["feed_scope"] == "daily"
+    assert obs["feed_total"] == 1, "只看当天那条"
+
+    async with get_sessionmaker()() as session:
+        await daily_feed.set_sync_scope(session, "full")
+    obs = await run_sync()
+    assert obs["feed_scope"] == "full"
+    assert obs["feed_total"] == 2, "切到 full 后旧的那条也进扫描范围"
+
+
+async def test_since_last_scope_widens_after_a_missed_sync(client, queue_stub, wiki_mocks):
+    """since_last 的价值:漏了几天会自动把那几天补扫回来。
+
+    daily 模式下漏掉就永久错过(arXiv 不会再给第二次)；full 模式每次重复排序几千篇。
+    since_last 正常时和 daily 一样省，出事时和 full 一样能自愈。
+    """
+    import datetime as dt
+
+    from app.models.daily_feed import DailyFeedEntry
+    from app.services import daily_feed
+
+    token = await register_and_login(client, email="sincelast@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("sincelast@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-自愈")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "search", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    today = dt.datetime.now(dt.UTC).date()
+    async with get_sessionmaker()() as session:
+        for i, day in enumerate((today, today - dt.timedelta(days=2))):
+            paper = new_paper(
+                source="arxiv", arxiv_id=f"2607.8200{i}", title=f"Missed {i}", abstract="research"
+            )
+            session.add(paper)
+            await session.flush()
+            session.add(
+                DailyFeedEntry(paper_id=paper.id, feed_date=day, primary_category="cs.AI")
+            )
+        # 模拟「上次成功同步是 3 天前」——中间那两天漏了
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        state = dict(library.ingest_state or {})
+        state["last_run"] = {
+            "voyage_id": "x",
+            "finished_at": (
+                dt.datetime.now(dt.UTC) - dt.timedelta(days=3)
+            ).isoformat(),
+        }
+        library.ingest_state = state
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        await daily_feed.set_sync_scope(session, "since_last")
+
+    r = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "incremental", "knobs": KNOBS},
+        headers=headers,
+    )
+    eng, _ = _make_engine()
+    await eng.run(uuid.UUID(r.json()["id"]))
+    obs = (await client.get(f"/api/voyages/{r.json()['id']}", headers=headers)).json()["steps"][0][
+        "observation"
+    ]
+    assert obs["feed_scope"] == "since_last"
+    assert obs["feed_since"] == (today - dt.timedelta(days=3)).isoformat()
+    assert obs["feed_total"] == 2, "漏掉那两天的论文被补扫回来"

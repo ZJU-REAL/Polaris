@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import EmbeddingSpace, active_space
 from app.models.daily_feed import (
-    DAILY_FEED_RETENTION_DAYS,
     DEFAULT_DAILY_CATEGORIES,
     DailyFeedEntry,
     DailyFeedLike,
@@ -185,7 +184,7 @@ async def backfill_embeddings(
     session: AsyncSession, *, user_id: uuid.UUID | None = None, today: dt.date | None = None
 ) -> dict[str, int]:
     """给当前 7 天窗口内所有缺向量的每日论文补建向量（管理员开开关后一次性补齐用）。"""
-    cutoff = (today or _today_utc()) - dt.timedelta(days=DAILY_FEED_RETENTION_DAYS - 1)
+    cutoff = (today or _today_utc()) - dt.timedelta(days=await get_retention_days(session) - 1)
     paper_ids = list(
         (
             await session.execute(
@@ -206,7 +205,7 @@ async def embedding_coverage(
     「有向量」按**激活空间**算：刚换过嵌入模型时覆盖率会如实掉下来，前端照此提示，
     而不是拿旧空间的向量数充数。
     """
-    cutoff = (today or _today_utc()) - dt.timedelta(days=DAILY_FEED_RETENTION_DAYS - 1)
+    cutoff = (today or _today_utc()) - dt.timedelta(days=await get_retention_days(session) - 1)
     base = (
         select(func.count())
         .select_from(DailyFeedEntry)
@@ -261,7 +260,7 @@ async def cleanup_expired(session: AsyncSession, *, today: dt.date | None = None
     过期退出推送后，若某文章不再被任何集合引用（库/书架/个人库/论著），回收其内容池
     本体 + 落盘文件——否则从没人收藏的每日推送会把内容池越堆越大。
     """
-    cutoff = (today or _today_utc()) - dt.timedelta(days=DAILY_FEED_RETENTION_DAYS - 1)
+    cutoff = (today or _today_utc()) - dt.timedelta(days=await get_retention_days(session) - 1)
     expired = (
         await session.execute(
             select(DailyFeedEntry.id, DailyFeedEntry.paper_id).where(
@@ -1257,3 +1256,67 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
         return True, None
     batch_date = batch_at.astimezone(dt.UTC).date()
     return batch_date >= _today_utc(), batch_date.isoformat()
+
+
+# ---- 保留期（可配置） ----
+
+RETENTION_SETTING_KEY = "daily_feed_retention_days"
+
+#: 每日池默认保留天数。这张表同时是**库同步的取数窗口**（同步全量重扫它），所以保留期
+#: 也就是「一个库最多能漏几天还能自愈」——漏掉的那几天只要论文还在窗口内，下次同步
+#: 会自动补上；掉出窗口就永久错过，arXiv 那边不会再给第二次。
+DEFAULT_RETENTION_DAYS = 14
+
+
+async def get_retention_days(session: AsyncSession) -> int:
+    """保留天数（默认 14）。存量值非法时回落默认。"""
+    row = await session.get(SystemSetting, RETENTION_SETTING_KEY)
+    value = row.value if row is not None else None
+    if isinstance(value, int) and 1 <= value <= 90:
+        return value
+    return DEFAULT_RETENTION_DAYS
+
+
+async def set_retention_days(session: AsyncSession, days: int) -> int:
+    if not (1 <= days <= 90):
+        raise ValueError(f"retention out of range: {days}")
+    row = await session.get(SystemSetting, RETENTION_SETTING_KEY)
+    if row is None:
+        session.add(SystemSetting(key=RETENTION_SETTING_KEY, value=days))
+    else:
+        row.value = days
+    await session.commit()
+    return days
+
+
+# ---- 库同步的扫描范围（可配置） ----
+
+SYNC_SCOPE_SETTING_KEY = "library_sync_scope"
+
+#: 库同步每次扫描每日池的范围：
+#:
+#: - ``since_last``（默认）：从这个库**上次成功同步**那天算起。正常情况下就是当天那批
+#:   （和 ``daily`` 一样快），漏了几天会自动多扫几天（和 ``full`` 一样能自愈）。
+#: - ``daily``：只扫当天。最省，但某次同步失败落下的论文**永久错过**——arXiv 不会
+#:   再给第二次。
+#: - ``full``：扫整张表。最稳，代价是每次重复排序几千篇早就处理过的。
+DEFAULT_SYNC_SCOPE = "since_last"
+SYNC_SCOPES = ("since_last", "daily", "full")
+
+
+async def get_sync_scope(session: AsyncSession) -> str:
+    row = await session.get(SystemSetting, SYNC_SCOPE_SETTING_KEY)
+    value = row.value if row is not None else None
+    return value if value in SYNC_SCOPES else DEFAULT_SYNC_SCOPE
+
+
+async def set_sync_scope(session: AsyncSession, scope: str) -> str:
+    if scope not in SYNC_SCOPES:
+        raise ValueError(f"unknown scope: {scope}")
+    row = await session.get(SystemSetting, SYNC_SCOPE_SETTING_KEY)
+    if row is None:
+        session.add(SystemSetting(key=SYNC_SCOPE_SETTING_KEY, value=scope))
+    else:
+        row.value = scope
+    await session.commit()
+    return scope

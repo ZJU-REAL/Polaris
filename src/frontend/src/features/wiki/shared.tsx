@@ -132,8 +132,19 @@ export function MetaItem({ label, children }: { label: string; children: ReactNo
  * 元信息折叠块：论文详情四处面板（论文库 / 只读库 / 阅读页 / 个人库 / 相关研究）共用的
  * frontmatter 卡外壳。默认收起——这些字段查证时才看，别占着首屏。
  */
-export function MetaFold({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  const [open, setOpen] = useState(false);
+export function MetaFold({
+  children,
+  style,
+  label,
+  defaultOpen = false,
+}: {
+  children: ReactNode;
+  style?: CSSProperties;
+  /** 折叠块标题，默认「元信息」。摘要等同类折叠块复用同一套样式，保持视觉一致。 */
+  label?: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div
       className="card"
@@ -145,7 +156,7 @@ export function MetaFold({ children, style }: { children: ReactNode; style?: CSS
         style={{ padding: '9px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
       >
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', letterSpacing: '0.04em' }}>
-          {tr('元信息', 'Metadata')}
+          {label ?? tr('元信息', 'Metadata')}
         </span>
         <Icon
           name="chevDown"

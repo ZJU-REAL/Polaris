@@ -15,6 +15,7 @@ import { citationExportItems, ExportDropdown } from '../../components/ui/ExportD
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
+import { CollectingLibraries } from '../../components/ui/CollectingLibraries';
 import {
   ApiError,
   api,
@@ -290,6 +291,7 @@ function DailyDetailPane({
         {/* 向量索引状态跟着徽章走：这一行是「这篇论文是什么」的速览，索引建没建属于
             同一类信息。不带重建按钮——那一行不是操作区。 */}
         <PaperIndexStatusRow paperId={paper.paper_id} showRebuild={false} />
+        <CollectingLibraries paperId={paper.paper_id} />
         {paper.arxiv_id &&
           (arxivHref ? (
             <a
@@ -431,14 +433,11 @@ function DailyDetailPane({
         </MetaItem>
       </MetaFold>
 
+      {/* 摘要默认折叠，复用元信息那套折叠块的样式，两者视觉一致 */}
       {paper.abstract ? (
-        <div className="card card-pad" style={{ background: 'var(--surface-2)', marginTop: 18 }}>
-          <div className="row gap8" style={{ marginBottom: 8 }}>
-            <Icon name="file" size={14} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontSize: 12, fontWeight: 700 }}>{tr('摘要', 'Abstract')}</span>
-          </div>
+        <MetaFold label={tr('摘要', 'Abstract')}>
           <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{paper.abstract}</p>
-        </div>
+        </MetaFold>
       ) : (
         <div className="empty" style={{ padding: 20, marginTop: 18 }}>
           {tr('这篇还没有摘要。', 'No abstract for this paper.')}
@@ -739,10 +738,14 @@ export function DailyPage() {
   const fallbackNotice = semantic && listQuery.data?.mode_used === 'keyword';
 
   // 首条自动选中
+  // 默认选中列表第一篇，**并在列表变了之后跟着走**。
+  // 原来只在 selectedId 为空时设一次：日期默认落到最新一天是异步的，列表先以「全部
+  // 7 天」返回，选中项就锁在了那一版的第一条——于是打开页面看到的是两天前那篇。
   const firstId = items[0]?.entry_id ?? null;
+  const selectedInList = !!selectedId && items.some((p) => p.entry_id === selectedId);
   useEffect(() => {
-    if (!selectedId && firstId) setSelectedId(firstId);
-  }, [selectedId, firstId]);
+    if (firstId && !selectedInList) setSelectedId(firstId);
+  }, [firstId, selectedInList]);
 
   const toggleSelected = (paperId: string) =>
     setSelected((prev) => {

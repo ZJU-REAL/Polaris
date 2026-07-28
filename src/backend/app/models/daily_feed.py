@@ -22,7 +22,9 @@ from app.models.paper import Paper
 DEFAULT_DAILY_CATEGORIES = ["cs.AI", "cs.CL", "cs.CV"]
 
 # 池滚动保留天数（含当天）
-DAILY_FEED_RETENTION_DAYS = 7
+#: 保留天数的**默认值**。运行时以 SystemSetting daily_feed_retention_days 为准
+#: （见 services/daily_feed.get_retention_days）；这里留着给不便读设置的调用方。
+DAILY_FEED_RETENTION_DAYS = 14
 
 
 class DailyFeedEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):

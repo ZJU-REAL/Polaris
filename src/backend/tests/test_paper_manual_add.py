@@ -259,3 +259,40 @@ async def test_add_mutual_exclusion_422(client):
         headers={"Authorization": f"Bearer {other}"},
     )
     assert resp.status_code == 404
+
+
+async def test_resolve_by_arxiv_id_fills_in_the_title(client, monkeypatch):
+    """锚点论文只填 arXiv id，题目由系统补上。
+
+    路由必须排在 /papers/{paper_id} **之前**，否则 "resolve" 会被当成 paper_id
+    去解析 UUID，直接 422——这条断言就是在守那个顺序。
+    """
+    from app.services import paper_import
+
+    async def _fake(arxiv_id=None, doi=None, bibtex=None):
+        return {"arxiv_id": "2005.11401", "title": "Retrieval-Augmented Generation",
+                "year": 2020, "authors": [{"name": "Lewis"}, {"name": "Perez"}]}
+
+    monkeypatch.setattr(paper_import, "resolve_fields", _fake)
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+
+    resp = await client.get("/api/papers/resolve", params={"arxiv_id": "2005.11401"}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["title"] == "Retrieval-Augmented Generation"
+    assert body["arxiv_id"] == "2005.11401"
+    assert body["authors"] == ["Lewis", "Perez"]
+
+
+async def test_resolve_unknown_arxiv_id_is_422(client, monkeypatch):
+    """解析不出时给 422，前端保留 id、题目留空即可，不该 500。"""
+    from app.services import paper_import
+
+    async def _fail(arxiv_id=None, doi=None, bibtex=None):
+        raise paper_import.ParseFailedError("nope")
+
+    monkeypatch.setattr(paper_import, "resolve_fields", _fail)
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    resp = await client.get("/api/papers/resolve", params={"arxiv_id": "9999.99999"}, headers=headers)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "ARXIV_ID_NOT_RESOLVED"

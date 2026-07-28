@@ -48,7 +48,7 @@ ARXIV_RSS = """<?xml version='1.0' encoding='UTF-8'?>
 xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
   <channel>
     <title>cs.CL updates on arXiv.org</title>
-    <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
+    <pubDate>__CHANNEL_PUBDATE__</pubDate>
     <item>
       <title>Computer-Use Agents at Scale</title>
       <link>https://arxiv.org/abs/2607.10001</link>
@@ -99,6 +99,19 @@ Abstract: A revised cross-listed older paper.</description>
 """
 
 
+def _rss_with_batch_date(day) -> str:
+    """把 fixture 的批次日期换成指定日期。
+
+    批次日期不是今天时**不会进缓存**（否则轮询会一直拿到同一份旧批次），所以想验证
+    缓存就必须让它声明今天。
+    """
+    from email.utils import format_datetime
+    import datetime as _dt
+
+    at = _dt.datetime.combine(day, _dt.time(), tzinfo=_dt.timezone(_dt.timedelta(hours=-4)))
+    return ARXIV_RSS.replace("__CHANNEL_PUBDATE__", format_datetime(at))
+
+
 @pytest_asyncio.fixture
 async def cache_redis():
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
@@ -138,12 +151,15 @@ async def test_arxiv_search_parses_and_caches(cache_redis):
 
 @respx.mock
 async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
+    import datetime as _dt
+
+    today = _dt.datetime.now(_dt.UTC).date()
     route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/cs\.CL").mock(
-        return_value=httpx.Response(200, text=ARXIV_RSS)
+        return_value=httpx.Response(200, text=_rss_with_batch_date(today))
     )
     client = ArxivClient(redis=cache_redis, min_interval=0)
     entries, batch_at = await client.fetch_new("cs.CL")
-    assert batch_at is not None and batch_at.date().isoformat() == "2026-07-20"
+    assert batch_at is not None and batch_at.astimezone(_dt.UTC).date() == today
 
     # 只留 announce_type ∈ {new, cross}；replace / replace-cross（旧论文更新）被跳过
     assert [e["announce_type"] for e in entries] == ["new", "cross"]
@@ -441,3 +457,24 @@ async def test_penalize_extends_the_shared_gate(cache_redis):
     ttl = await cache_redis.pttl("lit:arxiv:gate")
     assert ttl > 1000
     assert b._interval > 0  # b 会在 acquire 时撞上这个闸门
+
+
+@respx.mock
+async def test_stale_rss_batch_is_not_cached(cache_redis):
+    """**陈旧批次不进缓存**——这是每 15 分钟轮询能生效的前提。
+
+    RSS 缓存 3 小时。上午探到旧批次一旦被缓存住，接下来三小时的每一次探测都会拿到
+    同一份，轮询就白做了：当天批次出来了也发现不了。
+    """
+    import datetime as _dt
+
+    yesterday = _dt.datetime.now(_dt.UTC).date() - _dt.timedelta(days=1)
+    route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/cs\.CL").mock(
+        return_value=httpx.Response(200, text=_rss_with_batch_date(yesterday))
+    )
+    client = ArxivClient(redis=cache_redis, min_interval=0)
+
+    await client.fetch_new("cs.CL")
+    await client.fetch_new("cs.CL")
+    assert route.call_count == 2, "旧批次被缓存住的话，轮询永远发现不了当天那批"
+    await client.aclose()

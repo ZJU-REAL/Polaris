@@ -343,7 +343,6 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
           name={name}
           statement={statement}
           showRubric
-          showAnchors
         />
       </div>
     </Modal>

@@ -535,3 +535,57 @@ async def test_index_status_readable_for_a_daily_feed_paper(client):
     body = resp.json()
     assert "paper_vector" in body and "chunk_vector" in body
     assert body["paper_vector"]["built"] is False  # 刚入池，还没建向量
+
+
+async def test_collecting_libraries_lists_only_admitted_and_visible(client):
+    """列出收录了这篇论文的文献库：只算真正进了库的状态，且只列可见的库。
+
+    candidate 是还没打分、excluded 是打分没过，两者都不算「收录」——混进来会让人
+    以为库里有这篇。个人库不能经这个接口泄漏给别人。
+    """
+    from app.models.library_direction import DirectionLibrary, LibraryPaper
+    from app.models.paper import new_paper
+    from app.models.user import User
+    from sqlalchemy import select as _select
+
+    owner_token = await register_and_login(client, email="collect-owner@example.com")
+    owner = {"Authorization": f"Bearer {owner_token}"}
+    project_id, _ = await make_project_with_library(client, owner, name="收录来源")
+
+    async with get_sessionmaker()() as session:
+        paper = new_paper(source="arxiv", arxiv_id="2607.77001", title="Collected", abstract="x")
+        session.add(paper)
+        await session.flush()
+        me = (await session.execute(_select(User).where(User.email == "collect-owner@example.com"))).scalar_one()
+        libs = {}
+        for name, status, is_public, score in (
+            ("已收录公共库", "compiled", True, 0.91),
+            ("还没打分", "candidate", True, None),
+            ("打分没过", "excluded", True, 0.2),
+            ("别人的个人库", "scored", False, 0.85),
+        ):
+            lib = DirectionLibrary(
+                name=name, status="active", is_public=is_public, submitted_by=me.id
+            )
+            session.add(lib)
+            await session.flush()
+            session.add(
+                LibraryPaper(
+                    library_id=lib.id, paper_id=paper.id, status=status, relevance_score=score
+                )
+            )
+            libs[name] = lib.id
+        await session.commit()
+        paper_id = paper.id
+
+    resp = await client.get(f"/api/papers/{paper_id}/libraries", headers=owner)
+    assert resp.status_code == 200, resp.text
+    names = [r["name"] for r in resp.json()]
+    assert "已收录公共库" in names
+    assert "还没打分" not in names and "打分没过" not in names
+    assert resp.json()[0]["relevance_score"] == pytest.approx(0.91)
+
+    # 别人看不到那个个人库
+    other = {"Authorization": f"Bearer {await register_and_login(client, email='c2@e.com')}"}
+    resp = await client.get(f"/api/papers/{paper_id}/libraries", headers=other)
+    assert "别人的个人库" not in [r["name"] for r in resp.json()]

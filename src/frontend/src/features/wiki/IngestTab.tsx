@@ -12,6 +12,7 @@ import { fmtTime } from '../../lib/format';
 import {
   api,
   ApiError,
+  type AnchorPaper,
   type IngestStart,
   type IngestState,
   type IngestTimeRange,
@@ -97,6 +98,97 @@ function KnobRange({
   );
 }
 
+/** 锚点论文编辑器：只填 arXiv id，题目由系统补上。
+ *
+ * 从「收录设置」搬到这里——锚点是给「从锚点论文扩展」用的输入，放在收录设置里
+ * 与检索/打分的配置混在一起，用户找不到它跟哪个动作有关。 */
+function AnchorEditor({
+  libraryId,
+  anchors,
+  onChange,
+  disabled,
+}: {
+  libraryId?: string;
+  anchors: AnchorPaper[];
+  onChange: (next: AnchorPaper[]) => void;
+  disabled?: boolean;
+}) {
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    const id = draft.trim();
+    if (!id) return;
+    if (anchors.some((a) => (a.arxiv_id || '').trim() === id)) {
+      toast(tr('这篇已经在列表里了', 'Already in the list'), 'info');
+      return;
+    }
+    setBusy(true);
+    try {
+      // 题目自动补：解析不出也照样加进去（id 是有效输入，题目只是给人看的确认）
+      let title = '';
+      try {
+        title = (await api.resolvePaperByArxivId(id)).title;
+      } catch {
+        toast(tr('没解析出题目，已按 id 添加', 'Could not resolve the title — added by id'), 'info');
+      }
+      onChange([...anchors, { arxiv_id: id, title }]);
+      setDraft('');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="col gap8">
+      {anchors.length > 0 && (
+        <div className="col gap6">
+          {anchors.map((a, i) => (
+            <div key={`${a.arxiv_id}-${i}`} className="row gap8" style={{ alignItems: 'center' }}>
+              <span className="pill sm mono" style={{ background: 'var(--surface-3)' }}>
+                {a.arxiv_id}
+              </span>
+              <span style={{ fontSize: 12.5, flex: 1, minWidth: 0 }} className="ellipsis">
+                {a.title || <span className="muted">{tr('（题目未解析）', '(title unresolved)')}</span>}
+              </span>
+              {!disabled && (
+                <button
+                  type="button"
+                  className="btn btn-ghost sm"
+                  onClick={() => onChange(anchors.filter((_, j) => j !== i))}
+                >
+                  <Icon name="x" size={11} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {!disabled && (
+        <div className="row gap8">
+          <input
+            className="input"
+            style={{ flex: 1 }}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void add(); } }}
+            placeholder={tr('填 arXiv id，如 2005.11401', 'arXiv id, e.g. 2005.11401')}
+          />
+          <button type="button" className="btn btn-soft sm" disabled={busy || !draft.trim()} onClick={() => void add()}>
+            {busy ? tr('解析中…', 'Resolving…') : tr('添加', 'Add')}
+          </button>
+        </div>
+      )}
+      {libraryId && anchors.length === 0 && (
+        <div className="muted" style={{ fontSize: 11.5 }}>
+          {tr('还没有锚点论文。填几篇这个方向的代表作，扩展会从它们的引用与参考文献往外走。',
+              'No anchor papers yet. Add a few representative works — the expansion walks outward from their citations and references.')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onGoGovern, readOnly = false }: IngestTabProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -114,18 +206,29 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
     enabled: !!libraryId && !readOnly,
     retry: false,
   });
-  const anchorCount = libDef?.definition?.anchor_papers?.length ?? 0;
+  // 锚点论文：从库定义读，改完就存回（这里是它唯一的编辑入口，收录设置里已移除）
+  const anchors = libDef?.definition?.anchor_papers ?? [];
+  const anchorCount = anchors.length;
+  const saveAnchors = useMutation({
+    mutationFn: (next: AnchorPaper[]) =>
+      api.updateLibrary(libraryId as string, { anchors: next }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['library', libraryId] });
+    },
+    onError: (e) =>
+      toast(`${tr('保存锚点失败', 'Failed to save anchors')}：${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
   const noKeywords = libraryId
     ? !!libDef && (libDef.definition?.keywords?.include?.length ?? 0) === 0
     : !!project;
 
   // —— 成本旋钮（bootstrap） ——
-  const [maxPapers, setMaxPapers] = useState(50);
-  const [threshold, setThreshold] = useState(0.6);
+  const [maxPapers, setMaxPapers] = useState(150);
+  const [threshold, setThreshold] = useState(0.8);
   const [hops, setHops] = useState<'1' | '2' | '3'>('1');
   const [queryTerms, setQueryTerms] = useState('');
   const [timeRange, setTimeRange] = useState<IngestTimeRange>('6m');
-  const [compileTopN, setCompileTopN] = useState(20);
+  const [compileTopN, setCompileTopN] = useState(50);
   // 最大化模式：不限检索/编译篇数（仅 bootstrap 表单，增量同步不受影响）
   const [unlimited, setUnlimited] = useState(false);
 
@@ -408,6 +511,17 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
               onChange={setTimeRange}
             />
           </FormField>
+          <KnobRange
+            label={tr('相关度阈值', 'Relevance threshold')}
+            en="relevance_threshold"
+            hint={tr('LLM 相关性打分低于该阈值的论文将被过滤。', 'Papers scoring below this relevance threshold are filtered out.')}
+            value={threshold}
+            min={0}
+            max={1}
+            step={0.05}
+            format={(v) => v.toFixed(2)}
+            onChange={setThreshold}
+          />
           <FormField label={tr('最大化（不限篇数）', 'Maximize (no paper cap)')} en="unlimited">
             <label className="row gap10" style={{ cursor: 'pointer', userSelect: 'none' }}>
               <input
@@ -444,27 +558,16 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             label={tr('最大检索篇数', 'Max papers')}
             en="max_papers"
             hint={tr(
-              '本次检索与参考文献扩展最多加入知识库的论文数。',
-              'Cap on papers added to the library from search plus reference expansion.',
+              '本次最多检索并打分的论文数。',
+              'How many papers this run retrieves and scores at most.',
             )}
             value={maxPapers}
             min={10}
-            max={300}
+            max={500}
             step={10}
             onChange={setMaxPapers}
             disabled={unlimited}
             disabledText={tr('无上限', 'No cap')}
-          />
-          <KnobRange
-            label={tr('相关度阈值', 'Relevance threshold')}
-            en="relevance_threshold"
-            hint={tr('LLM 相关性打分低于该阈值的论文将被过滤。', 'Papers scoring below this relevance threshold are filtered out.')}
-            value={threshold}
-            min={0}
-            max={1}
-            step={0.05}
-            format={(v) => v.toFixed(2)}
-            onChange={setThreshold}
           />
           <KnobRange
             label={tr('最大编译篇数', 'Max compiled papers')}
@@ -475,7 +578,7 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
             )}
             value={compileTopN}
             min={5}
-            max={100}
+            max={200}
             step={5}
             onChange={setCompileTopN}
             disabled={unlimited}
@@ -562,14 +665,21 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
               onChange={setHops}
             />
           </FormField>
-          {!anchorCount && (
-            <div style={{ fontSize: 11.5, color: 'var(--text-4)', margin: '4px 0 10px' }}>
-              {tr(
-                '这个文献库还没有锚点论文，先去收录设置添加几篇代表作。',
-                'This library has no anchor papers yet — add a few in inclusion settings first.',
-              )}
-            </div>
-          )}
+          <FormField
+            label={tr('锚点论文', 'Anchor papers')}
+            en="anchor_papers"
+            hint={tr(
+              '只需填 arXiv id，题目由系统自动补上。扩展从这些论文的引用与参考文献往外走。',
+              'Just the arXiv id — the title is filled in automatically. The expansion walks outward from these papers.',
+            )}
+          >
+            <AnchorEditor
+              libraryId={libraryId}
+              anchors={anchors}
+              onChange={(next) => saveAnchors.mutate(next)}
+              disabled={saveAnchors.isPending}
+            />
+          </FormField>
           <div className="row gap10" style={{ marginTop: 6 }}>
             <button
               className="btn btn-ghost"
