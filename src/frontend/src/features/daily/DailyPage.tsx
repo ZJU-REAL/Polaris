@@ -615,7 +615,6 @@ export function DailyPage() {
   const [semanticOn, setSemanticOn] = useState(false);
   const [page, setPage] = useState(1);
   // —— 日期（null=全部，默认就停在全部）留在工具栏；分类 / 类型收进高级检索面板 ——
-  const [day, setDay] = useState<string | null>(null);
   // 只看被某个文献库收录的论文（#218）。空 = 不限
   const [libraryId, setLibraryId] = useState('');
   // 高级检索默认展开：分类 / 类型是常用筛选，藏起来用户找不到
@@ -639,23 +638,15 @@ export function DailyPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => setPage(1), [q, semanticOn, day, category, announce, author, affiliation]);
+  useEffect(() => setPage(1), [q, semanticOn, category, announce, author, affiliation]);
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
-  }, [q, semanticOn, day, category, announce, author, affiliation]);
+  }, [q, semanticOn, category, announce, author, affiliation]);
 
   // 日期标签上的数字要跟着筛选走，否则选了某个分类之后标签仍显示全部篇数，
   // 看起来就像筛选根本没生效。
   // 保留期是管理员可配的，界面上不能写死「7 天」
-  const retentionQuery = useQuery({
-    queryKey: ['daily-retention'],
-    queryFn: () => api.getDailyRetention(),
-    retry: false,
-    staleTime: 5 * 60_000,
-  });
-  const retentionDays = retentionQuery.data?.days ?? 14;
-
   const daysQuery = useQuery({
     queryKey: ['daily-days', announce, category],
     queryFn: () => api.listDailyDays({ announce: announce || undefined, category: category || undefined }),
@@ -664,27 +655,10 @@ export function DailyPage() {
   });
   const dayCount = new Map((daysQuery.data ?? []).map((d) => [d.date, d.count] as const));
 
-  // 有数据的日期，升序（旧 → 新），日期步进只在这些日期间跳
-  const dates = (daysQuery.data ?? []).map((d) => d.date).sort();
-  const latestDate = dates[dates.length - 1] ?? null;
 
-  // 日期一改就算用户表过态，之后不再自动初始化
-  const pickDay = useCallback((d: string | null) => setDay(d), []);
   // 默认停在「全部」：跨天一起看、按时间倒排，最新的自然在最前。以前默认落到最新
   // 一天，那一天恰好没有新公告（周末）时页面就是空的，看着像坏了。
 
-  const dayIdx = day ? dates.indexOf(day) : -1;
-  // 「全部」视为最新一天的后一位：← 从全部进入最新一天；→ 在最新一天回到全部
-  const canPrevDay = dates.length > 0 && (day === null || dayIdx > 0);
-  const canNextDay = day !== null && dayIdx >= 0;
-  const goPrevDay = () => {
-    if (day === null) pickDay(latestDate);
-    else if (dayIdx > 0) pickDay(dates[dayIdx - 1] ?? null);
-  };
-  const goNextDay = () => {
-    if (day === null) return;
-    pickDay(dayIdx >= 0 && dayIdx < dates.length - 1 ? (dates[dayIdx + 1] ?? null) : null);
-  };
 
   // 点作者/机构 → 列表只留匹配的论文（走已有的高级检索），其余条件重置并展开面板；
   // 日期放开到全部——只看当天的话，按作者/机构筛基本什么都剩不下
@@ -698,14 +672,13 @@ export function DailyPage() {
       setLibraryId('');
       setAnnounce('all');
       setAdvOpen(true);
-      pickDay(null);
       if (patch.author) {
         toast(tr(`已筛选作者：${patch.author}`, `Filtered by author: ${patch.author}`), 'info');
       } else if (patch.affiliation) {
         toast(tr(`已筛选机构：${patch.affiliation}`, `Filtered by affiliation: ${patch.affiliation}`), 'info');
       }
     },
-    [pickDay],
+    [],
   );
   const filterByAuthor = useCallback((name: string) => applyAdvFilter({ author: name }), [applyAdvFilter]);
   const filterByAffiliation = useCallback(
@@ -732,7 +705,7 @@ export function DailyPage() {
   const listQuery = useQuery({
     queryKey: [
       'daily-papers',
-      semanticOn, page, q, day, category, announce, author, affiliation, libraryId,
+      semanticOn, page, q, category, announce, author, affiliation, libraryId,
     ],
     queryFn: () =>
       api.listDailyPapers({
@@ -740,7 +713,6 @@ export function DailyPage() {
         page: semantic ? undefined : page,
         size: PAGE_SIZE,
         q: q || undefined,
-        date: day ?? undefined,
         category: category || undefined,
         announce: announce === 'all' ? undefined : announce,
         author: author || undefined,
@@ -752,7 +724,7 @@ export function DailyPage() {
     placeholderData: keepPreviousData,
   });
   // 默认口径（当天 + 新工作）之外还加了条件才算「筛过」——空列表时给的话术不一样
-  const filtered = !!q || advActive || (day !== null && day !== latestDate);
+  const filtered = !!q || advActive;
   const items = listQuery.data?.items ?? [];
   const total = listQuery.data?.total ?? 0;
   const pages = semantic ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -1037,38 +1009,6 @@ export function DailyPage() {
                   {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
                 </div>
               )}
-              {/* —— 日期步进（主导航，不收进高级检索） —— */}
-              <div className="row gap6 wrap" style={{ marginTop: 8 }}>
-                <button
-                  className="btn btn-ghost sm"
-                  style={{ padding: '0 7px', height: 24, fontSize: 11 }}
-                  disabled={!canPrevDay}
-                  onClick={goPrevDay}
-                >
-                  ‹ {tr('前一天', 'Prev day')}
-                </button>
-                <span
-                  className={`chip${day !== null ? ' on' : ''}`}
-                  title={
-                    day !== null
-                      ? tr(`点击看全部 ${retentionDays} 天`, `Click to show all ${retentionDays} days`)
-                      : tr('点击只看最新一天', 'Click to show the latest day only')
-                  }
-                  onClick={() => pickDay(day === null ? latestDate : null)}
-                >
-                  {day !== null
-                    ? dayLabel(day, dayCount.get(day))
-                    : tr(`全部 ${retentionDays} 天`, `All ${retentionDays} days`)}
-                </span>
-                <button
-                  className="btn btn-ghost sm"
-                  style={{ padding: '0 7px', height: 24, fontSize: 11 }}
-                  disabled={!canNextDay}
-                  onClick={goNextDay}
-                >
-                  {tr('后一天', 'Next day')} ›
-                </button>
-              </div>
             </div>
 
             <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
