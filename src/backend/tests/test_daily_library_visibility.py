@@ -171,3 +171,51 @@ async def test_daily_ingest_status_hides_other_peoples_libraries(client):
 async def test_daily_ingest_status_is_empty_without_runs(client):
     _pid, headers, _c, _p, _lib = await _setup(client)
     assert (await client.get("/api/lab/daily-ingest", headers=headers)).json() == []
+
+
+async def test_library_list_can_show_only_todays_daily_collections(client):
+    """文献库列表的「今日新收录」：今天入库 + 来自每日论文池，两个条件都要满足。"""
+    import datetime as dt
+
+    from sqlalchemy import select as sa_select
+
+    from app.models.library_direction import LibraryPaper
+
+    project_id, headers, collected_id, _passed_id, _lib = await _setup(client)
+
+    async with get_sessionmaker()() as session:
+        # 一篇手工加的（不在每日池里），今天入库——不该出现在「今日新收录」里
+        manual = await add_paper(
+            session, project_id=project_id, title="Manually Added", status="compiled"
+        )
+        session.add(manual)
+        await session.flush()
+        manual_id = manual.id
+        # 一篇来自每日池但是昨天入库的——也不该出现
+        old = await add_paper(
+            session, project_id=project_id, title="Collected Yesterday", status="compiled"
+        )
+        session.add(old)
+        await session.flush()
+        session.add(DailyFeedEntry(paper_id=old.id, feed_date=_today(), primary_category="cs.AI"))
+        await session.flush()
+        yesterday = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+        membership = (
+            await session.execute(sa_select(LibraryPaper).where(LibraryPaper.paper_id == old.id))
+        ).scalar_one()
+        membership.created_at = yesterday
+        old_id = old.id
+        await session.commit()
+
+    since = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat()
+    resp = await client.get(
+        f"/api/projects/{project_id}/papers",
+        # 走 params 而不是拼串：ISO 时间里的 + 号在 URL 里会被当成空格
+        params={"status": "library", "daily_only": "true", "created_from": since},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {row["id"] for row in resp.json()["items"]}
+    assert str(collected_id) in ids
+    assert str(manual_id) not in ids, "手工加的不算「从每日论文自动收录」"
+    assert str(old_id) not in ids, "昨天入库的不算今天新收录"

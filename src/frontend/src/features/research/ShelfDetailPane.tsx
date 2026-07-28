@@ -400,14 +400,8 @@ export function ShelfDetailPane({
       {/* —— 课题备注：为什么相关（仅书架内论文；这条是课题里公开的说明） —— */}
       {onShelf && <NoteEditor key={item.paper_id} note={item.note} pending={notePending} onSave={onSaveNote} />}
 
-      {/* —— 我的笔记（只有自己看得到，和上面的课题备注是两回事） —— */}
-      {paper && (
-        <PaperNotesSection
-          paperId={item.paper_id}
-          noteCount={paper.note_count ?? 0}
-          invalidateKeys={noteKeys}
-        />
-      )}
+      {/* —— 概念 chips：点了进不限库的概念页 —— */}
+      <ConceptChips concepts={paper?.concepts} onOpen={openConcept} />
 
       {/* —— frontmatter 风格元信息（默认折叠） —— */}
       <MetaFold>
@@ -446,8 +440,12 @@ export function ShelfDetailPane({
         </MetaItem>
       </MetaFold>
 
-      {/* —— 概念 chips：点了进不限库的概念页 —— */}
-      <ConceptChips concepts={paper?.concepts} onOpen={openConcept} />
+      {/* —— 摘要（折叠，与元信息 / 我的笔记同款） —— */}
+      {abstract && (
+        <MetaFold label={tr('摘要', 'Abstract')}>
+          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{abstract}</div>
+        </MetaFold>
+      )}
 
       {/* —— TL;DR —— */}
       {tldr && (
@@ -469,14 +467,13 @@ export function ShelfDetailPane({
         </div>
       )}
 
-      {/* —— 摘要 —— */}
-      {abstract && (
-        <div style={{ marginTop: 18 }}>
-          <div className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em', marginBottom: 6 }}>
-            {tr('摘要', 'Abstract')}
-          </div>
-          <div style={{ fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-2)' }}>{abstract}</div>
-        </div>
+      {/* —— 我的笔记（只有自己看得到，和上面的课题备注是两回事） —— */}
+      {paper && (
+        <PaperNotesSection
+          paperId={item.paper_id}
+          noteCount={paper.note_count ?? 0}
+          invalidateKeys={noteKeys}
+        />
       )}
 
       {/* —— 重要图片画廊（只读：提取/重新提取是库维护动作） —— */}

@@ -213,7 +213,6 @@ function PaperDetailPane({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [abstractOpen, setAbstractOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerPrint, setReaderPrint] = useState(false);
   const openReader = useCallback(() => {
@@ -243,9 +242,9 @@ function PaperDetailPane({
     [detailKey, libraryId],
   );
 
-  // 换论文时收起本地开合状态（面板不随选中项重挂载，得自己收）
+  // 换论文时收起本地开合状态（面板不随选中项重挂载，得自己收）。
+  // 折叠块的开合在 MetaFold 内部，用 key={paperId} 让它随论文重挂载即可。
   useEffect(() => {
-    setAbstractOpen(false);
     setReaderOpen(false);
   }, [paperId]);
 
@@ -374,8 +373,11 @@ function PaperDetailPane({
         invalidateKeys={listKeys}
       />
 
+      {/* —— 概念 chips（过多时折叠） —— */}
+      <ConceptChips concepts={paper.concepts} onOpen={(c) => onOpenConcept(c.id)} />
+
       {/* —— frontmatter 风格元信息（默认折叠）；编译时间在下方 AI 图文介绍那行已有 —— */}
-      <MetaFold>
+      <MetaFold key={`meta-${paperId}`}>
         <MetaItem label="arxiv_id">
           {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
         </MetaItem>
@@ -395,30 +397,11 @@ function PaperDetailPane({
         </MetaItem>
       </MetaFold>
 
-      {/* —— 概念 chips（过多时折叠） —— */}
-      <ConceptChips concepts={paper.concepts} onOpen={(c) => onOpenConcept(c.id)} />
-
-      {/* —— 摘要（折叠） —— */}
+      {/* —— 摘要（折叠，与元信息 / 我的笔记同款） —— */}
       {paper.abstract && (
-        <div className="card" style={{ marginTop: 18, overflow: 'hidden' }}>
-          <div
-            className="row"
-            onClick={() => setAbstractOpen((o) => !o)}
-            style={{ padding: '11px 16px', cursor: 'pointer', justifyContent: 'space-between', userSelect: 'none' }}
-          >
-            <span style={{ fontSize: 12.5, fontWeight: 650 }}>{tr('摘要', 'Abstract')}</span>
-            <Icon
-              name="chevDown"
-              size={14}
-              style={{ color: 'var(--text-3)', transform: abstractOpen ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
-            />
-          </div>
-          {abstractOpen && (
-            <div style={{ padding: '0 16px 14px', fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-2)' }}>
-              {paper.abstract}
-            </div>
-          )}
-        </div>
+        <MetaFold key={`abs-${paperId}`} label={tr('摘要', 'Abstract')}>
+          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{paper.abstract}</div>
+        </MetaFold>
       )}
 
       {/* —— TL;DR —— */}

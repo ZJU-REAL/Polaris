@@ -479,6 +479,9 @@ async def list_library_papers(
     published_to: datetime | None = Query(default=None),
     created_from: datetime | None = Query(default=None),
     created_to: datetime | None = Query(default=None),
+    daily_only: bool = Query(
+        default=False, description="只看从每日论文池自动收录的（今日新收录视图用）"
+    ),
     sort: str = Query(default="relevance", pattern="^(relevance|-published_at)$"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
@@ -507,6 +510,7 @@ async def list_library_papers(
         published_to=published_to,
         created_from=created_from,
         created_to=created_to,
+        daily_only=daily_only,
         user_id=user.id,
         sort=sort,
         page=page,

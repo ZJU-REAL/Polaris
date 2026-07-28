@@ -327,6 +327,9 @@ export function LibraryDetailPane({
         />
       )}
 
+      {/* —— 概念 chips：点了跳所属课题库的概念页 —— */}
+      {alive && <ConceptChips concepts={paper.concepts} onOpen={openConcept} />}
+
       {/* —— frontmatter 风格元信息（默认折叠） —— */}
       <MetaFold>
         <MetaItem label="arxiv_id">
@@ -344,8 +347,12 @@ export function LibraryDetailPane({
         )}
       </MetaFold>
 
-      {/* —— 概念 chips：点了跳所属课题库的概念页 —— */}
-      {alive && <ConceptChips concepts={paper.concepts} onOpen={openConcept} />}
+      {/* —— 摘要（折叠，与元信息 / 我的笔记同款） —— */}
+      {abstract && (
+        <MetaFold label={tr('摘要', 'Abstract')}>
+          <div style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{abstract}</div>
+        </MetaFold>
+      )}
 
       {/* —— TL;DR —— */}
       {tldr && (
@@ -364,16 +371,6 @@ export function LibraryDetailPane({
             TL;DR
           </span>
           {tldr}
-        </div>
-      )}
-
-      {/* —— 摘要 —— */}
-      {abstract && (
-        <div style={{ marginTop: 18 }}>
-          <div className="mono" style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '0.04em', marginBottom: 6 }}>
-            {tr('摘要', 'Abstract')}
-          </div>
-          <div style={{ fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-2)' }}>{abstract}</div>
         </div>
       )}
 
