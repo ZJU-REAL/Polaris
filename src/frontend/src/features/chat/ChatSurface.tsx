@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -7,6 +7,14 @@ import { ApiError, api, skillKindLabel, type ChatTurn } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { useIsMobile } from '../../lib/useBreakpoint';
 import { useChatHistory } from './useChatHistory';
+import {
+  isStreaming as streamIsLive,
+  startStream,
+  stopStream,
+  streamKey,
+  subscribeStream,
+  type StreamSnapshot,
+} from './liveChatStreams';
 import { Composer } from './Composer';
 import { CONTEXT_KIND_META, type ChatMsg, type ContextKind, type ContextRef, type MentionTarget } from './types';
 
@@ -93,7 +101,6 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   useEffect(() => {
     setDrawerOpen(isMobile ? false : defaultDrawerOpen);
   }, [isMobile, defaultDrawerOpen]);
-  const stopRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 是否「贴着底部」：用户往上滚离底部后暂停自动跟随，滚回底部再恢复
   const stickBottomRef = useRef(true);
@@ -113,7 +120,6 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   const activeMsgsRef = useRef<ChatMsg[]>(activeMsgs);
   activeMsgsRef.current = activeMsgs;
 
-  useEffect(() => () => stopRef.current?.(), []);
   // 只有用户仍贴在底部时才自动跟随到底；往上滚阅读时不打断
   useEffect(() => {
     const el = scrollRef.current;
@@ -126,48 +132,77 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   };
 
-  const finishStream = (failed: boolean, fallbackText?: string, deliverShare = true) => {
-    setStreaming(false);
-    stopRef.current = null;
-    const finalMsgs = withLastAssistant(activeMsgsRef.current, (last) => ({
-      ...last,
-      done: true,
-      failed: failed || undefined,
-      content: last.content || fallbackText || '',
-    }));
-    activeMsgsRef.current = finalMsgs;
-    commit(finalMsgs);
+  // 在途流按「会话」登记在模块级表里，组件卸载只退订、不掐流（#193）
+  const activeKey = history.activeId ? streamKey(cfg.surfaceKey, history.activeId) : null;
+  const activeKeyRef = useRef<string | null>(activeKey);
+  activeKeyRef.current = activeKey;
+  // 一条流的收尾只处理一次：重新订阅时会立刻收到一份 done 快照，别重复投递分享
+  const handledDoneRef = useRef<string | null>(null);
+
+  const deliverShare = (finalMsgs: ChatMsg[], failed: boolean) => {
     const share = pendingShareRef.current;
     pendingShareRef.current = null;
-    if (share && !failed && deliverShare) {
-      const link = cfg.shareLink ? tr('，已附论文链接', ' with paper link') : '';
-      if (share.kind === 'user') {
-        // 平台成员私信不在本次群机器人单向推送范围内，保留原有提示。
-        toast(
-          tr(`已排队分享给 ${share.label}${link}（成员分享后端待接）`, `Queued to share with ${share.label}${link} (member delivery pending)`),
-          'info',
-        );
-        return;
-      }
-      const assistant = finalMsgs[finalMsgs.length - 1];
-      const text = assistant?.role === 'assistant' ? assistant.content.trim() : '';
-      if (!text) {
-        toast(tr('回答为空，未向群机器人推送', 'The answer was empty, so nothing was sent to the group bot.'), 'error');
-        return;
-      }
-      toast(tr(`正在推送给 ${share.label}…`, `Sending to ${share.label}…`), 'info');
-      void api.sendChatBotMessage(share.kind, {
-        title: tr('Polaris AI 分享', 'Shared from Polaris AI'),
-        text,
-        ...(cfg.shareLink ? { link: cfg.shareLink } : {}),
-      }).then((result) => {
-        const parts = result.parts > 1 ? tr(`（${result.parts} 条）`, ` (${result.parts} messages)`) : '';
-        toast(tr(`已分享给 ${share.label}${link}${parts}`, `Shared with ${share.label}${link}${parts}`), 'ok');
-      }).catch((error: unknown) => {
-        toast(`${tr('分享失败', 'Share failed')}：${robotShareError(error)}`, 'error');
-      });
+    if (!share || failed) return;
+    const link = cfg.shareLink ? tr('，已附论文链接', ' with paper link') : '';
+    if (share.kind === 'user') {
+      // 平台成员私信不在本次群机器人单向推送范围内，保留原有提示。
+      toast(
+        tr(`已排队分享给 ${share.label}${link}（成员分享后端待接）`, `Queued to share with ${share.label}${link} (member delivery pending)`),
+        'info',
+      );
+      return;
+    }
+    const assistant = finalMsgs[finalMsgs.length - 1];
+    const text = assistant?.role === 'assistant' ? assistant.content.trim() : '';
+    if (!text) {
+      toast(tr('回答为空，未向群机器人推送', 'The answer was empty, so nothing was sent to the group bot.'), 'error');
+      return;
+    }
+    toast(tr(`正在推送给 ${share.label}…`, `Sending to ${share.label}…`), 'info');
+    void api.sendChatBotMessage(share.kind, {
+      title: tr('Polaris AI 分享', 'Shared from Polaris AI'),
+      text,
+      ...(cfg.shareLink ? { link: cfg.shareLink } : {}),
+    }).then((result) => {
+      const parts = result.parts > 1 ? tr(`（${result.parts} 条）`, ` (${result.parts} messages)`) : '';
+      toast(tr(`已分享给 ${share.label}${link}${parts}`, `Shared with ${share.label}${link}${parts}`), 'ok');
+    }).catch((error: unknown) => {
+      toast(`${tr('分享失败', 'Share failed')}：${robotShareError(error)}`, 'error');
+    });
+  };
+
+  // 快照 → 消息。首次订阅、逐 token 推送、切回来认领，走的都是这一条路径
+  const applySnapshot = (snap: StreamSnapshot) => {
+    const next = withLastAssistant(activeMsgsRef.current, (last) => ({
+      ...last,
+      content: snap.content,
+      ...(snap.sources ? { sources: snap.sources } : {}),
+      ...(snap.done ? { done: true } : {}),
+      ...(snap.failed ? { failed: true } : {}),
+    }));
+    activeMsgsRef.current = next;
+    commit(next);
+    if (!snap.done) return;
+    setStreaming(false);
+    const key = activeKeyRef.current;
+    if (key && handledDoneRef.current !== key) {
+      handledDoneRef.current = key;
+      deliverShare(next, snap.failed === true);
     }
   };
+  const applyRef = useRef(applySnapshot);
+  applyRef.current = applySnapshot;
+
+  // 挂载 / 切会话：认领该会话尚未结束的流，接着往下渲染
+  const stableApply = useCallback((snap: StreamSnapshot) => applyRef.current(snap), []);
+  useEffect(() => {
+    if (!activeKey) {
+      setStreaming(false);
+      return;
+    }
+    setStreaming(streamIsLive(activeKey));
+    return subscribeStream(activeKey, stableApply);
+  }, [activeKey, stableApply]);
 
   const send = (payload: { text: string; context: ContextRef[]; shareTo: MentionTarget | null }) => {
     if (streaming) return;
@@ -185,7 +220,15 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     const history10: ChatTurn[] = activeMsgsRef.current
       .filter((m) => m.content && !m.failed)
       .slice(-MAX_HISTORY_TURNS * 2)
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        // 带上这一轮引用了哪几篇论文，否则后端只能看到光秃秃的 [1][2]，
+        // 下一轮追问「这篇文章」时无从对应（#194）
+        ...(m.role === 'assistant' && m.sources?.length
+          ? { cited_paper_ids: m.sources.map((s) => s.paper_id) }
+          : {}),
+      }));
 
     const userMsg: ChatMsg = {
       role: 'user',
@@ -196,47 +239,28 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
     const base = [...activeMsgsRef.current, userMsg, { role: 'assistant' as const, content: '' }];
     activeMsgsRef.current = base;
     stickBottomRef.current = true; // 新一轮提问：跟随到底，把这轮滚进视野
+    // 开流前先把会话落定：流按会话登记，切走再切回来才认领得到
+    const convId = history.ensureId();
     commit(base);
     setStreaming(true);
     pendingShareRef.current = payload.shareTo;
+    handledDoneRef.current = null;
 
-    stopRef.current = cfg.stream(
-      { question, history: history10, context: payload.context },
-      {
-        onDelta: (text) => {
-          if (!text) return;
-          const next = withLastAssistant(activeMsgsRef.current, (last) =>
-            last.done ? last : { ...last, content: last.content + text },
-          );
-          activeMsgsRef.current = next;
-          commit(next);
-        },
-        onSources: (dataStr) => {
-          let items: ChatMsg['sources'] = [];
-          try {
-            items = (JSON.parse(dataStr) as { items?: ChatMsg['sources'] }).items ?? [];
-          } catch {
-            return;
-          }
-          const next = withLastAssistant(activeMsgsRef.current, (last) =>
-            last.done ? last : { ...last, sources: items },
-          );
-          activeMsgsRef.current = next;
-          commit(next);
-        },
-        onDone: () => finishStream(false),
-        onError: (detail) => {
-          toast(`${tr('对话出错：', 'Chat error: ')}${detail}`, 'error');
-          finishStream(true, tr('（回答中断了，请重试）', '(Answer interrupted — please retry)'));
-        },
-      },
+    startStream(
+      streamKey(cfg.surfaceKey, convId),
+      cfg.surfaceKey,
+      convId,
+      (handlers) =>
+        cfg.stream({ question, history: history10, context: payload.context }, handlers),
+      (detail) => toast(`${tr('对话出错：', 'Chat error: ')}${detail}`, 'error'),
     );
   };
 
   const stop = () => {
-    stopRef.current?.();
     // 人工停止只结束本地生成，不把不完整回答发到外部群。
-    finishStream(false, undefined, false);
+    pendingShareRef.current = null;
+    if (activeKeyRef.current) stopStream(activeKeyRef.current);
+    setStreaming(false);
   };
 
   const questionFor = (idx: number): string => {

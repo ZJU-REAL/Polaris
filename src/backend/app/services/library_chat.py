@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 _union_member_stmt = member_papers_stmt
 _dedupe = dedupe_member_rows
 
+PINNED_HISTORY_TURNS = 2  # 往回看几轮 assistant，把它们引用过的论文钉进本轮上下文
+MAX_PINNED_PAPERS = 3  # 最多补几篇（追问「这篇文章怎么样」时，光有标题没正文答不了）
 MAX_SOURCES = 8  # 上下文里最多引用的论文数
 MAX_CHUNKS = 16  # 检索片段数上限
 FALLBACK_PAPERS = 12  # 无分段时用的论文数（TL;DR/摘要）
@@ -53,6 +55,9 @@ LIBRARY_CHAT_SYSTEM_TEMPLATE = """\
   别的词不要加双链）；
 - 当某篇论文的「配图」能直观说明你的观点时，在合适位置插入该图标记 [[fig:论文id:图号]]
   （只用资料里给出的标记，别自己编图号），插图后配一句说明它画了什么、支撑了什么结论；
+- 历史轮次末尾的「本轮引用对照」说明那一轮的编号各指哪篇论文；每轮资料都是重新检索、
+  重新编号的，所以回答里的编号一律以上面「检索到的资料」为准，不要沿用历史轮次的编号。
+  用户说「这篇文章」而没指明是谁时，按最近一轮引用对照去认；
 - 涉及多篇论文时主动做对比与归纳（共识、分歧、演进脉络），不要逐篇罗列了事；
 - 用中文回答，讲清楚、说人话。
 
@@ -61,6 +66,81 @@ LIBRARY_CHAT_SYSTEM_TEMPLATE = """\
 检索到的资料（编号 = 论文）：
 {context}
 """
+
+
+@dataclass
+class HistoryTurn:
+    """一轮历史对话。``cited_paper_ids`` 只有 assistant 轮有值，按 [n] 编号顺序排列。"""
+
+    role: str
+    content: str
+    cited_paper_ids: list[uuid.UUID] = field(default_factory=list)
+
+
+def _norm_history(history) -> list[HistoryTurn]:
+    """兼容两种入参：HistoryTurn 列表，或老的 (role, content) 二元组列表。"""
+    out: list[HistoryTurn] = []
+    for item in history or []:
+        if isinstance(item, HistoryTurn):
+            out.append(item)
+        else:
+            out.append(HistoryTurn(role=item[0], content=item[1]))
+    return out
+
+
+def history_from_turns(turns) -> list[HistoryTurn]:
+    """schemas.ChatTurn 列表 → HistoryTurn 列表（API 层用）。"""
+    return [
+        HistoryTurn(
+            role=t.role,
+            content=t.content,
+            cited_paper_ids=list(getattr(t, "cited_paper_ids", []) or []),
+        )
+        for t in turns
+    ]
+
+
+def _recent_cited_ids(turns: list[HistoryTurn]) -> list[uuid.UUID]:
+    """最近几轮 assistant 引用过的论文 id（去重，越近越靠前）。"""
+    seen: list[uuid.UUID] = []
+    assistant_turns = [t for t in turns if t.role == "assistant"]
+    for turn in reversed(assistant_turns[-PINNED_HISTORY_TURNS:]):
+        for pid in turn.cited_paper_ids:
+            if pid not in seen:
+                seen.append(pid)
+    return seen
+
+
+async def _cited_titles(
+    session: AsyncSession, turns: list[HistoryTurn]
+) -> dict[uuid.UUID, tuple[str, int | None]]:
+    """历史里引用过的论文 id → (标题, 年份)。标题从库里取，不信前端传的。"""
+    ids = {pid for t in turns for pid in t.cited_paper_ids}
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(select(Paper.id, Paper.title, Paper.year).where(Paper.id.in_(ids)))
+    ).all()
+    return {pid: (title, year) for pid, title, year in rows}
+
+
+def _history_messages(
+    turns: list[HistoryTurn], titles: dict[uuid.UUID, tuple[str, int | None]]
+) -> list[Message]:
+    """把历史转成 Message；assistant 轮末尾补一行「本轮引用对照」解释它自己的编号。"""
+    msgs: list[Message] = []
+    for turn in turns:
+        content = turn.content
+        if turn.role == "assistant" and turn.cited_paper_ids:
+            legend = "；".join(
+                f"[{i}]=《{titles[pid][0]}》（{titles[pid][1] or '年份未知'}）"
+                for i, pid in enumerate(turn.cited_paper_ids, start=1)
+                if pid in titles
+            )
+            if legend:
+                content = f"{content}\n（本轮引用对照：{legend}）"
+        msgs.append(Message(role=turn.role, content=content))
+    return msgs
 
 
 @dataclass
@@ -216,6 +296,7 @@ async def build_messages_for_libraries(
     user_id: uuid.UUID | None = None,
 ) -> tuple[list[Message], list[ChatSource]]:
     """按一组库检索并组装对话消息的共享实现（project_id 仅用于 LLM 记账，可空）。"""
+    turns = _norm_history(history)
     if not library_ids:
         # 课题无关联库 = 无语料：直接给「空文献库」上下文（不抓片段、不兜底）
         messages = [
@@ -226,7 +307,7 @@ async def build_messages_for_libraries(
                 ),
             )
         ]
-        messages += [Message(role=role, content=content) for role, content in history]
+        messages += _history_messages(turns, {})
         messages.append(Message(role="user", content=question))
         return messages, []
 
@@ -243,13 +324,29 @@ async def build_messages_for_libraries(
     if rows:
         paper_ids = list({c.paper_id for c, _ in rows})
         found = (
-            await session.execute(
-                _union_member_stmt(library_ids).where(Paper.id.in_(paper_ids))
-            )
+            await session.execute(_union_member_stmt(library_ids).where(Paper.id.in_(paper_ids)))
         ).all()
         deduped = _dedupe(found)
         papers = {p.id: p for p, _ in deduped}
         memberships = {p.id: m for p, m in deduped}
+
+    # 追问「这篇文章具体做了什么」时，问题本身几乎没有语义信息，按它检索大概率
+    # 捞不回上一轮那篇论文。所以把最近几轮引用过的、本轮又没检索到的论文补进来，
+    # 否则模型认得出标题却没有正文可依据。
+    pinned: list[tuple[Paper, LibraryPaper]] = []
+    recent_ids = _recent_cited_ids(turns)
+    if recent_ids:
+        missing = [pid for pid in recent_ids if pid not in papers][:MAX_PINNED_PAPERS]
+        if missing:
+            # 仍然走成员关系查询：只有本次这些库里的论文才能进上下文
+            pinned = _dedupe(
+                (
+                    await session.execute(
+                        _union_member_stmt(library_ids).where(Paper.id.in_(missing))
+                    )
+                ).all()
+            )
+            memberships |= {p.id: m for p, m in pinned}
 
     # (paper, 送入上下文的正文) 顺序清单：优先检索片段，否则高分论文摘要兜底
     entries: list[tuple[Paper, str]] = []
@@ -268,13 +365,18 @@ async def build_messages_for_libraries(
             ).all()
         )
         fallback.sort(
-            key=lambda pm: -(
-                pm[1].relevance_score if pm[1].relevance_score is not None else -1e18
-            )
+            key=lambda pm: -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18)
         )
         fallback = fallback[:FALLBACK_PAPERS]
         entries = [(p, p.tldr or (p.abstract or "")[:400] or "（无摘要）") for p, _ in fallback]
         memberships |= {p.id: m for p, m in fallback}
+
+    # 钉住的历史引用排在检索结果之后：本轮检索到的更贴题，让它们占前面的编号
+    seen_ids = {p.id for p, _ in entries}
+    for paper, _membership in pinned:
+        if paper.id not in seen_ids:
+            seen_ids.add(paper.id)
+            entries.append((paper, paper.tldr or (paper.abstract or "")[:400] or "（无摘要）"))
 
     # 涉及论文的概念清单（回答里的 [[双链]] 只允许用这些名字，保证前端可点可跳）
     concepts_by_paper: dict[uuid.UUID, list[str]] = {}
@@ -322,7 +424,7 @@ async def build_messages_for_libraries(
             content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(statement=statement, context=context),
         )
     ]
-    messages += [Message(role=role, content=content) for role, content in history]
+    messages += _history_messages(turns, await _cited_titles(session, turns))
     messages.append(Message(role="user", content=question))
     return messages, sources
 
@@ -346,6 +448,7 @@ async def build_scoped_messages(
     一致，端点可照抄 chat_with_library 的消费方式。
     """
     statement_text = statement or "（未指定研究方向）"
+    turns = _norm_history(history)
     if not paper_ids:
         # 空语料：直接给「还没有论文」上下文（不抓片段、不兜底）
         messages = [
@@ -356,7 +459,7 @@ async def build_scoped_messages(
                 ),
             )
         ]
-        messages += [Message(role=role, content=content) for role, content in history]
+        messages += _history_messages(turns, {})
         messages.append(Message(role="user", content=question))
         return messages, []
 
@@ -383,18 +486,27 @@ async def build_scoped_messages(
             entries.append((paper, snippet))
     else:
         fallback = (
-            (
-                await session.execute(
-                    select(Paper).where(Paper.id.in_(paper_ids))
-                )
-            )
-            .scalars()
-            .all()
+            (await session.execute(select(Paper).where(Paper.id.in_(paper_ids)))).scalars().all()
         )
         by_id = {p.id: p for p in fallback}
         # 保留调用方给定的论文顺序（书架/收藏已按新→旧排好）
         ordered = [by_id[pid] for pid in paper_ids if pid in by_id][:FALLBACK_PAPERS]
         entries = [(p, p.tldr or (p.abstract or "")[:400] or "（无摘要）") for p in ordered]
+
+    # 同 build_messages_for_libraries：把最近几轮引用过、本轮没检索到的论文补进来。
+    # 限定在本次作用域的 paper_ids 内，别把别处的论文漏进这场对话。
+    scoped = set(paper_ids)
+    seen_ids = {p.id for p, _ in entries}
+    missing = [pid for pid in _recent_cited_ids(turns) if pid in scoped and pid not in seen_ids][
+        :MAX_PINNED_PAPERS
+    ]
+    if missing:
+        extra = (await session.execute(select(Paper).where(Paper.id.in_(missing)))).scalars().all()
+        entries += [
+            (p, p.tldr or (p.abstract or "")[:400] or "（无摘要）")
+            for p in extra
+            if p.id not in seen_ids
+        ]
 
     # 涉及论文的概念清单（回答里的 [[双链]] 只允许用这些名字）
     concepts_by_paper: dict[uuid.UUID, list[str]] = {}
@@ -438,12 +550,10 @@ async def build_scoped_messages(
     messages = [
         Message(
             role="system",
-            content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(
-                statement=statement_text, context=context
-            ),
+            content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(statement=statement_text, context=context),
         )
     ]
-    messages += [Message(role=role, content=content) for role, content in history]
+    messages += _history_messages(turns, await _cited_titles(session, turns))
     messages.append(Message(role="user", content=question))
     return messages, sources
 
@@ -470,9 +580,7 @@ async def build_reference_context(
         return "", []
     found = _dedupe(
         (
-            await session.execute(
-                _union_member_stmt(library_ids).where(Paper.id.in_(paper_ids))
-            )
+            await session.execute(_union_member_stmt(library_ids).where(Paper.id.in_(paper_ids)))
         ).all()
     )
     papers = {p.id: p for p, _ in found}

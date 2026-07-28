@@ -434,7 +434,7 @@ async def chat_with_daily_pool(
     """
     from app.api.wiki import _chat_stream_response
 
-    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    history = library_chat_service.history_from_turns(data.history[-20:])  # 最多 10 轮
     paper_ids = await daily_service.daily_paper_ids(session)
     messages, sources = await library_chat_service.build_scoped_messages(
         session,

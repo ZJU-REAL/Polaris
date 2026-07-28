@@ -215,3 +215,97 @@ async def test_library_chat_sources_include_concepts(client):
     by_paper = {it["paper_id"]: it for it in items}
     assert "思维树" in by_paper[ids[0]]["concepts"]
     assert {"status", "relevance"} <= set(items[0])
+
+
+# ---- 多轮引用记忆（#194）----
+
+
+async def _project_and_router(project_id):
+    from sqlalchemy import select as _select
+
+    from app.core.llm.router import get_llm_router
+    from app.models.project import Project
+
+    session = get_sessionmaker()()
+    project = (
+        await session.execute(_select(Project).where(Project.id == project_id))
+    ).scalar_one()
+    return session, project, get_llm_router()
+
+
+async def test_history_carries_its_own_citation_legend(client):
+    """历史里的 [n] 必须自带对照表，否则模型分不清它和本轮的 [n] 是不是同一篇。"""
+    from app.services import library_chat as lc
+
+    project_id, headers, ids = await _setup(client)
+    await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
+
+    session, project, llm = await _project_and_router(project_id)
+    async with session:
+        messages, _sources = await lc.build_library_messages(
+            session,
+            project=project,
+            question="这篇文章具体做了什么？",
+            history=[
+                lc.HistoryTurn(role="user", content="planning 有哪些方法？"),
+                lc.HistoryTurn(
+                    role="assistant",
+                    content="主流是树搜索 [1]。",
+                    cited_paper_ids=[uuid.UUID(ids[0])],
+                ),
+            ],
+            llm=llm,
+        )
+
+    assistant_msgs = [m for m in messages if m.role == "assistant"]
+    assert len(assistant_msgs) == 1
+    # 对照表里给出的是标题，模型据此认得出「这篇文章」是谁
+    assert "引用对照" in assistant_msgs[0].content
+    assert "Planning with Tree Search" in assistant_msgs[0].content
+    # 系统提示要讲清楚编号不跨轮沿用
+    assert "不要沿用历史轮次的编号" in messages[0].content
+
+
+async def test_previously_cited_paper_is_pinned_into_context(client, monkeypatch):
+    """追问「这篇文章怎么样」检索不回原文时，上一轮引用过的论文要补进上下文。
+
+    否则模型认得出标题，却没有正文可依据，只能答「未检索到相关内容」。
+    """
+    from app.services import library_chat as lc
+
+    project_id, headers, ids = await _setup(client)
+    await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
+    cited = uuid.UUID(ids[1])  # 上一轮引用的是第二篇
+
+    async def only_first_paper(session, **kwargs):
+        """检索只命中第一篇，模拟追问句检索不回目标论文。"""
+        rows = (
+            await session.execute(
+                select(PaperChunk).where(PaperChunk.paper_id == uuid.UUID(ids[0])).limit(2)
+            )
+        ).scalars().all()
+        return [(c, 0.9) for c in rows]
+
+    monkeypatch.setattr(lc, "_retrieve_chunks", only_first_paper)
+
+    session, project, llm = await _project_and_router(project_id)
+    async with session:
+        messages, sources = await lc.build_library_messages(
+            session,
+            project=project,
+            question="这篇文章具体做了什么？",
+            history=[
+                lc.HistoryTurn(
+                    role="assistant",
+                    content="可以看 [1]。",
+                    cited_paper_ids=[cited],
+                )
+            ],
+            llm=llm,
+        )
+
+    source_ids = [s.paper_id for s in sources]
+    assert str(cited) in source_ids, "上一轮引用的论文没有被钉进本轮上下文"
+    # 检索命中的那篇仍在，且排在钉进来的前面（更贴题的占小编号）
+    assert source_ids[0] == ids[0]
+    assert "Reflexion Self-Improvement" in messages[0].content

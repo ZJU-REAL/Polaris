@@ -270,7 +270,7 @@ async def chat_with_library(
     """
     project = await _member_project(session, project_id, user)
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
-    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    history = library_chat_service.history_from_turns(data.history[-20:])  # 最多 10 轮
     llm = get_llm_router()
     messages, sources = await library_chat_service.build_library_messages(
         session, project=project, question=data.question, history=history, llm=llm, user_id=user_id
@@ -294,7 +294,7 @@ async def chat_with_shelf(
     project = await _member_project(session, project_id, user)
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
     statement = project.statement or project.name
-    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    history = library_chat_service.history_from_turns(data.history[-20:])  # 最多 10 轮
     llm = get_llm_router()
     # 语料并集：关联文献库成员论文 ∪ 相关研究书架论文（去重）
     library_ids = await libraries_service.get_source_library_ids(session, project_id)
@@ -338,7 +338,7 @@ async def chat_with_personal_library(
     事件序列与文献库对话一致（``sources`` → ``delta``* → ``done``）。
     """
     user_id = user.id
-    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    history = library_chat_service.history_from_turns(data.history[-20:])  # 最多 10 轮
     llm = get_llm_router()
     paper_ids = await personal_paper_ids(session, user_id=user_id, tab="saved")
     messages, sources = await library_chat_service.build_scoped_messages(

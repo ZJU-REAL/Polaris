@@ -988,7 +988,7 @@ async def chat_with_library(
     library = await _get_visible_library(session, library_id, user)
     user_id = user.id  # 先快照：检索失败路径的 rollback 会使 ORM 对象过期
     project_id = library.project_id
-    history = [(turn.role, turn.content) for turn in data.history[-20:]]  # 最多 10 轮
+    history = library_chat_service.history_from_turns(data.history[-20:])  # 最多 10 轮
     llm = get_llm_router()
     messages, sources = await library_chat_service.build_library_messages_for_library(
         session, library=library, question=data.question, history=history, llm=llm, user_id=user_id
