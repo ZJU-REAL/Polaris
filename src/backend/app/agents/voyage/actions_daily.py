@@ -13,6 +13,7 @@
 - ``daily.embed`` 保持 best-effort：向量化是可选增强，失败不该让整次同步算失败。
 """
 
+import datetime as dt
 import logging
 import uuid
 from typing import Any
@@ -36,6 +37,15 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
 
     fetched = sum(s["count"] for s in statuses.values())
     failed = [c for c, s in statuses.items() if s["status"] == "error"]
+    # arXiv 声明的批次日期不是今天 = 抓早了，拿到的是上一批。这种失败原本完全无声：
+    # 条目照样几百条，只是全都昨天入过池了，去重后一条不进，而每一步都报成功。
+    # 周末除外——arXiv 的 RSS 里 skipDays 明写着周六周日不发，那时拿到周五那批是正常的。
+    weekend = dt.datetime.now(dt.UTC).weekday() >= 5
+    stale = (
+        []
+        if weekend
+        else sorted({s["batch_date"] for s in statuses.values() if s.get("stale")})
+    )
     for category, state in statuses.items():
         if state["status"] == "error":
             await ctx.log(f"{category}：抓取失败 —— {state['detail']}", level="error")
@@ -50,7 +60,14 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
         "fetched": fetched,
         "per_category": statuses,
         "failed_categories": failed,
+        "stale_batch_dates": stale,
     }
+    if stale and not failed:
+        result["error"] = (
+            f"抓到的是 {'、'.join(stale)} 的公告，不是今天的——多半是跑得比 arXiv 发布还早。"
+            "arXiv 每天约 04:00 UTC（北京 12:00）放当天批次，请把抓取时刻调到其后。"
+        )
+        return result
     if failed:
         # **任一分类失败就报错**，不是「全都空才报」。部分失败下当天那个分类的论文会
         # 永久缺失（RSS 只公告一次，每日池只留一周），而全实验室的文献库都靠这个池

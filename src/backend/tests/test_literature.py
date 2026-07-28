@@ -48,6 +48,7 @@ ARXIV_RSS = """<?xml version='1.0' encoding='UTF-8'?>
 xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
   <channel>
     <title>cs.CL updates on arXiv.org</title>
+    <pubDate>Mon, 20 Jul 2026 00:00:00 -0400</pubDate>
     <item>
       <title>Computer-Use Agents at Scale</title>
       <link>https://arxiv.org/abs/2607.10001</link>
@@ -141,7 +142,8 @@ async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
         return_value=httpx.Response(200, text=ARXIV_RSS)
     )
     client = ArxivClient(redis=cache_redis, min_interval=0)
-    entries = await client.fetch_new("cs.CL")
+    entries, batch_at = await client.fetch_new("cs.CL")
+    assert batch_at is not None and batch_at.date().isoformat() == "2026-07-20"
 
     # 只留 announce_type ∈ {new, cross}；replace / replace-cross（旧论文更新）被跳过
     assert [e["announce_type"] for e in entries] == ["new", "cross"]
@@ -162,7 +164,7 @@ async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
     assert entries[1]["arxiv_id"] == "2607.10002"  # v2 也被去版本号
 
     # 短 TTL 缓存命中：相同分类第二次调用不再发 HTTP
-    again = await client.fetch_new("cs.CL")
+    again, _ = await client.fetch_new("cs.CL")
     assert [e["arxiv_id"] for e in again] == ["2607.10001", "2607.10002"]
     assert route.call_count == 1
     await client.aclose()

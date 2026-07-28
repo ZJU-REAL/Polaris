@@ -66,6 +66,15 @@ class ArxivRateLimitedError(ArxivError):
     """被 arXiv 限流，且重试次数耗尽。"""
 
 
+def _parse_iso_dt(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
 def _retry_after_seconds(resp: httpx.Response) -> float | None:
     """解析 Retry-After：整数秒或 HTTP-date 两种形式都要认，解不出返回 None。"""
     raw = (resp.headers.get("Retry-After") or "").strip()
@@ -187,14 +196,28 @@ def _parse_rss_item(item: ET.Element) -> dict[str, Any] | None:
     }
 
 
-def _parse_rss(text: str) -> list[dict[str, Any]]:
+def _parse_rss(text: str) -> tuple[list[dict[str, Any]], datetime | None]:
+    """解析 RSS，返回 (条目, **这一批的公告日期**)。
+
+    批次日期取 channel 的 ``pubDate``（arXiv 自己声明这批是哪天的公告）。有了它，
+    「抓早了拿到上一批」就能当场识别——否则那种失败完全无声：条目照样有几百条，
+    只是全都是昨天的，去重之后一条不进，而每一步都报成功。
+    """
     root = ET.fromstring(text)
     out: list[dict[str, Any]] = []
     for item in root.findall(".//item"):
         parsed = _parse_rss_item(item)
         if parsed is not None:
             out.append(parsed)
-    return out
+    batch_at: datetime | None = None
+    channel = root.find("channel")
+    raw = channel.findtext("pubDate") if channel is not None else None
+    if raw:
+        try:
+            batch_at = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
+            batch_at = None
+    return out, batch_at
 
 
 def build_search_query(
@@ -348,7 +371,7 @@ class ArxivClient:
             start += len(entries)
         return results[:limit]
 
-    async def fetch_new(self, category: str) -> list[dict[str, Any]]:
+    async def fetch_new(self, category: str) -> tuple[list[dict[str, Any]], datetime | None]:
         """抓一个分类的当天新公告（RSS /new，即时无索引滞后）。
 
         只返回 announce_type ∈ {new, cross} 的条目（replace/replace-cross 是旧论文更新，
@@ -363,11 +386,17 @@ class ArxivClient:
         """
         key = cache_key("arxiv", "rss_new", {"category": category})
         if (cached := await self._rss_cache.get(key)) is not None:
-            return cached
+            return cached["entries"], _parse_iso_dt(cached.get("batch_at"))
         resp = await self._request(RSS_URL_TEMPLATE.format(category=category))
-        entries = _parse_rss(resp.text)
-        await self._rss_cache.set(key, entries)
-        return entries
+        entries, batch_at = _parse_rss(resp.text)
+        # **陈旧批次不写缓存**：调用方会每 15 分钟探一次直到当天那批出现，缓存住旧批次
+        # 会让接下来三小时的探测全部拿到同一份，轮询就白做了。与「失败不写缓存」同理。
+        fresh = batch_at is None or batch_at.astimezone(UTC).date() >= datetime.now(UTC).date()
+        if fresh:
+            await self._rss_cache.set(
+                key, {"entries": entries, "batch_at": batch_at.isoformat() if batch_at else None}
+            )
+        return entries, batch_at
 
     async def fetch_by_ids(self, arxiv_ids: list[str]) -> list[dict[str, Any]]:
         """按 id 批量取元数据。"""

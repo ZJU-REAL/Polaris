@@ -160,13 +160,18 @@ async def index_papers_fulltext_task(
 
 
 async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
-    """检查点任务（每 15 分钟一次）：到点且今天没跑过，就建一次「每日新论文抓取」。
+    """检查点任务（每 15 分钟一次）：**探到今天那批公告出来了**才抓。
 
-    抓取时刻是可配置的（默认 UTC 02:30 = 北京 10:30，arXiv 约北京 10:00 放新公告）。
-    arq 的 cron 时刻在 worker 启动时固定，改设置得重启才生效——所以这里让 cron 空转、
-    由设置决定是否真的动手。空转一次只是一条查询。
+    起始时刻可配置（默认 UTC 01:30 = 北京 09:30），从那时起每 15 分钟探一次，直到
+    arXiv 放出当天批次。不定死"几点抓"是因为发布时刻会飘，赌一个固定点赌输的表现
+    是拿到上一批、去重后一条不进、每一步却都报成功。
 
-    返回入队的 voyage id；未到点/今天已跑过/已有任务在跑都返回 None。
+    先探再建任务，不是建了任务让它失败——否则从早到晚会攒一堆 paused_error。
+
+    arq 的 cron 时刻在 worker 启动时固定，改设置得重启才生效，所以让 cron 空转、
+    由设置决定是否动手。空转一次只是一条查询加一次 RSS 探测。
+
+    返回入队的 voyage id；未到点 / 今天已跑过 / 今天那批还没出来，都返回 None。
     """
     import datetime as dt
 
@@ -179,6 +184,10 @@ async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
         if await daily_feed_service.already_ran_today(
             session, daily_feed_service.DAILY_FEED_VOYAGE_KIND, now=now
         ):
+            return None
+        fresh, batch_date = await daily_feed_service.todays_batch_available(session)
+        if not fresh:
+            logger.info("daily feed not published yet (latest batch %s), will retry", batch_date)
             return None
         try:
             run = await daily_feed_service.create_daily_feed_voyage(session, created_by=None)

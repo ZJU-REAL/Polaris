@@ -29,13 +29,23 @@ def _rss_entry(arxiv_id: str, title: str, *, announce: str = "new") -> dict:
 
 
 class _StubArxiv:
-    """按分类返回固定 RSS 条目的假客户端。"""
+    """按分类返回固定 RSS 条目的假客户端。
 
-    def __init__(self, by_category: dict[str, list[dict]]):
+    ``batch_date`` 默认为今天：真实 RSS 会声明这批公告是哪天的，抓早了拿到旧批次会被
+    判为陈旧并报错。想验证那条路径就显式传一个过去的日期。
+    """
+
+    def __init__(self, by_category: dict[str, list[dict]], batch_date=None):
         self.by_category = by_category
+        self.batch_date = batch_date
 
-    async def fetch_new(self, category: str) -> list[dict]:
-        return self.by_category.get(category, [])
+    async def fetch_new(self, category: str):
+        import datetime as _dt
+
+        at = _dt.datetime.combine(
+            self.batch_date or _dt.datetime.now(_dt.UTC).date(), _dt.time(), tzinfo=_dt.UTC
+        )
+        return self.by_category.get(category, []), at
 
 
 async def _run_sync(monkeypatch, by_category: dict[str, list[dict]]) -> dict:
@@ -611,11 +621,12 @@ async def test_daily_actions_observation_shapes(client, monkeypatch):
     obs = await get_action("daily.fetch")(ctx, {})
     assert obs["categories"] == ["cs.AI", "cs.CL", "cs.CV"]
     assert obs["fetched"] == 3
-    assert obs["per_category"] == {
-        "cs.AI": {"count": 2, "status": "ok", "detail": None},
-        "cs.CL": {"count": 1, "status": "ok", "detail": None},
-        "cs.CV": {"count": 0, "status": "ok", "detail": None},
+    assert {c: s["count"] for c, s in obs["per_category"].items()} == {
+        "cs.AI": 2,
+        "cs.CL": 1,
+        "cs.CV": 0,
     }
+    assert all(s["status"] == "ok" and not s["stale"] for s in obs["per_category"].values())
     assert obs["failed_categories"] == []
     assert "error" not in obs
     assert ctx.checkpoint["daily_entries"]  # 条目交给下一步
@@ -719,9 +730,12 @@ async def test_daily_fetch_fails_when_any_category_errors(client, monkeypatch):
 
     class _PartlyBroken:
         async def fetch_new(self, category: str):
+            import datetime as _dt
+
             if category == "cs.AI":
                 raise RuntimeError("429 Too Many Requests")
-            return [_rss_entry("2607.00099", "Fine")]
+            today = _dt.datetime.now(_dt.UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+            return [_rss_entry("2607.00099", "Fine")], today
 
     await register_and_login(client)
     monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _PartlyBroken())
@@ -813,19 +827,17 @@ async def test_sync_status_reports_failed_categories(client, monkeypatch):
 # ---- 抓取时刻 ----
 
 
-async def test_default_sync_time_is_after_arxiv_publishes(client):
-    """默认抓取时刻必须**晚于** arXiv 放新公告的时间，否则永远抓到前一天的列表。
+async def test_default_probe_start_time(client):
+    """默认从 UTC 01:30（北京 09:30）开始探，之后每 15 分钟一次直到当天批次出现。
 
-    arXiv 约北京时间 10:00 更新（= UTC 02:00）。原来定在 UTC 01:30 = 北京 09:30，
-    早了半小时——这不是「延迟一会儿」，是每天都差一整天。
+    早开始是安全的——探到旧批次就什么都不做。定死一个抓取时刻才危险：发布时刻会飘，
+    赌输的表现是拿到上一批、去重后一条不进、每一步却都报成功。
     """
     from app.core.db import get_sessionmaker
     from app.services import daily_feed
 
     async with get_sessionmaker()() as session:
-        hour, minute = await daily_feed.get_sync_time(session)
-    assert (hour, minute) == (2, 30)
-    assert hour * 60 + minute > 2 * 60, "必须晚于 UTC 02:00（北京 10:00）"
+        assert await daily_feed.get_sync_time(session) == (1, 30)
 
 
 async def test_sync_time_is_admin_configurable(client):
@@ -835,7 +847,7 @@ async def test_sync_time_is_admin_configurable(client):
     admin = {"Authorization": f"Bearer {await register_and_login(client)}"}  # 首个用户=admin
     resp = await client.get("/api/daily/sync-time", headers=admin)
     assert resp.status_code == 200
-    assert resp.json() == {"hour": 2, "minute": 30}
+    assert resp.json() == {"hour": 1, "minute": 30}
 
     resp = await client.put("/api/daily/sync-time", json={"hour": 3, "minute": 45}, headers=admin)
     assert resp.status_code == 200, resp.text
@@ -859,8 +871,8 @@ async def test_due_now_gates_on_the_configured_time(client):
 
     async with get_sessionmaker()() as session:
         day = dt.datetime(2026, 7, 28, tzinfo=dt.UTC)
-        assert not await daily_feed.due_now(session, now=day.replace(hour=2, minute=15))
-        assert await daily_feed.due_now(session, now=day.replace(hour=2, minute=30))
+        assert not await daily_feed.due_now(session, now=day.replace(hour=1, minute=15))
+        assert await daily_feed.due_now(session, now=day.replace(hour=1, minute=30))
         assert await daily_feed.due_now(session, now=day.replace(hour=9, minute=0))
 
 
@@ -926,3 +938,90 @@ async def test_day_counts_follow_the_active_filters(client, monkeypatch):
         "/api/daily/papers", params={"category": "cs.CV", "size": 50}, headers=headers
     )
     assert resp.json()["total"] == await days(category="cs.CV")
+
+
+async def test_stale_batch_is_reported_instead_of_silently_creating_nothing(client, monkeypatch):
+    """抓到的不是今天那批公告 → 这一步必须失败。
+
+    生产上真实发生过：抓取跑在 arXiv 发布之前，RSS 返回上一批，条目数照样两三百，
+    但全都昨天入过池，去重后 created=0——而 fetch 报 passed、upsert 报 passed，
+    三天下来丢了两整天的论文，没有任何一处报警。
+    """
+    import datetime as dt
+
+    from app.agents.voyage.actions import get_action
+    from app.agents.voyage.checks import run_deterministic_checks
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2607.00081", "Stale")]}, batch_date=yesterday),
+    )
+
+    ctx = _action_ctx()
+    obs = await get_action("daily.fetch")(ctx, {})
+    assert obs["stale_batch_dates"] == [yesterday.isoformat()]
+    assert obs["error"] and "不是今天的" in obs["error"]
+    assert obs["per_category"]["cs.AI"]["stale"] is True
+
+    verdict, _ = run_deterministic_checks(
+        [{"kind": "no_error"}], observation=obs, checkpoint=ctx.checkpoint
+    )
+    assert verdict is not None and verdict["passed"] is False
+
+
+async def test_fresh_batch_is_not_reported_as_stale(client, monkeypatch):
+    from app.agents.voyage.actions import get_action
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2607.00082", "Fresh")]}),
+    )
+    obs = await get_action("daily.fetch")(_action_ctx(), {})
+    assert obs["stale_batch_dates"] == []
+    assert "error" not in obs
+
+
+async def test_probe_reports_whether_todays_batch_is_out(client, monkeypatch):
+    """轮询的判据：探到的批次日期是不是今天。"""
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+
+    monkeypatch.setattr(
+        daily_feed, "get_arxiv_client", lambda: _StubArxiv({}, batch_date=yesterday)
+    )
+    async with get_sessionmaker()() as session:
+        fresh, seen = await daily_feed.todays_batch_available(session)
+    assert fresh is False and seen == yesterday.isoformat()
+
+    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _StubArxiv({}))
+    async with get_sessionmaker()() as session:
+        fresh, _ = await daily_feed.todays_batch_available(session)
+    assert fresh is True
+
+
+async def test_probe_failure_does_not_block_fetching(client, monkeypatch):
+    """探测本身失败时按「可以抓」处理——不能因为一个判断失灵就再也不抓了。"""
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    class _Broken:
+        async def fetch_new(self, category: str):
+            raise RuntimeError("network down")
+
+    await register_and_login(client)
+    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _Broken())
+    async with get_sessionmaker()() as session:
+        fresh, seen = await daily_feed.todays_batch_available(session)
+    assert fresh is True and seen is None

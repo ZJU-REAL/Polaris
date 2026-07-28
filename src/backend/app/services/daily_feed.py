@@ -299,7 +299,7 @@ async def fetch_new_by_category(
     statuses: dict[str, dict[str, Any]] = {}
     for category in categories:
         try:
-            entries = await client.fetch_new(category)
+            entries, batch_at = await client.fetch_new(category)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — 单分类失败不打断其余分类
@@ -312,7 +312,15 @@ async def fetch_new_by_category(
             }
             continue
         by_category[category] = entries
-        statuses[category] = {"count": len(entries), "status": "ok", "detail": None}
+        batch_date = batch_at.astimezone(dt.UTC).date() if batch_at else None
+        statuses[category] = {
+            "count": len(entries),
+            "status": "ok",
+            "detail": None,
+            # arXiv 自己声明这批是哪天的公告；调用方据此判断有没有抓早了
+            "batch_date": batch_date.isoformat() if batch_date else None,
+            "stale": bool(batch_date and batch_date < _today_utc()),
+        }
     return categories, by_category, statuses
 
 
@@ -1145,10 +1153,14 @@ async def sync_status(session: AsyncSession) -> dict[str, Any]:
 
 SYNC_TIME_SETTING_KEY = "daily_feed_sync_time"
 
-#: 默认抓取时刻（UTC）= 北京时间 10:30。arXiv 每天约北京时间 10:00 放出新公告，
-#: 早于这个点跑就只会拿到**前一天**的列表——不是延迟一会儿，是永远差一整天。
-#: 这里留半小时余量，给 arXiv 侧的发布抖动。
-DEFAULT_SYNC_UTC = (2, 30)
+#: 默认**开始探测**的时刻（UTC）= 北京时间 09:30。
+#:
+#: 这不是"几点抓"，是"几点开始每 15 分钟探一次"。arXiv 的实际发布时刻会飘：RSS 自己
+#: 写着 ``pubDate: 00:00 -0400`` = 04:00 UTC（北京 12:00），实测 ``lastBuildDate``
+#: 也在 04:00 UTC 附近，但没有任何保证。定死一个时刻就是在赌它不飘——赌输的表现是
+#: 拿到上一批、去重后一条不进、每一步却都报成功（生产上就是这么连丢两天的）。
+#: 改成从早探到晚：探到的批次日期不是今天就什么都不做，等下一个检查点。
+DEFAULT_SYNC_UTC = (1, 30)
 
 #: 库同步排在抓取之后多久。每日池是所有文献库的唯一供给，抓取没跑完就同步等于空跑一轮。
 LIBRARY_SYNC_DELAY_MINUTES = 90
@@ -1222,3 +1234,26 @@ async def claim_today(session: AsyncSession, key: str, *, now: dt.datetime) -> b
         row.value = today
     await session.commit()
     return True
+
+
+async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | None]:
+    """arXiv 上今天那批公告出来了没有。返回 (出来了吗, 探到的批次日期)。
+
+    只探**一个**分类：批次是全站一起发的，探一个就够，没必要为了一个判断打三次。
+    探测本身很便宜（一次 RSS，且陈旧批次不进缓存所以每次都是新的）。
+
+    拿不到批次日期（解析不出 / RSS 没给）时返回 True——宁可照常抓一次，也不能因为
+    一个判断失灵就再也不抓了。
+    """
+    categories = await get_categories(session)
+    if not categories:
+        return True, None
+    try:
+        _, batch_at = await get_arxiv_client().fetch_new(categories[0])
+    except Exception:  # noqa: BLE001 — 探测失败不下结论，交给正式抓取去报错
+        logger.warning("daily feed probe failed", exc_info=True)
+        return True, None
+    if batch_at is None:
+        return True, None
+    batch_date = batch_at.astimezone(dt.UTC).date()
+    return batch_date >= _today_utc(), batch_date.isoformat()
