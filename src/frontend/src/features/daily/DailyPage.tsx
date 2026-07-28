@@ -410,17 +410,39 @@ function DailyDetailPane({
       {/* —— 我的标签：就地改，只有自己看得到 —— */}
       {/* 库标签的界面入口已移除，个人标签取代了它；后端端点与数据保留。 */}
       {poolPaper && (
-        <PaperMyTagsRow paperId={poolPaper.id} myTags={poolPaper.my_tags} detailKey={poolKey} />
+        <PaperMyTagsRow
+          paperId={poolPaper.id}
+          myTags={poolPaper.my_tags}
+          detailKey={poolKey}
+          trailing={<PaperIndexStatusRow paperId={paper.paper_id} showRebuild={false} />}
+        />
       )}
-
-      {/* —— 向量索引状态（五处详情面板同一位置：标签行之后） —— */}
-      <PaperIndexStatusRow paperId={paper.paper_id} showRebuild={false} />
 
       {/* —— 概念 chips（与库版同款；点了进不限库的概念页） —— */}
       <ConceptChips concepts={paper.concepts} onOpen={openConcept} />
 
 
       {/* 摘要默认折叠，复用元信息那套折叠块的样式，两者视觉一致 */}
+      {/* —— TL;DR（来自内容池详情） —— */}
+      {poolPaper?.tldr && (
+        <div
+          style={{
+            marginTop: 18,
+            padding: '12px 16px',
+            borderRadius: 10,
+            background: 'var(--accent-soft)',
+            fontSize: 13,
+            lineHeight: 1.65,
+            color: 'var(--text)',
+          }}
+        >
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
+            TL;DR
+          </span>
+          {poolPaper.tldr}
+        </div>
+      )}
+
       {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
           只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
       <MetaFold label={tr('摘要', 'Abstract')}>
@@ -448,26 +470,6 @@ function DailyDetailPane({
       
         </div>
       </MetaFold>
-
-      {/* —— TL;DR（来自内容池详情） —— */}
-      {poolPaper?.tldr && (
-        <div
-          style={{
-            marginTop: 18,
-            padding: '12px 16px',
-            borderRadius: 10,
-            background: 'var(--accent-soft)',
-            fontSize: 13,
-            lineHeight: 1.65,
-            color: 'var(--text)',
-          }}
-        >
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
-            TL;DR
-          </span>
-          {poolPaper.tldr}
-        </div>
-      )}
 
       {/* —— 我的笔记（只有自己看得到） —— */}
       {poolPaper && (

@@ -395,11 +395,9 @@ export function ShelfDetailPane({
           myTags={paper.my_tags}
           detailKey={detailKey}
           invalidateKeys={listKeys}
+          trailing={<PaperIndexStatusRow paperId={item.paper_id} showRebuild={false} />}
         />
       )}
-
-      {/* —— 向量索引状态（五处详情面板同一位置：标签行之后） —— */}
-      {paper && <PaperIndexStatusRow paperId={item.paper_id} showRebuild={false} />}
 
       {/* —— 课题备注：为什么相关（仅书架内论文；这条是课题里公开的说明） —— */}
       {onShelf && <NoteEditor key={item.paper_id} note={item.note} pending={notePending} onSave={onSaveNote} />}
@@ -407,6 +405,26 @@ export function ShelfDetailPane({
       {/* —— 概念 chips：点了进不限库的概念页 —— */}
       <ConceptChips concepts={paper?.concepts} onOpen={openConcept} />
 
+
+      {/* —— TL;DR —— */}
+      {tldr && (
+        <div
+          style={{
+            marginTop: 18,
+            padding: '12px 16px',
+            borderRadius: 10,
+            background: 'var(--accent-soft)',
+            fontSize: 13,
+            lineHeight: 1.65,
+            color: 'var(--text)',
+          }}
+        >
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
+            TL;DR
+          </span>
+          {tldr}
+        </div>
+      )}
 
       {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
           只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
@@ -455,26 +473,6 @@ export function ShelfDetailPane({
       
         </div>
       </MetaFold>
-
-      {/* —— TL;DR —— */}
-      {tldr && (
-        <div
-          style={{
-            marginTop: 18,
-            padding: '12px 16px',
-            borderRadius: 10,
-            background: 'var(--accent-soft)',
-            fontSize: 13,
-            lineHeight: 1.65,
-            color: 'var(--text)',
-          }}
-        >
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
-            TL;DR
-          </span>
-          {tldr}
-        </div>
-      )}
 
       {/* —— 我的笔记（只有自己看得到，和上面的课题备注是两回事） —— */}
       {paper && (

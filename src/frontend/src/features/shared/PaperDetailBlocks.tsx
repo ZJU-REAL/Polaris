@@ -1,4 +1,4 @@
-import { useCallback, useState, type CSSProperties } from 'react';
+import { useCallback, useState, type CSSProperties, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -111,6 +111,7 @@ export function PaperMyTagsRow({
   detailKey,
   invalidateKeys,
   style,
+  trailing,
 }: {
   paperId: string;
   myTags: string[] | undefined;
@@ -119,6 +120,8 @@ export function PaperMyTagsRow({
   /** 改完要刷新的列表 / 搜索 queryKey */
   invalidateKeys?: readonly QueryKey[];
   style?: CSSProperties;
+  /** 同一行右侧的附加内容（各详情面板放向量索引状态）。 */
+  trailing?: ReactNode;
 }) {
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -151,13 +154,26 @@ export function PaperMyTagsRow({
   };
 
   return (
-    <div className="row gap6 wrap" style={{ marginTop: 10, ...style }}>
+    /* 标签与向量状态同一行：两者都是「这篇论文在我这儿是什么情况」，分两行摆
+       会让它们看起来是两件事。收进一张浅底卡里，与上方的操作按钮区分开。 */
+    <div
+      className="row gap8 wrap"
+      style={{
+        marginTop: 12,
+        alignItems: 'center',
+        padding: '8px 12px',
+        borderRadius: 8,
+        background: 'var(--surface-2)',
+        border: '0.5px solid var(--border)',
+        ...style,
+      }}
+    >
       <span
-        className="row gap6 mono"
-        style={{ fontSize: 10.5, color: 'var(--text-3)', marginRight: 2 }}
+        className="row gap6"
+        style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginRight: 2 }}
         title={tr('只有你自己看得到', 'Only you can see these')}
       >
-        <Icon name="bookmark" size={11} />
+        <Icon name="bookmark" size={12} style={{ color: 'var(--text-3)' }} />
         {tr('我的标签', 'My tags')}
       </span>
       {tags.map((t) => (
@@ -198,6 +214,11 @@ export function PaperMyTagsRow({
           <Icon name="plus" size={10} style={{ display: 'inline-block', verticalAlign: -1 }} />{' '}
           {tr('加标签', 'Add tag')}
         </span>
+      )}
+      {trailing && (
+        <div className="row gap10" style={{ marginLeft: 'auto', alignItems: 'center' }}>
+          {trailing}
+        </div>
       )}
     </div>
   );

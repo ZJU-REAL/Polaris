@@ -886,10 +886,8 @@ function PaperDetailPane({
         myTags={paper.my_tags}
         detailKey={['paper', scopeId, paper.id]}
         invalidateKeys={[['papers', scopeId]]}
+        trailing={<PaperIndexStatusRow paperId={paper.id} showRebuild={false} />}
       />
-
-      {/* —— 向量索引状态（五处详情面板同一位置：标签行之后） —— */}
-      <PaperIndexStatusRow paperId={paper.id} showRebuild={false} />
 
       {/* —— 概念 chips（过多时折叠） —— */}
       {paper.concepts.length > 0 && (
@@ -918,6 +916,26 @@ function PaperDetailPane({
         </div>
       )}
 
+
+      {/* —— TL;DR —— */}
+      {paper.tldr && (
+        <div
+          style={{
+            marginTop: 18,
+            padding: '12px 16px',
+            borderRadius: 10,
+            background: 'var(--accent-soft)',
+            fontSize: 13,
+            lineHeight: 1.65,
+            color: 'var(--text)',
+          }}
+        >
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
+            TL;DR
+          </span>
+          {paper.tldr}
+        </div>
+      )}
 
       {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
           只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
@@ -948,26 +966,6 @@ function PaperDetailPane({
       
         </div>
       </MetaFold>
-
-      {/* —— TL;DR —— */}
-      {paper.tldr && (
-        <div
-          style={{
-            marginTop: 18,
-            padding: '12px 16px',
-            borderRadius: 10,
-            background: 'var(--accent-soft)',
-            fontSize: 13,
-            lineHeight: 1.65,
-            color: 'var(--text)',
-          }}
-        >
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-text)', display: 'block', marginBottom: 4 }}>
-            TL;DR
-          </span>
-          {paper.tldr}
-        </div>
-      )}
 
       {/* —— 我的笔记（只有自己看得到；与其余四处详情面板同一顺序） —— */}
       <PaperNotesSection
