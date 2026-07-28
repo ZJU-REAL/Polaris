@@ -226,6 +226,49 @@ async def test_effort_rejected_falls_back_without_it():
 
 
 @respx.mock
+async def test_litellm_unsupported_params_falls_back_regardless_of_status():
+    """LiteLLM 把 UnsupportedParamsError 包成非 400 抛出时，仍要认出是 effort 的问题。
+
+    现网实例（qwen 系走 LiteLLM 中转）报的就是这一条：判据若卡在 400 上，
+    整个环节直接挂掉。所以只认错误内容、不认状态码。
+    """
+    body = {
+        "error": {
+            "message": (
+                "litellm.UnsupportedParamsError: openai does not support parameters: "
+                "['reasoning_effort'], for model=qwen36-35b-a3b-4. To drop these, set "
+                "`litellm.drop_params=True`. Received Model Group=qwen36-35b-a3b"
+            )
+        }
+    }
+    route = respx.post(CHAT_URL).mock(
+        side_effect=[httpx.Response(500, json=body), httpx.Response(200, json=NON_STREAM_OK)]
+    )
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    result = await provider.complete(
+        [Message(role="user", content="hi")], model="qwen36-35b-a3b", effort="high"
+    )
+    assert result.content == "ok"
+    assert "reasoning_effort" not in json.loads(route.calls[-1].request.content)
+    await provider.aclose()
+
+
+@respx.mock
+async def test_effort_unsupported_is_remembered_per_model():
+    """同一 model 只付一次「先失败再重试」的往返，后续请求直接不带该参数。"""
+    reject = httpx.Response(400, json={"error": {"message": "unsupported reasoning_effort"}})
+    ok = httpx.Response(200, json=NON_STREAM_OK)
+    route = respx.post(CHAT_URL).mock(side_effect=[reject, ok, ok])
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+    args = ([Message(role="user", content="hi")],)
+    await provider.complete(*args, model="qwen36-35b-a3b", effort="high")
+    await provider.complete(*args, model="qwen36-35b-a3b", effort="high")
+    assert route.call_count == 3  # 首次 2 次（含重试），第二次只 1 次
+    assert "reasoning_effort" not in json.loads(route.calls[-1].request.content)
+    await provider.aclose()
+
+
+@respx.mock
 async def test_unrelated_400_is_not_swallowed_as_effort_problem():
     """与 effort 无关的 400 照常抛错，不能被降级逻辑吞掉。"""
     route = respx.post(CHAT_URL).mock(

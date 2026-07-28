@@ -160,6 +160,25 @@ async def get_voyage(
     return run if await can_view_voyage(session, run=run, user=user) else None
 
 
+class VoyageStillRunningError(Exception):
+    """任务还没结束，不能删——先取消。"""
+
+
+async def delete_voyage(session: AsyncSession, run: VoyageRun) -> None:
+    """删除任务记录。只允许删**已结束**的。
+
+    还在跑的不能删：worker 那边仍在按这个 id 执行，行没了会一路报错到不知所云的地方。
+    要删先取消（cancel 是协作式的，引擎在下一步边界自行退出）。
+
+    级联是有意设计的：步骤与日志随任务删掉，而 **token 用量与实验记录只解引用**
+    （SET NULL）——删掉一个任务不该把它花过的钱从账上抹掉。
+    """
+    if run.status not in TERMINAL_STATUSES:
+        raise VoyageStillRunningError(str(run.id))
+    await session.delete(run)
+    await session.commit()
+
+
 async def cancel_voyage(session: AsyncSession, run: VoyageRun) -> VoyageRun:
     """协作式取消：置 cancelled，运行中的引擎在下一步边界自行退出。"""
     if run.status in TERMINAL_STATUSES:

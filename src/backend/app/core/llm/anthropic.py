@@ -90,7 +90,7 @@ class AnthropicProvider(LLMProvider):
                 messages, model, temperature, max_tokens, stream=False, images=images, effort=effort
             ),
         )
-        if effort is not None and resp.status_code == 400 and _rejects_effort(resp.text):
+        if effort is not None and resp.status_code >= 400 and _rejects_effort(resp.text):
             # 该模型不认这个档位：去掉参数重试一次，别让配错档位打断整个环节
             logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试", model, effort)
             resp = await self._client.post(

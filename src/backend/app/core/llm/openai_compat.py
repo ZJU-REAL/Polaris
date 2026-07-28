@@ -22,7 +22,9 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 # 部分中转强制流式：非流式请求返回 400 + 该提示，此时自动改走流式并聚合
 _FORCE_STREAM_MARKER = "stream must be set to true"
 # 模型/中转不认 reasoning_effort（非推理模型、老版中转、或该模型不支持所配档位）时的
-# 400 特征。命中即去掉该参数重试一次——配错档位不该让整个环节挂掉。
+# 错误特征。命中即去掉该参数重试一次——配错档位不该让整个环节挂掉。
+# LiteLLM 之类的中转会把 UnsupportedParamsError 包成 400 之外的状态码抛出来，
+# 所以这里只认错误内容、不认状态码；调用方已保证"本次确实发了该参数"。
 _EFFORT_REJECT_MARKERS = ("reasoning_effort", "reasoning.effort", "effort")
 
 
@@ -30,10 +32,8 @@ class _EffortUnsupported(RuntimeError):
     """服务端明确因 reasoning_effort 拒绝了请求；调用方去掉该参数重试。"""
 
 
-def _rejects_effort(status_code: int, body: str) -> bool:
-    """400 且错误信息提到 effort —— 仅在本次确实发了该参数时才做此判断。"""
-    if status_code != 400:
-        return False
+def _rejects_effort(body: str) -> bool:
+    """错误信息提到 effort —— 仅在本次确实发了该参数时才做此判断。"""
     low = body.lower()
     return any(marker in low for marker in _EFFORT_REJECT_MARKERS)
 
@@ -61,6 +61,14 @@ class OpenAICompatProvider(LLMProvider):
                 last_exc = e
                 await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
                 continue
+            if (
+                resp.status_code in _RETRYABLE_STATUS
+                and payload.get("reasoning_effort") is not None
+                and _rejects_effort(resp.text)
+            ):
+                # 中转把「不支持该参数」包成了 5xx：这不是临时故障，重试多少次都一样，
+                # 直接交回上层去掉参数重试，别白烧几十秒退避。
+                return resp
             if resp.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS - 1:
                 delay = _retry_delay(resp, attempt)
                 logger.warning(
@@ -87,6 +95,9 @@ class OpenAICompatProvider(LLMProvider):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._client = client or httpx.AsyncClient(timeout=timeout)
+        # 已确认不吃 reasoning_effort 的 model（本进程内记忆）。provider 实例被
+        # LLMRouter 缓存复用，所以每个模型只需要付一次"失败再重试"的往返代价。
+        self._effort_unsupported: set[str] = set()
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}"}
@@ -124,7 +135,8 @@ class OpenAICompatProvider(LLMProvider):
         }
         if temperature is not None:  # 新款 Claude 等模型已弃用该参数，None 则不发送
             payload["temperature"] = temperature
-        if effort is not None:  # 推理模型的思考深度；非推理模型/中转不认时不要发
+        if effort is not None and model not in self._effort_unsupported:
+            # 推理模型的思考深度；非推理模型/中转不认时不要发
             payload["reasoning_effort"] = effort
         # Anthropic 系模型（经 LiteLLM 等代理）强制要求 max_tokens，缺省给足额度
         payload["max_tokens"] = max_tokens if max_tokens is not None else 8192
@@ -146,6 +158,7 @@ class OpenAICompatProvider(LLMProvider):
             )
         except _EffortUnsupported as e:
             # 该模型不吃这个档位：去掉参数重试一次，别让配错档位打断整个环节
+            self._effort_unsupported.add(model)
             logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试：%s", model, effort, e)
             return await self._complete_once(messages, model, temperature, max_tokens, images, None)
 
@@ -164,7 +177,7 @@ class OpenAICompatProvider(LLMProvider):
         resp = await self._post_with_retry(f"{self._base_url}/chat/completions", payload)
         if resp.status_code >= 400:
             body = resp.text[:500]
-            if effort is not None and _rejects_effort(resp.status_code, body):
+            if effort is not None and _rejects_effort(body):
                 raise _EffortUnsupported(body)
             if resp.status_code == 400 and _FORCE_STREAM_MARKER in body.lower():
                 # 强制流式的中转：自动改用流式请求并聚合成非流式结果
@@ -196,9 +209,7 @@ class OpenAICompatProvider(LLMProvider):
             if resp.status_code >= 400:
                 # 流式响应体要显式读出来才能看到错误内容
                 body = (await resp.aread()).decode(errors="replace")[:500]
-                if payload.get("reasoning_effort") is not None and _rejects_effort(
-                    resp.status_code, body
-                ):
+                if payload.get("reasoning_effort") is not None and _rejects_effort(body):
                     raise _EffortUnsupported(body)
                 resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -261,6 +272,7 @@ class OpenAICompatProvider(LLMProvider):
             # effort 是在首个 token 之前被拒的，重试不会重复输出；真吐过内容就不冒这个险
             if emitted:
                 raise
+            self._effort_unsupported.add(model)
             logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试：%s", model, effort, e)
             payload.pop("reasoning_effort", None)
             async for data in self._stream_chunks(payload):

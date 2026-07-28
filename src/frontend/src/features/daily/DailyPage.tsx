@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -58,7 +58,7 @@ import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
 import { PaperProgressModal } from '../library/PaperProgressModal';
 
 /* ============================================================
-   /daily — 每日新论文：arxiv 每日新提交（订阅分类内），保留最近 7 天。
+   /daily — 每日新论文：arxiv 每日新提交（订阅分类内）。保留期由管理员配置（默认 14 天）。
    双栏主从布局对齐共享库浏览（LibraryBrowse）：
    左栏按日期分组的列表（排序 / 搜索 / 分页 / 行内点赞），右栏选中论文详情。
    ============================================================ */
@@ -556,7 +556,9 @@ type AnnounceFilter = 'all' | 'new' | 'cross';
 const DEFAULT_ANNOUNCE: AnnounceFilter = 'new';
 
 // 列表固定按点赞排序（没有排序切换 UI）；语义检索时后端按相关度排，忽略这个值
-const DAILY_SORT: DailySort = 'likes';
+// 时间倒排：最新的在最前。按点赞排会让一篇被点过的旧论文压在当天新论文前面，
+// 而「每日新论文」这个页面的主线本来就是时间。
+const DAILY_SORT: DailySort = 'date';
 
 /** 每日池的同步状况。池子是所有文献库的唯一供给——抓取失败会让全实验室当天颗粒无收，
     所以状态要摆在页面上，而不是只躺在任务日志里等人去翻。 */
@@ -608,7 +610,7 @@ export function DailyPage() {
   // 语义检索开关（true=按意思检索，false=关键词字面匹配）
   const [semanticOn, setSemanticOn] = useState(false);
   const [page, setPage] = useState(1);
-  // —— 日期（null=全部 7 天，默认落在最新一天）留在工具栏；分类 / 类型收进高级检索面板 ——
+  // —— 日期（null=全部，默认就停在全部）留在工具栏；分类 / 类型收进高级检索面板 ——
   const [day, setDay] = useState<string | null>(null);
   // 高级检索默认展开：分类 / 类型是常用筛选，藏起来用户找不到
   const [advOpen, setAdvOpen] = useState(true);
@@ -638,6 +640,15 @@ export function DailyPage() {
 
   // 日期标签上的数字要跟着筛选走，否则选了某个分类之后标签仍显示全部篇数，
   // 看起来就像筛选根本没生效。
+  // 保留期是管理员可配的，界面上不能写死「7 天」
+  const retentionQuery = useQuery({
+    queryKey: ['daily-retention'],
+    queryFn: () => api.getDailyRetention(),
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const retentionDays = retentionQuery.data?.days ?? 14;
+
   const daysQuery = useQuery({
     queryKey: ['daily-days', announce, category],
     queryFn: () => api.listDailyDays({ announce: announce || undefined, category: category || undefined }),
@@ -651,17 +662,9 @@ export function DailyPage() {
   const latestDate = dates[dates.length - 1] ?? null;
 
   // 日期一改就算用户表过态，之后不再自动初始化
-  const didInitDay = useRef(false);
-  const pickDay = useCallback((d: string | null) => {
-    didInitDay.current = true;
-    setDay(d);
-  }, []);
-  // 默认只看当天：日期列表到手后落到最新一天（只做一次，不覆盖用户选择）
-  useEffect(() => {
-    if (didInitDay.current || !latestDate) return;
-    didInitDay.current = true;
-    setDay(latestDate);
-  }, [latestDate]);
+  const pickDay = useCallback((d: string | null) => setDay(d), []);
+  // 默认停在「全部」：跨天一起看、按时间倒排，最新的自然在最前。以前默认落到最新
+  // 一天，那一天恰好没有新公告（周末）时页面就是空的，看着像坏了。
 
   const dayIdx = day ? dates.indexOf(day) : -1;
   // 「全部」视为最新一天的后一位：← 从全部进入最新一天；→ 在最新一天回到全部
@@ -677,7 +680,7 @@ export function DailyPage() {
   };
 
   // 点作者/机构 → 列表只留匹配的论文（走已有的高级检索），其余条件重置并展开面板；
-  // 日期放开到全部 7 天——只看当天的话，按作者/机构筛基本什么都剩不下
+  // 日期放开到全部——只看当天的话，按作者/机构筛基本什么都剩不下
   const applyAdvFilter = useCallback(
     (patch: { author?: string; affiliation?: string }) => {
       setSemanticOn(false);
@@ -740,7 +743,7 @@ export function DailyPage() {
   // 首条自动选中
   // 默认选中列表第一篇，**并在列表变了之后跟着走**。
   // 原来只在 selectedId 为空时设一次：日期默认落到最新一天是异步的，列表先以「全部
-  // 7 天」返回，选中项就锁在了那一版的第一条——于是打开页面看到的是两天前那篇。
+  // 全部」返回，选中项就锁在了那一版的第一条——于是打开页面看到的是两天前那篇。
   const firstId = items[0]?.entry_id ?? null;
   const selectedInList = !!selectedId && items.some((p) => p.entry_id === selectedId);
   useEffect(() => {
@@ -855,7 +858,7 @@ export function DailyPage() {
         className="card split-card"
       >
         {view === 'chat' ? (
-          /* ======== 池对话：就最近 7 天的每日新论文问答 ======== */
+          /* ======== 池对话：就保留期内的每日新论文问答 ======== */
           <DailyChatTab />
         ) : (
         <div className="split">
@@ -1009,12 +1012,14 @@ export function DailyPage() {
                   className={`chip${day !== null ? ' on' : ''}`}
                   title={
                     day !== null
-                      ? tr('点击看全部 7 天', 'Click to show all 7 days')
+                      ? tr(`点击看全部 ${retentionDays} 天`, `Click to show all ${retentionDays} days`)
                       : tr('点击只看最新一天', 'Click to show the latest day only')
                   }
                   onClick={() => pickDay(day === null ? latestDate : null)}
                 >
-                  {day !== null ? dayLabel(day, dayCount.get(day)) : tr('全部 7 天', 'All 7 days')}
+                  {day !== null
+                    ? dayLabel(day, dayCount.get(day))
+                    : tr(`全部 ${retentionDays} 天`, `All ${retentionDays} days`)}
                 </span>
                 <button
                   className="btn btn-ghost sm"

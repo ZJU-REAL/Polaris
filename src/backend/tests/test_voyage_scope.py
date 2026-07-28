@@ -469,3 +469,64 @@ async def test_new_ingest_voyage_carries_no_project(client):
         )
         assert run.project_id is None
         assert run.library_id == uuid.UUID(lib_id)
+
+
+async def test_delete_voyage_only_when_finished(client):
+    """删除只允许删已结束的任务；还在跑的先取消。
+
+    还在跑就删的话，worker 那边仍在按这个 id 执行，行没了会一路报错到不知所云的地方。
+    """
+    from app.core.db import get_sessionmaker
+    from app.models.voyage import VoyageRun
+
+    token = await register_and_login(client, email="del@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    me = (await client.get("/api/users/me", headers=headers)).json()
+
+    async with get_sessionmaker()() as session:
+        run = VoyageRun(kind="wiki_ingest", status="executing", goal="跑着的",
+                        created_by=uuid.UUID(me["id"]))
+        session.add(run)
+        await session.commit()
+        run_id = run.id
+
+    resp = await client.delete(f"/api/voyages/{run_id}", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "VOYAGE_STILL_RUNNING"
+
+    # 取消后可删
+    assert (await client.post(f"/api/voyages/{run_id}/cancel", headers=headers)).status_code == 200
+    assert (await client.delete(f"/api/voyages/{run_id}", headers=headers)).status_code == 204
+    async with get_sessionmaker()() as session:
+        assert await session.get(VoyageRun, run_id) is None
+
+
+async def test_delete_voyage_keeps_token_accounting(client):
+    """删任务不该把它花过的 token 从账上抹掉——用量行只解引用，不删。"""
+    from app.core.db import get_sessionmaker
+    from app.models.llm_config import LLMUsage
+    from app.models.voyage import VoyageRun
+    from sqlalchemy import select as _select
+
+    token = await register_and_login(client, email="del2@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    me = (await client.get("/api/users/me", headers=headers)).json()
+
+    async with get_sessionmaker()() as session:
+        run = VoyageRun(kind="wiki_ingest", status="done", goal="跑完的",
+                        created_by=uuid.UUID(me["id"]))
+        session.add(run)
+        await session.flush()
+        session.add(
+            LLMUsage(
+                stage="relevance", model="fake-default",
+                prompt_tokens=100, completion_tokens=20, voyage_id=run.id,
+            )
+        )
+        await session.commit()
+        run_id = run.id
+
+    assert (await client.delete(f"/api/voyages/{run_id}", headers=headers)).status_code == 204
+    async with get_sessionmaker()() as session:
+        usage = (await session.execute(_select(LLMUsage).where(LLMUsage.model == "fake-default"))).scalars().all()
+    assert len(usage) == 1 and usage[0].voyage_id is None, "用量行必须留下，只解引用"

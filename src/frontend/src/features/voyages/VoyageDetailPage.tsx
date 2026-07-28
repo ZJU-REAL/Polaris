@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
+import { VoyageActions } from '../../components/ui/VoyageActions';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
@@ -1554,16 +1555,6 @@ export function VoyageDetailPage() {
     onError: (err) => toast(`${tr('重试失败：', 'Retry failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
 
-  const cancelMutation = useMutation({
-    mutationFn: () => api.cancelVoyage(id),
-    onSuccess: () => {
-      toast(tr('任务已取消', 'Task cancelled'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['voyage', id] });
-      void queryClient.invalidateQueries({ queryKey: ['voyages'] });
-    },
-    onError: (err) => toast(`${tr('取消失败：', 'Cancel failed: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
-  });
-
   const active = !!voyage && !VOYAGE_TERMINAL.has(voyage.status);
 
   // —— SSE 实时订阅（活动状态时） ——
@@ -1734,12 +1725,8 @@ export function VoyageDetailPage() {
             )}
           </div>
         </div>
-        {active && (
-          <button className="btn btn-ghost" disabled={cancelMutation.isPending} onClick={() => cancelMutation.mutate()}>
-            <Icon name="x" size={13} />
-            {tr('取消任务', 'Cancel task')}
-          </button>
-        )}
+        {/* 取消 / 删除；续跑在下方 ActivityBar 里（紧挨报错说明，那里更好理解） */}
+        <VoyageActions voyage={voyage} showResume={false} onDone={() => navigate('/voyages')} />
         {voyage.kind === 'presentation' && voyage.status === 'done' && (
           <PresentationDownload voyageId={voyage.id} goal={voyage.goal} />
         )}

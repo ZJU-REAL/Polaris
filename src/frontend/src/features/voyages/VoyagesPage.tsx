@@ -8,6 +8,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
 import { api, LIBRARY_TASK_KINDS, VOYAGE_TERMINAL, type VoyageRead } from '../../lib/api';
+import { VoyageActions } from '../../components/ui/VoyageActions';
 import { fmtDuration, fmtFullTime, fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 
@@ -172,6 +173,8 @@ export function VoyageRow({ v, first }: { v: VoyageRead; first?: boolean }) {
       <span style={{ width: 134, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
         <StatusPill status={v.status} sm />
       </span>
+      {/* 动作就地可用：不必逐个点进详情才能取消/续跑/删除 */}
+      <VoyageActions voyage={v} compact />
       <Icon name="chevron" size={14} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
     </div>
   );

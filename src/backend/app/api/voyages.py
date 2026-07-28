@@ -146,6 +146,24 @@ async def cancel_voyage(
     return VoyageRead.model_validate(run)
 
 
+@router.delete("/{voyage_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_voyage(
+    voyage_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """删除任务记录（仅限已结束的；还在跑的先取消）。
+
+    步骤与日志一并删除；**token 用量与实验记录只解引用不删**——删任务不该把花过的
+    钱从账上抹掉。
+    """
+    run = await _get_owned_voyage(session, voyage_id, user)
+    try:
+        await voyages_service.delete_voyage(session, run)
+    except voyages_service.VoyageStillRunningError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_STILL_RUNNING") from e
+
+
 @router.post("/{voyage_id}/resume", response_model=VoyageRead)
 async def resume_voyage(
     voyage_id: uuid.UUID,

@@ -2915,6 +2915,10 @@ export const api = {
   cancelVoyage(id: string): Promise<VoyageRead> {
     return request<VoyageRead>(`/voyages/${id}/cancel`, { method: 'POST' });
   },
+  /** 删除任务记录（仅限已结束的）。步骤与日志一并删；token 用量只解引用，留在账上。 */
+  deleteVoyage(id: string): Promise<void> {
+    return request<void>(`/voyages/${id}`, { method: 'DELETE' });
+  },
   /** 重试 paused_error 的航程，从断点续跑。 */
   resumeVoyage(id: string): Promise<VoyageRead> {
     return request<VoyageRead>(`/voyages/${id}/resume`, { method: 'POST' });
@@ -4409,6 +4413,10 @@ export const api = {
   // —— 每日新论文池（/daily） ——
   /** 池内现存日期（倒序）与每天篇数。 */
   /** 每天的条目数。带上当前筛选，否则日期标签上的数字会和列表对不上。 */
+  /** 每日池保留天数（管理员可配；界面上别写死）。 */
+  getDailyRetention(): Promise<{ days: number }> {
+    return request<{ days: number }>('/daily/retention');
+  },
   listDailyDays(params: { announce?: string; category?: string } = {}): Promise<DailyDay[]> {
     const qs = new URLSearchParams();
     if (params.announce) qs.set('announce', params.announce);
