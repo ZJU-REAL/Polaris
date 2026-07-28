@@ -10,7 +10,7 @@
 """
 
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -24,6 +24,7 @@ from app.models.paper import Concept, Paper, PaperChunk
 from app.models.system_setting import SystemSetting
 from app.models.user import User
 from app.models.vectors import PaperChunkVector, PaperVector
+from app.models.voyage import VoyageRun, VoyageStep
 from app.services import graph as graph_service
 from app.services.chunks import chunk_vector_search_supported
 from app.services.concepts import library_concept_ids
@@ -57,6 +58,108 @@ async def visible_libraries(session: AsyncSession, user: User) -> list[Direction
         .all()
     )
     return [lib for lib in rows if library_visible_to(lib, user)]
+
+
+# ---- 每日同步收录状态 ----
+
+
+TERMINAL_RUN_STATUSES = ("done", "failed", "cancelled")
+
+_INGEST_STEP_KEYS = {
+    "wiki.search_candidates": "candidates",
+    "wiki.score_relevance": "score",
+    "wiki.compile": "compile",
+}
+
+
+async def daily_ingest_status(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[dict[str, Any]]:
+    """各可见库最近一轮「从每日论文自动收录」的进展与结果。
+
+    每日抓取跑完会给每个到期的库起一轮 wiki_ingest；这里把那一轮的漏斗数字摊开，
+    让人在每日新论文那张卡上就能看出「今天扫了多少、收了多少、还在跑没有」，
+    而不必逐个库点进任务详情。只列请求者看得见的库。
+    """
+    libraries = await visible_libraries(session, user)
+    if not libraries:
+        return []
+    by_id = {lib.id: lib for lib in libraries}
+    if since is None:
+        now = datetime.now(UTC)
+        since = datetime(now.year, now.month, now.day, tzinfo=UTC)
+
+    runs = (
+        (
+            await session.execute(
+                select(VoyageRun)
+                .where(
+                    VoyageRun.kind == "wiki_ingest",
+                    VoyageRun.library_id.in_(list(by_id)),
+                    VoyageRun.created_at >= since,
+                )
+                .order_by(VoyageRun.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # 一个库当天可能被手动多触发几次，只看最近那轮
+    latest: dict[uuid.UUID, VoyageRun] = {}
+    for run in runs:
+        if run.library_id is not None and run.library_id not in latest:
+            latest[run.library_id] = run
+    if not latest:
+        return []
+
+    steps = (
+        (
+            await session.execute(
+                select(VoyageStep).where(VoyageStep.run_id.in_([r.id for r in latest.values()]))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_run: dict[uuid.UUID, dict[str, dict[str, Any]]] = {}
+    for step in steps:
+        key = _INGEST_STEP_KEYS.get(step.action)
+        if key is None:
+            continue
+        by_run.setdefault(step.run_id, {})[key] = {
+            "status": step.status,
+            "observation": step.observation or {},
+        }
+
+    items: list[dict[str, Any]] = []
+    for library_id, run in latest.items():
+        parts = by_run.get(run.id, {})
+        candidates = parts.get("candidates", {}).get("observation", {})
+        score = parts.get("score", {}).get("observation", {})
+        compiled = parts.get("compile", {}).get("observation", {})
+        succeeded = int(score.get("succeeded") or 0)
+        rejected = int(score.get("excluded") or 0)
+        items.append(
+            {
+                "library_id": library_id,
+                "library_name": by_id[library_id].name,
+                "is_public": by_id[library_id].is_public,
+                "voyage_id": run.id,
+                "status": run.status,
+                "started_at": run.created_at,
+                # VoyageRun 没有独立的完成时间，终态时 updated_at 就是它
+                "finished_at": run.updated_at if run.status in TERMINAL_RUN_STATUSES else None,
+                # 漏斗：池子里扫了多少 → 送进打分多少 → 收下多少 → 编译了多少
+                "feed_total": int(candidates.get("feed_total") or 0),
+                "candidates": int(candidates.get("inserted") or 0),
+                "admitted": max(0, succeeded - rejected),
+                "rejected": rejected,
+                "compiled": int(compiled.get("succeeded") or 0),
+                "step_status": {k: v["status"] for k, v in parts.items()},
+            }
+        )
+    items.sort(key=lambda it: (-it["admitted"], it["library_name"]))
+    return items
 
 
 # ---- 索引与内容统计 ----

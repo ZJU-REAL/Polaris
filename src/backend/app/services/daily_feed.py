@@ -642,10 +642,25 @@ async def list_papers(
     category: str | None = None,
     author: str | None = None,
     affiliation: str | None = None,
+    library_id: uuid.UUID | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     stmt = select(DailyFeedEntry, Paper).join(Paper, Paper.id == DailyFeedEntry.paper_id)
     if date is not None:
         stmt = stmt.where(DailyFeedEntry.feed_date == date)
+    if library_id is not None:
+        # 「这篇被哪个库收进去了」：只算真正收录的成员行，候选和回收站不算
+        from app.models.library_direction import LibraryPaper
+        from app.services.papers import PAPER_STATUS_GROUPS
+
+        stmt = stmt.where(
+            Paper.id.in_(
+                select(LibraryPaper.paper_id).where(
+                    LibraryPaper.library_id == library_id,
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+                )
+            )
+        )
+
     if q:
         stmt = stmt.where(Paper.title.ilike(f"%{q.strip()}%"))
     # 作者 / 机构：在 JSON 列上做文本包含匹配（同 services/papers.apply_paper_filters 口径）
@@ -689,6 +704,7 @@ async def semantic_search_daily(
     announce: str | None = None,
     author: str | None = None,
     affiliation: str | None = None,
+    library_id: uuid.UUID | None = None,
 ) -> list[tuple[DailyFeedEntry, Paper, float]]:
     """池内向量检索（pgvector 余弦；仅 postgres，调用方先判 semantic_search_supported）。
 
@@ -719,6 +735,16 @@ async def semantic_search_daily(
     if affiliation:
         where.append("CAST(p.affiliations AS text) ILIKE :affiliation_like")
         params["affiliation_like"] = f"%{affiliation}%"
+    if library_id is not None:
+        from app.services.papers import PAPER_STATUS_GROUPS
+
+        where.append(
+            "EXISTS (SELECT 1 FROM library_papers lp WHERE lp.paper_id = p.id "
+            "AND lp.library_id = :library_id "
+            "AND lp.status = ANY(CAST(:lib_statuses AS varchar[])))"
+        )
+        params["library_id"] = str(library_id)
+        params["lib_statuses"] = list(PAPER_STATUS_GROUPS["library"])
     rows = (
         await session.execute(
             text(

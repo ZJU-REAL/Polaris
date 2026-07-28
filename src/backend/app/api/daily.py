@@ -86,6 +86,8 @@ async def list_papers(
     category: str | None = Query(default=None, max_length=32),
     author: str | None = Query(default=None, max_length=200),
     affiliation: str | None = Query(default=None, max_length=200),
+    # 只看被某个文献库收录的（每日论文页按库筛选）
+    library_id: uuid.UUID | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DailyPage:
@@ -113,6 +115,7 @@ async def list_papers(
                 announce=announce,
                 author=author,
                 affiliation=affiliation,
+                library_id=library_id,
             )
             mode_used = "semantic"
             entry_by_paper = {paper.id: entry for entry, paper, _ in rows}
@@ -143,6 +146,7 @@ async def list_papers(
             category=category,
             author=author,
             affiliation=affiliation,
+            library_id=library_id,
         )
         return DailyPage(items=items, total=total, page=page, size=size, mode_used=mode_used)
     ready, ready_total = await daily_service.embedding_coverage(session)
