@@ -28,7 +28,18 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        _engine = create_async_engine(get_settings().database_url, echo=False)
+        settings = get_settings()
+        kwargs: dict[str, object] = {"echo": False}
+        if not settings.is_sqlite:
+            # sqlite 走的是 NullPool/StaticPool，给它这些参数会直接报错
+            kwargs |= {
+                "pool_size": settings.db_pool_size,
+                "max_overflow": settings.db_max_overflow,
+                "pool_timeout": settings.db_pool_timeout,
+                # 长跑的 worker 连接可能被中间件掐掉，取用前探活一次
+                "pool_pre_ping": True,
+            }
+        _engine = create_async_engine(settings.database_url, **kwargs)
         if _engine.url.get_backend_name() == "sqlite":
             # sqlite 默认不强制外键：打开 pragma，让 ON DELETE CASCADE 生效（对齐 postgres）
             @event.listens_for(_engine.sync_engine, "connect")

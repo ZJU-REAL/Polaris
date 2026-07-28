@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     # 默认回退 sqlite+aiosqlite，便于无 docker 的本地开发与测试；生产用 postgresql+asyncpg
     database_url: str = "sqlite+aiosqlite:///./polaris_dev.db"
     redis_url: str = "redis://localhost:6379/0"
+    # 连接池要装得下 worker 的并发：max_jobs(10) 个 voyage × 每个 voyage 的打分并发
+    # (_LLM_CONCURRENCY=5)，每篇论文各开一个 session，再加上引擎自己记步骤/检查点的那条。
+    # SQLAlchemy 默认 5+10=15，实测在生产上被打满：50 个协程抢 15 个连接，多数等满 30s
+    # 超时、该篇打分失败、状态停在 candidate——库里那 2400 多条「从没打过分」的候选就是
+    # 这么攒出来的。Postgres 侧 max_connections=100，这个额度装得下。
+    db_pool_size: int = 20
+    db_max_overflow: int = 50
+    db_pool_timeout: int = 30
 
     # ---- LLM providers（初始值；后续可在 DB 模型路由表中配置）----
     openai_compat_base_url: str = "https://api.deepseek.com/v1"
