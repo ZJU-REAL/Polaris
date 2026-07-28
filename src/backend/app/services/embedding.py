@@ -176,23 +176,56 @@ async def _upsert(
     vector: list[float],
     space: EmbeddingSpace,
 ) -> None:
+    """原子写入/覆盖向量（调用方负责 commit）。
+
+    必须是真 upsert，不能「先查后插」：论文在全局内容池里是共享的，多个库并行同步时
+    会同时给同一篇论文的同一段建向量，两个事务各自查到「没有」，然后一起插——
+    (chunk_id, space) 主键冲突。而挂起的 INSERT 往往由后面某个查询的 autoflush 触发，
+    于是 UniqueViolationError 会在一个看起来毫不相干的地方抛出来
+    （"raised as a result of Query-invoked autoflush"），排查成本很高。
+    """
     if len(vector) != space.dim:
         raise EmbeddingSpaceMismatchError(
             f"refusing to store a {len(vector)}-dim vector in space {space}"
         )
-    row = (
-        await session.execute(
-            select(model_class).where(key_column == key, model_class.space == space.key)
+    values = {
+        key_column.key: key,
+        "space": space.key,
+        "dim": space.dim,
+        "embedding": vector,
+        "model": space.model,
+        "text_version": TEXT_VERSION,
+        "built_at": utcnow(),
+    }
+    dialect = session.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as _insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as _insert
+    else:  # 其余方言没有 ON CONFLICT，退回先查后插（单机开发场景没有并发问题）
+        row = (
+            await session.execute(
+                select(model_class).where(key_column == key, model_class.space == space.key)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = model_class(**{key_column.key: key, "space": space.key})
+            session.add(row)
+        for field, value in values.items():
+            setattr(row, field, value)
+        return
+
+    stmt = _insert(model_class).values(**values)
+    await session.execute(
+        stmt.on_conflict_do_update(
+            index_elements=[key_column.key, "space"],
+            set_={k: v for k, v in values.items() if k not in (key_column.key, "space")},
         )
-    ).scalar_one_or_none()
-    if row is None:
-        row = model_class(**{key_column.key: key, "space": space.key})
-        session.add(row)
-    row.dim = space.dim
-    row.embedding = vector
-    row.model = space.model
-    row.text_version = TEXT_VERSION
-    row.built_at = utcnow()
+    )
+    # 该行可能已在 identity map 里且被这条 INSERT 绕过了，过期它免得读到旧向量
+    existing = await session.get(model_class, (key, space.key))
+    if existing is not None:
+        await session.refresh(existing)
 
 
 # ---- 空间管理（管理端） ----

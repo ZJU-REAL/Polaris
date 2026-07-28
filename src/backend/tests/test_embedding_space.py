@@ -291,3 +291,127 @@ async def test_space_inventory_counts_each_kind(client):
         items = await space_inventory(session)
     assert len(items) == 1
     assert items[0]["papers"] == 2 and items[0]["active"] is True
+
+
+# ---- 并发写同一条向量（生产 UniqueViolationError 的来源）----
+
+
+async def test_upsert_same_vector_twice_overwrites_instead_of_raising(client):
+    """同一 (key, space) 写两次要覆盖，不能撞主键。
+
+    生产上报的就是这个：论文在全局内容池里共享，多个库并行同步时会同时给同一篇论文
+    的同一段建向量，两个事务各自查到「没有」然后一起插 ⇒
+      UniqueViolationError: duplicate key value violates unique constraint
+      "paper_chunk_vectors_pkey"  Key (chunk_id, space)=(..., BGE-M3@1024)
+    而且挂起的 INSERT 常由后面某个查询的 autoflush 触发，报错位置看着毫不相干。
+    """
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.core.embedding_space import EmbeddingSpace
+    from app.models.paper import PaperChunk, new_paper
+    from app.models.vectors import PaperChunkVector
+    from app.services.embedding import upsert_chunk_vector
+
+    space = EmbeddingSpace(model="BGE-M3", dim=4)
+    async with get_sessionmaker()() as session:
+        paper = new_paper(source="arxiv", arxiv_id="2699.00001", title="Dup Vector Paper")
+        session.add(paper)
+        await session.flush()
+        chunk = PaperChunk(paper_id=paper.id, seq=0, text="hello")
+        session.add(chunk)
+        await session.flush()
+        chunk_id = chunk.id
+
+        await upsert_chunk_vector(session, chunk_id, [0.1, 0.2, 0.3, 0.4], space)
+        await session.commit()
+
+        # 第二次写同一 (chunk_id, space)：覆盖，不抛
+        await upsert_chunk_vector(session, chunk_id, [0.9, 0.8, 0.7, 0.6], space)
+        await session.commit()
+
+        rows = (
+            (
+                await session.execute(
+                    select(PaperChunkVector).where(PaperChunkVector.chunk_id == chunk_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1, "同一段在同一空间里只该有一行"
+        assert [round(x, 1) for x in rows[0].embedding] == [0.9, 0.8, 0.7, 0.6], "后写的没覆盖"
+
+
+async def test_upsert_survives_a_concurrent_writer(client):
+    """交错写同一条 (key, space)：另一个会话抢先插入后，本次写入不能炸。
+
+    这条才是钉住修复的用例——上一条在单线程下「先查后插」也能过。
+    生产报错正是这个竞态：
+      UniqueViolationError: duplicate key ... "paper_chunk_vectors_pkey"
+      Key (chunk_id, space)=(..., BGE-M3@1024)
+    旧实现先 SELECT 到「没有」、把新行挂进 session，等真正 flush 时对方已经提交，
+    于是撞主键；且 flush 常由后面某个查询的 autoflush 触发，报错位置毫不相干。
+    """
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.core.embedding_space import EmbeddingSpace
+    from app.models.paper import PaperChunk, new_paper
+    from app.models.vectors import PaperChunkVector
+    from app.services.embedding import upsert_chunk_vector
+
+    space = EmbeddingSpace(model="BGE-M3", dim=4)
+    maker = get_sessionmaker()
+    async with maker() as setup:
+        paper = new_paper(source="arxiv", arxiv_id="2699.00002", title="Race Paper")
+        setup.add(paper)
+        await setup.flush()
+        chunk = PaperChunk(paper_id=paper.id, seq=0, text="race")
+        setup.add(chunk)
+        await setup.commit()
+        chunk_id = chunk.id
+
+    # 会话 B 抢先把这条写进去并提交
+    async with maker() as b:
+        await upsert_chunk_vector(b, chunk_id, [0.1, 0.1, 0.1, 0.1], space)
+        await b.commit()
+
+    # 会话 A 随后写同一条：必须覆盖而不是撞主键
+    async with maker() as a:
+        await upsert_chunk_vector(a, chunk_id, [0.5, 0.5, 0.5, 0.5], space)
+        await a.commit()
+
+    async with maker() as check:
+        rows = (
+            (
+                await check.execute(
+                    select(PaperChunkVector).where(PaperChunkVector.chunk_id == chunk_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        assert [round(x, 1) for x in rows[0].embedding] == [0.5, 0.5, 0.5, 0.5]
+
+
+def test_upsert_is_atomic_not_check_then_insert():
+    """守卫：``_upsert`` 必须走 ON CONFLICT，不能是「先查后插」。
+
+    生产报错来自这个竞态：A 查到「没有」把新行挂进 session，B 抢先插入并提交，
+    A 真正 flush 时撞主键 ——
+      UniqueViolationError: duplicate key ... "paper_chunk_vectors_pkey"
+      Key (chunk_id, space)=(..., BGE-M3@1024)
+
+    **这个竞态在 sqlite 上没法忠实复现**：要让 A 在未提交状态下挂着待插行，
+    A 的写锁就会把 B 挡在外面。上面两条只覆盖了「重复写入要覆盖」的行为，
+    退回旧实现照样通过——所以这里只能做源码级守卫，它比没有强，但确实不是
+    端到端验证。
+    """
+    import inspect
+
+    from app.services import embedding
+
+    src = inspect.getsource(embedding._upsert)
+    assert "on_conflict_do_update" in src, "_upsert 退回了先查后插，并发写会撞主键"

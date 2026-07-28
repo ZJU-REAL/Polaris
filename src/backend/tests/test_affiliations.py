@@ -26,6 +26,7 @@ from app.agents.voyage import actions_wiki
 from app.agents.voyage.actions import ActionContext
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
+from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper
 from app.models.voyage import VoyageRun
 from app.services import affiliations as affil_service
@@ -384,6 +385,15 @@ async def _setup_scored_paper(
             checkpoint={"params": {}},
         )
         session.add_all([paper, run])
+        await session.flush()
+        # 真实流程里是先建运行、再逐篇打分，所以 scored_at 一定落在运行创建之后。
+        # 取全文那步只处理「本次运行收下的」，靠的就是这个时刻。
+        membership = (
+            await session.execute(
+                select(LibraryPaper).where(LibraryPaper.paper_id == paper.id)
+            )
+        ).scalar_one()
+        membership.scored_at = run.created_at
         await session.commit()
         await session.refresh(paper)
         await session.refresh(run)

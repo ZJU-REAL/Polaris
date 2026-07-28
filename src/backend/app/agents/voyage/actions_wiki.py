@@ -230,6 +230,20 @@ def _is_retryable_conflict(exc: BaseException) -> bool:
     return code in _RETRYABLE_SQLSTATES
 
 
+def _scored_in_this_run(ctx: ActionContext):
+    """限定「本次运行打分收下的论文」的查询条件。
+
+    以前取全文/编译都是扫全库所有 status='scored' / 'fetched' 的行，于是
+    「本次通过筛选 1 篇」后面跟着「下载 12 个 PDF」——两个数字统计的不是同一批
+    论文，看着像对不上。
+
+    按 ``scored_at >= 本次运行创建时刻`` 筛，而不是靠 checkpoint 记 id：步骤中途
+    崩溃、恢复后重跑时，checkpoint 里那份记录会丢，崩溃前已打分的论文就再也进不了
+    后续步骤；而 scored_at 落在库里，恢复后照样认得出来。
+    """
+    return LibraryPaper.scored_at >= ctx.run.created_at
+
+
 async def _insert_pooled_with_retry(
     session: AsyncSession, **kwargs: Any
 ) -> tuple[Paper | None, str | None]:
@@ -901,15 +915,18 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         library = await _resolve_library(session, ctx)
         billing_user_id = _ingest_billing_owner(library)
         affil_mode = await get_affiliation_extraction_mode(session)
-        pairs = (
-            await session.execute(
-                select(Paper, LibraryPaper)
-                .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                .where(LibraryPaper.library_id == library.id, LibraryPaper.status == "scored")
-                .order_by(LibraryPaper.relevance_score.desc().nulls_last())
-                .limit(top_n)
-            )
-        ).all()
+        # 只处理**本次**打分收下的论文，不去捞历史积压。
+        # 以前是扫全库所有 status='scored' 的行，于是「本次通过筛选 1 篇」后面
+        # 跟着「下载 12 个 PDF」——两个数字统计的不是同一批论文，看起来像对不上。
+        # 代价是被预算截断的运行会把已打分未取全文的论文留在原地，需要另行处理。
+        stmt = (
+            select(Paper, LibraryPaper)
+            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .where(LibraryPaper.library_id == library.id, LibraryPaper.status == "scored")
+            .order_by(LibraryPaper.relevance_score.desc().nulls_last())
+            .limit(top_n)
+        )
+        pairs = (await session.execute(stmt.where(_scored_in_this_run(ctx)))).all()
         papers = [p for p, _ in pairs]
         membership_of = {p.id: m for p, m in pairs}
         # 发表日期回填：雪球/DOI 来源的论文只有年份，arXiv 能查到精确日期（时间线/趋势视图用）
@@ -1029,14 +1046,14 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
         billing_user_id = _ingest_billing_owner(library)
         # 幂等断点：已 compiled 的不再进入（status=fetched 才编译）。外层只查 id，每篇
         # 编译在各自独立 session 内重新加载，避免多任务共享一个 AsyncSession。
-        rows = (
-            await session.execute(
-                select(LibraryPaper.id, LibraryPaper.paper_id)
-                .where(LibraryPaper.library_id == library.id, LibraryPaper.status == "fetched")
-                .order_by(LibraryPaper.relevance_score.desc().nulls_last())
-                .limit(top_n)
-            )
-        ).all()
+        stmt = (
+            select(LibraryPaper.id, LibraryPaper.paper_id)
+            .where(LibraryPaper.library_id == library.id, LibraryPaper.status == "fetched")
+            .order_by(LibraryPaper.relevance_score.desc().nulls_last())
+            .limit(top_n)
+        )
+        # 同 fetch_extract：只编译本次收下的那批，不捞历史积压
+        rows = (await session.execute(stmt.where(_scored_in_this_run(ctx)))).all()
         membership_ids = [mid for mid, _ in rows]
         paper_ids = [pid for _, pid in rows]
 

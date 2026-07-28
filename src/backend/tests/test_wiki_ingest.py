@@ -1797,3 +1797,60 @@ async def test_insert_retry_reraises_unrelated_errors():
             await mod._insert_pooled_with_retry(_Session(), library_id=None)
     finally:
         mod._pool_paper_or_new = original
+
+
+# ---- 只处理本次收下的，不捞历史积压 ----
+
+
+async def test_run_does_not_pick_up_an_older_backlog(client, queue_stub, wiki_mocks):
+    """库里早先积压的 scored 论文，不该被这次同步顺手带走。
+
+    以前取全文那步扫的是全库所有 status='scored' 的行，于是「本次通过筛选 1 篇」
+    后面跟着「下载 12 个 PDF」，两个数字统计的不是同一批论文。
+    """
+    import datetime as dt
+
+    from sqlalchemy import select as sa_select
+
+    from app.models.library_direction import LibraryPaper
+
+    project_id, headers = await _setup_project(client)
+    await _bootstrap(client, project_id, headers)
+
+    # 造一篇「上周就打过分、一直没取全文」的积压论文
+    async with get_sessionmaker()() as session:
+        rows = await project_paper_rows(session, project_id=project_id)
+        library_id = rows[0][1].library_id
+        stale = new_paper(
+            source="arxiv", arxiv_id="2607.97000", title="Stale Backlog Paper", year=2026
+        )
+        session.add(stale)
+        await session.flush()
+        session.add(
+            LibraryPaper(
+                library_id=library_id,
+                paper_id=stale.id,
+                status="scored",
+                relevance_score=0.95,  # 分很高，按相关度排序会排在最前
+                scored_at=dt.datetime.now(dt.UTC) - dt.timedelta(days=7),
+            )
+        )
+        await session.commit()
+        stale_id = stale.id
+
+    async with get_sessionmaker()() as session:
+        await _seed_feed(
+            session,
+            project_id,
+            [("2607.97001", "Fresh Feed Paper", "research agents and planning")],
+        )
+
+    detail = await _run_incremental(client, project_id, headers)
+    assert detail["status"] == "done", detail
+
+    async with get_sessionmaker()() as session:
+        stale_row = (
+            await session.execute(sa_select(LibraryPaper).where(LibraryPaper.paper_id == stale_id))
+        ).scalar_one()
+        # 积压那篇原地不动：没被这次运行取全文、也没被编译
+        assert stale_row.status == "scored", "历史积压被这次同步顺手带走了"
