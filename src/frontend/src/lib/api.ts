@@ -2610,6 +2610,29 @@ export interface DailyDay {
   count: number;
 }
 
+/** 某个库今天从每日论文自动收录的一轮：漏斗数字 + 任务状态。 */
+export interface DailyIngestStatus {
+  library_id: string;
+  library_name: string;
+  is_public: boolean;
+  voyage_id: string;
+  /** 任务状态：executing / done / failed / paused_error / cancelled … */
+  status: string;
+  started_at: string;
+  finished_at?: string | null;
+  /** 池子里扫了多少 */
+  feed_total: number;
+  /** 送进打分的候选数 */
+  candidates: number;
+  /** 打分通过、真正收下的 */
+  admitted: number;
+  /** 相关性不够被淘汰的 */
+  rejected: number;
+  /** 编译成功的 */
+  compiled: number;
+  step_status: Record<string, string>;
+}
+
 export interface DailyCollectRequest {
   paper_ids: string[];
   direction_library_ids: string[];
@@ -4414,6 +4437,11 @@ export const api = {
   /** 池内现存日期（倒序）与每天篇数。 */
   /** 每天的条目数。带上当前筛选，否则日期标签上的数字会和列表对不上。 */
   /** 每日池保留天数（管理员可配；界面上别写死）。 */
+  /** 今天各可见库从每日论文自动收录的漏斗与状态。 */
+  listDailyIngestStatus(): Promise<DailyIngestStatus[]> {
+    return request<DailyIngestStatus[]>('/lab/daily-ingest');
+  },
+
   getDailyRetention(): Promise<{ days: number }> {
     return request<{ days: number }>('/daily/retention');
   },
@@ -4441,10 +4469,13 @@ export const api = {
       affiliation?: string;
       /** 检索方式：keyword=字面匹配，semantic=向量检索（只覆盖已生成向量的论文） */
       mode?: SearchMode;
+      /** 只看被这个文献库收录的（候选与回收站不算收录） */
+      libraryId?: string;
     } = {},
   ): Promise<DailyPage> {
     const params = new URLSearchParams();
     if (opts.date) params.set('date', opts.date);
+    if (opts.libraryId) params.set('library_id', opts.libraryId);
     if (opts.sort) params.set('sort', opts.sort);
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));
