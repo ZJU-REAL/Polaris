@@ -287,7 +287,7 @@ async def test_annotate_figures_degrades_to_top4_by_area(app):
 
     provider = _FailingVLM()
     router = LLMRouter()
-    router._providers[("fake", None, "")] = provider
+    router.override_provider(provider)
     merged = await annotate_figures(paper, candidates, llm=router)
 
     assert provider.image_calls == 2  # 失败重试 1 次

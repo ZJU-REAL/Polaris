@@ -159,7 +159,7 @@ async def test_compile_paper_strips_invalid_markers(app):
     )
     figure_path(str(paper.id), 0).write_bytes(_opaque_png_bytes(40, 30))
     router = LLMRouter()
-    router._providers[("fake", None, "")] = _InvalidMarkerLibrarian()
+    router.override_provider(_InvalidMarkerLibrarian())
 
     content = (await compile_paper(paper, llm=router)).content
     assert "![[fig:0]]" in content  # 有效标记保留
@@ -357,7 +357,7 @@ async def test_compile_paper_retries_when_figures_not_used(app):
     figure_path(str(paper.id), 0).write_bytes(_opaque_png_bytes(40, 30))
     provider = _NoMarkerLibrarian()
     router = LLMRouter()
-    router._providers[("fake", None, "")] = provider
+    router.override_provider(provider)
 
     content = (await compile_paper(paper, llm=router)).content
     assert provider.compile_calls == 2  # 首稿无标记 → 重试一次

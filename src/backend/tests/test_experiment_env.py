@@ -192,7 +192,7 @@ async def test_prompt_context_sections(client, queue_stub, fake_ssh, bus_recorde
 
     provider = _RecordingProvider()
     router = LLMRouter()
-    router._providers[("fake", None, "")] = provider
+    router.override_provider(provider)
     await _run_pipeline(client, headers, project_id, exp["voyage_id"], router)
 
     plan_prompts = [p for p in provider.prompts if "实验规划师" in p]

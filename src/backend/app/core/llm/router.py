@@ -110,6 +110,24 @@ STREAM_STAGES = frozenset(
 )
 _STREAM_FLUSH_CHARS = 80  # token 增量攒到此长度再广播一段（节流，防刷爆 pub/sub）
 
+# 一次调用能等多久、重试几次，按环节分两档——两者的合理耐心程度差一个数量级。
+#
+# 生产实测（gpt-5.6-luna，6 小时）：relevance 中位 13.3s，但 p95 达到 1215s。
+# 那不是模型在慢慢想——4 次尝试 × 300s 超时 + 退避 3+6+12 正好是 1221s，也就是
+# 重试循环耐心地熬过四次各 5 分钟的超时。而打分协程全程攥着一个数据库连接，
+# 于是连接池被卡死的协程占满，其余论文打分批量超时、状态停在 candidate。
+#
+# 短 JSON 环节（打分 / 判定 / 结构化抽取）中位数都在十几秒，没有理由等 300 秒，
+# 更没理由等四次；卡住的短请求重试也极少能救回来。长文本环节（编译 / 写作 /
+# 评审）本来就要跑几分钟，保持宽松。
+_SHORT_CALL = (60.0, 2)  # (timeout 秒, 最多尝试次数) → 最坏 60+3+60 = 123s
+_LONG_CALL = (300.0, 4)
+
+
+def call_profile(stage: str) -> tuple[float, int]:
+    """该环节单次调用的 (超时, 最大尝试次数)。"""
+    return _LONG_CALL if stage in STREAM_STAGES else _SHORT_CALL
+
 
 class LLMRouter:
     """stage → (provider 实例, model)；complete/stream 自动记账。
@@ -124,8 +142,20 @@ class LLMRouter:
         self._routes_loaded_at: dict[uuid.UUID | None, float] = {}
         # 用户 llm_self_managed 标志缓存（(flag, loaded_at)）
         self._self_managed: dict[uuid.UUID, tuple[bool, float]] = {}
-        self._providers: dict[tuple[str, str | None, str], LLMProvider] = {}
+        # 键含耐心档位（见 call_profile）：长/短两档各持一个客户端。键是实现细节，
+        # 要在测试里替换 provider 请用 override_provider()，别直接往这个字典里塞。
+        self._providers: dict[tuple[str, str | None, str, float, int], LLMProvider] = {}
+        self._override: LLMProvider | None = None
         self.event_bus: Any | None = None
+
+    def override_provider(self, provider: LLMProvider | None) -> None:
+        """强制所有环节都用这个 provider（测试注入点；传 None 取消）。
+
+        以前测试是直接往 ``_providers`` 里按键塞，于是缓存键的形状变成了事实上的
+        公开接口——给它加个「耐心档位」维度就一次打断 16 个用例。走这个口子，
+        键怎么变都与测试无关。
+        """
+        self._override = provider
 
     def invalidate_cache(self) -> None:
         """管理端 / 用户改动 providers/routes/接管状态后调用（清所有 owner）。"""
@@ -193,16 +223,23 @@ class LLMRouter:
             return None
         return user_id if await self._is_self_managed(user_id) else None
 
-    def _provider_for(self, route: ResolvedRoute) -> LLMProvider:
-        key = (route.provider_kind, route.base_url, route.api_key)
+    def _provider_for(self, route: ResolvedRoute, stage: str = "") -> LLMProvider:
+        if self._override is not None:
+            return self._override
+        # 耐心程度进缓存键：同一个 provider 配置在长/短两档下各持一个客户端
+        timeout, attempts = call_profile(stage)
+        key = (route.provider_kind, route.base_url, route.api_key, timeout, attempts)
         if key not in self._providers:
             if route.provider_kind == "openai_compat":
                 base_url = route.base_url or get_settings().openai_compat_base_url
                 self._providers[key] = OpenAICompatProvider(
-                    base_url=base_url, api_key=route.api_key
+                    base_url=base_url,
+                    api_key=route.api_key,
+                    timeout=timeout,
+                    max_attempts=attempts,
                 )
             elif route.provider_kind == "anthropic":
-                self._providers[key] = AnthropicProvider(api_key=route.api_key)
+                self._providers[key] = AnthropicProvider(api_key=route.api_key, timeout=timeout)
             elif route.provider_kind == "fake":
                 self._providers[key] = FakeProvider()
             else:
@@ -244,7 +281,7 @@ class LLMRouter:
                             "no LLM provider configured — add a provider and routes in settings"
                         )
                     route = _FALLBACK_ROUTE
-        return self._provider_for(route), route
+        return self._provider_for(route, stage), route
 
     async def model_name(self, stage: str, user_id: uuid.UUID | None = None) -> str | None:
         """该环节实际会用到的模型名；未配置/不可用时 None（调用方只用于展示）。

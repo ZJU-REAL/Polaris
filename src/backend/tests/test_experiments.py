@@ -777,7 +777,7 @@ async def test_path_violation_rejected(client, queue_stub, fake_ssh, bus_recorde
     exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
 
     router = LLMRouter()
-    router._providers[("fake", None, "")] = _PathViolationProvider()
+    router.override_provider(_PathViolationProvider())
     engine, bus = _make_engine(router)
     await engine.run(uuid.UUID(voyage_id))
     await _approve_gate(client, headers, project_id)

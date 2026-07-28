@@ -130,7 +130,7 @@ class _QCFailOnceProvider(FakeProvider):
 
 def _router_with(provider: FakeProvider) -> LLMRouter:
     router = LLMRouter()
-    router._providers[("fake", None, "")] = provider
+    router.override_provider(provider)
     return router
 
 

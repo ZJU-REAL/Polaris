@@ -54,7 +54,7 @@ class OpenAICompatProvider(LLMProvider):
     async def _post_with_retry(self, url: str, payload: dict[str, Any]) -> httpx.Response:
         """429/5xx/网络错误重试（指数退避，尊重 Retry-After），其余状态原样返回。"""
         last_exc: Exception | None = None
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(self._max_attempts):
             try:
                 resp = await self._client.post(url, headers=self._headers(), json=payload)
             except (httpx.TransportError, httpx.TimeoutException) as e:
@@ -69,20 +69,22 @@ class OpenAICompatProvider(LLMProvider):
                 # 中转把「不支持该参数」包成了 5xx：这不是临时故障，重试多少次都一样，
                 # 直接交回上层去掉参数重试，别白烧几十秒退避。
                 return resp
-            if resp.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS - 1:
+            if resp.status_code in _RETRYABLE_STATUS and attempt < self._max_attempts - 1:
                 delay = _retry_delay(resp, attempt)
                 logger.warning(
                     "openai_compat %s，%.0fs 后重试（%d/%d）：%s",
                     resp.status_code,
                     delay,
                     attempt + 1,
-                    _MAX_ATTEMPTS,
+                    self._max_attempts,
                     url,
                 )
                 await asyncio.sleep(delay)
                 continue
             return resp
-        raise RuntimeError(f"openai_compat 请求 {url} 重试 {_MAX_ATTEMPTS} 次后仍失败：{last_exc}")
+        raise RuntimeError(
+            f"openai_compat 请求 {url} 重试 {self._max_attempts} 次后仍失败：{last_exc}"
+        )
 
     def __init__(
         self,
@@ -91,9 +93,11 @@ class OpenAICompatProvider(LLMProvider):
         *,
         client: httpx.AsyncClient | None = None,
         timeout: float = 300.0,
+        max_attempts: int = _MAX_ATTEMPTS,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._max_attempts = max_attempts
         self._client = client or httpx.AsyncClient(timeout=timeout)
         # 已确认不吃 reasoning_effort 的 model（本进程内记忆）。provider 实例被
         # LLMRouter 缓存复用，所以每个模型只需要付一次"失败再重试"的往返代价。

@@ -178,8 +178,9 @@ async def test_route_effort_reaches_provider(app):
             seen.append(kwargs.get("effort"))
             return await super().complete(messages, **kwargs)
 
-    router._providers[("fake", None, "fake-db-model")] = _Recorder()
-    router._provider_for = lambda r: router._providers[("fake", None, "fake-db-model")]  # type: ignore[assignment]
+    recorder = _Recorder()
+    # _provider_for 现在按 (route, stage) 取——stage 决定超时/重试档位（call_profile）
+    router._provider_for = lambda r, stage="": recorder  # type: ignore[assignment]
 
     await router.complete("default", [Message(role="user", content="hi")])
     await router.complete("default", [Message(role="user", content="hi")], effort="low")
@@ -206,7 +207,53 @@ async def test_route_without_effort_sends_nothing(app):
 
     router = LLMRouter()
     legacy = _LegacyProvider()
-    router._provider_for = lambda r: legacy  # type: ignore[assignment]
+    router._provider_for = lambda r, stage="": legacy  # type: ignore[assignment]
     result = await router.complete("default", [Message(role="user", content="hi")])
     assert result.content == "ok"
     assert len(seen_kwargs) == 1
+
+
+# ---- 按环节区分耐心程度（生产上 relevance p95 达 1215s 的直接原因）----
+
+
+def test_short_json_stages_get_a_tight_call_budget():
+    """打分/判定/抽取这类短 JSON 环节，最坏耗时要压在两分钟级以内。
+
+    生产实测 relevance 中位 13.3s、p95 却有 1215s——4 次尝试 × 300s 超时 + 退避
+    3+6+12 正好 1221s，也就是重试循环熬过四次五分钟超时。而打分协程全程占着一个
+    数据库连接，连接池被卡死的协程占满，其余论文批量超时、状态停在 candidate。
+    """
+    from app.core.llm.router import call_profile
+
+    for stage in ("relevance", "sextant", "extract", "concepts"):
+        timeout, attempts = call_profile(stage)
+        worst = timeout * attempts + 3 * (attempts - 1)  # 含指数退避
+        assert worst <= 180, f"{stage} 最坏 {worst}s，太能等了"
+
+
+def test_long_form_stages_stay_patient():
+    """编译 / 写作 / 评审本来就要跑几分钟，别把它们一起收紧了。"""
+    from app.core.llm.router import STREAM_STAGES, call_profile
+
+    for stage in STREAM_STAGES:
+        timeout, _ = call_profile(stage)
+        assert timeout >= 300, f"{stage} 超时 {timeout}s 太短"
+
+
+def test_profile_is_part_of_the_provider_cache_key():
+    """长短两档必须各持一个客户端——否则先建的那个把超时定死给所有环节。"""
+    from app.core.llm.router import LLMRouter, ResolvedRoute
+
+    router = LLMRouter()
+    route = ResolvedRoute(
+        provider_kind="fake",
+        base_url=None,
+        api_key="",
+        model="m",
+        temperature=None,
+        provider_name="fake",
+        effort=None,
+    )
+    router._provider_for(route, "relevance")
+    router._provider_for(route, "librarian")
+    assert len(router._providers) == 2, "长短档共用了同一个客户端"

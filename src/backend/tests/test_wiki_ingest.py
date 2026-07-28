@@ -447,7 +447,7 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
     # 并发各自打分：其中 1 个（第 2 次 LLM 调用）抛 CancelledError，其余 3 个照常完成并
     # 逐篇 commit。故崩溃后恰好 3 篇落库、1 篇仍是 candidate（下次续跑补打这 1 篇）。
     crashing_router = LLMRouter()
-    crashing_router._providers[("fake", None, "")] = _CrashOnNthRelevance(crash_at=2)
+    crashing_router.override_provider(_CrashOnNthRelevance(crash_at=2))
     engine = VoyageEngine(event_bus=RecordingBus(), llm_router=crashing_router)
     with pytest.raises(asyncio.CancelledError):
         await engine.run(run_id)
@@ -502,7 +502,7 @@ async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_moc
 
     router = LLMRouter()
     # "Benchmark" 命中「LLM Scientist Benchmark Suite」这一篇 → 该篇打分返回坏 JSON
-    router._providers[("fake", None, "")] = _BreakOneRelevance(break_marker="Benchmark")
+    router.override_provider(_BreakOneRelevance(break_marker="Benchmark"))
     engine = VoyageEngine(event_bus=RecordingBus(), llm_router=router)
     await engine.run(run_id)
 

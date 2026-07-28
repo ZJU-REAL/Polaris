@@ -276,7 +276,7 @@ async def test_forge_resume_does_not_regenerate(client, queue_stub):
 
     provider = _CrashOnFirstScore()
     router = LLMRouter()
-    router._providers[("fake", None, "")] = provider
+    router.override_provider(provider)
     engine = VoyageEngine(event_bus=RecordingBus(), llm_router=router)
     with pytest.raises(asyncio.CancelledError):
         await engine.run(run_id)

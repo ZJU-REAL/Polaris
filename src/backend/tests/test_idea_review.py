@@ -265,7 +265,7 @@ async def test_discussion_and_human_context_injection(client, queue_stub, bus_re
     run_id = resp.json()["id"]
     provider = _RecordingProvider()
     router = LLMRouter()
-    router._providers[("fake", None, "")] = provider
+    router.override_provider(provider)
     engine = VoyageEngine(event_bus=RecordingBus(), llm_router=router)
     await engine.run(uuid.UUID(run_id))
 
