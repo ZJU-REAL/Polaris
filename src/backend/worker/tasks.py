@@ -68,7 +68,10 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
 
 
 async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
-    """每日 03:00 cron：给 cadence=daily 且已 bootstrap 的**文献库**入队增量 ingest。
+    """给已建库的**文献库**入队同步。由每日论文抓取跑完后触发（daily.sync_libraries）。
+
+    不再自己定时：定时就意味着赌抓取已经跑完，抓取慢一点或失败重试，同步就会在旧池子
+    上空跑一整轮，而界面上只显示「0 篇新论文」。每天只跑一轮（同一天重复触发会被挡）。
 
     按库选而不是按课题选：独立库（project_id 为空）在按课题遍历的老写法里一个都进不来。
 
@@ -78,8 +81,15 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
 
     返回本次入队的 voyage id 列表（arq 结果可查）。
     """
+    import datetime as dt
+
+    from app.services import daily_feed as daily_feed_service
+
+    now = dt.datetime.now(dt.UTC)
     enqueued: list[str] = []
     async with get_sessionmaker()() as session:
+        if await daily_feed_service.already_ran_today(session, "wiki_ingest", now=now):
+            return enqueued
         # 先回收长期卡住的 paused_error：它们会把所在库一直挡在互斥判定外面
         reclaimed = await ingest_service.reclaim_stale_paused_ingests(session)
         if reclaimed:
@@ -150,14 +160,26 @@ async def index_papers_fulltext_task(
 
 
 async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
-    """每日 01:30 cron（arXiv 约 00:00 UTC 发布新公告）：建一次「每日新论文抓取」任务并入队。
+    """检查点任务（每 15 分钟一次）：到点且今天没跑过，就建一次「每日新论文抓取」。
 
-    抓取/入池/清理/建向量四步都在任务系统里跑（kind=daily_feed_sync），有计划、有步骤
-    状态、有日志，失败可见可重试。返回入队的 voyage id；已有任务在跑则跳过（返回 None）。
+    抓取时刻是可配置的（默认 UTC 02:30 = 北京 10:30，arXiv 约北京 10:00 放新公告）。
+    arq 的 cron 时刻在 worker 启动时固定，改设置得重启才生效——所以这里让 cron 空转、
+    由设置决定是否真的动手。空转一次只是一条查询。
+
+    返回入队的 voyage id；未到点/今天已跑过/已有任务在跑都返回 None。
     """
+    import datetime as dt
+
     from app.services import daily_feed as daily_feed_service
 
+    now = dt.datetime.now(dt.UTC)
     async with get_sessionmaker()() as session:
+        if not await daily_feed_service.due_now(session, now=now):
+            return None
+        if await daily_feed_service.already_ran_today(
+            session, daily_feed_service.DAILY_FEED_VOYAGE_KIND, now=now
+        ):
+            return None
         try:
             run = await daily_feed_service.create_daily_feed_voyage(session, created_by=None)
         except daily_feed_service.DailyFeedConflictError:
@@ -166,9 +188,29 @@ async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
     return str(run.id)
 
 
+#: 发表匹配排在库同步之后多久（新入库论文要先落库，匹配才有东西可匹）
+_PUBLICATION_MATCH_DELAY_MINUTES = 150
+
+
 async def daily_publication_match(ctx: dict[str, Any]) -> int:
-    """每日 04:00 cron（每日 ingest 之后）：对开了自动匹配的绑定用户逐个跑库内匹配。"""
+    """检查点任务：库同步之后再跑发表匹配（新入库论文 → 姓名+机构命中进待确认）。
+
+    时刻同样跟随每日池抓取时间派生，不写死。
+    """
+    import datetime as dt
+
+    from app.services import daily_feed as daily_feed_service
+
+    now = dt.datetime.now(dt.UTC)
     async with get_sessionmaker()() as session:
+        if not await daily_feed_service.due_now(
+            session, now=now, delay_minutes=_PUBLICATION_MATCH_DELAY_MINUTES
+        ):
+            return 0
+        if not await daily_feed_service.claim_today(
+            session, "daily_publication_match_last_run", now=now
+        ):
+            return 0
         user_ids = await publications_service.profiles_for_daily_match(session)
     total = 0
     for uid in user_ids:

@@ -4391,8 +4391,13 @@ export const api = {
 
   // —— 每日新论文池（/daily） ——
   /** 池内现存日期（倒序）与每天篇数。 */
-  listDailyDays(): Promise<DailyDay[]> {
-    return request<DailyDay[]>('/daily/days');
+  /** 每天的条目数。带上当前筛选，否则日期标签上的数字会和列表对不上。 */
+  listDailyDays(params: { announce?: string; category?: string } = {}): Promise<DailyDay[]> {
+    const qs = new URLSearchParams();
+    if (params.announce) qs.set('announce', params.announce);
+    if (params.category) qs.set('category', params.category);
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return request<DailyDay[]>(`/daily/days${suffix}`);
   },
   listDailyPapers(
     opts: {

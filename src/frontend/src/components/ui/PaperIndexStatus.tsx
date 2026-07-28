@@ -79,7 +79,14 @@ function Dot({
   );
 }
 
-export function PaperIndexStatusRow({ paperId }: { paperId: string }) {
+export function PaperIndexStatusRow({
+  paperId,
+  showRebuild = true,
+}: {
+  paperId: string;
+  /** 放进顶部徽章行时关掉按钮：那一行是「这篇论文是什么」的速览，不是操作区。 */
+  showRebuild?: boolean;
+}) {
   const queryClient = useQueryClient();
   const queryKey = ['paper-index-status', paperId];
 
@@ -140,6 +147,7 @@ export function PaperIndexStatusRow({ paperId }: { paperId: string }) {
           {data.embedded_chunk_count}/{data.chunk_count}
         </span>
       )}
+      {showRebuild && (
       <button
         type="button"
         className="btn btn-ghost sm"
@@ -161,6 +169,7 @@ export function PaperIndexStatusRow({ paperId }: { paperId: string }) {
             ? tr('重新构建', 'Rebuild')
             : tr('构建索引', 'Build index')}
       </button>
+      )}
     </div>
   );
 }

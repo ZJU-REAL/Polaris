@@ -14,6 +14,7 @@ import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
+import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import {
   ApiError,
   api,
@@ -286,6 +287,9 @@ function DailyDetailPane({
           </span>
         ))}
         <AnnounceBadge type={paper.announce_type} />
+        {/* 向量索引状态跟着徽章走：这一行是「这篇论文是什么」的速览，索引建没建属于
+            同一类信息。不带重建按钮——那一行不是操作区。 */}
+        <PaperIndexStatusRow paperId={paper.paper_id} showRebuild={false} />
         {paper.arxiv_id &&
           (arxivHref ? (
             <a
@@ -633,9 +637,11 @@ export function DailyPage() {
     setSelectMode(false);
   }, [q, semanticOn, day, category, announce, author, affiliation]);
 
+  // 日期标签上的数字要跟着筛选走，否则选了某个分类之后标签仍显示全部篇数，
+  // 看起来就像筛选根本没生效。
   const daysQuery = useQuery({
-    queryKey: ['daily-days'],
-    queryFn: () => api.listDailyDays(),
+    queryKey: ['daily-days', announce, category],
+    queryFn: () => api.listDailyDays({ announce: announce || undefined, category: category || undefined }),
     retry: false,
     staleTime: 60_000,
   });

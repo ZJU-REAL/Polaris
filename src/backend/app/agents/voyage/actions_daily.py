@@ -1,15 +1,15 @@
 """每日新论文抓取动作（Voyage kind ``daily_feed_sync`` 的固定计划执行体）。
 
 流水线（navigator.daily_feed_plan）：
-    daily.fetch → daily.upsert → daily.cleanup → daily.embed
+    daily.fetch → daily.upsert → daily.cleanup → daily.embed → daily.sync_libraries
 
 设计约定：
 - 抓取/去重/清理全是确定性代码，不走 LLM；只有最后一步的向量化会花配额；
 - 跨步骤传值走 ``ctx.checkpoint``（抓到的条目 / 本次涉及的论文 id），断点续跑时
   引擎会把 checkpoint 原样带回来；
-- ``daily.fetch`` 全分类颗粒无收即报错：arXiv 客户端把网络/解析失败兜底成 []
-  （见 services/literature/arxiv.py），以前这类失败被整个吞掉，纳入任务系统后
-  让这一步失败 → 任务进 paused_error，列表看得见、日志查得到、可以重试；
+- ``daily.fetch`` **任一分类抓失败即报错**（不是「全都空才报」）：部分失败会让当天
+  那个分类的论文永久缺失，而全实验室的文献库都靠这个池供料；
+- ``daily.sync_libraries`` 收尾时触发各库同步：池子备好了才同步，时刻不用猜；
 - ``daily.embed`` 保持 best-effort：向量化是可选增强，失败不该让整次同步算失败。
 """
 
@@ -93,7 +93,7 @@ async def cleanup(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     return {"expired": expired}
 
 
-# ---- 4. 建立语义向量（管理员开关，默认关） ----
+# ---- 4. 建立语义向量 ----
 
 
 @register("daily.embed")
@@ -109,3 +109,22 @@ async def embed(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     else:
         await ctx.log(f"建立向量 {stats['embedded']} 篇")
     return stats
+
+
+# ---- 5. 触发文献库同步 ----
+
+
+@register("daily.sync_libraries")
+async def sync_libraries(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    """新论文入池后立刻触发各文献库的同步。
+
+    以前库同步是自己定时跑的（抓取时刻 + 90 分钟），那是在赌抓取已经跑完——抓取慢一点
+    或者失败重试，同步就会在旧池子上空跑一整轮，而界面上只显示「0 篇新论文」。改成
+    事件驱动：池子备好了才同步，时刻不用猜也不用配。
+    """
+    from app.core.queue import get_task_queue
+
+    queue = await get_task_queue()
+    await queue.enqueue("daily_wiki_ingest")
+    await ctx.log("已触发各文献库同步")
+    return {"triggered": True}

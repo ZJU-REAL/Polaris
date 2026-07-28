@@ -77,6 +77,8 @@ export function InfoPanel({
             {paper.note_count} {tr('条笔记', 'notes')}
           </span>
         )}
+        {/* 向量索引状态跟着徽章走；不带重建按钮——这一行是速览，不是操作区 */}
+        <PaperIndexStatusRow paperId={paper.id} showRebuild={false} />
       </div>
       <div style={{ fontSize: 14.5, fontWeight: 660, lineHeight: 1.4, marginBottom: 5 }}>{paper.title}</div>
       {paper.authors.length > 0 && (
@@ -154,9 +156,6 @@ export function InfoPanel({
         </MetaItem>
         <MetaItem label="ingested">
           <span className="mono">{fmtTime(paper.created_at)}</span>
-        </MetaItem>
-        <MetaItem label={tr('索引', 'index')}>
-          <PaperIndexStatusRow paperId={paper.id} />
         </MetaItem>
       </MetaFold>
 

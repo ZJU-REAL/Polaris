@@ -4,11 +4,9 @@ from arq import cron, func
 from arq.connections import RedisSettings
 
 from app.core.config import get_settings
-from app.services.ingest import DAILY_SYNC_UTC_HOUR, DAILY_SYNC_UTC_MINUTE
 from worker.tasks import (
     daily_feed_sync,
     daily_publication_match,
-    daily_wiki_ingest,
     index_papers_fulltext_task,
     match_user_publications,
     ping_task,
@@ -31,13 +29,17 @@ class WorkerSettings:
         index_papers_fulltext_task,
         daily_feed_sync,
     ]
-    # 每日 03:00 对 cadence=daily 且已 bootstrap 的项目触发增量 ingest（docs/api-m2.md §4）
+    # 抓取时刻可由管理员配置（SystemSetting daily_feed_sync_time，默认 UTC 02:30 =
+    # 北京 10:30；arXiv 约北京 10:00 放新公告）。arq 的 cron 时刻在 worker 启动时就固定
+    # 了，改设置得重启才生效——所以这里让 cron 每 15 分钟空转一次，由任务自己判断到点
+    # 没有、今天跑过没有。空转一次只是一条查询，代价可以忽略。
+    #
+    # 库同步不在这里：它由「每日论文抓取」跑完后触发（daily.sync_libraries），池子备好
+    # 了才同步，时刻不用猜。发表匹配仍按时刻派生（抓取 + 150 分钟）。
+    _CHECKPOINT_MINUTES = {0, 15, 30, 45}
     cron_jobs = [
-        # 每日论文池：arXiv 约 00:00 UTC 发布新公告，01:30 抓取（错开 03:00 的每日 ingest）
-        cron(daily_feed_sync, hour=1, minute=30),
-        cron(daily_wiki_ingest, hour=DAILY_SYNC_UTC_HOUR, minute=DAILY_SYNC_UTC_MINUTE),
-        # 每日 ingest 后一小时跑发表匹配（新入库论文 → 姓名+机构命中进待确认）
-        cron(daily_publication_match, hour=DAILY_SYNC_UTC_HOUR + 1, minute=DAILY_SYNC_UTC_MINUTE),
+        cron(daily_feed_sync, minute=_CHECKPOINT_MINUTES),
+        cron(daily_publication_match, minute=_CHECKPOINT_MINUTES),
     ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     # 其余任务保持 1h 上限

@@ -548,7 +548,12 @@ async def test_daily_feed_voyage_is_platform_scoped_and_singleton(client):
         assert again.id != run_id
 
 
-async def test_daily_feed_plan_is_the_four_fixed_steps():
+async def _async_value(value):
+    """把普通值包成 awaitable：get_task_queue 是 async 函数，桩也得是。"""
+    return value
+
+
+async def test_daily_feed_plan_is_the_five_fixed_steps():
     from app.agents.voyage.actions import known_actions
     from app.agents.voyage.navigator import daily_feed_plan
     from app.models.voyage import VoyageRun, mode_for_kind
@@ -560,6 +565,7 @@ async def test_daily_feed_plan_is_the_four_fixed_steps():
         "daily.upsert",
         "daily.cleanup",
         "daily.embed",
+        "daily.sync_libraries",
     ]
     assert all(s["checks"] == [{"kind": "no_error"}] for s in plan)
     # 动作必须已注册（app.agents.voyage.__init__ 导入 actions_daily），否则引擎查不到表
@@ -638,7 +644,7 @@ async def test_daily_actions_observation_shapes(client, monkeypatch):
 
 
 async def test_daily_feed_voyage_end_to_end(client, monkeypatch):
-    """整条任务跑通：四步依次 passed、run 到 done、论文真的入了池。"""
+    """整条任务跑通：五步依次 passed、run 到 done、论文真的入了池、库同步被触发。"""
     from app.agents.voyage.engine import VoyageEngine
     from app.core.db import get_sessionmaker
     from app.core.llm.router import LLMRouter
@@ -653,11 +659,24 @@ async def test_daily_feed_voyage_end_to_end(client, monkeypatch):
         lambda: _StubArxiv({"cs.AI": [_rss_entry("2607.00071", "E2E Paper")]}),
     )
 
+    # 最后一步会入队库同步；测试里没有真 Redis，打桩记录调用
+    from app.core import queue as queue_module
+
+    enqueued: list[tuple] = []
+
+    class _StubQueue:
+        async def enqueue(self, func, *args, **kwargs):
+            enqueued.append((func, args))
+
+    monkeypatch.setattr(queue_module, "get_task_queue", lambda: _async_value(_StubQueue()))
+
     async with get_sessionmaker()() as session:
         run = await daily_feed.create_daily_feed_voyage(session, created_by=None)
         run_id = run.id
 
     await VoyageEngine(event_bus=RecordingBus(), llm_router=LLMRouter()).run(run_id)
+
+    assert enqueued == [("daily_wiki_ingest", ())], "入池后必须触发文献库同步"
 
     async with get_sessionmaker()() as session:
         from sqlalchemy import select
@@ -677,6 +696,7 @@ async def test_daily_feed_voyage_end_to_end(client, monkeypatch):
             "daily.upsert",
             "daily.cleanup",
             "daily.embed",
+            "daily.sync_libraries",
         ]
         assert all(s.status == "passed" for s in run.steps)
 
@@ -788,3 +808,121 @@ async def test_sync_status_reports_failed_categories(client, monkeypatch):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["failed_categories"] == ["cs.AI"]
+
+
+# ---- 抓取时刻 ----
+
+
+async def test_default_sync_time_is_after_arxiv_publishes(client):
+    """默认抓取时刻必须**晚于** arXiv 放新公告的时间，否则永远抓到前一天的列表。
+
+    arXiv 约北京时间 10:00 更新（= UTC 02:00）。原来定在 UTC 01:30 = 北京 09:30，
+    早了半小时——这不是「延迟一会儿」，是每天都差一整天。
+    """
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    async with get_sessionmaker()() as session:
+        hour, minute = await daily_feed.get_sync_time(session)
+    assert (hour, minute) == (2, 30)
+    assert hour * 60 + minute > 2 * 60, "必须晚于 UTC 02:00（北京 10:00）"
+
+
+async def test_sync_time_is_admin_configurable(client):
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    admin = {"Authorization": f"Bearer {await register_and_login(client)}"}  # 首个用户=admin
+    resp = await client.get("/api/daily/sync-time", headers=admin)
+    assert resp.status_code == 200
+    assert resp.json() == {"hour": 2, "minute": 30}
+
+    resp = await client.put("/api/daily/sync-time", json={"hour": 3, "minute": 45}, headers=admin)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"hour": 3, "minute": 45}
+
+    async with get_sessionmaker()() as session:
+        assert await daily_feed.get_sync_time(session) == (3, 45)
+
+    # 非 admin 改不了
+    other = {"Authorization": f"Bearer {await register_and_login(client, email='u2@e.com')}"}
+    resp = await client.put("/api/daily/sync-time", json={"hour": 5, "minute": 0}, headers=other)
+    assert resp.status_code == 403
+
+
+async def test_due_now_gates_on_the_configured_time(client):
+    """检查点每 15 分钟跑一次，靠 due_now 判断到点没有——没有它就会一天触发几十次。"""
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    async with get_sessionmaker()() as session:
+        day = dt.datetime(2026, 7, 28, tzinfo=dt.UTC)
+        assert not await daily_feed.due_now(session, now=day.replace(hour=2, minute=15))
+        assert await daily_feed.due_now(session, now=day.replace(hour=2, minute=30))
+        assert await daily_feed.due_now(session, now=day.replace(hour=9, minute=0))
+
+
+async def test_claim_today_is_idempotent_within_a_day(client):
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    now = dt.datetime(2026, 7, 28, 5, 0, tzinfo=dt.UTC)
+    async with get_sessionmaker()() as session:
+        assert await daily_feed.claim_today(session, "k", now=now) is True
+        assert await daily_feed.claim_today(session, "k", now=now) is False
+        # 换一天又能占
+        assert await daily_feed.claim_today(session, "k", now=now + dt.timedelta(days=1)) is True
+
+
+async def test_day_counts_follow_the_active_filters(client, monkeypatch):
+    """日期标签上的数字要跟着筛选走。
+
+    以前 /daily/days 是无条件按天统计的，于是选了某个分类之后，标签仍显示全部篇数，
+    和下面列表里看到的对不上——看起来就像筛选根本没生效。
+    """
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {
+                "cs.AI": [
+                    _rss_entry("2607.11001", "AI One"),
+                    _rss_entry("2607.11002", "AI Two", announce="cross"),
+                ],
+                "cs.CV": [_rss_entry("2607.11003", "CV One")],
+            }
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        _, by_category, _ = await daily_feed.fetch_new_by_category(session)
+        await daily_feed.upsert_entries(session, by_category=by_category)
+
+    async def days(**params):
+        resp = await client.get("/api/daily/days", params=params, headers=headers)
+        assert resp.status_code == 200, resp.text
+        return sum(d["count"] for d in resp.json())
+
+    everything = await days()
+    assert everything == 3
+
+    # 按分类筛：只剩该分类的条目
+    assert await days(category="cs.CV") == 1
+    assert await days(category="cs.AI") == 2
+
+    # 按公告类型筛
+    assert await days(announce="cross") == 1
+    assert await days(announce="new") == 2
+
+    # 与列表口径一致：同样的筛选下，两个数字必须相等
+    resp = await client.get(
+        "/api/daily/papers", params={"category": "cs.CV", "size": 50}, headers=headers
+    )
+    assert resp.json()["total"] == await days(category="cs.CV")

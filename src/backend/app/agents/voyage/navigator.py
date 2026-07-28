@@ -121,6 +121,7 @@ def daily_feed_plan(run: VoyageRun) -> list[dict[str, Any]]:
         ("去重入池", "daily.upsert", "新论文已入池，多分类命中已合并"),
         ("清理过期推送", "daily.cleanup", "7 天外的推送与无人收藏的论文已清理"),
         ("建立语义向量", "daily.embed", "本次新论文已补上向量"),
+        ("触发文献库同步", "daily.sync_libraries", "各文献库的同步任务已入队"),
     ]
     return [
         {

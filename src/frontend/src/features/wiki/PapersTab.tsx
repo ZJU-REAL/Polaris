@@ -733,6 +733,8 @@ function PaperDetailPane({
                 wiki
               </span>
             )}
+            {/* 向量索引状态跟着徽章走；不带重建按钮——这一行是速览，不是操作区 */}
+            <PaperIndexStatusRow paperId={paper.id} showRebuild={false} />
             {paper.pdf_available && (
               <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
                 <Icon name="file" size={11} />
@@ -882,9 +884,6 @@ function PaperDetailPane({
         </MetaItem>
         <MetaItem label={tr('入库时间', 'added at')}>
           <span className="mono">{fmtTime(paper.created_at)}</span>
-        </MetaItem>
-        <MetaItem label={tr('检索索引', 'search index')}>
-          <PaperIndexStatusRow paperId={paper.id} />
         </MetaItem>
       </MetaFold>
 

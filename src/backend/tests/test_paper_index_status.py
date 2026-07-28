@@ -504,3 +504,34 @@ async def test_rebuild_rejects_empty_target(client, fake_redis):
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == "NOTHING_TO_REBUILD"
+
+
+async def test_index_status_readable_for_a_daily_feed_paper(client):
+    """每日论文（只在内容池、不属于任何文献库）也要能看到索引状态。
+
+    每日论文详情页会显示这两个红绿点，而那些论文没有任何库成员行——端点必须
+    include_pool 才读得到，否则界面上是一片 404。
+    """
+    import datetime as dt
+
+    from app.models.daily_feed import DailyFeedEntry
+    from app.models.paper import new_paper
+
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    async with get_sessionmaker()() as session:
+        paper = new_paper(source="arxiv", arxiv_id="2607.55001", title="Pool Only", abstract="x")
+        session.add(paper)
+        await session.flush()
+        session.add(
+            DailyFeedEntry(
+                paper_id=paper.id, feed_date=dt.date(2026, 7, 28), primary_category="cs.AI"
+            )
+        )
+        await session.commit()
+        paper_id = paper.id
+
+    resp = await client.get(f"/api/papers/{paper_id}/index-status", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "paper_vector" in body and "chunk_vector" in body
+    assert body["paper_vector"]["built"] is False  # 刚入池，还没建向量

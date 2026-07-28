@@ -157,3 +157,15 @@ class DailySyncStatus(BaseModel):
     # {分类: {count, status, detail}}
     per_category: dict[str, Any] = Field(default_factory=dict)
     failed_categories: list[str] = Field(default_factory=list)
+
+
+class DailySyncTimeRead(BaseModel):
+    """每日论文抓取时刻（UTC）。北京时间 = UTC + 8。"""
+
+    hour: int = Field(ge=0, le=23)
+    minute: int = Field(ge=0, le=59)
+
+
+class DailySyncTimeUpdate(BaseModel):
+    hour: int = Field(ge=0, le=23)
+    minute: int = Field(ge=0, le=59)

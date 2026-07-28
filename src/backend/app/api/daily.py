@@ -37,6 +37,8 @@ from app.schemas.daily import (
     DailyPage,
     DailyPaperDetail,
     DailySyncStatus,
+    DailySyncTimeRead,
+    DailySyncTimeUpdate,
 )
 from app.schemas.paper import PaperChatRequest
 from app.services import citations as citations_service
@@ -55,10 +57,17 @@ _NOT_FOUND = HTTPException(status.HTTP_404_NOT_FOUND, detail="DAILY_ENTRY_NOT_FO
 
 @router.get("/days", response_model=list[DailyDay])
 async def list_days(
+    announce: str | None = Query(default=None, pattern="^(new|cross)$"),
+    category: str | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[DailyDay]:
-    return [DailyDay(**d) for d in await daily_service.list_days(session)]
+    return [
+        DailyDay(**d)
+        for d in await daily_service.list_days(
+            session, announce=announce, category=category
+        )
+    ]
 
 
 @router.get("/papers", response_model=DailyPage)
@@ -309,6 +318,31 @@ async def get_sync_status(
     摆在每日页上，而不是只留在任务日志里。
     """
     return DailySyncStatus(**await daily_service.sync_status(session))
+
+
+@router.get("/sync-time", response_model=DailySyncTimeRead)
+async def get_sync_time(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DailySyncTimeRead:
+    """每日论文抓取时刻（UTC，全员可读）。"""
+    hour, minute = await daily_service.get_sync_time(session)
+    return DailySyncTimeRead(hour=hour, minute=minute)
+
+
+@router.put("/sync-time", response_model=DailySyncTimeRead)
+async def set_sync_time(
+    payload: DailySyncTimeUpdate,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_admin),
+) -> DailySyncTimeRead:
+    """改抓取时刻（admin）。
+
+    arXiv 每天约北京时间 10:00 放新公告，早于这个点跑只会拿到**前一天**的列表。
+    库同步与发表匹配的时刻由它派生（+90 / +150 分钟），不必分别设置。
+    """
+    hour, minute = await daily_service.set_sync_time(session, payload.hour, payload.minute)
+    return DailySyncTimeRead(hour=hour, minute=minute)
 
 
 @router.get("/categories", response_model=DailyCategoriesRead)

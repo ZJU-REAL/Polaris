@@ -595,12 +595,28 @@ async def entry_items(
     return [_entry_item(entry, paper, likes.get(entry.id, empty)) for entry, paper in rows]
 
 
-async def list_days(session: AsyncSession) -> list[dict[str, Any]]:
+async def list_days(
+    session: AsyncSession,
+    *,
+    announce: str | None = None,
+    category: str | None = None,
+) -> list[dict[str, Any]]:
+    """每天的条目数。**按当前筛选算**——日期标签上的数字与列表里看到的必须是同一回事，
+    否则选了 cs.CV 之后标签仍显示全部篇数，看起来就像筛选没生效。
+
+    筛选条件与 :func:`list_papers` 保持同一口径。
+    """
+    stmt = select(DailyFeedEntry.feed_date, func.count(DailyFeedEntry.id))
+    if announce in ("new", "cross"):
+        stmt = stmt.where(DailyFeedEntry.announce_type == announce)
+    if category:
+        stmt = stmt.where(
+            (DailyFeedEntry.primary_category == category)
+            | cast(DailyFeedEntry.categories, String).like(f'%"{category}"%')
+        )
     rows = (
         await session.execute(
-            select(DailyFeedEntry.feed_date, func.count(DailyFeedEntry.id))
-            .group_by(DailyFeedEntry.feed_date)
-            .order_by(DailyFeedEntry.feed_date.desc())
+            stmt.group_by(DailyFeedEntry.feed_date).order_by(DailyFeedEntry.feed_date.desc())
         )
     ).all()
     return [{"date": date, "count": count} for date, count in rows]
@@ -1123,3 +1139,86 @@ async def sync_status(session: AsyncSession) -> dict[str, Any]:
         "per_category": per_category,
         "failed_categories": failed,
     }
+
+
+# ---- 抓取时刻（可配置） ----
+
+SYNC_TIME_SETTING_KEY = "daily_feed_sync_time"
+
+#: 默认抓取时刻（UTC）= 北京时间 10:30。arXiv 每天约北京时间 10:00 放出新公告，
+#: 早于这个点跑就只会拿到**前一天**的列表——不是延迟一会儿，是永远差一整天。
+#: 这里留半小时余量，给 arXiv 侧的发布抖动。
+DEFAULT_SYNC_UTC = (2, 30)
+
+#: 库同步排在抓取之后多久。每日池是所有文献库的唯一供给，抓取没跑完就同步等于空跑一轮。
+LIBRARY_SYNC_DELAY_MINUTES = 90
+
+
+async def get_sync_time(session: AsyncSession) -> tuple[int, int]:
+    """抓取时刻（UTC 时、分）。存量值非法时回落默认。"""
+    row = await session.get(SystemSetting, SYNC_TIME_SETTING_KEY)
+    value = row.value if row is not None else None
+    if isinstance(value, str) and ":" in value:
+        hh, _, mm = value.partition(":")
+        try:
+            hour, minute = int(hh), int(mm)
+        except ValueError:
+            return DEFAULT_SYNC_UTC
+        if 0 <= hour < 24 and 0 <= minute < 60:
+            return hour, minute
+    return DEFAULT_SYNC_UTC
+
+
+async def set_sync_time(session: AsyncSession, hour: int, minute: int) -> tuple[int, int]:
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        raise ValueError(f"invalid time: {hour}:{minute}")
+    value = f"{hour:02d}:{minute:02d}"
+    row = await session.get(SystemSetting, SYNC_TIME_SETTING_KEY)
+    if row is None:
+        session.add(SystemSetting(key=SYNC_TIME_SETTING_KEY, value=value))
+    else:
+        row.value = value
+    await session.commit()
+    return hour, minute
+
+
+async def due_now(session: AsyncSession, *, now: dt.datetime, delay_minutes: int = 0) -> bool:
+    """现在是否到了该跑的时刻（供每 15 分钟一次的检查点判断）。
+
+    arq 的 cron 时刻在 worker 启动时就固定了，改设置得重启才生效。所以改成让 cron 高频
+    空转、由这里判断是否真的该跑：``now`` 已过今天的目标时刻即为 True。调用方还要自己
+    确认今天没跑过（见 :func:`already_ran_today`），否则每个检查点都会重复触发。
+    """
+    hour, minute = await get_sync_time(session)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    target += dt.timedelta(minutes=delay_minutes)
+    return now >= target
+
+
+async def already_ran_today(session: AsyncSession, kind: str, *, now: dt.datetime) -> bool:
+    """今天（UTC）是否已经建过这种任务。"""
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    found = await session.scalar(
+        select(VoyageRun.id)
+        .where(VoyageRun.kind == kind, VoyageRun.created_at >= start)
+        .limit(1)
+    )
+    return found is not None
+
+
+async def claim_today(session: AsyncSession, key: str, *, now: dt.datetime) -> bool:
+    """把「今天跑过了」这件事记下来；今天已被记过则返回 False。
+
+    给不建任务记录、因而无从按 VoyageRun 判重的检查点任务用（如发表匹配）。
+    先占位再干活：检查点每 15 分钟一次，不占位就会重复触发。
+    """
+    today = now.date().isoformat()
+    row = await session.get(SystemSetting, key)
+    if row is not None and row.value == today:
+        return False
+    if row is None:
+        session.add(SystemSetting(key=key, value=today))
+    else:
+        row.value = today
+    await session.commit()
+    return True
