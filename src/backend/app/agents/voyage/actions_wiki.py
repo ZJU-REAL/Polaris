@@ -218,6 +218,49 @@ async def _existing_keys(
     return arxiv_ids, dois, titles
 
 
+# Postgres 在并发写下检测到环就挑一个事务牺牲掉，这是正常行为而不是错误：
+# 40P01 死锁 / 40001 序列化失败，两者都该重试而不是让整个步骤挂掉。
+_RETRYABLE_SQLSTATES = frozenset({"40P01", "40001"})
+_DEADLOCK_RETRIES = 3
+
+
+def _is_retryable_conflict(exc: BaseException) -> bool:
+    orig = getattr(exc, "orig", None)
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return code in _RETRYABLE_SQLSTATES
+
+
+async def _insert_pooled_with_retry(
+    session: AsyncSession, **kwargs: Any
+) -> tuple[Paper | None, str | None]:
+    """插入一篇池论文并**立刻提交**；撞上并发冲突就回滚重试。返回 (论文, 放弃原因)。
+
+    为什么逐篇提交：整步一个事务时，每插一行都会在 ``papers.dedup_key`` 唯一索引上
+    持锁到步骤结束（实测能到几分钟）。而各库是并行同步的、方向又都在 AI 领域，
+    Semantic Scholar 返回的引文大量重叠、插入顺序还各不相同——两个事务互等对方
+    未提交的行，正好成环。逐篇提交把锁窗口从几分钟压到毫秒级。
+
+    真撞上了也只丢这一篇：重试三次仍冲突就记进 failed 继续跑，不再让整步作废、
+    把已经拿到的上百篇引文一起丢掉。
+    """
+    for attempt in range(_DEADLOCK_RETRIES):
+        try:
+            paper = await _pool_paper_or_new(session, **kwargs)
+            await session.commit()
+            return paper, None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — 只吞冲突类，其余照抛
+            await session.rollback()
+            if not _is_retryable_conflict(e):
+                raise
+            if attempt == _DEADLOCK_RETRIES - 1:
+                return None, f"{type(e).__name__}: {e}"
+            logger.warning("snowball insert conflict, retry %d", attempt + 1)
+            await asyncio.sleep(0.2 * (attempt + 1))
+    return None, None
+
+
 async def _pool_paper_or_new(
     session: AsyncSession,
     *,
@@ -672,7 +715,7 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                             published_at=_parse_iso(item.get("publicationDate")),
                         )
 
-                    paper = await _pool_paper_or_new(
+                    paper, conflict = await _insert_pooled_with_retry(
                         session,
                         library_id=library.id,
                         make_paper=make_paper,
@@ -682,6 +725,8 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
                         year=item.get("year"),
                         authors=authors,
                     )
+                    if conflict is not None:
+                        failed.append({"id": title[:80], "error": conflict})
                     titles.add(title.lower())
                     if aid:
                         arxiv_ids.add(aid)

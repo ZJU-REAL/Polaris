@@ -2636,6 +2636,9 @@ export interface DailyIngestStatus {
   step_status: Record<string, string>;
 }
 
+/** 库同步每次扫描每日池的范围。 */
+export type DailySyncScope = 'since_last' | 'daily' | 'full';
+
 export interface DailyCollectRequest {
   paper_ids: string[];
   direction_library_ids: string[];
@@ -4451,6 +4454,32 @@ export const api = {
     return request<DailyIngestStatus[]>('/lab/daily-ingest');
   },
 
+  /** 库同步每次扫描每日池的范围：since_last 上次同步以来 / daily 只当天 / full 整池。 */
+  getDailySyncScope(): Promise<{ scope: DailySyncScope }> {
+    return request<{ scope: DailySyncScope }>('/daily/sync-scope');
+  },
+  setDailySyncScope(scope: DailySyncScope): Promise<{ scope: DailySyncScope }> {
+    return request<{ scope: DailySyncScope }>('/daily/sync-scope', {
+      method: 'PUT',
+      body: JSON.stringify({ scope }),
+    });
+  },
+  /** 每日抓取的起始时刻（UTC；北京时间 = UTC + 8）。 */
+  getDailySyncTime(): Promise<{ hour: number; minute: number }> {
+    return request<{ hour: number; minute: number }>('/daily/sync-time');
+  },
+  setDailySyncTime(hour: number, minute: number): Promise<{ hour: number; minute: number }> {
+    return request<{ hour: number; minute: number }>('/daily/sync-time', {
+      method: 'PUT',
+      body: JSON.stringify({ hour, minute }),
+    });
+  },
+  setDailyRetention(days: number): Promise<{ days: number }> {
+    return request<{ days: number }>('/daily/retention', {
+      method: 'PUT',
+      body: JSON.stringify({ days }),
+    });
+  },
   getDailyRetention(): Promise<{ days: number }> {
     return request<{ days: number }>('/daily/retention');
   },

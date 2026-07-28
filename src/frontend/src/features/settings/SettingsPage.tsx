@@ -25,6 +25,7 @@ import {
   type AdminUserRead,
   type AffiliationMode,
   type ChatBotPlatform,
+  type DailySyncScope,
   LLM_EFFORT_LEVELS,
   type EffectiveTestResult,
   type LlmCallLogRow,
@@ -2807,10 +2808,194 @@ function DailyEmbedSection() {
   );
 }
 
+/** 抓取与同步：抓取时刻、池子保留期、库同步每次扫多大范围。 */
+function DailySyncSection() {
+  const queryClient = useQueryClient();
+  const scopeQuery = useQuery({
+    queryKey: ['daily-sync-scope'],
+    queryFn: () => api.getDailySyncScope(),
+    retry: false,
+  });
+  const timeQuery = useQuery({
+    queryKey: ['daily-sync-time'],
+    queryFn: () => api.getDailySyncTime(),
+    retry: false,
+  });
+  const retentionQuery = useQuery({
+    queryKey: ['daily-retention'],
+    queryFn: () => api.getDailyRetention(),
+    retry: false,
+  });
+
+  const [days, setDays] = useState('');
+  const [clock, setClock] = useState('');
+  useEffect(() => {
+    if (retentionQuery.data && !days) setDays(String(retentionQuery.data.days));
+  }, [retentionQuery.data, days]);
+  useEffect(() => {
+    if (timeQuery.data && !clock) {
+      const { hour, minute } = timeQuery.data;
+      setClock(`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
+    }
+  }, [timeQuery.data, clock]);
+
+  const fail = (e: unknown) =>
+    toast(`${tr('保存失败', 'Save failed')}：${e instanceof Error ? e.message : String(e)}`, 'error');
+
+  const scopeMutation = useMutation({
+    mutationFn: (scope: DailySyncScope) => api.setDailySyncScope(scope),
+    onSuccess: () => {
+      toast(tr('同步范围已保存', 'Sync scope saved'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['daily-sync-scope'] });
+    },
+    onError: fail,
+  });
+  const timeMutation = useMutation({
+    mutationFn: () => {
+      const [h, m] = clock.split(':');
+      return api.setDailySyncTime(Number(h), Number(m));
+    },
+    onSuccess: () => {
+      toast(tr('抓取时刻已保存，重启 worker 后生效', 'Fetch time saved — restart the worker to apply'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['daily-sync-time'] });
+    },
+    onError: fail,
+  });
+  const retentionMutation = useMutation({
+    mutationFn: () => api.setDailyRetention(Number(days)),
+    onSuccess: () => {
+      toast(tr('保留期已保存', 'Retention saved'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['daily-retention'] });
+    },
+    onError: fail,
+  });
+
+  const scope = scopeQuery.data?.scope ?? 'since_last';
+  const SCOPES: { v: DailySyncScope; zh: string; en: string; noteZh: string; noteEn: string }[] = [
+    {
+      v: 'since_last',
+      zh: '上次同步以来',
+      en: 'Since last sync',
+      noteZh: '正常就是当天那批；漏了几天会自动多扫几天补回来。',
+      noteEn: 'Normally just today’s batch; automatically catches up if a few days were missed.',
+    },
+    {
+      v: 'daily',
+      zh: '只扫当天',
+      en: 'Today only',
+      noteZh: '最省，但漏掉的永远错过——arXiv 不会再给第二次。',
+      noteEn: 'Cheapest, but anything missed is missed for good — arXiv will not serve it again.',
+    },
+    {
+      v: 'full',
+      zh: '整个池子',
+      en: 'Whole pool',
+      noteZh: '最稳，代价是每次重排几千篇早就处理过的论文。',
+      noteEn: 'Safest, at the cost of re-ranking thousands of already-processed papers each run.',
+    },
+  ];
+  const current = SCOPES.find((x) => x.v === scope);
+
+  const rowStyle = { alignItems: 'center', marginTop: 14 } as const;
+  const labelStyle = { width: 92, flexShrink: 0, fontSize: 12, color: 'var(--text-2)' } as const;
+
+  return (
+    <div className="card card-pad" style={{ maxWidth: 640, marginTop: 20 }}>
+      <div className="section-h" style={{ marginBottom: 6 }}>
+        <Icon name="refresh" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('抓取与同步', 'Fetch & sync')}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
+        {tr(
+          '每日抓取跑完会自动触发各文献库同步，库同步不再单独定时。',
+          'Library sync is triggered once the daily fetch finishes; it is no longer separately scheduled.',
+        )}
+      </div>
+
+      {/* —— 库同步扫描范围 —— */}
+      <div className="row gap8" style={rowStyle}>
+        <span style={labelStyle}>{tr('同步范围', 'Sync scope')}</span>
+        <select
+          className="input"
+          style={{ flex: 1, minWidth: 0, height: 28, fontSize: 12 }}
+          value={scope}
+          disabled={scopeQuery.isLoading || scopeMutation.isPending}
+          onChange={(e) => scopeMutation.mutate(e.target.value as DailySyncScope)}
+        >
+          {SCOPES.map((x) => (
+            <option key={x.v} value={x.v}>
+              {tr(x.zh, x.en)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {current && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 5, paddingLeft: 100, lineHeight: 1.5 }}>
+          {tr(current.noteZh, current.noteEn)}
+        </div>
+      )}
+
+      {/* —— 抓取时刻 —— */}
+      <div className="row gap8" style={rowStyle}>
+        <span style={labelStyle}>{tr('抓取时刻', 'Fetch time')}</span>
+        <input
+          className="input mono"
+          type="time"
+          style={{ width: 120, height: 28, fontSize: 12 }}
+          value={clock}
+          onChange={(e) => setClock(e.target.value)}
+        />
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)' }}>UTC</span>
+        <button
+          className="btn btn-soft sm"
+          disabled={!/^\d{2}:\d{2}$/.test(clock) || timeMutation.isPending}
+          onClick={() => timeMutation.mutate()}
+        >
+          {tr('保存', 'Save')}
+        </button>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 5, paddingLeft: 100, lineHeight: 1.5 }}>
+        {tr(
+          '北京时间 = UTC + 8。这是开始探测的时刻，之后每 15 分钟看一次，直到 arXiv 当天的批次真的放出来。',
+          'Beijing = UTC + 8. This is when probing starts; it then checks every 15 minutes until arXiv actually publishes today’s batch.',
+        )}
+      </div>
+
+      {/* —— 保留天数 —— */}
+      <div className="row gap8" style={rowStyle}>
+        <span style={labelStyle}>{tr('保留天数', 'Retention')}</span>
+        <input
+          className="input mono"
+          type="number"
+          min={1}
+          max={90}
+          style={{ width: 90, height: 28, fontSize: 12 }}
+          value={days}
+          onChange={(e) => setDays(e.target.value)}
+        />
+        <button
+          className="btn btn-soft sm"
+          disabled={!days || Number(days) < 1 || Number(days) > 90 || retentionMutation.isPending}
+          onClick={() => retentionMutation.mutate()}
+        >
+          {tr('保存', 'Save')}
+        </button>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 5, paddingLeft: 100, lineHeight: 1.5 }}>
+        {tr(
+          '过期的每日论文会被清掉。这张表同时是库同步的取数窗口——调小了，来不及同步的论文就再也收不进来。',
+          'Expired daily papers are pruned. This table is also the window library sync reads from — shrink it and papers not synced in time can never be collected.',
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function DailyCategoriesTab() {
   return (
     <>
       <DailyCategoriesSection />
+      <DailySyncSection />
       <DailyEmbedSection />
     </>
   );

@@ -1702,3 +1702,98 @@ async def test_rejected_papers_are_not_scored_twice(client, queue_stub, wiki_moc
 
     obs = detail["steps"][0]["observation"]
     assert obs["skipped_previously_rejected"] >= 1
+
+
+# ---- 并发插入冲突（生产死锁：asyncpg DeadlockDetectedError） ----
+
+
+class _FakeDeadlock(Exception):
+    """asyncpg 的死锁异常长这样：DBAPIError.orig 上带 sqlstate=40P01。"""
+
+    sqlstate = "40P01"
+
+
+def _deadlock_error() -> Exception:
+    from sqlalchemy.exc import DBAPIError
+
+    return DBAPIError("INSERT INTO papers ...", {}, _FakeDeadlock("deadlock detected"))
+
+
+async def test_insert_retry_recovers_from_one_deadlock():
+    """第一次死锁、第二次成功 → 返回论文，不上抛。"""
+
+    calls = {"n": 0}
+    sentinel = object()
+
+    class _Session:
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    async def fake_pool(session, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _deadlock_error()
+        return sentinel
+
+    import app.agents.voyage.actions_wiki as mod
+
+    original = mod._pool_paper_or_new
+    mod._pool_paper_or_new = fake_pool
+    try:
+        paper, reason = await mod._insert_pooled_with_retry(_Session(), library_id=None)
+    finally:
+        mod._pool_paper_or_new = original
+
+    assert paper is sentinel and reason is None
+    assert calls["n"] == 2  # 死锁一次 + 重试成功一次
+
+
+async def test_insert_retry_gives_up_but_does_not_kill_the_step():
+    """一直死锁 → 记下原因返回 None，让上层继续处理其余论文，而不是整步失败。"""
+    import app.agents.voyage.actions_wiki as mod
+
+    class _Session:
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    async def always_deadlock(session, **kwargs):
+        raise _deadlock_error()
+
+    original = mod._pool_paper_or_new
+    mod._pool_paper_or_new = always_deadlock
+    try:
+        paper, reason = await mod._insert_pooled_with_retry(_Session(), library_id=None)
+    finally:
+        mod._pool_paper_or_new = original
+
+    assert paper is None
+    assert reason and "40P01" not in reason and "DBAPIError" in reason
+
+
+async def test_insert_retry_reraises_unrelated_errors():
+    """非冲突类错误照抛——别把真 bug 吞成「这一篇跳过」。"""
+    import app.agents.voyage.actions_wiki as mod
+
+    class _Session:
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    async def boom(session, **kwargs):
+        raise ValueError("something else entirely")
+
+    original = mod._pool_paper_or_new
+    mod._pool_paper_or_new = boom
+    try:
+        with pytest.raises(ValueError, match="something else"):
+            await mod._insert_pooled_with_retry(_Session(), library_id=None)
+    finally:
+        mod._pool_paper_or_new = original
