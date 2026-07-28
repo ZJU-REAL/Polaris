@@ -120,9 +120,7 @@ async def test_empty_source_libraries_yields_empty_corpus(client):
     project_id = uuid.UUID(resp.json()["id"])
 
     async with get_sessionmaker()() as session:
-        await libraries_service.set_source_libraries(
-            session, topic_id=project_id, library_ids=[]
-        )
+        await libraries_service.set_source_libraries(session, topic_id=project_id, library_ids=[])
         await session.commit()
         items, total = await papers_service.list_papers(
             session, project_id=project_id, status="library"
@@ -136,7 +134,11 @@ async def test_create_library_admin_independent(client):
     admin = await _hdr(client, "p7u-4@example.com")
     resp = await client.post(
         "/api/libraries",
-        json={"name": "独立库", "statement": "一句话", "cadence": "weekly"},
+        json={
+            "name": "独立库",
+            "statement": "Sparse attention methods for long-context language models.",
+            "cadence": "weekly",
+        },
         headers=admin,
     )
     assert resp.status_code == 201, resp.text
@@ -153,7 +155,11 @@ async def test_create_library_any_user_allowed(client):
     """P10：建库权限放开——任意登录用户可建，新库 active 个人库、创建者自动成为策展人。"""
     await _hdr(client, "p9b-admin5@example.com")  # 首个注册者=平台 admin，占位
     member = await _hdr(client, "p9b-member5@example.com")
-    resp = await client.post("/api/libraries", json={"name": "x"}, headers=member)
+    resp = await client.post(
+        "/api/libraries",
+        json={"name": "x", "statement": "Retrieval-augmented generation for scientific QA."},
+        headers=member,
+    )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["status"] == "active"
@@ -167,7 +173,11 @@ async def test_create_library_any_user_allowed(client):
 
 async def test_source_libraries_read_write_api(client):
     admin = await _hdr(client, "p7u-6@example.com")
-    resp = await client.post("/api/libraries", json={"name": "可关联库"}, headers=admin)
+    resp = await client.post(
+        "/api/libraries",
+        json={"name": "可关联库", "statement": "Tool-using agents and their benchmarks."},
+        headers=admin,
+    )
     lib_id = resp.json()["id"]
     resp = await client.post("/api/projects", json={"name": "关联课题"}, headers=admin)
     project_id = resp.json()["id"]

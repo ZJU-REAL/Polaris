@@ -52,6 +52,9 @@ from app.schemas.libraries import (
     LibraryReject,
     PaperMergeRequest,
     PaperMergeResult,
+    StatementInterviewQuestion,
+    StatementInterviewRequest,
+    StatementInterviewResponse,
     SuggestDefinitionRequest,
     SuggestDefinitionResponse,
 )
@@ -83,6 +86,7 @@ from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
 from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
+from app.services import statement_interview as interview
 from app.services.embedding import embed_query
 from app.services.wiki_export import build_obsidian_zip_for_libraries
 
@@ -194,6 +198,45 @@ async def create_library(
     await session.commit()
     row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
+
+
+@router.post("/libraries/statement-interview", response_model=StatementInterviewResponse)
+async def statement_interview(
+    data: StatementInterviewRequest,
+    user: User = Depends(require_llm_task),
+) -> StatementInterviewResponse:
+    """结构化访谈产出文献库的方向描述：问四个环节，每题给几个可勾选的候选。
+
+    为什么不让人自己写：statement 同时决定粗排挑哪些论文、以及 LLM 怎么打分，写含糊了
+    后果很实在——生产上 12 个库全是 3~31 字符的标签，其中一个只有三个字母，导致向量
+    排在最前的是与方向完全无关的论文。写作提示解决不了这个问题，得改成引导式产出。
+
+    无状态：前端每次把已答内容全量带回来。答满四个环节后本接口直接返回写好的英文描述。
+    """
+    answers = [
+        interview.Answer(stage=a.stage, selected=list(a.selected), custom=a.custom)
+        for a in data.answers
+    ]
+    llm = get_llm_router()
+    total = len(interview.STAGE_KEYS)
+    question = await interview.ask(topic=data.topic, answers=answers, llm=llm, user_id=user.id)
+    if question is not None:
+        return StatementInterviewResponse(
+            done=False,
+            step=interview.STAGE_KEYS.index(question.stage) + 1,
+            total=total,
+            question=StatementInterviewQuestion(
+                stage=question.stage,
+                title=question.title,
+                hint=question.hint,
+                question=question.question,
+                options=question.options,
+            ),
+        )
+    statement = await interview.compose(
+        topic=data.topic, answers=answers, llm=llm, user_id=user.id
+    )
+    return StatementInterviewResponse(done=True, step=total, total=total, statement=statement)
 
 
 @router.post("/libraries/suggest-definition", response_model=SuggestDefinitionResponse)

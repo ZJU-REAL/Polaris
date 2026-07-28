@@ -2639,6 +2639,30 @@ export interface DailyIngestStatus {
 /** 库同步每次扫描每日池的范围。 */
 export type DailySyncScope = 'since_last' | 'daily' | 'full';
 
+/** 方向描述访谈：一次问一个环节，多选 + 自由补充；答满四个环节后返回写好的英文描述。 */
+export interface StatementInterviewAnswer {
+  stage: string;
+  selected: string[];
+  custom: string;
+}
+
+export interface StatementInterviewQuestion {
+  stage: string;
+  title: string;
+  hint: string;
+  question: string;
+  /** 模型不可用时为空——此时只显示自由填写框，访谈仍能走完 */
+  options: string[];
+}
+
+export interface StatementInterviewResponse {
+  done: boolean;
+  step: number;
+  total: number;
+  question?: StatementInterviewQuestion | null;
+  statement?: string | null;
+}
+
 export interface DailyCollectRequest {
   paper_ids: string[];
   direction_library_ids: string[];
@@ -4455,6 +4479,17 @@ export const api = {
   },
 
   /** 库同步每次扫描每日池的范围：since_last 上次同步以来 / daily 只当天 / full 整池。 */
+  /** 方向描述访谈的下一步（无状态：把已答内容全量带上）。 */
+  statementInterview(
+    topic: string,
+    answers: StatementInterviewAnswer[],
+  ): Promise<StatementInterviewResponse> {
+    return request<StatementInterviewResponse>('/libraries/statement-interview', {
+      method: 'POST',
+      body: JSON.stringify({ topic, answers }),
+    });
+  },
+
   getDailySyncScope(): Promise<{ scope: DailySyncScope }> {
     return request<{ scope: DailySyncScope }>('/daily/sync-scope');
   },

@@ -60,7 +60,13 @@ class LibraryCreate(BaseModel):
     """
 
     name: str = Field(min_length=1, max_length=255)
-    statement: str | None = None
+    # 必填：它同时决定粗排挑哪些论文和 LLM 怎么打分。以前可空，结果生产上 12 个库的
+    # statement 全是 3~31 字符的标签（有一个只有三个字母），向量排序完全失真。
+    #
+    # 只要求非空，不设长度门槛——长度不等于质量，10 个字的描述照样没用，而门槛会误伤
+    # 正当的短描述。质量靠界面上的 AI 访谈（POST /libraries/statement-interview）引导，
+    # 那才是能真正问出「研究问题/对象/子问题/方法类型」的东西。
+    statement: str = Field(min_length=1, max_length=4000)
     cadence: str | None = Field(default=None, max_length=32)
     monthly_budget: int | None = Field(default=None, ge=0)
     rubric: Any | None = None
@@ -199,3 +205,44 @@ class LibraryBudgetRead(BaseModel):
     used_tokens: int
     remaining_tokens: int | None  # 不限时为 None；用超时为 0
     exhausted: bool  # True = 本月预算已用尽（ingest 会被拒绝启动）
+
+
+# ---- 方向描述访谈（AI 结构化问答产出 statement） ----
+
+
+class InterviewAnswer(BaseModel):
+    """用户对某一环节的回答：勾选项 + 自己补充的。两者都可为空（= 跳过）。"""
+
+    stage: str = Field(max_length=32)
+    selected: list[str] = Field(default_factory=list)
+    custom: str = Field(default="", max_length=2000)
+
+
+class StatementInterviewRequest(BaseModel):
+    """无状态访谈：每次把已答内容全量带回来，服务端据此决定下一题或收尾。
+
+    这样刷新页面、换设备都不丢进度，也省掉一张会话表。
+    """
+
+    topic: str = Field(min_length=1, max_length=255)
+    answers: list[InterviewAnswer] = Field(default_factory=list)
+
+
+class StatementInterviewQuestion(BaseModel):
+    stage: str
+    title: str
+    hint: str
+    question: str
+    # LLM 不可用时为空列表——此时前端只显示「其他」输入框，访谈仍能走完
+    options: list[str] = Field(default_factory=list)
+
+
+class StatementInterviewResponse(BaseModel):
+    """要么给下一题，要么给写好的 statement（英文）。"""
+
+    done: bool
+    # 第几步 / 共几步，供前端显示进度
+    step: int
+    total: int
+    question: StatementInterviewQuestion | None = None
+    statement: str | None = None

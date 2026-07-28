@@ -140,7 +140,9 @@ async def test_daily_ingest_status_hides_other_peoples_libraries(client):
     _pid, headers, _c, _p, _lib = await _setup(client)
     created = await client.post(
         "/api/libraries",
-        json={"name": "private-lib", "definition": {"statement": "secret direction"}},
+        # statement 是顶层字段，不是 definition 里的——之前写错了位置，
+        # 因为当时它可空所以静默通过，建出来的库其实没有描述
+        json={"name": "private-lib", "statement": "A private direction on secret topics."},
         headers=headers,
     )
     assert created.status_code in (200, 201), created.text

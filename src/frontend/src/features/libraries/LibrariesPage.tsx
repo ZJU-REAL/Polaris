@@ -11,6 +11,7 @@ import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, isAdmin, type DirectionLibrarySummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { StatementInterview } from './StatementInterview';
 import { useLibraries, libraryPath, type LibraryFilters } from './hooks';
 import { InclusionSettingsForm, ARXIV_ID_RE, type InclusionValue } from './InclusionSettingsForm';
 
@@ -243,6 +244,7 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [statement, setStatement] = useState('');
+  const [interviewOpen, setInterviewOpen] = useState(false);
   const [incl, setIncl] = useState<InclusionValue>(EMPTY_INCLUSION);
 
   const badAnchors = incl.anchors.filter(
@@ -323,7 +325,28 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
           <input className="input" value={name} onChange={(e) => setName(e.target.value)}
             placeholder={tr('如：稀疏注意力', 'e.g. Sparse attention')} />
         </FormField>
-        <FormField label={tr('一句话说明', 'Statement')} hint={tr('必填，用于相关性打分', 'Required — used for relevance scoring')}>
+        <FormField
+          label={tr('方向描述', 'Statement')}
+          hint={tr('必填，用于挑论文和打分', 'Required — selects and scores papers')}
+        >
+          <div className="row gap8" style={{ alignItems: 'center', marginBottom: 6 }}>
+            <button
+              className="btn btn-soft sm"
+              disabled={!name.trim()}
+              title={
+                name.trim()
+                  ? tr('AI 按四个环节提问，帮你把方向说清楚', 'AI asks four questions to pin the direction down')
+                  : tr('先填名称', 'Enter a name first')
+              }
+              onClick={() => setInterviewOpen(true)}
+            >
+              <Icon name="sparkle" size={12} />
+              {tr('AI 访谈生成', 'Write it with AI')}
+            </button>
+            <span className="muted" style={{ fontSize: 11.5 }}>
+              {tr('不知道怎么写就用它', 'Use this if you are unsure what to write')}
+            </span>
+          </div>
           <textarea className="textarea" rows={2} value={statement} onChange={(e) => setStatement(e.target.value)}
             placeholder={tr(
               '例：研究长时程运行的 LLM 智能体。关注记忆压缩、错误恢复、长期一致性评测；偏重方法与系统设计，不收纯 prompt 工程和纯应用报告。',
@@ -331,8 +354,8 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
             )} />
           <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 4 }}>
             {tr(
-              '写清四件事效果最好：研究对象、关注的子问题、偏重什么、明确不要什么。这段描述既用来自动挑论文，也用来给论文打分，写得越具体收得越准。',
-              'Four things help most: the subject, the sub-problems you care about, what you favour, and what you explicitly do not want. This text both selects and scores papers, so specifics pay off.',
+              '写清四件事效果最好：研究问题、研究对象、关注的子问题、偏重哪类方法。用英文写——语料是英文论文摘要，中文描述会让向量匹配失准。',
+              'Four things help most: the research question, the subject, the sub-problems, and which kinds of method you favour. Write it in English — the corpus is English abstracts, and a Chinese statement skews vector matching.',
             )}
           </div>
         </FormField>
@@ -345,6 +368,12 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
           showRubric
         />
       </div>
+      <StatementInterview
+        open={interviewOpen}
+        topic={name}
+        onClose={() => setInterviewOpen(false)}
+        onDone={setStatement}
+      />
     </Modal>
   );
 }
