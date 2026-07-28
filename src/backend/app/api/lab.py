@@ -13,7 +13,12 @@ from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.models.user import User
 from app.schemas.graph import GraphResponse
-from app.schemas.lab import LabLeaderboardEntry, LabLeaderboardResponse, LabStats
+from app.schemas.lab import (
+    DailyIngestStatusRow,
+    LabLeaderboardEntry,
+    LabLeaderboardResponse,
+    LabStats,
+)
 from app.schemas.llm_admin import UsageRow
 from app.services import lab as lab_service
 from app.services import llm_admin as llm_admin_service
@@ -28,6 +33,20 @@ async def lab_stats(
 ) -> LabStats:
     """实验室索引与内容统计（跨库论文去重；只算当前用户看得到的库）。"""
     return LabStats(**await lab_service.lab_stats(session, user))
+
+
+@router.get("/daily-ingest", response_model=list[DailyIngestStatusRow])
+async def daily_ingest_status(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[DailyIngestStatusRow]:
+    """今天各库从每日论文自动收录的进展与结果（只列请求者看得见的库）。
+
+    抓取成功但一篇都没收进来，和抓取压根没触发同步，在界面上原本长得一模一样；
+    这条把每个库的漏斗摊开，让「今天到底收了什么」不用逐个点进任务详情才知道。
+    """
+    rows = await lab_service.daily_ingest_status(session, user)
+    return [DailyIngestStatusRow(**row) for row in rows]
 
 
 @router.get("/usage", response_model=list[UsageRow])

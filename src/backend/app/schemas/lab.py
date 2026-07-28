@@ -1,6 +1,7 @@
 """实验室数据面板 schema（/lab 概况页）。"""
 
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel
 
@@ -60,3 +61,22 @@ class LabLeaderboardResponse(BaseModel):
     enabled: bool
     days: int
     items: list[LabLeaderboardEntry]
+
+
+class DailyIngestStatusRow(BaseModel):
+    """某个库最近一轮「从每日论文自动收录」的漏斗与状态。"""
+
+    library_id: uuid.UUID
+    library_name: str
+    is_public: bool
+    voyage_id: uuid.UUID
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    # 池子里扫了多少 → 送进打分多少 → 收下多少 / 淘汰多少 → 编译了多少
+    feed_total: int = 0
+    candidates: int = 0
+    admitted: int = 0
+    rejected: int = 0
+    compiled: int = 0
+    step_status: dict[str, str] = {}
