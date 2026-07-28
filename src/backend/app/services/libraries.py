@@ -32,6 +32,27 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 
 
+# 自动淘汰的论文不进回收站，而是直接删掉成员行（见 papers.delete_membership_hard）。
+# 成员行一没，库内去重集合就挡不住它们了；而 since_last 的扫描窗口与上次同步那天是
+# 重叠的，于是同一批论文明天会再花一次 LLM。这里在库上留一份「判过且没通过」的名单
+# 挡住重复。只存 id 且有上限——它是防重复的备忘，不是档案，覆盖得住重叠窗口就够。
+_MAX_REJECTED_MEMORY = 5000
+
+
+def rejected_paper_ids(library: DirectionLibrary) -> set[str]:
+    """本库判过且相关性不达标的论文 id（不再重复送打分）。"""
+    return {pid for pid in (library.ingest_state or {}).get("rejected_ids") or [] if pid}
+
+
+def remember_rejected(library: DirectionLibrary, paper_ids: Iterable[str]) -> None:
+    """把本轮淘汰的论文记进名单（最近的在前，超出上限的丢掉）。"""
+    state = dict(library.ingest_state or {})
+    previous = [pid for pid in (state.get("rejected_ids") or []) if isinstance(pid, str)]
+    merged = list(dict.fromkeys([*paper_ids, *previous]))[:_MAX_REJECTED_MEMORY]
+    state["rejected_ids"] = merged
+    library.ingest_state = state  # 整体赋值：JSON 列不跟踪原地修改
+
+
 def library_definition(library: DirectionLibrary) -> dict[str, Any]:
     """库的收录配置（P8a 权威源）：definition JSON；为空时回退标量列拼一份兼容视图。
 
@@ -108,9 +129,7 @@ async def set_source_libraries(
 ) -> None:
     """全量替换课题的关联库（去重，不存在的 library_id 静默忽略）；flush 不 commit。"""
     unique_ids = list(dict.fromkeys(library_ids))
-    await session.execute(
-        delete(TopicSourceLibrary).where(TopicSourceLibrary.topic_id == topic_id)
-    )
+    await session.execute(delete(TopicSourceLibrary).where(TopicSourceLibrary.topic_id == topic_id))
     if unique_ids:
         found = set(
             (
@@ -400,9 +419,7 @@ async def _owner_names(
     ids = {uid for uid in submitted_by if uid is not None}
     if not ids:
         return {}
-    rows = await session.execute(
-        select(User.id, User.display_name).where(User.id.in_(ids))
-    )
+    rows = await session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
     return {uid: name for uid, name in rows.all()}
 
 
@@ -445,9 +462,7 @@ async def list_libraries_overview(
             _overview_dict(
                 lib,
                 my_linked=my_linked,
-                can_manage=can_manage_library_row(
-                    user=user, library=lib, curated_ids=my_curated
-                ),
+                can_manage=can_manage_library_row(user=user, library=lib, curated_ids=my_curated),
                 paper_count=paper_counts.get(lib.id, 0),
                 concept_count=concept_counts.get(lib.id, 0),
                 last_compiled_at=last_compiled.get(lib.id),
@@ -501,9 +516,7 @@ async def source_libraries_overview(
         _overview_dict(
             lib,
             my_linked=my_linked,
-            can_manage=can_manage_library_row(
-                user=user, library=lib, curated_ids=my_curated
-            ),
+            can_manage=can_manage_library_row(user=user, library=lib, curated_ids=my_curated),
             paper_count=paper_counts.get(lib.id, 0),
             concept_count=concept_counts.get(lib.id, 0),
             last_compiled_at=last_compiled.get(lib.id),
@@ -627,9 +640,7 @@ def _coerce_anchors(value: Any) -> list[dict[str, Any]]:
             {
                 "title": title.strip(),
                 "arxiv_id": (
-                    arxiv_id.strip()
-                    if isinstance(arxiv_id, str) and arxiv_id.strip()
-                    else None
+                    arxiv_id.strip() if isinstance(arxiv_id, str) and arxiv_id.strip() else None
                 ),
                 "reason": reason.strip() if isinstance(reason, str) and reason.strip() else None,
             }
@@ -754,9 +765,7 @@ async def create_library(
     return library
 
 
-async def request_public(
-    session: AsyncSession, *, library: DirectionLibrary
-) -> DirectionLibrary:
+async def request_public(session: AsyncSession, *, library: DirectionLibrary) -> DirectionLibrary:
     """申请把个人库转为公共库（P10）：is_public 仍 false，status → pending 等 admin 审批。
 
     鉴权（仅创建者 / 策展人）由 api 层校验。幂等：重复申请只是保持 pending。commit 落库。
@@ -767,9 +776,7 @@ async def request_public(
     return library
 
 
-async def approve_library(
-    session: AsyncSession, *, library: DirectionLibrary
-) -> DirectionLibrary:
+async def approve_library(session: AsyncSession, *, library: DirectionLibrary) -> DirectionLibrary:
     """审批通过转公共库（平台 admin，P10）：is_public → true、status → active、清驳回理由。
 
     公共库全实验室可见、ingest 走系统/全局 key（token 不再记创建者账）。commit 落库。
@@ -809,9 +816,7 @@ async def cancel_request_public(
     return library
 
 
-async def make_personal(
-    session: AsyncSession, *, library: DirectionLibrary
-) -> DirectionLibrary:
+async def make_personal(session: AsyncSession, *, library: DirectionLibrary) -> DirectionLibrary:
     """管理员把公共库转回个人库（P10）：is_public → false、status=active。转回后仅
     归属人 + admin 可见（其他成员看不到）。鉴权（平台 admin）由 api 层校验。commit 落库。"""
     library.is_public = False
@@ -826,9 +831,7 @@ async def make_personal(
 
 async def _my_curated_library_ids(session: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
     rows = await session.execute(
-        select(DirectionLibraryCurator.library_id).where(
-            DirectionLibraryCurator.user_id == user_id
-        )
+        select(DirectionLibraryCurator.library_id).where(DirectionLibraryCurator.user_id == user_id)
     )
     return set(rows.scalars().all())
 

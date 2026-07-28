@@ -176,6 +176,8 @@ async def semantic_saved_entries(
     stmt = select(UserLibraryEntry).where(
         UserLibraryEntry.user_id == user_id,
         UserLibraryEntry.saved.is_(True),
+        # 回收站里的收藏不参与检索（与列表路径同口径）
+        UserLibraryEntry.trashed_at.is_(None),
         UserLibraryEntry.last_paper_id.is_not(None),
     )
     entries = list((await session.execute(stmt)).scalars().all())

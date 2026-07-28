@@ -482,11 +482,15 @@ async def semantic_search_chunks(
             )
         ).all()
     else:
+        # 回收站里的论文不该被文献对话检索到并引用（与关键词检索口径一致）
+        from app.services.papers import PAPER_STATUS_GROUPS
+
         params = {
             "qv": qv,
             "libs": [str(lid) for lid in (library_ids or [])],
             "k": limit,
             "space": space.key,
+            "statuses": list(PAPER_STATUS_GROUPS["library"]),
         }
         paper_filter = ""
         if paper_ids:
@@ -501,6 +505,7 @@ async def semantic_search_chunks(
                     "JOIN library_papers lp ON lp.paper_id = c.paper_id "
                     "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
                     "WHERE v.space = :space "
+                    "AND lp.status = ANY(CAST(:statuses AS varchar[])) "
                     f"{paper_filter}"
                     "ORDER BY score DESC "
                     "LIMIT :k"
@@ -545,10 +550,17 @@ async def keyword_search_chunks(
         # 纯 paper_ids 分支：不 join library_papers，只按论文集合过滤
         stmt = select(PaperChunk).where(PaperChunk.paper_id.in_(paper_ids), cond)
     else:
+        from app.services.papers import PAPER_STATUS_GROUPS
+
         stmt = (
             select(PaperChunk)
             .join(LibraryPaper, LibraryPaper.paper_id == PaperChunk.paper_id)
-            .where(LibraryPaper.library_id.in_(library_ids or []), cond)
+            .where(
+                LibraryPaper.library_id.in_(library_ids or []),
+                # 回收站里的论文不该被检索到（与向量分支、关键词论文检索同口径）
+                LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+                cond,
+            )
             .distinct()
         )
         if paper_ids:

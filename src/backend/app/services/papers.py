@@ -762,6 +762,20 @@ async def gc_orphan_papers(session: AsyncSession, paper_ids: Sequence[uuid.UUID]
     return removed
 
 
+async def delete_membership_hard(session: AsyncSession, membership: LibraryPaper) -> None:
+    """把一条成员行彻底删掉（不进回收站），并顺带清理孤儿标签与孤儿论文。
+
+    自动淘汰用这条：相关性不足的论文每天上百篇，堆进回收站没人会去翻，还会把用户
+    手动删的那几篇淹掉。论文本体只在**再没有任何集合引用它**时才回收——被每日池
+    引用着的照常留在内容池里，别的库要用还能用。
+    """
+    library_id = membership.library_id
+    paper_id = membership.paper_id
+    await _delete_membership_rows(session, library_id=library_id, memberships=[membership])
+    await prune_orphan_tags(session, library_id=library_id)
+    await gc_orphan_papers(session, [paper_id])
+
+
 async def delete_paper(session: AsyncSession, view: PaperView) -> None:
     """从当前方向库彻底移除一篇论文（回收站里的「彻底删除」）。
 
@@ -1153,7 +1167,9 @@ async def semantic_search_papers(
     if not library_ids:
         return []
     qv = json.dumps(query_vector)
-    # DISTINCT p.id：一篇论文命中多个关联库时只召回一次（分数不受成员行影响）
+    # DISTINCT p.id：一篇论文命中多个关联库时只召回一次（分数不受成员行影响）。
+    # status 过滤与 keyword_search_papers 对齐：回收站（excluded）和未筛选的候选
+    # （candidate）都不该出现在检索结果里——删掉的论文又被搜出来，比搜不到更难理解。
     rows = (
         await session.execute(
             text(
@@ -1163,6 +1179,7 @@ async def semantic_search_papers(
                 "JOIN library_papers lp ON lp.paper_id = p.id "
                 "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
                 "WHERE v.space = :space "
+                "AND lp.status = ANY(CAST(:statuses AS varchar[])) "
                 "ORDER BY score DESC "
                 "LIMIT :k"
             ),
@@ -1171,6 +1188,7 @@ async def semantic_search_papers(
                 "libs": [str(lid) for lid in library_ids],
                 "k": limit,
                 "space": space.key,
+                "statuses": list(PAPER_STATUS_GROUPS["library"]),
             },
         )
     ).all()
@@ -1179,9 +1197,7 @@ async def semantic_search_papers(
     scores = {row.id: float(row.score) for row in rows}
     pairs = dedupe_member_rows(
         (
-            await session.execute(
-                member_papers_stmt(library_ids).where(Paper.id.in_(list(scores)))
-            )
+            await session.execute(member_papers_stmt(library_ids).where(Paper.id.in_(list(scores))))
         ).all()
     )
     by_id = {p.id: PaperView(p, m, project_id) for p, m in pairs}

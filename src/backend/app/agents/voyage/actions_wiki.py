@@ -57,12 +57,15 @@ from app.services.libraries import (
     find_pool_paper,
     get_library_for_project,
     library_definition,
+    rejected_paper_ids,
+    remember_rejected,
 )
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
 from app.services.paper_enrich import paper_embedding_text
 from app.services.paper_wiki import upsert_wiki
+from app.services.papers import delete_membership_hard
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
 from app.services.relevance import (
     build_direction_query,
@@ -170,9 +173,7 @@ def _mode(ctx: ActionContext) -> str:
     return "incremental" if ctx.run.kind == "wiki_ingest" else "search"
 
 
-async def _resolve_library(
-    session: AsyncSession, ctx: ActionContext
-) -> DirectionLibrary | None:
+async def _resolve_library(session: AsyncSession, ctx: ActionContext) -> DirectionLibrary | None:
     """P9a：库化任务优先按 ``run.library_id`` 直接定位方向库；回退起源课题解析（兼容
     库化前建的存量 run）。独立库（无起源课题）也能由此拿到自己的库。"""
     if ctx.run.library_id is not None:
@@ -253,6 +254,7 @@ async def _pool_paper_or_new(
 
 # ---- 1. 检索候选（arXiv） ----
 
+
 async def _rank_feed_by_similarity(
     ctx: ActionContext,
     session: AsyncSession,
@@ -293,9 +295,7 @@ async def _rank_feed_by_similarity(
     vectors = await paper_vectors(session, [p.id for p in papers], space)
     if not vectors:
         return papers[:limit], False
-    scored = [
-        (cosine_similarity(vector, vectors[p.id]), p) for p in papers if p.id in vectors
-    ]
+    scored = [(cosine_similarity(vector, vectors[p.id]), p) for p in papers if p.id in vectors]
     scored.sort(key=lambda x: -x[0])
     ranked = [p for _, p in scored]
     # 没建向量的排在后面而不是丢掉（同上：粗排不该有排除语义）
@@ -352,8 +352,12 @@ async def _collect_from_daily_feed(
             since_day = last.astimezone(UTC).date()
             stmt = stmt.where(DailyFeedEntry.feed_date >= since_day)
     rows = (await session.execute(stmt)).all()
-    feed_papers = [p for p, _ in rows]
     feed_latest = max((d for _, d in rows), default=None)
+    # 判过且没通过的直接跳过：它们的成员行已被删掉，去重集合挡不住，而扫描窗口
+    # 和上次同步那天是重叠的——不挡的话今天淘汰的几百篇明天会再打一次分。
+    rejected = rejected_paper_ids(library)
+    feed_papers = [p for p, _ in rows if str(p.id) not in rejected]
+    skipped_rejected = len(rows) - len(feed_papers)
 
     excluded_by_terms = 0
     if exclude:
@@ -402,6 +406,7 @@ async def _collect_from_daily_feed(
     return {
         "feed_total": len(rows),
         "feed_scope": scope,
+        "skipped_previously_rejected": skipped_rejected,
         "feed_since": since_day.isoformat() if since_day else None,
         "excluded_by_terms": excluded_by_terms,
         "feed_ranked": did_rank,
@@ -446,8 +451,12 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         # 而每日推送本来就每天把新论文抓进内容池了，同一批论文没有理由抓第二遍。
         if mode == "incremental":
             feed = await _collect_from_daily_feed(
-                ctx, session, library=library, direction=direction_query,
-                exclude=exclude, limit=limit,
+                ctx,
+                session,
+                library=library,
+                direction=direction_query,
+                exclude=exclude,
+                limit=limit,
             )
             new_papers = feed.pop("selected")
             await session.flush()
@@ -760,15 +769,22 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 voyage_id=ctx.run.id,
             )
             score = scored.score
-            membership.status = "scored" if score >= threshold else "excluded"
-            membership.trash_reason = None if membership.status == "scored" else "irrelevant"
+            passed = score >= threshold
+            if passed:
+                membership.status = "scored"
+                membership.trash_reason = None
+            else:
+                # 相关性不够的直接删掉成员行，不进回收站——自动淘汰每天上百篇，堆在
+                # 回收站里没人会去看，还把「用户手动删的」淹没掉。论文本体留在内容池
+                # （每日池仍引用着它），孤儿清理会在它彻底没人引用时回收。
+                await delete_membership_hard(session, membership)
             # 逐篇 commit：worker 中途被杀后按 status 断点续跑，不重复打分
             await session.commit()
             return {
                 "id": str(paper.id),
                 "title": paper.title,
                 "score": score,
-                "passed": membership.status == "scored",
+                "passed": passed,
             }
 
     results = await _gather_bounded(_LLM_CONCURRENCY, [score_one(mid) for mid in membership_ids])
@@ -779,6 +795,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
     excluded = 0
     failed: list[dict[str, str]] = []
     scored_ids: list[str] = []
+    rejected_ids: list[str] = []
     scored_brief: list[dict[str, Any]] = []
     for paper_id, result in zip(paper_ids, results, strict=True):
         if isinstance(result, BaseException):
@@ -790,8 +807,19 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         scored_ids.append(result["id"])
         if not result["passed"]:
             excluded += 1
+            rejected_ids.append(result["id"])
         if len(scored_brief) < _OBS_LIST_CAP:
             scored_brief.append(result)
+
+    # 成员行删掉之后，去重集合就挡不住它们了：而 since_last 的扫描窗口和上次同步那天
+    # 是重叠的，不记一笔的话今天淘汰的几百篇明天会再花一次 LLM。所以在库上留一份
+    # 「判过且没通过」的名单（只存 id，有上限，够覆盖重叠窗口即可）。
+    if rejected_ids:
+        async with get_sessionmaker()() as session:
+            library = await _resolve_library(session, ctx)
+            if library is not None:
+                remember_rejected(library, rejected_ids)
+                await session.commit()
 
     # 步内进度记入 checkpoint（审计用；幂等本身靠 Paper.status）
     ctx.checkpoint["scored_ids"] = list(ctx.checkpoint.get("scored_ids") or []) + scored_ids
@@ -832,9 +860,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             await session.execute(
                 select(Paper, LibraryPaper)
                 .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
-                .where(
-                    LibraryPaper.library_id == library.id, LibraryPaper.status == "scored"
-                )
+                .where(LibraryPaper.library_id == library.id, LibraryPaper.status == "scored")
                 .order_by(LibraryPaper.relevance_score.desc().nulls_last())
                 .limit(top_n)
             )
@@ -914,9 +940,7 @@ async def fetch_extract(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                failed.append(
-                    {"id": str(paper.id), "error": f"chunks: {type(e).__name__}: {e}"}
-                )
+                failed.append({"id": str(paper.id), "error": f"chunks: {type(e).__name__}: {e}"})
             # 顺带提取候选图（基础信息 caption=null；筛选注释在 wiki.compile 后做）；
             # 失败不影响全文流程
             if paper.pdf_path and paper.figures is None:
@@ -963,9 +987,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
         rows = (
             await session.execute(
                 select(LibraryPaper.id, LibraryPaper.paper_id)
-                .where(
-                    LibraryPaper.library_id == library.id, LibraryPaper.status == "fetched"
-                )
+                .where(LibraryPaper.library_id == library.id, LibraryPaper.status == "fetched")
                 .order_by(LibraryPaper.relevance_score.desc().nulls_last())
                 .limit(top_n)
             )
@@ -1184,8 +1206,8 @@ async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 .where(VoyageStep.run_id == ctx.run.id, VoyageStep.status == "obsolete")
             )
         ) or 0
-        watermark = previous if truncated else (
-            ctx.checkpoint.get("watermark_candidate") or previous
+        watermark = (
+            previous if truncated else (ctx.checkpoint.get("watermark_candidate") or previous)
         )
         finished_at = utcnow().isoformat()
         state["watermark"] = watermark

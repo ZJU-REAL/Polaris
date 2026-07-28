@@ -312,12 +312,14 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
 
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
-        assert len(rows) == 3  # 检索模式只有 arXiv 候选，引文扩展是另一个模式
+        # 3 篇候选里那篇 "irrelevant" 相关性不达标，成员行被直接删掉（不进回收站），
+        # 所以库里只剩 2 行
+        assert len(rows) == 2
         by_status = {}
         for p, m in rows:
             by_status.setdefault(m.status, []).append((p, m))
-        assert len(by_status.get("excluded", [])) == 1  # "irrelevant" 论文被排除
-        assert by_status["excluded"][0][0].arxiv_id == "2406.00003"
+        assert not by_status.get("excluded")
+        assert "2406.00003" not in {p.arxiv_id for p, _ in rows}
         compiled_rows = by_status.get("compiled", [])
         assert len(compiled_rows) == 2
         for p, m in compiled_rows:
@@ -366,9 +368,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
         activity_kinds = {
             a.kind
             for a in (
-                await session.execute(
-                    select(Activity).where(Activity.library_id == library.id)
-                )
+                await session.execute(select(Activity).where(Activity.library_id == library.id))
             ).scalars()
         }
         assert {"ingest.started", "ingest.completed"} <= activity_kinds
@@ -381,7 +381,8 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert state["last_run"]["voyage_id"] == run_id
     assert state["last_run"]["status"] == "done"
     counts = state["paper_counts"]
-    assert counts["compiled"] == 2 and counts["excluded"] == 1 and counts["total"] == 3
+    # 淘汰的那篇已不在库内，所以 total 是 2 而不是 3
+    assert counts["compiled"] == 2 and counts["excluded"] == 0 and counts["total"] == 2
 
     # papers API 上能看到编译结果
     resp = await client.get(f"/api/projects/{project_id}/papers?status=compiled", headers=headers)
@@ -411,7 +412,8 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     assert "window_since" not in obs2
     assert obs2["feed_total"] == 0  # 本测试没往每日池放东西
     async with get_sessionmaker()() as session:
-        assert len(await project_paper_rows(session, project_id=project_id)) == 3
+        # 仍是 2：增量这轮没有新候选，上一轮淘汰的那篇也不会复活
+        assert len(await project_paper_rows(session, project_id=project_id)) == 2
 
 
 class _CrashOnNthRelevance(FakeProvider):
@@ -453,8 +455,10 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
     assert await _relevance_call_count() == 2  # 崩溃前 2 篇成功打分（并发，非串行的 1）
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
-        scored = sum(1 for _, m in rows if m.status in ("scored", "excluded"))
-        assert scored == 2  # 逐篇 commit：崩溃前的进度已落库
+        # 逐篇 commit：崩溃前的进度已落库。达标的留下成员行，不达标的整行删掉，
+        # 所以「已处理」= 剩下的非 candidate 行 + 消失的行
+        scored = sum(1 for _, m in rows if m.status != "candidate") + (3 - len(rows))
+        assert scored == 2
 
     # resume：从断点续跑到 done，总打分调用数 == 论文数（无重复）
     engine2, _ = _make_engine()
@@ -465,7 +469,7 @@ async def test_resume_does_not_rescore(client, queue_stub, wiki_mocks):
 
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
-        assert sorted(m.status for _, m in rows) == ["compiled", "compiled", "excluded"]
+        assert sorted(m.status for _, m in rows) == ["compiled", "compiled"]
 
 
 class _BreakOneRelevance(FakeProvider):
@@ -517,7 +521,7 @@ async def test_concurrent_scoring_failure_isolation(client, queue_stub, wiki_moc
             by_status[m.status] = by_status.get(m.status, 0) + 1
         # 失败打分的那篇仍是 candidate（下次续跑会重试），其余照常推进
         assert by_status.get("candidate", 0) == 1
-        assert by_status.get("excluded", 0) == 1  # irrelevant 篮子编织论文
+        assert by_status.get("excluded", 0) == 0  # irrelevant 那篇整行删掉，不进回收站
         assert by_status.get("compiled", 0) == 1  # 通过阈值且未失败的那篇成功编译
 
 
@@ -551,8 +555,8 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
 
     async with get_sessionmaker()() as session:
         rows = await project_paper_rows(session, project_id=project_id)
-        # 3 候选：2 编译 + 1 排除（无 rubric 时打分只用 statement）
-        assert sorted(m.status for _, m in rows) == ["compiled", "compiled", "excluded"]
+        # 3 候选：2 编译 + 1 淘汰（淘汰的整行删掉；无 rubric 时打分只用 statement）
+        assert sorted(m.status for _, m in rows) == ["compiled", "compiled"]
 
 
 async def test_incremental_pulls_from_daily_feed_without_arxiv(client, queue_stub, wiki_mocks):
@@ -597,15 +601,11 @@ async def test_incremental_pulls_from_daily_feed_without_arxiv(client, queue_stu
             feed_ids.append(paper.id)
             # 用今天：库同步默认只看「上次同步以来」的窗口，固定的过去日期会被筛掉
             session.add(
-                DailyFeedEntry(
-                    paper_id=paper.id, feed_date=_today(), primary_category="cs.AI"
-                )
+                DailyFeedEntry(paper_id=paper.id, feed_date=_today(), primary_category="cs.AI")
             )
         # 已在库的论文也进池：必须被去重挡住，不能重复送打分
         session.add(
-            DailyFeedEntry(
-                paper_id=existing_id, feed_date=_today(), primary_category="cs.AI"
-            )
+            DailyFeedEntry(paper_id=existing_id, feed_date=_today(), primary_category="cs.AI")
         )
         await session.commit()
 
@@ -860,9 +860,7 @@ async def test_cadence_no_longer_excludes_a_library(client, queue_stub, wiki_moc
 async def _promote_admin(email: str) -> None:
     """把已注册用户提为平台 admin（独立建库 / 库级 ingest 触发需要）。"""
     async with get_sessionmaker()() as session:
-        user = (
-            await session.execute(select(User).where(User.email == email))
-        ).scalar_one()
+        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
         user.role = "admin"
         await session.commit()
 
@@ -943,17 +941,14 @@ async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_
             .scalars()
             .all()
         )
-        assert len(members) == 3
+        # 淘汰的那篇成员行被删掉，库里只剩 2 行
+        assert len(members) == 2
         assert sum(1 for m in members if m.status == "compiled") == 2
-        assert sum(1 for m in members if m.status == "excluded") == 1
+        assert sum(1 for m in members if m.status == "excluded") == 0
 
         # 库级用量归因：ingest 全程 LLM 调用（打分/图注/编译/概念定义/向量化）记到库上
         usage = (
-            (
-                await session.execute(
-                    select(LLMUsage).where(LLMUsage.library_id == library.id)
-                )
-            )
+            (await session.execute(select(LLMUsage).where(LLMUsage.library_id == library.id)))
             .scalars()
             .all()
         )
@@ -962,11 +957,7 @@ async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_
 
         # 库级活动流：project_id 为空，library_id 指向本库
         acts = (
-            (
-                await session.execute(
-                    select(Activity).where(Activity.library_id == library.id)
-                )
-            )
+            (await session.execute(select(Activity).where(Activity.library_id == library.id)))
             .scalars()
             .all()
         )
@@ -1268,9 +1259,7 @@ async def test_truncated_run_does_not_advance_the_watermark(client, queue_stub, 
         session.add(run)
         await session.flush()
         session.add(
-            VoyageStep(
-                run_id=run.id, action="wiki.compile", title="编译", status="obsolete", seq=0
-            )
+            VoyageStep(run_id=run.id, action="wiki.compile", title="编译", status="obsolete", seq=0)
         )
         await session.commit()
         run_id = run.id
@@ -1361,9 +1350,7 @@ async def test_search_mode_uses_given_terms_and_time_range(client, queue_stub, w
     assert detail["steps"][0]["action"] == "wiki.search_candidates"
 
     calls = [
-        str(c.request.url)
-        for c in wiki_mocks.calls
-        if "export.arxiv.org" in str(c.request.url)
+        str(c.request.url) for c in wiki_mocks.calls if "export.arxiv.org" in str(c.request.url)
     ]
     assert calls, "检索模式必须真的打了 arXiv 检索接口"
     assert "world+model" in calls[0] or "world%20model" in calls[0]
@@ -1437,9 +1424,7 @@ async def test_exclude_terms_filter_the_daily_feed_sync(client, queue_stub, wiki
             session.add(paper)
             await session.flush()
             session.add(
-                DailyFeedEntry(
-                    paper_id=paper.id, feed_date=_today(), primary_category="cs.AI"
-                )
+                DailyFeedEntry(paper_id=paper.id, feed_date=_today(), primary_category="cs.AI")
             )
         await session.commit()
 
@@ -1504,9 +1489,7 @@ async def test_sync_scope_defaults_to_today_only(client, queue_stub, wiki_mocks)
             )
             session.add(paper)
             await session.flush()
-            session.add(
-                DailyFeedEntry(paper_id=paper.id, feed_date=day, primary_category="cs.AI")
-            )
+            session.add(DailyFeedEntry(paper_id=paper.id, feed_date=day, primary_category="cs.AI"))
         await session.commit()
 
     async def run_sync() -> dict:
@@ -1570,17 +1553,13 @@ async def test_since_last_scope_widens_after_a_missed_sync(client, queue_stub, w
             )
             session.add(paper)
             await session.flush()
-            session.add(
-                DailyFeedEntry(paper_id=paper.id, feed_date=day, primary_category="cs.AI")
-            )
+            session.add(DailyFeedEntry(paper_id=paper.id, feed_date=day, primary_category="cs.AI"))
         # 模拟「上次成功同步是 3 天前」——中间那两天漏了
         library = await session.get(DirectionLibrary, uuid.UUID(library_id))
         state = dict(library.ingest_state or {})
         state["last_run"] = {
             "voyage_id": "x",
-            "finished_at": (
-                dt.datetime.now(dt.UTC) - dt.timedelta(days=3)
-            ).isoformat(),
+            "finished_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=3)).isoformat(),
         }
         library.ingest_state = state
         await session.commit()
@@ -1601,3 +1580,125 @@ async def test_since_last_scope_widens_after_a_missed_sync(client, queue_stub, w
     assert obs["feed_scope"] == "since_last"
     assert obs["feed_since"] == (today - dt.timedelta(days=3)).isoformat()
     assert obs["feed_total"] == 2, "漏掉那两天的论文被补扫回来"
+
+
+# ---- 相关性不足的论文直接删除，不进回收站 ----
+
+
+async def _seed_feed(session, project_id, specs):
+    """往每日池里放几篇论文（用今天，否则会被 since_last 的窗口筛掉）。返回 id 列表。"""
+    import datetime as dt
+
+    from app.models.daily_feed import DailyFeedEntry
+
+    ids = []
+    for aid, title, abstract in specs:
+        paper = new_paper(
+            source="arxiv",
+            arxiv_id=aid,
+            title=title,
+            abstract=abstract,
+            year=2026,
+            published_at=dt.datetime.now(dt.UTC),
+        )
+        session.add(paper)
+        await session.flush()
+        ids.append(paper.id)
+        session.add(DailyFeedEntry(paper_id=paper.id, feed_date=_today(), primary_category="cs.AI"))
+    await session.commit()
+    return ids
+
+
+async def _run_incremental(client, project_id, headers):
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "incremental", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+    return (await client.get(f"/api/voyages/{resp.json()['id']}", headers=headers)).json()
+
+
+async def _bootstrap(client, project_id, headers):
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+
+async def test_irrelevant_papers_are_deleted_not_trashed(client, queue_stub, wiki_mocks):
+    """相关性不达标的论文直接删成员行，不落回收站；论文本体留在每日池里。
+
+    自动淘汰每天上百篇，堆在回收站里没人会去翻，还会把用户手动删的那几篇淹掉。
+    """
+    from sqlalchemy import select
+
+    from app.models.library_direction import LibraryPaper
+    from app.models.paper import Paper
+
+    project_id, headers = await _setup_project(client)
+    await _bootstrap(client, project_id, headers)
+
+    async with get_sessionmaker()() as session:
+        kept_id, dropped_id = await _seed_feed(
+            session,
+            project_id,
+            [
+                ("2607.95000", "Feed Planning Agent", "research agents and planning"),
+                ("2607.95001", "Totally irrelevant paper", "irrelevant to this direction"),
+            ],
+        )
+
+    detail = await _run_incremental(client, project_id, headers)
+    assert detail["status"] == "done", detail
+
+    async with get_sessionmaker()() as session:
+        members = {
+            m.paper_id: m
+            for m in (
+                await session.execute(
+                    select(LibraryPaper).where(LibraryPaper.paper_id.in_([kept_id, dropped_id]))
+                )
+            )
+            .scalars()
+            .all()
+        }
+        # 达标的留在库里（打分后流水线继续走，状态会推进到 fetched/compiled）
+        assert kept_id in members
+        assert members[kept_id].status in ("scored", "fetched", "compiled", "included")
+        # 关键：不是 excluded，而是**根本没有这条成员行**
+        assert dropped_id not in members
+        # 论文本体还在——每日池仍然引用着它，别的库也还用得上
+        assert await session.get(Paper, dropped_id) is not None
+
+
+async def test_rejected_papers_are_not_scored_twice(client, queue_stub, wiki_mocks):
+    """成员行删了之后仍要挡住重复打分。
+
+    since_last 的扫描窗口和上次同步那天是重叠的，不记一笔的话，今天淘汰的论文
+    明天会再花一次 LLM——每库每天几百篇。
+    """
+    project_id, headers = await _setup_project(client)
+    await _bootstrap(client, project_id, headers)
+
+    async with get_sessionmaker()() as session:
+        await _seed_feed(
+            session,
+            project_id,
+            [("2607.96000", "Another irrelevant one", "irrelevant to this direction")],
+        )
+
+    await _run_incremental(client, project_id, headers)
+    after_first = await _relevance_call_count()
+
+    # 同一批池子再同步一次：那篇被淘汰的不该再打一次分
+    detail = await _run_incremental(client, project_id, headers)
+    assert detail["status"] == "done", detail
+    assert await _relevance_call_count() == after_first
+
+    obs = detail["steps"][0]["observation"]
+    assert obs["skipped_previously_rejected"] >= 1
