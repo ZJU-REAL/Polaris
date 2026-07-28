@@ -13,6 +13,7 @@ import { tr } from '../../lib/i18n';
 import {
   api,
   ApiError,
+  isLabScopedTask,
   VOYAGE_TERMINAL,
   type VoyageAcceptance,
   type VoyageAcceptanceCheck,
@@ -258,6 +259,8 @@ function PresentationDownload({ voyageId, goal }: { voyageId: string; goal: stri
 
 // —— 文献任务（wiki_bootstrap / wiki_ingest）：observation 的用户可读摘要 ——
 
+/** 只用来决定要不要渲染建库摘要卡；不含每日新论文（它没有这种 observation）。
+    「这个任务归实验室还是归课题」用 lib/api 的 isLabScopedTask，别拿这个判。 */
 const WIKI_RUN_KINDS = new Set(['wiki_bootstrap', 'wiki_ingest']);
 
 interface PaperBrief {
@@ -1683,20 +1686,22 @@ export function VoyageDetailPage() {
       <div className="row" style={{ alignItems: 'flex-start', marginBottom: 20 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="h-eyebrow row gap8">
-            {/* 返回按任务层级分流：库任务（建库/增量更新）归实验室工作台，
-                其余归课题工作台。库任务的 project_id 为空，跳课题会落到首页。 */}
+            {/* 返回按任务层级分流：文献库任务（建库/增量更新）与每日新论文归实验室
+                工作台，其余归课题工作台。判据与面包屑同一份（isLabScopedTask）——
+                原来这里单用 WIKI_RUN_KINDS，漏掉每日新论文，把它送去了课题工作台；
+                而它 project_id 为空，跳课题只会落到首页。 */}
             <span
               className="row gap6"
               style={{ cursor: 'pointer' }}
               onClick={() =>
                 navigate(
-                  WIKI_RUN_KINDS.has(voyage.kind)
+                  isLabScopedTask(voyage)
                     ? '/lab?tab=tasks'
                     : topicPath(voyage.project_id, 'voyages'),
                 )
               }
             >
-              {WIKI_RUN_KINDS.has(voyage.kind)
+              {isLabScopedTask(voyage)
                 ? tr('← 实验室任务', '← Lab tasks')
                 : tr('← 课题任务', '← Topic tasks')}
             </span>

@@ -12,7 +12,7 @@ import { topicPath, useProject } from './project';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
-import { api, getToken, isAdmin, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
+import { api, getToken, isAdmin, isLabScopedTask, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
@@ -98,7 +98,12 @@ function navCrumb(key: string, pid: string | null): Crumb {
  * 分组段指向该组的落地页（实验室工作台 / 课题工作台 / 我的文献库）。
  * libName：文献库详情页的库名（列表缓存里已有，取不到时退回通用文案）。
  */
-function crumbsFor(pathname: string, pid: string | null, libName?: string | null): Crumb[] {
+function crumbsFor(
+  pathname: string,
+  pid: string | null,
+  libName?: string | null,
+  labTask?: boolean,
+): Crumb[] {
   const lab: Crumb = { label: tr(NAV_GROUPS.lab.zh, NAV_GROUPS.lab.en), to: '/lab' };
   const topic: Crumb = {
     label: tr(NAV_GROUPS.topic.zh, NAV_GROUPS.topic.en),
@@ -125,12 +130,16 @@ function crumbsFor(pathname: string, pid: string | null, libName?: string | null
     if (p.startsWith('/writer/')) return [topic, e('writer'), { label: tr('编辑工作台', 'Editor workspace') }];
     // 任务已并入课题工作台的「任务」标签
     if (p === '/voyages') return [topic, e(''), { label: tr('任务', 'Tasks') }];
+    // 任务详情按归属分流：文献库任务 / 每日新论文（以及任何不挂课题的任务）归实验室，
+    // 其余归课题。归属要等任务本身取回来才知道，取不到时按课题走（占多数）。
     if (p.startsWith('/voyages/'))
-      return [
-        topic,
-        { ...e(''), to: topicPath(pid) + '?tab=tasks' },
-        { label: tr('任务详情', 'Task detail') },
-      ];
+      return labTask
+        ? [lab, { ...e('/lab'), to: '/lab?tab=tasks' }, { label: tr('任务详情', 'Task detail') }]
+        : [
+            topic,
+            { ...e(''), to: topicPath(pid) + '?tab=tasks' },
+            { label: tr('任务详情', 'Task detail') },
+          ];
     if (p === '/start') return [topic, { label: tr('选择课题', 'Pick a topic') }];
     if (p === '/projects/new') return [topic, { label: tr('新建课题', 'New topic') }];
     if (p.startsWith('/projects/')) return [topic, { label: tr('课题设置', 'Topic settings') }];
@@ -564,7 +573,22 @@ export function AppShell() {
     retry: false,
     staleTime: 60_000,
   });
-  const crumbs = crumbsFor(location.pathname, currentProjectId, crumbLibrary?.name);
+  // 任务详情：归属课题还是归属实验室，得看任务本身。queryKey 与详情页默认态
+  // （showObsolete=false）一致，命中的是同一份缓存，正常不会多发请求。
+  const crumbVoyageId = /^\/voyages\/([^/]+)$/.exec(location.pathname)?.[1] ?? null;
+  const { data: crumbVoyage } = useQuery({
+    queryKey: ['voyage', crumbVoyageId, false],
+    queryFn: () => api.getVoyage(crumbVoyageId ?? '', { includeObsolete: false }),
+    enabled: !!crumbVoyageId,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const crumbs = crumbsFor(
+    location.pathname,
+    currentProjectId,
+    crumbLibrary?.name,
+    crumbVoyage ? isLabScopedTask(crumbVoyage) : false,
+  );
 
   // —— 刷新：让所有查询失效并重取（保留页面状态，不整页重载） ——
   const [refreshing, setRefreshing] = useState(false);

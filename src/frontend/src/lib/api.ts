@@ -304,6 +304,24 @@ export type VoyageStatus =
 /** 终态集合（不再产生 SSE 事件）。 */
 export const VOYAGE_TERMINAL: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled']);
 
+/**
+ * 不属于任何课题的任务类型：建库 / 增量更新 / 每日新论文，归实验室。
+ * 与后端 models/voyage.py 的 LIBRARY_KINDS 同一份口径（课题任务列表按它排除）。
+ * 放在这里而不是任务页里：外壳的面包屑也要用，而任务页是懒加载的。
+ */
+export const LIBRARY_TASK_KINDS = ['wiki_bootstrap', 'wiki_ingest', 'daily_feed_sync'] as const;
+
+/**
+ * 这个任务归实验室（而不是某个课题）吗——决定面包屑挂在哪一组、返回链接跳哪。
+ * 判据用 kind 而非 library_id：库化改造前建的存量库任务只挂了课题、没有 library_id。
+ * 没有归属课题的任务（含既不属课题也不属库的）同样归实验室工作台。
+ */
+export function isLabScopedTask(task: { kind: string; project_id: string | null }): boolean {
+  return (
+    (LIBRARY_TASK_KINDS as readonly string[]).includes(task.kind) || !task.project_id
+  );
+}
+
 export interface VoyageVerdict {
   passed: boolean;
   reason: string;

@@ -7,7 +7,7 @@ import { StatusPill } from '../../components/ui/StatusPill';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useProject } from '../../app/project';
-import { api, VOYAGE_TERMINAL, type VoyageRead } from '../../lib/api';
+import { api, LIBRARY_TASK_KINDS, VOYAGE_TERMINAL, type VoyageRead } from '../../lib/api';
 import { fmtDuration, fmtFullTime, fmtRelative } from '../../lib/format';
 import { tr } from '../../lib/i18n';
 
@@ -72,11 +72,11 @@ function kindMeta(kind: string): KindMeta {
   return KIND_META[kind] ?? { zh: kind, icon: 'sparkle', bg: 'var(--surface-3)', tx: 'var(--text-2)' };
 }
 
-/* —— 任务层级：与后端 app/models/voyage.py 的 LIBRARY_KINDS 对应 ——
-   文献库任务（建库/增量更新）与每日新论文任务归实验室工作台，其余归课题。
-   课题工作台的类型筛选只列课题类型：那里根本不会出现库任务，列出来只会
-   选中后永远空列表。 */
-export const LIBRARY_TASK_KINDS = ['wiki_bootstrap', 'wiki_ingest', 'daily_feed_sync'] as const;
+/* —— 任务层级 ——
+   LIBRARY_TASK_KINDS 现在住在 lib/api.ts（外壳的面包屑也要用，那边不能 import 本页），
+   这里转出去给既有引用方。课题工作台的类型筛选只列课题类型：那里根本不会出现库任务，
+   列出来只会选中后永远空列表。 */
+export { LIBRARY_TASK_KINDS };
 export const TOPIC_TASK_KINDS = Object.keys(KIND_META).filter(
   (k) => !(LIBRARY_TASK_KINDS as readonly string[]).includes(k),
 );
