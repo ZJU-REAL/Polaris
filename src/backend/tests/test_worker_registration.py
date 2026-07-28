@@ -90,3 +90,42 @@ def test_sqlite_engine_skips_pool_sizing():
 
     engine = get_engine()
     assert engine is not None  # 建得起来即说明没把池参数塞给 sqlite
+
+
+# ---- 启动对账要认领所有在途状态 ----
+
+
+async def test_reconcile_reclaims_every_in_flight_status(client, monkeypatch):
+    """worker 重启把运行掐在 planning / verifying 时，也必须重新入队。
+
+    互斥检查（find_running_ingest_for_library）把**任何非终态**都当成「正在跑」，
+    而对账以前只认领 executing。于是被掐在 planning / verifying 的运行永远没人接手，
+    它所属的文献库也再发不起新同步——生产上实测三条运行卡了四个半小时，
+    而它们的八个兄弟都已完成。
+    """
+    from app.core.db import get_sessionmaker
+    from app.models.voyage import IN_FLIGHT_STATUSES, TERMINAL_STATUSES, VoyageRun
+    from worker.tasks import reconcile_stuck_voyages
+
+    parked = ("paused_gate", "paused_error")
+    made: dict[str, str] = {}
+    async with get_sessionmaker()() as session:
+        for status in sorted(IN_FLIGHT_STATUSES | set(parked) | TERMINAL_STATUSES):
+            run = VoyageRun(kind="wiki_ingest", mode="pipeline", status=status, goal=status)
+            session.add(run)
+            await session.flush()
+            made[status] = str(run.id)
+        await session.commit()
+
+    enqueued: list[str] = []
+
+    class _Redis:
+        async def enqueue_job(self, name, run_id, **kwargs):
+            enqueued.append(run_id)
+
+    await reconcile_stuck_voyages({"redis": _Redis()})
+
+    for status in IN_FLIGHT_STATUSES:
+        assert made[status] in enqueued, f"{status} 没被认领，这条运行会永远卡住"
+    for status in (*parked, *TERMINAL_STATUSES):
+        assert made[status] not in enqueued, f"{status} 不该被自动重跑"

@@ -47,7 +47,7 @@ async def resume_voyage(ctx: dict[str, Any], run_id: str) -> None:
 
 
 async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
-    """worker 启动对账：认领无人执行的 executing 航程。
+    """worker 启动对账：认领无人执行的在途航程（见 IN_FLIGHT_STATUSES）。
 
     被 SIGTERM/超时打断的 ARQ 任务按任务年龄指数延迟重试，长航程会被晾数小时
     （实测：远端 run.sh 已 exit=0，平台侧 50 分钟无人收尾）。启动时把 executing
@@ -55,11 +55,17 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
     checkpoint 断点恢复），``_job_id`` 去重避免同一 voyage 重复入队。"""
     from sqlalchemy import select
 
-    from app.models.voyage import VoyageRun
+    from app.models.voyage import IN_FLIGHT_STATUSES, VoyageRun
 
     async with get_sessionmaker()() as session:
         ids = (
-            (await session.execute(select(VoyageRun.id).where(VoyageRun.status == "executing")))
+            (
+                await session.execute(
+                    select(VoyageRun.id).where(
+                        VoyageRun.status.in_(tuple(IN_FLIGHT_STATUSES))
+                    )
+                )
+            )
             .scalars()
             .all()
         )

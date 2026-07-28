@@ -37,6 +37,13 @@ VOYAGE_STATUSES = (
     "cancelled",
 )
 TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})
+# 「有 worker 任务正持有它」的状态。worker 重启后必须把这些全部认领回来：
+# 互斥检查（find_running_ingest_for_library）把任何非终态都当成「在跑」，所以只要
+# 有一个状态漏了认领，那条运行就永远卡住，而它所属的文献库也再不能发起新同步——
+# 实测被重启掐在 planning / verifying 的三条运行卡了四个半小时，零进展。
+# paused_gate / paused_error 不在其列：它们是在等人，不是在等 worker
+# （另有 reclaim_stale_paused_ingests 按陈旧度处理）。
+IN_FLIGHT_STATUSES = frozenset({"planning", "executing", "verifying", "replanning"})
 
 # ---- 运行模式（docs/voyage-loop.md §2/§3）：由 kind 静态决定，不暴露给用户/LLM 选择 ----
 # pipeline：固定计划 + 机械校验，失败不经 LLM 重规划；
