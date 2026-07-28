@@ -234,6 +234,10 @@ class PaperMyMetaRead(BaseModel):
 class ChatTurn(BaseModel):
     role: Literal["user", "assistant"]
     content: str
+    # assistant 轮：这一轮的 [n] 编号分别指哪几篇论文（按编号顺序）。上下文每轮都会
+    # 重新检索、重新编号，所以历史里的 [1] 和本轮的 [1] 往往不是同一篇——不带上它，
+    # 模型要么答不出「这篇文章」是谁，要么按本轮编号张冠李戴。
+    cited_paper_ids: list[uuid.UUID] = []
 
 
 class PaperChatRequest(BaseModel):

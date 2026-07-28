@@ -867,6 +867,9 @@ export type CitationFormat = 'bibtex' | 'csl-json';
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
+  /** assistant：这一轮的 [n] 编号分别指哪几篇论文（按编号顺序）。上下文每轮重新
+   *  检索、重新编号，不带上它，模型会把历史里的 [1] 当成本轮的 [1]。 */
+  cited_paper_ids?: string[];
 }
 
 // ============================================================

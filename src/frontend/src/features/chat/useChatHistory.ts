@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { load, newId, save } from './chatStorage';
 import type { ChatMsg, Conversation } from './types';
 
 /* ============================================================
@@ -6,36 +7,7 @@ import type { ChatMsg, Conversation } from './types';
    后端暂无会话持久化，这里先用本地存储把历史对话体验搭起来。
    ============================================================ */
 
-const NS = 'polaris.chat';
-const MAX_CONVERSATIONS = 40;
 const SAVE_THROTTLE_MS = 400; // 流式期间 localStorage 落盘节流间隔
-
-function key(surfaceKey: string): string {
-  return `${NS}:${surfaceKey}`;
-}
-
-function load(surfaceKey: string): Conversation[] {
-  try {
-    const raw = localStorage.getItem(key(surfaceKey));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Conversation[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function save(surfaceKey: string, list: Conversation[]) {
-  try {
-    localStorage.setItem(key(surfaceKey), JSON.stringify(list.slice(0, MAX_CONVERSATIONS)));
-  } catch {
-    /* 配额/隐私模式：静默降级为仅本次会话 */
-  }
-}
-
-function newId(): string {
-  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-}
 
 /** 首条用户消息 → 会话标题（截断） */
 function titleFromMsgs(msgs: ChatMsg[]): string {
@@ -50,6 +22,8 @@ export interface ChatHistory {
   activeMsgs: ChatMsg[];
   /** 用最新消息覆盖当前会话（无会话时按需新建） */
   commit: (msgs: ChatMsg[]) => void;
+  /** 同步拿到当前会话 id（没有就地新建）。开流前要用它给流登记归属。 */
+  ensureId: () => string;
   select: (id: string) => void;
   create: () => void;
   remove: (id: string) => void;
@@ -139,6 +113,20 @@ export function useChatHistory(surfaceKey: string): ChatHistory {
     [surfaceKey, scheduleSave],
   );
 
+  const ensureId = useCallback((): string => {
+    let id = activeIdRef.current;
+    if (id) return id;
+    id = newId();
+    activeIdRef.current = id;
+    setActiveId(id);
+    setConversations((prev) =>
+      prev.some((c) => c.id === id)
+        ? prev
+        : [{ id: id!, title: '', msgs: [], updatedAt: Date.now() }, ...prev],
+    );
+    return id;
+  }, []);
+
   const select = useCallback((id: string) => setActiveId(id), []);
 
   const create = useCallback(() => {
@@ -173,5 +161,5 @@ export function useChatHistory(surfaceKey: string): ChatHistory {
     [surfaceKey, flushSave],
   );
 
-  return { conversations, activeId, activeMsgs, commit, select, create, remove };
+  return { conversations, activeId, activeMsgs, commit, ensureId, select, create, remove };
 }
