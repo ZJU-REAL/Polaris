@@ -288,9 +288,6 @@ function DailyDetailPane({
           </span>
         ))}
         <AnnounceBadge type={paper.announce_type} />
-        {/* 向量索引状态跟着徽章走：这一行是「这篇论文是什么」的速览，索引建没建属于
-            同一类信息。不带重建按钮——那一行不是操作区。 */}
-        <PaperIndexStatusRow paperId={paper.paper_id} showRebuild={false} />
         <CollectingLibraries paperId={paper.paper_id} />
         {paper.arxiv_id &&
           (arxivHref ? (
@@ -416,11 +413,25 @@ function DailyDetailPane({
         <PaperMyTagsRow paperId={poolPaper.id} myTags={poolPaper.my_tags} detailKey={poolKey} />
       )}
 
+      {/* —— 向量索引状态（五处详情面板同一位置：标签行之后） —— */}
+      <PaperIndexStatusRow paperId={paper.paper_id} showRebuild={false} />
+
       {/* —— 概念 chips（与库版同款；点了进不限库的概念页） —— */}
       <ConceptChips concepts={paper.concepts} onOpen={openConcept} />
 
-      {/* —— frontmatter 风格元信息（默认折叠）；编译时间在下方 AI 图文介绍那行已有 —— */}
-      <MetaFold>
+
+      {/* 摘要默认折叠，复用元信息那套折叠块的样式，两者视觉一致 */}
+      {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
+          只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
+      <MetaFold label={tr('摘要', 'Abstract')}>
+        {paper.abstract ? (
+          <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{paper.abstract}</p>
+        ) : (
+          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+            {tr('这篇还没有摘要。', 'No abstract for this paper.')}
+          </p>
+        )}
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
         <MetaItem label="arxiv_id">
           {paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}
         </MetaItem>
@@ -434,14 +445,9 @@ function DailyDetailPane({
             <span className="muted">—</span>
           )}
         </MetaItem>
+      
+        </div>
       </MetaFold>
-
-      {/* 摘要默认折叠，复用元信息那套折叠块的样式，两者视觉一致 */}
-      {paper.abstract && (
-        <MetaFold label={tr('摘要', 'Abstract')}>
-          <p style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{paper.abstract}</p>
-        </MetaFold>
-      )}
 
       {/* —— TL;DR（来自内容池详情） —— */}
       {poolPaper?.tldr && (

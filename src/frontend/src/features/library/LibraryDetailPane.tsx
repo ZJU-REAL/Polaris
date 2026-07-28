@@ -22,6 +22,7 @@ import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
 import { PaperReader } from '../wiki/PaperReader';
+import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { AffiliationChips, AuthorLinks, MetaFold, usePoolConceptNav } from '../wiki/shared';
 import {
   ConceptChips,
@@ -327,11 +328,24 @@ export function LibraryDetailPane({
         />
       )}
 
+      {/* —— 向量索引状态（五处详情面板同一位置：标签行之后；快照态没有池论文，不显示） —— */}
+      {alive && <PaperIndexStatusRow paperId={paper.id} showRebuild={false} />}
+
       {/* —— 概念 chips：点了跳所属课题库的概念页 —— */}
       {alive && <ConceptChips concepts={paper.concepts} onOpen={openConcept} />}
 
-      {/* —— frontmatter 风格元信息（默认折叠） —— */}
-      <MetaFold>
+
+      {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
+          只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
+      <MetaFold label={tr('摘要', 'Abstract')}>
+        {abstract ? (
+          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{abstract}</div>
+        ) : (
+          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+            {tr('这篇还没有摘要。', 'No abstract for this paper.')}
+          </p>
+        )}
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
         <MetaItem label="arxiv_id">
           {arxivId ? <span className="mono">{arxivId}</span> : <span className="muted">—</span>}
         </MetaItem>
@@ -345,14 +359,9 @@ export function LibraryDetailPane({
             <span className="mono">{snapshot.citedByCount}</span>
           </MetaItem>
         )}
+      
+        </div>
       </MetaFold>
-
-      {/* —— 摘要（折叠，与元信息 / 我的笔记同款） —— */}
-      {abstract && (
-        <MetaFold label={tr('摘要', 'Abstract')}>
-          <div style={{ fontSize: 13.5, lineHeight: 1.7, margin: 0 }}>{abstract}</div>
-        </MetaFold>
-      )}
 
       {/* —— TL;DR —— */}
       {tldr && (

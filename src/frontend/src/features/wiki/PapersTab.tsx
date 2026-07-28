@@ -755,8 +755,6 @@ function PaperDetailPane({
                 wiki
               </span>
             )}
-            {/* 向量索引状态跟着徽章走；不带重建按钮——这一行是速览，不是操作区 */}
-            <PaperIndexStatusRow paperId={paper.id} showRebuild={false} />
             {paper.pdf_available && (
               <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
                 <Icon name="file" size={11} />
@@ -890,6 +888,9 @@ function PaperDetailPane({
         invalidateKeys={[['papers', scopeId]]}
       />
 
+      {/* —— 向量索引状态（五处详情面板同一位置：标签行之后） —— */}
+      <PaperIndexStatusRow paperId={paper.id} showRebuild={false} />
+
       {/* —— 概念 chips（过多时折叠） —— */}
       {paper.concepts.length > 0 && (
         <div className="row gap8 wrap" style={{ marginTop: 16 }}>
@@ -917,8 +918,18 @@ function PaperDetailPane({
         </div>
       )}
 
-      {/* —— frontmatter 风格元信息（默认折叠）；编译时间在下方 AI 图文介绍那行已有 —— */}
-      <MetaFold key={`meta-${paperId}`}>
+
+      {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
+          只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
+      <MetaFold key={`abs-${paperId}`} label={tr('摘要', 'Abstract')}>
+        {paper.abstract ? (
+          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{paper.abstract}</div>
+        ) : (
+          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+            {tr('这篇还没有摘要。', 'No abstract for this paper.')}
+          </p>
+        )}
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
         <MetaItem label="arxiv_id">{paper.arxiv_id ? <span className="mono">{paper.arxiv_id}</span> : <span className="muted">—</span>}</MetaItem>
         <MetaItem label="doi">{paper.doi ? <span className="mono">{paper.doi}</span> : <span className="muted">—</span>}</MetaItem>
         <MetaItem label="published">
@@ -934,14 +945,9 @@ function PaperDetailPane({
         <MetaItem label={tr('入库时间', 'added at')}>
           <span className="mono">{fmtTime(paper.created_at)}</span>
         </MetaItem>
+      
+        </div>
       </MetaFold>
-
-      {/* —— 摘要（折叠，与元信息 / 我的笔记同款） —— */}
-      {paper.abstract && (
-        <MetaFold key={`abs-${paperId}`} label={tr('摘要', 'Abstract')}>
-          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{paper.abstract}</div>
-        </MetaFold>
-      )}
 
       {/* —— TL;DR —— */}
       {paper.tldr && (

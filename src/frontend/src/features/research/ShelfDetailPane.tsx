@@ -16,6 +16,7 @@ import { tr } from '../../lib/i18n';
 import { libraryPath, useLibraries } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
 import { PaperReader } from '../wiki/PaperReader';
+import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { AffiliationChips, AuthorLinks, MetaFold, usePoolConceptNav } from '../wiki/shared';
 import {
   ConceptChips,
@@ -397,14 +398,27 @@ export function ShelfDetailPane({
         />
       )}
 
+      {/* —— 向量索引状态（五处详情面板同一位置：标签行之后） —— */}
+      {paper && <PaperIndexStatusRow paperId={item.paper_id} showRebuild={false} />}
+
       {/* —— 课题备注：为什么相关（仅书架内论文；这条是课题里公开的说明） —— */}
       {onShelf && <NoteEditor key={item.paper_id} note={item.note} pending={notePending} onSave={onSaveNote} />}
 
       {/* —— 概念 chips：点了进不限库的概念页 —— */}
       <ConceptChips concepts={paper?.concepts} onOpen={openConcept} />
 
-      {/* —— frontmatter 风格元信息（默认折叠） —— */}
-      <MetaFold>
+
+      {/* 摘要 + 元信息合成一块：元信息本来就是查证时才看的东西，单独一张卡
+          只是多一次点击。样式与「我的笔记」同款，默认收起。 */}
+      <MetaFold label={tr('摘要', 'Abstract')}>
+        {abstract ? (
+          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{abstract}</div>
+        ) : (
+          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+            {tr('这篇还没有摘要。', 'No abstract for this paper.')}
+          </p>
+        )}
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '0.5px solid var(--border)' }}>
         <MetaItem label="arxiv_id">
           {item.arxiv_id ? <span className="mono">{item.arxiv_id}</span> : <span className="muted">—</span>}
         </MetaItem>
@@ -438,14 +452,9 @@ export function ShelfDetailPane({
             tr('手动添加', 'Added manually')
           )}
         </MetaItem>
+      
+        </div>
       </MetaFold>
-
-      {/* —— 摘要（折叠，与元信息 / 我的笔记同款） —— */}
-      {abstract && (
-        <MetaFold label={tr('摘要', 'Abstract')}>
-          <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>{abstract}</div>
-        </MetaFold>
-      )}
 
       {/* —— TL;DR —— */}
       {tldr && (
