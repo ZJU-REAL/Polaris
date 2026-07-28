@@ -4,9 +4,11 @@ from arq import cron, func
 from arq.connections import RedisSettings
 
 from app.core.config import get_settings
+from app.core.queue import WORKER_FUNCTIONS
 from worker.tasks import (
     daily_feed_sync,
     daily_publication_match,
+    daily_wiki_ingest,
     index_papers_fulltext_task,
     match_user_publications,
     ping_task,
@@ -28,6 +30,10 @@ class WorkerSettings:
         match_user_publications,
         index_papers_fulltext_task,
         daily_feed_sync,
+        # 库同步：由「每日论文抓取」跑完后入队触发。它一度只挂在 cron 上，改成
+        # 事件驱动后忘了加到这里，于是每次入队都被 arq 丢掉（#216）。
+        daily_wiki_ingest,
+        daily_publication_match,
     ]
     # 抓取时刻可由管理员配置（SystemSetting daily_feed_sync_time，默认 UTC 02:30 =
     # 北京 10:30；arXiv 约北京 10:00 放新公告）。arq 的 cron 时刻在 worker 启动时就固定
@@ -46,3 +52,19 @@ class WorkerSettings:
     job_timeout = 3600
     # 启动对账：认领无人执行的 executing 航程（重启/超时把任务弄丢时自动恢复）
     on_startup = reconcile_stuck_voyages
+
+
+def registered_function_names() -> set[str]:
+    """WorkerSettings.functions 里实际注册的任务名。"""
+    return {getattr(f, "name", None) or f.__name__ for f in WorkerSettings.functions}
+
+
+# 与入队方的白名单双向核对，导入即校验：任一边漏了都会让入队被 arq 静默丢弃（#216）。
+# 用显式抛错而不是 assert —— assert 在 python -O 下会被剥掉，那正是它最该生效的场合。
+_registered = registered_function_names()
+if _registered != WORKER_FUNCTIONS:
+    raise RuntimeError(
+        "WorkerSettings.functions 与 app.core.queue.WORKER_FUNCTIONS 不一致："
+        f"只在 worker 侧={sorted(_registered - WORKER_FUNCTIONS)}，"
+        f"只在白名单侧={sorted(WORKER_FUNCTIONS - _registered)}"
+    )
