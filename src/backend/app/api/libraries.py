@@ -39,7 +39,7 @@ from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.graph import GraphResponse
-from app.schemas.ingest import IngestRequest, IngestStateRead
+from app.schemas.ingest import DigestGenerateRead, IngestRequest, IngestStateRead
 from app.schemas.libraries import (
     CuratorRead,
     CuratorsUpdate,
@@ -49,6 +49,8 @@ from app.schemas.libraries import (
     DuplicateCandidateGroup,
     LibraryBudgetRead,
     LibraryCreate,
+    LibraryDigestRead,
+    LibraryDigestSummary,
     LibraryReject,
     PaperMergeRequest,
     PaperMergeResult,
@@ -84,6 +86,7 @@ from app.services import paper_enrich as paper_enrich_service
 from app.services import paper_import as paper_import_service
 from app.services import paper_merge as paper_merge_service
 from app.services import papers as papers_service
+from app.services import research_digest as research_digest_service
 from app.services import statement_interview as interview
 from app.services.embedding import embed_query
 from app.services.wiki_export import build_obsidian_zip_for_libraries
@@ -231,9 +234,7 @@ async def statement_interview(
                 options=question.options,
             ),
         )
-    statement = await interview.compose(
-        topic=data.topic, answers=answers, llm=llm, user_id=user.id
-    )
+    statement = await interview.compose(topic=data.topic, answers=answers, llm=llm, user_id=user.id)
     return StatementInterviewResponse(done=True, step=total, total=total, statement=statement)
 
 
@@ -249,6 +250,75 @@ async def get_library(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     row = await libraries_service.library_overview(session, library=library, user=user)
     return DirectionLibraryDetail(**row)
+
+
+@router.get("/libraries/{library_id}/digests", response_model=list[LibraryDigestSummary])
+async def list_library_digests(
+    library_id: uuid.UUID,
+    limit: int = Query(default=30, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[LibraryDigestSummary]:
+    """按日期倒序列出文献库每日简报；正文由详情端点按需读取。"""
+    library = await _get_visible_library(session, library_id, user)
+    rows = await research_digest_service.list_digest_summaries(
+        session, library_id=library.id, limit=limit
+    )
+    return [LibraryDigestSummary(**row) for row in rows]
+
+
+@router.post(
+    "/libraries/{library_id}/digests/generate",
+    response_model=DigestGenerateRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_library_digest(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_llm_task),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> DigestGenerateRead:
+    """生成今日简报：有今日更新则直接生成，否则先执行一次增量同步。"""
+    library = await _get_managed_library(session, library_id, user)
+    if library.status != "active":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_NOT_ACTIVE")
+    project = (
+        await session.get(Project, library.project_id) if library.project_id is not None else None
+    )
+    try:
+        run, strategy, paper_count = await ingest_service.create_digest_voyage(
+            session,
+            library=library,
+            project=project,
+            created_by=user.id,
+        )
+    except ingest_service.IngestConflictError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="INGEST_ALREADY_RUNNING") from e
+    except ingest_service.LibraryBudgetExhaustedError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_BUDGET_EXHAUSTED") from e
+    await queue.enqueue("run_voyage", str(run.id))
+    return DigestGenerateRead(
+        voyage_id=run.id,
+        strategy=strategy,
+        paper_count=paper_count,
+    )
+
+
+@router.get("/libraries/{library_id}/digests/{digest_id}", response_model=LibraryDigestRead)
+async def get_library_digest(
+    library_id: uuid.UUID,
+    digest_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LibraryDigestRead:
+    """读取一份每日简报及该次同步形成的滚动趋势快照。"""
+    library = await _get_visible_library(session, library_id, user)
+    digest = await research_digest_service.get_digest(
+        session, library_id=library.id, digest_id=digest_id
+    )
+    if digest is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_DIGEST_NOT_FOUND")
+    return LibraryDigestRead.model_validate(digest)
 
 
 @router.post("/libraries/{library_id}/request-public", response_model=DirectionLibraryDetail)
@@ -379,9 +449,7 @@ async def delete_library(
     """
     library = await _get_library(session, library_id)
     try:
-        await libraries_service.delete_library(
-            session, library=library, user=user, force=force
-        )
+        await libraries_service.delete_library(session, library=library, user=user, force=force)
     except libraries_service.LibraryDeleteForbiddenError as e:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LIBRARY_DELETE_FORBIDDEN") from e
     except libraries_service.LibraryHasTopicsError as e:
@@ -432,9 +500,7 @@ async def start_library_ingest(
         # 待审批 / 已驳回的库不能抓取（P9b：仅 active 且预算内可触发）。
         raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_NOT_ACTIVE")
     project = (
-        await session.get(Project, library.project_id)
-        if library.project_id is not None
-        else None
+        await session.get(Project, library.project_id) if library.project_id is not None else None
     )
     try:
         run = await ingest_service.create_ingest_voyage(
@@ -608,9 +674,7 @@ async def restore_library_paper(
     return await _paper_detail(session, view, user.id)
 
 
-@router.delete(
-    "/libraries/{library_id}/papers/{paper_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/libraries/{library_id}/papers/{paper_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_library_paper(
     library_id: uuid.UUID,
     paper_id: uuid.UUID,
@@ -750,16 +814,12 @@ async def export_library_citations(
         return Response(
             content=citations_service.build_bibtex(papers),
             media_type="text/plain; charset=utf-8",
-            headers={
-                "Content-Disposition": 'attachment; filename="polaris-library-citations.bib"'
-            },
+            headers={"Content-Disposition": 'attachment; filename="polaris-library-citations.bib"'},
         )
     return Response(
         content=json.dumps(citations_service.build_csl_json(papers), ensure_ascii=False, indent=2),
         media_type="application/json",
-        headers={
-            "Content-Disposition": 'attachment; filename="polaris-library-citations.json"'
-        },
+        headers={"Content-Disposition": 'attachment; filename="polaris-library-citations.json"'},
     )
 
 

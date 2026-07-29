@@ -15,7 +15,11 @@ from alembic import command
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.paper import Concept, Paper, PaperWiki
-from app.services.concepts import extract_wikilinks, link_paper_concepts
+from app.services.concepts import (
+    extract_wikilinks,
+    link_generated_paper_concepts,
+    link_paper_concepts,
+)
 
 from .conftest import add_paper, membership_of, register_and_login
 
@@ -70,9 +74,7 @@ async def _link(project_id: str, paper_id: uuid.UUID) -> tuple[int, int]:
 
 async def _concept(name: str) -> Concept:
     async with get_sessionmaker()() as session:
-        return (
-            await session.execute(select(Concept).where(Concept.name == name))
-        ).scalar_one()
+        return (await session.execute(select(Concept).where(Concept.name == name))).scalar_one()
 
 
 async def test_first_reference_stays_candidate_and_invisible(client):
@@ -130,6 +132,39 @@ async def test_second_reference_promotes_and_defines(client):
     assert (await _concept("本文自造Bench")).status == "candidate"
 
 
+async def test_daily_digest_concepts_link_and_promote_shared_names(client):
+    """尚未精读的今日论文也能通过简报标注概念；只展示达到复用门槛的正式概念。"""
+    project_id, _headers, ids = await _seed(
+        client,
+        {
+            "Paper A": "尚未包含概念双链。",
+            "Paper B": "同样尚未包含概念双链。",
+        },
+    )
+    async with get_sessionmaker()() as session:
+        active_by_paper, stats = await link_generated_paper_concepts(
+            session,
+            concepts_by_paper={
+                ids["Paper A"]: ["Agent 工作流", "A 专属方法"],
+                ids["Paper B"]: ["Agent 工作流", "B 专属方法"],
+            },
+            llm=LLMRouter(),
+            project_id=uuid.UUID(project_id),
+        )
+
+    assert active_by_paper[str(ids["Paper A"])] == ["Agent 工作流"]
+    assert active_by_paper[str(ids["Paper B"])] == ["Agent 工作流"]
+    assert stats == {
+        "concepts_created": 3,
+        "links_created": 4,
+        "concepts_promoted": 1,
+        "concepts_rejected": 0,
+        "active_concepts": 1,
+    }
+    assert (await _concept("Agent 工作流")).status == "active"
+    assert (await _concept("A 专属方法")).status == "candidate"
+
+
 async def test_junk_name_is_rejected_at_promotion(client):
     """够门槛也进不来：模型判定不是概念的（漏感叹号的 fig:3）落 rejected 终态。
 
@@ -173,9 +208,7 @@ async def test_promotion_survives_recompile_of_one_paper(client):
 
     async with get_sessionmaker()() as session:
         wiki = (
-            await session.execute(
-                select(PaperWiki).where(PaperWiki.paper_id == ids["Paper A"])
-            )
+            await session.execute(select(PaperWiki).where(PaperWiki.paper_id == ids["Paper A"]))
         ).scalar_one()
         wiki.content = "改写后不再提它。"
         await session.commit()
@@ -216,9 +249,10 @@ async def test_sweep_reviews_never_validated_legacy_concepts(client):
     assert (await _concept("fig:1")).status == "rejected"
     real = await _concept("真概念")
     assert real.status == "active" and real.validated_at is not None  # 判过就不再复判
-    names = {c["name"] for c in (await client.get(
-        f"/api/projects/{project_id}/concepts", headers=headers
-    )).json()}
+    names = {
+        c["name"]
+        for c in (await client.get(f"/api/projects/{project_id}/concepts", headers=headers)).json()
+    }
     assert "fig:1" not in names and "真概念" in names
 
 
@@ -288,10 +322,7 @@ def _seed_concepts(db_path: Path) -> dict[str, uuid.UUID]:
             for concept, papers in links.items():
                 for paper in papers:
                     conn.execute(
-                        text(
-                            "INSERT INTO paper_concepts (paper_id, concept_id)"
-                            " VALUES (:p, :c)"
-                        ),
+                        text("INSERT INTO paper_concepts (paper_id, concept_id) VALUES (:p, :c)"),
                         {"p": ids[paper].hex, "c": ids[concept].hex},
                     )
     finally:

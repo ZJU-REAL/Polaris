@@ -74,14 +74,31 @@ IDEA_KINDS = ("idea_forge", "idea_review", "idea_proposal")
 def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
     """文献收集计划：每种模式只跑自己需要的步骤（docs/api-m2.md §7）。
 
-    以前三种来源焊成一条七步流水线，想只补一轮引文就得连带再检索一次 arXiv。现在按
-    ``checkpoint.params.mode`` 分叉，共用后五步（打分→取全文→编译→概念→记录进度）：
+    三种来源按 ``checkpoint.params.mode`` 分叉，共用后续步骤；简报与趋势必须成功后才
+    提交水位线。``digest_only`` 用于今日已有论文更新时跳过抓取，直接重建简报与趋势。
 
     - ``search``：按查询词走 arXiv 检索 API；
     - ``snowball``：从锚点论文出发走引用/参考；
     - ``incremental``：从每日论文池按方向挑，不访问 arXiv。
     """
     params = (run.checkpoint or {}).get("params") or {}
+    if params.get("digest_only") is True:
+        steps = [
+            ("生成每日简报", "wiki.daily_digest", "今日简报已基于今日更新论文生成"),
+            ("综合滚动趋势", "wiki.trend_synthesize", "滚动趋势快照已更新"),
+        ]
+        return [
+            {
+                "title": title,
+                "action": action,
+                "params": {},
+                "acceptance": acceptance,
+                "checks": [{"kind": "no_error"}],
+                "requires_gate": None,
+            }
+            for title, action, acceptance in steps
+        ]
+
     mode = params.get("mode") or ("incremental" if run.kind == "wiki_ingest" else "search")
     if mode == "bootstrap":  # 存量任务的旧名
         mode = "search"
@@ -99,7 +116,9 @@ def wiki_plan(run: VoyageRun) -> list[dict[str, Any]]:
         ("下载 PDF + 抽全文", "wiki.fetch_extract", "top-N 论文全文就绪（失败降级摘要）"),
         ("Librarian 编译 wiki 页", "wiki.compile", "top-N 论文已生成中文 wiki markdown"),
         ("概念上链 + embedding", "wiki.link_concepts", "双链概念已 upsert 并关联论文"),
-        ("记录收集进度", "wiki.update_watermark", "文献库同步状态已更新"),
+        ("生成每日简报", "wiki.daily_digest", "本次简报已持久化且覆盖保留/排除论文"),
+        ("综合滚动趋势", "wiki.trend_synthesize", "滚动趋势快照已更新"),
+        ("记录同步进度", "wiki.update_watermark", "文献库同步状态已更新"),
     ]
     return [
         {

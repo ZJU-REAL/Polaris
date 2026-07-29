@@ -7,6 +7,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -38,6 +39,11 @@ def _rejects_effort(body: str) -> bool:
     return any(marker in low for marker in _EFFORT_REJECT_MARKERS)
 
 
+_MATRYOSHKA_UNSUPPORTED_MARKER = "does not support matryoshka representation"
+# PostgreSQL 的 papers/paper_chunks/ideas 向量列统一为 vector(1024)。
+_POLARIS_EMBEDDING_DIM = 1024
+
+
 def _retry_delay(resp: httpx.Response, attempt: int) -> float:
     retry_after = resp.headers.get("retry-after")
     if retry_after:
@@ -46,6 +52,25 @@ def _retry_delay(resp: httpx.Response, attempt: int) -> float:
         except ValueError:
             pass
     return _BACKOFF_BASE_SECONDS * (2**attempt)
+
+
+def _is_qwen3_embedding(model: str) -> bool:
+    """Qwen3 Embedding 支持 MRL，但旧版 vLLM 可能没有从模型配置识别出来。"""
+    normalized = model.lower().replace("-", "_")
+    return "qwen3" in normalized and "embedding" in normalized
+
+
+def _truncate_and_normalize(vector: list[float], dimensions: int) -> list[float]:
+    """按 Matryoshka 语义截取前 N 维，并恢复单位长度。"""
+    if len(vector) < dimensions:
+        raise RuntimeError(
+            f"embedding dimension mismatch: expected {dimensions}, got {len(vector)}"
+        )
+    truncated = vector[:dimensions]
+    norm = math.sqrt(math.fsum(value * value for value in truncated))
+    if norm == 0:
+        raise RuntimeError("cannot normalize a zero embedding vector")
+    return [value / norm for value in truncated]
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -288,14 +313,39 @@ class OpenAICompatProvider(LLMProvider):
                     yield content
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
-        resp = await self._post_with_retry(
-            f"{self._base_url}/embeddings", {"model": model, "input": texts}
-        )
+        url = f"{self._base_url}/embeddings"
+        payload: dict[str, Any] = {"model": model, "input": texts}
+        qwen3_embedding = _is_qwen3_embedding(model)
+        if qwen3_embedding:
+            # Qwen3 Embedding 原生支持 32..hidden_size 的 MRL 输出维度。新 vLLM
+            # 会直接返回 1024 维；旧部署若没有标记 is_matryoshka，会在下面兼容。
+            payload["dimensions"] = _POLARIS_EMBEDDING_DIM
+
+        resp = await self._post_with_retry(url, payload)
+        if (
+            qwen3_embedding
+            and resp.status_code == 400
+            and _MATRYOSHKA_UNSUPPORTED_MARKER in resp.text.lower()
+        ):
+            logger.warning(
+                "embedding backend did not recognize Qwen3 MRL; requesting the native vector "
+                "and reducing it to %d dimensions locally",
+                _POLARIS_EMBEDDING_DIM,
+            )
+            resp = await self._post_with_retry(url, {"model": model, "input": texts})
         resp.raise_for_status()
         data = resp.json()["data"]
         # 按 index 还原顺序（OpenAI 兼容端点保证有 index 字段）
         data.sort(key=lambda item: item.get("index", 0))
-        return [item["embedding"] for item in data]
+        vectors = [item["embedding"] for item in data]
+        if not qwen3_embedding:
+            return vectors
+        return [
+            vector
+            if len(vector) == _POLARIS_EMBEDDING_DIM
+            else _truncate_and_normalize(vector, _POLARIS_EMBEDDING_DIM)
+            for vector in vectors
+        ]
 
     async def rerank(
         self,

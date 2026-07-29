@@ -32,6 +32,8 @@ _FAKE_AFFIL_BLOCK = (
     "POLARIS_AFFILIATIONS>>>\n"
 )
 _LIBRARIAN_MARKER = "TL;DR"
+_DAILY_DIGEST_MARKER = "POLARIS_DAILY_DIGEST"
+_TREND_SYNTHESIS_MARKER = "POLARIS_TREND_SYNTHESIS"
 _INTERVIEW_MARKER = '"out_of_scope"'
 _GAPS_MARKER = '"gaps"'  # forge gap 分析
 _IDEAS_MARKER = '"ideas"'  # forge 候选生成
@@ -281,6 +283,10 @@ class FakeProvider(LLMProvider):
             return FakeProvider._respond_writing_related(last_user)
         if _WRITE_SECTION_MARKER in full_text:
             return FakeProvider._respond_writing_section(full_text, last_user)
+        if _DAILY_DIGEST_MARKER in full_text:
+            return FakeProvider._respond_daily_digest(last_user)
+        if _TREND_SYNTHESIS_MARKER in full_text:
+            return FakeProvider._respond_trend_synthesis(last_user)
         if _VERDICT_MARKER in full_text and _PLAN_MARKER not in full_text:
             return json.dumps(
                 {"passed": True, "reason": "fake-sextant: 产出满足验收标准（确定性假判定）"},
@@ -389,6 +395,58 @@ class FakeProvider(LLMProvider):
                 "score": score,
                 "reason": "fake-relevance: 依据标题/摘要关键词的确定性假打分",
                 "tldr": "（fake TL;DR）" + last_user.strip().splitlines()[-1][:120],
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_daily_digest(last_user: str) -> str:
+        """每日简报：覆盖 prompt 中每个 paper_id，供全流水线测试。"""
+        paper_ids = list(dict.fromkeys(re.findall(r'"paper_id"\s*:\s*"([^"]+)"', last_user)))
+        return json.dumps(
+            {
+                "summary": f"（fake 每日简报）本期共整理 {len(paper_ids)} 篇相关论文。",
+                "paper_insights": [
+                    {
+                        "paper_id": paper_id,
+                        "highlight": "给出了可复用的方法与实验信号（fake）。",
+                        "direction_relation": "直接回应本库的研究问题（fake）。",
+                        "concepts": ["Agent", "强化学习"],
+                    }
+                    for paper_id in paper_ids
+                ],
+                "cross_paper_signals": (
+                    [
+                        {
+                            "title": "Agent 方法持续系统化（fake）",
+                            "summary": "多篇论文共同强调规划与反馈闭环（fake）。",
+                            "paper_ids": paper_ids[:3],
+                        }
+                    ]
+                    if paper_ids
+                    else []
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _respond_trend_synthesis(last_user: str) -> str:
+        """滚动趋势：从 prompt 取论文 id，返回一条确定性趋势。"""
+        paper_ids = list(dict.fromkeys(re.findall(r'"paper_id"\s*:\s*"([^"]+)"', last_user)))
+        return json.dumps(
+            {
+                "trends": [
+                    {
+                        "title": "可验证的 Agent 工作流（fake）",
+                        "status": "active",
+                        "summary": "研究正在从单步生成转向可验证闭环（fake）。",
+                        "evidence_trajectory": "近期论文持续补充规划、反馈与评测证据（fake）。",
+                        "concepts": ["Agent", "强化学习"],
+                        "paper_ids": paper_ids[:5],
+                        "last_seen": "2026-07-29",
+                    }
+                ]
             },
             ensure_ascii=False,
         )

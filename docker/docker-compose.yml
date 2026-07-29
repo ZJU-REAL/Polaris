@@ -40,7 +40,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "${POLARIS_API_PORT:-8000}:8000"
     volumes:
       - appdata:/srv/data          # PDF / 编译产物等
       - tectonic-cache:/root/.cache/Tectonic   # tectonic 宏包缓存（首次编译联网下载）
@@ -72,7 +72,7 @@ services:
     depends_on:
       - api
     ports:
-      - "8080:80"
+      - "${POLARIS_FRONTEND_PORT:-8080}:80"
 
 volumes:
   pgdata:

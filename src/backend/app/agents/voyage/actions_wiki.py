@@ -2,7 +2,8 @@
 
 流水线（docs/api-m2.md §7）：
     wiki.search_candidates → wiki.snowball → wiki.score_relevance →
-    wiki.fetch_extract → wiki.compile → wiki.link_concepts → wiki.update_watermark
+    wiki.fetch_extract → wiki.compile → wiki.link_concepts → wiki.daily_digest →
+    wiki.trend_synthesize → wiki.update_watermark
 
 健壮性约定：
 - 每篇论文独立 try/except，单篇失败不打断批处理；observation 汇总
@@ -30,6 +31,7 @@ from app.models.base import utcnow
 from app.models.daily_feed import DailyFeedEntry
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, new_paper
+from app.models.research_digest import LibraryResearchDigest
 from app.models.voyage import VoyageStep
 from app.schemas.ingest import TIME_RANGE_DAYS
 from app.services.affiliations import (
@@ -72,6 +74,7 @@ from app.services.relevance import (
     build_relevance_context,
     score_paper_relevance,
 )
+from app.services.research_digest import create_daily_digest, synthesize_rolling_trends
 from app.services.wiki_compile import compile_paper
 
 logger = logging.getLogger(__name__)
@@ -474,6 +477,11 @@ async def _collect_from_daily_feed(
     }
 
 
+def _latest_source_date(entries: list[dict[str, Any]]) -> str | None:
+    dates = [parsed for entry in entries if (parsed := _parse_iso(entry.get("published")))]
+    return max(dates).isoformat() if dates else None
+
+
 @register("wiki.search_candidates")
 async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     knobs = _knobs(ctx)
@@ -518,6 +526,22 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             new_papers = feed.pop("selected")
             await session.flush()
             brief = _paper_brief(new_papers)
+            messages: list[str] = []
+            if int(feed["feed_total"]) == 0:
+                messages.append("每日论文池当前为空；请检查每日抓取任务及数据源状态。")
+            if feed.get("feed_latest_date") is None:
+                messages.append("未能确认每日论文池的最新公告时间。")
+            diagnostics = {
+                "source": "daily_feed",
+                "source_fetched": int(feed["feed_total"]),
+                "prescreened": int(feed["after_vector_rank"]),
+                "inserted": len(new_papers),
+                "source_latest_at": feed.get("feed_latest_date"),
+                "status": "warning" if messages else "ok",
+                "messages": messages,
+                **feed,
+            }
+            ctx.checkpoint["ingest_search_stats"] = diagnostics
             await session.commit()
             ctx.checkpoint["watermark_candidate"] = now.isoformat()
             await ctx.log(
@@ -529,6 +553,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 "mode": mode,
                 "inserted": len(new_papers),
                 "new_papers": brief,
+                "source_latest_at": diagnostics["source_latest_at"],
+                "diagnostic_status": diagnostics["status"],
+                "diagnostic_messages": messages,
                 **feed,
             }
 
@@ -608,7 +635,30 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         brief = _paper_brief(new_papers)
         await session.commit()
 
-    # 新水位线 = 本次检索时刻，由 wiki.update_watermark 落库
+    source_latest_at = _latest_source_date(entries)
+    messages: list[str] = []
+    source_fetched = len(entries)
+    cap_hit = len(entries) >= limit
+    if source_fetched == 0:
+        messages.append("本次所有数据源均返回 0 篇；请复查检索配置、源站状态和时间窗口。")
+    if cap_hit:
+        messages.append(f"arXiv 查询达到 {limit} 篇上限，窗口内可能仍有未抓取候选。")
+    if source_latest_at is None:
+        messages.append("未能从返回结果确认数据源最新公告时间。")
+    diagnostics = {
+        "source": "arxiv",
+        "source_fetched": source_fetched,
+        "prescreened": len(entries),
+        "query_found": len(entries),
+        "inserted": len(new_papers),
+        "window_since": since.isoformat(),
+        "source_latest_at": source_latest_at,
+        "cap_hit": cap_hit,
+        "status": "warning" if messages else "ok",
+        "messages": messages,
+    }
+    ctx.checkpoint["ingest_search_stats"] = diagnostics
+    # 新水位线 = 本次检索时刻，由最后一步 wiki.update_watermark 落库
     ctx.checkpoint["watermark_candidate"] = now.isoformat()
     return {
         "source": "arxiv",
@@ -617,6 +667,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         "new_papers": brief,
         "window_since": since.isoformat(),
         "mode": mode,
+        "source_latest_at": source_latest_at,
+        "diagnostic_status": diagnostics["status"],
+        "diagnostic_messages": messages,
     }
 
 
@@ -758,6 +811,19 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
         brief = _paper_brief(new_papers)
         await session.commit()
 
+    ctx.checkpoint["ingest_snowball_inserted"] = (
+        int(ctx.checkpoint.get("ingest_snowball_inserted") or 0) + inserted
+    )
+    ctx.checkpoint["ingest_search_stats"] = {
+        "source": "semantic_scholar",
+        "source_fetched": inserted,
+        "prescreened": inserted,
+        # 插入量由 ingest_snowball_inserted 统一计数，避免简报中重复相加。
+        "inserted": 0,
+        "source_latest_at": None,
+        "status": "warning" if failed else "ok",
+        "messages": [f"Semantic Scholar 扩展有 {len(failed)} 个种子失败。"] if failed else [],
+    }
     return {
         "depth": depth,
         "processed": processed_seeds,
@@ -828,6 +894,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 voyage_id=ctx.run.id,
             )
             score = scored.score
+            membership.relevance_reason = scored.reason
             passed = score >= threshold
             if passed:
                 membership.status = "scored"
@@ -844,6 +911,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 "title": paper.title,
                 "score": score,
                 "passed": passed,
+                "reason": scored.reason,
             }
 
     results = await _gather_bounded(_LLM_CONCURRENCY, [score_one(mid) for mid in membership_ids])
@@ -855,6 +923,7 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
     failed: list[dict[str, str]] = []
     scored_ids: list[str] = []
     rejected_ids: list[str] = []
+    digest_excluded: list[dict[str, Any]] = []
     scored_brief: list[dict[str, Any]] = []
     for paper_id, result in zip(paper_ids, results, strict=True):
         if isinstance(result, BaseException):
@@ -867,6 +936,14 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
         if not result["passed"]:
             excluded += 1
             rejected_ids.append(result["id"])
+            digest_excluded.append(
+                {
+                    "paper_id": result["id"],
+                    "title": result["title"],
+                    "relevance_score": result["score"],
+                    "reason": result["reason"],
+                }
+            )
         if len(scored_brief) < _OBS_LIST_CAP:
             scored_brief.append(result)
 
@@ -882,6 +959,13 @@ async def score_relevance(ctx: ActionContext, params: dict[str, Any]) -> dict[st
 
     # 步内进度记入 checkpoint（审计用；幂等本身靠 Paper.status）
     ctx.checkpoint["scored_ids"] = list(ctx.checkpoint.get("scored_ids") or []) + scored_ids
+    previous_excluded = {
+        str(item.get("paper_id")): item
+        for item in (ctx.checkpoint.get("digest_excluded_papers") or [])
+        if isinstance(item, dict) and item.get("paper_id")
+    }
+    previous_excluded.update({item["paper_id"]: item for item in digest_excluded})
+    ctx.checkpoint["digest_excluded_papers"] = list(previous_excluded.values())
     return {
         "processed": len(scored_ids) + len(failed),
         "succeeded": succeeded,
@@ -1246,7 +1330,62 @@ async def link_concepts(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
     }
 
 
-# ---- 7. 更新水位线 + 活动流 ----
+# ---- 7. 每日简报（持久化；失败会阻止后续水位线提交） ----
+
+
+@register("wiki.daily_digest")
+async def daily_digest(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    async with get_sessionmaker()() as session:
+        library = await _resolve_library(session, ctx)
+        if library is None:
+            raise ValueError(f"library not found for run: {ctx.run.id}")
+        digest = await create_daily_digest(
+            session,
+            run=ctx.run,
+            library=library,
+            checkpoint=ctx.checkpoint,
+            llm=ctx.llm,
+            user_id=_ingest_billing_owner(library),
+            extra_guidance=ctx.skill_guidance("wiki.daily_digest"),
+        )
+    ctx.checkpoint["daily_digest_id"] = str(digest.id)
+    await ctx.log(f"每日简报已生成：{digest.report_date.isoformat()}", level="success")
+    return {
+        "digest_id": str(digest.id),
+        "report_date": digest.report_date.isoformat(),
+        "kept": int(digest.counts.get("kept") or 0),
+        "excluded": int(digest.counts.get("excluded") or 0),
+        "signals": len(digest.cross_paper_signals),
+    }
+
+
+# ---- 8. 滚动趋势综合（持久化快照） ----
+
+
+@register("wiki.trend_synthesize")
+async def trend_synthesize(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
+    async with get_sessionmaker()() as session:
+        library = await _resolve_library(session, ctx)
+        if library is None:
+            raise ValueError(f"library not found for run: {ctx.run.id}")
+        digest = await synthesize_rolling_trends(
+            session,
+            run=ctx.run,
+            library=library,
+            llm=ctx.llm,
+            user_id=_ingest_billing_owner(library),
+            extra_guidance=ctx.skill_guidance("wiki.trend_synthesize"),
+        )
+    ctx.checkpoint["trend_digest_id"] = str(digest.id)
+    await ctx.log(f"滚动趋势已更新：{len(digest.rolling_trends)} 条主线", level="success")
+    return {
+        "digest_id": str(digest.id),
+        "trends": len(digest.rolling_trends),
+        "model": digest.trend_model,
+    }
+
+
+# ---- 9. 更新水位线 + 活动流 ----
 
 
 @register("wiki.update_watermark")
@@ -1268,6 +1407,19 @@ async def update_watermark(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 .where(VoyageStep.run_id == ctx.run.id, VoyageStep.status == "obsolete")
             )
         ) or 0
+        if not truncated:
+            digest = (
+                await session.execute(
+                    select(LibraryResearchDigest).where(
+                        LibraryResearchDigest.voyage_id == ctx.run.id,
+                        LibraryResearchDigest.trend_model.is_not(None),
+                    )
+                )
+            ).scalar_one_or_none()
+            if digest is None:
+                raise ValueError(
+                    "daily digest/trend snapshot missing; refusing to advance watermark"
+                )
         watermark = (
             previous if truncated else (ctx.checkpoint.get("watermark_candidate") or previous)
         )

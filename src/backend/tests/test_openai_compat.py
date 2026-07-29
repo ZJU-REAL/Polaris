@@ -13,6 +13,7 @@ from app.core.llm.openai_compat import OpenAICompatProvider
 
 BASE_URL = "http://relay.test/api/v1"
 CHAT_URL = f"{BASE_URL}/chat/completions"
+EMBEDDING_URL = f"{BASE_URL}/embeddings"
 
 
 def _sse(chunks: list[dict]) -> bytes:
@@ -160,6 +161,21 @@ async def test_effort_sent_as_reasoning_effort():
 
 
 @respx.mock
+async def test_qwen3_embedding_requests_1024_dimensions():
+    route = respx.post(EMBEDDING_URL).mock(
+        return_value=httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1] * 1024}]})
+    )
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+
+    vectors = await provider.embed(["hello"], model="qwen3_embedding_8b")
+
+    assert len(vectors[0]) == 1024
+    payload = json.loads(route.calls.last.request.content)
+    assert payload["dimensions"] == 1024
+    await provider.aclose()
+
+
+@respx.mock
 async def test_effort_omitted_when_unset():
     """不配 effort 就完全不发该字段——非推理模型/老中转收到会 400。"""
     route = respx.post(CHAT_URL).mock(return_value=httpx.Response(200, json=NON_STREAM_OK))
@@ -211,9 +227,7 @@ async def test_effort_rejected_falls_back_without_it():
             }
         },
     )
-    route = respx.post(CHAT_URL).mock(
-        side_effect=[reject, httpx.Response(200, json=NON_STREAM_OK)]
-    )
+    route = respx.post(CHAT_URL).mock(side_effect=[reject, httpx.Response(200, json=NON_STREAM_OK)])
     provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
     result = await provider.complete(
         [Message(role="user", content="hi")], model="gpt-4o", effort="xhigh"
@@ -222,6 +236,38 @@ async def test_effort_rejected_falls_back_without_it():
     assert route.call_count == 2
     assert json.loads(route.calls[0].request.content)["reasoning_effort"] == "xhigh"
     assert "reasoning_effort" not in json.loads(route.calls[1].request.content)
+    await provider.aclose()
+
+
+@respx.mock
+async def test_qwen3_embedding_falls_back_for_old_vllm_and_normalizes():
+    native = [3.0, 4.0, *([0.0] * 4094)]
+    route = respx.post(EMBEDDING_URL).mock(
+        side_effect=[
+            httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": (
+                            'Model "qwen3_embedding_8b" does not support matryoshka '
+                            "representation, changing output dimensions will lead to poor results."
+                        )
+                    }
+                },
+            ),
+            httpx.Response(200, json={"data": [{"index": 0, "embedding": native}]}),
+        ]
+    )
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+
+    vectors = await provider.embed(["hello"], model="qwen3_embedding_8b")
+
+    assert route.call_count == 2
+    assert json.loads(route.calls[0].request.content)["dimensions"] == 1024
+    assert "dimensions" not in json.loads(route.calls[1].request.content)
+    assert len(vectors[0]) == 1024
+    assert vectors[0][:2] == pytest.approx([0.6, 0.8])
+    assert sum(value * value for value in vectors[0]) == pytest.approx(1.0)
     await provider.aclose()
 
 
@@ -276,9 +322,7 @@ async def test_unrelated_400_is_not_swallowed_as_effort_problem():
     )
     provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
     with pytest.raises(RuntimeError, match="model not found"):
-        await provider.complete(
-            [Message(role="user", content="hi")], model="nope", effort="high"
-        )
+        await provider.complete([Message(role="user", content="hi")], model="nope", effort="high")
     assert route.call_count == 1  # 没有重试
     await provider.aclose()
 
@@ -313,4 +357,18 @@ async def test_effort_rejected_on_stream_retries_without_it():
     assert "".join(chunks) == "Hello world"
     assert route.call_count == 2
     assert "reasoning_effort" not in json.loads(route.calls[1].request.content)
+    await provider.aclose()
+
+
+@respx.mock
+async def test_non_qwen_embedding_request_is_unchanged():
+    route = respx.post(EMBEDDING_URL).mock(
+        return_value=httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1] * 1024}]})
+    )
+    provider = OpenAICompatProvider(base_url=BASE_URL, api_key="sk-test")
+
+    vectors = await provider.embed(["hello"], model="bge-m3")
+
+    assert len(vectors[0]) == 1024
+    assert "dimensions" not in json.loads(route.calls.last.request.content)
     await provider.aclose()

@@ -1161,6 +1161,88 @@ export interface GraphData {
 }
 
 // ============================================================
+// 文献库每日简报 / 滚动趋势
+// ============================================================
+
+export interface LibraryDigestCounts {
+  source_fetched: number;
+  prescreened: number;
+  inserted: number;
+  kept: number;
+  excluded: number;
+  compiled: number;
+}
+
+export interface LibraryDigestGenerateResult {
+  voyage_id: string;
+  strategy: 'digest_only' | 'incremental';
+  paper_count: number;
+}
+
+export interface LibraryPaperInsight {
+  paper_id: string;
+  title: string;
+  tldr?: string;
+  highlight?: string;
+  direction_relation?: string;
+  concepts?: string[];
+  relevance_score?: number | null;
+  status?: string;
+}
+
+export interface LibraryCrossPaperSignal {
+  title: string;
+  summary: string;
+  paper_ids?: string[];
+}
+
+export interface LibraryRollingTrend {
+  title: string;
+  status: 'emerging' | 'active' | 'converging' | 'stale';
+  summary: string;
+  evidence_trajectory: string;
+  concepts: string[];
+  paper_ids: string[];
+  last_seen: string;
+}
+
+export interface LibraryDigestSummary {
+  id: string;
+  report_date: string;
+  source: 'voyage' | 'obsidian';
+  mode: 'bootstrap' | 'incremental' | 'import';
+  counts: LibraryDigestCounts;
+  summary: string;
+  voyage_id: string | null;
+  has_trends: boolean;
+  created_at: string;
+}
+
+export interface LibraryDigestRead extends LibraryDigestSummary {
+  library_id: string;
+  source_diagnostics: {
+    status?: 'ok' | 'warning' | 'imported';
+    source_latest_at?: string | null;
+    messages?: string[];
+    [key: string]: unknown;
+  };
+  paper_insights: LibraryPaperInsight[];
+  excluded_papers: Array<{
+    paper_id?: string;
+    title: string;
+    relevance_score?: number | null;
+    reason: string;
+  }>;
+  cross_paper_signals: LibraryCrossPaperSignal[];
+  content: string;
+  model: string | null;
+  rolling_trends: LibraryRollingTrend[];
+  trend_content: string;
+  trend_model: string | null;
+  updated_at: string;
+}
+
+// ============================================================
 // 实验室数据面板（/lab 概况页）
 // ============================================================
 
@@ -3495,6 +3577,20 @@ export const api = {
   },
   getLibraryGraph(id: string): Promise<GraphData> {
     return request<GraphData>(`/libraries/${id}/graph`);
+  },
+  /** 每日简报历史（正文按选中项再取）。 */
+  listLibraryDigests(id: string, limit = 30): Promise<LibraryDigestSummary[]> {
+    return request<LibraryDigestSummary[]>(`/libraries/${id}/digests?limit=${limit}`);
+  },
+  /** 一份每日简报及该时点的滚动趋势快照。 */
+  getLibraryDigest(id: string, digestId: string): Promise<LibraryDigestRead> {
+    return request<LibraryDigestRead>(`/libraries/${id}/digests/${digestId}`);
+  },
+  /** 智能生成今日简报：今日已有论文更新则直接生成，否则先执行增量同步。 */
+  generateLibraryDigest(id: string): Promise<LibraryDigestGenerateResult> {
+    return request<LibraryDigestGenerateResult>(`/libraries/${id}/digests/generate`, {
+      method: 'POST',
+    });
   },
 
   // —— 实验室数据面板（/lab 概况页） ——

@@ -41,9 +41,7 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 生命周期（P9b）：pending 待审批 | active 已激活（可抓取）| rejected 已驳回。
     # server_default='active'——存量库与课题隐式起源库都视为已激活；用户经
     # POST /libraries 独立建的库显式落 pending，管理员审批后转 active。
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="active"
-    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="active")
     review_note: Mapped[str | None] = mapped_column(Text)  # 驳回理由（status=rejected 时有值）
     # 归属（P10）：个人库 is_public=false（仅创建者 + admin 可见/可管理），公共库
     # is_public=true（全实验室可见，全体 admin + 创建者/策展人可管理）。个人库经
@@ -96,6 +94,7 @@ class LibraryPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("papers.id", ondelete="CASCADE"), index=True, nullable=False
     )
     relevance_score: Mapped[float | None]  # LLM 对照方向 rubric 的打分
+    relevance_reason: Mapped[str | None] = mapped_column(Text)  # 本次收录/排除的方向化理由
     tldr_note: Mapped[str | None] = mapped_column(Text)  # 库视角一句话概括（可选）
     # 退役列（解读已统一到 paper_wikis，每篇论文一份、不再按库分版本）：只留存量
     # 数据，代码不再读写；删列待确认稳定后另做迁移。

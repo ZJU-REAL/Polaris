@@ -4,7 +4,7 @@
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -187,6 +187,49 @@ class LibraryBudgetRead(BaseModel):
     used_tokens: int
     remaining_tokens: int | None  # 不限时为 None；用超时为 0
     exhausted: bool  # True = 本月预算已用尽（ingest 会被拒绝启动）
+
+
+class LibraryDigestSummary(BaseModel):
+    """文献库每日简报列表项；正文按需从详情端点读取。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    report_date: date
+    source: str
+    mode: str
+    counts: dict[str, Any]
+    summary: str
+    voyage_id: uuid.UUID | None
+    has_trends: bool = False
+    created_at: datetime
+
+
+class LibraryDigestRead(BaseModel):
+    """每日简报完整内容与该时点的滚动趋势快照。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    library_id: uuid.UUID
+    voyage_id: uuid.UUID | None
+    report_date: date
+    source: str
+    mode: str
+    counts: dict[str, Any]
+    source_diagnostics: dict[str, Any]
+    paper_insights: list[Any]
+    excluded_papers: list[Any]
+    cross_paper_signals: list[Any]
+    summary: str
+    content: str
+    model: str | None
+    rolling_trends: list[Any]
+    trend_content: str
+    trend_model: str | None
+    has_trends: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 # ---- 方向描述访谈（AI 结构化问答产出 statement） ----

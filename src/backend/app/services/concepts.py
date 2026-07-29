@@ -124,8 +124,10 @@ async def _free_slug(session: AsyncSession, name: str) -> str:
     """给新概念取一个没被占用的 slug（全局唯一；撞了加随机后缀）。"""
     slug = wiki_slug(name)
     taken = (
-        await session.execute(select(Concept.slug).where(Concept.slug.like(f"{slug}%")))
-    ).scalars().all()
+        (await session.execute(select(Concept.slug).where(Concept.slug.like(f"{slug}%"))))
+        .scalars()
+        .all()
+    )
     if slug not in set(taken):
         return slug
     return f"{slug}-{uuid.uuid4().hex[:6]}"
@@ -218,9 +220,7 @@ async def papers_of_concept(
     )
     if library_id is not None:
         stmt = stmt.where(
-            Paper.id.in_(
-                select(LibraryPaper.paper_id).where(LibraryPaper.library_id == library_id)
-            )
+            Paper.id.in_(select(LibraryPaper.paper_id).where(LibraryPaper.library_id == library_id))
         )
     return list((await session.execute(stmt)).scalars().all())
 
@@ -397,6 +397,148 @@ async def promote_ready_concepts(
     return promoted, rejected
 
 
+def _normalize_generated_concept_names(values: Any) -> list[str]:
+    """清洗简报模型返回的概念名，保序去重并限制单篇概念数量。"""
+    if not isinstance(values, list):
+        return []
+    names: dict[str, None] = {}
+    for value in values:
+        name = " ".join(str(value or "").strip().split())
+        if name.startswith("[[") and name.endswith("]]"):
+            name = name[2:-2].strip()
+        if name.lower().startswith("concepts/"):
+            name = name[len("concepts/") :].strip()
+        name = name.split("|", 1)[0].split("#", 1)[0].strip()
+        if not name or len(name) > 255:
+            continue
+        names.setdefault(name, None)
+        if len(names) >= 6:
+            break
+    return list(names)
+
+
+async def link_generated_paper_concepts(
+    session: AsyncSession,
+    *,
+    concepts_by_paper: dict[str | uuid.UUID, list[Any]],
+    llm: LLMRouter | None = None,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    library_id: uuid.UUID | None = None,
+    voyage_id: uuid.UUID | None = None,
+) -> tuple[dict[str, list[str]], dict[str, int]]:
+    """把每日简报模型提取的概念落库并关联论文。
+
+    这条路径补足「今日论文已评分、但尚未精读编译」时的概念关联。它只增补关联，不清除
+    解读正文建立的既有关系；新名字仍遵循统一的候选/转正治理：至少被两篇论文复用并通过
+    有效性复核后才成为可点击的正式概念。返回值只包含正式概念，供简报生成 wikilink。
+    """
+    normalized: dict[uuid.UUID, list[str]] = {}
+    for raw_paper_id, values in concepts_by_paper.items():
+        try:
+            paper_id = uuid.UUID(str(raw_paper_id))
+        except (TypeError, ValueError):
+            continue
+        normalized[paper_id] = _normalize_generated_concept_names(values)
+
+    names = sorted({name for paper_names in normalized.values() for name in paper_names})
+    if not normalized or not names:
+        return (
+            {str(paper_id): [] for paper_id in normalized},
+            {
+                "concepts_created": 0,
+                "links_created": 0,
+                "concepts_promoted": 0,
+                "concepts_rejected": 0,
+                "active_concepts": 0,
+            },
+        )
+
+    existing = list(
+        (await session.execute(select(Concept).where(Concept.name.in_(names)))).scalars().all()
+    )
+    existing_by_name = {concept.name: concept for concept in existing}
+    by_name = {
+        name: concept
+        for name, concept in existing_by_name.items()
+        if concept.status != CONCEPT_STATUS_REJECTED
+    }
+    created = 0
+    for name in names:
+        # 已判为无效的名字保持终态，不重新创建或关联。
+        if name in existing_by_name:
+            continue
+        by_name[name] = await _new_candidate_concept(session, name)
+        created += 1
+    await session.flush()
+
+    paper_ids = list(normalized)
+    existing_pairs = {
+        (paper_id, concept_id)
+        for paper_id, concept_id in (
+            await session.execute(
+                select(paper_concepts.c.paper_id, paper_concepts.c.concept_id).where(
+                    paper_concepts.c.paper_id.in_(paper_ids)
+                )
+            )
+        ).all()
+    }
+    linked = 0
+    linked_concept_ids: set[uuid.UUID] = set()
+    for paper_id, paper_names in normalized.items():
+        for name in paper_names:
+            concept = by_name.get(name)
+            if concept is None:
+                continue
+            linked_concept_ids.add(concept.id)
+            pair = (paper_id, concept.id)
+            if pair in existing_pairs:
+                continue
+            await session.execute(
+                insert(paper_concepts).values(paper_id=paper_id, concept_id=concept.id)
+            )
+            existing_pairs.add(pair)
+            linked += 1
+
+    # 先释放写事务，再让概念复核模型通过独立连接记账，避免 SQLite 写锁互相等待。
+    await session.commit()
+    promoted, rejected = await promote_ready_concepts(
+        session,
+        concept_ids=list(linked_concept_ids),
+        llm=llm,
+        user_id=user_id,
+        project_id=project_id,
+        library_id=library_id,
+        voyage_id=voyage_id,
+    )
+    await session.commit()
+
+    active_rows = (
+        await session.execute(
+            select(paper_concepts.c.paper_id, Concept.name)
+            .join(Concept, Concept.id == paper_concepts.c.concept_id)
+            .where(
+                paper_concepts.c.paper_id.in_(paper_ids),
+                Concept.status == CONCEPT_STATUS_ACTIVE,
+                Concept.name.in_(names),
+            )
+            .order_by(Concept.name)
+        )
+    ).all()
+    active_by_paper = {str(paper_id): [] for paper_id in paper_ids}
+    for paper_id, name in active_rows:
+        if name in normalized[paper_id]:
+            active_by_paper[str(paper_id)].append(name)
+    active_names = {name for _, name in active_rows}
+    return active_by_paper, {
+        "concepts_created": created,
+        "links_created": linked,
+        "concepts_promoted": len(promoted),
+        "concepts_rejected": len(rejected),
+        "active_concepts": len(active_names),
+    }
+
+
 def _apply_verdict(concept: Concept, meta: dict[str, Any] | None) -> bool:
     """把一条判定结果写到词条上，返回它是否留在概念库（True=有效）。
 
@@ -452,9 +594,7 @@ async def _remove_stale_paper_links(
         cid
         for (cid,) in (
             await session.execute(
-                select(paper_concepts.c.concept_id).where(
-                    paper_concepts.c.paper_id == paper_id
-                )
+                select(paper_concepts.c.concept_id).where(paper_concepts.c.paper_id == paper_id)
             )
         ).all()
         if cid not in keep_concept_ids
@@ -515,9 +655,7 @@ async def link_all_paper_concepts(
 
     # 概念全平台一份：按名字查全表（别的库先建过同名词条，这里直接复用）
     existing = (
-        (await session.execute(select(Concept).where(Concept.name.in_(all_names))))
-        .scalars()
-        .all()
+        (await session.execute(select(Concept).where(Concept.name.in_(all_names)))).scalars().all()
     )
     by_name = {c.name: c for c in existing}
     new_names = [n for n in all_names if n not in by_name]
@@ -672,11 +810,7 @@ async def review_active_concepts(
         .all()
     )
     pending = sorted(
-        (
-            c
-            for c in scoped
-            if c.validated_at is None or is_placeholder_definition(c.definition)
-        ),
+        (c for c in scoped if c.validated_at is None or is_placeholder_definition(c.definition)),
         key=lambda c: (c.created_at is None, c.created_at or c.name),
     )
     if limit is not None:
@@ -731,9 +865,7 @@ async def link_paper_concepts(
     library_id = membership.library_id if membership is not None else None
     names = extract_wikilinks(paper.wiki_content)
     existing = (
-        (await session.execute(select(Concept).where(Concept.name.in_(names))))
-        .scalars()
-        .all()
+        (await session.execute(select(Concept).where(Concept.name.in_(names)))).scalars().all()
     )
     by_name = {c.name: c for c in existing}
     new_names = [n for n in names if n not in by_name]
@@ -748,9 +880,7 @@ async def link_paper_concepts(
         cid
         for (cid,) in (
             await session.execute(
-                select(paper_concepts.c.concept_id).where(
-                    paper_concepts.c.paper_id == paper.id
-                )
+                select(paper_concepts.c.concept_id).where(paper_concepts.c.paper_id == paper.id)
             )
         ).all()
     }

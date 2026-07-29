@@ -22,6 +22,7 @@ from app.models.activity import Activity
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.llm_config import LLMUsage
 from app.models.paper import Paper, new_paper, paper_concepts
+from app.models.research_digest import LibraryResearchDigest
 from app.models.user import User
 from app.models.voyage import VoyageRun
 from app.services import ingest as ingest_service
@@ -306,7 +307,7 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 8
     obs0 = detail["steps"][0]["observation"]
     assert obs0["found"] == 3 and obs0["inserted"] == 3
 
@@ -372,6 +373,32 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
             ).scalars()
         }
         assert {"ingest.started", "ingest.completed"} <= activity_kinds
+        digest = (
+            await session.execute(
+                select(LibraryResearchDigest).where(
+                    LibraryResearchDigest.voyage_id == uuid.UUID(run_id)
+                )
+            )
+        ).scalar_one()
+        assert digest.counts["kept"] == 2
+        assert digest.counts["excluded"] == 1
+        assert len(digest.paper_insights) == 2
+        assert all(item["concepts"] == ["Agent", "强化学习"] for item in digest.paper_insights)
+        assert "**发表时间**：" in digest.content
+        assert "**概念**：[[Agent]] · [[强化学习]]" in digest.content
+        assert "## 排除清单（1 篇）" in digest.content
+        assert digest.rolling_trends
+        library_id = str(library.id)
+
+    resp = await client.get(f"/api/libraries/{library_id}/digests", headers=headers)
+    assert resp.status_code == 200, resp.text
+    summaries = resp.json()
+    assert summaries[0]["counts"]["kept"] == 2
+    resp = await client.get(
+        f"/api/libraries/{library_id}/digests/{summaries[0]['id']}", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["trend_content"].startswith("# 滚动趋势")
 
     # ingest/state：完成后的水位线与计数
     resp = await client.get(f"/api/projects/{project_id}/ingest/state", headers=headers)
@@ -414,6 +441,68 @@ async def test_bootstrap_full_pipeline(client, queue_stub, wiki_mocks):
     async with get_sessionmaker()() as session:
         # 仍是 2：增量这轮没有新候选，上一轮淘汰的那篇也不会复活
         assert len(await project_paper_rows(session, project_id=project_id)) == 2
+
+
+class _BreakDailyDigest(FakeProvider):
+    """让每日简报产出非法 JSON，验证水位线不会越过失败产物。"""
+
+    async def complete(
+        self,
+        messages,
+        *,
+        model,
+        temperature=0.7,
+        max_tokens=None,
+        images=None,
+        effort=None,
+    ):
+        if any("POLARIS_DAILY_DIGEST" in message.content for message in messages):
+            from app.core.llm.base import CompletionResult
+
+            return CompletionResult(content="(empty report)", model=model, finish_reason="stop")
+        return await super().complete(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            images=images,
+            effort=effort,
+        )
+
+
+async def test_daily_digest_failure_does_not_advance_watermark(client, queue_stub, wiki_mocks):
+    """成功跑完前置步骤但没有有效简报时视为空跑，趋势与 watermark 均不得推进。"""
+    project_id, headers = await _setup_project(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    run_id = uuid.UUID(resp.json()["id"])
+
+    router = LLMRouter()
+    router.override_provider(_BreakDailyDigest())
+    engine = VoyageEngine(event_bus=RecordingBus(), llm_router=router)
+    await engine.run(run_id)
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert detail["status"] == "paused_error", detail
+    assert [step["status"] for step in detail["steps"][:5]] == ["passed"] * 5
+    assert detail["steps"][5]["status"] == "failed"
+    assert detail["steps"][5]["observation"]["error"].startswith("ValueError")
+    assert [step["status"] for step in detail["steps"][6:]] == ["pending", "pending"]
+
+    async with get_sessionmaker()() as session:
+        from app.services.libraries import get_library_for_project
+
+        library = await get_library_for_project(session, uuid.UUID(project_id))
+        assert not (library.ingest_state or {}).get("watermark")
+        digest = (
+            await session.execute(
+                select(LibraryResearchDigest).where(LibraryResearchDigest.voyage_id == run_id)
+            )
+        ).scalar_one_or_none()
+        assert digest is None
 
 
 class _CrashOnNthRelevance(FakeProvider):
@@ -550,7 +639,7 @@ async def test_sparse_definition_bootstrap_smoke(client, queue_stub, wiki_mocks)
     resp = await client.get(f"/api/voyages/{run_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "done", detail
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 8
     assert detail["steps"][0]["observation"]["inserted"] == 3  # 默认分类兜底后仍能检索
 
     async with get_sessionmaker()() as session:
@@ -776,7 +865,7 @@ async def test_unlimited_bootstrap_uncapped(client, queue_stub, wiki_mocks_big):
 
     detail = (await client.get(f"/api/voyages/{voyage['id']}", headers=headers)).json()
     assert detail["status"] == "done", detail  # 未因预算暂停
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 8
 
     # 检索：分页抓到全部 210 条（旧逻辑 limit=min(200, 10*3)=30）
     obs0 = detail["steps"][0]["observation"]
@@ -923,7 +1012,7 @@ async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_
 
     detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
     assert detail["status"] == "done", detail
-    assert [s["status"] for s in detail["steps"]] == ["passed"] * 6
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 8
 
     async with get_sessionmaker()() as session:
         library = await session.get(DirectionLibrary, uuid.UUID(library_id))
@@ -963,6 +1052,79 @@ async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_
         )
         assert {"ingest.started", "ingest.completed"} <= {a.kind for a in acts}
         assert all(a.project_id is None for a in acts)
+
+
+async def test_manual_digest_reuses_today_updates_without_incremental_ingest(
+    client, queue_stub, wiki_mocks
+):
+    """今日已有评分更新时，手动简报只跑简报/趋势，不重复检索且不推进水位线。"""
+    token = await register_and_login(client, email="lib-digest@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    library_id = await _create_standalone_library(client, headers, name="独立库-今日简报")
+
+    bootstrap = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert bootstrap.status_code == 201, bootstrap.text
+    bootstrap_id = bootstrap.json()["id"]
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(bootstrap_id))
+    state_before = (
+        await client.get(f"/api/libraries/{library_id}/ingest/state", headers=headers)
+    ).json()
+
+    resp = await client.post(f"/api/libraries/{library_id}/digests/generate", headers=headers)
+    assert resp.status_code == 201, resp.text
+    launch = resp.json()
+    assert launch["strategy"] == "digest_only"
+    assert launch["paper_count"] == 2
+    digest_run_id = launch["voyage_id"]
+    assert ("run_voyage", (digest_run_id,), {}) in queue_stub.jobs
+
+    await engine.run(uuid.UUID(digest_run_id))
+    detail = (await client.get(f"/api/voyages/{digest_run_id}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    assert [step["action"] for step in detail["steps"]] == [
+        "wiki.daily_digest",
+        "wiki.trend_synthesize",
+    ]
+
+    state_after = (
+        await client.get(f"/api/libraries/{library_id}/ingest/state", headers=headers)
+    ).json()
+    assert state_after["watermark"] == state_before["watermark"]
+    assert state_after["last_run"] == state_before["last_run"]
+    async with get_sessionmaker()() as session:
+        digest = (
+            await session.execute(
+                select(LibraryResearchDigest).where(
+                    LibraryResearchDigest.voyage_id == uuid.UUID(digest_run_id)
+                )
+            )
+        ).scalar_one()
+        assert digest.counts["kept"] == 2
+        assert digest.counts["excluded"] == 1
+        assert any("跳过增量抓取" in message for message in digest.source_diagnostics["messages"])
+
+
+async def test_manual_digest_falls_back_to_incremental_when_no_today_updates(client, queue_stub):
+    """今日没有评分更新时，手动简报入口退回完整增量任务。"""
+    token = await register_and_login(client, email="lib-digest-empty@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    library_id = await _create_standalone_library(client, headers, name="独立库-无今日更新")
+
+    resp = await client.post(f"/api/libraries/{library_id}/digests/generate", headers=headers)
+    assert resp.status_code == 201, resp.text
+    launch = resp.json()
+    assert launch["strategy"] == "incremental"
+    assert launch["paper_count"] == 0
+    assert ("run_voyage", (launch["voyage_id"],), {}) in queue_stub.jobs
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, uuid.UUID(launch["voyage_id"]))
+        assert run.kind == "wiki_ingest"
+        assert run.checkpoint["params"].get("digest_only") is None
 
 
 async def test_standalone_library_ingest_budget_gate(client, queue_stub):
@@ -1320,6 +1482,8 @@ async def test_snowball_mode_skips_the_arxiv_search(client, queue_stub, wiki_moc
         "wiki.fetch_extract",
         "wiki.compile",
         "wiki.link_concepts",
+        "wiki.daily_digest",
+        "wiki.trend_synthesize",
         "wiki.update_watermark",
     ]
 

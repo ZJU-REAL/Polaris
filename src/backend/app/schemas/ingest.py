@@ -44,6 +44,15 @@ class IngestRequest(BaseModel):
     time_range: Literal["1w", "3m", "6m", "1y"] | None = None
 
 
+class DigestGenerateRead(BaseModel):
+    """手动生成今日简报的启动结果。"""
+
+    voyage_id: uuid.UUID
+    # digest_only：复用今日已更新论文；incremental：今日无更新，先跑增量同步。
+    strategy: Literal["digest_only", "incremental"]
+    paper_count: int = 0
+
+
 class IngestLastRun(BaseModel):
     voyage_id: uuid.UUID
     status: str

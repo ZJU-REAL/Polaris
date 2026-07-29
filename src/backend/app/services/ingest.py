@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.voyage.navigator import WIKI_KINDS
 from app.models.activity import Activity
 from app.models.library_direction import DirectionLibrary, LibraryPaper
-from app.models.paper import PAPER_STATUSES
+from app.models.paper import PAPER_STATUSES, Paper
 from app.models.project import Project
+from app.models.research_digest import LibraryResearchDigest
 from app.models.user import User
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.ingest import IngestKnobs
@@ -45,9 +46,7 @@ class LibraryBudgetExhaustedError(Exception):
     """方向库本月预算已用尽（P6）：拒绝启动新的 ingest。"""
 
 
-async def monthly_library_usage(
-    session: AsyncSession, library_id: uuid.UUID
-) -> dict[str, Any]:
+async def monthly_library_usage(session: AsyncSession, library_id: uuid.UUID) -> dict[str, Any]:
     """该方向库本月（UTC 自然月）的 LLM 用量聚合（口径与 LLMUsage 记账一致）。"""
     from app.models.llm_config import LLMUsage  # 延迟导入避免模块环
 
@@ -184,6 +183,136 @@ async def create_ingest_voyage(
     return run
 
 
+async def create_digest_voyage(
+    session: AsyncSession,
+    *,
+    library: DirectionLibrary,
+    project: Project | None = None,
+    created_by: uuid.UUID | None,
+    knobs: IngestKnobs | None = None,
+) -> tuple[VoyageRun, str, int]:
+    """智能启动今日简报。
+
+    UTC 当天已有完成相关性判断的论文时，只建「简报 + 趋势」两步任务并复用这些
+    论文；当天没有论文更新时，退回正常增量 ingest。简报专用任务不包含水位线步骤，
+    因为它没有访问任何外部数据源。
+    """
+    if await find_running_ingest_for_library(session, library.id) is not None:
+        raise IngestConflictError(str(library.id))
+
+    now = datetime.now(UTC)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = (
+        await session.execute(
+            select(LibraryPaper.paper_id, LibraryPaper.status, Paper.published_at)
+            .join(Paper, Paper.id == LibraryPaper.paper_id)
+            .where(
+                LibraryPaper.library_id == library.id,
+                LibraryPaper.scored_at.is_not(None),
+                LibraryPaper.scored_at >= day_start,
+                LibraryPaper.scored_at <= now,
+            )
+            .order_by(LibraryPaper.scored_at, LibraryPaper.paper_id)
+        )
+    ).all()
+    if not rows:
+        run = await create_ingest_voyage(
+            session,
+            library=library,
+            project=project,
+            mode="incremental",
+            knobs=knobs or IngestKnobs(),
+            created_by=created_by,
+        )
+        return run, "incremental", 0
+
+    actual_knobs = knobs or IngestKnobs()
+    budget = await apply_library_budget(
+        session,
+        library_id=library.id,
+        monthly_budget=library.monthly_budget,
+        budget=derive_budget(actual_knobs),
+    )
+    paper_ids = list(dict.fromkeys(row.paper_id for row in rows))
+    latest_published_at = max(
+        (row.published_at for row in rows if row.published_at is not None), default=None
+    )
+
+    # 当天已有原生简报时保留其来源统计；本次只重新综合内容，不伪装成又抓了一遍来源。
+    prior_digest = (
+        await session.execute(
+            select(LibraryResearchDigest).where(
+                LibraryResearchDigest.library_id == library.id,
+                LibraryResearchDigest.report_date == now.date(),
+                LibraryResearchDigest.source == "voyage",
+            )
+        )
+    ).scalar_one_or_none()
+    digest_counts = (
+        dict(prior_digest.counts or {})
+        if prior_digest is not None
+        else {
+            "source_fetched": 0,
+            "prescreened": len(paper_ids),
+            "inserted": 0,
+            "compiled": sum(1 for row in rows if row.status in {"compiled", "included"}),
+        }
+    )
+    diagnostics = dict(prior_digest.source_diagnostics or {}) if prior_digest is not None else {}
+    prior_messages = diagnostics.get("messages")
+    messages = list(prior_messages) if isinstance(prior_messages, list) else []
+    messages.append(
+        f"检测到今日已有 {len(paper_ids)} 篇论文完成更新；"
+        "本次跳过增量抓取，直接生成简报与滚动趋势。"
+    )
+    diagnostics.update(
+        {
+            "status": diagnostics.get("status") or "ok",
+            "messages": messages,
+            "source_latest_at": diagnostics.get("source_latest_at")
+            or (latest_published_at.isoformat() if latest_published_at else None),
+        }
+    )
+
+    target_name = project.name if project is not None else library.name
+    checkpoint = {
+        "params": {
+            "mode": "incremental",
+            "knobs": actual_knobs.model_dump(),
+            "digest_only": True,
+        },
+        "digest_paper_ids": [str(paper_id) for paper_id in paper_ids],
+        "digest_counts": digest_counts,
+        "digest_excluded_papers": list(prior_digest.excluded_papers or [])
+        if prior_digest is not None
+        else [],
+        "ingest_search_stats": diagnostics,
+    }
+    run = VoyageRun(
+        kind="wiki_ingest",
+        goal=f"生成今日文献简报：{target_name}",
+        status="planning",
+        cursor=0,
+        checkpoint=checkpoint,
+        budget=budget,
+        library_id=library.id,
+        created_by=created_by,
+    )
+    session.add(run)
+    session.add(
+        Activity(
+            library_id=library.id,
+            actor=f"user:{created_by}" if created_by else "system",
+            kind="digest.started",
+            message=f"今日简报生成已启动（复用 {len(paper_ids)} 篇今日更新论文）",
+            payload={"strategy": "digest_only", "paper_count": len(paper_ids)},
+        )
+    )
+    await session.commit()
+    await session.refresh(run)
+    return run, "digest_only", len(paper_ids)
+
+
 def _empty_counts() -> dict[str, int]:
     counts = {status: 0 for status in PAPER_STATUSES}
     counts["total"] = 0
@@ -192,9 +321,7 @@ def _empty_counts() -> dict[str, int]:
     return counts
 
 
-async def library_paper_counts(
-    session: AsyncSession, library_id: uuid.UUID
-) -> dict[str, int]:
+async def library_paper_counts(session: AsyncSession, library_id: uuid.UUID) -> dict[str, int]:
     """某方向库的论文状态计数（库级直接统计 library_papers，库工作台/ingest 面板共用）。"""
     counts = {status: 0 for status in PAPER_STATUSES}
     rows = (
@@ -277,16 +404,12 @@ async def _resolve_last_run(
     }
 
 
-async def ingest_state(
-    session: AsyncSession, project: Project, *, user: User
-) -> dict[str, Any]:
+async def ingest_state(session: AsyncSession, project: Project, *, user: User) -> dict[str, Any]:
     # P8a：水位线/last_run 权威源在库（library.ingest_state）
     library = await get_library_for_project(session, project.id)
     state = (library.ingest_state if library else None) or {}
     # 互斥以库为准：库任务不写 project_id，按课题查已经查不到在跑的任务
-    running = (
-        await find_running_ingest_for_library(session, library.id) if library else None
-    )
+    running = await find_running_ingest_for_library(session, library.id) if library else None
     return {
         "watermark": state.get("watermark"),
         "last_run": await _resolve_last_run(session, state, user),
@@ -358,11 +481,7 @@ async def find_due_daily_libraries(session: AsyncSession) -> list[DirectionLibra
     ``status``，pending/rejected 但留有历史水位线的库照样会被 cron 拉起来。
     """
     libraries = (
-        (
-            await session.execute(
-                select(DirectionLibrary).where(DirectionLibrary.status == "active")
-            )
-        )
+        (await session.execute(select(DirectionLibrary).where(DirectionLibrary.status == "active")))
         .scalars()
         .all()
     )
@@ -375,5 +494,3 @@ async def find_due_daily_libraries(session: AsyncSession) -> list[DirectionLibra
             continue
         due.append(library)
     return due
-
-

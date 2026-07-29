@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "929c05a03745"  # 删除主表向量列（向量已搬进侧表）
+HEAD_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
+INLINE_VECTOR_DROP_REVISION = "929c05a03745"  # 删除主表向量列（向量已搬进侧表）
 VECTOR_TABLES_REVISION = "5d8ebd5cb100"  # 向量侧表建表 + 存量搬迁
 EFFORT_REVISION = "510f6bde2233"  # 模型路由推理档位（model_routes.effort）
 CHAT_BOT_REVISION = "d4e8b71c2a90"  # 每用户群机器人 Webhook 配置
@@ -86,6 +87,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "direction_libraries",
                     "projects",
                     "chat_bot_configs",
+                    "library_research_digests",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -312,8 +314,29 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "secret_encrypted",
         "last_delivered_at",
     } <= columns["chat_bot_configs"]
+    # 文献库每日简报：结构化统计/论文观察/趋势快照 + 收录或排除理由。
+    assert "library_research_digests" in columns["_tables"]
+    assert {
+        "library_id",
+        "voyage_id",
+        "report_date",
+        "counts",
+        "paper_insights",
+        "excluded_papers",
+        "cross_paper_signals",
+        "rolling_trends",
+        "trend_content",
+    } <= columns["library_research_digests"]
+    assert "relevance_reason" in columns["library_papers"]
 
-    # 最新 revision 可往返：先把主表向量列加回来（数据不搬回，见迁移 docstring）。
+    # 最新 revision 可往返：先退掉每日简报表与相关性理由。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == INLINE_VECTOR_DROP_REVISION
+    assert "library_research_digests" not in columns["_tables"]
+    assert "relevance_reason" not in columns["library_papers"]
+
+    # 再把主表向量列加回来（数据不搬回，见迁移 docstring）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == VECTOR_TABLES_REVISION

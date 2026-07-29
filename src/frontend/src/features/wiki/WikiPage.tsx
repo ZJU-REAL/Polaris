@@ -16,6 +16,9 @@ import { GovernanceTab } from './GovernanceTab';
 
 // 图谱与 PPT 弹窗体量大且非默认视图：按需加载
 const GraphTab = lazy(() => import('./GraphTab').then((m) => ({ default: m.GraphTab })));
+const DailyDigestTab = lazy(() =>
+  import('./DailyDigestTab').then((m) => ({ default: m.DailyDigestTab })),
+);
 const PresentationModal = lazy(() =>
   import('./PresentationModal').then((m) => ({ default: m.PresentationModal })),
 );
@@ -28,7 +31,7 @@ const PresentationModal = lazy(() =>
    从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
    ============================================================ */
 
-type WikiTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'ingest' | 'notes' | 'govern';
+type WikiTab = 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'ingest' | 'notes' | 'govern';
 
 export function WikiWorkbench({
   pid,
@@ -95,7 +98,7 @@ export function WikiWorkbench({
         seq: (old?.seq ?? 0) + 1,
       }));
       setTab('papers');
-    } else if (tabParam && ['papers', 'concepts', 'graph', 'chat', 'ingest', 'notes', 'govern'].includes(tabParam)) {
+    } else if (tabParam && ['papers', 'concepts', 'graph', 'digest', 'chat', 'ingest', 'notes', 'govern'].includes(tabParam)) {
       setTab(tabParam as WikiTab);
     }
     setSearchParams({}, { replace: true });
@@ -161,6 +164,7 @@ export function WikiWorkbench({
             { v: 'papers', label: `${tr('论文库', 'Papers')}${total !== undefined ? ` · ${total}` : ''}` },
             { v: 'concepts', label: tr('概念库', 'Concepts') },
             { v: 'graph', label: tr('图谱', 'Graph') },
+            ...(libraryId ? [{ v: 'digest' as const, label: tr('每日简报', 'Daily digest') }] : []),
             { v: 'chat', label: tr('文献对话', 'Chat') },
             { v: 'notes', label: tr('笔记', 'Notes') },
             ...(libraryId ? [{ v: 'govern' as const, label: tr('文献库配置', 'Library config') }] : []),
@@ -233,6 +237,17 @@ export function WikiWorkbench({
         ) : tab === 'graph' ? (
           <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
             <GraphTab pid={pid} libraryId={tabLibraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />
+          </Suspense>
+        ) : tab === 'digest' && libraryId ? (
+          <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
+            <DailyDigestTab
+              libraryId={libraryId}
+              onOpenPaper={goPaper}
+              onWikiLink={onWikiLink}
+              canGenerate={canManage}
+              ingestRunning={!!ingestQuery.data?.running_voyage_id}
+              hasWatermark={!!ingestQuery.data?.watermark}
+            />
           </Suspense>
         ) : tab === 'chat' ? (
           <LibraryChatTab

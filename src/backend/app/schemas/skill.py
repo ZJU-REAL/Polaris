@@ -15,6 +15,8 @@ SKILL_TARGETS = frozenset(
     {
         "wiki.score_relevance",
         "wiki.compile",
+        "wiki.daily_digest",
+        "wiki.trend_synthesize",
         "forge.gap_analysis",
         "forge.generate",
         "forge.score",
