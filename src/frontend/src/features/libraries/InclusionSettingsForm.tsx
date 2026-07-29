@@ -1,14 +1,11 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
-import { toast } from '../../components/ui/Toast';
-import { api, type AnchorPaper, type RubricDimension } from '../../lib/api';
+import type { AnchorPaper, RubricDimension } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 
 /* ============================================================
    收录设置共享表单（受控）——建库弹窗与文献库收录设置卡共用。
    四块：arXiv 分类 chips / 检索关键词 chips / 锚点论文 / 打分标准（rubric）；
-   顶部AI 自动生成按名称+说明推荐一整套设置填进表单，供用户改后保存。
    ============================================================ */
 
 const QUICK_CATEGORIES = ['cs.CL', 'cs.AI', 'cs.LG', 'cs.CV', 'cs.MA', 'stat.ML'];
@@ -28,9 +25,6 @@ export interface InclusionValue {
 export interface InclusionSettingsFormProps {
   value: InclusionValue;
   onChange: (v: InclusionValue) => void;
-  /** 用于 AI 自动生成（名称/说明为空时按钮禁用） */
-  name: string;
-  statement: string;
   showRubric?: boolean;
   showAnchors?: boolean;
   /** 只读：隐藏 AI 生成 / 增删按钮，禁用所有输入，仅展示已配置项。 */
@@ -49,8 +43,6 @@ function BlockLabel({ zh, en, right }: { zh: string; en: string; right?: React.R
 export function InclusionSettingsForm({
   value,
   onChange,
-  name,
-  statement,
   showRubric,
   showAnchors,
   readOnly,
@@ -63,40 +55,6 @@ export function InclusionSettingsForm({
   const [kwDraft, setKwDraft] = useState('');
   const [exDraft, setExDraft] = useState('');
 
-  // —— AI 自动生成 ——
-  const canSuggest = name.trim().length > 0 && statement.trim().length > 0;
-  const suggest = useMutation({
-    mutationFn: () => api.suggestLibraryDefinition({ name: name.trim(), statement: statement.trim() }),
-    onSuccess: (d) => {
-      // 非破坏性合并：并集分类/关键词，追加不重名的 rubric 维度与不重复的锚点。
-      const cats = [...new Set([...arxiv_categories, ...(d.keywords.arxiv_categories ?? [])])];
-      const haveInc = new Set(include.map((x) => x.toLowerCase()));
-      const inc = [...include, ...(d.keywords.include ?? []).filter((x) => x.trim() && !haveInc.has(x.trim().toLowerCase()))];
-      const haveRub = new Set(rubric.map((r) => r.name.trim().toLowerCase()));
-      const rub = [...rubric, ...(d.rubric ?? []).filter((r) => r.name.trim() && !haveRub.has(r.name.trim().toLowerCase()))];
-      const haveAnc = new Set(anchors.map((a) => (a.arxiv_id || a.title || '').trim().toLowerCase()));
-      const anc = [...anchors, ...(d.anchors ?? []).filter((a) => {
-        const key = (a.arxiv_id || a.title || '').trim().toLowerCase();
-        return key.length > 0 && !haveAnc.has(key);
-      })];
-      onChange({
-        arxiv_categories: cats,
-        include: inc,
-        exclude: [
-          ...exclude,
-          ...(d.keywords.exclude ?? []).filter(
-            (x) => x.trim() && !new Set(exclude.map((y) => y.toLowerCase())).has(x.trim().toLowerCase()),
-          ),
-        ],
-        rubric: showRubric ? rub : rubric,
-        anchors: showAnchors ? anc : anchors,
-      });
-      toast(tr('已用 AI 生成，请检查后保存', 'AI-generated — review and save'), 'ok');
-    },
-    onError: (e) => toast(`${tr('生成失败：', 'Generate failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
-  });
-
-  // —— arXiv 分类 ——
   function toggleCat(c: string) {
     patch({ arxiv_categories: arxiv_categories.includes(c) ? arxiv_categories.filter((x) => x !== c) : [...arxiv_categories, c] });
   }
@@ -148,30 +106,6 @@ export function InclusionSettingsForm({
 
   return (
     <div className="col gap16">
-      {/* —— AI 自动生成 —— */}
-      {!readOnly && (
-      <div className="row gap10" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          className="btn btn-soft sm"
-          disabled={!canSuggest || suggest.isPending}
-          onClick={() => suggest.mutate()}
-        >
-          {suggest.isPending ? (
-            <Icon name="refresh" size={13} style={{ animation: 'spin 1s linear infinite' }} />
-          ) : (
-            <Icon name="sparkle" size={13} />
-          )}
-          {suggest.isPending ? tr('生成中…', 'Generating…') : tr('AI 自动生成', 'Auto-generate with AI')}
-        </button>
-        {!canSuggest && (
-          <span className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
-            {tr('先填名称和一句话说明', 'Fill in the name and statement first')}
-          </span>
-        )}
-      </div>
-      )}
-
       {/* —— arXiv 分类 —— */}
       <div className="col gap6">
         <BlockLabel zh="arXiv 分类" en="arXiv categories" />

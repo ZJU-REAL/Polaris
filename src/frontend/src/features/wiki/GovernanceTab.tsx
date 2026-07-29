@@ -433,8 +433,6 @@ function InclusionSettingsCard({ lib, readOnly }: { lib: DirectionLibraryDetail;
       <InclusionSettingsForm
         value={value}
         onChange={setValue}
-        name={lib.name}
-        statement={lib.statement ?? ''}
         showRubric
         readOnly={readOnly}
       />

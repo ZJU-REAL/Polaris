@@ -7,8 +7,6 @@ P7 起课题 × 库多对多关联（``topic_source_libraries``）：课题的�
 读路径（想法生成/检索/图谱/写作引用等）应改走关联库并集。
 """
 
-import asyncio
-import json
 import logging
 import uuid
 from collections.abc import Iterable, Sequence
@@ -17,8 +15,6 @@ from typing import Any
 from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.llm.base import Message
-from app.core.llm.router import LLMRouter
 from app.models.library_direction import (
     DirectionLibrary,
     DirectionLibraryCurator,
@@ -537,178 +533,6 @@ _SUGGEST_MAX_RUBRIC = 6
 _SUGGEST_MAX_ANCHORS = 8
 
 # 标记（POLARIS_LIBRARY_SUGGEST）供 fake provider / 日志识别本次调用用途。
-SUGGEST_DEFINITION_SYSTEM_PROMPT = """\
-你是科研文献库收录设置助手（POLARIS_LIBRARY_SUGGEST）。用户给你一个研究方向的\
-名称和一句话描述，请据此产出一套「文献库收录设置」，帮助自动检索与筛选该方向的论文。
-请只输出一个 JSON 对象（不要输出任何解释性文字、不要用代码块围栏），结构如下：
-{
-  "keywords": {
-    "arxiv_categories": ["cs.CL", "cs.AI", "cs.LG"],
-    "include": ["retrieval-augmented generation", "in-context learning"],
-    "exclude": ["speech recognition", "protein folding"]
-  },
-  "rubric": [
-    {"name": "任务相关性", "description": "论文直接研究该方向核心任务时得高分", "weight": 0.4}
-  ],
-  "anchors": [
-    {"title": "代表作标题", "arxiv_id": "2005.11401", "reason": "该方向奠基/代表性工作"}
-  ]
-}
-要求：
-- arxiv_categories：从名称/描述推断的相关 arXiv 分类代码（如 cs.CL、cs.AI、cs.LG、stat.ML 等），\
-最相关的在前，最多 12 个；
-- include：英文为主的检索关键词/术语，覆盖该方向核心概念、方法名、任务名，最多 30 个；
-- exclude：容易和该方向撞词、但明确不该收录的术语（如同名的其他领域用法），最多 20 个；\
-拿不准就给空列表，宁缺毋滥——排除词会直接把论文挡在门外；
-- rubric：3-5 条相关性打分维度，每条含 name（简短中文维度名）、description（什么样的论文在\
-这一维得高分）、weight（0-1 之间的小数，各条 weight 之和约等于 1）；
-- anchors：3-6 篇该方向的代表性锚点论文，每条含 title（英文原题）、arxiv_id（可留空或省略，\
-不确定就不要编造）、reason（为何是该方向的锚点）；
-- 无法判断某字段时给空列表，不要编造无关内容。
-"""
-
-
-def _empty_suggestion() -> dict[str, Any]:
-    """结构完整的空兜底（解析失败/调用失败时返回，字段与成功时同形）。"""
-    return {
-        "keywords": {"arxiv_categories": [], "include": [], "exclude": []},
-        "rubric": [],
-        "anchors": [],
-    }
-
-
-def _coerce_str_list(value: Any, *, cap: int) -> list[str]:
-    """强制成去重保序的非空字符串列表（大小写不敏感去重），截断到 cap。"""
-    if not isinstance(value, list):
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        text = item.strip()
-        if not text or text.lower() in seen:
-            continue
-        seen.add(text.lower())
-        out.append(text)
-        if len(out) >= cap:
-            break
-    return out
-
-
-def _coerce_rubric(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    out: list[dict[str, Any]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        name = item.get("name")
-        if not isinstance(name, str) or not name.strip():
-            continue
-        description = item.get("description")
-        try:
-            weight = float(item.get("weight"))
-        except (TypeError, ValueError):
-            weight = 0.0
-        weight = min(1.0, max(0.0, weight))
-        out.append(
-            {
-                "name": name.strip(),
-                "description": description.strip() if isinstance(description, str) else "",
-                "weight": weight,
-            }
-        )
-        if len(out) >= _SUGGEST_MAX_RUBRIC:
-            break
-    return out
-
-
-def _coerce_anchors(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    out: list[dict[str, Any]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        title = item.get("title")
-        if not isinstance(title, str) or not title.strip():
-            continue
-        arxiv_id = item.get("arxiv_id")
-        reason = item.get("reason")
-        out.append(
-            {
-                "title": title.strip(),
-                "arxiv_id": (
-                    arxiv_id.strip() if isinstance(arxiv_id, str) and arxiv_id.strip() else None
-                ),
-                "reason": reason.strip() if isinstance(reason, str) and reason.strip() else None,
-            }
-        )
-        if len(out) >= _SUGGEST_MAX_ANCHORS:
-            break
-    return out
-
-
-def _parse_suggestion(content: str) -> dict[str, Any]:
-    """从 LLM 输出解析收录设置 JSON；任意异常/缺字段都退回结构完整的空兜底。"""
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end <= start:
-        return _empty_suggestion()
-    try:
-        data = json.loads(content[start : end + 1])
-    except ValueError:
-        return _empty_suggestion()
-    if not isinstance(data, dict):
-        return _empty_suggestion()
-    keywords = data.get("keywords")
-    keywords = keywords if isinstance(keywords, dict) else {}
-    return {
-        "keywords": {
-            "arxiv_categories": _coerce_str_list(
-                keywords.get("arxiv_categories"), cap=_SUGGEST_MAX_CATEGORIES
-            ),
-            "include": _coerce_str_list(keywords.get("include"), cap=_SUGGEST_MAX_KEYWORDS),
-            "exclude": _coerce_str_list(keywords.get("exclude"), cap=_SUGGEST_MAX_EXCLUDES),
-        },
-        "rubric": _coerce_rubric(data.get("rubric")),
-        "anchors": _coerce_anchors(data.get("anchors")),
-    }
-
-
-async def suggest_definition(
-    *,
-    name: str,
-    statement: str,
-    llm: LLMRouter,
-    user_id: uuid.UUID | None = None,
-) -> dict[str, Any]:
-    """AI 根据研究方向名称 + 一句话描述生成一套收录设置（arxiv 分类/关键词/打分维度/锚点论文）。
-
-    同步 LLM→JSON（照 affiliations 那套）：调用失败或解析不出合法结构都返回结构完整的空
-    兜底而不抛，前端可直接把结果填进收录设置表单。
-    """
-    statement_line = (statement or "").strip() or "（未提供）"
-    user_prompt = f"研究方向名称：{name.strip()}\n\n一句话描述：{statement_line}"
-    try:
-        result = await llm.complete(
-            "extract",
-            [
-                Message(role="system", content=SUGGEST_DEFINITION_SYSTEM_PROMPT),
-                Message(role="user", content=user_prompt),
-            ],
-            max_tokens=_SUGGEST_MAX_TOKENS,
-            user_id=user_id,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001 — 生成尽力而为，失败给空兜底由前端手填
-        logger.warning("LLM suggest_definition failed for %r", name, exc_info=True)
-        return _empty_suggestion()
-    return _parse_suggestion(result.content)
-
-
 async def create_library(
     session: AsyncSession,
     *,

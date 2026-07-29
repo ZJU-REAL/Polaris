@@ -3315,13 +3315,6 @@ export const api = {
    * AI 根据库名与一句话说明推荐收录设置（分类 / 关键词 / 打分标准 / 锚点论文）。
    * 供建库与收录设置的「AI 自动生成」按钮调用；结果填进表单供用户修改后保存。
    */
-  suggestLibraryDefinition(input: { name: string; statement: string }): Promise<{
-    keywords: { arxiv_categories: string[]; include: string[]; exclude?: string[] };
-    rubric: RubricDimension[];
-    anchors: AnchorPaper[];
-  }> {
-    return requestJson('/libraries/suggest-definition', 'POST', input);
-  },
   /** 审批通过（仅平台管理员）：pending/rejected → active，激活后可触发抓取。 */
   approveLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}/approve`, { method: 'POST' });
@@ -4484,9 +4477,9 @@ export const api = {
     topic: string,
     answers: StatementInterviewAnswer[],
   ): Promise<StatementInterviewResponse> {
-    return request<StatementInterviewResponse>('/libraries/statement-interview', {
-      method: 'POST',
-      body: JSON.stringify({ topic, answers }),
+    return requestJson<StatementInterviewResponse>('/libraries/statement-interview', 'POST', {
+      topic,
+      answers,
     });
   },
 
@@ -4494,26 +4487,20 @@ export const api = {
     return request<{ scope: DailySyncScope }>('/daily/sync-scope');
   },
   setDailySyncScope(scope: DailySyncScope): Promise<{ scope: DailySyncScope }> {
-    return request<{ scope: DailySyncScope }>('/daily/sync-scope', {
-      method: 'PUT',
-      body: JSON.stringify({ scope }),
-    });
+    return requestJson<{ scope: DailySyncScope }>('/daily/sync-scope', 'PUT', { scope });
   },
   /** 每日抓取的起始时刻（UTC；北京时间 = UTC + 8）。 */
   getDailySyncTime(): Promise<{ hour: number; minute: number }> {
     return request<{ hour: number; minute: number }>('/daily/sync-time');
   },
   setDailySyncTime(hour: number, minute: number): Promise<{ hour: number; minute: number }> {
-    return request<{ hour: number; minute: number }>('/daily/sync-time', {
-      method: 'PUT',
-      body: JSON.stringify({ hour, minute }),
+    return requestJson<{ hour: number; minute: number }>('/daily/sync-time', 'PUT', {
+      hour,
+      minute,
     });
   },
   setDailyRetention(days: number): Promise<{ days: number }> {
-    return request<{ days: number }>('/daily/retention', {
-      method: 'PUT',
-      body: JSON.stringify({ days }),
-    });
+    return requestJson<{ days: number }>('/daily/retention', 'PUT', { days });
   },
   getDailyRetention(): Promise<{ days: number }> {
     return request<{ days: number }>('/daily/retention');

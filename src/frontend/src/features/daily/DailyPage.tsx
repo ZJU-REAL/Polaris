@@ -617,6 +617,9 @@ export function DailyPage() {
   // —— 日期（null=全部，默认就停在全部）留在工具栏；分类 / 类型收进高级检索面板 ——
   // 只看被某个文献库收录的论文（#218）。空 = 不限
   const [libraryId, setLibraryId] = useState('');
+  // 日期：空 = 全部。之前是「前一天 / 后一天」步进，只会把人困在某一天；
+  // 现在按有数据的日期直接选，跳到哪天都是一步。
+  const [day, setDay] = useState('');
   // 高级检索默认展开：分类 / 类型是常用筛选，藏起来用户找不到
   const [advOpen, setAdvOpen] = useState(true);
   const [category, setCategory] = useState('');
@@ -628,7 +631,12 @@ export function DailyPage() {
   const affiliation = useDebounced(affiliationInput.trim());
   // 高级条件是否偏离默认（决定高级检索按钮上的小圆点）
   const advActive =
-    !!category || announce !== DEFAULT_ANNOUNCE || !!author || !!affiliation || !!libraryId;
+    !!category ||
+    announce !== DEFAULT_ANNOUNCE ||
+    !!author ||
+    !!affiliation ||
+    !!libraryId ||
+    !!day;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
@@ -638,7 +646,7 @@ export function DailyPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => setPage(1), [q, semanticOn, category, announce, author, affiliation]);
+  useEffect(() => setPage(1), [q, semanticOn, category, announce, author, affiliation, day]);
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
@@ -669,6 +677,7 @@ export function DailyPage() {
       setAuthorInput(patch.author ?? '');
       setAffiliationInput(patch.affiliation ?? '');
       setCategory('');
+      setDay('');
       setLibraryId('');
       setAnnounce('all');
       setAdvOpen(true);
@@ -705,7 +714,7 @@ export function DailyPage() {
   const listQuery = useQuery({
     queryKey: [
       'daily-papers',
-      semanticOn, page, q, category, announce, author, affiliation, libraryId,
+      semanticOn, page, q, category, announce, author, affiliation, libraryId, day,
     ],
     queryFn: () =>
       api.listDailyPapers({
@@ -718,6 +727,7 @@ export function DailyPage() {
         author: author || undefined,
         affiliation: affiliation || undefined,
         libraryId: libraryId || undefined,
+        date: day || undefined,
         mode: semantic ? 'semantic' : undefined,
       }),
     retry: false,
@@ -888,6 +898,7 @@ export function DailyPage() {
                     advActive
                       ? () => {
                           setCategory('');
+                          setDay('');
                           setLibraryId('');
                           setAnnounce(DEFAULT_ANNOUNCE);
                           setAuthorInput('');
@@ -896,6 +907,32 @@ export function DailyPage() {
                       : undefined
                   }
                 >
+                  <div className="row gap6" style={{ alignItems: 'center' }}>
+                    <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
+                      {tr('日期', 'Date')}
+                    </span>
+                    <select
+                      className="input mono"
+                      style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11, padding: '0 6px' }}
+                      value={day}
+                      onChange={(e) => setDay(e.target.value)}
+                      title={tr('只看某一天公告的论文', 'Only papers announced on one day')}
+                    >
+                      <option value="">
+                        {tr(
+                          `全部（${(daysQuery.data ?? []).length} 天）`,
+                          `All (${(daysQuery.data ?? []).length} days)`,
+                        )}
+                      </option>
+                      {[...(daysQuery.data ?? [])]
+                        .sort((a, b) => b.date.localeCompare(a.date))
+                        .map((d) => (
+                          <option key={d.date} value={d.date}>
+                            {d.date} · {d.count}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
                   <div className="row gap6" style={{ alignItems: 'center' }}>
                     <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
                       {tr('文献库', 'Library')}

@@ -363,8 +363,6 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
         <InclusionSettingsForm
           value={incl}
           onChange={setIncl}
-          name={name}
-          statement={statement}
           showRubric
         />
       </div>
