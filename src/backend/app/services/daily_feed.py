@@ -980,6 +980,11 @@ async def compile_entry_wiki(
 # ---- 收录到各类库 ----
 
 
+#: 手动收录时可以被「提升」为 included 的既有状态。已经在库内的（scored/fetched/
+#: compiled/included）保持原样，不该被一次手动收录降级或重置。
+PROMOTABLE_ON_MANUAL_COLLECT = ("candidate", "excluded")
+
+
 async def entry_collections(
     session: AsyncSession, *, entry_id: uuid.UUID, user_id: uuid.UUID
 ) -> dict[str, Any]:
@@ -987,10 +992,18 @@ async def entry_collections(
     entry = await session.get(DailyFeedEntry, entry_id)
     if entry is None:
         raise DailyEntryNotFoundError(str(entry_id))
+    # 只算**真正进了库**的状态，与 papers.collecting_libraries 和列表口径一致。
+    # 以前不过滤，于是刚被粗排选中、还没打分的 candidate 也显示成「已在库中」，
+    # 复选框还被禁用——想手动收进去都点不了。excluded（回收站）同理。
+    from app.services.papers import PAPER_STATUS_GROUPS
+
     library_ids = (
         (
             await session.execute(
-                select(LibraryPaper.library_id).where(LibraryPaper.paper_id == entry.paper_id)
+                select(LibraryPaper.library_id).where(
+                    LibraryPaper.paper_id == entry.paper_id,
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+                )
             )
         )
         .scalars()
@@ -1048,11 +1061,20 @@ async def collect_papers(
             continue
         added = skipped = 0
         for paper in papers:
-            _, created = await ensure_membership(
+            membership, created = await ensure_membership(
                 session, library_id=library_id, paper_id=paper.id, status="included"
             )
-            added += int(created)
-            skipped += int(not created)
+            if created:
+                added += 1
+            elif membership.status in PROMOTABLE_ON_MANUAL_COLLECT:
+                # 人已经明确说「收进这个库」，那就照做：候选（还没轮到打分）和
+                # 回收站里的（自动淘汰过）都提升为人工纳入，而不是静默跳过——
+                # 否则勾了确认却什么也没发生。
+                membership.status = "included"
+                membership.trash_reason = None
+                added += 1
+            else:
+                skipped += 1
         await session.commit()
         results.append(
             {

@@ -623,7 +623,8 @@ export function DailyPage() {
   const [showAll, setShowAll] = useState(true);
   const [day, setDay] = useState('');
   // 高级检索默认展开：分类 / 类型是常用筛选，藏起来用户找不到
-  const [advOpen, setAdvOpen] = useState(true);
+  // 默认收起：日期切换已经在工具栏上，高级条件是偶尔才用的东西
+  const [advOpen, setAdvOpen] = useState(false);
   const [category, setCategory] = useState('');
   const [announce, setAnnounce] = useState<AnnounceFilter>(DEFAULT_ANNOUNCE);
   // 作者 / 机构：手填，或在右栏详情里点作者名、点机构 chip 带进来

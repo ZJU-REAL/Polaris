@@ -289,3 +289,67 @@ async def test_latest_batch_is_empty_when_the_library_never_synced(client):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["items"] == []
+
+
+async def test_candidate_is_not_reported_as_already_in_the_library(client):
+    """粗排选中但还没打分的 candidate，不能显示成「已在库中」。
+
+    线上碰到的：VetClaw 那篇刚被 CUA 的向量粗排捞进候选队列（status=candidate、
+    还没打分），收录弹窗却标成「已在库中」并把复选框禁用了——想手动收进去都点不了。
+    库内的口径是 PAPER_STATUS_GROUPS["library"]，candidate 不在其中。
+    """
+    from sqlalchemy import select as sa_select
+
+    from app.models.daily_feed import DailyFeedEntry
+    from app.models.library_direction import LibraryPaper
+
+    _pid, headers, _collected, passed_id, library_id = await _setup(client)
+
+    async with get_sessionmaker()() as session:
+        # passed_id 那篇在 _setup 里就是 candidate
+        membership = (
+            await session.execute(sa_select(LibraryPaper).where(LibraryPaper.paper_id == passed_id))
+        ).scalar_one()
+        assert membership.status == "candidate"
+        entry_id = (
+            await session.execute(
+                sa_select(DailyFeedEntry.id).where(DailyFeedEntry.paper_id == passed_id)
+            )
+        ).scalar_one()
+
+    resp = await client.get(f"/api/daily/papers/{entry_id}/collections", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert str(library_id) not in resp.json()["direction_library_ids"], (
+        "candidate 被当成了「已在库中」"
+    )
+
+
+async def test_manual_collect_promotes_a_candidate_instead_of_skipping_it(client):
+    """人明确勾选「收进这个库」时，已有的 candidate 行要提升为 included。
+
+    否则复选框放开了也没用：ensure_membership 遇到已有行直接返回，状态原封不动，
+    勾了确认却什么都没发生。
+    """
+    from sqlalchemy import select as sa_select
+
+    from app.models.library_direction import LibraryPaper
+
+    _pid, headers, _collected, passed_id, library_id = await _setup(client)
+
+    resp = await client.post(
+        "/api/daily/collect",
+        json={
+            "paper_ids": [str(passed_id)],
+            "direction_library_ids": [str(library_id)],
+            "topic_ids": [],
+            "personal": False,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    async with get_sessionmaker()() as session:
+        membership = (
+            await session.execute(sa_select(LibraryPaper).where(LibraryPaper.paper_id == passed_id))
+        ).scalar_one()
+        assert membership.status == "included", "手动收录没有把 candidate 提升为 included"
