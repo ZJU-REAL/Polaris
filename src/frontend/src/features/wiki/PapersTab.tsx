@@ -68,19 +68,14 @@ const VIEW_FILTERS: { v: ViewFilter; zh: string; en: string; hintZh: string; hin
   { v: 'starred', zh: '已星标', en: 'Starred', hintZh: '我加了星标的文献', hintEn: 'Papers I starred' },
   {
     v: 'today',
-    zh: '今日新收录',
-    en: 'New today',
-    hintZh: '今天从每日论文自动收录进来的',
-    hintEn: 'Collected from the daily papers today',
+    zh: '最新收录',
+    en: 'Latest batch',
+    hintZh: '上次同步新增的文献（这次没新增就是 0 篇）',
+    hintEn: 'Papers added by the most recent sync (0 if it added none)',
   },
 ];
 
-/** 今天 00:00（本地）的 ISO 串——「今日新收录」按入库时间卡这条线。 */
-function startOfToday(): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
-}
+
 
 /** 视图 → 列表查询参数（未纳入/回收站文献一律不出现在论文库）。 */
 function viewQuery(view: ViewFilter): {
@@ -88,12 +83,14 @@ function viewQuery(view: ViewFilter): {
   starred?: boolean;
   created_from?: string;
   daily_only?: boolean;
+  last_sync_only?: boolean;
 } {
   if (view === 'compiled') return { status: 'compiled_any' };
   if (view === 'starred') return { status: 'library', starred: true };
-  // 今日新收录：今天入库 + 来自每日论文池（手动加的、引文扩展来的不算）
+  // 最新收录：上次同步新增的那批。不能按「今天入库」卡——上次同步要是在昨天，
+  // 今天就永远是 0 篇，而用户想看的是「上次更新带进来什么」。
   if (view === 'today') {
-    return { status: 'library', created_from: startOfToday(), daily_only: true };
+    return { status: 'library', last_sync_only: true };
   }
   return { status: 'library' };
 }

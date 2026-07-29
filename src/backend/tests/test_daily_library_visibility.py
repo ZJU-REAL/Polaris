@@ -221,3 +221,71 @@ async def test_library_list_can_show_only_todays_daily_collections(client):
     assert str(collected_id) in ids
     assert str(manual_id) not in ids, "手工加的不算「从每日论文自动收录」"
     assert str(old_id) not in ids, "昨天入库的不算今天新收录"
+
+
+async def test_latest_batch_view_follows_the_last_sync_not_the_calendar(client):
+    """「最新收录」按上次同步新增算，不是按「今天入库」。
+
+    按日历卡的话，上次同步在昨天就永远显示 0 篇，而用户想看的是「上次更新带进来什么」。
+    """
+    import datetime as dt
+
+    from sqlalchemy import select as sa_select
+
+    from app.models.library_direction import LibraryPaper
+    from app.models.voyage import VoyageRun
+
+    project_id, headers, collected_id, _passed_id, library_id = await _setup(client)
+
+    async with get_sessionmaker()() as session:
+        run = VoyageRun(
+            kind="wiki_ingest",
+            mode="pipeline",
+            status="done",
+            goal="上次同步",
+            library_id=library_id,
+        )
+        session.add(run)
+        await session.flush()
+        two_days_ago = dt.datetime.now(dt.UTC) - dt.timedelta(days=2)
+        run.created_at = two_days_ago
+        membership = (
+            await session.execute(
+                sa_select(LibraryPaper).where(LibraryPaper.paper_id == collected_id)
+            )
+        ).scalar_one()
+        membership.created_at = two_days_ago + dt.timedelta(minutes=1)
+        # 再放一篇「上次同步之前就在库里」的：它不该算进最新收录
+        older = await add_paper(
+            session, project_id=project_id, title="Added Long Ago", status="compiled"
+        )
+        session.add(older)
+        await session.flush()
+        older_membership = (
+            await session.execute(sa_select(LibraryPaper).where(LibraryPaper.paper_id == older.id))
+        ).scalar_one()
+        older_membership.created_at = two_days_ago - dt.timedelta(days=5)
+        older_id = older.id
+        await session.commit()
+
+    resp = await client.get(
+        f"/api/projects/{project_id}/papers",
+        params={"status": "library", "last_sync_only": "true"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {row["id"] for row in resp.json()["items"]}
+    assert str(collected_id) in ids, "上次同步（两天前）新增的那篇应当算「最新收录」"
+    assert str(older_id) not in ids, "上次同步之前就在库里的不该算新增"
+
+
+async def test_latest_batch_is_empty_when_the_library_never_synced(client):
+    """从没同步过的库：0 篇，而不是退化成全部。"""
+    project_id, headers, _c, _p, _lib = await _setup(client)
+    resp = await client.get(
+        f"/api/projects/{project_id}/papers",
+        params={"status": "library", "last_sync_only": "true"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == []

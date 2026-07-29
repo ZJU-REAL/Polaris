@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Select, and_, cast, delete, exists, func, insert, or_, select, text
+from sqlalchemy import Select, and_, cast, delete, exists, false, func, insert, or_, select, text
 from sqlalchemy import Text as SAText
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -273,6 +273,7 @@ async def list_papers(
     created_from: datetime | None = None,
     created_to: datetime | None = None,
     daily_only: bool = False,
+    last_sync_only: bool = False,
 ) -> tuple[Sequence[PaperView], int]:
     """库内论文列表。入口二选一：library_id（单库读视图/库工作台）或 project_id
     （课题成员视角 = 关联库并集，P7）。project_id 兼作 PaperView 的课题上下文回填。
@@ -282,6 +283,28 @@ async def list_papers(
     library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
     if not library_ids:
         return [], 0
+
+    # 「最近一次同步新增」：按各库自己最后一轮 ingest 的开始时刻卡。
+    # 不能用「今天入库」——上次同步要是在昨天，今天就永远是 0 篇，而用户想看的是
+    # 「上次更新带进来什么」。没跑过同步的库返回空集（0 篇），而不是退化成全部。
+    last_sync_clause = None
+    if last_sync_only:
+        from app.models.voyage import VoyageRun
+
+        rows = (
+            await session.execute(
+                select(VoyageRun.library_id, func.max(VoyageRun.created_at))
+                .where(VoyageRun.kind == "wiki_ingest", VoyageRun.library_id.in_(library_ids))
+                .group_by(VoyageRun.library_id)
+            )
+        ).all()
+        per_library = [
+            and_(LibraryPaper.library_id == lib_id, LibraryPaper.created_at >= started)
+            for lib_id, started in rows
+            if started is not None
+        ]
+        # 一次都没同步过 → 没有「上次新增」可言，给一个恒假条件而不是放行
+        last_sync_clause = or_(*per_library) if per_library else false()
 
     filter_kwargs = dict(
         library_ids=library_ids,
@@ -303,6 +326,8 @@ async def list_papers(
 
     if len(library_ids) == 1:
         stmt = apply_paper_filters(member_paper_stmt(library_ids[0]), **filter_kwargs)
+        if last_sync_clause is not None:
+            stmt = stmt.where(last_sync_clause)
         total = (await session.execute(stmt.with_only_columns(func.count()))).scalar_one()
         if sort == "-published_at":
             stmt = stmt.order_by(
@@ -318,6 +343,8 @@ async def list_papers(
 
     # 关联多库并集：过滤 → 跨库归并 → Python 排序 + 分页
     stmt = apply_paper_filters(member_papers_stmt(library_ids), **filter_kwargs)
+    if last_sync_clause is not None:
+        stmt = stmt.where(last_sync_clause)
     all_rows = dedupe_member_rows((await session.execute(stmt)).all())
     if sort == "-published_at":
         all_rows.sort(

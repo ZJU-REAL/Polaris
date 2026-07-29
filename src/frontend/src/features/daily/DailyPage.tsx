@@ -288,7 +288,6 @@ function DailyDetailPane({
           </span>
         ))}
         <AnnounceBadge type={paper.announce_type} />
-        <CollectingLibraries paperId={paper.paper_id} />
         {paper.arxiv_id &&
           (arxivHref ? (
             <a
@@ -417,6 +416,9 @@ function DailyDetailPane({
           trailing={<PaperIndexStatusRow paperId={paper.paper_id} showRebuild={false} />}
         />
       )}
+
+      {/* —— 哪些文献库收录了这篇：紧跟标签行，两者都是「这篇在平台里的归属」 —— */}
+      <CollectingLibraries paperId={paper.paper_id} standalone />
 
       {/* —— 概念 chips（与库版同款；点了进不限库的概念页） —— */}
       <ConceptChips concepts={paper.concepts} onOpen={openConcept} />
@@ -616,9 +618,9 @@ export function DailyPage() {
   const [page, setPage] = useState(1);
   // —— 日期（null=全部，默认就停在全部）留在工具栏；分类 / 类型收进高级检索面板 ——
   // 只看被某个文献库收录的论文（#218）。空 = 不限
-  const [libraryId, setLibraryId] = useState('');
-  // 日期：空 = 全部。之前是「前一天 / 后一天」步进，只会把人困在某一天；
-  // 现在按有数据的日期直接选，跳到哪天都是一步。
+  // 日期：勾上「全部」就是跨天一起看（默认）；取消勾选后在有数据的日期间前后切换。
+  // 只在这些日期间跳，而不是任意日历日——中间没有公告的日子点进去是空的。
+  const [showAll, setShowAll] = useState(true);
   const [day, setDay] = useState('');
   // 高级检索默认展开：分类 / 类型是常用筛选，藏起来用户找不到
   const [advOpen, setAdvOpen] = useState(true);
@@ -630,13 +632,7 @@ export function DailyPage() {
   const author = useDebounced(authorInput.trim());
   const affiliation = useDebounced(affiliationInput.trim());
   // 高级条件是否偏离默认（决定高级检索按钮上的小圆点）
-  const advActive =
-    !!category ||
-    announce !== DEFAULT_ANNOUNCE ||
-    !!author ||
-    !!affiliation ||
-    !!libraryId ||
-    !!day;
+  const advActive = !!category || announce !== DEFAULT_ANNOUNCE || !!author || !!affiliation;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
@@ -646,7 +642,7 @@ export function DailyPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => setPage(1), [q, semanticOn, category, announce, author, affiliation, day]);
+  useEffect(() => setPage(1), [q, semanticOn, category, announce, author, affiliation, showAll, day]);
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
@@ -662,6 +658,9 @@ export function DailyPage() {
     staleTime: 60_000,
   });
   const dayCount = new Map((daysQuery.data ?? []).map((d) => [d.date, d.count] as const));
+  // 有数据的日期，升序（旧 → 新）；前后切换只在这些日期间跳
+  const dates = (daysQuery.data ?? []).map((d) => d.date).sort();
+  const dayIdx = dates.indexOf(day);
 
 
   // 默认停在「全部」：跨天一起看、按时间倒排，最新的自然在最前。以前默认落到最新
@@ -677,8 +676,6 @@ export function DailyPage() {
       setAuthorInput(patch.author ?? '');
       setAffiliationInput(patch.affiliation ?? '');
       setCategory('');
-      setDay('');
-      setLibraryId('');
       setAnnounce('all');
       setAdvOpen(true);
       if (patch.author) {
@@ -701,20 +698,13 @@ export function DailyPage() {
     retry: false,
     staleTime: 300_000,
   });
-  // 按库筛选的候选：后端只回请求者看得见的库，这里照单全收
-  const librariesQuery = useQuery({
-    queryKey: ['libraries-for-daily-filter'],
-    queryFn: () => api.listLibraries(),
-    retry: false,
-    staleTime: 300_000,
-  });
 
   // 语义检索：只在有关键词时生效；结果按相关度排序、不分页
   const semantic = !!q && semanticOn;
   const listQuery = useQuery({
     queryKey: [
       'daily-papers',
-      semanticOn, page, q, category, announce, author, affiliation, libraryId, day,
+      semanticOn, page, q, category, announce, author, affiliation, showAll, day,
     ],
     queryFn: () =>
       api.listDailyPapers({
@@ -726,15 +716,15 @@ export function DailyPage() {
         announce: announce === 'all' ? undefined : announce,
         author: author || undefined,
         affiliation: affiliation || undefined,
-        libraryId: libraryId || undefined,
-        date: day || undefined,
+        date: showAll ? undefined : day || undefined,
         mode: semantic ? 'semantic' : undefined,
       }),
     retry: false,
     placeholderData: keepPreviousData,
   });
   // 默认口径（当天 + 新工作）之外还加了条件才算「筛过」——空列表时给的话术不一样
-  const filtered = !!q || advActive;
+  // 选了某一天也算「筛过」——空列表时给的话术不一样
+  const filtered = !!q || advActive || !showAll;
   const items = listQuery.data?.items ?? [];
   const total = listQuery.data?.total ?? 0;
   const pages = semantic ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -898,8 +888,6 @@ export function DailyPage() {
                     advActive
                       ? () => {
                           setCategory('');
-                          setDay('');
-                          setLibraryId('');
                           setAnnounce(DEFAULT_ANNOUNCE);
                           setAuthorInput('');
                           setAffiliationInput('');
@@ -907,51 +895,6 @@ export function DailyPage() {
                       : undefined
                   }
                 >
-                  <div className="row gap6" style={{ alignItems: 'center' }}>
-                    <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
-                      {tr('日期', 'Date')}
-                    </span>
-                    <select
-                      className="input mono"
-                      style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11, padding: '0 6px' }}
-                      value={day}
-                      onChange={(e) => setDay(e.target.value)}
-                      title={tr('只看某一天公告的论文', 'Only papers announced on one day')}
-                    >
-                      <option value="">
-                        {tr(
-                          `全部（${(daysQuery.data ?? []).length} 天）`,
-                          `All (${(daysQuery.data ?? []).length} days)`,
-                        )}
-                      </option>
-                      {[...(daysQuery.data ?? [])]
-                        .sort((a, b) => b.date.localeCompare(a.date))
-                        .map((d) => (
-                          <option key={d.date} value={d.date}>
-                            {d.date} · {d.count}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                  <div className="row gap6" style={{ alignItems: 'center' }}>
-                    <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
-                      {tr('文献库', 'Library')}
-                    </span>
-                    <select
-                      className="input"
-                      style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11, padding: '0 6px' }}
-                      value={libraryId}
-                      onChange={(e) => setLibraryId(e.target.value)}
-                      title={tr('只看被某个文献库收录的论文', 'Only papers collected by one library')}
-                    >
-                      <option value="">{tr('全部文献库', 'All libraries')}</option>
-                      {(librariesQuery.data ?? []).map((lib) => (
-                        <option key={lib.id} value={lib.id}>
-                          {lib.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                   <div className="row gap6" style={{ alignItems: 'center' }}>
                     <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
                       {tr('分类', 'Category')}
@@ -1046,6 +989,60 @@ export function DailyPage() {
                   {tr('语义检索暂不可用，已回退为关键词匹配。', 'Semantic search unavailable — fell back to keyword matching.')}
                 </div>
               )}
+              {/* —— 日期切换：前一天 / 当前 / 后一天，右侧勾选看全部 ——
+                  只在有数据的日期间跳：中间没公告的日子（周末）点进去是空的。 */}
+              <div className="row gap6 wrap" style={{ marginTop: 8, alignItems: 'center' }}>
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ padding: '0 7px', height: 24, fontSize: 11 }}
+                  disabled={showAll || dayIdx <= 0}
+                  onClick={() => setDay(dates[dayIdx - 1] ?? day)}
+                  title={tr('前一天有公告的日期', 'Previous day with papers')}
+                >
+                  ‹ {tr('前一天', 'Prev')}
+                </button>
+                <span
+                  className="mono"
+                  style={{
+                    minWidth: 132,
+                    textAlign: 'center',
+                    fontSize: 11.5,
+                    color: showAll ? 'var(--text-4)' : 'var(--text-1)',
+                    fontWeight: showAll ? 400 : 600,
+                  }}
+                >
+                  {showAll
+                    ? tr(`全部 ${dates.length} 天`, `All ${dates.length} days`)
+                    : day
+                      ? dayLabel(day, dayCount.get(day))
+                      : tr('无数据', 'No data')}
+                </span>
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ padding: '0 7px', height: 24, fontSize: 11 }}
+                  disabled={showAll || dayIdx < 0 || dayIdx >= dates.length - 1}
+                  onClick={() => setDay(dates[dayIdx + 1] ?? day)}
+                  title={tr('后一天有公告的日期', 'Next day with papers')}
+                >
+                  {tr('后一天', 'Next')} ›
+                </button>
+                <label
+                  className="row gap6"
+                  style={{ alignItems: 'center', cursor: 'pointer', marginLeft: 4 }}
+                  title={tr('跨天一起看，按时间倒排', 'Show every day, newest first')}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showAll}
+                    onChange={(e) => {
+                      setShowAll(e.target.checked);
+                      // 取消「全部」时落到最新一天，省得还要再点一次
+                      if (!e.target.checked && !day) setDay(dates[dates.length - 1] ?? '');
+                    }}
+                  />
+                  <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr('全部', 'All')}</span>
+                </label>
+              </div>
             </div>
 
             <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>

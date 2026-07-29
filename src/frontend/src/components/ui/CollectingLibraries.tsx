@@ -16,7 +16,15 @@ function scoreText(v: number | null): string {
   return v === null ? tr('未打分', 'not scored') : v.toFixed(2);
 }
 
-export function CollectingLibraries({ paperId }: { paperId: string }) {
+export function CollectingLibraries({
+  paperId,
+  standalone = false,
+}: {
+  paperId: string;
+  /** 独立成一行（详情面板用）：占整行、多摆几个、空态也出提示。
+   *  默认是挤在顶部徽章行里的紧凑形态。 */
+  standalone?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const { data } = useQuery({
     queryKey: ['paper-libraries', paperId],
@@ -25,15 +33,41 @@ export function CollectingLibraries({ paperId }: { paperId: string }) {
   });
 
   const libs: CollectingLibrary[] = data ?? [];
-  if (libs.length === 0) return null;
+  // 独立成行时，「没有任何库收录」本身是有用的信息，要说出来；挤在徽章行里则不占位
+  if (libs.length === 0) {
+    return standalone ? (
+      <div className="row gap6" style={{ alignItems: 'center', marginTop: 8, paddingLeft: 2 }}>
+        <Icon name="book" size={12} style={{ color: 'var(--text-4)' }} />
+        <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>
+          {tr('还没有文献库收录这篇', 'No library has collected this paper yet')}
+        </span>
+      </div>
+    ) : null;
+  }
 
-  const shown = libs.slice(0, 2);
+  // 独立成行有整行宽度，可以多摆几个；挤在徽章行里只放两个
+  const shown = libs.slice(0, standalone ? 6 : 2);
   const rest = libs.length - shown.length;
 
   return (
     <>
-      <span className="row gap6 wrap" style={{ alignItems: 'center' }}>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+      <span
+        className="row gap6 wrap"
+        style={
+          standalone
+            ? { alignItems: 'center', marginTop: 8, paddingLeft: 2 }
+            : { alignItems: 'center' }
+        }
+      >
+        <span
+          className={standalone ? 'row gap6' : 'mono'}
+          style={
+            standalone
+              ? { fontSize: 11.5, color: 'var(--text-3)', alignItems: 'center' }
+              : { fontSize: 10.5, color: 'var(--text-4)' }
+          }
+        >
+          {standalone && <Icon name="book" size={12} style={{ color: 'var(--text-4)' }} />}
           {tr('已收录', 'In')}
         </span>
         {shown.map((l) => (
