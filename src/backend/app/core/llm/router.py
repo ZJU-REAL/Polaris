@@ -77,6 +77,11 @@ _CAPABILITY_STAGES = frozenset({"embedding", "rerank"})
 # rerank 不在此列：它是逐条打分，不涉及跨调用可比性，各用各的没有问题。
 GLOBAL_ONLY_STAGES = frozenset({"embedding"})
 
+# 新环节拆出来时的兼容回退：没显式配路由就沿用原来那个环节的，行为不变。
+# digest 原先是直接复用 librarian 的调用，拆开只是为了能单独设模型——
+# 存量部署不配也不该因此改变行为（default 路由指向的往往是另一类模型）。
+_STAGE_ROUTE_FALLBACKS = {"digest": "librarian"}
+
 
 @dataclass(slots=True, frozen=True)
 class ResolvedRoute:
@@ -123,10 +128,15 @@ _STREAM_FLUSH_CHARS = 80  # token 增量攒到此长度再广播一段（节流�
 _SHORT_CALL = (60.0, 2)  # (timeout 秒, 最多尝试次数) → 最坏 60+3+60 = 123s
 _LONG_CALL = (300.0, 4)
 
+# 「要给长耐心」与「要流式播出去」是两件事，不能共用一个集合。
+# digest 就是反例：它输出 JSON（不该流式，否则整段 JSON 灌进任务终端日志），
+# 但一次要为一批论文生成洞察，实测 p95 313 秒，必须给长档预算。
+_LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest"})
+
 
 def call_profile(stage: str) -> tuple[float, int]:
     """该环节单次调用的 (超时, 最大尝试次数)。"""
-    return _LONG_CALL if stage in STREAM_STAGES else _SHORT_CALL
+    return _LONG_CALL if stage in _LONG_CALL_STAGES else _SHORT_CALL
 
 
 class LLMRouter:
@@ -267,6 +277,8 @@ class LLMRouter:
         owner_id = await self._effective_owner(user_id, stage)
         routes = await self._get_routes(owner_id)
         route = routes.get(stage)
+        if route is None and (inherited := _STAGE_ROUTE_FALLBACKS.get(stage)):
+            route = routes.get(inherited)
         if route is None:
             if stage in _CAPABILITY_STAGES:
                 if not routes and get_settings().llm_fake_fallback:

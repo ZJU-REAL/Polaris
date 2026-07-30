@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import date
 from typing import Any
@@ -20,6 +21,8 @@ from app.models.research_digest import LibraryResearchDigest
 from app.models.voyage import VoyageRun
 from app.services import concepts as concepts_service
 from app.services.libraries import library_definition
+
+logger = logging.getLogger(__name__)
 
 PAPER_INSIGHTS_SYSTEM_PROMPT = """\
 POLARIS_DAILY_DIGEST
@@ -115,8 +118,13 @@ async def _generate_insight_batch(
     preferred_concepts: list[str],
     user_id: uuid.UUID | None,
     extra_guidance: str,
-) -> tuple[dict[str, dict[str, Any]], str | None, int]:
-    """生成一批逐篇看点；模型漏项时只把缺失论文送回去补跑，最多三轮。"""
+) -> tuple[dict[str, dict[str, Any]], str | None, int, str | None]:
+    """生成一批逐篇看点；模型漏项时只把缺失论文送回去补跑，最多三轮。
+
+    返回 (已生成的洞察, 模型名, 重试次数, 失败原因或 None)。三轮之后仍有缺失也
+    **不抛错**：把已经拿到的那部分交回去，缺的记进原因。摘要是附加产物，不该因为
+    模型偶尔漏几篇就把整轮同步打成 paused_error——前面的候选、打分、取全文、编译、
+    概念上链都已经落库了。"""
     expected = {item["paper_id"]: item for item in papers}
     pending = list(papers)
     collected: dict[str, dict[str, Any]] = {}
@@ -139,7 +147,7 @@ async def _generate_insight_batch(
         )
         try:
             result = await llm.complete(
-                "librarian",
+                "digest",
                 [
                     Message(
                         role="system",
@@ -169,7 +177,7 @@ async def _generate_insight_batch(
                     collected[paper_id] = item
             pending = [item for item in papers if item["paper_id"] not in collected]
             if not pending:
-                return collected, model, retries
+                return collected, model, retries, None
             last_error = ValueError(
                 f"daily digest batch {batch_index}/{batch_total} omitted {len(pending)} papers"
             )
@@ -180,12 +188,19 @@ async def _generate_insight_batch(
             retries += 1
             await _retry_pause(attempt)
 
+    # 这一批没能生成洞察：记下原因交回给调用方，**不抛错**。
+    # 以前是直接 raise，于是整轮同步被打成 paused_error——前面五步（候选、打分、
+    # 取全文、编译、概念上链）的成果全被最后一步的摘要生成拖死，而摘要本身只是
+    # 附加产物。模型偶尔不把一批论文的 id 全数返回是常态，不该升级成致命错误。
     missing_ids = [item["paper_id"] for item in pending]
     detail = f"; missing={','.join(missing_ids)}" if missing_ids else ""
-    raise ValueError(
-        f"daily digest batch {batch_index}/{batch_total} failed after "
+    reason = (
+        f"batch {batch_index}/{batch_total} failed after "
         f"{_DIGEST_MAX_ATTEMPTS} attempts: {last_error}{detail}"
     )
+    logger.warning("daily digest %s", reason)
+    # 交回**已经生成的**部分，而不是整批丢掉：前几轮拿到的洞察是有效的
+    return collected, model, retries, reason
 
 
 async def _generate_paper_insights(
@@ -196,7 +211,7 @@ async def _generate_paper_insights(
     papers: list[dict[str, Any]],
     user_id: uuid.UUID | None,
     extra_guidance: str,
-) -> tuple[list[dict[str, Any]], str | None, int, int]:
+) -> tuple[list[dict[str, Any]], str | None, int, int, list[str]]:
     """按固定小批次生成看点，并保持最终顺序与输入论文一致。"""
     direction = library_definition(library)
     batches = [
@@ -209,8 +224,9 @@ async def _generate_paper_insights(
     )
     model: str | None = None
     retries = 0
+    failed_batches: list[str] = []
     for index, batch in enumerate(batches, start=1):
-        generated, batch_model, batch_retries = await _generate_insight_batch(
+        generated, batch_model, batch_retries, failure = await _generate_insight_batch(
             llm=llm,
             run=run,
             library=library,
@@ -229,22 +245,26 @@ async def _generate_paper_insights(
         )
         model = batch_model or model
         retries += batch_retries
+        if failure:
+            failed_batches.append(failure)
 
+    # 批次彻底失败时 by_id 不再覆盖全部论文：缺项的论文照样列出来，只是看点退回它自己的
+    # TL;DR。少一句模型措辞，好过让这篇论文从简报里凭空消失。
     insights = [
         item
         | {
-            "highlight": _string(by_id[item["paper_id"]].get("highlight"), item["tldr"]),
+            "highlight": _string(by_id.get(item["paper_id"], {}).get("highlight"), item["tldr"]),
             "direction_relation": _string(
-                by_id[item["paper_id"]].get("direction_relation"),
+                by_id.get(item["paper_id"], {}).get("direction_relation"),
                 item.get("relevance_reason") or "与本库研究方向相关。",
             ),
             "concepts": _generated_concepts(
-                by_id[item["paper_id"]].get("concepts"), item.get("concepts")
+                by_id.get(item["paper_id"], {}).get("concepts"), item.get("concepts")
             ),
         }
         for item in papers
     ]
-    return insights, model, retries, len(batches)
+    return insights, model, retries, len(batches), failed_batches
 
 
 async def _synthesize_digest_summary(
@@ -281,7 +301,7 @@ async def _synthesize_digest_summary(
             prompt += "\n上次综合输出无效，请严格按 JSON schema 重新生成。"
         try:
             result = await llm.complete(
-                "librarian",
+                "digest",
                 [
                     Message(
                         role="system",
@@ -453,6 +473,14 @@ def _render_digest_markdown(
             f"- 概念关联：{int(generation.get('active_concepts') or 0)} 个正式概念；"
             f"新增 {int(generation.get('links_created') or 0)} 条论文关系"
         )
+        failed = generation.get("failed_batches")
+        if isinstance(failed, list) and failed:
+            # 降级说明必须写在正文里：这几批的论文只有 TL;DR，没有模型写的看点，
+            # 否则读者会以为看点写得敷衍，而不知道是模型没出结果。
+            lines.append(
+                f"- ⚠️ {len(failed)} 批未能生成看点，相关论文暂以 TL;DR 代替："
+                + "；".join(str(item) for item in failed)
+            )
     messages = diagnostics.get("messages") if isinstance(diagnostics.get("messages"), list) else []
     if messages:
         lines.extend(["", "### 来源诊断", ""] + [f"- {message}" for message in messages])
@@ -552,6 +580,7 @@ async def create_daily_digest(
             insight_model,
             insight_retries,
             batch_count,
+            insight_failures,
         ) = await _generate_paper_insights(
             llm=llm,
             run=run,
@@ -587,6 +616,8 @@ async def create_daily_digest(
             "batch_size": _DIGEST_BATCH_SIZE,
             "batches": batch_count,
             "retries": insight_retries + synthesis_retries,
+            # 哪几批没能生成洞察（以前这里是直接抛错、整轮同步被打成 paused_error）
+            "failed_batches": insight_failures,
             **concept_stats,
         }
         model = synthesis_model or insight_model
@@ -755,7 +786,7 @@ async def synthesize_rolling_trends(
         ],
     }
     result = await llm.complete(
-        "librarian",
+        "digest",
         [
             Message(role="system", content=TREND_SYSTEM_PROMPT + extra_guidance),
             Message(role="user", content=json.dumps(payload, ensure_ascii=False)),

@@ -10,6 +10,7 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   sextant: { zh: '自动校验', en: 'Auto verification' },
   relevance: { zh: '相关度打分', en: 'Relevance scoring' },
   librarian: { zh: '图文精读编译', en: 'Paper compile (with figures)' },
+  digest: { zh: '每日研究简报', en: 'Daily research digest' },
   extract: { zh: '结构化抽取', en: 'Structured extraction' },
   reading: { zh: 'AI 伴读对话', en: 'Reading companion chat' },
   embedding: { zh: '向量嵌入', en: 'Embeddings' },

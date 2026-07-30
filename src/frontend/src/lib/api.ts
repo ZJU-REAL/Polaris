@@ -479,6 +479,7 @@ export const LLM_STAGES = [
   'sextant',
   'relevance',
   'librarian',
+  'digest',
   'extract',
   'reading',
   'embedding',

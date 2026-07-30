@@ -257,3 +257,82 @@ def test_profile_is_part_of_the_provider_cache_key():
     router._provider_for(route, "relevance")
     router._provider_for(route, "librarian")
     assert len(router._providers) == 2, "长短档共用了同一个客户端"
+
+
+# ---- digest 拆成独立 stage（可单独设模型）----
+
+
+def test_digest_gets_the_long_call_budget_without_streaming():
+    """digest 输出 JSON，不该流式；但它一次为一批论文生成洞察，必须给长档预算。
+
+    「要给长耐心」与「要流式播出去」是两件事。#229 里我把耐心绑在 STREAM_STAGES 上，
+    digest 正是反例——流式会把整段 JSON 灌进任务终端日志，而 60 秒预算又盖不住它
+    实测 313 秒的 p95。
+    """
+    from app.core.llm.router import STREAM_STAGES, call_profile
+
+    timeout, attempts = call_profile("digest")
+    assert timeout >= 300, f"digest 超时 {timeout}s 太短，实测 p95 就有 313s"
+    assert attempts >= 3
+    assert "digest" not in STREAM_STAGES, "digest 输出 JSON，不该流式"
+
+
+async def test_digest_falls_back_to_the_librarian_route_when_unset(client, monkeypatch):
+    """没显式配 digest 路由时沿用 librarian 的，存量部署行为不变。
+
+    digest 原先就是直接复用 librarian 的调用，拆出来只为能单独设模型。若回退到
+    default，存量部署会悄悄换成另一类模型——那不是拆分该带来的后果。
+    """
+    from app.core.llm.router import LLMRouter, ResolvedRoute
+
+    router = LLMRouter()
+    librarian_route = ResolvedRoute(
+        provider_kind="fake",
+        base_url=None,
+        api_key="",
+        model="librarian-model",
+        temperature=None,
+        provider_name="fake",
+        effort=None,
+    )
+    default_route = ResolvedRoute(
+        provider_kind="fake",
+        base_url=None,
+        api_key="",
+        model="default-model",
+        temperature=None,
+        provider_name="fake",
+        effort=None,
+    )
+
+    async def fake_routes(owner_id):
+        return {"librarian": librarian_route, "default": default_route}
+
+    monkeypatch.setattr(router, "_get_routes", fake_routes)
+    _provider, route = await router.resolve("digest")
+    assert route.model == "librarian-model", "应当沿用 librarian，而不是掉到 default"
+
+
+async def test_an_explicit_digest_route_wins_over_the_fallback(client, monkeypatch):
+    """显式配了 digest 就用它——拆分的意义就在这里。"""
+    from app.core.llm.router import LLMRouter, ResolvedRoute
+
+    router = LLMRouter()
+
+    def _route(model):
+        return ResolvedRoute(
+            provider_kind="fake",
+            base_url=None,
+            api_key="",
+            model=model,
+            temperature=None,
+            provider_name="fake",
+            effort=None,
+        )
+
+    async def fake_routes(owner_id):
+        return {"digest": _route("digest-model"), "librarian": _route("librarian-model")}
+
+    monkeypatch.setattr(router, "_get_routes", fake_routes)
+    _provider, route = await router.resolve("digest")
+    assert route.model == "digest-model"
