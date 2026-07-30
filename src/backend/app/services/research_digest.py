@@ -402,7 +402,9 @@ async def _run_members(
         if paper_ids
         else (
             LibraryPaper.scored_at.is_not(None),
-            LibraryPaper.scored_at >= run.created_at,
+            # 同 actions_wiki._scored_in_this_run：按运行 id 认本次那批，不按时间窗口
+            # （墙钟回拨/多机时钟偏差会让刚打完分的论文落在窗口外）
+            LibraryPaper.scored_run_id == run.id,
         )
     )
     return list(

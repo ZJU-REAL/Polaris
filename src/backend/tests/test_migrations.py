@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
+HEAD_REVISION = "78e222c38b3b"  # 成员行记下打分它的那次同步任务 id
+DIGEST_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
 INLINE_VECTOR_DROP_REVISION = "929c05a03745"  # 删除主表向量列（向量已搬进侧表）
 VECTOR_TABLES_REVISION = "5d8ebd5cb100"  # 向量侧表建表 + 存量搬迁
 EFFORT_REVISION = "510f6bde2233"  # 模型路由推理档位（model_routes.effort）
@@ -328,8 +329,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "trend_content",
     } <= columns["library_research_digests"]
     assert "relevance_reason" in columns["library_papers"]
+    assert "scored_run_id" in columns["library_papers"]  # 打分归属改记运行 id
 
-    # 最新 revision 可往返：先退掉每日简报表与相关性理由。
+    # 最新 revision 可往返：先退掉成员行上的打分任务 id。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == DIGEST_REVISION
+    assert "scored_run_id" not in columns["library_papers"]
+
+    # 再退掉每日简报表与相关性理由。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == INLINE_VECTOR_DROP_REVISION

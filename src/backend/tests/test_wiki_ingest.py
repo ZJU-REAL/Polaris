@@ -6,6 +6,7 @@
 
 import asyncio
 import uuid
+from datetime import timedelta
 
 import fakeredis.aioredis
 import httpx
@@ -468,6 +469,48 @@ class _BreakDailyDigest(FakeProvider):
             images=images,
             effort=effort,
         )
+
+
+async def test_backwards_clock_keeps_scored_papers_in_the_run(
+    client, queue_stub, wiki_mocks, monkeypatch
+):
+    """墙钟回拨也不能把刚打完分的论文丢出本次同步（#234）。
+
+    取全文/编译/简报要认出「本次收下的那批论文」。曾按 ``scored_at >= run.created_at``
+    划时间窗口：两个时间戳分别取自建任务和打分两个时刻的系统墙钟，NTP 回拨、或 API 与
+    worker 不在一台机器上，都会让刚打完分的论文落在窗口外被静默排除——生产上「已打分
+    却没全文」的积压就是这么攒出来的。这里把打分时刻整体拨到建任务之前来钉住这个语义。
+    """
+    import app.services.relevance as relevance_module
+
+    real_utcnow = relevance_module.utcnow
+    monkeypatch.setattr(relevance_module, "utcnow", lambda: real_utcnow() - timedelta(seconds=30))
+
+    project_id, headers = await _setup_project(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/ingest",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    run_id = resp.json()["id"]
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(run_id))
+
+    detail = (await client.get(f"/api/voyages/{run_id}", headers=headers)).json()
+    assert detail["status"] == "done", detail
+    assert [s["status"] for s in detail["steps"]] == ["passed"] * 8
+    # 3 篇候选里 1 篇不相关被淘汰，剩下 2 篇必须一路走到编译，不因时钟回拨掉队
+    assert detail["steps"][2]["observation"]["processed"] == 2  # 取全文
+    assert detail["steps"][3]["observation"]["processed"] == 2  # 编译
+
+    async with get_sessionmaker()() as session:
+        rows = await project_paper_rows(session, project_id=project_id)
+        assert [m.status for _, m in rows] == ["compiled"] * 2
+        # 打分时刻确实早于建任务（回拨生效），归属仍靠运行 id 认出来
+        run = await session.get(VoyageRun, uuid.UUID(run_id))
+        for _, m in rows:
+            assert m.scored_at < run.created_at
+            assert m.scored_run_id == run.id
 
 
 async def test_daily_digest_failure_does_not_advance_watermark(client, queue_stub, wiki_mocks):

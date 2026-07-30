@@ -240,11 +240,16 @@ def _scored_in_this_run(ctx: ActionContext):
     「本次通过筛选 1 篇」后面跟着「下载 12 个 PDF」——两个数字统计的不是同一批
     论文，看着像对不上。
 
-    按 ``scored_at >= 本次运行创建时刻`` 筛，而不是靠 checkpoint 记 id：步骤中途
+    按打分时写进成员行的 ``scored_run_id`` 筛，而不是靠 checkpoint 记 id：步骤中途
     崩溃、恢复后重跑时，checkpoint 里那份记录会丢，崩溃前已打分的论文就再也进不了
-    后续步骤；而 scored_at 落在库里，恢复后照样认得出来。
+    后续步骤；而 scored_run_id 落在库里，恢复后照样认得出来。
+
+    也不用 ``scored_at >= run.created_at`` 划时间窗口：那两个时间戳分别取自建任务时刻
+    和打分时刻的系统墙钟，只要中间发生 NTP 回拨（或 API 与 worker 不在一台机器上、
+    时钟有偏差），刚打完分的论文就会落在窗口外，被静默排除在取全文/编译之外——
+    生产上「已打分却没全文」的积压正是这么来的。运行 id 是恒等比较，与时钟无关。
     """
-    return LibraryPaper.scored_at >= ctx.run.created_at
+    return LibraryPaper.scored_run_id == ctx.run.id
 
 
 async def _insert_pooled_with_retry(

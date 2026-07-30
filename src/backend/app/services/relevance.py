@@ -122,7 +122,7 @@ async def score_paper_relevance(
     project_id: uuid.UUID | None = None,
     voyage_id: uuid.UUID | None = None,
 ) -> RelevanceResult:
-    """对一篇论文打相关性分：写成员行 relevance_score/scored_at 与论文 tldr。
+    """对一篇论文打相关性分：写成员行 relevance_score/scored_at/scored_run_id 与论文 tldr。
 
     不改成员行 status、不 commit（由调用方决定状态转移与落库时机）。
     extra_guidance：追加到 system prompt 的补充指引（voyage 技能注入点用）。
@@ -145,6 +145,7 @@ async def score_paper_relevance(
     membership.relevance_score = score
     paper.tldr = str(data.get("tldr") or "") or paper.tldr
     membership.scored_at = utcnow()
+    membership.scored_run_id = voyage_id  # 手动加论文没有任务，留 NULL
     return RelevanceResult(score=score, reason=str(data.get("reason") or ""), tldr=paper.tldr or "")
 
 

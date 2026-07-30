@@ -56,6 +56,7 @@ _FILLABLE_MEMBERSHIP_FIELDS = (
     "relevance_score",
     "tldr_note",
     "scored_at",
+    "scored_run_id",  # 跟着 scored_at 走，合并后仍认得出是哪次同步收下的
 )
 
 # 阅读状态推进序（冲突时取两边更靠后的）

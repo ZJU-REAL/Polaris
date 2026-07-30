@@ -224,7 +224,7 @@ def test_parse_and_strip_block_good():
 
 
 def test_parse_and_strip_block_bad_json():
-    content = "正文B\n<<<POLARIS_AFFILIATIONS\n[{\"name\": broken OOPS]\nPOLARIS_AFFILIATIONS>>>\n"
+    content = '正文B\n<<<POLARIS_AFFILIATIONS\n[{"name": broken OOPS]\nPOLARIS_AFFILIATIONS>>>\n'
     stripped, mapping = parse_and_strip_affiliation_block(content)
     assert "POLARIS_AFFILIATIONS" not in stripped  # 坏 JSON 也要剥净
     assert stripped == "正文B\n"
@@ -233,7 +233,7 @@ def test_parse_and_strip_block_bad_json():
 
 def test_parse_and_strip_block_unclosed_marker():
     """模型只吐了开头标记、没闭合 → 从裸标记删到文末，绝不漏进 wiki。"""
-    content = "## TL;DR\n\n正文C。\n\n---\n<<<POLARIS_AFFILIATIONS\n[{\"name\": \"Alice\"}]"
+    content = '## TL;DR\n\n正文C。\n\n---\n<<<POLARIS_AFFILIATIONS\n[{"name": "Alice"}]'
     stripped, mapping = parse_and_strip_affiliation_block(content)
     assert "POLARIS_AFFILIATIONS" not in stripped
     assert stripped == "## TL;DR\n\n正文C。\n"
@@ -386,14 +386,12 @@ async def _setup_scored_paper(
         )
         session.add_all([paper, run])
         await session.flush()
-        # 真实流程里是先建运行、再逐篇打分，所以 scored_at 一定落在运行创建之后。
-        # 取全文那步只处理「本次运行收下的」，靠的就是这个时刻。
+        # 取全文那步只处理「本次运行收下的」——打分时会把运行 id 写在成员行上，这里补齐。
         membership = (
-            await session.execute(
-                select(LibraryPaper).where(LibraryPaper.paper_id == paper.id)
-            )
+            await session.execute(select(LibraryPaper).where(LibraryPaper.paper_id == paper.id))
         ).scalar_one()
         membership.scored_at = run.created_at
+        membership.scored_run_id = run.id
         await session.commit()
         await session.refresh(paper)
         await session.refresh(run)

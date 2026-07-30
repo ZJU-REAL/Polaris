@@ -104,6 +104,12 @@ class LibraryPaper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 进回收站的原因（status=excluded 时有值）：irrelevant 相关性不足自动淘汰 | manual 手动删除
     trash_reason: Mapped[str | None] = mapped_column(String(16))
     scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 最后一次给这行打分的同步任务 id：后续步骤（取全文/编译/简报）靠它认出「本次收下的
+    # 那批论文」。以前按 scored_at >= run.created_at 划窗口，两个时间戳分别取自不同时刻的
+    # 系统墙钟，NTP 回拨/多机时钟偏差都会让刚打完分的论文落在窗口外被静默丢掉。
+    scored_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("voyage_runs.id", ondelete="SET NULL"), index=True
+    )
     # 退役列（编译时间/模型随解读走 paper_wikis）：同上，只留存量数据。
     compiled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     compiled_model: Mapped[str | None] = mapped_column(String(255))
