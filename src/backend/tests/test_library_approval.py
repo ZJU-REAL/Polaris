@@ -244,6 +244,100 @@ async def test_public_library_visible_to_all(client):
     assert resp.json()["is_public"] is True
 
 
+async def test_digest_is_readable_by_anyone_who_can_see_the_library(client):
+    """每日简报跟随**库可见性**，不跟随管理权限。
+
+    简报是读物，不是管理动作：公共库全员可读，它的简报也该全员可读。界面上一度只有
+    管理者视角（工作台）挂着「每日简报」标签，只读浏览视角没有，于是没有管理权的人
+    在有简报的库里根本看不到它——公共库里几个 submitted_by 为空的，实际就成了
+    只有平台管理员看得见。
+    """
+    import datetime as dt
+    import uuid as _uuid
+
+    from app.models.research_digest import LibraryResearchDigest
+
+    admin = await _hdr(client, "digest-admin@example.com")
+    await _promote_admin("digest-admin@example.com")
+    owner = await _hdr(client, "digest-owner@example.com")
+    stranger = await _hdr(client, "digest-stranger@example.com")
+
+    lib_id = await _create_personal(client, owner, name="有简报的库")
+    await client.post(f"/api/libraries/{lib_id}/request-public", headers=owner)
+    await client.post(f"/api/libraries/{lib_id}/approve", headers=admin)
+
+    async with get_sessionmaker()() as session:
+        session.add(
+            LibraryResearchDigest(
+                library_id=_uuid.UUID(lib_id),
+                report_date=dt.date(2026, 7, 30),
+                source="voyage",
+                mode="incremental",
+                counts={"kept": 2},
+                source_diagnostics={},
+                paper_insights=[],
+                excluded_papers=[],
+                cross_paper_signals=[],
+                summary="本期两篇。",
+                content="# 每日文献简报",
+                rolling_trends=[],
+                trend_content="",
+            )
+        )
+        await session.commit()
+
+    # 没有任何管理权的普通用户：列表读得到，正文也读得到
+    resp = await client.get(f"/api/libraries/{lib_id}/digests", headers=stranger)
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert len(rows) == 1 and rows[0]["counts"]["kept"] == 2
+
+    resp = await client.get(f"/api/libraries/{lib_id}/digests/{rows[0]['id']}", headers=stranger)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["content"].startswith("# 每日文献简报")
+
+    # 生成仍然是管理动作：只读的人拿不到
+    resp = await client.post(f"/api/libraries/{lib_id}/digests/generate", headers=stranger)
+    assert resp.status_code in (403, 404), resp.text
+
+
+async def test_personal_library_digest_stays_hidden_from_strangers(client):
+    """个人库的简报不能因为「简报全员可读」而漏出去——它跟随库可见性，库看不见就 404。"""
+    import datetime as dt
+    import uuid as _uuid
+
+    from app.models.research_digest import LibraryResearchDigest
+
+    owner = await _hdr(client, "digest-priv-owner@example.com")
+    stranger = await _hdr(client, "digest-priv-stranger@example.com")
+    lib_id = await _create_personal(client, owner, name="私有库")
+
+    async with get_sessionmaker()() as session:
+        session.add(
+            LibraryResearchDigest(
+                library_id=_uuid.UUID(lib_id),
+                report_date=dt.date(2026, 7, 30),
+                source="voyage",
+                mode="incremental",
+                counts={},
+                source_diagnostics={},
+                paper_insights=[],
+                excluded_papers=[],
+                cross_paper_signals=[],
+                summary="私有",
+                content="# 私有简报",
+                rolling_trends=[],
+                trend_content="",
+            )
+        )
+        await session.commit()
+
+    assert (
+        await client.get(f"/api/libraries/{lib_id}/digests", headers=stranger)
+    ).status_code == 404
+    assert (await client.get(f"/api/libraries/{lib_id}/digests", headers=owner)).status_code == 200
+
+
 async def test_list_type_filter(client):
     admin = await _hdr(client, "p10-a12@example.com")
     await _promote_admin("p10-a12@example.com")

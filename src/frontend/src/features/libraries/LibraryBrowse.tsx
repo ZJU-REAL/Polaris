@@ -65,6 +65,9 @@ import { AddToButton } from '../library/AddToPopover';
 
 // 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
 const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m.GraphTab })));
+const DailyDigestTab = lazy(() =>
+  import('../wiki/DailyDigestTab').then((m) => ({ default: m.DailyDigestTab })),
+);
 
 /* ============================================================
    共享文献库只读浏览（P5c 非成员视角）：
@@ -72,7 +75,7 @@ const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m
    全部走 /libraries 读端点；没有任何管理入口，收藏/笔记等个人操作去阅读页做。
    ============================================================ */
 
-type BrowseTab = 'papers' | 'concepts' | 'graph' | 'chat' | 'notes' | 'govern' | 'ingest';
+type BrowseTab = 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'notes' | 'govern' | 'ingest';
 
 const PAGE_SIZE = 20;
 
@@ -912,6 +915,8 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
             { v: 'papers', label: `${tr('论文库', 'Papers')}${paperTotal !== undefined ? ` · ${paperTotal}` : ''}` },
             { v: 'concepts', label: tr('概念库', 'Concepts') },
             { v: 'graph', label: tr('图谱', 'Graph') },
+            // 简报是读物，不是管理动作：能看见这个库的人就该看得见它（只是不能生成）
+            { v: 'digest', label: tr('每日简报', 'Daily digest') },
             { v: 'chat', label: tr('文献对话', 'Chat') },
             { v: 'notes', label: tr('笔记', 'Notes') },
             { v: 'govern', label: tr('文献库配置', 'Library config') },
@@ -969,6 +974,17 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
         ) : tab === 'graph' ? (
           <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
             <GraphTab libraryId={libraryId} onOpenPaper={goPaper} onOpenConcept={goConcept} />
+          </Suspense>
+        ) : tab === 'digest' ? (
+          <Suspense fallback={<div className="skel" style={{ flex: 1, margin: 16 }} />}>
+            <DailyDigestTab
+              libraryId={libraryId}
+              onOpenPaper={goPaper}
+              onWikiLink={onWikiLink}
+              canGenerate={false}
+              ingestRunning={!!ingestQuery.data?.running_voyage_id}
+              hasWatermark={!!ingestQuery.data?.watermark}
+            />
           </Suspense>
         ) : tab === 'chat' ? (
           <LibraryChatTab libraryId={libraryId} canManage={false} onOpenPaper={goPaper} onWikiLink={onWikiLink} />
