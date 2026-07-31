@@ -1230,6 +1230,103 @@ async def test_standalone_library_is_due_for_daily_cron(client, queue_stub, wiki
         assert [str(lib.id) for lib in due] == [library_id]
 
 
+async def test_one_manual_sync_does_not_cancel_everyone_elses_daily_sync(
+    client, queue_stub, wiki_mocks
+):
+    """某个库今天被手动同步过，不影响其余库当天的自动同步。
+
+    生产上 07-31 就是这样丢了一整轮：10:22 有人手动同步了 rubric 一个库，10:32 每日池
+    刚灌进 227 篇新论文、扇出被触发，结果一个库都没选中——因为闸门是
+    ``already_ran_today("wiki_ingest")``，查的是**当天任意一条** wiki_ingest 运行，
+    不分库、也不分手动还是自动。
+    """
+    token = await register_and_login(client, email="fanout-manual@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("fanout-manual@example.com")
+
+    first = await _create_standalone_library(client, headers, name="被手动同步的库")
+    second = await _create_standalone_library(client, headers, name="等自动同步的库")
+    engine, _ = _make_engine()
+    for library_id in (first, second):
+        resp = await client.post(
+            f"/api/libraries/{library_id}/ingest/run",
+            json={"mode": "bootstrap", "knobs": KNOBS},
+            headers=headers,
+        )
+        await engine.run(uuid.UUID(resp.json()["id"]))
+
+    async with get_sessionmaker()() as session:
+        # 有人手动同步了第一个库（created_by 非空，且已跑完）
+        me = (
+            await session.execute(
+                select(User).where(User.email == "fanout-manual@example.com")
+            )
+        ).scalar_one()
+        session.add(
+            VoyageRun(
+                kind="wiki_ingest",
+                goal="手动同步",
+                status="done",
+                library_id=uuid.UUID(first),
+                created_by=me.id,
+            )
+        )
+        await session.commit()
+
+    # 走真正的扇出任务：闸门以前就在这里，直接调选库函数是测不到的
+    from worker.tasks import daily_wiki_ingest
+
+    enqueued: list[str] = []
+
+    class _Redis:
+        async def enqueue_job(self, name, run_id, **kwargs):
+            enqueued.append(run_id)
+
+    created = await daily_wiki_ingest({"redis": _Redis()})
+    assert enqueued == created
+
+    async with get_sessionmaker()() as session:
+        synced = {
+            str((await session.get(VoyageRun, uuid.UUID(rid))).library_id) for rid in created
+        }
+    assert second in synced, "别人手动同步了一个库，不该让这个库当天不再自动同步"
+    assert first in synced, "手动同步跑在池子更新之前，替代不了这一轮"
+
+
+async def test_a_library_is_only_auto_synced_once_a_day(client, queue_stub, wiki_mocks):
+    """同一个库当天已经**自动**同步过就不再选——「每天一轮」的语义按库保留。"""
+    token = await register_and_login(client, email="fanout-once@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("fanout-once@example.com")
+    library_id = await _create_standalone_library(client, headers, name="每天一轮的库")
+
+    resp = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    async with get_sessionmaker()() as session:
+        assert [str(lib.id) for lib in await ingest_service.find_due_daily_libraries(session)] == [
+            library_id
+        ]
+        session.add(
+            VoyageRun(
+                kind="wiki_ingest",
+                goal="自动同步",
+                status="done",
+                library_id=uuid.UUID(library_id),
+                created_by=None,  # 自动
+            )
+        )
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        assert await ingest_service.find_due_daily_libraries(session) == []
+
+
 async def test_non_active_library_is_not_due(client, queue_stub, wiki_mocks):
     """库 status 不是 active 就不该被 cron 拉起来——老的按课题选表压根没查这个字段。"""
     token = await register_and_login(client, email="due-inactive@example.com")

@@ -485,10 +485,34 @@ async def find_due_daily_libraries(session: AsyncSession) -> list[DirectionLibra
         .scalars()
         .all()
     )
+    # 今天已经**自动**同步过的库不再重复选。这一条以前写在调用方，而且是全局的：
+    # 「今天有任意一条 wiki_ingest」就整轮跳过。于是任何人手动同步任何一个库，当天
+    # 其余所有库的自动同步全部消失——生产上 07-31 就是这样，10:22 有人手动同步了
+    # rubric，10:32 每日池刚灌进 227 篇新论文，扇出却一个库都没选。
+    # 手动运行不计入：它跑在池子更新之前，不能替代这一轮。只认**跑成功**的——失败或
+    # 被回收（cancelled）的那次什么也没同步，把它算成「今天已经跑过」就等于让一次
+    # 瞬时故障吃掉这个库当天的同步。在跑的那些由下面的互斥判定各自挡住。
+    start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    auto_today = set(
+        (
+            await session.execute(
+                select(VoyageRun.library_id).where(
+                    VoyageRun.kind == "wiki_ingest",
+                    VoyageRun.created_by.is_(None),
+                    VoyageRun.status == "done",
+                    VoyageRun.created_at >= start,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     due: list[DirectionLibrary] = []
     for library in libraries:
         state = library.ingest_state or {}
         if not state.get("watermark"):
+            continue
+        if library.id in auto_today:
             continue
         if await find_running_ingest_for_library(session, library.id) is not None:
             continue

@@ -87,15 +87,11 @@ async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
 
     返回本次入队的 voyage id 列表（arq 结果可查）。
     """
-    import datetime as dt
-
-    from app.services import daily_feed as daily_feed_service
-
-    now = dt.datetime.now(dt.UTC)
     enqueued: list[str] = []
     async with get_sessionmaker()() as session:
-        if await daily_feed_service.already_ran_today(session, "wiki_ingest", now=now):
-            return enqueued
+        # 「今天只跑一轮」的判据在 find_due_daily_libraries 里，且是**按库**算的。
+        # 这里以前是一道全局闸门（今天有任意一条 wiki_ingest 就整轮返回），于是
+        # 任何人手动同步任何一个库，当天其余所有库的自动同步全部被吞掉。
         # 先回收长期卡住的 paused_error：它们会把所在库一直挡在互斥判定外面
         reclaimed = await ingest_service.reclaim_stale_paused_ingests(session)
         if reclaimed:
