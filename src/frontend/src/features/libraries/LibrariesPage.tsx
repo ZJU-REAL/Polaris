@@ -166,7 +166,20 @@ function LibraryCard({
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 14.5, fontWeight: 680, lineHeight: 1.3 }} title={lib.name}>
+            <span
+              // 长库名限两行：撑高的是整行卡片（grid 行高取最高者），不只是它自己
+              style={{
+                fontSize: 14.5,
+                fontWeight: 680,
+                lineHeight: 1.3,
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                overflowWrap: 'anywhere',
+              }}
+              title={lib.name}
+            >
               {lib.name}
             </span>
             <TypeBadge isPublic={lib.is_public} />
@@ -214,7 +227,12 @@ function LibraryCard({
       >
         {lib.statement ?? tr('这个方向还没有写一句话介绍。', 'No statement for this direction yet.')}
       </div>
-      <div className="row gap10" style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+      <div
+        className="row gap10"
+        // marginTop:auto —— 同一行的卡片高度由最高的那张决定，不钉底的话矮内容的卡片
+        // 会把统计行留在半空中（截图里 SWE 那张底下空一大块）
+        style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 'auto' }}
+      >
         <span className="row gap6">
           <Icon name="file" size={12} />
           {tr(`${lib.paper_count} 篇论文`, `${lib.paper_count} papers`)}
