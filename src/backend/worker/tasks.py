@@ -191,9 +191,34 @@ async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
             session, daily_feed_service.DAILY_FEED_VOYAGE_KIND, now=now
         ):
             return None
+        # 探测有次数上限：「今天 arXiv 就是没发」是正常情况（周末、节假日、发布故障），
+        # 不该从早探到晚。探满就当天收工，明天归零重来——这是正常结束，不是失败。
+        max_attempts = await daily_feed_service.get_max_probe_attempts(session)
+        state = await daily_feed_service.probe_state(session, now=now)
+        if state["attempts"] >= max_attempts:
+            return None
         fresh, batch_date = await daily_feed_service.todays_batch_available(session)
         if not fresh:
-            logger.info("daily feed not published yet (latest batch %s), will retry", batch_date)
+            state = await daily_feed_service.record_probe(
+                session,
+                now=now,
+                batch_date=batch_date,
+                exhausted=state["attempts"] + 1 >= max_attempts,
+            )
+            if state["exhausted"]:
+                logger.info(
+                    "daily feed probe exhausted after %s attempts (latest batch %s); "
+                    "no new announcement today",
+                    state["attempts"],
+                    batch_date,
+                )
+            else:
+                logger.info(
+                    "daily feed not published yet (latest batch %s), probe %s/%s",
+                    batch_date,
+                    state["attempts"],
+                    max_attempts,
+                )
             return None
         try:
             run = await daily_feed_service.create_daily_feed_voyage(session, created_by=None)

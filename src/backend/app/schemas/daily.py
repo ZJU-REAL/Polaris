@@ -157,6 +157,11 @@ class DailySyncStatus(BaseModel):
     # {分类: {count, status, detail}}
     per_category: dict[str, Any] = Field(default_factory=dict)
     failed_categories: list[str] = Field(default_factory=list)
+    # 今天探了几次 / 上限几次 / 探到的最新批次；探满仍没有新批次是正常结束，不是故障
+    probe_attempts: int = 0
+    probe_max_attempts: int = 0
+    probe_batch_date: str | None = None
+    probe_exhausted: bool = False
 
 
 class DailySyncTimeRead(BaseModel):
@@ -169,6 +174,16 @@ class DailySyncTimeRead(BaseModel):
 class DailySyncTimeUpdate(BaseModel):
     hour: int = Field(ge=0, le=23)
     minute: int = Field(ge=0, le=59)
+
+
+class DailyProbeAttemptsRead(BaseModel):
+    """一天最多探几次 arXiv 有没有发新批次（探测每 15 分钟一次）。"""
+
+    attempts: int = Field(ge=1, le=96)
+
+
+class DailyProbeAttemptsUpdate(BaseModel):
+    attempts: int = Field(ge=1, le=96)
 
 
 class DailyRetentionRead(BaseModel):

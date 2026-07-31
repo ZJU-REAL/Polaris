@@ -4602,6 +4602,13 @@ export const api = {
       minute,
     });
   },
+  /** 一天最多探几次 arXiv 有没有发新批次（探测每 15 分钟一次）。 */
+  getDailyProbeAttempts(): Promise<{ attempts: number }> {
+    return request<{ attempts: number }>('/daily/probe-attempts');
+  },
+  setDailyProbeAttempts(attempts: number): Promise<{ attempts: number }> {
+    return requestJson<{ attempts: number }>('/daily/probe-attempts', 'PUT', { attempts });
+  },
   setDailyRetention(days: number): Promise<{ days: number }> {
     return requestJson<{ days: number }>('/daily/retention', 'PUT', { days });
   },

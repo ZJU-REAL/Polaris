@@ -2826,12 +2826,21 @@ function DailySyncSection() {
     queryFn: () => api.getDailyRetention(),
     retry: false,
   });
+  const probeQuery = useQuery({
+    queryKey: ['daily-probe-attempts'],
+    queryFn: () => api.getDailyProbeAttempts(),
+    retry: false,
+  });
 
   const [days, setDays] = useState('');
   const [clock, setClock] = useState('');
+  const [probes, setProbes] = useState('');
   useEffect(() => {
     if (retentionQuery.data && !days) setDays(String(retentionQuery.data.days));
   }, [retentionQuery.data, days]);
+  useEffect(() => {
+    if (probeQuery.data && !probes) setProbes(String(probeQuery.data.attempts));
+  }, [probeQuery.data, probes]);
   useEffect(() => {
     if (timeQuery.data && !clock) {
       const { hour, minute } = timeQuery.data;
@@ -2858,6 +2867,14 @@ function DailySyncSection() {
     onSuccess: () => {
       toast(tr('抓取时刻已保存，重启 worker 后生效', 'Fetch time saved — restart the worker to apply'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['daily-sync-time'] });
+    },
+    onError: fail,
+  });
+  const probeMutation = useMutation({
+    mutationFn: () => api.setDailyProbeAttempts(Number(probes)),
+    onSuccess: () => {
+      toast(tr('最大查询次数已保存', 'Max probe attempts saved'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['daily-probe-attempts'] });
     },
     onError: fail,
   });
@@ -2958,6 +2975,36 @@ function DailySyncSection() {
         {tr(
           '北京时间 = UTC + 8。这是开始探测的时刻，之后每 15 分钟看一次，直到 arXiv 当天的批次真的放出来。',
           'Beijing = UTC + 8. This is when probing starts; it then checks every 15 minutes until arXiv actually publishes today’s batch.',
+        )}
+      </div>
+
+      {/* —— 最大查询次数 —— */}
+      <div className="row gap8" style={rowStyle}>
+        <span style={labelStyle}>{tr('最大查询次数', 'Max probe attempts')}</span>
+        <input
+          className="input mono"
+          type="number"
+          min={1}
+          max={96}
+          style={{ width: 90, height: 28, fontSize: 12 }}
+          value={probes}
+          onChange={(e) => setProbes(e.target.value)}
+        />
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)' }}>
+          {tr('次 / 天', 'per day')}
+        </span>
+        <button
+          className="btn btn-soft sm"
+          disabled={!probes || Number(probes) < 1 || Number(probes) > 96 || probeMutation.isPending}
+          onClick={() => probeMutation.mutate()}
+        >
+          {tr('保存', 'Save')}
+        </button>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 5, paddingLeft: 100, lineHeight: 1.5 }}>
+        {tr(
+          '从抓取时刻起每 15 分钟探一次，探满这么多次仍没有今天的批次就当天收工——这是正常结束，不会留下失败的任务。默认 10 次约覆盖 2.5 小时。',
+          'From the fetch time onwards it probes every 15 minutes; after this many attempts with no batch for today, it stops for the day — a normal ending, not a failed run. The default of 10 covers about 2.5 hours.',
         )}
       </div>
 

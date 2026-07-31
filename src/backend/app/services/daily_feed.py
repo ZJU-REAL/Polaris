@@ -1184,7 +1184,11 @@ async def sync_status(session: AsyncSession) -> dict[str, Any]:
         failed = list(obs.get("failed_categories") or [])
 
     latest = await session.scalar(select(func.max(DailyFeedEntry.feed_date)))
-    today = dt.datetime.now(dt.UTC).date()
+    now = dt.datetime.now(dt.UTC)
+    today = now.date()
+    # 今天还没抓到新批次时，界面上要能区分「还在探」和「探完了今天就是没有」——
+    # 否则用户只看到「最新是昨天」，无从判断该等还是该查。
+    probe = await probe_state(session, now=now)
     return {
         "latest_feed_date": latest.isoformat() if latest else None,
         "stale": bool(latest is None or (today - latest).days > 1),
@@ -1193,6 +1197,10 @@ async def sync_status(session: AsyncSession) -> dict[str, Any]:
         "last_run_at": run.created_at.isoformat() if run is not None else None,
         "per_category": per_category,
         "failed_categories": failed,
+        "probe_attempts": probe["attempts"],
+        "probe_max_attempts": await get_max_probe_attempts(session),
+        "probe_batch_date": probe["batch_date"],
+        "probe_exhausted": probe["exhausted"],
     }
 
 
@@ -1239,6 +1247,74 @@ async def set_sync_time(session: AsyncSession, hour: int, minute: int) -> tuple[
         row.value = value
     await session.commit()
     return hour, minute
+
+
+# ---- 探测次数上限（可配置） ----
+
+MAX_PROBE_SETTING_KEY = "daily_feed_max_probe_attempts"
+PROBE_STATE_SETTING_KEY = "daily_feed_probe_state"
+
+#: 一天最多探几次。探测每 15 分钟一次，10 次 = 从开始时刻起覆盖 2.5 小时。
+#: 有上限是因为「今天 arXiv 就是没发」是正常情况（周末、节假日、发布故障），
+#: 不该让检查点从早探到晚——探满这个次数就当天收工，明天重新开始。
+DEFAULT_MAX_PROBE_ATTEMPTS = 10
+
+
+async def get_max_probe_attempts(session: AsyncSession) -> int:
+    """一天最多探几次（默认 10）。存量值非法时回落默认。"""
+    row = await session.get(SystemSetting, MAX_PROBE_SETTING_KEY)
+    value = row.value if row is not None else None
+    if isinstance(value, int) and 1 <= value <= 96:
+        return value
+    return DEFAULT_MAX_PROBE_ATTEMPTS
+
+
+async def set_max_probe_attempts(session: AsyncSession, attempts: int) -> int:
+    if not 1 <= attempts <= 96:
+        raise ValueError(f"invalid attempts: {attempts}")
+    row = await session.get(SystemSetting, MAX_PROBE_SETTING_KEY)
+    if row is None:
+        session.add(SystemSetting(key=MAX_PROBE_SETTING_KEY, value=attempts))
+    else:
+        row.value = attempts
+    await session.commit()
+    return attempts
+
+
+async def probe_state(session: AsyncSession, *, now: dt.datetime) -> dict[str, Any]:
+    """今天探过几次、探到的最新批次是哪天。跨天自动归零。"""
+    today = now.astimezone(dt.UTC).date().isoformat()
+    row = await session.get(SystemSetting, PROBE_STATE_SETTING_KEY)
+    value = row.value if row is not None and isinstance(row.value, dict) else {}
+    if value.get("date") != today:
+        return {"date": today, "attempts": 0, "batch_date": None, "exhausted": False}
+    return {
+        "date": today,
+        "attempts": int(value.get("attempts") or 0),
+        "batch_date": value.get("batch_date"),
+        "exhausted": bool(value.get("exhausted")),
+    }
+
+
+async def record_probe(
+    session: AsyncSession,
+    *,
+    now: dt.datetime,
+    batch_date: str | None,
+    exhausted: bool = False,
+) -> dict[str, Any]:
+    """记一次「探了但今天那批还没出来」。返回记完之后的状态。"""
+    state = await probe_state(session, now=now)
+    state["attempts"] += 1
+    state["batch_date"] = batch_date
+    state["exhausted"] = exhausted
+    row = await session.get(SystemSetting, PROBE_STATE_SETTING_KEY)
+    if row is None:
+        session.add(SystemSetting(key=PROBE_STATE_SETTING_KEY, value=state))
+    else:
+        row.value = dict(state)
+    await session.commit()
+    return state
 
 
 async def due_now(session: AsyncSession, *, now: dt.datetime, delay_minutes: int = 0) -> bool:

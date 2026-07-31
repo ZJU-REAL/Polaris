@@ -36,6 +36,8 @@ from app.schemas.daily import (
     DailyLikeState,
     DailyPage,
     DailyPaperDetail,
+    DailyProbeAttemptsRead,
+    DailyProbeAttemptsUpdate,
     DailyRetentionRead,
     DailyRetentionUpdate,
     DailySyncStatus,
@@ -401,6 +403,30 @@ async def set_sync_time(
     """
     hour, minute = await daily_service.set_sync_time(session, payload.hour, payload.minute)
     return DailySyncTimeRead(hour=hour, minute=minute)
+
+
+@router.get("/probe-attempts", response_model=DailyProbeAttemptsRead)
+async def get_probe_attempts(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> DailyProbeAttemptsRead:
+    """一天最多探几次 arXiv 有没有发新批次（全员可读）。"""
+    return DailyProbeAttemptsRead(attempts=await daily_service.get_max_probe_attempts(session))
+
+
+@router.put("/probe-attempts", response_model=DailyProbeAttemptsRead)
+async def set_probe_attempts(
+    payload: DailyProbeAttemptsUpdate,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(require_admin),
+) -> DailyProbeAttemptsRead:
+    """改探测次数上限（admin）。
+
+    从抓取时刻起每 15 分钟探一次，探满这么多次仍没有今天的批次就当天收工——
+    这是**正常结束**，不会留下失败的任务。默认 10 次 ≈ 覆盖 2.5 小时。
+    """
+    attempts = await daily_service.set_max_probe_attempts(session, payload.attempts)
+    return DailyProbeAttemptsRead(attempts=attempts)
 
 
 @router.get("/categories", response_model=DailyCategoriesRead)

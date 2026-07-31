@@ -946,12 +946,17 @@ async def test_day_counts_follow_the_active_filters(client, monkeypatch):
     assert resp.json()["total"] == await days(category="cs.CV")
 
 
-async def test_stale_batch_is_reported_instead_of_silently_creating_nothing(client, monkeypatch):
-    """抓到的不是今天那批公告 → 这一步必须失败。
+async def test_stale_batch_is_visible_but_does_not_fail_the_run(client, monkeypatch):
+    """抓到的不是今天那批公告 → 留痕，但**不算失败**。
 
-    生产上真实发生过：抓取跑在 arXiv 发布之前，RSS 返回上一批，条目数照样两三百，
-    但全都昨天入过池，去重后 created=0——而 fetch 报 passed、upsert 报 passed，
-    三天下来丢了两整天的论文，没有任何一处报警。
+    两个方向都要防：
+
+    - 不能静默。生产上真实发生过：抓取跑在 arXiv 发布之前，RSS 返回上一批，条目数照样
+      两三百，但全都昨天入过池，去重后 created=0——而每一步都报 passed，三天下来丢了
+      两整天的论文，没有任何一处报警。所以 stale_batch_dates 与 note 必须留下。
+    - 也不能报错。「今天那批还没发布」是轮询语义下的正常状态：检查点会继续探，手动
+      触发也可能落在发布之前。以前这里置 error，一次早点的手动触发就留下一条
+      paused_error，而它其实什么都没坏。
     """
     import datetime as dt
 
@@ -970,13 +975,144 @@ async def test_stale_batch_is_reported_instead_of_silently_creating_nothing(clie
     ctx = _action_ctx()
     obs = await get_action("daily.fetch")(ctx, {})
     assert obs["stale_batch_dates"] == [yesterday.isoformat()]
-    assert obs["error"] and "不是今天的" in obs["error"]
     assert obs["per_category"]["cs.AI"]["stale"] is True
+    assert "error" not in obs, "还没发布不是故障"
+    assert obs["note"] and "今天那批还没发布" in obs["note"]
 
     verdict, _ = run_deterministic_checks(
         [{"kind": "no_error"}], observation=obs, checkpoint=ctx.checkpoint
     )
-    assert verdict is not None and verdict["passed"] is False
+    assert verdict is not None and verdict["passed"] is True
+
+
+async def test_probe_stops_after_the_configured_number_of_attempts(client, monkeypatch):
+    """探满上限就当天收工：不再探、不建任务，也不留失败记录。
+
+    「今天 arXiv 就是没发」是正常情况（周末、节假日、发布故障）。没有上限时检查点会
+    从早空转到晚，每 15 分钟打一次 arXiv，却永远得不出结论。
+    """
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+    from worker.tasks import daily_feed_sync
+
+    await register_and_login(client)
+    yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+    monkeypatch.setattr(
+        daily_feed, "get_arxiv_client", lambda: _StubArxiv({}, batch_date=yesterday)
+    )
+    async with get_sessionmaker()() as session:
+        await daily_feed.set_sync_time(session, 0, 0)  # 保证 due_now 恒真
+        await daily_feed.set_max_probe_attempts(session, 3)
+
+    enqueued: list[str] = []
+
+    class _Redis:
+        async def enqueue_job(self, name, *args, **kwargs):
+            enqueued.append(name)
+
+    ctx = {"redis": _Redis()}
+    state: dict = {}
+    for expected in (1, 2, 3):
+        assert await daily_feed_sync(ctx) is None
+        async with get_sessionmaker()() as session:
+            state = await daily_feed.probe_state(session, now=dt.datetime.now(dt.UTC))
+        assert state["attempts"] == expected
+        assert state["batch_date"] == yesterday.isoformat()
+    assert state["exhausted"] is True
+
+    # 第四次：已经收工，连 arXiv 都不该再打
+    probed: list[str] = []
+
+    class _Counting:
+        async def fetch_new(self, category: str):
+            probed.append(category)
+            raise AssertionError("探满之后不该再探")
+
+    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _Counting())
+    assert await daily_feed_sync(ctx) is None
+    assert probed == []
+    assert enqueued == [], "全程不该建任何任务"
+
+
+async def test_probe_creates_the_run_once_the_batch_appears(client, monkeypatch):
+    """探到今天那批就建任务——次数上限不能把正常的抓取也挡掉。"""
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+    from worker.tasks import daily_feed_sync
+
+    await register_and_login(client)
+    yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+    monkeypatch.setattr(
+        daily_feed, "get_arxiv_client", lambda: _StubArxiv({}, batch_date=yesterday)
+    )
+    async with get_sessionmaker()() as session:
+        await daily_feed.set_sync_time(session, 0, 0)
+        await daily_feed.set_max_probe_attempts(session, 5)
+
+    enqueued: list[tuple[str, str]] = []
+
+    class _Redis:
+        async def enqueue_job(self, name, run_id, **kwargs):
+            enqueued.append((name, run_id))
+
+    ctx = {"redis": _Redis()}
+    assert await daily_feed_sync(ctx) is None  # 还没发布
+
+    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _StubArxiv({}))
+    run_id = await daily_feed_sync(ctx)
+    assert run_id is not None
+    assert enqueued == [("run_voyage", run_id)]
+
+
+async def test_max_probe_attempts_defaults_to_ten_and_is_configurable(client):
+    """默认 10 次；管理员可改，普通用户只读。"""
+    admin = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    member = {
+        "Authorization": f"Bearer {await register_and_login(client, email='probe@example.com')}"
+    }
+
+    resp = await client.get("/api/daily/probe-attempts", headers=member)
+    assert resp.status_code == 200 and resp.json()["attempts"] == 10
+
+    assert (
+        await client.put("/api/daily/probe-attempts", json={"attempts": 4}, headers=member)
+    ).status_code == 403
+
+    resp = await client.put("/api/daily/probe-attempts", json={"attempts": 4}, headers=admin)
+    assert resp.status_code == 200 and resp.json()["attempts"] == 4
+    assert (await client.get("/api/daily/probe-attempts", headers=member)).json()["attempts"] == 4
+
+    for bad in (0, 97):
+        resp = await client.put("/api/daily/probe-attempts", json={"attempts": bad}, headers=admin)
+        assert resp.status_code == 422, bad
+
+
+async def test_sync_status_shows_how_far_the_probe_has_got(client, monkeypatch):
+    """界面要能区分「还在探」和「探完了今天就是没有」，否则用户不知道该等还是该查。"""
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+
+    body = (await client.get("/api/daily/sync-status", headers=headers)).json()
+    assert body["probe_attempts"] == 0 and body["probe_max_attempts"] == 10
+
+    async with get_sessionmaker()() as session:
+        await daily_feed.record_probe(
+            session, now=dt.datetime.now(dt.UTC), batch_date=yesterday.isoformat()
+        )
+
+    body = (await client.get("/api/daily/sync-status", headers=headers)).json()
+    assert body["probe_attempts"] == 1
+    assert body["probe_batch_date"] == yesterday.isoformat()
+    assert body["probe_exhausted"] is False
 
 
 async def test_fresh_batch_is_not_reported_as_stale(client, monkeypatch):

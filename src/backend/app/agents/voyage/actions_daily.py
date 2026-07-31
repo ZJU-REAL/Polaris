@@ -63,10 +63,17 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
         "stale_batch_dates": stale,
     }
     if stale and not failed:
-        result["error"] = (
-            f"抓到的是 {'、'.join(stale)} 的公告，不是今天的——多半是跑得比 arXiv 发布还早。"
-            "arXiv 每天约 04:00 UTC（北京 12:00）放当天批次，请把抓取时刻调到其后。"
+        # 抓早了，拿到的是上一批。这**不算失败**：按轮询语义，「今天那批还没发布」是正常
+        # 状态——检查点会继续探（探满上限就当天收工），手动触发也可能落在发布之前。
+        # 以前这里置 error，于是一次手动点击就留下一条 paused_error，而它其实什么也没坏。
+        #
+        # 但痕迹必须留下，否则又退回最初那个问题：条目照样几百条，全是昨天入过池的，
+        # 去重后一条不进，而每一步都报成功。stale_batch_dates + 这行说明就是那道痕迹。
+        result["note"] = (
+            f"抓到的是 {'、'.join(stale)} 的公告，今天那批还没发布——本次不会有新论文入池。"
+            "arXiv 每天约 04:00 UTC（北京 12:00）放当天批次，检查点会继续探。"
         )
+        await ctx.log(result["note"], level="warning")
         return result
     if failed:
         # **任一分类失败就报错**，不是「全都空才报」。部分失败下当天那个分类的论文会
