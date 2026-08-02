@@ -579,26 +579,53 @@ function SyncStatusPill() {
   if (!data) return null;
 
   const failed = data.failed_categories;
-  const bad = failed.length > 0;
-  const stale = data.stale && !bad;
-  if (!bad && !stale) {
+  const latest = data.latest_feed_date ?? '—';
+  // 旧后端没有 feed_state：按老口径折算，不然会一律显示成「已跟上」
+  const state = data.feed_state ?? (failed.length > 0 ? 'failed' : data.stale ? 'stalled' : 'fresh');
+
+  // 已跟上、以及「arXiv 自己没发」——都不是问题，用常规灰字，不摆警告
+  if (state === 'fresh' || state === 'quiet') {
     return (
       <span className="mono" style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 10 }}>
-        {tr(`已更新至 ${data.latest_feed_date ?? '—'}`, `Updated to ${data.latest_feed_date ?? '—'}`)}
+        {state === 'quiet'
+          ? tr(`arXiv 未更新 · 最新 ${latest}`, `Nothing new on arXiv · latest ${latest}`)
+          : tr(`已更新至 ${latest}`, `Updated to ${latest}`)}
       </span>
     );
   }
-  const label = bad
-    ? tr(`${failed.join('、')} 抓取失败`, `${failed.join(', ')} failed to fetch`)
-    : tr(`论文池已停更（最新 ${data.latest_feed_date ?? '无'}）`, `Feed is stale (latest ${data.latest_feed_date ?? 'none'})`);
+
+  // 今天该公告、还在等：也不是故障，说清楚在等什么
+  if (state === 'waiting') {
+    const probed =
+      data.probe_attempts !== undefined && data.probe_max_attempts
+        ? `（${data.probe_attempts}/${data.probe_max_attempts}）`
+        : '';
+    return (
+      <span
+        className="mono"
+        style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 10 }}
+        title={tr(
+          'arXiv 每天约北京时间 12:00 放当天批次，平台从设定时刻起每 15 分钟探一次',
+          'arXiv publishes the day’s batch around 04:00 UTC; the platform probes every 15 minutes from the configured time',
+        )}
+      >
+        {tr(`等待今天的批次${probed} · 最新 ${latest}`, `Waiting for today’s batch${probed} · latest ${latest}`)}
+      </span>
+    );
+  }
+
+  const label =
+    state === 'failed'
+      ? tr(`${failed.join('、')} 抓取失败`, `${failed.join(', ')} failed to fetch`)
+      : tr(`论文池已停更（最新 ${latest}）`, `Feed is stale (latest ${latest})`);
   return (
     <span
       className={data.last_run_id ? 'pill sm hoverable' : 'pill sm'}
       style={{ background: 'var(--warn-bg)', color: 'var(--warn-tx)', marginLeft: 10 }}
       title={
-        bad
+        state === 'failed'
           ? tr('这些分类当天的新论文不会进池，各文献库也就收不到', 'Those categories will not enter the pool today, so no library will receive them')
-          : tr('每日抓取已超过一天没有成功', 'The daily fetch has not succeeded for more than a day')
+          : tr('该公告的日子已经过去，池子却没跟上——不是周末，也不是 arXiv 没发', 'A publishing day has passed without the pool catching up — not a weekend, and not arXiv having nothing')
       }
       onClick={data.last_run_id ? () => navigate(`/voyages/${data.last_run_id}`) : undefined}
     >

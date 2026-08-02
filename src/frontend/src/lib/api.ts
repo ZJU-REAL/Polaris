@@ -2780,9 +2780,18 @@ export interface DailyCollectionsRead {
 }
 
 /** 每日论文池的同步状况。池子是所有文献库的唯一供给，抓失败=全实验室当天颗粒无收。 */
+/** 池子状态：已跟上 / 今天该发还在等 / arXiv 自己没发（周末、节假日）/ 真的落后了 / 抓取失败。 */
+export type DailyFeedState = 'fresh' | 'waiting' | 'quiet' | 'stalled' | 'failed';
+
 export interface DailySyncStatus {
   latest_feed_date: string | null;
+  feed_state: DailyFeedState;
+  /** 旧口径：只在 stalled 时为真 */
   stale: boolean;
+  probe_attempts?: number;
+  probe_max_attempts?: number;
+  probe_batch_date?: string | null;
+  probe_exhausted?: boolean;
   last_run_id: string | null;
   last_run_status: string | null;
   last_run_at: string | null;

@@ -1189,9 +1189,18 @@ async def sync_status(session: AsyncSession) -> dict[str, Any]:
     # 今天还没抓到新批次时，界面上要能区分「还在探」和「探完了今天就是没有」——
     # 否则用户只看到「最新是昨天」，无从判断该等还是该查。
     probe = await probe_state(session, now=now)
+    state = feed_state(
+        latest=latest,
+        today=today,
+        probe=probe,
+        max_attempts=await get_max_probe_attempts(session),
+        failed=bool(failed),
+    )
     return {
         "latest_feed_date": latest.isoformat() if latest else None,
-        "stale": bool(latest is None or (today - latest).days > 1),
+        "feed_state": state,
+        # stale 保留旧口径的语义（「该提醒人了」），但不再把周末与等待中的情况算进来
+        "stale": state == "stalled",
         "last_run_id": str(run.id) if run is not None else None,
         "last_run_status": run.status if run is not None else None,
         "last_run_at": run.created_at.isoformat() if run is not None else None,
@@ -1202,6 +1211,57 @@ async def sync_status(session: AsyncSession) -> dict[str, Any]:
         "probe_batch_date": probe["batch_date"],
         "probe_exhausted": probe["exhausted"],
     }
+
+
+#: arXiv 的 RSS skipDays 里写明周六周日不公告；这两天没有新批次是**正常**的。
+_PUBLISHING_WEEKDAYS = frozenset({0, 1, 2, 3, 4})
+
+
+def last_publishing_day(today: dt.date) -> dt.date:
+    """今天（含）往回数，第一个 arXiv 会公告的日子。"""
+    day = today
+    while day.weekday() not in _PUBLISHING_WEEKDAYS:
+        day -= dt.timedelta(days=1)
+    return day
+
+
+def feed_state(
+    *,
+    latest: dt.date | None,
+    today: dt.date,
+    probe: dict[str, Any],
+    max_attempts: int,
+    failed: bool = False,
+) -> str:
+    """池子现在算什么状态：``fresh`` / ``waiting`` / ``quiet`` / ``stalled`` / ``failed``。
+
+    起因是界面上只有一个「已停更」：周日看到「最新 2026-07-31」就报停更，可 arXiv
+    周末本来就不公告，什么毛病也没有。把「没更新」拆成三种：
+
+    - ``waiting``：今天该公告，检查点还在探（没探满）。等就是了。
+    - ``quiet``：arXiv 自己没有更新的批次——周末/节假日，或者探满了仍是旧批次。
+      判据用探到的批次日期与池子最新日期比：两者一致说明我们与 arXiv 同步，
+      是**它**没发新的，不是我们没抓到。
+    - ``stalled``：该公告的日子过去了，池子却没跟上，也没有「arXiv 没发」的证据。
+      这才是要提醒人去查的那种。
+    """
+    if failed:
+        return "failed"
+    if latest is None:
+        return "stalled"
+    expected = last_publishing_day(today)
+    if latest >= expected:
+        return "fresh"
+    # 今天不该公告（周末），而池子已经跟上了最后一个公告日 → 正常的安静
+    if today.weekday() not in _PUBLISHING_WEEKDAYS:
+        return "quiet"
+    probe_batch = probe.get("batch_date")
+    if probe_batch and probe_batch == latest.isoformat():
+        # 探到的最新批次就是池子里这一批：arXiv 没发新的，我们没落后
+        return "quiet" if probe.get("exhausted") else "waiting"
+    if int(probe.get("attempts") or 0) < max_attempts:
+        return "waiting"
+    return "stalled"
 
 
 # ---- 抓取时刻（可配置） ----

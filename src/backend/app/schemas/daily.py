@@ -150,6 +150,10 @@ class DailySyncStatus(BaseModel):
     """每日论文池的同步健康状况（每日页顶部展示）。"""
 
     latest_feed_date: str | None = None
+    #: fresh（已跟上）/ waiting（今天该发、还在探）/ quiet（arXiv 自己没发：周末、节假日）
+    #: / stalled（该发的日子过了却没跟上）/ failed（有分类抓失败）
+    feed_state: Literal["fresh", "waiting", "quiet", "stalled", "failed"] = "fresh"
+    #: 旧口径：只在 stalled 时为真（周末与等待中不再算「停更」）
     stale: bool = False
     last_run_id: str | None = None
     last_run_status: str | None = None

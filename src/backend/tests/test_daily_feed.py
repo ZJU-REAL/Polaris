@@ -942,7 +942,10 @@ async def test_sync_status_reports_failed_categories(client, monkeypatch):
     assert status["failed_categories"] == ["cs.AI"]
     assert status["last_run_status"] == "paused_error"
     assert status["per_category"]["cs.CL"]["count"] == 12
-    assert status["stale"] is True  # 池子里一条 entry 都没有
+    # 有分类抓失败时优先报失败（比「停更」更接近原因，也更可操作）；
+    # stale 现在只在 stalled 时为真，所以这里是 False。
+    assert status["feed_state"] == "failed"
+    assert status["stale"] is False
 
     resp = await client.get(
         "/api/daily/sync-status",
@@ -1215,6 +1218,102 @@ async def test_max_probe_attempts_defaults_to_ten_and_is_configurable(client):
     for bad in (0, 97):
         resp = await client.put("/api/daily/probe-attempts", json={"attempts": bad}, headers=admin)
         assert resp.status_code == 422, bad
+
+
+async def test_weekend_pool_is_quiet_not_stalled(client):
+    """周日看到「最新是周五」不该报停更——arXiv 周末本来就不公告。
+
+    界面上一度只有一个「论文池已停更」，把「周末没发」「今天还没发」「真的落后了」
+    混成一句话，于是每个周末都在报一次假警。
+    """
+    import datetime as dt
+
+    from app.services.daily_feed import feed_state
+
+    await register_and_login(client)
+    friday, saturday, sunday = dt.date(2026, 7, 31), dt.date(2026, 8, 1), dt.date(2026, 8, 2)
+    idle = {"attempts": 0, "batch_date": None, "exhausted": False}
+    # 周末拿着周五那批就是**已跟上**：更新的批次根本不存在，没什么可等的
+    assert feed_state(latest=friday, today=saturday, probe=idle, max_attempts=10) == "fresh"
+    assert feed_state(latest=friday, today=sunday, probe=idle, max_attempts=10) == "fresh"
+    assert feed_state(latest=friday, today=friday, probe=idle, max_attempts=10) == "fresh"
+    # 周末而池子还停在更早的日子（周四）→ 也不催：周末补不上，等周一
+    thursday = dt.date(2026, 7, 30)
+    assert feed_state(latest=thursday, today=sunday, probe=idle, max_attempts=10) == "quiet"
+
+
+async def test_waiting_for_todays_batch_is_not_stalled(client):
+    """工作日、检查点还在探的时候是「等待」，不是故障。"""
+    import datetime as dt
+
+    from app.services.daily_feed import feed_state
+
+    await register_and_login(client)
+    monday, tuesday = dt.date(2026, 8, 3), dt.date(2026, 8, 4)
+    probing = {"attempts": 3, "batch_date": monday.isoformat(), "exhausted": False}
+    assert feed_state(latest=monday, today=tuesday, probe=probing, max_attempts=10) == "waiting"
+
+    # 探满了，而探到的最新批次就是池子里这批 → arXiv 自己没发，我们没落后
+    done = {"attempts": 10, "batch_date": monday.isoformat(), "exhausted": True}
+    assert feed_state(latest=monday, today=tuesday, probe=done, max_attempts=10) == "quiet"
+
+
+async def test_genuinely_behind_is_reported_as_stalled(client):
+    """该公告的日子过去了、池子没跟上、又没有「arXiv 没发」的证据 → 这才要提醒人。"""
+    import datetime as dt
+
+    from app.services.daily_feed import feed_state
+
+    await register_and_login(client)
+    exhausted_no_evidence = {"attempts": 10, "batch_date": None, "exhausted": True}
+    assert (
+        feed_state(
+            latest=dt.date(2026, 7, 28),
+            today=dt.date(2026, 8, 4),
+            probe=exhausted_no_evidence,
+            max_attempts=10,
+        )
+        == "stalled"
+    )
+    # 池子空 → 一样要提醒
+    assert (
+        feed_state(
+            latest=None, today=dt.date(2026, 8, 4), probe=exhausted_no_evidence, max_attempts=10
+        )
+        == "stalled"
+    )
+    # 有分类抓失败时优先报失败
+    assert (
+        feed_state(
+            latest=dt.date(2026, 8, 4),
+            today=dt.date(2026, 8, 4),
+            probe=exhausted_no_evidence,
+            max_attempts=10,
+            failed=True,
+        )
+        == "failed"
+    )
+
+
+async def test_last_publishing_day_skips_the_weekend(client):
+    import datetime as dt
+
+    from app.services.daily_feed import last_publishing_day
+
+    await register_and_login(client)
+    friday = dt.date(2026, 7, 31)
+    assert last_publishing_day(dt.date(2026, 8, 1)) == friday  # 周六
+    assert last_publishing_day(dt.date(2026, 8, 2)) == friday  # 周日
+    assert last_publishing_day(friday) == friday
+    assert last_publishing_day(dt.date(2026, 8, 3)) == dt.date(2026, 8, 3)  # 周一
+
+
+async def test_sync_status_reports_the_feed_state(client, monkeypatch):
+    """接口要把状态发出来，而且 stale 只在 stalled 时为真（前端旧口径靠它）。"""
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    body = (await client.get("/api/daily/sync-status", headers=headers)).json()
+    assert body["feed_state"] in {"fresh", "waiting", "quiet", "stalled", "failed"}
+    assert body["stale"] is (body["feed_state"] == "stalled")
 
 
 async def test_sync_status_shows_how_far_the_probe_has_got(client, monkeypatch):
