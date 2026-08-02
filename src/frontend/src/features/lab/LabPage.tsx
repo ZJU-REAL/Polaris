@@ -7,10 +7,10 @@ import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
 import { StatCard } from '../../components/ui/StatCard';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { useProject } from '../../app/project';
 import {
   api,
   isAdmin,
+  isLabScopedTask,
   type DailyIngestStatus,
   type DirectionLibrarySummary,
   type LabStats,
@@ -28,7 +28,6 @@ import {
   FILTERS,
   KIND_META,
   LIBRARY_TASK_KINDS,
-  TOPIC_TASK_KINDS,
   SkeletonRows,
   VoyageRow,
   matchFilter,
@@ -41,8 +40,9 @@ import {
    - 概况：实验室级数据面板 —— 索引与内容统计（/lab/stats，后端聚合、跨库去重、
      按可见库收敛）、AI 用量与排行榜（/lab/usage 系列）、跨库概念图谱
      （/lab/graph）、文献库与每日新论文汇总
-   - 任务：全部可见任务按归属分组（课题任务 / 文献库任务 / 其它），
-     覆盖课题工作台看不到的课题外任务（VoyageRun.project_id 可为空）
+   - 任务：只有实验室自己的任务 —— 文献库任务（建库 / 增量更新）与每日新论文，
+     按归属分组。课题任务归课题工作台的「任务」标签，这里不重复列
+     （判据是 isLabScopedTask，与任务详情的面包屑/返回链接同一份）
    ============================================================ */
 
 type LabTab = 'overview' | 'tasks';
@@ -900,7 +900,11 @@ function OverviewTab() {
 
   const stats = statsQuery.data;
   const libList = libs ?? [];
-  const activeVoyages = (voyages ?? []).filter((v) => matchFilter(v, 'active') || matchFilter(v, 'paused')).length;
+  // 与下面「任务」标签同一个口径（只数实验室自己的任务）：同一页上卡片报 7、
+  // 表里只列 2 会让人以为漏了任务。课题任务的进度在课题工作台看。
+  const activeVoyages = (voyages ?? []).filter(
+    (v) => isLabScopedTask(v) && (matchFilter(v, 'active') || matchFilter(v, 'paused')),
+  ).length;
   const admin = isAdmin(me);
   // 开关关掉时排行榜只对管理员显示；加载中先不显示，免得闪一下又消失
   const showLeaderboard = !!stats && (stats.leaderboard_enabled || admin);
@@ -934,7 +938,7 @@ function OverviewTab() {
           label="进行中的任务"
           en="Running tasks"
           value={voyages ? activeVoyages : '—'}
-          sub={tr('含等待审批', 'incl. waiting')}
+          sub={tr('实验室任务，含等待审批', 'lab tasks, incl. waiting')}
           accent
         />
       </div>
@@ -964,7 +968,7 @@ interface VoyageGroup {
   title: string;
   /** 分组说明（已本地化） */
   hint: string;
-  icon: 'dashboard' | 'book' | 'sparkle';
+  icon: IconName;
   items: VoyageRead[];
 }
 
@@ -1018,14 +1022,13 @@ function TaskGroup({ group, open, onToggle }: { group: VoyageGroup; open: boolea
 }
 
 function TasksTab() {
-  const { projects } = useProject();
   const { data: libs } = useLibraries();
 
   const [filter, setFilter] = useState<Filter>('all');
   const [kindFilter, setKindFilter] = useState<string>('all');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
-  // 不传 project_id = 我可见的全部任务（含 project_id 为空的课题外任务）
+  // 不传 project_id = 我可见的全部任务；课题任务在下面按 isLabScopedTask 滤掉
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['voyages', 'all'],
     queryFn: () => api.listVoyages(),
@@ -1033,25 +1036,29 @@ function TasksTab() {
     refetchInterval: 30_000,
   });
 
-  const projectName = useMemo(() => new Map(projects.map((p) => [p.id, p.name] as const)), [projects]);
   const libraryName = useMemo(() => new Map((libs ?? []).map((l) => [l.id, l.name] as const)), [libs]);
 
   const groups = useMemo<VoyageGroup[]>(() => {
+    // 这里只列实验室自己的任务：文献库任务与每日新论文。课题任务归课题工作台，
+    // 在两处都列会让人以为是两拨任务，也把这张表冲得很长。
     const rows = (data ?? []).filter(
-      (v) => matchFilter(v, filter) && (kindFilter === 'all' || v.kind === kindFilter),
+      (v) =>
+        isLabScopedTask(v) &&
+        matchFilter(v, filter) &&
+        (kindFilter === 'all' || v.kind === kindFilter),
     );
-    const byProject = new Map<string, VoyageRead[]>();
     const byLibrary = new Map<string, VoyageRead[]>();
+    const daily: VoyageRead[] = [];
     const other: VoyageRead[] = [];
     for (const v of rows) {
-      if (v.project_id) {
-        const arr = byProject.get(v.project_id) ?? [];
-        arr.push(v);
-        byProject.set(v.project_id, arr);
-      } else if (v.library_id) {
+      if (v.library_id) {
         const arr = byLibrary.get(v.library_id) ?? [];
         arr.push(v);
         byLibrary.set(v.library_id, arr);
+      } else if (v.kind === 'daily_feed_sync') {
+        // 每日新论文是全实验室的事，两个作用域 id 都为空 —— 自成一组，
+        // 不能跟着「既不属课题也不属库」的兜底组走，那个标题词不达意。
+        daily.push(v);
       } else {
         other.push(v);
       }
@@ -1059,37 +1066,38 @@ function TasksTab() {
     const newest = (list: VoyageRead[]) =>
       [...list].sort((a, b) => b.created_at.localeCompare(a.created_at));
     const out: VoyageGroup[] = [];
-    for (const [pid, list] of byProject) {
-      out.push({
-        key: `project:${pid}`,
-        title: projectName.get(pid) ?? tr('未知课题', 'Unknown topic'),
-        hint: tr('课题任务', 'Topic tasks'),
-        icon: 'dashboard',
-        items: newest(list),
-      });
-    }
     for (const [lid, list] of byLibrary) {
       out.push({
         key: `library:${lid}`,
         title: libraryName.get(lid) ?? tr('未知文献库', 'Unknown library'),
-        hint: tr('文献库任务（课题外）', 'Library tasks (outside topics)'),
+        hint: tr('文献库任务', 'Library tasks'),
         icon: 'book',
         items: newest(list),
       });
     }
+    if (daily.length > 0) {
+      out.push({
+        key: 'daily',
+        title: tr('每日新论文', 'Daily papers'),
+        hint: tr('全实验室共享，不属于任何文献库', 'Lab-wide, not tied to a library'),
+        icon: 'refresh',
+        items: newest(daily),
+      });
+    }
+    // 兜底组：正常不该有东西落进来（真有就是新类型没归位），宁可露出也不要静默吞掉
     if (other.length > 0) {
       out.push({
         key: 'other',
         title: tr('其它任务', 'Other tasks'),
-        hint: tr('既不属于课题也不属于文献库', 'Neither topic nor library'),
+        hint: tr('既不属于文献库也不属于每日新论文', 'Neither a library nor the daily feed'),
         icon: 'sparkle',
         items: newest(other),
       });
     }
-    // 课题组在前、文献库组次之、其它垫底；组内按任务数多的在前
-    const rank = (g: VoyageGroup) => (g.key.startsWith('project:') ? 0 : g.key.startsWith('library:') ? 1 : 2);
+    // 文献库组在前、每日新论文次之、兜底垫底；组内按任务数多的在前
+    const rank = (g: VoyageGroup) => (g.key.startsWith('library:') ? 0 : g.key === 'daily' ? 1 : 2);
     return out.sort((a, b) => rank(a) - rank(b) || b.items.length - a.items.length);
-  }, [data, filter, kindFilter, projectName, libraryName]);
+  }, [data, filter, kindFilter, libraryName]);
 
   return (
     <>
@@ -1103,18 +1111,11 @@ function TasksTab() {
           style={{ height: 33, fontSize: 12.5, fontWeight: 600, width: 128, color: kindFilter === 'all' ? 'var(--text-3)' : 'var(--text)' }}
         >
           <option value="all">{tr('全部类型', 'All types')}</option>
-          {/* 按任务层级分组：库任务与课题任务在实验室工作台都看得到，分开列
-              比一长串平铺好找。以后每日新论文进任务系统，在这里加一组即可。 */}
-          <optgroup label={tr('文献库任务', 'Library tasks')}>
-            {LIBRARY_TASK_KINDS.map((k) => (
-              <option key={k} value={k}>{tr(KIND_META[k]?.zh ?? k, KIND_META[k]?.en)}</option>
-            ))}
-          </optgroup>
-          <optgroup label={tr('课题任务', 'Topic tasks')}>
-            {TOPIC_TASK_KINDS.map((k) => (
-              <option key={k} value={k}>{tr(KIND_META[k]?.zh ?? k, KIND_META[k]?.en)}</option>
-            ))}
-          </optgroup>
+          {/* 只列实验室自己的类型（建库 / 增量更新 / 每日新论文）。课题类型不列：
+              这张表里根本不会出现，列出来只会选中后永远空列表。 */}
+          {LIBRARY_TASK_KINDS.map((k) => (
+            <option key={k} value={k}>{tr(KIND_META[k]?.zh ?? k, KIND_META[k]?.en)}</option>
+          ))}
         </select>
       </div>
 
@@ -1143,7 +1144,10 @@ function TasksTab() {
             desc={
               filter !== 'all' || kindFilter !== 'all'
                 ? tr('当前筛选条件下没有任务，换个筛选试试。', 'No tasks match the current filters — try different ones.')
-                : tr('发起建库、想法生成、实验等操作后，任务会出现在这里。', 'Tasks show up here once you start ingest, idea generation, experiments, and so on.')
+                : tr(
+                    '建库、增量更新与每日新论文的任务会出现在这里。想法生成、实验等课题任务在课题工作台看。',
+                    'Library builds, incremental syncs and the daily paper feed show up here. Idea generation, experiments and other topic tasks live in the topic workbench.',
+                  )
             }
             compact
           />
