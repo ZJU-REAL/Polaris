@@ -92,7 +92,7 @@ async def _get_task(session: Any, ctx: ToolContext, raw_id: Any) -> VoyageRun:
 
 @tool(
     "get_project_status",
-    description="课题总览：论文/想法/实验/稿件计数、待审闸门数、关联文献库、在跑任务、最近动态",
+    description="取本课题总览，含论文、想法、实验与稿件计数，待审闸门数量，关联文献库，进行中的任务与最近动态",
     input_schema={"type": "object", "properties": {}},
     summarize=lambda a, r: f"课题总览（{r.get('papers_total', 0)} 篇论文）",
 )
@@ -115,7 +115,7 @@ async def get_project_status(ctx: ToolContext, args: dict[str, Any]) -> dict[str
 
 @tool(
     "list_tasks",
-    description="课题的 AI 任务清单（建库抓取/想法生成/评审/实验/写作等），新→旧",
+    description="列出本课题的 AI 任务，按创建时间由新到旧排列，可按状态与类型筛选",
     input_schema={
         "type": "object",
         "properties": {
@@ -174,7 +174,7 @@ def _last_error(run: VoyageRun) -> str | None:
 
 @tool(
     "get_task",
-    description="任务详情：状态、计划步骤与判定、卡在哪个闸门、失败原因、产出物 id",
+    description="取某个任务的详情，含状态、计划步骤与判定结果、正在阻塞它的审批闸门、失败原因与产出物标识",
     input_schema={
         "type": "object",
         "properties": {
@@ -228,7 +228,7 @@ async def get_task(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "read_task_logs",
-    description="读任务的终端日志（结构化日志行 + 大模型输出），按时间正序返回最近若干条",
+    description="读取某个任务的终端日志，含结构化日志行与模型输出，按时间正序返回最近若干条",
     input_schema={
         "type": "object",
         "properties": {
@@ -269,7 +269,7 @@ async def read_task_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
 
 @tool(
     "list_gates",
-    description="课题的人工审批闸门（想法晋级/算力预算/投稿等）；审批仍需在网页端操作",
+    description="列出本课题的人工审批闸门，含想法晋级、算力预算与投稿等类型；审批操作需在网页端完成",
     input_schema={
         "type": "object",
         "properties": {

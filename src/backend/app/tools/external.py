@@ -34,7 +34,7 @@ def _s2_brief(row: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "external_search",
-    description="库外文献检索（Semantic Scholar，失败降级 OpenAlex）——找库里还没有的论文",
+    description="检索平台文献库之外的论文，数据源为 Semantic Scholar，不可用时降级为 OpenAlex",
     input_schema={
         "type": "object",
         "properties": {
@@ -109,7 +109,7 @@ _REF_SCHEMA = {
 
 @tool(
     "get_references",
-    description="某论文引用的参考文献（它站在谁的肩膀上）",
+    description="列出某篇论文引用的参考文献",
     input_schema=_REF_SCHEMA,
     network=True,
     summarize=lambda a, r: f"参考文献 → {len(r.get('references') or [])} 篇",
@@ -122,7 +122,7 @@ async def get_references(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
 
 @tool(
     "get_citations",
-    description="引用某论文的后续工作（谁在它基础上继续做）",
+    description="列出引用了某篇论文的后续工作",
     input_schema=_REF_SCHEMA,
     network=True,
     summarize=lambda a, r: f"施引文献 → {len(r.get('citations') or [])} 篇",
@@ -135,7 +135,7 @@ async def get_citations(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
 
 @tool(
     "lookup_paper",
-    description="按 DOI 查库外论文元数据（含被引数）",
+    description="按 DOI 查询库外论文的元数据，含被引数",
     input_schema={
         "type": "object",
         "properties": {"doi": {"type": "string", "description": "DOI"}},

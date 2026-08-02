@@ -72,7 +72,7 @@ async def _get_project_paper(session: Any, ctx: ToolContext, raw_id: Any) -> Pap
 
 @tool(
     "search_papers",
-    description="库内检索论文",
+    description="在本课题语料内检索论文，支持关键词与语义两种模式",
     input_schema={
         "type": "object",
         "properties": {
@@ -126,7 +126,7 @@ async def search_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
 
 @tool(
     "read_wiki",
-    description="读某论文的 wiki 综述页",
+    description="读取某篇论文的 wiki 解读页；尚未编译解读时返回摘要",
     input_schema={
         "type": "object",
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
@@ -161,7 +161,7 @@ def _read_fulltext_summary(a: dict[str, Any], r: dict[str, Any]) -> str:
 
 @tool(
     "read_fulltext",
-    description="读论文全文（有 query 返回最相关段落，否则按 page 分页）",
+    description="读取论文全文；给定 query 时返回最相关段落，否则按 page 分页返回",
     input_schema={
         "type": "object",
         "properties": {
@@ -211,7 +211,7 @@ async def read_fulltext(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
 
 @tool(
     "get_concept",
-    description="概念定义 + 相关概念 + 关联论文",
+    description="查询某个概念的定义、相关概念与关联论文",
     input_schema={
         "type": "object",
         "properties": {"name": {"type": "string", "description": "概念名"}},
@@ -255,7 +255,7 @@ async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "list_concepts",
-    description="项目概念清单",
+    description="列出本课题语料中的概念，可按类别筛选",
     input_schema={
         "type": "object",
         "properties": {

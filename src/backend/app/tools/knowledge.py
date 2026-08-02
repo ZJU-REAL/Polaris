@@ -24,7 +24,7 @@ _MAX_K = 12
 
 @tool(
     "search_chunks",
-    description="全文段落级语义检索（比 search_papers 更细，直接命中相关段落）",
+    description="在本课题语料内做段落级检索，直接返回相关段落，粒度比 search_papers 更细",
     input_schema={
         "type": "object",
         "properties": {
@@ -102,7 +102,7 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
 
 @tool(
     "get_paper",
-    description="取某论文的元数据 + 概念标签（不含全文，全文用 read_fulltext）",
+    description="取某篇论文的元数据与概念标签，不含全文；全文请用 read_fulltext",
     input_schema={
         "type": "object",
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
@@ -150,7 +150,7 @@ async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "knowledge_graph",
-    description="项目知识图谱：论文/概念/作者节点与关联边",
+    description="取本课题的知识图谱，含论文、概念、作者节点及其关联边",
     input_schema={"type": "object", "properties": {}},
     summarize=lambda a, r: f"知识图谱（{len(r.get('nodes') or [])} 节点）",
 )
@@ -161,7 +161,7 @@ async def knowledge_graph(ctx: ToolContext, args: dict[str, Any]) -> dict[str, A
 
 @tool(
     "global_search",
-    description="跨实体检索：论文/概念/想法/实验/稿件/任务（确定性 ilike）",
+    description="在本课题内按关键词跨实体检索论文、概念、想法、实验、稿件与任务",
     input_schema={
         "type": "object",
         "properties": {"q": {"type": "string", "description": "检索关键词"}},

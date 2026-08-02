@@ -62,7 +62,7 @@ async def _get_manuscript(
 
 @tool(
     "list_manuscripts",
-    description="课题的稿件清单（标题/模板/状态/是否评审通过/上次编译结果）",
+    description="列出本课题的稿件，含标题、模板、状态、评审结论与上次编译结果",
     input_schema={
         "type": "object",
         "properties": {
@@ -83,7 +83,7 @@ async def list_manuscripts(ctx: ToolContext, args: dict[str, Any]) -> dict[str, 
 
 @tool(
     "get_manuscript",
-    description="稿件详情：文件树（路径/大小/是否只读）、编译入口与引擎、上次编译诊断",
+    description="取某份稿件的详情，含文件树、编译入口与引擎、上次编译诊断",
     input_schema={
         "type": "object",
         "properties": {"manuscript_id": {"type": "string", "description": "稿件 uuid"}},
@@ -117,7 +117,7 @@ async def get_manuscript(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
 
 @tool(
     "read_manuscript_file",
-    description="读稿件里某个文件的内容（按 path 定位，长文件按 page 分页）",
+    description="读取稿件中某个文件的内容，按路径定位，长文件分页返回",
     input_schema={
         "type": "object",
         "properties": {

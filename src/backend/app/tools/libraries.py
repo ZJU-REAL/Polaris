@@ -51,7 +51,7 @@ def _library_brief(row: dict[str, Any], *, linked: bool) -> dict[str, Any]:
 
 @tool(
     "list_libraries",
-    description="我能看到的方向文献库清单（含论文/概念计数、是否已关联到本课题）",
+    description="列出当前用户可见的方向文献库，含论文与概念计数，以及是否已关联到本课题",
     input_schema={
         "type": "object",
         "properties": {
@@ -85,7 +85,7 @@ async def list_libraries(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
 
 @tool(
     "get_library",
-    description="文献库详情：方向说明、收录关键词与锚点论文、论文/概念计数、同步节奏",
+    description="取某个文献库的详情，含方向说明、收录关键词与锚点论文、论文与概念计数及同步节奏",
     input_schema={
         "type": "object",
         "properties": {"library_id": {"type": "string", "description": "文献库 uuid"}},
@@ -121,7 +121,7 @@ async def get_library(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "search_daily_pool",
-    description="检索每日新论文池（arXiv 当日新公告的上游候选，尚未收进任何文献库）",
+    description="检索每日新论文池，即 arXiv 当日新公告中尚未收录进任何文献库的候选论文",
     input_schema={
         "type": "object",
         "properties": {

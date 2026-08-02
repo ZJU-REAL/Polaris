@@ -60,11 +60,29 @@ def test_registry_has_expected_tools():
         assert spec.read_only is True
 
 
+def test_tool_descriptions_are_formal():
+    """工具描述是外部客户端唯一的选型依据，必须正式、完整、无破折号。
+
+    破折号在这里尤其糟：它把「这个工具是什么」和一句口语补充黏成一句，
+    模型读到的是语气而不是能力边界。要补充就写成完整的一句话。
+    """
+    for spec in tools.list_tools():
+        desc = spec.description
+        assert desc and desc.strip() == desc, spec.name
+        assert "——" not in desc and "—" not in desc, f"{spec.name} 的描述里有破折号：{desc}"
+        assert "→" not in desc, f"{spec.name} 的描述里有箭头：{desc}"
+        # 参数描述同样面向模型，一并守住
+        for pname, prop in (spec.input_schema.get("properties") or {}).items():
+            pdesc = prop.get("description")
+            if pdesc:
+                assert "——" not in pdesc and "—" not in pdesc, f"{spec.name}.{pname}：{pdesc}"
+
+
 def test_render_tool_specs_subset():
     text = tools.render_tool_specs(["search_papers", "get_concept"])
     lines = text.splitlines()
     assert len(lines) == 2
-    assert lines[0].startswith("- search_papers {") and "库内检索论文" in lines[0]
+    assert lines[0].startswith("- search_papers {") and "检索论文" in lines[0]
     assert '"query"' in lines[0] and '"mode"?' in lines[0]  # required vs optional 标注
 
 

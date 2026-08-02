@@ -92,7 +92,7 @@ def _clamp_max_dim(raw: Any) -> int:
 
 @tool(
     "list_paper_figures",
-    description="列出某论文所有图的元数据（index/页码/类型/图注），不含图片本体",
+    description="列出某篇论文全部插图的元数据，含编号、页码、类型与图注，不含图片本体",
     input_schema={
         "type": "object",
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
@@ -113,7 +113,7 @@ async def list_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str
 
 @tool(
     "get_paper_figure",
-    description="取某论文某张图的图片（PNG）+ 图注，用于 PPT / 展示 / 视觉说明",
+    description="取某篇论文指定编号的插图，返回 PNG 图片与图注",
     input_schema={
         "type": "object",
         "properties": {
@@ -149,7 +149,7 @@ async def get_paper_figure(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
 
 @tool(
     "get_paper_figures",
-    description="批量取某论文的图片（默认只取重要图，可按 kind 过滤）——做 PPT 一次拿全套",
+    description="批量取某篇论文的插图，默认只取重要图，可按类型筛选",
     input_schema={
         "type": "object",
         "properties": {
@@ -198,7 +198,9 @@ async def get_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> ToolResul
 
 @tool(
     "find_figures",
-    description="跨库按主题/类型找图（返回图元数据，再用 get_paper_figure 取图本体）",
+    description=(
+        "在本课题语料内按主题或类型检索插图，返回图片元数据；取图片本体请用 get_paper_figure"
+    ),
     input_schema={
         "type": "object",
         "properties": {
@@ -251,7 +253,7 @@ async def find_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]
 
 @tool(
     "get_paper_citation",
-    description="取某论文的引用条目（BibTeX 或 CSL-JSON），用于 PPT / 论文署名",
+    description="取某篇论文的引用条目，格式为 BibTeX 或 CSL-JSON",
     input_schema={
         "type": "object",
         "properties": {
@@ -276,7 +278,7 @@ async def get_paper_citation(ctx: ToolContext, args: dict[str, Any]) -> dict[str
 
 @tool(
     "get_paper_notes",
-    description="取某论文下当前用户的笔记（P5b 起笔记仅作者本人可见）",
+    description="取当前用户在某篇论文下的笔记；笔记仅作者本人可见",
     input_schema={
         "type": "object",
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
@@ -303,7 +305,7 @@ async def get_paper_notes(ctx: ToolContext, args: dict[str, Any]) -> dict[str, A
 
 @tool(
     "get_paper_highlights",
-    description="取某论文下当前用户的划线/高亮（含所在页与选中文本；仅作者本人可见）",
+    description="取当前用户在某篇论文下的划线，含所在页码与选中文本；划线仅作者本人可见",
     input_schema={
         "type": "object",
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
@@ -337,7 +339,7 @@ async def get_paper_highlights(ctx: ToolContext, args: dict[str, Any]) -> dict[s
 
 @tool(
     "related_papers",
-    description="与某论文共享概念最多的近邻论文（扩展调研）",
+    description="列出与某篇论文共享概念最多的近邻论文",
     input_schema={
         "type": "object",
         "properties": {

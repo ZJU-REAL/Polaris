@@ -37,7 +37,7 @@ def _idea_brief(idea: Idea) -> dict[str, Any]:
 
 @tool(
     "list_ideas",
-    description="项目想法清单（可按 status/depth/research_type 过滤）",
+    description="列出本课题的想法，可按状态、深度与研究类型筛选",
     input_schema={
         "type": "object",
         "properties": {
@@ -62,7 +62,7 @@ async def list_ideas(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "get_idea",
-    description="取某想法的完整内容（动机/方法/预期实验/风险 + 结构化 goal）",
+    description="取某个想法的完整内容，含动机、方法、预期实验、风险与结构化研究目标",
     input_schema={
         "type": "object",
         "properties": {"idea_id": {"type": "string", "description": "想法 uuid"}},
@@ -88,7 +88,7 @@ async def get_idea(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "list_experiments",
-    description="项目实验清单（状态 + 关联想法标题）",
+    description="列出本课题的实验，含状态与关联想法标题",
     input_schema={"type": "object", "properties": {}},
     summarize=lambda a, r: f"实验清单（{len(r.get('experiments') or [])} 条）",
 )
@@ -109,7 +109,7 @@ async def list_experiments(ctx: ToolContext, args: dict[str, Any]) -> dict[str, 
 
 @tool(
     "get_experiment",
-    description="取某实验详情（假设/计划/运行记录与指标）",
+    description="取某个实验的详情，含假设、计划、各轮运行记录与指标",
     input_schema={
         "type": "object",
         "properties": {"experiment_id": {"type": "string", "description": "实验 uuid"}},
@@ -138,7 +138,7 @@ async def get_experiment(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
 
 @tool(
     "read_experiment_logs",
-    description="读实验某一轮运行的训练日志尾部（不给 run_id 就读最近一轮）",
+    description="读取实验某一轮运行的训练日志尾部；未指定 run_id 时读取最近一轮",
     input_schema={
         "type": "object",
         "properties": {
@@ -199,7 +199,7 @@ async def read_experiment_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[s
 
 @tool(
     "get_fact_pack",
-    description="取稿件的事实包：关联想法 + 实验假设/指标/图表 + 项目引用（写作取料用）",
+    description="取某份稿件的事实包，含关联想法、实验假设与指标、图表及可引用文献，供写作取材使用",
     input_schema={
         "type": "object",
         "properties": {"manuscript_id": {"type": "string", "description": "稿件 uuid"}},
