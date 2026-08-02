@@ -52,7 +52,7 @@ export default defineConfig({
         ws: true, // /ws/notifications WebSocket 代理
       },
       '/mcp': {
-        // MCP 协议端点（POST /mcp，JSON-RPC）——见 docs/api-mcp.md
+        // MCP 协议端点（POST /mcp，JSON-RPC）——见 docs/mcp.md
         target: process.env.VITE_PROXY_TARGET ?? 'http://localhost:8000',
         changeOrigin: true,
       },

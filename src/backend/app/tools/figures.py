@@ -1,4 +1,4 @@
-"""围绕 Paper 的图片与支撑只读工具（docs/api-mcp.md）。
+"""围绕 Paper 的图片与支撑只读工具（docs/mcp.md）。
 
 核心：把论文里已抽取、已分类（motivation/method/architecture/experiment/other）、
 已配中文图注的图片，作为 MCP image content 暴露出去——外部客户端（Claude Code /

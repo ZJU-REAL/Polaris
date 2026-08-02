@@ -1,4 +1,4 @@
-"""统一只读检索工具层（docs/api-mcp.md）。
+"""统一只读检索工具层（docs/mcp.md）。
 
 单一事实源：工具在 ``app/tools/*`` 里用 ``@tool`` 注册，既供内部 agent
 （``agents/voyage/tool_loop.run_tool_loop``）动态调用，又供外部 MCP 服务器
@@ -9,8 +9,11 @@ from app.tools import (
     external,  # noqa: F401 — 导入即注册工具
     figures,  # noqa: F401
     knowledge,  # noqa: F401
+    libraries,  # noqa: F401
     literature,  # noqa: F401
     project_state,  # noqa: F401
+    workspace,  # noqa: F401
+    writing,  # noqa: F401
 )
 from app.tools.context import ToolContext
 from app.tools.registry import (

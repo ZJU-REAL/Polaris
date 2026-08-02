@@ -174,10 +174,12 @@ truth: each is registered once and reused by two consumers.
 - **Externally**, an MCP protocol server exposes the same tools to MCP clients such as Claude Desktop
   and Cursor.
 
-The registry holds around two dozen tools spanning in-library search (papers, chunks, wiki,
-concepts, figures, knowledge graph), project state (ideas, experiments, fact packs), and external
-lookups (Semantic Scholar and OpenAlex search, references, citations, DOI lookup). Figure tools can
-return inline images so external clients can pull method and experiment figures directly.
+The registry holds around three dozen tools spanning in-library search (papers, chunks, wiki,
+concepts, figures, knowledge graph), project state (ideas, experiments, fact packs), the workspace
+itself (topic status, AI tasks and their logs, pending approval gates), the corpus (direction
+libraries, the daily arXiv pool), manuscripts (file tree and contents), and external lookups
+(Semantic Scholar and OpenAlex search, references, citations, DOI lookup). Figure tools can return
+inline images so external clients can pull method and experiment figures directly.
 
 The external server offers two transports:
 
@@ -186,5 +188,9 @@ The external server offers two transports:
 - **stdio** via `python -m app.mcp`, for local desktop clients, where the user is identified by an
   environment variable.
 
-Everything here is strictly read-only and project-isolated: there are no write, delete, or SSH
-operations exposed through the tool layer.
+Everything here is strictly read-only and topic-isolated: no write, delete, or SSH operation is
+exposed through the tool layer, and an id belonging to another topic reads as not found even when
+the caller has access to it elsewhere. Approval gates are visible but not decidable — an agent can
+report that work is waiting on a human, and the human decides in the web app.
+
+See [MCP](mcp.md) for the connection guide and the full tool catalog.

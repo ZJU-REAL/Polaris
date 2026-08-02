@@ -19,6 +19,7 @@ from app.tools.context import ToolContext
 from app.tools.registry import tool
 
 _CONTENT_CHARS = 4000
+_MAX_LOG_LINES = 1000
 
 
 def _idea_brief(idea: Idea) -> dict[str, Any]:
@@ -133,6 +134,67 @@ async def get_experiment(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
             raise ValueError(f"项目内不存在该实验：{args.get('experiment_id')}")
         exp, idea_title = row
         return experiments_service.to_read(exp, idea_title).model_dump(mode="json")
+
+
+@tool(
+    "read_experiment_logs",
+    description="读实验某一轮运行的训练日志尾部（不给 run_id 就读最近一轮）",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "experiment_id": {"type": "string", "description": "实验 uuid"},
+            "run_id": {"type": "string", "description": "某一轮 uuid（见 get_experiment 的 runs）"},
+            "tail": {"type": "integer", "minimum": 1, "maximum": _MAX_LOG_LINES, "default": 200},
+        },
+        "required": ["experiment_id"],
+    },
+    summarize=lambda a, r: f"实验日志（{len(r.get('lines') or [])} 行）",
+)
+async def read_experiment_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        exp_id = uuid.UUID(str(args.get("experiment_id")))
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"experiment_id 不是合法 uuid：{args.get('experiment_id')}") from e
+    raw_run = str(args.get("run_id") or "").strip()
+    tail = min(_MAX_LOG_LINES, max(1, int(args.get("tail") or 200)))
+
+    async with get_sessionmaker()() as session:
+        stmt = (
+            select(Experiment)
+            .where(Experiment.id == exp_id, Experiment.project_id == ctx.project_id)
+            .options(selectinload(Experiment.runs))
+        )
+        exp = (await session.execute(stmt)).scalar_one_or_none()
+        if exp is None:
+            raise ValueError(f"项目内不存在该实验：{args.get('experiment_id')}")
+        if raw_run:
+            try:
+                run_id = uuid.UUID(raw_run)
+            except ValueError as e:
+                raise ValueError(f"run_id 不是合法 uuid：{raw_run}") from e
+            run = next((r for r in exp.runs if r.id == run_id), None)
+            if run is None:
+                raise ValueError(f"实验里没有这一轮：{raw_run}")
+        else:
+            run = experiments_service.latest_run(exp)
+        if run is None:
+            return {
+                "experiment_id": str(exp_id),
+                "run_id": None,
+                "lines": [],
+                "note": "实验还没有运行记录",
+            }
+        log_path, run_seq, run_status = run.log_path, run.seq, run.status
+
+    lines, truncated = experiments_service.read_local_log_tail(log_path, tail)
+    return {
+        "experiment_id": str(exp_id),
+        "run_id": str(run.id),
+        "seq": run_seq,
+        "run_status": run_status,
+        "truncated": truncated,
+        "lines": lines,
+    }
 
 
 @tool(

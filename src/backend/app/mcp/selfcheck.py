@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.mcp.dispatch import call_tool
@@ -32,6 +32,7 @@ from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
 from app.models.manuscript import Manuscript
 from app.models.paper import Concept, Paper
+from app.models.voyage import VoyageRun
 from app.services.concepts import library_concept_ids
 from app.services.libraries import get_source_library_ids
 from app.tools import ToolSpec, list_tools
@@ -51,6 +52,9 @@ _MISSING_REASON = {
     "experiment_id": "课题里还没有实验",
     "manuscript_id": "课题里还没有稿件",
     "doi": "库内论文都没有 DOI",
+    "library_id": "课题还没有关联任何文献库",
+    "task_id": "课题里还没有跑过 AI 任务",
+    "path": "课题里还没有稿件（拿不到文件路径）",
 }
 
 _FALLBACK_QUERY = "learning"
@@ -69,6 +73,9 @@ class ProjectSamples:
     idea_id: str | None = None
     experiment_id: str | None = None
     manuscript_id: str | None = None
+    library_id: str | None = None
+    task_id: str | None = None
+    manuscript_path: str | None = None
 
 
 def _query_from_title(title: str | None) -> str:
@@ -146,6 +153,25 @@ async def collect_samples(session: AsyncSession, *, project_id: uuid.UUID) -> Pr
         )
         return str(row) if row is not None else None
 
+    # 最近一次任务（含库任务：建库/增量抓取挂在库上，但课题语料正是它抓来的）
+    task_stmt = (
+        select(VoyageRun.id)
+        .where(
+            (VoyageRun.project_id == project_id)
+            | (VoyageRun.library_id.in_(library_ids) if library_ids else false())
+        )
+        .order_by(VoyageRun.created_at.desc())
+        .limit(1)
+    )
+    task_id = (await session.execute(task_stmt)).scalars().first()
+
+    # 稿件文件路径：读文件类工具没有 path 就没法测，拿主文件当样本
+    manuscript_id = await _first_id(Manuscript)
+    manuscript_path: str | None = None
+    if manuscript_id is not None:
+        manuscript = await session.get(Manuscript, uuid.UUID(manuscript_id))
+        manuscript_path = manuscript.main_tex if manuscript is not None else None
+
     return ProjectSamples(
         query=_query_from_title(papers[0].title if papers else None),
         paper_id=str(papers[0].id) if papers else None,
@@ -155,7 +181,10 @@ async def collect_samples(session: AsyncSession, *, project_id: uuid.UUID) -> Pr
         concept_name=concept.name if concept is not None else None,
         idea_id=await _first_id(Idea),
         experiment_id=await _first_id(Experiment),
-        manuscript_id=await _first_id(Manuscript),
+        manuscript_id=manuscript_id,
+        library_id=str(library_ids[0]) if library_ids else None,
+        task_id=str(task_id) if task_id is not None else None,
+        manuscript_path=manuscript_path,
     )
 
 
@@ -175,8 +204,10 @@ def _sample_value(
         return samples.figure_index
     if name == "doi":
         return samples.doi
-    if name in ("idea_id", "experiment_id", "manuscript_id"):
+    if name in ("idea_id", "experiment_id", "manuscript_id", "library_id", "task_id"):
         return getattr(samples, name)
+    if name == "path":
+        return samples.manuscript_path
     if name == "mode" and "keyword" in (schema.get("enum") or []):
         return "keyword"  # 确定性、不触发 embedding
     if name == "max_dim":

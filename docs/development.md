@@ -132,7 +132,19 @@ The full rules live in the project's Git workflow guide; the essentials:
 The read-only tool registry in `app/tools/` is the single source of truth for retrieval tools, used
 both by the internal agent loop and by the external MCP server in `app/mcp/`. Adding a tool is a
 single handler in `app/tools/`; it then becomes visible to both consumers. See the tool layer in
-[Core Concepts](concepts.md#the-mcp-read-only-tool-layer).
+[Core Concepts](concepts.md#the-mcp-read-only-tool-layer) and the user-facing guide in [MCP](mcp.md).
+
+Modules are grouped by what they read: `literature.py` and `knowledge.py` (papers, chunks, concepts,
+graph), `figures.py` (images), `external.py` (third-party APIs), `project_state.py` (ideas,
+experiments, fact packs), `workspace.py` (topic status, tasks, gates), `libraries.py` (direction
+libraries, daily pool), `writing.py` (manuscripts). A new tool goes in whichever module already owns
+its subject, and gets registered by importing that module in `app/tools/__init__.py`.
+
+Two rules keep the layer honest. **Tools are thin wrappers over `services/*`** — no business logic
+lives here, so REST and MCP can never drift apart. **Every tool is topic-scoped**: an id belonging to
+another topic must read as not found, even when the caller has access to it elsewhere, because an
+MCP session is bound to one `project_id`. `tests/test_mcp_workspace_tools.py` pins that for tasks,
+manuscripts, and libraries; a new tool that takes an id needs the same case.
 
 ### Testing the tools
 
@@ -159,6 +171,12 @@ parameters are left unset, `mode` is pinned to `keyword` so no embedding call is
 tools render at 512 px. Network tools are skipped unless `include_network` is set, since they really
 call Semantic Scholar and OpenAlex. A tool whose required argument has no sample in that topic (no
 manuscript yet, no extracted figures) is reported as `skipped`, not as a failure.
+
+The sampler recognises arguments by name (`app/mcp/selfcheck.py::_sample_value`): `paper_id`,
+`library_id`, `task_id`, `idea_id`, `experiment_id`, `manuscript_id`, `path`, `index`, `query`/`q`,
+`name`, `doi`. **A new tool whose required argument is not in that list will silently be reported as
+`skipped` forever** — add the sample to `collect_samples` and a reason to `_MISSING_REASON` in the
+same change, or the self-check will quietly stop covering it.
 
 `search_papers`, `search_chunks`, and `find_figures` all take `mode` (`keyword` | `semantic`), and
 all three fall back to keyword search when the embedding call fails for any reason — the embedding

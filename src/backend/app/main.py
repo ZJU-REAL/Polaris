@@ -80,7 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix="/api")
     # WS 不挂 /api 前缀：nginx 按 /ws 反代（Upgrade），见 docs/architecture.md §7
     app.include_router(ws_router)
-    # MCP 只读工具服务：POST /mcp（Streamable HTTP，JSON-RPC 2.0），见 docs/api-mcp.md
+    # MCP 只读工具服务：POST /mcp（Streamable HTTP，JSON-RPC 2.0），见 docs/mcp.md
     app.include_router(mcp_router)
     return app
 
