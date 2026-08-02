@@ -724,6 +724,128 @@ async def test_daily_feed_voyage_end_to_end(client, monkeypatch):
     assert resp.json()["total"] == 1
 
 
+async def test_weekend_batch_is_not_reported_as_stale(client, monkeypatch):
+    """周六周日 arXiv 不公告，拿到周五那批是正常的，不该报「抓早了」。
+
+    这条豁免以前只能靠「挑个周末跑测试」验证——它反过来还让另一条测试每逢周末必挂。
+    """
+    import datetime as dt
+
+    from app.agents.voyage import actions_daily
+    from app.agents.voyage.actions import get_action
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    friday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2607.00131", "Friday")]}, batch_date=friday),
+    )
+    monkeypatch.setattr(actions_daily, "_is_weekend", lambda *a, **k: True)
+
+    obs = await get_action("daily.fetch")(_action_ctx(), {})
+    assert obs["stale_batch_dates"] == []
+    assert "error" not in obs and "note" not in obs
+
+
+async def test_is_weekend_follows_the_calendar():
+    """判据本身：周六周日为真，周一到周五为假。"""
+    import datetime as dt
+
+    from app.agents.voyage.actions_daily import _is_weekend
+
+    monday = dt.datetime(2026, 7, 27, 12, 0, tzinfo=dt.UTC)
+    for offset, expected in enumerate([False, False, False, False, False, True, True]):
+        assert _is_weekend(monday + dt.timedelta(days=offset)) is expected, offset
+
+
+async def test_no_new_papers_does_not_trigger_library_sync(client, monkeypatch):
+    """池里一篇新论文都没有（周末/节假日/当天没发）就不触发文献库同步。
+
+    否则 14 个库各跑一轮打分与编译，扫的是同一批昨天就打过分的论文，白花一轮钱，
+    还在每个库下面留一条「0 篇新论文」的任务记录。
+    """
+    from app.agents.voyage.actions import get_action
+    from app.agents.voyage.checks import run_deterministic_checks
+
+    await register_and_login(client)
+    enqueued: list[str] = []
+
+    class _Queue:
+        async def enqueue(self, name, *args, **kwargs):
+            enqueued.append(name)
+
+    from app.core import queue as queue_mod
+
+    async def _get_queue():
+        return _Queue()
+
+    monkeypatch.setattr(queue_mod, "get_task_queue", _get_queue)
+
+    ctx = _action_ctx()
+    ctx.checkpoint["daily_created"] = 0
+    obs = await get_action("daily.sync_libraries")(ctx, {})
+
+    assert obs["triggered"] is False
+    assert obs["reason"] == "no_new_papers"
+    assert enqueued == [], "没有新论文就不该入队库同步"
+
+    # 跳过是正常结果，不能把这一步判成失败
+    verdict, _ = run_deterministic_checks(
+        [{"kind": "no_error"}], observation=obs, checkpoint=ctx.checkpoint
+    )
+    assert verdict is not None and verdict["passed"] is True
+
+
+async def test_new_papers_still_trigger_library_sync(client, monkeypatch):
+    """有新论文就照常触发——跳过的判据不能把正常的一轮也挡掉。"""
+    from app.agents.voyage.actions import get_action
+
+    await register_and_login(client)
+    enqueued: list[str] = []
+
+    class _Queue:
+        async def enqueue(self, name, *args, **kwargs):
+            enqueued.append(name)
+
+    from app.core import queue as queue_mod
+
+    async def _get_queue():
+        return _Queue()
+
+    monkeypatch.setattr(queue_mod, "get_task_queue", _get_queue)
+
+    ctx = _action_ctx()
+    ctx.checkpoint["daily_created"] = 7
+    obs = await get_action("daily.sync_libraries")(ctx, {})
+
+    assert obs["triggered"] is True and obs["created"] == 7
+    assert enqueued == ["daily_wiki_ingest"]
+
+
+async def test_upsert_records_the_new_paper_count_for_the_next_step(client, monkeypatch):
+    """入池步骤要把「新增几篇」写进 checkpoint——触发与否的判据来自它，不是抓到的条目数。
+
+    抓到几百条但全是昨天入过池的，去重后 created=0，对文献库来说和没抓一样。
+    """
+    from app.agents.voyage.actions import get_action
+
+    await register_and_login(client)
+    ctx = _action_ctx()
+    ctx.checkpoint["daily_entries"] = {"cs.AI": [_rss_entry("2607.00120", "Brand new")]}
+    obs = await get_action("daily.upsert")(ctx, {})
+    assert obs["created"] == 1
+    assert ctx.checkpoint["daily_created"] == 1
+
+    # 同一篇再来一次：去重后没有新增，checkpoint 如实记 0
+    ctx2 = _action_ctx()
+    ctx2.checkpoint["daily_entries"] = {"cs.AI": [_rss_entry("2607.00120", "Brand new")]}
+    obs2 = await get_action("daily.upsert")(ctx2, {})
+    assert obs2["created"] == 0
+    assert ctx2.checkpoint["daily_created"] == 0
+
+
 async def test_daily_fetch_fails_when_any_category_errors(client, monkeypatch):
     """**任一分类抓失败就报错**，不是「全都空才报」。
 
@@ -971,6 +1093,10 @@ async def test_stale_batch_is_visible_but_does_not_fail_the_run(client, monkeypa
         "get_arxiv_client",
         lambda: _StubArxiv({"cs.AI": [_rss_entry("2607.00081", "Stale")]}, batch_date=yesterday),
     )
+    # 固定成工作日：周末 arXiv 本来就不公告，那条豁免会让这条断言随星期时对时错
+    from app.agents.voyage import actions_daily
+
+    monkeypatch.setattr(actions_daily, "_is_weekend", lambda *a, **k: False)
 
     ctx = _action_ctx()
     obs = await get_action("daily.fetch")(ctx, {})

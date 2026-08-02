@@ -25,6 +25,16 @@ from app.services import daily_feed as daily_feed_service
 logger = logging.getLogger(__name__)
 
 
+def _is_weekend(now: dt.datetime | None = None) -> bool:
+    """今天 arXiv 本来就不公告吗。
+
+    RSS 的 skipDays 明写着周六周日不发，那时拿到周五那批是正常的，不该报「抓早了」。
+    单独成函数是为了能被测试固定住——直接读 now() 的话，同一条断言会随跑测试的星期
+    时对时错（这条豁免上线后第一个周六就把测试挂了）。
+    """
+    return (now or dt.datetime.now(dt.UTC)).weekday() >= 5
+
+
 # ---- 1. 抓取订阅分类的当天新公告 ----
 
 
@@ -39,11 +49,9 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     failed = [c for c, s in statuses.items() if s["status"] == "error"]
     # arXiv 声明的批次日期不是今天 = 抓早了，拿到的是上一批。这种失败原本完全无声：
     # 条目照样几百条，只是全都昨天入过池了，去重后一条不进，而每一步都报成功。
-    # 周末除外——arXiv 的 RSS 里 skipDays 明写着周六周日不发，那时拿到周五那批是正常的。
-    weekend = dt.datetime.now(dt.UTC).weekday() >= 5
     stale = (
         []
-        if weekend
+        if _is_weekend()
         else sorted({s["batch_date"] for s in statuses.values() if s.get("stale")})
     )
     for category, state in statuses.items():
@@ -100,6 +108,8 @@ async def upsert(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
 
     touched = [str(pid) for pid in stats["touched"]]
     ctx.checkpoint["daily_touched_papers"] = touched
+    # 交给 daily.sync_libraries 判断要不要触发库同步：一篇新的都没有就不必触发
+    ctx.checkpoint["daily_created"] = stats["created"]
     ctx.checkpoint.pop("daily_entries", None)  # 已入池，不必再占着 checkpoint
     await ctx.log(f"新增 {stats['created']} 篇，合并分类 {stats['merged']} 篇")
     return {"created": stats["created"], "merged": stats["merged"], "papers": len(touched)}
@@ -140,15 +150,28 @@ async def embed(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
 
 @register("daily.sync_libraries")
 async def sync_libraries(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
-    """新论文入池后立刻触发各文献库的同步。
+    """新论文入池后立刻触发各文献库的同步；一篇新的都没有就不触发。
 
     以前库同步是自己定时跑的（抓取时刻 + 90 分钟），那是在赌抓取已经跑完——抓取慢一点
     或者失败重试，同步就会在旧池子上空跑一整轮，而界面上只显示「0 篇新论文」。改成
     事件驱动：池子备好了才同步，时刻不用猜也不用配。
+
+    池里一篇新论文都没有时（周末、节假日、arXiv 当天没发）就不触发：14 个库各跑一轮
+    打分/编译，扫的是同一批昨天就打过分的论文，白花一轮钱，还在每个库下面留一条
+    「0 篇新论文」的任务记录。
+
+    判据是 **created**（真正新进池的论文数），不是抓到的条目数：抓到几百条但全是昨天
+    入过池的，去重后 created=0，对文献库来说和没抓一样。``merged`` 也不算——那是已在
+    池中的论文多挂了一个分类，而库同步不按分类筛，没有新信号。
     """
     from app.core.queue import get_task_queue
 
+    created = int(ctx.checkpoint.get("daily_created") or 0)
+    if created <= 0:
+        await ctx.log("池里没有新论文，跳过文献库同步", level="warning")
+        return {"triggered": False, "created": 0, "reason": "no_new_papers"}
+
     queue = await get_task_queue()
     await queue.enqueue("daily_wiki_ingest")
-    await ctx.log("已触发各文献库同步")
-    return {"triggered": True}
+    await ctx.log(f"已触发各文献库同步（新增 {created} 篇）")
+    return {"triggered": True, "created": created}
