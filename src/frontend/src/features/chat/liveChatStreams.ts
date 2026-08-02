@@ -20,10 +20,10 @@ export interface StreamSnapshot {
 type Subscriber = (snap: StreamSnapshot) => void;
 
 interface Entry extends StreamSnapshot {
+  key: string;
   surfaceKey: string;
   convId: string;
   stop: () => void;
-  subs: Set<Subscriber>;
   /** 无人订阅时的落盘节流句柄 */
   saveTimer: number | null;
 }
@@ -33,6 +33,16 @@ const SAVE_THROTTLE_MS = 400;
 const KEEP_AFTER_DONE_MS = 60_000;
 
 const entries = new Map<string, Entry>();
+
+/* 订阅者按 key 单独登记，**不挂在 Entry 上**。
+
+   挂在 Entry 上时，只要那条 Entry 被换掉或删掉，订阅关系就随之消失，而组件那边
+   activeKey 没变、订阅 effect 不会重跑，于是它再也收不到推送——界面一直转圈，可流
+   其实在跑。切走再切回来（组件重挂）才重新订阅，这才看见回答正在流式输出。
+
+   三条路径都会踩到：追问时 startStream 换掉同 key 的 Entry；用户点停止后 stopStream
+   删掉 Entry；以及一轮结束 KEEP_AFTER_DONE_MS 到点删掉 Entry 之后再提问。 */
+const subscribers = new Map<string, Set<Subscriber>>();
 
 export function streamKey(surfaceKey: string, convId: string): string {
   return `${surfaceKey}::${convId}`;
@@ -56,11 +66,12 @@ function flush(e: Entry) {
 }
 
 function publish(e: Entry) {
-  if (e.subs.size > 0) {
+  const subs = subscribers.get(e.key);
+  if (subs && subs.size > 0) {
     // 有人挂载着：由订阅方 commit（同时更新 React 状态和 localStorage），
     // 这里不再自己写盘，免得两边互相覆盖
     const snap = snapshot(e);
-    e.subs.forEach((fn) => fn(snap));
+    subs.forEach((fn) => fn(snap));
     return;
   }
   if (e.done) {
@@ -70,7 +81,7 @@ function publish(e: Entry) {
   if (e.saveTimer == null) {
     e.saveTimer = window.setTimeout(() => {
       e.saveTimer = null;
-      if (e.subs.size === 0) flush(e);
+      if (!subscribers.get(e.key)?.size) flush(e);
     }, SAVE_THROTTLE_MS);
   }
 }
@@ -95,11 +106,11 @@ export function startStream(
 ): void {
   entries.get(key)?.stop();
   const e: Entry = {
+    key,
     surfaceKey,
     convId,
     content: '',
     done: false,
-    subs: new Set(),
     saveTimer: null,
     stop: () => {},
   };
@@ -141,16 +152,29 @@ export function startStream(
   });
 }
 
-/** 订阅某条在途流；返回退订函数。订阅时立即推一次当前快照。 */
+/** 订阅某个会话的流；返回退订函数。已有在途流时立即推一次当前快照。
+
+    **订阅不要求流已经存在**：组件挂在一个还没提问的会话上时也照样登记，这样之后
+    startStream 起流时它立刻就能收到推送。以前这里 `if (!e) return () => {}` 直接
+    放弃订阅，是「一直转圈」的另一半原因。 */
 export function subscribeStream(key: string, fn: Subscriber): () => void {
+  let subs = subscribers.get(key);
+  if (!subs) {
+    subs = new Set();
+    subscribers.set(key, subs);
+  }
+  subs.add(fn);
   const e = entries.get(key);
-  if (!e) return () => {};
-  e.subs.add(fn);
-  fn(snapshot(e));
+  if (e) fn(snapshot(e));
   return () => {
-    e.subs.delete(fn);
+    const cur = subscribers.get(key);
+    if (!cur) return;
+    cur.delete(fn);
+    if (cur.size > 0) return;
+    subscribers.delete(key);
     // 最后一个订阅者走了（组件卸载）：立刻把当前进展落盘，之后由本模块接管
-    if (e.subs.size === 0) flush(e);
+    const live = entries.get(key);
+    if (live) flush(live);
   };
 }
 
