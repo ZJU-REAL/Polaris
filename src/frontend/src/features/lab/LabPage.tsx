@@ -564,11 +564,22 @@ function UsageBars({ rows }: { rows: { date: string; prompt: number; completion:
                 }}
               />
             </div>
-            {i % labelEvery === 0 && (
-              <div className="mono" style={{ fontSize: 9, color: 'var(--text-4)', textAlign: 'center', marginTop: 4 }}>
-                {r.date.slice(5)}
-              </div>
-            )}
+            {/* 标签行**每列都占位**：只给带日期的列渲染这一行的话，那几列会比邻居高出
+                一行，而外层是 flex-end 底部对齐——结果是带日期的柱子整体被顶高一截，
+                日期文字插进邻居柱子的半腰，基线也就散了。 */}
+            <div
+              className="mono"
+              style={{
+                height: 13,
+                fontSize: 9,
+                color: 'var(--text-4)',
+                textAlign: 'center',
+                marginTop: 4,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {i % labelEvery === 0 ? r.date.slice(5) : ''}
+            </div>
           </div>
         );
       })}
