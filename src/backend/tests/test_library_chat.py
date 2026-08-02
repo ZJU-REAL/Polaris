@@ -309,3 +309,56 @@ async def test_previously_cited_paper_is_pinned_into_context(client, monkeypatch
     # 检索命中的那篇仍在，且排在钉进来的前面（更贴题的占小编号）
     assert source_ids[0] == ids[0]
     assert "Reflexion Self-Improvement" in messages[0].content
+
+
+# ---- 「最近 7 天」问得出来：上下文要带日期，系统提示要带今天 ----
+
+
+async def test_context_carries_the_publication_date_not_just_the_year(client):
+    """每篇论文在上下文里要标到**天**，并且告诉模型今天是哪天。
+
+    生产上问「最近 7 天有哪些值得关注的新论文」，模型如实回答「资料均为 2025 至 2026 年
+    的研究成果，但具体发表日期未提供，无法确认是否在最近 7 天范围内」——它没说错：
+    上下文里每篇只写了年份（`（2026）`），而每日池里的论文本来都带着 published_at。
+    """
+    import datetime as dt
+
+    from sqlalchemy import select as _select
+
+    from app.models.paper import Paper
+    from app.services import library_chat as lc
+
+    project_id, headers, ids = await _setup(client)
+    await client.post(f"/api/projects/{project_id}/index/rebuild", headers=headers)
+
+    published = dt.datetime.now(dt.UTC) - dt.timedelta(days=2)
+    async with get_sessionmaker()() as session:
+        paper = (
+            await session.execute(_select(Paper).where(Paper.id == uuid.UUID(ids[0])))
+        ).scalar_one()
+        paper.published_at = published
+        await session.commit()
+
+    session, project, llm = await _project_and_router(project_id)
+    async with session:
+        messages, _ = await lc.build_library_messages(
+            session, project=project, question="最近 7 天有哪些新论文？", history=[], llm=llm
+        )
+
+    system = messages[0].content
+    assert published.date().isoformat() in system, "上下文里要给到具体日期，不能只有年份"
+    today = dt.datetime.now(dt.UTC).date().isoformat()
+    assert today in system, "不告诉模型今天几号，它算不出「最近 7 天」"
+
+
+async def test_dateline_falls_back_to_the_year_when_no_date_is_known(client):
+    """没有 published_at 的老论文退回年份，都没有则明说未知——不能因此空着。"""
+    import datetime as dt
+
+    from app.models.paper import Paper
+    from app.services.library_chat import _dateline
+
+    assert _dateline(Paper(title="t", year=2024)) == "2024"
+    assert _dateline(Paper(title="t")) == "日期未知"
+    exact = dt.datetime(2026, 7, 30, 6, 0, tzinfo=dt.UTC)
+    assert _dateline(Paper(title="t", year=2026, published_at=exact)) == "2026-07-30"

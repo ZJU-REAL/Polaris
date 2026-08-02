@@ -7,6 +7,7 @@
 最终兜底用高分论文的 TL;DR/摘要拼上下文。
 """
 
+import datetime as dt
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -61,11 +62,41 @@ LIBRARY_CHAT_SYSTEM_TEMPLATE = """\
 - 涉及多篇论文时主动做对比与归纳（共识、分歧、演进脉络），不要逐篇罗列了事；
 - 用中文回答，讲清楚、说人话。
 
+今天是 {today}（UTC）。资料里每篇论文都标了发布日期，问到「最近几天/最新」时按它判断。
+
 研究方向：{statement}
 
 检索到的资料（编号 = 论文）：
 {context}
 """
+
+
+def _render_system(*, statement: str, context: str) -> str:
+    """渲染对话系统提示。
+
+    独立成函数是因为模板里有「今天是哪天」——四个调用点各自 format 的话，漏掉一个
+    就会 KeyError，而且日期得在每处重算一遍。
+    """
+    return LIBRARY_CHAT_SYSTEM_TEMPLATE.format(
+        statement=statement,
+        context=context,
+        today=dt.datetime.now(dt.UTC).date().isoformat(),
+    )
+
+
+def _dateline(paper: Paper) -> str:
+    """论文在上下文里的日期标注：能给到天就给到天。
+
+    以前只给年份，于是「最近 7 天有哪些新论文」这种问题模型只能如实回答「资料里没有
+    具体发表日期，无法确认」——每日池里的论文明明都带着 published_at。
+    """
+    published = getattr(paper, "published_at", None)
+    if published is not None:
+        try:
+            return published.date().isoformat()
+        except AttributeError:  # 已经是 date
+            return published.isoformat()
+    return str(paper.year) if paper.year else "日期未知"
 
 
 @dataclass
@@ -302,7 +333,7 @@ async def build_messages_for_libraries(
         messages = [
             Message(
                 role="system",
-                content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(
+                content=_render_system(
                     statement=statement, context="（还没有关联任何文献库）"
                 ),
             )
@@ -402,7 +433,7 @@ async def build_messages_for_libraries(
         concept_line = f"\n概念：{'、'.join(names)}" if names else ""
         fig_line = _figure_hints(paper)
         blocks.append(
-            f"[{i}] {paper.title}（{paper.year or '年份未知'}）{concept_line}{fig_line}\n{body}"
+            f"[{i}] {paper.title}（{_dateline(paper)}）{concept_line}{fig_line}\n{body}"
         )
         membership = memberships.get(paper.id)
         sources.append(
@@ -421,7 +452,7 @@ async def build_messages_for_libraries(
     messages = [
         Message(
             role="system",
-            content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(statement=statement, context=context),
+            content=_render_system(statement=statement, context=context),
         )
     ]
     messages += _history_messages(turns, await _cited_titles(session, turns))
@@ -454,7 +485,7 @@ async def build_scoped_messages(
         messages = [
             Message(
                 role="system",
-                content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(
+                content=_render_system(
                     statement=statement_text, context="（还没有收藏任何论文）"
                 ),
             )
@@ -532,7 +563,7 @@ async def build_scoped_messages(
         concept_line = f"\n概念：{'、'.join(names)}" if names else ""
         fig_line = _figure_hints(paper)
         blocks.append(
-            f"[{i}] {paper.title}（{paper.year or '年份未知'}）{concept_line}{fig_line}\n{body}"
+            f"[{i}] {paper.title}（{_dateline(paper)}）{concept_line}{fig_line}\n{body}"
         )
         sources.append(
             ChatSource(
@@ -550,7 +581,7 @@ async def build_scoped_messages(
     messages = [
         Message(
             role="system",
-            content=LIBRARY_CHAT_SYSTEM_TEMPLATE.format(statement=statement_text, context=context),
+            content=_render_system(statement=statement_text, context=context),
         )
     ]
     messages += _history_messages(turns, await _cited_titles(session, turns))
@@ -611,7 +642,7 @@ async def build_reference_context(
             body = ("\n…\n".join(c.text for c in chunk_list))[:SNIPPET_CHARS]
         else:
             body = paper.tldr or (paper.abstract or "")[:400] or "（无摘要）"
-        blocks.append(f"[{i}] {paper.title}（{paper.year or '年份未知'}）\n{body}")
+        blocks.append(f"[{i}] {paper.title}（{_dateline(paper)}）\n{body}")
         membership = memberships.get(paper.id)
         sources.append(
             ChatSource(
