@@ -6,7 +6,6 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,9 +16,10 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_llm_chat, require_llm_task
+from app.api.chat_stream import chat_stream_response
+from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session
 from app.core.events import paper_task_channel, paper_task_log_key
-from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
 from app.core.redis import get_redis_dep
 from app.models.user import User
@@ -254,10 +254,6 @@ async def add_paper_manually(
     )
     detail = await _paper_detail(session, view, user_id)
     return detail.model_copy(update={"task_id": task_id})
-
-
-def _sse_frame(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 @router.get("/paper-tasks/{task_id}/events")
@@ -713,10 +709,6 @@ async def rebuild_paper_index(
 # ---- AI 伴读（docs/api-lit.md §3，SSE 流） ----
 
 
-def _sse_frame(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
-
-
 @router.post("/papers/{paper_id}/chat")
 async def chat_with_paper(
     paper_id: uuid.UUID,
@@ -747,59 +739,14 @@ async def chat_with_paper(
         paper, question=data.question, history=history, references=references
     )
 
-    async def event_stream() -> AsyncIterator[str]:
-        if sources:
-            yield _sse_frame("sources", {"items": [asdict(s) for s in sources]})
-        queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
-
-        async def pump() -> None:
-            try:
-                # router.stream 结束时自动写 LLMUsage 记账（归属 user + project）
-                async for chunk in llm.stream(
-                    "reading", messages, user_id=user_id, project_id=project_id
-                ):
-                    await queue.put(("delta", chunk))
-                await queue.put(("done", None))
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 — 转成 error 事件后关流
-                logger.warning("paper chat stream failed", exc_info=True)
-                await queue.put(("error", f"{type(e).__name__}: {e}"))
-
-        task = asyncio.create_task(pump())
-        collected: list[str] = []
-        try:
-            while True:
-                try:
-                    kind, payload = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
-                except TimeoutError:
-                    yield ": ping\n\n"
-                    continue
-                if kind == "delta":
-                    collected.append(payload or "")
-                    yield _sse_frame("delta", {"text": payload})
-                elif kind == "done":
-                    # usage 与 router 记账口径一致（provider 无 usage 时按 len/4 估算）
-                    usage = {
-                        "prompt_tokens": sum(estimate_tokens(m.content) for m in messages),
-                        "completion_tokens": estimate_tokens("".join(collected)),
-                    }
-                    yield _sse_frame("done", {"usage": usage})
-                    return
-                else:  # error
-                    yield _sse_frame("error", {"detail": payload})
-                    return
-        finally:
-            task.cancel()
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # nginx 关缓冲
-        },
+    # 伴读只在真有参考文献时才发 sources：它的语料就是当前这一篇
+    return chat_stream_response(
+        messages,
+        sources,
+        user_id=user_id,
+        project_id=project_id,
+        log_label="paper chat",
+        always_send_sources=False,
     )
 
 

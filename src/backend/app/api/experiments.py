@@ -6,7 +6,6 @@
 
 import asyncio
 import io
-import json
 import posixpath
 import time
 import uuid
@@ -20,6 +19,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_experiment
+from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session, get_sessionmaker
 from app.core.events import EventBus, get_event_bus
 from app.core.queue import TaskQueue, get_task_queue
@@ -494,10 +494,6 @@ async def get_experiment_logs(
     log_path = _resolve_log_path(experiment, run_id)
     lines, truncated = experiments_service.read_local_log_tail(log_path, tail)
     return ExperimentLogsRead(lines=lines, truncated=truncated)
-
-
-def _sse_frame(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 @router.get("/experiments/{experiment_id}/logs/stream")

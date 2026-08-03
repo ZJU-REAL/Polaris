@@ -16,6 +16,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_admin, require_llm_chat, require_llm_task
+from app.api.chat_stream import chat_stream_response
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
@@ -462,8 +463,6 @@ async def chat_with_daily_pool(
 
     事件序列与文献库对话一致（``sources`` → ``delta``* → ``done``）。
     """
-    from app.api.wiki import _chat_stream_response
-
     history = library_chat_service.history_from_turns(data.history[-20:])  # 最多 10 轮
     paper_ids = await daily_service.daily_paper_ids(session)
     messages, sources = await library_chat_service.build_scoped_messages(
@@ -476,7 +475,7 @@ async def chat_with_daily_pool(
         user_id=user.id,
         project_id=None,
     )
-    return _chat_stream_response(messages, sources, user_id=user.id, project_id=None)
+    return chat_stream_response(messages, sources, user_id=user.id, project_id=None)
 
 
 @router.post("/papers/{entry_id}/fetch-pdf", response_model=DailyPaperDetail)

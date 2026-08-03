@@ -5,7 +5,6 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -13,6 +12,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
+from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session
 from app.core.events import voyage_channel
 from app.core.queue import TaskQueue, get_task_queue
@@ -179,10 +179,6 @@ async def resume_voyage(
     await session.commit()
     await queue.enqueue("resume_voyage", str(run.id))
     return VoyageRead.model_validate(run)
-
-
-def _sse_frame(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 @router.get("/{voyage_id}/events")

@@ -5,13 +5,11 @@
 """
 
 import asyncio
-import json
 import logging
 import mimetypes
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -24,6 +22,7 @@ from app.api.auth import (
     require_paper_review,
     require_writer,
 )
+from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session
 from app.core.events import EventBus, get_event_bus
 from app.core.llm.fake import estimate_tokens
@@ -1028,10 +1027,6 @@ async def initialize_structure(
 # ---- §6 内联 AI 写作辅助（SSE 流） ----
 
 _ASSIST_HEARTBEAT_SECONDS = 15.0
-
-
-def _sse_frame(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 @router.post("/manuscripts/{manuscript_id}/assist")

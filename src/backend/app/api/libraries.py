@@ -8,12 +8,9 @@
 个人文献库路由在 ``app/api/library.py``（/me/library），勿混淆。
 """
 
-import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
-from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -30,8 +27,8 @@ from app.api.auth import (
     require_llm_chat,
     require_llm_task,
 )
+from app.api.chat_stream import chat_stream_response
 from app.core.db import get_session
-from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
 from app.core.redis import get_redis_dep
@@ -96,10 +93,6 @@ router = APIRouter(tags=["libraries"])
 logger = logging.getLogger(__name__)
 
 _HEARTBEAT_SECONDS = 15.0
-
-
-def _sse_frame(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 async def _paper_detail(
@@ -1084,49 +1077,9 @@ async def chat_with_library(
         session, library=library, question=data.question, history=history, llm=llm, user_id=user_id
     )
 
-    async def event_stream() -> AsyncIterator[str]:
-        yield _sse_frame("sources", {"items": [asdict(source) for source in sources]})
-        queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
-
-        async def pump() -> None:
-            try:
-                async for chunk in llm.stream(
-                    "reading", messages, user_id=user_id, project_id=project_id
-                ):
-                    await queue.put(("delta", chunk))
-                await queue.put(("done", None))
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 — 转成 error 事件后关流
-                logger.warning("library chat stream failed", exc_info=True)
-                await queue.put(("error", f"{type(e).__name__}: {e}"))
-
-        task = asyncio.create_task(pump())
-        collected: list[str] = []
-        try:
-            while True:
-                try:
-                    kind, payload = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
-                except TimeoutError:
-                    yield ": ping\n\n"
-                    continue
-                if kind == "delta":
-                    collected.append(payload or "")
-                    yield _sse_frame("delta", {"text": payload})
-                elif kind == "done":
-                    usage = {
-                        "prompt_tokens": sum(estimate_tokens(m.content) for m in messages),
-                        "completion_tokens": estimate_tokens("".join(collected)),
-                    }
-                    yield _sse_frame("done", {"usage": usage})
-                    return
-                else:  # error
-                    yield _sse_frame("error", {"detail": payload})
-                    return
-        finally:
-            task.cancel()
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return chat_stream_response(
+        messages, sources, user_id=user_id, project_id=project_id, log_label="library chat"
+    )
 
 
 # ---- P6 治理：重复论文合并 ----

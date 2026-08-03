@@ -1,12 +1,9 @@
 """Research Wiki 附属路由：检索 / Obsidian 导出 / 引用导出 / 项目统计 / 图谱 / 文献库对话
 （docs/api-m2.md §3、§5、§6；docs/api-lit.md §6、§8）。"""
 
-import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
-from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -16,8 +13,8 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user, require_llm_chat
+from app.api.chat_stream import chat_stream_response
 from app.core.db import get_session
-from app.core.llm.fake import estimate_tokens
 from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.library_direction import LibraryPaper
@@ -197,10 +194,6 @@ async def export_citations(
     )
 
 
-def _sse_frame(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
-
-
 def _chat_stream_response(
     messages: list,
     sources: list,
@@ -208,53 +201,13 @@ def _chat_stream_response(
     user_id: uuid.UUID,
     project_id: uuid.UUID | None,
 ) -> StreamingResponse:
-    """文献对话 SSE 骨架：先发 ``sources``，再 stage=reading 流式 ``delta``* → ``done``；
-    出错 ``error`` 后关流；空闲发 ``: ping`` 心跳。库/课题/个人三种对话共用。"""
-    llm = get_llm_router()
+    """文献对话 SSE：实现已收敛到 app/api/chat_stream.py，这里只留一个薄壳。
 
-    async def event_stream() -> AsyncIterator[str]:
-        yield _sse_frame("sources", {"items": [asdict(s) for s in sources]})
-        queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
-
-        async def pump() -> None:
-            try:
-                async for chunk in llm.stream(
-                    "reading", messages, user_id=user_id, project_id=project_id
-                ):
-                    await queue.put(("delta", chunk))
-                await queue.put(("done", None))
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001 — 转成 error 事件后关流
-                logger.warning("literature chat stream failed", exc_info=True)
-                await queue.put(("error", f"{type(e).__name__}: {e}"))
-
-        task = asyncio.create_task(pump())
-        collected: list[str] = []
-        try:
-            while True:
-                try:
-                    kind, payload = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
-                except TimeoutError:
-                    yield ": ping\n\n"
-                    continue
-                if kind == "delta":
-                    collected.append(payload or "")
-                    yield _sse_frame("delta", {"text": payload})
-                elif kind == "done":
-                    usage = {
-                        "prompt_tokens": sum(estimate_tokens(m.content) for m in messages),
-                        "completion_tokens": estimate_tokens("".join(collected)),
-                    }
-                    yield _sse_frame("done", {"usage": usage})
-                    return
-                else:  # error
-                    yield _sse_frame("error", {"detail": payload})
-                    return
-        finally:
-            task.cancel()
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    保留这个名字是因为它是三个课题级端点的调用点，改名会让 diff 淹没在噪音里。
+    """
+    return chat_stream_response(
+        messages, sources, user_id=user_id, project_id=project_id
+    )
 
 
 @router.post("/projects/{project_id}/chat")
