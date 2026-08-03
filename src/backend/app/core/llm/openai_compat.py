@@ -13,7 +13,26 @@ from typing import Any
 
 import httpx
 
-from app.core.llm.base import CompletionResult, EffortLevel, LLMProvider, Message, RerankResult
+from app.core.llm.base import (
+    CompletionResult,
+    EffortLevel,
+    ImageBlock,
+    LLMProvider,
+    Message,
+    RerankResult,
+    StreamDone,
+    StreamEvent,
+    TextBlock,
+    TextDelta,
+    ThinkingBlock,
+    ThinkingDelta,
+    ToolResultBlock,
+    ToolUseArgsDelta,
+    ToolUseBlock,
+    ToolUseStart,
+    ToolUseStop,
+    normalize_finish_reason,
+)
 
 logger = logging.getLogger("polaris.llm")
 
@@ -73,8 +92,100 @@ def _truncate_and_normalize(vector: list[float], dimensions: int) -> list[float]
     return [value / norm for value in truncated]
 
 
+def _messages_payload(messages: Sequence[Message]) -> list[dict[str, Any]]:
+    """把消息（可能带 content blocks）翻成 OpenAI 的形状。
+
+    两处不对称，都是 OpenAI 侧的限制，不是我们的选择：
+
+    - **工具结果要扇出**：我们把一轮里的 K 个结果装在一条 ``role="user"`` 消息里
+      （Anthropic 形状），这里要拆成 K 条 ``role="tool"``。
+    - **``role="tool"`` 塞不进图片**（多数中转只认纯文本）。所以图片另起一条合成的
+      user 消息，正文写明它属于哪次调用——绑定关系靠文字，是有损的，但没有更好的办法。
+    """
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if isinstance(m.content, str):
+            out.append({"role": m.role, "content": m.content})
+            continue
+
+        blocks = list(m.content)
+        tool_results = [b for b in blocks if isinstance(b, ToolResultBlock)]
+        tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
+        texts = [b.text for b in blocks if isinstance(b, TextBlock | ThinkingBlock)]
+        images = [b for b in blocks if isinstance(b, ImageBlock)]
+
+        if tool_results:
+            for result in tool_results:
+                out.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": result.tool_use_id,
+                        "content": result.content,
+                    }
+                )
+            carried = [img for r in tool_results for img in r.images] + images
+            if carried:
+                parts: list[dict[str, Any]] = [
+                    {"type": "text", "text": "以下是上面工具调用返回的图片。"}
+                ]
+                for img in carried:
+                    b64 = base64.b64encode(img.data).decode("ascii")
+                    parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{img.mime};base64,{b64}"},
+                        }
+                    )
+                out.append({"role": "user", "content": parts})
+            continue
+
+        entry: dict[str, Any] = {"role": m.role, "content": "\n".join(texts)}
+        if tool_uses:
+            entry["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.input, ensure_ascii=False),
+                    },
+                }
+                for call in tool_uses
+            ]
+            # 带 tool_calls 时 content 允许为空；有的中转对空字符串更宽容，保持 ""
+        if images:
+            parts = [{"type": "text", "text": entry["content"]}]
+            for img in images:
+                b64 = base64.b64encode(img.data).decode("ascii")
+                parts.append(
+                    {"type": "image_url", "image_url": {"url": f"data:{img.mime};base64,{b64}"}}
+                )
+            entry["content"] = parts
+        out.append(entry)
+    return out
+
+
+def _tool_call_events(delta: dict[str, Any]) -> list[StreamEvent]:
+    """把一个 chunk 里的 ``delta.tool_calls[]`` 翻成事件。
+
+    中转的三个常见差异都在这里兜住：单工具时可能**不发 index**（一律兜底 0）；``id`` /
+    ``name`` 有的只在首片发、有的每片都发（首次非空即锁定，交给累加器判重）；
+    ``arguments`` 是逐段的 JSON 字符串，这里只往下传，不解析。
+    """
+    events: list[StreamEvent] = []
+    for frag in delta.get("tool_calls") or []:
+        index = int(frag.get("index", 0) or 0)
+        fn = frag.get("function") or {}
+        if frag.get("id") or fn.get("name"):
+            events.append(ToolUseStart(index, str(frag.get("id") or ""), str(fn.get("name") or "")))
+        if (args := fn.get("arguments")) is not None:
+            events.append(ToolUseArgsDelta(index, args))
+    return events
+
+
 class OpenAICompatProvider(LLMProvider):
     name = "openai_compat"
+    supports_tools = True
 
     async def _post_with_retry(self, url: str, payload: dict[str, Any]) -> httpx.Response:
         """429/5xx/网络错误重试（指数退避，尊重 Retry-After），其余状态原样返回。"""
@@ -140,10 +251,10 @@ class OpenAICompatProvider(LLMProvider):
         stream: bool,
         images: list[bytes] | None = None,
         effort: EffortLevel | None = None,
+        tools: Sequence[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> dict[str, Any]:
-        payload_messages: list[dict[str, Any]] = [
-            {"role": m.role, "content": m.content} for m in messages
-        ]
+        payload_messages: list[dict[str, Any]] = _messages_payload(messages)
         if images:
             # 多模态：图片以 data-url image_url parts 附在最后一条 user 消息上
             target = next(
@@ -169,6 +280,21 @@ class OpenAICompatProvider(LLMProvider):
             payload["reasoning_effort"] = effort
         # Anthropic 系模型（经 LiteLLM 等代理）强制要求 max_tokens，缺省给足额度
         payload["max_tokens"] = max_tokens if max_tokens is not None else 8192
+        if tools:
+            # ToolSpec.input_schema 本来就是标准 JSON Schema，这里零转换
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        "parameters": t.get("parameters") or {"type": "object", "properties": {}},
+                    },
+                }
+                for t in tools
+            ]
+            if tool_choice is not None:
+                payload["tool_choice"] = tool_choice
         return payload
 
     async def complete(
@@ -180,16 +306,20 @@ class OpenAICompatProvider(LLMProvider):
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
         effort: EffortLevel | None = None,
+        tools: Sequence[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> CompletionResult:
         try:
             return await self._complete_once(
-                messages, model, temperature, max_tokens, images, effort
+                messages, model, temperature, max_tokens, images, effort, tools, tool_choice
             )
         except _EffortUnsupported as e:
             # 该模型不吃这个档位：去掉参数重试一次，别让配错档位打断整个环节
             self._effort_unsupported.add(model)
             logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试：%s", model, effort, e)
-            return await self._complete_once(messages, model, temperature, max_tokens, images, None)
+            return await self._complete_once(
+                messages, model, temperature, max_tokens, images, None, tools, tool_choice
+            )
 
     async def _complete_once(
         self,
@@ -199,9 +329,19 @@ class OpenAICompatProvider(LLMProvider):
         max_tokens: int | None,
         images: list[bytes] | None,
         effort: EffortLevel | None,
+        tools: Sequence[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> CompletionResult:
         payload = self._payload(
-            messages, model, temperature, max_tokens, stream=False, images=images, effort=effort
+            messages,
+            model,
+            temperature,
+            max_tokens,
+            stream=False,
+            images=images,
+            effort=effort,
+            tools=tools,
+            tool_choice=tool_choice,
         )
         resp = await self._post_with_retry(f"{self._base_url}/chat/completions", payload)
         if resp.status_code >= 400:
@@ -217,11 +357,25 @@ class OpenAICompatProvider(LLMProvider):
             raise RuntimeError(f"openai_compat {resp.status_code} from {self._base_url}: {body}")
         data = resp.json()
         choice = data["choices"][0]
+        message = choice.get("message") or {}
+        text = message.get("content") or ""
+        blocks: list[Any] = [TextBlock(text)] if text else []
+        for call in message.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            raw_args = fn.get("arguments") or "{}"
+            try:
+                parsed = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+            except (json.JSONDecodeError, ValueError):
+                # 解析不了不抛：交给上层告诉模型重发，抛出去会把整轮打断
+                parsed = {"__parse_error__": str(raw_args)[:2000]}
+            call_id = str(call.get("id") or "")
+            blocks.append(ToolUseBlock(call_id, str(fn.get("name") or ""), parsed))
         return CompletionResult(
-            content=choice["message"]["content"] or "",
+            content=text,
             model=data.get("model", model),
-            finish_reason=choice.get("finish_reason"),
+            finish_reason=normalize_finish_reason(choice.get("finish_reason")),
             usage=data.get("usage") or {},
+            blocks=tuple(blocks),
         )
 
     async def _stream_chunks(self, payload: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
@@ -283,34 +437,92 @@ class OpenAICompatProvider(LLMProvider):
         images: list[bytes] | None = None,
         effort: EffortLevel | None = None,
     ) -> AsyncIterator[str]:
-        # TODO(M2): usage 统计、错误恢复
+        """纯文本流式：``stream_events`` 的过滤器。
+
+        保持这个签名不变（三个 SSE 端点 + 写作辅助都在用），也不给它加 tools——
+        只有一份 SSE 解析，就是下面那个。
+        """
+        async for ev in self.stream_events(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            images=images,
+            effort=effort,
+        ):
+            if isinstance(ev, TextDelta):
+                yield ev.text
+
+    async def stream_events(
+        self,
+        messages: Sequence[Message],
+        *,
+        model: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
+        tools: Sequence[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         payload = self._payload(
-            messages, model, temperature, max_tokens, stream=True, images=images, effort=effort
+            messages,
+            model,
+            temperature,
+            max_tokens,
+            stream=True,
+            images=images,
+            effort=effort,
+            tools=tools,
+            tool_choice=tool_choice,
         )
         emitted = False
         try:
-            async for data in self._stream_chunks(payload):
-                choices = data.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                if content := delta.get("content"):
-                    emitted = True
-                    yield content
+            async for ev in self._events_from(payload):
+                emitted = emitted or isinstance(ev, TextDelta | ToolUseStart)
+                yield ev
         except _EffortUnsupported as e:
-            # effort 是在首个 token 之前被拒的，重试不会重复输出；真吐过内容就不冒这个险
+            # effort 是在首个 token 之前被拒的，重试不会重复输出。
+            # 判据里必须带上 ToolUseStart：已经发起过工具调用还重试，会重复调用 + 双倍计费。
             if emitted:
                 raise
             self._effort_unsupported.add(model)
             logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试：%s", model, effort, e)
             payload.pop("reasoning_effort", None)
-            async for data in self._stream_chunks(payload):
-                choices = data.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                if content := delta.get("content"):
-                    yield content
+            async for ev in self._events_from(payload):
+                yield ev
+
+    async def _events_from(self, payload: dict[str, Any]) -> AsyncIterator[StreamEvent]:
+        """一个 chunk 一个 chunk 地翻成结构化事件。
+
+        ``delta.content`` 与 ``delta.tool_calls`` **可能出现在同一个 chunk 里**，所以这里
+        不能写成 if/elif —— 那样会丢掉其中一个。
+        """
+        finish_reason: str | None = None
+        usage: dict[str, int] = {}
+        open_indexes: set[int] = set()
+        async for data in self._stream_chunks(payload):
+            if data.get("usage"):
+                usage = data["usage"]
+            choices = data.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = choice.get("delta") or {}
+            if content := delta.get("content"):
+                yield TextDelta(content)
+            # DeepSeek 与部分中转的非标字段；有就映射成思考，没有也不强求
+            if reasoning := (delta.get("reasoning_content") or delta.get("reasoning")):
+                yield ThinkingDelta(reasoning)
+            for ev in _tool_call_events(delta):
+                if isinstance(ev, ToolUseStart):
+                    open_indexes.add(ev.index)
+                yield ev
+            if reason := choice.get("finish_reason"):
+                finish_reason = reason
+        for index in sorted(open_indexes):
+            yield ToolUseStop(index)
+        yield StreamDone(finish_reason=normalize_finish_reason(finish_reason), usage=usage)
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
         url = f"{self._base_url}/embeddings"

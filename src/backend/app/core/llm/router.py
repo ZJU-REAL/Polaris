@@ -20,7 +20,15 @@ from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.llm import call_log
 from app.core.llm.anthropic import AnthropicProvider
-from app.core.llm.base import CompletionResult, EffortLevel, LLMProvider, Message
+from app.core.llm.base import (
+    CompletionResult,
+    EffortLevel,
+    LLMProvider,
+    Message,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+)
 from app.core.llm.fake import FakeProvider, estimate_tokens
 from app.core.llm.openai_compat import OpenAICompatProvider
 from app.core.security import decrypt_secret
@@ -43,6 +51,7 @@ class LLMNotConfiguredError(RuntimeError):
 # 结构化抽取（作者↔机构解析、概念定义批量生成、建库向导收录设置），小模型够用。
 STAGES = (
     "default",
+    "agent",
     "navigator",
     "sextant",
     "relevance",
@@ -80,7 +89,7 @@ GLOBAL_ONLY_STAGES = frozenset({"embedding"})
 # 新环节拆出来时的兼容回退：没显式配路由就沿用原来那个环节的，行为不变。
 # digest 原先是直接复用 librarian 的调用，拆开只是为了能单独设模型——
 # 存量部署不配也不该因此改变行为（default 路由指向的往往是另一类模型）。
-_STAGE_ROUTE_FALLBACKS = {"digest": "librarian"}
+_STAGE_ROUTE_FALLBACKS = {"digest": "librarian", "agent": "reading"}
 
 
 @dataclass(slots=True, frozen=True)
@@ -133,9 +142,16 @@ _LONG_CALL = (300.0, 4)
 # 但一次要为一批论文生成洞察，实测 p95 313 秒，必须给长档预算。
 _LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest"})
 
+# agent 单独一档。一轮 agent 调用 = 思考 + 发起工具调用，比短 JSON 长得多，但**不能**
+# 直接塞进长档：那是 300s × 4 尝试，最坏 20 分钟攥着一个 HTTP 连接不放，而对话是同步的，
+# 用户早走了。180s × 2 是"够想完一轮、又不至于把连接耗死"的折中。
+_AGENT_CALL = (180.0, 2)
+
 
 def call_profile(stage: str) -> tuple[float, int]:
     """该环节单次调用的 (超时, 最大尝试次数)。"""
+    if stage == "agent":
+        return _AGENT_CALL
     return _LONG_CALL if stage in _LONG_CALL_STAGES else _SHORT_CALL
 
 
@@ -385,7 +401,7 @@ class LLMRouter:
         """provider 未返回 usage 时按 len/4 估算。"""
         usage = dict(usage or {})
         if not usage.get("prompt_tokens"):
-            usage["prompt_tokens"] = sum(estimate_tokens(m.content) for m in messages)
+            usage["prompt_tokens"] = sum(estimate_tokens(m.text) for m in messages)
         if not usage.get("completion_tokens"):
             usage["completion_tokens"] = estimate_tokens(content)
         return usage
@@ -399,6 +415,8 @@ class LLMRouter:
         max_tokens: int | None = None,
         images: list[bytes] | None = None,
         effort: EffortLevel | None = None,
+        tools: Sequence[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
         user_id: uuid.UUID | None = None,
         project_id: uuid.UUID | None = None,
         library_id: uuid.UUID | None = None,
@@ -421,6 +439,12 @@ class LLMRouter:
                 extra: dict[str, Any] = {"images": images} if images else {}
                 if eff is not None:
                     extra["effort"] = eff
+                if tools:
+                    # 只在真的要用工具时才传：未声明该参数的 provider 子类/测试替身
+                    # 一旦收到未知关键字就会 TypeError，而它们本来工作得好好的
+                    extra["tools"] = tools
+                    if tool_choice is not None:
+                        extra["tool_choice"] = tool_choice
                 result = await provider.complete(
                     messages, model=route.model, temperature=temp, max_tokens=max_tokens, **extra
                 )
@@ -737,6 +761,102 @@ class LLMRouter:
             library_id=library_id,
         )
         # 时延 = 到流结束的完整耗时；response 聚合完整输出
+        if log_enabled:
+            await self._log_call(
+                stage=stage,
+                route=route,
+                model=route.model,
+                started_at=started_at,
+                status="ok",
+                error=None,
+                request=call_log.sanitize_request(messages),
+                response=content,
+                usage=usage,
+                user_id=user_id,
+                project_id=project_id,
+                voyage_id=voyage_id,
+                library_id=library_id,
+            )
+
+
+    async def stream_events(
+        self,
+        stage: str,
+        messages: Sequence[Message],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
+        tools: Sequence[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+        user_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+        library_id: uuid.UUID | None = None,
+        voyage_id: uuid.UUID | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """结构化流式：文本 / 思考 / 工具调用。agent 循环用它，普通对话仍走 stream()。
+
+        记账与 stream() 同口径：流正常结束后写一行 LLMUsage。provider 给了 usage 就用
+        它的（Anthropic 现在也归一化过键名了），没给才按 len/4 估。
+        """
+        provider, route = await self.resolve(stage, user_id)
+        log_enabled = await call_log.logging_enabled()
+        started_at = time.monotonic()
+        collected: list[str] = []
+        reported: dict[str, int] = {}
+        eff = route.effort if effort is None else effort
+        extra: dict[str, Any] = {}
+        if eff is not None:
+            extra["effort"] = eff
+        if images:
+            extra["images"] = images
+        if tools:
+            extra["tools"] = tools
+            if tool_choice is not None:
+                extra["tool_choice"] = tool_choice
+        try:
+            async for ev in provider.stream_events(
+                messages,
+                model=route.model,
+                temperature=route.temperature if temperature is None else temperature,
+                max_tokens=max_tokens,
+                **extra,
+            ):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.text)
+                elif isinstance(ev, StreamDone) and ev.usage:
+                    reported = dict(ev.usage)
+                yield ev
+        except Exception as e:
+            if log_enabled:
+                await self._log_call(
+                    stage=stage,
+                    route=route,
+                    model=route.model,
+                    started_at=started_at,
+                    status="error",
+                    error=f"{type(e).__name__}: {e}",
+                    request=call_log.sanitize_request(messages),
+                    response="".join(collected) or None,
+                    usage={},
+                    user_id=user_id,
+                    project_id=project_id,
+                    voyage_id=voyage_id,
+                    library_id=library_id,
+                )
+            raise
+        content = "".join(collected)
+        usage = reported or self._ensure_usage(messages, content, None)
+        await self._record_usage(
+            stage=stage,
+            model=route.model,
+            usage=usage,
+            user_id=user_id,
+            project_id=project_id,
+            voyage_id=voyage_id,
+            library_id=library_id,
+        )
         if log_enabled:
             await self._log_call(
                 stage=stage,

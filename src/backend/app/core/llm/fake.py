@@ -10,8 +10,21 @@ import json
 import math
 import re
 from collections.abc import AsyncIterator, Sequence
+from typing import Any
 
-from app.core.llm.base import CompletionResult, EffortLevel, LLMProvider, Message, RerankResult
+from app.core.llm.base import (
+    CompletionResult,
+    EffortLevel,
+    LLMProvider,
+    Message,
+    RerankResult,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+    ToolUseArgsDelta,
+    ToolUseStart,
+    ToolUseStop,
+)
 
 # 与 navigator.py / sextant.py / actions_wiki.py / actions_ideas.py /
 # services/projects.py 的 prompt 对齐的识别标记
@@ -97,8 +110,56 @@ def fake_embedding(text: str, dim: int = EMBEDDING_DIM) -> list[float]:
     return [v / norm for v in vec]
 
 
+#: 端到端测试用的驱动标记：最后一条 user 消息里出现
+#: ``POLARIS_FAKE_TOOL:<工具名>:<json 参数>`` 时，本轮就发起这个工具调用。
+#: 拿不到 provider 实例的测试（走 llm_fake_fallback 的那些）靠它驱动工具循环。
+_TOOL_MARKER = "POLARIS_FAKE_TOOL:"
+
+
+def _slice_oddly(raw: str, size: int = 7) -> list[str]:
+    """把字符串切成不对齐的小段。段长取质数，保证切口落在键名/值/转义序列中间。"""
+    return [raw[i : i + size] for i in range(0, len(raw), size)] or [""]
+
+
 class FakeProvider(LLMProvider):
     name = "fake"
+    supports_tools = True
+
+    def __init__(self) -> None:
+        self._script: list[list[tuple[str, dict[str, Any]]] | str] = []
+        self._turn = 0
+
+    def script(self, steps: list[list[tuple[str, dict[str, Any]]] | str]) -> None:
+        """排一段剧本驱动工具循环。
+
+        每个元素要么是 ``[(工具名, 参数), ...]``（该轮发起这些并行调用），要么是一段
+        字符串（该轮直接作答）。**不排剧本时行为与从前完全一致**——这是本次改造能安全
+        落地的判据：现存所有测试一行不改仍然通过。
+        """
+        self._script = list(steps)
+        self._turn = 0
+
+    def _next_step(
+        self, messages: Sequence[Message]
+    ) -> list[tuple[str, dict[str, Any]]] | str | None:
+        """本轮该干什么：一组工具调用 / 一段直接作答 / None（按默认行为走）。"""
+        if self._script:
+            if self._turn >= len(self._script):
+                return None
+            step = self._script[self._turn]
+            self._turn += 1
+            return step
+        # 无剧本时看标记（端到端路径）
+        last_user = next((m.text for m in reversed(messages) if m.role == "user"), "")
+        if _TOOL_MARKER not in last_user:
+            return None
+        raw = last_user.split(_TOOL_MARKER, 1)[1].splitlines()[0].strip()
+        name, _, args_raw = raw.partition(":")
+        try:
+            args = json.loads(args_raw) if args_raw else {}
+        except json.JSONDecodeError:
+            args = {}
+        return [(name.strip(), args if isinstance(args, dict) else {})]
 
     async def complete(
         self,
@@ -110,13 +171,13 @@ class FakeProvider(LLMProvider):
         images: list[bytes] | None = None,
         effort: EffortLevel | None = None,  # 确定性替身不做推理，收下即忽略
     ) -> CompletionResult:
-        full_text = "\n".join(m.content for m in messages)
+        full_text = "\n".join(m.text for m in messages)
         if images and _PAPER_REVIEWER_MARKER in full_text:
             # 多模态论文评审员：确定性 JSON（人设不同分便于聚合测试）
             content = self._respond_paper_reviewer(full_text)
         elif images and _LIBRARIAN_MARKER in full_text:
             # 多模态图文编译：librarian markdown 里插入一行 ![[fig:0]] 图片标记
-            last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+            last_user = next((m.text for m in reversed(messages) if m.role == "user"), "")
             content = self._respond_librarian(last_user, with_figure=True)
         elif images and _EXP_FIGQC_MARKER in full_text:
             # 多模态实验图表质检：确定性通过并逐图配假图注
@@ -150,7 +211,7 @@ class FakeProvider(LLMProvider):
             content = self._respond_exp_plot()
         else:
             content = self._respond(messages, model)
-        prompt_len = sum(estimate_tokens(m.content) for m in messages)
+        prompt_len = sum(estimate_tokens(m.text) for m in messages)
         return CompletionResult(
             content=content,
             model=model,
@@ -179,6 +240,47 @@ class FakeProvider(LLMProvider):
         chunk = 64
         for i in range(0, len(result.content), chunk):
             yield result.content[i : i + chunk]
+
+    async def stream_events(
+        self,
+        messages: Sequence[Message],
+        *,
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        images: list[bytes] | None = None,
+        effort: EffortLevel | None = None,
+        tools: Sequence[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """按剧本发起工具调用，否则回退到纯文本。
+
+        ``tool_choice="none"`` 时**一律不发工具**——agent 循环轮次耗尽后就是靠它硬关
+        工具收尾的，这条语义必须在假 provider 上也成立，否则那条路径没人测。
+        """
+        step = None if tool_choice == "none" else self._next_step(messages)
+        if isinstance(step, str):
+            # 剧本里排的是「这一轮直接作答」
+            for i in range(0, len(step), 16):
+                yield TextDelta(step[i : i + 16])
+            yield StreamDone(finish_reason="stop", usage={})
+            return
+        if step:
+            for index, (name, args) in enumerate(step):
+                yield ToolUseStart(index, f"call_{index}_{name}", name)
+                # 故意把 JSON 切在奇怪的位置（键名中间、值中间、转义序列中间）：
+                # 累加器的增量拼接路径只有这里能天天跑到
+                raw = json.dumps(args, ensure_ascii=False)
+                for piece in _slice_oddly(raw):
+                    yield ToolUseArgsDelta(index, piece)
+                yield ToolUseStop(index)
+            yield StreamDone(finish_reason="tool_use", usage={})
+            return
+        async for text in self.stream(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
+        ):
+            yield TextDelta(text)
+        yield StreamDone(finish_reason="stop", usage={})
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
         return [fake_embedding(t) for t in texts]
@@ -210,9 +312,9 @@ class FakeProvider(LLMProvider):
 
     @staticmethod
     def _respond(messages: Sequence[Message], model: str) -> str:
-        full_text = "\n".join(m.content for m in messages)
+        full_text = "\n".join(m.text for m in messages)
         last_user = next(
-            (m.content for m in reversed(messages) if m.role == "user"),
+            (m.text for m in reversed(messages) if m.role == "user"),
             full_text,
         )
         # M5-C 论文评审五 marker：prompt 内嵌 LaTeX 源/评审意见（可能撞其他 marker），

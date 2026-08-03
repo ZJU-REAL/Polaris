@@ -85,7 +85,7 @@ def sanitize_request(
     """messages → 可入库 JSON：内容截断到 MESSAGE_MAX_CHARS，图片只留大小占位。"""
     payload: dict[str, Any] = {
         "messages": [
-            {"role": m.role, "content": truncate_text(m.content, MESSAGE_MAX_CHARS)}
+            {"role": m.role, "content": truncate_text(m.text, MESSAGE_MAX_CHARS)}
             for m in messages
         ]
     }

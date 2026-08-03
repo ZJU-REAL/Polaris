@@ -1100,7 +1100,7 @@ async def assist_manuscript(
                     if warnings:
                         yield _sse_frame("warnings", {"items": warnings})
                     usage = {
-                        "prompt_tokens": sum(estimate_tokens(m.content) for m in messages),
+                        "prompt_tokens": sum(estimate_tokens(m.text) for m in messages),
                         "completion_tokens": estimate_tokens(result),
                     }
                     yield _sse_frame("done", {"usage": usage})
