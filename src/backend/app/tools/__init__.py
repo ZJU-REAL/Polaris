@@ -12,6 +12,7 @@ from app.tools import (
     libraries,  # noqa: F401
     literature,  # noqa: F401
     project_state,  # noqa: F401
+    skills,  # noqa: F401
     workspace,  # noqa: F401
     writing,  # noqa: F401
 )

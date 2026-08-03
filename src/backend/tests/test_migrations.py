@@ -9,9 +9,10 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "581d172bd41b"  # 成员行记下打分它的那次同步任务 id
+HEAD_REVISION = "a22aa895244c"  # 成员行记下打分它的那次同步任务 id
 DIGEST_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
 SCORED_RUN_REVISION = "78e222c38b3b"  # 成员行记下打分它的那次同步任务 id
+CONVERSATIONS_REVISION = "581d172bd41b"  # 对话搬到服务端
 INLINE_VECTOR_DROP_REVISION = "929c05a03745"  # 删除主表向量列（向量已搬进侧表）
 VECTOR_TABLES_REVISION = "5d8ebd5cb100"  # 向量侧表建表 + 存量搬迁
 EFFORT_REVISION = "510f6bde2233"  # 模型路由推理档位（model_routes.effort）
@@ -92,6 +93,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "library_research_digests",
                     "conversations",
                     "conversation_messages",
+                    "agent_skills",
+                    "agent_skill_files",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -111,6 +114,11 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "effort" in columns["model_routes"]  # 推理档位可配（NULL = 用模型默认）
     # 对话搬到服务端：agent 一轮里可能调好几次工具，历史不能只活在浏览器 localStorage
     assert {"conversations", "conversation_messages"} <= columns["_tables"]
+    # Skills v2：技能是「一句 description 常驻 + 正文按需加载」，附件单独一张表
+    assert {"agent_skills", "agent_skill_files"} <= columns["_tables"]
+    assert {"slug", "description", "body", "allowed_tools", "invocation"} <= columns[
+        "agent_skills"
+    ]
     assert {"scope_kind", "scope_id", "usage", "active_stream_id"} <= columns["conversations"]
     assert {"blocks", "text", "seq", "status", "sources"} <= columns["conversation_messages"]
     # 这场对话花了多少 token（voyage_id 的对偶）
@@ -342,7 +350,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "relevance_reason" in columns["library_papers"]
     assert "scored_run_id" in columns["library_papers"]  # 打分归属改记运行 id
 
-    # 最新 revision 可往返：先退掉对话持久化（两张表 + 三处附带列）。
+    # 最新 revision 可往返：先退掉 Skills v2。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == CONVERSATIONS_REVISION
+    assert not {"agent_skills", "agent_skill_files"} & columns["_tables"]
+
+    # 再退掉对话持久化（两张表 + 三处附带列）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == SCORED_RUN_REVISION

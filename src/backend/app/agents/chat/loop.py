@@ -77,6 +77,7 @@ class ChatTurnRequest:
     max_turn_tokens: int | None = None
     statement: str | None = None
     extra_system: str = ""
+    skill_catalog: str = ""
 
 
 @dataclass(slots=True)
@@ -111,7 +112,12 @@ class ChatAgentLoop:
     async def run(self, req: ChatTurnRequest) -> AsyncIterator[ChatEvent]:
         specs = tool_definitions(req.tool_names)
         messages: list[Message] = [
-            Message(role="system", content=build_system_prompt(req.statement, req.extra_system)),
+            Message(
+                role="system",
+                content=build_system_prompt(
+                    req.statement, req.extra_system, req.skill_catalog
+                ),
+            ),
             *self._history,
             Message(role="user", content=req.question),
         ]

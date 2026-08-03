@@ -1,6 +1,7 @@
 """SQLAlchemy 模型包。import 本包即可把全部表注册进 Base.metadata（create_all / alembic 用）。"""
 
 from app.models.activity import Activity
+from app.models.agent_skill import AgentSkill, AgentSkillFile
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.chat_bot import ChatBotConfig
 from app.models.conversation import Conversation, ConversationMessage
@@ -46,6 +47,8 @@ from app.models.voyage import VoyageRun, VoyageStep
 
 __all__ = [
     "Activity",
+    "AgentSkill",
+    "AgentSkillFile",
     "ChatBotConfig",
     "Conversation",
     "ConversationMessage",

@@ -43,6 +43,7 @@ from app.schemas.chat_agent import (
     ConversationTurnRequest,
     MessageRead,
 )
+from app.services import agent_skills
 from app.services import conversations as store
 from app.tools.context import ToolContext
 
@@ -156,6 +157,9 @@ async def run_turn(
     if conv.id != conversation_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONVERSATION_NOT_FOUND")
     history = await store.replay(session, conversation_id=conv.id)
+    # L1：技能目录进 system prompt（每个技能只占一行）。正文由 skill_load 按需取，
+    # 绝不写进 system——那会作废整个 prompt cache 前缀。
+    catalog = await agent_skills.render_catalog(session, user_id=user.id)
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
     await session.commit()
 
@@ -168,6 +172,7 @@ async def run_turn(
         tool_names=tuple(payload.tool_names or DEFAULT_TOOL_NAMES),
         max_rounds=payload.max_rounds,
         statement=payload.statement,
+        skill_catalog=catalog,
     )
     conv_id, user_id = conv.id, user.id
 

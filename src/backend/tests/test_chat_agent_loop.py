@@ -300,9 +300,15 @@ def test_system_prompt_keeps_a_stable_prefix():
 
 
 def test_default_tool_whitelist_is_small():
-    """首期只给 6 个。38 个 schema 每轮重发既贵，又让模型在相近工具间反复犹豫。"""
-    assert len(DEFAULT_TOOL_NAMES) == 6
-    assert "search_chunks" in DEFAULT_TOOL_NAMES
+    """检索工具只给 6 个 + 两个技能加载工具。
+
+    38 个 schema 每轮重发既贵，又让模型在相近工具间反复犹豫。技能那两个是例外——
+    它们是渐进披露的入口，不给就等于没有技能系统。
+    """
+    retrieval = [t for t in DEFAULT_TOOL_NAMES if not t.startswith("skill_")]
+    assert len(retrieval) == 6
+    assert "search_chunks" in retrieval
+    assert set(DEFAULT_TOOL_NAMES) - set(retrieval) == {"skill_load", "skill_read_file"}
 
 
 @pytest.mark.asyncio

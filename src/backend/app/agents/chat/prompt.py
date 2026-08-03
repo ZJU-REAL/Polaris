@@ -20,6 +20,9 @@ DEFAULT_TOOL_NAMES: tuple[str, ...] = (
     "read_fulltext",
     "list_concepts",
     "get_concept",
+    # 渐进披露：目录常驻，正文按需取
+    "skill_load",
+    "skill_read_file",
 )
 
 _SYSTEM = """\
@@ -36,16 +39,25 @@ _SYSTEM = """\
 {statement}{extra}"""
 
 
-def build_system_prompt(statement: str | None = None, extra: str = "") -> str:
+def build_system_prompt(
+    statement: str | None = None, extra: str = "", skill_catalog: str = ""
+) -> str:
     """组装系统提示。
 
-    ``statement``（研究方向）与 ``extra``（技能等）都追加在末尾，前面那段是不变的
-    稳定前缀——顺序反过来会让每个作用域都有各自的缓存前缀，缓存命中率归零。
+    ``statement``（研究方向）、``skill_catalog``（技能目录）与 ``extra`` 都追加在末尾，
+    前面那段是不变的稳定前缀——顺序反过来会让每个作用域都有各自的缓存前缀，
+    命中率归零。
+
+    **技能正文永远不进这里**：目录里每个技能只占一行，正文由 ``skill_load`` 作为工具
+    结果追加。把正文写进 system prompt 会作废整个缓存前缀，而它是每轮都要重发的。
     """
     direction = f"\n\n研究方向：{statement.strip()}" if statement and statement.strip() else ""
+    catalog = f"\n\n{skill_catalog.strip()}" if skill_catalog and skill_catalog.strip() else ""
     tail = f"\n\n{extra.strip()}" if extra and extra.strip() else ""
     return _SYSTEM.format(
-        today=dt.datetime.now(dt.UTC).date().isoformat(), statement=direction, extra=tail
+        today=dt.datetime.now(dt.UTC).date().isoformat(),
+        statement=direction,
+        extra=catalog + tail,
     )
 
 
