@@ -92,7 +92,7 @@ def chat_stream_response(
                 elif kind == "done":
                     # usage 与 router 记账口径一致（provider 无 usage 时按 len/4 估算）
                     usage = {
-                        "prompt_tokens": sum(estimate_tokens(m.content) for m in messages),
+                        "prompt_tokens": sum(estimate_tokens(m.text) for m in messages),
                         "completion_tokens": estimate_tokens("".join(collected)),
                     }
                     yield sse_frame("done", {"usage": usage})
