@@ -84,6 +84,8 @@ class ModelRoute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)  # None=不传该参数
     # 推理档位（none/minimal/low/medium/high/xhigh/max，见 core/llm/base.py）。
     # None=不传该参数，用模型默认；具体模型支持哪些档位由服务端校验。
+    #: 该模型的上下文窗口（token）。压缩阈值要用它；None 时调用方按保守常量走。
+    context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
     effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     provider: Mapped[LLMProviderConfig] = relationship(back_populates="routes")
@@ -94,7 +96,11 @@ class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # 用量面板按天/周窗口聚合（/lab/usage、排行榜），没这个索引就是全表扫
     __table_args__ = (Index("ix_llm_usage_created_at", "created_at"),)
 
-    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    #: index=True：配额检查按用户过滤，而这一列此前**没有索引**（project_id/library_id
+    #: 都有），agent 循环里每轮查一次配额就是一次全表扫。
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), index=True
     )
@@ -102,6 +108,8 @@ class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     library_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("direction_libraries.id", ondelete="SET NULL"), index=True
     )
+    #: 这一行属于哪场对话（voyage_id 的对偶）。让"这场对话花了多少 token"可回答。
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     voyage_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("voyage_runs.id", ondelete="SET NULL")
     )

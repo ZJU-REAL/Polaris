@@ -3,6 +3,7 @@
 from app.models.activity import Activity
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.chat_bot import ChatBotConfig
+from app.models.conversation import Conversation, ConversationMessage
 from app.models.daily_feed import DailyFeedEntry, DailyFeedLike
 from app.models.email_code import EmailVerificationCode
 from app.models.experiment import Experiment, ExperimentRun
@@ -46,6 +47,8 @@ from app.models.voyage import VoyageRun, VoyageStep
 __all__ = [
     "Activity",
     "ChatBotConfig",
+    "Conversation",
+    "ConversationMessage",
     "Concept",
     "DailyFeedEntry",
     "DailyFeedLike",

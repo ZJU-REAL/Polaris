@@ -9,8 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "78e222c38b3b"  # 成员行记下打分它的那次同步任务 id
+HEAD_REVISION = "581d172bd41b"  # 成员行记下打分它的那次同步任务 id
 DIGEST_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
+SCORED_RUN_REVISION = "78e222c38b3b"  # 成员行记下打分它的那次同步任务 id
 INLINE_VECTOR_DROP_REVISION = "929c05a03745"  # 删除主表向量列（向量已搬进侧表）
 VECTOR_TABLES_REVISION = "5d8ebd5cb100"  # 向量侧表建表 + 存量搬迁
 EFFORT_REVISION = "510f6bde2233"  # 模型路由推理档位（model_routes.effort）
@@ -89,6 +90,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "projects",
                     "chat_bot_configs",
                     "library_research_digests",
+                    "conversations",
+                    "conversation_messages",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -106,6 +109,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
     assert "effort" in columns["model_routes"]  # 推理档位可配（NULL = 用模型默认）
+    # 对话搬到服务端：agent 一轮里可能调好几次工具，历史不能只活在浏览器 localStorage
+    assert {"conversations", "conversation_messages"} <= columns["_tables"]
+    assert {"scope_kind", "scope_id", "usage", "active_stream_id"} <= columns["conversations"]
+    assert {"blocks", "text", "seq", "status", "sources"} <= columns["conversation_messages"]
+    # 这场对话花了多少 token（voyage_id 的对偶）
+    assert "conversation_id" in columns["llm_usage"]
+    # 压缩阈值要知道模型的窗口有多大，此前 router 只能拍脑袋
+    assert "context_window" in columns["model_routes"]
     # 向量搬进三张侧表，主表上的向量列与元信息列一并删除
     assert {"paper_vectors", "paper_chunk_vectors", "idea_vectors"} <= columns["_tables"]
     assert {"paper_id", "space", "dim", "embedding", "model", "built_at"} <= columns[
@@ -331,7 +342,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "relevance_reason" in columns["library_papers"]
     assert "scored_run_id" in columns["library_papers"]  # 打分归属改记运行 id
 
-    # 最新 revision 可往返：先退掉成员行上的打分任务 id。
+    # 最新 revision 可往返：先退掉对话持久化（两张表 + 三处附带列）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SCORED_RUN_REVISION
+    assert not {"conversations", "conversation_messages"} & columns["_tables"]
+    assert "conversation_id" not in columns["llm_usage"]
+    assert "context_window" not in columns["model_routes"]
+
+    # 再退掉成员行上的打分任务 id。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == DIGEST_REVISION
