@@ -9,6 +9,7 @@ import { ToastHost, toast } from '../components/ui/Toast';
 import { UpdateBadge } from '../components/ui/UpdateBadge';
 import { useAuth } from './auth';
 import { topicPath, useProject } from './project';
+import { AssistantPanel } from '../features/assistant/AssistantPanel';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
@@ -428,11 +429,17 @@ export function AppShell() {
 
   // —— 全局搜索（⌘K / Ctrl+K）——
   const [searchOpen, setSearchOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setSearchOpen((o) => !o);
+      }
+      // ⌘J：全局助手。挑 J 是因为 ⌘K 已被搜索占了，而两者都该是全局的
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        setAssistantOpen((o) => !o);
       }
     };
     document.addEventListener('keydown', onKey);
@@ -803,6 +810,9 @@ export function AppShell() {
 
       {/* —— 全局搜索面板 —— */}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+
+      {/* —— 全局助手（⌘J）—— */}
+      <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
 
       <ToastHost />
     </div>

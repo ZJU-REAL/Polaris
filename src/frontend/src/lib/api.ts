@@ -4724,6 +4724,10 @@ export const api = {
    * 可直接跳任务详情看步骤与日志；409 detail=DAILY_FEED_RUNNING 表示已有一次在跑。
    */
   /** 每日论文池的同步状况（全员可读）：最新一天、是否过期、各分类成败。 */
+  /** 全局助手：新建一场会话（后端开关关着时 404）。 */
+  createAssistantConversation(scope: { scope_kind?: string; project_id?: string } = {}): Promise<{ id: string; title: string }> {
+    return requestJson<{ id: string; title: string }>('/chat/conversations', 'POST', scope);
+  },
   getDailySyncStatus(): Promise<DailySyncStatus> {
     return request<DailySyncStatus>('/daily/sync-status');
   },

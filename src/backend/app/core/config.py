@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # 默认关闭：未配置时 AI 功能返回 LLM_NOT_CONFIGURED，而不是产出演示假内容。
     # 生产（env=prod）下无论如何都强制关闭，见下方 _prod_forbids_fake_llm。
     llm_fake_fallback: bool = False
+    #: 全局助手（Claude Code 式工具循环）。默认关：它每轮都要重发历史与工具 schema，
+    #: 成本与现有一次性对话不是一个量级，先按部署开。
+    chat_agent_enabled: bool = False
 
     # ---- 文献 API ----
     s2_api_key: str = ""  # Semantic Scholar（可空，限流更严）
