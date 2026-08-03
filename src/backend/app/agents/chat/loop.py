@@ -110,7 +110,8 @@ class ChatAgentLoop:
         self._history = list(history)
 
     async def run(self, req: ChatTurnRequest) -> AsyncIterator[ChatEvent]:
-        specs = tool_definitions(req.tool_names)
+        active_tools: tuple[str, ...] = tuple(req.tool_names)
+        specs = tool_definitions(active_tools)
         messages: list[Message] = [
             Message(
                 role="system",
@@ -203,6 +204,12 @@ class ChatAgentLoop:
                 yield ev
             messages.append(Message(role="user", content=list(results)))
 
+            # 技能声明了 allowed-tools 就收窄后续可用的工具面。**只能收窄，永不扩权**：
+            # 技能里写一个会话没给的工具名，结果是那个工具不可用，而不是把它加进来。
+            if narrowed := _skill_narrowing(results, active_tools):
+                active_tools = narrowed
+                specs = tool_definitions(active_tools)
+
             if removed := _elide_old_results(messages):
                 yield CompactionEvent(removed=removed)
 
@@ -288,6 +295,32 @@ class ChatAgentLoop:
             ),
             ToolResultBlock(call.id, text, is_error=True),
         )
+
+
+def _skill_narrowing(
+    results: list[ToolResultBlock], current: tuple[str, ...]
+) -> tuple[str, ...] | None:
+    """本轮加载的技能若声明了 allowed-tools，就据此收窄。
+
+    收窄发生在技能加载**之后**的那一轮起效——这一轮已经调过的工具不受影响，那是既成
+    事实。收窄结果为空时不生效（技能写错名字不该把助手变成哑巴）。
+    """
+    from app.services.agent_skills import narrow_tools
+
+    narrowed = current
+    for block in results:
+        if block.is_error:
+            continue
+        try:
+            payload = json.loads(block.content)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict) or "allowed_tools" not in payload:
+            continue
+        narrowed = narrow_tools(narrowed, payload.get("allowed_tools"))
+    if narrowed == current or not narrowed:
+        return None
+    return narrowed
 
 
 def _elide_old_results(messages: list[Message]) -> int:

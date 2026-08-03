@@ -6,6 +6,7 @@
 """
 
 from app.tools import (
+    agentic_search,  # noqa: F401
     external,  # noqa: F401 — 导入即注册工具
     figures,  # noqa: F401
     knowledge,  # noqa: F401
@@ -13,6 +14,7 @@ from app.tools import (
     literature,  # noqa: F401
     project_state,  # noqa: F401
     skills,  # noqa: F401
+    subagent,  # noqa: F401
     workspace,  # noqa: F401
     writing,  # noqa: F401
 )

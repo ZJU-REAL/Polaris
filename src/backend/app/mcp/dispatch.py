@@ -51,6 +51,7 @@ def tool_definitions() -> list[dict[str, Any]]:
             "inputSchema": _mcp_input_schema(spec.input_schema),
         }
         for spec in list_tools()
+        if spec.read_only  # 外部 MCP 客户端只拿只读工具，见下方注释
     ]
 
 
@@ -102,9 +103,14 @@ async def call_tool(
     if project is None:
         return _text_result("项目不存在或无权访问", is_error=True)
 
+    # allow_writes 保持默认 False：外部 MCP 客户端（Claude Desktop / Cursor）只有平台
+    # JWT，没有经过任何对话内审批，不该拿到写能力。上面的 tools/list 也只列只读工具，
+    # 两道一起才算数——只过滤清单挡不住知道名字直接调的。
     ctx = ToolContext(project_id=project_id, llm=get_llm_router(), user_id=user_id)
     try:
         result = await run_tool(ctx, name, args)
+    except PermissionError as e:
+        return _text_result(str(e), is_error=True)
     except ValueError as e:
         return _text_result(str(e), is_error=True)
     return _content_blocks(result)

@@ -44,8 +44,8 @@ async def skill_load(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 @tool(
     name="skill_read_file",
     description=(
-        "读技能目录里的附件（模板、参考资料、示例代码）。"
-        "技能正文里提到某个文件时才用它，不要挨个试。"
+        "读技能目录里的附件，例如模板、参考资料或示例代码。"
+        "仅在技能正文里提到了某个文件时使用，不要逐个尝试路径。"
     ),
     input_schema={
         "type": "object",

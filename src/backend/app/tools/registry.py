@@ -35,6 +35,18 @@ class ToolResult:
     images: tuple[ToolImage, ...] = ()
 
 
+class ToolWriteDenied(PermissionError):
+    """要执行写工具，但这个上下文没有写权限。
+
+    正常路径上不该出现——写工具只会出现在明确开了 ``allow_writes`` 的会话里。它出现
+    就说明有条路径漏了检查（比如 MCP 那边没过滤只读），所以是硬失败而不是软降级。
+    """
+
+    def __init__(self, name: str) -> None:
+        self.tool_name = name
+        super().__init__(f"工具 {name!r} 会改数据，当前上下文只读")
+
+
 # handler 可返回纯 dict（文本）或 ToolResult（文本 + 图片）
 ToolReturn = dict[str, Any] | ToolResult
 ToolHandler = Callable[[ToolContext, dict[str, Any]], Awaitable[ToolReturn]]
@@ -130,6 +142,10 @@ async def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> ToolRet
         raise ValueError(f"未知工具：{name}（可用：{', '.join(sorted(_REGISTRY))}）")
     if not isinstance(args, dict):
         raise ValueError("工具参数必须是 JSON 对象")
+    if not spec.read_only and not ctx.allow_writes:
+        # 默认拒绝：调用方必须显式开写权限（且已经走完审批）。这条守卫让"忘了传
+        # allow_writes"的后果是拒绝执行，而不是静默改数据。
+        raise ToolWriteDenied(name)
     return await spec.handler(ctx, args)
 
 

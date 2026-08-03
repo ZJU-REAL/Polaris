@@ -27,3 +27,7 @@ class ToolContext:
     llm: LLMRouter
     user_id: uuid.UUID | None = None
     voyage_id: uuid.UUID | None = None
+    #: 允许执行会改数据的工具吗。**默认 False 是整套安全性的支点**——MCP、voyage 的
+    #: tool_loop、以及所有现存调用点因此自动保持只读，一行不用改。只有明确开了它的
+    #: 调用方（走完审批的对话轮次）才拿得到写能力。
+    allow_writes: bool = False
