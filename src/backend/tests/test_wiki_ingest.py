@@ -2158,3 +2158,50 @@ async def test_run_does_not_pick_up_an_older_backlog(client, queue_stub, wiki_mo
         ).scalar_one()
         # 积压那篇原地不动：没被这次运行取全文、也没被编译
         assert stale_row.status == "scored", "历史积压被这次同步顺手带走了"
+
+
+async def test_digest_only_survives_a_backward_clock_jump(client, queue_stub, wiki_mocks):
+    """打分之后墙钟回拨一秒，手动简报仍然选 digest_only，一篇不少。
+
+    本机容器的墙钟每 10 秒跳 ±1 秒（#234 的根因）。此前 create_digest_voyage 的窗口带
+    `scored_at <= now` 上界：回拨发生在打分与建简报之间时，now 小于刚打的 scored_at，
+    论文掉出窗口——paper_count 少一截，策略翻成 incremental。合法数据里 scored_at
+    不会在未来，那个上界什么都不保护。
+    """
+    import datetime as real_datetime
+
+    from app.services import ingest as ingest_service_mod
+
+    token = await register_and_login(client, email="clock-jump@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    library_id = await _create_standalone_library(client, headers, name="独立库-时钟回拨")
+
+    bootstrap = await client.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "bootstrap", "knobs": KNOBS},
+        headers=headers,
+    )
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(bootstrap.json()["id"]))
+
+    # 模拟回拨：ingest 模块里的"现在"比真实时间早 2 秒——刚打的 scored_at 全在"未来"
+    class _RewoundDateTime(real_datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001
+            return real_datetime.datetime.now(tz) - real_datetime.timedelta(seconds=2)
+
+    original = ingest_service_mod.datetime
+    ingest_service_mod.datetime = _RewoundDateTime
+    try:
+        resp = await client.post(
+            f"/api/libraries/{library_id}/digests/generate", headers=headers
+        )
+    finally:
+        ingest_service_mod.datetime = original
+
+    assert resp.status_code == 201, resp.text
+    launch = resp.json()
+    assert launch["strategy"] == "digest_only", (
+        f"回拨两秒就把策略翻成了 {launch['strategy']}——上界又回来了？"
+    )
+    assert launch["paper_count"] == 2, launch

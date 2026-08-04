@@ -209,8 +209,12 @@ async def create_digest_voyage(
             .where(
                 LibraryPaper.library_id == library.id,
                 LibraryPaper.scored_at.is_not(None),
+                # 只有下界没有上界。此前这里还有 `scored_at <= now`，防的是"未来的打分
+                # 时间"——而那恰恰只有时钟跳变才制造得出来：墙钟在打分之后回拨一秒，
+                # now 就小于刚打的 scored_at，论文掉出窗口，paper_count 少一截，策略从
+                # digest_only 翻成 incremental（#234 一族的偶发）。合法数据里 scored_at
+                # 不会在未来，这个上界什么都不保护，只会翻车。
                 LibraryPaper.scored_at >= day_start,
-                LibraryPaper.scored_at <= now,
             )
             .order_by(LibraryPaper.scored_at, LibraryPaper.paper_id)
         )
