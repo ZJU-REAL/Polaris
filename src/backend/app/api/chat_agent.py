@@ -45,6 +45,7 @@ from app.schemas.chat_agent import (
 )
 from app.services import agent_skills
 from app.services import conversations as store
+from app.services import projects as projects_service
 from app.tools.context import ToolContext
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -87,6 +88,11 @@ async def create_conversation(
     user: User = Depends(current_active_user),
 ) -> ConversationRead:
     _require_enabled()
+    # 归属校验在入口做，垃圾不落库：project_id / scope_id 指向的课题必须是自己的。
+    # 非成员一律 404（不区分「不存在」与「无权」，防枚举——与平台其他读口一致）。
+    for pid in {payload.project_id, payload.scope_id if payload.scope_kind == "project" else None}:
+        if pid is not None and await projects_service.get_project(session, pid, user.id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     conv = await store.get_or_create(
         session,
         user_id=user.id,
@@ -163,13 +169,21 @@ async def run_turn(
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
     await session.commit()
 
-    project_id = conv.project_id or conv.scope_id or uuid.uuid4()
-    tool_ctx = ToolContext(project_id=project_id, llm=get_llm_router(), user_id=user.id)
+    project_id = await _resolve_project(
+        session, user=user, conv=conv, requested=payload.project_id
+    )
+    # project_id 为 None（用户没有课题）时这轮不带任何工具：ToolContext 里的占位 id
+    # 不会被用到，因为没有工具可调。这与从前兜随机 UUID 的区别是**诚实**——助手不会
+    # 调工具查到零条然后说「没查到」，它根本不会声称自己查过。
+    tool_names = tuple(payload.tool_names or DEFAULT_TOOL_NAMES) if project_id else ()
+    tool_ctx = ToolContext(
+        project_id=project_id or uuid.uuid4(), llm=get_llm_router(), user_id=user.id
+    )
     loop = ChatAgentLoop(llm=get_llm_router(), tool_ctx=tool_ctx, history=history)
     req = ChatTurnRequest(
         conversation_id=conv.id,
         question=payload.question,
-        tool_names=tuple(payload.tool_names or DEFAULT_TOOL_NAMES),
+        tool_names=tool_names,
         max_rounds=payload.max_rounds,
         statement=payload.statement,
         skill_catalog=catalog,
@@ -206,6 +220,48 @@ async def run_turn(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def _resolve_project(
+    session: AsyncSession,
+    *,
+    user: User,
+    conv: Any,
+    requested: uuid.UUID | None,
+) -> uuid.UUID | None:
+    """定出这轮工具检索的课题作用域；``None`` = 没有课题，这轮不带工具纯对话。
+
+    此前这里是 ``conv.project_id or conv.scope_id or uuid.uuid4()``，两个都空时兜一个
+    **随机 UUID**——检索工具全按 project_id 过滤，于是助手在全局会话里永远查不到任何
+    东西，还会一本正经地说「没查到」。测试没抓住它，是因为循环测试用假工具（不看
+    project_id）、端点测试用不发工具调用的 fake，两层都绕开了「真工具 + 真作用域」。
+
+    解析顺序：本轮显式指定 → 会话上已存的 → scope 指向的课题 → 用户唯一的课题
+    （顺手存回会话，下轮不再解析）。每一步都做成员校验——课题成员资格是会变的，
+    存过不代表现在还有权。多于一个课题且没指定时 409，让前端弹选择，**绝不替用户猜**。
+    """
+    scoped = conv.scope_id if conv.scope_kind == "project" else None
+    for candidate in (requested, conv.project_id, scoped):
+        if candidate is None:
+            continue
+        if await projects_service.get_project(session, candidate, user.id) is not None:
+            if conv.project_id != candidate:
+                conv.project_id = candidate
+                await session.commit()
+            return candidate
+        if candidate == requested:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    mine = await projects_service.list_projects(session, user.id)
+    if len(mine) == 1:
+        conv.project_id = mine[0].id
+        await session.commit()
+        return mine[0].id
+    if not mine:
+        # 一个课题都没有的用户也该能纯聊天：这轮不带工具。悄悄降级成「检索不到」
+        # 是此前那个随机 UUID 的做法，绝不重蹈。
+        return None
+    # 多于一个且没指定：409 让前端弹选择，不替用户猜
+    raise HTTPException(status.HTTP_409_CONFLICT, detail="PROJECT_REQUIRED")
 
 
 async def _persist_answer(

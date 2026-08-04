@@ -31,6 +31,8 @@ class ConversationRead(BaseModel):
 
 class ConversationTurnRequest(BaseModel):
     question: str = Field(min_length=1)
+    #: 这轮工具检索的课题。全局会话第一次提问时带上；会话上存过就不用再传。
+    project_id: uuid.UUID | None = None
     #: 不给就用默认白名单（首期 6 个只读工具）
     tool_names: list[str] | None = None
     max_rounds: int = Field(default=8, ge=1, le=20)
