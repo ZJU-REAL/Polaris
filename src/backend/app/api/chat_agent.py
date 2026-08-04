@@ -42,6 +42,7 @@ from app.schemas.chat_agent import (
     ConversationRead,
     ConversationTurnRequest,
     MessageRead,
+    SkillImportRequest,
 )
 from app.services import agent_skills
 from app.services import conversations as store
@@ -146,6 +147,62 @@ async def list_messages(
         .all()
     )
     return [MessageRead.model_validate(r, from_attributes=True) for r in rows]
+
+
+@router.get("/skills")
+async def list_skills(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[dict[str, Any]]:
+    """我能看到的技能：内置的 + 自己的。目录预算有限，界面上要能看到谁占着位置。"""
+    _require_enabled()
+    from app.models.agent_skill import as_dict
+
+    rows = await agent_skills.visible_skills(session, user_id=user.id)
+    return [as_dict(r) | {"is_builtin": r.scope == "builtin"} for r in rows]
+
+
+@router.post("/skills", status_code=201)
+async def import_skill(
+    payload: SkillImportRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """从 SKILL.md 建/更新自己的技能（同 slug 覆盖自己的那份，碰不到内置的）。"""
+    _require_enabled()
+    from app.models.agent_skill import as_dict
+    from app.services.agent_skills import SkillParseError
+
+    try:
+        skill = await agent_skills.upsert_from_md(
+            session, text=payload.skill_md, user_id=user.id, files=payload.files or {}
+        )
+    except SkillParseError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
+    await session.commit()
+    return as_dict(skill)
+
+
+@router.delete("/skills/{slug}", status_code=204)
+async def delete_skill(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """删自己的技能。内置技能删不掉（404）：它是代码的一部分，想改就导入同名覆盖不了、
+    只能建自己的。"""
+    _require_enabled()
+    from sqlalchemy import select as _select
+
+    from app.models.agent_skill import AgentSkill
+
+    row = await session.scalar(
+        _select(AgentSkill).where(AgentSkill.slug == slug, AgentSkill.owner_id == user.id)
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SKILL_NOT_FOUND")
+    await session.delete(row)
+    await session.commit()
 
 
 @router.post("/conversations/{conversation_id}/turn")

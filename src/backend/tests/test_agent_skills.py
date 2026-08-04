@@ -230,3 +230,117 @@ async def test_skill_load_tool_reports_a_missing_skill_instead_of_raising(client
     ctx = ToolContext(project_id=uuid.uuid4(), llm=get_llm_router(), user_id=user_id)
     result = await skill_load(ctx, {"slug": "not-there"})
     assert "error" in result
+
+
+# ---- 内置种子与管理 API ----
+
+
+async def test_builtin_seeding_is_idempotent(client):
+    """种子跑两遍不重复。
+
+    第一版 upsert_from_md 里 `owner_id == user_id` 在 user_id=None 时翻成 SQL 是
+    `owner_id = NULL`，永远为假——查重必落空，每次启动都会再插一份。修法是 IS NULL。
+    """
+    from sqlalchemy import func, select
+
+    from app.models.agent_skill import AgentSkill
+    from app.services.builtin_agent_skills import ensure_builtin_agent_skills
+
+    async with get_sessionmaker()() as session:
+        first = await ensure_builtin_agent_skills(session)
+        await ensure_builtin_agent_skills(session)
+        total = await session.scalar(
+            select(func.count()).select_from(AgentSkill).where(AgentSkill.scope == "builtin")
+        )
+    assert first >= 5
+    assert total == first, f"跑两遍出现重复：{total} != {first}"
+
+
+async def test_builtin_skills_appear_in_the_catalog(client):
+    """种完之后目录不再是空的——渐进披露的 L1 真的有货了。"""
+    from app.services.builtin_agent_skills import ensure_builtin_agent_skills
+
+    user_id = await _user_id(client, "seed-catalog@example.com")
+    async with get_sessionmaker()() as session:
+        await ensure_builtin_agent_skills(session)
+        catalog = await agent_skills.render_catalog(session, user_id=user_id)
+
+    assert "polaris-search-playbook" in catalog
+    assert "literature-triage" in catalog
+    # 目录里是触发条件，不是正文
+    assert "检索工具选型" not in catalog
+
+
+async def test_seed_bodies_update_when_the_code_changes(client):
+    """种子跟代码走：正文变了重新种就该更新，落后的种子只会误导模型。"""
+    from sqlalchemy import select
+
+    from app.models.agent_skill import AgentSkill
+    from app.services import builtin_agent_skills as seeds
+
+    async with get_sessionmaker()() as session:
+        await seeds.ensure_builtin_agent_skills(session)
+        row = await session.scalar(
+            select(AgentSkill).where(
+                AgentSkill.slug == "citation-hygiene", AgentSkill.owner_id.is_(None)
+            )
+        )
+        row.body = "过时的旧正文"
+        await session.commit()
+
+    async with get_sessionmaker()() as session:
+        await seeds.ensure_builtin_agent_skills(session)
+        row = await session.scalar(
+            select(AgentSkill).where(
+                AgentSkill.slug == "citation-hygiene", AgentSkill.owner_id.is_(None)
+            )
+        )
+    assert "过时的旧正文" not in row.body
+    assert "引用纪律" in row.body
+
+
+async def test_skill_api_import_list_delete(client, monkeypatch):
+    """管理 API 的最小闭环：导入 → 列表可见 → 删除；内置的删不掉。"""
+    import os
+
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("POLARIS_CHAT_AGENT_ENABLED", "true")
+    get_settings.cache_clear()
+    try:
+        token = await register_and_login(client, email="skill-api@example.com")
+        headers = {"Authorization": f"Bearer {token}"}
+        md = SKILL_MD.replace("literature-triage", "my-own-skill")
+        resp = await client.post(
+            "/api/chat/skills",
+            json={"skill_md": md, "files": {"note.md": "备注"}},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["slug"] == "my-own-skill"
+
+        listed = (await client.get("/api/chat/skills", headers=headers)).json()
+        mine = [s for s in listed if s["slug"] == "my-own-skill"]
+        assert mine and mine[0]["is_builtin"] is False
+
+        # 坏 frontmatter 422 并带原因
+        bad = await client.post(
+            "/api/chat/skills", json={"skill_md": "没有 frontmatter"}, headers=headers
+        )
+        assert bad.status_code == 422
+
+        assert (
+            await client.delete("/api/chat/skills/my-own-skill", headers=headers)
+        ).status_code == 204
+        # 内置的删不掉
+        from app.core.db import get_sessionmaker as gsm
+        from app.services.builtin_agent_skills import ensure_builtin_agent_skills
+
+        async with gsm()() as session:
+            await ensure_builtin_agent_skills(session)
+        assert (
+            await client.delete("/api/chat/skills/citation-hygiene", headers=headers)
+        ).status_code == 404
+    finally:
+        os.environ.pop("POLARIS_CHAT_AGENT_ENABLED", None)
+        get_settings.cache_clear()

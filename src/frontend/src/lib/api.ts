@@ -4724,6 +4724,18 @@ export const api = {
    * 可直接跳任务详情看步骤与日志；409 detail=DAILY_FEED_RUNNING 表示已有一次在跑。
    */
   /** 每日论文池的同步状况（全员可读）：最新一天、是否过期、各分类成败。 */
+  /** 全局助手：会话列表（最近说过话的在前）。 */
+  listAssistantConversations(): Promise<
+    { id: string; title: string; last_message_at: string | null }[]
+  > {
+    return request('/chat/conversations');
+  },
+  /** 全局助手：一场会话的完整消息（含工具块；SSE 里的 preview 是截断的）。 */
+  getAssistantMessages(
+    conversationId: string,
+  ): Promise<{ role: string; text: string; blocks: unknown[]; status: string }[]> {
+    return request(`/chat/conversations/${conversationId}/messages`);
+  },
   /** 全局助手：新建一场会话（后端开关关着时 404）。 */
   createAssistantConversation(scope: { scope_kind?: string; project_id?: string } = {}): Promise<{ id: string; title: string }> {
     return requestJson<{ id: string; title: string }>('/chat/conversations', 'POST', scope);

@@ -51,3 +51,10 @@ class MessageRead(BaseModel):
     usage: dict[str, Any] | None = None
     stop_reason: str | None = None
     created_at: datetime
+
+
+class SkillImportRequest(BaseModel):
+    """从 SKILL.md 导入技能。files 是附件（相对路径 → 文本内容）。"""
+
+    skill_md: str = Field(min_length=1)
+    files: dict[str, str] | None = None

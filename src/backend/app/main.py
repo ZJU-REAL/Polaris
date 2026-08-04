@@ -15,6 +15,7 @@ from app.core.db import create_all, dispose_engine, get_sessionmaker
 from app.core.llm.router import LLMNotConfiguredError
 from app.core.redis import close_redis
 from app.mcp import mcp_router
+from app.services.builtin_agent_skills import ensure_builtin_agent_skills
 from app.services.crdt_rooms import reset_crdt_rooms
 from app.services.crdt_stream import get_crdt_stream_subscriber, stop_crdt_stream_subscriber
 from app.services.skills import ensure_builtin_skills
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
     try:
         async with get_sessionmaker()() as session:
             await ensure_builtin_skills(session)
+            await ensure_builtin_agent_skills(session)
     except Exception:  # noqa: BLE001
         logger.warning("builtin skill seeding failed (migrations pending?)", exc_info=True)
     # AI 起草流式镜像订阅（worker 发布 → 写活跃 CRDT 房间；连不上 redis 自动放弃）

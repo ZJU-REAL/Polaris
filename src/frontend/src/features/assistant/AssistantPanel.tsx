@@ -21,6 +21,30 @@ interface Turn {
   blocks: AssistantBlock[];
 }
 
+/** 服务端持久化的块 → 前端块。认不出的形状一律降级成文本，绝不抛。 */
+function restoreBlocks(m: { text: string; blocks: unknown[] }): AssistantBlock[] {
+  const out: AssistantBlock[] = [];
+  for (const raw of Array.isArray(m.blocks) ? m.blocks : []) {
+    if (!raw || typeof raw !== 'object') continue;
+    const b = raw as Record<string, unknown>;
+    if (b.kind === 'text' && typeof b.text === 'string') {
+      out.push({ kind: 'text', text: b.text });
+    } else if (b.kind === 'thinking' && typeof b.text === 'string') {
+      out.push({ kind: 'thinking', text: b.text });
+    } else if (b.kind === 'tool_use') {
+      out.push({
+        kind: 'tool',
+        id: String(b.id ?? ''),
+        name: String(b.name ?? '?'),
+        state: 'ok',
+      });
+    }
+    // tool_result 等其余块不单独渲染：它们是模型的输入，不是回答的一部分
+  }
+  if (out.length === 0 && m.text) out.push({ kind: 'text', text: m.text });
+  return out;
+}
+
 function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> }) {
   const [open, setOpen] = useState(false);
   const color =
@@ -100,6 +124,10 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [convId, setConvId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [conversations, setConversations] = useState<
+    { id: string; title: string }[]
+  >([]);
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -108,6 +136,48 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
   }, [turns]);
 
   useEffect(() => () => abortRef.current?.(), []);
+
+  const stop = useCallback(() => {
+    // 掐掉 SSE 连接。后端会把已生成的部分落库标成 interrupted，重开会话还能看到。
+    abortRef.current?.();
+    abortRef.current = null;
+    setBusy(false);
+  }, []);
+
+  const openHistory = useCallback(async () => {
+    setHistoryOpen((o) => !o);
+    try {
+      setConversations(await api.listAssistantConversations());
+    } catch {
+      setConversations([]);
+    }
+  }, []);
+
+  const loadConversation = useCallback(async (id: string) => {
+    // 服务端才是历史的权威源：本地状态直接整体替换
+    try {
+      const messages = await api.getAssistantMessages(id);
+      setConvId(id);
+      setHistoryOpen(false);
+      setTurns(
+        messages
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => ({
+            role: m.role as 'user' | 'assistant',
+            blocks: restoreBlocks(m),
+          })),
+      );
+    } catch {
+      /* 载入失败保持现状 */
+    }
+  }, []);
+
+  const newConversation = useCallback(() => {
+    stop();
+    setConvId(null);
+    setTurns([]);
+    setHistoryOpen(false);
+  }, [stop]);
 
   const send = useCallback(async () => {
     const question = input.trim();
@@ -173,10 +243,61 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
         <Icon name="chat" size={15} style={{ color: 'var(--accent)' }} />
         <strong style={{ fontSize: 14 }}>{tr('Polaris 助手', 'Polaris assistant')}</strong>
         <span style={{ flex: 1 }} />
+        {busy && (
+          <button className="btn btn-ghost sm" onClick={stop} style={{ height: 24, fontSize: 11 }}>
+            <Icon name="pause" size={11} /> {tr('停止', 'Stop')}
+          </button>
+        )}
+        <button
+          className="icon-btn"
+          onClick={() => void openHistory()}
+          title={tr('历史会话', 'Conversations')}
+        >
+          <Icon name="clock" size={14} />
+        </button>
+        <button className="icon-btn" onClick={newConversation} title={tr('新会话', 'New')}>
+          <Icon name="plus" size={14} />
+        </button>
         <button className="icon-btn" onClick={onClose} title={tr('关闭（⌘J）', 'Close (⌘J)')}>
           <Icon name="x" size={14} />
         </button>
       </div>
+
+      {historyOpen && (
+        <div
+          style={{
+            borderBottom: '0.5px solid var(--border-2)',
+            maxHeight: 220,
+            overflowY: 'auto',
+            padding: '6px 8px',
+          }}
+        >
+          {conversations.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-4)', padding: 8 }}>
+              {tr('还没有历史会话', 'No conversations yet')}
+            </div>
+          )}
+          {conversations.map((c) => (
+            <div
+              key={c.id}
+              className="hoverable"
+              onClick={() => void loadConversation(c.id)}
+              style={{
+                padding: '7px 9px',
+                borderRadius: 7,
+                fontSize: 12.5,
+                cursor: 'pointer',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                background: c.id === convId ? 'var(--accent-soft)' : undefined,
+              }}
+            >
+              {c.title || tr('（未命名）', '(untitled)')}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px' }}>
         {turns.length === 0 && (

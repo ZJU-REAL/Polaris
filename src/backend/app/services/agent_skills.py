@@ -206,10 +206,13 @@ async def upsert_from_md(
 ) -> AgentSkill:
     """从 SKILL.md 建/更新一个技能（同 slug 覆盖）。"""
     parsed = parse_skill_md(text)
+    # owner_id 为 None（内置技能）时必须用 IS NULL：`owner_id == None` 翻成 SQL 是
+    # `owner_id = NULL`，永远为假——那样每次启动种子都会重复插入一份。
+    owner_clause = (
+        AgentSkill.owner_id.is_(None) if user_id is None else AgentSkill.owner_id == user_id
+    )
     existing = await session.scalar(
-        select(AgentSkill).where(
-            AgentSkill.slug == parsed["slug"], AgentSkill.owner_id == user_id
-        )
+        select(AgentSkill).where(AgentSkill.slug == parsed["slug"], owner_clause)
     )
     skill = existing or AgentSkill(slug=parsed["slug"], owner_id=user_id, scope=scope)
     skill.name = parsed["name"]
