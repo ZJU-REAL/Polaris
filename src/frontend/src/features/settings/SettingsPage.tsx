@@ -116,89 +116,141 @@ function PersonalTab() {
   if (isLoading) return <div className="empty">{tr('加载中…', 'Loading…')}</div>;
   if (isError || !me) return <div className="empty">{tr('无法加载用户信息（后端不可用）', 'Failed to load user info (backend unavailable)')}</div>;
 
+  const quotaPct =
+    usage?.token_quota != null && usage.token_quota > 0
+      ? Math.min(100, Math.round((usage.tokens_used / usage.token_quota) * 100))
+      : null;
+
   return (
     <>
-    <div className="card card-pad" style={{ maxWidth: 560 }}>
-      <div className="row gap16" style={{ marginBottom: 20 }}>
-        <Avatar userId={me.id} hasAvatar={!!me.has_avatar} name={me.display_name || me.email} size={64} version={avatarVersion} />
-        <div>
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) avatarMutation.mutate(f);
-              e.target.value = '';
-            }}
-          />
-          <button className="btn btn-soft" disabled={avatarMutation.isPending} onClick={() => avatarInputRef.current?.click()}>
-            {avatarMutation.isPending ? tr('上传中…', 'Uploading…') : tr('更换头像', 'Change avatar')}
-          </button>
-          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 6 }}>{tr('PNG / JPEG / WebP，2MB 以内', 'PNG / JPEG / WebP, up to 2MB')}</div>
+      {/* —— 身份条：头像 + 是谁 + 角色/用量，横着铺满 —— */}
+      <div className="card card-pad" style={{ marginBottom: 20 }}>
+        <div className="row gap20 wrap" style={{ alignItems: 'center' }}>
+          <Avatar userId={me.id} hasAvatar={!!me.has_avatar} name={me.display_name || me.email} size={72} version={avatarVersion} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 17, fontWeight: 650, lineHeight: 1.3 }}>
+              {me.display_name || tr('（还没填姓名）', '(no name yet)')}
+            </div>
+            <div className="mono" style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>{me.email}</div>
+            <div className="row gap8 wrap" style={{ marginTop: 9 }}>
+              <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+                {me.role === 'admin' ? tr('管理员', 'Admin') : tr('成员', 'Member')}
+              </span>
+              {me.username && (
+                <span className="pill sm mono" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                  @{me.username}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* AI 用量：这里只报个数，明细在「用量」标签页 */}
+          {usage && (
+            <div style={{ minWidth: 190 }}>
+              <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr('AI 用量', 'AI usage')}</div>
+              <div className="row gap6" style={{ alignItems: 'baseline', marginTop: 2 }}>
+                <span className="mono" style={{ fontSize: 19, fontWeight: 700 }}>{usage.tokens_used.toLocaleString()}</span>
+                <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                  {usage.token_quota != null ? `/ ${usage.token_quota.toLocaleString()}` : tr('· 不限', '· unlimited')}
+                </span>
+              </div>
+              {quotaPct != null && (
+                <div style={{ height: 5, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden', marginTop: 7 }}>
+                  <div style={{ width: `${quotaPct}%`, height: '100%', borderRadius: 999, background: quotaPct >= 100 ? 'var(--danger-tx)' : 'var(--accent)' }} />
+                </div>
+              )}
+            </div>
+          )}
+
+          <div>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) avatarMutation.mutate(f);
+                e.target.value = '';
+              }}
+            />
+            <button className="btn btn-soft sm" disabled={avatarMutation.isPending} onClick={() => avatarInputRef.current?.click()}>
+              {avatarMutation.isPending ? tr('上传中…', 'Uploading…') : tr('更换头像', 'Change avatar')}
+            </button>
+            <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 6, textAlign: 'center' }}>
+              {tr('PNG / JPEG / WebP，2MB 以内', 'PNG / JPEG / WebP, up to 2MB')}
+            </div>
+          </div>
         </div>
       </div>
-      <FormField label={tr('姓名', 'Name')}>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('你的真实姓名', 'Your name')} />
-      </FormField>
-      <FormField label={tr('用户名', 'Username')}>
-        {usernameLocked ? (
-          <div className="row gap8" style={{ alignItems: 'center' }}>
-            <input className="input mono" value={me.username ?? ''} disabled style={{ flex: 1 }} />
-            <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-              {tr('已锁定', 'Locked')}
-            </span>
+
+      {/* —— 主表单 + 学术身份并排 —— */}
+      <div className="settings-main-side">
+        <div className="card card-pad">
+          <div className="section-h" style={{ marginBottom: 14 }}>
+            <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
+            {tr('账号信息', 'Account')}
           </div>
-        ) : (
-          <>
-            <div className="row gap8" style={{ alignItems: 'center' }}>
-              <input
-                className="input mono"
-                value={username}
-                onChange={(e) => setUsername(e.target.value.toLowerCase())}
-                placeholder="e.g. zhang_san"
-                style={{ flex: 1 }}
-              />
-              <button
-                className="btn btn-soft"
-                disabled={!usernameValid || usernameMutation.isPending || username === (me.username ?? '')}
-                onClick={() => usernameMutation.mutate()}
-              >
-                {tr('保存', 'Save')}
-              </button>
-            </div>
-            <div style={{ fontSize: 11, color: username && !usernameValid ? 'var(--danger-tx)' : 'var(--text-4)', marginTop: 4 }}>
-              {tr('小写字母、数字、下划线 3-32 位；全局唯一。只能设置/修改一次', 'lowercase letters, digits, underscore; 3-32 chars; unique. Can only be set once')}
-            </div>
-          </>
-        )}
-      </FormField>
-      <FormField label={tr('邮箱', 'Email')}>
-        <input className="input" value={me.email} disabled />
-      </FormField>
-      <div className="row gap12" style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12.5, color: 'var(--text-2)' }}>
-          {tr('角色', 'Role')}：{me.role === 'admin' ? tr('管理员', 'Admin') : tr('成员', 'Member')}
+
+          <div className="settings-fields">
+            <FormField label={tr('姓名', 'Name')}>
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('你的真实姓名', 'Your name')} />
+            </FormField>
+            <FormField label={tr('邮箱', 'Email')} hint={tr('注册后不能改', 'Cannot be changed after signup')}>
+              <input className="input" value={me.email} disabled />
+            </FormField>
+          </div>
+
+          <FormField
+            label={tr('用户名', 'Username')}
+            hint={
+              usernameLocked
+                ? tr('已经定下来了，不能再改。', 'Already set — it cannot be changed.')
+                : tr('小写字母、数字、下划线 3-32 位；全局唯一。只能设置一次，设完就锁。', 'Lowercase letters, digits, underscore; 3-32 chars; unique. Can only be set once, then it locks.')
+            }
+            error={!usernameLocked && username && !usernameValid ? tr('格式不对', 'Invalid format') : null}
+          >
+            {usernameLocked ? (
+              <div className="row gap8" style={{ alignItems: 'center' }}>
+                <input className="input mono" value={me.username ?? ''} disabled style={{ flex: 1, minWidth: 0 }} />
+                <span className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-3)', flexShrink: 0 }}>
+                  {tr('已锁定', 'Locked')}
+                </span>
+              </div>
+            ) : (
+              <div className="row gap8" style={{ alignItems: 'center' }}>
+                <input
+                  className="input mono"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                  placeholder="e.g. zhang_san"
+                  style={{ flex: 1, minWidth: 0 }}
+                />
+                <button
+                  className="btn btn-soft"
+                  style={{ flexShrink: 0 }}
+                  disabled={!usernameValid || usernameMutation.isPending || username === (me.username ?? '')}
+                  onClick={() => usernameMutation.mutate()}
+                >
+                  {tr('保存', 'Save')}
+                </button>
+              </div>
+            )}
+          </FormField>
+
+          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 4 }}>
+            <button
+              className="btn btn-primary"
+              disabled={saveMutation.isPending || (me.display_name ?? '') === name.trim()}
+              onClick={() => saveMutation.mutate()}
+            >
+              {tr('保存', 'Save')}
+            </button>
+          </div>
         </div>
-        {usage && (
-          <div style={{ fontSize: 12.5, color: 'var(--text-2)' }}>
-            {tr('AI 用量', 'AI usage')}：{usage.tokens_used.toLocaleString()} tokens
-            {usage.token_quota != null && ` / ${tr('配额', 'quota')} ${usage.token_quota.toLocaleString()}`}
-          </div>
-        )}
+
+        <AcademicIdentitySection />
       </div>
-      <div className="row" style={{ justifyContent: 'flex-end' }}>
-        <button
-          className="btn btn-primary"
-          disabled={saveMutation.isPending || (me.display_name ?? '') === name.trim()}
-          onClick={() => saveMutation.mutate()}
-        >
-          {tr('保存', 'Save')}
-        </button>
-      </div>
-      </div>
-      <AcademicIdentitySection />
     </>
   );
 }
@@ -208,24 +260,37 @@ function PersonalTab() {
 function PreferencesTab() {
   const showHistory = useTaskLogHistory();
   return (
-    <div className="card" style={{ maxWidth: 560, padding: '14px 18px' }}>
-      <div className="section-h">
+    <div className="card card-pad">
+      <div className="section-h" style={{ marginBottom: 4 }}>
+        <Icon name="sliders" size={15} style={{ color: 'var(--accent)' }} />
         {tr('界面偏好', 'Interface preferences')}
-        <span style={{ fontSize: 11.5, fontWeight: 400, color: 'var(--text-4)' }}>
-          {tr('只保存在本浏览器。', 'Saved in this browser only.')}
-        </span>
       </div>
-      <div className="row" style={{ gap: 16, alignItems: 'center', marginTop: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div id="pref-task-log-history" style={{ fontSize: 13, lineHeight: 1.4 }}>
-            {tr('任务终端展示历史日志', 'Show past logs in the task terminal')}
+      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>
+        {tr(
+          '这些只存在这台设备的浏览器里，不跟着账号走——换台电脑要重新设。',
+          'These live in this browser only and do not follow your account — set them again on another machine.',
+        )}
+      </div>
+
+      <div className="settings-list">
+        <div className="settings-row">
+          <div className="settings-row-text">
+            <div id="pref-task-log-history" style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>
+              {tr('任务终端展示历史日志', 'Show past logs in the task terminal')}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5, marginTop: 3 }}>
+              {tr(
+                '打开任务终端时把之前跑过的日志一起显示出来。关掉就只看这次新产生的。',
+                'Include logs from earlier runs when you open a task terminal. Turn it off to see only what this run produces.',
+              )}
+            </div>
           </div>
+          <Switch
+            checked={showHistory}
+            onChange={setTaskLogHistory}
+            aria-labelledby="pref-task-log-history"
+          />
         </div>
-        <Switch
-          checked={showHistory}
-          onChange={setTaskLogHistory}
-          aria-labelledby="pref-task-log-history"
-        />
       </div>
     </div>
   );
@@ -342,18 +407,49 @@ function ChatBotsTab() {
   }
 
   return (
-    <div style={{ maxWidth: 760 }}>
-      <div className="card card-pad" style={{ marginBottom: 14 }}>
-        <div className="section-h">{tr('群机器人单向推送', 'One-way group bot delivery')}</div>
-        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.65, marginTop: 6 }}>
-          {tr(
-            '在钉钉或飞书目标群中添加“自定义机器人”，开启“签名校验”，然后把 Webhook（或其中的机器人 ID）和 Secret 填在下面。之后在文献对话或 AI 伴读里输入 @ 并选择机器人，Polaris 会在回答完成后直接推送到群；群成员无需再 @ 机器人。',
-            'Add a custom bot to the target DingTalk or Feishu group, enable signature verification, then enter its Webhook (or bot ID) and secret below. In literature chat or AI reading, type @ and select the bot; Polaris pushes the completed answer directly to the group, with no need to mention the bot there.',
-          )}
+    <>
+      <div className="card card-pad" style={{ marginBottom: 20 }}>
+        <div className="section-h">
+          <Icon name="chat" size={15} style={{ color: 'var(--accent)' }} />
+          {tr('群机器人单向推送', 'One-way group bot delivery')}
+        </div>
+        {/* 三步说明横着排：宽屏下一眼看完，不用顺着一长条文字读到底 */}
+        <div className="settings-stats" style={{ marginTop: 14 }}>
+          {[
+            {
+              n: '1',
+              zh: '在目标群里添加「自定义机器人」，并开启「签名校验」。',
+              en: 'Add a custom bot to the target group and enable signature verification.',
+            },
+            {
+              n: '2',
+              zh: '把 Webhook（或其中的机器人 ID）和 Secret 填到下面对应的卡片里。',
+              en: 'Enter its Webhook (or bot ID) and secret in the matching card below.',
+            },
+            {
+              n: '3',
+              zh: '在文献对话或 AI 伴读里输入 @ 选中机器人，回答生成完就直接推到群里，群成员不用再 @ 它。',
+              en: 'In literature chat or AI reading, type @ and pick the bot; finished answers go straight to the group.',
+            },
+          ].map((s) => (
+            <div key={s.n} className="row gap10" style={{ alignItems: 'flex-start' }}>
+              <span
+                className="mono"
+                style={{
+                  flexShrink: 0, width: 20, height: 20, borderRadius: 999,
+                  background: 'var(--accent-soft)', color: 'var(--accent-text)',
+                  fontSize: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                {s.n}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6 }}>{tr(s.zh, s.en)}</span>
+            </div>
+          ))}
         </div>
       </div>
 
-      <div className="col gap14">
+      <div className="settings-2col">
         {CHAT_BOT_PLATFORMS.map((platform) => {
           const meta = CHAT_BOT_META[platform];
           const config = data.find((item) => item.platform === platform);
@@ -462,7 +558,7 @@ function ChatBotsTab() {
           );
         })}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -2537,28 +2633,42 @@ function MyUsageTab() {
 
   return (
     <>
-      <div className="card card-pad" style={{ marginBottom: 20, maxWidth: 560 }}>
-        <div className="section-h" style={{ marginBottom: 12 }}>
-          <Icon name="chart" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('我的 AI 用量', 'My AI usage')}{' '}
-          <span className="en-label" style={{ fontSize: 11 }}>{tr('累计消耗', 'total consumed')}</span>
-        </div>
-        <div className="row gap12" style={{ alignItems: 'baseline' }}>
-          <span className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{used.toLocaleString()}</span>
-          <span style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
-            tokens{quota != null ? ` / ${tr('配额', 'quota')} ${quota.toLocaleString()}` : ` · ${tr('不限配额', 'unlimited quota')}`}
-          </span>
-        </div>
-        {pct != null && (
-          <div style={{ marginTop: 10 }}>
-            <div style={{ height: 8, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden' }}>
-              <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: pct >= 100 ? 'var(--danger-tx)' : 'var(--accent)' }} />
+      {/* —— 指标墙：一眼看完「一共用了多少 / 这段时间用了多少」——
+             左边第一张是累计与配额，后面三张跟着上面的天数选择走。 */}
+      <div className="settings-stats" style={{ marginBottom: 20 }}>
+        <div className="card card-pad">
+          <div className="row gap8" style={{ alignItems: 'center' }}>
+            <Icon name="chart" size={14} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr('累计消耗', 'Total consumed')}</span>
+          </div>
+          <div className="mono" style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{used.toLocaleString()}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
+            {quota != null ? `tokens / ${tr('配额', 'quota')} ${quota.toLocaleString()}` : `tokens · ${tr('不限配额', 'unlimited')}`}
+          </div>
+          {pct != null && (
+            <div style={{ marginTop: 9 }}>
+              <div style={{ height: 6, borderRadius: 999, background: 'var(--surface-3)', overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: pct >= 100 ? 'var(--danger-tx)' : 'var(--accent)' }} />
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>{tr(`已用 ${pct}%`, `${pct}% used`)}</div>
             </div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4 }}>
-              {tr(`已用 ${pct}%`, `${pct}% used`)}
+          )}
+        </div>
+
+        {[
+          { zh: '这段时间 · 输入', en: 'Selected range · prompt', v: totals.prompt, unit: 'tokens' },
+          { zh: '这段时间 · 输出', en: 'Selected range · completion', v: totals.completion, unit: 'tokens' },
+          { zh: '这段时间 · 调用', en: 'Selected range · calls', v: totals.calls, unit: tr('次', 'calls') },
+        ].map((s) => (
+          <div key={s.en} className="card card-pad">
+            <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{tr(s.zh, s.en)}</div>
+            <div className="mono" style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{s.v.toLocaleString()}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>
+              {s.unit}
+              <span style={{ color: 'var(--text-4)' }}>{tr(` · 近 ${days} 天`, ` · last ${days}d`)}</span>
             </div>
           </div>
-        )}
+        ))}
       </div>
 
       <div className="card card-pad">
@@ -2683,7 +2793,7 @@ function DailyCategoriesSection() {
   }
 
   return (
-    <div className="card card-pad" style={{ maxWidth: 640 }}>
+    <div className="card card-pad">
       <div className="section-h" style={{ marginBottom: 6 }}>
         <Icon name="book" size={15} style={{ color: 'var(--accent)' }} />
         {tr('每日新论文订阅分类', 'Daily papers subscribed categories')}
@@ -2774,7 +2884,7 @@ function DailyEmbedSection() {
   });
 
   return (
-    <div className="card card-pad" style={{ maxWidth: 640, marginTop: 20 }}>
+    <div className="card card-pad">
       <div className="section-h" style={{ marginBottom: 6 }}>
         <Icon name="layers" size={15} style={{ color: 'var(--accent)' }} />
         {tr('每日论文向量', 'Daily paper embeddings')}
@@ -2917,7 +3027,7 @@ function DailySyncSection() {
   const labelStyle = { width: 92, flexShrink: 0, fontSize: 12, color: 'var(--text-2)' } as const;
 
   return (
-    <div className="card card-pad" style={{ maxWidth: 640, marginTop: 20 }}>
+    <div className="card card-pad">
       <div className="section-h" style={{ marginBottom: 6 }}>
         <Icon name="refresh" size={15} style={{ color: 'var(--accent)' }} />
         {tr('抓取与同步', 'Fetch & sync')}
@@ -3041,9 +3151,15 @@ function DailySyncSection() {
 export function DailyCategoriesTab() {
   return (
     <>
-      <DailyCategoriesSection />
-      <DailySyncSection />
-      <DailyEmbedSection />
+      {/* 订阅分类是一排 chips，越宽越好用，独占整行 */}
+      <div style={{ marginBottom: 20 }}>
+        <DailyCategoriesSection />
+      </div>
+      {/* 抓取节奏与向量补建互不相干，并排放 */}
+      <div className="settings-2col">
+        <DailySyncSection />
+        <DailyEmbedSection />
+      </div>
     </>
   );
 }

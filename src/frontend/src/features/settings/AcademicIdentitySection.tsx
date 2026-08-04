@@ -63,7 +63,7 @@ export function AcademicIdentitySection() {
         autoSync !== profile.auto_sync;
 
   return (
-    <div className="card card-pad" style={{ maxWidth: 560, marginTop: 20 }}>
+    <div className="card card-pad">
       <div className="section-h" style={{ marginBottom: 14 }}>
         <Icon name="users" size={15} style={{ color: 'var(--accent)' }} />
         {tr('学术身份', 'Academic identity')}

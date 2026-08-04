@@ -529,6 +529,52 @@ input {
 .gap14 { gap: 14px; } .gap16 { gap: 16px; } .gap20 { gap: 20px; } .gap24 { gap: 24px; }
 .wrap { flex-wrap: wrap; }
 
+/* ============================================================
+   设置页栅格
+   ------------------------------------------------------------
+   设置页从前一半标签页锁死在 maxWidth:560~760，另一半（表格类）铺满
+   1180，同一个页面两种宽度。统一成铺满后，窄表单不能就这么拉长——
+   一行 1100px 的输入框没人想填。所以按内容分栏：表单进栅格、指标进
+   卡片墙、开关进列表。这几个类是那三种排法的共同底座。
+
+   一律 minmax(0, …)：不写 min 宽的话，栅格轨道的默认 min-content 会
+   被长 URL、长模型名撑破，整页横向溢出。
+   ============================================================ */
+
+/* 等宽两栏（两块地位相当的卡片并排） */
+.settings-2col {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px; align-items: start;
+}
+
+/* 主次两栏（左边是主表单，右边是补充信息） */
+.settings-main-side {
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 20px; align-items: start;
+}
+
+/* 指标卡片墙：能放几张放几张，放不下自己换行 */
+.settings-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+}
+
+/* 表单字段并排：字段本身有天然的舒适宽度，宽屏就并成两三列，
+   而不是把每个输入框拉到一米长 */
+.settings-fields {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  column-gap: 24px;
+}
+
+/* 开关/选项列表：左边说明右边控件，逐行分隔 */
+.settings-list > * + * { border-top: 0.5px solid var(--border-2); }
+.settings-row {
+  display: flex; align-items: center; gap: 20px; padding: 14px 0;
+}
+.settings-row:first-child { padding-top: 4px; }
+.settings-row:last-child { padding-bottom: 4px; }
+.settings-row-text { flex: 1; min-width: 0; }
+
 /* animations */
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .pulse { animation: pulse 1.6s ease-in-out infinite; }
@@ -1186,6 +1232,11 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   }
 
   .page { padding: 22px 18px 60px; }
+
+  /* 设置页的两栏一律堆叠。指标墙与字段栅格不用管：它们是 auto-fit，
+     宽度不够会自己减列，减到一列为止。 */
+  .settings-2col,
+  .settings-main-side { grid-template-columns: minmax(0, 1fr); }
 
   /* 右侧抽屉不超出视口 */
   .drawer { width: min(420px, 100vw - 32px); }
