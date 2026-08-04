@@ -4726,7 +4726,7 @@ export const api = {
   /** 每日论文池的同步状况（全员可读）：最新一天、是否过期、各分类成败。 */
   /** 全局助手：会话列表（最近说过话的在前）。 */
   listAssistantConversations(): Promise<
-    { id: string; title: string; last_message_at: string | null }[]
+    { id: string; title: string; last_message_at: string | null; project_id: string | null }[]
   > {
     return request('/chat/conversations');
   },

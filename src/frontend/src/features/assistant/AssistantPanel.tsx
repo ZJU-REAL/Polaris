@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { Markdown } from '../../lib/markdown';
-import { api } from '../../lib/api';
+import { api, type ProjectRead } from '../../lib/api';
 import { assistantTurnSse, type AssistantBlock } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 
@@ -43,6 +43,29 @@ function restoreBlocks(m: { text: string; blocks: unknown[] }): AssistantBlock[]
   }
   if (out.length === 0 && m.text) out.push({ kind: 'text', text: m.text });
   return out;
+}
+
+/** 后端错误码 → 用户看得懂的一句话。认不出的原样透出，别把线索吃掉。 */
+function errorText(detail: string): string {
+  if (detail === 'PROJECT_REQUIRED') {
+    return tr(
+      '你有多个课题，先在上面选一个，助手才知道去哪儿查资料。',
+      'You have several topics — pick one above so the assistant knows where to search.',
+    );
+  }
+  if (detail === 'PROJECT_NOT_FOUND') {
+    return tr('这个课题不存在，或者你已经不是它的成员了。', 'That topic does not exist, or you are no longer a member.');
+  }
+  if (detail === 'CHAT_AGENT_DISABLED') {
+    return tr('助手在这个部署上没开启，找管理员开一下。', 'The assistant is switched off on this deployment — ask an admin to enable it.');
+  }
+  if (detail === 'LLM_NOT_CONFIGURED') {
+    return tr('还没配可用的模型，去设置里配一个。', 'No usable model is configured yet — set one up in settings.');
+  }
+  if (detail === 'QUOTA_EXCEEDED') {
+    return tr('你的 AI 用量已经用完了。', 'You have used up your AI quota.');
+  }
+  return detail;
 }
 
 function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> }) {
@@ -126,8 +149,14 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
   const [convId, setConvId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<
-    { id: string; title: string }[]
+    { id: string; title: string; project_id: string | null }[]
   >([]);
+  // 这轮检索的课题作用域。名下只有一个课题时后端会自己认，但选出来更诚实——
+  // 用户看得见助手在哪儿查。多于一个且没选，后端 409，见 errorText。
+  const [projects, setProjects] = useState<ProjectRead[]>([]);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  //: 上一轮因为没选课题而失败过——把选择器点亮，别让人对着一句错误发呆
+  const [projectMissing, setProjectMissing] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -136,6 +165,26 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
   }, [turns]);
 
   useEffect(() => () => abortRef.current?.(), []);
+
+  // 面板打开时才拉课题列表：关着的时候没人看得见，不值得多一个请求。
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const rows = await api.listProjects();
+        if (!alive) return;
+        setProjects(rows);
+        // 只有一个课题就直接替他选上——这不算「替用户猜」，没有别的可能。
+        setProjectId((cur) => cur ?? (rows.length === 1 ? (rows[0]?.id ?? null) : null));
+      } catch {
+        if (alive) setProjects([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open]);
 
   const stop = useCallback(() => {
     // 掐掉 SSE 连接。后端会把已生成的部分落库标成 interrupted，重开会话还能看到。
@@ -153,30 +202,38 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
     }
   }, []);
 
-  const loadConversation = useCallback(async (id: string) => {
-    // 服务端才是历史的权威源：本地状态直接整体替换
-    try {
-      const messages = await api.getAssistantMessages(id);
-      setConvId(id);
-      setHistoryOpen(false);
-      setTurns(
-        messages
-          .filter((m) => m.role === 'user' || m.role === 'assistant')
-          .map((m) => ({
-            role: m.role as 'user' | 'assistant',
-            blocks: restoreBlocks(m),
-          })),
-      );
-    } catch {
-      /* 载入失败保持现状 */
-    }
-  }, []);
+  const loadConversation = useCallback(
+    async (id: string) => {
+      // 服务端才是历史的权威源：本地状态直接整体替换
+      try {
+        const messages = await api.getAssistantMessages(id);
+        setConvId(id);
+        setHistoryOpen(false);
+        setProjectMissing(false);
+        // 会话上存着的课题才是这场对话真正的作用域，跟着切过去
+        const stored = conversations.find((c) => c.id === id)?.project_id ?? null;
+        if (stored) setProjectId(stored);
+        setTurns(
+          messages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({
+              role: m.role as 'user' | 'assistant',
+              blocks: restoreBlocks(m),
+            })),
+        );
+      } catch {
+        /* 载入失败保持现状 */
+      }
+    },
+    [conversations],
+  );
 
   const newConversation = useCallback(() => {
     stop();
     setConvId(null);
     setTurns([]);
     setHistoryOpen(false);
+    setProjectMissing(false);
   }, [stop]);
 
   const send = useCallback(async () => {
@@ -189,13 +246,15 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
     let id = convId;
     try {
       if (!id) {
-        id = (await api.createAssistantConversation()).id;
+        id = (await api.createAssistantConversation(projectId ? { project_id: projectId } : {})).id;
         setConvId(id);
       }
-    } catch {
+    } catch (e) {
+      // 这里以前把所有失败都说成「助手未启用」，把真正的原因吃掉了
+      const detail = e instanceof Error ? e.message : String(e);
       setTurns((t) => {
         const next = [...t];
-        next[next.length - 1] = { role: 'assistant', blocks: [{ kind: 'text', text: tr('助手未启用。', 'The assistant is not enabled.') }] };
+        next[next.length - 1] = { role: 'assistant', blocks: [{ kind: 'text', text: `⚠️ ${errorText(detail)}` }] };
         return next;
       });
       setBusy(false);
@@ -211,15 +270,21 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
         return next;
       });
 
-    abortRef.current = assistantTurnSse(id, question, {
-      onBlocks: patch,
-      onDone: () => setBusy(false),
-      onError: (detail) => {
-        patch((blocks) => [...blocks, { kind: 'text', text: `⚠️ ${detail}` }]);
-        setBusy(false);
+    abortRef.current = assistantTurnSse(
+      id,
+      question,
+      {
+        onBlocks: patch,
+        onDone: () => setBusy(false),
+        onError: (detail) => {
+          if (detail === 'PROJECT_REQUIRED') setProjectMissing(true);
+          patch((blocks) => [...blocks, { kind: 'text', text: `⚠️ ${errorText(detail)}` }]);
+          setBusy(false);
+        },
       },
-    });
-  }, [input, busy, convId]);
+      projectId,
+    );
+  }, [input, busy, convId, projectId]);
 
   if (!open) return null;
 
@@ -262,6 +327,47 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
           <Icon name="x" size={14} />
         </button>
       </div>
+
+      {/* —— 作用域：助手拿哪个课题的资料去查 ——
+          一个课题都没有时不显示：那种情况下助手本来就不带工具，摆个空下拉只会误导。 */}
+      {projects.length > 0 && (
+        <div
+          className="row gap8"
+          style={{
+            padding: '8px 16px',
+            borderBottom: '0.5px solid var(--border-2)',
+            alignItems: 'center',
+            background: projectMissing && !projectId ? 'var(--danger-bg, var(--surface-2))' : 'var(--surface-2)',
+          }}
+        >
+          <Icon name="layers" size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+          <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0 }}>
+            {tr('查这个课题', 'Search in')}
+          </span>
+          <select
+            className="input"
+            value={projectId ?? ''}
+            onChange={(e) => {
+              setProjectId(e.target.value || null);
+              setProjectMissing(false);
+            }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: 26,
+              fontSize: 12,
+              borderColor: projectMissing && !projectId ? 'var(--danger)' : undefined,
+            }}
+          >
+            <option value="">{tr('未选 —— 只闲聊，不检索', 'None — chat only, no search')}</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {historyOpen && (
         <div

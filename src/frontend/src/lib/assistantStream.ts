@@ -40,15 +40,21 @@ function parse(data: string): Record<string, unknown> {
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
 
-/** 跑一轮助手对话；返回中止函数。 */
+/** 跑一轮助手对话；返回中止函数。
+ *
+ * ``projectId`` 是这轮检索工具的作用域。后端只在会话上还没存过课题时需要它，
+ * 存过一次就自己认得；但每轮都带上是无害的，也省得前端追踪「存没存过」。
+ * 不传且用户名下有多个课题时，后端返回 409 PROJECT_REQUIRED，由调用方弹选择。
+ */
 export function assistantTurnSse(
   conversationId: string,
   question: string,
   handlers: AssistantHandlers,
+  projectId?: string | null,
 ): () => void {
   return postSse(
     `/chat/conversations/${conversationId}/turn`,
-    { question },
+    projectId ? { question, project_id: projectId } : { question },
     {
       onEvent: (event, raw) => {
         const data = parse(raw);
