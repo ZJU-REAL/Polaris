@@ -101,6 +101,9 @@ class ResolvedRoute:
     temperature: float | None
     provider_name: str = "fake"  # 管理端 provider 名称（调用日志用）
     effort: EffortLevel | None = None  # 推理档位，None = 不发送该参数（用模型默认）
+    #: 模型的上下文窗口（token）。None = 管理端没填，调用方按保守常量走。
+    #: agent 的历史回放预算靠它——不知道窗口多大，裁剪阈值就只能拍脑袋。
+    context_window: int | None = None
 
 
 # 无 DB 路由时的兜底：确定性 fake provider
@@ -215,6 +218,7 @@ class LLMRouter:
                     temperature=route.temperature,
                     provider_name=provider.name,
                     effort=route.effort,
+                    context_window=route.context_window,
                 )
         return routes
 

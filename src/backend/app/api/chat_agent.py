@@ -219,7 +219,18 @@ async def run_turn(
     )
     if conv.id != conversation_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONVERSATION_NOT_FOUND")
-    history = await store.replay(session, conversation_id=conv.id)
+    # 回放预算从模型路由的 context_window 推：窗口的一半给历史（字符 ≈ token×4，两个
+    # 近似相抵），另一半留给工具 schema、系统提示与本轮生成。管理端没填就用保守缺省。
+    budget_chars: int | None = None
+    try:
+        _, route = await get_llm_router().resolve("agent", user.id)
+        if route.context_window:
+            budget_chars = route.context_window * 2  # window/2 token × 4 字符/token
+    except Exception:  # noqa: BLE001 — 路由解析失败不该挡住对话，走缺省预算
+        budget_chars = None
+    history = await store.replay(
+        session, conversation_id=conv.id, budget_chars=budget_chars
+    )
     # L1：技能目录进 system prompt（每个技能只占一行）。正文由 skill_load 按需取，
     # 绝不写进 system——那会作废整个 prompt cache 前缀。
     catalog = await agent_skills.render_catalog(session, user_id=user.id)

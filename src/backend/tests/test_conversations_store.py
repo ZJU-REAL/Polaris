@@ -224,3 +224,113 @@ def test_blocks_round_trip_is_provider_neutral():
     assert back[3].is_error is True
     # 拍平成文本时工具调用不能凭空消失
     assert "search_papers" in Message(role="assistant", content=back).text
+
+
+# ---- 回放预算：历史不能无界增长 ----
+#
+# run_turn 此前不带任何上界地回放全部历史：会话越长每轮重发越多，token 成本平方
+# 增长，最终撑爆上下文窗口。P2 加的 model_routes.context_window 列在此之前没人读。
+
+
+def _turn(question: str, result_chars: int = 3000) -> list:
+    from app.core.llm.base import Message, TextBlock, ToolResultBlock, ToolUseBlock
+    from app.services.conversations import trim_history  # noqa: F401 — 确保可导入
+
+    return [
+        Message(role="user", content=question),
+        Message(
+            role="assistant",
+            content=[TextBlock("我查一下"), ToolUseBlock("c1", "search_papers", {"q": question})],
+        ),
+        Message(role="user", content=[ToolResultBlock("c1", "x" * result_chars)]),
+        Message(role="assistant", content=f"关于{question}的回答"),
+    ]
+
+
+def test_trim_cuts_only_at_turn_boundaries():
+    """裁剪永不把 tool_use 和它的 tool_result 拆散——孤儿 tool_use 会被 Anthropic 400。"""
+    from app.core.llm.base import Message, ToolResultBlock, ToolUseBlock
+    from app.services.conversations import trim_history
+
+    history: list[Message] = []
+    for i in range(8):
+        history += _turn(f"问题{i}")
+
+    trimmed = trim_history(history, budget_chars=8000)
+    assert trimmed, "至少保留最新一轮"
+    assert trimmed[0].role == "user", "开头必须是一个用户提问"
+
+    # 逐条核对：每个 tool_use 后面必须跟着装它 result 的消息
+    pending: set[str] = set()
+    for msg in trimmed:
+        blocks = msg.content if isinstance(msg.content, list) else []
+        for b in blocks:
+            if isinstance(b, ToolUseBlock):
+                pending.add(b.id)
+            elif isinstance(b, ToolResultBlock):
+                pending.discard(b.tool_use_id)
+    assert not pending, f"有孤儿 tool_use：{pending}"
+
+
+def test_trim_keeps_the_newest_and_drops_the_oldest():
+    from app.core.llm.base import Message
+    from app.services.conversations import trim_history
+
+    history: list[Message] = []
+    for i in range(10):
+        history += _turn(f"问题{i}")
+
+    # 预算要算上「旧轮次的工具结果会被压到 ~250 字符」：10 个轮次里最新一轮 ~3000，
+    # 旧轮次每轮 ~270——4000 的预算装得下最新 + 约 3 个旧轮次，更早的必须淘汰
+    trimmed = trim_history(history, budget_chars=4_000)
+    text = "\n".join(m.text for m in trimmed)
+    assert "问题9" in text, "最新的必须在"
+    assert "问题0" not in text, "最旧的该被裁掉"
+    assert len(trimmed) < len(history)
+
+
+def test_the_latest_turn_survives_even_when_it_alone_exceeds_the_budget():
+    """预算再小也不能把最新一轮裁没——那等于把用户刚说的话扔了。"""
+    from app.services.conversations import trim_history
+
+    history = _turn("唯一的问题", result_chars=50_000)
+    trimmed = trim_history(history, budget_chars=100)
+    assert any("唯一的问题" in m.text for m in trimmed)
+
+
+def test_old_turns_have_their_tool_results_shrunk_but_the_latest_keeps_full_text():
+    """保留的旧轮次里工具结果压成一行；最新一轮保留原文（追问经常要引用它）。"""
+    from app.core.llm.base import Message, ToolResultBlock
+    from app.services.conversations import trim_history
+
+    history: list[Message] = []
+    for i in range(3):
+        history += _turn(f"问题{i}", result_chars=3000)
+
+    trimmed = trim_history(history, budget_chars=1_000_000)  # 预算充足，全部保留
+    results = [
+        b
+        for m in trimmed
+        for b in (m.content if isinstance(m.content, list) else [])
+        if isinstance(b, ToolResultBlock)
+    ]
+    assert len(results) == 3
+    assert len(results[0].content) < 300, "旧轮次的结果该被压掉"
+    assert "已截断" in results[0].content
+    assert len(results[-1].content) >= 3000, "最新一轮的结果保留原文"
+
+
+def test_plain_conversations_without_tools_trim_cleanly():
+    """纯文本会话（没有工具块）也照常按轮次裁。"""
+    from app.core.llm.base import Message
+    from app.services.conversations import trim_history
+
+    history: list[Message] = []
+    for i in range(20):
+        history.append(Message(role="user", content=f"问题{i}" * 100))
+        history.append(Message(role="assistant", content=f"回答{i}" * 100))
+
+    trimmed = trim_history(history, budget_chars=5000)
+    assert trimmed[0].role == "user"
+    assert len(trimmed) < 40
+    assert "问题19" in trimmed[-2].text

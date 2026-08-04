@@ -24,6 +24,14 @@ from app.models.conversation import Conversation, ConversationMessage
 #: 标题取首条用户消息的前若干字符
 _TITLE_CHARS = 60
 
+#: 回放预算的保守缺省（字符）。管理端没在模型路由上填 context_window 时用它——
+#: 约合 16k token，给工具 schema、系统提示和本轮生成留足余量。
+DEFAULT_REPLAY_BUDGET_CHARS = 64_000
+
+#: 旧轮次里单个工具结果保留多少。历史里的工具结果是 token 大头（一条 4000 字符），
+#: 而模型早已基于它作过答——保留一行出处就够了。
+_OLD_RESULT_KEEP_CHARS = 200
+
 
 def blocks_to_json(blocks: tuple[ContentBlock, ...] | list[ContentBlock]) -> list[dict[str, Any]]:
     """块 → 可落库的 JSON（provider 中立）。
@@ -171,7 +179,11 @@ async def append_message(
 
 
 async def replay(
-    session: AsyncSession, *, conversation_id: uuid.UUID, limit: int | None = None
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    limit: int | None = None,
+    budget_chars: int | None = None,
 ) -> list[Message]:
     """把会话历史翻回 ``Message`` 列表，按 seq 升序。
 
@@ -190,7 +202,84 @@ async def replay(
         stmt = stmt.limit(limit)
     rows = list((await session.execute(stmt)).scalars().all())
     rows.reverse()
-    return [Message(role=r.role, content=blocks_from_json(r.blocks)) for r in rows]
+    messages = [Message(role=r.role, content=blocks_from_json(r.blocks)) for r in rows]
+    return trim_history(messages, budget_chars=budget_chars)
+
+
+def _is_turn_start(msg: Message) -> bool:
+    """真正的用户提问（而不是装工具结果的 user 消息）——轮次从这里开始。"""
+    if msg.role != "user":
+        return False
+    blocks = msg.content
+    if isinstance(blocks, str):
+        return True
+    return not any(isinstance(b, ToolResultBlock) for b in blocks)
+
+
+def trim_history(
+    messages: list[Message], *, budget_chars: int | None = None
+) -> list[Message]:
+    """把历史裁进预算。两条硬规则：
+
+    1. **只在轮次边界裁**。一轮 = 一个用户提问到下一个提问之间的全部消息（含中间的
+       tool_use / tool_result 往返）。从半中腰切开会把 assistant 的 tool_use 和它的
+       tool_result 拆散——Anthropic 对孤儿 tool_use 直接 400，OpenAI 侧行为未定义。
+    2. **保留的旧轮次里，工具结果压成一行**。模型早已基于它作过答，整段留着只是
+       每轮重发的死重；最近一轮保留原文（追问经常要引用它）。
+
+    预算按拍平字符数算（与 estimate_tokens 的 len/4 同源），不精确但方向正确：
+    这里要防的是无界增长，不是精确计费。
+    """
+    budget = budget_chars or DEFAULT_REPLAY_BUDGET_CHARS
+    if not messages:
+        return messages
+
+    # 切成轮次（首条消息之前若有游离的 assistant 消息，归入第一轮）
+    turns: list[list[Message]] = []
+    current: list[Message] = []
+    for msg in messages:
+        if _is_turn_start(msg) and current:
+            turns.append(current)
+            current = []
+        current.append(msg)
+    if current:
+        turns.append(current)
+
+    # 从最新往回收轮次，直到预算耗尽；最新一轮永远保留（哪怕它自己就超了预算）
+    kept: list[list[Message]] = []
+    used = 0
+    for index, turn in enumerate(reversed(turns)):
+        is_latest = index == 0
+        turn = turn if is_latest else [_shrink_old_results(m) for m in turn]
+        size = sum(len(m.text) for m in turn)
+        if not is_latest and used + size > budget:
+            break
+        kept.append(turn)
+        used += size
+    kept.reverse()
+    return [msg for turn in kept for msg in turn]
+
+
+def _shrink_old_results(msg: Message) -> Message:
+    """旧轮次里的工具结果压成一行出处。"""
+    blocks = msg.content
+    if isinstance(blocks, str):
+        return msg
+    changed = False
+    out: list[ContentBlock] = []
+    for b in blocks:
+        if isinstance(b, ToolResultBlock) and len(b.content) > _OLD_RESULT_KEEP_CHARS:
+            out.append(
+                ToolResultBlock(
+                    b.tool_use_id,
+                    b.content[:_OLD_RESULT_KEEP_CHARS] + "…（历史轮次，已截断）",
+                    is_error=b.is_error,
+                )
+            )
+            changed = True
+        else:
+            out.append(b)
+    return Message(role=msg.role, content=out) if changed else msg
 
 
 async def finish_message(
