@@ -60,6 +60,17 @@ export function TurnStatus({
   if (phase === 'idle') return null;
 
   const running = blocks.filter((b) => b.kind === 'tool' && b.state === 'running');
+  // 有计划时优先说「在做第几步」——那是用户真正关心的事，工具名只是手段
+  const plan = blocks.find((b) => b.kind === 'plan');
+  const step =
+    plan?.kind === 'plan' ? plan.steps.findIndex((s) => s.status === 'running') : -1;
+  const stepLabel =
+    plan?.kind === 'plan' && step >= 0
+      ? tr(
+          `第 ${step + 1}/${plan.steps.length} 步：${plan.steps[step]?.title ?? ''}`,
+          `Step ${step + 1}/${plan.steps.length}: ${plan.steps[step]?.title ?? ''}`,
+        )
+      : '';
   const label =
     phase === 'tool'
       ? tr(
@@ -81,7 +92,11 @@ export function TurnStatus({
       }}
     >
       <Icon name="refresh" size={12} style={{ color: 'var(--accent)', animation: 'spin 1.1s linear infinite' }} />
-      <span>{label}</span>
+      <span
+        style={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+      >
+        {stepLabel || label}
+      </span>
       {secs >= 3 && (
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
           {secs}s

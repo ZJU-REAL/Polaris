@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
 import { Markdown } from '../../lib/markdown';
 import { api, type ProjectRead } from '../../lib/api';
-import { assistantTurnSse, type AssistantBlock } from '../../lib/assistantStream';
+import { assistantTurnSse, type AssistantBlock, type PlanStep } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 import { pageContextFrom } from './buddyContext';
 import { TurnStatus } from './TurnStatus';
@@ -129,6 +129,69 @@ function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> 
   );
 }
 
+/** 任务计划：做到哪一步了。步骤状态是模型自己更新的，界面只是如实画出来。 */
+function PlanCard({ steps }: { steps: PlanStep[] }) {
+  const done = steps.filter((s) => s.status === 'done').length;
+  return (
+    <div
+      style={{
+        border: '0.5px solid var(--border-2)',
+        borderRadius: 9,
+        background: 'var(--surface-2)',
+        padding: '9px 11px',
+        margin: '8px 0',
+      }}
+    >
+      <div
+        className="row gap6"
+        style={{ alignItems: 'center', marginBottom: 6, fontSize: 11.5, color: 'var(--text-3)' }}
+      >
+        <Icon name="layers" size={12} style={{ color: 'var(--accent)' }} />
+        <span>{tr('计划', 'Plan')}</span>
+        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+          {done}/{steps.length}
+        </span>
+      </div>
+      {steps.map((step, i) => (
+        <div
+          key={`${i}-${step.title}`}
+          className="row gap6"
+          style={{
+            alignItems: 'flex-start',
+            fontSize: 12.5,
+            lineHeight: 1.6,
+            color: step.status === 'done' ? 'var(--text-4)' : 'var(--text-2)',
+          }}
+        >
+          <Icon
+            name={step.status === 'done' ? 'check' : step.status === 'running' ? 'refresh' : 'dot'}
+            size={11}
+            style={{
+              marginTop: 4,
+              flexShrink: 0,
+              color:
+                step.status === 'done'
+                  ? 'var(--ok-tx)'
+                  : step.status === 'running'
+                    ? 'var(--accent)'
+                    : 'var(--text-4)',
+              animation: step.status === 'running' ? 'spin 1.1s linear infinite' : undefined,
+            }}
+          />
+          <span
+            style={{
+              textDecoration: step.status === 'done' ? 'line-through' : undefined,
+              fontWeight: step.status === 'running' ? 600 : 400,
+            }}
+          >
+            {step.title}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** 思考块：跑的时候只露最后一行（瞟一眼就够），停了折起来。 */
 function ThinkingView({ text, live }: { text: string; live: boolean }) {
   const [open, setOpen] = useState(false);
@@ -182,6 +245,7 @@ function ThinkingView({ text, live }: { text: string; live: boolean }) {
 
 function BlockView({ block, live }: { block: AssistantBlock; live: boolean }) {
   if (block.kind === 'text') return <Markdown source={block.text} />;
+  if (block.kind === 'plan') return <PlanCard steps={block.steps} />;
   if (block.kind === 'thinking') return <ThinkingView text={block.text} live={live} />;
   if (block.kind === 'tool') return <ToolCard block={block} />;
   return null; // 未知块：画不出来就不画，绝不抛

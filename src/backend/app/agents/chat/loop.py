@@ -25,6 +25,7 @@ from app.agents.chat.events import (
     DoneEvent,
     ErrorEvent,
     MetaEvent,
+    PlanEvent,
     ThinkingEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -66,6 +67,10 @@ PREVIEW_CHARS = 800
 
 #: 最近几轮的工具结果保持原样，更早的压成一行摘要。
 _KEEP_FULL_RESULT_ROUNDS = 2
+
+#: 计划工具的名字。循环认识这一个名字，是为了在它调成功后补一帧 PlanEvent——
+#: 前端不必去解析工具结果的 JSON 就能画出进度条。耦合是显式的，写在这儿。
+_PLAN_TOOL = "update_plan"
 
 
 @dataclass(slots=True)
@@ -212,6 +217,8 @@ class ChatAgentLoop:
                 if result is not None:
                     results.append(result)
                 yield ev
+                if plan := _plan_from(ev, result):
+                    yield PlanEvent(steps=plan)
             messages.append(Message(role="user", content=list(results)))
 
             # 技能声明了 allowed-tools 就收窄后续可用的工具面。**只能收窄，永不扩权**：
@@ -305,6 +312,28 @@ class ChatAgentLoop:
             ),
             ToolResultBlock(call.id, text, is_error=True),
         )
+
+
+def _plan_from(
+    ev: ChatEvent, result: ToolResultBlock | None
+) -> tuple[dict[str, str], ...] | None:
+    """成功的 update_plan 结果 → 计划步骤；其余一律 None。
+
+    读的是**回喂给模型的那份文本**，不是另算一份：界面上画的计划和模型看到的计划
+    必须是同一个东西，否则用户按着进度条问"第二步呢"，模型一脸茫然。
+    """
+    if not isinstance(ev, ToolResultEvent) or ev.name != _PLAN_TOOL or not ev.ok:
+        return None
+    if result is None:
+        return None
+    try:
+        payload = json.loads(result.content)
+        steps = payload["steps"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(steps, list):
+        return None
+    return tuple(s for s in steps if isinstance(s, dict))
 
 
 def _skill_narrowing(

@@ -8,8 +8,14 @@ import { postSse } from './sse';
    运行时炸了没人拦得住。
    ============================================================ */
 
+export interface PlanStep {
+  title: string;
+  status: 'pending' | 'running' | 'done';
+}
+
 export type AssistantBlock =
   | { kind: 'text'; text: string }
+  | { kind: 'plan'; steps: PlanStep[] }
   | { kind: 'thinking'; text: string }
   | {
       kind: 'tool';
@@ -84,6 +90,35 @@ export function assistantTurnSse(
               return [...blocks.slice(0, -1), { kind: 'thinking', text: last.text + text }];
             }
             return [...blocks, { kind: 'thinking', text }];
+          });
+        } else if (event === 'plan') {
+          // 计划是**替换**不是追加：后端每次发全量，界面上永远只有一份最新的。
+          // 就地更新（而不是插到末尾）才不会让进度条在对话里越滚越多。
+          const steps = Array.isArray(data.steps)
+            ? (data.steps as unknown[]).flatMap((raw) => {
+                if (!raw || typeof raw !== 'object') return [];
+                const step = raw as Record<string, unknown>;
+                const title = str(step.title);
+                if (!title) return [];
+                const status = str(step.status, 'pending');
+                return [
+                  {
+                    title,
+                    status: (['pending', 'running', 'done'] as const).includes(
+                      status as PlanStep['status'],
+                    )
+                      ? (status as PlanStep['status'])
+                      : ('pending' as const),
+                  },
+                ];
+              })
+            : [];
+          if (!steps.length) return;
+          handlers.onBlocks((blocks) => {
+            const at = blocks.findIndex((b) => b.kind === 'plan');
+            const block: AssistantBlock = { kind: 'plan', steps };
+            if (at < 0) return [...blocks, block];
+            return blocks.map((b, i) => (i === at ? block : b));
           });
         } else if (event === 'tool_call') {
           const id = str(data.id);

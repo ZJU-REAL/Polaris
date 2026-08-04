@@ -42,6 +42,11 @@ def _mcp_input_schema(base: dict[str, Any]) -> dict[str, Any]:
     return {"type": "object", "properties": props, "required": required}
 
 
+#: 只在对话里有意义的工具，不进 MCP 清单。``update_plan`` 记的是「这场对话的计划」，
+#: 对外部 MCP 客户端就是个回声——它没有对话，也没有能画进度的界面。
+_CONVERSATION_ONLY = frozenset({"update_plan"})
+
+
 def tool_definitions() -> list[dict[str, Any]]:
     """MCP tools/list 载荷：只读工具的 name/description/inputSchema。"""
     return [
@@ -52,6 +57,7 @@ def tool_definitions() -> list[dict[str, Any]]:
         }
         for spec in list_tools()
         if spec.read_only  # 外部 MCP 客户端只拿只读工具，见下方注释
+        and spec.name not in _CONVERSATION_ONLY
     ]
 
 

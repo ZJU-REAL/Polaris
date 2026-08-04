@@ -36,6 +36,17 @@ class ThinkingEvent:
 
 
 @dataclass(slots=True, frozen=True)
+class PlanEvent:
+    """当前的任务计划。``update_plan`` 调成功后由循环补发。
+
+    它是 ``tool_result`` 的**衍生帧**，不是新的信息源：同一份计划已经在工具结果里
+    回喂给模型了，这一帧只是让前端不必去解析工具结果的 JSON 就能画出进度。
+    """
+
+    steps: tuple[dict[str, str], ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
 class ToolCallEvent:
     id: str
     name: str
@@ -94,6 +105,7 @@ ChatEvent = (
     | SourcesEvent
     | DeltaEvent
     | ThinkingEvent
+    | PlanEvent
     | ToolCallEvent
     | ToolResultEvent
     | UsageEvent
