@@ -78,6 +78,9 @@ class ChatTurnRequest:
     statement: str | None = None
     extra_system: str = ""
     skill_catalog: str = ""
+    #: 用户此刻在看什么（PolarisBuddy 的页面感知）。拼在本轮提问前面，**不进 system**：
+    #: system 是稳定前缀，每轮变一次等于 prompt cache 永不命中。
+    page_context: str = ""
 
 
 @dataclass(slots=True)
@@ -120,7 +123,14 @@ class ChatAgentLoop:
                 ),
             ),
             *self._history,
-            Message(role="user", content=req.question),
+            Message(
+                role="user",
+                content=(
+                    f"{req.page_context}\n\n{req.question}"
+                    if req.page_context
+                    else req.question
+                ),
+            ),
         ]
         state = _RoundState()
         yield MetaEvent(

@@ -4731,6 +4731,10 @@ export const api = {
    */
   /** 每日论文池的同步状况（全员可读）：最新一天、是否过期、各分类成败。 */
   /** 全局助手：会话列表（最近说过话的在前）。 */
+  /** PolarisBuddy 开面板时的问候语。数字是 SQL 数出来的，不过模型。 */
+  getBuddyGreeting(): Promise<{ greeting: string; stats: Record<string, number> }> {
+    return request<{ greeting: string; stats: Record<string, number> }>('/chat/buddy/greeting');
+  },
   listAssistantConversations(): Promise<
     { id: string; title: string; last_message_at: string | null; project_id: string | null }[]
   > {

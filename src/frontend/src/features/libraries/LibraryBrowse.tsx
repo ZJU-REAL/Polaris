@@ -62,6 +62,7 @@ import {
 } from '../wiki/shared';
 import { ReadingDot, readerFrom } from '../reading/shared';
 import { AddToButton } from '../library/AddToPopover';
+import { paperDragProps } from '../assistant/paperDrag';
 
 // 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
 const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m.GraphTab })));
@@ -115,6 +116,8 @@ const PaperRow = memo(function PaperRow({
   return (
     <div
       onClick={onClick}
+      // 可以直接拖给 PolarisBuddy 解读（右下角悬浮球是落点）
+      {...paperDragProps(p.id, p.title)}
       style={{
         padding: '12px 16px',
         cursor: 'pointer',

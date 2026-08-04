@@ -48,6 +48,7 @@ import { PaperMyTagChips, PaperMyTagsRow, PaperNotesSection } from '../shared/Pa
 import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { AddToButton } from '../library/AddToPopover';
 import { PaperProgressModal } from '../library/PaperProgressModal';
+import { paperDragProps } from '../assistant/paperDrag';
 
 /* ============================================================
    论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
@@ -538,6 +539,8 @@ const PaperRow = memo(function PaperRow({
   return (
     <div
       onClick={onClick}
+      // 可以直接拖给 PolarisBuddy 解读（右下角悬浮球是落点）
+      {...paperDragProps(p.id, p.title)}
       style={{
         padding: '12px 16px',
         cursor: 'pointer',

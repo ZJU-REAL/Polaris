@@ -44,7 +44,7 @@ from app.schemas.chat_agent import (
     MessageRead,
     SkillImportRequest,
 )
-from app.services import agent_skills
+from app.services import agent_skills, buddy
 from app.services import conversations as store
 from app.services import projects as projects_service
 from app.tools.context import ToolContext
@@ -205,6 +205,24 @@ async def delete_skill(
     await session.commit()
 
 
+@router.get("/buddy/greeting")
+async def buddy_greeting(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, object]:
+    """PolarisBuddy 开面板时说的那句话，外加它依据的计数。
+
+    **不过模型**：每次开面板都要出现，过 LLM 就是每次都花钱、还得等，而且模型会把
+    数字说错。句子是从真实计数里挑的，不是生成的。
+    """
+    _require_enabled()
+    stats = await buddy.collect_stats(session, user_id=user.id)
+    return {
+        "greeting": buddy.compose_greeting(stats, name=user.display_name or None),
+        "stats": stats.as_dict(),
+    }
+
+
 @router.post("/conversations/{conversation_id}/turn")
 async def run_turn(
     conversation_id: uuid.UUID,
@@ -255,6 +273,7 @@ async def run_turn(
         max_rounds=payload.max_rounds,
         statement=payload.statement,
         skill_catalog=catalog,
+        page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
     )
     conv_id, user_id = conv.id, user.id
 

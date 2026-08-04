@@ -37,6 +37,9 @@ class ConversationTurnRequest(BaseModel):
     tool_names: list[str] | None = None
     max_rounds: int = Field(default=8, ge=1, le=20)
     statement: str | None = None
+    #: 用户此刻在看的页面（前端声明）。paper|idea|experiment|library|project|manuscript|daily
+    page_kind: str | None = Field(default=None, max_length=32)
+    page_id: str | None = Field(default=None, max_length=64)
 
 
 class MessageRead(BaseModel):

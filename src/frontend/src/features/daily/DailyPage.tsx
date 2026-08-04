@@ -56,6 +56,7 @@ import { DailyLikes } from './DailyLikes';
 import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
 import { PaperProgressModal } from '../library/PaperProgressModal';
+import { paperDragProps } from '../assistant/paperDrag';
 
 /* ============================================================
    /daily — 每日新论文：arxiv 每日新提交（订阅分类内）。保留期由管理员配置（默认 14 天）。
@@ -121,6 +122,8 @@ function DailyRow({
   return (
     <div
       onClick={onClick}
+      // 可以直接拖给 PolarisBuddy 解读（右下角悬浮球是落点）
+      {...paperDragProps(p.paper_id, p.title)}
       style={{
         padding: '11px 14px 11px 16px',
         cursor: 'pointer',

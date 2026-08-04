@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
 import { Markdown } from '../../lib/markdown';
 import { api, type ProjectRead } from '../../lib/api';
 import { assistantTurnSse, type AssistantBlock } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
+import { pageContextFrom } from './buddyContext';
+import { TurnStatus } from './TurnStatus';
 
 /* ============================================================
-   Polaris 助手：全局抽屉。⌘J 开关。
+   PolarisBuddy：全局抽屉。⌘J 开关，或点右下角的悬浮球。
 
-   与现有六个对话入口并存——它们一行没改。助手能跨课题/库/论文调用平台工具，
+   与现有六个对话入口并存——它们一行没改。Buddy 能跨课题/库/论文调用平台工具，
    界面上多出来的就是「工具卡片」：正在调什么、调完拿到了什么。
 
    渲染必须**防御式**：SSE 过来的是 JSON.parse 出来的 any，TypeScript 只在编译期
@@ -126,23 +129,78 @@ function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> 
   );
 }
 
-function BlockView({ block }: { block: AssistantBlock }) {
+/** 思考块：跑的时候只露最后一行（瞟一眼就够），停了折起来。 */
+function ThinkingView({ text, live }: { text: string; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  const tail = text.trim().split('\n').filter(Boolean).slice(-1)[0] ?? '';
+  return (
+    <div style={{ margin: '4px 0' }}>
+      <div
+        className="row gap6 hoverable"
+        style={{ cursor: 'pointer', alignItems: 'center', fontSize: 11.5, color: 'var(--text-4)' }}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon
+          name="chevDown"
+          size={11}
+          style={{ transform: open ? undefined : 'rotate(-90deg)', transition: 'transform 0.12s' }}
+        />
+        <span>{tr('思考过程', 'Thinking')}</span>
+        {!open && live && (
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              opacity: 0.75,
+            }}
+          >
+            {tail}
+          </span>
+        )}
+      </div>
+      {open && (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--text-3)',
+            whiteSpace: 'pre-wrap',
+            borderLeft: '2px solid var(--border-2)',
+            paddingLeft: 9,
+            marginTop: 4,
+            lineHeight: 1.6,
+          }}
+        >
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BlockView({ block, live }: { block: AssistantBlock; live: boolean }) {
   if (block.kind === 'text') return <Markdown source={block.text} />;
-  if (block.kind === 'thinking') {
-    return (
-      <details style={{ margin: '4px 0' }}>
-        <summary style={{ fontSize: 11.5, color: 'var(--text-4)', cursor: 'pointer' }}>
-          {tr('思考过程', 'Thinking')}
-        </summary>
-        <div style={{ fontSize: 12, color: 'var(--text-3)', whiteSpace: 'pre-wrap' }}>{block.text}</div>
-      </details>
-    );
-  }
+  if (block.kind === 'thinking') return <ThinkingView text={block.text} live={live} />;
   if (block.kind === 'tool') return <ToolCard block={block} />;
   return null; // 未知块：画不出来就不画，绝不抛
 }
 
-export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AssistantPanel({
+  open,
+  onClose,
+  droppedPaperId,
+  onDroppedPaperHandled,
+  onBusyChange,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** 拖到悬浮球上的论文 id：进来就自动问一句「解读这篇」 */
+  droppedPaperId?: string | null;
+  onDroppedPaperHandled?: () => void;
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -157,14 +215,37 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
   const [projectId, setProjectId] = useState<string | null>(null);
   //: 上一轮因为没选课题而失败过——把选择器点亮，别让人对着一句错误发呆
   const [projectMissing, setProjectMissing] = useState(false);
+  const [greeting, setGreeting] = useState<string>('');
+  const [stats, setStats] = useState<Record<string, number>>({});
+  const [contextOn, setContextOn] = useState(true);
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+  const pageContext = pageContextFrom(location.pathname);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [turns]);
 
   useEffect(() => () => abortRef.current?.(), []);
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
+  // 开面板时取一次问候语。数字是 SQL 数出来的，**不过模型**——每次开面板过一次 LLM
+  // 既慢又费钱，而且模型会把数字说错。取不到就不说，不要兜一句假的（0 和「没数出来」
+  // 在界面上长得一样，对用户却是两回事）。
+  useEffect(() => {
+    if (!open || greeting) return;
+    void api
+      .getBuddyGreeting()
+      .then((g) => {
+        setGreeting(g.greeting);
+        setStats(g.stats ?? {});
+      })
+      .catch(() => setGreeting(''));
+  }, [open, greeting]);
 
   // 面板打开时才拉课题列表：关着的时候没人看得见，不值得多一个请求。
   useEffect(() => {
@@ -236,10 +317,9 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
     setProjectMissing(false);
   }, [stop]);
 
-  const send = useCallback(async () => {
-    const question = input.trim();
+  const ask = useCallback(
+    async (question: string) => {
     if (!question || busy) return;
-    setInput('');
     setBusy(true);
     setTurns((t) => [...t, { role: 'user', blocks: [{ kind: 'text', text: question }] }, { role: 'assistant', blocks: [] }]);
 
@@ -274,6 +354,10 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
       id,
       question,
       {
+        // 页面上下文是**线索不是授权**：它只说用户在看什么，真要读内容还得调工具，
+        // 那条路上的权限校验一点没少。用户可以关掉。
+        page:
+          contextOn && pageContext ? { kind: pageContext.kind, id: pageContext.id } : undefined,
         onBlocks: patch,
         onDone: () => setBusy(false),
         onError: (detail) => {
@@ -284,9 +368,43 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
       },
       projectId,
     );
-  }, [input, busy, convId, projectId]);
+    },
+    [busy, convId, projectId, contextOn, pageContext],
+  );
+
+  const send = useCallback(() => {
+    const question = input.trim();
+    if (!question) return;
+    setInput('');
+    void ask(question);
+  }, [input, ask]);
+
+  // 论文被拖到悬浮球上：直接问一句解读。id 写进问题里，Buddy 自己去 get_paper。
+  useEffect(() => {
+    if (!droppedPaperId || busy) return;
+    onDroppedPaperHandled?.();
+    void ask(
+      tr(
+        `帮我解读这篇论文（id: ${droppedPaperId}）：它解决什么问题、方法怎么工作、证据强不强。`,
+        `Walk me through this paper (id: ${droppedPaperId}): the problem, how the method works, how strong the evidence is.`,
+      ),
+    );
+  }, [droppedPaperId, busy, ask, onDroppedPaperHandled]);
 
   if (!open) return null;
+
+  // 快捷动作按真实计数给：没有实验就不该出现「实验怎么样了」
+  const suggestions = [
+    stats.experiments_running ? tr('我的实验现在怎么样了？', 'How are my experiments doing?') : '',
+    stats.daily_today ? tr('帮我筛一遍今天的新论文', 'Triage today’s new papers for me') : '',
+    stats.saved_recent
+      ? tr('这周我收的论文有什么共同线索？', 'What connects the papers I saved this week?')
+      : '',
+    pageContext?.kind === 'paper' ? tr('解读我正在看的这篇', 'Walk me through this paper') : '',
+  ].filter(Boolean);
+
+  const lastTurn = turns[turns.length - 1];
+  const liveBlocks = busy && lastTurn?.role === 'assistant' ? lastTurn.blocks : [];
 
   return (
     <div
@@ -305,14 +423,9 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
       }}
     >
       <div className="row gap8" style={{ padding: '12px 16px', borderBottom: '0.5px solid var(--border-2)', alignItems: 'center' }}>
-        <Icon name="chat" size={15} style={{ color: 'var(--accent)' }} />
-        <strong style={{ fontSize: 14 }}>{tr('Polaris 助手', 'Polaris assistant')}</strong>
+        <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
+        <strong style={{ fontSize: 14 }}>PolarisBuddy</strong>
         <span style={{ flex: 1 }} />
-        {busy && (
-          <button className="btn btn-ghost sm" onClick={stop} style={{ height: 24, fontSize: 11 }}>
-            <Icon name="pause" size={11} /> {tr('停止', 'Stop')}
-          </button>
-        )}
         <button
           className="icon-btn"
           onClick={() => void openHistory()}
@@ -407,34 +520,86 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
 
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px' }}>
         {turns.length === 0 && (
-          <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.7 }}>
-            {tr(
-              '助手可以调用平台的检索工具去查东西，而不是只凭上下文猜。试试问「最近有哪些关于 planning 的新论文」。',
-              'The assistant calls the platform’s search tools instead of guessing from context. Try asking what is new on a topic.',
+          <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+            {greeting && (
+              <div
+                style={{
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent-text)',
+                  borderRadius: 10,
+                  padding: '10px 12px',
+                  marginBottom: 10,
+                  fontSize: 13,
+                }}
+              >
+                {greeting}
+              </div>
             )}
+            <div style={{ color: 'var(--text-3)' }}>
+              {tr(
+                '我会调用平台的检索工具去查，而不是凭上下文猜。把论文拖到右下角的球上，我就替你读它。',
+                'I call the platform’s search tools instead of guessing. Drop a paper on the bubble and I’ll read it for you.',
+              )}
+            </div>
+            {/* 快捷动作只在对应数据真的存在时出现：没有实验就不该问「实验怎么样了」 */}
+            <div className="row gap6 wrap" style={{ marginTop: 10 }}>
+              {suggestions.map((text) => (
+                <span
+                  key={text}
+                  className="chip"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => void ask(text)}
+                >
+                  {text}
+                </span>
+              ))}
+            </div>
           </div>
         )}
-        {turns.map((turn, i) => (
-          <div key={i} style={{ marginBottom: 14 }}>
-            {turn.role === 'user' ? (
-              <div style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', borderRadius: 9, padding: '8px 11px', fontSize: 13 }}>
-                {turn.blocks.map((b, j) => (b.kind === 'text' ? <span key={j}>{b.text}</span> : null))}
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, lineHeight: 1.7 }}>
-                {turn.blocks.map((b, j) => (
-                  <BlockView key={j} block={b} />
-                ))}
-                {busy && i === turns.length - 1 && turn.blocks.length === 0 && (
-                  <span style={{ color: 'var(--text-4)', fontSize: 12 }}>{tr('思考中…', 'Thinking…')}</span>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
+        {turns.map((turn, i) => {
+          const isLast = i === turns.length - 1;
+          return (
+            <div key={i} style={{ marginBottom: 14 }}>
+              {turn.role === 'user' ? (
+                <div style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', borderRadius: 9, padding: '8px 11px', fontSize: 13 }}>
+                  {turn.blocks.map((b, j) => (b.kind === 'text' ? <span key={j}>{b.text}</span> : null))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+                  {turn.blocks.map((b, j) => (
+                    <BlockView
+                      key={j}
+                      block={b}
+                      live={busy && isLast && j === turn.blocks.length - 1}
+                    />
+                  ))}
+                  {isLast && <TurnStatus blocks={liveBlocks} busy={busy} onStop={stop} />}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <div style={{ padding: 12, borderTop: '0.5px solid var(--border-2)' }}>
+        {pageContext && (
+          <div
+            className="row gap6"
+            style={{ alignItems: 'center', marginBottom: 6, fontSize: 11, color: 'var(--text-4)' }}
+            title={tr(
+              '我知道你在看什么。关掉的话这轮就不带页面信息了。',
+              'I can see what you are looking at. Turn it off to leave the page out of this turn.',
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={contextOn}
+              onChange={(e) => setContextOn(e.target.checked)}
+              style={{ width: 12, height: 12, margin: 0, accentColor: 'var(--accent)', cursor: 'pointer' }}
+            />
+            <span>{pageContext.label}</span>
+          </div>
+        )}
         <textarea
           className="textarea"
           rows={2}
@@ -444,7 +609,7 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              void send();
+              send();
             }
           }}
           style={{ width: '100%', fontSize: 13 }}

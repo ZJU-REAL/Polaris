@@ -10,6 +10,7 @@ import { UpdateBadge } from '../components/ui/UpdateBadge';
 import { useAuth } from './auth';
 import { topicPath, useProject } from './project';
 import { AssistantPanel } from '../features/assistant/AssistantPanel';
+import { BuddyBubble } from '../features/assistant/BuddyBubble';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
@@ -430,13 +431,16 @@ export function AppShell() {
   // —— 全局搜索（⌘K / Ctrl+K）——
   const [searchOpen, setSearchOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  // 拖到悬浮球上的论文：交给面板发起解读，取走后清空（清空由面板回调做）
+  const [droppedPaperId, setDroppedPaperId] = useState<string | null>(null);
+  const [buddyBusy, setBuddyBusy] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setSearchOpen((o) => !o);
       }
-      // ⌘J：全局助手。挑 J 是因为 ⌘K 已被搜索占了，而两者都该是全局的
+      // ⌘J：PolarisBuddy。挑 J 是因为 ⌘K 已被搜索占了，而两者都该是全局的
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault();
         setAssistantOpen((o) => !o);
@@ -811,8 +815,22 @@ export function AppShell() {
       {/* —— 全局搜索面板 —— */}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
 
-      {/* —— 全局助手（⌘J）—— */}
-      <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+      {/* —— PolarisBuddy：悬浮球 + 抽屉（⌘J）—— */}
+      <BuddyBubble
+        busy={buddyBusy}
+        onOpen={() => setAssistantOpen(true)}
+        onDropPaper={(paperId) => {
+          setDroppedPaperId(paperId);
+          setAssistantOpen(true);
+        }}
+      />
+      <AssistantPanel
+        open={assistantOpen}
+        onClose={() => setAssistantOpen(false)}
+        droppedPaperId={droppedPaperId}
+        onDroppedPaperHandled={() => setDroppedPaperId(null)}
+        onBusyChange={setBuddyBusy}
+      />
 
       <ToastHost />
     </div>
