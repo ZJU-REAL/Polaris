@@ -66,13 +66,14 @@ _NOT_FOUND = HTTPException(status.HTTP_404_NOT_FOUND, detail="DAILY_ENTRY_NOT_FO
 async def list_days(
     announce: str | None = Query(default=None, pattern="^(new|cross)$"),
     category: str | None = Query(default=None),
+    collected: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[DailyDay]:
     return [
         DailyDay(**d)
         for d in await daily_service.list_days(
-            session, announce=announce, category=category
+            session, announce=announce, category=category, collected=collected
         )
     ]
 
@@ -91,6 +92,8 @@ async def list_papers(
     affiliation: str | None = Query(default=None, max_length=200),
     # 只看被某个文献库收录的（每日论文页按库筛选）
     library_id: uuid.UUID | None = Query(default=None),
+    # 只看被**任意**文献库收录的（每日页的默认视角）
+    collected: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DailyPage:
@@ -119,6 +122,7 @@ async def list_papers(
                 author=author,
                 affiliation=affiliation,
                 library_id=library_id,
+                collected=collected,
             )
             mode_used = "semantic"
             entry_by_paper = {paper.id: entry for entry, paper, _ in rows}
@@ -150,6 +154,7 @@ async def list_papers(
             author=author,
             affiliation=affiliation,
             library_id=library_id,
+            collected=collected,
         )
         return DailyPage(items=items, total=total, page=page, size=size, mode_used=mode_used)
     ready, ready_total = await daily_service.embedding_coverage(session)

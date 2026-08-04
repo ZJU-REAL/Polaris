@@ -556,10 +556,10 @@ function DailyDetailPane({
 }
 
 type DailyView = 'papers' | 'chat';
-type AnnounceFilter = 'all' | 'new' | 'cross';
+type AnnounceFilter = 'collected' | 'all' | 'new' | 'cross';
 
-// 类型筛选默认值：只看新工作（高级检索面板里的「恢复默认」也回到这个值）
-const DEFAULT_ANNOUNCE: AnnounceFilter = 'new';
+// 类型筛选默认值：只看已收录的（进了文献库的才值得先看；「恢复默认」也回到这个值）
+const DEFAULT_ANNOUNCE: AnnounceFilter = 'collected';
 
 // 列表固定按点赞排序（没有排序切换 UI）；语义检索时后端按相关度排，忽略这个值
 // 时间倒排：最新的在最前。按点赞排会让一篇被点过的旧论文压在当天新论文前面，
@@ -647,7 +647,7 @@ export function DailyPage() {
   // 只看被某个文献库收录的论文（#218）。空 = 不限
   // 日期：勾上「全部」就是跨天一起看（默认）；取消勾选后在有数据的日期间前后切换。
   // 只在这些日期间跳，而不是任意日历日——中间没有公告的日子点进去是空的。
-  const [showAll, setShowAll] = useState(true);
+  const [showAll, setShowAll] = useState(false);
   const [day, setDay] = useState('');
   // 高级检索默认展开：分类 / 类型是常用筛选，藏起来用户找不到
   // 默认收起：日期切换已经在工具栏上，高级条件是偶尔才用的东西
@@ -660,7 +660,8 @@ export function DailyPage() {
   const author = useDebounced(authorInput.trim());
   const affiliation = useDebounced(affiliationInput.trim());
   // 高级条件是否偏离默认（决定高级检索按钮上的小圆点）
-  const advActive = !!category || announce !== DEFAULT_ANNOUNCE || !!author || !!affiliation;
+  // 分类/类型已上工具栏；高级检索只剩作者与机构
+  const advActive = !!author || !!affiliation;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collectPaper, setCollectPaper] = useState<CollectPaperRef | null>(null);
   const [collectOpen, setCollectOpen] = useState(false);
@@ -681,7 +682,12 @@ export function DailyPage() {
   // 保留期是管理员可配的，界面上不能写死「7 天」
   const daysQuery = useQuery({
     queryKey: ['daily-days', announce, category],
-    queryFn: () => api.listDailyDays({ announce: announce || undefined, category: category || undefined }),
+    queryFn: () =>
+      api.listDailyDays({
+        announce: announce === 'new' || announce === 'cross' ? announce : undefined,
+        category: category || undefined,
+        collected: announce === 'collected' || undefined,
+      }),
     retry: false,
     staleTime: 60_000,
   });
@@ -689,6 +695,14 @@ export function DailyPage() {
   // 有数据的日期，升序（旧 → 新）；前后切换只在这些日期间跳
   const dates = (daysQuery.data ?? []).map((d) => d.date).sort();
   const dayIdx = dates.indexOf(day);
+
+  // 默认停在最近一天。以前默认落到「今天」，周末没公告时页面是空的看着像坏了；
+  // 落到「最新**有数据**的一天」没有这个问题——dates 本来就只含有数据的日期。
+  useEffect(() => {
+    const latest = dates[dates.length - 1];
+    if (!showAll && !day && latest) setDay(latest);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAll, day, dates.join(',')]);
 
 
   // 默认停在「全部」：跨天一起看、按时间倒排，最新的自然在最前。以前默认落到最新
@@ -741,7 +755,8 @@ export function DailyPage() {
         size: PAGE_SIZE,
         q: q || undefined,
         category: category || undefined,
-        announce: announce === 'all' ? undefined : announce,
+        announce: announce === 'new' || announce === 'cross' ? announce : undefined,
+        collected: announce === 'collected' || undefined,
         author: author || undefined,
         affiliation: affiliation || undefined,
         date: showAll ? undefined : day || undefined,
@@ -899,63 +914,59 @@ export function DailyPage() {
                   open={advOpen}
                   active={advActive}
                   onToggle={() => setAdvOpen((o) => !o)}
-                  title={tr(
-                    '高级检索：分类 / 类型 / 作者 / 机构',
-                    'Advanced search: category / type / author / affiliation',
-                  )}
+                  title={tr('高级检索：作者 / 机构', 'Advanced search: author / affiliation')}
                 />
                 <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
                   {total ? tr(`${total} 篇`, `${total}`) : ''}
                 </span>
               </div>
 
-              {/* 高级检索面板：分类 + 类型 + 作者 / 机构（日期步进和排序留在工具栏，它们是主导航） */}
+              {/* 分类与类型是主筛选，直接摆在工具栏上（作者/机构才收进高级检索） */}
+              <div className="row gap6 wrap" style={{ marginTop: 8, alignItems: 'center' }}>
+                <select
+                  className="input mono"
+                  style={{ width: 120, height: 26, fontSize: 11, padding: '0 6px', flexShrink: 0 }}
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  title={tr('只看某个订阅分类的论文', 'Only papers in one subscribed category')}
+                >
+                  <option value="">{tr('全部分类', 'All categories')}</option>
+                  {(categoriesQuery.data?.categories ?? []).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <span
+                  className={`chip${announce === 'collected' ? ' on' : ''}`}
+                  onClick={() => setAnnounce('collected')}
+                  title={tr('只看已被文献库收录的（默认）', 'Only papers collected into a library (default)')}
+                >
+                  {tr('已收录', 'Collected')}
+                </span>
+                <span className={`chip${announce === 'all' ? ' on' : ''}`} onClick={() => setAnnounce('all')}>
+                  {tr('全部', 'All')}
+                </span>
+                <span className={`chip${announce === 'new' ? ' on' : ''}`} onClick={() => setAnnounce('new')}>
+                  {tr('新工作', 'New')}
+                </span>
+                <span className={`chip${announce === 'cross' ? ' on' : ''}`} onClick={() => setAnnounce('cross')}>
+                  {tr('更新', 'Updated')}
+                </span>
+              </div>
+
+              {/* 高级检索面板：作者 / 机构（分类与类型已上工具栏） */}
               {advOpen && (
                 <AdvancedPanel
                   onClear={
                     advActive
                       ? () => {
-                          setCategory('');
-                          setAnnounce(DEFAULT_ANNOUNCE);
                           setAuthorInput('');
                           setAffiliationInput('');
                         }
                       : undefined
                   }
                 >
-                  <div className="row gap6" style={{ alignItems: 'center' }}>
-                    <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
-                      {tr('分类', 'Category')}
-                    </span>
-                    <select
-                      className="input mono"
-                      style={{ flex: 1, minWidth: 0, height: 26, fontSize: 11, padding: '0 6px' }}
-                      value={category}
-                      onChange={(e) => setCategory(e.target.value)}
-                      title={tr('只看某个订阅分类的论文', 'Only papers in one subscribed category')}
-                    >
-                      <option value="">{tr('全部分类', 'All categories')}</option>
-                      {(categoriesQuery.data?.categories ?? []).map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="row gap6 wrap" style={{ alignItems: 'center' }}>
-                    <span style={{ width: 34, flexShrink: 0, fontSize: 11, color: 'var(--text-3)' }}>
-                      {tr('类型', 'Type')}
-                    </span>
-                    <span className={`chip${announce === 'all' ? ' on' : ''}`} onClick={() => setAnnounce('all')}>
-                      {tr('全部', 'All')}
-                    </span>
-                    <span className={`chip${announce === 'new' ? ' on' : ''}`} onClick={() => setAnnounce('new')}>
-                      {tr('新工作', 'New')}
-                    </span>
-                    <span className={`chip${announce === 'cross' ? ' on' : ''}`} onClick={() => setAnnounce('cross')}>
-                      {tr('更新', 'Updated')}
-                    </span>
-                  </div>
                   <div className="row gap8">
                     <FilterInput
                       value={authorInput}
@@ -976,21 +987,14 @@ export function DailyPage() {
               )}
               {/* 面板收起时，把正在生效的分类/类型如实说一句（默认「只看新工作」也算），
                   免得筛选藏进面板后用户不知道列表被过滤过 */}
-              {!advOpen && (announce !== 'all' || !!category || !!author || !!affiliation) && (
+              {!advOpen && (!!author || !!affiliation) && (
                 <div
                   onClick={() => setAdvOpen(true)}
                   style={{ marginTop: 6, fontSize: 11, color: 'var(--text-4)', cursor: 'pointer', lineHeight: 1.5 }}
                   title={tr('点开高级检索改筛选条件', 'Open advanced search to change the filters')}
                 >
                   {tr('只看：', 'Showing: ')}
-                  {[
-                    announce === 'new' ? tr('新工作', 'New') : announce === 'cross' ? tr('更新', 'Updated') : '',
-                    category,
-                    author,
-                    affiliation,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
+                  {[author, affiliation].filter(Boolean).join(' · ')}
                 </div>
               )}
 

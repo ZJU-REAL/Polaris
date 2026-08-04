@@ -4624,10 +4624,13 @@ export const api = {
   getDailyRetention(): Promise<{ days: number }> {
     return request<{ days: number }>('/daily/retention');
   },
-  listDailyDays(params: { announce?: string; category?: string } = {}): Promise<DailyDay[]> {
+  listDailyDays(
+    params: { announce?: string; category?: string; collected?: boolean } = {},
+  ): Promise<DailyDay[]> {
     const qs = new URLSearchParams();
     if (params.announce) qs.set('announce', params.announce);
     if (params.category) qs.set('category', params.category);
+    if (params.collected) qs.set('collected', 'true');
     const suffix = qs.toString() ? `?${qs}` : '';
     return request<DailyDay[]>(`/daily/days${suffix}`);
   },
@@ -4650,11 +4653,14 @@ export const api = {
       mode?: SearchMode;
       /** 只看被这个文献库收录的（候选与回收站不算收录） */
       libraryId?: string;
+      /** 只看被任意文献库收录的（每日页的默认视角） */
+      collected?: boolean;
     } = {},
   ): Promise<DailyPage> {
     const params = new URLSearchParams();
     if (opts.date) params.set('date', opts.date);
     if (opts.libraryId) params.set('library_id', opts.libraryId);
+    if (opts.collected) params.set('collected', 'true');
     if (opts.sort) params.set('sort', opts.sort);
     if (opts.page) params.set('page', String(opts.page));
     if (opts.size) params.set('size', String(opts.size));

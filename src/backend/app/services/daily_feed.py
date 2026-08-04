@@ -19,7 +19,7 @@ import re
 import uuid
 from typing import Any
 
-from sqlalchemy import String, cast, delete, func, select, text
+from sqlalchemy import String, case, cast, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.embedding_space import EmbeddingSpace, active_space
@@ -607,6 +607,7 @@ async def list_days(
     *,
     announce: str | None = None,
     category: str | None = None,
+    collected: bool = False,
 ) -> list[dict[str, Any]]:
     """每天的条目数。**按当前筛选算**——日期标签上的数字与列表里看到的必须是同一回事，
     否则选了 cs.CV 之后标签仍显示全部篇数，看起来就像筛选没生效。
@@ -614,6 +615,17 @@ async def list_days(
     筛选条件与 :func:`list_papers` 保持同一口径。
     """
     stmt = select(DailyFeedEntry.feed_date, func.count(DailyFeedEntry.id))
+    if collected:
+        from app.models.library_direction import LibraryPaper
+        from app.services.papers import PAPER_STATUS_GROUPS
+
+        stmt = stmt.where(
+            DailyFeedEntry.paper_id.in_(
+                select(LibraryPaper.paper_id).where(
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"])
+                )
+            )
+        )
     if announce in ("new", "cross"):
         stmt = stmt.where(DailyFeedEntry.announce_type == announce)
     if category:
@@ -643,8 +655,22 @@ async def list_papers(
     author: str | None = None,
     affiliation: str | None = None,
     library_id: uuid.UUID | None = None,
+    collected: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     stmt = select(DailyFeedEntry, Paper).join(Paper, Paper.id == DailyFeedEntry.paper_id)
+    if collected:
+        # 「已收录」：被**任意**文献库真正收进去的（候选/回收站不算）。与 library_id
+        # 的区别是不限定哪个库——它是每日页的默认视角：只看进了库的。
+        from app.models.library_direction import LibraryPaper
+        from app.services.papers import PAPER_STATUS_GROUPS
+
+        stmt = stmt.where(
+            Paper.id.in_(
+                select(LibraryPaper.paper_id).where(
+                    LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"])
+                )
+            )
+        )
     if date is not None:
         stmt = stmt.where(DailyFeedEntry.feed_date == date)
     if library_id is not None:
@@ -681,12 +707,32 @@ async def list_papers(
     total = (await session.execute(count_stmt)).scalar_one()
 
     likes_sq = _like_count_sq()
+    # 分类优先级打头：cs.CL 的排最前，cs.RO 的排最后（一篇同时挂两者按 cs.CL 算）。
+    # LIKE 序列化文本的写法与上面 category 过滤同口径，PG/sqlite 通用。
+    category_rank = case(
+        (
+            (DailyFeedEntry.primary_category == "cs.CL")
+            | cast(DailyFeedEntry.categories, String).like('%"cs.CL"%'),
+            0,
+        ),
+        (
+            (DailyFeedEntry.primary_category == "cs.RO")
+            | cast(DailyFeedEntry.categories, String).like('%"cs.RO"%'),
+            2,
+        ),
+        else_=1,
+    )
     if sort == "likes":
         stmt = stmt.order_by(
-            likes_sq.desc(), DailyFeedEntry.feed_date.desc(), DailyFeedEntry.created_at.desc()
+            category_rank,
+            likes_sq.desc(),
+            DailyFeedEntry.feed_date.desc(),
+            DailyFeedEntry.created_at.desc(),
         )
     else:  # date
-        stmt = stmt.order_by(DailyFeedEntry.feed_date.desc(), DailyFeedEntry.created_at.desc())
+        stmt = stmt.order_by(
+            category_rank, DailyFeedEntry.feed_date.desc(), DailyFeedEntry.created_at.desc()
+        )
     stmt = stmt.offset((page - 1) * size).limit(size)
 
     rows = (await session.execute(stmt)).all()
@@ -705,6 +751,7 @@ async def semantic_search_daily(
     author: str | None = None,
     affiliation: str | None = None,
     library_id: uuid.UUID | None = None,
+    collected: bool = False,
 ) -> list[tuple[DailyFeedEntry, Paper, float]]:
     """池内向量检索（pgvector 余弦；仅 postgres，调用方先判 semantic_search_supported）。
 
@@ -745,6 +792,14 @@ async def semantic_search_daily(
         )
         params["library_id"] = str(library_id)
         params["lib_statuses"] = list(PAPER_STATUS_GROUPS["library"])
+    if collected:
+        from app.services.papers import PAPER_STATUS_GROUPS
+
+        where.append(
+            "EXISTS (SELECT 1 FROM library_papers lpc WHERE lpc.paper_id = p.id "
+            "AND lpc.status = ANY(CAST(:collected_statuses AS varchar[])))"
+        )
+        params["collected_statuses"] = list(PAPER_STATUS_GROUPS["library"])
     rows = (
         await session.execute(
             text(

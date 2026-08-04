@@ -1456,3 +1456,109 @@ async def test_cleanup_uses_the_configured_retention(client, monkeypatch):
         expired = await daily_feed.cleanup_expired(session)
         await session.commit()
     assert expired == 1
+
+
+async def test_collected_filter_shows_only_library_members(client, monkeypatch):
+    """「已收录」= 被任意文献库真正收进去的；候选与回收站不算。这是每日页的默认视角。"""
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary, LibraryPaper
+    from app.models.paper import Paper
+    from app.services import daily_feed
+
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {
+                "cs.CL": [
+                    _rss_entry("2608.21001", "Collected Paper"),
+                    _rss_entry("2608.21002", "Candidate Paper"),
+                    _rss_entry("2608.21003", "Loose Paper"),
+                ]
+            }
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        _, by_category, _ = await daily_feed.fetch_new_by_category(session)
+        await daily_feed.upsert_entries(session, by_category=by_category)
+        lib = DirectionLibrary(name="收录测试库", definition={"statement": "x"})
+        session.add(lib)
+        await session.flush()
+        papers = {
+            p.title: p
+            for p in (
+                (await session.execute(select(Paper).where(Paper.title.like("%Paper%"))))
+                .scalars()
+                .all()
+            )
+        }
+        session.add(
+            LibraryPaper(
+                library_id=lib.id, paper_id=papers["Collected Paper"].id, status="included"
+            )
+        )
+        # candidate 不算收录
+        session.add(
+            LibraryPaper(
+                library_id=lib.id, paper_id=papers["Candidate Paper"].id, status="candidate"
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(
+        "/api/daily/papers", params={"collected": "true", "size": 50}, headers=headers
+    )
+    titles = [item["title"] for item in resp.json()["items"]]
+    assert titles == ["Collected Paper"], f"只该剩真正收录的：{titles}"
+
+    # 日期标签的数字同口径
+    days = (
+        await client.get("/api/daily/days", params={"collected": "true"}, headers=headers)
+    ).json()
+    assert sum(d["count"] for d in days) == 1
+
+
+async def test_daily_list_puts_cscl_first_and_csro_last(client, monkeypatch):
+    """列表按分类优先级排：cs.CL 的在前，cs.RO 的在最后，其余居中。
+
+    一篇同时挂 cs.CL 和 cs.RO 的按 cs.CL 算（排前面）。
+    """
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {
+                "cs.RO": [_rss_entry("2608.22001", "Robot Paper")],
+                "cs.AI": [_rss_entry("2608.22002", "AI Paper")],
+                "cs.CL": [
+                    _rss_entry("2608.22003", "Language Paper"),
+                    # 同一篇也出现在 cs.RO：合并后同时挂两个分类，按 cs.CL 排前面
+                    _rss_entry("2608.22004", "Both Paper"),
+                ],
+            }
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        # cs.RO 不在默认订阅里，先配上，否则抓取不会去拉它
+        await daily_feed.set_categories(session, ["cs.CL", "cs.AI", "cs.RO"])
+        _, by_category, _ = await daily_feed.fetch_new_by_category(session)
+        await daily_feed.upsert_entries(session, by_category=by_category)
+        # 把 Both Paper 也并进 cs.RO 的分类（模拟跨列合并）
+        by_ro = {"cs.RO": [_rss_entry("2608.22004", "Both Paper")]}
+        await daily_feed.upsert_entries(session, by_category=by_ro)
+
+    resp = await client.get(
+        "/api/daily/papers", params={"sort": "date", "size": 50}, headers=headers
+    )
+    titles = [item["title"] for item in resp.json()["items"]]
+    cl = [titles.index(t) for t in ("Language Paper", "Both Paper")]
+    other = titles.index("AI Paper")
+    ro = titles.index("Robot Paper")
+    assert max(cl) < other < ro, f"顺序应为 cs.CL < 其他 < cs.RO：{titles}"
