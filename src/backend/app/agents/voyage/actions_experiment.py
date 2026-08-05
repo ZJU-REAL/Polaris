@@ -1586,6 +1586,13 @@ async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str
         primary_value = extract_primary_value(run.metrics, pm_name)
         run.primary_value = primary_value
         if primary_value is not None:
+            # 记账：真正拿到主指标的轮次数。voyage 级完成标准据此判「这趟到底有没有
+            # 结果」——否则每轮 exit 1、指标全空，只要写出了报告就照样宣告 done
+            # （实测 voyage 6c5df454：三轮里两轮 exit 1，全被判 passed，最后 done，
+            # 报告基于空数据。比直接失败更有害，因为它看起来是成功的）。
+            iterate_cp = dict(ctx.checkpoint.get("iterate") or {})
+            iterate_cp["primary_metric_runs"] = int(iterate_cp.get("primary_metric_runs") or 0) + 1
+            ctx.checkpoint["iterate"] = iterate_cp
             if is_improvement(primary_value, best, pm_direction):
                 state["no_improve_streak"] = 0
             else:

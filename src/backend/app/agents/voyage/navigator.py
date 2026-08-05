@@ -369,6 +369,11 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
 _DONE_CRITERIA_BY_KIND: dict[str, dict[str, Any]] = {
     "experiment": {
         "checks": [
+            # 至少有一轮真的跑出了主指标。原来只查「停止原因」+「报告已生成」，
+            # 于是每轮 exit 1、指标全空，只要写出报告就照样 done——实测 voyage
+            # 6c5df454 三轮里两轮失败仍宣告完成，还产出了一份基于空数据的报告。
+            # 「跑完了」不等于「有结果」，完成标准必须要求后者。
+            {"kind": "min_count", "field": "iterate.primary_metric_runs", "value": 1},
             {"kind": "artifact_exists", "key": "iterate.stopped_reason"},
             {"kind": "artifact_exists", "key": "report_done"},
         ]

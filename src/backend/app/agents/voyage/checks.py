@@ -104,9 +104,17 @@ def _check_metric(check: dict, observation: dict, checkpoint: dict) -> str | Non
 
 
 def _check_min_count(check: dict, observation: dict, checkpoint: dict) -> str | None:
+    """字段数量 ≥ value。observation 里没有就去 checkpoint 找。
+
+    回落是为了让这条检查能用在 **voyage 级完成标准**上：``_finalize`` 求值时
+    observation 恒为 None（没有"当前步骤"可言），只有 checkpoint。没有回落的话，
+    完成标准里只能用 artifact_exists 判「某个键非空」，判不了「至少有 N 个」。
+    """
     field = str(check.get("field") or "")
     minimum = int(check.get("value", 1))
     value = _dig(observation, field)
+    if value is None:
+        value = _dig(checkpoint, field)
     if isinstance(value, int | float):
         count = int(value)
     elif isinstance(value, list | dict | str):

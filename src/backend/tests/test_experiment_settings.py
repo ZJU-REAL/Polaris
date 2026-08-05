@@ -159,3 +159,42 @@ def test_metrics_json_drops_non_finite_values():
     import json as _json
 
     _json.dumps(points, allow_nan=False)  # bool 也被挡掉，不会混进指标
+
+
+# ---- 完成标准必须要求「有结果」（voyage 6c5df454：三轮两败仍宣告 done）----
+
+
+def test_min_count_falls_back_to_checkpoint():
+    """voyage 级完成标准求值时 observation 恒为 None，只能从 checkpoint 取。"""
+    from app.agents.voyage import checks
+
+    check = {"kind": "min_count", "field": "iterate.primary_metric_runs", "value": 1}
+    # observation 没有该字段 → 回落 checkpoint
+    assert checks._check_min_count(check, {}, {"iterate": {"primary_metric_runs": 2}}) is None
+    # finalize 传的就是 None
+    assert checks._check_min_count(check, None, {"iterate": {"primary_metric_runs": 1}}) is None
+    # 一轮都没产出主指标 → 必须判失败，且理由能说清
+    reason = checks._check_min_count(check, None, {"iterate": {"stopped_reason": "max_runs"}})
+    assert reason and "primary_metric_runs" in reason
+
+
+def test_experiment_done_criteria_requires_a_result():
+    """光有「停止原因 + 报告」不够——那正是 6c5df454 假成功的组合。"""
+    from app.agents.voyage import navigator
+    from app.agents.voyage.checks import run_deterministic_checks
+
+    criteria = navigator.done_criteria_for_kind("experiment")
+    checks_list = criteria["checks"]
+
+    # 三轮全废：有停止原因、有报告，但没有任何一轮产出主指标 → 不许 done
+    empty_result = {"iterate": {"stopped_reason": "max_runs"}, "report_done": True}
+    verdict, _ = run_deterministic_checks(checks_list, observation=None, checkpoint=empty_result)
+    assert verdict is not None and not verdict["passed"]
+
+    # 至少一轮有主指标 → 通过
+    with_result = {
+        "iterate": {"stopped_reason": "max_runs", "primary_metric_runs": 1},
+        "report_done": True,
+    }
+    verdict, _ = run_deterministic_checks(checks_list, observation=None, checkpoint=with_result)
+    assert verdict is None or verdict["passed"]
