@@ -2205,3 +2205,53 @@ async def test_digest_only_survives_a_backward_clock_jump(client, queue_stub, wi
         f"回拨两秒就把策略翻成了 {launch['strategy']}——上界又回来了？"
     )
     assert launch["paper_count"] == 2, launch
+
+
+async def test_next_sync_follows_the_configured_fetch_time(client):
+    """「下次自动同步」要跟着每日抓取时刻走。
+
+    库同步是事件驱动的：每日论文抓完、且真有新论文才触发。以前这个时刻写死 03:00 UTC，
+    而抓取默认 01:30 UTC——界面报北京 11:00，实际约 09:35 就跑完了。孤立看只是个小数字，
+    但它属于「界面说的和实际发生的不是一回事」，用户照着它等，等到的是已经结束的东西。
+    """
+    import datetime as _dt
+
+    from app.models.library_direction import DirectionLibrary
+    from app.services.ingest import next_daily_sync_at
+
+    library = DirectionLibrary(name="x", definition={"statement": "s"})
+    library.ingest_state = {"watermark": "2026-08-01T00:00:00+00:00"}
+
+    at = next_daily_sync_at(library, fetch_at=(5, 45))
+    assert at is not None and (at.hour, at.minute) == (5, 45)
+    # 永远在将来：今天那个时刻已经过了就顺延到明天
+    assert at > _dt.datetime.now(_dt.UTC)
+
+    # 没建过库的库没有下次同步（不是给个假时刻）
+    library.ingest_state = {}
+    assert next_daily_sync_at(library, fetch_at=(5, 45)) is None
+
+
+async def test_next_sync_reads_the_setting_not_a_hardcoded_hour(client):
+    """端到端：改了抓取时刻，库状态里的下次同步跟着变。"""
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary
+    from app.models.user import User
+    from app.services import daily_feed
+    from app.services.ingest import library_ingest_state
+
+    token = await register_and_login(client)
+    assert token
+    async with get_sessionmaker()() as session:
+        await daily_feed.set_sync_time(session, 6, 15)
+        user = (await session.execute(select(User))).scalars().first()
+        library = DirectionLibrary(name="sync-time-lib", definition={"statement": "s"})
+        library.ingest_state = {"watermark": "2026-08-01T00:00:00+00:00"}
+        session.add(library)
+        await session.commit()
+        state = await library_ingest_state(session, library, user=user)
+
+    assert state["next_sync_at"]
+    assert state["next_sync_at"][11:16] == "06:15"

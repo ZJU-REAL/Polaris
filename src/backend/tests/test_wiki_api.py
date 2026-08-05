@@ -532,4 +532,8 @@ async def test_ingest_state_next_sync_at(client):
 
     resp = await client.get(f"/api/projects/{project_id}/ingest/state", headers=headers)
     nxt = resp.json()["next_sync_at"]
-    assert nxt is not None and "T03:00:00" in nxt  # 每日 03:00 UTC
+    # 跟着每日论文的抓取时刻走（库同步紧随抓取之后），不再是写死的 03:00 UTC
+    from app.services.daily_feed import DEFAULT_SYNC_UTC
+
+    hour, minute = DEFAULT_SYNC_UTC
+    assert nxt is not None and f"T{hour:02d}:{minute:02d}:00" in nxt

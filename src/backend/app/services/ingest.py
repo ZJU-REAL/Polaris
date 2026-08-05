@@ -357,25 +357,36 @@ async def paper_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str
 
 
 # 每日自动同步的触发时刻（UTC，与 worker/settings.py 的 cron 保持一致）
-DAILY_SYNC_UTC_HOUR = 3
-DAILY_SYNC_UTC_MINUTE = 0
+#: 读不到每日抓取时刻时的兜底（与 daily_feed.DEFAULT_SYNC_UTC 一致）。
+DAILY_SYNC_UTC_HOUR = 1
+DAILY_SYNC_UTC_MINUTE = 30
 
 
-def next_daily_sync_at(library: DirectionLibrary | None) -> datetime | None:
-    """下一次自动同步时间：完成初始建库的库都有；未建库返回 None。
+def next_daily_sync_at(
+    library: DirectionLibrary | None, *, fetch_at: tuple[int, int] | None = None
+) -> datetime | None:
+    """下一次自动同步的**大致**时刻：完成初始建库的库都有；未建库返回 None。
 
-    同步节奏不再可配置——每日论文池每天更新且只保留一周，任何比「每天」更稀疏的
-    节奏都意味着永久漏抓，而界面上只表现为「一直没有新论文」。
+    库同步是事件驱动的——每日论文抓完、且真有新论文入池才触发（见
+    ``actions_daily.sync_libraries``）。所以这里给的是「抓取时刻」，同步紧随其后。
+    以前这里写死 03:00 UTC，而抓取默认 01:30 UTC：界面报 11:00（北京），实际约 09:35
+    就跑完了，差着一个半小时。孤立地看这只是个小数字，但它属于「界面说的和实际发生的
+    不是一回事」那一类——用户照着它等，等到的是已经结束的东西。
+
+    ``fetch_at`` 由调用方从设置里读（本函数不碰 session）；不给就用默认时刻。
+    真正的触发还取决于 arXiv 当天几点发布，所以这是估计值，不是承诺。
+
+    同步节奏不可配置：每日论文池每天更新且只保留一周，任何比「每天」更稀疏的节奏
+    都意味着永久漏抓，而界面上只表现为「一直没有新论文」。
     """
     if library is None:
         return None
     state = library.ingest_state or {}
     if not state.get("watermark"):
         return None
+    hour, minute = fetch_at or (DAILY_SYNC_UTC_HOUR, DAILY_SYNC_UTC_MINUTE)
     now = datetime.now(UTC)
-    candidate = now.replace(
-        hour=DAILY_SYNC_UTC_HOUR, minute=DAILY_SYNC_UTC_MINUTE, second=0, microsecond=0
-    )
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= now:
         candidate += timedelta(days=1)
     return candidate
@@ -420,8 +431,19 @@ async def ingest_state(session: AsyncSession, project: Project, *, user: User) -
         "paper_counts": await paper_counts(session, project.id),
         "running_voyage_id": running.id if running else None,
         "can_open_running_voyage": await _can_open(session, running, user),
-        "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
+        "next_sync_at": (
+            next_dt.isoformat()
+            if (next_dt := next_daily_sync_at(library, fetch_at=await _daily_fetch_at(session)))
+            else None
+        ),
     }
+
+
+async def _daily_fetch_at(session: AsyncSession) -> tuple[int, int]:
+    """每日论文的抓取时刻（库同步紧随其后）。延迟 import 避开循环依赖。"""
+    from app.services import daily_feed
+
+    return await daily_feed.get_sync_time(session)
 
 
 async def library_ingest_state(
@@ -440,7 +462,11 @@ async def library_ingest_state(
         "paper_counts": await library_paper_counts(session, library.id),
         "running_voyage_id": running.id if running else None,
         "can_open_running_voyage": await _can_open(session, running, user),
-        "next_sync_at": (next_dt.isoformat() if (next_dt := next_daily_sync_at(library)) else None),
+        "next_sync_at": (
+            next_dt.isoformat()
+            if (next_dt := next_daily_sync_at(library, fetch_at=await _daily_fetch_at(session)))
+            else None
+        ),
     }
 
 

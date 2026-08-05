@@ -375,7 +375,15 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
                         {tr('尚未运行过初始建库', 'Initial library build has not run yet')}
                       </div>
                     )}
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', margin: '10px 0 4px' }}>{tr('下次自动同步', 'Next auto sync')}</div>
+                    <div
+                      style={{ fontSize: 11, color: 'var(--text-3)', margin: '10px 0 4px' }}
+                      title={tr(
+                        '同步跟着每日论文抓取走：抓完且有新论文才同步，所以这是估计时刻，不是准点',
+                        'Sync follows the daily paper fetch and only runs if new papers arrived, so this is an estimate',
+                      )}
+                    >
+                      {tr('下次自动同步（约）', 'Next auto sync (approx.)')}
+                    </div>
                     <div className="mono" style={{ fontSize: 13, fontWeight: 650 }}>
                       {state?.next_sync_at
                         ? new Date(state.next_sync_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
