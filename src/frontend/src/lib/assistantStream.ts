@@ -30,6 +30,7 @@ export type AssistantBlock =
   | { kind: 'text'; text: string }
   | { kind: 'plan'; steps: PlanStep[] }
   | { kind: 'sources'; papers: PaperSource[] }
+  | { kind: 'verify'; notes: string[] }
   | { kind: 'thinking'; text: string }
   | {
       kind: 'tool';
@@ -139,6 +140,16 @@ export function applyAssistantEvent(
       const seen = new Set(b.papers.map((p) => p.paperId));
       return { kind: 'sources', papers: [...b.papers, ...incoming.filter((p) => !seen.has(p.paperId))] };
     });
+  }
+
+  if (event === 'verify') {
+    // 通过时后端根本不发这一帧；真发来了也只在有话说时才画——一条「一切正常」的
+    // 绿条只会训练用户忽略这一栏。
+    const notes = Array.isArray(data.notes)
+      ? (data.notes as unknown[]).map((n) => str(n)).filter(Boolean)
+      : [];
+    if (data.passed === true || !notes.length) return blocks;
+    return [...blocks, { kind: 'verify', notes }];
   }
 
   if (event === 'tool_call') {

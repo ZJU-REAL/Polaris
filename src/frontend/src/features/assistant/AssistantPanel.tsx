@@ -278,10 +278,34 @@ function SourcesCard({ papers }: { papers: PaperSource[] }) {
   );
 }
 
+/** 验收提请注意。判据是启发式的，所以措辞要让人一眼看穿并能忽略——
+    装成权威结论比不提示更糟。 */
+function VerifyCard({ notes }: { notes: string[] }) {
+  return (
+    <div
+      style={{
+        margin: '8px 0 2px',
+        padding: '7px 10px',
+        borderRadius: 8,
+        background: 'var(--warn-bg)',
+        color: 'var(--warn-tx)',
+        fontSize: 11.5,
+        lineHeight: 1.6,
+      }}
+    >
+      <div style={{ marginBottom: 2 }}>{tr('这段回答有地方对不上：', 'Something in this answer does not line up:')}</div>
+      {notes.map((note) => (
+        <div key={note}>· {note}</div>
+      ))}
+    </div>
+  );
+}
+
 function BlockView({ block, live }: { block: AssistantBlock; live: boolean }) {
   if (block.kind === 'text') return <Markdown source={block.text} />;
   if (block.kind === 'plan') return <PlanCard steps={block.steps} />;
   if (block.kind === 'sources') return <SourcesCard papers={block.papers} />;
+  if (block.kind === 'verify') return <VerifyCard notes={block.notes} />;
   if (block.kind === 'thinking') return <ThinkingView text={block.text} live={live} />;
   if (block.kind === 'tool') return <ToolCard block={block} />;
   return null; // 未知块：画不出来就不画，绝不抛

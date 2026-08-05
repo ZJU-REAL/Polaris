@@ -47,6 +47,18 @@ class PlanEvent:
 
 
 @dataclass(slots=True, frozen=True)
+class VerifyEvent:
+    """Sextant 的验收结论。
+
+    ``passed`` 为真时前端什么都不画——一条「一切正常」的绿条只会训练用户忽略这一栏。
+    只有站不住的地方才值得占用屏幕。
+    """
+
+    passed: bool
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
 class ToolCallEvent:
     id: str
     name: str
@@ -111,6 +123,7 @@ ChatEvent = (
     | DeltaEvent
     | ThinkingEvent
     | PlanEvent
+    | VerifyEvent
     | ToolCallEvent
     | ToolResultEvent
     | UsageEvent

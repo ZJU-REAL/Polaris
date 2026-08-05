@@ -148,3 +148,19 @@ describe('本轮查看的论文', () => {
     expect(reduce([['sources', { items: '不是数组' }]])).toEqual([]);
   });
 });
+
+describe('验收结论', () => {
+  it('通过时不画任何东西——绿条只会训练用户忽略这一栏', () => {
+    expect(reduce([['verify', { passed: true, notes: [] }]])).toEqual([]);
+    expect(reduce([['verify', { passed: true, notes: ['理论上不该有'] }]])).toEqual([]);
+  });
+
+  it('没通过时把话说出来', () => {
+    const blocks = reduce([['verify', { passed: false, notes: ['引用编号超出查到的篇数'] }]]);
+    expect(blocks).toEqual([{ kind: 'verify', notes: ['引用编号超出查到的篇数'] }]);
+  });
+
+  it('没有具体说法就不占地方', () => {
+    expect(reduce([['verify', { passed: false, notes: [] }]])).toEqual([]);
+  });
+});

@@ -12,12 +12,12 @@
 import asyncio
 import json
 import logging
-import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agents.chat.core import Helm, Navigator, Sextant
 from app.agents.chat.events import (
     ChatEvent,
     CompactionEvent,
@@ -31,6 +31,7 @@ from app.agents.chat.events import (
     ToolCallEvent,
     ToolResultEvent,
     UsageEvent,
+    VerifyEvent,
 )
 from app.agents.chat.prompt import build_system_prompt, tool_definitions
 from app.core.llm.base import (
@@ -46,7 +47,7 @@ from app.core.llm.base import (
 from app.core.llm.router import LLMRouter
 from app.core.llm.tool_stream import ToolCallAccumulator
 from app.tools.context import ToolContext
-from app.tools.registry import get_tool, result_images, result_payload, run_tool
+from app.tools.registry import get_tool
 
 logger = logging.getLogger(__name__)
 
@@ -152,15 +153,18 @@ class ChatAgentLoop:
             tools=tuple(req.tool_names),
         )
 
+        navigator = Navigator(max_rounds=req.max_rounds, max_turn_tokens=req.max_turn_tokens)
+        helm = Helm(self._tool_ctx)
+        sextant = Sextant()
+        answer_parts: list[str] = []
+        successful_calls = 0
+
         while True:
             state.rounds += 1
-            last_round = state.rounds >= req.max_rounds
-            over_budget = (
-                req.max_turn_tokens is not None
-                and sum(state.usage.values()) >= req.max_turn_tokens
+            round_plan = navigator.plan_round(
+                rounds_done=state.rounds, tokens_used=sum(state.usage.values())
             )
-            # 到顶就硬关工具：让模型用已经拿到的东西收尾，而不是继续查
-            tool_choice = "none" if (last_round or over_budget) else None
+            tool_choice = round_plan.tool_choice
 
             accumulator = ToolCallAccumulator()
             try:
@@ -174,6 +178,7 @@ class ChatAgentLoop:
                 ):
                     accumulator.feed(ev)
                     if isinstance(ev, TextDelta):
+                        answer_parts.append(ev.text)
                         yield DeltaEvent(ev.text)
                     elif isinstance(ev, ThinkingDelta) and ev.text:
                         yield ThinkingEvent(ev.text)
@@ -201,9 +206,17 @@ class ChatAgentLoop:
                     completion_tokens=state.usage.get("completion_tokens", 0),
                     total_tokens=sum(state.usage.values()),
                 )
+                # 验收在 done 之前：结论是这一轮的一部分，不该等下一轮才出现
+                verdict = sextant.verify(
+                    answer="".join(answer_parts),
+                    sources=len(state.sources_seen),
+                    successful_tool_calls=successful_calls,
+                )
+                if not verdict.passed:
+                    yield VerifyEvent(passed=False, notes=verdict.notes)
                 yield DoneEvent(
                     usage=dict(state.usage),
-                    stop_reason=self._stop_reason(last_round, over_budget),
+                    stop_reason=navigator.stop_reason(round_plan),
                 )
                 return
 
@@ -221,9 +234,11 @@ class ChatAgentLoop:
                     read_only=spec.read_only if spec else True,
                 )
             results: list[ToolResultBlock] = []
-            async for ev, result in self._run_calls(calls):
+            async for ev, result in helm.run(calls):
                 if result is not None:
                     results.append(result)
+                if isinstance(ev, ToolResultEvent) and ev.ok:
+                    successful_calls += 1
                 yield ev
                 if plan := _plan_from(ev, result):
                     yield PlanEvent(steps=plan)
@@ -243,99 +258,12 @@ class ChatAgentLoop:
 
             # 技能声明了 allowed-tools 就收窄后续可用的工具面。**只能收窄，永不扩权**：
             # 技能里写一个会话没给的工具名，结果是那个工具不可用，而不是把它加进来。
-            if narrowed := _skill_narrowing(results, active_tools):
+            if narrowed := navigator.narrow_tools(results, active_tools):
                 active_tools = narrowed
                 specs = tool_definitions(active_tools)
 
             if removed := _elide_old_results(messages):
                 yield CompactionEvent(removed=removed)
-
-    def _stop_reason(self, last_round: bool, over_budget: bool) -> str:
-        if over_budget:
-            return "turn_budget"
-        if last_round:
-            return "max_rounds"
-        return "stop"
-
-    async def _run_calls(
-        self, calls: list[ToolUseBlock]
-    ) -> AsyncIterator[tuple[ChatEvent, ToolResultBlock | None]]:
-        """并行执行一轮里的工具调用，按发起顺序把事件吐出去。
-
-        只读工具才并行。写工具（本期还没有）必须串行：没有事务包裹，并行改同一行就是
-        竞态，而且审批 UI 一次弹两个框是灾难。
-        """
-        semaphore = asyncio.Semaphore(_TOOL_CONCURRENCY)
-
-        async def one(call: ToolUseBlock) -> tuple[ToolResultEvent, ToolResultBlock]:
-            async with semaphore:
-                return await self._execute(call)
-
-        for coro in [asyncio.create_task(one(c)) for c in calls]:
-            event, block = await coro
-            yield event, block
-
-    async def _execute(self, call: ToolUseBlock) -> tuple[ToolResultEvent, ToolResultBlock]:
-        started = time.monotonic()
-        spec = get_tool(call.name)
-        if spec is None:
-            # 未知工具不打断循环：把可用清单告诉模型，它下一轮自己纠正
-            payload = {"error": f"未知工具 {call.name!r}"}
-            return self._failure(call, payload, started)
-        if "__parse_error__" in call.input:
-            payload = {"error": "参数不是合法 JSON，请重新发起这次调用"}
-            return self._failure(call, payload, started)
-        try:
-            result = await asyncio.wait_for(
-                run_tool(self._tool_ctx, call.name, call.input), timeout=TOOL_TIMEOUT_SECONDS
-            )
-        except TimeoutError:
-            note = {"error": f"工具执行超过 {TOOL_TIMEOUT_SECONDS:.0f} 秒"}
-            return self._failure(call, note, started)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001 — 工具异常转成结果回喂，不打断循环
-            logger.warning("chat agent: tool %s failed", call.name, exc_info=True)
-            return self._failure(call, {"error": f"{type(e).__name__}: {e}"}, started)
-
-        payload = result_payload(result)
-        images = result_images(result)
-        text = json.dumps(payload, ensure_ascii=False)[:RESULT_CHARS]
-        duration = int((time.monotonic() - started) * 1000)
-        summary = spec.summary(call.input, payload) if spec else call.name
-        return (
-            ToolResultEvent(
-                id=call.id,
-                name=call.name,
-                ok=True,
-                summary=summary,
-                preview=text[:PREVIEW_CHARS],
-                duration_ms=duration,
-                images=len(images),
-                image_refs=tuple(
-                    {**img.ref, "label": img.label} for img in images if img.ref is not None
-                ),
-            ),
-            ToolResultBlock(call.id, text),
-        )
-
-    def _failure(
-        self, call: ToolUseBlock, payload: dict[str, Any], started: float
-    ) -> tuple[ToolResultEvent, ToolResultBlock]:
-        text = json.dumps(payload, ensure_ascii=False)
-        duration = int((time.monotonic() - started) * 1000)
-        return (
-            ToolResultEvent(
-                id=call.id,
-                name=call.name,
-                ok=False,
-                summary=payload.get("error", "失败"),
-                preview=text[:PREVIEW_CHARS],
-                duration_ms=duration,
-            ),
-            ToolResultBlock(call.id, text, is_error=True),
-        )
-
 
 def _safe_json(text: str) -> Any:
     """工具结果文本 → 对象；解析不了返回 None（结果被截断过，未必是完整 JSON）。"""
@@ -401,32 +329,6 @@ def _plan_from(
     if not isinstance(steps, list):
         return None
     return tuple(s for s in steps if isinstance(s, dict))
-
-
-def _skill_narrowing(
-    results: list[ToolResultBlock], current: tuple[str, ...]
-) -> tuple[str, ...] | None:
-    """本轮加载的技能若声明了 allowed-tools，就据此收窄。
-
-    收窄发生在技能加载**之后**的那一轮起效——这一轮已经调过的工具不受影响，那是既成
-    事实。收窄结果为空时不生效（技能写错名字不该把助手变成哑巴）。
-    """
-    from app.services.agent_skills import narrow_tools
-
-    narrowed = current
-    for block in results:
-        if block.is_error:
-            continue
-        try:
-            payload = json.loads(block.content)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if not isinstance(payload, dict) or "allowed_tools" not in payload:
-            continue
-        narrowed = narrow_tools(narrowed, payload.get("allowed_tools"))
-    if narrowed == current or not narrowed:
-        return None
-    return narrowed
 
 
 def _elide_old_results(messages: list[Message]) -> int:

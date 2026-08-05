@@ -29,6 +29,7 @@ from app.agents.chat.events import (
     ToolCallEvent,
     ToolResultEvent,
     UsageEvent,
+    VerifyEvent,
 )
 from app.agents.chat.loop import ChatAgentLoop, ChatTurnRequest
 from app.agents.chat.prompt import DEFAULT_TOOL_NAMES
@@ -60,6 +61,7 @@ _EVENT_NAMES: dict[type, str] = {
     DeltaEvent: "delta",
     ThinkingEvent: "thinking",
     PlanEvent: "plan",
+    VerifyEvent: "verify",
     ToolCallEvent: "tool_call",
     ToolResultEvent: "tool_result",
     UsageEvent: "usage",
