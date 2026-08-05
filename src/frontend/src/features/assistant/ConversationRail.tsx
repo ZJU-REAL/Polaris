@@ -108,7 +108,7 @@ export function ConversationRail({
   return (
     <div
       style={{
-        width: 176,
+        width: 184,
         flexShrink: 0,
         borderRight: '0.5px solid var(--border-2)',
         display: 'flex',
@@ -116,13 +116,23 @@ export function ConversationRail({
         background: 'var(--surface-2)',
       }}
     >
-      <button
-        className="btn btn-soft sm"
+      {/* 「新对话」按 Codex 那样是一行导航项，不是一个按钮块——它和下面的会话是
+          同一类东西，长得像按钮反而把它从列表里割出去了。 */}
+      <div
+        className="row gap8 hoverable"
         onClick={onNew}
-        style={{ margin: 8, height: 28, fontSize: 12, justifyContent: 'center' }}
+        style={{
+          alignItems: 'center',
+          margin: '8px 6px 4px',
+          padding: '6px 8px',
+          borderRadius: 7,
+          cursor: 'pointer',
+          fontSize: 12.5,
+        }}
       >
-        <Icon name="plus" size={12} /> {tr('新对话', 'New chat')}
-      </button>
+        <Icon name="pen" size={13} style={{ color: 'var(--text-3)' }} />
+        <span>{tr('新对话', 'New chat')}</span>
+      </div>
       <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '0 6px 8px' }}>
         {rows.length === 0 && (
           <div style={{ fontSize: 11, color: 'var(--text-4)', padding: '6px 6px' }}>
@@ -133,10 +143,9 @@ export function ConversationRail({
           <div key={group.label} style={{ marginBottom: 6 }}>
             <div
               style={{
-                fontSize: 10,
+                fontSize: 10.5,
                 color: 'var(--text-4)',
-                padding: '6px 6px 3px',
-                letterSpacing: '0.04em',
+                padding: '10px 8px 4px',
               }}
             >
               {group.label}

@@ -12,6 +12,7 @@ import {
   type PlanStep,
 } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
+import { copyText } from '../../lib/clipboard';
 import { BuddyHome } from './BuddyHome';
 import { followUps } from './followups';
 import { InlineFigure } from './InlineFigure';
@@ -843,6 +844,43 @@ export function AssistantPanel({
                     />
                   ))}
                   {isLast && <TurnStatus blocks={liveBlocks} busy={busy} onStop={stop} />}
+                  {/* 答完之后的操作行：复制、重来。**不放点赞/点踩**——没有接收端的
+                      反馈按钮是摆设，点了之后什么都没发生比没有按钮更伤信任。 */}
+                  {!busy && turn.blocks.some((b) => b.kind === 'text') && (
+                    <div className="row gap4" style={{ marginTop: 8, alignItems: 'center' }}>
+                      <button
+                        className="icon-btn"
+                        title={tr('复制回答', 'Copy answer')}
+                        onClick={() => {
+                          const text = turn.blocks
+                            .filter((b) => b.kind === 'text')
+                            .map((b) => (b.kind === 'text' ? b.text : ''))
+                            .join('\n');
+                          void copyText(text);
+                        }}
+                        style={{ width: 24, height: 24 }}
+                      >
+                        <Icon name="file" size={12} />
+                      </button>
+                      {isLast && (
+                        <button
+                          className="icon-btn"
+                          title={tr('换一个回答', 'Answer again')}
+                          onClick={() => {
+                            const question = turns[i - 1];
+                            const text =
+                              question?.role === 'user'
+                                ? question.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('')
+                                : '';
+                            if (text) void ask(text);
+                          }}
+                          style={{ width: 24, height: 24 }}
+                        >
+                          <Icon name="refresh" size={12} />
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {/* 答完给几条可点的下一步。它们从本轮真实发生的事里出——查到了论文
                       就问共同点，取过图就问图说明什么。凭空造的建议点一次就没人再点。 */}
                   {isLast && !busy && followUps(turn.blocks).length > 0 && (
@@ -866,48 +904,67 @@ export function AssistantPanel({
         })}
       </div>
 
-      </div>
-
       <div style={{ padding: 12, borderTop: '0.5px solid var(--border-2)' }}>
-        {/* 模式与课题：都摆在输入框上方一行，像 Codex 那样。默认什么都不选。 */}
-        <div className="row gap8" style={{ alignItems: 'center', marginBottom: 6, position: 'relative' }}>
+        {/* 上下文栏贴在输入框顶上（Codex 那样）：课题与模式是这次提问的前置条件，
+            放进框里会和正文抢注意力，放到别处又和输入脱节。 */}
+        <div
+          className="row gap8"
+          style={{
+            alignItems: 'center',
+            padding: '6px 10px',
+            border: '0.5px solid var(--border-2)',
+            borderBottom: 'none',
+            borderRadius: '12px 12px 0 0',
+            background: 'var(--surface-2)',
+            fontSize: 11.5,
+            color: 'var(--text-3)',
+            position: 'relative',
+          }}
+        >
           <button
             className="icon-btn"
             onClick={() => setPlusOpen((o) => !o)}
-            title={tr('模式与课题', 'Mode and topic')}
-            style={{ width: 24, height: 24 }}
+            title={tr('课题与模式', 'Topic and mode')}
+            style={{ width: 22, height: 22 }}
           >
             <Icon name="plus" size={13} />
           </button>
 
-          {mode !== 'chat' && (
+          {bindProject && currentProject ? (
             <span
-              className="pill sm"
-              style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', cursor: 'pointer' }}
-              onClick={() => setMode('chat')}
-              title={tr('点掉回到普通对话', 'Click to return to plain chat')}
-            >
-              {mode === 'plan' ? tr('计划模式', 'Plan mode') : tr('目标模式', 'Goal mode')} ×
-            </span>
-          )}
-          {bindProject && currentProject && (
-            <span
-              className="pill sm"
-              style={{ cursor: 'pointer', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              className="row gap6 hoverable"
+              style={{ alignItems: 'center', cursor: 'pointer', minWidth: 0 }}
               onClick={() => setBindProject(false)}
               title={tr('只在这个课题的语料里查；点掉恢复全部', 'Restricted to this topic; click to clear')}
             >
-              {currentProject.name} ×
+              <Icon name="layers" size={12} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {currentProject.name}
+              </span>
             </span>
+          ) : (
+            <span style={{ color: 'var(--text-4)' }}>{tr('全部文献库', 'All libraries')}</span>
           )}
-          {mode === 'goal' && (
-            <input
-              className="input"
-              value={goal}
-              placeholder={tr('这场对话要达成什么？', 'What should this conversation achieve?')}
-              onChange={(e) => setGoal(e.target.value)}
-              style={{ flex: 1, minWidth: 0, height: 24, fontSize: 11.5 }}
-            />
+
+          {mode !== 'chat' && (
+            <>
+              <span style={{ color: 'var(--border-2)' }}>·</span>
+              <span
+                className="hoverable"
+                style={{ cursor: 'pointer', color: 'var(--accent-text)' }}
+                onClick={() => setMode('chat')}
+                title={tr('点掉回到普通对话', 'Click to return to plain chat')}
+              >
+                {mode === 'plan' ? tr('计划模式', 'Plan mode') : tr('目标模式', 'Goal mode')}
+              </span>
+            </>
+          )}
+
+          <span style={{ flex: 1 }} />
+          {model && (
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }} title={model}>
+              {model}
+            </span>
           )}
 
           {plusOpen && (
@@ -917,24 +974,20 @@ export function AssistantPanel({
                 className="col gap4"
                 style={{
                   position: 'absolute',
-                  left: 0,
-                  bottom: 30,
+                  left: 6,
+                  bottom: 34,
                   zIndex: 50,
-                  minWidth: 236,
+                  minWidth: 244,
                   padding: 6,
                   background: 'var(--surface)',
                   border: '0.5px solid var(--border-2)',
-                  borderRadius: 10,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
+                  borderRadius: 12,
+                  boxShadow: '0 10px 28px rgba(0,0,0,0.14)',
                 }}
                 onClick={() => setPlusOpen(false)}
               >
                 {currentProject && (
-                  <button
-                    className="btn btn-ghost sm"
-                    style={{ justifyContent: 'flex-start' }}
-                    onClick={() => setBindProject((b) => !b)}
-                  >
+                  <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setBindProject((b) => !b)}>
                     <Icon name="layers" size={13} />
                     <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {tr('只查课题', 'Work in a topic')} · {currentProject.name}
@@ -942,47 +995,44 @@ export function AssistantPanel({
                     {bindProject && <Icon name="check" size={12} />}
                   </button>
                 )}
-                <button
-                  className="btn btn-ghost sm"
-                  style={{ justifyContent: 'flex-start' }}
-                  onClick={() => setMode(mode === 'plan' ? 'chat' : 'plan')}
-                >
+                <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setMode(mode === 'plan' ? 'chat' : 'plan')}>
                   <Icon name="bulb" size={13} />
-                  <span style={{ flex: 1, textAlign: 'left' }}>
-                    {tr('计划模式 · 先出方案再动手', 'Plan mode · propose before doing')}
-                  </span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('计划模式 · 先出方案再动手', 'Plan mode · propose before doing')}</span>
                   {mode === 'plan' && <Icon name="check" size={12} />}
                 </button>
-                <button
-                  className="btn btn-ghost sm"
-                  style={{ justifyContent: 'flex-start' }}
-                  onClick={() => setMode(mode === 'goal' ? 'chat' : 'goal')}
-                >
+                <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setMode(mode === 'goal' ? 'chat' : 'goal')}>
                   <Icon name="compass" size={13} />
-                  <span style={{ flex: 1, textAlign: 'left' }}>
-                    {tr('目标模式 · 一直朝一个目标推进', 'Goal mode · keep pursuing one goal')}
-                  </span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('目标模式 · 一直朝一个目标推进', 'Goal mode · keep pursuing one goal')}</span>
                   {mode === 'goal' && <Icon name="check" size={12} />}
                 </button>
               </div>
             </>
           )}
         </div>
-        {/* 输入区：随内容长高（7 行封顶），发送/停止就在右下角——正在流的时候
-            「停」应该在离手最近的位置，而不是让人回面板顶上去找。 */}
+
+        {mode === 'goal' && (
+          <input
+            className="input"
+            value={goal}
+            placeholder={tr('这场对话要达成什么？', 'What should this conversation achieve?')}
+            onChange={(e) => setGoal(e.target.value)}
+            style={{ width: '100%', height: 28, fontSize: 11.5, borderRadius: 0 }}
+          />
+        )}
+
         <div
           style={{
             border: '0.5px solid var(--border-2)',
-            borderRadius: 10,
+            borderRadius: '0 0 12px 12px',
             background: 'var(--surface)',
-            padding: '8px 10px 6px',
+            padding: '10px 12px 8px',
           }}
         >
           <textarea
             className="textarea"
             rows={1}
             value={input}
-            placeholder={tr('问点什么…', 'Ask something…')}
+            placeholder={tr('问点什么…', 'Ask anything…')}
             onChange={(e) => {
               setInput(e.target.value);
               const el = e.target;
@@ -997,37 +1047,52 @@ export function AssistantPanel({
             }}
             style={{
               width: '100%',
-              fontSize: 13,
+              fontSize: 13.5,
               border: 'none',
               outline: 'none',
               resize: 'none',
               background: 'transparent',
               padding: 0,
               maxHeight: 140,
-              lineHeight: '20px',
+              lineHeight: '21px',
             }}
           />
-          <div className="row gap8" style={{ alignItems: 'center', marginTop: 4 }}>
+          <div className="row gap8" style={{ alignItems: 'center', marginTop: 6 }}>
             <span style={{ flex: 1, fontSize: 10.5, color: 'var(--text-4)' }}>
               {tr('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line')}
             </span>
             {busy ? (
-              <button className="btn btn-ghost sm" onClick={stop} style={{ height: 26, fontSize: 11.5 }}>
-                <Icon name="pause" size={11} /> {tr('停止', 'Stop')}
+              <button
+                onClick={stop}
+                title={tr('停止', 'Stop')}
+                style={{
+                  width: 28, height: 28, borderRadius: '50%', border: 'none',
+                  background: 'var(--surface-3)', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Icon name="pause" size={12} />
               </button>
             ) : (
               <button
-                className="btn btn-primary sm"
                 onClick={send}
                 disabled={!input.trim()}
-                style={{ height: 26, fontSize: 11.5 }}
+                title={tr('发送', 'Send')}
+                style={{
+                  width: 28, height: 28, borderRadius: '50%', border: 'none',
+                  background: input.trim() ? 'var(--accent)' : 'var(--surface-3)',
+                  color: input.trim() ? '#fff' : 'var(--text-4)',
+                  cursor: input.trim() ? 'pointer' : 'default',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
               >
-                {tr('发送', 'Send')}
+                <Icon name="arrow" size={13} />
               </button>
             )}
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }
