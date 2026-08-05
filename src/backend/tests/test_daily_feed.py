@@ -1595,3 +1595,103 @@ async def test_new_submissions_come_before_cross_lists(client, monkeypatch):
     news = [titles.index(t) for t in ("New One", "New Two")]
     crosses = [titles.index(t) for t in ("Cross One", "Cross Two")]
     assert max(news) < min(crosses), f"新工作应全部排在更新前面：{titles}"
+
+
+async def test_probing_slows_down_after_exhaustion_instead_of_stopping():
+    """探满 ≠ 当天收工。
+
+    arXiv 的 /new 只带**当天那一批**：今天的公告错过了，明天抓的是明天那批，这一天
+    就永久没有了。所以探满只该意味着别再每 15 分钟敲，而不是从此不看——发晚了两小时
+    的批次不该整天丢掉。
+    """
+    from app.services.daily_feed import SLOW_PROBE_MINUTES, should_probe_now
+
+    now = dt.datetime.now(dt.UTC)
+    # 没探满：照常探
+    fresh = {"attempts": 3, "last_probe_at": now.isoformat()}
+    assert should_probe_now(fresh, now=now, max_attempts=10)
+    # 探满且刚探过：不探（这就是「别再每 15 分钟敲」）
+    just_now = (now - dt.timedelta(minutes=SLOW_PROBE_MINUTES - 5)).isoformat()
+    assert not should_probe_now(
+        {"attempts": 10, "last_probe_at": just_now}, now=now, max_attempts=10
+    )
+    # 探满但过了复查间隔：再探一次
+    long_ago = (now - dt.timedelta(minutes=SLOW_PROBE_MINUTES + 1)).isoformat()
+    assert should_probe_now(
+        {"attempts": 10, "last_probe_at": long_ago}, now=now, max_attempts=10
+    )
+
+
+async def test_probe_gate_is_permissive_when_the_timestamp_is_missing_or_broken():
+    """没有/读不懂上次探测时刻时选择「探一次」。
+
+    多探一次的代价是一个 RSS 请求；不探的代价可能是丢掉一整天的论文。存量状态里
+    没有 last_probe_at 这个字段（这次才加的），升级当天就会走到这条路上。
+    """
+    from app.services.daily_feed import should_probe_now
+
+    now = dt.datetime.now(dt.UTC)
+    assert should_probe_now({"attempts": 10}, now=now, max_attempts=10)
+    assert should_probe_now(
+        {"attempts": 10, "last_probe_at": "not-a-time"}, now=now, max_attempts=10
+    )
+
+
+async def test_record_probe_stamps_the_probe_time(client):
+    """降频判据要有依据：每次探测都记下时刻。"""
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    assert await register_and_login(client)
+    now = dt.datetime.now(dt.UTC)
+    async with get_sessionmaker()() as session:
+        state = await daily_feed.record_probe(session, now=now, batch_date=None)
+    assert state["last_probe_at"]
+    assert dt.datetime.fromisoformat(state["last_probe_at"]).date() == now.date()
+
+
+async def test_a_late_batch_is_still_picked_up_after_the_probes_ran_out(client, monkeypatch):
+    """探满之后 arXiv 才发布：下一次降频复查要能把它接住，建出今天的任务。
+
+    这是这次事故真正会丢数据的地方——/new 只带当天那一批，今天错过就永久没有了。
+    """
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+    from worker import tasks as worker_tasks
+
+    assert await register_and_login(client)
+    now = dt.datetime.now(dt.UTC)
+    async with get_sessionmaker()() as session:
+        # 今天已探满，且上次探测是两小时前（早过了复查间隔）
+        await daily_feed.set_max_probe_attempts(session, 2)
+        for _ in range(2):
+            await daily_feed.record_probe(
+                session,
+                now=now - dt.timedelta(hours=2),
+                batch_date=(now.date() - dt.timedelta(days=1)).isoformat(),
+                exhausted=True,
+            )
+        # 到点了、今天还没跑过任务
+        hour, minute = now.hour, now.minute
+        await daily_feed.set_sync_time(session, hour, minute)
+
+    # 这一刻 arXiv 那批终于出来了
+    monkeypatch.setattr(
+        daily_feed, "todays_batch_available", _fake_batch_available(now.date().isoformat())
+    )
+    enqueued: list[str] = []
+
+    class _Redis:
+        async def enqueue_job(self, name: str, *args: object) -> None:
+            enqueued.append(f"{name}:{args[0]}")
+
+    run_id = await worker_tasks.daily_feed_sync({"redis": _Redis()})
+    assert run_id, "探满之后来的批次被丢掉了"
+    assert enqueued and enqueued[0].startswith("run_voyage:")
+
+
+def _fake_batch_available(batch_date: str):
+    async def _available(session):  # noqa: ANN001
+        return True, batch_date
+
+    return _available

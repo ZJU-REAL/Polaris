@@ -1408,13 +1408,47 @@ async def probe_state(session: AsyncSession, *, now: dt.datetime) -> dict[str, A
     row = await session.get(SystemSetting, PROBE_STATE_SETTING_KEY)
     value = row.value if row is not None and isinstance(row.value, dict) else {}
     if value.get("date") != today:
-        return {"date": today, "attempts": 0, "batch_date": None, "exhausted": False}
+        return {
+            "date": today,
+            "attempts": 0,
+            "batch_date": None,
+            "exhausted": False,
+            "last_probe_at": None,
+        }
     return {
         "date": today,
         "attempts": int(value.get("attempts") or 0),
         "batch_date": value.get("batch_date"),
         "exhausted": bool(value.get("exhausted")),
+        "last_probe_at": value.get("last_probe_at"),
     }
+
+
+#: 探满之后的复查间隔（分钟）。arXiv 的 /new 只带**当天那一批**：今天的公告错过了，
+#: 明天抓的是明天那批，这一天就永久没有了。所以「探满」只该意味着别再每 15 分钟敲，
+#: 不该意味着今天就此收工——一小时一次的复查，代价是一天最多二十来个 RSS 请求，
+#: 换的是「arXiv 发晚了」不至于丢掉一整天。
+SLOW_PROBE_MINUTES = 60
+
+
+def should_probe_now(state: dict[str, Any], *, now: dt.datetime, max_attempts: int) -> bool:
+    """现在该探一次吗。
+
+    没探满：该探（由调用方的 15 分钟检查点决定频率）。
+    探满了：离上次探测够久才探（降频复查，见 :data:`SLOW_PROBE_MINUTES`）。
+    """
+    if int(state.get("attempts") or 0) < max_attempts:
+        return True
+    last = state.get("last_probe_at")
+    if not last:
+        return True
+    try:
+        last_at = dt.datetime.fromisoformat(str(last))
+    except ValueError:
+        return True
+    if last_at.tzinfo is None:
+        last_at = last_at.replace(tzinfo=dt.UTC)
+    return now - last_at >= dt.timedelta(minutes=SLOW_PROBE_MINUTES)
 
 
 async def record_probe(
@@ -1429,6 +1463,7 @@ async def record_probe(
     state["attempts"] += 1
     state["batch_date"] = batch_date
     state["exhausted"] = exhausted
+    state["last_probe_at"] = now.astimezone(dt.UTC).isoformat()
     row = await session.get(SystemSetting, PROBE_STATE_SETTING_KEY)
     if row is None:
         session.add(SystemSetting(key=PROBE_STATE_SETTING_KEY, value=state))

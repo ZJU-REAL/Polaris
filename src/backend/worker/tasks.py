@@ -188,10 +188,11 @@ async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
         ):
             return None
         # 探测有次数上限：「今天 arXiv 就是没发」是正常情况（周末、节假日、发布故障），
-        # 不该从早探到晚。探满就当天收工，明天归零重来——这是正常结束，不是失败。
+        # 不该从早探到晚每 15 分钟敲一次。但**探满不等于当天收工**：/new 只带当天那批，
+        # 今天的公告错过了就永久没有了，所以探满之后转成一小时一次的复查。
         max_attempts = await daily_feed_service.get_max_probe_attempts(session)
         state = await daily_feed_service.probe_state(session, now=now)
-        if state["attempts"] >= max_attempts:
+        if not daily_feed_service.should_probe_now(state, now=now, max_attempts=max_attempts):
             return None
         fresh, batch_date = await daily_feed_service.todays_batch_available(session)
         if not fresh:
