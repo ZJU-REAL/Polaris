@@ -4749,6 +4749,15 @@ export const api = {
   deleteBuddyMemory(id: string): Promise<void> {
     return request(`/chat/memories/${id}`, { method: 'DELETE' });
   },
+  renameAssistantConversation(id: string, title: string): Promise<void> {
+    return request(`/chat/conversations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    });
+  },
+  deleteAssistantConversation(id: string): Promise<void> {
+    return request(`/chat/conversations/${id}`, { method: 'DELETE' });
+  },
   /** Buddy 这一轮手里有什么：工具面、技能、MCP 暴露状况。 */
   getBuddyCapabilities(): Promise<{
     tools: { name: string; description: string; read_only: boolean }[];

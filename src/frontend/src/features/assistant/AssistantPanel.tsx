@@ -12,6 +12,7 @@ import {
 import { tr } from '../../lib/i18n';
 import { BuddyHome } from './BuddyHome';
 import { CapabilitiesBar } from './CapabilitiesBar';
+import { ConversationRail } from './ConversationRail';
 import { ToolImages } from './ToolImages';
 import { pageContextFrom } from './buddyContext';
 import { useProject } from '../../app/project';
@@ -339,7 +340,12 @@ export function AssistantPanel({
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [convId, setConvId] = useState<string | null>(null);
+  // dock 形态下会话列表是常驻一栏（不再是头部时钟弹层）；overlay 形态屏幕太窄，
+  // 仍然用弹层。
+  const [railOpen, setRailOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
+  //: 发完一轮之后标题才生成，列表要跟着刷新一次
+  const [railRefresh, setRailRefresh] = useState(0);
   const [conversations, setConversations] = useState<
     { id: string; title: string; project_id: string | null }[]
   >([]);
@@ -463,7 +469,10 @@ export function AssistantPanel({
           contextOn && pageContext ? { kind: pageContext.kind, id: pageContext.id } : undefined,
         projectId: currentProject?.id ?? null,
         onBlocks: patch,
-        onDone: () => setBusy(false),
+        onDone: () => {
+          setBusy(false);
+          setRailRefresh((n) => n + 1); // 标题这时才有
+        },
         onError: (detail) => {
           patch((blocks) => [...blocks, { kind: 'text', text: `⚠️ ${errorText(detail)}` }]);
           setBusy(false);
@@ -548,13 +557,24 @@ export function AssistantPanel({
         <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
         <strong style={{ fontSize: 14 }}>PolarisBuddy</strong>
         <span style={{ flex: 1 }} />
-        <button
-          className="icon-btn"
-          onClick={() => void openHistory()}
-          title={tr('历史会话', 'Conversations')}
-        >
-          <Icon name="clock" size={14} />
-        </button>
+        {variant === 'dock' ? (
+          <button
+            className="icon-btn"
+            onClick={() => setRailOpen((o) => !o)}
+            title={tr('会话列表', 'Conversations')}
+            style={{ color: railOpen ? 'var(--accent)' : undefined }}
+          >
+            <Icon name="sidebar" size={14} />
+          </button>
+        ) : (
+          <button
+            className="icon-btn"
+            onClick={() => void openHistory()}
+            title={tr('历史会话', 'Conversations')}
+          >
+            <Icon name="clock" size={14} />
+          </button>
+        )}
         <button className="icon-btn" onClick={newConversation} title={tr('新会话', 'New')}>
           <Icon name="plus" size={14} />
         </button>
@@ -572,6 +592,7 @@ export function AssistantPanel({
       </div>
 
       <CapabilitiesBar loadedSkills={loadedSkills} />
+
 
       {historyOpen && (
         <div
@@ -609,7 +630,16 @@ export function AssistantPanel({
         </div>
       )}
 
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px' }}>
+      <div className="row" style={{ flex: 1, minHeight: 0, alignItems: 'stretch' }}>
+      {variant === 'dock' && railOpen && (
+        <ConversationRail
+          activeId={convId}
+          onPick={(id) => void loadConversation(id)}
+          onNew={newConversation}
+          refreshKey={railRefresh}
+        />
+      )}
+      <div ref={scrollRef} style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '14px 16px' }}>
         {turns.length === 0 && (
           <BuddyHome greeting={greeting} onPick={(prompt) => setInput(prompt)} />
         )}
@@ -636,6 +666,8 @@ export function AssistantPanel({
             </div>
           );
         })}
+      </div>
+
       </div>
 
       <div style={{ padding: 12, borderTop: '0.5px solid var(--border-2)' }}>
@@ -673,20 +705,65 @@ export function AssistantPanel({
             <span>{pageContext.label}</span>
           </div>
         )}
-        <textarea
-          className="textarea"
-          rows={2}
-          value={input}
-          placeholder={tr('问点什么…（Enter 发送）', 'Ask something… (Enter to send)')}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
+        {/* 输入区：随内容长高（7 行封顶），发送/停止就在右下角——正在流的时候
+            「停」应该在离手最近的位置，而不是让人回面板顶上去找。 */}
+        <div
+          style={{
+            border: '0.5px solid var(--border-2)',
+            borderRadius: 10,
+            background: 'var(--surface)',
+            padding: '8px 10px 6px',
           }}
-          style={{ width: '100%', fontSize: 13 }}
-        />
+        >
+          <textarea
+            className="textarea"
+            rows={1}
+            value={input}
+            placeholder={tr('问点什么…', 'Ask something…')}
+            onChange={(e) => {
+              setInput(e.target.value);
+              const el = e.target;
+              el.style.height = 'auto';
+              el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            style={{
+              width: '100%',
+              fontSize: 13,
+              border: 'none',
+              outline: 'none',
+              resize: 'none',
+              background: 'transparent',
+              padding: 0,
+              maxHeight: 140,
+              lineHeight: '20px',
+            }}
+          />
+          <div className="row gap8" style={{ alignItems: 'center', marginTop: 4 }}>
+            <span style={{ flex: 1, fontSize: 10.5, color: 'var(--text-4)' }}>
+              {tr('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line')}
+            </span>
+            {busy ? (
+              <button className="btn btn-ghost sm" onClick={stop} style={{ height: 26, fontSize: 11.5 }}>
+                <Icon name="pause" size={11} /> {tr('停止', 'Stop')}
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary sm"
+                onClick={send}
+                disabled={!input.trim()}
+                style={{ height: 26, fontSize: 11.5 }}
+              >
+                {tr('发送', 'Send')}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

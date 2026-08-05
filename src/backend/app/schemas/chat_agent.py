@@ -33,6 +33,10 @@ class MemoryCreate(BaseModel):
     text: str = Field(min_length=1, max_length=300)
 
 
+class ConversationRenameRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
 class ConversationTurnRequest(BaseModel):
     question: str = Field(min_length=1)
     #: 这轮工具检索的课题。全局会话第一次提问时带上；会话上存过就不用再传。

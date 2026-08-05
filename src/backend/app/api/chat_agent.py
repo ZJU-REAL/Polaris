@@ -42,6 +42,7 @@ from app.models.user import User
 from app.schemas.chat_agent import (
     ConversationCreate,
     ConversationRead,
+    ConversationRenameRequest,
     ConversationTurnRequest,
     MemoryCreate,
     MessageRead,
@@ -54,6 +55,9 @@ from app.tools.context import ToolContext
 from app.tools.scope import visible_library_ids
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+#: 标题长度上限（与 services.conversations 自动生成时同一口径）
+_TITLE_LIMIT = 60
 
 #: 事件类 → 线上帧名。加法式：老客户端只认识其中四个，其余忽略即可。
 _EVENT_NAMES: dict[type, str] = {
@@ -124,6 +128,39 @@ async def list_conversations(
         session, user_id=user.id, scope_kind=scope_kind, scope_id=scope_id, limit=limit
     )
     return [ConversationRead.model_validate(r, from_attributes=True) for r in rows]
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationRead)
+async def rename_conversation(
+    conversation_id: uuid.UUID,
+    payload: ConversationRenameRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ConversationRead:
+    """改标题。标题原本取第一句提问的前 60 字，那句话常常并不概括这场对话。"""
+    _require_enabled()
+    conv = await store.get_owned(session, conversation_id=conversation_id, user_id=user.id)
+    if conv is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONVERSATION_NOT_FOUND")
+    conv.title = payload.title.strip()[:_TITLE_LIMIT]
+    await session.commit()
+    return ConversationRead.model_validate(conv, from_attributes=True)
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    """删掉一场对话（消息随外键级联）。只能删自己的——别人的一律 404，不是 403：
+    403 等于承认「这个 id 存在」。"""
+    _require_enabled()
+    conv = await store.get_owned(session, conversation_id=conversation_id, user_id=user.id)
+    if conv is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONVERSATION_NOT_FOUND")
+    await session.delete(conv)
+    await session.commit()
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageRead])

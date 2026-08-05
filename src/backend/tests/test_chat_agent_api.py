@@ -385,3 +385,76 @@ async def test_figure_tools_carry_a_ref_so_images_never_ride_the_stream(client, 
         id="c", name="get_paper_figure", ok=True, summary="", preview="", duration_ms=1
     )
     assert ev.image_refs == (), "默认不带图，字段存在即可"
+
+
+async def test_conversations_can_be_renamed_and_deleted(client, agent_on):
+    """标题取自第一句提问，而那句话常常并不概括整场对话——所以要能改，也要能删。"""
+    headers = await _headers(client, "conv-crud@example.com")
+    conv = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()
+
+    resp = await client.patch(
+        f"/api/chat/conversations/{conv['id']}",
+        json={"title": "  planning 相关的那次  "},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "planning 相关的那次"  # 首尾空白去掉
+
+    assert (
+        await client.delete(f"/api/chat/conversations/{conv['id']}", headers=headers)
+    ).status_code == 204
+    rows = (await client.get("/api/chat/conversations", headers=headers)).json()
+    assert conv["id"] not in {r["id"] for r in rows}
+
+
+async def test_someone_elses_conversation_is_404_not_403(client, agent_on):
+    """别人的对话一律 404。403 等于承认「这个 id 存在」——对话标题里常带着研究方向。"""
+    owner = await _headers(client, "conv-owner@example.com")
+    intruder = await _headers(client, "conv-intruder@example.com")
+    conv = (await client.post("/api/chat/conversations", json={}, headers=owner)).json()
+
+    assert (
+        await client.delete(f"/api/chat/conversations/{conv['id']}", headers=intruder)
+    ).status_code == 404
+    assert (
+        await client.patch(
+            f"/api/chat/conversations/{conv['id']}", json={"title": "x"}, headers=intruder
+        )
+    ).status_code == 404
+    # 而且真的没被删掉
+    rows = (await client.get("/api/chat/conversations", headers=owner)).json()
+    assert conv["id"] in {r["id"] for r in rows}
+
+
+async def test_deleting_a_conversation_takes_its_messages(client, agent_on):
+    """消息随对话级联删除，不留孤儿行。"""
+    from sqlalchemy import func, select
+
+    from app.models.conversation import ConversationMessage
+
+    headers = await _headers(client, "conv-cascade@example.com")
+    conv = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv['id']}/turn",
+        json={"question": "留一条消息"},
+        headers=headers,
+    ) as stream:
+        await stream.aread()
+
+    async with get_sessionmaker()() as session:
+        before = await session.scalar(
+            select(func.count())
+            .select_from(ConversationMessage)
+            .where(ConversationMessage.conversation_id == uuid.UUID(conv["id"]))
+        )
+    assert before and before > 0
+
+    await client.delete(f"/api/chat/conversations/{conv['id']}", headers=headers)
+    async with get_sessionmaker()() as session:
+        after = await session.scalar(
+            select(func.count())
+            .select_from(ConversationMessage)
+            .where(ConversationMessage.conversation_id == uuid.UUID(conv["id"]))
+        )
+    assert after == 0

@@ -123,6 +123,17 @@ async def get_or_create(
     return conv
 
 
+async def get_owned(
+    session: AsyncSession, *, conversation_id: uuid.UUID, user_id: uuid.UUID
+) -> Conversation | None:
+    """取自己的那场对话；不是自己的返回 None（调用方一律 404，不给 403——
+    403 等于承认这个 id 存在）。"""
+    conv = await session.get(Conversation, conversation_id)
+    if conv is None or conv.user_id != user_id:
+        return None
+    return conv
+
+
 async def append_message(
     session: AsyncSession,
     *,
