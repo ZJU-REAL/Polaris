@@ -438,7 +438,7 @@ export function LoginPage() {
           {isRegister ? tr('创建账号', 'Create your account') : tr('欢迎回来', 'Welcome back')}
         </div>
         <div className="auth-card-sub">
-          {tr('北极星 AI 科研智能体，让 AI 与你一起做研究', 'Polaris AI research agent — do research together with AI')}
+          {tr('北极星 AI 科研智能体，与 AI 一起做出发现', 'Polaris AI research agent — discovery, made together with AI')}
         </div>
 
         <div className="row" style={{ justifyContent: 'center', marginBottom: 18 }}>

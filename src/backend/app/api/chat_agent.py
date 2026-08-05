@@ -32,7 +32,7 @@ from app.agents.chat.events import (
     VerifyEvent,
 )
 from app.agents.chat.loop import ChatAgentLoop, ChatTurnRequest
-from app.agents.chat.prompt import default_tool_names
+from app.agents.chat.prompt import default_tool_names, mode_instructions
 from app.api.auth import current_active_user, require_llm_chat
 from app.core.config import get_settings
 from app.core.db import get_session
@@ -409,6 +409,18 @@ async def run_turn(
     # 长期记忆随 extra_system 追加在末尾（与方向说明、技能目录同处）：稳定前缀不动，
     # 缓存前缀才不会每轮作废。
     memories = await buddy.render_memories(session, user_id=user.id)
+    # 目标随会话存着：用户设过一次之后每轮都带上，不必重述，模型也不会在第三轮忘了
+    # 最初要干什么。
+    settings = dict(conv.settings or {})
+    if payload.goal is not None:
+        settings["goal"] = payload.goal.strip()
+    goal = str(settings.get("goal") or "")
+    if payload.mode != settings.get("mode"):
+        settings["mode"] = payload.mode
+    if settings != (conv.settings or {}):
+        conv.settings = settings
+        await session.commit()
+    mode_note = mode_instructions(payload.mode, goal=goal)
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
     await session.commit()
 
@@ -453,10 +465,11 @@ async def run_turn(
         max_rounds=payload.max_rounds,
         statement=payload.statement,
         skill_catalog=catalog,
-        extra_system=memories,
+        extra_system="\n\n".join(x for x in (memories, mode_note) if x),
         page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
     )
     conv_id, user_id = conv.id, user.id
+    first_question = payload.question
 
     async def event_stream() -> AsyncIterator[str]:
         # 落库的是**整条时间线**，不只是最终文本。只存文本的后果用户一眼就能看见：
@@ -479,6 +492,11 @@ async def run_turn(
             if blocks:
                 await asyncio.shield(
                     _persist_answer(conv_id, user_id, blocks, timeline.text, stop_reason, usage)
+                )
+                await asyncio.shield(
+                    _name_conversation(
+                        conv_id, user_id, question=first_question, answer=timeline.text
+                    )
                 )
 
     return StreamingResponse(
@@ -591,6 +609,26 @@ class _TurnTimeline:
     def blocks(self) -> list[Any]:
         self._flush_thinking()
         return list(self._blocks)
+
+
+async def _name_conversation(
+    conversation_id: uuid.UUID, user_id: uuid.UUID, *, question: str, answer: str
+) -> None:
+    """第一轮结束后给这场对话起个短名字（≤15 字）。
+
+    只在**还没有名字**时起：改过名的对话不该被下一轮悄悄改回去。用最便宜那档模型，
+    失败就退回用户自己的话——导航用的标题不值得为它冒险。
+    """
+    from app.core.db import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        conv = await store.get_owned(session, conversation_id=conversation_id, user_id=user_id)
+        if conv is None or (conv.settings or {}).get("title_generated"):
+            return
+        title = await store.generate_title(get_llm_router(), question=question, answer=answer)
+        conv.title = title
+        conv.settings = {**(conv.settings or {}), "title_generated": True}
+        await session.commit()
 
 
 async def _persist_answer(

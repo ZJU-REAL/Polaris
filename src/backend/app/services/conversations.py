@@ -24,6 +24,9 @@ from app.models.conversation import Conversation, ConversationMessage
 #: 标题取首条用户消息的前若干字符
 _TITLE_CHARS = 60
 
+#: 生成标题的长度上限。列表一行放得下才有用——截断的标题和没有标题差不多。
+TITLE_MAX_CHARS = 15
+
 #: 回放预算的保守缺省（字符）。管理端没在模型路由上填 context_window 时用它——
 #: 约合 16k token，给工具 schema、系统提示和本轮生成留足余量。
 DEFAULT_REPLAY_BUDGET_CHARS = 64_000
@@ -338,3 +341,23 @@ async def list_conversations(
         stmt = stmt.where(Conversation.scope_id == scope_id)
     stmt = stmt.order_by(Conversation.last_message_at.desc().nullslast()).limit(limit)
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def generate_title(llm: Any, *, question: str, answer: str) -> str:
+    """给这场对话起个短名字（≤15 字）。
+
+    用**最便宜的那档**模型、只发一小段上下文：标题是导航用的，不值得为它花一次
+    正经推理。取不到就退回问题的前 15 字——那至少是用户自己的话。
+    """
+    fallback = question.strip().replace("\n", " ")[:TITLE_MAX_CHARS]
+    prompt = (
+        f"用不超过 {TITLE_MAX_CHARS} 个字概括下面这段对话的主题，只输出标题本身，"
+        "不要引号、不要标点结尾。\n\n"
+        f"问：{question.strip()[:300]}\n答：{answer.strip()[:300]}"
+    )
+    try:
+        result = await llm.complete("default", [Message(role="user", content=prompt)])
+        title = (result.content or "").strip().strip('"「」\'').splitlines()[0]
+    except Exception:  # noqa: BLE001 — 起名失败不该影响这轮对话
+        return fallback
+    return (title or fallback)[:TITLE_MAX_CHARS]

@@ -49,8 +49,11 @@ export interface AssistantHandlers {
   onMeta?: (meta: { model: string; tools: string[] }) => void;
   /** 用户此刻在看的页面（PolarisBuddy 的页面感知）；不传就不带 */
   page?: { kind: string; id?: string };
-  /** 这场对话属于哪个课题（= 平台的 project）。自动跟着外壳当前课题走。 */
+  /** 这场对话属于哪个课题（= 平台的 project）。默认不绑，用户勾选才收窄。 */
   projectId?: string | null;
+  /** chat（默认）/ plan（只出方案）/ goal（带着一个持续目标） */
+  mode?: 'chat' | 'plan' | 'goal';
+  goal?: string;
   /** 用「上一份块列表 → 新块列表」的形式增量更新（React 状态直接套用）。 */
   onBlocks: (fn: (blocks: AssistantBlock[]) => AssistantBlock[]) => void;
   onDone: (stopReason: string) => void;
@@ -210,6 +213,8 @@ export function assistantTurnSse(
       question,
       ...(handlers.page ? { page_kind: handlers.page.kind, page_id: handlers.page.id } : {}),
       ...(handlers.projectId ? { project_id: handlers.projectId } : {}),
+      ...(handlers.mode && handlers.mode !== 'chat' ? { mode: handlers.mode } : {}),
+      ...(handlers.goal ? { goal: handlers.goal } : {}),
     },
     {
       onEvent: (event, raw) => {

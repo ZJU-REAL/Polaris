@@ -462,6 +462,7 @@ export function AssistantPanel({
   >([]);
   const [greeting, setGreeting] = useState<string>('');
   const [model, setModel] = useState<string>('');
+  const [title, setTitle] = useState<string>('');
   // 页面上下文照常发给模型，但不在输入框上占一行——它是背景信息，不是待办事项。
   const contextOn = true;
   const abortRef = useRef<(() => void) | null>(null);
@@ -472,6 +473,10 @@ export function AssistantPanel({
   // 查不到别的库」要好。
   const { currentProject } = useProject();
   const [bindProject, setBindProject] = useState(false);
+  // chat = 默认（行为一个字没变）；plan = 只调研出计划等人点头；goal = 带着一个持续目标
+  const [mode, setMode] = useState<'chat' | 'plan' | 'goal'>('chat');
+  const [goal, setGoal] = useState('');
+  const [plusOpen, setPlusOpen] = useState(false);
   const pageContext = pageContextFrom(location.pathname);
 
   // 只有「本来就贴着底」才跟着滚。正在往回翻的时候被拽回最新一行，是流式界面里最
@@ -543,6 +548,7 @@ export function AssistantPanel({
     stop();
     setConvId(null);
     setTurns([]);
+    setTitle('');
     setHistoryOpen(false);
   }, [stop]);
 
@@ -588,11 +594,18 @@ export function AssistantPanel({
         page:
           contextOn && pageContext ? { kind: pageContext.kind, id: pageContext.id } : undefined,
         projectId: bindProject ? (currentProject?.id ?? null) : null,
+        mode,
+        goal: mode === 'goal' ? goal : undefined,
         onMeta: (meta) => setModel(meta.model),
         onBlocks: patch,
         onDone: () => {
           setBusy(false);
-          setRailRefresh((n) => n + 1); // 标题这时才有
+          setRailRefresh((n) => n + 1);
+          // 标题是这一轮结束后才生成的，回头取一次
+          void api
+            .listAssistantConversations()
+            .then((rows) => setTitle(rows.find((r) => r.id === id)?.title ?? ''))
+            .catch(() => undefined);
         },
         onError: (detail) => {
           // 把原始细节一并留下：只写「网络错误」等于让用户和我们都无从查起
@@ -605,7 +618,7 @@ export function AssistantPanel({
       },
     );
     },
-    [busy, convId, contextOn, pageContext, currentProject, bindProject],
+    [busy, convId, contextOn, pageContext, currentProject, bindProject, mode, goal],
   );
 
   const send = useCallback(() => {
@@ -681,16 +694,23 @@ export function AssistantPanel({
         }}
       >
         <BuddyMark busy={busy} size={17} />
-        <strong style={{ fontSize: 14 }}>PolarisBuddy</strong>
-        {model && (
-          <span
-            className="mono"
-            style={{ fontSize: 10.5, color: 'var(--text-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            title={tr(`这轮用的模型：${model}`, `Model this turn: ${model}`)}
-          >
-            {model}
-          </span>
-        )}
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+          <div className="row gap6" style={{ alignItems: 'center', minWidth: 0 }}>
+            {/* 运行中的呼吸灯：标题栏与会话列表用同一个记号，扫一眼就知道哪场还在跑 */}
+            {busy && <span className="buddy-live-dot" />}
+            <strong
+              style={{ fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              title={title || 'PolarisBuddy'}
+            >
+              {title || 'PolarisBuddy'}
+            </strong>
+          </div>
+          {model && (
+            <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+              {model}
+            </span>
+          )}
+        </div>
         <span style={{ flex: 1 }} />
         {variant === 'dock' ? (
           <button
@@ -770,6 +790,7 @@ export function AssistantPanel({
           onPick={(id) => void loadConversation(id)}
           onNew={newConversation}
           refreshKey={railRefresh}
+          runningId={busy ? convId : null}
         />
       )}
       {/* overflowWrap: anywhere 是给长 URL、DOI、无空格的模型名留的后路——它们不换行，
@@ -848,25 +869,105 @@ export function AssistantPanel({
       </div>
 
       <div style={{ padding: 12, borderTop: '0.5px solid var(--border-2)' }}>
-        {/* 课题：默认不绑（检索走全部可见文献库），需要收窄时自己勾 */}
-        {currentProject && (
-          <label
-            className="row gap6"
-            style={{ alignItems: 'center', marginBottom: 6, fontSize: 11, color: 'var(--text-4)', cursor: 'pointer' }}
-            title={tr('勾上后只在这个课题的语料里查', 'Restrict retrieval to this topic when checked')}
+        {/* 模式与课题：都摆在输入框上方一行，像 Codex 那样。默认什么都不选。 */}
+        <div className="row gap8" style={{ alignItems: 'center', marginBottom: 6, position: 'relative' }}>
+          <button
+            className="icon-btn"
+            onClick={() => setPlusOpen((o) => !o)}
+            title={tr('模式与课题', 'Mode and topic')}
+            style={{ width: 24, height: 24 }}
           >
-            <input
-              type="checkbox"
-              checked={bindProject}
-              onChange={(e) => setBindProject(e.target.checked)}
-              style={{ width: 12, height: 12, margin: 0, accentColor: 'var(--accent)', cursor: 'pointer' }}
-            />
-            <Icon name="layers" size={11} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {tr(`只查课题：${currentProject.name}`, `Only in: ${currentProject.name}`)}
+            <Icon name="plus" size={13} />
+          </button>
+
+          {mode !== 'chat' && (
+            <span
+              className="pill sm"
+              style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', cursor: 'pointer' }}
+              onClick={() => setMode('chat')}
+              title={tr('点掉回到普通对话', 'Click to return to plain chat')}
+            >
+              {mode === 'plan' ? tr('计划模式', 'Plan mode') : tr('目标模式', 'Goal mode')} ×
             </span>
-          </label>
-        )}
+          )}
+          {bindProject && currentProject && (
+            <span
+              className="pill sm"
+              style={{ cursor: 'pointer', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              onClick={() => setBindProject(false)}
+              title={tr('只在这个课题的语料里查；点掉恢复全部', 'Restricted to this topic; click to clear')}
+            >
+              {currentProject.name} ×
+            </span>
+          )}
+          {mode === 'goal' && (
+            <input
+              className="input"
+              value={goal}
+              placeholder={tr('这场对话要达成什么？', 'What should this conversation achieve?')}
+              onChange={(e) => setGoal(e.target.value)}
+              style={{ flex: 1, minWidth: 0, height: 24, fontSize: 11.5 }}
+            />
+          )}
+
+          {plusOpen && (
+            <>
+              <div onClick={() => setPlusOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 49 }} />
+              <div
+                className="col gap4"
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  bottom: 30,
+                  zIndex: 50,
+                  minWidth: 236,
+                  padding: 6,
+                  background: 'var(--surface)',
+                  border: '0.5px solid var(--border-2)',
+                  borderRadius: 10,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
+                }}
+                onClick={() => setPlusOpen(false)}
+              >
+                {currentProject && (
+                  <button
+                    className="btn btn-ghost sm"
+                    style={{ justifyContent: 'flex-start' }}
+                    onClick={() => setBindProject((b) => !b)}
+                  >
+                    <Icon name="layers" size={13} />
+                    <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {tr('只查课题', 'Work in a topic')} · {currentProject.name}
+                    </span>
+                    {bindProject && <Icon name="check" size={12} />}
+                  </button>
+                )}
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ justifyContent: 'flex-start' }}
+                  onClick={() => setMode(mode === 'plan' ? 'chat' : 'plan')}
+                >
+                  <Icon name="bulb" size={13} />
+                  <span style={{ flex: 1, textAlign: 'left' }}>
+                    {tr('计划模式 · 先出方案再动手', 'Plan mode · propose before doing')}
+                  </span>
+                  {mode === 'plan' && <Icon name="check" size={12} />}
+                </button>
+                <button
+                  className="btn btn-ghost sm"
+                  style={{ justifyContent: 'flex-start' }}
+                  onClick={() => setMode(mode === 'goal' ? 'chat' : 'goal')}
+                >
+                  <Icon name="compass" size={13} />
+                  <span style={{ flex: 1, textAlign: 'left' }}>
+                    {tr('目标模式 · 一直朝一个目标推进', 'Goal mode · keep pursuing one goal')}
+                  </span>
+                  {mode === 'goal' && <Icon name="check" size={12} />}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
         {/* 输入区：随内容长高（7 行封顶），发送/停止就在右下角——正在流的时候
             「停」应该在离手最近的位置，而不是让人回面板顶上去找。 */}
         <div

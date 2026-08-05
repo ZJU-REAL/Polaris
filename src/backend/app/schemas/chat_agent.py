@@ -49,6 +49,10 @@ class ConversationTurnRequest(BaseModel):
     #: 不给就用默认白名单（首期 6 个只读工具）
     tool_names: list[str] | None = None
     max_rounds: int = Field(default=8, ge=1, le=20)
+    #: chat（默认，行为不变）/ plan（只调研出计划，等人点头）/ goal（带着一个持续目标）
+    mode: str = Field(default="chat", pattern="^(chat|plan|goal)$")
+    #: goal 模式的目标；不传就沿用会话上存着的那个
+    goal: str | None = Field(default=None, max_length=500)
     statement: str | None = None
     #: 用户此刻在看的页面（前端声明）。paper|idea|experiment|library|project|manuscript|daily
     page_kind: str | None = Field(default=None, max_length=32)

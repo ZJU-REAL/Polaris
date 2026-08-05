@@ -51,12 +51,15 @@ export function ConversationRail({
   onPick,
   onNew,
   refreshKey,
+  runningId,
 }: {
   activeId: string | null;
   onPick: (id: string) => void;
   onNew: () => void;
   /** 变一次就重拉一次列表（发完一轮之后标题才有） */
   refreshKey: number;
+  /** 正在跑的那场：列表里给它一个呼吸灯 */
+  runningId?: string | null;
 }) {
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -151,6 +154,7 @@ export function ConversationRail({
                   background: row.id === activeId ? 'var(--accent-soft)' : undefined,
                 }}
               >
+                {row.id === runningId && <span className="buddy-live-dot" />}
                 {renaming === row.id ? (
                   <input
                     className="input"

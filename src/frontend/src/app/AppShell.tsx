@@ -10,7 +10,7 @@ import { UpdateBadge } from '../components/ui/UpdateBadge';
 import { useAuth } from './auth';
 import { topicPath, useProject } from './project';
 import { AssistantPanel } from '../features/assistant/AssistantPanel';
-import { BuddyDock } from '../features/assistant/BuddyDock';
+import { BuddyDock, dockMaxWidth } from '../features/assistant/BuddyDock';
 import { alreadyNudgedToday, markNudged } from '../features/assistant/nudge';
 import { PAPER_DND_MIME } from '../features/assistant/paperDrag';
 import { SearchPalette } from './SearchPalette';
@@ -443,6 +443,14 @@ export function AppShell() {
   // 顶栏还宽裕吗。量的是**主区**：Buddy 拉开后视口没变，变窄的是主区。
   const mainRef = useRef<HTMLDivElement | null>(null);
   const [topbarRoomy, setTopbarRoomy] = useState(true);
+  // 窗口塞不下「侧栏 + 够用的主区 + 停靠栏」时，Buddy 改用覆盖式（就是窄屏那套）。
+  // 硬挤的结果是主区被压成竖排单字，两边都用不了——不如让一边完整。
+  const [dockFits, setDockFits] = useState(() => dockMaxWidth(window.innerWidth) > 0);
+  useEffect(() => {
+    const onResize = () => setDockFits(dockMaxWidth(window.innerWidth) > 0);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   useEffect(() => {
     const el = mainRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
@@ -923,7 +931,7 @@ export function AppShell() {
       {/* —— PolarisBuddy 停靠栏：它是版面的一列，内容区被挤窄而不是被盖住 ——
           浮层盖住内容，「一边看论文一边问」就只能开一下关一下；停靠栏让两边同时在场。
           窄屏不走这条（挤两列谁都看不清），下面那个覆盖式抽屉才是手机形态。 */}
-      {!isMobile && assistantOpen && (
+      {!isMobile && dockFits && assistantOpen && (
         <BuddyDock>
           <AssistantPanel
             variant="dock"
@@ -1005,7 +1013,7 @@ export function AppShell() {
       {/* —— 全局搜索面板 —— */}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
 
-      {isMobile && (
+      {(isMobile || !dockFits) && (
         <AssistantPanel
           open={assistantOpen}
           onClose={() => setAssistantOpen(false)}

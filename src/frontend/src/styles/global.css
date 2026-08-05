@@ -296,8 +296,10 @@ input {
   height: 52px; flex-shrink: 0; border-bottom: 0.5px solid var(--border);
   display: flex; align-items: center; gap: 14px; padding: 0 22px;
   /* 停靠栏一展开，主区就变窄：不允许顶栏被内容顶宽，否则右侧那排图标会被挤出去、
-     叠到面包屑上（内容溢出而不是换行，是 flex 默认 min-width:auto 的经典表现）。 */
-  min-width: 0; overflow: hidden;
+     叠到面包屑上（内容溢出而不是换行，是 flex 默认 min-width:auto 的经典表现）。
+     **不能用 overflow:hidden** —— 那会把顶栏自己的下拉菜单一起裁掉（我上一轮就是
+     这么把「更多」菜单弄没的）。溢出靠子项可压缩来治，不靠裁。 */
+  min-width: 0;
   background: rgba(247, 249, 252, 0.85); backdrop-filter: blur(8px);
   /* backdrop-filter 会新建层叠上下文；顶栏在 .content 之前渲染，
      不抬 z-index 的话下拉浮层会被下方内容盖住。抬到内容之上（低于弹窗/toast）。 */
@@ -328,7 +330,7 @@ input {
   border-radius: 50%; background: var(--accent);
 }
 
-.searchbox { min-width: 0; flex-shrink: 1;
+.searchbox { min-width: 0; flex-shrink: 1; overflow: hidden;
   display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 11px;
   background: var(--surface-2); border: 0.5px solid var(--border-2); border-radius: 8px;
   color: var(--text-3); font-size: 12.5px; min-width: 200px; cursor: text;
@@ -346,7 +348,14 @@ input {
   font-family: var(--mono);
 }
 
-.content { flex: 1; overflow-y: auto; min-width: 0; }
+.content {
+  flex: 1; overflow-y: auto; min-width: 0;
+  /* 响应式的判据是**主区多宽**，不是视口多宽。Buddy 的停靠栏一拉开，视口一点没变、
+     主区却窄了一大截——所有挂在 @media 上的规则都以为还很宽，于是卡片被压成竖排单字。
+     容器查询让这些规则跟着真正变化的那个尺寸走。 */
+  container-type: inline-size;
+  container-name: mainarea;
+}
 /* 同理：主区必须能被压缩到比内容还窄，否则挤的是停靠栏 */
 .main { min-width: 0; }
 .page { max-width: 1180px; margin: 0 auto; padding: 20px 36px 80px; }
@@ -1418,4 +1427,41 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 @keyframes buddy-breathe {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.55; transform: scale(0.94); }
+}
+
+
+/* ============================================================
+   主区变窄时（多半是 PolarisBuddy 拉开了，而不是窗口变小）
+   ============================================================ */
+@container mainarea (max-width: 900px) {
+  /* 统计卡：两列比四列挤成竖排单字强得多 */
+  .dash-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-main { display: block; }
+  .dash-primary + .dash-side { margin-top: 20px; }
+  .dash-side { position: static; }
+  .page-head { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-head-actions { margin-left: 0; flex-wrap: wrap; }
+  .page { padding-left: 20px; padding-right: 20px; }
+}
+@container mainarea (max-width: 620px) {
+  /* 再窄就一列。卡片有下限：低于它文字必然逐字换行，不如让它们排成一列 */
+  .dash-stats { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 统计卡与流水线节点的宽度下限：宽度低于此值时中文会被压成竖排单字，
+   那已经不是「紧凑」而是读不了。 */
+.dash-stats > * { min-width: 132px; }
+.pipeline-node { min-width: 92px; }
+
+
+/* 运行中的呼吸灯。绿色 + 呼吸而不是转圈：它要在余光里可见，又不能像 spinner 那样
+   把视线拽过去——一份对话列表里可能同时有好几个在跑。 */
+.buddy-live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ok-tx, #19A974); flex-shrink: 0;
+  animation: buddy-pulse 1.4s ease-in-out infinite;
+}
+@keyframes buddy-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(25, 169, 116, 0.45); }
+  50% { opacity: 0.5; box-shadow: 0 0 0 4px rgba(25, 169, 116, 0); }
 }

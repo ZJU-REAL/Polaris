@@ -105,3 +105,35 @@ def tool_definitions(names: tuple[str, ...] | list[str] | None = None) -> list[d
         {"name": spec.name, "description": spec.description, "parameters": spec.input_schema}
         for spec in list_tools(wanted)
     ]
+
+
+#: 三种模式。默认那种（``chat``）行为不变。
+CHAT_MODES = ("chat", "plan", "goal")
+
+#: 计划模式的附加指令。照搬 Claude Code 的 plan mode：**只调研、不动手**，先把方案
+#: 摆出来等人点头。它的价值不在「多一个开关」，而在于把「我以为你要的是 A」这个
+#: 误会提前到花钱之前——研究任务里改错方向的代价是几个小时，不是几秒。
+_PLAN_MODE = """\
+【计划模式】这一轮**只做调研和规划，不给最终结论**。
+
+- 先用工具把事实查清楚，再用 update_plan 把打算怎么做写成分步计划；
+- 计划要具体到「每一步查什么、产出什么」，而不是「分析问题、给出结论」这种废话；
+- 讲清楚你打算怎么做、为什么这么做、哪里可能不成立；
+- 最后一句问用户这个计划行不行，等他点头再执行。**不要**在这一轮就把活干完。"""
+
+#: 目标模式的附加指令。目标随会话存着，每轮都带上——用户不必每次重述，模型也不会
+#: 在第三轮忘了最初要干什么。
+_GOAL_MODE = """\
+【目标模式】这场对话有一个持续目标：{goal}
+
+每一轮都要：先说这一轮把目标推进了多少，再说下一步做什么。已经达成的部分不要重复
+汇报；卡住了就直说卡在哪、需要什么才能继续——假装有进展比停下来更浪费时间。"""
+
+
+def mode_instructions(mode: str, *, goal: str = "") -> str:
+    """模式附加指令；``chat`` 返回空串（默认行为一个字都不变）。"""
+    if mode == "plan":
+        return _PLAN_MODE
+    if mode == "goal" and goal.strip():
+        return _GOAL_MODE.format(goal=goal.strip())
+    return ""

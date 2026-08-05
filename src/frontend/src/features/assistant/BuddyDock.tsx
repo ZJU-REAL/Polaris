@@ -14,8 +14,25 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 const WIDTH_KEY = 'polaris.buddy.width';
 const MIN_WIDTH = 320;
-//: 上限按视口算：固定 720 在小笔记本上会把内容区挤到没法看
-const maxWidth = () => Math.max(MIN_WIDTH, Math.min(760, Math.round(window.innerWidth * 0.55)));
+
+//: 侧栏宽度（global.css 里的 .sidebar）。算可用空间时要减掉它。
+const SIDEBAR_WIDTH = 248;
+
+//: 主区的下限。比这更窄，页面里的卡片就会被压成竖排单字——那已经不是「紧凑」，
+//: 是读不了。停靠栏必须先让位，而不是把主区挤到不可用。
+export const MAIN_MIN_WIDTH = 640;
+
+//: 停靠栏的上限。对话不需要很宽（一行太长反而难读），而主区是干活的地方。
+const MAX_WIDTH = 520;
+
+/** 当前视口下停靠栏最多能有多宽；空间不够时返回 0，调用方据此改用覆盖式。 */
+export function dockMaxWidth(viewport: number): number {
+  const room = viewport - SIDEBAR_WIDTH - MAIN_MIN_WIDTH;
+  if (room < MIN_WIDTH) return 0; // 塞不下两栏了
+  return Math.min(MAX_WIDTH, room);
+}
+
+const maxWidth = () => Math.max(MIN_WIDTH, dockMaxWidth(window.innerWidth) || MIN_WIDTH);
 
 export const DEFAULT_WIDTH = 420;
 

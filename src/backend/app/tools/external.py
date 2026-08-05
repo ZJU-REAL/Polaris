@@ -11,10 +11,10 @@ from typing import Any
 
 from app.core.db import get_sessionmaker
 from app.models.paper import Paper
-from app.services.libraries import membership_for_project
 from app.services.literature import get_openalex_client, get_s2_client
 from app.tools.context import ToolContext
 from app.tools.registry import tool
+from app.tools.scope import membership_in_scope
 
 _MAX_K = 10
 
@@ -88,7 +88,7 @@ async def _resolve_ref(ctx: ToolContext, args: dict[str, Any]) -> str:
     async with get_sessionmaker()() as session:
         paper = await session.get(Paper, pid)
         if paper is None or (
-            await membership_for_project(session, project_id=ctx.project_id, paper_id=pid)
+            await membership_in_scope(session, ctx, pid)
         ) is None:
             raise ValueError(f"库内不存在该论文：{raw}")
         if paper.arxiv_id:

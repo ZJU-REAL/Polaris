@@ -48,3 +48,17 @@ describe('按最近活跃分组', () => {
     expect(groups[1]?.rows.map((r) => r.id)).toEqual(['零点前']);
   });
 });
+
+describe('停靠栏的宽度上限', () => {
+  it('先保住主区的下限，剩下的才给停靠栏', async () => {
+    const { dockMaxWidth } = await import('../BuddyDock');
+    expect(dockMaxWidth(1920)).toBe(520);
+    expect(dockMaxWidth(1400)).toBe(512);
+  });
+
+  it('塞不下两栏时返回 0——调用方据此改用覆盖式，而不是把主区挤成竖排单字', async () => {
+    const { dockMaxWidth } = await import('../BuddyDock');
+    expect(dockMaxWidth(1180)).toBe(0);
+    expect(dockMaxWidth(900)).toBe(0);
+  });
+});

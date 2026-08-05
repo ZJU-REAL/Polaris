@@ -20,6 +20,7 @@ from app.services import daily_feed as daily_service
 from app.services import libraries as libraries_service
 from app.tools.context import ToolContext
 from app.tools.registry import tool
+from app.tools.scope import library_ids_for
 
 _MAX_LIBRARIES = 100
 _MAX_DAILY = 50
@@ -76,7 +77,7 @@ async def list_libraries(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
     async with get_sessionmaker()() as session:
         user = await _require_user(session, ctx)
         rows = await libraries_service.list_libraries_overview(session, user=user, type=want)
-        linked_ids = set(await libraries_service.get_source_library_ids(session, ctx.project_id))
+        linked_ids = set(await library_ids_for(session, ctx))
     briefs = [_library_brief(r, linked=r["id"] in linked_ids) for r in rows]
     if linked_only:
         briefs = [b for b in briefs if b["linked_to_this_topic"]]
@@ -105,7 +106,7 @@ async def get_library(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         if library is None or not libraries_service.library_visible_to(library, user):
             raise ValueError(f"文献库不存在或无权访问：{args.get('library_id')}")
         row = await libraries_service.library_overview(session, library=library, user=user)
-        linked_ids = set(await libraries_service.get_source_library_ids(session, ctx.project_id))
+        linked_ids = set(await library_ids_for(session, ctx))
     definition = row.get("definition") or {}
     return {
         **_library_brief(row, linked=library_id in linked_ids),

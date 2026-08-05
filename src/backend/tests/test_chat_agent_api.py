@@ -526,3 +526,82 @@ async def test_a_tool_that_needs_a_topic_fails_inside_the_loop_not_on_the_wire(c
     assert results, f"没有工具结果帧：{names}"
     assert results[0]["ok"] is False
     assert "课题" in results[0]["summary"], results[0]
+
+
+async def test_every_tool_module_resolves_scope_the_same_way(client, agent_on):
+    """所有工具都必须走同一条范围解析。
+
+    #269 放开检索范围时漏改了三个模块（figures / external / libraries），它们仍按
+    课题查——于是全局模式下取图必然报「库内不存在该论文」，而论文和图都好端端在那儿。
+    这条把「没有工具再自己按 project_id 判成员资格」钉住：漏一个模块，症状是某类工具
+    在全局对话里整体失灵，而其它工具一切正常，很难联想到是范围解析没统一。
+    """
+    import pathlib
+
+    tools_dir = pathlib.Path(__file__).resolve().parent.parent / "app" / "tools"
+    offenders = []
+    for path in tools_dir.glob("*.py"):
+        if path.name == "scope.py":  # 范围解析自己就住在这儿
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "membership_for_project" in text or "get_source_library_ids" in text:
+            offenders.append(path.name)
+    assert offenders == [], f"这些模块还在按课题解析范围：{offenders}"
+
+
+async def test_the_conversation_gets_a_short_name_after_the_first_turn(client, agent_on):
+    """对话要有个短名字（≤15 字），而不是把第一句提问整段截下来当标题。"""
+    from app.services.conversations import TITLE_MAX_CHARS
+
+    headers = await _headers(client, "title@example.com")
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": "帮我把这个方向的相关工作梳理一遍，重点看最近两年的进展"},
+        headers=headers,
+    ) as stream:
+        await stream.aread()
+
+    rows = (await client.get("/api/chat/conversations", headers=headers)).json()
+    title = next(r["title"] for r in rows if r["id"] == conv_id)
+    assert title and len(title) <= TITLE_MAX_CHARS
+
+
+async def test_renaming_survives_the_next_turn(client, agent_on):
+    """改过名的对话不该被下一轮悄悄改回去。"""
+    headers = await _headers(client, "title-keep@example.com")
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": "第一句"},
+        headers=headers,
+    ) as stream:
+        await stream.aread()
+
+    await client.patch(
+        f"/api/chat/conversations/{conv_id}", json={"title": "我自己起的名字"}, headers=headers
+    )
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": "第二句"},
+        headers=headers,
+    ) as stream:
+        await stream.aread()
+
+    rows = (await client.get("/api/chat/conversations", headers=headers)).json()
+    assert next(r["title"] for r in rows if r["id"] == conv_id) == "我自己起的名字"
+
+
+async def test_plan_mode_tells_the_model_to_propose_before_acting(client, agent_on):
+    """计划模式把「先出方案等人点头」写进这一轮的指令；默认模式一个字都不加。"""
+    from app.agents.chat.prompt import mode_instructions
+
+    assert mode_instructions("chat") == ""
+    assert mode_instructions("goal", goal="") == ""
+    plan = mode_instructions("plan")
+    assert "只做调研和规划" in plan and "update_plan" in plan
+    goal = mode_instructions("goal", goal="把 CUA 这条线读透")
+    assert "把 CUA 这条线读透" in goal
