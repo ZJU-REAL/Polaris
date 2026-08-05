@@ -13,19 +13,38 @@ from app.tools.registry import list_tools
 
 #: 首期给助手的工具白名单。**不要一上来给 38 个**：schema 每轮重发既贵，又让模型
 #: 在相近的工具之间反复犹豫（search_papers / search_chunks / global_search 尤其像）。
-DEFAULT_TOOL_NAMES: tuple[str, ...] = (
-    "search_chunks",
-    "search_papers",
-    "get_paper",
-    "read_fulltext",
-    "list_concepts",
-    "get_concept",
-    # 渐进披露：目录常驻，正文按需取
-    "skill_load",
-    "skill_read_file",
-    # 多步任务把计划摆出来，用户看得见你打算怎么做、做到哪儿了
-    "update_plan",
-)
+#: 助手默认拿不到的工具。**默认给全部只读工具**，这里只列例外。
+#:
+#: 反过来（白名单）曾经是默认：只给 6 个检索工具，理由是「38 个 schema 每轮重发既贵
+#: 又让模型选择困难」。实测下来那个判断错在两处：一是代价被高估了——全部只读工具的
+#: schema 加起来约 12.6k 字符（≈3.2k tokens），一轮问答的历史往往比这更大；二是代价
+#: 算错了地方——模型拿不到取图工具时，不会「省下一次调用」，而是**假装看过图**或者
+#: 干脆说做不到，用户为此付的代价远超几千 token。
+#:
+#: 例外只有一个：get_fact_pack 一次返回整包事实，动辄几万字符，模型几乎总能用更
+#: 便宜的工具问到同样的东西。需要它的场景由技能显式声明。
+_TOOL_DENYLIST = frozenset({"get_fact_pack"})
+
+
+def default_tool_names() -> tuple[str, ...]:
+    """这一轮默认给哪些工具：注册表里全部只读的，减去 denylist。
+
+    动态取而不是写死一份名单：新工具加进注册表就自动可用。写死名单的问题不是麻烦，
+    而是**没人会记得回来加**——助手会悄悄少一项能力，而界面上看不出任何异常。
+    """
+    from app.tools.registry import list_tools
+
+    return tuple(
+        spec.name for spec in list_tools() if spec.read_only and spec.name not in _TOOL_DENYLIST
+    )
+
+
+#: 兼容旧引用（测试与 API 都在用这个名字）。求值时机在 import 之后，工具已注册完毕。
+def __getattr__(name: str) -> object:
+    if name == "DEFAULT_TOOL_NAMES":
+        return default_tool_names()
+    raise AttributeError(name)
+
 
 _SYSTEM = """\
 你是 Polaris 科研平台的助手。你可以调用工具去平台里查东西，而不是只凭上下文作答。
@@ -70,7 +89,7 @@ def tool_definitions(names: tuple[str, ...] | list[str] | None = None) -> list[d
 
     顺序跟随 ``list_tools`` 给定的顺序（它保序），这样工具块也是稳定前缀的一部分。
     """
-    wanted = list(names) if names else list(DEFAULT_TOOL_NAMES)
+    wanted = list(names) if names else list(default_tool_names())
     return [
         {"name": spec.name, "description": spec.description, "parameters": spec.input_schema}
         for spec in list_tools(wanted)

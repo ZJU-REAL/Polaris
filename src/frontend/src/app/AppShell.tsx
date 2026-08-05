@@ -10,9 +10,9 @@ import { UpdateBadge } from '../components/ui/UpdateBadge';
 import { useAuth } from './auth';
 import { topicPath, useProject } from './project';
 import { AssistantPanel } from '../features/assistant/AssistantPanel';
-import { BuddyBubble } from '../features/assistant/BuddyBubble';
 import { BuddyDock } from '../features/assistant/BuddyDock';
 import { alreadyNudgedToday, markNudged } from '../features/assistant/nudge';
+import { PAPER_DND_MIME } from '../features/assistant/paperDrag';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
@@ -438,6 +438,7 @@ export function AppShell() {
   const [droppedText, setDroppedText] = useState<string | null>(null);
   const [buddyBusy, setBuddyBusy] = useState(false);
   const [nudge, setNudge] = useState<string | null>(null);
+  const [buddyDragOver, setBuddyDragOver] = useState(false);
 
   // 主动提示：今天没提过才去问一次计数——大多数次打开页面连这个请求都不会发。
   // 提示必须对应一件**真事**（跑着的实验、今天到的新论文）；为了让球看起来「活着」
@@ -751,6 +752,66 @@ export function AppShell() {
             <span>{tr('搜索论文 / 想法 / 实验…', 'Search papers / ideas / experiments…')}</span>
             <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
           </div>
+          {/* PolarisBuddy：入口在顶栏右侧，不再是浮在页面上的球——球会挡住内容，
+              而且没人知道它是什么。这里也是论文/选中文字的拖放落点。 */}
+          <button
+            className="icon-btn"
+            onClick={() => setAssistantOpen((o) => !o)}
+            title={tr('PolarisBuddy（⌘J）· 可把论文或选中的文字拖到这里', 'PolarisBuddy (⌘J) · drop a paper or selection here')}
+            aria-label="PolarisBuddy"
+            onDragOver={(e) => {
+              const types = e.dataTransfer.types;
+              if (types.includes(PAPER_DND_MIME) || types.includes('text/plain')) {
+                e.preventDefault();
+                setBuddyDragOver(true);
+              }
+            }}
+            onDragLeave={() => setBuddyDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setBuddyDragOver(false);
+              // 论文优先：拖论文行时 text/plain 里是标题，不该被当成一段要解释的话
+              const paperId = e.dataTransfer.getData(PAPER_DND_MIME);
+              if (paperId) {
+                setDroppedPaperId(paperId);
+                setAssistantOpen(true);
+                return;
+              }
+              const text = e.dataTransfer.getData('text/plain').trim();
+              if (text) {
+                setDroppedText(text.slice(0, 1200));
+                setAssistantOpen(true);
+              }
+            }}
+            style={{
+              position: 'relative',
+              background: buddyDragOver ? 'var(--accent-soft)' : undefined,
+              outline: buddyDragOver ? '1px dashed var(--accent)' : undefined,
+            }}
+          >
+            <PolarisMark size={16} dot={!buddyBusy} />
+            {/* 主动提示：顶栏按钮上一个小点；点开面板即消。没有真事时根本不出现 */}
+            {nudge && (
+              <span
+                title={nudge}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dismissNudge();
+                  setAssistantOpen(true);
+                }}
+                style={{
+                  position: 'absolute',
+                  top: 4,
+                  right: 4,
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: 'var(--danger)',
+                }}
+              />
+            )}
+          </button>
+
           {/* 管理员设置入口（仅管理员可见） */}
           {isAdmin(me) && (
             <button
@@ -861,27 +922,6 @@ export function AppShell() {
       {/* —— 全局搜索面板 —— */}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
 
-      {/* —— PolarisBuddy：悬浮球 + 抽屉（⌘J）——
-          停靠形态见下方 .app 里的 BuddyDock；这里只留窄屏的覆盖式抽屉与悬浮球。 */}
-      <BuddyBubble
-        busy={buddyBusy}
-        nudge={nudge}
-        onDismissNudge={dismissNudge}
-        onOpen={() => {
-          dismissNudge();
-          setAssistantOpen(true);
-        }}
-        onDropPaper={(paperId) => {
-          dismissNudge();
-          setDroppedPaperId(paperId);
-          setAssistantOpen(true);
-        }}
-        onDropText={(text) => {
-          dismissNudge();
-          setDroppedText(text);
-          setAssistantOpen(true);
-        }}
-      />
       {isMobile && (
         <AssistantPanel
           open={assistantOpen}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
+import { PolarisMark } from '../../components/ui/PolarisLogo';
 import { Markdown } from '../../lib/markdown';
 import { api } from '../../lib/api';
 import {
@@ -11,7 +12,6 @@ import {
 } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 import { BuddyHome } from './BuddyHome';
-import { CapabilitiesBar } from './CapabilitiesBar';
 import { ConversationRail } from './ConversationRail';
 import { ToolImages } from './ToolImages';
 import { pageContextFrom } from './buddyContext';
@@ -128,6 +128,24 @@ function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> 
         </pre>
       )}
     </div>
+  );
+}
+
+/** 会动的标识：思考/作答中只画蓝色主体并轻微呼吸，答完把右上角那个绿点补上。
+
+    用标识自己的一笔当状态，而不是再摆一个转圈图标——转圈是通用的「在忙」，
+    而「还差一点」正好说明它在把这件事做完。呼吸幅度压得很小：状态提示要能被余光
+    看见，但不该在读答案时抢注意力。 */
+export function BuddyMark({ busy, size = 16 }: { busy: boolean; size?: number }) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        animation: busy ? 'buddy-breathe 1.6s ease-in-out infinite' : undefined,
+      }}
+    >
+      <PolarisMark size={size} dot={!busy} />
+    </span>
   );
 }
 
@@ -516,27 +534,11 @@ export function AssistantPanel({
 
   if (!open) return null;
 
-  // 快捷动作按真实计数给：没有实验就不该出现「实验怎么样了」
-  const lastTurn = turns[turns.length - 1];
-  const liveBlocks = busy && lastTurn?.role === 'assistant' ? lastTurn.blocks : [];
-
-  // 这场对话里真的被加载过的技能。判据是 skill_load 的调用摘要——**不是**目录里
-  // 有哪些技能：目录只说明「它可能会用」，加载过才是「它真的用了」。
-  const loadedSkills = new Set<string>();
-  for (const turn of turns) {
-    for (const block of turn.blocks) {
-      if (block.kind === 'tool' && block.name === 'skill_load' && block.state === 'ok') {
-        const slug = (block.summary ?? '').match(/[a-z0-9][a-z0-9-]{2,}/i)?.[0];
-        if (slug) loadedSkills.add(slug);
-      }
-    }
-  }
-
-  // dock 形态下，外框（宽度/边框/拖拽把手）归 BuddyDock 管，这里只铺内容；
-  // overlay 形态自己是那个浮层。两种形态共用下面同一套正文，不分叉。
+  // dock 形态下外框（宽度/边框/拖拽把手）归 BuddyDock 管，这里只铺内容；
+  // overlay 形态自己就是那个浮层。两种形态共用同一套正文，不分叉。
   const frame: React.CSSProperties =
     variant === 'dock'
-      ? { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }
+      ? { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }
       : {
           position: 'fixed',
           top: 0,
@@ -551,10 +553,24 @@ export function AssistantPanel({
           boxShadow: '-8px 0 24px rgba(0,0,0,0.06)',
         };
 
+  const lastTurn = turns[turns.length - 1];
+  const liveBlocks = busy && lastTurn?.role === 'assistant' ? lastTurn.blocks : [];
+
   return (
     <div style={frame}>
-      <div className="row gap8" style={{ padding: '12px 16px', borderBottom: '0.5px solid var(--border-2)', alignItems: 'center' }}>
-        <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
+      {/* 高度与主面板顶栏（.topbar, 52px）严格一致：两栏并排时分割线必须在同一水平线上，
+          差几个像素比差很多更显眼——眼睛会把它读成「没对齐」而不是「另一种设计」。 */}
+      <div
+        className="row gap8"
+        style={{
+          height: 52,
+          flexShrink: 0,
+          padding: '0 16px',
+          borderBottom: '0.5px solid var(--border)',
+          alignItems: 'center',
+        }}
+      >
+        <BuddyMark busy={busy} size={17} />
         <strong style={{ fontSize: 14 }}>PolarisBuddy</strong>
         <span style={{ flex: 1 }} />
         {variant === 'dock' ? (
@@ -590,8 +606,6 @@ export function AssistantPanel({
           <Icon name={variant === 'dock' ? 'chevron' : 'x'} size={14} />
         </button>
       </div>
-
-      <CapabilitiesBar loadedSkills={loadedSkills} />
 
 
       {historyOpen && (
@@ -630,7 +644,7 @@ export function AssistantPanel({
         </div>
       )}
 
-      <div className="row" style={{ flex: 1, minHeight: 0, alignItems: 'stretch' }}>
+      <div className="row" style={{ flex: 1, minHeight: 0, minWidth: 0, alignItems: 'stretch' }}>
       {variant === 'dock' && railOpen && (
         <ConversationRail
           activeId={convId}
@@ -639,7 +653,20 @@ export function AssistantPanel({
           refreshKey={railRefresh}
         />
       )}
-      <div ref={scrollRef} style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '14px 16px' }}>
+      {/* overflowWrap: anywhere 是给长 URL、DOI、无空格的模型名留的后路——它们不换行，
+          会把整个对话框顶宽，而对话框是 flex 子项，顶宽的结果是把页面撑破。 */}
+      <div
+        ref={scrollRef}
+        className="buddy-scroll"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          overflowWrap: 'anywhere',
+          padding: '14px 16px',
+        }}
+      >
         {turns.length === 0 && (
           <BuddyHome greeting={greeting} onPick={(prompt) => setInput(prompt)} />
         )}
@@ -648,7 +675,17 @@ export function AssistantPanel({
           return (
             <div key={i} style={{ marginBottom: 14 }}>
               {turn.role === 'user' ? (
-                <div style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)', borderRadius: 9, padding: '8px 11px', fontSize: 13 }}>
+                <div
+                  style={{
+                    background: 'var(--accent-soft)',
+                    color: 'var(--accent-text)',
+                    borderRadius: 9,
+                    padding: '8px 11px',
+                    fontSize: 13,
+                    overflowWrap: 'anywhere',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
                   {turn.blocks.map((b, j) => (b.kind === 'text' ? <span key={j}>{b.text}</span> : null))}
                 </div>
               ) : (

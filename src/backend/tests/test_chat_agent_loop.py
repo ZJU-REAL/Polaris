@@ -299,18 +299,35 @@ def test_system_prompt_keeps_a_stable_prefix():
     assert with_statement.index("Computer-use agents") > with_statement.index("你是 Polaris")
 
 
-def test_default_tool_whitelist_is_small():
-    """检索工具只给 6 个；另外三个不是检索工具，各有各的理由。
+def test_the_default_surface_is_every_read_only_tool_minus_a_named_few():
+    """默认给**全部只读工具**，例外要显式列出来。
 
-    38 个 schema 每轮重发既贵，又让模型在相近工具间反复犹豫。例外只有：
-    ``skill_load`` / ``skill_read_file`` 是渐进披露的入口，不给就等于没有技能系统；
-    ``update_plan`` 让多步任务的进度可寻址，写在正文里的计划前端画不出来。
+    这里原来钉的是相反的判断（「只给 6 个检索工具，schema 每轮重发太贵」）。那个判断
+    错在两处：代价被高估——全部只读工具的 schema 约 3.2k tokens，比一轮问答的历史还小；
+    代价也算错了地方——模型拿不到取图工具时不会「省下一次调用」，而是假装看过图，或者
+    干脆说做不到。用户为此付的远比几千 token 贵。
+
+    动态取而不是写死名单：新工具加进注册表就自动可用。写死的问题不是麻烦，而是没人
+    会记得回来加，助手会悄悄少一项能力而界面上看不出异常。
     """
-    non_retrieval = {"skill_load", "skill_read_file", "update_plan"}
-    retrieval = [t for t in DEFAULT_TOOL_NAMES if t not in non_retrieval]
-    assert len(retrieval) == 6
-    assert "search_chunks" in retrieval
-    assert set(DEFAULT_TOOL_NAMES) - set(retrieval) == non_retrieval
+    from app.agents.chat.prompt import _TOOL_DENYLIST, default_tool_names
+    from app.tools.registry import list_tools
+
+    names = set(default_tool_names())
+    read_only = {spec.name for spec in list_tools() if spec.read_only}
+
+    assert names == read_only - _TOOL_DENYLIST
+    # 用户实际撞上的那几个：取图、读解读、看实验
+    assert {"get_paper_figure", "read_wiki", "get_experiment"} <= names
+    # 写工具一个都不能混进来（本期仍是只读期）
+    assert not {spec.name for spec in list_tools() if not spec.read_only} & names
+
+
+def test_the_denylist_says_why_each_entry_is_out():
+    """例外必须少而有据：get_fact_pack 一次返回整包事实，模型总能用更便宜的工具问到。"""
+    from app.agents.chat.prompt import _TOOL_DENYLIST
+
+    assert set(_TOOL_DENYLIST) == {"get_fact_pack"}
 
 
 @pytest.mark.asyncio

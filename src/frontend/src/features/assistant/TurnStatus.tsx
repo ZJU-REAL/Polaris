@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Icon } from '../../components/ui/Icon';
+import { PolarisMark } from '../../components/ui/PolarisLogo';
 import type { AssistantBlock } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 
@@ -91,7 +91,10 @@ export function TurnStatus({
         color: 'var(--text-3)',
       }}
     >
-      <Icon name="refresh" size={12} style={{ color: 'var(--accent)', animation: 'spin 1.1s linear infinite' }} />
+      {/* 用标识本身表示「在忙」：转圈是通用的忙，标识差着一点则是「这件事还没做完」 */}
+      <span style={{ display: 'inline-flex', animation: 'buddy-breathe 1.6s ease-in-out infinite' }}>
+        <PolarisMark size={13} dot={false} />
+      </span>
       <span
         style={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
       >
