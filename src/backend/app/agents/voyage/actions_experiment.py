@@ -47,6 +47,7 @@ from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperWiki
 from app.models.ssh_credential import SSHCredential
 from app.models.voyage import VoyageRun
+from app.services import experiment_settings as experiment_settings_service
 from app.services import experiments as experiments_service
 from app.services import ssh_exec
 from app.services.figure_annotate import prepare_image_for_llm
@@ -283,20 +284,74 @@ def _prompt_with_context(base: str, ctx: ActionContext) -> str:
     return "".join(parts)
 
 
+def _env_facts_prompt(env_settings: dict[str, str]) -> str:
+    """把「实验设置」里的环境事实拼成一段提示词，附到 codegen 的 user prompt 后面。
+
+    没配任何一项就返回空串（不往提示词里塞噪声）。这段是**事实陈述**而非建议：模型
+    对目标机器一无所知，路径全靠猜，猜错的代价是整个 voyage 跑到冒烟才失败。
+    """
+    lines: list[str] = []
+    if env_settings.get("model_root"):
+        root = env_settings["model_root"]
+        lines.append(
+            f"- 本机模型都放在 {root} 下（也可用环境变量 $POLARIS_MODEL_ROOT）。"
+            f"引用本机模型必须用这个前缀的完整路径，如 {root.rstrip('/')}/Qwen/Qwen3-1.7B；"
+            "不要自己编造别的目录层级。"
+        )
+    if env_settings.get("dataset_root"):
+        root = env_settings["dataset_root"]
+        lines.append(f"- 本机数据集都放在 {root} 下（环境变量 $POLARIS_DATASET_ROOT）。")
+    if env_settings.get("pip_index_url"):
+        lines.append(
+            f"- pip 镜像源已由平台配好（PIP_INDEX_URL={env_settings['pip_index_url']}），"
+            "requirements.txt 里不要再写 -i/--index-url。"
+        )
+    if env_settings.get("hf_endpoint"):
+        lines.append(
+            f"- HF 端点已由平台配好（HF_ENDPOINT={env_settings['hf_endpoint']}），"
+            "代码里不要再改它。"
+        )
+    if not lines:
+        return ""
+    return "\n\n本机环境（平台实配，按此写代码，不要臆测）：\n" + "\n".join(lines)
+
+
 def _platform_env_files(
-    ctx: ActionContext, *, proxy_url: str | None = None, no_proxy_extra: str = ""
+    ctx: ActionContext,
+    *,
+    proxy_url: str | None = None,
+    no_proxy_extra: str = "",
+    env_settings: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """平台生成的 env.sh（固定内容，非 LLM 产物）：恒定导出 POLARIS_WORKDIR，
     hf_mirror 时追加 HF_ENDPOINT 镜像；服务器配置了出网代理时导出 http(s)_proxy，
-    并把内网 LLM 地址列入 no_proxy（评测 API 不走代理）。模板执行前会 source。"""
+    并把内网 LLM 地址列入 no_proxy（评测 API 不走代理）。模板执行前会 source。
+
+    ``env_settings`` 是「实验设置」里配的全局环境（管理端可改，见
+    services/experiment_settings）。这些值已在服务层过白名单校验，此处直接用：
+    pip 镜像与 HF 端点导出成环境变量，模型/数据集根目录也导出，方便生成代码引用。
+    """
+    settings = env_settings or {}
     lines = [
         "export POLARIS_WORKDIR=$(pwd)",
         # 有 venv 就激活：让 LLM 代码里的裸 `python` 落到 venv（很多主机只有 python3，
         # 裸机实验实测 LLM 反复写 `python` 且修复循环绕不开 exit 127；容器模式无 .venv 为 no-op）
         "[ -f .venv/bin/activate ] && . .venv/bin/activate",
     ]
-    if _params(ctx).get("hf_mirror"):
-        lines.append(f"export HF_ENDPOINT={HF_MIRROR_ENDPOINT}")
+    # 模型/数据集根目录：导出给生成代码用，省得它靠猜路径
+    if settings.get("model_root"):
+        lines.append(f"export POLARIS_MODEL_ROOT={settings['model_root']}")
+    if settings.get("dataset_root"):
+        lines.append(f"export POLARIS_DATASET_ROOT={settings['dataset_root']}")
+    # pip 镜像：装依赖慢/连不上官方源是实验起不来的常见原因，配了就全局生效
+    if settings.get("pip_index_url"):
+        lines.append(f"export PIP_INDEX_URL={settings['pip_index_url']}")
+    # HF 端点：设置里配的优先于 hf_mirror 参数的内置镜像
+    hf_endpoint = settings.get("hf_endpoint") or (
+        HF_MIRROR_ENDPOINT if _params(ctx).get("hf_mirror") else ""
+    )
+    if hf_endpoint:
+        lines.append(f"export HF_ENDPOINT={hf_endpoint}")
     if proxy_url:
         no_proxy = "localhost,127.0.0.1"
         if _params(ctx).get("hf_mirror"):
@@ -1062,11 +1117,18 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         experiment = await _get_experiment(session, ctx)
         await _set_status(ctx, session, experiment, "setup")
 
+        # 实验的全局环境设置（管理端「实验设置」里配）：模型/数据集位置、pip 镜像、
+        # HF 端点、代理。既写进 env.sh，也**作为事实写进 codegen 提示词**——模型不知道
+        # 这台机器上模型放在哪，只能照提示词里的例子猜。实测一次失败（voyage 6c5df454）
+        # 生成了 /hf/Qwen/Qwen3-1.7B，少了一层目录，冒烟直接起不来。
+        env_settings = await experiment_settings_service.get_settings(session)
+
         files = ctx.checkpoint.get("exp_files")
         if not isinstance(files, dict):  # 断点幂等：已生成的代码不重复调 LLM
             user_prompt = (
                 f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:8000]}\n"
                 f"预算：{json.dumps(experiment.budget or {}, ensure_ascii=False)}"
+                f"{_env_facts_prompt(env_settings)}"
             )
             files = await _complete_json(
                 ctx,
@@ -1088,8 +1150,15 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             )
 
         executor = await _open_executor(session, ctx, experiment)
+        # 代理优先用凭据上配的（那是「这台机器」的属性），没配才回落到全局实验设置
+        proxy_url = executor.proxy_url or env_settings.get("proxy_url") or None
         platform_files = (
-            _platform_env_files(ctx, proxy_url=executor.proxy_url, no_proxy_extra=llm_host)
+            _platform_env_files(
+                ctx,
+                proxy_url=proxy_url,
+                no_proxy_extra=llm_host,
+                env_settings=env_settings,
+            )
             | eval_files
         )
         try:

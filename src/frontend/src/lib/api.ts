@@ -1288,6 +1288,20 @@ export interface LabLeaderboardSetting {
   enabled: boolean;
 }
 
+/** 实验的全局环境设置（所有实验共用一份）。空串 = 不配置该项。 */
+export interface ExperimentEnvSettings {
+  /** 本机模型根目录，如 /hf/model */
+  model_root: string;
+  /** 本机数据集根目录 */
+  dataset_root: string;
+  /** pip 镜像源 */
+  pip_index_url: string;
+  /** HF 镜像端点，如 https://hf-mirror.com */
+  hf_endpoint: string;
+  /** 实验机出外网的 HTTP 代理（凭据上单独配了的以凭据为准） */
+  proxy_url: string;
+}
+
 // ============================================================
 // M2 · Ingest（冷启动 / 增量同步，复用 Voyage）
 // ============================================================
@@ -4241,6 +4255,13 @@ export const api = {
   },
   setLabLeaderboardEnabled(enabled: boolean): Promise<LabLeaderboardSetting> {
     return requestJson<LabLeaderboardSetting>('/admin/settings/lab-leaderboard', 'PUT', { enabled });
+  },
+  /** 实验的全局环境设置（admin）：模型/数据集位置、pip 镜像、HF 端点、代理。 */
+  getExperimentEnv(): Promise<ExperimentEnvSettings> {
+    return request<ExperimentEnvSettings>('/admin/settings/experiment-env');
+  },
+  setExperimentEnv(payload: ExperimentEnvSettings): Promise<ExperimentEnvSettings> {
+    return requestJson<ExperimentEnvSettings>('/admin/settings/experiment-env', 'PUT', payload);
   },
   /** 给最近 7 天里还没有向量的每日论文补建向量（可能耗时几十秒）。 */
   backfillDailyEmbeddings(): Promise<DailyEmbedBackfillResult> {

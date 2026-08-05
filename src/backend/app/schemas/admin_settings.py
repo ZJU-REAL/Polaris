@@ -64,3 +64,17 @@ class EmbeddingSpaceAdoptResult(BaseModel):
 
     active: EmbeddingSpaceItem
     previous: str | None = None
+
+
+class ExperimentEnvSettings(BaseModel):
+    """实验的全局环境设置（所有实验共用一份）。
+
+    空字符串 = 不配置该项，各自走兜底行为（不配 pip 镜像就用官方源，等等）。
+    路径/URL 会拼进远端 shell，服务层做白名单校验，非法值直接拒收。
+    """
+
+    model_root: str = ""  # 本机模型根目录，如 /hf/model
+    dataset_root: str = ""  # 本机数据集根目录
+    pip_index_url: str = ""  # pip 镜像源
+    hf_endpoint: str = ""  # HF 镜像端点，如 https://hf-mirror.com
+    proxy_url: str = ""  # 实验机出外网的 HTTP 代理

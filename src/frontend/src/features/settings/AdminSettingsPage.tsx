@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { PageHead } from '../../components/ui/PageHead';
 import { Segmented } from '../../components/ui/Segmented';
+import { ExperimentSettings } from './ExperimentSettings';
 import { FeedbackTab } from '../feedback/FeedbackTab';
 import { tr } from '../../lib/i18n';
 import { api, isAdmin } from '../../lib/api';
@@ -14,9 +15,9 @@ import { CodesTab, DailyCategoriesTab, LlmTab, UsageTab, UsersTab } from './Sett
    各标签页组件仍住在 SettingsPage.tsx（与个人设置共用一批内部小组件），这里只负责壳层。
    ============================================================ */
 
-type AdminTab = 'llm' | 'daily' | 'users' | 'codes' | 'feedback' | 'usage';
+type AdminTab = 'llm' | 'experiment' | 'daily' | 'users' | 'codes' | 'feedback' | 'usage';
 
-const ADMIN_TABS: AdminTab[] = ['llm', 'daily', 'users', 'codes', 'feedback', 'usage'];
+const ADMIN_TABS: AdminTab[] = ['llm', 'experiment', 'daily', 'users', 'codes', 'feedback', 'usage'];
 
 export function AdminSettingsPage() {
   const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
@@ -30,6 +31,7 @@ export function AdminSettingsPage() {
 
   const items: { v: AdminTab; label: string }[] = [
     { v: 'llm', label: tr('LLM 管理', 'LLM admin') },
+    { v: 'experiment', label: tr('实验设置', 'Experiments') },
     { v: 'daily', label: tr('每日论文', 'Daily papers') },
     { v: 'users', label: tr('用户管理', 'Users') },
     { v: 'codes', label: tr('注册码', 'Codes') },
@@ -55,6 +57,7 @@ export function AdminSettingsPage() {
             <Segmented options={items} value={tab} onChange={setTab} />
           </div>
           {tab === 'llm' && <LlmTab />}
+          {tab === 'experiment' && <ExperimentSettings />}
           {tab === 'daily' && <DailyCategoriesTab />}
           {tab === 'users' && <UsersTab />}
           {tab === 'codes' && <CodesTab />}

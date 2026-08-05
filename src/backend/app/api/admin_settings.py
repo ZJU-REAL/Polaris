@@ -12,12 +12,14 @@ from app.schemas.admin_settings import (
     EmbeddingSpaceAdoptResult,
     EmbeddingSpaceItem,
     EmbeddingSpaceStatus,
+    ExperimentEnvSettings,
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
 )
 from app.services import affiliations as affiliations_service
 from app.services import daily_feed as daily_service
 from app.services import embedding as embedding_service
+from app.services import experiment_settings as experiment_settings_service
 from app.services import lab as lab_service
 
 router = APIRouter(
@@ -128,3 +130,27 @@ async def set_lab_leaderboard(
     return LabLeaderboardSettingRead(
         enabled=await lab_service.set_leaderboard_enabled(session, payload.enabled)
     )
+
+
+@router.get("/experiment-env", response_model=ExperimentEnvSettings)
+async def get_experiment_env(
+    session: AsyncSession = Depends(get_session),
+) -> ExperimentEnvSettings:
+    """实验的全局环境设置（模型/数据集位置、pip 镜像、HF 端点、代理）。"""
+    return ExperimentEnvSettings(**await experiment_settings_service.get_settings(session))
+
+
+@router.put("/experiment-env", response_model=ExperimentEnvSettings)
+async def set_experiment_env(
+    payload: ExperimentEnvSettings,
+    session: AsyncSession = Depends(get_session),
+) -> ExperimentEnvSettings:
+    """整份覆盖写入。字段非法（会拼进远端 shell 的路径/URL）→ 422，带上是哪个字段。"""
+    try:
+        saved = await experiment_settings_service.set_settings(session, payload.model_dump())
+    except experiment_settings_service.InvalidExperimentSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"INVALID_EXPERIMENT_SETTING:{exc.field}",
+        ) from exc
+    return ExperimentEnvSettings(**saved)
