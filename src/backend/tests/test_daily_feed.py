@@ -1562,3 +1562,36 @@ async def test_daily_list_puts_cscl_first_and_csro_last(client, monkeypatch):
     other = titles.index("AI Paper")
     ro = titles.index("Robot Paper")
     assert max(cl) < other < ro, f"顺序应为 cs.CL < 其他 < cs.RO：{titles}"
+
+
+async def test_new_submissions_come_before_cross_lists(client, monkeypatch):
+    """同一分类里，新工作排在交叉提交（更新）前面——当天真正的新东西优先。"""
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {
+                "cs.CL": [
+                    _rss_entry("2608.23001", "Cross One", announce="cross"),
+                    _rss_entry("2608.23002", "New One"),
+                    _rss_entry("2608.23003", "Cross Two", announce="cross"),
+                    _rss_entry("2608.23004", "New Two"),
+                ]
+            }
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        _, by_category, _ = await daily_feed.fetch_new_by_category(session)
+        await daily_feed.upsert_entries(session, by_category=by_category)
+
+    resp = await client.get(
+        "/api/daily/papers", params={"sort": "date", "size": 50}, headers=headers
+    )
+    titles = [item["title"] for item in resp.json()["items"]]
+    news = [titles.index(t) for t in ("New One", "New Two")]
+    crosses = [titles.index(t) for t in ("Cross One", "Cross Two")]
+    assert max(news) < min(crosses), f"新工作应全部排在更新前面：{titles}"

@@ -57,6 +57,7 @@ import { DailyChatTab } from './DailyChatTab';
 import { CollectTreeModal, type CollectPaperRef } from './CollectTreeModal';
 import { PaperProgressModal } from '../library/PaperProgressModal';
 import { paperDragProps } from '../assistant/paperDrag';
+import { clampLines } from '../../lib/clamp';
 
 /* ============================================================
    /daily — 每日新论文：arxiv 每日新提交（订阅分类内）。保留期由管理员配置（默认 14 天）。
@@ -152,7 +153,12 @@ function DailyRow({
           }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>{p.title}</div>
+          <div
+            style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, ...clampLines(2) }}
+            title={p.title}
+          >
+            {p.title}
+          </div>
           <div className="row gap8" style={{ marginTop: 5, fontSize: 11, color: 'var(--text-3)' }}>
             <span className="pill sm mono" style={{ background: 'var(--surface-3)', flexShrink: 0 }}>
               {p.primary_category}
@@ -173,8 +179,6 @@ function DailyRow({
               </span>
             )}
           </div>
-          {/* 第三行：[♥] 点赞者头像（单行，超出用 +N） …… N 人赞过 */}
-          <DailyLikes item={p} variant="row" />
         </div>
       </div>
     </div>
@@ -559,7 +563,7 @@ function DailyDetailPane({
 }
 
 type DailyView = 'papers' | 'chat';
-type AnnounceFilter = 'collected' | 'all' | 'new' | 'cross';
+type AnnounceFilter = 'collected' | 'all' | 'new';
 
 // 类型筛选默认值：只看已收录的（进了文献库的才值得先看；「恢复默认」也回到这个值）
 const DEFAULT_ANNOUNCE: AnnounceFilter = 'collected';
@@ -687,7 +691,7 @@ export function DailyPage() {
     queryKey: ['daily-days', announce, category],
     queryFn: () =>
       api.listDailyDays({
-        announce: announce === 'new' || announce === 'cross' ? announce : undefined,
+        announce: announce === 'new' ? 'new' : undefined,
         category: category || undefined,
         collected: announce === 'collected' || undefined,
       }),
@@ -758,7 +762,7 @@ export function DailyPage() {
         size: PAGE_SIZE,
         q: q || undefined,
         category: category || undefined,
-        announce: announce === 'new' || announce === 'cross' ? announce : undefined,
+        announce: announce === 'new' ? 'new' : undefined,
         collected: announce === 'collected' || undefined,
         author: author || undefined,
         affiliation: affiliation || undefined,
@@ -952,9 +956,6 @@ export function DailyPage() {
                 </span>
                 <span className={`chip${announce === 'new' ? ' on' : ''}`} onClick={() => setAnnounce('new')}>
                   {tr('新工作', 'New')}
-                </span>
-                <span className={`chip${announce === 'cross' ? ' on' : ''}`} onClick={() => setAnnounce('cross')}>
-                  {tr('更新', 'Updated')}
                 </span>
               </div>
 

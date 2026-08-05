@@ -722,16 +722,22 @@ async def list_papers(
         ),
         else_=1,
     )
+    # 同分类里，新工作排在交叉提交（更新）前面：新工作才是当天真正的新东西
+    announce_rank = case((DailyFeedEntry.announce_type == "new", 0), else_=1)
     if sort == "likes":
         stmt = stmt.order_by(
             category_rank,
+            announce_rank,
             likes_sq.desc(),
             DailyFeedEntry.feed_date.desc(),
             DailyFeedEntry.created_at.desc(),
         )
     else:  # date
         stmt = stmt.order_by(
-            category_rank, DailyFeedEntry.feed_date.desc(), DailyFeedEntry.created_at.desc()
+            category_rank,
+            announce_rank,
+            DailyFeedEntry.feed_date.desc(),
+            DailyFeedEntry.created_at.desc(),
         )
     stmt = stmt.offset((page - 1) * size).limit(size)
 

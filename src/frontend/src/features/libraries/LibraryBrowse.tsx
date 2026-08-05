@@ -63,6 +63,7 @@ import {
 import { ReadingDot, readerFrom } from '../reading/shared';
 import { AddToButton } from '../library/AddToPopover';
 import { paperDragProps } from '../assistant/paperDrag';
+import { clampLines } from '../../lib/clamp';
 
 // 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
 const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m.GraphTab })));
@@ -159,7 +160,18 @@ const PaperRow = memo(function PaperRow({
         </span>
       </div>
       <div className="row gap8" style={{ alignItems: 'flex-start' }}>
-        <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 13,
+            fontWeight: 600,
+            lineHeight: 1.35,
+            color: 'var(--text)',
+            ...clampLines(2),
+          }}
+          title={p.title}
+        >
           {p.title}
         </div>
         <AddToButton paperId={p.id} />

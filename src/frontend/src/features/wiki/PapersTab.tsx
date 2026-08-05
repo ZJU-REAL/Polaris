@@ -49,6 +49,7 @@ import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { AddToButton } from '../library/AddToPopover';
 import { PaperProgressModal } from '../library/PaperProgressModal';
 import { paperDragProps } from '../assistant/paperDrag';
+import { clampLines } from '../../lib/clamp';
 
 /* ============================================================
    论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
@@ -574,7 +575,18 @@ const PaperRow = memo(function PaperRow({
         </span>
       </div>
       <div className="row gap8" style={{ alignItems: 'flex-start' }}>
-        <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, lineHeight: 1.35, color: 'var(--text)' }}>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 13,
+            fontWeight: 600,
+            lineHeight: 1.35,
+            color: 'var(--text)',
+            ...clampLines(2),
+          }}
+          title={p.title}
+        >
           {p.title}
         </div>
         <AddToButton paperId={p.id} />
