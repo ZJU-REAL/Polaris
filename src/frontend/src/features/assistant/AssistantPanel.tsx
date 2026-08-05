@@ -7,11 +7,14 @@ import { api } from '../../lib/api';
 import {
   assistantTurnSse,
   type AssistantBlock,
+  type ImageRef,
   type PaperSource,
   type PlanStep,
 } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 import { BuddyHome } from './BuddyHome';
+import { followUps } from './followups';
+import { InlineFigure } from './InlineFigure';
 import { ConversationRail } from './ConversationRail';
 import { ToolImages } from './ToolImages';
 import { pageContextFrom } from './buddyContext';
@@ -34,27 +37,76 @@ interface Turn {
   blocks: AssistantBlock[];
 }
 
-/** 服务端持久化的块 → 前端块。认不出的形状一律降级成文本，绝不抛。 */
+/** 服务端持久化的块 → 前端块。认不出的形状一律降级，绝不抛。
+
+    工具结果里存的是**摘要**（summary/preview/图片引用），不是完整 payload——回放要的
+    是「调了什么、拿到了什么样的东西」，而完整结果动辄几万字符。 */
 function restoreBlocks(m: { text: string; blocks: unknown[] }): AssistantBlock[] {
   const out: AssistantBlock[] = [];
+  const cardById = new Map<string, Extract<AssistantBlock, { kind: 'tool' }>>();
+
   for (const raw of Array.isArray(m.blocks) ? m.blocks : []) {
     if (!raw || typeof raw !== 'object') continue;
     const b = raw as Record<string, unknown>;
+
     if (b.kind === 'text' && typeof b.text === 'string') {
-      out.push({ kind: 'text', text: b.text });
+      const last = out[out.length - 1];
+      // 落库时正文是逐段写的，回放要拼回一整块，否则每个 token 都成了独立段落
+      if (last && last.kind === 'text') last.text += b.text;
+      else out.push({ kind: 'text', text: b.text });
     } else if (b.kind === 'thinking' && typeof b.text === 'string') {
       out.push({ kind: 'thinking', text: b.text });
     } else if (b.kind === 'tool_use') {
-      out.push({
+      const card: Extract<AssistantBlock, { kind: 'tool' }> = {
         kind: 'tool',
         id: String(b.id ?? ''),
         name: String(b.name ?? '?'),
+        // 结果还没读到之前先当成功：历史里的调用都已经结束了，画成 running 会骗人
         state: 'ok',
-      });
+      };
+      cardById.set(card.id, card);
+      out.push(card);
+    } else if (b.kind === 'tool_result') {
+      // 结果回填到对应卡片上（含图片引用）——切走再回来，工具过程与图片都还在
+      const card = cardById.get(String(b.tool_use_id ?? ''));
+      if (!card) continue;
+      let payload: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(String(b.content ?? '{}'));
+        if (parsed && typeof parsed === 'object') payload = parsed as Record<string, unknown>;
+      } catch {
+        /* 存量数据里 content 是原始结果文本，不是摘要 JSON：忽略即可 */
+      }
+      if (typeof payload.summary === 'string') card.summary = payload.summary;
+      if (typeof payload.preview === 'string') card.preview = payload.preview;
+      if (typeof payload.duration_ms === 'number') card.durationMs = payload.duration_ms;
+      if (b.is_error === true || payload.ok === false) card.state = 'error';
+      const refs = parseRestoredImageRefs(payload.image_refs);
+      if (refs.length) card.images = refs;
     }
-    // tool_result 等其余块不单独渲染：它们是模型的输入，不是回答的一部分
   }
   if (out.length === 0 && m.text) out.push({ kind: 'text', text: m.text });
+  return out;
+}
+
+/** 落库的图片引用 → 前端形状；认不出的丢掉。 */
+function parseRestoredImageRefs(raw: unknown): ImageRef[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ImageRef[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const ref = item as Record<string, unknown>;
+    if (ref.kind !== 'paper_figure') continue;
+    const paperId = typeof ref.paper_id === 'string' ? ref.paper_id : '';
+    const index = typeof ref.index === 'number' ? ref.index : undefined;
+    if (!paperId || index === undefined) continue;
+    out.push({
+      kind: 'paper_figure',
+      paperId,
+      index,
+      label: typeof ref.label === 'string' ? ref.label : undefined,
+    });
+  }
   return out;
 }
 
@@ -322,8 +374,49 @@ function VerifyCard({ notes }: { notes: string[] }) {
   );
 }
 
-function BlockView({ block, live }: { block: AssistantBlock; live: boolean }) {
-  if (block.kind === 'text') return <Markdown source={block.text} />;
+function BlockView({
+  block,
+  live,
+  sources,
+}: {
+  block: AssistantBlock;
+  live: boolean;
+  sources: PaperSource[];
+}) {
+  if (block.kind === 'text') {
+    // 模型会在正文里直接写 ![图注](paper_id/图号) 和 [1] 这类引用。Markdown 组件本来
+    // 就有 renderLibraryFigure / renderCitation 两个钩子（文献对话一直在用），Buddy
+    // 只是一个都没传——于是图不显示、引用点不动。
+    return (
+      <Markdown
+        source={block.text}
+        renderLibraryFigure={(paperId, index) => <InlineFigure paperId={paperId} index={index} />}
+        renderCitation={(n) => {
+          const src = sources[n - 1];
+          if (!src) return null;
+          return (
+            <a
+              href={`/papers/${src.paperId}/read`}
+              title={src.title}
+              style={{
+                display: 'inline-block',
+                padding: '0 4px',
+                margin: '0 1px',
+                borderRadius: 5,
+                background: 'var(--accent-soft)',
+                color: 'var(--accent-text)',
+                fontSize: '0.82em',
+                fontWeight: 650,
+                textDecoration: 'none',
+              }}
+            >
+              {n}
+            </a>
+          );
+        }}
+      />
+    );
+  }
   if (block.kind === 'plan') return <PlanCard steps={block.steps} />;
   if (block.kind === 'sources') return <SourcesCard papers={block.papers} />;
   if (block.kind === 'verify') return <VerifyCard notes={block.notes} />;
@@ -368,17 +461,26 @@ export function AssistantPanel({
     { id: string; title: string; project_id: string | null }[]
   >([]);
   const [greeting, setGreeting] = useState<string>('');
-  const [contextOn, setContextOn] = useState(true);
+  const [model, setModel] = useState<string>('');
+  // 页面上下文照常发给模型，但不在输入框上占一行——它是背景信息，不是待办事项。
+  const contextOn = true;
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
-  // 对话里的「项目」就是平台里的课题：跟着外壳当前选中的那个走，不另设一套选择。
-  // 用户在哪个课题下工作，问出来的问题多半就属于那个课题；让他再选一次是多余的。
+  // 对话里的「项目」就是平台里的课题。**默认不绑**：绑上之后检索范围就收窄到这个
+  // 课题，而用户多数问题是跨课题的；想收窄时自己勾一下，比默认收窄再去发现「怎么
+  // 查不到别的库」要好。
   const { currentProject } = useProject();
+  const [bindProject, setBindProject] = useState(false);
   const pageContext = pageContextFrom(location.pathname);
 
+  // 只有「本来就贴着底」才跟着滚。正在往回翻的时候被拽回最新一行，是流式界面里最
+  // 烦人的一种行为——用户已经用滚动明确表达了「我在看别的地方」。
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (nearBottom) el.scrollTo({ top: el.scrollHeight });
   }, [turns]);
 
   useEffect(() => () => abortRef.current?.(), []);
@@ -485,20 +587,25 @@ export function AssistantPanel({
         // 那条路上的权限校验一点没少。用户可以关掉。
         page:
           contextOn && pageContext ? { kind: pageContext.kind, id: pageContext.id } : undefined,
-        projectId: currentProject?.id ?? null,
+        projectId: bindProject ? (currentProject?.id ?? null) : null,
+        onMeta: (meta) => setModel(meta.model),
         onBlocks: patch,
         onDone: () => {
           setBusy(false);
           setRailRefresh((n) => n + 1); // 标题这时才有
         },
         onError: (detail) => {
-          patch((blocks) => [...blocks, { kind: 'text', text: `⚠️ ${errorText(detail)}` }]);
+          // 把原始细节一并留下：只写「网络错误」等于让用户和我们都无从查起
+          patch((blocks) => [
+            ...blocks,
+            { kind: 'text', text: `⚠️ ${errorText(detail)}\n\n\`${detail}\`` },
+          ]);
           setBusy(false);
         },
       },
     );
     },
-    [busy, convId, contextOn, pageContext, currentProject],
+    [busy, convId, contextOn, pageContext, currentProject, bindProject],
   );
 
   const send = useCallback(() => {
@@ -567,11 +674,23 @@ export function AssistantPanel({
           flexShrink: 0,
           padding: '0 16px',
           borderBottom: '0.5px solid var(--border)',
+          // 与 .topbar 同一底色：两栏并排时颜色差一点点，看起来像没加载完
+          background: 'rgba(247, 249, 252, 0.85)',
+          backdropFilter: 'blur(8px)',
           alignItems: 'center',
         }}
       >
         <BuddyMark busy={busy} size={17} />
         <strong style={{ fontSize: 14 }}>PolarisBuddy</strong>
+        {model && (
+          <span
+            className="mono"
+            style={{ fontSize: 10.5, color: 'var(--text-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={tr(`这轮用的模型：${model}`, `Model this turn: ${model}`)}
+          >
+            {model}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         {variant === 'dock' ? (
           <button
@@ -695,9 +814,30 @@ export function AssistantPanel({
                       key={j}
                       block={b}
                       live={busy && isLast && j === turn.blocks.length - 1}
+                      sources={
+                        (turn.blocks.find((x) => x.kind === 'sources') as
+                          | { kind: 'sources'; papers: PaperSource[] }
+                          | undefined)?.papers ?? []
+                      }
                     />
                   ))}
                   {isLast && <TurnStatus blocks={liveBlocks} busy={busy} onStop={stop} />}
+                  {/* 答完给几条可点的下一步。它们从本轮真实发生的事里出——查到了论文
+                      就问共同点，取过图就问图说明什么。凭空造的建议点一次就没人再点。 */}
+                  {isLast && !busy && followUps(turn.blocks).length > 0 && (
+                    <div className="row gap6 wrap" style={{ marginTop: 10 }}>
+                      {followUps(turn.blocks).map((q) => (
+                        <span
+                          key={q}
+                          className="chip"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => void ask(q)}
+                        >
+                          {q}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -708,39 +848,24 @@ export function AssistantPanel({
       </div>
 
       <div style={{ padding: 12, borderTop: '0.5px solid var(--border-2)' }}>
-        {/* 当前课题：自动绑定外壳里选中的那个，只作展示——换课题在左上角切，
-            这里再放一个选择器就是两个真相来源。 */}
+        {/* 课题：默认不绑（检索走全部可见文献库），需要收窄时自己勾 */}
         {currentProject && (
-          <div
+          <label
             className="row gap6"
-            style={{ alignItems: 'center', marginBottom: 6, fontSize: 11, color: 'var(--text-4)' }}
-            title={tr('这场对话属于当前课题，跟着左上角的课题切换走', 'This chat belongs to the current topic, following the switcher in the top-left')}
-          >
-            <Icon name="layers" size={11} />
-            <span
-              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            >
-              {currentProject.name}
-            </span>
-          </div>
-        )}
-        {pageContext && (
-          <div
-            className="row gap6"
-            style={{ alignItems: 'center', marginBottom: 6, fontSize: 11, color: 'var(--text-4)' }}
-            title={tr(
-              '我知道你在看什么。关掉的话这轮就不带页面信息了。',
-              'I can see what you are looking at. Turn it off to leave the page out of this turn.',
-            )}
+            style={{ alignItems: 'center', marginBottom: 6, fontSize: 11, color: 'var(--text-4)', cursor: 'pointer' }}
+            title={tr('勾上后只在这个课题的语料里查', 'Restrict retrieval to this topic when checked')}
           >
             <input
               type="checkbox"
-              checked={contextOn}
-              onChange={(e) => setContextOn(e.target.checked)}
+              checked={bindProject}
+              onChange={(e) => setBindProject(e.target.checked)}
               style={{ width: 12, height: 12, margin: 0, accentColor: 'var(--accent)', cursor: 'pointer' }}
             />
-            <span>{pageContext.label}</span>
-          </div>
+            <Icon name="layers" size={11} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {tr(`只查课题：${currentProject.name}`, `Only in: ${currentProject.name}`)}
+            </span>
+          </label>
         )}
         {/* 输入区：随内容长高（7 行封顶），发送/停止就在右下角——正在流的时候
             「停」应该在离手最近的位置，而不是让人回面板顶上去找。 */}

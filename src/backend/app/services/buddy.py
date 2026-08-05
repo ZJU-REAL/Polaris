@@ -197,8 +197,12 @@ async def list_memories(session: AsyncSession, *, user_id: uuid.UUID) -> list[Bu
     return list(rows.scalars().all())
 
 
-async def add_memory(session: AsyncSession, *, user_id: uuid.UUID, text: str) -> BuddyMemory:
-    row = BuddyMemory(user_id=user_id, text=text.strip()[:MAX_MEMORY_ITEM_CHARS])
+async def add_memory(
+    session: AsyncSession, *, user_id: uuid.UUID, text: str, kind: str = "fact"
+) -> BuddyMemory:
+    row = BuddyMemory(
+        user_id=user_id, text=text.strip()[:MAX_MEMORY_ITEM_CHARS], kind=kind or "fact"
+    )
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -214,13 +218,30 @@ async def delete_memory(session: AsyncSession, *, user_id: uuid.UUID, memory_id:
     return True
 
 
+async def search_memories(
+    session: AsyncSession, *, user_id: uuid.UUID, query: str, limit: int
+) -> list[BuddyMemory]:
+    """在记忆里找。空查询返回最近的几条——「我上次说了什么」本来就没有关键词。
+
+    用 ilike 而不是向量：记忆是几十条量级的短句，为它建一套向量管线的收益还不如
+    诚实的字面匹配；等它真的多到检索不动了再说。
+    """
+    stmt = select(BuddyMemory).where(BuddyMemory.user_id == user_id)
+    if query.strip():
+        stmt = stmt.where(BuddyMemory.text.ilike(f"%{query.strip()}%"))
+    rows = await session.execute(stmt.order_by(BuddyMemory.created_at.desc()).limit(limit))
+    return list(rows.scalars().all())
+
+
 async def render_memories(session: AsyncSession, *, user_id: uuid.UUID) -> str:
     """记忆 → 追加进系统提示的一段；没有记忆返回空串。
 
     **总长封顶**并且按新到旧填：每轮都要重发，放任下去就是每轮都在为一堆旧便签付钱。
     填不下的直接不进——与其截断成半句话让模型猜，不如少给一条。
     """
-    rows = await list_memories(session, user_id=user_id)
+    # 只有 fact 进提示词：note 是带时间戳的片段，检索到才回上下文，
+    # 每轮都带上就是每轮为陈年琐事付钱
+    rows = [r for r in await list_memories(session, user_id=user_id) if r.kind != "note"]
     if not rows:
         return ""
     lines: list[str] = []
@@ -234,3 +255,21 @@ async def render_memories(session: AsyncSession, *, user_id: uuid.UUID) -> str:
     if not lines:
         return ""
     return "关于这位用户，你需要一直记得：\n" + "\n".join(lines)
+
+
+#: 记忆开关存在用户设置里的键。不值得为一个布尔值开一张表。
+MEMORY_ENABLED_KEY = "buddy_memory_enabled"
+
+
+def memory_enabled(user: Any) -> bool:
+    """这个人开了记忆吗。**默认关**：一个会自己记东西的助手，得由用户先说「可以」。"""
+    settings = getattr(user, "settings", None) or {}
+    return bool(settings.get(MEMORY_ENABLED_KEY, False))
+
+
+async def set_memory_enabled(session: AsyncSession, *, user: Any, enabled: bool) -> bool:
+    settings = dict(getattr(user, "settings", None) or {})
+    settings[MEMORY_ENABLED_KEY] = bool(enabled)
+    user.settings = settings
+    await session.commit()
+    return bool(enabled)

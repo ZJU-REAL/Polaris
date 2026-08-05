@@ -29,8 +29,13 @@ class ConversationRead(BaseModel):
     last_message_at: datetime | None = None
 
 
+class MemoryToggle(BaseModel):
+    enabled: bool
+
+
 class MemoryCreate(BaseModel):
     text: str = Field(min_length=1, max_length=300)
+    kind: str = Field(default="fact", pattern="^(fact|note)$")
 
 
 class ConversationRenameRequest(BaseModel):

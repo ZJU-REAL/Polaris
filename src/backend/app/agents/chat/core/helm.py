@@ -85,9 +85,21 @@ class Helm:
             logger.warning("chat agent: tool %s failed", call.name, exc_info=True)
             return self._failure(call, {"error": f"{type(e).__name__}: {e}"}, started)
 
-        payload = result_payload(result)
-        images = result_images(result)
-        text = json.dumps(payload, ensure_ascii=False)[:RESULT_CHARS]
+        # 序列化也在 try 里：这一步同样会炸。生产上就是这么断的——get_project_status
+        # 的返回里带 datetime，json.dumps 抛 TypeError，而那行当时在 try 之外，于是异常
+        # 穿出循环、带走 SSE 连接，用户只看到一句「network error」。**「异常绝不外抛」
+        # 必须覆盖到把结果交出去为止**，否则这条保证在最后一米失效。
+        try:
+            payload = result_payload(result)
+            images = result_images(result)
+            # default=str：工具的返回里有 datetime / UUID / Decimal 是常态，不该由每个
+            # 工具各自记得转成字符串——漏一个就是一次断流。
+            text = json.dumps(payload, ensure_ascii=False, default=str)[:RESULT_CHARS]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("chat agent: tool %s result not serializable", call.name, exc_info=True)
+            return self._failure(
+                call, {"error": f"结果无法序列化：{type(e).__name__}: {e}"}, started
+            )
         return (
             ToolResultEvent(
                 id=call.id,
@@ -107,7 +119,7 @@ class Helm:
     def _failure(
         self, call: ToolUseBlock, payload: dict[str, Any], started: float
     ) -> tuple[ToolResultEvent, ToolResultBlock]:
-        text = json.dumps(payload, ensure_ascii=False)
+        text = json.dumps(payload, ensure_ascii=False, default=str)
         return (
             ToolResultEvent(
                 id=call.id,

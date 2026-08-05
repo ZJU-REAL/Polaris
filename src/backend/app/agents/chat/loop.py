@@ -146,10 +146,18 @@ class ChatAgentLoop:
             ),
         ]
         state = _RoundState()
+        # model 报**解析出来的真实模型**，不是 stage 名。界面上「这轮用的是谁」得是
+        # 用户能对得上账单的那个名字，"agent" 不是。
+        resolved_model = self._stage
+        try:
+            _, route = await self._llm.resolve(self._stage, self._tool_ctx.user_id)
+            resolved_model = route.model or self._stage
+        except Exception:  # noqa: BLE001 — 取不到就退回 stage 名，不值得为它中断一轮
+            pass
         yield MetaEvent(
             conversation_id=str(req.conversation_id),
             message_id="",
-            model=self._stage,
+            model=resolved_model,
             tools=tuple(req.tool_names),
         )
 

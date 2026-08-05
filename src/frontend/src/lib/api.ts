@@ -4763,6 +4763,9 @@ export const api = {
   listBuddyMemories(): Promise<{ id: string; text: string; created_at: string }[]> {
     return request('/chat/memories');
   },
+  setBuddyMemoryEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
+    return request('/chat/memory/enabled', { method: 'PUT', body: JSON.stringify({ enabled }) });
+  },
   addBuddyMemory(text: string): Promise<{ id: string; text: string; created_at: string }> {
     return request('/chat/memories', { method: 'POST', body: JSON.stringify({ text }) });
   },
@@ -4782,6 +4785,7 @@ export const api = {
   getBuddyCapabilities(): Promise<{
     tools: { name: string; description: string; read_only: boolean }[];
     skills: { slug: string; name: string; description: string; is_builtin: boolean }[];
+    memory: { enabled: boolean; count: number };
     mcp: { role: string; endpoint: string; exposed_tools: number; note: string };
   }> {
     return request('/chat/capabilities');

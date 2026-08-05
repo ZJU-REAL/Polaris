@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "07e7faea4c7a"  # 技能全局启用（user_skills，不再绑定课题）
+HEAD_REVISION = "d4e8b19c7a55"  # 记忆分层：fact 每轮带上 / note 检索到才回上下文
+SKILLS_GLOBAL_REVISION = "07e7faea4c7a"  # 技能全局启用（user_skills，不再绑定课题）
 BUDDY_REVISION = "c31f7a9d40b2"  # Buddy 的长期记忆（用户自己写的）
 SKILLS_REVISION = "a22aa895244c"  # Skills v2（SKILL.md 渐进披露）
 DIGEST_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
@@ -98,6 +99,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "agent_skills",
                     "agent_skill_files",
                     "skills",
+                    "buddy_memories",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -355,7 +357,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "relevance_reason" in columns["library_papers"]
     assert "scored_run_id" in columns["library_papers"]  # 打分归属改记运行 id
 
-    # 最新 revision 可往返：先退掉技能全局化（user_skills → 空的 project_skills）。
+    # 最新 revision 可往返：先退掉记忆分层。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SKILLS_GLOBAL_REVISION
+    assert "kind" not in columns["buddy_memories"]
+
+    # 再退掉技能全局化（user_skills → 空的 project_skills）。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == BUDDY_REVISION

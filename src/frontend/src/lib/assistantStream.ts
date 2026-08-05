@@ -45,6 +45,8 @@ export type AssistantBlock =
     };
 
 export interface AssistantHandlers {
+  /** 首帧带来的这轮模型名——界面上要显示「这轮用的是谁」 */
+  onMeta?: (meta: { model: string; tools: string[] }) => void;
   /** 用户此刻在看的页面（PolarisBuddy 的页面感知）；不传就不带 */
   page?: { kind: string; id?: string };
   /** 这场对话属于哪个课题（= 平台的 project）。自动跟着外壳当前课题走。 */
@@ -73,6 +75,25 @@ const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : und
  * 由后端按可见性算。以前这里要传 projectId，多课题不传就 409——那是在让用户替一个
  * 纯内部的数据结构做选择题。
  */
+/** 图片出处：认不出的形状一律丢掉。少显示一张图，好过让整条时间线炸掉。
+
+    这段曾经在 #275 里写过，又在那次 rebase 解冲突时被丢掉，只剩下类型和字段的空壳——
+    于是「图片能显示」这条链路一路通到最后一米断了，而 TypeScript 看不出任何问题：
+    字段是可选的，没人填就是 undefined。 */
+function parseImageRefs(raw: unknown): ImageRef[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: ImageRef[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const ref = item as Record<string, unknown>;
+    const paperId = str(ref.paper_id);
+    const index = num(ref.index);
+    if (ref.kind !== 'paper_figure' || !paperId || index === undefined) continue;
+    out.push({ kind: 'paper_figure', paperId, index, label: str(ref.label) || undefined });
+  }
+  return out.length ? out : undefined;
+}
+
 /** 一个事件作用到块时间线上，返回新的时间线。
 
     抽成纯函数是为了**能测**：这里处理的是全仓最不可信的输入——SSE 里 JSON.parse 出来
@@ -168,6 +189,7 @@ export function applyAssistantEvent(
             summary: str(data.summary) || undefined,
             preview: str(data.preview) || undefined,
             durationMs: num(data.duration_ms),
+            images: parseImageRefs(data.image_refs),
           }
         : b,
     );
@@ -192,7 +214,12 @@ export function assistantTurnSse(
     {
       onEvent: (event, raw) => {
         const data = parse(raw);
-        if (event === 'done') {
+        if (event === 'meta') {
+          handlers.onMeta?.({
+            model: str(data.model),
+            tools: Array.isArray(data.tools) ? (data.tools as unknown[]).map((t) => str(t)) : [],
+          });
+        } else if (event === 'done') {
           handlers.onDone(str(data.stop_reason, 'stop'));
         } else if (event === 'error') {
           handlers.onError(str(data.detail, '出错了'));
@@ -201,7 +228,12 @@ export function assistantTurnSse(
         }
       },
       onClose: () => handlers.onDone('stop'),
-      onError: (err) => handlers.onError(err instanceof Error ? err.message : String(err)),
+      onError: (err) => {
+        // 传输层错误的默认文案是「network error」，那句话什么都没说明——把能拿到的
+        // 细节都带上，用户至少知道是断在哪儿。
+        const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        handlers.onError(detail || 'connection closed');
+      },
     },
   );
 }

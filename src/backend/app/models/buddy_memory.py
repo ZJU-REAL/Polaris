@@ -9,7 +9,7 @@
 
 import uuid
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -23,3 +23,6 @@ class BuddyMemory(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    #: fact = 每轮都带上的稳定事实；note = 带时间戳的片段，只在检索到时才回上下文。
+    #: 分两层是因为成本不同：事实每轮都要付钱，笔记只在用得上时付。
+    kind: Mapped[str] = mapped_column(String(16), default="fact", nullable=False)

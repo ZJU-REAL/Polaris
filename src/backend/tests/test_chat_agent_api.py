@@ -458,3 +458,71 @@ async def test_deleting_a_conversation_takes_its_messages(client, agent_on):
             .where(ConversationMessage.conversation_id == uuid.UUID(conv["id"]))
         )
     assert after == 0
+
+
+async def test_a_turn_persists_its_whole_timeline_not_just_the_answer(client, agent_on):
+    """切到别的对话再切回来，思考过程与工具调用还得在。
+
+    此前每轮只落库最终文本，于是回放只剩一段结论——而那段结论之所以可信，正是因为
+    下面那些调用。
+    """
+    headers = await _headers(client, "timeline@example.com")
+    await _project_with_paper(client, headers, "Timeline Persistence Paper")
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
+
+    marker = 'POLARIS_FAKE_TOOL:search_papers:{"query": "Timeline", "mode": "keyword"}'
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": f"查一下\n{marker}"},
+        headers=headers,
+    ) as stream:
+        await stream.aread()
+
+    messages = (
+        await client.get(f"/api/chat/conversations/{conv_id}/messages", headers=headers)
+    ).json()
+    assistant = [m for m in messages if m["role"] == "assistant"]
+    assert assistant, "助手消息没落库"
+    kinds = [b.get("kind") for m in assistant for b in (m["blocks"] or [])]
+    assert "tool_use" in kinds, f"工具调用没落库：{kinds}"
+    assert "tool_result" in kinds, f"工具结果没落库：{kinds}"
+    assert "text" in kinds
+
+    # 工具结果存的是摘要而不是完整 payload——回放只需要「调了什么、拿到什么样的东西」
+    results = [
+        json.loads(b["content"])
+        for m in assistant
+        for b in (m["blocks"] or [])
+        if b.get("kind") == "tool_result"
+    ]
+    assert results and {"summary", "ok"} <= set(results[0])
+
+
+async def test_a_tool_that_needs_a_topic_fails_inside_the_loop_not_on_the_wire(client, agent_on):
+    """需要课题的工具在没有课题时，必须变成**循环内的一个失败结果**，而不是把流打断。
+
+    线上现象是两张卡片停在「调用中…」然后一条 ⚠️ network error——那说明异常逃出了
+    循环、把 SSE 连接带走了。权限/参数一类的错误应该回喂给模型，由它决定下一步；
+    连接断掉的话，用户看到的是「网络坏了」，而其实是工具不适用。
+    """
+    headers = await _headers(client, "toolerr@example.com")
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
+
+    marker = "POLARIS_FAKE_TOOL:knowledge_graph:{}"
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": f"看看图谱\n{marker}"},
+        headers=headers,
+    ) as stream:
+        assert stream.status_code == 200
+        body = (await stream.aread()).decode()
+
+    events = _parse_sse(body)
+    names = [e for e, _ in events]
+    assert "done" in names, f"流被打断了，没有 done：{names}"
+    results = [d for e, d in events if e == "tool_result"]
+    assert results, f"没有工具结果帧：{names}"
+    assert results[0]["ok"] is False
+    assert "课题" in results[0]["summary"], results[0]

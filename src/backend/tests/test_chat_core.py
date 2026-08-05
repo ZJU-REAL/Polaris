@@ -171,3 +171,39 @@ def test_sextant_does_not_fire_on_plain_answers():
     assert Sextant().verify(
         answer="这个问题不需要查库，我直接说说思路。", sources=0, successful_tool_calls=0
     ).passed
+
+
+async def test_helm_survives_a_result_that_cannot_be_serialized():
+    """结果序列化失败也要变成失败结果，而不是把整轮对话带走。
+
+    生产上就是这么断的：get_project_status 的返回里带 datetime，json.dumps 抛
+    TypeError，而那行当时在 try 之外——异常穿出循环、带走 SSE 连接，用户只看到
+    「network error」。「异常绝不外抛」必须覆盖到把结果交出去为止。
+    """
+    import datetime as dt
+
+    @tool(name="_dated", description="返回时间", input_schema={"type": "object", "properties": {}})
+    async def _dated(ctx, args):  # noqa: ANN001
+        return {"when": dt.datetime.now(dt.UTC)}
+
+    event, block = await Helm(_ctx()).execute(ToolUseBlock("c1", "_dated", {}))
+    # datetime 现在按 default=str 落成字符串，正常成功
+    assert event.ok is True
+    assert "when" in block.content
+
+
+async def test_helm_reports_a_truly_unserializable_result_instead_of_crashing():
+    """连 str() 都救不回来的对象（自定义 __str__ 抛异常）：报失败，不炸循环。"""
+
+    class Hostile:
+        def __str__(self) -> str:
+            raise RuntimeError("连字符串都不给")
+
+    @tool(name="_hostile", description="难缠", input_schema={"type": "object", "properties": {}})
+    async def _hostile(ctx, args):  # noqa: ANN001
+        return {"x": Hostile()}
+
+    event, block = await Helm(_ctx()).execute(ToolUseBlock("c1", "_hostile", {}))
+    assert event.ok is False
+    assert "序列化" in event.summary
+    assert block.is_error

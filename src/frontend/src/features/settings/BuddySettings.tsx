@@ -45,12 +45,6 @@ function SkillsCard() {
         <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
         {tr('技能', 'Skills')}
       </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.7, marginBottom: 10 }}>
-        {tr(
-          '技能是「什么时候该怎么做」的说明书。目录里每条只占一行常驻，正文由 Buddy 判断需要时才加载——所以描述要写成触发条件，而不是功能介绍。',
-          'A skill describes how to handle a kind of task. Only one line per skill stays resident; the body is loaded on demand — so the description should read as a trigger condition, not a feature blurb.',
-        )}
-      </div>
       {skills.length === 0 && <div className="empty">{tr('还没有技能', 'No skills yet')}</div>}
       <div className="col gap8">
         {skills.map((skill) => (
@@ -105,6 +99,12 @@ function MemoryCard() {
     queryFn: () => api.listBuddyMemories(),
     retry: false,
   });
+  const caps = useQuery({ queryKey: ['buddy-capabilities'], queryFn: () => api.getBuddyCapabilities(), retry: false });
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) => api.setBuddyMemoryEnabled(enabled),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['buddy-capabilities'] }),
+    onError: (e) => toast(e instanceof Error ? e.message : String(e), 'error'),
+  });
   const add = useMutation({
     mutationFn: (text: string) => api.addBuddyMemory(text),
     onSuccess: () => {
@@ -122,15 +122,23 @@ function MemoryCard() {
 
   return (
     <div className="card card-pad">
-      <div className="section-h" style={{ marginBottom: 6 }}>
+      <div className="section-h row gap8" style={{ marginBottom: 10, alignItems: 'center' }}>
         <Icon name="bulb" size={15} style={{ color: 'var(--accent)' }} />
         {tr('长期记忆', 'Memory')}
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.7, marginBottom: 10 }}>
-        {tr(
-          '你希望 Buddy 一直记得的事——研究方向、习惯的表达、不想被推荐的东西。每轮对话都会带上，所以宜少而准：太多会挤占它读你问题的余地。目前只有你能写，Buddy 自己往里记属于写工具那一期。',
-          'Things you want Buddy to always know. They ride along on every turn, so keep them few and sharp. Only you can write them for now; Buddy writing its own memory comes with the write-tools phase.',
-        )}
+        <span style={{ flex: 1 }} />
+        {/* 开着时 Buddy 才有 remember / recall 两个动作。默认关：一个会自己记东西的
+            助手，得先由用户说「可以」。 */}
+        <label className="row gap6" style={{ alignItems: 'center', cursor: 'pointer', fontSize: 12 }}>
+          <input
+            type="checkbox"
+            checked={caps.data?.memory?.enabled ?? false}
+            onChange={(e) => toggle.mutate(e.target.checked)}
+            style={{ width: 13, height: 13, margin: 0, accentColor: 'var(--accent)' }}
+          />
+          <span style={{ color: 'var(--text-3)' }}>
+            {tr('让 Buddy 自己记与查', 'Let Buddy write and search it')}
+          </span>
+        </label>
       </div>
       <div className="row gap8" style={{ marginBottom: 10 }}>
         <input
@@ -202,12 +210,6 @@ function McpCard() {
       <div className="section-h" style={{ marginBottom: 6 }}>
         <Icon name="git" size={15} style={{ color: 'var(--accent)' }} />
         MCP
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.7 }}>
-        {tr(
-          'Polaris 自己是 MCP 服务端：Buddy 用的工具，与 Claude Desktop 这类外部客户端拿到的是同一批（对外只给只读的）。所以这里没有「已连接的服务器」列表——我们不对外连接，列一个空表只会让人误会。',
-          'Polaris is itself an MCP server: Buddy uses the same tools external clients (Claude Desktop and the like) receive, minus anything that writes. There is no "connected servers" list because Polaris makes no outbound MCP connections.',
-        )}
       </div>
       {data && (
         <div className="row gap8" style={{ marginTop: 10, alignItems: 'center', fontSize: 12 }}>

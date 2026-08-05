@@ -12,6 +12,7 @@ from app.tools import (
     knowledge,  # noqa: F401
     libraries,  # noqa: F401
     literature,  # noqa: F401
+    memory,  # noqa: F401
     plan,  # noqa: F401
     project_state,  # noqa: F401
     skills,  # noqa: F401

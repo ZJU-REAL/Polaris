@@ -439,6 +439,19 @@ export function AppShell() {
   const [buddyBusy, setBuddyBusy] = useState(false);
   const [nudge, setNudge] = useState<string | null>(null);
   const [buddyDragOver, setBuddyDragOver] = useState(false);
+  const [topbarMoreOpen, setTopbarMoreOpen] = useState(false);
+  // 顶栏还宽裕吗。量的是**主区**：Buddy 拉开后视口没变，变窄的是主区。
+  const mainRef = useRef<HTMLDivElement | null>(null);
+  const [topbarRoomy, setTopbarRoomy] = useState(true);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setTopbarRoomy(entry.contentRect.width >= 880);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // 主动提示：今天没提过才去问一次计数——大多数次打开页面连这个请求都不会发。
   // 提示必须对应一件**真事**（跑着的实验、今天到的新论文）；为了让球看起来「活着」
@@ -701,7 +714,7 @@ export function AppShell() {
       )}
 
       {/* —— 主列 —— */}
-      <div className="main">
+      <div className="main" ref={mainRef}>
         <div className="topbar">
           <button
             className="icon-btn nav-toggle"
@@ -746,12 +759,25 @@ export function AppShell() {
             <Icon name="refresh" size={15} style={refreshing ? { animation: 'spin 1s linear infinite' } : undefined} />
           </button>
           <div className="spacer" />
-          <div className="searchbox" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSearchOpen(true); }}>
-            <Icon name="search" size={14} />
-            <span>{tr('搜索论文 / 想法 / 实验…', 'Search papers / ideas / experiments…')}</span>
-            <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
-          </div>
+          {/* 窄的时候（Buddy 一拉开就窄了）搜索框缩成一个图标：它的提示文字是奢侈品，
+              而右侧那排功能入口不是。 */}
+          {topbarRoomy ? (
+            <div className="searchbox" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSearchOpen(true); }}>
+              <Icon name="search" size={14} />
+              <span>{tr('搜索论文 / 想法 / 实验…', 'Search papers / ideas / experiments…')}</span>
+              <span className="mono" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>⌘K</span>
+            </div>
+          ) : (
+            <button
+              className="icon-btn"
+              onClick={() => setSearchOpen(true)}
+              title={tr('搜索（⌘K）', 'Search (⌘K)')}
+              aria-label={tr('搜索', 'Search')}
+            >
+              <Icon name="search" size={16} />
+            </button>
+          )}
           {/* PolarisBuddy：入口在顶栏右侧，不再是浮在页面上的球——球会挡住内容，
               而且没人知道它是什么。这里也是论文/选中文字的拖放落点。 */}
           <button
@@ -812,25 +838,82 @@ export function AppShell() {
             )}
           </button>
 
-          {/* 管理员设置入口（仅管理员可见） */}
-          {isAdmin(me) && (
-            <button
-              className="icon-btn"
-              onClick={() => navigate('/admin')}
-              title={tr('管理', 'Manage')}
-              aria-label={tr('管理', 'Manage')}
-              style={location.pathname === '/admin' ? { color: 'var(--accent)', background: 'var(--surface-2)' } : undefined}
-            >
-              <Icon name="settings" size={16} />
-            </button>
+          {/* 次要入口：宽时平铺，窄时收进「更多」。判据是主区实际宽度而不是视口——
+              Buddy 拉开之后视口没变，变窄的是主区，按视口判会一直以为还很宽。 */}
+          {topbarRoomy ? (
+            <>
+              {isAdmin(me) && (
+                <button
+                  className="icon-btn"
+                  onClick={() => navigate('/admin')}
+                  title={tr('管理', 'Manage')}
+                  aria-label={tr('管理', 'Manage')}
+                  style={location.pathname === '/admin' ? { color: 'var(--accent)', background: 'var(--surface-2)' } : undefined}
+                >
+                  <Icon name="settings" size={16} />
+                </button>
+              )}
+              <LangToggle />
+              <FeedbackWidget />
+              <UpdateBadge />
+              <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
+                <Icon name="bell" size={16} />
+                {pending.length > 0 && <span className="badge">{pending.length}</span>}
+              </button>
+            </>
+          ) : (
+            <div style={{ position: 'relative' }}>
+              <button
+                className="icon-btn"
+                onClick={() => setTopbarMoreOpen((o) => !o)}
+                title={tr('更多', 'More')}
+                aria-label={tr('更多', 'More')}
+              >
+                <Icon name="sliders" size={16} />
+                {pending.length > 0 && <span className="badge">{pending.length}</span>}
+              </button>
+              {topbarMoreOpen && (
+                <>
+                  {/* 点外面关掉：下拉盖着的是内容区，留着它挡路比少一次点击更糟 */}
+                  <div
+                    onClick={() => setTopbarMoreOpen(false)}
+                    style={{ position: 'fixed', inset: 0, zIndex: 39 }}
+                  />
+                  <div
+                    className="col gap4"
+                    style={{
+                      position: 'absolute',
+                      right: 0,
+                      top: 36,
+                      zIndex: 40,
+                      minWidth: 168,
+                      padding: 6,
+                      background: 'var(--surface)',
+                      border: '0.5px solid var(--border-2)',
+                      borderRadius: 10,
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                    }}
+                    onClick={() => setTopbarMoreOpen(false)}
+                  >
+                    {isAdmin(me) && (
+                      <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => navigate('/admin')}>
+                        <Icon name="settings" size={14} /> {tr('管理', 'Manage')}
+                      </button>
+                    )}
+                    <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => openGates(null)}>
+                      <Icon name="bell" size={14} /> {tr('审批中心', 'Approvals')}
+                      {pending.length > 0 && <span className="badge" style={{ position: 'static', marginLeft: 'auto' }}>{pending.length}</span>}
+                    </button>
+                    <div className="row gap6" style={{ padding: '2px 4px' }}>
+                      <LangToggle />
+                      <FeedbackWidget />
+                      <UpdateBadge />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           )}
-          <LangToggle />
-          <FeedbackWidget />
-          <UpdateBadge />
-          <button className="icon-btn" onClick={() => openGates(null)} title={tr('审批中心', 'Approvals')}>
-            <Icon name="bell" size={16} />
-            {pending.length > 0 && <span className="badge">{pending.length}</span>}
-          </button>
         </div>
         <div className="content scroll">
           <Outlet context={ctx} />

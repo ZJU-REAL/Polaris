@@ -57,7 +57,13 @@ def test_registry_has_expected_tools():
     # 每个工具的 input_schema 都是合法 JSON-schema object
     for spec in tools.list_tools():
         assert spec.input_schema.get("type") == "object", spec.name
-        assert spec.read_only is True
+
+    # 会写的工具必须**逐个点名**。这条原来是「全部只读」，remember 是第一个例外：
+    # 它写的只是 Buddy 与用户之间的记忆（碰不到论文/想法/实验），并且要用户先打开
+    # 记忆开关、调用方显式给 allow_writes 才跑得起来。名单写死在这里，是为了下一个
+    # 写工具进来时必须有人改这一行——而不是悄悄混进去。
+    writers = {spec.name for spec in tools.list_tools() if not spec.read_only}
+    assert writers == {"remember"}
 
 
 def test_tool_descriptions_are_formal():

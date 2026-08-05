@@ -26,17 +26,28 @@ from app.tools.registry import list_tools
 _TOOL_DENYLIST = frozenset({"get_fact_pack"})
 
 
-def default_tool_names() -> tuple[str, ...]:
+def default_tool_names(*, memory_enabled: bool = False) -> tuple[str, ...]:
     """这一轮默认给哪些工具：注册表里全部只读的，减去 denylist。
 
     动态取而不是写死一份名单：新工具加进注册表就自动可用。写死名单的问题不是麻烦，
     而是**没人会记得回来加**——助手会悄悄少一项能力，而界面上看不出任何异常。
     """
+    from app.tools.memory import MEMORY_TOOL_NAMES
     from app.tools.registry import list_tools
 
-    return tuple(
-        spec.name for spec in list_tools() if spec.read_only and spec.name not in _TOOL_DENYLIST
-    )
+    names = []
+    for spec in list_tools():
+        if spec.name in _TOOL_DENYLIST:
+            continue
+        if spec.name in MEMORY_TOOL_NAMES:
+            # 记忆没打开时这两个工具根本不进工具面：模型不知道有这回事，
+            # 也就不会假装记住——「我记下了」而其实没存，比不能记更糟。
+            if memory_enabled:
+                names.append(spec.name)
+            continue
+        if spec.read_only:
+            names.append(spec.name)
+    return tuple(names)
 
 
 #: 兼容旧引用（测试与 API 都在用这个名字）。求值时机在 import 之后，工具已注册完毕。

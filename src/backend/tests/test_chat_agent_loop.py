@@ -311,12 +311,22 @@ def test_the_default_surface_is_every_read_only_tool_minus_a_named_few():
     会记得回来加，助手会悄悄少一项能力而界面上看不出异常。
     """
     from app.agents.chat.prompt import _TOOL_DENYLIST, default_tool_names
+    from app.tools.memory import MEMORY_TOOL_NAMES
     from app.tools.registry import list_tools
 
     names = set(default_tool_names())
     read_only = {spec.name for spec in list_tools() if spec.read_only}
 
-    assert names == read_only - _TOOL_DENYLIST
+    # 记忆没打开时 remember/recall 不在工具面里——模型不知道有这回事，也就不会假装
+    # 记住；「我记下了」而其实没存，比不能记更糟
+    assert names == read_only - _TOOL_DENYLIST - set(MEMORY_TOOL_NAMES)
+    assert not set(MEMORY_TOOL_NAMES) & names
+
+    # 打开之后两个都在，且 remember 是工具面里唯一会写的
+    with_memory = set(default_tool_names(memory_enabled=True))
+    assert set(MEMORY_TOOL_NAMES) <= with_memory
+    writers = {spec.name for spec in list_tools() if not spec.read_only}
+    assert with_memory & writers == {"remember"}
     # 用户实际撞上的那几个：取图、读解读、看实验
     assert {"get_paper_figure", "read_wiki", "get_experiment"} <= names
     # 写工具一个都不能混进来（本期仍是只读期）

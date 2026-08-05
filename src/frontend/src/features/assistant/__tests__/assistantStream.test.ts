@@ -164,3 +164,46 @@ describe('验收结论', () => {
     expect(reduce([['verify', { passed: false, notes: [] }]])).toEqual([]);
   });
 });
+
+describe('工具返回的图片', () => {
+  it('tool_result 里的图片出处要装进卡片', () => {
+    const blocks = reduce([
+      ['tool_call', { id: 'f1', name: 'get_paper_figure' }],
+      [
+        'tool_result',
+        {
+          id: 'f1',
+          ok: true,
+          image_refs: [{ kind: 'paper_figure', paper_id: 'p-1', index: 3, label: '图注' }],
+        },
+      ],
+    ]);
+    expect(blocks[0]).toMatchObject({
+      kind: 'tool',
+      images: [{ kind: 'paper_figure', paperId: 'p-1', index: 3, label: '图注' }],
+    });
+  });
+
+  it('认不出的出处丢掉，一张都不剩时是 undefined 而不是空数组', () => {
+    const blocks = reduce([
+      ['tool_call', { id: 'f1', name: 'get_paper_figure' }],
+      [
+        'tool_result',
+        {
+          id: 'f1',
+          ok: true,
+          image_refs: [{ kind: '未来的类型', paper_id: 'p' }, { paper_id: 'p' }, { index: 1 }],
+        },
+      ],
+    ]);
+    expect((blocks[0] as { images?: unknown }).images).toBeUndefined();
+  });
+
+  it('没有图片的工具结果不会凭空长出 images 字段', () => {
+    const blocks = reduce([
+      ['tool_call', { id: 's1', name: 'search_papers' }],
+      ['tool_result', { id: 's1', ok: true, summary: '3 篇' }],
+    ]);
+    expect((blocks[0] as { images?: unknown }).images).toBeUndefined();
+  });
+});

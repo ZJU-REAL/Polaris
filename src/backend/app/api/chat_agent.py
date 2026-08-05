@@ -32,11 +32,11 @@ from app.agents.chat.events import (
     VerifyEvent,
 )
 from app.agents.chat.loop import ChatAgentLoop, ChatTurnRequest
-from app.agents.chat.prompt import DEFAULT_TOOL_NAMES
+from app.agents.chat.prompt import default_tool_names
 from app.api.auth import current_active_user, require_llm_chat
 from app.core.config import get_settings
 from app.core.db import get_session
-from app.core.llm.base import TextBlock
+from app.core.llm.base import TextBlock, ThinkingBlock, ToolResultBlock, ToolUseBlock
 from app.core.llm.router import get_llm_router
 from app.models.user import User
 from app.schemas.chat_agent import (
@@ -45,6 +45,7 @@ from app.schemas.chat_agent import (
     ConversationRenameRequest,
     ConversationTurnRequest,
     MemoryCreate,
+    MemoryToggle,
     MessageRead,
     SkillImportRequest,
 )
@@ -270,7 +271,7 @@ async def add_memory(
     """记一条。**只有用户能写**——agent 自己往里写属于写工具那一期，
     一个能改自己记忆的助手必须和权限模型、审批一起设计。"""
     _require_enabled()
-    row = await buddy.add_memory(session, user_id=user.id, text=payload.text)
+    row = await buddy.add_memory(session, user_id=user.id, text=payload.text, kind=payload.kind)
     return {"id": str(row.id), "text": row.text, "created_at": row.created_at.isoformat()}
 
 
@@ -283,6 +284,17 @@ async def delete_memory(
     _require_enabled()
     if not await buddy.delete_memory(session, user_id=user.id, memory_id=memory_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="MEMORY_NOT_FOUND")
+
+
+@router.put("/memory/enabled")
+async def set_memory_enabled(
+    payload: MemoryToggle,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, bool]:
+    """开/关记忆。**默认关**：一个会自己记东西的助手，得由用户先说「可以」。"""
+    _require_enabled()
+    return {"enabled": await buddy.set_memory_enabled(session, user=user, enabled=payload.enabled)}
 
 
 @router.get("/capabilities")
@@ -304,7 +316,7 @@ async def capabilities(
     from app.models.agent_skill import as_dict
     from app.tools.registry import get_tool
 
-    names = list(DEFAULT_TOOL_NAMES)
+    names = list(default_tool_names(memory_enabled=buddy.memory_enabled(user)))
     tools = []
     for name in names:
         spec = get_tool(name)
@@ -332,6 +344,10 @@ async def capabilities(
         # Polaris 自己就是 MCP 服务端：Buddy 用的工具与外部客户端（Claude Desktop 等）
         # 拿到的是同一批，只是外部那边只给只读的。如实说清楚，别让界面上多出一个
         # 并不存在的「已连接的 MCP 服务器」列表。
+        "memory": {
+            "enabled": buddy.memory_enabled(user),
+            "count": len(await buddy.list_memories(session, user_id=user.id)),
+        },
         "mcp": {
             "role": "server",
             "endpoint": "/mcp",
@@ -412,13 +428,22 @@ async def run_turn(
     # 一个可见库都没有 = 没有语料可查，这轮不带工具。**不假装查过**：兜一个空范围
     # 然后说「没查到」，与从前兜随机 UUID 一样是在撒谎。
     has_corpus = bool(project_id) or bool(library_ids)
-    tool_names = tuple(payload.tool_names or DEFAULT_TOOL_NAMES) if has_corpus else ()
+    memory_on = buddy.memory_enabled(user)
+    # 记忆开着时才把 remember/recall 放进工具面；也只有这时才开写权限——
+    # 而这个「写」写的只是它与用户之间的记忆，碰不到论文/想法/实验。
+    tool_names = (
+        tuple(payload.tool_names or default_tool_names(memory_enabled=memory_on))
+        if has_corpus
+        else (default_tool_names(memory_enabled=memory_on) if memory_on else ())
+    )
     tool_ctx = ToolContext(
         project_id=project_id,
         # 指定了课题就按课题算范围（library_ids=None），否则给显式的可见库集合
         library_ids=None if project_id else library_ids,
         llm=get_llm_router(),
         user_id=user.id,
+        # 只为记忆开写：工具面里唯一非只读的就是 remember
+        allow_writes=memory_on,
     )
     loop = ChatAgentLoop(llm=get_llm_router(), tool_ctx=tool_ctx, history=history)
     req = ChatTurnRequest(
@@ -434,13 +459,15 @@ async def run_turn(
     conv_id, user_id = conv.id, user.id
 
     async def event_stream() -> AsyncIterator[str]:
-        collected: list[str] = []
+        # 落库的是**整条时间线**，不只是最终文本。只存文本的后果用户一眼就能看见：
+        # 切到别的对话再切回来，思考过程和工具调用全没了，只剩一段结论——而那段结论
+        # 之所以可信，正是因为下面那些调用。
+        timeline = _TurnTimeline()
         stop_reason, usage = "stop", {}
         try:
             async for ev in loop.run(req):
-                if isinstance(ev, DeltaEvent):
-                    collected.append(ev.text)
-                elif isinstance(ev, DoneEvent):
+                timeline.feed(ev)
+                if isinstance(ev, DoneEvent):
                     stop_reason, usage = ev.stop_reason, ev.usage
                 yield _to_frame(ev)
         finally:
@@ -448,10 +475,10 @@ async def run_turn(
             # shield 是必需的——取消态下再 await 数据库写会被二次取消。
             import asyncio
 
-            text = "".join(collected)
-            if text:
+            blocks = timeline.blocks()
+            if blocks:
                 await asyncio.shield(
-                    _persist_answer(conv_id, user_id, text, stop_reason, usage)
+                    _persist_answer(conv_id, user_id, blocks, timeline.text, stop_reason, usage)
                 )
 
     return StreamingResponse(
@@ -510,9 +537,66 @@ async def _resolve_project(
     raise HTTPException(status.HTTP_409_CONFLICT, detail="PROJECT_REQUIRED")
 
 
+class _TurnTimeline:
+    """把这一轮的事件收成可落库的块。
+
+    与 SSE 帧的区别：帧是给界面看的（带 duration、preview），块是给**下一轮的模型**
+    和**回放**看的。两者都需要工具调用在场——模型需要它才能接着推理，用户需要它才
+    看得出结论是怎么来的。
+    """
+
+    def __init__(self) -> None:
+        self._blocks: list[Any] = []
+        self._text: list[str] = []
+        self._thinking: list[str] = []
+
+    @property
+    def text(self) -> str:
+        return "".join(self._text)
+
+    def feed(self, ev: ChatEvent) -> None:
+        if isinstance(ev, DeltaEvent):
+            self._flush_thinking()
+            self._text.append(ev.text)
+            self._blocks.append(TextBlock(ev.text))
+        elif isinstance(ev, ThinkingEvent):
+            # 思考是逐 token 来的：攒成一块再落，否则一轮会写出几百个一字块
+            self._thinking.append(ev.text)
+        elif isinstance(ev, ToolCallEvent):
+            self._flush_thinking()
+            self._blocks.append(ToolUseBlock(id=ev.id, name=ev.name, input=ev.args))
+        elif isinstance(ev, ToolResultEvent):
+            # 存**摘要**而不是完整结果：完整结果动辄几万字符，而回放只需要让人（和模型）
+            # 知道「调了什么、拿到了什么样的东西」。图片存引用，不存字节。
+            payload = {
+                "summary": ev.summary,
+                "preview": ev.preview,
+                "ok": ev.ok,
+                "duration_ms": ev.duration_ms,
+                "image_refs": list(ev.image_refs),
+            }
+            self._blocks.append(
+                ToolResultBlock(
+                    tool_use_id=ev.id,
+                    content=json.dumps(payload, ensure_ascii=False, default=str),
+                    is_error=not ev.ok,
+                )
+            )
+
+    def _flush_thinking(self) -> None:
+        if self._thinking:
+            self._blocks.append(ThinkingBlock("".join(self._thinking)))
+            self._thinking = []
+
+    def blocks(self) -> list[Any]:
+        self._flush_thinking()
+        return list(self._blocks)
+
+
 async def _persist_answer(
     conversation_id: uuid.UUID,
     user_id: uuid.UUID,
+    blocks: list[Any],
     text: str,
     stop_reason: str,
     usage: dict[str, Any],
@@ -528,7 +612,8 @@ async def _persist_answer(
             session,
             conversation=conv,
             role="assistant",
-            blocks=[TextBlock(text)],
+            blocks=blocks,
+            text=text,
             usage=usage or None,
             stop_reason=stop_reason,
             status="complete" if stop_reason != "interrupted" else "interrupted",
