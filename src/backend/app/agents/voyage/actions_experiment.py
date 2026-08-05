@@ -316,6 +316,82 @@ def _env_facts_prompt(env_settings: dict[str, str]) -> str:
     return "\n\n本机环境（平台实配，按此写代码，不要臆测）：\n" + "\n".join(lines)
 
 
+def diagnose_failure(err_text: str, env_settings: dict[str, str] | None = None) -> str:
+    """把 stderr 里**确定性可辨认**的失败归类，回一句定向提示给修复循环。
+
+    修复循环原本只把 stderr 原样丢回给模型，指望它自己看出问题。对「路径写错」这种
+    错，模型看到的是 transformers 抛的 HFValidationError 或 OSError——它不知道这台
+    机器上模型到底在哪，于是改来改去还是错。实测（voyage 6c5df454）三次尝试全废在
+    同一个不存在的路径 /hf/Qwen/Qwen3-1.7B 上。
+
+    这里只认**签名明确**的几类：错认了就是给条误导的提示，所以宁可少认不可乱认，
+    认不出就返回空串（退回原来的行为，让模型自己看 stderr）。
+    """
+    settings = env_settings or {}
+    text = err_text or ""
+    lowered = text.lower()
+
+    # ---- 本机路径/模型引用错 ----
+    path_signatures = (
+        "hfvalidationerror",
+        "repo id must be in the form",
+        "can't load the configuration of",
+        "is not a local folder and is not a valid model identifier",
+        "no such file or directory",
+        "does not appear to have a file named config.json",
+    )
+    if any(sig in lowered for sig in path_signatures):
+        root = settings.get("model_root")
+        if root:
+            example = f"{root.rstrip('/')}/Qwen/Qwen3-1.7B"
+            return (
+                f"引用的模型/文件路径在这台机器上不存在。本机模型的根目录是 {root}"
+                f"（环境变量 $POLARIS_MODEL_ROOT），完整路径形如 {example}。"
+                "请改成这个前缀下的真实路径，或改用能联网下载的 HF 名（如 Qwen/Qwen3-1.7B，"
+                "注意不要给它加本机路径前缀）。不要臆造目录层级。"
+            )
+        return (
+            "引用的模型/文件路径在这台机器上不存在。平台没有配置本机模型根目录，"
+            "请改用能联网下载的 HF 名（如 Qwen/Qwen3-1.7B），不要写本机绝对路径。"
+        )
+
+    # ---- 缺依赖 ----
+    if "modulenotfounderror" in lowered or "no module named" in lowered:
+        return (
+            "缺 Python 依赖。把缺的包补进 requirements.txt（写明可用版本），"
+            "不要在代码里 try/except 掉 import 假装能跑。"
+        )
+
+    # ---- 显存不够 ----
+    if "out of memory" in lowered or "cuda oom" in lowered:
+        return (
+            "显存不够。冒烟本来就该极小：换更小的模型/更短的序列/更小的 batch，"
+            "或加载时用更省显存的精度。别靠重试碰运气。"
+        )
+
+    # ---- 装依赖时网络不通 ----
+    network_signatures = (
+        "could not find a version",
+        "connection to pypi",
+        "read timed out",
+        "temporary failure in name resolution",
+        "network is unreachable",
+    )
+    if any(sig in lowered for sig in network_signatures):
+        index = settings.get("pip_index_url")
+        if index:
+            return (
+                f"装依赖时网络不通。平台已配好镜像源（PIP_INDEX_URL={index}），"
+                "requirements.txt 里不要再自己写 -i/--index-url 覆盖它；"
+                "也请去掉装不上的可选依赖。"
+            )
+        return (
+            "装依赖时网络不通。请精简依赖、去掉可选包；如果必须联网下载大包，"
+            "考虑换成镜像里已自带的实现。"
+        )
+    return ""
+
+
 def _platform_env_files(
     ctx: ActionContext,
     *,
@@ -1233,13 +1309,17 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     raise RuntimeError(
                         f"依赖安装失败（exit={exit_status}，{attempts} 次）：{detail}"
                     )
-                # 把诊断 + 报错回给 LLM 修 requirements.txt/run.sh（方案级修复）
+                # 把诊断 + 报错回给 LLM 修 requirements.txt/run.sh（方案级修复）。
+                # 环境事实必须一起带上：修复循环原本只有 stderr，模型照样不知道这台机器
+                # 上模型放哪、有没有配镜像源，只能接着猜。
                 fixes += 1
+                hint = hint or diagnose_failure(err_text, env_settings)
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
                     f"依赖安装退出码：{exit_status}\n"
                     + (f"诊断提示：{hint}\n" if hint else "")
                     + f"报错：\n{err_text}"
+                    + _env_facts_prompt(env_settings)
                 )
                 files = await _complete_json(
                     ctx,
@@ -1261,6 +1341,8 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
     async with get_sessionmaker()() as session:
         experiment = await _get_experiment(session, ctx)
         files: dict[str, str] = dict(ctx.checkpoint.get("exp_files") or {})
+        # 修复循环也要拿到环境事实（模型/数据集位置、镜像源），否则它只能对着 stderr 猜
+        env_settings = await experiment_settings_service.get_settings(session)
 
         executor = await _open_executor(session, ctx, experiment)
         try:
@@ -1294,13 +1376,16 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     raise RuntimeError(
                         f"冒烟测试连续失败（{attempts} 次，exit={exit_status}）：{err_text[-500:]}"
                     )
-                # 把诊断提示 + stderr 回给 LLM 修文件（方案级修复）
+                # 把诊断提示 + stderr 回给 LLM 修文件（方案级修复）。
+                # 超时那类已经在上面给了 hint；其余按 stderr 签名归类，认不出就留空。
                 fixes += 1
+                hint = hint or diagnose_failure(err_text, env_settings)
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
                     f"冒烟测试退出码：{exit_status}\n"
                     + (f"诊断提示：{hint}\n" if hint else "")
                     + f"stderr：\n{err_text[-_STDERR_CHARS:]}"
+                    + _env_facts_prompt(env_settings)
                 )
                 files = await _complete_json(
                     ctx,

@@ -82,3 +82,46 @@ def test_codegen_prompt_states_model_root_as_fact():
     assert "/hf/model" in facts
     assert "/hf/model/Qwen/Qwen3-1.7B" in facts  # 给出完整示例，别让它少一层
     assert ax._env_facts_prompt(dict(es.DEFAULTS)) == ""  # 没配就不塞噪声
+
+
+# ---- 失败分类器：样本取自真实失败的 stderr ----
+
+
+def test_diagnose_model_path_points_at_configured_root():
+    """voyage 6c5df454 的两次真实报错，都该归到「路径不存在」并指向配好的根目录。"""
+    env = {"model_root": "/hf/model", "pip_index_url": ""}
+    first = (
+        "huggingface_hub.errors.HFValidationError: Repo id must be in the form "
+        "'repo_name' or 'namespace/repo_name': '/hf/Qwen/Qwen3-1.7B'."
+    )
+    second = (
+        "OSError: Can't load the configuration of '/hf/Qwen/Qwen3-1.7B'. If you were "
+        "trying to load it from 'https://huggingface.co/models', make sure ..."
+    )
+    for err in (first, second):
+        hint = ax.diagnose_failure(err, env)
+        assert "/hf/model" in hint
+        assert "/hf/model/Qwen/Qwen3-1.7B" in hint  # 给完整示例，别让它又少一层
+
+
+def test_diagnose_model_path_without_configured_root():
+    """没配根目录时不能瞎指路，只能建议改用可下载的 HF 名。"""
+    hint = ax.diagnose_failure("huggingface_hub.errors.HFValidationError: Repo id ...", {})
+    assert "HF 名" in hint
+    assert "根目录" not in hint.replace("本机模型根目录", "")  # 不编造一个不存在的路径
+
+
+def test_diagnose_other_known_signatures():
+    assert "requirements.txt" in ax.diagnose_failure("ModuleNotFoundError: No module named 'x'", {})
+    assert "显存" in ax.diagnose_failure("torch.cuda.OutOfMemoryError: CUDA out of memory", {})
+    net = ax.diagnose_failure(
+        "ERROR: Could not find a version that satisfies the requirement foo",
+        {"pip_index_url": "https://pypi.tuna.tsinghua.edu.cn/simple"},
+    )
+    assert "pypi.tuna.tsinghua.edu.cn" in net
+
+
+def test_diagnose_stays_silent_when_unsure():
+    """认不出就返回空串——宁可不提示，也不能给条误导的诊断。"""
+    assert ax.diagnose_failure("Traceback: some entirely novel failure", {}) == ""
+    assert ax.diagnose_failure("", {}) == ""
