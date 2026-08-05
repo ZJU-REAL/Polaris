@@ -8,6 +8,14 @@ import { postSse } from './sse';
    运行时炸了没人拦得住。
    ============================================================ */
 
+export interface ImageRef {
+  /** 目前只有 paper_figure 一种出处；认不出的一律丢掉，不猜 */
+  kind: 'paper_figure';
+  paperId: string;
+  index: number;
+  label?: string;
+}
+
 export interface PlanStep {
   title: string;
   status: 'pending' | 'running' | 'done';
@@ -25,6 +33,8 @@ export type AssistantBlock =
       summary?: string;
       preview?: string;
       durationMs?: number;
+      /** 工具返回的图片**出处**（不是字节）：前端拿它走已有的鉴权端点取图 */
+      images?: ImageRef[];
     };
 
 export interface AssistantHandlers {

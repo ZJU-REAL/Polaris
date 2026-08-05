@@ -69,6 +69,11 @@ class ToolResultEvent:
     preview: str
     duration_ms: int
     images: int = 0
+    #: 图片的**出处**，不是字节：[{"kind": "paper_figure", "paper_id": ..., "index": 3,
+    #: "label": 图注}]。base64 一张图几百 KB，几张就能把 SSE 连接和浏览器一起灌爆；
+    #: 前端本来就有带鉴权的取图端点，让它自己去取。给不出出处的图不进这个列表，
+    #: 但仍计入 images——「有 3 张图，其中 2 张能显示」是诚实的，假装只有 2 张不是。
+    image_refs: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(slots=True, frozen=True)

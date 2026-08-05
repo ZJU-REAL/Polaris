@@ -292,6 +292,9 @@ class ChatAgentLoop:
                 preview=text[:PREVIEW_CHARS],
                 duration_ms=duration,
                 images=len(images),
+                image_refs=tuple(
+                    {**img.ref, "label": img.label} for img in images if img.ref is not None
+                ),
             ),
             ToolResultBlock(call.id, text),
         )

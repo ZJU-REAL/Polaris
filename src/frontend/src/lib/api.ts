@@ -4731,6 +4731,14 @@ export const api = {
    */
   /** 每日论文池的同步状况（全员可读）：最新一天、是否过期、各分类成败。 */
   /** 全局助手：会话列表（最近说过话的在前）。 */
+  /** Buddy 这一轮手里有什么：工具面、技能、MCP 暴露状况。 */
+  getBuddyCapabilities(): Promise<{
+    tools: { name: string; description: string; read_only: boolean }[];
+    skills: { slug: string; name: string; description: string; is_builtin: boolean }[];
+    mcp: { role: string; endpoint: string; exposed_tools: number; note: string };
+  }> {
+    return request('/chat/capabilities');
+  },
   /** PolarisBuddy 开面板时的问候语。数字是 SQL 数出来的，不过模型。 */
   getBuddyGreeting(): Promise<{
     greeting: string;

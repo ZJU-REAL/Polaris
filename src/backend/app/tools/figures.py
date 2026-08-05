@@ -52,6 +52,12 @@ async def _project_paper(
     return paper
 
 
+def _figure_ref(paper_id: uuid.UUID, index: int) -> dict[str, Any]:
+    """图片在平台里的出处。前端拿它去 /papers/{id}/figures/{index}/image 取图——
+    那个端点本来就有、且带鉴权，对话流里没必要再造一条图片通道。"""
+    return {"kind": "paper_figure", "paper_id": str(paper_id), "index": index}
+
+
 def _fig_meta(fig: dict[str, Any]) -> dict[str, Any]:
     return {
         "index": fig.get("index"),
@@ -144,7 +150,16 @@ async def get_paper_figure(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
             "title": paper.title,
             **_fig_meta(fig),
         }
-    return ToolResult(payload=payload, images=(ToolImage(data=data, label=fig.get("caption")),))
+    return ToolResult(
+        payload=payload,
+        images=(
+            ToolImage(
+                data=data,
+                label=fig.get("caption"),
+                ref=_figure_ref(paper.id, int(fig["index"])),
+            ),
+        ),
+    )
 
 
 @tool(
@@ -187,7 +202,13 @@ async def get_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> ToolResul
         if not path.exists():
             continue
         try:
-            images.append(ToolImage(data=_png_bytes(path, max_dim), label=fig.get("caption")))
+            images.append(
+                ToolImage(
+                    data=_png_bytes(path, max_dim),
+                    label=fig.get("caption"),
+                    ref=_figure_ref(uuid.UUID(paper_id), int(fig["index"])),
+                )
+            )
             metas.append(_fig_meta(fig))
         except Exception:  # noqa: BLE001 — 单图解码失败跳过，不阻断其余
             continue

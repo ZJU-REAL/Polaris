@@ -25,6 +25,11 @@ class ToolImage:
     data: bytes
     mime: str = "image/png"
     label: str | None = None  # 图注 / alt（可选）
+    #: 这张图在平台里的出处，形如 {"kind": "paper_figure", "paper_id": ..., "index": 3}。
+    #: 对话流里**发引用不发字节**：一张图 base64 之后几百 KB，几张就能把 SSE 连接和
+    #: 浏览器一起灌爆，而前端本来就有取图的鉴权端点。给不出出处的图（将来可能有）
+    #: 就是 None，前端只显示图注。
+    ref: dict[str, Any] | None = None
 
 
 @dataclass(slots=True, frozen=True)

@@ -5,6 +5,8 @@ import { Markdown } from '../../lib/markdown';
 import { api } from '../../lib/api';
 import { assistantTurnSse, type AssistantBlock, type PlanStep } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
+import { CapabilitiesBar } from './CapabilitiesBar';
+import { ToolImages } from './ToolImages';
 import { pageContextFrom } from './buddyContext';
 import { TurnStatus } from './TurnStatus';
 
@@ -100,6 +102,7 @@ function ToolCard({ block }: { block: Extract<AssistantBlock, { kind: 'tool' }> 
           </span>
         )}
       </div>
+      {block.images?.length ? <ToolImages images={block.images} /> : null}
       {open && block.preview && (
         <pre
           className="mono"
@@ -250,9 +253,12 @@ export function AssistantPanel({
   droppedText,
   onDroppedTextHandled,
   onBusyChange,
+  variant = 'overlay',
 }: {
   open: boolean;
   onClose: () => void;
+  /** dock = 版面的一列（宽度与边框由 BuddyDock 负责）；overlay = 窄屏覆盖式抽屉 */
+  variant?: 'dock' | 'overlay';
   /** 拖到悬浮球上的论文 id：进来就自动问一句「解读这篇」 */
   droppedPaperId?: string | null;
   onDroppedPaperHandled?: () => void;
@@ -446,22 +452,39 @@ export function AssistantPanel({
   const lastTurn = turns[turns.length - 1];
   const liveBlocks = busy && lastTurn?.role === 'assistant' ? lastTurn.blocks : [];
 
+  // 这场对话里真的被加载过的技能。判据是 skill_load 的调用摘要——**不是**目录里
+  // 有哪些技能：目录只说明「它可能会用」，加载过才是「它真的用了」。
+  const loadedSkills = new Set<string>();
+  for (const turn of turns) {
+    for (const block of turn.blocks) {
+      if (block.kind === 'tool' && block.name === 'skill_load' && block.state === 'ok') {
+        const slug = (block.summary ?? '').match(/[a-z0-9][a-z0-9-]{2,}/i)?.[0];
+        if (slug) loadedSkills.add(slug);
+      }
+    }
+  }
+
+  // dock 形态下，外框（宽度/边框/拖拽把手）归 BuddyDock 管，这里只铺内容；
+  // overlay 形态自己是那个浮层。两种形态共用下面同一套正文，不分叉。
+  const frame: React.CSSProperties =
+    variant === 'dock'
+      ? { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }
+      : {
+          position: 'fixed',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 'min(520px, 100vw)',
+          background: 'var(--surface)',
+          borderLeft: '0.5px solid var(--border-2)',
+          display: 'flex',
+          flexDirection: 'column',
+          zIndex: 60,
+          boxShadow: '-8px 0 24px rgba(0,0,0,0.06)',
+        };
+
   return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: 'min(520px, 100vw)',
-        background: 'var(--surface)',
-        borderLeft: '0.5px solid var(--border-2)',
-        display: 'flex',
-        flexDirection: 'column',
-        zIndex: 60,
-        boxShadow: '-8px 0 24px rgba(0,0,0,0.06)',
-      }}
-    >
+    <div style={frame}>
       <div className="row gap8" style={{ padding: '12px 16px', borderBottom: '0.5px solid var(--border-2)', alignItems: 'center' }}>
         <Icon name="sparkle" size={15} style={{ color: 'var(--accent)' }} />
         <strong style={{ fontSize: 14 }}>PolarisBuddy</strong>
@@ -476,10 +499,20 @@ export function AssistantPanel({
         <button className="icon-btn" onClick={newConversation} title={tr('新会话', 'New')}>
           <Icon name="plus" size={14} />
         </button>
-        <button className="icon-btn" onClick={onClose} title={tr('关闭（⌘J）', 'Close (⌘J)')}>
-          <Icon name="x" size={14} />
+        <button
+          className="icon-btn"
+          onClick={onClose}
+          title={
+            variant === 'dock'
+              ? tr('收起（⌘J）', 'Collapse (⌘J)')
+              : tr('关闭（⌘J）', 'Close (⌘J)')
+          }
+        >
+          <Icon name={variant === 'dock' ? 'chevron' : 'x'} size={14} />
         </button>
       </div>
+
+      <CapabilitiesBar loadedSkills={loadedSkills} />
 
       {historyOpen && (
         <div

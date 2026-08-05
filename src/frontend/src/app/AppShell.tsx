@@ -11,6 +11,7 @@ import { useAuth } from './auth';
 import { topicPath, useProject } from './project';
 import { AssistantPanel } from '../features/assistant/AssistantPanel';
 import { BuddyBubble } from '../features/assistant/BuddyBubble';
+import { BuddyDock } from '../features/assistant/BuddyDock';
 import { alreadyNudgedToday, markNudged } from '../features/assistant/nudge';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
@@ -775,6 +776,24 @@ export function AppShell() {
         </div>
       </div>
 
+      {/* —— PolarisBuddy 停靠栏：它是版面的一列，内容区被挤窄而不是被盖住 ——
+          浮层盖住内容，「一边看论文一边问」就只能开一下关一下；停靠栏让两边同时在场。
+          窄屏不走这条（挤两列谁都看不清），下面那个覆盖式抽屉才是手机形态。 */}
+      {!isMobile && assistantOpen && (
+        <BuddyDock>
+          <AssistantPanel
+            variant="dock"
+            open
+            onClose={() => setAssistantOpen(false)}
+            droppedPaperId={droppedPaperId}
+            onDroppedPaperHandled={() => setDroppedPaperId(null)}
+            droppedText={droppedText}
+            onDroppedTextHandled={() => setDroppedText(null)}
+            onBusyChange={setBuddyBusy}
+          />
+        </BuddyDock>
+      )}
+
       {/* —— 审批抽屉 —— */}
       <Drawer
         open={drawerOpen}
@@ -842,7 +861,8 @@ export function AppShell() {
       {/* —— 全局搜索面板 —— */}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
 
-      {/* —— PolarisBuddy：悬浮球 + 抽屉（⌘J）—— */}
+      {/* —— PolarisBuddy：悬浮球 + 抽屉（⌘J）——
+          停靠形态见下方 .app 里的 BuddyDock；这里只留窄屏的覆盖式抽屉与悬浮球。 */}
       <BuddyBubble
         busy={buddyBusy}
         nudge={nudge}
@@ -862,15 +882,17 @@ export function AppShell() {
           setAssistantOpen(true);
         }}
       />
-      <AssistantPanel
-        open={assistantOpen}
-        onClose={() => setAssistantOpen(false)}
-        droppedPaperId={droppedPaperId}
-        onDroppedPaperHandled={() => setDroppedPaperId(null)}
-        droppedText={droppedText}
-        onDroppedTextHandled={() => setDroppedText(null)}
-        onBusyChange={setBuddyBusy}
-      />
+      {isMobile && (
+        <AssistantPanel
+          open={assistantOpen}
+          onClose={() => setAssistantOpen(false)}
+          droppedPaperId={droppedPaperId}
+          onDroppedPaperHandled={() => setDroppedPaperId(null)}
+          droppedText={droppedText}
+          onDroppedTextHandled={() => setDroppedText(null)}
+          onBusyChange={setBuddyBusy}
+        />
+      )}
 
       <ToastHost />
     </div>

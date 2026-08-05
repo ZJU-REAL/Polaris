@@ -208,6 +208,62 @@ async def delete_skill(
     await session.commit()
 
 
+@router.get("/capabilities")
+async def capabilities(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """这一轮 Buddy 手里有什么：工具、技能、MCP。
+
+    界面上要能回答「它现在到底能干什么」。此前这个问题只能靠读代码——工具白名单写在
+    常量里，技能目录只在提示词里出现过，MCP 那套工具面是不是同一批也没人说得清。
+
+    三件事在这里合并成一个答案，因为它们本来就是同一件事的三个侧面：**平台的工具面**
+    （对内给 Buddy、对外给 MCP 客户端，是同一批），**技能**（按需加载的用法说明），
+    以及 MCP 的暴露状况。
+    """
+    _require_enabled()
+    from app.mcp.dispatch import tool_definitions as mcp_tool_definitions
+    from app.models.agent_skill import as_dict
+    from app.tools.registry import get_tool
+
+    names = list(DEFAULT_TOOL_NAMES)
+    tools = []
+    for name in names:
+        spec = get_tool(name)
+        if spec is None:
+            continue
+        tools.append(
+            {"name": spec.name, "description": spec.description, "read_only": spec.read_only}
+        )
+    skills = [
+        as_dict(r) | {"is_builtin": r.scope == "builtin"}
+        for r in await agent_skills.visible_skills(session, user_id=user.id)
+    ]
+    mcp_tools = mcp_tool_definitions()
+    return {
+        "tools": tools,
+        "skills": [
+            {
+                "slug": s["slug"],
+                "name": s.get("name") or s["slug"],
+                "description": s.get("description") or "",
+                "is_builtin": s["is_builtin"],
+            }
+            for s in skills
+        ],
+        # Polaris 自己就是 MCP 服务端：Buddy 用的工具与外部客户端（Claude Desktop 等）
+        # 拿到的是同一批，只是外部那边只给只读的。如实说清楚，别让界面上多出一个
+        # 并不存在的「已连接的 MCP 服务器」列表。
+        "mcp": {
+            "role": "server",
+            "endpoint": "/mcp",
+            "exposed_tools": len(mcp_tools),
+            "note": "Buddy 的工具与对外 MCP 暴露的是同一批（外部客户端只拿只读工具）",
+        },
+    }
+
+
 @router.get("/buddy/greeting")
 async def buddy_greeting(
     session: AsyncSession = Depends(get_session),
