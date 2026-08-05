@@ -187,6 +187,44 @@ async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
 
 
 @respx.mock
+async def test_a_cached_batch_goes_stale_at_midnight_utc(cache_redis):
+    """跨过 UTC 零点后，昨天缓存的那批不能再当「今天的」返回。
+
+    真事：08-04 23:5x UTC 存进缓存的批次，当时确实是今天的；三小时 TTL 让它一直活到
+    08-05 02:5x。读路径不查新鲜度，于是整个 00:00–03:00 UTC（北京 08:00–11:00）窗口
+    里，探测反复拿到昨天那批，判定「今天那批还没出来」——界面上就停在「等待今天的
+    批次（2/10）· 最新 08-04」，而 arXiv 早发了。写的时候查新鲜度、读的时候不查，
+    等于只挡住了一半。
+
+    直接把旧条目塞进缓存来构造这个局面，而不是去改模块里的 ``datetime``：被测的就是
+    「读路径会不会丢掉过期条目」，不必为此动全局状态。
+    """
+    import datetime as _dt
+
+    from app.services.literature.cache import cache_key
+
+    today = _dt.datetime.now(_dt.UTC).date()
+    yesterday = today - _dt.timedelta(days=1)
+    stale_at = _dt.datetime.combine(yesterday, _dt.time(23, 55), tzinfo=_dt.UTC)
+
+    client = ArxivClient(redis=cache_redis, min_interval=0)
+    # 昨天 23:55 写进去的那份：当时是新鲜的，现在不是了，但离过期还有两小时
+    await client._rss_cache.set(
+        cache_key("arxiv", "rss_new", {"category": "cs.CL"}),
+        {"entries": [{"arxiv_id": "old-batch"}], "batch_at": stale_at.isoformat()},
+    )
+    route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/cs\.CL").mock(
+        return_value=httpx.Response(200, text=_rss_with_batch_date(today))
+    )
+
+    entries, batch_at = await client.fetch_new("cs.CL")
+    assert route.call_count == 1, "过期批次不该再从缓存里返回，应该重新抓一次"
+    assert batch_at is not None and batch_at.astimezone(_dt.UTC).date() == today
+    assert [e["arxiv_id"] for e in entries] == ["2607.10001", "2607.10002"]
+    await client.aclose()
+
+
+@respx.mock
 async def test_arxiv_fetch_new_raises_after_exhausted_retries(cache_redis):
     """RSS 失败原样上抛，**不再吞成 []**。
 

@@ -196,6 +196,16 @@ def _parse_rss_item(item: ET.Element) -> dict[str, Any] | None:
     }
 
 
+def _batch_is_fresh(batch_at: datetime | None) -> bool:
+    """这批公告还算「今天的」吗。读缓存与写缓存**共用这一条判据**。
+
+    解析不出批次日期时算新鲜：宁可照常抓一次，也不能因为一个判断失灵就再也不抓。
+    """
+    if batch_at is None:
+        return True
+    return batch_at.astimezone(UTC).date() >= datetime.now(UTC).date()
+
+
 def _parse_rss(text: str) -> tuple[list[dict[str, Any]], datetime | None]:
     """解析 RSS，返回 (条目, **这一批的公告日期**)。
 
@@ -386,13 +396,18 @@ class ArxivClient:
         """
         key = cache_key("arxiv", "rss_new", {"category": category})
         if (cached := await self._rss_cache.get(key)) is not None:
-            return cached["entries"], _parse_iso_dt(cached.get("batch_at"))
+            cached_at = _parse_iso_dt(cached.get("batch_at"))
+            # **读的时候也要查新鲜度**，不是只在写的时候查：昨天 23:50 存进来的那份，
+            # 当时确实是「今天的」，跨过 UTC 零点它就成了旧批次——而缓存还有两小时
+            # 才到期。只查写不查读，等于每天 00:00–03:00 UTC（北京 08:00–11:00）的探测
+            # 全部拿到昨天那批，判定「今天那批还没出来」，白等一上午。
+            if _batch_is_fresh(cached_at):
+                return cached["entries"], cached_at
         resp = await self._request(RSS_URL_TEMPLATE.format(category=category))
         entries, batch_at = _parse_rss(resp.text)
         # **陈旧批次不写缓存**：调用方会每 15 分钟探一次直到当天那批出现，缓存住旧批次
         # 会让接下来三小时的探测全部拿到同一份，轮询就白做了。与「失败不写缓存」同理。
-        fresh = batch_at is None or batch_at.astimezone(UTC).date() >= datetime.now(UTC).date()
-        if fresh:
+        if _batch_is_fresh(batch_at):
             await self._rss_cache.set(
                 key, {"entries": entries, "batch_at": batch_at.isoformat() if batch_at else None}
             )
