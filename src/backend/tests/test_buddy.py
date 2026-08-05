@@ -58,6 +58,25 @@ def test_greeting_without_any_data_still_greets():
     assert "PolarisBuddy" in line
 
 
+def test_nudge_stays_quiet_when_there_is_nothing_new():
+    """主动提示的门槛比问候语高：没有真事就不该敲肩膀。
+
+    为了让悬浮球看起来「活着」而常亮的红点，是在教用户忽略它。
+    """
+    assert buddy.compose_nudge(_stats()) is None
+    # 光是「库里有存货」不算新事——它昨天也在那儿
+    assert buddy.compose_nudge(_stats(saved_total=200)) is None
+    assert buddy.compose_nudge(_stats(saved_recent=3)) is None
+
+
+def test_nudge_speaks_only_about_what_is_actually_new():
+    assert "2 个实验" in (buddy.compose_nudge(_stats(experiments_running=2)) or "")
+    assert "9 篇" in (buddy.compose_nudge(_stats(daily_today=9)) or "")
+    # 一次只说一件事
+    line = buddy.compose_nudge(_stats(experiments_running=1, daily_today=9)) or ""
+    assert "9" not in line
+
+
 def test_page_context_renders_only_known_kinds():
     """认不出的 kind 返回空串：前端能声明任何字符串，不能让它随便往提示词里塞话。"""
     line = buddy.render_page_context("paper", "abc-123")
@@ -114,6 +133,7 @@ async def test_greeting_endpoint_returns_sentence_and_counts(client, agent_on):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["greeting"]
+    assert "nudge" in body  # 没有真事时是 null，前端据此决定要不要冒气泡
     assert set(body["stats"]) == {
         "saved_recent",
         "saved_total",

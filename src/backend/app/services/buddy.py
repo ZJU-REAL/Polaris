@@ -135,6 +135,22 @@ def compose_greeting(stats: BuddyStats, *, name: str | None = None) -> str:
     return f"{who}我是 PolarisBuddy。你在平台上做的事我都能帮上手——先从一个问题开始吧。"
 
 
+def compose_nudge(stats: BuddyStats) -> str | None:
+    """今天值得**主动**说的一句话；没有真事就返回 None。
+
+    与 :func:`compose_greeting` 的区别是门槛：问候语是用户自己点开面板时说的，
+    什么都没有也该有句开场白；主动提示是敲一下肩膀，**没有新东西就不该敲**。
+    为了让悬浮球看起来「活着」而常亮的红点，是在教用户忽略它。
+
+    句子和问候语一样从计数里挑——措辞留在这一处，前端只负责「今天提过没」。
+    """
+    if stats.experiments_running:
+        return f"你有 {stats.experiments_running} 个实验在跑，要看看进展吗？"
+    if stats.daily_today:
+        return f"今天到了 {stats.daily_today} 篇新论文，要我先替你筛一遍吗？"
+    return None
+
+
 #: 页面类型 → 说给模型听的一句话。键与前端 `buddyContext.ts` 的 kind 一一对应。
 _CONTEXT_LABELS = {
     "paper": "用户正在读一篇论文",

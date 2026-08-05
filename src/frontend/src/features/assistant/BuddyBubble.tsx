@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { tr } from '../../lib/i18n';
+import { PAPER_DND_MIME } from './paperDrag';
 
 /* ============================================================
    PolarisBuddy 的悬浮球。
@@ -11,6 +12,9 @@ import { tr } from '../../lib/i18n';
    ============================================================ */
 
 const POS_KEY = 'polaris.buddy.pos';
+
+//: 拖进来的文字截断长度。一整篇论文被拖进来时，问题本身不该是一篇论文。
+const MAX_DROPPED_TEXT = 1200;
 const CLICK_THRESHOLD_PX = 6;
 
 interface Pos {
@@ -39,11 +43,19 @@ function loadPos(): Pos {
 export function BuddyBubble({
   onOpen,
   onDropPaper,
+  onDropText,
+  nudge,
+  onDismissNudge,
   busy,
 }: {
   onOpen: () => void;
   /** 论文被拖到球上：paper_id 交给面板发起解读 */
   onDropPaper: (paperId: string) => void;
+  /** 选中的文字被拖到球上：直接问这段话 */
+  onDropText: (text: string) => void;
+  /** 今天值得主动说的一句话；null = 不打扰 */
+  nudge?: string | null;
+  onDismissNudge?: () => void;
   busy: boolean;
 }) {
   const [pos, setPos] = useState<Pos>(loadPos);
@@ -89,14 +101,55 @@ export function BuddyBubble({
   );
 
   return (
-    <div
+    <>
+      {nudge && (
+        <div
+          onClick={onOpen}
+          style={{
+            position: 'fixed',
+            right: pos.right + 60,
+            bottom: pos.bottom + 4,
+            maxWidth: 260,
+            background: 'var(--surface)',
+            border: '0.5px solid var(--border-2)',
+            borderRadius: 12,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.12)',
+            padding: '9px 11px',
+            fontSize: 12.5,
+            lineHeight: 1.6,
+            color: 'var(--text-2)',
+            cursor: 'pointer',
+            zIndex: 69,
+          }}
+        >
+          <div className="row gap6" style={{ alignItems: 'flex-start' }}>
+            <span style={{ flex: 1, minWidth: 0 }}>{nudge}</span>
+            <span
+              className="hoverable"
+              title={tr('今天不用再提醒我', 'Don’t remind me again today')}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDismissNudge?.();
+              }}
+              style={{ flexShrink: 0, color: 'var(--text-4)', cursor: 'pointer', lineHeight: 1 }}
+            >
+              <Icon name="x" size={11} />
+            </span>
+          </div>
+        </div>
+      )}
+      <div
       role="button"
       aria-label="PolarisBuddy"
-      title={tr('PolarisBuddy（⌘J）· 可拖动 · 把论文拖过来让我解读', 'PolarisBuddy (⌘J) · drag me · drop a paper on me')}
+      title={tr(
+        'PolarisBuddy（⌘J）· 可拖动 · 把论文或选中的文字拖过来',
+        'PolarisBuddy (⌘J) · drag me · drop a paper or selected text on me',
+      )}
       onPointerDown={onPointerDown}
       onDragOver={(e) => {
-        // 只认平台内拖出的论文
-        if (e.dataTransfer.types.includes('application/x-polaris-paper')) {
+        // 平台内拖出的论文，或者页面上选中的一段文字
+        const types = e.dataTransfer.types;
+        if (types.includes(PAPER_DND_MIME) || types.includes('text/plain')) {
           e.preventDefault();
           setDragOver(true);
         }
@@ -105,8 +158,14 @@ export function BuddyBubble({
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
-        const paperId = e.dataTransfer.getData('application/x-polaris-paper');
-        if (paperId) onDropPaper(paperId);
+        // 论文优先：拖论文行时 text/plain 里是标题，不该被当成"解释这段话"
+        const paperId = e.dataTransfer.getData(PAPER_DND_MIME);
+        if (paperId) {
+          onDropPaper(paperId);
+          return;
+        }
+        const text = e.dataTransfer.getData('text/plain').trim();
+        if (text) onDropText(text.slice(0, MAX_DROPPED_TEXT));
       }}
       style={{
         position: 'fixed',
@@ -137,6 +196,7 @@ export function BuddyBubble({
           animation: busy ? 'spin 1.2s linear infinite' : undefined,
         }}
       />
-    </div>
+      </div>
+    </>
   );
 }

@@ -221,6 +221,8 @@ async def buddy_greeting(
     stats = await buddy.collect_stats(session, user_id=user.id)
     return {
         "greeting": buddy.compose_greeting(stats, name=user.display_name or None),
+        # 主动提示：没有真事就是 null，前端据此决定要不要冒气泡
+        "nudge": buddy.compose_nudge(stats),
         "stats": stats.as_dict(),
     }
 

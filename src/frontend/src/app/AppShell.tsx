@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon, type IconName } from '../components/ui/Icon';
@@ -11,6 +11,7 @@ import { useAuth } from './auth';
 import { topicPath, useProject } from './project';
 import { AssistantPanel } from '../features/assistant/AssistantPanel';
 import { BuddyBubble } from '../features/assistant/BuddyBubble';
+import { alreadyNudgedToday, markNudged } from '../features/assistant/nudge';
 import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
@@ -433,7 +434,33 @@ export function AppShell() {
   const [assistantOpen, setAssistantOpen] = useState(false);
   // 拖到悬浮球上的论文：交给面板发起解读，取走后清空（清空由面板回调做）
   const [droppedPaperId, setDroppedPaperId] = useState<string | null>(null);
+  const [droppedText, setDroppedText] = useState<string | null>(null);
   const [buddyBusy, setBuddyBusy] = useState(false);
+  const [nudge, setNudge] = useState<string | null>(null);
+
+  // 主动提示：今天没提过才去问一次计数——大多数次打开页面连这个请求都不会发。
+  // 提示必须对应一件**真事**（跑着的实验、今天到的新论文）；为了让球看起来「活着」
+  // 而常亮的红点，是在教用户忽略它。
+  useEffect(() => {
+    if (alreadyNudgedToday(new Date())) return;
+    let alive = true;
+    void api
+      .getBuddyGreeting()
+      .then((g) => {
+        if (alive) setNudge(g.nudge ?? null);
+      })
+      .catch(() => {
+        /* 数不出来就不提示——沉默比编一句好 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const dismissNudge = useCallback(() => {
+    markNudged(new Date());
+    setNudge(null);
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -818,9 +845,20 @@ export function AppShell() {
       {/* —— PolarisBuddy：悬浮球 + 抽屉（⌘J）—— */}
       <BuddyBubble
         busy={buddyBusy}
-        onOpen={() => setAssistantOpen(true)}
+        nudge={nudge}
+        onDismissNudge={dismissNudge}
+        onOpen={() => {
+          dismissNudge();
+          setAssistantOpen(true);
+        }}
         onDropPaper={(paperId) => {
+          dismissNudge();
           setDroppedPaperId(paperId);
+          setAssistantOpen(true);
+        }}
+        onDropText={(text) => {
+          dismissNudge();
+          setDroppedText(text);
           setAssistantOpen(true);
         }}
       />
@@ -829,6 +867,8 @@ export function AppShell() {
         onClose={() => setAssistantOpen(false)}
         droppedPaperId={droppedPaperId}
         onDroppedPaperHandled={() => setDroppedPaperId(null)}
+        droppedText={droppedText}
+        onDroppedTextHandled={() => setDroppedText(null)}
         onBusyChange={setBuddyBusy}
       />
 

@@ -256,6 +256,8 @@ export function AssistantPanel({
   onClose,
   droppedPaperId,
   onDroppedPaperHandled,
+  droppedText,
+  onDroppedTextHandled,
   onBusyChange,
 }: {
   open: boolean;
@@ -263,6 +265,9 @@ export function AssistantPanel({
   /** 拖到悬浮球上的论文 id：进来就自动问一句「解读这篇」 */
   droppedPaperId?: string | null;
   onDroppedPaperHandled?: () => void;
+  /** 拖到悬浮球上的一段文字：直接问这段 */
+  droppedText?: string | null;
+  onDroppedTextHandled?: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -454,6 +459,18 @@ export function AssistantPanel({
       ),
     );
   }, [droppedPaperId, busy, ask, onDroppedPaperHandled]);
+
+  // 选中的文字被拖过来：把原文原样带上，让 Buddy 就着这段说
+  useEffect(() => {
+    if (!droppedText || busy) return;
+    onDroppedTextHandled?.();
+    void ask(
+      tr(
+        `解释一下这段话，必要时去平台里查证：\n\n「${droppedText}」`,
+        `Explain this passage, checking the platform if needed:\n\n“${droppedText}”`,
+      ),
+    );
+  }, [droppedText, busy, ask, onDroppedTextHandled]);
 
   if (!open) return null;
 
