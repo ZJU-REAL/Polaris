@@ -54,6 +54,79 @@ const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : und
  * 由后端按可见性算。以前这里要传 projectId，多课题不传就 409——那是在让用户替一个
  * 纯内部的数据结构做选择题。
  */
+/** 一个事件作用到块时间线上，返回新的时间线。
+
+    抽成纯函数是为了**能测**：这里处理的是全仓最不可信的输入——SSE 里 JSON.parse 出来
+    的 any。TypeScript 在这儿帮不上忙，编译期它以为自己知道形状，运行时后端发什么就是
+    什么。认不出的事件原样返回旧时间线（后端加事件不该让旧前端崩掉），字段缺失一律
+    兜底，绝不抛。 */
+export function applyAssistantEvent(
+  blocks: AssistantBlock[],
+  event: string,
+  raw: unknown,
+): AssistantBlock[] {
+  const data: Record<string, unknown> =
+    raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+
+  if (event === 'delta' || event === 'thinking') {
+    const kind = event === 'delta' ? 'text' : 'thinking';
+    const text = str(data.text);
+    if (!text) return blocks;
+    // 追加到尾部同类块；尾块类型不同就新开一个
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === kind) {
+      return [...blocks.slice(0, -1), { kind, text: last.text + text }];
+    }
+    return [...blocks, { kind, text }];
+  }
+
+  if (event === 'plan') {
+    // 计划是**替换**不是追加：后端每次发全量，界面上永远只有一份最新的。
+    // 就地更新（而不是插到末尾）才不会让进度条在对话里越滚越多。
+    const steps = Array.isArray(data.steps)
+      ? (data.steps as unknown[]).flatMap((item) => {
+          if (!item || typeof item !== 'object') return [];
+          const step = item as Record<string, unknown>;
+          const title = str(step.title);
+          if (!title) return [];
+          const status = str(step.status, 'pending');
+          const known = (['pending', 'running', 'done'] as const).includes(
+            status as PlanStep['status'],
+          );
+          return [{ title, status: known ? (status as PlanStep['status']) : ('pending' as const) }];
+        })
+      : [];
+    // 一步都不剩就别画空进度条——空白进度条比不画更糟
+    if (!steps.length) return blocks;
+    const at = blocks.findIndex((b) => b.kind === 'plan');
+    const block: AssistantBlock = { kind: 'plan', steps };
+    if (at < 0) return [...blocks, block];
+    return blocks.map((b, i) => (i === at ? block : b));
+  }
+
+  if (event === 'tool_call') {
+    return [...blocks, { kind: 'tool', id: str(data.id), name: str(data.name, '?'), state: 'running' }];
+  }
+
+  if (event === 'tool_result') {
+    const id = str(data.id);
+    return blocks.map((b) =>
+      b.kind === 'tool' && b.id === id
+        ? {
+            ...b,
+            state: data.ok === false ? 'error' : 'ok',
+            summary: str(data.summary) || undefined,
+            preview: str(data.preview) || undefined,
+            durationMs: num(data.duration_ms),
+          }
+        : b,
+    );
+  }
+
+  // 其余事件（meta / usage / compaction / 将来新增的）一律忽略
+  return blocks;
+}
+
 export function assistantTurnSse(
   conversationId: string,
   question: string,
@@ -68,84 +141,13 @@ export function assistantTurnSse(
     {
       onEvent: (event, raw) => {
         const data = parse(raw);
-        if (event === 'delta') {
-          const text = str(data.text);
-          if (!text) return;
-          // 追加到尾部文本块；尾块不是 text 就新开一个
-          handlers.onBlocks((blocks) => {
-            const last = blocks[blocks.length - 1];
-            if (last && last.kind === 'text') {
-              return [...blocks.slice(0, -1), { kind: 'text', text: last.text + text }];
-            }
-            return [...blocks, { kind: 'text', text }];
-          });
-        } else if (event === 'thinking') {
-          const text = str(data.text);
-          if (!text) return;
-          handlers.onBlocks((blocks) => {
-            const last = blocks[blocks.length - 1];
-            if (last && last.kind === 'thinking') {
-              return [...blocks.slice(0, -1), { kind: 'thinking', text: last.text + text }];
-            }
-            return [...blocks, { kind: 'thinking', text }];
-          });
-        } else if (event === 'plan') {
-          // 计划是**替换**不是追加：后端每次发全量，界面上永远只有一份最新的。
-          // 就地更新（而不是插到末尾）才不会让进度条在对话里越滚越多。
-          const steps = Array.isArray(data.steps)
-            ? (data.steps as unknown[]).flatMap((raw) => {
-                if (!raw || typeof raw !== 'object') return [];
-                const step = raw as Record<string, unknown>;
-                const title = str(step.title);
-                if (!title) return [];
-                const status = str(step.status, 'pending');
-                return [
-                  {
-                    title,
-                    status: (['pending', 'running', 'done'] as const).includes(
-                      status as PlanStep['status'],
-                    )
-                      ? (status as PlanStep['status'])
-                      : ('pending' as const),
-                  },
-                ];
-              })
-            : [];
-          if (!steps.length) return;
-          handlers.onBlocks((blocks) => {
-            const at = blocks.findIndex((b) => b.kind === 'plan');
-            const block: AssistantBlock = { kind: 'plan', steps };
-            if (at < 0) return [...blocks, block];
-            return blocks.map((b, i) => (i === at ? block : b));
-          });
-        } else if (event === 'tool_call') {
-          const id = str(data.id);
-          handlers.onBlocks((blocks) => [
-            ...blocks,
-            { kind: 'tool', id, name: str(data.name, '?'), state: 'running' },
-          ]);
-        } else if (event === 'tool_result') {
-          const id = str(data.id);
-          handlers.onBlocks((blocks) =>
-            blocks.map((b) =>
-              b.kind === 'tool' && b.id === id
-                ? {
-                    ...b,
-                    state: data.ok === false ? 'error' : 'ok',
-                    summary: str(data.summary) || undefined,
-                    preview: str(data.preview) || undefined,
-                    durationMs: num(data.duration_ms),
-                  }
-                : b,
-            ),
-          );
-        } else if (event === 'done') {
+        if (event === 'done') {
           handlers.onDone(str(data.stop_reason, 'stop'));
         } else if (event === 'error') {
           handlers.onError(str(data.detail, '出错了'));
+        } else {
+          handlers.onBlocks((blocks) => applyAssistantEvent(blocks, event, data));
         }
-        // 其余事件（meta / usage / compaction / 将来新增的）一律忽略：
-        // 后端加事件不该让旧前端崩掉
       },
       onClose: () => handlers.onDone('stop'),
       onError: (err) => handlers.onError(err instanceof Error ? err.message : String(err)),
