@@ -22,6 +22,7 @@
   白名单 run_plot → 拉回 figures/*.png(+.pdf) → VLM 质检（失败修脚本 ≤2 次）。
 """
 
+import ast
 import asyncio
 import contextlib
 import functools
@@ -448,12 +449,24 @@ def _extract_json(content: str) -> Any:
 
 
 async def _complete_json(ctx: ActionContext, *, system: str, user: str, validate) -> Any:
-    """stage=experiment 的 LLM JSON 请求：解析/校验失败重试，仍失败抛 ValueError。"""
+    """stage=experiment 的 LLM JSON 请求：解析/校验失败**带着错误**重试，仍失败抛 ValueError。
+
+    重试必须把上一次的错误回喂给模型。原来是原样重发同一个 prompt——对确定性错误
+    （少一个必需文件、生成的 .py 有语法错）这等于让模型再猜一遍同样的题，三次尝试
+    烧三次 token 换回同一个错。带上错误后它才知道要改哪里。
+    """
     last_error: Exception | None = None
-    for _attempt in range(_MAX_JSON_ATTEMPTS):
+    for attempt in range(_MAX_JSON_ATTEMPTS):
+        prompt = user
+        if last_error is not None:
+            prompt = (
+                f"{user}\n\n---\n"
+                f"上一次输出没通过校验（第 {attempt} 次尝试）：{last_error}\n"
+                "请针对这个错误修正后重新输出完整 JSON，不要重复同样的问题。"
+            )
         result = await ctx.llm.complete(
             "experiment",
-            [Message(role="system", content=system), Message(role="user", content=user)],
+            [Message(role="system", content=system), Message(role="user", content=prompt)],
             user_id=ctx.run.created_by,
             project_id=ctx.run.project_id,
             voyage_id=ctx.run.id,
@@ -596,8 +609,32 @@ def validate_plan(data: Any) -> dict[str, Any]:
     return out
 
 
+def _check_python_syntax(files: dict[str, str]) -> None:
+    """把生成的 .py 编译一遍；语法错在这里就打回，绝不让它上机器。
+
+    实测一次失败（voyage ae147dec）：生成的 train.py 在 f-string 里写了 ``\\"``，
+    ``SyntaxError: unexpected character after line continuation character``。这个错
+    以前一路穿过校验、rsync 到远端、直到冒烟测试才炸——代价是一次 SSH 往返、三次冒烟
+    尝试、两次 LLM 修复调用，最后整个 voyage 判死。而 ``ast.parse`` 在本地零成本就能
+    发现它，错误还能顺着 _complete_json 的重试回喂给模型自己改。
+    """
+    for name, content in sorted(files.items()):
+        if not name.endswith(".py"):
+            continue
+        try:
+            ast.parse(content, filename=name)
+        except SyntaxError as e:
+            # 带上行号与出错行，模型才改得准
+            line = (e.text or "").strip()
+            where = f"{name}:{e.lineno}" if e.lineno else name
+            detail = f"{where}: {e.msg}"
+            raise ValueError(
+                f"生成的 Python 有语法错误 —— {detail}" + (f"\n出错行：{line}" if line else "")
+            ) from e
+
+
 def validate_files(data: Any) -> dict[str, str]:
-    """代码文件 dict 校验：requirements.txt / run.sh 必须存在，路径过白名单校验。"""
+    """代码文件 dict 校验：必需文件齐全、路径过白名单、生成的 Python 语法可编译。"""
     files = data.get("files") if isinstance(data, dict) else None
     if not isinstance(files, dict) or not files:
         raise ValueError('expected {"files": {...}}')
@@ -610,6 +647,7 @@ def validate_files(data: Any) -> dict[str, str]:
             raise ValueError(f"missing required file: {required}")
     if "--smoke" not in normalized["run.sh"]:
         raise ValueError("run.sh must support --smoke argument")
+    _check_python_syntax(normalized)
     return normalized
 
 

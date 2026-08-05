@@ -808,12 +808,34 @@ def test_relpath_whitelist_unit():
 
 
 def test_validate_files_unit():
-    ok = {"files": {"requirements.txt": "", "run.sh": "if --smoke", "train.py": "x"}}
+    ok = {"files": {"requirements.txt": "", "run.sh": "if --smoke", "train.py": "x = 1"}}
     assert set(ax.validate_files(ok)) == {"requirements.txt", "run.sh", "train.py"}
     with pytest.raises(ValueError):
         ax.validate_files({"files": {"run.sh": "--smoke"}})  # 缺 requirements.txt
     with pytest.raises(ValueError):
         ax.validate_files({"files": {"requirements.txt": "", "run.sh": "no smoke flag"}})
+
+
+def test_validate_files_rejects_python_syntax_error():
+    """生成的 .py 语法错必须在生成阶段打回，不能等到远端冒烟才炸。
+
+    样本取自真实失败（voyage ae147dec）：f-string 里写了 ``\\"``。这个错以前一路穿过
+    校验传到远端，直到冒烟才暴露，整个 voyage 判死。
+    """
+    broken = (
+        'print(f"POLARIS_METRIC {json.dumps({\\"name\\": \\"acc\\", \\"value\\": v})}")\n'
+    )
+    with pytest.raises(ValueError) as exc:
+        ax.validate_files(
+            {"files": {"requirements.txt": "", "run.sh": "--smoke", "train.py": broken}}
+        )
+    # 报错要能指到文件与行号，模型才改得准
+    assert "train.py" in str(exc.value)
+
+    # 非 .py 文件不做语法检查：run.sh 里的 shell 片段不该被当成 Python
+    ax.validate_files(
+        {"files": {"requirements.txt": "", "run.sh": "if [ --smoke ]; then :; fi"}}
+    )
 
 
 def test_parse_metric_lines_unit():
