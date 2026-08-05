@@ -3,7 +3,12 @@ import { useLocation } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
 import { Markdown } from '../../lib/markdown';
 import { api } from '../../lib/api';
-import { assistantTurnSse, type AssistantBlock, type PlanStep } from '../../lib/assistantStream';
+import {
+  assistantTurnSse,
+  type AssistantBlock,
+  type PaperSource,
+  type PlanStep,
+} from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 import { CapabilitiesBar } from './CapabilitiesBar';
 import { ToolImages } from './ToolImages';
@@ -237,9 +242,46 @@ function ThinkingView({ text, live }: { text: string; live: boolean }) {
   );
 }
 
+/** 这一轮它看过的论文。**不叫「引用」**：模型写的 [n] 指的是谁，我们无从核对，
+    叫引用就是在替它担保。点进去是论文本身——回答里提到某篇却点不进去，是这套界面
+    最容易让人卡住的地方。 */
+function SourcesCard({ papers }: { papers: PaperSource[] }) {
+  return (
+    <div style={{ margin: '10px 0 2px' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 4 }}>
+        {tr(`本轮查看的论文 · ${papers.length}`, `Papers looked at · ${papers.length}`)}
+      </div>
+      <div className="col gap4">
+        {papers.map((paper, i) => (
+          <a
+            key={paper.paperId}
+            href={`/papers/${paper.paperId}/read`}
+            className="row gap6 hoverable"
+            style={{
+              alignItems: 'flex-start',
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: 'var(--text-2)',
+              textDecoration: 'none',
+              padding: '3px 5px',
+              borderRadius: 6,
+            }}
+          >
+            <span className="mono" style={{ color: 'var(--text-4)', flexShrink: 0 }}>
+              {i + 1}.
+            </span>
+            <span style={{ minWidth: 0 }}>{paper.title}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BlockView({ block, live }: { block: AssistantBlock; live: boolean }) {
   if (block.kind === 'text') return <Markdown source={block.text} />;
   if (block.kind === 'plan') return <PlanCard steps={block.steps} />;
+  if (block.kind === 'sources') return <SourcesCard papers={block.papers} />;
   if (block.kind === 'thinking') return <ThinkingView text={block.text} live={live} />;
   if (block.kind === 'tool') return <ToolCard block={block} />;
   return null; // 未知块：画不出来就不画，绝不抛

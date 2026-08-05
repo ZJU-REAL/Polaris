@@ -16,6 +16,11 @@ export interface ImageRef {
   label?: string;
 }
 
+export interface PaperSource {
+  paperId: string;
+  title: string;
+}
+
 export interface PlanStep {
   title: string;
   status: 'pending' | 'running' | 'done';
@@ -24,6 +29,7 @@ export interface PlanStep {
 export type AssistantBlock =
   | { kind: 'text'; text: string }
   | { kind: 'plan'; steps: PlanStep[] }
+  | { kind: 'sources'; papers: PaperSource[] }
   | { kind: 'thinking'; text: string }
   | {
       kind: 'tool';
@@ -112,6 +118,27 @@ export function applyAssistantEvent(
     const block: AssistantBlock = { kind: 'plan', steps };
     if (at < 0) return [...blocks, block];
     return blocks.map((b, i) => (i === at ? block : b));
+  }
+
+  if (event === 'sources') {
+    // 「刚才它看了哪几篇」。后端只发新出现的，这里追加去重，块本身固定在末尾一处。
+    const incoming: PaperSource[] = Array.isArray(data.items)
+      ? (data.items as unknown[]).flatMap((item) => {
+          if (!item || typeof item !== 'object') return [];
+          const row = item as Record<string, unknown>;
+          const paperId = str(row.paper_id);
+          const title = str(row.title);
+          return paperId && title ? [{ paperId, title }] : [];
+        })
+      : [];
+    if (!incoming.length) return blocks;
+    const at = blocks.findIndex((b) => b.kind === 'sources');
+    if (at < 0) return [...blocks, { kind: 'sources', papers: incoming }];
+    return blocks.map((b, i) => {
+      if (i !== at || b.kind !== 'sources') return b;
+      const seen = new Set(b.papers.map((p) => p.paperId));
+      return { kind: 'sources', papers: [...b.papers, ...incoming.filter((p) => !seen.has(p.paperId))] };
+    });
   }
 
   if (event === 'tool_call') {

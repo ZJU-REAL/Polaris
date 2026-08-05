@@ -26,6 +26,7 @@ from app.agents.chat.events import (
     ErrorEvent,
     MetaEvent,
     PlanEvent,
+    SourcesEvent,
     ThinkingEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -68,6 +69,10 @@ PREVIEW_CHARS = 800
 #: 最近几轮的工具结果保持原样，更早的压成一行摘要。
 _KEEP_FULL_RESULT_ROUNDS = 2
 
+#: 一轮最多报多少篇论文。工具结果里可能有上百篇（scan_papers 一次 50 篇），
+#: 全铺到界面上就成了第二个搜索结果页，而这一栏的用处是「刚才它看了哪几篇」。
+_MAX_SOURCES = 20
+
 #: 计划工具的名字。循环认识这一个名字，是为了在它调成功后补一帧 PlanEvent——
 #: 前端不必去解析工具结果的 JSON 就能画出进度条。耦合是显式的，写在这儿。
 _PLAN_TOOL = "update_plan"
@@ -95,6 +100,8 @@ class _RoundState:
         default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0}
     )
     blocks_by_round: list[tuple[ContentBlock, ...]] = field(default_factory=list)
+    #: 这一轮已经报给前端的论文 id，避免同一篇在多次检索里重复出现
+    sources_seen: set[str] = field(default_factory=set)
 
 
 class ChatAgentLoop:
@@ -201,6 +208,7 @@ class ChatAgentLoop:
                 return
 
             messages.append(Message(role="assistant", content=list(blocks)))
+            fresh_sources: list[dict[str, str]] = []
             # 先把「要调什么」全部播出去，再开始执行：前端据此立刻画出 running 的卡片。
             # 不这么做的话，卡片会在工具跑完的那一刻凭空出现在完成态，几秒的等待期里
             # 界面上什么都没有。
@@ -219,6 +227,18 @@ class ChatAgentLoop:
                 yield ev
                 if plan := _plan_from(ev, result):
                     yield PlanEvent(steps=plan)
+                # 「刚才它看了哪几篇」——只播**新**出现的，前端追加即可。
+                # 这一栏不声称是「回答引用了这些」：我们无从核对模型的 [n] 指的是谁，
+                # 说成引用就是在替它担保。
+                if result is not None and ev.name != _PLAN_TOOL:
+                    for ref in _paper_refs(_safe_json(result.content)):
+                        if ref["paper_id"] in state.sources_seen:
+                            continue
+                        state.sources_seen.add(ref["paper_id"])
+                        fresh_sources.append(ref)
+            if fresh_sources:
+                yield SourcesEvent(items=list(fresh_sources))
+                fresh_sources.clear()
             messages.append(Message(role="user", content=list(results)))
 
             # 技能声明了 allowed-tools 就收窄后续可用的工具面。**只能收窄，永不扩权**：
@@ -315,6 +335,50 @@ class ChatAgentLoop:
             ),
             ToolResultBlock(call.id, text, is_error=True),
         )
+
+
+def _safe_json(text: str) -> Any:
+    """工具结果文本 → 对象；解析不了返回 None（结果被截断过，未必是完整 JSON）。"""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+def _paper_refs(payload: Any) -> list[dict[str, str]]:
+    """从工具结果里认出论文（paper_id + title）。
+
+    通用遍历而不是按工具写死：search_papers 给 results、scan_papers 给 papers、
+    get_paper 直接就是一篇……逐个工具适配的话，每加一个工具就得记得回来改这里，
+    而漏改的表现是「引用列表少了几篇」——没人会注意到。
+
+    只收**同时有 id 和标题**的：光有 uuid 的条目在界面上没法看，与其显示一串 uuid，
+    不如不显示。
+    """
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def walk(node: Any, depth: int = 0) -> None:
+        if depth > 6 or len(found) >= _MAX_SOURCES:
+            return
+        if isinstance(node, dict):
+            pid, title = node.get("paper_id"), node.get("title")
+            if (
+                isinstance(pid, str)
+                and isinstance(title, str)
+                and title.strip()
+                and pid not in seen
+            ):
+                seen.add(pid)
+                found.append({"paper_id": pid, "title": title.strip()[:200]})
+            for value in node.values():
+                walk(value, depth + 1)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, depth + 1)
+
+    walk(payload)
+    return found
 
 
 def _plan_from(

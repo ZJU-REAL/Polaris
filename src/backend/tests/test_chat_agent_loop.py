@@ -321,3 +321,79 @@ async def test_meta_is_the_first_event(monkeypatch):
     events = await _drive(_loop(provider))
     assert isinstance(events[0], MetaEvent)
     assert events[0].conversation_id
+
+
+def test_paper_refs_are_found_wherever_they_sit_in_the_payload():
+    """论文引用走通用遍历，不跟每个工具的形状耦合。
+
+    逐个工具适配的话，每加一个工具就得记得回来改；漏改的表现是「列表少了几篇」，
+    没人会注意到。
+    """
+    from app.agents.chat.loop import _paper_refs
+
+    refs = _paper_refs(
+        {
+            "results": [{"paper_id": "a", "title": "甲", "score": 1}],
+            "nested": {"deep": [{"papers": [{"paper_id": "b", "title": "乙"}]}]},
+            "single": {"paper_id": "c", "title": "丙"},
+        }
+    )
+    assert [r["paper_id"] for r in refs] == ["a", "b", "c"]
+
+
+def test_paper_refs_skip_entries_without_a_title_and_dedupe():
+    """只收同时有 id 和标题的：光有 uuid 的条目在界面上没法看。"""
+    from app.agents.chat.loop import _paper_refs
+
+    refs = _paper_refs(
+        {
+            "a": {"paper_id": "x", "title": "标题"},
+            "b": {"paper_id": "x", "title": "同一篇又出现一次"},
+            "c": {"paper_id": "y"},  # 没标题
+            "d": {"title": "没 id"},
+            "e": {"paper_id": "z", "title": "   "},  # 空白标题不算
+        }
+    )
+    assert [r["paper_id"] for r in refs] == ["x"]
+
+
+def test_paper_refs_are_capped():
+    """scan_papers 一次能回 50 篇，全铺上去这一栏就成了第二个搜索结果页。"""
+    from app.agents.chat.loop import _MAX_SOURCES, _paper_refs
+
+    payload = {"results": [{"paper_id": str(i), "title": f"第 {i} 篇"} for i in range(80)]}
+    assert len(_paper_refs(payload)) == _MAX_SOURCES
+
+
+@pytest.mark.asyncio
+async def test_the_loop_reports_papers_it_looked_at(monkeypatch):
+    """整条链路：工具查到论文 → 循环播一帧 sources，同一篇不重复播。"""
+
+    @tool(
+        name="_probe_papers",
+        description="测试用检索",
+        input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+    )
+    async def _probe(ctx, args):  # noqa: ANN001
+        return {
+            "results": [
+                {"paper_id": "p-1", "title": "第一篇"},
+                {"paper_id": "p-2", "title": "第二篇"},
+            ]
+        }
+
+    provider = FakeProvider()
+    provider.script(
+        [
+            [("_probe_papers", {"q": "planning"})],
+            # 第二轮又查了一次，返回同样的两篇：不该再播一遍
+            [("_probe_papers", {"q": "planning 换个说法"})],
+            "查到两篇。",
+        ]
+    )
+    events = await _drive(_loop(provider), tool_names=("_probe_papers",))
+    sources = [e for e in events if type(e).__name__ == "SourcesEvent"]
+
+    assert len(sources) == 1, f"同一批论文被播了 {len(sources)} 次"
+    assert [i["paper_id"] for i in sources[0].items] == ["p-1", "p-2"]
+    assert [i["title"] for i in sources[0].items] == ["第一篇", "第二篇"]

@@ -118,3 +118,33 @@ describe('畸形输入', () => {
     }
   });
 });
+
+describe('本轮查看的论文', () => {
+  it('后端只发新出现的，这里追加并去重', () => {
+    const blocks = reduce([
+      ['sources', { items: [{ paper_id: 'a', title: '甲' }] }],
+      ['sources', { items: [{ paper_id: 'a', title: '甲' }, { paper_id: 'b', title: '乙' }] }],
+    ]);
+    const sources = blocks.filter((b) => b.kind === 'sources');
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toEqual({
+      kind: 'sources',
+      papers: [
+        { paperId: 'a', title: '甲' },
+        { paperId: 'b', title: '乙' },
+      ],
+    });
+  });
+
+  it('缺 id 或缺标题的条目丢掉——一串 uuid 在界面上没法看', () => {
+    const blocks = reduce([
+      ['sources', { items: [{ paper_id: 'a' }, { title: '没有 id' }, { paper_id: 'b', title: '乙' }] }],
+    ]);
+    expect(blocks[0]).toEqual({ kind: 'sources', papers: [{ paperId: 'b', title: '乙' }] });
+  });
+
+  it('一条都认不出时不留空块', () => {
+    expect(reduce([['sources', { items: [] }]])).toEqual([]);
+    expect(reduce([['sources', { items: '不是数组' }]])).toEqual([]);
+  });
+});
