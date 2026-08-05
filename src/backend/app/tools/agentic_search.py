@@ -20,9 +20,9 @@ from app.core.db import get_sessionmaker
 from app.services import chunks as chunks_service
 from app.services import papers as papers_service
 from app.services.embedding import embed_query
-from app.services.libraries import get_source_library_ids
 from app.tools.context import ToolContext
 from app.tools.registry import tool
+from app.tools.scope import library_ids_for
 
 #: grep 每条命中回多少字符的上下文（前后各一半）
 _GREP_WINDOW = 160
@@ -66,6 +66,7 @@ async def scan_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
                 rows = await papers_service.semantic_search_papers(
                     session,
                     project_id=ctx.project_id,
+                    library_ids=await library_ids_for(session, ctx),
                     query_vector=vector,
                     space=space,
                     limit=k,
@@ -75,7 +76,11 @@ async def scan_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
                 rows = []
         if not rows:
             rows = await papers_service.keyword_search_papers(
-                session, project_id=ctx.project_id, q=query, limit=k
+                session,
+                project_id=ctx.project_id,
+                library_ids=await library_ids_for(session, ctx),
+                q=query,
+                limit=k,
             )
         # 一行一篇：标题 + 年份。**刻意不回 tldr/摘要**——回了就又变成 top-k RAG，
         # k 也就不敢往大了要。
@@ -112,7 +117,7 @@ async def grep_fulltext(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     k = max(1, min(int(args.get("k") or 20), 40))
 
     async with get_sessionmaker()() as session:
-        library_ids = await get_source_library_ids(session, ctx.project_id)
+        library_ids = await library_ids_for(session, ctx)
         rows = await chunks_service.keyword_search_chunks(
             session,
             library_ids=library_ids or None,

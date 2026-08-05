@@ -152,9 +152,13 @@ async def _read_library_ids(
     *,
     project_id: uuid.UUID | None,
     library_id: uuid.UUID | None,
+    library_ids: Sequence[uuid.UUID] | None = None,
 ) -> list[uuid.UUID]:
-    """并集读路径的库解析：显式 library_id（单库读视图/库工作台）→ [library_id]；
+    """并集读路径的库解析：显式 library_ids（全局助手已按可见性算好的一组库）→ 原样用；
+    显式 library_id（单库读视图/库工作台）→ [library_id]；
     否则按课题关联库并集（P7；空关联=空语料，调用方返回空态而非报错）。"""
+    if library_ids is not None:
+        return list(library_ids)
     if library_id is not None:
         return [library_id]
     assert project_id is not None
@@ -1106,6 +1110,8 @@ async def keyword_search_papers(
     *,
     project_id: uuid.UUID | None = None,
     library_id: uuid.UUID | None = None,
+    #: 显式库集合（全局助手）：给了就不看 project_id
+    library_ids: Sequence[uuid.UUID] | None = None,
     q: str,
     limit: int,
     user_id: uuid.UUID | None = None,
@@ -1116,7 +1122,9 @@ async def keyword_search_papers(
     笔记仅作者本人可见（P5b），故只有传 user_id（用户检索入口）才并入笔记命中；
     agent 调用（无用户语境）不搜笔记。入口同 list_papers：project_id 或 library_id。
     """
-    library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
+    library_ids = await _read_library_ids(
+        session, project_id=project_id, library_id=library_id, library_ids=library_ids
+    )
     if not library_ids:
         return []
     pattern = f"%{q}%"
@@ -1187,6 +1195,8 @@ async def semantic_search_papers(
     *,
     project_id: uuid.UUID | None = None,
     library_id: uuid.UUID | None = None,
+    #: 显式库集合（全局助手）：给了就不看 project_id
+    library_ids: Sequence[uuid.UUID] | None = None,
     query_vector: list[float],
     space: EmbeddingSpace,
     limit: int,
@@ -1196,7 +1206,9 @@ async def semantic_search_papers(
     只跟 ``space`` 这一个向量空间里的论文比较——别的空间的向量出自别的模型，
     余弦值没有可比性。
     """
-    library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
+    library_ids = await _read_library_ids(
+        session, project_id=project_id, library_id=library_id, library_ids=library_ids
+    )
     if not library_ids:
         return []
     qv = json.dumps(query_vector)

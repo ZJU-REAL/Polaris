@@ -49,6 +49,7 @@ from app.services import agent_skills, buddy
 from app.services import conversations as store
 from app.services import projects as projects_service
 from app.tools.context import ToolContext
+from app.tools.scope import visible_library_ids
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -259,15 +260,29 @@ async def run_turn(
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
     await session.commit()
 
-    project_id = await _resolve_project(
-        session, user=user, conv=conv, requested=payload.project_id
+    # PolarisBuddy 是**全局**助手：检索范围是「这个人看得见的全部文献库」，不再要求
+    # 先选一个课题。课题从来不是权限边界，只是库的一个子集；要求先选课题，等于让用户
+    # 替一个纯内部的数据结构做选择题，而他想问的往往正好跨库。
+    #
+    # 越权由可见性这一步挡住（口径与库列表页一致：管理员看全部，普通用户看自己的
+    # 个人库加公共库），不是靠"只给一个课题"。
+    library_ids = tuple(await visible_library_ids(session, user))
+    # 本轮显式指定课题时仍然收窄到那个课题（课题里的对话还走这条路）。
+    project_id = (
+        await _resolve_project(session, user=user, conv=conv, requested=payload.project_id)
+        if payload.project_id is not None
+        else None
     )
-    # project_id 为 None（用户没有课题）时这轮不带任何工具：ToolContext 里的占位 id
-    # 不会被用到，因为没有工具可调。这与从前兜随机 UUID 的区别是**诚实**——助手不会
-    # 调工具查到零条然后说「没查到」，它根本不会声称自己查过。
-    tool_names = tuple(payload.tool_names or DEFAULT_TOOL_NAMES) if project_id else ()
+    # 一个可见库都没有 = 没有语料可查，这轮不带工具。**不假装查过**：兜一个空范围
+    # 然后说「没查到」，与从前兜随机 UUID 一样是在撒谎。
+    has_corpus = bool(project_id) or bool(library_ids)
+    tool_names = tuple(payload.tool_names or DEFAULT_TOOL_NAMES) if has_corpus else ()
     tool_ctx = ToolContext(
-        project_id=project_id or uuid.uuid4(), llm=get_llm_router(), user_id=user.id
+        project_id=project_id,
+        # 指定了课题就按课题算范围（library_ids=None），否则给显式的可见库集合
+        library_ids=None if project_id else library_ids,
+        llm=get_llm_router(),
+        user_id=user.id,
     )
     loop = ChatAgentLoop(llm=get_llm_router(), tool_ctx=tool_ctx, history=history)
     req = ChatTurnRequest(
@@ -320,7 +335,10 @@ async def _resolve_project(
     conv: Any,
     requested: uuid.UUID | None,
 ) -> uuid.UUID | None:
-    """定出这轮工具检索的课题作用域；``None`` = 没有课题，这轮不带工具纯对话。
+    """定出这轮工具检索的课题作用域；``None`` = 不收窄到某个课题（走全局可见库）。
+
+    只在**本轮显式指定了课题**时才走到这里——全局助手默认按可见库检索，不再有
+    「先选课题」这道坎。留着它是因为课题内的对话仍然需要把范围收窄到那个课题。
 
     此前这里是 ``conv.project_id or conv.scope_id or uuid.uuid4()``，两个都空时兜一个
     **随机 UUID**——检索工具全按 project_id 过滤，于是助手在全局会话里永远查不到任何

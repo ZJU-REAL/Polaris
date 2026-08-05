@@ -17,14 +17,20 @@ from app.core.llm.router import LLMRouter
 class ToolContext:
     """只读工具的最小执行上下文。
 
-    - ``project_id``：工具的检索范围（库内论文/概念/图谱都按项目隔离）。
+    - ``project_id``：默认的检索范围（课题关联的那些库）。
+    - ``library_ids``：显式的检索范围，给了就**不看 project_id**。全局助手用它把范围
+      放到「这个人看得见的全部库」；空元组是合法值，表示没有语料（查不到，不报错）。
     - ``user_id``：归属校验用（``*_for_user`` 服务）；系统内部调用可为 None。
     - ``voyage_id``：仅用于 LLM 用量记账（embed 调用），无则不挂 voyage。
     - ``llm``：LLM 路由器，仅供需要 embedding 的工具（语义检索）使用。
     """
 
-    project_id: uuid.UUID
+    #: 课题范围。全局助手不收窄到课题时是 None——**不要编一个占位 uuid**：它会顺着
+    #: embedding 记账写进 llm_usage.project_id，撞 FK 或者更糟，悄悄记到一个不存在的
+    #: 课题头上。
+    project_id: uuid.UUID | None
     llm: LLMRouter
+    library_ids: tuple[uuid.UUID, ...] | None = None
     user_id: uuid.UUID | None = None
     voyage_id: uuid.UUID | None = None
     #: 允许执行会改数据的工具吗。**默认 False 是整套安全性的支点**——MCP、voyage 的

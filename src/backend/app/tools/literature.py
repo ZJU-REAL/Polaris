@@ -18,11 +18,11 @@ from app.services import concepts as concepts_service
 from app.services import papers as papers_service
 from app.services.concepts import library_concept_ids
 from app.services.embedding import embed_query
-from app.services.libraries import get_source_library_ids, membership_for_project
 from app.services.paper_review import relevant_excerpt
 from app.services.papers import PaperView
 from app.tools.context import ToolContext
 from app.tools.registry import tool
+from app.tools.scope import library_ids_for, membership_in_scope
 
 _WIKI_CHARS = 8000
 _FULLTEXT_PAGE_CHARS = 6000
@@ -61,9 +61,7 @@ async def _get_project_paper(session: Any, ctx: ToolContext, raw_id: Any) -> Pap
         raise ValueError(f"paper_id 不是合法 uuid：{raw_id}") from e
     paper = await session.get(Paper, paper_id)
     membership = (
-        await membership_for_project(session, project_id=ctx.project_id, paper_id=paper_id)
-        if paper is not None
-        else None
+        await membership_in_scope(session, ctx, paper_id) if paper is not None else None
     )
     if paper is None or membership is None:
         raise ValueError(f"库内不存在该论文：{raw_id}")
@@ -72,7 +70,7 @@ async def _get_project_paper(session: Any, ctx: ToolContext, raw_id: Any) -> Pap
 
 @tool(
     "search_papers",
-    description="在本课题语料内检索论文，支持关键词与语义两种模式",
+    description="在可检索的文献库内检索论文，支持关键词与语义两种模式",
     input_schema={
         "type": "object",
         "properties": {
@@ -106,6 +104,7 @@ async def search_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                 rows = await papers_service.semantic_search_papers(
                     session,
                     project_id=ctx.project_id,
+                    library_ids=await library_ids_for(session, ctx),
                     query_vector=vector,
                     space=space,
                     limit=k,
@@ -115,7 +114,11 @@ async def search_papers(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                 rows = []
         if not rows:  # semantic 不可用/无召回 → 关键词降级
             rows = await papers_service.keyword_search_papers(
-                session, project_id=ctx.project_id, q=query, limit=k
+                session,
+                project_id=ctx.project_id,
+                library_ids=await library_ids_for(session, ctx),
+                q=query,
+                limit=k,
             )
             used_mode = used_mode if rows and used_mode == "semantic" else "keyword"
         return {
@@ -224,7 +227,7 @@ async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     if not name:
         raise ValueError("get_concept 需要非空 name")
     async with get_sessionmaker()() as session:
-        library_ids = await get_source_library_ids(session, ctx.project_id)
+        library_ids = await library_ids_for(session, ctx)
         if not library_ids:
             return {"name": name, "found": False, "note": "概念库中没有该概念"}
         scoped = library_concept_ids(library_ids)
@@ -267,7 +270,7 @@ async def get_concept(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 async def list_concepts(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     category = str(args.get("category") or "").strip() or None
     async with get_sessionmaker()() as session:
-        library_ids = await get_source_library_ids(session, ctx.project_id)
+        library_ids = await library_ids_for(session, ctx)
         rows = await concepts_service.list_concepts(
             session, library_ids=library_ids, category=category
         )

@@ -226,12 +226,11 @@ async def test_the_assistant_actually_finds_papers_in_the_resolved_project(clien
     )
 
 
-async def test_a_turn_with_no_resolvable_project_says_so_instead_of_searching_nothing(
-    client, agent_on
-):
-    """用户有多个课题且没指定：409 PROJECT_REQUIRED，让前端弹选择。
+async def test_several_projects_no_longer_block_the_turn(client, agent_on):
+    """有多个课题也不用先选一个：PolarisBuddy 是全局助手，按「看得见的库」检索。
 
-    绝不替用户猜，也绝不再兜随机 UUID 假装在查。
+    以前这里 409 PROJECT_REQUIRED，逼用户替一个纯内部的数据结构做选择题——而他想问
+    的问题往往正好跨库。越权由可见性挡住，不是靠「只给一个课题」。
     """
     headers = await _headers(client, "agent-scope-many@example.com")
     for name in ("proj-a", "proj-b"):
@@ -240,11 +239,59 @@ async def test_a_turn_with_no_resolvable_project_says_so_instead_of_searching_no
         )
 
     conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
-    resp = await client.post(
-        f"/api/chat/conversations/{conv_id}/turn", json={"question": "hi"}, headers=headers
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": "hi"},
+        headers=headers,
+    ) as stream:
+        assert stream.status_code == 200
+        body = (await stream.aread()).decode()
+    assert "PROJECT_REQUIRED" not in body
+
+
+async def test_the_assistant_searches_across_libraries_without_a_project(client, agent_on):
+    """不指定课题时，检索范围是**可见的全部库**——包括不属于任何课题的库。
+
+    这条是「全局助手」的核心断言：以前论文只有挂在课题关联库上才搜得到。
+    """
+    from tests.conftest import add_paper
+
+    headers = await _headers(client, "agent-global-scope@example.com")
+    async with get_sessionmaker()() as session:
+        from app.models.library_direction import DirectionLibrary, LibraryPaper
+        from app.models.paper import new_paper
+
+        lib = DirectionLibrary(name="公共库", definition={"statement": "x"}, is_public=True)
+        session.add(lib)
+        await session.flush()
+        paper = new_paper(
+            title="Global Scope Retrieval Works",
+            abstract="a paper in a library that belongs to no project",
+        )
+        session.add(paper)
+        await session.flush()
+        session.add(
+            LibraryPaper(library_id=lib.id, paper_id=paper.id, status="included")
+        )
+        await session.commit()
+    assert add_paper is not None  # 用不上，但保持与其它作用域测试同一套脚手架
+
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
+    marker = 'POLARIS_FAKE_TOOL:search_papers:{"query": "Global Scope", "mode": "keyword"}'
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": f"查一下\n{marker}"},
+        headers=headers,
+    ) as stream:
+        body = (await stream.aread()).decode()
+
+    results = [d for e, d in _parse_sse(body) if e == "tool_result"]
+    assert results, f"没有工具结果帧：{body[:300]}"
+    assert "Global Scope Retrieval Works" in json.dumps(results, ensure_ascii=False), (
+        f"没搜到不属于任何课题的库里的论文：{results}"
     )
-    assert resp.status_code == 409
-    assert resp.json()["detail"] == "PROJECT_REQUIRED"
 
 
 async def test_someone_elses_project_id_is_rejected_everywhere(client, agent_on):

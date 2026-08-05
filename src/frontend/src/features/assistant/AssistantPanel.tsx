@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
 import { Markdown } from '../../lib/markdown';
-import { api, type ProjectRead } from '../../lib/api';
+import { api } from '../../lib/api';
 import { assistantTurnSse, type AssistantBlock, type PlanStep } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
 import { pageContextFrom } from './buddyContext';
@@ -50,15 +50,6 @@ function restoreBlocks(m: { text: string; blocks: unknown[] }): AssistantBlock[]
 
 /** 后端错误码 → 用户看得懂的一句话。认不出的原样透出，别把线索吃掉。 */
 function errorText(detail: string): string {
-  if (detail === 'PROJECT_REQUIRED') {
-    return tr(
-      '你有多个课题，先在上面选一个，助手才知道去哪儿查资料。',
-      'You have several topics — pick one above so the assistant knows where to search.',
-    );
-  }
-  if (detail === 'PROJECT_NOT_FOUND') {
-    return tr('这个课题不存在，或者你已经不是它的成员了。', 'That topic does not exist, or you are no longer a member.');
-  }
   if (detail === 'CHAT_AGENT_DISABLED') {
     return tr('助手在这个部署上没开启，找管理员开一下。', 'The assistant is switched off on this deployment — ask an admin to enable it.');
   }
@@ -278,12 +269,6 @@ export function AssistantPanel({
   const [conversations, setConversations] = useState<
     { id: string; title: string; project_id: string | null }[]
   >([]);
-  // 这轮检索的课题作用域。名下只有一个课题时后端会自己认，但选出来更诚实——
-  // 用户看得见助手在哪儿查。多于一个且没选，后端 409，见 errorText。
-  const [projects, setProjects] = useState<ProjectRead[]>([]);
-  const [projectId, setProjectId] = useState<string | null>(null);
-  //: 上一轮因为没选课题而失败过——把选择器点亮，别让人对着一句错误发呆
-  const [projectMissing, setProjectMissing] = useState(false);
   const [greeting, setGreeting] = useState<string>('');
   const [stats, setStats] = useState<Record<string, number>>({});
   const [contextOn, setContextOn] = useState(true);
@@ -316,26 +301,6 @@ export function AssistantPanel({
       .catch(() => setGreeting(''));
   }, [open, greeting]);
 
-  // 面板打开时才拉课题列表：关着的时候没人看得见，不值得多一个请求。
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    void (async () => {
-      try {
-        const rows = await api.listProjects();
-        if (!alive) return;
-        setProjects(rows);
-        // 只有一个课题就直接替他选上——这不算「替用户猜」，没有别的可能。
-        setProjectId((cur) => cur ?? (rows.length === 1 ? (rows[0]?.id ?? null) : null));
-      } catch {
-        if (alive) setProjects([]);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [open]);
-
   const stop = useCallback(() => {
     // 掐掉 SSE 连接。后端会把已生成的部分落库标成 interrupted，重开会话还能看到。
     abortRef.current?.();
@@ -359,10 +324,7 @@ export function AssistantPanel({
         const messages = await api.getAssistantMessages(id);
         setConvId(id);
         setHistoryOpen(false);
-        setProjectMissing(false);
         // 会话上存着的课题才是这场对话真正的作用域，跟着切过去
-        const stored = conversations.find((c) => c.id === id)?.project_id ?? null;
-        if (stored) setProjectId(stored);
         setTurns(
           messages
             .filter((m) => m.role === 'user' || m.role === 'assistant')
@@ -383,7 +345,6 @@ export function AssistantPanel({
     setConvId(null);
     setTurns([]);
     setHistoryOpen(false);
-    setProjectMissing(false);
   }, [stop]);
 
   const ask = useCallback(
@@ -395,7 +356,7 @@ export function AssistantPanel({
     let id = convId;
     try {
       if (!id) {
-        id = (await api.createAssistantConversation(projectId ? { project_id: projectId } : {})).id;
+        id = (await api.createAssistantConversation({})).id;
         setConvId(id);
       }
     } catch (e) {
@@ -430,15 +391,13 @@ export function AssistantPanel({
         onBlocks: patch,
         onDone: () => setBusy(false),
         onError: (detail) => {
-          if (detail === 'PROJECT_REQUIRED') setProjectMissing(true);
           patch((blocks) => [...blocks, { kind: 'text', text: `⚠️ ${errorText(detail)}` }]);
           setBusy(false);
         },
       },
-      projectId,
     );
     },
-    [busy, convId, projectId, contextOn, pageContext],
+    [busy, convId, contextOn, pageContext],
   );
 
   const send = useCallback(() => {
@@ -521,47 +480,6 @@ export function AssistantPanel({
           <Icon name="x" size={14} />
         </button>
       </div>
-
-      {/* —— 作用域：助手拿哪个课题的资料去查 ——
-          一个课题都没有时不显示：那种情况下助手本来就不带工具，摆个空下拉只会误导。 */}
-      {projects.length > 0 && (
-        <div
-          className="row gap8"
-          style={{
-            padding: '8px 16px',
-            borderBottom: '0.5px solid var(--border-2)',
-            alignItems: 'center',
-            background: projectMissing && !projectId ? 'var(--danger-bg, var(--surface-2))' : 'var(--surface-2)',
-          }}
-        >
-          <Icon name="layers" size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-          <span style={{ fontSize: 11.5, color: 'var(--text-3)', flexShrink: 0 }}>
-            {tr('查这个课题', 'Search in')}
-          </span>
-          <select
-            className="input"
-            value={projectId ?? ''}
-            onChange={(e) => {
-              setProjectId(e.target.value || null);
-              setProjectMissing(false);
-            }}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              height: 26,
-              fontSize: 12,
-              borderColor: projectMissing && !projectId ? 'var(--danger)' : undefined,
-            }}
-          >
-            <option value="">{tr('未选 —— 只闲聊，不检索', 'None — chat only, no search')}</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
 
       {historyOpen && (
         <div

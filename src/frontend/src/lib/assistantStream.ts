@@ -50,21 +50,19 @@ const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : und
 
 /** 跑一轮助手对话；返回中止函数。
  *
- * ``projectId`` 是这轮检索工具的作用域。后端只在会话上还没存过课题时需要它，
- * 存过一次就自己认得；但每轮都带上是无害的，也省得前端追踪「存没存过」。
- * 不传且用户名下有多个课题时，后端返回 409 PROJECT_REQUIRED，由调用方弹选择。
+ * 不带课题作用域：PolarisBuddy 是全局助手，检索范围是「这个人看得见的全部文献库」，
+ * 由后端按可见性算。以前这里要传 projectId，多课题不传就 409——那是在让用户替一个
+ * 纯内部的数据结构做选择题。
  */
 export function assistantTurnSse(
   conversationId: string,
   question: string,
   handlers: AssistantHandlers,
-  projectId?: string | null,
 ): () => void {
   return postSse(
     `/chat/conversations/${conversationId}/turn`,
     {
       question,
-      ...(projectId ? { project_id: projectId } : {}),
       ...(handlers.page ? { page_kind: handlers.page.kind, page_id: handlers.page.id } : {}),
     },
     {

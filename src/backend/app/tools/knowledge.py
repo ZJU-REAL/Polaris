@@ -14,9 +14,9 @@ from app.services import chunks as chunks_service
 from app.services import graph as graph_service
 from app.services import search as search_service
 from app.services.embedding import embed_query
-from app.services.libraries import get_source_library_ids, membership_for_project
 from app.tools.context import ToolContext
 from app.tools.registry import tool
+from app.tools.scope import library_ids_for, membership_in_scope
 
 _CHUNK_CHARS = 1200
 _MAX_K = 12
@@ -44,7 +44,7 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     mode = str(args.get("mode") or "semantic")
 
     async with get_sessionmaker()() as session:
-        library_ids = await get_source_library_ids(session, ctx.project_id)
+        library_ids = await library_ids_for(session, ctx)
         rows: list[tuple[PaperChunk, float]] = []
         used_mode = "keyword"
         if (
@@ -123,9 +123,7 @@ async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         )
         paper = (await session.execute(stmt)).scalar_one_or_none()
         membership = (
-            await membership_for_project(session, project_id=ctx.project_id, paper_id=paper_id)
-            if paper is not None
-            else None
+            await membership_in_scope(session, ctx, paper_id) if paper is not None else None
         )
         if paper is None or membership is None:
             raise ValueError(f"库内不存在该论文：{args.get('paper_id')}")
@@ -155,6 +153,8 @@ async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     summarize=lambda a, r: f"知识图谱（{len(r.get('nodes') or [])} 节点）",
 )
 async def knowledge_graph(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    if ctx.project_id is None:
+        raise ValueError("knowledge_graph 需要指定课题：知识图谱是按课题组织的")
     async with get_sessionmaker()() as session:
         return await graph_service.project_graph(session, project_id=ctx.project_id)
 
@@ -173,6 +173,8 @@ async def global_search(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     q = str(args.get("q") or "").strip()
     if not q:
         raise ValueError("global_search 需要非空 q")
+    if ctx.project_id is None:
+        raise ValueError("global_search 需要指定课题：它检索的是课题内的想法/实验/稿件")
     async with get_sessionmaker()() as session:
         hits = await search_service.global_search(session, project_id=ctx.project_id, q=q)
     return {"hits": [h.model_dump(mode="json") for h in hits]}
