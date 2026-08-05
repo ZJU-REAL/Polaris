@@ -10,9 +10,11 @@ import {
   type PlanStep,
 } from '../../lib/assistantStream';
 import { tr } from '../../lib/i18n';
+import { BuddyHome } from './BuddyHome';
 import { CapabilitiesBar } from './CapabilitiesBar';
 import { ToolImages } from './ToolImages';
 import { pageContextFrom } from './buddyContext';
+import { useProject } from '../../app/project';
 import { TurnStatus } from './TurnStatus';
 
 /* ============================================================
@@ -342,11 +344,13 @@ export function AssistantPanel({
     { id: string; title: string; project_id: string | null }[]
   >([]);
   const [greeting, setGreeting] = useState<string>('');
-  const [stats, setStats] = useState<Record<string, number>>({});
   const [contextOn, setContextOn] = useState(true);
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
+  // 对话里的「项目」就是平台里的课题：跟着外壳当前选中的那个走，不另设一套选择。
+  // 用户在哪个课题下工作，问出来的问题多半就属于那个课题；让他再选一次是多余的。
+  const { currentProject } = useProject();
   const pageContext = pageContextFrom(location.pathname);
 
   useEffect(() => {
@@ -366,10 +370,7 @@ export function AssistantPanel({
     if (!open || greeting) return;
     void api
       .getBuddyGreeting()
-      .then((g) => {
-        setGreeting(g.greeting);
-        setStats(g.stats ?? {});
-      })
+      .then((g) => setGreeting(g.greeting))
       .catch(() => setGreeting(''));
   }, [open, greeting]);
 
@@ -460,6 +461,7 @@ export function AssistantPanel({
         // 那条路上的权限校验一点没少。用户可以关掉。
         page:
           contextOn && pageContext ? { kind: pageContext.kind, id: pageContext.id } : undefined,
+        projectId: currentProject?.id ?? null,
         onBlocks: patch,
         onDone: () => setBusy(false),
         onError: (detail) => {
@@ -469,7 +471,7 @@ export function AssistantPanel({
       },
     );
     },
-    [busy, convId, contextOn, pageContext],
+    [busy, convId, contextOn, pageContext, currentProject],
   );
 
   const send = useCallback(() => {
@@ -506,15 +508,6 @@ export function AssistantPanel({
   if (!open) return null;
 
   // 快捷动作按真实计数给：没有实验就不该出现「实验怎么样了」
-  const suggestions = [
-    stats.experiments_running ? tr('我的实验现在怎么样了？', 'How are my experiments doing?') : '',
-    stats.daily_today ? tr('帮我筛一遍今天的新论文', 'Triage today’s new papers for me') : '',
-    stats.saved_recent
-      ? tr('这周我收的论文有什么共同线索？', 'What connects the papers I saved this week?')
-      : '',
-    pageContext?.kind === 'paper' ? tr('解读我正在看的这篇', 'Walk me through this paper') : '',
-  ].filter(Boolean);
-
   const lastTurn = turns[turns.length - 1];
   const liveBlocks = busy && lastTurn?.role === 'assistant' ? lastTurn.blocks : [];
 
@@ -618,41 +611,7 @@ export function AssistantPanel({
 
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px' }}>
         {turns.length === 0 && (
-          <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
-            {greeting && (
-              <div
-                style={{
-                  background: 'var(--accent-soft)',
-                  color: 'var(--accent-text)',
-                  borderRadius: 10,
-                  padding: '10px 12px',
-                  marginBottom: 10,
-                  fontSize: 13,
-                }}
-              >
-                {greeting}
-              </div>
-            )}
-            <div style={{ color: 'var(--text-3)' }}>
-              {tr(
-                '我会调用平台的检索工具去查，而不是凭上下文猜。把论文拖到右下角的球上，我就替你读它。',
-                'I call the platform’s search tools instead of guessing. Drop a paper on the bubble and I’ll read it for you.',
-              )}
-            </div>
-            {/* 快捷动作只在对应数据真的存在时出现：没有实验就不该问「实验怎么样了」 */}
-            <div className="row gap6 wrap" style={{ marginTop: 10 }}>
-              {suggestions.map((text) => (
-                <span
-                  key={text}
-                  className="chip"
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => void ask(text)}
-                >
-                  {text}
-                </span>
-              ))}
-            </div>
-          </div>
+          <BuddyHome greeting={greeting} onPick={(prompt) => setInput(prompt)} />
         )}
         {turns.map((turn, i) => {
           const isLast = i === turns.length - 1;
@@ -680,6 +639,22 @@ export function AssistantPanel({
       </div>
 
       <div style={{ padding: 12, borderTop: '0.5px solid var(--border-2)' }}>
+        {/* 当前课题：自动绑定外壳里选中的那个，只作展示——换课题在左上角切，
+            这里再放一个选择器就是两个真相来源。 */}
+        {currentProject && (
+          <div
+            className="row gap6"
+            style={{ alignItems: 'center', marginBottom: 6, fontSize: 11, color: 'var(--text-4)' }}
+            title={tr('这场对话属于当前课题，跟着左上角的课题切换走', 'This chat belongs to the current topic, following the switcher in the top-left')}
+          >
+            <Icon name="layers" size={11} />
+            <span
+              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {currentProject.name}
+            </span>
+          </div>
+        )}
         {pageContext && (
           <div
             className="row gap6"

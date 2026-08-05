@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.buddy_memory import BuddyMemory
 from app.models.daily_feed import DailyFeedEntry
 from app.models.experiment import Experiment
 from app.models.idea import Idea
@@ -177,3 +178,59 @@ def render_page_context(kind: str | None, obj_id: str | None) -> str:
     return f"[当前页面] {line}。回答时优先考虑这个上下文；用户说「这篇」「这个」多半指它。"[
         :MAX_CONTEXT_CHARS
     ]
+
+
+#: 记忆注入提示词的总长上限。它每轮都要重发——放任下去就是每轮都在为一堆旧便签付钱。
+MAX_MEMORY_CHARS = 1200
+
+#: 单条记忆的长度上限。一条写成一篇文章的记忆，模型多半只会记住开头。
+MAX_MEMORY_ITEM_CHARS = 300
+
+
+async def list_memories(session: AsyncSession, *, user_id: uuid.UUID) -> list[BuddyMemory]:
+    """用户的长期记忆，新的在前。"""
+    rows = await session.execute(
+        select(BuddyMemory)
+        .where(BuddyMemory.user_id == user_id)
+        .order_by(BuddyMemory.created_at.desc())
+    )
+    return list(rows.scalars().all())
+
+
+async def add_memory(session: AsyncSession, *, user_id: uuid.UUID, text: str) -> BuddyMemory:
+    row = BuddyMemory(user_id=user_id, text=text.strip()[:MAX_MEMORY_ITEM_CHARS])
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+async def delete_memory(session: AsyncSession, *, user_id: uuid.UUID, memory_id: uuid.UUID) -> bool:
+    row = await session.get(BuddyMemory, memory_id)
+    if row is None or row.user_id != user_id:
+        return False
+    await session.delete(row)
+    await session.commit()
+    return True
+
+
+async def render_memories(session: AsyncSession, *, user_id: uuid.UUID) -> str:
+    """记忆 → 追加进系统提示的一段；没有记忆返回空串。
+
+    **总长封顶**并且按新到旧填：每轮都要重发，放任下去就是每轮都在为一堆旧便签付钱。
+    填不下的直接不进——与其截断成半句话让模型猜，不如少给一条。
+    """
+    rows = await list_memories(session, user_id=user_id)
+    if not rows:
+        return ""
+    lines: list[str] = []
+    used = 0
+    for row in rows:
+        line = f"- {row.text.strip()}"
+        if used + len(line) > MAX_MEMORY_CHARS:
+            break
+        lines.append(line)
+        used += len(line)
+    if not lines:
+        return ""
+    return "关于这位用户，你需要一直记得：\n" + "\n".join(lines)

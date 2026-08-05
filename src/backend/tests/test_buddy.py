@@ -173,3 +173,58 @@ async def test_page_context_reaches_the_model_as_a_user_prefix(client, agent_on,
     page_context, question = seen[0]
     assert "正在读一篇论文" in page_context and "p-1" in page_context
     assert question == "这篇讲了什么", "提问本身不该被改写"
+
+
+async def test_memories_are_per_user_and_reach_the_prompt(client, agent_on):
+    """长期记忆：只有自己看得见，并且真的进了这一轮的提示词。"""
+    from app.core.db import get_sessionmaker
+    from app.services import buddy as buddy_service
+
+    token_a = await register_and_login(client, email="mem-a@example.com")
+    token_b = await register_and_login(client, email="mem-b@example.com")
+    mine = {"Authorization": f"Bearer {token_a}"}
+    theirs = {"Authorization": f"Bearer {token_b}"}
+
+    created = await client.post(
+        "/api/chat/memories", json={"text": "我做具身智能，别给我推纯 NLP"}, headers=mine
+    )
+    assert created.status_code == 201
+
+    assert len((await client.get("/api/chat/memories", headers=mine)).json()) == 1
+    assert (await client.get("/api/chat/memories", headers=theirs)).json() == []
+
+    # 别人的记忆删不掉（404 而不是 403：403 等于承认这条存在）
+    memory_id = created.json()["id"]
+    assert (
+        await client.delete(f"/api/chat/memories/{memory_id}", headers=theirs)
+    ).status_code == 404
+
+    async with get_sessionmaker()() as session:
+        from sqlalchemy import select
+
+        from app.models.user import User
+
+        user_id = (
+            await session.execute(select(User.id).where(User.email == "mem-a@example.com"))
+        ).scalar_one()
+        rendered = await buddy_service.render_memories(session, user_id=user_id)
+    assert "具身智能" in rendered
+
+
+async def test_memory_injection_is_capped():
+    """记忆每轮都要重发：不封顶就是每轮都在为一堆旧便签付钱。"""
+    from app.services.buddy import MAX_MEMORY_CHARS
+
+    assert MAX_MEMORY_CHARS <= 2000
+
+
+async def test_a_user_with_no_memories_adds_nothing_to_the_prompt(client, agent_on):
+    """没有记忆时一个字都不加——空标题会白占提示词，还会让模型以为该找点什么。"""
+    import uuid as _uuid
+
+    from app.core.db import get_sessionmaker
+    from app.services import buddy as buddy_service
+
+    assert await register_and_login(client, email="mem-empty@example.com")
+    async with get_sessionmaker()() as session:
+        assert await buddy_service.render_memories(session, user_id=_uuid.uuid4()) == ""

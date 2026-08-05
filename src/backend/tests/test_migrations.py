@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a22aa895244c"  # 成员行记下打分它的那次同步任务 id
+HEAD_REVISION = "c31f7a9d40b2"  # Buddy 的长期记忆（用户自己写的）
+SKILLS_REVISION = "a22aa895244c"  # Skills v2（SKILL.md 渐进披露）
 DIGEST_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
 SCORED_RUN_REVISION = "78e222c38b3b"  # 成员行记下打分它的那次同步任务 id
 CONVERSATIONS_REVISION = "581d172bd41b"  # 对话搬到服务端
@@ -350,7 +351,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "relevance_reason" in columns["library_papers"]
     assert "scored_run_id" in columns["library_papers"]  # 打分归属改记运行 id
 
-    # 最新 revision 可往返：先退掉 Skills v2。
+    # 最新 revision 可往返：先退掉 Buddy 的长期记忆。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SKILLS_REVISION
+    assert "buddy_memories" not in columns["_tables"]
+
+    # 再退掉 Skills v2。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == CONVERSATIONS_REVISION

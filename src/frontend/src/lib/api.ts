@@ -4731,6 +4731,24 @@ export const api = {
    */
   /** 每日论文池的同步状况（全员可读）：最新一天、是否过期、各分类成败。 */
   /** 全局助手：会话列表（最近说过话的在前）。 */
+  listAssistantSkills(): Promise<
+    { slug: string; description: string; is_builtin: boolean }[]
+  > {
+    return request('/chat/skills');
+  },
+  deleteAssistantSkill(slug: string): Promise<void> {
+    return request(`/chat/skills/${slug}`, { method: 'DELETE' });
+  },
+  /** Buddy 的长期记忆（只有用户能写；agent 自己写属于写工具那一期）。 */
+  listBuddyMemories(): Promise<{ id: string; text: string; created_at: string }[]> {
+    return request('/chat/memories');
+  },
+  addBuddyMemory(text: string): Promise<{ id: string; text: string; created_at: string }> {
+    return request('/chat/memories', { method: 'POST', body: JSON.stringify({ text }) });
+  },
+  deleteBuddyMemory(id: string): Promise<void> {
+    return request(`/chat/memories/${id}`, { method: 'DELETE' });
+  },
   /** Buddy 这一轮手里有什么：工具面、技能、MCP 暴露状况。 */
   getBuddyCapabilities(): Promise<{
     tools: { name: string; description: string; read_only: boolean }[];

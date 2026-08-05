@@ -43,6 +43,7 @@ from app.schemas.chat_agent import (
     ConversationCreate,
     ConversationRead,
     ConversationTurnRequest,
+    MemoryCreate,
     MessageRead,
     SkillImportRequest,
 )
@@ -210,6 +211,43 @@ async def delete_skill(
     await session.commit()
 
 
+@router.get("/memories")
+async def list_memories(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[dict[str, Any]]:
+    """我让 Buddy 一直记得的事。"""
+    _require_enabled()
+    rows = await buddy.list_memories(session, user_id=user.id)
+    return [
+        {"id": str(r.id), "text": r.text, "created_at": r.created_at.isoformat()} for r in rows
+    ]
+
+
+@router.post("/memories", status_code=201)
+async def add_memory(
+    payload: MemoryCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, Any]:
+    """记一条。**只有用户能写**——agent 自己往里写属于写工具那一期，
+    一个能改自己记忆的助手必须和权限模型、审批一起设计。"""
+    _require_enabled()
+    row = await buddy.add_memory(session, user_id=user.id, text=payload.text)
+    return {"id": str(row.id), "text": row.text, "created_at": row.created_at.isoformat()}
+
+
+@router.delete("/memories/{memory_id}", status_code=204)
+async def delete_memory(
+    memory_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    _require_enabled()
+    if not await buddy.delete_memory(session, user_id=user.id, memory_id=memory_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="MEMORY_NOT_FOUND")
+
+
 @router.get("/capabilities")
 async def capabilities(
     session: AsyncSession = Depends(get_session),
@@ -315,6 +353,9 @@ async def run_turn(
     # L1：技能目录进 system prompt（每个技能只占一行）。正文由 skill_load 按需取，
     # 绝不写进 system——那会作废整个 prompt cache 前缀。
     catalog = await agent_skills.render_catalog(session, user_id=user.id)
+    # 长期记忆随 extra_system 追加在末尾（与方向说明、技能目录同处）：稳定前缀不动，
+    # 缓存前缀才不会每轮作废。
+    memories = await buddy.render_memories(session, user_id=user.id)
     await store.append_message(session, conversation=conv, role="user", text=payload.question)
     await session.commit()
 
@@ -350,6 +391,7 @@ async def run_turn(
         max_rounds=payload.max_rounds,
         statement=payload.statement,
         skill_catalog=catalog,
+        extra_system=memories,
         page_context=buddy.render_page_context(payload.page_kind, payload.page_id),
     )
     conv_id, user_id = conv.id, user.id

@@ -47,6 +47,8 @@ export type AssistantBlock =
 export interface AssistantHandlers {
   /** 用户此刻在看的页面（PolarisBuddy 的页面感知）；不传就不带 */
   page?: { kind: string; id?: string };
+  /** 这场对话属于哪个课题（= 平台的 project）。自动跟着外壳当前课题走。 */
+  projectId?: string | null;
   /** 用「上一份块列表 → 新块列表」的形式增量更新（React 状态直接套用）。 */
   onBlocks: (fn: (blocks: AssistantBlock[]) => AssistantBlock[]) => void;
   onDone: (stopReason: string) => void;
@@ -185,6 +187,7 @@ export function assistantTurnSse(
     {
       question,
       ...(handlers.page ? { page_kind: handlers.page.kind, page_id: handlers.page.id } : {}),
+      ...(handlers.projectId ? { project_id: handlers.projectId } : {}),
     },
     {
       onEvent: (event, raw) => {
