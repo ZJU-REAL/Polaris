@@ -27,6 +27,7 @@ import asyncio
 import contextlib
 import functools
 import json
+import math
 import re
 import uuid
 from datetime import UTC, datetime
@@ -846,8 +847,30 @@ def validate_plot_files(data: Any) -> dict[str, str]:
 # ---- 指标解析 ----
 
 
+def _is_storable_number(value: Any) -> bool:
+    """能不能落库：必须是有限的数（NaN / ±Infinity 一律不收）。
+
+    实验算出 NaN 是家常便饭（某个条件下指标无定义、除零、空集求均值）。但 Python 的
+    ``json.loads`` **默认接受裸 NaN/Infinity 词元**，``json.dumps`` 也照原样吐出来——
+    而它们都不是合法 JSON，写进 JSONB 时 Postgres 直接拒收：
+
+        asyncpg.exceptions.InvalidTextRepresentationError:
+        invalid input syntax for type json  DETAIL: Token "NaN" is invalid.
+
+    实测（voyage 6c5df454 第 1 轮运行）：实验跑完了、指标也产出了，就因为其中一项是
+    NaN，整条 UPDATE 失败，这一轮判死。一个无定义的指标点本来就不承载信息，丢掉它
+    远比让整轮成果陪葬合理。bool 是 int 的子类，也在这里挡掉。
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    return math.isfinite(value)
+
+
 def parse_metric_lines(text: str) -> list[dict[str, Any]]:
-    """解析日志中的 ``POLARIS_METRIC {json}`` 行 → [{name, step, value}]。"""
+    """解析日志中的 ``POLARIS_METRIC {json}`` 行 → [{name, step, value}]。
+
+    非有限值（NaN/Inf）跳过——它们进不了 JSONB，见 :func:`_is_storable_number`。
+    """
     points: list[dict[str, Any]] = []
     for line in text.splitlines():
         m = METRIC_LINE_RE.search(line)
@@ -859,7 +882,7 @@ def parse_metric_lines(text: str) -> list[dict[str, Any]]:
             continue
         name = data.get("name") if isinstance(data, dict) else None
         value = data.get("value") if isinstance(data, dict) else None
-        if not isinstance(name, str) or not isinstance(value, int | float):
+        if not isinstance(name, str) or not _is_storable_number(value):
             continue
         step = data.get("step")
         points.append(
@@ -887,14 +910,14 @@ def parse_metrics_json(text: str) -> list[dict[str, Any]]:
     for name, value in data.items():
         if not isinstance(name, str):
             continue
-        if isinstance(value, int | float) and not isinstance(value, bool):
+        if _is_storable_number(value):
             points.append({"name": name, "step": None, "value": float(value)})
         elif isinstance(value, list):
             for item in value:
                 if not isinstance(item, dict):
                     continue
                 v = item.get("value")
-                if not isinstance(v, int | float) or isinstance(v, bool):
+                if not _is_storable_number(v):
                     continue
                 step = item.get("step")
                 points.append(

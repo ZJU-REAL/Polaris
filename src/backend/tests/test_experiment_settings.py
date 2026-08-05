@@ -125,3 +125,37 @@ def test_diagnose_stays_silent_when_unsure():
     """认不出就返回空串——宁可不提示，也不能给条误导的诊断。"""
     assert ax.diagnose_failure("Traceback: some entirely novel failure", {}) == ""
     assert ax.diagnose_failure("", {}) == ""
+
+
+# ---- 指标里的 NaN/Inf 不能进 JSONB（voyage 6c5df454 第 1 轮运行的真实故障）----
+
+
+def test_metric_lines_drop_non_finite_values():
+    """NaN/Inf 必须在解析阶段丢掉：它们不是合法 JSON，进 JSONB 会被 Postgres 拒收，
+    连累整轮运行判死。样本取自 6c5df454 实际产出的指标名。"""
+    log = (
+        'POLARIS_METRIC {"name": "accuracy/Qwen3-1.7B/baseline", "step": 1, "value": 0.5}\n'
+        'POLARIS_METRIC {"name": "consistency/Qwen3-1.7B/baseline", "step": 1, "value": NaN}\n'
+        'POLARIS_METRIC {"name": "ratio", "step": 1, "value": Infinity}\n'
+        'POLARIS_METRIC {"name": "neg", "step": 1, "value": -Infinity}\n'
+    )
+    points = ax.parse_metric_lines(log)
+    names = [p["name"] for p in points]
+    assert names == ["accuracy/Qwen3-1.7B/baseline"]  # 只留有限值，其余整点丢弃
+
+    # 关键断言：结果必须能被严格 JSON 序列化（allow_nan=False 即 Postgres 的口径）
+    import json as _json
+
+    _json.dumps(points, allow_nan=False)
+
+
+def test_metrics_json_drops_non_finite_values():
+    """metrics.json 两种形态（裸数值 / 点列表）都要过滤。"""
+    points = ax.parse_metrics_json(
+        '{"good": 1.5, "bad": NaN, "series": [{"step": 1, "value": 2.0},'
+        ' {"step": 2, "value": NaN}], "flag": true}'
+    )
+    assert [(p["name"], p["value"]) for p in points] == [("good", 1.5), ("series", 2.0)]
+    import json as _json
+
+    _json.dumps(points, allow_nan=False)  # bool 也被挡掉，不会混进指标
