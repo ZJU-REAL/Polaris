@@ -108,9 +108,8 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
   const pendingShareRef = useRef<MentionTarget | null>(null);
 
   const skillsQ = useQuery({
-    queryKey: ['project-skills', cfg.pid],
-    queryFn: () => api.listProjectSkills(cfg.pid),
-    enabled: !!cfg.pid,
+    queryKey: ['user-skills'],
+    queryFn: () => api.listUserSkills(),
     retry: false,
     staleTime: 60_000,
   });

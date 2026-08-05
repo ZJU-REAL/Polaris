@@ -1,6 +1,6 @@
 """SkillSet：读取 voyage checkpoint 的技能快照并渲染注入文本（docs/skill-system.md §3.2）。
 
-快照由 engine 在首次驱动时写入 checkpoint["skills"]（services.skills.snapshot_for_project），
+快照由 engine 在首次驱动时写入 checkpoint["skills"]（services.skills.snapshot_for_user），
 结构：{target: [{slug, name, kind, version, body, config, personas, steps}, ...]}。
 本模块只读快照、不碰 DB——断点恢复与审计回放天然自包含。
 """

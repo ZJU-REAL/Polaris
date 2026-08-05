@@ -17,7 +17,7 @@ import {
   skillTargetLabel,
   skillKindLabel,
   SKILL_TARGETS,
-  type ProjectSkillRead,
+  type UserSkillRead,
   type SkillDetail,
   type SkillKind,
   type SkillListingRead,
@@ -39,7 +39,7 @@ function downloadJson(filename: string, data: unknown): void {
 }
 
 /* ============================================================
-   /skills — 技能库：内置/我的技能列表 + 启用到当前研究方向。
+   /skills — 技能库：内置/我的技能列表 + 全局启用（不绑定课题）。
    - 技能 = 各环节 AI 的补充判断标准（指引/评分标准/评审人设/流程模板）
    - 详情弹窗：全文预览 / 试运行 / 启用 / 复制为我的 / 编辑（追加版本）
    - 流程模板可直接运行此流程→ 创建 AI 任务
@@ -130,7 +130,7 @@ function SkillDetailModal({
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['skills'] });
     void queryClient.invalidateQueries({ queryKey: ['skill', skillId] });
-    void queryClient.invalidateQueries({ queryKey: ['project-skills'] });
+    void queryClient.invalidateQueries({ queryKey: ['user-skills'] });
   };
 
   const testMutation = useMutation({
@@ -173,10 +173,9 @@ function SkillDetailModal({
     onError: (e) => toast(`${tr('删除失败', 'Delete failed')}：${errMsg(e)}`, 'error'),
   });
   const enableMutation = useMutation({
-    mutationFn: (target: string) =>
-      api.enableProjectSkill(currentProjectId!, { skill_id: skillId, target }),
+    mutationFn: (target: string) => api.enableUserSkill({ skill_id: skillId, target }),
     onSuccess: (row) => {
-      toast(`${tr('已启用到当前课题', 'Enabled for current topic')}：${skillTargetLabel(row.target)}`, 'ok');
+      toast(`${tr('已启用', 'Enabled')}：${skillTargetLabel(row.target)}`, 'ok');
       invalidate();
     },
     onError: (e) =>
@@ -217,7 +216,7 @@ function SkillDetailModal({
               className="btn btn-ghost"
               style={{ marginRight: 'auto', color: 'var(--danger, #c0392b)' }}
               onClick={() => {
-                if (window.confirm(tr('删除这个技能？已启用的项目会同时失效（进行中的任务不受影响）。', 'Delete this skill? Projects using it will lose it (running tasks are unaffected).'))) {
+                if (window.confirm(tr('删除这个技能？已启用的环节会同时失效（进行中的任务不受影响）。', 'Delete this skill? Stages using it will lose it (running tasks are unaffected).'))) {
                   archiveMutation.mutate();
                 }
               }}
@@ -261,7 +260,7 @@ function SkillDetailModal({
             {skillTargetLabel(t)}
           </span>
         ))}
-        {skill.kind !== 'workflow' && currentProjectId && targets.length > 0 && (
+        {skill.kind !== 'workflow' && targets.length > 0 && (
           <span className="row gap8" style={{ marginLeft: 'auto' }}>
             {targets.length > 1 && (
               <SelectMenu
@@ -279,7 +278,7 @@ function SkillDetailModal({
                 if (t) enableMutation.mutate(t);
               }}
             >
-              {tr('启用到当前课题', 'Enable for current topic')}
+              {tr('启用', 'Enable')}
             </button>
           </span>
         )}
@@ -801,29 +800,29 @@ function MarketView() {
 
 // ---- 已启用面板 ----
 
-function EnabledPanel({ projectId }: { projectId: string }) {
+function EnabledPanel() {
   const queryClient = useQueryClient();
   const { data: rows, isLoading } = useQuery({
-    queryKey: ['project-skills', projectId],
-    queryFn: () => api.listProjectSkills(projectId),
+    queryKey: ['user-skills'],
+    queryFn: () => api.listUserSkills(),
   });
 
   const patchMutation = useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.patchProjectSkill(id, { enabled }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['project-skills', projectId] }),
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.patchUserSkill(id, { enabled }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['user-skills'] }),
     onError: (e) => toast(`${tr('操作失败', 'Action failed')}：${errMsg(e)}`, 'error'),
   });
   const removeMutation = useMutation({
-    mutationFn: (id: string) => api.removeProjectSkill(id),
+    mutationFn: (id: string) => api.removeUserSkill(id),
     onSuccess: () => {
-      toast(tr('已从当前课题移除', 'Removed from current topic'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['project-skills', projectId] });
+      toast(tr('已移除', 'Removed'), 'ok');
+      void queryClient.invalidateQueries({ queryKey: ['user-skills'] });
     },
     onError: (e) => toast(`${tr('移除失败', 'Remove failed')}：${errMsg(e)}`, 'error'),
   });
 
   const grouped = useMemo(() => {
-    const m = new Map<string, ProjectSkillRead[]>();
+    const m = new Map<string, UserSkillRead[]>();
     for (const r of rows ?? []) {
       const list = m.get(r.target) ?? [];
       list.push(r);
@@ -834,12 +833,9 @@ function EnabledPanel({ projectId }: { projectId: string }) {
 
   return (
     <div className="card" style={{ padding: '14px 16px' }}>
-      <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 4 }}>{tr('当前课题已启用', 'Enabled for current topic')}</div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 12 }}>
-        {tr('新发起的 AI 任务会按下面的技能执行；进行中的任务不受影响', 'New AI tasks will use these skills; running tasks are unaffected')}
-      </div>
+      <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 12 }}>{tr('已启用的技能', 'Enabled skills')}</div>
       {isLoading ? null : grouped.length === 0 ? (
-        <EmptyState compact icon="sparkle" title={tr('还没有启用技能', 'No skills enabled yet')} desc={tr('从左侧技能列表点启用到当前课题', 'Enable one from the skill list on the left')} />
+        <EmptyState compact icon="sparkle" title={tr('还没有启用技能', 'No skills enabled yet')} desc={tr('从左侧技能列表点启用', 'Enable one from the skill list on the left')} />
       ) : (
         grouped.map(([target, list]) => (
           <div key={target} style={{ marginBottom: 12 }}>
@@ -872,7 +868,7 @@ function EnabledPanel({ projectId }: { projectId: string }) {
                   <button
                     className="icon-btn"
                     style={{ width: 24, height: 24 }}
-                    title={tr('从当前课题移除', 'Remove from current topic')}
+                    title={tr('移除', 'Remove')}
                     onClick={() => removeMutation.mutate(r.id)}
                   >
                     <Icon name="x" size={12} />
@@ -892,7 +888,6 @@ function EnabledPanel({ projectId }: { projectId: string }) {
 export function SkillsPage() {
   const compact = useIsCompact();
   const queryClient = useQueryClient();
-  const { currentProjectId } = useProject();
   const [view, setView] = useState<'library' | 'market'>('library');
   const [scope, setScope] = useState<ScopeFilter>('all');
   const [kind, setKind] = useState<KindFilter>('all');
@@ -1023,13 +1018,7 @@ export function SkillsPage() {
           )}
         </div>
 
-        {currentProjectId ? (
-          <EnabledPanel projectId={currentProjectId} />
-        ) : (
-          <div className="card" style={{ padding: '14px 16px' }}>
-            <EmptyState compact icon="compass" title={tr('未选择课题', 'No topic selected')} desc={tr('选择课题后可把技能启用到该课题', 'Pick a topic to enable skills for it')} />
-          </div>
-        )}
+        <EnabledPanel />
       </div>
 
       {openId && <SkillDetailModal skillId={openId} onClose={() => setOpenId(null)} />}

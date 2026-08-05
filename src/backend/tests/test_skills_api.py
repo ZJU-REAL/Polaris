@@ -1,5 +1,5 @@
 """技能系统测试（docs/skill-system.md S1）：
-CRUD/版本/fork/归档 · 启用到项目 · 内置种子幂等 · Voyage 快照与 guidance 注入。"""
+CRUD/版本/fork/归档 · 全局启用（不绑定课题） · 内置种子幂等 · Voyage 快照与 guidance 注入。"""
 
 import uuid
 
@@ -9,7 +9,7 @@ from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
 from app.services.builtin_skills import BUILTIN_SKILLS
-from app.services.skills import ensure_builtin_skills, snapshot_for_project
+from app.services.skills import ensure_builtin_skills, snapshot_for_user
 from tests.conftest import RecordingBus, register_and_login
 
 SKILL_BODY = "打分时优先考虑可复现性：没有开源代码的方法降一档。"
@@ -20,6 +20,10 @@ async def _setup(client, email="alice@example.com"):
     headers = {"Authorization": f"Bearer {token}"}
     resp = await client.post("/api/projects", json={"name": "skill-proj"}, headers=headers)
     return headers, resp.json()["id"]
+
+
+async def _user_id(client, headers) -> uuid.UUID:
+    return uuid.UUID((await client.get("/api/users/me", headers=headers)).json()["id"])
 
 
 def _skill_payload(slug="my-scoring", targets=None):
@@ -132,15 +136,15 @@ async def test_builtin_seed_readonly_and_fork(client):
     assert fork["current_version"]["body"]  # 内容拷贝自内置当前版
 
 
-# ---- 启用到项目 ----
+# ---- 全局启用（不绑定课题）----
 
 
-async def test_enable_skill_to_project(client):
-    headers, project_id = await _setup(client)
+async def test_enable_skill_globally(client):
+    headers, _ = await _setup(client)
     skill = (await client.post("/api/skills", json=_skill_payload(), headers=headers)).json()
 
     resp = await client.post(
-        f"/api/projects/{project_id}/skills",
+        "/api/user-skills",
         json={"skill_id": skill["id"], "target": "forge.score", "config": {"strict": True}},
         headers=headers,
     )
@@ -151,42 +155,45 @@ async def test_enable_skill_to_project(client):
 
     # 重复启用同 target → 409；技能未声明的 target → 422
     resp = await client.post(
-        f"/api/projects/{project_id}/skills",
+        "/api/user-skills",
         json={"skill_id": skill["id"], "target": "forge.score"},
         headers=headers,
     )
     assert resp.status_code == 409
     resp = await client.post(
-        f"/api/projects/{project_id}/skills",
+        "/api/user-skills",
         json={"skill_id": skill["id"], "target": "writing.section"},
         headers=headers,
     )
     assert resp.status_code == 422
 
-    # 非成员 404
+    # 启用记录按人隔离：他人列表为空，他人改/删 → 404
     token_b = await register_and_login(client, email="bob@example.com")
-    resp = await client.get(
-        f"/api/projects/{project_id}/skills", headers={"Authorization": f"Bearer {token_b}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    assert (await client.get("/api/user-skills", headers=headers_b)).json() == []
+    resp = await client.patch(
+        f"/api/user-skills/{enable['id']}", json={"enabled": False}, headers=headers_b
     )
     assert resp.status_code == 404
 
     # PATCH 停用 + DELETE
     resp = await client.patch(
-        f"/api/project-skills/{enable['id']}", json={"enabled": False}, headers=headers
+        f"/api/user-skills/{enable['id']}", json={"enabled": False}, headers=headers
     )
     assert resp.json()["enabled"] is False
-    resp = await client.delete(f"/api/project-skills/{enable['id']}", headers=headers)
+    resp = await client.delete(f"/api/user-skills/{enable['id']}", headers=headers)
     assert resp.status_code == 204
-    rows = (await client.get(f"/api/projects/{project_id}/skills", headers=headers)).json()
+    rows = (await client.get("/api/user-skills", headers=headers)).json()
     assert rows == []
 
 
 async def test_snapshot_pin_and_latest(client):
-    headers, project_id = await _setup(client)
+    headers, _ = await _setup(client)
+    user_id = await _user_id(client, headers)
     skill = (await client.post("/api/skills", json=_skill_payload(), headers=headers)).json()
     v1_id = skill["current_version"]["id"]
     await client.post(
-        f"/api/projects/{project_id}/skills",
+        "/api/user-skills",
         json={"skill_id": skill["id"], "target": "forge.score", "version_id": v1_id},
         headers=headers,
     )
@@ -197,18 +204,16 @@ async def test_snapshot_pin_and_latest(client):
         headers=headers,
     )
     async with get_sessionmaker()() as session:
-        snapshot = await snapshot_for_project(session, uuid.UUID(project_id))
+        snapshot = await snapshot_for_user(session, user_id)
     assert [e["version"] for e in snapshot["forge.score"]] == [1]
 
     # 解除 pin → 跟随最新
-    enable_id = (await client.get(f"/api/projects/{project_id}/skills", headers=headers)).json()[0][
-        "id"
-    ]
+    enable_id = (await client.get("/api/user-skills", headers=headers)).json()[0]["id"]
     await client.patch(
-        f"/api/project-skills/{enable_id}", json={"unpin_version": True}, headers=headers
+        f"/api/user-skills/{enable_id}", json={"unpin_version": True}, headers=headers
     )
     async with get_sessionmaker()() as session:
-        snapshot = await snapshot_for_project(session, uuid.UUID(project_id))
+        snapshot = await snapshot_for_user(session, user_id)
     assert [e["version"] for e in snapshot["forge.score"]] == [2]
     assert snapshot["forge.score"][0]["body"] == "v2 body"
 
@@ -260,7 +265,7 @@ async def test_voyage_snapshots_enabled_skills(client, queue_stub, bus_recorder)
     headers, project_id = await _setup(client)
     skill = (await client.post("/api/skills", json=_skill_payload(), headers=headers)).json()
     await client.post(
-        f"/api/projects/{project_id}/skills",
+        "/api/user-skills",
         json={"skill_id": skill["id"], "target": "forge.score"},
         headers=headers,
     )

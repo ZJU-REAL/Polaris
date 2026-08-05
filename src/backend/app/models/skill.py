@@ -1,9 +1,10 @@
 """技能系统（docs/skill-system.md）：可版本化、可装配的判断性任务指令包。
 
-- Skill：技能主体（builtin 内置只读 / user 个人 / project 项目级）
+- Skill：技能主体（builtin 内置只读 / user 个人）
 - SkillVersion：不可变版本（manifest JSON + markdown body），只增不改；
   「当前版本」= 该技能 version 最大的一行，不另存指针
-- ProjectSkill：「启用到项目」记录：项目 × 技能 × 注入点，可 pin 版本与配置
+- UserSkill：全局启用记录：用户 × 技能 × 注入点，可 pin 版本与配置
+  （技能不绑定课题，启用后对该用户所有新任务生效）
 - SkillListing：技能市场条目（发布指向具体版本，管理员审核后可安装）
 - SkillRating：市场评分（每人每条目一条，可更新）
 """
@@ -30,13 +31,10 @@ class Skill(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     name_en: Mapped[str | None] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text)
-    # builtin | user | project
+    # builtin | user
     scope: Mapped[str] = mapped_column(String(16), default="user", index=True, nullable=False)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    project_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
@@ -63,16 +61,16 @@ class SkillVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     skill: Mapped[Skill] = relationship(back_populates="versions")
 
 
-class ProjectSkill(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """技能启用到项目：同一注入点可启用多个技能，按 sort_order 拼接。"""
+class UserSkill(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """技能全局启用（不绑定课题）：同一注入点可启用多个技能，按 sort_order 拼接。"""
 
-    __tablename__ = "project_skills"
+    __tablename__ = "user_skills"
     __table_args__ = (
-        UniqueConstraint("project_id", "skill_id", "target", name="uq_project_skills_target"),
+        UniqueConstraint("user_id", "skill_id", "target", name="uq_user_skills_target"),
     )
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
     skill_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("skills.id", ondelete="CASCADE"), index=True, nullable=False
@@ -81,15 +79,12 @@ class ProjectSkill(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("skill_versions.id", ondelete="SET NULL")
     )
-    # 注入点（docs/skill-system.md §3.1 白名单，schema 层校验）
+    # 注入点（白名单见 schemas/skill.py，schema 层校验）
     target: Mapped[str] = mapped_column(String(64), nullable=False)
     # config_schema 定义的旋钮取值
     config: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL")
-    )
 
     skill: Mapped[Skill] = relationship()
 

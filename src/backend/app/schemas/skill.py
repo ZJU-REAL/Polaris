@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SKILL_KINDS = ("guidance", "rubric", "persona", "workflow")
-SKILL_SCOPES = ("builtin", "user", "project")
+SKILL_SCOPES = ("builtin", "user")
 
 # 注入点白名单（docs/skill-system.md §3.1）。workflow 技能用虚拟注入点 navigator.free_plan
 SKILL_TARGETS = frozenset(
@@ -135,7 +135,6 @@ class SkillRead(BaseModel):
     description: str | None
     scope: str
     owner_id: uuid.UUID | None
-    project_id: uuid.UUID | None
     is_archived: bool
     created_at: datetime
     updated_at: datetime
@@ -147,7 +146,7 @@ class SkillDetail(SkillRead):
     current_version: SkillVersionRead | None = None
 
 
-class ProjectSkillCreate(BaseModel):
+class UserSkillCreate(BaseModel):
     skill_id: uuid.UUID
     target: str
     version_id: uuid.UUID | None = None  # None = 跟随最新
@@ -162,7 +161,7 @@ class ProjectSkillCreate(BaseModel):
         return v
 
 
-class ProjectSkillUpdate(BaseModel):
+class UserSkillUpdate(BaseModel):
     enabled: bool | None = None
     config: dict[str, Any] | None = None
     sort_order: int | None = None
@@ -281,11 +280,11 @@ class ListingDecision(BaseModel):
     comment: str | None = Field(default=None, max_length=2000)
 
 
-class ProjectSkillRead(BaseModel):
+class UserSkillRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    project_id: uuid.UUID
+    user_id: uuid.UUID
     skill_id: uuid.UUID
     version_id: uuid.UUID | None
     target: str

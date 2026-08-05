@@ -2,7 +2,7 @@
 
 - /skills：技能 CRUD / 版本 / fork（builtin 只读，user 技能仅本人可改）
 - /skills/import-md：导入 Claude 官方风格技能包（SKILL.md frontmatter + markdown）
-- /projects/{pid}/skills + /project-skills/{id}：启用到项目（项目成员）
+- /user-skills：全局启用（技能不绑定课题，对本人所有新任务生效）
 """
 
 import re
@@ -19,9 +19,6 @@ from app.core.queue import TaskQueue, get_task_queue
 from app.models.skill import Skill
 from app.models.user import User
 from app.schemas.skill import (
-    ProjectSkillCreate,
-    ProjectSkillRead,
-    ProjectSkillUpdate,
     SkillCreate,
     SkillDetail,
     SkillExport,
@@ -32,6 +29,9 @@ from app.schemas.skill import (
     SkillTestResult,
     SkillVersionCreate,
     SkillVersionRead,
+    UserSkillCreate,
+    UserSkillRead,
+    UserSkillUpdate,
 )
 from app.schemas.voyage import VoyageRead
 from app.services import gates as gates_service
@@ -320,78 +320,68 @@ async def archive_skill(
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="SKILL_READ_ONLY") from e
 
 
-# ---- 启用到项目 ----
+# ---- 全局启用（不绑定课题）----
 
 
-def _enable_read(row) -> ProjectSkillRead:  # noqa: ANN001 — ProjectSkill（惰性关系已加载）
-    read = ProjectSkillRead.model_validate(row)
+def _enable_read(row) -> UserSkillRead:  # noqa: ANN001 — UserSkill（惰性关系已加载）
+    read = UserSkillRead.model_validate(row)
     if row.skill is not None:
         read.skill = SkillRead.model_validate(row.skill)
     return read
 
 
-@router.get("/projects/{project_id}/skills", response_model=list[ProjectSkillRead])
-async def list_project_skills(
-    project_id: uuid.UUID,
+@router.get("/user-skills", response_model=list[UserSkillRead])
+async def list_user_skills(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
-) -> list[ProjectSkillRead]:
-    await _require_member(session, project_id, user)
-    rows = await skills_service.list_project_skills(session, project_id)
+) -> list[UserSkillRead]:
+    rows = await skills_service.list_user_skills(session, user.id)
     return [_enable_read(r) for r in rows]
 
 
-@router.post(
-    "/projects/{project_id}/skills",
-    response_model=ProjectSkillRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def enable_project_skill(
-    project_id: uuid.UUID,
-    data: ProjectSkillCreate,
+@router.post("/user-skills", response_model=UserSkillRead, status_code=status.HTTP_201_CREATED)
+async def enable_user_skill(
+    data: UserSkillCreate,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
-) -> ProjectSkillRead:
-    await _require_member(session, project_id, user)
+) -> UserSkillRead:
     skill = await _get_visible_skill(session, data.skill_id, user)
     try:
-        row = await skills_service.enable_skill(
-            session, project_id=project_id, user_id=user.id, data=data, skill=skill
-        )
+        row = await skills_service.enable_skill(session, user_id=user.id, data=data, skill=skill)
     except skills_service.SkillWorkflowInvalidError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except IntegrityError as e:
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="SKILL_ALREADY_ENABLED") from e
-    row = await skills_service.get_project_skill(session, row.id)
+    row = await skills_service.get_user_skill(session, row.id)
     assert row is not None
     return _enable_read(row)
 
 
-async def _get_member_enable_row(session: AsyncSession, enable_id: uuid.UUID, user: User):
-    row = await skills_service.get_project_skill(session, enable_id)
-    if row is None or not await gates_service.can_access_project(session, row.project_id, user.id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_SKILL_NOT_FOUND")
+async def _get_own_enable_row(session: AsyncSession, enable_id: uuid.UUID, user: User):
+    row = await skills_service.get_user_skill(session, enable_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="USER_SKILL_NOT_FOUND")
     return row
 
 
-@router.patch("/project-skills/{enable_id}", response_model=ProjectSkillRead)
-async def update_project_skill(
+@router.patch("/user-skills/{enable_id}", response_model=UserSkillRead)
+async def update_user_skill(
     enable_id: uuid.UUID,
-    data: ProjectSkillUpdate,
+    data: UserSkillUpdate,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
-) -> ProjectSkillRead:
-    row = await _get_member_enable_row(session, enable_id, user)
-    row = await skills_service.update_project_skill(session, row, data)
+) -> UserSkillRead:
+    row = await _get_own_enable_row(session, enable_id, user)
+    row = await skills_service.update_user_skill(session, row, data)
     return _enable_read(row)
 
 
-@router.delete("/project-skills/{enable_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project_skill(
+@router.delete("/user-skills/{enable_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user_skill(
     enable_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> None:
-    row = await _get_member_enable_row(session, enable_id, user)
-    await skills_service.delete_project_skill(session, row)
+    row = await _get_own_enable_row(session, enable_id, user)
+    await skills_service.delete_user_skill(session, row)

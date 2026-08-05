@@ -298,7 +298,7 @@ async def test_voyage_detail_lists_snapshot_skills(client, queue_stub, bus_recor
         )
     ).json()
     await client.post(
-        f"/api/projects/{project_id}/skills",
+        "/api/user-skills",
         json={"skill_id": skill["id"], "target": "forge.score"},
         headers=headers,
     )

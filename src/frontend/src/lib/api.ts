@@ -2241,7 +2241,7 @@ export interface ReviewSummary {
 // ============================================================
 
 export type SkillKind = 'guidance' | 'rubric' | 'persona' | 'workflow';
-export type SkillScope = 'builtin' | 'user' | 'project';
+export type SkillScope = 'builtin' | 'user';
 
 export interface SkillPersona {
   name: string;
@@ -2270,7 +2270,6 @@ export interface SkillRead {
   description: string | null;
   scope: SkillScope;
   owner_id: string | null;
-  project_id: string | null;
   is_archived: boolean;
   created_at: string;
   updated_at: string;
@@ -2291,9 +2290,9 @@ export interface SkillDetail extends SkillRead {
   current_version: SkillVersionRead | null;
 }
 
-export interface ProjectSkillRead {
+export interface UserSkillRead {
   id: string;
-  project_id: string;
+  user_id: string;
   skill_id: string;
   version_id: string | null;
   target: string;
@@ -4402,23 +4401,23 @@ export const api = {
   ): Promise<VoyageRead> {
     return requestJson<VoyageRead>(`/skills/${id}/run`, 'POST', input);
   },
-  listProjectSkills(projectId: string): Promise<ProjectSkillRead[]> {
-    return request<ProjectSkillRead[]>(`/projects/${projectId}/skills`);
+  /** 全局启用（技能不绑定课题，对本人所有新任务生效）。 */
+  listUserSkills(): Promise<UserSkillRead[]> {
+    return request<UserSkillRead[]>(`/user-skills`);
   },
-  enableProjectSkill(
-    projectId: string,
+  enableUserSkill(
     input: { skill_id: string; target: string; version_id?: string; config?: Record<string, unknown> },
-  ): Promise<ProjectSkillRead> {
-    return requestJson<ProjectSkillRead>(`/projects/${projectId}/skills`, 'POST', input);
+  ): Promise<UserSkillRead> {
+    return requestJson<UserSkillRead>(`/user-skills`, 'POST', input);
   },
-  patchProjectSkill(
+  patchUserSkill(
     enableId: string,
     input: { enabled?: boolean; config?: Record<string, unknown>; sort_order?: number; unpin_version?: boolean },
-  ): Promise<ProjectSkillRead> {
-    return requestJson<ProjectSkillRead>(`/project-skills/${enableId}`, 'PATCH', input);
+  ): Promise<UserSkillRead> {
+    return requestJson<UserSkillRead>(`/user-skills/${enableId}`, 'PATCH', input);
   },
-  removeProjectSkill(enableId: string): Promise<void> {
-    return request<void>(`/project-skills/${enableId}`, { method: 'DELETE' });
+  removeUserSkill(enableId: string): Promise<void> {
+    return request<void>(`/user-skills/${enableId}`, { method: 'DELETE' });
   },
   // —— 论文分享 PPT（文献追踪板块） ——
   /** 发起 PPT 生成任务：single=单篇分享 / survey=多篇主题梳理。 */

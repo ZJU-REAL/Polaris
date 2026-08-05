@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c31f7a9d40b2"  # Buddy 的长期记忆（用户自己写的）
+HEAD_REVISION = "07e7faea4c7a"  # 技能全局启用（user_skills，不再绑定课题）
+BUDDY_REVISION = "c31f7a9d40b2"  # Buddy 的长期记忆（用户自己写的）
 SKILLS_REVISION = "a22aa895244c"  # Skills v2（SKILL.md 渐进披露）
 DIGEST_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
 SCORED_RUN_REVISION = "78e222c38b3b"  # 成员行记下打分它的那次同步任务 id
@@ -96,6 +97,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "conversation_messages",
                     "agent_skills",
                     "agent_skill_files",
+                    "skills",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -171,8 +173,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"depth", "research_type", "goal", "evidence", "seed_idea_id"} <= columns["ideas"]
     # 文献知识底座：paper_chunks 表
     assert "paper_chunks" in columns["_tables"]
-    # 技能系统 S1：skills / skill_versions / project_skills 表
-    assert {"skills", "skill_versions", "project_skills"} <= columns["_tables"]
+    # 技能系统 S1 + 技能全局化：skills / skill_versions / user_skills 表（project_skills 已删）
+    assert {"skills", "skill_versions", "user_skills"} <= columns["_tables"]
+    assert "project_skills" not in columns["_tables"]
+    assert "project_id" not in columns["skills"]
     # 技能市场 S4：skill_listings / skill_ratings 表
     assert {"skill_listings", "skill_ratings"} <= columns["_tables"]
     # 发表机构列（高级检索）
@@ -351,7 +355,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "relevance_reason" in columns["library_papers"]
     assert "scored_run_id" in columns["library_papers"]  # 打分归属改记运行 id
 
-    # 最新 revision 可往返：先退掉 Buddy 的长期记忆。
+    # 最新 revision 可往返：先退掉技能全局化（user_skills → 空的 project_skills）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == BUDDY_REVISION
+    assert "user_skills" not in columns["_tables"]
+    assert "project_skills" in columns["_tables"]
+    assert "project_id" in columns["skills"]
+
+    # 再退掉 Buddy 的长期记忆。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == SKILLS_REVISION

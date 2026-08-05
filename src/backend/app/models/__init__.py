@@ -38,7 +38,7 @@ from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.registration_code import RegistrationCode
 from app.models.research_digest import LibraryResearchDigest
 from app.models.review import ReviewMessage, ReviewSession
-from app.models.skill import ProjectSkill, Skill, SkillListing, SkillRating, SkillVersion
+from app.models.skill import Skill, SkillListing, SkillRating, SkillVersion, UserSkill
 from app.models.ssh_credential import SSHCredential
 from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
@@ -88,7 +88,6 @@ __all__ = [
     "Project",
     "ProjectInvite",
     "ProjectMember",
-    "ProjectSkill",
     "RegistrationCode",
     "ReviewMessage",
     "ReviewSession",
@@ -105,6 +104,7 @@ __all__ = [
     "UserLibraryEntry",
     "UserPaperTag",
     "UserPublication",
+    "UserSkill",
     "UUIDPrimaryKeyMixin",
     "VoyageRun",
     "VoyageStep",

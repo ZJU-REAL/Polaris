@@ -241,17 +241,17 @@ class VoyageEngine:
                 await self._emit_status(run)
 
     async def _ensure_skills_snapshot(self, session: AsyncSession, run: VoyageRun) -> None:
-        """首次驱动时把项目生效技能内容快照进 checkpoint["skills"]（docs/skill-system.md §3.2）。
+        """首次驱动时把任务创建人的生效技能内容快照进 checkpoint["skills"]。
 
-        此后本次 run 只读快照：中途改技能不影响进行中任务，断点恢复无需再查技能表，
-        且事后可回放「本次任务用了哪些技能的哪个版本」。
+        技能全局启用（不绑定课题）；此后本次 run 只读快照：中途改技能不影响进行中任务，
+        断点恢复无需再查技能表，且事后可回放「本次任务用了哪些技能的哪个版本」。
         """
         if "skills" in (run.checkpoint or {}):
             return
-        # P9a：独立库任务无起源课题 → 无项目作用域技能，快照留空。
+        # 系统发起（无创建人）的任务不注入个人技能，快照留空。
         snapshot = (
-            await skills_service.snapshot_for_project(session, run.project_id)
-            if run.project_id is not None
+            await skills_service.snapshot_for_user(session, run.created_by)
+            if run.created_by is not None
             else {}
         )
         checkpoint = dict(run.checkpoint or {})

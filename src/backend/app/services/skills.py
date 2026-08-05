@@ -1,8 +1,8 @@
 """技能系统业务逻辑（docs/skill-system.md；不 import fastapi）。
 
 - 技能 CRUD / 版本追加 / fork / 归档（builtin 只读）
-- 启用到项目（project_skills）
-- Voyage 快照：把项目生效技能解析成 checkpoint["skills"] 结构（§3.2）
+- 全局启用（user_skills：技能不绑定课题，对该用户所有新任务生效）
+- Voyage 快照：把任务创建人的生效技能解析成 checkpoint["skills"] 结构（§3.2）
 - 内置技能种子幂等插入
 """
 
@@ -18,13 +18,13 @@ from sqlalchemy.orm import selectinload
 if TYPE_CHECKING:
     from app.models.voyage import VoyageRun
 
-from app.models.skill import ProjectSkill, Skill, SkillVersion
+from app.models.skill import Skill, SkillVersion, UserSkill
 from app.schemas.skill import (
-    ProjectSkillCreate,
-    ProjectSkillUpdate,
     SkillCreate,
     SkillManifest,
     SkillVersionCreate,
+    UserSkillCreate,
+    UserSkillUpdate,
 )
 from app.services.builtin_skills import BUILTIN_SKILLS
 
@@ -242,17 +242,15 @@ async def archive_skill(session: AsyncSession, skill: Skill, *, user_id: uuid.UU
     await session.commit()
 
 
-# ---- 启用到项目 ----
+# ---- 全局启用（不绑定课题）----
 
 
-async def list_project_skills(
-    session: AsyncSession, project_id: uuid.UUID
-) -> Sequence[ProjectSkill]:
+async def list_user_skills(session: AsyncSession, user_id: uuid.UUID) -> Sequence[UserSkill]:
     stmt = (
-        select(ProjectSkill)
-        .where(ProjectSkill.project_id == project_id)
-        .options(selectinload(ProjectSkill.skill))
-        .order_by(ProjectSkill.target, ProjectSkill.sort_order, ProjectSkill.created_at)
+        select(UserSkill)
+        .where(UserSkill.user_id == user_id)
+        .options(selectinload(UserSkill.skill))
+        .order_by(UserSkill.target, UserSkill.sort_order, UserSkill.created_at)
     )
     return (await session.execute(stmt)).scalars().all()
 
@@ -260,24 +258,22 @@ async def list_project_skills(
 async def enable_skill(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
     user_id: uuid.UUID,
-    data: ProjectSkillCreate,
+    data: UserSkillCreate,
     skill: Skill,
-) -> ProjectSkill:
-    """同一 (project, skill, target) 唯一（DB 约束），重复启用由调用方转 409。"""
+) -> UserSkill:
+    """同一 (user, skill, target) 唯一（DB 约束），重复启用由调用方转 409。"""
     # 注入点必须是技能声明过的 target（防误挂）；manifest 未声明任何 target 时放行
     declared = _skill_targets(await _manifest_of(session, skill))
     if declared and data.target not in declared:
         raise SkillWorkflowInvalidError(f"skill {skill.slug} does not declare target {data.target}")
-    row = ProjectSkill(
-        project_id=project_id,
+    row = UserSkill(
+        user_id=user_id,
         skill_id=skill.id,
         version_id=data.version_id,
         target=data.target,
         config=data.config,
         sort_order=data.sort_order,
-        created_by=user_id,
     )
     session.add(row)
     await session.commit()
@@ -297,18 +293,18 @@ def _skill_targets(manifest: dict[str, Any] | None) -> list[str]:
     return [t for t in targets if isinstance(t, str)] if isinstance(targets, list) else []
 
 
-async def get_project_skill(session: AsyncSession, enable_id: uuid.UUID) -> ProjectSkill | None:
+async def get_user_skill(session: AsyncSession, enable_id: uuid.UUID) -> UserSkill | None:
     stmt = (
-        select(ProjectSkill)
-        .where(ProjectSkill.id == enable_id)
-        .options(selectinload(ProjectSkill.skill))
+        select(UserSkill)
+        .where(UserSkill.id == enable_id)
+        .options(selectinload(UserSkill.skill))
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def update_project_skill(
-    session: AsyncSession, row: ProjectSkill, data: ProjectSkillUpdate
-) -> ProjectSkill:
+async def update_user_skill(
+    session: AsyncSession, row: UserSkill, data: UserSkillUpdate
+) -> UserSkill:
     if data.enabled is not None:
         row.enabled = data.enabled
     if data.config is not None:
@@ -324,7 +320,7 @@ async def update_project_skill(
     return row
 
 
-async def delete_project_skill(session: AsyncSession, row: ProjectSkill) -> None:
+async def delete_user_skill(session: AsyncSession, row: UserSkill) -> None:
     await session.delete(row)
     await session.commit()
 
@@ -332,16 +328,16 @@ async def delete_project_skill(session: AsyncSession, row: ProjectSkill) -> None
 # ---- Voyage 快照（§3.2）----
 
 
-async def snapshot_for_project(
-    session: AsyncSession, project_id: uuid.UUID
+async def snapshot_for_user(
+    session: AsyncSession, user_id: uuid.UUID
 ) -> dict[str, list[dict[str, Any]]]:
-    """项目生效技能 → checkpoint["skills"]：{target: [条目...]}，条目含完整 body。
+    """用户生效技能 → checkpoint["skills"]：{target: [条目...]}，条目含完整 body。
 
     - pin 了版本用 pin 版本，否则用最新版本；
     - 归档技能 / disabled 行跳过；
     - 结果自包含（不依赖 DB），保证断点恢复与审计回放。
     """
-    rows = await list_project_skills(session, project_id)
+    rows = await list_user_skills(session, user_id)
     snapshot: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         if not row.enabled or row.skill is None or row.skill.is_archived:
