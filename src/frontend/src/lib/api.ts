@@ -4764,19 +4764,16 @@ export const api = {
     return request('/chat/memories');
   },
   setBuddyMemoryEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
-    return request('/chat/memory/enabled', { method: 'PUT', body: JSON.stringify({ enabled }) });
+    return requestJson<{ enabled: boolean }>('/chat/memory/enabled', 'PUT', { enabled });
   },
   addBuddyMemory(text: string): Promise<{ id: string; text: string; created_at: string }> {
-    return request('/chat/memories', { method: 'POST', body: JSON.stringify({ text }) });
+    return requestJson<{ id: string; text: string; created_at: string }>('/chat/memories', 'POST', { text });
   },
   deleteBuddyMemory(id: string): Promise<void> {
     return request(`/chat/memories/${id}`, { method: 'DELETE' });
   },
   renameAssistantConversation(id: string, title: string): Promise<void> {
-    return request(`/chat/conversations/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ title }),
-    });
+    return requestJson<void>(`/chat/conversations/${id}`, 'PATCH', { title });
   },
   deleteAssistantConversation(id: string): Promise<void> {
     return request(`/chat/conversations/${id}`, { method: 'DELETE' });
