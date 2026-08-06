@@ -2,6 +2,7 @@
 
 - VoyageRun：一次航程（目标、计划、游标、检查点、预算/用量）
 - VoyageStep：航程中的单个步骤（动作、观测、Sextant 判定、token 记账）
+- VoyageMessage：任务级对话流（用户建议 / agent 提问与播报），run 资产随任务级联删除
 """
 
 import uuid
@@ -13,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -157,6 +159,55 @@ class VoyageStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     run: Mapped[VoyageRun] = relationship(back_populates="steps")
+
+
+# 消息种类：chat = 用户的非阻塞建议（agent 在下一个决策点消费）；
+# ask = agent 向用户提问（阻塞，任务转 paused_ask，见 docs/task-system.md）；
+# answer = 用户对 ask 的回答（reply_to 指向 ask）；info = agent 播报（如「已采纳你的建议」）。
+VOYAGE_MESSAGE_KINDS = ("chat", "ask", "answer", "info")
+# ask 生命周期：open（等回答）→ answered（已答，等引擎消费）→ consumed（引擎已把回答
+# 变成行为，与该行为同事务提交）；superseded = 被取消/新 ask 覆盖。其余 kind 恒为 none。
+VOYAGE_MESSAGE_STATUSES = ("none", "open", "answered", "consumed", "superseded")
+
+
+class VoyageMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """任务对话流的一条消息：用户与任务 agent 的双向通道。
+
+    run 资产（非用户资产）：项目成员共享同一条流，随任务级联删除——与
+    Conversation（用户资产，课题删了对话还在）刻意区分，不复用。
+    """
+
+    __tablename__ = "voyage_messages"
+    __table_args__ = (
+        UniqueConstraint("run_id", "seq", name="uq_voyage_messages_run_seq"),
+        # 引擎热查询：open ask / 未消费 chat 都按 (run_id, kind, status) 走
+        Index("ix_voyage_messages_run_kind_status", "run_id", "kind", "status"),
+    )
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("voyage_runs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    # 流内定序（同 conversation_messages 模式：max+1 分配，唯一约束兜底并发）
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | agent
+    # agent 侧消息无作者；用户删号不删流（历史建议仍是任务因果链的一部分）
+    author_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # VOYAGE_MESSAGE_KINDS
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    # kind=ask: {ask_kind, diagnosis?, context?, options: [{id,label,effect?}]}
+    # kind=answer: {choice?, extra?}
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    # 仅 kind=ask 有意义（引擎按 (run_id, kind, status) 查 open/answered，不查 JSON path）
+    status: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
+    reply_to: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("voyage_messages.id", ondelete="SET NULL")
+    )
+    step_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("voyage_steps.id", ondelete="SET NULL")
+    )
+    # 仅 kind=chat：被 agent 消费的时间与位置（审计 + resume 重放幂等锚点）
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_step_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("voyage_steps.id"))
 
 
 class VoyageTerminalLog(Base):

@@ -43,6 +43,7 @@ from app.models.gate import Gate
 from app.models.llm_config import LLMUsage
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep, mode_for_kind
 from app.services import skills as skills_service
+from app.services import voyage_messages as messages_service
 
 MAX_REPLANS = 2
 _RANK_GAP = 100.0
@@ -193,6 +194,43 @@ class VoyageEngine:
         if step_id is not None:
             data["step_id"] = str(step_id)
         await self._emit_voyage(run.id, "log", data)
+
+    async def _post_agent_message(
+        self,
+        session: AsyncSession,
+        run: VoyageRun,
+        *,
+        kind: str,
+        text: str,
+        payload: dict[str, Any] | None = None,
+        status: str = "none",
+        step_id: uuid.UUID | None = None,
+    ) -> None:
+        """agent 侧消息落对话流 + SSE `message` 事件（尽力而为，不影响主流程）。"""
+        try:
+            message = await messages_service.append_message(
+                session,
+                run.id,
+                role="agent",
+                kind=kind,
+                text=text,
+                payload=payload,
+                status=status,
+                step_id=step_id,
+            )
+        except messages_service.MessageSeqConflictError:
+            return
+        await self._emit_voyage(
+            run.id, "message", {"message": messages_service.serialize_message(message)}
+        )
+
+    # ---- 用户建议消费（docs/task-system.md：非阻塞反馈在下一个决策点注入）----
+
+    async def _drain_user_messages(self, session: AsyncSession, run: VoyageRun) -> list[Any]:
+        """取未消费的用户建议（不标记）。标记与效果必须同一事务提交：
+        用 :func:`messages_service.mark_chat_consumed` 后由调用方 commit，
+        resume 重放时要么建议已随效果生效、要么原样留在队列。"""
+        return await messages_service.pending_chat_messages(session, run.id)
 
     # ---- 状态持久化 ----
 
@@ -505,11 +543,30 @@ class VoyageEngine:
         step_def: dict[str, Any],
         step_row: VoyageStep,
     ) -> None:
+        # 注入点①：把未消费的用户建议注入本步骤 params（消费标记与 running 同一事务，
+        # resume 重放天然幂等——建议随步骤持久化，不会二次注入）
+        guidance_msgs = await self._drain_user_messages(session, run)
+        if guidance_msgs:
+            params = dict(step_row.params or {})
+            params["user_guidance"] = list(params.get("user_guidance") or []) + [
+                m.text for m in guidance_msgs
+            ]
+            step_row.params = params
+            step_def["params"] = params  # step_def 在本次调用前构建，需同步
+            messages_service.mark_chat_consumed(guidance_msgs, step_id=step_row.id)
         step_row.status = "running"
         step_row.attempt = step_row.attempt + 1
         step_row.started_at = utcnow()
         await session.commit()
         await self._emit_step(run, step_row)
+        if guidance_msgs:
+            await self._post_agent_message(
+                session,
+                run,
+                kind="info",
+                text=f"已收到你的 {len(guidance_msgs)} 条建议，执行「{step_row.title}」时一并参考",
+                step_id=step_row.id,
+            )
         retry_note = f"（第 {step_row.attempt} 次尝试）" if step_row.attempt > 1 else ""
         await self._emit_log(
             run,
@@ -869,9 +926,17 @@ class VoyageEngine:
         await self._set_status(session, run, "replanning")
         rows = await self._active_rows(session, run)
         failed_def = dict(failed_step) | {"step_id": str(failed_node.id)}
+        # 注入点②：计划调整时把未消费的用户建议交给 Navigator（标记与编辑生效同一事务；
+        # LLM 失败 / 编辑被拒时不标记，建议留在队列等下一个决策点）
+        guidance_msgs = await self._drain_user_messages(session, run)
+        user_guidance = messages_service.guidance_text(guidance_msgs) or None
         try:
             edit = await self.navigator.on_result(
-                run, failed_def, diagnosis, self._plan_state_summary(rows)
+                run,
+                failed_def,
+                diagnosis,
+                self._plan_state_summary(rows),
+                user_guidance=user_guidance,
             )
         except NavigatorError as e:
             await self._emit_log(run, f"计划调整失败：{e}", level="error")
@@ -913,8 +978,18 @@ class VoyageEngine:
             obsoleted=obsoleted,
             trigger_step=failed_node.title,
         )
+        if guidance_msgs:
+            messages_service.mark_chat_consumed(guidance_msgs, step_id=failed_node.id)
         await self._regen_plan_snapshot(session, run)
         await session.commit()
+        if guidance_msgs:
+            await self._post_agent_message(
+                session,
+                run,
+                kind="info",
+                text=f"计划调整时参考了你的 {len(guidance_msgs)} 条建议",
+                step_id=failed_node.id,
+            )
         await self._emit_log(
             run,
             f"第 {replans + 1} 次计划调整完成（{edit.get('reason') or ''}，"
@@ -949,8 +1024,13 @@ class VoyageEngine:
             return False
 
         await self._set_status(session, run, "replanning")
+        # 注入点②（template 同 loop）：用户建议交给重规划，失败不标记消费
+        guidance_msgs = await self._drain_user_messages(session, run)
+        user_guidance = messages_service.guidance_text(guidance_msgs) or None
         try:
-            new_tail = await self.navigator.replan(run, failed_step, diagnosis)
+            new_tail = await self.navigator.replan(
+                run, failed_step, diagnosis, user_guidance=user_guidance
+            )
         except NavigatorError as e:
             await self._emit_log(run, f"重规划失败：{e}", level="error")
             await self._set_status(session, run, "paused_error")
@@ -993,10 +1073,20 @@ class VoyageEngine:
             obsoleted=len(tail),
             trigger_step=failed_node.title,
         )
+        if guidance_msgs:
+            messages_service.mark_chat_consumed(guidance_msgs, step_id=failed_node.id)
         # run.plan 快照单向派生：已通过前缀 + 新尾部
         passed_defs = [_step_def_from_row(r, run.plan) for r in rows if r.status == "passed"]
         run.plan = passed_defs + list(new_tail)
         await session.commit()
+        if guidance_msgs:
+            await self._post_agent_message(
+                session,
+                run,
+                kind="info",
+                text=f"重规划时参考了你的 {len(guidance_msgs)} 条建议",
+                step_id=failed_node.id,
+            )
         await self._emit_log(
             run,
             f"第 {replans + 1} 次重规划完成，剩余 {len(new_tail)} 步（诊断：{diagnosis}）",

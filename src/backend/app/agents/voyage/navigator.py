@@ -686,11 +686,16 @@ class Navigator:
         return await self._ask_for_steps(run, system, user_prompt, workflows=workflows)
 
     async def replan(
-        self, run: VoyageRun, failed_step: dict[str, Any], diagnosis: str
+        self,
+        run: VoyageRun,
+        failed_step: dict[str, Any],
+        diagnosis: str,
+        user_guidance: str | None = None,
     ) -> list[dict[str, Any]]:
         """验证失败后重规划：返回替换「失败步骤起的剩余计划」的新步骤列表。
 
         idea_proposal 走确定性重规划（novelty 三档分支等），不经 LLM。
+        ``user_guidance``：用户在任务对话流里的未消费建议（优先遵循）。
         """
         if run.kind == "idea_proposal":
             return proposal_replan(run, failed_step, diagnosis)
@@ -701,6 +706,8 @@ class Navigator:
             f"失败步骤：{json.dumps(failed_step, ensure_ascii=False, default=str)}\n"
             f"失败诊断：{diagnosis}"
         )
+        if user_guidance:
+            user_prompt += f"\n用户对这次调整的补充指示（务必优先遵循）：\n{user_guidance}"
         return await self._ask_for_steps(run, system, user_prompt)
 
     async def on_result(
@@ -709,11 +716,13 @@ class Navigator:
         failed_step: dict[str, Any],
         diagnosis: str,
         plan_state: str,
+        user_guidance: str | None = None,
     ) -> dict[str, Any]:
         """loop 模式失败回灌：LLM 产出**计划编辑**而非替换尾部（docs/voyage-loop.md §5.3）。
 
         输出经 validate_plan_edit 严格校验（schema / 动作注册表 / 新增节点上限 /
         新节点必须带验收）；连续非法抛 NavigatorError（engine 转 paused_error）。
+        ``user_guidance``：用户在任务对话流里的未消费建议（优先遵循）。
         """
         system = PLAN_EDIT_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
         user_prompt = (
@@ -722,6 +731,8 @@ class Navigator:
             f"失败步骤：{json.dumps(failed_step, ensure_ascii=False, default=str)}\n"
             f"失败诊断：{diagnosis}"
         )
+        if user_guidance:
+            user_prompt += f"\n用户对这次调整的补充指示（务必优先遵循）：\n{user_guidance}"
         last_error: Exception | None = None
         for _attempt in range(_MAX_ATTEMPTS):
             result = await self._llm.complete(

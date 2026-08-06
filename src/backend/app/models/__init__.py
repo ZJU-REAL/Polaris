@@ -44,7 +44,7 @@ from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
 from app.models.vectors import IdeaVector, PaperChunkVector, PaperVector
-from app.models.voyage import VoyageRun, VoyageStep
+from app.models.voyage import VoyageMessage, VoyageRun, VoyageStep
 
 __all__ = [
     "Activity",
@@ -106,6 +106,7 @@ __all__ = [
     "UserPublication",
     "UserSkill",
     "UUIDPrimaryKeyMixin",
+    "VoyageMessage",
     "VoyageRun",
     "VoyageStep",
     "paper_concepts",

@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "b3f5c1e07a92"  # 只读账号（游客）：能看的由 role 决定，能改的一律没有
+HEAD_REVISION = "63133f647463"  # 任务对话流：voyage_messages 表（用户与任务 agent 的双向通道）
+READ_ONLY_REVISION = "b3f5c1e07a92"  # 只读账号（游客）
 SKILLS_GLOBAL_REVISION = "07e7faea4c7a"  # 技能全局启用（user_skills，不再绑定课题）
 MEMORY_KIND_REVISION = "d4e8b19c7a55"  # 记忆分层：fact 每轮带上 / note 检索到才回上下文
 BUDDY_REVISION = "c31f7a9d40b2"  # Buddy 的长期记忆（用户自己写的）
@@ -358,8 +359,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["library_research_digests"]
     assert "relevance_reason" in columns["library_papers"]
     assert "scored_run_id" in columns["library_papers"]  # 打分归属改记运行 id
+    # 任务对话流：用户与任务 agent 的双向消息
+    assert "voyage_messages" in columns["_tables"]
 
-    # 最新 revision 可往返：先退掉只读账号。
+    # 最新 revision 可往返：先退掉任务对话流。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == READ_ONLY_REVISION
+    assert "voyage_messages" not in columns["_tables"]
+
+    # 再退掉只读账号。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == MEMORY_KIND_REVISION

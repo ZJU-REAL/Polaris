@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import current_active_user
 from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session
-from app.core.events import voyage_channel
+from app.core.events import EventBus, get_event_bus, voyage_channel
 from app.core.queue import TaskQueue, get_task_queue
 from app.core.redis import get_redis_dep
 from app.models.user import User
@@ -22,12 +22,15 @@ from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.voyage import (
     VoyageCreate,
     VoyageDetailRead,
+    VoyageMessageCreate,
+    VoyageMessageRead,
     VoyagePlanEvent,
     VoyageRead,
     VoyageSkillUse,
     VoyageTerminalLogRead,
 )
 from app.services import projects as projects_service
+from app.services import voyage_messages as messages_service
 from app.services import voyages as voyages_service
 
 router = APIRouter(prefix="/voyages", tags=["voyages"])
@@ -130,6 +133,55 @@ async def get_voyage_logs(
 
     rows = await fetch_terminal_logs(session, voyage_id)
     return [VoyageTerminalLogRead.model_validate(r) for r in rows]
+
+
+@router.get("/{voyage_id}/messages", response_model=list[VoyageMessageRead])
+async def list_voyage_messages(
+    voyage_id: uuid.UUID,
+    after_seq: int | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[VoyageMessageRead]:
+    """任务对话流（用户建议 / agent 提问与播报），按 seq 升序。"""
+    await _get_owned_voyage(session, voyage_id, user)
+    rows = await messages_service.list_messages(
+        session, voyage_id, after_seq=after_seq, limit=limit
+    )
+    return [VoyageMessageRead.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/{voyage_id}/messages",
+    response_model=VoyageMessageRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_voyage_message(
+    voyage_id: uuid.UUID,
+    data: VoyageMessageCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    bus: EventBus = Depends(get_event_bus),
+) -> VoyageMessageRead:
+    """给运行中的任务发一条建议（非阻塞：agent 在下一个决策点参考）。
+
+    终态任务没有下一个决策点，409；暂停中的任务可以发（恢复后消费）。
+    """
+    run = await _get_owned_voyage(session, voyage_id, user)
+    if run.status in TERMINAL_STATUSES:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_ALREADY_FINISHED")
+    message = await messages_service.append_message(
+        session,
+        run.id,
+        role="user",
+        kind="chat",
+        text=data.text,
+        author_id=user.id,
+    )
+    await bus.publish_voyage_event(
+        run.id, "message", {"message": messages_service.serialize_message(message)}
+    )
+    return VoyageMessageRead.model_validate(message)
 
 
 @router.post("/{voyage_id}/cancel", response_model=VoyageRead)

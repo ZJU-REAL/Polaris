@@ -85,6 +85,34 @@ class VoyagePlanEvent(BaseModel):
     at: datetime | None = None
 
 
+class VoyageMessageCreate(BaseModel):
+    """用户向任务发一条建议（非阻塞：agent 在下一个决策点参考）。"""
+
+    text: str = Field(min_length=1, max_length=8000)
+
+
+class VoyageMessageRead(BaseModel):
+    """任务对话流的一条消息（用户建议 / agent 提问 / 回答 / agent 播报）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    seq: int  # 流内定序
+    role: Literal["user", "agent"]
+    kind: Literal["chat", "ask", "answer", "info"]
+    author_id: uuid.UUID | None = None
+    text: str
+    # kind=ask: {ask_kind, diagnosis?, context?, options: [...]}；kind=answer: {choice?, extra?}
+    payload: dict[str, Any] | None = None
+    # 仅 kind=ask：open | answered | consumed | superseded（其余恒 none）
+    status: str = "none"
+    reply_to: uuid.UUID | None = None
+    step_id: uuid.UUID | None = None
+    consumed_at: datetime | None = None  # 仅 kind=chat：被 agent 消费的时间
+    created_at: datetime
+
+
 class VoyageTerminalLogRead(BaseModel):
     """任务终端历史日志的一条：结构化日志行（event=log）或大模型完整输出（event=llm）。"""
 
