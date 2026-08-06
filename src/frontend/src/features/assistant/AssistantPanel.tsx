@@ -903,6 +903,7 @@ export function AssistantPanel({
           );
         })}
       </div>
+      </div>
 
       <div style={{ padding: 12, borderTop: '0.5px solid var(--border-2)' }}>
         {/* 上下文栏贴在输入框顶上（Codex 那样）：课题与模式是这次提问的前置条件，
@@ -1092,7 +1093,6 @@ export function AssistantPanel({
           </div>
         </div>
       </div>
-    </div>
     </div>
   );
 }
