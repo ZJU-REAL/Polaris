@@ -43,7 +43,10 @@ _RSS_NS = {
 
 # RSS /new 每天更新一次、URL 只按分类（对所有用户/项目相同）→ 短 TTL 缓存跨用户共享，
 # 当天能及时拿到新公告又不重复打 arXiv。3 小时。
-_RSS_CACHE_TTL = 3 * 3600
+#: RSS 缓存时长。**短**，因为轮询要在同一天内看到批次的变化；而它必须存在，因为
+#: 不缓存就等于每次探测都打 arXiv——生产上正是这么被 429 的（日期判据恒假 →
+#: 从来没写进过缓存 → 每次都真打）。
+_RSS_CACHE_TTL = 10 * 60
 
 # 只接纳当天首发/跨列表公告；replace / replace-cross 是旧论文更新，跳过。
 _RSS_KEEP_TYPES = frozenset({"new", "cross"})
@@ -194,16 +197,6 @@ def _parse_rss_item(item: ET.Element) -> dict[str, Any] | None:
         "pdf_url": PDF_URL_TEMPLATE.format(arxiv_id=arxiv_id),
         "announce_type": announce,
     }
-
-
-def _batch_is_fresh(batch_at: datetime | None) -> bool:
-    """这批公告还算「今天的」吗。读缓存与写缓存**共用这一条判据**。
-
-    解析不出批次日期时算新鲜：宁可照常抓一次，也不能因为一个判断失灵就再也不抓。
-    """
-    if batch_at is None:
-        return True
-    return batch_at.astimezone(UTC).date() >= datetime.now(UTC).date()
 
 
 def _parse_rss(text: str) -> tuple[list[dict[str, Any]], datetime | None]:
@@ -396,21 +389,16 @@ class ArxivClient:
         """
         key = cache_key("arxiv", "rss_new", {"category": category})
         if (cached := await self._rss_cache.get(key)) is not None:
-            cached_at = _parse_iso_dt(cached.get("batch_at"))
-            # **读的时候也要查新鲜度**，不是只在写的时候查：昨天 23:50 存进来的那份，
-            # 当时确实是「今天的」，跨过 UTC 零点它就成了旧批次——而缓存还有两小时
-            # 才到期。只查写不查读，等于每天 00:00–03:00 UTC（北京 08:00–11:00）的探测
-            # 全部拿到昨天那批，判定「今天那批还没出来」，白等一上午。
-            if _batch_is_fresh(cached_at):
-                return cached["entries"], cached_at
+            # 不再按「声明的日期是不是今天」决定能不能用缓存：arXiv 的 RSS 日期字段
+            # 会整体滞后一天（见 daily_feed.todays_batch_available），那样判的结果是
+            # 缓存永远写不进、每次探测都真打 arXiv。改用短 TTL 控制陈旧程度。
+            return cached["entries"], _parse_iso_dt(cached.get("batch_at"))
         resp = await self._request(RSS_URL_TEMPLATE.format(category=category))
         entries, batch_at = _parse_rss(resp.text)
-        # **陈旧批次不写缓存**：调用方会每 15 分钟探一次直到当天那批出现，缓存住旧批次
-        # 会让接下来三小时的探测全部拿到同一份，轮询就白做了。与「失败不写缓存」同理。
-        if _batch_is_fresh(batch_at):
-            await self._rss_cache.set(
-                key, {"entries": entries, "batch_at": batch_at.isoformat() if batch_at else None}
-            )
+        # 失败不写缓存（见 _request）；成功的一律写，靠短 TTL 控制陈旧程度
+        await self._rss_cache.set(
+            key, {"entries": entries, "batch_at": batch_at.isoformat() if batch_at else None}
+        )
         return entries, batch_at
 
     async def fetch_by_ids(self, arxiv_ids: list[str]) -> list[dict[str, Any]]:

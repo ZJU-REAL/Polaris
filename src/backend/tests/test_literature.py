@@ -102,11 +102,11 @@ Abstract: A revised cross-listed older paper.</description>
 def _rss_with_batch_date(day) -> str:
     """把 fixture 的批次日期换成指定日期。
 
-    批次日期不是今天时**不会进缓存**（否则轮询会一直拿到同一份旧批次），所以想验证
-    缓存就必须让它声明今天。
+    RSS 的日期字段不可靠（arXiv 会整体滞后一天），如今它只是被如实带出来、不决定
+    任何事；这个 helper 只是让夹具能造出想要的声明日期。
     """
-    from email.utils import format_datetime
     import datetime as _dt
+    from email.utils import format_datetime
 
     at = _dt.datetime.combine(day, _dt.time(), tzinfo=_dt.timezone(_dt.timedelta(hours=-4)))
     return ARXIV_RSS.replace("__CHANNEL_PUBDATE__", format_datetime(at))
@@ -183,44 +183,6 @@ async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
     again, _ = await client.fetch_new("cs.CL")
     assert [e["arxiv_id"] for e in again] == ["2607.10001", "2607.10002"]
     assert route.call_count == 1
-    await client.aclose()
-
-
-@respx.mock
-async def test_a_cached_batch_goes_stale_at_midnight_utc(cache_redis):
-    """跨过 UTC 零点后，昨天缓存的那批不能再当「今天的」返回。
-
-    真事：08-04 23:5x UTC 存进缓存的批次，当时确实是今天的；三小时 TTL 让它一直活到
-    08-05 02:5x。读路径不查新鲜度，于是整个 00:00–03:00 UTC（北京 08:00–11:00）窗口
-    里，探测反复拿到昨天那批，判定「今天那批还没出来」——界面上就停在「等待今天的
-    批次（2/10）· 最新 08-04」，而 arXiv 早发了。写的时候查新鲜度、读的时候不查，
-    等于只挡住了一半。
-
-    直接把旧条目塞进缓存来构造这个局面，而不是去改模块里的 ``datetime``：被测的就是
-    「读路径会不会丢掉过期条目」，不必为此动全局状态。
-    """
-    import datetime as _dt
-
-    from app.services.literature.cache import cache_key
-
-    today = _dt.datetime.now(_dt.UTC).date()
-    yesterday = today - _dt.timedelta(days=1)
-    stale_at = _dt.datetime.combine(yesterday, _dt.time(23, 55), tzinfo=_dt.UTC)
-
-    client = ArxivClient(redis=cache_redis, min_interval=0)
-    # 昨天 23:55 写进去的那份：当时是新鲜的，现在不是了，但离过期还有两小时
-    await client._rss_cache.set(
-        cache_key("arxiv", "rss_new", {"category": "cs.CL"}),
-        {"entries": [{"arxiv_id": "old-batch"}], "batch_at": stale_at.isoformat()},
-    )
-    route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/cs\.CL").mock(
-        return_value=httpx.Response(200, text=_rss_with_batch_date(today))
-    )
-
-    entries, batch_at = await client.fetch_new("cs.CL")
-    assert route.call_count == 1, "过期批次不该再从缓存里返回，应该重新抓一次"
-    assert batch_at is not None and batch_at.astimezone(_dt.UTC).date() == today
-    assert [e["arxiv_id"] for e in entries] == ["2607.10001", "2607.10002"]
     await client.aclose()
 
 
@@ -495,14 +457,17 @@ async def test_penalize_extends_the_shared_gate(cache_redis):
     ttl = await cache_redis.pttl("lit:arxiv:gate")
     assert ttl > 1000
     assert b._interval > 0  # b 会在 acquire 时撞上这个闸门
-
-
 @respx.mock
-async def test_stale_rss_batch_is_not_cached(cache_redis):
-    """**陈旧批次不进缓存**——这是每 15 分钟轮询能生效的前提。
+async def test_rss_is_cached_regardless_of_the_declared_date(cache_redis):
+    """RSS 一律进缓存，陈旧程度由**短 TTL**控制。
 
-    RSS 缓存 3 小时。上午探到旧批次一旦被缓存住，接下来三小时的每一次探测都会拿到
-    同一份，轮询就白做了：当天批次出来了也发现不了。
+    这条原来钉的是「陈旧批次不进缓存」——判据是 RSS 里声明的批次日期。现实推翻了它：
+    arXiv 的日期字段会整体滞后一天（网页版已经是次日的清单、条目 id 也是当天的，而
+    channel/item 的 pubDate 还写着前一天）。按日期判的结果是**缓存永远写不进**，于是
+    每次探测都真去打 arXiv——把我们自己打到 429。
+
+    「今天那批出来了没有」现在按内容判（见 daily_feed.todays_batch_available），
+    缓存只需保证别太旧。
     """
     import datetime as _dt
 
@@ -514,5 +479,12 @@ async def test_stale_rss_batch_is_not_cached(cache_redis):
 
     await client.fetch_new("cs.CL")
     await client.fetch_new("cs.CL")
-    assert route.call_count == 2, "旧批次被缓存住的话，轮询永远发现不了当天那批"
+    assert route.call_count == 1, "声明日期不是今天也要进缓存，否则每次探测都真打 arXiv"
     await client.aclose()
+
+
+def test_the_rss_cache_ttl_stays_short():
+    """轮询要在同一天内看到批次变化，缓存就不能长。"""
+    from app.services.literature.arxiv import _RSS_CACHE_TTL
+
+    assert _RSS_CACHE_TTL <= 15 * 60

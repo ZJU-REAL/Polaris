@@ -1458,7 +1458,9 @@ async def record_probe(
     batch_date: str | None,
     exhausted: bool = False,
 ) -> dict[str, Any]:
-    """记一次「探了但今天那批还没出来」。返回记完之后的状态。"""
+    """记一次「探了但今天那批还没出来」。返回记完之后的状态。
+
+    """
     state = await probe_state(session, now=now)
     state["attempts"] += 1
     state["batch_date"] = batch_date
@@ -1516,26 +1518,46 @@ async def claim_today(session: AsyncSession, key: str, *, now: dt.datetime) -> b
 
 
 async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | None]:
-    """arXiv 上今天那批公告出来了没有。返回 (出来了吗, 探到的批次日期)。
+    """arXiv 上有我们还没收的论文吗。返回 (有没有, 这批声明的日期)。
 
-    只探**一个**分类：批次是全站一起发的，探一个就够，没必要为了一个判断打三次。
-    探测本身很便宜（一次 RSS，且陈旧批次不进缓存所以每次都是新的）。
+    **判据是内容，不是日期。** 曾经用 channel 的 ``pubDate`` 判「是不是今天那批」，
+    结果 arXiv 的 RSS 日期字段会整体滞后一天：网页版明明已经是 8-06 的清单、条目
+    id 也是当天的（2608.026xx），而 channel 与 item 的 pubDate 都还写着 8-05。于是
+    判据永远为假，池子一直停在昨天，界面上就一直「等待今天的批次」。
 
-    拿不到批次日期（解析不出 / RSS 没给）时返回 True——宁可照常抓一次，也不能因为
-    一个判断失灵就再也不抓了。
+    连带的代价还不止于此：日期判据也把 RSS 缓存的写入条件卡死了（永远不「新鲜」），
+    于是每次探测都真去打 arXiv——把我们自己打到 429。
+
+    「有没有新论文可收」本来就是这个探测唯一关心的事，直接问它。
     """
     categories = await get_categories(session)
     if not categories:
         return True, None
     try:
-        _, batch_at = await get_arxiv_client().fetch_new(categories[0])
+        entries, batch_at = await get_arxiv_client().fetch_new(categories[0])
     except Exception:  # noqa: BLE001 — 探测失败不下结论，交给正式抓取去报错
         logger.warning("daily feed probe failed", exc_info=True)
         return True, None
-    if batch_at is None:
-        return True, None
-    batch_date = batch_at.astimezone(dt.UTC).date()
-    return batch_date >= _today_utc(), batch_date.isoformat()
+
+    declared = batch_at.astimezone(dt.UTC).date().isoformat() if batch_at else None
+    arxiv_ids = [str(e.get("arxiv_id")) for e in entries if e.get("arxiv_id")]
+    if not arxiv_ids:
+        # 一条都没有：周末/节假日的正常形态，没什么可收的
+        return False, declared
+
+    known = set(
+        (
+            await session.execute(
+                select(Paper.arxiv_id)
+                .join(DailyFeedEntry, DailyFeedEntry.paper_id == Paper.id)
+                .where(Paper.arxiv_id.in_(arxiv_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    fresh = any(aid not in known for aid in arxiv_ids)
+    return fresh, declared
 
 
 # ---- 保留期（可配置） ----

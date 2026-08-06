@@ -1191,7 +1191,13 @@ async def test_probe_creates_the_run_once_the_batch_appears(client, monkeypatch)
     ctx = {"redis": _Redis()}
     assert await daily_feed_sync(ctx) is None  # 还没发布
 
-    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _StubArxiv({}))
+    # 批次「出现」= 有我们还没收的论文，而**不是**声明日期变成了今天：arXiv 的日期
+    # 字段会滞后一天，按日期判会永远等下去。
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2608.66001", "新到的")]}, batch_date=yesterday),
+    )
     run_id = await daily_feed_sync(ctx)
     assert run_id is not None
     assert enqueued == [("run_voyage", run_id)]
@@ -1365,6 +1371,7 @@ async def test_probe_reports_whether_todays_batch_is_out(client, monkeypatch):
     await register_and_login(client)
     yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
 
+    # 空批次 = 没有可收的（周末/节假日的正常形态），日期照常如实报出来
     monkeypatch.setattr(
         daily_feed, "get_arxiv_client", lambda: _StubArxiv({}, batch_date=yesterday)
     )
@@ -1372,7 +1379,15 @@ async def test_probe_reports_whether_todays_batch_is_out(client, monkeypatch):
         fresh, seen = await daily_feed.todays_batch_available(session)
     assert fresh is False and seen == yesterday.isoformat()
 
-    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _StubArxiv({}))
+    # 有我们没收过的论文 = 该抓了。**与它声明哪天无关**：arXiv 的日期字段会滞后一天，
+    # 按日期判会永远判成「还没发」——生产上池子就是这么停在昨天的。
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {"cs.AI": [_rss_entry("2608.77001", "没收过的")]}, batch_date=yesterday
+        ),
+    )
     async with get_sessionmaker()() as session:
         fresh, _ = await daily_feed.todays_batch_available(session)
     assert fresh is True
@@ -1695,3 +1710,50 @@ def _fake_batch_available(batch_date: str):
         return True, batch_date
 
     return _available
+
+
+async def test_probe_looks_at_content_not_at_the_declared_date(client, monkeypatch):
+    """探测判「有没有我们还没收的论文」，而不是「声明日期是不是今天」。
+
+    生产上就是这么卡住的：arXiv 的 RSS 日期字段整体滞后一天——网页版已经是 8-06 的
+    清单、条目 id 也是当天的（2608.026xx），而 channel/item 的 pubDate 都还写着 8-05。
+    按日期判永远为假，池子停在昨天，界面上一直「等待今天的批次（7/10）」。
+    """
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    assert await register_and_login(client)
+    yesterday = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+
+    # 日期声明成昨天（模拟 arXiv 的滞后），内容是我们没见过的新论文
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {"cs.AI": [_rss_entry("2608.90001", "全新的一篇")]}, batch_date=yesterday.date()
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        fresh, declared = await daily_feed.todays_batch_available(session)
+    assert fresh is True, "内容是新的就该抓，别管它声明的日期"
+    assert declared == yesterday.date().isoformat()  # 日期照常如实报出来
+
+
+async def test_probe_says_no_when_everything_is_already_in_the_pool(client, monkeypatch):
+    """同一批重复出现时不再触发抓取——这才是「还没发新的」的真正含义。"""
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    assert await register_and_login(client)
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv({"cs.AI": [_rss_entry("2608.90002", "已经收过的")]}),
+    )
+    async with get_sessionmaker()() as session:
+        _, by_category, _ = await daily_feed.fetch_new_by_category(session)
+        await daily_feed.upsert_entries(session, by_category=by_category)
+
+        fresh, _ = await daily_feed.todays_batch_available(session)
+    assert fresh is False
+
