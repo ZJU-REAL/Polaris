@@ -15,6 +15,8 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     username: str | None = None
     username_locked: bool = False
     role: str
+    # 只读账号（游客）：前端据此挂只读横幅、把写入入口收起来
+    read_only: bool = False
     llm_access: str = "full"
     llm_self_managed: bool = False
     has_avatar: bool = False
@@ -92,6 +94,7 @@ class AdminUserRead(BaseModel):
     display_name: str
     username: str | None
     role: str
+    read_only: bool = False
     is_active: bool
     has_avatar: bool
     llm_access: str
@@ -110,6 +113,8 @@ class AdminUserCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=255)
     username: str = Field(pattern=USERNAME_PATTERN)
     role: str = Field(default="member", pattern="^(admin|member)$")
+    # 游客号：role=admin + read_only=true，看得见管理端、写不动任何东西
+    read_only: bool = False
     llm_access: str = Field(default="full", pattern="^(full|chat_only|blocked)$")
     token_quota: int | None = Field(default=None, ge=0)
 
@@ -120,6 +125,7 @@ class AdminUserUpdate(BaseModel):
     # 重置密码（≥8 位）；不传 = 不变
     password: str | None = Field(default=None, min_length=8, max_length=128)
     role: str | None = Field(default=None, pattern="^(admin|member)$")
+    read_only: bool | None = None
     is_active: bool | None = None
     # token_quota：传 -1 表示清除配额（恢复不限）
     token_quota: int | None = Field(default=None, ge=-1)

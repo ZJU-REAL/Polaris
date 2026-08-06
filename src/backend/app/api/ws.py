@@ -153,6 +153,11 @@ async def manuscript_crdt_ws(
     if file.readonly:
         await websocket.close(code=4403)  # 只读模板文件不开协同房间
         return
+    if user.read_only:
+        # 只读账号（游客）：协同房间是条写入通道，进来就能改正文。稿件正文照样能
+        # 用 HTTP 的 GET 读到，所以这里挡掉不影响「看得见」。
+        await websocket.close(code=4403)
+        return
 
     await websocket.accept()
     rooms = get_crdt_rooms()

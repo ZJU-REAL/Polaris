@@ -1465,3 +1465,23 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(25, 169, 116, 0.45); }
   50% { opacity: 0.5; box-shadow: 0 0 0 4px rgba(25, 169, 116, 0); }
 }
+
+/* 只读账号（游客）的常驻提示条：贴在顶栏下沿，占一行，不盖内容。
+   用警示色而不是危险色——只读不是出错，是这个账号本来的样子。 */
+.readonly-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-bottom: 0.5px solid var(--border-2);
+  flex-shrink: 0;
+}
+.readonly-strip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -35,6 +35,7 @@ async def _read(session: AsyncSession, target: User) -> AdminUserRead:
         display_name=target.display_name,
         username=target.username,
         role=target.role,
+        read_only=target.read_only,
         is_active=target.is_active,
         has_avatar=target.has_avatar,
         llm_access=target.llm_access,
@@ -85,7 +86,12 @@ async def create_user(
     target = await users_service.admin_update_user(
         session,
         target,
-        {"role": data.role, "llm_access": data.llm_access, "token_quota": data.token_quota},
+        {
+            "role": data.role,
+            "read_only": data.read_only,
+            "llm_access": data.llm_access,
+            "token_quota": data.token_quota,
+        },
     )
     return await _read(session, target)
 
@@ -103,7 +109,10 @@ async def update_user(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="USER_NOT_FOUND")
     payload = data.model_dump(exclude_unset=True)
     # 不能修改自己的角色/停用自己（防止管理员把自己锁在门外）
-    if target.id == admin.id and ("role" in payload or "is_active" in payload):
+    # 不能修改自己的角色/停用自己/把自己变成只读（防止管理员把自己锁在门外）
+    if target.id == admin.id and (
+        "role" in payload or "is_active" in payload or "read_only" in payload
+    ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="CANNOT_MODIFY_SELF_ROLE")
     # 重置密码：API 层用 password_helper 预先 hash，再交给 service
     if payload.pop("password", None) is not None:

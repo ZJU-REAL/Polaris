@@ -76,12 +76,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* non-JSON error body — keep statusText */
     }
-    throw new ApiError(res.status, detail, body);
+    throw new ApiError(res.status, readOnlyMessage(detail), body);
   }
   if (res.status === 204) {
     return undefined as T;
   }
   return (await res.json()) as T;
+}
+
+/** 只读账号撞上写操作时，别把后端的错误码原样甩给用户。只此一处，全站受益。 */
+function readOnlyMessage(detail: string): string {
+  if (detail !== 'READ_ONLY_ACCOUNT') return detail;
+  return tr('这是只读账号，只能查看，不能修改。', 'This account is read-only — you can look, but not change anything.');
 }
 
 function requestJson<T>(path: string, method: string, body: unknown): Promise<T> {
@@ -142,6 +148,8 @@ export interface UserRead {
   username?: string | null;
   username_locked?: boolean;
   role?: string;
+  /** true = 只读账号（游客）：看得见，改不动 */
+  read_only?: boolean;
   llm_access?: 'full' | 'chat_only' | 'blocked';
   /** true = 用户自管 LLM 配置；false = 由管理员统一接管（用全局配置） */
   llm_self_managed?: boolean;
@@ -162,6 +170,8 @@ export interface AdminUserRead {
   display_name: string;
   username: string | null;
   role: string;
+  /** true = 只读账号（游客） */
+  read_only: boolean;
   is_active: boolean;
   has_avatar: boolean;
   llm_access: string;
@@ -2942,6 +2952,8 @@ export const api = {
     display_name: string;
     username: string;
     role: 'member' | 'admin';
+    /** true = 只读账号（游客）：看得见角色允许看的一切，改不动任何东西 */
+    read_only?: boolean;
     llm_access: 'full' | 'chat_only' | 'blocked';
     /** 留空 = 不限 */
     token_quota?: number | null;
@@ -2956,6 +2968,7 @@ export const api = {
       /** 重置密码，至少 8 位；留空即不改 */
       password?: string;
       role?: string;
+      read_only?: boolean;
       is_active?: boolean;
       token_quota?: number;
       features?: Record<string, boolean>;

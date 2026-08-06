@@ -3,11 +3,12 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.api.auth import block_read_only_writes
 from app.api.router import api_router
 from app.api.ws import router as ws_router
 from app.core.config import get_settings
@@ -79,11 +80,15 @@ def create_app() -> FastAPI:
         # 未配置大模型：统一 503，前端提示到设置页配置，而不是 500 堆栈
         return JSONResponse(status_code=503, content={"detail": "LLM_NOT_CONFIGURED"})
 
-    app.include_router(api_router, prefix="/api")
+    # 只读账号的写入闸门挂在路由器层：一处生效，新端点自动被覆盖，不会因为
+    # 有人加了个 POST 忘记加守卫就漏出去。
+    read_only_gate = [Depends(block_read_only_writes)]
+    app.include_router(api_router, prefix="/api", dependencies=read_only_gate)
     # WS 不挂 /api 前缀：nginx 按 /ws 反代（Upgrade），见 docs/architecture.md §7
+    # WS 走不到 HTTP 依赖，只读账号在 ws.py 里各自挡（协同房间是写，通知只是收）
     app.include_router(ws_router)
     # MCP 只读工具服务：POST /mcp（Streamable HTTP，JSON-RPC 2.0），见 docs/mcp.md
-    app.include_router(mcp_router)
+    app.include_router(mcp_router, dependencies=read_only_gate)
     return app
 
 

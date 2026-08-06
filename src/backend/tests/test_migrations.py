@@ -9,8 +9,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d4e8b19c7a55"  # 记忆分层：fact 每轮带上 / note 检索到才回上下文
+HEAD_REVISION = "b3f5c1e07a92"  # 只读账号（游客）：能看的由 role 决定，能改的一律没有
 SKILLS_GLOBAL_REVISION = "07e7faea4c7a"  # 技能全局启用（user_skills，不再绑定课题）
+MEMORY_KIND_REVISION = "d4e8b19c7a55"  # 记忆分层：fact 每轮带上 / note 检索到才回上下文
 BUDDY_REVISION = "c31f7a9d40b2"  # Buddy 的长期记忆（用户自己写的）
 SKILLS_REVISION = "a22aa895244c"  # Skills v2（SKILL.md 渐进披露）
 DIGEST_REVISION = "e6a1c9d4f207"  # 文献库每日简报 + 相关性理由
@@ -116,6 +117,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     version, columns = _inspect_db(db_path)
     assert version == HEAD_REVISION
+    assert "read_only" in columns["users"]  # 只读账号（游客）
     assert "effort" in columns["model_routes"]  # 推理档位可配（NULL = 用模型默认）
     # 对话搬到服务端：agent 一轮里可能调好几次工具，历史不能只活在浏览器 localStorage
     assert {"conversations", "conversation_messages"} <= columns["_tables"]
@@ -357,7 +359,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "relevance_reason" in columns["library_papers"]
     assert "scored_run_id" in columns["library_papers"]  # 打分归属改记运行 id
 
-    # 最新 revision 可往返：先退掉记忆分层。
+    # 最新 revision 可往返：先退掉只读账号。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == MEMORY_KIND_REVISION
+    assert "read_only" not in columns["users"]
+
+    # 再退掉记忆分层。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == SKILLS_GLOBAL_REVISION

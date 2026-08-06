@@ -59,6 +59,7 @@ async def list_users_with_usage(session: AsyncSession) -> list[dict[str, Any]]:
             "display_name": u.display_name,
             "username": u.username,
             "role": u.role,
+            "read_only": u.read_only,
             "is_active": u.is_active,
             "has_avatar": u.has_avatar,
             "token_quota": u.token_quota,
@@ -103,6 +104,8 @@ async def admin_update_user(session: AsyncSession, user: User, data: dict[str, A
         user.role = v
     if (v := data.get("is_active")) is not None:
         user.is_active = v
+    if (v := data.get("read_only")) is not None:
+        user.read_only = v
     if (v := data.get("token_quota")) is not None:
         user.token_quota = None if v == -1 else v
     if (v := data.get("llm_access")) is not None:

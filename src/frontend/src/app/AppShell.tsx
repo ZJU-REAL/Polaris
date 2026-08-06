@@ -923,6 +923,19 @@ export function AppShell() {
             </div>
           )}
         </div>
+        {/* 只读账号：说在前面，别让人填完一整张表才被拒。常驻不可关——它不是通知，
+            是这个会话的事实。 */}
+        {me?.read_only && (
+          <div className="readonly-strip" role="status">
+            <Icon name="shield" size={13} />
+            <span>
+              {tr(
+                '只读账号：可以查看全部内容，但不能修改任何东西，也不会调用大模型。',
+                'Read-only account: you can view everything, but nothing can be changed and no model is called.',
+              )}
+            </span>
+          </div>
+        )}
         <div className="content scroll">
           <Outlet context={ctx} />
         </div>

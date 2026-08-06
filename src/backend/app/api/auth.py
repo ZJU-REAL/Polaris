@@ -119,6 +119,30 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
 
 # 其他路由用这个依赖拿当前登录用户
 current_active_user = fastapi_users.current_user(active=True)
+# 没登录不报错、返回 None——写入闸门要挂在所有路由上，公开端点不能因此变成必须登录
+current_user_optional = fastapi_users.current_user(active=True, optional=True)
+
+# 写入闸门放行的方法。收口在 HTTP 方法上，而不是给 211 个写端点逐个加守卫：
+# app/api 下没有任何 GET/HEAD 处理器写库，也没有任何一个走 LLM 守卫（加这层时
+# 遍历过全部处理器的 AST 核对），所以在这个代码库里「不安全方法」就等于「写」。
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# 登出是 POST，但它只销毁调用者自己的会话。不放行的话游客连退出登录都做不到。
+_READ_ONLY_ALLOWED_PATHS = frozenset({"/api/auth/jwt/logout"})
+
+
+async def block_read_only_writes(
+    request: Request,
+    user: User | None = Depends(current_user_optional),
+) -> None:
+    """只读账号的写入闸门（挂在整个 /api 与 /mcp 上，见 main.py）。
+
+    未登录直接放行——该拦的由各端点自己的鉴权依赖去拦，这里只管「登录了但只读」。
+    """
+    if user is None or not user.read_only:
+        return
+    if request.method in _SAFE_METHODS or request.url.path in _READ_ONLY_ALLOWED_PATHS:
+        return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, detail="READ_ONLY_ACCOUNT")
 
 
 async def require_admin(user: User = Depends(current_active_user)) -> User:
@@ -138,6 +162,10 @@ async def _check_llm_quota(session: AsyncSession, user: User) -> None:
 
 def _check_llm_access(user: User, *, chat: bool) -> None:
     """大模型使用权限：full=不限 | chat_only=仅文献对话与 AI 伴读 | blocked=锁定。"""
+    # 只读账号一个 token 也不该花。写入闸门已经挡住了所有调模型的入口（它们全是
+    # POST），这里再挡一次是为了不依赖「建号的人记得把 llm_access 设成 blocked」。
+    if user.read_only:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LLM_ACCESS_BLOCKED")
     level = user.llm_access or "full"
     if level == "blocked":
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LLM_ACCESS_BLOCKED")

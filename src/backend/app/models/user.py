@@ -23,6 +23,10 @@ class User(SQLAlchemyBaseUserTableUUID, TimestampMixin, Base):
     # 用户名只能在个人设置里改一次：改过一次后锁定（admin 预设即锁定）。
     username_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     role: Mapped[str] = mapped_column(String(32), default="member", nullable=False)  # admin|member
+    # 只读账号（游客）：看得见的和 role 决定的一样多，写得动的一样也没有。
+    # 与 role 正交是有意的——游客要看管理端就给 role=admin，26 处 role 判断照旧生效，
+    # 不必为「能看但不能改」再发明一个角色、再逐处回头改判断。
+    read_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # 大模型使用权限：full=不限 | chat_only=仅文献对话与 AI 伴读 | blocked=锁定
     llm_access: Mapped[str] = mapped_column(String(16), default="full", nullable=False)
     # LLM 配置归属：False=被管理员接管（用全局 provider/路由）| True=自管（用自己的）。

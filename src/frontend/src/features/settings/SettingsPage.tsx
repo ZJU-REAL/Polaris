@@ -3224,6 +3224,7 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'member' | 'admin'>('member');
+  const [readOnly, setReadOnly] = useState(false);
   const [llmAccess, setLlmAccess] = useState<'full' | 'chat_only' | 'blocked'>('full');
   const [quota, setQuota] = useState('');
 
@@ -3241,6 +3242,7 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
         display_name: displayName.trim(),
         username: username.trim(),
         role,
+        read_only: readOnly,
         llm_access: llmAccess,
         token_quota: quota.trim() === '' ? null : Math.max(0, Number(quota)),
       }),
@@ -3316,6 +3318,19 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
         error={quotaInvalid ? tr('请输入非负整数', 'Enter a non-negative number') : null}
       >
         <input className="input mono" value={quota} onChange={(e) => setQuota(e.target.value)} placeholder={tr('不限', 'Unlimited')} />
+      </FormField>
+      <FormField
+        label={tr('只读账号', 'Read-only account')}
+        hint={tr(
+          '打开后：这个账号能看到角色允许看的一切，但改不动任何东西，也不会调用大模型。给人演示时用。',
+          'When on, the account sees everything its role allows but cannot change anything and never calls a model. Use it for demos.',
+        )}
+        style={{ marginBottom: 0 }}
+      >
+        <label className="row gap8" style={{ cursor: 'pointer' }}>
+          <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
+          <span>{tr('只能查看，不能修改', 'Can view, cannot change')}</span>
+        </label>
       </FormField>
     </Modal>
   );
@@ -3394,6 +3409,7 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
   const [username, setUsername] = useState(u.username || '');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState(u.role);
+  const [readOnly, setReadOnly] = useState(u.read_only);
   const [active, setActive] = useState(u.is_active);
   const [quota, setQuota] = useState(u.token_quota != null ? String(u.token_quota) : '');
   const [llmAccess, setLlmAccess] = useState(u.llm_access || 'full');
@@ -3413,6 +3429,7 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
         username: username.trim(),
         ...(password !== '' ? { password } : {}),
         role,
+        read_only: readOnly,
         is_active: active,
         token_quota: quota.trim() === '' ? -1 : Math.max(0, Number(quota)),
         features,
@@ -3485,6 +3502,18 @@ function UserEditModal({ u, onClose }: { u: AdminUserRead; onClose: () => void }
           />
         </FormField>
       </div>
+      <FormField
+        label={tr('只读账号', 'Read-only account')}
+        hint={tr(
+          '打开后：能看到角色允许看的一切，但改不动任何东西，也不会调用大模型。',
+          'When on, this account sees everything its role allows but cannot change anything and never calls a model.',
+        )}
+      >
+        <label className="row gap8" style={{ cursor: 'pointer' }}>
+          <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
+          <span>{tr('只能查看，不能修改', 'Can view, cannot change')}</span>
+        </label>
+      </FormField>
       <FormField label={tr('大模型使用', 'LLM access')} hint={tr('限制该用户能否调用大模型', 'Controls whether this user can call LLMs')}>
         <SelectMenu
           value={llmAccess}
@@ -3684,6 +3713,12 @@ export function UsersTab() {
                     <span className="pill sm" style={u.role === 'admin' ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : undefined}>
                       {u.role === 'admin' ? tr('管理员', 'Admin') : tr('成员', 'Member')}
                     </span>
+                    {/* 只读是和角色正交的一维：一个只读管理员看得见全部、改不动任何东西 */}
+                    {u.read_only && (
+                      <span className="pill sm" style={{ marginLeft: 4 }} title={tr('只能查看，不能修改', 'Can view, cannot change')}>
+                        {tr('只读', 'Read-only')}
+                      </span>
+                    )}
                   </td>
                   <td>
                     <span className="pill sm" style={{ background: u.is_active ? 'var(--ok-bg)' : 'var(--surface-3)', color: u.is_active ? 'var(--ok-tx)' : 'var(--text-3)' }}>
