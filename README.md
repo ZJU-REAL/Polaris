@@ -30,6 +30,17 @@ hours or days without losing state.
 > citation matching) is deterministic code. LLMs are reserved for the judgement calls: scoring,
 > synthesis, drafting, and review. This split keeps runs cheap, reproducible, and auditable.
 
+## Demo
+
+A 2-minute tour of the platform: the six-stage pipeline, the Voyage agent core, a real experiment
+run, and PolarisBuddy.
+
+<a href="docs/assets/polaris-demo.mp4">
+  <img src="docs/assets/polaris-demo-cover.jpg" alt="Polaris 2-minute demo video" width="100%">
+</a>
+
+<p align="center"><em>Click the image to watch the video (<a href="docs/assets/polaris-demo.mp4">docs/assets/polaris-demo.mp4</a>).</em></p>
+
 ## The research pipeline
 
 Polaris models research as six stages. Each stage produces durable artifacts that the next stage
