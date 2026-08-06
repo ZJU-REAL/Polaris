@@ -66,6 +66,15 @@ export function AddToLibraryModal({
           e.message.replace(/^PARSE_FAILED:?\s*/, '') ||
             tr('内容解析失败，请检查格式', 'Failed to parse — check the format'),
         );
+      } else if (e instanceof ApiError && e.status === 503) {
+        // 上游（arXiv/OpenAlex）在限流。说清楚是别人家的问题、以及能怎么办——
+        // 「添加失败」三个字会让用户以为是自己输错了编号。
+        setParseError(
+          tr(
+            'arXiv 正在限流，暂时查不到这个编号的元数据。过几分钟再试，或者改用 DOI / BibTeX 添加。',
+            'arXiv is rate-limiting us and the metadata cannot be fetched right now. Try again in a few minutes, or add it by DOI / BibTeX.',
+          ),
+        );
       } else {
         toast(`${tr('添加失败：', 'Failed to add: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
       }

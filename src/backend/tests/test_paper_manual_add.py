@@ -4,6 +4,7 @@ import uuid
 
 import fakeredis.aioredis
 import httpx
+import pytest
 import pytest_asyncio
 import respx
 
@@ -296,3 +297,51 @@ async def test_resolve_unknown_arxiv_id_is_422(client, monkeypatch):
     resp = await client.get("/api/papers/resolve", params={"arxiv_id": "9999.99999"}, headers=headers)
     assert resp.status_code == 422
     assert resp.json()["detail"] == "ARXIV_ID_NOT_RESOLVED"
+
+
+async def test_arxiv_throttling_falls_back_to_openalex(monkeypatch):
+    """arXiv 限流时改用 OpenAlex 取元数据。
+
+    线上就是这么坏的：arXiv 429 → ArxivRateLimitedError 一路抛到端点 → 用户看到一句
+    「Internal Server Error」。字段会少一点（摘要常缺），但**能加进来的半篇远胜于
+    加不进来**——用户手里就是那个编号，让他因为上游限流干等着，等于把别人的故障
+    转嫁给他。
+    """
+    from app.services import paper_import
+    from app.services.literature.arxiv import ArxivRateLimitedError
+
+    class _Throttled:
+        async def fetch_by_ids(self, ids):  # noqa: ANN001
+            raise ArxivRateLimitedError("429 from arXiv")
+
+    class _OpenAlex:
+        async def get_by_arxiv(self, arxiv_id):  # noqa: ANN001
+            return {"title": "兜底拿到的标题", "year": 2026, "url": "https://example.org/x"}
+
+    monkeypatch.setattr(paper_import, "get_arxiv_client", lambda: _Throttled())
+    monkeypatch.setattr(paper_import, "get_openalex_client", lambda: _OpenAlex())
+
+    fields = await paper_import.resolve_fields(arxiv_id="2607.04425")
+    assert fields["title"] == "兜底拿到的标题"
+    assert fields["arxiv_id"] == "2607.04425"
+
+
+async def test_both_sources_down_is_a_parse_error_not_a_crash(monkeypatch):
+    """两边都查不到时给出可读的错误，而不是把异常抛穿。"""
+    from app.services import paper_import
+    from app.services.literature.arxiv import ArxivRateLimitedError
+
+    class _Throttled:
+        async def fetch_by_ids(self, ids):  # noqa: ANN001
+            raise ArxivRateLimitedError("429 from arXiv")
+
+    class _Empty:
+        async def get_by_arxiv(self, arxiv_id):  # noqa: ANN001
+            return None
+
+    monkeypatch.setattr(paper_import, "get_arxiv_client", lambda: _Throttled())
+    monkeypatch.setattr(paper_import, "get_openalex_client", lambda: _Empty())
+
+    with pytest.raises(paper_import.ParseFailedError) as excinfo:
+        await paper_import.resolve_fields(arxiv_id="2607.04425")
+    assert "限流" in str(excinfo.value)

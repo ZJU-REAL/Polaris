@@ -19,7 +19,7 @@ from app.services.libraries import (
     get_membership,
 )
 from app.services.literature import get_arxiv_client, get_openalex_client
-from app.services.literature.arxiv import normalize_arxiv_id
+from app.services.literature.arxiv import ArxivRateLimitedError, normalize_arxiv_id
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +99,39 @@ def _parse_iso(value: str | None) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
+async def _fields_from_openalex_arxiv(arxiv_id: str) -> dict[str, Any]:
+    """arXiv 限流时的兜底：同一篇论文 OpenAlex 也有元数据。
+
+    字段会少一点（摘要常缺、分类没有），但**能加进来的半篇远胜于加不进来**——
+    用户手里就是那个编号，让他因为上游限流而干等着，等于我们把别人的故障转嫁给他。
+    """
+    normalized = normalize_arxiv_id(arxiv_id)
+    meta = await get_openalex_client().get_by_arxiv(normalized)
+    if meta is None or not meta.get("title"):
+        raise ParseFailedError(f"arXiv 正在限流，OpenAlex 上也查不到 {normalized}")
+    return {
+        "title": meta["title"],
+        "authors": meta.get("authors"),
+        "affiliations": meta.get("affiliations") or [],
+        "abstract": meta.get("abstract"),
+        "year": meta.get("year"),
+        "venue": meta.get("venue"),
+        "doi": meta.get("doi"),
+        "url": meta.get("url") or f"https://arxiv.org/abs/{normalized}",
+        "arxiv_id": normalized,
+        "published_at": _parse_iso(meta.get("published")),
+    }
+
+
 async def _fields_from_arxiv(arxiv_id: str) -> dict[str, Any]:
     normalized = normalize_arxiv_id(arxiv_id)
-    entries = await get_arxiv_client().fetch_by_ids([normalized])
+    try:
+        entries = await get_arxiv_client().fetch_by_ids([normalized])
+    except ArxivRateLimitedError:
+        # arXiv 限流是常态（尤其每日抓取跑完之后）。这条路以前直接抛到端点、变成
+        # 一句「Internal Server Error」——用户既不知道发生了什么，也不知道要不要重试。
+        logger.warning("arxiv rate-limited, falling back to OpenAlex for %s", normalized)
+        return await _fields_from_openalex_arxiv(normalized)
     entry = next((e for e in entries if e.get("title")), None)
     if entry is None:
         raise ParseFailedError(f"arxiv 上查不到编号 {normalized}")

@@ -86,6 +86,7 @@ from app.services import papers as papers_service
 from app.services import research_digest as research_digest_service
 from app.services import statement_interview as interview
 from app.services.embedding import embed_query
+from app.services.literature.arxiv import ArxivRateLimitedError
 from app.services.wiki_export import build_obsidian_zip_for_libraries
 
 router = APIRouter(tags=["libraries"])
@@ -882,6 +883,14 @@ async def add_library_paper_manually(
             status_code=status.HTTP_409_CONFLICT,
             content={"detail": "PAPER_EXISTS", "paper_id": str(e.paper_id)},
         )
+    except ArxivRateLimitedError as e:
+        # 上游限流不是我们的故障，但用户看到的必须是「稍后再试」而不是
+        # 「Internal Server Error」——后者既没说发生了什么，也没说要不要重试。
+        # 元数据在 paper_import 里已经先试过 OpenAlex 兜底，走到这里说明两边都不行。
+        logger.warning("manual add hit upstream rate limit: %s", e)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="UPSTREAM_RATE_LIMITED"
+        ) from e
     except paper_import_service.ParseFailedError as e:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"PARSE_FAILED: {e}"
