@@ -152,6 +152,18 @@ async def require_admin(user: User = Depends(current_active_user)) -> User:
     return user
 
 
+async def block_read_only_personal_data(user: User = Depends(current_active_user)) -> User:
+    """名册依赖：只读账号（游客）看不到实验室成员的个人信息。
+
+    游客号是 role=admin + read_only，为的是「能看到管理端长什么样」，不是「能看到
+    这个实验室里都有谁、邮箱是多少」。挡在接口上而不是只把前端标签藏起来——藏了
+    标签接口还照答，等于没藏。
+    """
+    if user.read_only:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="READ_ONLY_NO_PERSONAL_DATA")
+    return user
+
+
 async def _check_llm_quota(session: AsyncSession, user: User) -> None:
     if user.token_quota is not None:
         from app.services.users import tokens_used_by_user

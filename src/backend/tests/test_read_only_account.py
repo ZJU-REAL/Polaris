@@ -36,8 +36,9 @@ async def test_guest_reads_admin_views_but_cannot_write(client):
     guest = await _make_guest(client, admin)
     gh = {"Authorization": f"Bearer {guest}"}
 
-    # 看得见：管理员才能看的用户列表照常 200
-    assert (await client.get("/api/admin/users", headers=gh)).status_code == 200
+    # 看得见：管理员才能看的配置页照常 200（成员名册另有守卫，见
+    # test_read_only_personal_data.py——游客能看管理端长什么样，但看不到实验室里有谁）
+    assert (await client.get("/api/admin/llm/providers", headers=gh)).status_code == 200
     me = await client.get("/api/users/me", headers=gh)
     assert me.status_code == 200
     assert me.json()["read_only"] is True  # 前端据此挂只读横幅

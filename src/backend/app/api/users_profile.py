@@ -10,7 +10,7 @@ from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import block_read_only_personal_data, current_active_user
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
@@ -56,8 +56,12 @@ async def search_users(
     q: str,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
+    _: User = Depends(block_read_only_personal_data),
 ) -> list[UserSearchResult]:
-    """按 email/显示名模糊查平台用户（加协作者用）；排除自己。"""
+    """按 email/显示名模糊查平台用户（加协作者用）；排除自己。
+
+    只读账号（游客）走不到这里：这个接口返回成员邮箱，藏了设置页的名册却留着它，
+    等于换个入口把同一份东西交出去。"""
     rows = await users_service.search_users(session, q, limit=10, exclude_ids=[user.id])
     return [UserSearchResult(id=u.id, email=u.email, display_name=u.display_name) for u in rows]
 

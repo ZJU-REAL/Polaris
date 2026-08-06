@@ -7,7 +7,12 @@ from fastapi_users import exceptions
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import UserManager, get_user_manager, require_admin
+from app.api.auth import (
+    UserManager,
+    block_read_only_personal_data,
+    get_user_manager,
+    require_admin,
+)
 from app.core.db import get_session
 from app.models.project import Project
 from app.models.user import User
@@ -51,6 +56,7 @@ async def _read(session: AsyncSession, target: User) -> AdminUserRead:
 async def list_users(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_admin),
+    __: User = Depends(block_read_only_personal_data),
 ) -> list[AdminUserRead]:
     rows = await users_service.list_users_with_usage(session)
     return [AdminUserRead(**r) for r in rows]
