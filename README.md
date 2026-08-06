@@ -35,11 +35,7 @@ hours or days without losing state.
 A 2-minute tour of the platform: the six-stage pipeline, the Voyage agent core, a real experiment
 run, and PolarisBuddy.
 
-<a href="docs/assets/polaris-demo.mp4">
-  <img src="docs/assets/polaris-demo-cover.jpg" alt="Polaris 2-minute demo video" width="100%">
-</a>
-
-<p align="center"><em>Click the image to watch the video (<a href="docs/assets/polaris-demo.mp4">docs/assets/polaris-demo.mp4</a>).</em></p>
+https://github.com/user-attachments/assets/388972c1-7ffa-45f2-94c4-07f388379ba2
 
 ## The research pipeline
 
