@@ -488,10 +488,10 @@ async def run_turn(
             # shield 是必需的——取消态下再 await 数据库写会被二次取消。
             import asyncio
 
-            blocks = timeline.blocks()
-            if blocks:
+            parts = timeline.messages()
+            if parts:
                 await asyncio.shield(
-                    _persist_answer(conv_id, user_id, blocks, timeline.text, stop_reason, usage)
+                    _persist_answer(conv_id, user_id, parts, timeline.text, stop_reason, usage)
                 )
                 await asyncio.shield(
                     _name_conversation(
@@ -606,6 +606,33 @@ class _TurnTimeline:
             self._blocks.append(ThinkingBlock("".join(self._thinking)))
             self._thinking = []
 
+    def messages(self) -> list[tuple[str, list[Any]]]:
+        """按**落库时的消息边界**切开：assistant（正文/思考/调用）+ 携带工具结果的消息。
+
+        不能把整轮塞进一条 assistant 消息——回放到 OpenAI 形状时，工具结果会变成
+        没有 tool_calls 前置的孤儿 tool 消息，中转直接 400。这条边界与循环里跑的时候
+        用的是同一套（结果单独成一条消息），回放才可能和当时等价。
+        """
+        self._flush_thinking()
+        out: list[tuple[str, list[Any]]] = []
+        current: list[Any] = []
+        for block in self._blocks:
+            if isinstance(block, ToolResultBlock):
+                if current:
+                    out.append(("assistant", current))
+                    current = []
+                if out and out[-1][0] == "tool_results":
+                    out[-1][1].append(block)
+                else:
+                    out.append(("tool_results", [block]))
+                continue
+            if out and out[-1][0] == "tool_results" and current == []:
+                pass
+            current.append(block)
+        if current:
+            out.append(("assistant", current))
+        return out
+
     def blocks(self) -> list[Any]:
         self._flush_thinking()
         return list(self._blocks)
@@ -634,7 +661,7 @@ async def _name_conversation(
 async def _persist_answer(
     conversation_id: uuid.UUID,
     user_id: uuid.UUID,
-    blocks: list[Any],
+    parts: list[tuple[str, list[Any]]],
     text: str,
     stop_reason: str,
     usage: dict[str, Any],
@@ -646,14 +673,22 @@ async def _persist_answer(
         conv = await store.get_or_create(
             session, user_id=user_id, scope_kind="global", conversation_id=conversation_id
         )
-        await store.append_message(
-            session,
-            conversation=conv,
-            role="assistant",
-            blocks=blocks,
-            text=text,
-            usage=usage or None,
-            stop_reason=stop_reason,
-            status="complete" if stop_reason != "interrupted" else "interrupted",
-        )
+        for index, (role, blocks) in enumerate(parts):
+            last = index == len(parts) - 1
+            await store.append_message(
+                session,
+                conversation=conv,
+                # 工具结果按 Anthropic 的形状装在 role="user" 里；kind 标出来，
+                # 好让回放与界面都能认出「这不是用户说的话」。
+                role="assistant" if role == "assistant" else "user",
+                kind="normal" if role == "assistant" else "tool_results",
+                blocks=blocks,
+                # 用量与终态只记在最后一条上，否则一轮会被算成好几轮
+                text=text if last else None,
+                usage=usage or None if last else None,
+                stop_reason=stop_reason if last else None,
+                status=("complete" if stop_reason != "interrupted" else "interrupted")
+                if last
+                else "complete",
+            )
         await session.commit()

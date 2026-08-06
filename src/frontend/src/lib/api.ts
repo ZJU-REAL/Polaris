@@ -4807,7 +4807,7 @@ export const api = {
   /** 全局助手：一场会话的完整消息（含工具块；SSE 里的 preview 是截断的）。 */
   getAssistantMessages(
     conversationId: string,
-  ): Promise<{ role: string; text: string; blocks: unknown[]; status: string }[]> {
+  ): Promise<{ role: string; kind: string; text: string; blocks: unknown[]; status: string }[]> {
     return request(`/chat/conversations/${conversationId}/messages`);
   },
   /** 全局助手：新建一场会话（后端开关关着时 404）。 */

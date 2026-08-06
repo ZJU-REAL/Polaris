@@ -482,9 +482,11 @@ async def test_a_turn_persists_its_whole_timeline_not_just_the_answer(client, ag
     messages = (
         await client.get(f"/api/chat/conversations/{conv_id}/messages", headers=headers)
     ).json()
-    assistant = [m for m in messages if m["role"] == "assistant"]
-    assert assistant, "助手消息没落库"
-    kinds = [b.get("kind") for m in assistant for b in (m["blocks"] or [])]
+    # 一轮会落成几条消息：assistant（正文/思考/调用）与携带工具结果的那条分开。
+    # 塞进一条的话，回放到 OpenAI 形状时工具结果就成了没有 tool_calls 前置的孤儿。
+    turn = [m for m in messages if m["role"] == "assistant" or m["kind"] == "tool_results"]
+    assert turn, "助手消息没落库"
+    kinds = [b.get("kind") for m in turn for b in (m["blocks"] or [])]
     assert "tool_use" in kinds, f"工具调用没落库：{kinds}"
     assert "tool_result" in kinds, f"工具结果没落库：{kinds}"
     assert "text" in kinds
@@ -492,7 +494,7 @@ async def test_a_turn_persists_its_whole_timeline_not_just_the_answer(client, ag
     # 工具结果存的是摘要而不是完整 payload——回放只需要「调了什么、拿到什么样的东西」
     results = [
         json.loads(b["content"])
-        for m in assistant
+        for m in turn
         for b in (m["blocks"] or [])
         if b.get("kind") == "tool_result"
     ]
@@ -605,3 +607,64 @@ async def test_plan_mode_tells_the_model_to_propose_before_acting(client, agent_
     assert "只做调研和规划" in plan and "update_plan" in plan
     goal = mode_instructions("goal", goal="把 CUA 这条线读透")
     assert "把 CUA 这条线读透" in goal
+
+
+async def test_replayed_history_never_orphans_a_tool_message(client, agent_on):
+    """回放出来的历史必须能原样喂回 OpenAI 形状的中转。
+
+    线上撞到的 400：「Messages with role 'tool' must be a response to a preceding
+    message with 'tool_calls'」——因为整轮曾被塞进**一条** assistant 消息，工具结果
+    和调用挤在一起，展开后 tool 消息前面没有带 tool_calls 的 assistant。
+    """
+    from app.core.llm.openai_compat import _messages_payload
+    from app.services import conversations as store
+
+    headers = await _headers(client, "orphan@example.com")
+    await _project_with_paper(client, headers, "Orphan Tool Message Paper")
+    conv_id = (await client.post("/api/chat/conversations", json={}, headers=headers)).json()["id"]
+
+    marker = 'POLARIS_FAKE_TOOL:search_papers:{"query": "Orphan", "mode": "keyword"}'
+    async with client.stream(
+        "POST",
+        f"/api/chat/conversations/{conv_id}/turn",
+        json={"question": f"查一下\n{marker}"},
+        headers=headers,
+    ) as stream:
+        await stream.aread()
+
+    async with get_sessionmaker()() as session:
+        history = await store.replay(session, conversation_id=uuid.UUID(conv_id))
+
+    payload = _messages_payload(history)
+    for index, entry in enumerate(payload):
+        if entry["role"] != "tool":
+            continue
+        assert index > 0, "tool 消息不能是第一条"
+        prev = payload[index - 1]
+        assert prev.get("tool_calls") or prev["role"] == "tool", (
+            f"第 {index} 条 tool 消息前面没有带 tool_calls 的 assistant：{payload[:index + 1]}"
+        )
+
+
+def test_a_single_message_holding_both_call_and_result_still_translates():
+    """存量历史就是这个形状（一条消息里既有调用又有结果），必须还能回放。"""
+    from app.core.llm.base import Message, TextBlock, ToolResultBlock, ToolUseBlock
+    from app.core.llm.openai_compat import _messages_payload
+
+    payload = _messages_payload(
+        [
+            Message(role="user", content="查一下"),
+            Message(
+                role="assistant",
+                content=[
+                    TextBlock("我去查"),
+                    ToolUseBlock("call-1", "search_papers", {"query": "x"}),
+                    ToolResultBlock("call-1", '{"results": []}'),
+                ],
+            ),
+        ]
+    )
+    roles = [e["role"] for e in payload]
+    assert roles == ["user", "assistant", "tool"]
+    assert payload[1]["tool_calls"][0]["id"] == "call-1"
+    assert payload[2]["tool_call_id"] == "call-1"

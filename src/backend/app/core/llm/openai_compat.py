@@ -133,6 +133,29 @@ def _messages_payload(messages: Sequence[Message]) -> list[dict[str, Any]]:
         images = [b for b in blocks if isinstance(b, ImageBlock)]
 
         if tool_results:
+            # 同一条消息里既有调用又有结果时，**必须先把调用发出去**：OpenAI 要求
+            # role="tool" 前面有一条带 tool_calls 的 assistant，否则 400
+            # （"Messages with role 'tool' must be a response to a preceding message
+            # with 'tool_calls'"）。落库时把整轮塞进一条 assistant 消息就会撞上这个；
+            # 存量历史已经是那个形状，所以这里必须能兜住。
+            if tool_uses:
+                out.append(
+                    {
+                        "role": "assistant",
+                        "content": "\n".join(texts),
+                        "tool_calls": [
+                            {
+                                "id": call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": call.name,
+                                    "arguments": json.dumps(call.input, ensure_ascii=False),
+                                },
+                            }
+                            for call in tool_uses
+                        ],
+                    }
+                )
             for result in tool_results:
                 out.append(
                     {

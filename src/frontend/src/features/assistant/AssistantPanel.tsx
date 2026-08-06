@@ -532,11 +532,20 @@ export function AssistantPanel({
         // 会话上存着的课题才是这场对话真正的作用域，跟着切过去
         setTurns(
           messages
-            .filter((m) => m.role === 'user' || m.role === 'assistant')
-            .map((m) => ({
-              role: m.role as 'user' | 'assistant',
-              blocks: restoreBlocks(m),
-            })),
+            // 一轮会落成几条消息：assistant（正文/调用）+ 携带工具结果的那条。
+            // 后者 role 是 user（Anthropic 形状），但**不是用户说的话**——按 kind 认出来
+            // 并入上一轮，否则历史里会冒出一堆空的「提问」。
+            .reduce<Turn[]>((turns, m) => {
+              if (m.role !== 'user' && m.role !== 'assistant') return turns;
+              const blocks = restoreBlocks(m);
+              const last = turns[turns.length - 1];
+              if (m.kind === 'tool_results' && last) {
+                last.blocks = [...last.blocks, ...blocks];
+                return turns;
+              }
+              turns.push({ role: m.role as 'user' | 'assistant', blocks });
+              return turns;
+            }, []),
         );
       } catch {
         /* 载入失败保持现状 */
