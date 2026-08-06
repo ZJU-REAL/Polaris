@@ -27,6 +27,7 @@ from app.core.llm.base import (
     ThinkingBlock,
     ThinkingDelta,
     ToolResultBlock,
+    ToolsUnsupportedError,
     ToolUseArgsDelta,
     ToolUseBlock,
     ToolUseStart,
@@ -50,6 +51,23 @@ _EFFORT_REJECT_MARKERS = ("reasoning_effort", "reasoning.effort", "effort")
 
 class _EffortUnsupported(RuntimeError):
     """服务端明确因 reasoning_effort 拒绝了请求；调用方去掉该参数重试。"""
+
+
+#: 中转/本地推理服务不支持 tools 时的说法。命中就降级回无工具的一次性问答，
+#: 而不是把这轮打成失败——用户要的是答案，不是「你的服务端不支持函数调用」。
+_TOOLS_REJECT_MARKERS = (
+    "tools is not supported",
+    "tool_choice",
+    "does not support tools",
+    "function calling",
+    "functions are not supported",
+    "unsupported parameter: 'tools'",
+)
+
+
+def _tools_unsupported(body: str) -> bool:
+    low = body.lower()
+    return any(marker in low for marker in _TOOLS_REJECT_MARKERS)
 
 
 def _rejects_effort(body: str) -> bool:
@@ -394,7 +412,15 @@ class OpenAICompatProvider(LLMProvider):
                 body = (await resp.aread()).decode(errors="replace")[:500]
                 if payload.get("reasoning_effort") is not None and _rejects_effort(body):
                     raise _EffortUnsupported(body)
-                resp.raise_for_status()
+                if resp.status_code == 400 and _tools_unsupported(body):
+                    # 这个中转不认 tools：交给上层降级，而不是把这轮打成失败
+                    raise ToolsUnsupportedError(body)
+                # **不要用 raise_for_status()**：httpx 的那个异常只带状态码，把上游
+                # 已经写明的原因（哪个参数不合法、哪个模型不存在）整段丢掉，用户拿到
+                # 的就只有一句「400 Bad Request」，我们也无从查起。
+                raise RuntimeError(
+                    f"openai_compat {resp.status_code} from {self._base_url}: {body}"
+                )
             async for line in resp.aiter_lines():
                 if not line.startswith("data:"):
                     continue

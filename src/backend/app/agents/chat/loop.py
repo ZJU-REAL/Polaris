@@ -194,10 +194,25 @@ class ChatAgentLoop:
                         for key in ("prompt_tokens", "completion_tokens"):
                             state.usage[key] = state.usage.get(key, 0) + int(ev.usage.get(key, 0))
             except ToolsUnsupportedError as e:
-                # 这个中转不认 tools：交给调用方降级回一次性 RAG，别把这轮打成失败
+                # 这个中转/推理服务不认 tools。**就地降级重来一轮**，而不是把这轮判死：
+                # 用户要的是答案，「你的服务端不支持函数调用」对他毫无用处。降级之后
+                # 模型没有工具，只能凭上下文答——所以要明说这一轮没查库。
                 logger.warning("chat agent: provider rejected tools: %s", e)
-                yield ErrorEvent(str(e), code="TOOLS_UNSUPPORTED", recoverable=True)
-                return
+                if not specs:
+                    yield ErrorEvent(str(e), code="TOOLS_UNSUPPORTED", recoverable=True)
+                    return
+                specs = []
+                messages.append(
+                    Message(
+                        role="user",
+                        content=(
+                            "（这次运行的模型不支持调用工具，接下来只能凭已有上下文回答。"
+                            "凡是需要查库才能确定的事，请明说你没查过。）"
+                        ),
+                    )
+                )
+                state.rounds -= 1  # 降级重来不算一轮，否则白扣一次预算
+                continue
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 — 转成事件，会话继续活着

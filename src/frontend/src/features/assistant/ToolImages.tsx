@@ -52,6 +52,9 @@ function FigureImage({ figure, onOpen }: { figure: ImageRef; onOpen: (url: strin
       {url ? (
         <img
           src={url}
+          // 200 但解不出来（代理返回了 HTML、文件损坏）时，<img> 只会安静地显示 alt
+          // 文本——看起来像「图注旁边空了一块」。显式转成失败态，说清楚这张没显示出来。
+          onError={() => setFailed(true)}
           alt={figure.label ?? `figure ${figure.index}`}
           onClick={() => onOpen(url)}
           style={{

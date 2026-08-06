@@ -39,6 +39,7 @@ export function InlineFigure({ paperId, index }: { paperId: string; index: numbe
     <a href={`/papers/${paperId}/read`} title={tr('点击打开论文', 'open the paper')}>
       <img
         src={url}
+        onError={() => setFailed(true)}
         alt={tr('论文配图', 'paper figure')}
         style={{
           display: 'block',

@@ -175,3 +175,26 @@ def test_completion_result_rebuilds_the_assistant_message_with_blocks():
     plain = CompletionResult(content="hi", model="m")
     assert plain.as_assistant_message().content == "hi"
     assert plain.tool_calls == ()
+
+
+def test_provider_errors_keep_the_upstream_body():
+    """400 的原因写在上游的响应体里，不能只把状态码抛出去。
+
+    线上就撞过：用户只看到「HTTPStatusError: 400 Bad Request」，而中转其实已经写明了
+    是哪个参数不合法——那行字被 raise_for_status() 丢掉了，我们和用户都无从查起。
+    """
+    import inspect
+
+    from app.core.llm import openai_compat
+
+    src = inspect.getsource(openai_compat.OpenAICompatProvider.stream_events)
+    assert "raise_for_status" not in src, "流式错误路径不能用 raise_for_status（它丢正文）"
+
+
+def test_tools_unsupported_is_detected_from_the_body():
+    """不认 tools 的说法五花八门，命中就该降级而不是失败。"""
+    from app.core.llm.openai_compat import _tools_unsupported
+
+    assert _tools_unsupported('{"error":{"message":"tools is not supported for this model"}}')
+    assert _tools_unsupported("Unsupported parameter: 'tools'")
+    assert not _tools_unsupported('{"error":{"message":"context length exceeded"}}')
