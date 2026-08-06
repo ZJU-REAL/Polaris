@@ -8,6 +8,10 @@ on:
     paths:
       - "docker/**"
       - "src/backend/pyproject.toml"
+      # 前端源码也要触发：镜像构建里跑的是 `npm run build`（tsc --noEmit && vite build），
+      # 一个类型错就让整个前端镜像出不来。以前这里不含前端，于是 5a3cd37 带着编译错误
+      # 合进 main，直到部署才发现——CI 全绿，因为它根本没跑。
+      - "src/frontend/**"
       - ".github/workflows/docker-build.yml"
   workflow_dispatch:
 
