@@ -164,6 +164,18 @@ async def block_read_only_personal_data(user: User = Depends(current_active_user
     return user
 
 
+async def block_read_only_secrets(user: User = Depends(current_active_user)) -> User:
+    """密钥依赖：只读账号（游客）看不到能拿去用的东西。
+
+    与 block_read_only_personal_data 分开是因为理由不同：那条挡的是「实验室里有谁」，
+    这条挡的是「拿了就能用」。注册码尤其如此——只读挡得住写，挡不住它被抄走，因为
+    用它开号走的是公开的注册接口，写入闸门根本看不到那一步。
+    """
+    if user.read_only:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="READ_ONLY_NO_SECRETS")
+    return user
+
+
 async def _check_llm_quota(session: AsyncSession, user: User) -> None:
     if user.token_quota is not None:
         from app.services.users import tokens_used_by_user

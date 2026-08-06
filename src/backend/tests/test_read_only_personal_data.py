@@ -40,6 +40,19 @@ async def test_guest_cannot_read_the_roster(client):
     assert found.json()["detail"] == "READ_ONLY_NO_PERSONAL_DATA"
 
 
+async def test_guest_cannot_read_the_registration_codes(client):
+    """注册码是明文，抄走就能开真账号——只读挡得住写，挡不住它被读走。"""
+    admin = await register_and_login(client)
+    guest = await _make_guest(client, admin)
+
+    codes = await client.get(
+        "/api/admin/registration-codes", headers={"Authorization": f"Bearer {guest}"}
+    )
+    assert codes.status_code == 403
+    # 与名册用不同的错误码：理由不同，一个是「有谁」，一个是「拿了就能用」
+    assert codes.json()["detail"] == "READ_ONLY_NO_SECRETS"
+
+
 async def test_guest_still_sees_the_non_personal_admin_screens(client):
     """挡的是「实验室里有谁」，不是「管理端长什么样」——游客仍该看得见配置。"""
     admin = await register_and_login(client)
@@ -47,8 +60,7 @@ async def test_guest_still_sees_the_non_personal_admin_screens(client):
     gh = {"Authorization": f"Bearer {guest}"}
 
     for path in (
-        "/api/admin/llm/providers",  # 模型配置：没有人的信息
-        "/api/admin/registration-codes",  # 注册码不记兑换人
+        "/api/admin/llm/providers",  # 模型配置：api_key 是脱敏的，没有人的信息
         "/api/admin/settings/experiment-env",
     ):
         resp = await client.get(path, headers=gh)
@@ -61,3 +73,4 @@ async def test_admins_and_members_are_unaffected(client):
     ah = {"Authorization": f"Bearer {admin}"}
     assert (await client.get("/api/admin/users", headers=ah)).status_code == 200
     assert (await client.get("/api/collaborators/search?q=example", headers=ah)).status_code == 200
+    assert (await client.get("/api/admin/registration-codes", headers=ah)).status_code == 200

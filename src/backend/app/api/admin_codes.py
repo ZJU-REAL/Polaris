@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import require_admin
+from app.api.auth import block_read_only_secrets, require_admin
 from app.core.db import get_session
 from app.models.user import User
 from app.schemas.registration_code import RegistrationCodeCreate, RegistrationCodeRead
@@ -54,6 +54,7 @@ async def create_registration_code(
 async def list_registration_codes(
     session: AsyncSession = Depends(get_session),
     _: User = Depends(require_admin),
+    __: User = Depends(block_read_only_secrets),
 ) -> list[RegistrationCodeRead]:
     rows = await codes_service.list_codes(session)
     return [_to_read(rc) for rc in rows]
