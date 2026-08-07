@@ -236,37 +236,33 @@ async def test_no_improve_stop_budget_param(client, queue_stub, fake_ssh, bus_re
     assert detail["iteration_state"]["no_improve_streak"] == 3
 
 
-async def test_debug_limit_terminates(client, queue_stub, fake_ssh, bus_recorder):
-    """运行失败走 debug 分支：独立限额 3 次，第 4 次 debug 决策直接终止。
-
-    全部轮次失败 → 一个主指标都没产出 → 完成标准终检不过：不再一律 paused_error，
-    转向用户提问（接受为完成 / 继续补做 / 放弃），实验镜像 waiting_user。
-    """
+async def test_debug_repeats_until_run_budget(client, queue_stub, fake_ssh, bus_recorder):
+    """debug 不再按次数终止（旧限额 3 次）：只受轮数/时间预算约束。
+    每轮都失败、decision 一直 debug → 修到 max_runs 截断；全部轮次失败 →
+    完成标准终检转提问（零主指标），报告仍按事实收口为 failed。"""
     fake_ssh.run_exit = 1  # 每轮正式运行都失败
     fake_ssh.run_log = "Traceback: train boom\n"
-    project_id, headers, exp_id, voyage_id = await _launch_experiment(client)
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(
+        client, budget={"max_hours": 2, "max_runs": 5}
+    )
     await _drive_pipeline(
         client, headers, project_id, voyage_id, _router_with(_FixedReflectionProvider("debug"))
     )
 
     voyage_status, observation = await _iterate_observation(client, headers, voyage_id)
     assert voyage_status == "paused_ask"
-    assert observation["stopped_reason"] == "debug_limit"
+    assert observation["stopped_reason"] == "max_runs"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["open_ask"]["payload"]["ask_kind"] == "done_criteria"
     detail = await _get_detail(client, headers, exp_id)
-    assert len(detail["runs"]) == 4  # 首轮 + 3 次 debug 修复重跑
+    assert len(detail["runs"]) == 5  # 修过 4 次（超过旧限额 3）仍在继续，直到轮数预算
     assert all(r["status"] == "failed" for r in detail["runs"])
     assert all(r["reflection"]["decision"] == "debug" for r in detail["runs"])
     state = detail["iteration_state"]
-    assert state["no_improve_streak"] == 0  # 失败轮无主指标，不计入无提升
-    assert state["debug_count"] == 3
-    assert state["stopped_reason"] == "debug_limit"
-    # 末轮全失败 → 报告仍按事实收口为 failed（终态在先，提问镜像不覆盖终态）；
-    # 但 voyage 的完成标准提问仍开着，用户可拍板接受/放弃
+    assert state["debug_count"] == 4  # 不再在 3 处截断
+    assert state["stopped_reason"] == "max_runs"
     assert detail["status"] == "failed"
     assert detail["report"].startswith("## 实验报告")
-
 
 async def test_analyze_ask_pauses_then_guidance_continues(
     client, queue_stub, fake_ssh, bus_recorder

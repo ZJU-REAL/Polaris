@@ -326,7 +326,7 @@ def experiment_plan(run: VoyageRun) -> list[dict[str, Any]]:
 
     失败语义按节点分派：plan/setup/analyze/figures/report 失败走 loop 回灌
     （原地重试 → AI 计划调整）；smoke 保留 on_failure="fail"——动作内部已有
-    LLM 修复循环（MAX_SMOKE_FIXES），修完仍失败说明代码根本性不可用，诚实硬停
+    LLM 修复循环（只受时间预算约束），仍失败会转向用户提问，不自动重规划
     且 max_attempts=1 防引擎级重跑整个修复循环。
     """
     steps = [

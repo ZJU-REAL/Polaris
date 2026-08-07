@@ -39,7 +39,8 @@ from app.services.projects import in_my_projects
 
 logger = logging.getLogger("polaris.experiments")
 
-DEFAULT_BUDGET: dict[str, Any] = {"max_hours": 4, "max_runs": 10, "no_improve_stop": 2}
+# max_hours=0 = 无限时（用户定调：修复/运行只受显式时间预算约束，默认不设限）
+DEFAULT_BUDGET: dict[str, Any] = {"max_hours": 0, "max_runs": 10, "no_improve_stop": 2}
 
 
 class IdeaNotFoundError(Exception):
@@ -145,6 +146,12 @@ async def create_experiment(
                 "eval_model": params.eval_model if params else None,
                 "hf_mirror": bool(params.hf_mirror) if params else False,
                 "extra_notes": params.extra_notes if params else None,
+                # 开题问答（AI 按 idea 生成的问题 + 用户回答）：进 plan/codegen prompt
+                "intake": (
+                    [qa.model_dump() for qa in params.intake]
+                    if params and params.intake
+                    else None
+                ),
             }
         },
         budget=None,

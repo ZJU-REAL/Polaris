@@ -338,10 +338,10 @@ async def test_smoke_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus
     assert resp.json()["status"] == "done"
 
 
-async def test_smoke_exhausted_asks_user(client, queue_stub, fake_ssh, bus_recorder):
-    """冒烟连续失败（1 次 + 2 次修复重试）→ 不再打死任务：动作主动提问（paused_ask），
-    节点回 pending 不烧尝试预算；实验镜像「等你回复」；回答重试后修复计数清零续跑。"""
-    fake_ssh.smoke_exits = [1, 1, 1, 0]  # 前 3 次失败（额度用尽提问），回答重试后第 4 次通过
+async def test_smoke_fixes_unbounded_until_success(client, queue_stub, fake_ssh, bus_recorder):
+    """冒烟修复不再按次数设限：连续失败 3 次（超过旧上限）仍继续修，第 4 次通过，
+    全程不提问、不打断，整条流水线走完。"""
+    fake_ssh.smoke_exits = [1, 1, 1, 0]
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
@@ -355,33 +355,13 @@ async def test_smoke_exhausted_asks_user(client, queue_stub, fake_ssh, bus_recor
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
-    assert voyage["status"] == "paused_ask"
-    ask = voyage["open_ask"]
-    assert ask is not None and ask["payload"]["ask_kind"] == "fatal_step"
-    assert "代码试跑连续失败" in ask["text"]
+    assert voyage["status"] == "done", voyage
+    smoke_step = next(s for s in voyage["steps"] if s["action"] == "experiment.smoke")
+    assert smoke_step["observation"] == {"exit_code": 0, "attempts": 4, "fixes": 3}
     statuses = [e[2]["status"] for e in bus.voyage_events if e[1] == "status"]
-    assert "replanning" not in statuses  # 不走 LLM 重规划
-    smoke_step = voyage["steps"][2]
-    assert smoke_step["action"] == "experiment.smoke"
-    assert smoke_step["status"] == "pending"  # 提问不烧尝试预算，节点等回答后重跑
-
-    # 实验镜像「等你回复」，不再被 _guarded 提前打成 failed
-    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
-    assert resp.json()["status"] == "waiting_user"
-
-    # 回答「重试」并附指示 → 恢复执行；冒烟重跑通过，整条流水线走完
-    resp = await client.post(
-        f"/api/voyages/{voyage_id}/asks/{ask['id']}/answer",
-        json={"choice": "retry", "text": "换个更小的冒烟配置"},
-        headers=headers,
-    )
-    assert resp.status_code == 201
-    await engine.resume(uuid.UUID(voyage_id))
-    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
-    assert resp.json()["status"] == "done"
+    assert "paused_ask" not in statuses  # 修复期间不打断
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.json()["status"] == "done"
-
 
 async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus_recorder):
     """依赖安装第一次失败 → 报错回 LLM 修 requirements/run.sh → 重装通过（对称 smoke 自愈）。"""
@@ -409,10 +389,10 @@ async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh,
     assert resp.json()["status"] == "done"
 
 
-async def test_setup_deps_exhausted_asks_then_retry(client, queue_stub, fake_ssh, bus_recorder):
-    """依赖装不上、内部修复用尽 → 不再抛错让引擎盲目重装（线上实测「一直装镜像」）：
-    转向用户提问（paused_ask）；回答重试后修复计数清零、装通、整条流水线走完。"""
-    fake_ssh.setup_exits = [1, 1, 1, 0]  # 耗尽一轮内部修复（1 次 + 2 次 fixes）→ 提问；答后重装通过
+async def test_setup_fixes_unbounded_until_success(client, queue_stub, fake_ssh, bus_recorder):
+    """修复不再按次数设限（用户定调）：连续失败 3 次（超过旧上限 2）仍继续修，
+    第 4 次装通、整条流水线走完，全程不提问。"""
+    fake_ssh.setup_exits = [1, 1, 1, 0]
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
@@ -425,26 +405,58 @@ async def test_setup_deps_exhausted_asks_then_retry(client, queue_stub, fake_ssh
     await engine.resume(uuid.UUID(voyage_id))
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "done", resp.json()
+    setup_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.setup")
+    assert setup_step["observation"]["fixes"] == 3  # 旧上限是 2：现在不设限
+    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
+    assert resp.json()["status"] == "done"
+
+
+async def test_setup_time_budget_exceeded_asks(
+    client, queue_stub, fake_ssh, bus_recorder, monkeypatch
+):
+    """唯一的刹车是时间预算：超出 budget.max_hours → 转向用户提问；
+    回答重试后（时间预算内）装通走完。"""
+    fake_ssh.setup_exits = [1, 0]
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(
+        client, headers, project_id, idea_id, cred_id, budget={"max_hours": 2, "max_runs": 3}
+    )
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    # 让「本阶段已耗时」显得超预算（相位时钟拨快）
+    monkeypatch.setattr(ax, "_phase_deadline_exceeded", lambda budget, started: True)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
     assert voyage["status"] == "paused_ask", voyage
     ask = voyage["open_ask"]
-    assert ask is not None and "实验环境装不起来" in ask["text"]
-    setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
-    assert setup_step["status"] == "pending"  # 提问不烧尝试预算
+    assert ask is not None and "超出时间预算" in ask["text"]
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.json()["status"] == "waiting_user"
 
-    # 回答重试 → setup 重跑（第 4 个退出码 0）→ 全程走完
+    # 回答重试（恢复真实时钟）→ 装通走完
+    monkeypatch.setattr(
+        ax, "_phase_deadline_exceeded", ax._phase_deadline_exceeded.__wrapped__
+        if hasattr(ax._phase_deadline_exceeded, "__wrapped__")
+        else ax._phase_deadline_exceeded,
+    )
+    monkeypatch.undo()
+    monkeypatch.setattr(ax, "RUN_POLL_SECONDS", 0)  # undo 会连 fast_poll 一起撤销，补回
     resp = await client.post(
         f"/api/voyages/{voyage_id}/asks/{ask['id']}/answer",
-        json={"choice": "retry", "text": "精简依赖再装一次"},
+        json={"choice": "retry", "text": "换更快的镜像源"},
         headers=headers,
     )
     assert resp.status_code == 201
     await engine.resume(uuid.UUID(voyage_id))
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
-    assert resp.json()["status"] == "done"
-    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.json()["status"] == "done"
 
 
@@ -597,6 +609,93 @@ async def test_experiment_memory_written_and_synced(client, queue_stub, fake_ssh
         assert "第 3 轮结论" in resp.json()["content"]
     finally:
         ssh_exec.set_connector_factory(None)
+
+
+class _IntakeProvider(FakeProvider):
+    """开题提问：返回 6 个问题（超上限，应被截到 5）。"""
+
+    async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+        full = "\n".join(m.content for m in messages)
+        if "开题助手" in full:
+            payload = {
+                "questions": [
+                    {"question": f"问题 {i}：用哪个数据集？", "hint": f"提示 {i}"}
+                    for i in range(1, 7)
+                ]
+            }
+            return CompletionResult(
+                content=json.dumps(payload, ensure_ascii=False),
+                model=model,
+                finish_reason="stop",
+                usage={"prompt_tokens": 1, "completion_tokens": 1},
+            )
+        return await super().complete(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
+        )
+
+
+async def test_intake_questions_and_answers_reach_plan(client, queue_stub, fake_ssh, bus_recorder):
+    """开题提问端点：按 idea 生成问题（≤5 截断）；回答随创建提交后进 plan prompt。"""
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+
+    from app.core.llm import router as llm_router_module
+
+    router = llm_router_module.get_llm_router()
+    router.override_provider(_IntakeProvider())
+    try:
+        resp = await client.post(
+            f"/api/projects/{project_id}/experiments/intake-questions",
+            json={"idea_id": idea_id},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        questions = resp.json()["questions"]
+        assert len(questions) == 5  # 超出上限被截断
+        assert questions[0]["question"].startswith("问题 1")
+        assert questions[0]["hint"] == "提示 1"
+    finally:
+        llm_router_module.reset_llm_router()
+
+    # 带开题问答创建：答案进 plan prompt（prompt spy）
+    class _PlanPromptSpy(FakeProvider):
+        def __init__(self) -> None:
+            self.saw_intake = False
+
+        async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+            full = "\n".join(m.content for m in messages)
+            if "开题问答" in full and "用 GSM8K 的前 500 条" in full:
+                self.saw_intake = True
+            return await FakeProvider.complete(
+                self, messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                images=images,
+            )
+
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    # 重建一个带 intake 的实验（上面的默认建实验只是确认互不影响）
+    resp = await client.post(
+        f"/api/projects/{project_id}/experiments",
+        json={
+            "idea_id": idea_id,
+            "credential_id": cred_id,
+            "params": {
+                "intake": [
+                    {"question": "用哪个数据集？", "answer": "用 GSM8K 的前 500 条"},
+                    {"question": "要对照组吗？", "answer": ""},
+                ]
+            },
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    voyage_id = resp.json()["voyage_id"]
+    spy = _PlanPromptSpy()
+    router = LLMRouter()
+    router.override_provider(spy)
+    engine, _ = _make_engine(router)
+    await engine.run(uuid.UUID(voyage_id))  # 跑到 compute_budget 闸门（plan 已生成）
+    assert spy.saw_intake
 
 
 def test_parse_gpu_csv_unit():
@@ -783,7 +882,7 @@ async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_record
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
     resp = await _create_experiment(
-        client, headers, project_id, idea_id, cred_id, budget={"max_hours": 0, "max_runs": 3}
+        client, headers, project_id, idea_id, cred_id, budget={"max_hours": 1e-9, "max_runs": 3}
     )
     exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
 
@@ -1063,10 +1162,10 @@ async def test_create_experiment_validation(client, queue_stub, fake_ssh):
     assert resp.status_code == 404
     assert resp.json()["detail"] == "CREDENTIAL_NOT_FOUND"
 
-    # 默认预算（M5-A：含 no_improve_stop）
+    # 默认预算：时数 0 = 无限时（用户定调），轮数与无提升阈值保底
     resp = await _create_experiment(client, headers, project_id, promoted_id, cred_id)
     assert resp.status_code == 201
-    assert resp.json()["budget"] == {"max_hours": 4, "max_runs": 10, "no_improve_stop": 2}
+    assert resp.json()["budget"] == {"max_hours": 0, "max_runs": 10, "no_improve_stop": 2}
 
 
 async def test_experiment_member_permissions(client, queue_stub, fake_ssh):

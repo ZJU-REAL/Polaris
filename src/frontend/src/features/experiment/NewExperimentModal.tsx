@@ -6,14 +6,15 @@ import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { toast } from '../../components/ui/Toast';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { api } from '../../lib/api';
+import { api, type ExperimentIntakeQuestion } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { topicPath } from '../../app/project';
 
 /* ============================================================
    新建实验 Modal：选 promoted idea + SSH 凭据 + 预算 →
-   POST /projects/{pid}/experiments（后端同时创建 experiment voyage）。
-   无凭据时提示去设置页添加。
+   AI 按 idea 生成 ≤5 个开题问题（代替静态 GPU 提示/高级选项表单），
+   用户作答（可跳过）→ POST /projects/{pid}/experiments。
+   其余不确定点实验过程中经提问机制动态交互——用户决定权更大、更灵活。
    ============================================================ */
 
 export interface NewExperimentModalProps {
@@ -30,13 +31,11 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
 
   const [ideaId, setIdeaId] = useState('');
   const [credentialId, setCredentialId] = useState('');
-  const [maxHours, setMaxHours] = useState('4');
+  const [maxHours, setMaxHours] = useState('');
   const [maxRuns, setMaxRuns] = useState('10');
-  const [gpuHint, setGpuHint] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [evalModel, setEvalModel] = useState('');
-  const [hfMirror, setHfMirror] = useState(false);
-  const [extraNotes, setExtraNotes] = useState('');
+  const [questions, setQuestions] = useState<ExperimentIntakeQuestion[]>([]);
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [intakeState, setIntakeState] = useState<'idle' | 'loading' | 'ready' | 'skipped'>('idle');
 
   const ideasQuery = useQuery({
     queryKey: ['ideas', pid, 'promoted'],
@@ -57,13 +56,11 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
   useEffect(() => {
     if (!open) return;
     setIdeaId(initialIdeaId ?? '');
-    setMaxHours('4');
+    setMaxHours('');
     setMaxRuns('10');
-    setGpuHint('');
-    setShowAdvanced(false);
-    setEvalModel('');
-    setHfMirror(false);
-    setExtraNotes('');
+    setQuestions([]);
+    setAnswers([]);
+    setIntakeState('idle');
   }, [open, initialIdeaId]);
 
   // 凭据加载后默认选第一个
@@ -75,22 +72,46 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
     if (creds.length === 0) setCredentialId('');
   }, [open, creds, credentialId]);
 
+  // 选定 idea → AI 生成开题问题（失败/为空则静默降级：直接创建）
+  useEffect(() => {
+    if (!open || !ideaId) return;
+    let cancelled = false;
+    setIntakeState('loading');
+    setQuestions([]);
+    setAnswers([]);
+    api
+      .getExperimentIntakeQuestions(pid, ideaId)
+      .then((r) => {
+        if (cancelled) return;
+        const qs = (r.questions ?? []).slice(0, 5);
+        setQuestions(qs);
+        setAnswers(qs.map(() => ''));
+        setIntakeState(qs.length > 0 ? 'ready' : 'skipped');
+      })
+      .catch(() => {
+        if (!cancelled) setIntakeState('skipped');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, pid, ideaId]);
+
   const mutation = useMutation({
     mutationFn: () => {
       const hours = Number(maxHours);
       const runs = Number(maxRuns);
+      const intake = questions
+        .map((q, i) => ({ question: q.question, answer: (answers[i] ?? '').trim() }))
+        .filter((qa) => qa.answer !== '');
       return api.createExperiment(pid, {
         idea_id: ideaId,
         credential_id: credentialId,
         params: {
-          ...(gpuHint.trim() ? { gpu_hint: gpuHint.trim() } : {}),
-          ...(evalModel.trim() ? { eval_model: evalModel.trim() } : {}),
-          ...(hfMirror ? { hf_mirror: true } : {}),
-          ...(extraNotes.trim() ? { extra_notes: extraNotes.trim() } : {}),
+          ...(intake.length > 0 ? { intake } : {}),
           budget: {
-            ...(Number.isFinite(hours) && hours > 0 ? { max_hours: hours } : {}),
+            // 留空 = 无限时（后端 0 = 不设时限）
+            max_hours: Number.isFinite(hours) && hours > 0 ? hours : 0,
             ...(Number.isFinite(runs) && runs > 0 ? { max_runs: runs } : {}),
-            // M5-A 固定值：连续 2 轮主指标无提升自动停止
             no_improve_stop: 2,
           },
         },
@@ -187,84 +208,66 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
       )}
 
       <div className="row gap12" style={{ alignItems: 'flex-start' }}>
-        <FormField label={tr('预算 · 最长时数', 'Budget · max hours')} en="max_hours" style={{ flex: 1 }}>
-          <input className="input mono" inputMode="decimal" value={maxHours} onChange={(e) => setMaxHours(e.target.value)} placeholder="4" />
+        <FormField
+          label={tr('时间预算（小时）', 'Time budget (hours)')}
+          en="max_hours"
+          style={{ flex: 1 }}
+          hint={tr('留空 = 不限时。这是唯一的自动修复刹车：超时会暂停并问你怎么办。', 'Empty = unlimited. The only brake on auto-fixing: on timeout it pauses and asks you.')}
+        >
+          <input className="input mono" inputMode="decimal" value={maxHours} onChange={(e) => setMaxHours(e.target.value)} placeholder={tr('不限', 'unlimited')} />
         </FormField>
-        <FormField label={tr('预算 · 最多运行轮数', 'Budget · max runs')} en="max_runs" style={{ flex: 1 }}>
+        <FormField label={tr('最多运行轮数', 'Max runs')} en="max_runs" style={{ flex: 1 }}>
           <input className="input mono" inputMode="numeric" value={maxRuns} onChange={(e) => setMaxRuns(e.target.value)} placeholder="10" />
         </FormField>
         <FormField
-          label={tr('预算 · 无提升自动停', 'Budget · auto stop')}
+          label={tr('无提升自动停', 'Auto stop')}
           en="no_improve_stop"
           style={{ flex: 1 }}
-          hint={tr('固定值：连续 2 轮主指标无提升自动停止。', 'Fixed: stops after 2 runs in a row without metric gain.')}
+          hint={tr('连续 2 轮主指标无提升自动收尾。', 'Wraps up after 2 runs in a row without metric gain.')}
         >
           <input className="input mono" value={tr('2 轮', '2 runs')} disabled />
         </FormField>
       </div>
-      <FormField label={tr('GPU 提示（可选）', 'GPU hint (optional)')} en="gpu_hint" hint={tr('供计划阶段参考。', 'Used as a reference when planning.')}>
-        <input className="input mono" value={gpuHint} onChange={(e) => setGpuHint(e.target.value)} placeholder={tr('如 1×A100', 'e.g. 1×A100')} />
-      </FormField>
 
-      <button
-        type="button"
-        className="btn btn-ghost sm"
-        style={{ marginBottom: showAdvanced ? 10 : 14, paddingLeft: 0 }}
-        onClick={() => setShowAdvanced((v) => !v)}
-      >
-        <Icon name={showAdvanced ? 'chevDown' : 'chevron'} size={13} />
-        {tr('高级选项', 'Advanced options')}
-      </button>
-      {showAdvanced && (
-        <>
-          <FormField
-            label={tr('评测模型（可选）', 'Eval model (optional)')}
-            en="eval_model"
-            hint={tr(
-              '实验代码将获得该模型的 API 访问，接入点与密钥写入工作目录 llm_config.json。',
-              'The experiment code gets API access to this model; endpoint and key are written to llm_config.json in the workdir.',
-            )}
-          >
-            <input
-              className="input mono"
-              value={evalModel}
-              onChange={(e) => setEvalModel(e.target.value)}
-              placeholder="qwen36-35b-a3b"
-            />
-          </FormField>
-          <FormField
-            label={tr('HuggingFace 镜像', 'HuggingFace mirror')}
-            en="hf_mirror"
-            hint={tr('训练类实验从 hf-mirror.com 拉取模型与数据集（大陆网络推荐勾选）。', 'Training experiments pull models and datasets from hf-mirror.com (recommended on mainland-China networks).')}
-          >
-            <label className="row gap8" style={{ fontSize: 12.5, cursor: 'pointer' }}>
-              <input type="checkbox" checked={hfMirror} onChange={(e) => setHfMirror(e.target.checked)} />
-              {tr('启用 HF 镜像（注入 HF_ENDPOINT）', 'Enable HF mirror (injects HF_ENDPOINT)')}
-            </label>
-          </FormField>
-          <FormField
-            label={tr('补充说明（可选）', 'Extra notes (optional)')}
-            en="extra_notes"
-            hint={tr(
-              '会原文提供给计划与代码生成的 AI。',
-              'Passed verbatim to the planning and code-writing AI.',
-            )}
-          >
-            <textarea
-              className="textarea"
-              rows={3}
-              value={extraNotes}
-              onChange={(e) => setExtraNotes(e.target.value)}
-              placeholder={tr('如：只评测 ALFWorld 前 30 个任务；必须对比 ReAct 基线', 'e.g. only eval the first 30 ALFWorld tasks; must compare against the ReAct baseline')}
-            />
-          </FormField>
-        </>
+      {/* 开题问答：选定 idea 后 AI 生成 ≤5 个整体性问题（可不答；实验中还能随时对话） */}
+      {ideaId && intakeState === 'loading' && (
+        <div className="row gap8" style={{ padding: '14px 4px', fontSize: 12.5, color: 'var(--text-3)' }}>
+          <Icon name="sparkle" size={14} style={{ color: 'var(--accent)', animation: 'ai-dot-pulse 1.2s ease-in-out infinite' }} />
+          {tr('AI 正在根据这个想法准备几个开题问题…', 'The AI is preparing a few intake questions for this idea…')}
+        </div>
+      )}
+      {ideaId && intakeState === 'ready' && (
+        <div style={{ marginBottom: 6 }}>
+          <div className="row gap6" style={{ marginBottom: 10 }}>
+            <Icon name="sparkle" size={14} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontSize: 13, fontWeight: 650 }}>
+              {tr('AI 想先确认几件事', 'The AI wants to confirm a few things first')}
+            </span>
+            <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>
+              {tr('（不答也行，实验中还能随时对话补充）', '(optional — you can also chat during the run)')}
+            </span>
+          </div>
+          {questions.map((q, i) => (
+            <FormField key={i} label={`${i + 1}. ${q.question}`} hint={q.hint ?? undefined}>
+              <textarea
+                className="textarea"
+                rows={2}
+                value={answers[i] ?? ''}
+                onChange={(e) =>
+                  setAnswers((prev) => prev.map((a, j) => (j === i ? e.target.value : a)))
+                }
+                placeholder={tr('（可留空，交给 AI 判断）', '(leave empty to let the AI decide)')}
+                style={{ minHeight: 44 }}
+              />
+            </FormField>
+          ))}
+        </div>
       )}
 
       <div style={{ fontSize: 11, color: 'var(--text-4)', lineHeight: 1.6 }}>
         {tr(
-          '消耗真实算力前会提交算力预算审批等待人工确认；超时或超预算会自动终止并标记失败。',
-          'Before real compute is spent, a budget approval is submitted for human sign-off; runs over time or budget are killed and marked failed.',
+          '消耗真实算力前会提交算力预算审批等待人工确认；实验中 AI 拿不准会随时暂停问你。',
+          'Before real compute is spent, a budget approval awaits human sign-off; whenever the AI is unsure mid-run it pauses and asks you.',
         )}
       </div>
     </Modal>

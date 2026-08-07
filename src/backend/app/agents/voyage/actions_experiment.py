@@ -63,9 +63,6 @@ from app.services.libraries import (
 )
 
 RUN_POLL_SECONDS = 30.0  # 正式运行轮询间隔（测试 monkeypatch 为 0）
-MAX_SETUP_FIXES = 2  # 依赖安装失败回 LLM 修 requirements/run.sh 的次数上限
-MAX_SMOKE_FIXES = 2  # 冒烟失败回 LLM 修代码的次数上限
-MAX_DEBUG_FIXES = 3  # 迭代内 debug 分支独立限额（docs/api-m5-a.md §1）
 MAX_FIGURE_FIXES = 2  # 绘图脚本执行失败 / VLM 质检不合格的修复次数上限
 DEFAULT_NO_IMPROVE_STOP = 2  # 连续 N 轮主指标无提升即停（budget.no_improve_stop 可覆盖）
 MAX_QC_IMAGES = 8  # 单次质检最多送 LLM 的图数
@@ -364,6 +361,12 @@ EXTRA_NOTES_PROMPT_SECTION = """\
 {notes}
 """
 
+INTAKE_PROMPT_SECTION = """\
+
+开题问答（创建实验时按想法向用户确认的关键信息，务必遵循）：
+{qa}
+"""
+
 HF_MIRROR_ENDPOINT = "https://hf-mirror.com"
 
 
@@ -378,6 +381,16 @@ def _prompt_with_context(base: str, ctx: ActionContext) -> str:
     notes = str(params.get("extra_notes") or "").strip()
     if notes:
         parts.append(EXTRA_NOTES_PROMPT_SECTION.format(notes=notes))
+    intake = params.get("intake")
+    if isinstance(intake, list):
+        qa_lines = [
+            f"- 问：{str(qa.get('question') or '').strip()}\n"
+            f"  答：{str(qa.get('answer') or '').strip()}"
+            for qa in intake
+            if isinstance(qa, dict) and str(qa.get("answer") or "").strip()
+        ]
+        if qa_lines:
+            parts.append(INTAKE_PROMPT_SECTION.format(qa="\n".join(qa_lines)))
     return "".join(parts)
 
 
@@ -1113,6 +1126,15 @@ def is_improvement(value: float, best: float | None, direction: str) -> bool:
     return value > best if direction == "maximize" else value < best
 
 
+def _phase_deadline_exceeded(budget: dict[str, Any] | None, phase_started: datetime) -> bool:
+    """修复循环的唯一刹车：本阶段耗时超出 budget.max_hours（0/缺省 = 无限时）。
+
+    用户定调：自动修复不按次数设限，只受一开始定义的时间预算约束。
+    相位起点取循环开始（不含排队/等审批/等回答的时间）。"""
+    max_hours = float((budget or {}).get("max_hours") or 0)
+    return bool(max_hours) and _elapsed_hours(phase_started) > max_hours
+
+
 def _elapsed_hours(started_at: datetime | None) -> float:
     if started_at is None:
         return 0.0
@@ -1453,9 +1475,12 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 )
 
             # 依赖安装自愈（对称 smoke）：装不上/太慢/断连都当「可修的失败」而非硬崩——
-            # 超时/断连→重连重试；pip 报错→回 LLM 修 requirements.txt/run.sh 再装（≤2 次）。
+            # 超时/断连→重连重试；pip 报错→回 LLM 修 requirements.txt/run.sh 再装。
+            # 修复次数不设上限（用户定调：只受时间预算约束，默认无限时）；
+            # 每轮修复都是一次真实安装（分钟级），LLM 调用频率天然被实际工作限速。
             fixes = 0
             attempts = 0
+            phase_started = utcnow()
             while True:
                 attempts += 1
                 await executor.write_files(files)  # 每次（修复后）重写 LLM 产出文件
@@ -1504,18 +1529,18 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     if preflight_warnings:
                         obs["preflight_warnings"] = preflight_warnings
                     return obs
-                if fixes >= MAX_SETUP_FIXES:
-                    # 修复额度用尽不再抛错：抛错会让引擎原地重试整个 setup——
-                    # 又从头拉镜像/装依赖一遍（线上实测「一直装镜像」就是这个循环）。
-                    # 转向用户提问，等人给指示再动。
+                if _phase_deadline_exceeded(experiment.budget, phase_started):
+                    # 不按修复次数设限（用户定调），只受时间预算约束：超时转向用户提问。
+                    # 抛错会让引擎原地重试整个 setup——又从头拉镜像/装依赖一遍
+                    # （线上实测「一直装镜像」就是这个循环），所以一律提问不抛错。
                     detail = err_text or "（无输出，多为连接中断或超时）"
                     await _mark_attention(
-                        ctx, f"依赖安装连续失败（{attempts} 次，exit={exit_status}）"
+                        ctx, f"依赖安装超出时间预算（{attempts} 次，exit={exit_status}）"
                     )
                     _remember(
                         ctx,
                         "环境障碍",
-                        f"依赖安装 {attempts} 次未通过（exit={exit_status}）："
+                        f"依赖安装超出时间预算（{attempts} 次尝试，exit={exit_status}）："
                         f"{detail[-200:]}，已转向用户提问",
                     )
                     await _sync_memory_file(ctx, executor)
@@ -1527,8 +1552,8 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                         "ask": {
                             "ask_kind": "fatal_step",
                             "question": (
-                                f"实验环境装不起来（尝试 {attempts} 次，"
-                                f"自动修复 {fixes} 次已用尽），"
+                                f"实验环境装不起来（已尝试 {attempts} 次、"
+                                f"自动修复 {fixes} 次，超出时间预算），"
                                 f"最后的报错：{detail[-300:]}。怎么处理？"
                             ),
                             "context": {
@@ -1580,7 +1605,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             await executor.close()
 
 
-# ---- 3. 冒烟测试：exit 0 通过；失败回 LLM 修文件（≤2 次） ----
+# ---- 3. 冒烟测试：exit 0 通过；失败回 LLM 修文件（不限次数，超时预算转提问） ----
 
 
 @register("experiment.smoke")
@@ -1596,6 +1621,7 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         try:
             attempts = 0
             fixes = 0
+            phase_started = utcnow()  # 修复不限次数，只受时间预算约束（用户定调）
             while True:
                 attempts += 1
                 # 超时/断连也当作「可修的失败」（多为规模太大/太慢或环境问题），而非硬崩：
@@ -1623,17 +1649,17 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                         _remember(ctx, "试跑", f"自动修复 {fixes} 次后通过")
                     await _sync_memory_file(ctx, executor)
                     return {"exit_code": 0, "attempts": attempts, "fixes": fixes}
-                if fixes >= MAX_SMOKE_FIXES:
-                    # 修复额度用尽不再抛错打死：转向用户提问（引擎收到 observation.ask
-                    # 会把节点回 pending、任务转 paused_ask）。回答「重试」会从头重跑
-                    # 本动作（修复计数随之清零），回答文本经 params["user_guidance"] 注入。
+                if _phase_deadline_exceeded(experiment.budget, phase_started):
+                    # 修复不设次数上限（用户定调），超出时间预算才转向用户提问
+                    # （引擎收到 observation.ask 会把节点回 pending、任务转 paused_ask）。
+                    # 回答「重试」会从头重跑本动作，回答文本经 params["user_guidance"] 注入。
                     await _mark_attention(
-                        ctx, f"冒烟测试连续失败（{attempts} 次，exit={exit_status}）"
+                        ctx, f"冒烟测试超出时间预算（{attempts} 次，exit={exit_status}）"
                     )
                     _remember(
                         ctx,
                         "试跑障碍",
-                        f"冒烟 {attempts} 次未通过（exit={exit_status}）："
+                        f"冒烟超出时间预算（{attempts} 次尝试，exit={exit_status}）："
                         f"{err_text[-200:]}，已转向用户提问",
                     )
                     await _sync_memory_file(ctx, executor)
@@ -1644,7 +1670,8 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                         "ask": {
                             "ask_kind": "fatal_step",
                             "question": (
-                                f"代码试跑连续失败（{attempts} 次，自动修复 {fixes} 次已用尽），"
+                                f"代码试跑一直不通过（已尝试 {attempts} 次、"
+                                f"自动修复 {fixes} 次，超出时间预算），"
                                 f"最后的报错：{err_text[-300:]}。怎么处理？"
                             ),
                             "context": {
@@ -1964,7 +1991,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             f"{cond_line}"
             f"历史各轮：{json.dumps(history, ensure_ascii=False)}\n"
             f"迭代状态：无提升连续 {state['no_improve_streak']} 轮，"
-            f"debug 已用 {state['debug_count']}/{MAX_DEBUG_FIXES} 次\n"
+            f"debug 已修 {state['debug_count']} 次\n"
             f"本轮日志尾部：\n" + "\n".join(log_lines)
         )
         reflection = await _complete_json(
@@ -2049,8 +2076,8 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             stopped_reason = "max_runs"
         elif max_hours and _elapsed_hours(iterate_started) > max_hours:
             stopped_reason = "max_hours"
-        elif decision == "debug" and state["debug_count"] >= MAX_DEBUG_FIXES:
-            stopped_reason = "debug_limit"
+        # debug 不再按次数终止（用户定调：只受时间/轮数预算约束）——
+        # debug_count 仍然记账，供面板与 reflection 观察
 
         if stopped_reason:
             _remember(ctx, "终止判定", f"迭代结束：{stopped_reason}")
@@ -2257,7 +2284,7 @@ async def _poll_run(
                     raise
             continue  # 远端状态持久化，重连后下一轮继续跟踪
 
-        if max_hours >= 0 and _elapsed_hours(run.started_at) > max_hours:
+        if max_hours and _elapsed_hours(run.started_at) > max_hours:
             try:
                 await executor.kill_pid(int(run.pid or 0))
                 await ingest_chunk()

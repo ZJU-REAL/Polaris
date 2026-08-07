@@ -8,10 +8,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExperimentBudget(BaseModel):
-    max_hours: float = Field(default=4, ge=0)
+    # 0 = 无限时（默认）：修复循环/运行轮询只受它约束，不再按次数设限（用户定调）
+    max_hours: float = Field(default=0, ge=0)
     max_runs: int = Field(default=10, ge=1)
     # 连续 N 轮主指标无提升即停（docs/api-m5-a.md §3）
     no_improve_stop: int = Field(default=2, ge=1)
+
+
+class IntakeQA(BaseModel):
+    """开题问答：创建实验时 AI 按 idea 提出的问题与用户的回答（可留空）。"""
+
+    question: str = Field(min_length=1, max_length=500)
+    answer: str = Field(default="", max_length=4000)
 
 
 class ExperimentParams(BaseModel):
@@ -24,6 +32,22 @@ class ExperimentParams(BaseModel):
     hf_mirror: bool = False
     # 用户对实验的补充说明（原文进 plan 与 codegen prompt）
     extra_notes: str | None = None
+    # 开题问答（AI 按 idea 生成 ≤5 个整体性问题，用户作答后随创建提交；
+    # 原文进 plan 与 codegen prompt——其余不确定点实验中经 ask 机制动态交互）
+    intake: list[IntakeQA] | None = None
+
+
+class ExperimentIntakeQuestion(BaseModel):
+    question: str
+    hint: str | None = None
+
+
+class ExperimentIntakeQuestions(BaseModel):
+    questions: list[ExperimentIntakeQuestion]
+
+
+class ExperimentIntakeRequest(BaseModel):
+    idea_id: uuid.UUID
 
 
 class ExperimentCreate(BaseModel):

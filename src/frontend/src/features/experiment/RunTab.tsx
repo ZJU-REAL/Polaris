@@ -238,8 +238,7 @@ function IterationStateBar({ exp, runCount }: { exp: ExperimentDetail; runCount:
     },
     {
       label: tr('修错次数', 'Debug attempts'),
-      value: `${st?.debug_count ?? 0} / 3`,
-      warn: (st?.debug_count ?? 0) >= 2,
+      value: String(st?.debug_count ?? 0),
     },
   ];
   return (

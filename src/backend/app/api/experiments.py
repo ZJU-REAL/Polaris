@@ -31,6 +31,9 @@ from app.schemas.common import BatchResult, TrashBatchAction
 from app.schemas.experiment import (
     ExperimentCreate,
     ExperimentDetail,
+    ExperimentIntakeQuestion,
+    ExperimentIntakeQuestions,
+    ExperimentIntakeRequest,
     ExperimentLogsRead,
     ExperimentRead,
 )
@@ -39,6 +42,79 @@ from app.services import projects as projects_service
 from app.services import ssh_exec
 
 router = APIRouter(tags=["experiments"])
+
+# 开题提问：按 idea 让 AI 提出 ≤5 个影响开局的整体性问题（数据集/规模/评测口径/
+# 资源与框架约束/成功判据），代替静态表单字段；其余不确定点实验中经 ask 机制动态交互。
+_INTAKE_MAX_QUESTIONS = 5
+_INTAKE_SYSTEM_PROMPT = """\
+你是 Experiment Lab 的开题助手。用户选定了一个研究想法，准备交给自动化实验 agent
+（它会自己规划、写代码、建环境、跑实验、分析迭代）。请提出对「实验规划与环境设置」
+最关键的问题，帮用户在开局把方向定准。
+只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
+{"questions": [{"question": "问题", "hint": "一句提示/候选/示例，帮助快速作答"}]}
+约束：
+- 最多 5 个；只问**影响开局的整体性问题**（如用哪个数据集与规模、评测口径与基线、
+  GPU/框架/模型约束、成功判据、要不要对照组）；能在实验过程中动态确认的细节不要问
+- 问题必须针对这个想法本身，不问放之四海皆准的空话；已经能从想法内容里读出的答案不要再问
+- 用大白话，中文提问
+"""
+
+
+@router.post(
+    "/projects/{project_id}/experiments/intake-questions",
+    response_model=ExperimentIntakeQuestions,
+)
+async def experiment_intake_questions(
+    project_id: uuid.UUID,
+    data: ExperimentIntakeRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_experiment),
+) -> ExperimentIntakeQuestions:
+    """按 idea 生成开题问题（LLM 不可用/输出非法时降级为空列表，前端直接创建）。"""
+    import json as _json
+
+    from app.core.llm.base import Message
+    from app.core.llm.router import get_llm_router
+    from app.models.idea import Idea
+
+    project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    idea = await session.get(Idea, data.idea_id)
+    if idea is None or idea.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="IDEA_NOT_FOUND")
+
+    user_prompt = (
+        f"想法标题：{idea.title}\n"
+        f"想法概述：{idea.summary or '（无）'}\n"
+        f"想法详情：\n{(idea.content or '')[:4000]}"
+    )
+    try:
+        result = await get_llm_router().complete(
+            "experiment",
+            [
+                Message(role="system", content=_INTAKE_SYSTEM_PROMPT),
+                Message(role="user", content=user_prompt),
+            ],
+            user_id=user.id,
+            project_id=project.id,
+        )
+        start, end = result.content.find("{"), result.content.rfind("}")
+        payload = _json.loads(result.content[start : end + 1])
+        questions: list[ExperimentIntakeQuestion] = []
+        for raw in payload.get("questions") or []:
+            if not isinstance(raw, dict):
+                continue
+            question = str(raw.get("question") or "").strip()
+            if not question:
+                continue
+            hint = str(raw.get("hint") or "").strip() or None
+            questions.append(ExperimentIntakeQuestion(question=question[:500], hint=hint))
+            if len(questions) >= _INTAKE_MAX_QUESTIONS:
+                break
+        return ExperimentIntakeQuestions(questions=questions)
+    except Exception:  # noqa: BLE001 — 开题提问是增强项，失败不阻塞创建
+        return ExperimentIntakeQuestions(questions=[])
 
 _HEARTBEAT_SECONDS = 15.0
 _STREAM_POLL_SECONDS = 1.0

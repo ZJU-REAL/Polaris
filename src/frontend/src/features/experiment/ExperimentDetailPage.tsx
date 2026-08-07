@@ -622,12 +622,6 @@ export function ExperimentDetailPage() {
       {/* 页头 */}
       <div className="row" style={{ alignItems: 'flex-start', marginBottom: 4 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="h-eyebrow row gap8">
-            <span className="row gap6" style={{ cursor: 'pointer' }} onClick={() => navigate(topicPath(exp.project_id, 'experiment'))}>
-              ← Experiment Lab
-            </span>
-            <span className="mono" style={{ textTransform: 'none', color: 'var(--text-4)' }}>{exp.id.slice(0, 8)}</span>
-          </div>
           <h1 className="h-title" style={{ fontSize: 20 }}>{exp.idea_title}</h1>
           <div className="row gap8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
             <StatusPill status={exp.status} sm />

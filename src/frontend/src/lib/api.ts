@@ -1945,6 +1945,17 @@ export interface ExperimentCodeFile {
   content: string;
 }
 
+/** 开题问答：创建实验时 AI 按 idea 提出的问题与用户的回答（可留空）。 */
+export interface ExperimentIntakeQA {
+  question: string;
+  answer: string;
+}
+
+export interface ExperimentIntakeQuestion {
+  question: string;
+  hint: string | null;
+}
+
 export interface CreateExperimentInput {
   idea_id: string;
   credential_id: string;
@@ -1957,6 +1968,8 @@ export interface CreateExperimentInput {
     hf_mirror?: boolean;
     /** 用户对实验的补充说明（进计划与代码生成 prompt） */
     extra_notes?: string;
+    /** 开题问答（AI 按 idea 生成的问题 + 用户回答；进计划与代码生成 prompt） */
+    intake?: ExperimentIntakeQA[];
   };
 }
 
@@ -3978,6 +3991,17 @@ export const api = {
   // —— M4 · Experiments ——
   createExperiment(projectId: string, input: CreateExperimentInput): Promise<ExperimentRead> {
     return requestJson<ExperimentRead>(`/projects/${projectId}/experiments`, 'POST', input);
+  },
+  /** 开题提问：AI 按 idea 生成 ≤5 个整体性问题（失败/不可用时返回空列表）。 */
+  getExperimentIntakeQuestions(
+    projectId: string,
+    ideaId: string,
+  ): Promise<{ questions: ExperimentIntakeQuestion[] }> {
+    return requestJson<{ questions: ExperimentIntakeQuestion[] }>(
+      `/projects/${projectId}/experiments/intake-questions`,
+      'POST',
+      { idea_id: ideaId },
+    );
   },
   /** 默认返回活动列表；opts.trashed=true 返回回收站（已软删除的实验）。 */
   listExperiments(projectId: string, opts?: { trashed?: boolean }): Promise<ExperimentRead[]> {
