@@ -37,6 +37,22 @@ run, and PolarisBuddy.
 
 https://github.com/user-attachments/assets/388972c1-7ffa-45f2-94c4-07f388379ba2
 
+### Try it live
+
+A guest account on a running instance, for looking around:
+
+| | |
+| --- | --- |
+| **URL** | http://101.37.174.109:8080 |
+| **Username** | `guest` |
+| **Password** | `zjuguest123` |
+
+**The account is for demonstration only: it is read-only and cannot call any model.** It reaches every
+screen, the admin views included, but nothing it does changes state — creating, editing, deleting and
+uploading are all refused, and no LLM call will run, whether from chat, compilation or the assistant.
+Lab members' details and the registration codes are hidden from it as well. It is there to show what
+the platform looks like, not to do work on it.
+
 ## The research pipeline
 
 Polaris models research as six stages. Each stage produces durable artifacts that the next stage
