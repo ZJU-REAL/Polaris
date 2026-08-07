@@ -1507,3 +1507,25 @@ async def test_experiment_trash_flow(client):
     r = await client.post(f"/api/projects/{project_id}/experiments/trash/empty", headers=headers)
     assert r.status_code == 200 and r.json()["affected"] == 1
     assert (await client.get(f"/api/experiments/{ids[1]}", headers=headers)).status_code == 404
+
+
+async def test_complete_json_escalates_max_tokens_on_truncation():
+    """截断（finish_reason=max_tokens）≠ 格式错：升档输出预算重试，不烧解析重试次数。"""
+    from types import SimpleNamespace
+
+    calls: list[int | None] = []
+
+    class _TruncatingLLM:
+        async def complete(self, stage, messages, **kw):
+            calls.append(kw.get("max_tokens"))
+            if len(calls) == 1:
+                return SimpleNamespace(content='{"a": 1', finish_reason="max_tokens")
+            return SimpleNamespace(content='{"a": 1}', finish_reason="stop")
+
+    ctx = SimpleNamespace(
+        llm=_TruncatingLLM(),
+        run=SimpleNamespace(created_by=None, project_id=None, id=None),
+    )
+    out = await ax._complete_json(ctx, system="s", user="u", validate=lambda d: d)
+    assert out == {"a": 1}
+    assert calls == [None, 8192]  # 截断后第二次带升档 max_tokens

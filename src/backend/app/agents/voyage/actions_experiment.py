@@ -761,8 +761,12 @@ async def _complete_json(ctx: ActionContext, *, system: str, user: str, validate
     重试必须把上一次的错误回喂给模型。原来是原样重发同一个 prompt——对确定性错误
     （少一个必需文件、生成的 .py 有语法错）这等于让模型再猜一遍同样的题，三次尝试
     烧三次 token 换回同一个错。带上错误后它才知道要改哪里。
+
+    截断（finish_reason=max_tokens）单独处理：JSON 烂在尾部不是模型写错格式，
+    重发同 prompt 必然在同一处再截一刀。升档输出预算并要求紧凑输出后重试。
     """
     last_error: Exception | None = None
+    max_tokens: int | None = None
     for attempt in range(_MAX_JSON_ATTEMPTS):
         prompt = user
         if last_error is not None:
@@ -786,7 +790,15 @@ async def _complete_json(ctx: ActionContext, *, system: str, user: str, validate
             user_id=ctx.run.created_by,
             project_id=ctx.run.project_id,
             voyage_id=ctx.run.id,
+            max_tokens=max_tokens,
         )
+        if getattr(result, "finish_reason", None) == "max_tokens":
+            max_tokens = 16384 if max_tokens else 8192
+            last_error = ValueError(
+                "输出超长被截断（max_tokens）。请压缩输出：省略非必要注释与空行，"
+                "避免重复内容，只保留任务要求的字段与文件"
+            )
+            continue
         try:
             return validate(_extract_json(result.content))
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
