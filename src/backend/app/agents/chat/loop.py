@@ -78,6 +78,11 @@ _MAX_SOURCES = 20
 #: 前端不必去解析工具结果的 JSON 就能画出进度条。耦合是显式的，写在这儿。
 _PLAN_TOOL = "update_plan"
 
+#: 计划模式的出口。调成功就**收工**：这一轮到此为止，把计划交给用户点头。
+#: 不这样收的话，"只调研不动手"就只是一句叮嘱——模型交完计划会顺手把活干了，
+#: 而计划模式的全部价值就在于让人在花钱之前先看一眼。
+_SUBMIT_PLAN_TOOL = "submit_plan"
+
 
 @dataclass(slots=True)
 class ChatTurnRequest:
@@ -257,14 +262,21 @@ class ChatAgentLoop:
                     read_only=spec.read_only if spec else True,
                 )
             results: list[ToolResultBlock] = []
+            awaiting_approval = False
             async for ev, result in helm.run(calls):
                 if result is not None:
                     results.append(result)
                 if isinstance(ev, ToolResultEvent) and ev.ok:
                     successful_calls += 1
                 yield ev
+                submitted = (
+                    isinstance(ev, ToolResultEvent) and ev.name == _SUBMIT_PLAN_TOOL and ev.ok
+                )
                 if plan := _plan_from(ev, result):
-                    yield PlanEvent(steps=plan)
+                    yield PlanEvent(steps=plan, awaiting_approval=submitted)
+                # 计划交出去了，这一轮就到此为止：等用户点头，别顺手把活干了。
+                if submitted:
+                    awaiting_approval = True
                 # 「刚才它看了哪几篇」——只播**新**出现的，前端追加即可。
                 # 这一栏不声称是「回答引用了这些」：我们无从核对模型的 [n] 指的是谁，
                 # 说成引用就是在替它担保。
@@ -278,6 +290,9 @@ class ChatAgentLoop:
                 yield SourcesEvent(items=list(fresh_sources))
                 fresh_sources.clear()
             messages.append(Message(role="user", content=list(results)))
+            if awaiting_approval:
+                # 结果照常回喂（下一轮模型看得见自己交了什么），但循环就停在这儿。
+                break
 
             # 技能声明了 allowed-tools 就收窄后续可用的工具面。**只能收窄，永不扩权**：
             # 技能里写一个会话没给的工具名，结果是那个工具不可用，而不是把它加进来。
@@ -335,12 +350,14 @@ def _paper_refs(payload: Any) -> list[dict[str, str]]:
 def _plan_from(
     ev: ChatEvent, result: ToolResultBlock | None
 ) -> tuple[dict[str, str], ...] | None:
-    """成功的 update_plan 结果 → 计划步骤；其余一律 None。
+    """成功的 update_plan / submit_plan 结果 → 计划步骤；其余一律 None。
 
     读的是**回喂给模型的那份文本**，不是另算一份：界面上画的计划和模型看到的计划
     必须是同一个东西，否则用户按着进度条问"第二步呢"，模型一脸茫然。
     """
-    if not isinstance(ev, ToolResultEvent) or ev.name != _PLAN_TOOL or not ev.ok:
+    if not isinstance(ev, ToolResultEvent) or not ev.ok:
+        return None
+    if ev.name not in (_PLAN_TOOL, _SUBMIT_PLAN_TOOL):
         return None
     if result is None:
         return None

@@ -93,3 +93,42 @@ def normalize(steps: Any) -> list[dict[str, str]]:
 async def update_plan(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     steps = normalize(args.get("steps"))
     return {"steps": steps}
+
+
+#: 计划模式的出口。等价于 Claude Code 的 ExitPlanMode：模型调研完、把方案排好之后
+#: 调它，这一轮就到此为止，把计划交给用户点头。
+#:
+#: 为什么要一个**工具**而不是让模型在正文里写「以上是我的计划，可以吗？」：那句话
+#: 不可寻址。界面没法据此画出「批准 / 让它改」两个按钮，用户只能再打一行字说"可以"，
+#: 而模型下一轮未必知道那句"可以"是在批准哪份计划。给它一个结构化的落点，
+#: 审批才既能被点，也能被记住。
+_SUBMIT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "steps": _SCHEMA["properties"]["steps"],
+        "rationale": {
+            "type": "string",
+            "description": "为什么这么做，以及哪里可能不成立。一两句话",
+        },
+    },
+    "required": ["steps"],
+}
+
+
+@tool(
+    "submit_plan",
+    description=(
+        "计划模式专用：调研清楚、方案排好之后调它，把计划交给用户审批。"
+        "调用之后这一轮就结束，不要在同一轮里接着执行。"
+        "用户批准后你会在下一轮拿到这份计划，那时才动手。"
+    ),
+    input_schema=_SUBMIT_SCHEMA,
+    summarize=lambda args, result: f"待审批的计划（{len(result.get('steps', []))} 步）",
+)
+async def submit_plan(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    steps = normalize(args.get("steps"))
+    # 提交待审的计划里不该有"已完成"——一步都还没做呢。全部按未开始记。
+    for s in steps:
+        s["status"] = "pending"
+    rationale = str(args.get("rationale") or "").strip()[:1000]
+    return {"steps": steps, "rationale": rationale, "awaiting_approval": True}

@@ -220,7 +220,18 @@ export function BuddyMark({ busy, size = 16 }: { busy: boolean; size?: number })
 }
 
 /** 任务计划：做到哪一步了。步骤状态是模型自己更新的，界面只是如实画出来。 */
-function PlanCard({ steps }: { steps: PlanStep[] }) {
+function PlanCard({
+  steps,
+  awaitingApproval,
+  onApprove,
+  onRevise,
+}: {
+  steps: PlanStep[];
+  /** 计划模式交上来等点头的那份；推进中的进度条不带这个 */
+  awaitingApproval?: boolean;
+  onApprove?: () => void;
+  onRevise?: () => void;
+}) {
   const done = steps.filter((s) => s.status === 'done').length;
   return (
     <div
@@ -237,10 +248,13 @@ function PlanCard({ steps }: { steps: PlanStep[] }) {
         style={{ alignItems: 'center', marginBottom: 6, fontSize: 11.5, color: 'var(--text-3)' }}
       >
         <Icon name="layers" size={12} style={{ color: 'var(--accent)' }} />
-        <span>{tr('计划', 'Plan')}</span>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
-          {done}/{steps.length}
-        </span>
+        <span>{awaitingApproval ? tr('这样做行吗？', 'Shall I go ahead?') : tr('计划', 'Plan')}</span>
+        {/* 待审批时不报「0/N」：一步都还没做，进度数字只会让人以为它已经开工了 */}
+        {!awaitingApproval && (
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-4)' }}>
+            {done}/{steps.length}
+          </span>
+        )}
       </div>
       {steps.map((step, i) => (
         <div
@@ -278,6 +292,22 @@ function PlanCard({ steps }: { steps: PlanStep[] }) {
           </span>
         </div>
       ))}
+      {/* 批准是**一次点击**的事。让用户再打一行「可以」有两个毛病：多打一行字，
+          以及那句「可以」漂在正文里，模型未必知道它在批准哪份计划。 */}
+      {awaitingApproval && (onApprove || onRevise) && (
+        <div className="row gap6" style={{ marginTop: 10 }}>
+          {onApprove && (
+            <button className="btn btn-primary sm" onClick={onApprove}>
+              {tr('按这个做', 'Go ahead')}
+            </button>
+          )}
+          {onRevise && (
+            <button className="btn btn-ghost sm" onClick={onRevise}>
+              {tr('改一改', 'Revise it')}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -396,10 +426,14 @@ function BlockView({
   block,
   live,
   sources,
+  onApprovePlan,
+  onRevisePlan,
 }: {
   block: AssistantBlock;
   live: boolean;
   sources: PaperSource[];
+  onApprovePlan?: () => void;
+  onRevisePlan?: () => void;
 }) {
   if (block.kind === 'text') {
     // 模型会在正文里直接写 ![图注](paper_id/图号) 和 [1] 这类引用。Markdown 组件本来
@@ -435,7 +469,15 @@ function BlockView({
       />
     );
   }
-  if (block.kind === 'plan') return <PlanCard steps={block.steps} />;
+  if (block.kind === 'plan')
+    return (
+      <PlanCard
+        steps={block.steps}
+        awaitingApproval={block.awaitingApproval}
+        onApprove={onApprovePlan}
+        onRevise={onRevisePlan}
+      />
+    );
   if (block.kind === 'sources') return <SourcesCard papers={block.papers} />;
   if (block.kind === 'verify') return <VerifyCard notes={block.notes} />;
   if (block.kind === 'thinking') return <ThinkingView text={block.text} live={live} />;
@@ -542,6 +584,9 @@ export function AssistantPanel({
   }, [projects, topicQuery]);
   // chat = 默认（行为一个字没变）；plan = 只调研出计划等人点头；goal = 带着一个持续目标
   const [mode, setMode] = useState<'chat' | 'plan' | 'goal'>('chat');
+  // 目标模式的目标**取自你说的第一句话**，不再单开一行让人填。
+  // 多出来的那一行有两个毛病：切到目标模式时版面突然长高一截，而且它问的
+  // 「这场对话要达成什么」和下面输入框要打的字，多数时候本来就是同一句。
   const [goal, setGoal] = useState('');
   const [plusOpen, setPlusOpen] = useState(false);
   const pageContext = pageContextFrom(location.pathname);
@@ -641,6 +686,8 @@ export function AssistantPanel({
 
   const newConversation = useCallback(() => {
     stop();
+    // 新的一场对话不该背着上一场的目标
+    setGoal('');
     setConvId(null);
     setTurns([]);
     setTitle('');
@@ -650,6 +697,9 @@ export function AssistantPanel({
   const ask = useCallback(
     async (question: string) => {
     if (!question || busy) return;
+    // 目标模式：还没有目标就把这一句立为目标，并记下来给后续每一轮用
+    const activeGoal = mode === 'goal' ? goal.trim() || question : '';
+    if (mode === 'goal' && !goal.trim()) setGoal(question);
     setBusy(true);
     setTurns((t) => [...t, { role: 'user', blocks: [{ kind: 'text', text: question }] }, { role: 'assistant', blocks: [] }]);
 
@@ -690,7 +740,9 @@ export function AssistantPanel({
           contextOn && pageContext ? { kind: pageContext.kind, id: pageContext.id } : undefined,
         projectId: topicId,
         mode,
-        goal: mode === 'goal' ? goal : undefined,
+        // 第一句话立为目标，之后每轮都带同一个——不然第二轮会把新问题当成新目标，
+        // 「一直朝一个目标推进」就变成了「每轮换一个目标」。
+        goal: mode === 'goal' ? activeGoal : undefined,
         onMeta: (meta) => setModel(meta.model),
         onBlocks: patch,
         onDone: () => {
@@ -722,6 +774,27 @@ export function AssistantPanel({
     setInput('');
     void ask(question);
   }, [input, ask]);
+
+  /** 批准计划：切回一般模式，让它按刚才那份计划动手。
+
+      切回一般模式是关键——留在计划模式里，模型下一轮又会去"调研并提交计划"，
+      用户点了「按这个做」却看见它再交一份计划，会以为按钮没生效。 */
+  const approvePlan = useCallback(() => {
+    setMode('chat');
+    void ask(
+      tr(
+        '按你刚才那份计划做，边做边用 update_plan 更新进度。',
+        'Go ahead with the plan you just proposed; keep it updated with update_plan as you go.',
+      ),
+    );
+  }, [ask]);
+
+  /** 让它改：留在计划模式，把话头交回给用户说哪儿不对。 */
+  const revisePlan = useCallback(() => {
+    // 留在计划模式，把话头交回给用户：他说哪儿不对，模型据此重排一份。
+    // 这里只清空输入框，不替他打字——「哪儿不对」只有他知道。
+    setInput('');
+  }, []);
 
   // 论文被拖到悬浮球上：直接问一句解读。id 写进问题里，Buddy 自己去 get_paper。
   useEffect(() => {
@@ -940,6 +1013,9 @@ export function AssistantPanel({
                           | { kind: 'sources'; papers: PaperSource[] }
                           | undefined)?.papers ?? []
                       }
+                      // 只有最后一轮的计划还能批：翻上去看历史时那些按钮点了也没意义
+                      onApprovePlan={isLast && !busy ? approvePlan : undefined}
+                      onRevisePlan={isLast && !busy ? revisePlan : undefined}
                     />
                   ))}
                   {isLast && <TurnStatus blocks={liveBlocks} busy={busy} onStop={stop} />}
@@ -1068,7 +1144,7 @@ export function AssistantPanel({
               <span
                 className="hoverable"
                 style={{ cursor: 'pointer', color: 'var(--accent-text)' }}
-                onClick={() => setMode('chat')}
+                onClick={() => { setMode('chat'); setGoal(''); }}
                 title={tr('点掉回到普通对话', 'Click to return to plain chat')}
               >
                 {mode === 'plan' ? tr('计划模式', 'Plan mode') : tr('目标模式', 'Goal mode')}
@@ -1171,12 +1247,19 @@ export function AssistantPanel({
                 }}
                 onClick={() => setPlusOpen(false)}
               >
-                <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setMode(mode === 'plan' ? 'chat' : 'plan')}>
+                {/* 三种模式并列、单选。以前只列 plan 与 goal，回到普通对话得再点一次
+                    已经亮着的那个——「取消勾选」这个动作没人猜得到，等于普通模式没有入口。 */}
+                <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => { setMode('chat'); setGoal(''); }}>
+                  <Icon name="chat" size={13} />
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('一般模式 · 直接回答', 'Normal · just answer')}</span>
+                  {mode === 'chat' && <Icon name="check" size={12} />}
+                </button>
+                <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => { setMode('plan'); setGoal(''); }}>
                   <Icon name="bulb" size={13} />
-                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('计划模式 · 先出方案再动手', 'Plan mode · propose before doing')}</span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tr('计划模式 · 先出方案，你点头再做', 'Plan · propose first, act on approval')}</span>
                   {mode === 'plan' && <Icon name="check" size={12} />}
                 </button>
-                <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setMode(mode === 'goal' ? 'chat' : 'goal')}>
+                <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setMode('goal')}>
                   <Icon name="compass" size={13} />
                   <span style={{ flex: 1, textAlign: 'left' }}>{tr('目标模式 · 一直朝一个目标推进', 'Goal mode · keep pursuing one goal')}</span>
                   {mode === 'goal' && <Icon name="check" size={12} />}
@@ -1186,15 +1269,7 @@ export function AssistantPanel({
           )}
         </div>
 
-        {mode === 'goal' && (
-          <input
-            className="input"
-            value={goal}
-            placeholder={tr('这场对话要达成什么？', 'What should this conversation achieve?')}
-            onChange={(e) => setGoal(e.target.value)}
-            style={{ width: '100%', height: 28, fontSize: 11.5, borderRadius: 0 }}
-          />
-        )}
+
 
         <div
           style={{

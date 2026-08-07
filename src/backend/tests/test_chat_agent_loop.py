@@ -334,10 +334,25 @@ def test_the_default_surface_is_every_read_only_tool_minus_a_named_few():
 
 
 def test_the_denylist_says_why_each_entry_is_out():
-    """例外必须少而有据：get_fact_pack 一次返回整包事实，模型总能用更便宜的工具问到。"""
-    from app.agents.chat.prompt import _TOOL_DENYLIST
+    """例外必须少而有据。
 
-    assert set(_TOOL_DENYLIST) == {"get_fact_pack"}
+    - ``get_fact_pack``：一次返回整包事实，模型总能用更便宜的工具问到。
+    - ``submit_plan``：它是计划模式的出口，只在那个模式给（见 ``tools_for_mode``）。
+      别的模式下它没有意义，模型会拿它当"我说完了"的花式说法，把一轮好好的回答
+      变成一份待审的计划。
+
+    默认工具面是从注册表动态取的，所以新工具**默认可用**——这条测试的用处是：
+    往 denylist 里加东西必须回到这里写清楚为什么，而不是悄悄多一个例外。
+    """
+    from app.agents.chat.prompt import _TOOL_DENYLIST, default_tool_names, tools_for_mode
+
+    assert set(_TOOL_DENYLIST) == {"get_fact_pack", "submit_plan"}
+    # 出口工具只在计划模式出现
+    names = default_tool_names()
+    assert "submit_plan" not in names
+    assert "submit_plan" not in tools_for_mode(names, "chat")
+    assert "submit_plan" not in tools_for_mode(names, "goal")
+    assert "submit_plan" in tools_for_mode(names, "plan")
 
 
 @pytest.mark.asyncio
