@@ -23,6 +23,7 @@ import {
 import { tr } from '../../lib/i18n';
 import { budgetText, HypChip } from './shared';
 import { ConsoleTab } from './ConsoleTab';
+import { MemoryTab } from './MemoryTab';
 import { RunTab } from './RunTab';
 import { CodeTab } from './CodeTab';
 import { ExperimentFigures } from './ExperimentFigures';
@@ -34,13 +35,14 @@ import { ExperimentFigures } from './ExperimentFigures';
    原环境 Tab 的服务器状态并入运行台概览、搭建步骤并入任务地图。
    ============================================================ */
 
-type TabKey = 'console' | 'plan' | 'run' | 'code' | 'report';
+type TabKey = 'console' | 'plan' | 'run' | 'memory' | 'code' | 'report';
 
 /* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
 const TABS: { k: TabKey; zh: string; en: string }[] = [
   { k: 'console', zh: '运行台', en: 'Console' },
   { k: 'plan', zh: '计划', en: 'Plan' },
   { k: 'run', zh: '指标与轮次', en: 'Metrics & runs' },
+  { k: 'memory', zh: '记忆', en: 'Memory' },
   { k: 'code', zh: '代码', en: 'Code' },
   { k: 'report', zh: '报告', en: 'Report' },
 ];
@@ -697,6 +699,7 @@ export function ExperimentDetailPage() {
       {tab === 'console' && <ConsoleTab exp={exp} />}
       {tab === 'plan' && <PlanTab exp={exp} onOpenGates={() => openGates(null)} />}
       {tab === 'run' && <RunTab exp={exp} />}
+      {tab === 'memory' && <MemoryTab exp={exp} />}
       {tab === 'code' && <CodeTab exp={exp} active={active} />}
       {tab === 'report' && <ReportTab exp={exp} />}
     </div>

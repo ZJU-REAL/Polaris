@@ -212,13 +212,23 @@ DEBUG_SYSTEM_PROMPT = (
 )
 
 
+#: 全文渲染的近期尝试数（其余压成一行摘要——上下文预算给记忆与最新代码，不给旧全文）
+_ARCHIVE_RECENT_FULL = 2
+
+
 def _render_attempt_archive(
-    archive: list[dict[str, Any]], per_file_cap: int = 2000, best_file_cap: int = 4000
+    archive: list[dict[str, Any]],
+    per_file_cap: int = 2000,
+    best_file_cap: int = 4000,
+    recent_full: int = _ARCHIVE_RECENT_FULL,
 ) -> str:
     """把历史尝试（源码+得分+轨迹）渲染进迭代 proposer 提示——通用的「先验经验档案」。
 
-    非某类实验专属：渲染每次尝试的**全部**源码文件（不假设入口文件名），最优尝试给更长上下文，
-    其余截断；轨迹给尾部。让 proposer 据全量历史而非最后一轮提出下一次尝试。"""
+    体量有界（docs/task-system.md，对照 Anthropic long-running agent 结论）：
+    只有**最优尝试**与**最近 recent_full 次**渲染源码全文（分别截断
+    best_file_cap / per_file_cap），更早的尝试压成一行摘要——它们的结论已经
+    蒸馏进实验记忆（MEMORY.md），全文重放只会稀释信号。旧行为（全量渲染）
+    在 10 轮实验上能吃掉 ~70K 字符且无上限。"""
     if not archive:
         return ""
 
@@ -227,14 +237,21 @@ def _render_attempt_archive(
         return (1, float(v)) if isinstance(v, int | float) else (0, float("-inf"))
 
     best = max(archive, key=_score)
-    parts = [f"历史尝试档案（共 {len(archive)} 次，含源码/得分/轨迹，据此提出下一次尝试）："]
+    recent = set(map(id, archive[-max(recent_full, 0) :]))
+    parts = [f"历史尝试档案（共 {len(archive)} 次；最优与最近 {recent_full} 次含源码全文）："]
     for c in archive:
         star = " ★迄今最好" if c is best else ""
         delta = c.get("conditions_delta")
         delta_s = json.dumps(delta, ensure_ascii=False) if delta else "—"
-        parts.append(
-            f"\n[尝试 seq={c.get('seq')} | 主指标={c.get('primary_value')}{star} | 对照={delta_s}]"
+        header = (
+            f"\n[尝试 seq={c.get('seq')} | 主指标={c.get('primary_value')}{star}"
+            f" | 对照={delta_s}]"
         )
+        if c is not best and id(c) not in recent:
+            observation = str(c.get("observation") or "")[:200]
+            parts.append(header + (f" 观察：{observation}" if observation else ""))
+            continue
+        parts.append(header)
         cap = best_file_cap if c is best else per_file_cap
         # 渲染全部源码文件（跳过 requirements 这类噪音），不假设固定入口名，保证通用
         for name, code in sorted((c.get("files") or {}).items()):
@@ -245,6 +262,81 @@ def _render_attempt_archive(
         if trace:
             parts.append(f"执行轨迹尾部：{trace[-600:]}")
     return "\n".join(parts) + "\n"
+
+
+# ---- 实验记忆（docs/task-system.md）：以文件为载体的跨轮持续记忆 ----
+#
+# 载体是 workdir 根下的 MEMORY.md（人可读、实验脚本可读、前端 code 端点可实时看），
+# checkpoint["memory_md"] 是真源镜像（engine 每步持久化；服务器断连时前端仍可读）。
+# 平台在关键事件处确定性写入（计划定稿/环境事实/每轮结论/修复额度用尽/用户决策/
+# 终止判定），AI 经 reflection.memory_note 自主记笔记；所有实验 LLM 决策点注入
+# 记忆尾部——context 再长，跨轮的关键结论也不丢。
+
+MEMORY_REL = "MEMORY.md"
+_MEMORY_MAX_CHARS = 40_000  # 镜像总量上限：超出滚动丢弃最旧条目（标题行保留）
+_MEMORY_PROMPT_CHARS = 6_000  # 注入 prompt 的尾部预算（新条目优先）
+_MEMORY_HEADER = (
+    "# 实验记忆\n\n"
+    "平台与 AI 共同维护的跨轮记忆：关键决策、环境事实、每轮结论、已证伪路径。\n"
+    "实验脚本可直接读取本文件；新条目在文件末尾。\n"
+)
+
+
+def _memory_text(ctx: ActionContext) -> str:
+    return str(ctx.checkpoint.get("memory_md") or "")
+
+
+def _remember(ctx: ActionContext, section: str, text: str) -> None:
+    """向实验记忆追加一条（只写 checkpoint 镜像；workdir 副本由 _sync_memory_file 推）。"""
+    text = (text or "").strip()
+    if not text:
+        return
+    memory = _memory_text(ctx) or _MEMORY_HEADER
+    stamp = utcnow().strftime("%m-%d %H:%M")
+    memory += f"\n### [{stamp}] {section}\n{text}\n"
+    if len(memory) > _MEMORY_MAX_CHARS:
+        tail = memory[-_MEMORY_MAX_CHARS:]
+        cut = tail.find("\n### ")
+        if cut >= 0:
+            tail = tail[cut:]
+        memory = _MEMORY_HEADER + "\n（更早的记忆条目已滚动丢弃）\n" + tail
+    ctx.checkpoint["memory_md"] = memory
+
+
+async def _sync_memory_file(ctx: ActionContext, executor: Runner) -> None:
+    """把记忆镜像推到 workdir/MEMORY.md（尽力而为：推不动不影响主流程）。"""
+    memory = _memory_text(ctx)
+    if not memory:
+        return
+    with contextlib.suppress(Exception):
+        await executor.write_files({MEMORY_REL: memory})
+
+
+def _memory_prompt(ctx: ActionContext) -> str:
+    """记忆尾部 → prompt 注入段（有界；无记忆时空串）。"""
+    memory = _memory_text(ctx)
+    if not memory:
+        return ""
+    tail = memory[-_MEMORY_PROMPT_CHARS:]
+    if len(memory) > _MEMORY_PROMPT_CHARS:
+        cut = tail.find("\n### ")
+        if cut >= 0:
+            tail = "（更早条目省略，见 MEMORY.md）" + tail[cut:]
+    return f"实验记忆（MEMORY.md，跨轮持续维护——先读它再决策）：\n{tail}\n"
+
+
+def _remember_guidance(ctx: ActionContext, params: dict[str, Any]) -> None:
+    """把注入本步骤的用户指示记进记忆（按步骤去重：resume 重放/修复循环不重复记）。"""
+    guidance = list(params.get("user_guidance") or [])
+    if not guidance or ctx.step_id is None:
+        return
+    key = f"memory_guidance_seen_{ctx.step_id}"
+    seen = int(ctx.checkpoint.get(key) or 0)
+    if len(guidance) <= seen:
+        return
+    for text in guidance[seen:]:
+        _remember(ctx, "用户指示", str(text)[:300])
+    ctx.checkpoint[key] = len(guidance)
 
 
 # ---- 按实验 params 条件追加的 system prompt 段落（plan 与全部 codegen prompt 共用） ----
@@ -468,7 +560,7 @@ REFLECTION_SYSTEM_PROMPT = """\
 {"observation": "本轮结果观察", "diagnosis": "原因诊断",
  "hypothesis_updates": [{"index": 0, "status": "verified|falsified|testing", "evidence": "证据"}],
  "decision": "improve|debug|stop|ask", "planned_change": "下一轮计划修改", "stop_reason": null,
- "question": null}
+ "question": null, "memory_note": null}
 约束：
 - hypothesis_updates 的 index 是假设清单下标（从 0 开始），status 只能取 verified/falsified/testing
 - 本轮运行失败（exit_code 非 0）时 decision 用 debug；结果已足以回答全部假设时用 stop
@@ -479,6 +571,8 @@ REFLECTION_SYSTEM_PROMPT = """\
   怀疑度量有误、两个改进方向证据相当难以取舍、或继续下去要花大算力而收益存疑。
   能自己判断就别问；问题里给出候选方向让用户好回答
 - 若给了「用户指示」，那是用户在对话里的最新意见，**优先遵循**
+- memory_note 可选：想跨轮记住的关键结论/教训（一两句，如「X 方向已证伪：原因」），
+  会写进实验记忆（MEMORY.md）供后续轮次与收尾报告使用
 - 对照实验：若给了「对照汇总」，据 baseline vs treatment 的 delta 判断假设成立与否
   （处理组是否优于 baseline），别只看单个 primary_value；对照结果已清晰时可直接 stop
 """
@@ -881,6 +975,7 @@ def validate_reflection(data: Any) -> dict[str, Any]:
     question = data.get("question")
     if decision == "ask" and not (isinstance(question, str) and question.strip()):
         raise ValueError('decision "ask" requires a non-empty "question"')
+    memory_note = data.get("memory_note")
     return {
         "observation": observation.strip(),
         "diagnosis": diagnosis.strip(),
@@ -889,6 +984,7 @@ def validate_reflection(data: Any) -> dict[str, Any]:
         "planned_change": str(planned_change).strip() if planned_change else None,
         "stop_reason": str(stop_reason).strip() if stop_reason else None,
         "question": str(question).strip() if question else None,
+        "memory_note": str(memory_note).strip() if memory_note else None,
     }
 
 
@@ -1176,6 +1272,15 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
             )
             experiment.plan = plan
             await session.commit()
+            pm_def = plan.get("primary_metric") or {}
+            hyp_texts = [str(h.get("text", ""))[:80] for h in plan.get("hypotheses", [])]
+            _remember(
+                ctx,
+                "实验计划定稿",
+                f"主指标：{pm_def.get('name')}（{pm_def.get('direction')}）；"
+                f"假设 {len(hyp_texts)} 条：" + "；".join(hyp_texts[:6]) + "；"
+                f"预算：{json.dumps(experiment.budget or {}, ensure_ascii=False)}",
+            )
         plan = experiment.plan
 
         # 预算闸门 payload（engine 建 Gate 时合并）：实验 id + 预算摘要 + 计划摘要
@@ -1285,9 +1390,11 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         env_settings = await experiment_settings_service.get_settings(session)
 
         files = ctx.checkpoint.get("exp_files")
+        _remember_guidance(ctx, params)
         if not isinstance(files, dict):  # 断点幂等：已生成的代码不重复调 LLM
             user_prompt = (
                 f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:8000]}\n"
+                f"{_memory_prompt(ctx)}"
                 f"{_guidance_line(params)}"
                 f"预算：{json.dumps(experiment.budget or {}, ensure_ascii=False)}"
                 f"{_env_facts_prompt(env_settings)}"
@@ -1377,6 +1484,13 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                         await executor.close()
                     executor = await _open_executor(session, ctx, experiment)
                 if exit_status == 0:
+                    env_bits = [f"探测到 GPU {len(gpus)} 卡" if gpus else "未探测到 GPU"]
+                    for warning in preflight_warnings:
+                        env_bits.append(str(warning)[:200])
+                    if fixes:
+                        env_bits.append(f"依赖安装经 {fixes} 次自动修复后通过")
+                    _remember(ctx, "环境事实", "；".join(env_bits))
+                    await _sync_memory_file(ctx, executor)
                     written = list(files) + list(platform_files)
                     obs: dict[str, Any] = {
                         "workdir": experiment.workdir,
@@ -1398,6 +1512,13 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     await _mark_attention(
                         ctx, f"依赖安装连续失败（{attempts} 次，exit={exit_status}）"
                     )
+                    _remember(
+                        ctx,
+                        "环境障碍",
+                        f"依赖安装 {attempts} 次未通过（exit={exit_status}）："
+                        f"{detail[-200:]}，已转向用户提问",
+                    )
+                    await _sync_memory_file(ctx, executor)
                     return {
                         "workdir": experiment.workdir,
                         "venv_exit": exit_status,
@@ -1438,8 +1559,10 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 fixes += 1
                 hint = hint or diagnose_failure(err_text, env_settings)
                 guidance_line = await _refresh_user_guidance(ctx, params)
+                _remember_guidance(ctx, params)
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
+                    + _memory_prompt(ctx)
                     + guidance_line
                     + f"依赖安装退出码：{exit_status}\n"
                     + (f"诊断提示：{hint}\n" if hint else "")
@@ -1496,6 +1619,9 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                         await executor.close()
                     executor = await _open_executor(session, ctx, experiment)
                 if exit_status == 0:
+                    if fixes:
+                        _remember(ctx, "试跑", f"自动修复 {fixes} 次后通过")
+                    await _sync_memory_file(ctx, executor)
                     return {"exit_code": 0, "attempts": attempts, "fixes": fixes}
                 if fixes >= MAX_SMOKE_FIXES:
                     # 修复额度用尽不再抛错打死：转向用户提问（引擎收到 observation.ask
@@ -1504,6 +1630,13 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     await _mark_attention(
                         ctx, f"冒烟测试连续失败（{attempts} 次，exit={exit_status}）"
                     )
+                    _remember(
+                        ctx,
+                        "试跑障碍",
+                        f"冒烟 {attempts} 次未通过（exit={exit_status}）："
+                        f"{err_text[-200:]}，已转向用户提问",
+                    )
+                    await _sync_memory_file(ctx, executor)
                     return {
                         "exit_code": exit_status,
                         "attempts": attempts,
@@ -1540,8 +1673,10 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 hint = hint or diagnose_failure(err_text, env_settings)
                 # 修复前拉取对话流里新到的用户建议（试跑修复同样是长循环）
                 guidance_line = await _refresh_user_guidance(ctx, params)
+                _remember_guidance(ctx, params)
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
+                    + _memory_prompt(ctx)
                     + guidance_line
                     + f"冒烟测试退出码：{exit_status}\n"
                     + (f"诊断提示：{hint}\n" if hint else "")
@@ -1816,10 +1951,12 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         )
         run_lasts = {k: _last_value(v) for k, v in (run.metrics or {}).items()}
         # 用户在对话里的建议 / 对提问的回答（引擎注入 step params，见 docs/task-system.md）
+        _remember_guidance(ctx, params)
         guidance_line = _guidance_line(params)
         reflection_user = (
             f"实验计划：{json.dumps(plan, ensure_ascii=False)[:4000]}\n"
             f"主指标：{json.dumps(pm, ensure_ascii=False)}（假设共 {hyp_count} 条）\n"
+            f"{_memory_prompt(ctx)}"
             f"{guidance_line}"
             f"本轮运行：seq={run.seq} status={run.status} exit_code={run.exit_code} "
             f"primary_value={run.primary_value}\n"
@@ -1837,6 +1974,19 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             validate=validate_reflection,
         )
         run.reflection = reflection
+        _remember(
+            ctx,
+            f"第 {run.seq} 轮结论",
+            f"主指标 {run.primary_value}；决策 {reflection['decision']}；"
+            f"诊断：{str(reflection.get('diagnosis') or '')[:250]}"
+            + (
+                f"；下一步：{str(reflection.get('planned_change') or '')[:250]}"
+                if reflection.get("planned_change")
+                else ""
+            ),
+        )
+        if reflection.get("memory_note"):
+            _remember(ctx, "AI 笔记", str(reflection["memory_note"])[:600])
 
         # 尝试存档（通用先验经验档案）：把本轮实现的源码/得分/轨迹存起来，供后续迭代 proposer 读取
         # 全量历史（不是只看上一轮）。记录产生本轮 run 的实现（当前 exp_files）。
@@ -1903,6 +2053,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             stopped_reason = "debug_limit"
 
         if stopped_reason:
+            _remember(ctx, "终止判定", f"迭代结束：{stopped_reason}")
             state["stopped_reason"] = stopped_reason
             experiment.iteration_state = dict(state)
             await session.commit()
@@ -1932,6 +2083,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             archive_ctx = _render_attempt_archive(prior) if prior else ""
             fix_user = (
                 (archive_ctx + "\n" if archive_ctx else "")
+                + _memory_prompt(ctx)
                 + guidance_line
                 + f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
                 + f"reflection 观察：{reflection['observation']}\n"
@@ -1945,7 +2097,9 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             system_prompt = _prompt_with_context(IMPROVE_SYSTEM_PROMPT, ctx)
             fix_user = (
                 _render_attempt_archive(archive)
-                + ("\n" + guidance_line if guidance_line else "")
+                + "\n"
+                + _memory_prompt(ctx)
+                + guidance_line
                 + f"\n主指标：{json.dumps(pm, ensure_ascii=False)}\n"
                 + f"当前尝试 seq={run.seq} 主指标={run.primary_value}；"
                 + f"reflection 诊断：{reflection['diagnosis']}\n"
@@ -1968,6 +2122,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         executor = await _open_executor(session, ctx, experiment)
         try:
             await executor.write_files(files)
+            await _sync_memory_file(ctx, executor)
         finally:
             await executor.close()
         ctx.checkpoint["exp_files"] = files
@@ -2292,6 +2447,7 @@ async def experiment_figures(ctx: ActionContext, params: dict[str, Any]) -> dict
                     )
                     ctx.checkpoint["plot_files"] = plot_files
                 await executor.write_files(plot_files)
+                await _sync_memory_file(ctx, executor)
 
                 # 绘图依赖确定性保证（幂等；失败不阻断——真实错误由 run_plot 暴露）
                 with contextlib.suppress(Exception):
@@ -2406,6 +2562,7 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
         )
         user_prompt = (
             f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:4000]}\n"
+            f"{_memory_prompt(ctx)}"
             f"{_guidance_line(params)}"
             f"迭代各轮：{json.dumps(runs_brief, ensure_ascii=False)}\n"
             f"迭代状态：{json.dumps(experiment.iteration_state or {}, ensure_ascii=False)}\n"
@@ -2424,6 +2581,7 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
             voyage_id=ctx.run.id,
         )
         experiment.report = result.content.strip()
+        _remember(ctx, "报告", f"实验报告已生成（约 {len(experiment.report)} 字）")
         run_ok = last_run is not None and last_run.status == "succeeded"
         final_status = "done" if run_ok else "failed"
         session.add(

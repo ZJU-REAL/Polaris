@@ -243,12 +243,21 @@ async def _open_exp_executor(session: AsyncSession, experiment: Experiment):
 
 
 async def _checkpoint_files(session: AsyncSession, experiment: Experiment) -> dict[str, str]:
-    """voyage checkpoint 里的 exp_files 快照（服务器不可达时的回退来源）。"""
+    """voyage checkpoint 里的文件快照（服务器不可达时的回退来源）。
+
+    exp_files（LLM 产出的源码）+ memory_md（实验记忆镜像，映射为 MEMORY.md）——
+    记忆的真源在 checkpoint，断连时前端记忆页照常可读。
+    """
     if experiment.voyage_id is None:
         return {}
     voyage = await session.get(VoyageRun, experiment.voyage_id)
-    files = (voyage.checkpoint or {}).get("exp_files") if voyage is not None else None
-    return {str(k): str(v) for k, v in files.items()} if isinstance(files, dict) else {}
+    checkpoint = (voyage.checkpoint or {}) if voyage is not None else {}
+    files = checkpoint.get("exp_files")
+    out = {str(k): str(v) for k, v in files.items()} if isinstance(files, dict) else {}
+    memory = checkpoint.get("memory_md")
+    if memory:
+        out["MEMORY.md"] = str(memory)
+    return out
 
 
 @router.get("/experiments/{experiment_id}/sysinfo")

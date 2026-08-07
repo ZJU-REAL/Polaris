@@ -545,6 +545,60 @@ async def test_gate_approve_comment_flows_into_conversation(
         assert pending == []  # 恢复执行后意见已注入决策点并标记消费
 
 
+async def test_experiment_memory_written_and_synced(client, queue_stub, fake_ssh, bus_recorder):
+    """实验记忆：关键事件确定性写入 checkpoint 镜像，并同步到 workdir/MEMORY.md；
+    /code 端点可读（前端记忆页数据源）。"""
+    fake_ssh.run_logs = [RUN_LOG, metric_log(0.75), metric_log(0.8)]
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(
+        client, headers, project_id, idea_id, cred_id, budget={"max_hours": 2, "max_runs": 3}
+    )
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    async with get_sessionmaker()() as session:
+        voyage = await session.get(VoyageRun, uuid.UUID(voyage_id))
+        memory = (voyage.checkpoint or {}).get("memory_md") or ""
+    assert "实验计划定稿" in memory
+    assert "环境事实" in memory
+    assert "第 1 轮结论" in memory and "第 3 轮结论" in memory
+    assert "终止判定" in memory
+    assert "报告" in memory
+    # workdir 副本已同步（脚本可读、CodeTab 可见）；fake 按全路径存键
+    memory_key = next(k for k in fake_ssh.files if k.endswith("/MEMORY.md"))
+    remote = fake_ssh.files[memory_key]
+    remote_text = remote.decode("utf-8") if isinstance(remote, bytes) else str(remote)
+    assert "实验计划定稿" in remote_text
+    # 前端记忆页数据源：/code/file 实时读
+    resp = await client.get(
+        f"/api/experiments/{exp_id}/code/file", params={"path": "MEMORY.md"}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert "实验计划定稿" in resp.json()["content"]
+
+    # 服务器不可达 → 回退 checkpoint 镜像（source=checkpoint）
+    class _DeadConnector:
+        async def connect(self, *a, **k):
+            raise OSError("unreachable (test)")
+
+    ssh_exec.set_connector_factory(lambda: _DeadConnector())
+    try:
+        resp = await client.get(
+            f"/api/experiments/{exp_id}/code/file", params={"path": "MEMORY.md"}, headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source"] == "checkpoint"
+        assert "第 3 轮结论" in resp.json()["content"]
+    finally:
+        ssh_exec.set_connector_factory(None)
+
+
 def test_parse_gpu_csv_unit():
     """nvidia-smi CSV 解析：正常行解析、非法/短行跳过、空输入 → 空列表。"""
     text = "0, 49140, 48000\n1, 49140, 12000\nbad line\n2, x, y\n"
@@ -927,7 +981,8 @@ async def test_path_violation_rejected(client, queue_stub, fake_ssh, bus_recorde
     assert setup_step["attempt"] == 2  # 执行类错误带诊断原地重试过一次
     statuses = [e[2]["status"] for e in bus.voyage_events if e[1] == "status"]
     assert "replanning" in statuses  # 重试尽后走了计划调整
-    assert fake_ssh.files == {}  # 一个文件都没写出去
+    # 安全护栏的本质：越界文件绝不落盘（自愈后的合法平台文件如 MEMORY.md 允许写）
+    assert not any("evil" in path for path in fake_ssh.files)
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.json()["status"] == "waiting_user"  # 提问中，未被提前打死
 

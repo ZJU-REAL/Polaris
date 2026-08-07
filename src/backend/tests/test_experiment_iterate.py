@@ -60,6 +60,7 @@ def _reflection_json(
     planned_change: str | None = "调大学习率（test）",
     stop_reason: str | None = None,
     question: str | None = None,
+    memory_note: str | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -72,6 +73,7 @@ def _reflection_json(
             "planned_change": planned_change,
             "stop_reason": stop_reason,
             "question": question,
+            "memory_note": memory_note,
         },
         ensure_ascii=False,
     )
@@ -334,6 +336,72 @@ async def test_analyze_without_runs_self_heals(client, queue_stub, fake_ssh, bus
 
     assert observation["skipped"] is True and observation["reason"] == "no_runs"
     assert observation["plan_signal"] == {"decision": "continue", "next_round": 1}
+
+
+class _NoteThenStopProvider(FakeProvider):
+    """第一轮 reflection 留 memory_note（improve），第二轮 stop；记录 prompt 是否带记忆。"""
+
+    def __init__(self) -> None:
+        self.reflection_calls = 0
+        self.later_prompt_had_memory = False
+
+    async def complete(
+        self, messages, *, model, temperature=0.7, max_tokens=None, images=None
+    ) -> CompletionResult:
+        full = "\n".join(m.content for m in messages)
+        if not images and '"hypothesis_updates"' in full:
+            self.reflection_calls += 1
+            if self.reflection_calls == 1:
+                return _result(
+                    _reflection_json(
+                        "improve", memory_note="小学习率方向已证伪：损失不降（test note）"
+                    ),
+                    model,
+                )
+            if "实验记忆" in full and "test note" in full:
+                self.later_prompt_had_memory = True
+            return _result(_reflection_json("stop", stop_reason="足够了（test）"), model)
+        return await super().complete(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
+        )
+
+
+async def test_memory_note_persists_and_reinjected(client, queue_stub, fake_ssh, bus_recorder):
+    """AI 的 memory_note 落进实验记忆，并在后续轮次的 reflection prompt 里可见。"""
+    fake_ssh.run_logs = [metric_log(0.7), metric_log(0.75)]
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(client)
+    provider = _NoteThenStopProvider()
+    await _drive_pipeline(client, headers, project_id, voyage_id, _router_with(provider))
+
+    detail = await _get_detail(client, headers, exp_id)
+    assert detail["status"] == "done"
+    async with get_sessionmaker()() as session:
+        voyage = await session.get(VoyageRun, uuid.UUID(voyage_id))
+        memory = (voyage.checkpoint or {}).get("memory_md") or ""
+    assert "AI 笔记" in memory and "test note" in memory
+    assert provider.later_prompt_had_memory  # 第二轮 reflection 读到了第一轮的笔记
+
+
+def test_render_attempt_archive_bounded():
+    """历史尝试档案有界：只有最优 + 最近 2 次渲染源码全文，更早的压成一行摘要。"""
+    from app.agents.voyage.actions_experiment import _render_attempt_archive
+
+    archive = [
+        {
+            "seq": i,
+            "primary_value": 0.5 + i * 0.05 if i != 3 else 0.99,  # seq=3 是最优
+            "files": {"train.py": f"code round {i}" * 10},
+            "trace": f"trace {i}",
+            "observation": f"obs {i}",
+        }
+        for i in range(1, 6)
+    ]
+    text = _render_attempt_archive(archive)
+    # 最优（seq=3）与最近两次（seq=4,5）带源码
+    assert text.count("源码（train.py") == 3
+    # 更早的（seq=1,2）只有摘要行（带观察，不带源码）
+    assert "seq=1" in text and "obs 1" in text
+    assert "seq=2" in text and "obs 2" in text
 
 
 async def test_max_runs_truncates_iteration(client, queue_stub, fake_ssh, bus_recorder):
