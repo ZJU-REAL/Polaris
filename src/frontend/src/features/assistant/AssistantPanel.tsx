@@ -495,13 +495,23 @@ export function AssistantPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   // 对话里的「项目」就是平台里的课题。**默认不选**：选了之后检索范围就收窄到这个
-  // 课题，而用户多数问题是跨课题的；想收窄时自己挑一个，比默认收窄再去发现「怎么
-  // 查不到别的库」要好。
+  // 课题。**默认跟随你正在做的那个课题**：人问「实验跑得怎么样」时，指的多半就是
+  // 眼前这个课题的实验，而不是全实验室的。想问别的课题、或者想放开到全部资产，
+  // 点上面那个按钮改——改了就以你改的为准，不再被界面切换带着走。
   //
-  // 以前这里是个开关，只能绑「你现在正在看的那个课题」——想问另一个课题，得先把整个
-  // 界面切过去。现在存的是选中的课题 id，输入框上方那个按钮直接挑。
-  const { projects } = useProject();
-  const [topicId, setTopicId] = useState<string | null>(null);
+  // 以前这里是个开关，只能绑当前课题、不能挑；再往前默认是「全部」，于是问一句
+  // 「我的实验」会把别的课题的也捞进来。
+  const { projects, currentProjectId } = useProject();
+  const [topicId, setTopicId] = useState<string | null>(currentProjectId);
+  // 用户自己动过选择之后，就别再跟着界面切课题——那是他的选择，不是界面的。
+  const topicPinned = useRef(false);
+  useEffect(() => {
+    if (!topicPinned.current) setTopicId(currentProjectId);
+  }, [currentProjectId]);
+  const pickTopic = useCallback((id: string | null) => {
+    topicPinned.current = true;
+    setTopicId(id);
+  }, []);
   const [topicOpen, setTopicOpen] = useState(false);
   const [topicQuery, setTopicQuery] = useState('');
   const topic = useMemo(
@@ -581,7 +591,9 @@ export function AssistantPanel({
         setHistoryOpen(false);
         // 会话上存着的课题才是这场对话真正的作用域，跟着切过去。
         // （这句注释以前是空头支票：写着「跟着切」，却没有一行代码在切。）
-        setTopicId(conversations.find((c) => c.id === id)?.project_id ?? null);
+        // 会话自己的作用域也算「定下来了」：它是这场对话当初问的范围，
+        // 不该被用户后来在界面上切课题给盖掉。
+        pickTopic(conversations.find((c) => c.id === id)?.project_id ?? null);
         setTurns(
           messages
             // 一轮会落成几条消息：assistant（正文/调用）+ 携带工具结果的那条。
@@ -603,7 +615,7 @@ export function AssistantPanel({
         /* 载入失败保持现状 */
       }
     },
-    [conversations],
+    [conversations, pickTopic],
   );
 
   const newConversation = useCallback(() => {
@@ -1067,7 +1079,7 @@ export function AssistantPanel({
                       // 搜到只剩一个时回车直接选它
                       const only = topicMatches.length === 1 ? topicMatches[0] : undefined;
                       if (e.key === 'Enter' && only) {
-                        setTopicId(only.id);
+                        pickTopic(only.id);
                         setTopicOpen(false);
                       }
                     }}
@@ -1080,7 +1092,7 @@ export function AssistantPanel({
                     role="option"
                     aria-selected={!topicId}
                     onClick={() => {
-                      setTopicId(null);
+                      pickTopic(null);
                       setTopicOpen(false);
                     }}
                   >
@@ -1097,7 +1109,7 @@ export function AssistantPanel({
                       aria-selected={p.id === topicId}
                       title={p.name}
                       onClick={() => {
-                        setTopicId(p.id);
+                        pickTopic(p.id);
                         setTopicOpen(false);
                       }}
                     >

@@ -71,6 +71,17 @@ describe('课题选择', () => {
 
   it('载入历史会话时采用它自己的课题', () => {
     // 这句注释以前是空头支票：写着「跟着切」，却没有一行代码在切
-    expect(source).toContain('setTopicId(conversations.find((c) => c.id === id)?.project_id ?? null)');
+    expect(source).toContain('pickTopic(conversations.find((c) => c.id === id)?.project_id ?? null)');
+  });
+
+  it('默认跟随你正在做的那个课题', () => {
+    // 问「实验跑得怎么样」，指的多半是眼前这个课题的实验，不是全实验室的
+    expect(source).toContain('useState<string | null>(currentProjectId)');
+    expect(source).toContain('if (!topicPinned.current) setTopicId(currentProjectId)');
+  });
+
+  it('用户自己选过之后就不再被界面切换带着走', () => {
+    // 否则他在 Buddy 里挑了 A，回头在侧栏切到 B，问话范围会被悄悄换掉
+    expect(source).toContain('topicPinned.current = true');
   });
 });
