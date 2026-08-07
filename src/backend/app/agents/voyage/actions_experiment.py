@@ -50,10 +50,11 @@ from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
 from app.models.paper import Paper, PaperWiki
 from app.models.ssh_credential import SSHCredential
-from app.models.voyage import VoyageRun
+from app.models.voyage import VoyageRun, VoyageStep
 from app.services import experiment_settings as experiment_settings_service
 from app.services import experiments as experiments_service
 from app.services import ssh_exec
+from app.services import voyage_messages as messages_service
 from app.services.figure_annotate import prepare_image_for_llm
 from app.services.libraries import (
     dedupe_member_rows,
@@ -568,6 +569,47 @@ async def _mark_attention(ctx: ActionContext, reason: str) -> None:
             )
         )
         await session.commit()
+
+
+def _guidance_line(params: dict[str, Any]) -> str:
+    """params["user_guidance"] → prompt 注入行（无建议时空串）。
+
+    每个 LLM 决策点都必须带上这一行——线上实测过：建议只接了 smoke/analyze，
+    用户对着装依赖循环连发建议全被无视（docs/task-system.md）。
+    """
+    guidance = params.get("user_guidance")
+    if not guidance:
+        return ""
+    return f"用户指示（务必优先遵循）：{json.dumps(guidance, ensure_ascii=False)}\n"
+
+
+async def _refresh_user_guidance(ctx: ActionContext, params: dict[str, Any]) -> str:
+    """长动作（setup/smoke 修复循环）每一轮把对话流里**新到**的建议并入 guidance。
+
+    引擎只在步骤开始时注入一次；装依赖/修代码动辄几十分钟，期间用户发的建议
+    不该等到下一个步骤边界才被看见。消费标记与「并入步骤 params」同一事务提交
+    （resume 重放不会重复注入也不会丢建议）；失败静默降级为用已有 guidance。
+    返回最新的 prompt 注入行。
+    """
+    try:
+        async with get_sessionmaker()() as session:
+            pending = await messages_service.pending_chat_messages(session, ctx.run.id)
+            if pending:
+                merged = list(params.get("user_guidance") or []) + [m.text for m in pending]
+                step = (
+                    await session.get(VoyageStep, ctx.step_id) if ctx.step_id else None
+                )
+                if step is not None:
+                    step_params = dict(step.params or {})
+                    step_params["user_guidance"] = merged
+                    step.params = step_params
+                messages_service.mark_chat_consumed(pending, step_id=ctx.step_id)
+                await session.commit()
+                params["user_guidance"] = merged
+                await ctx.log(f"已收到你的 {len(pending)} 条建议，立即用于当前修复")
+    except Exception:  # noqa: BLE001 — 建议拉取失败不能影响修复主流程
+        pass
+    return _guidance_line(params)
 
 
 def _guarded(func):
@@ -1122,6 +1164,7 @@ async def experiment_plan(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                 f"想法详情：\n{(idea.content or '')[:4000]}\n"
                 f"{_proposal_context(idea)}\n"
                 f"相关 wiki 摘要：\n{wiki_context}\n\n"
+                f"{_guidance_line(params)}"
                 f"预算约束：{json.dumps(experiment.budget or {}, ensure_ascii=False)}\n"
                 f"GPU 提示：{gpu_hint or '（无）'}"
             )
@@ -1245,6 +1288,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
         if not isinstance(files, dict):  # 断点幂等：已生成的代码不重复调 LLM
             user_prompt = (
                 f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:8000]}\n"
+                f"{_guidance_line(params)}"
                 f"预算：{json.dumps(experiment.budget or {}, ensure_ascii=False)}"
                 f"{_env_facts_prompt(env_settings)}"
             )
@@ -1347,18 +1391,57 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                         obs["preflight_warnings"] = preflight_warnings
                     return obs
                 if fixes >= MAX_SETUP_FIXES:
+                    # 修复额度用尽不再抛错：抛错会让引擎原地重试整个 setup——
+                    # 又从头拉镜像/装依赖一遍（线上实测「一直装镜像」就是这个循环）。
+                    # 转向用户提问，等人给指示再动。
                     detail = err_text or "（无输出，多为连接中断或超时）"
-                    raise RuntimeError(
-                        f"依赖安装失败（exit={exit_status}，{attempts} 次）：{detail}"
+                    await _mark_attention(
+                        ctx, f"依赖安装连续失败（{attempts} 次，exit={exit_status}）"
                     )
+                    return {
+                        "workdir": experiment.workdir,
+                        "venv_exit": exit_status,
+                        "attempts": attempts,
+                        "fixes": fixes,
+                        "ask": {
+                            "ask_kind": "fatal_step",
+                            "question": (
+                                f"实验环境装不起来（尝试 {attempts} 次，"
+                                f"自动修复 {fixes} 次已用尽），"
+                                f"最后的报错：{detail[-300:]}。怎么处理？"
+                            ),
+                            "context": {
+                                "setup_log_tail": detail[-2000:],
+                                "attempts": attempts,
+                                "fixes": fixes,
+                                "preflight_warnings": preflight_warnings,
+                            },
+                            "options": [
+                                {
+                                    "id": "retry",
+                                    "zh": "带指示重试（换依赖/换镜像/改配置等）",
+                                    "en": "Retry with instructions",
+                                },
+                                {
+                                    "id": "replan",
+                                    "zh": "换个方案（请说明思路）",
+                                    "en": "Change approach (describe how)",
+                                },
+                                {"id": "abort", "zh": "放弃实验", "en": "Give up"},
+                            ],
+                        },
+                    }
                 # 把诊断 + 报错回给 LLM 修 requirements.txt/run.sh（方案级修复）。
                 # 环境事实必须一起带上：修复循环原本只有 stderr，模型照样不知道这台机器
-                # 上模型放哪、有没有配镜像源，只能接着猜。
+                # 上模型放哪、有没有配镜像源，只能接着猜。修复前先拉取对话流里
+                # 新到的用户建议——装依赖动辄几十分钟，用户在旁边说话不能装听不见。
                 fixes += 1
                 hint = hint or diagnose_failure(err_text, env_settings)
+                guidance_line = await _refresh_user_guidance(ctx, params)
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
-                    f"依赖安装退出码：{exit_status}\n"
+                    + guidance_line
+                    + f"依赖安装退出码：{exit_status}\n"
                     + (f"诊断提示：{hint}\n" if hint else "")
                     + f"报错：\n{err_text}"
                     + _env_facts_prompt(env_settings)
@@ -1455,12 +1538,8 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 # 超时那类已经在上面给了 hint；其余按 stderr 签名归类，认不出就留空。
                 fixes += 1
                 hint = hint or diagnose_failure(err_text, env_settings)
-                guidance = params.get("user_guidance")
-                guidance_line = (
-                    f"用户指示（务必优先遵循）：{json.dumps(guidance, ensure_ascii=False)}\n"
-                    if guidance
-                    else ""
-                )
+                # 修复前拉取对话流里新到的用户建议（试跑修复同样是长循环）
+                guidance_line = await _refresh_user_guidance(ctx, params)
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
                     + guidance_line
@@ -1737,12 +1816,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         )
         run_lasts = {k: _last_value(v) for k, v in (run.metrics or {}).items()}
         # 用户在对话里的建议 / 对提问的回答（引擎注入 step params，见 docs/task-system.md）
-        user_guidance = params.get("user_guidance")
-        guidance_line = (
-            f"用户指示（务必优先遵循）：{json.dumps(user_guidance, ensure_ascii=False)}\n"
-            if user_guidance
-            else ""
-        )
+        guidance_line = _guidance_line(params)
         reflection_user = (
             f"实验计划：{json.dumps(plan, ensure_ascii=False)[:4000]}\n"
             f"主指标：{json.dumps(pm, ensure_ascii=False)}（假设共 {hyp_count} 条）\n"
@@ -2206,6 +2280,7 @@ async def experiment_figures(ctx: ActionContext, params: dict[str, Any]) -> dict
                 if plot_files is None:
                     plot_user = (
                         f"主指标：{json.dumps(plan.get('primary_metric'), ensure_ascii=False)}\n"
+                        f"{_guidance_line(params)}"
                         f"metrics_all.json 内容预览：{metrics_all_text[:4000]}\n"
                         + (f"上一版脚本的问题（请修复）：{problem}" if problem else "")
                     )
@@ -2331,6 +2406,7 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
         )
         user_prompt = (
             f"实验计划：{json.dumps(experiment.plan or {}, ensure_ascii=False)[:4000]}\n"
+            f"{_guidance_line(params)}"
             f"迭代各轮：{json.dumps(runs_brief, ensure_ascii=False)}\n"
             f"迭代状态：{json.dumps(experiment.iteration_state or {}, ensure_ascii=False)}\n"
             f"指标数据：{json.dumps(experiment.metrics or {}, ensure_ascii=False)[:4000]}\n"

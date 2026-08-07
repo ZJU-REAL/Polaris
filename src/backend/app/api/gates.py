@@ -20,11 +20,13 @@ from app.core.events import EventBus, get_event_bus
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.gate import Gate
 from app.models.user import User
+from app.models.voyage import VoyageRun
 from app.schemas.gate import GateDecision, GateRead
 from app.services import experiments as experiments_service
 from app.services import gates as gates_service
 from app.services import ideas as ideas_service
 from app.services import manuscripts as manuscripts_service
+from app.services import voyage_messages as messages_service
 
 router = APIRouter(prefix="/gates", tags=["gates"])
 
@@ -91,6 +93,29 @@ async def _decide(
     voyage_id = gates_service.gate_voyage_id(gate)
     if voyage_id is not None:
         if approved:
+            # 审批意见并入任务对话流：以前批准时 comment 直接被丢弃，
+            # 用户在预算闸门写的「先用小模型跑」这类指示 agent 永远看不到。
+            # 走既有建议通道（下一个决策点自动注入 + 消费留痕）。
+            comment = (data.comment or "").strip() if data is not None else ""
+            # 先确认 voyage 行确实存在：payload 里的 id 可能指向已删任务，
+            # 外键失败的回滚会把 session 里的 gate 弄过期、砸了后面的联动
+            if comment and await session.get(VoyageRun, voyage_id) is not None:
+                try:
+                    message = await messages_service.append_message(
+                        session,
+                        voyage_id,
+                        role="user",
+                        kind="chat",
+                        text=f"（审批意见）{comment}",
+                        author_id=user.id,
+                    )
+                    await bus.publish_voyage_event(
+                        voyage_id,
+                        "message",
+                        {"message": messages_service.serialize_message(message)},
+                    )
+                except messages_service.MessageSeqConflictError:
+                    pass  # 极小概率并发撞 seq：意见仍在 gate.comment 里，不阻塞审批
             await queue.enqueue("resume_voyage", str(voyage_id))
         else:
             run = await gates_service.fail_voyage(session, voyage_id)

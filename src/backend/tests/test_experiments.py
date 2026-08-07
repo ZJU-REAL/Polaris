@@ -409,10 +409,10 @@ async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh,
     assert resp.json()["status"] == "done"
 
 
-async def test_setup_deps_escalate_not_hard_fail(client, queue_stub, fake_ssh, bus_recorder):
-    """依赖装不上、内部修复用尽 → setup 不像 smoke 那样硬停：它是「可换方案」节点，
-    升级到引擎级重试/AI 计划调整（navigator：setup 走 loop 回灌）。本例重试后恢复 → voyage done。"""
-    fake_ssh.setup_exits = [1, 1, 1]  # 够耗尽一轮内部修复（1 次 + 2 次 fixes）后升级
+async def test_setup_deps_exhausted_asks_then_retry(client, queue_stub, fake_ssh, bus_recorder):
+    """依赖装不上、内部修复用尽 → 不再抛错让引擎盲目重装（线上实测「一直装镜像」）：
+    转向用户提问（paused_ask）；回答重试后修复计数清零、装通、整条流水线走完。"""
+    fake_ssh.setup_exits = [1, 1, 1, 0]  # 耗尽一轮内部修复（1 次 + 2 次 fixes）→ 提问；答后重装通过
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
@@ -426,10 +426,123 @@ async def test_setup_deps_escalate_not_hard_fail(client, queue_stub, fake_ssh, b
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
-    # 关键区别：内部修复用尽后 setup 不硬停，升级重试后恢复完成（对比 smoke 用尽即 failed）
-    assert voyage["status"] == "done", voyage
+    assert voyage["status"] == "paused_ask", voyage
+    ask = voyage["open_ask"]
+    assert ask is not None and "实验环境装不起来" in ask["text"]
+    setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
+    assert setup_step["status"] == "pending"  # 提问不烧尝试预算
+    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
+    assert resp.json()["status"] == "waiting_user"
+
+    # 回答重试 → setup 重跑（第 4 个退出码 0）→ 全程走完
+    resp = await client.post(
+        f"/api/voyages/{voyage_id}/asks/{ask['id']}/answer",
+        json={"choice": "retry", "text": "精简依赖再装一次"},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    await engine.resume(uuid.UUID(voyage_id))
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "done"
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.json()["status"] == "done"
+
+
+async def test_setup_fix_loop_picks_up_mid_action_suggestions(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """长动作期间的建议不再等下一个步骤边界：setup 修复循环每一轮实时拉取
+    对话流新消息，注入修复 prompt 并标记消费（与步骤 params 持久化同事务）。"""
+    from app.core.llm.base import CompletionResult
+    from app.services import voyage_messages as messages_service
+
+    fake_ssh.setup_exits = [1, 0]  # 失败一次 → 修复一轮（期间用户发建议）→ 装通
+
+    class _FixPromptSpy(FakeProvider):
+        def __init__(self) -> None:
+            self.fix_prompts: list[str] = []
+
+        async def complete(
+            self, messages, *, model, temperature=0.7, max_tokens=None, images=None
+        ) -> CompletionResult:
+            full = "\n".join(m.content for m in messages)
+            if "依赖安装退出码" in full:
+                self.fix_prompts.append(full)
+            return await super().complete(
+                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                images=images,
+            )
+
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    posted = False
+
+    async def post_suggestion(command: str) -> None:
+        # 首次装依赖启动后（= setup 动作执行中途）用户发来建议
+        nonlocal posted
+        if "setup.exit" in command and not posted:
+            posted = True
+            async with get_sessionmaker()() as session:
+                await messages_service.append_message(
+                    session,
+                    uuid.UUID(voyage_id),
+                    role="user",
+                    kind="chat",
+                    text="换成 torch 的 cpu 版本",
+                )
+
+    fake_ssh.on_command = post_suggestion
+
+    provider = _FixPromptSpy()
+    router = LLMRouter()
+    router.override_provider(provider)
+    engine, _ = _make_engine(router)
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    assert posted
+    assert provider.fix_prompts, "应发生过一次依赖修复"
+    assert "换成 torch 的 cpu 版本" in provider.fix_prompts[0]
+    assert "用户指示" in provider.fix_prompts[0]
+    async with get_sessionmaker()() as session:
+        pending = await messages_service.pending_chat_messages(session, uuid.UUID(voyage_id))
+        assert pending == []  # 已消费，不残留
+
+
+async def test_gate_approve_comment_flows_into_conversation(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """批准闸门时写的意见不再被丢弃：镜像成对话流建议，恢复执行后被消费。"""
+    from app.services import voyage_messages as messages_service
+
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))  # 停在 compute_budget 闸门
+    resp = await client.get(f"/api/gates?project_id={project_id}", headers=headers)
+    gate = resp.json()[0]
+    resp = await client.post(
+        f"/api/gates/{gate['id']}/approve", json={"comment": "先用小模型跑"}, headers=headers
+    )
+    assert resp.status_code == 200
+
+    resp = await client.get(f"/api/voyages/{voyage_id}/messages", headers=headers)
+    chat = [m for m in resp.json() if m["kind"] == "chat"]
+    assert any("先用小模型跑" in m["text"] for m in chat), chat
+
+    await engine.resume(uuid.UUID(voyage_id))
+    async with get_sessionmaker()() as session:
+        pending = await messages_service.pending_chat_messages(session, uuid.UUID(voyage_id))
+        assert pending == []  # 恢复执行后意见已注入决策点并标记消费
 
 
 def test_parse_gpu_csv_unit():
