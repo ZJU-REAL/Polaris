@@ -37,8 +37,16 @@ def is_admin_expr(user_id: uuid.UUID):
 
     这些查询只拿得到 user_id、拿不到 User 对象，所以用 exists 子查询就地判；
     写法与 voyages._visible_filter、libraries.user_visible_paper_stmt 一致。
+
+    只读账号（游客）不算：它顶着 role=admin 是为了看见管理端长什么样，不是为了
+    看见全实验室在做哪些课题。少了这一条，一个演示号打开就是二十几个课题的清单，
+    每个名字都在说这个实验室正在做什么。它该看到的只有别人把它加进去的那些。
     """
-    return select(User.id).where(User.id == user_id, User.role == "admin").exists()
+    return (
+        select(User.id)
+        .where(User.id == user_id, User.role == "admin", User.read_only.is_(False))
+        .exists()
+    )
 
 
 def in_my_projects(project_id_col, user_id: uuid.UUID):

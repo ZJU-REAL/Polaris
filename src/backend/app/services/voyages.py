@@ -56,7 +56,14 @@ def _visible_filter(stmt, user_id: uuid.UUID):
     my_libraries = select(DirectionLibrary.id).where(
         or_(DirectionLibrary.submitted_by == user_id, DirectionLibrary.id.in_(my_curated))
     )
-    is_admin = select(User.id).where(User.id == user_id, User.role == "admin").exists()
+    # 只读账号（游客）不吃这条旁路：课题可见范围已经按成员关系收紧
+    # （见 projects.is_admin_expr），任务这边不跟着收，列表里就会冒出一堆
+    # 它够不着的课题的任务，标题旁边写着「未知课题」。
+    is_admin = (
+        select(User.id)
+        .where(User.id == user_id, User.role == "admin", User.read_only.is_(False))
+        .exists()
+    )
     # 「我发起的」只对有作用域的任务生效：平台级任务（两个 id 都为空）恒为 admin-only。
     mine_scoped = and_(
         VoyageRun.created_by == user_id,
@@ -114,7 +121,7 @@ async def can_view_voyage(
 
     :func:`_visible_filter` 是它的 SQL 镜像，两边必须一起改。
     """
-    if user.role == "admin":
+    if user.role == "admin" and not user.read_only:
         return True
     if run.project_id is None and run.library_id is None:
         return False
