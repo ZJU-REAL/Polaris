@@ -359,18 +359,27 @@ async def capabilities(
 
 @router.get("/buddy/greeting")
 async def buddy_greeting(
+    page: str | None = None,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> dict[str, object]:
     """PolarisBuddy 开面板时说的那句话，外加它依据的计数。
 
     **不过模型**：每次开面板都要出现，过 LLM 就是每次都花钱、还得等，而且模型会把
-    数字说错。句子是从真实计数里挑的，不是生成的。
+    数字说错。句子是从真实计数里挑的，不是生成的。只读的演示账号更是连模型都调不动，
+    走 LLM 的话那边会直接空掉。
+
+    ``page`` 是前端告诉我们「用户此刻在看什么」（kind，见 buddy._CONTEXT_LABELS）。
+    这是最强的信号——他人就在那一页上——所以开场问句优先按它来挑。
     """
     _require_enabled()
     stats = await buddy.collect_stats(session, user_id=user.id)
+    question, suggestions = buddy.compose_opening(stats, page_kind=page)
     return {
         "greeting": buddy.compose_greeting(stats, name=user.display_name or None),
+        # 开场：一句主动问话 + 三条点一下就发出去的候选
+        "question": question,
+        "suggestions": suggestions,
         # 主动提示：没有真事就是 null，前端据此决定要不要冒气泡
         "nudge": buddy.compose_nudge(stats),
         "stats": stats.as_dict(),

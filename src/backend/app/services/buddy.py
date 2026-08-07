@@ -22,6 +22,8 @@ from app.models.daily_feed import DailyFeedEntry
 from app.models.experiment import Experiment
 from app.models.idea import Idea
 from app.models.library import UserLibraryEntry
+from app.models.manuscript import Manuscript
+from app.models.paper import PaperUserMeta
 from app.models.project import ProjectMember
 
 #: 「最近」的口径。七天是一周工作节奏，比"今天"稳（周一看不到上周五的成果会很挫）。
@@ -40,6 +42,9 @@ class BuddyStats:
     ideas_recent: int  # 最近 7 天在自己参与的课题里新增的想法
     experiments_running: int
     daily_today: int  # 今天的新论文（全平台）
+    reading_now: int  # 标了「在读」还没读完的论文——搁在半路的事最值得被问一句
+    manuscripts_active: int  # 自己课题下在写的稿子
+    topics: int  # 参与的课题数；0 = 还没开张，问候语要走冷启动那条
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -48,6 +53,9 @@ class BuddyStats:
             "ideas_recent": self.ideas_recent,
             "experiments_running": self.experiments_running,
             "daily_today": self.daily_today,
+            "reading_now": self.reading_now,
+            "manuscripts_active": self.manuscripts_active,
+            "topics": self.topics,
         }
 
 
@@ -101,12 +109,28 @@ async def collect_stats(session: AsyncSession, *, user_id: uuid.UUID) -> BuddySt
         .select_from(DailyFeedEntry)
         .where(DailyFeedEntry.feed_date == dt.datetime.now(dt.UTC).date())
     )
+    reading_now = await count(
+        select(func.count())
+        .select_from(PaperUserMeta)
+        .where(PaperUserMeta.user_id == user_id, PaperUserMeta.reading_status == "reading")
+    )
+    manuscripts_active = await count(
+        select(func.count())
+        .select_from(Manuscript)
+        .where(Manuscript.project_id.in_(my_projects), Manuscript.trashed_at.is_(None))
+    )
+    topics = await count(
+        select(func.count()).select_from(ProjectMember).where(ProjectMember.user_id == user_id)
+    )
     return BuddyStats(
         saved_recent=saved_recent,
         saved_total=saved_total,
         ideas_recent=ideas_recent,
         experiments_running=experiments_running,
         daily_today=daily_today,
+        reading_now=reading_now,
+        manuscripts_active=manuscripts_active,
+        topics=topics,
     )
 
 
@@ -138,6 +162,122 @@ def compose_greeting(stats: BuddyStats, *, name: str | None = None) -> str:
     if stats.saved_total:
         return f"{who}你的库里已经有 {stats.saved_total} 篇论文了。今天想从哪儿看起？"
     return f"{who}我是 PolarisBuddy。你在平台上做的事我都能帮上手——先从一个问题开始吧。"
+
+
+#: 开场：一句主动的问话 + 三条用户可能想说的话（点一下就发出去）。
+#:
+#: **仍然不过模型**（见文件头第 1 条纪律），而且现在多了一条硬理由：只读的演示账号
+#: 根本调不动模型，开场白要是走 LLM，公开演示上会直接空掉。
+#:
+#: 「智能」来自信号的覆盖与排序，不是来自生成：先看他此刻正在看什么（页面上下文是
+#: 最强的信号——他人就在那儿），看不出名堂再退回他自己的近况。一次只问一件事。
+def compose_opening(
+    stats: BuddyStats, *, page_kind: str | None = None
+) -> tuple[str, list[str]]:
+    """返回 (问句, 三条候选回复)。三条是**用户说的话**，点了就当他这么问。"""
+    # —— 他正在看的东西优先：此刻在屏幕上的那件事，比七天前的统计切题得多 ——
+    by_page: dict[str, tuple[str, list[str]]] = {
+        "paper": (
+            "在读这篇？我可以帮你拆开看看。",
+            [
+                "这篇到底解决了什么问题？",
+                "它的方法和已有工作差在哪？",
+                "证据够不够强，有什么没做的实验？",
+            ],
+        ),
+        "idea": (
+            "这个想法要往下推吗？",
+            [
+                "帮我查查有没有人做过类似的",
+                "这个想法最薄弱的地方在哪？",
+                "帮我把它拆成可做的第一步",
+            ],
+        ),
+        "experiment": (
+            "这个实验现在怎么样？",
+            [
+                "跑到哪一步了，结果说明什么？",
+                "这个结果可信吗，有什么坑？",
+                "下一轮该改哪个变量？",
+            ],
+        ),
+        "manuscript": (
+            "在写这篇？我可以搭把手。",
+            [
+                "帮我看看这一节的逻辑通不通",
+                "相关工作还缺哪些该引的？",
+                "把这段改得更紧凑一些",
+            ],
+        ),
+        "library": (
+            "这个库里想找什么？",
+            [
+                "这个库最近进了哪些值得看的？",
+                "帮我按主题把这些论文归归类",
+                "这些工作里有哪些共同的思路？",
+            ],
+        ),
+        "project": (
+            "这个课题接下来做什么？",
+            [
+                "帮我理一下这个课题现在的进展",
+                "这个方向还有哪些没被做的空档？",
+                "下一步最该动手的是什么？",
+            ],
+        ),
+        "daily": (
+            "今天的新论文，要我帮你挑吗？",
+            [
+                "哪几篇和我的方向相关？",
+                "今天有什么值得一读的？",
+                "把今天的按主题归归类",
+            ],
+        ),
+    }
+    if page_kind and page_kind in by_page:
+        return by_page[page_kind]
+
+    # —— 看不出他在看什么，就退回他自己的近况：搁在半路的事排在前面 ——
+    if stats.experiments_running:
+        return (
+            "有实验在跑，要看看进展吗？",
+            ["我的实验跑到哪了？", "结果能说明什么？", "下一步该做什么？"],
+        )
+    if stats.manuscripts_active:
+        return (
+            "稿子写到哪了？",
+            ["帮我看看现在这版的问题", "相关工作还缺哪些该引的？", "接下来该补哪一节？"],
+        )
+    if stats.reading_now:
+        return (
+            "有几篇还在读，要接着看吗？",
+            ["帮我把在读的这几篇串一串", "这几篇的共同点是什么？", "挑一篇帮我讲讲"],
+        )
+    if stats.ideas_recent:
+        return (
+            "最近攒了些想法，挑一个推推？",
+            ["帮我看看哪个想法最值得做", "查查有没有人做过", "帮我拆成可做的第一步"],
+        )
+    if stats.saved_recent:
+        return (
+            "这周收了些论文，要串一串吗？",
+            ["这几篇有什么共同的线索？", "帮我按主题归归类", "里面哪篇最值得细读？"],
+        )
+    if stats.daily_today:
+        return (
+            "今天有新论文进来了，想看看吗？",
+            ["哪几篇和我的方向相关？", "今天有什么值得一读的？", "帮我按主题归归类"],
+        )
+    if stats.saved_total:
+        return (
+            "今天想从哪儿看起？",
+            ["我的库里有什么值得重读的？", "帮我找某个方向的论文", "最近这个方向有什么新进展？"],
+        )
+    # —— 全新账号：别问他"你的实验怎么样"，他什么都还没有 ——
+    return (
+        "想从哪儿开始？",
+        ["帮我找某个方向的论文", "最近有什么值得读的新论文？", "Polaris 能帮我做什么？"],
+    )
 
 
 def compose_nudge(stats: BuddyStats) -> str | None:

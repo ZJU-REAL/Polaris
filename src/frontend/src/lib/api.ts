@@ -4865,13 +4865,17 @@ export const api = {
     return request('/chat/capabilities');
   },
   /** PolarisBuddy 开面板时的问候语。数字是 SQL 数出来的，不过模型。 */
-  getBuddyGreeting(): Promise<{
+  getBuddyGreeting(page?: string | null): Promise<{
     greeting: string;
+    /** 开场的一句主动问话；按「用户此刻在看什么」挑 */
+    question: string;
+    /** 三条用户可能想说的话，点一下就发出去 */
+    suggestions: string[];
     /** 今天值得主动说的一句话；null = 没有真事，不要打扰 */
     nudge: string | null;
     stats: Record<string, number>;
   }> {
-    return request('/chat/buddy/greeting');
+    return request(`/chat/buddy/greeting${page ? `?page=${encodeURIComponent(page)}` : ''}`);
   },
   listAssistantConversations(): Promise<
     { id: string; title: string; last_message_at: string | null; project_id: string | null }[]

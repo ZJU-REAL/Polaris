@@ -32,6 +32,9 @@ def _stats(**kw) -> buddy.BuddyStats:
         "ideas_recent": 0,
         "experiments_running": 0,
         "daily_today": 0,
+        "reading_now": 0,
+        "manuscripts_active": 0,
+        "topics": 0,
     }
     return buddy.BuddyStats(**{**base, **kw})
 
@@ -54,6 +57,50 @@ def test_greeting_does_not_count_todays_papers():
     assert "384" not in line
     assert "筛" not in line
     assert line  # 但仍然要有一句话
+
+
+def test_opening_always_offers_exactly_three_replies():
+    """三条是版面定死的——多一条挤版，少一条留个空位，两种都难看。
+
+    每一条分支都要给满三条，包括什么都没有的新账号：空屏本来就最劝退，
+    再给不出可点的东西就真的只能干瞪眼。
+    """
+    cases = [
+        _stats(),  # 全新账号
+        _stats(experiments_running=1),
+        _stats(manuscripts_active=1),
+        _stats(reading_now=2),
+        _stats(ideas_recent=3),
+        _stats(saved_recent=4),
+        _stats(daily_today=5),
+        _stats(saved_total=6),
+    ]
+    for s in cases:
+        question, suggestions = buddy.compose_opening(s)
+        assert question
+        assert len(suggestions) == 3
+        assert all(x.strip() for x in suggestions)
+    # 七种页面上下文同样都要给满
+    for kind in ("paper", "idea", "experiment", "manuscript", "library", "project", "daily"):
+        question, suggestions = buddy.compose_opening(_stats(), page_kind=kind)
+        assert question
+        assert len(suggestions) == 3
+
+
+def test_opening_prefers_the_page_over_the_backlog():
+    """在读一篇论文时，不该被问「你的实验跑到哪了」——他此刻不在那儿。"""
+    busy = _stats(experiments_running=3, daily_today=384)
+    on_paper, _ = buddy.compose_opening(busy, page_kind="paper")
+    elsewhere, _ = buddy.compose_opening(busy)
+    assert on_paper != elsewhere
+    assert "实验" not in on_paper
+
+
+def test_opening_never_reports_a_count():
+    """开场问话里不出现数字：384 这种数每天都在变，却不帮人做任何决定。"""
+    question, suggestions = buddy.compose_opening(_stats(daily_today=384, saved_recent=12))
+    for text in [question, *suggestions]:
+        assert not any(ch.isdigit() for ch in text), text
 
 
 def test_greeting_says_one_thing_at_a_time():
@@ -152,7 +199,30 @@ async def test_greeting_endpoint_returns_sentence_and_counts(client, agent_on):
         "ideas_recent",
         "experiments_running",
         "daily_today",
+        "reading_now",
+        "manuscripts_active",
+        "topics",
     }
+    # 开场：一句问话 + 三条点一下就发出去的候选
+    assert body["question"]
+    assert len(body["suggestions"]) == 3
+
+
+async def test_opening_follows_the_page_the_user_is_on(client, agent_on):
+    """用户此刻在看什么，是最强的信号——他人就在那一页上。"""
+    token = await register_and_login(client, email="buddy-page@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    cold = (await client.get("/api/chat/buddy/greeting", headers=headers)).json()
+    on_paper = (
+        await client.get("/api/chat/buddy/greeting?page=paper", headers=headers)
+    ).json()
+    assert on_paper["question"] != cold["question"]
+    assert len(on_paper["suggestions"]) == 3
+
+    # 认不出的 kind 不该把开场搞没，退回近况那条路
+    junk = (await client.get("/api/chat/buddy/greeting?page=nonsense", headers=headers)).json()
+    assert junk["question"] == cold["question"]
 
 
 async def test_page_context_reaches_the_model_as_a_user_prefix(client, agent_on, monkeypatch):

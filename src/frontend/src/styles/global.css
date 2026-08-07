@@ -1569,3 +1569,48 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   font-size: 12px;
   color: var(--text-4);
 }
+
+/* —— Buddy 空屏上的三条候选回复 ——
+   一行一条，点哪行发哪行。箭头平时很淡，悬停才亮起来——它是「点我」的暗示，
+   不是需要一直被看见的东西。 */
+.buddy-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 420px;
+}
+.buddy-reply {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  border: 0.5px solid var(--border-2);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.buddy-reply:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.buddy-reply-text {
+  flex: 1;
+  min-width: 0;
+}
+/* 箭头靠 currentColor 跟着行走，悬停时随整行一起提亮 */
+.buddy-reply svg {
+  flex-shrink: 0;
+  opacity: 0.3;
+  transition: opacity 0.12s;
+}
+.buddy-reply:hover svg {
+  opacity: 0.7;
+}

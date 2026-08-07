@@ -485,6 +485,8 @@ export function AssistantPanel({
   // 问候语改成前端按本地时间算（见 greeting.ts），这里只要名字。
   // queryKey 与 AppShell 一致，命中同一份缓存，不多发一次请求。
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
+  // 开场的问句与三条候选：后端按「他此刻在看什么」+ 他自己的近况挑，不过模型。
+  const [opening, setOpening] = useState<{ question: string; suggestions: string[] } | null>(null);
   const [model, setModel] = useState<string>('');
   const [title, setTitle] = useState<string>('');
   // 页面上下文照常发给模型，但不在输入框上占一行——它是背景信息，不是待办事项。
@@ -534,6 +536,25 @@ export function AssistantPanel({
   // 开面板时取一次问候语。数字是 SQL 数出来的，**不过模型**——每次开面板过一次 LLM
   // 既慢又费钱，而且模型会把数字说错。取不到就不说，不要兜一句假的（0 和「没数出来」
   // 在界面上长得一样，对用户却是两回事）。
+
+  // 开面板时按「此刻在看什么」取一次开场。换了页面就重取——在读论文时问的和在
+  // 实验页问的本来就该不一样；这条请求不过模型，快且不花钱。
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void api
+      .getBuddyGreeting(pageContext?.kind ?? null)
+      .then((g) => {
+        if (alive) setOpening({ question: g.question, suggestions: g.suggestions ?? [] });
+      })
+      .catch(() => {
+        // 取不到就不摆开场——宁可只有一句问候，也不要挂着一句假的
+        if (alive) setOpening(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, pageContext?.kind]);
 
   const stop = useCallback(() => {
     // 掐掉 SSE 连接。后端会把已生成的部分落库标成 interrupted，重开会话还能看到。
@@ -849,7 +870,12 @@ export function AssistantPanel({
         }}
       >
         {turns.length === 0 && (
-          <BuddyHome name={me?.display_name} onPick={(prompt) => setInput(prompt)} />
+          <BuddyHome
+            name={me?.display_name}
+            question={opening?.question}
+            suggestions={opening?.suggestions}
+            onPick={(prompt) => setInput(prompt)}
+          />
         )}
         {turns.map((turn, i) => {
           const isLast = i === turns.length - 1;
