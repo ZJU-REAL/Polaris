@@ -4895,8 +4895,8 @@ export const api = {
     greeting: string;
     /** 开场的一句主动问话；按「用户此刻在看什么」挑 */
     question: string;
-    /** 三条用户可能想说的话，点一下就发出去 */
-    suggestions: string[];
+    /** 三张卡片：卡面显示 summary，点击后把 prompt 送进输入框 */
+    cards: { summary: string; prompt: string }[];
     /** 今天值得主动说的一句话；null = 没有真事，不要打扰 */
     nudge: string | null;
     stats: Record<string, number>;

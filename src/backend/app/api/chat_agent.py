@@ -374,12 +374,12 @@ async def buddy_greeting(
     """
     _require_enabled()
     stats = await buddy.collect_stats(session, user_id=user.id)
-    question, suggestions = buddy.compose_opening(stats, page_kind=page)
+    question, cards = buddy.compose_opening(stats, page_kind=page)
     return {
         "greeting": buddy.compose_greeting(stats, name=user.display_name or None),
-        # 开场：一句主动问话 + 三条点一下就发出去的候选
+        # 开场：一句主动问话 + 三张卡片（卡面是摘要，点开进输入框的是完整问题）
         "question": question,
-        "suggestions": suggestions,
+        "cards": cards,
         # 主动提示：没有真事就是 null，前端据此决定要不要冒气泡
         "nudge": buddy.compose_nudge(stats),
         "stats": stats.as_dict(),

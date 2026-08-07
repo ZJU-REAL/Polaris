@@ -486,7 +486,9 @@ export function AssistantPanel({
   // queryKey 与 AppShell 一致，命中同一份缓存，不多发一次请求。
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   // 开场的问句与三条候选：后端按「他此刻在看什么」+ 他自己的近况挑，不过模型。
-  const [opening, setOpening] = useState<{ question: string; suggestions: string[] } | null>(null);
+  const [opening, setOpening] = useState<
+    { question: string; cards: { summary: string; prompt: string }[] } | null
+  >(null);
   const [model, setModel] = useState<string>('');
   const [title, setTitle] = useState<string>('');
   // 页面上下文照常发给模型，但不在输入框上占一行——它是背景信息，不是待办事项。
@@ -555,7 +557,7 @@ export function AssistantPanel({
     void api
       .getBuddyGreeting(pageContext?.kind ?? null)
       .then((g) => {
-        if (alive) setOpening({ question: g.question, suggestions: g.suggestions ?? [] });
+        if (alive) setOpening({ question: g.question, cards: g.cards ?? [] });
       })
       .catch(() => {
         // 取不到就不摆开场——宁可只有一句问候，也不要挂着一句假的
@@ -885,7 +887,7 @@ export function AssistantPanel({
           <BuddyHome
             name={me?.display_name}
             question={opening?.question}
-            suggestions={opening?.suggestions}
+            cards={opening?.cards}
             onPick={(prompt) => setInput(prompt)}
           />
         )}

@@ -76,15 +76,15 @@ def test_opening_always_offers_exactly_three_replies():
         _stats(saved_total=6),
     ]
     for s in cases:
-        question, suggestions = buddy.compose_opening(s)
+        question, cards = buddy.compose_opening(s)
         assert question
-        assert len(suggestions) == 3
-        assert all(x.strip() for x in suggestions)
+        assert len(cards) == 3
+        assert all(c["summary"].strip() and c["prompt"].strip() for c in cards)
     # 七种页面上下文同样都要给满
     for kind in ("paper", "idea", "experiment", "manuscript", "library", "project", "daily"):
-        question, suggestions = buddy.compose_opening(_stats(), page_kind=kind)
+        question, cards = buddy.compose_opening(_stats(), page_kind=kind)
         assert question
-        assert len(suggestions) == 3
+        assert len(cards) == 3
 
 
 def test_opening_prefers_the_page_over_the_backlog():
@@ -98,9 +98,24 @@ def test_opening_prefers_the_page_over_the_backlog():
 
 def test_opening_never_reports_a_count():
     """开场问话里不出现数字：384 这种数每天都在变，却不帮人做任何决定。"""
-    question, suggestions = buddy.compose_opening(_stats(daily_today=384, saved_recent=12))
-    for text in [question, *suggestions]:
+    question, cards = buddy.compose_opening(_stats(daily_today=384, saved_recent=12))
+    for text in [question, *(c["summary"] for c in cards), *(c["prompt"] for c in cards)]:
         assert not any(ch.isdigit() for ch in text), text
+
+
+def test_card_summary_is_short_and_prompt_is_a_whole_question():
+    """卡面给眼睛扫，问题给模型读——两者混为一谈就会有一头出问题。
+
+    摘要长了在卡上折行；问题短了进输入框就是个没头没尾的词组，模型只能瞎猜。
+    """
+    for kind in (None, "paper", "idea", "experiment", "manuscript", "library", "project", "daily"):
+        _, cards = buddy.compose_opening(_stats(), page_kind=kind)
+        for card in cards:
+            assert len(card["summary"]) <= 8, card
+            # 完整的问句：说得出上下文，且以问号或句号收尾
+            assert len(card["prompt"]) >= 15, card
+            assert card["prompt"][-1] in "？。", card
+            assert card["prompt"] != card["summary"]
 
 
 def test_greeting_says_one_thing_at_a_time():
@@ -203,9 +218,10 @@ async def test_greeting_endpoint_returns_sentence_and_counts(client, agent_on):
         "manuscripts_active",
         "topics",
     }
-    # 开场：一句问话 + 三条点一下就发出去的候选
+    # 开场：一句问话 + 三张卡片（卡面摘要，点开是完整问题）
     assert body["question"]
-    assert len(body["suggestions"]) == 3
+    assert len(body["cards"]) == 3
+    assert all(c["summary"] and c["prompt"] for c in body["cards"])
 
 
 async def test_opening_follows_the_page_the_user_is_on(client, agent_on):
@@ -218,7 +234,7 @@ async def test_opening_follows_the_page_the_user_is_on(client, agent_on):
         await client.get("/api/chat/buddy/greeting?page=paper", headers=headers)
     ).json()
     assert on_paper["question"] != cold["question"]
-    assert len(on_paper["suggestions"]) == 3
+    assert len(on_paper["cards"]) == 3
 
     # 认不出的 kind 不该把开场搞没，退回近况那条路
     junk = (await client.get("/api/chat/buddy/greeting?page=nonsense", headers=headers)).json()

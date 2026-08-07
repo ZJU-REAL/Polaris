@@ -1570,47 +1570,51 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   color: var(--text-4);
 }
 
-/* —— Buddy 空屏上的三条候选回复 ——
-   一行一条，点哪行发哪行。箭头平时很淡，悬停才亮起来——它是「点我」的暗示，
-   不是需要一直被看见的东西。 */
-.buddy-replies {
-  display: flex;
-  flex-direction: column;
+/* —— Buddy 空屏上的开场卡片 ——
+   卡面只有一个摘要标签，所以横排成网格：短标签排一行整齐好扫。窄到放不下就自动
+   落行（auto-fit），不是写死三列——Buddy 是可拉宽的一栏，宽度本来就在变。
+   箭头平时很淡，悬停才亮起来——它是「点我」的暗示，不该一直抢眼。 */
+.buddy-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
   gap: 8px;
   width: 100%;
   max-width: 420px;
 }
-.buddy-reply {
+.buddy-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 11px 14px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 13px;
   border: 0.5px solid var(--border-2);
   border-radius: 12px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 12.5px;
+  line-height: 1.4;
   text-align: left;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
 }
-.buddy-reply:hover {
+.buddy-card:hover {
   background: var(--surface-2);
   border-color: var(--border);
 }
-.buddy-reply-text {
-  flex: 1;
+.buddy-card-summary {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
 }
-/* 箭头靠 currentColor 跟着行走，悬停时随整行一起提亮 */
-.buddy-reply svg {
+/* 箭头靠 currentColor 跟着走，悬停时随整张卡一起提亮 */
+.buddy-card svg {
   flex-shrink: 0;
-  opacity: 0.3;
+  opacity: 0.28;
   transition: opacity 0.12s;
 }
-.buddy-reply:hover svg {
+.buddy-card:hover svg {
   opacity: 0.7;
 }
