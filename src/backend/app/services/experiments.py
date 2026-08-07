@@ -8,6 +8,7 @@
 import logging
 import shutil
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -217,14 +218,22 @@ def serialize_figures(experiment: Experiment) -> list[ExperimentFigure]:
 
 
 async def list_experiments(
-    session: AsyncSession, *, project_id: uuid.UUID, trashed: bool = False
+    session: AsyncSession, *, project_ids: Sequence[uuid.UUID], trashed: bool = False
 ) -> list[tuple[Experiment, str]]:
+    """这些课题下的实验。
+
+    收一个列表而不是单个 id：界面上问的是「这个课题的实验」（传一个），而助手在
+    不收窄课题时问的是「我能看到的实验」（传全部参与的课题）。以前只能传一个，
+    助手那条路就只好传 None，SQL 里成了 project_id = NULL，一条都匹配不到。
+    """
+    if not project_ids:
+        return []
     trash_cond = Experiment.trashed_at.is_not(None) if trashed else Experiment.trashed_at.is_(None)
     order = Experiment.trashed_at.desc() if trashed else Experiment.created_at.desc()
     stmt = (
         select(Experiment, Idea.title)
         .join(Idea, Idea.id == Experiment.idea_id)
-        .where(Experiment.project_id == project_id, trash_cond)
+        .where(Experiment.project_id.in_(project_ids), trash_cond)
         .order_by(order)
     )
     return [(exp, title) for exp, title in (await session.execute(stmt)).all()]
@@ -271,7 +280,10 @@ async def purge_experiments(
     远端 workdir 不动（best-effort，避免误删共享服务器）。返回删除数量。"""
     if ids is None:
         rows = [
-            exp for exp, _ in await list_experiments(session, project_id=project_id, trashed=True)
+            exp
+            for exp, _ in await list_experiments(
+                session, project_ids=[project_id], trashed=True
+            )
         ]
     else:
         rows = [

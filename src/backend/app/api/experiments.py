@@ -186,7 +186,7 @@ async def list_experiments(
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     rows = await experiments_service.list_experiments(
-        session, project_id=project_id, trashed=trashed
+        session, project_ids=[project_id], trashed=trashed
     )
     return [experiments_service.to_read(exp, title) for exp, title in rows]
 

@@ -178,7 +178,7 @@ async def test_task_cross_project_denied(client):
     message = await _call_expect_error(
         client, headers, "get_task", {"project_id": project_b, "task_id": task_a}
     )
-    assert "不属于本课题" in message
+    assert "不在当前范围内" in message
 
     listed = await _call(client, headers, "list_tasks", {"project_id": project_b})
     assert listed["tasks"] == []

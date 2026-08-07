@@ -357,7 +357,7 @@ async def list_manuscripts(
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
     rows = await manuscripts_service.list_manuscripts(
-        session, project_id=project_id, trashed=trashed
+        session, project_ids=[project_id], trashed=trashed
     )
     return [ManuscriptRead.model_validate(m) for m in rows]
 

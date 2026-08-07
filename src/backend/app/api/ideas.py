@@ -162,7 +162,7 @@ async def list_ideas(
     await _member_project(session, project_id, user)
     ideas = await ideas_service.list_ideas(
         session,
-        project_id=project_id,
+        project_ids=[project_id],
         status=status_filter,
         depth=depth,
         research_type=research_type,
@@ -339,7 +339,7 @@ async def get_leaderboard(
     user: User = Depends(current_active_user),
 ) -> list[IdeaLeaderboardEntry]:
     await _member_project(session, project_id, user)
-    ideas = await ideas_service.list_ideas(session, project_id=project_id, sort="elo")
+    ideas = await ideas_service.list_ideas(session, project_ids=[project_id], sort="elo")
     return [IdeaLeaderboardEntry.model_validate(i) for i in ideas]
 
 

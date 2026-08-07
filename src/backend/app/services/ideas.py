@@ -1,6 +1,7 @@
 """Idea Forge / 评审锦标赛业务逻辑（不 import fastapi）。"""
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -363,15 +364,18 @@ def composite_score(idea: Idea) -> float:
 async def list_ideas(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    project_ids: Sequence[uuid.UUID],
     status: str | None = None,
     depth: str | None = None,
     research_type: str | None = None,
     sort: str = "-created_at",
     trashed: bool = False,
 ) -> list[Idea]:
+    """这些课题下的想法（列表而非单个 id 的理由见 experiments.list_experiments）。"""
+    if not project_ids:
+        return []
     trash_cond = Idea.trashed_at.is_not(None) if trashed else Idea.trashed_at.is_(None)
-    stmt = select(Idea).where(Idea.project_id == project_id, trash_cond)
+    stmt = select(Idea).where(Idea.project_id.in_(project_ids), trash_cond)
     if trashed:
         return list((await session.execute(stmt.order_by(Idea.trashed_at.desc()))).scalars().all())
     if status:
@@ -439,7 +443,7 @@ async def purge_ideas(
     """永久删除。ids=None → 清空该项目回收站；否则只删指定 id 中已在回收站的。
     级联删除其实验（DB FK ondelete=CASCADE）。返回删除数量。"""
     if ids is None:
-        rows = await list_ideas(session, project_id=project_id, trashed=True)
+        rows = await list_ideas(session, project_ids=[project_id], trashed=True)
     else:
         rows = [
             i

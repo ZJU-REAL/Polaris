@@ -17,6 +17,7 @@ from app.services import ideas as ideas_service
 from app.services import manuscripts as manuscripts_service
 from app.tools.context import ToolContext
 from app.tools.registry import tool
+from app.tools.scope import project_ids_for
 
 _CONTENT_CHARS = 4000
 _MAX_LOG_LINES = 1000
@@ -52,7 +53,7 @@ async def list_ideas(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         ideas = await ideas_service.list_ideas(
             session,
-            project_id=ctx.project_id,
+            project_ids=await project_ids_for(session, ctx),
             status=str(args.get("status") or "") or None,
             depth=str(args.get("depth") or "") or None,
             research_type=str(args.get("research_type") or "") or None,
@@ -77,8 +78,8 @@ async def get_idea(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"idea_id 不是合法 uuid：{args.get('idea_id')}") from e
     async with get_sessionmaker()() as session:
         idea = await session.get(Idea, idea_id)
-        if idea is None or idea.project_id != ctx.project_id:
-            raise ValueError(f"项目内不存在该想法：{args.get('idea_id')}")
+        if idea is None or idea.project_id not in await project_ids_for(session, ctx):
+            raise ValueError(f"范围内不存在该想法：{args.get('idea_id')}")
         brief = _idea_brief(idea)
         brief["content"] = (idea.content or "")[:_CONTENT_CHARS] or None
         brief["goal"] = idea.goal
@@ -94,7 +95,9 @@ async def get_idea(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 )
 async def list_experiments(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
-        rows = await experiments_service.list_experiments(session, project_id=ctx.project_id)
+        rows = await experiments_service.list_experiments(
+            session, project_ids=await project_ids_for(session, ctx)
+        )
     return {
         "experiments": [
             {
@@ -126,12 +129,15 @@ async def get_experiment(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
         stmt = (
             select(Experiment, Idea.title)
             .join(Idea, Idea.id == Experiment.idea_id)
-            .where(Experiment.id == exp_id, Experiment.project_id == ctx.project_id)
+            .where(
+                Experiment.id == exp_id,
+                Experiment.project_id.in_(await project_ids_for(session, ctx)),
+            )
             .options(selectinload(Experiment.runs))
         )
         row = (await session.execute(stmt)).first()
         if row is None:
-            raise ValueError(f"项目内不存在该实验：{args.get('experiment_id')}")
+            raise ValueError(f"范围内不存在该实验：{args.get('experiment_id')}")
         exp, idea_title = row
         return experiments_service.to_read(exp, idea_title).model_dump(mode="json")
 
@@ -161,12 +167,15 @@ async def read_experiment_logs(ctx: ToolContext, args: dict[str, Any]) -> dict[s
     async with get_sessionmaker()() as session:
         stmt = (
             select(Experiment)
-            .where(Experiment.id == exp_id, Experiment.project_id == ctx.project_id)
+            .where(
+                Experiment.id == exp_id,
+                Experiment.project_id.in_(await project_ids_for(session, ctx)),
+            )
             .options(selectinload(Experiment.runs))
         )
         exp = (await session.execute(stmt)).scalar_one_or_none()
         if exp is None:
-            raise ValueError(f"项目内不存在该实验：{args.get('experiment_id')}")
+            raise ValueError(f"范围内不存在该实验：{args.get('experiment_id')}")
         if raw_run:
             try:
                 run_id = uuid.UUID(raw_run)
@@ -214,6 +223,6 @@ async def get_fact_pack(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
         raise ValueError(f"manuscript_id 不是合法 uuid：{args.get('manuscript_id')}") from e
     async with get_sessionmaker()() as session:
         manuscript = await session.get(Manuscript, ms_id)
-        if manuscript is None or manuscript.project_id != ctx.project_id:
-            raise ValueError(f"项目内不存在该稿件：{args.get('manuscript_id')}")
+        if manuscript is None or manuscript.project_id not in await project_ids_for(session, ctx):
+            raise ValueError(f"范围内不存在该稿件：{args.get('manuscript_id')}")
         return await manuscripts_service.build_fact_pack(session, manuscript)

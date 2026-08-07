@@ -22,6 +22,7 @@ from app.services import voyages as voyages_service
 from app.services.libraries import get_source_libraries
 from app.tools.context import ToolContext
 from app.tools.registry import tool
+from app.tools.scope import project_ids_for
 
 _MAX_TASKS = 50
 _MAX_LOG_LINES = 500
@@ -61,11 +62,12 @@ async def _visible_tasks(session: Any, ctx: ToolContext) -> list[VoyageRun]:
     """
     libraries = await get_source_libraries(session, ctx.project_id)
     library_ids = {lib.id for lib in libraries}
+    scoped = set(await project_ids_for(session, ctx))
     runs = await voyages_service.list_voyages(session, user_id=ctx.user_id)
     return [
         run
         for run in runs
-        if run.project_id == ctx.project_id
+        if run.project_id in scoped
         or (run.library_id is not None and run.library_id in library_ids)
     ]
 
@@ -82,11 +84,11 @@ async def _get_task(session: Any, ctx: ToolContext, raw_id: Any) -> VoyageRun:
         raise ValueError(f"任务不存在或无权访问：{raw_id}")
     libraries = await get_source_libraries(session, ctx.project_id)
     library_ids = {lib.id for lib in libraries}
-    in_scope = run.project_id == ctx.project_id or (
+    in_scope = run.project_id in set(await project_ids_for(session, ctx)) or (
         run.library_id is not None and run.library_id in library_ids
     )
     if not in_scope:
-        raise ValueError(f"该任务不属于本课题：{raw_id}")
+        raise ValueError(f"该任务不在当前范围内：{raw_id}")
     return run
 
 

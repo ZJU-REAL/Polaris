@@ -17,6 +17,7 @@ from app.models.manuscript import Manuscript
 from app.services import manuscripts as manuscripts_service
 from app.tools.context import ToolContext
 from app.tools.registry import tool
+from app.tools.scope import project_ids_for
 
 _MAX_MANUSCRIPTS = 50
 _FILE_PAGE_CHARS = 6000
@@ -55,7 +56,7 @@ async def _get_manuscript(
         session, manuscript_id=manuscript_id, user_id=ctx.user_id, with_files=with_files
     )
     # 课题隔离：跨课题的稿件即便本人有权，也不该在本次 MCP 会话里露出
-    if manuscript is None or manuscript.project_id != ctx.project_id:
+    if manuscript is None or manuscript.project_id not in await project_ids_for(session, ctx):
         raise ValueError(f"本课题内不存在该稿件：{raw_id}")
     return manuscript
 
@@ -74,7 +75,9 @@ async def _get_manuscript(
 async def list_manuscripts(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     limit = min(_MAX_MANUSCRIPTS, max(1, int(args.get("limit") or 20)))
     async with get_sessionmaker()() as session:
-        rows = await manuscripts_service.list_manuscripts(session, project_id=ctx.project_id)
+        rows = await manuscripts_service.list_manuscripts(
+            session, project_ids=await project_ids_for(session, ctx)
+        )
     return {
         "total": len(rows),
         "manuscripts": [_manuscript_brief(m) for m in rows[:limit]],

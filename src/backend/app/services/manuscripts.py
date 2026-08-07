@@ -13,6 +13,7 @@
 import json
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -522,11 +523,16 @@ async def initialize_structure(
 
 
 async def list_manuscripts(
-    session: AsyncSession, *, project_id: uuid.UUID, trashed: bool = False
+    session: AsyncSession, *, project_ids: Sequence[uuid.UUID], trashed: bool = False
 ) -> list[Manuscript]:
-    """项目下的稿件；trashed=False 只列未删除（置顶优先），True 只列回收站。"""
+    """这些课题下的稿件；trashed=False 只列未删除（置顶优先），True 只列回收站。
+
+    收列表而非单个 id 的理由见 experiments.list_experiments。
+    """
+    if not project_ids:
+        return []
     cond = Manuscript.trashed_at.is_not(None) if trashed else Manuscript.trashed_at.is_(None)
-    stmt = select(Manuscript).where(Manuscript.project_id == project_id, cond)
+    stmt = select(Manuscript).where(Manuscript.project_id.in_(project_ids), cond)
     if trashed:
         stmt = stmt.order_by(Manuscript.trashed_at.desc())
     else:
@@ -582,7 +588,7 @@ async def purge_manuscripts(
     """永久删除。ids=None → 清空该项目回收站（删所有已在回收站的稿件）；
     否则只永久删除指定 id 中已在回收站的稿件（避免误删未删除的）。返回删除数量。"""
     if ids is None:
-        rows = await list_manuscripts(session, project_id=project_id, trashed=True)
+        rows = await list_manuscripts(session, project_ids=[project_id], trashed=True)
     else:
         rows = [
             m
