@@ -2143,6 +2143,12 @@ export interface CompileResult {
   duration_ms: number;
 }
 
+export interface ReferencesRefreshResult {
+  entries: number;
+  bibliography_updated: boolean;
+  main_tex: string | null;
+}
+
 // —— fact-pack（防幻觉事实源，AI 起草只允许引用其中的引文/图表/数字） ——
 
 export interface FactPackIdea {
@@ -4227,6 +4233,12 @@ export const api = {
   /** 重新从 experiment + 文献库组装事实包；前端以 invalidate 详情为准。 */
   refreshFactPack(id: string): Promise<FactPack> {
     return request<FactPack>(`/manuscripts/${id}/fact-pack/refresh`, { method: 'POST' });
+  },
+  /** 一键刷新参考文献：引用池（相关研究∪关联库）→ references.bib → 主 tex 接线。 */
+  refreshReferences(id: string): Promise<ReferencesRefreshResult> {
+    return request<ReferencesRefreshResult>(`/manuscripts/${id}/references/refresh`, {
+      method: 'POST',
+    });
   },
   /** 同步编译（tectonic，硬超时 120s），直接返回诊断结果。 */
   compileManuscript(id: string): Promise<CompileResult> {

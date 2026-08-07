@@ -28,7 +28,9 @@ from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.library_direction import LibraryPaper
 from app.models.manuscript import Manuscript, ManuscriptFile
+from app.models.paper import Paper
 from app.models.project import Project
+from app.models.topic_shelf import TopicPaper
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun
 from app.schemas.manuscript import ManuscriptCreate
 from app.services.citations import DEFAULT_EXPORT_STATUSES, assign_citation_keys
@@ -239,25 +241,39 @@ def _figures_pack(experiment: Experiment) -> list[dict[str, Any]]:
 
 
 async def _citations_pack(session: AsyncSession, *, project_id: uuid.UUID) -> list[dict[str, Any]]:
-    """项目库 compiled/included 全部论文（排序与引用导出一致，bibkey 同规则）。
+    """课题引用语料：关联库 compiled/included 论文 ∪ 相关研究书架在架论文
+    （排序与引用导出一致，bibkey 同规则）。
 
     条目含契约字段 {bibkey, title, year}，附加内部字段 paper_id / source
     供编译时按固定 key 生成 references.bib（避免库变动导致 key 漂移）。
     """
+    entries: dict[uuid.UUID, tuple[Paper, Any]] = {}
     library_ids = await get_source_library_ids(session, project_id)
-    if not library_ids:
-        return []  # 课题无关联库 = 无引用语料
-    rows = dedupe_member_rows(
-        (
-            await session.execute(
-                member_papers_stmt(library_ids).where(
-                    LibraryPaper.status.in_(DEFAULT_EXPORT_STATUSES)
+    if library_ids:
+        rows = dedupe_member_rows(
+            (
+                await session.execute(
+                    member_papers_stmt(library_ids).where(
+                        LibraryPaper.status.in_(DEFAULT_EXPORT_STATUSES)
+                    )
                 )
-            )
-        ).all()
-    )
-    rows.sort(key=lambda pm: (pm[0].year is None, pm[0].year or 0, pm[1].created_at))
-    papers = [p for p, _ in rows]
+            ).all()
+        )
+        for paper, membership in rows:
+            entries[paper.id] = (paper, membership.created_at)
+    shelf_rows = (
+        await session.execute(
+            select(Paper, TopicPaper.created_at)
+            .join(TopicPaper, TopicPaper.paper_id == Paper.id)
+            .where(TopicPaper.topic_id == project_id, TopicPaper.trashed_at.is_(None))
+        )
+    ).all()
+    for paper, added_at in shelf_rows:
+        entries.setdefault(paper.id, (paper, added_at))
+    if not entries:
+        return []  # 课题无关联库也无在架论文 = 无引用语料
+    ordered = sorted(entries.values(), key=lambda pm: (pm[0].year is None, pm[0].year or 0, pm[1]))
+    papers = [p for p, _ in ordered]
     keys = assign_citation_keys(papers)
     return [
         {

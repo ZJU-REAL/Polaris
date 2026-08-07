@@ -242,6 +242,87 @@ async def build_references_bib(session: AsyncSession, manuscript: Manuscript) ->
     return bib or extra
 
 
+# 只匹配 \bibliography{...}（\bibliographystyle 后面紧跟的不是 { 所以不会误伤）
+_BIBLIOGRAPHY_RE = re.compile(r"^[ \t]*\\bibliography\{[^}]*\}[ \t]*\n?", re.MULTILINE)
+_BIBSTYLE_RE = re.compile(r"^[ \t]*\\bibliographystyle\{", re.MULTILINE)
+_END_DOCUMENT_RE = re.compile(r"^[ \t]*\\end\{document\}", re.MULTILINE)
+_BIBLIOGRAPHY_LINE = "\\bibliography{references}\n"
+
+
+def normalize_bibliography_wiring(text: str) -> tuple[str, bool]:
+    """把主 tex 的文献表接线归一成唯一一条 ``\\bibliography{references}``。
+
+    多条 \\bibliography（模板残留 + AI 追加的常见事故）会让 BibTeX 因重复
+    \\bibdata 直接失败、全部引用 undefined——这里保留第一条位置并删掉其余；
+    一条都没有时插到 \\bibliographystyle 前（无则 \\end{document} 前，
+    再没有就不动）。返回 (新文本, 是否改动)。
+    """
+    matches = list(_BIBLIOGRAPHY_RE.finditer(text))
+    if matches:
+        if len(matches) == 1 and matches[0].group(0).strip() == "\\bibliography{references}":
+            return text, False  # 已是唯一一条且指向 references，不动
+        head = text[: matches[0].start()]
+        tail = _BIBLIOGRAPHY_RE.sub("", text[matches[0].end() :])
+        return head + _BIBLIOGRAPHY_LINE + tail, True
+    anchor = _BIBSTYLE_RE.search(text) or _END_DOCUMENT_RE.search(text)
+    if anchor is None:
+        return text, False
+    pos = anchor.start()
+    return text[:pos] + _BIBLIOGRAPHY_LINE + text[pos:], True
+
+
+async def _rewire_main_bibliography(
+    session: AsyncSession, manuscript: Manuscript, *, user_id: uuid.UUID
+) -> tuple[str | None, bool]:
+    """主 tex 接线归一落盘（活跃协同房间经 Y 事务替换）；返回 (主文件名, 是否改动)。"""
+    main_path = manuscript.main_tex or MAIN_TEX
+    stmt = select(ManuscriptFile).where(ManuscriptFile.manuscript_id == manuscript.id)
+    files = (await session.execute(stmt)).scalars().all()
+    main = next((f for f in files if f.path == main_path), None)
+    if main is None:
+        # 稿件设置的主文件不存在：退回唯一一个含 \begin{document} 的可编辑 .tex
+        candidates = [
+            f
+            for f in files
+            if f.path.endswith(".tex")
+            and not f.is_binary
+            and not f.readonly
+            and "\\begin{document}" in (f.content or "")
+        ]
+        if len(candidates) != 1:
+            return None, False
+        main = candidates[0]
+    if main.readonly or main.is_binary:
+        return main.path, False
+    rooms = crdt_rooms.get_crdt_rooms()
+    current = rooms.room_content(main.id)
+    text = current if current is not None else main.content
+    rewired, changed = normalize_bibliography_wiring(text)
+    if not changed:
+        return main.path, False
+    via_room = await rooms.set_content(main.id, rewired)
+    if not via_room:
+        main.content = rewired
+        main.updated_by = user_id
+        await manuscript_versions.snapshot_file(
+            session, main, origin="refresh_references", created_by=user_id, content=rewired
+        )
+    await session.commit()
+    return main.path, True
+
+
+async def refresh_references(
+    session: AsyncSession, manuscript: Manuscript, *, user_id: uuid.UUID
+) -> dict[str, Any]:
+    """一键刷新参考文献：重建 fact-pack 引用池（相关研究书架 ∪ 关联文献库）→
+    重写 references.bib（含协同房间同步）→ 主 tex 接线归一。"""
+    await manuscripts_service.refresh_fact_pack(session, manuscript)
+    await sync_references_bib(session, manuscript)
+    main_tex, wired = await _rewire_main_bibliography(session, manuscript, user_id=user_id)
+    entries = len((manuscript.fact_pack or {}).get("citations") or [])
+    return {"entries": entries, "bibliography_updated": wired, "main_tex": main_tex}
+
+
 async def _copy_figures(
     session: AsyncSession, manuscript: Manuscript, workdir: Path
 ) -> list[dict[str, Any]]:

@@ -356,6 +356,23 @@ export function WriterEditorPage() {
     if (insertSnippet(snippet)) toast(`已在光标处插入图表 ${figId}`, 'ok');
   }
 
+  // —— 刷新参考文献（引用池 → references.bib → 主 tex 接线） ——
+  const refreshRefsMutation = useMutation({
+    mutationFn: () => api.refreshReferences(id),
+    onSuccess: (res) => {
+      const wiring = res.bibliography_updated
+        ? tr('，并修正了主文件的 \\bibliography 设置', ' and fixed \\bibliography wiring in the main file')
+        : '';
+      toast(
+        tr(`已更新 references.bib（${res.entries} 条文献）${wiring}`, `references.bib updated (${res.entries} entries)${wiring}`),
+        'ok',
+      );
+      void queryClient.invalidateQueries({ queryKey: ['manuscript', id] });
+    },
+    onError: (e) =>
+      toast(`${tr('刷新参考文献失败：', 'Refresh references failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
   // —— 编译 ——
   const compileMutation = useMutation({
     mutationFn: () => api.compileManuscript(id),
@@ -813,6 +830,22 @@ export function WriterEditorPage() {
           <option value="xelatex">XeLaTeX</option>
           <option value="lualatex">LuaLaTeX</option>
         </select>
+        <button
+          className="btn btn-ghost sm"
+          disabled={refreshRefsMutation.isPending}
+          title={tr(
+            '把课题的相关文献与关联文献库重新写入 references.bib，并保证主文件里正确引用它',
+            "Rewrite references.bib from the project's related papers and linked libraries, and wire it into the main file",
+          )}
+          onClick={() => refreshRefsMutation.mutate()}
+        >
+          <Icon
+            name={refreshRefsMutation.isPending ? 'refresh' : 'book'}
+            size={13}
+            style={refreshRefsMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined}
+          />
+          {refreshRefsMutation.isPending ? tr('刷新中…', 'Refreshing…') : tr('刷新参考文献', 'Refresh references')}
+        </button>
         <button
           className="btn btn-primary sm"
           disabled={compileMutation.isPending}

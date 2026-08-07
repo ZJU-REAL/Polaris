@@ -260,3 +260,81 @@ async def test_compile_fact_pack_s2_extras_in_bib(client, monkeypatch):
     assert "smith2017attention" in captured["references"]
     assert "@misc{doe2024related," in captured["references"]
     assert "Jane Doe" in captured["references"]
+
+
+# ---- 一键刷新参考文献（相关研究 ∪ 关联库 → references.bib → 主 tex 接线） ----
+
+
+def test_normalize_bibliography_wiring_dedupes_multiple_commands():
+    text = (
+        "\\begin{document}\nBody\n"
+        "\\bibliography{example_paper}\n"
+        "\\bibliography{references}\n"
+        "\\bibliographystyle{icml2026}\n"
+        "\\end{document}\n"
+    )
+    rewired, changed = latex_compile.normalize_bibliography_wiring(text)
+    assert changed
+    assert rewired.count("\\bibliography{") == 1
+    assert "\\bibliography{references}\n\\bibliographystyle{icml2026}" in rewired
+
+
+def test_normalize_bibliography_wiring_inserts_before_style_or_end():
+    with_style = "\\begin{document}\nBody\n\\bibliographystyle{plain}\n\\end{document}\n"
+    rewired, changed = latex_compile.normalize_bibliography_wiring(with_style)
+    assert changed
+    assert "\\bibliography{references}\n\\bibliographystyle{plain}" in rewired
+
+    without_style = "\\begin{document}\nBody\n\\end{document}\n"
+    rewired, changed = latex_compile.normalize_bibliography_wiring(without_style)
+    assert changed
+    assert "\\bibliography{references}\n\\end{document}" in rewired
+
+
+def test_normalize_bibliography_wiring_noop_cases():
+    ok = "\\begin{document}\n\\bibliography{references}\n\\end{document}\n"
+    rewired, changed = latex_compile.normalize_bibliography_wiring(ok)
+    assert not changed
+    assert rewired == ok
+    # 连 \end{document} 都没有（非主文件形态）：不乱插
+    fragment = "just a fragment"
+    rewired, changed = latex_compile.normalize_bibliography_wiring(fragment)
+    assert not changed
+    assert rewired == fragment
+
+
+async def test_refresh_references_endpoint(client):
+    """端点全链路：书架论文进 references.bib；主 tex 双 \\bibliography 收敛成一条。"""
+    from app.models.paper import Paper
+    from app.models.topic_shelf import TopicPaper
+
+    project_id, headers, ms_id, _ = await _make_manuscript_with_facts(client)
+
+    async with get_sessionmaker()() as session:
+        # 相关研究书架论文（不在任何关联库）：@Paper 直建 + 上架
+        shelf_paper = Paper(title="Shelf Only Paper", authors=[{"name": "Bo Chen"}], year=2023)
+        session.add(shelf_paper)
+        await session.flush()
+        session.add(TopicPaper(topic_id=uuid.UUID(project_id), paper_id=shelf_paper.id))
+        # 主 tex 制造双 \bibliography 事故现场
+        ms = await session.get(Manuscript, uuid.UUID(ms_id))
+        await session.refresh(ms, ["files"])
+        main = next(f for f in ms.files if f.path == (ms.main_tex or "main.tex"))
+        main.content = main.content.replace(
+            "\\end{document}",
+            "\\bibliography{example_paper}\n\\bibliography{references}\n\\end{document}",
+        )
+        await session.commit()
+
+    resp = await client.post(f"/api/manuscripts/{ms_id}/references/refresh", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["entries"] >= 2  # 库内论文 + 书架论文
+    assert body["bibliography_updated"] is True
+    assert body["main_tex"]
+
+    async with get_sessionmaker()() as session:
+        ms = await session.get(Manuscript, uuid.UUID(ms_id))
+        bibkeys = [c["bibkey"] for c in ms.fact_pack["citations"]]
+        assert "chen2023shelf" in bibkeys
+        assert "smith2017attention" in bibkeys

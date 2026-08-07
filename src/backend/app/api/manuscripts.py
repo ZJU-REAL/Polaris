@@ -50,6 +50,7 @@ from app.schemas.manuscript import (
     ManuscriptFileRename,
     ManuscriptRead,
     ManuscriptUpdate,
+    ReferencesRefreshResult,
     ShareLink,
     ShareLinkCreate,
     TemplateDownloadProgress,
@@ -861,6 +862,21 @@ async def refresh_fact_pack(
 ) -> dict:
     manuscript = await _member_manuscript(session, manuscript_id, user)
     return await manuscripts_service.refresh_fact_pack(session, manuscript)
+
+
+@router.post(
+    "/manuscripts/{manuscript_id}/references/refresh", response_model=ReferencesRefreshResult
+)
+async def refresh_references(
+    manuscript_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ReferencesRefreshResult:
+    """一键刷新参考文献：引用池（相关研究 ∪ 关联文献库）→ references.bib →
+    主 tex 唯一 \\bibliography{references} 接线。"""
+    manuscript = await _member_manuscript(session, manuscript_id, user)
+    result = await latex_compile.refresh_references(session, manuscript, user_id=user.id)
+    return ReferencesRefreshResult(**result)
 
 
 # ---- §4 编译 ----

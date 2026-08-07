@@ -172,6 +172,12 @@ class ManuscriptFileContent(BaseModel):
     readonly: bool
 
 
+class ReferencesRefreshResult(BaseModel):
+    entries: int  # references.bib 里写入的条目数
+    bibliography_updated: bool  # 主 tex 的 \bibliography 接线是否有改动
+    main_tex: str | None  # 实际接线的主文件（找不到唯一主文件时为 null）
+
+
 class DraftRequest(BaseModel):
     # null = 模板全部节；显式列表时只写指定节（related_work 也在可选值内）
     sections: list[str] | None = None
