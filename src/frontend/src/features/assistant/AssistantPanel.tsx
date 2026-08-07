@@ -42,10 +42,19 @@ interface Turn {
 /** 服务端持久化的块 → 前端块。认不出的形状一律降级，绝不抛。
 
     工具结果里存的是**摘要**（summary/preview/图片引用），不是完整 payload——回放要的
-    是「调了什么、拿到了什么样的东西」，而完整结果动辄几万字符。 */
-function restoreBlocks(m: { text: string; blocks: unknown[] }): AssistantBlock[] {
+    是「调了什么、拿到了什么样的东西」，而完整结果动辄几万字符。
+
+    ``cardById`` 由调用方传进来、**跨消息共用**：一轮会落成两条消息——assistant 那条
+    带 ``tool_use``，紧跟的 ``tool_results`` 那条带 ``tool_result``。这张表以前建在函数
+    里、每条消息重来一次，于是回放 ``tool_results`` 时压根找不到上一条的卡片，结果
+    回填不上，两件事跟着出错：卡片永远没有 summary，标签就一直显示「调用中…」（图标
+    却是 ✓）；而这条消息一个块都没产出，触发下面的兜底，把
+    ``[工具结果] {"summary": ...}`` 整段原始 JSON 当正文打进对话里。 */
+export function restoreBlocks(
+  m: { text: string; blocks: unknown[]; kind?: string },
+  cardById: Map<string, Extract<AssistantBlock, { kind: 'tool' }>>,
+): AssistantBlock[] {
   const out: AssistantBlock[] = [];
-  const cardById = new Map<string, Extract<AssistantBlock, { kind: 'tool' }>>();
 
   for (const raw of Array.isArray(m.blocks) ? m.blocks : []) {
     if (!raw || typeof raw !== 'object') continue;
@@ -70,6 +79,8 @@ function restoreBlocks(m: { text: string; blocks: unknown[] }): AssistantBlock[]
       out.push(card);
     } else if (b.kind === 'tool_result') {
       // 结果回填到对应卡片上（含图片引用）——切走再回来，工具过程与图片都还在
+      // 跨消息也找不到对应卡片，说明这条结果是孤儿（存量数据或落库出错）。
+      // 跳过就好：宁可少一张卡，也不要把几万字符的原始结果倒进对话。
       const card = cardById.get(String(b.tool_use_id ?? ''));
       if (!card) continue;
       let payload: Record<string, unknown> = {};
@@ -87,7 +98,12 @@ function restoreBlocks(m: { text: string; blocks: unknown[] }): AssistantBlock[]
       if (refs.length) card.images = refs;
     }
   }
-  if (out.length === 0 && m.text) out.push({ kind: 'text', text: m.text });
+  // 兜底只对**真的有话要说**的消息生效。tool_results 那条的 text 是把工具结果拍平成
+  // 的 `[工具结果] {...}`（见 core/llm/base.py _block_text），那是给日志和 token 估算
+  // 看的，不是给人看的——它没块可还原时，正确的做法是什么都不显示。
+  if (out.length === 0 && m.text && m.kind !== 'tool_results') {
+    out.push({ kind: 'text', text: m.text });
+  }
   return out;
 }
 
@@ -596,14 +612,17 @@ export function AssistantPanel({
         // 会话自己的作用域也算「定下来了」：它是这场对话当初问的范围，
         // 不该被用户后来在界面上切课题给盖掉。
         pickTopic(conversations.find((c) => c.id === id)?.project_id ?? null);
+        const cardById = new Map<string, Extract<AssistantBlock, { kind: 'tool' }>>();
         setTurns(
           messages
             // 一轮会落成几条消息：assistant（正文/调用）+ 携带工具结果的那条。
             // 后者 role 是 user（Anthropic 形状），但**不是用户说的话**——按 kind 认出来
             // 并入上一轮，否则历史里会冒出一堆空的「提问」。
+            // 卡片表在**整轮之外**建：tool_use 与 tool_result 分属两条消息，
+            // 每条消息各建一张表就永远对不上（见 restoreBlocks 的注释）。
             .reduce<Turn[]>((turns, m) => {
               if (m.role !== 'user' && m.role !== 'assistant') return turns;
-              const blocks = restoreBlocks(m);
+              const blocks = restoreBlocks(m, cardById);
               const last = turns[turns.length - 1];
               if (m.kind === 'tool_results' && last) {
                 last.blocks = [...last.blocks, ...blocks];
