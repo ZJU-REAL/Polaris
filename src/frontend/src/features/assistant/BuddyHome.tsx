@@ -1,4 +1,4 @@
-import { Icon } from '../../components/ui/Icon';
+import { Icon, type IconName } from '../../components/ui/Icon';
 import { PolarisMark } from '../../components/ui/PolarisLogo';
 import { tr } from '../../lib/i18n';
 import { greetingFor } from './greeting';
@@ -24,6 +24,25 @@ import { greetingFor } from './greeting';
    还得等；只读的演示账号更是连模型都调不动，走 LLM 那边会直接空掉。
    ============================================================ */
 
+/** 卡片类别 → 图标与颜色。**这张表归前端**：后端只说这张卡在问哪一类事
+    （services/buddy.py 的 CARD_KINDS），换个图标不该惊动后端。
+    认不出的类别给中性图标——宁可样子普通，也不要因为多了一个类别就空一块。 */
+const CARD_LOOK: Record<string, { icon: IconName; color: string }> = {
+  read: { icon: 'book', color: '#8B5CF6' },
+  compare: { icon: 'scale', color: '#2C7BE5' },
+  verify: { icon: 'shield', color: '#0EA5A4' },
+  idea: { icon: 'bulb', color: '#19A974' },
+  experiment: { icon: 'flask', color: '#E8590C' },
+  write: { icon: 'pen', color: '#D6336C' },
+  cite: { icon: 'link', color: '#7048E8' },
+  browse: { icon: 'layers', color: '#1C7ED6' },
+  next: { icon: 'compass', color: '#F08C00' },
+  search: { icon: 'search', color: '#2C7BE5' },
+  about: { icon: 'sparkle', color: '#868E96' },
+};
+
+const NEUTRAL = { icon: 'dot' as IconName, color: 'var(--text-4)' };
+
 export function BuddyHome({
   name,
   question,
@@ -34,8 +53,8 @@ export function BuddyHome({
   name?: string | null;
   /** 这次开场的问句；取不到就只显示招呼，不摆一句假的 */
   question?: string;
-  /** 三张卡片：卡面显示 summary，点击把 prompt 送进输入框 */
-  cards?: { summary: string; prompt: string }[];
+  /** 四张卡片：卡面显示 summary（配 kind 的图标），点击把 prompt 送进输入框 */
+  cards?: { kind: string; summary: string; prompt: string }[];
   onPick: (prompt: string) => void;
 }) {
   const picks = (cards ?? []).filter((c) => c.summary.trim() && c.prompt.trim());
@@ -67,21 +86,24 @@ export function BuddyHome({
         )}
       </div>
 
-      {/* 卡面只放摘要，所以可以横排成网格——短标签排一行整齐，长句子才需要竖排。
-          title 挂完整问题：点之前想知道会问出什么，悬停就能看见。 */}
+      {/* 方块卡，两行两列。图标在上、摘要在下——图标先被看见，给这张卡定个调子，
+          再读那三五个字。title 挂完整问题：点之前想知道会问出什么，悬停就能看见。 */}
       {picks.length > 0 && (
         <div className="buddy-cards">
-          {picks.map((c) => (
-            <button
-              key={c.summary}
-              className="buddy-card"
-              onClick={() => onPick(c.prompt)}
-              title={c.prompt}
-            >
-              <span className="buddy-card-summary">{c.summary}</span>
-              <Icon name="arrow" size={12} />
-            </button>
-          ))}
+          {picks.map((c) => {
+            const look = CARD_LOOK[c.kind] ?? NEUTRAL;
+            return (
+              <button
+                key={c.summary}
+                className="buddy-card"
+                onClick={() => onPick(c.prompt)}
+                title={c.prompt}
+              >
+                <Icon name={look.icon} size={17} style={{ color: look.color }} />
+                <span className="buddy-card-summary">{c.summary}</span>
+              </button>
+            );
+          })}
         </div>
       )}
 

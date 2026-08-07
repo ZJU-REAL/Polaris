@@ -78,13 +78,13 @@ def test_opening_always_offers_exactly_three_replies():
     for s in cases:
         question, cards = buddy.compose_opening(s)
         assert question
-        assert len(cards) == 3
+        assert len(cards) == 4
         assert all(c["summary"].strip() and c["prompt"].strip() for c in cards)
     # 七种页面上下文同样都要给满
     for kind in ("paper", "idea", "experiment", "manuscript", "library", "project", "daily"):
         question, cards = buddy.compose_opening(_stats(), page_kind=kind)
         assert question
-        assert len(cards) == 3
+        assert len(cards) == 4
 
 
 def test_opening_prefers_the_page_over_the_backlog():
@@ -116,6 +116,8 @@ def test_card_summary_is_short_and_prompt_is_a_whole_question():
             assert len(card["prompt"]) >= 15, card
             assert card["prompt"][-1] in "？。", card
             assert card["prompt"] != card["summary"]
+            # kind 是给前端挑图标用的：不在表里前端会退回中性图标，样子就废了一半
+            assert card["kind"] in buddy.CARD_KINDS, card
 
 
 def test_greeting_says_one_thing_at_a_time():
@@ -220,8 +222,8 @@ async def test_greeting_endpoint_returns_sentence_and_counts(client, agent_on):
     }
     # 开场：一句问话 + 三张卡片（卡面摘要，点开是完整问题）
     assert body["question"]
-    assert len(body["cards"]) == 3
-    assert all(c["summary"] and c["prompt"] for c in body["cards"])
+    assert len(body["cards"]) == 4
+    assert all(c["summary"] and c["prompt"] and c["kind"] for c in body["cards"])
 
 
 async def test_opening_follows_the_page_the_user_is_on(client, agent_on):
@@ -234,7 +236,7 @@ async def test_opening_follows_the_page_the_user_is_on(client, agent_on):
         await client.get("/api/chat/buddy/greeting?page=paper", headers=headers)
     ).json()
     assert on_paper["question"] != cold["question"]
-    assert len(on_paper["cards"]) == 3
+    assert len(on_paper["cards"]) == 4
 
     # 认不出的 kind 不该把开场搞没，退回近况那条路
     junk = (await client.get("/api/chat/buddy/greeting?page=nonsense", headers=headers)).json()

@@ -487,7 +487,7 @@ export function AssistantPanel({
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   // 开场的问句与三条候选：后端按「他此刻在看什么」+ 他自己的近况挑，不过模型。
   const [opening, setOpening] = useState<
-    { question: string; cards: { summary: string; prompt: string }[] } | null
+    { question: string; cards: { kind: string; summary: string; prompt: string }[] } | null
   >(null);
   const [model, setModel] = useState<string>('');
   const [title, setTitle] = useState<string>('');

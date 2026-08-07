@@ -1571,29 +1571,32 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 }
 
 /* —— Buddy 空屏上的开场卡片 ——
-   卡面只有一个摘要标签，所以横排成网格：短标签排一行整齐好扫。窄到放不下就自动
-   落行（auto-fit），不是写死三列——Buddy 是可拉宽的一栏，宽度本来就在变。
-   箭头平时很淡，悬停才亮起来——它是「点我」的暗示，不该一直抢眼。 */
+   四张方块，两行两列。图标在上、摘要在下：先被看见的是图标，它给这张卡定调子，
+   再读那三五个字。
+
+   **写死两列**而不是 auto-fit：这四张是一组，2×2 是它的形状；交给 auto-fit 会在
+   面板拉宽时摊成一行四张、拉窄时叠成一列四张，同一组东西每次看见都不是同一个样子。
+   窄到放不下时才落成一列（见下面的容器查询）。 */
 .buddy-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
   width: 100%;
   max-width: 420px;
 }
 .buddy-card {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
-  padding: 11px 13px;
+  gap: 14px;
+  min-height: 92px;
+  padding: 13px 14px;
   border: 0.5px solid var(--border-2);
   border-radius: 12px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-size: 12.5px;
-  line-height: 1.4;
   text-align: left;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
@@ -1604,17 +1607,17 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 }
 .buddy-card-summary {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
   font-weight: 550;
+  line-height: 1.4;
 }
-/* 箭头靠 currentColor 跟着走，悬停时随整张卡一起提亮 */
-.buddy-card svg {
-  flex-shrink: 0;
-  opacity: 0.28;
-  transition: opacity 0.12s;
-}
-.buddy-card:hover svg {
-  opacity: 0.7;
+/* Buddy 是可拉宽的一栏，窄到两列各自放不下一个词时，宁可排成一列 */
+@media (max-width: 420px) {
+  .buddy-cards {
+    grid-template-columns: 1fr;
+  }
 }
