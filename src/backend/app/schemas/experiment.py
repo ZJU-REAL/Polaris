@@ -40,6 +40,8 @@ class ExperimentParams(BaseModel):
 class ExperimentIntakeQuestion(BaseModel):
     question: str
     hint: str | None = None
+    # 候选答案（前端渲染为可点选项 + 「其他」自由输入）；可为空列表
+    options: list[str] = []
 
 
 class ExperimentIntakeQuestions(BaseModel):

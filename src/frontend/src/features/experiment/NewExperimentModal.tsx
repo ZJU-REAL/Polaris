@@ -211,21 +211,21 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
         <FormField
           label={tr('时间预算（小时）', 'Time budget (hours)')}
           en="max_hours"
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 0 }}
           hint={tr('留空 = 不限时。这是唯一的自动修复刹车：超时会暂停并问你怎么办。', 'Empty = unlimited. The only brake on auto-fixing: on timeout it pauses and asks you.')}
         >
-          <input className="input mono" inputMode="decimal" value={maxHours} onChange={(e) => setMaxHours(e.target.value)} placeholder={tr('不限', 'unlimited')} />
+          <input className="input mono" style={{ width: '100%' }} inputMode="decimal" value={maxHours} onChange={(e) => setMaxHours(e.target.value)} placeholder={tr('不限', 'unlimited')} />
         </FormField>
-        <FormField label={tr('最多运行轮数', 'Max runs')} en="max_runs" style={{ flex: 1 }}>
-          <input className="input mono" inputMode="numeric" value={maxRuns} onChange={(e) => setMaxRuns(e.target.value)} placeholder="10" />
+        <FormField label={tr('最多运行轮数', 'Max runs')} en="max_runs" style={{ flex: 1, minWidth: 0 }}>
+          <input className="input mono" style={{ width: '100%' }} inputMode="numeric" value={maxRuns} onChange={(e) => setMaxRuns(e.target.value)} placeholder="10" />
         </FormField>
         <FormField
           label={tr('无提升自动停', 'Auto stop')}
           en="no_improve_stop"
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 0 }}
           hint={tr('连续 2 轮主指标无提升自动收尾。', 'Wraps up after 2 runs in a row without metric gain.')}
         >
-          <input className="input mono" value={tr('2 轮', '2 runs')} disabled />
+          <input className="input mono" style={{ width: '100%' }} value={tr('2 轮', '2 runs')} disabled />
         </FormField>
       </div>
 
@@ -249,6 +249,34 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
           </div>
           {questions.map((q, i) => (
             <FormField key={i} label={`${i + 1}. ${q.question}`} hint={q.hint ?? undefined}>
+              {(q.options ?? []).length > 0 && (
+                <div className="row gap6 wrap" style={{ marginBottom: 8 }}>
+                  {(q.options ?? []).map((opt) => {
+                    const active = (answers[i] ?? '') === opt;
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        className="pill sm"
+                        style={{
+                          cursor: 'pointer',
+                          border: active ? '1.5px solid var(--accent)' : '0.5px solid var(--border)',
+                          background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
+                          color: active ? 'var(--accent-text)' : 'var(--text-2)',
+                          fontWeight: active ? 700 : 500,
+                          maxWidth: '100%',
+                        }}
+                        onClick={() =>
+                          setAnswers((prev) => prev.map((a, j) => (j === i ? (active ? '' : opt) : a)))
+                        }
+                        title={opt}
+                      >
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <textarea
                 className="textarea"
                 rows={2}
@@ -256,8 +284,12 @@ export function NewExperimentModal({ open, onClose, pid, initialIdeaId }: NewExp
                 onChange={(e) =>
                   setAnswers((prev) => prev.map((a, j) => (j === i ? e.target.value : a)))
                 }
-                placeholder={tr('（可留空，交给 AI 判断）', '(leave empty to let the AI decide)')}
-                style={{ minHeight: 44 }}
+                placeholder={
+                  (q.options ?? []).length > 0
+                    ? tr('其他（手动输入，或点上方候选）', 'Other — type your own, or pick above')
+                    : tr('（可留空，交给 AI 判断）', '(leave empty to let the AI decide)')
+                }
+                style={{ minHeight: 44, width: '100%' }}
               />
             </FormField>
           ))}

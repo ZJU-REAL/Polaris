@@ -619,7 +619,11 @@ class _IntakeProvider(FakeProvider):
         if "开题助手" in full:
             payload = {
                 "questions": [
-                    {"question": f"问题 {i}：用哪个数据集？", "hint": f"提示 {i}"}
+                    {
+                        "question": f"问题 {i}：用哪个数据集？",
+                        "hint": f"提示 {i}",
+                        "options": [f"候选 {i}A", f"候选 {i}B"],
+                    }
                     for i in range(1, 7)
                 ]
             }
@@ -655,6 +659,7 @@ async def test_intake_questions_and_answers_reach_plan(client, queue_stub, fake_
         assert len(questions) == 5  # 超出上限被截断
         assert questions[0]["question"].startswith("问题 1")
         assert questions[0]["hint"] == "提示 1"
+        assert questions[0]["options"] == ["候选 1A", "候选 1B"]
     finally:
         llm_router_module.reset_llm_router()
 

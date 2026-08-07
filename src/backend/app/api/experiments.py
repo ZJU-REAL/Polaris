@@ -43,19 +43,26 @@ from app.services import ssh_exec
 
 router = APIRouter(tags=["experiments"])
 
-# 开题提问：按 idea 让 AI 提出 ≤5 个影响开局的整体性问题（数据集/规模/评测口径/
-# 资源与框架约束/成功判据），代替静态表单字段；其余不确定点实验中经 ask 机制动态交互。
+# 开题提问：按 idea 让 AI 提出它真正拿不准的开局问题（以环境设置为主，宁少勿凑，
+# ≤5 个，带候选答案），代替静态表单字段；其余不确定点实验中经 ask 机制动态交互。
 _INTAKE_MAX_QUESTIONS = 5
 _INTAKE_SYSTEM_PROMPT = """\
 你是 Experiment Lab 的开题助手。用户选定了一个研究想法，准备交给自动化实验 agent
-（它会自己规划、写代码、建环境、跑实验、分析迭代）。请提出对「实验规划与环境设置」
-最关键的问题，帮用户在开局把方向定准。
+（它会自己规划、写代码、建环境、跑实验、分析迭代）。请只提出**你自己拿不准、
+而答案会影响开局**的问题——重点是环境与设置类的不确定性（比如模型/数据在服务器上的
+位置、能用的 GPU 与显存、该用什么框架或镜像、评测怎么调用）。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
-{"questions": [{"question": "问题", "hint": "一句提示/候选/示例，帮助快速作答"}]}
+{"questions": [{"question": "问题", "hint": "一句提示，帮助快速作答",
+  "options": ["候选答案1", "候选答案2"]}]}
 约束：
-- 最多 5 个；只问**影响开局的整体性问题**（如用哪个数据集与规模、评测口径与基线、
-  GPU/框架/模型约束、成功判据、要不要对照组）；能在实验过程中动态确认的细节不要问
-- 问题必须针对这个想法本身，不问放之四海皆准的空话；已经能从想法内容里读出的答案不要再问
+- **宁少勿凑**：真不确定的才问，1-3 个很正常，一个都没有就输出空列表；上限 5 个
+- 不要按固定类别套模板（不是每个实验都要问数据集/基线/判据）；从这个想法的具体
+  内容出发，找你规划或建环境时真正卡壳的点
+- 每个问题要**明确、可直接作答**（问「Qwen3.5-4B 权重在服务器上的路径是什么」，
+  不问「资源情况如何」这类空泛问题）
+- 能从想法内容里读出答案的不要问；实验过程中能动态确认的细节不要问
+- 每个问题尽量给 2-4 个**具体的候选答案**（options，用户可一键选择，也能自己填）；
+  实在给不出合理候选就给空列表
 - 用大白话，中文提问
 """
 
@@ -109,7 +116,14 @@ async def experiment_intake_questions(
             if not question:
                 continue
             hint = str(raw.get("hint") or "").strip() or None
-            questions.append(ExperimentIntakeQuestion(question=question[:500], hint=hint))
+            options = [
+                str(opt).strip()[:200]
+                for opt in (raw.get("options") or [])
+                if isinstance(opt, str) and str(opt).strip()
+            ][:6]
+            questions.append(
+                ExperimentIntakeQuestion(question=question[:500], hint=hint, options=options)
+            )
             if len(questions) >= _INTAKE_MAX_QUESTIONS:
                 break
         return ExperimentIntakeQuestions(questions=questions)

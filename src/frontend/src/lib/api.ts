@@ -1954,6 +1954,8 @@ export interface ExperimentIntakeQA {
 export interface ExperimentIntakeQuestion {
   question: string;
   hint: string | null;
+  /** 候选答案（可一键选择；空列表 = 只有自由输入） */
+  options: string[];
 }
 
 export interface CreateExperimentInput {
