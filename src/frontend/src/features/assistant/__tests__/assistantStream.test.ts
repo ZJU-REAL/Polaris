@@ -207,3 +207,24 @@ describe('工具返回的图片', () => {
     expect((blocks[0] as { images?: unknown }).images).toBeUndefined();
   });
 });
+
+describe('待审批的计划', () => {
+  it('submit_plan 交上来的带审批标记，推进中的不带', () => {
+    // 同一种块两种读法：带标记的是审批单（画「按这个做 / 改一改」），
+    // 不带的是进度条。推进中的计划要是也带一个 false，每处比较都得多写一笔。
+    const pending = applyAssistantEvent([], 'plan', {
+      steps: [{ title: '查文献', status: 'pending' }],
+      awaiting_approval: true,
+    });
+    expect(pending[0]).toEqual({
+      kind: 'plan',
+      steps: [{ title: '查文献', status: 'pending' }],
+      awaitingApproval: true,
+    });
+
+    const running = applyAssistantEvent([], 'plan', {
+      steps: [{ title: '查文献', status: 'running' }],
+    });
+    expect(running[0]).not.toHaveProperty('awaitingApproval');
+  });
+});

@@ -44,6 +44,9 @@ class PlanEvent:
     """
 
     steps: tuple[dict[str, str], ...] = ()
+    #: 这份计划在等用户点头（submit_plan 交出来的）。界面据此画批准按钮；
+    #: update_plan 推进中的计划不带这个标记，它是进度条不是审批单。
+    awaiting_approval: bool = False
 
 
 @dataclass(slots=True, frozen=True)

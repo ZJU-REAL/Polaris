@@ -190,3 +190,53 @@ async def test_the_plan_frame_reaches_the_client(client, agent_on):
         {"title": "先查", "status": "running"},
         {"title": "再读", "status": "pending"},
     ]
+
+
+# ---- 计划模式的出口：submit_plan ----
+
+
+def test_submit_plan_marks_everything_as_not_yet_started():
+    """待审的计划里不该有"已完成"——一步都还没做呢。
+
+    模型很容易顺手把第一步标成 done（它刚查完资料，感觉像做完了一步）。
+    真让它进了界面，用户看到的是一份已经开工的计划，而他还没点头。
+    """
+    import asyncio
+
+    from app.tools.plan import submit_plan
+
+    out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        submit_plan(
+            None,  # type: ignore[arg-type]  这个工具不碰 ctx
+            {
+                "steps": [
+                    {"title": "查文献", "status": "done"},
+                    {"title": "读全文", "status": "running"},
+                ],
+                "rationale": "先摸清现状再动手",
+            },
+        )
+    )
+    assert [s["status"] for s in out["steps"]] == ["pending", "pending"]
+    assert out["awaiting_approval"] is True
+    assert out["rationale"] == "先摸清现状再动手"
+
+
+def test_the_plan_frame_also_comes_from_submit_plan():
+    """界面画的计划，两个工具都得认。
+
+    只认 update_plan 的话，计划模式交出来的方案在界面上一片空白——而那正是
+    用户唯一需要看的东西。
+    """
+    result = ToolResultBlock(
+        tool_use_id="t1",
+        content=json.dumps(
+            {"steps": [{"title": "查文献", "status": "pending"}], "awaiting_approval": True}
+        ),
+    )
+    ev = ToolResultEvent(
+        id="t1", name="submit_plan", ok=True, summary="待审批的计划（1 步）", preview="", duration_ms=1
+    )
+    steps = _plan_from(ev, result)
+    assert steps is not None
+    assert steps[0]["title"] == "查文献"

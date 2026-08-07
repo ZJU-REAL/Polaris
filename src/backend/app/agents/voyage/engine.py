@@ -566,6 +566,12 @@ class VoyageEngine:
             run.status = await self._current_db_status(session, run.id)
             raise _ExternallyTerminated(run.status)
         run.status = status
+        if status == "done":
+            # 终态联动：仍非终态的关联实验随 voyage 落定为 done（报告动作不再自判
+            # failed，用户「接受当前结果」等路径都汇到这里；无关联实验时是 noop）
+            from app.services import experiments as experiments_service
+
+            await experiments_service.complete_by_voyage(session, run.id)
         await self._emit_status(run)
 
     # ---- 主流程 ----

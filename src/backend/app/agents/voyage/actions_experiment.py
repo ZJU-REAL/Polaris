@@ -2825,7 +2825,14 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
         experiment.report = result.content.strip()
         _remember(ctx, "报告", f"实验报告已生成（约 {len(experiment.report)} 字）")
         run_ok = last_run is not None and last_run.status == "succeeded"
-        final_status = "done" if run_ok else "failed"
+        # failed 只由人拍板：最后一轮未成功时**不写终态**——紧随其后的完成标准检查
+        # 会向用户提问（接受/补做/放弃），终态由用户答案或 voyage 终态联动落定。
+        # 原来这里直接置 failed，把实验锁进终态，waiting_user 镜像与后续状态全部失效。
+        final_status = "done" if run_ok else experiment.status
+        if run_ok:
+            await _set_status(ctx, session, experiment, "done")
+        else:
+            await ctx.log("最后一轮运行未成功——不自动判失败，等完成标准检查和你的裁决")
         session.add(
             Activity(
                 project_id=experiment.project_id,
@@ -2835,7 +2842,7 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 payload={"experiment_id": str(experiment.id), "final_status": final_status},
             )
         )
-        await _set_status(ctx, session, experiment, final_status)
+        await session.commit()
 
     # voyage 级完成标准（done_criteria）断言该标记：防"过早宣告完成"
     ctx.checkpoint["report_done"] = True

@@ -32,7 +32,7 @@ from app.agents.chat.events import (
     VerifyEvent,
 )
 from app.agents.chat.loop import ChatAgentLoop, ChatTurnRequest
-from app.agents.chat.prompt import default_tool_names, mode_instructions
+from app.agents.chat.prompt import default_tool_names, mode_instructions, tools_for_mode
 from app.api.auth import current_active_user, require_llm_chat
 from app.core.config import get_settings
 from app.core.db import get_session
@@ -457,6 +457,8 @@ async def run_turn(
         if has_corpus
         else (default_tool_names(memory_enabled=memory_on) if memory_on else ())
     )
+    # 计划模式多给一个出口工具（submit_plan）；其余模式一个字不变
+    tool_names = tools_for_mode(tool_names, payload.mode)
     tool_ctx = ToolContext(
         project_id=project_id,
         # 指定了课题就按课题算范围（library_ids=None），否则给显式的可见库集合

@@ -604,9 +604,15 @@ async def test_plan_mode_tells_the_model_to_propose_before_acting(client, agent_
     assert mode_instructions("chat") == ""
     assert mode_instructions("goal", goal="") == ""
     plan = mode_instructions("plan")
-    assert "只做调研和规划" in plan and "update_plan" in plan
+    assert "只做调研和规划" in plan
+    # 出口是 submit_plan：交出计划这一轮就结束，等人点头。没有这一条，
+    # "只调研不动手"就只是一句叮嘱，模型交完计划会顺手把活干了。
+    assert "submit_plan" in plan
+    assert "下一轮" in plan
     goal = mode_instructions("goal", goal="把 CUA 这条线读透")
     assert "把 CUA 这条线读透" in goal
+    # 目标模式要自己往前走，只在真需要用户拍板时才停
+    assert "自己往前走" in goal
 
 
 async def test_replayed_history_never_orphans_a_tool_message(client, agent_on):

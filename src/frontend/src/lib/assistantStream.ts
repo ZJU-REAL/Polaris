@@ -28,7 +28,7 @@ export interface PlanStep {
 
 export type AssistantBlock =
   | { kind: 'text'; text: string }
-  | { kind: 'plan'; steps: PlanStep[] }
+  | { kind: 'plan'; steps: PlanStep[]; awaitingApproval?: boolean }
   | { kind: 'sources'; papers: PaperSource[] }
   | { kind: 'verify'; notes: string[] }
   | { kind: 'thinking'; text: string }
@@ -142,7 +142,15 @@ export function applyAssistantEvent(
     // 一步都不剩就别画空进度条——空白进度条比不画更糟
     if (!steps.length) return blocks;
     const at = blocks.findIndex((b) => b.kind === 'plan');
-    const block: AssistantBlock = { kind: 'plan', steps };
+    // 待审批的计划是**审批单**，推进中的是进度条：同一种块，两种读法，
+    // 界面据此决定要不要画「批准 / 让它改」。
+    //
+    // 只在为真时才带这个字段：推进中的计划带一个恒为 false 的标记，除了让每处
+    // 比较都要多写一笔之外没有任何用处——「没有这个标记」本身就是"不用审批"。
+    const block: AssistantBlock =
+      data.awaiting_approval === true
+        ? { kind: 'plan', steps, awaitingApproval: true }
+        : { kind: 'plan', steps };
     if (at < 0) return [...blocks, block];
     return blocks.map((b, i) => (i === at ? block : b));
   }
