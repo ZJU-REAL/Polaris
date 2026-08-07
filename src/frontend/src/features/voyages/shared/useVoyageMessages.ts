@@ -37,11 +37,19 @@ export function useVoyageMessages(voyageId: string | null) {
   const handleExtraEvent = useCallback(
     (event: string, data: unknown) => {
       if (event !== 'message' && event !== 'ask.created' && event !== 'ask.answered') return;
-      const payload = data as { message?: VoyageMessageRead };
+      const payload = data as { message?: VoyageMessageRead; ask_id?: string };
       if (!payload?.message) return;
       queryClient.setQueryData<VoyageMessageRead[]>(['voyage-messages', id], (old) =>
         upsert(old, payload.message!),
       );
+      if (event === 'ask.answered' && payload.ask_id) {
+        // 事件只带回答消息；被回答的提问行要就地翻状态，否则界面卡在「等你回复」
+        queryClient.setQueryData<VoyageMessageRead[]>(['voyage-messages', id], (old) =>
+          (old ?? []).map((m) =>
+            m.id === payload.ask_id && m.status === 'open' ? { ...m, status: 'answered' } : m,
+          ),
+        );
+      }
       if (event !== 'message') {
         // ask 状态变化伴随任务状态变化（paused_ask / executing）：刷详情
         void queryClient.invalidateQueries({ queryKey: ['voyage', id] });

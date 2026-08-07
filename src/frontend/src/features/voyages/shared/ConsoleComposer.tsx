@@ -63,14 +63,31 @@ export function ConsoleComposer({
   const answerMutation = useMutation({
     mutationFn: (body: { text?: string; choice?: string }) =>
       api.answerVoyageAsk(voyageId, openAsk!.id, body),
-    onSuccess: (message) => {
+    onSuccess: (message, _body) => {
+      // 本地立刻把提问置为已回答（SSE 的 ask.answered 只带回答消息，
+      // 不带更新后的提问行；不改缓存的话界面会一直卡在「等你回复」）
+      const askId = message.reply_to;
+      if (askId) {
+        queryClient.setQueryData<VoyageMessageRead[]>(['voyage-messages', voyageId], (old) =>
+          (old ?? []).map((m) => (m.id === askId ? { ...m, status: 'answered' } : m)),
+        );
+      }
       afterSend(message);
       setText('');
       setChoice(null);
       toast(tr('已回复，任务继续', 'Answered — the task resumes'), 'ok');
     },
-    onError: (e) =>
-      toast(`${tr('回复失败：', 'Reply failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+    onError: (e) => {
+      const notOpen = e instanceof Error && e.message.includes('ASK_NOT_OPEN');
+      if (notOpen) {
+        // 提问已被回答/作废（可能在别的窗口答过）：以服务端为准刷新，自愈过期界面
+        void queryClient.invalidateQueries({ queryKey: ['voyage-messages', voyageId] });
+        void queryClient.invalidateQueries({ queryKey: ['voyage', voyageId] });
+        toast(tr('这个问题已经回复过了，界面已刷新', 'Already answered — refreshed the view'), 'info');
+        return;
+      }
+      toast(`${tr('回复失败：', 'Reply failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
+    },
   });
 
   const busy = suggestMutation.isPending || answerMutation.isPending;
@@ -147,6 +164,7 @@ export function ConsoleComposer({
           className="textarea"
           rows={2}
           value={text}
+          onChange={(e) => setText(e.target.value)}
           disabled={disabled || busy}
           placeholder={
             disabled
