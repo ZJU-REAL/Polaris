@@ -46,13 +46,27 @@ async def resume_voyage(ctx: dict[str, Any], run_id: str) -> None:
     await _make_engine().resume(uuid.UUID(run_id))
 
 
+RECONCILE_DEDUP_WINDOW_SECONDS = 900  # 同一 voyage 15 分钟内只入队一次 resume
+RECONCILE_STALE_MINUTES = 30  # 周期回收：终端无动静超过这个时长才算僵死
+
+
+def _reconcile_job_id(vid: object, now: float) -> str:
+    """时间分桶的去重键。arq 对已有同 id 的任务（排队/在跑/**结果保留期内**）会静默
+    去重——keep_result 默认 1 小时，固定 id 意味着重启后的对账 enqueue 可能被一小时前
+    的旧结果吞掉（线上实测：voyage 卡 verifying 45 分钟无人认领）。分桶让去重只在
+    短窗口内生效。"""
+    return f"reconcile-resume-{vid}-{int(now // RECONCILE_DEDUP_WINDOW_SECONDS)}"
+
+
 async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
     """worker 启动对账：认领无人执行的在途航程（见 IN_FLIGHT_STATUSES）。
 
     被 SIGTERM/超时打断的 ARQ 任务按任务年龄指数延迟重试，长航程会被晾数小时
-    （实测：远端 run.sh 已 exit=0，平台侧 50 分钟无人收尾）。启动时把 executing
+    （实测：远端 run.sh 已 exit=0，平台侧 50 分钟无人收尾）。启动时把在途
     状态的 voyage 重新入队 resume——引擎幂等（setup/run 都会重挂在跑的远端进程，
-    checkpoint 断点恢复），``_job_id`` 去重避免同一 voyage 重复入队。"""
+    checkpoint 断点恢复）。"""
+    import time
+
     from sqlalchemy import select
 
     from app.models.voyage import IN_FLIGHT_STATUSES, VoyageRun
@@ -69,8 +83,67 @@ async def reconcile_stuck_voyages(ctx: dict[str, Any]) -> None:
             .scalars()
             .all()
         )
+    now = time.time()
     for vid in ids:
-        await ctx["redis"].enqueue_job("resume_voyage", str(vid), _job_id=f"reconcile-resume-{vid}")
+        await ctx["redis"].enqueue_job(
+            "resume_voyage", str(vid), _job_id=_reconcile_job_id(vid, now)
+        )
+
+
+async def reconcile_stale_voyages(
+    ctx: dict[str, Any], stale_minutes: int = RECONCILE_STALE_MINUTES
+) -> None:
+    """周期回收（cron）：在途但终端长时间无动静的 voyage 重新入队 resume。
+
+    启动对账只救 worker 重启这一种孤儿；任务在运行中途丢失（LLM 调用悬死后被杀、
+    ARQ 指数延迟重试晾着）产生的僵死靠这里兜底。判据保守：距最后一条终端日志
+    （无日志则取创建时间）超过 ``stale_minutes`` 才认领——活着的长步骤会持续产生
+    日志/轮询输出，短暂静默不会被误抢；引擎本身幂等，偶发的并发 resume 可容忍
+    （arq 中断重试与启动对账本就可能重叠，线上已验证无碍）。"""
+    import time
+    from datetime import timedelta
+
+    from sqlalchemy import func as sa_func
+    from sqlalchemy import or_, select
+
+    from app.models.base import utcnow
+    from app.models.voyage import IN_FLIGHT_STATUSES, VoyageRun, VoyageTerminalLog
+
+    cutoff = utcnow() - timedelta(minutes=stale_minutes)
+    last_log = (
+        select(
+            VoyageTerminalLog.run_id.label("run_id"),
+            sa_func.max(VoyageTerminalLog.at).label("last_at"),
+        )
+        .group_by(VoyageTerminalLog.run_id)
+        .subquery()
+    )
+    async with get_sessionmaker()() as session:
+        ids = (
+            (
+                await session.execute(
+                    select(VoyageRun.id)
+                    .outerjoin(last_log, last_log.c.run_id == VoyageRun.id)
+                    .where(
+                        VoyageRun.status.in_(tuple(IN_FLIGHT_STATUSES)),
+                        or_(
+                            last_log.c.last_at < cutoff,
+                            (last_log.c.last_at.is_(None)) & (VoyageRun.created_at < cutoff),
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    if not ids:
+        return
+    logger.warning("reclaiming %d stale in-flight voyage(s): %s", len(ids), ids)
+    now = time.time()
+    for vid in ids:
+        await ctx["redis"].enqueue_job(
+            "resume_voyage", str(vid), _job_id=_reconcile_job_id(vid, now)
+        )
 
 
 async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:

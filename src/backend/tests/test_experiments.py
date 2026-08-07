@@ -1529,3 +1529,23 @@ async def test_complete_json_escalates_max_tokens_on_truncation():
     out = await ax._complete_json(ctx, system="s", user="u", validate=lambda d: d)
     assert out == {"a": 1}
     assert calls == [None, 8192]  # 截断后第二次带升档 max_tokens
+
+
+async def test_complete_by_voyage_finalizes_nonterminal(client, queue_stub, fake_ssh):
+    """voyage done 联动：非终态实验落定 done；终态不再动（幂等）。"""
+    from app.services import experiments as experiments_service
+
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    async with get_sessionmaker()() as session:
+        experiment = await session.get(Experiment, uuid.UUID(exp_id))
+        experiment.status = "running"
+        await session.commit()
+        out = await experiments_service.complete_by_voyage(session, uuid.UUID(voyage_id))
+        assert out is not None and out.status == "done"
+        # 已终态：noop（failed/cancelled 同理，不会被覆盖）
+        assert await experiments_service.complete_by_voyage(session, uuid.UUID(voyage_id)) is None

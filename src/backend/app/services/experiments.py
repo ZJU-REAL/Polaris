@@ -336,6 +336,22 @@ async def fail_by_voyage(session: AsyncSession, voyage_id: uuid.UUID) -> Experim
     return experiment
 
 
+async def complete_by_voyage(session: AsyncSession, voyage_id: uuid.UUID) -> Experiment | None:
+    """voyage 到达 done：仍非终态的关联实验落定为 done。
+
+    覆盖两条路：完成标准通过（正常收尾）与用户拍板「接受当前结果为完成」。
+    报告动作只在最后一轮成功时自己写 done（failed 只由人拍板，见 #366）——
+    其余情况实验状态一路保持非终态，最终在这里随 voyage 落定。"""
+    stmt = select(Experiment).where(Experiment.voyage_id == voyage_id)
+    experiment = (await session.execute(stmt)).scalar_one_or_none()
+    if experiment is None or experiment.status in EXPERIMENT_TERMINAL_STATUSES:
+        return None
+    experiment.status = "done"
+    await session.commit()
+    await session.refresh(experiment)
+    return experiment
+
+
 async def mark_waiting_by_voyage(session: AsyncSession, voyage_id: uuid.UUID) -> Experiment | None:
     """voyage 转 paused_ask：实验镜像 waiting_user（原状态记进 iteration_state，
     回答后由 :func:`resume_from_waiting_by_voyage` 恢复）。"""

@@ -12,6 +12,7 @@ from worker.tasks import (
     index_papers_fulltext_task,
     match_user_publications,
     ping_task,
+    reconcile_stale_voyages,
     reconcile_stuck_voyages,
     resume_voyage,
     run_voyage,
@@ -46,6 +47,9 @@ class WorkerSettings:
     cron_jobs = [
         cron(daily_feed_sync, minute=_CHECKPOINT_MINUTES),
         cron(daily_publication_match, minute=_CHECKPOINT_MINUTES),
+        # 僵死回收：启动对账只救 worker 重启的孤儿；运行中途丢任务（LLM 调用悬死、
+        # ARQ 指数延迟重试）的僵死靠周期兜底（判据=终端 30 分钟无动静，见 tasks.py）
+        cron(reconcile_stale_voyages, minute={5, 15, 25, 35, 45, 55}),
     ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     # 其余任务保持 1h 上限
