@@ -1460,6 +1460,9 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--ok-tx, #19A974); flex-shrink: 0;
   animation: buddy-pulse 1.4s ease-in-out infinite;
+  /* 和标题之间留一口气。它有个向外扩散的光晕（见 buddy-pulse 的 box-shadow），
+     贴着字排时光晕会扫到字上，看起来像标题在发抖。 */
+  margin-right: 3px;
 }
 @keyframes buddy-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(25, 169, 116, 0.45); }

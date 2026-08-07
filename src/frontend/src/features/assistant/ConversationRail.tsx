@@ -51,7 +51,7 @@ export function ConversationRail({
   onPick,
   onNew,
   refreshKey,
-  runningId,
+  runningIds,
 }: {
   activeId: string | null;
   onPick: (id: string) => void;
@@ -59,7 +59,9 @@ export function ConversationRail({
   /** 变一次就重拉一次列表（发完一轮之后标题才有） */
   refreshKey: number;
   /** 正在跑的那场：列表里给它一个呼吸灯 */
-  runningId?: string | null;
+  /** 正在跑的会话 id 集合。**不是「当前这场」**：切走之后那条还在跑，
+      它在列表里的呼吸灯就该一直亮到结束。 */
+  runningIds?: ReadonlySet<string>;
 }) {
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -163,7 +165,7 @@ export function ConversationRail({
                   background: row.id === activeId ? 'var(--accent-soft)' : undefined,
                 }}
               >
-                {row.id === runningId && <span className="buddy-live-dot" />}
+                {runningIds?.has(row.id) && <span className="buddy-live-dot" />}
                 {renaming === row.id ? (
                   <input
                     className="input"

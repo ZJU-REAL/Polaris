@@ -467,7 +467,14 @@ export function AssistantPanel({
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
+  // 「哪些会话在跑」是**一张按 id 的表**，不是一个布尔。
+  //
+  // 以前是单个 busy + 单个 abortRef，整个面板共用：A 在跑时切到 B，B 也显示停止
+  // 按钮，点下去掐掉的是 A 那条流；而切走之后 A 在列表里的呼吸灯立刻灭了，尽管
+  // 它还在跑。对话本来就该并行，各自的状态就得各自存。
+  const [running, setRunning] = useState<Set<string>>(() => new Set());
+  //: 还没落库的新会话（convId 还是 null）也可能在跑，用这个占位
+  const NEW_CONV = '__new__';
   const [convId, setConvId] = useState<string | null>(null);
   // dock 形态下会话列表是常驻一栏（不再是头部时钟弹层）；overlay 形态屏幕太窄，
   // 仍然用弹层。
@@ -509,7 +516,8 @@ export function AssistantPanel({
   const [title, setTitle] = useState<string>('');
   // 页面上下文照常发给模型，但不在输入框上占一行——它是背景信息，不是待办事项。
   const contextOn = true;
-  const abortRef = useRef<(() => void) | null>(null);
+  //: 会话 id → 掐掉它那条 SSE 的函数。停止只停这一条，不动别人。
+  const abortById = useRef<Map<string, () => void>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   // 对话里的「项目」就是平台里的课题。**默认不选**：选了之后检索范围就收窄到这个
@@ -545,6 +553,8 @@ export function AssistantPanel({
   const [goal, setGoal] = useState('');
   const [plusOpen, setPlusOpen] = useState(false);
   const pageContext = pageContextFrom(location.pathname);
+  //: 「**当前这场**在跑吗」——界面上多数地方问的是这个
+  const busy = running.has(convId ?? NEW_CONV);
 
   // 只有「本来就贴着底」才跟着滚。正在往回翻的时候被拽回最新一行，是流式界面里最
   // 烦人的一种行为——用户已经用滚动明确表达了「我在看别的地方」。
@@ -555,7 +565,8 @@ export function AssistantPanel({
     if (nearBottom) el.scrollTo({ top: el.scrollHeight });
   }, [turns]);
 
-  useEffect(() => () => abortRef.current?.(), []);
+  // 面板卸载时把所有还在跑的都掐掉，别留下野连接
+  useEffect(() => () => abortById.current.forEach((fn) => fn()), []);
 
   useEffect(() => {
     onBusyChange?.(busy);
@@ -584,11 +595,31 @@ export function AssistantPanel({
     };
   }, [open, pageContext?.kind]);
 
-  const stop = useCallback(() => {
+  /** 这一场跑完了：从在跑集合里摘掉，并丢掉它的中止函数。 */
+  const finish = useCallback((id: string) => {
+    abortById.current.delete(id);
+    setRunning((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  /** 停掉某一场对话。不传就停当前这场。
+
+      以前这里停的是「面板唯一那条流」，于是在 B 里点停止会掐掉 A。 */
+  const stopConv = useCallback((id: string | null) => {
+    const key = id ?? NEW_CONV;
     // 掐掉 SSE 连接。后端会把已生成的部分落库标成 interrupted，重开会话还能看到。
-    abortRef.current?.();
-    abortRef.current = null;
-    setBusy(false);
+    abortById.current.get(key)?.();
+    abortById.current.delete(key);
+    setRunning((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
   }, []);
 
   const openHistory = useCallback(async () => {
@@ -640,7 +671,7 @@ export function AssistantPanel({
   );
 
   const newConversation = useCallback(() => {
-    stop();
+    stopConv(convId);
     setConvId(null);
     setTurns([]);
     setTitle('');
@@ -650,7 +681,9 @@ export function AssistantPanel({
   const ask = useCallback(
     async (question: string) => {
     if (!question || busy) return;
-    setBusy(true);
+    // 起跑：先按当前 id 记上（新会话用占位，拿到真 id 后改名）
+    const startedAt = convId ?? NEW_CONV;
+    setRunning((prev) => new Set(prev).add(startedAt));
     setTurns((t) => [...t, { role: 'user', blocks: [{ kind: 'text', text: question }] }, { role: 'assistant', blocks: [] }]);
 
     let id = convId;
@@ -658,6 +691,13 @@ export function AssistantPanel({
       if (!id) {
         id = (await api.createAssistantConversation({})).id;
         setConvId(id);
+        // 占位换成真 id：否则这场跑起来了，列表里那条却不亮
+        setRunning((prev) => {
+          const next = new Set(prev);
+          next.delete(NEW_CONV);
+          next.add(id!);
+          return next;
+        });
       }
     } catch (e) {
       // 这里以前把所有失败都说成「助手未启用」，把真正的原因吃掉了
@@ -667,7 +707,7 @@ export function AssistantPanel({
         next[next.length - 1] = { role: 'assistant', blocks: [{ kind: 'text', text: `⚠️ ${errorText(detail)}` }] };
         return next;
       });
-      setBusy(false);
+      finish(startedAt);
       return;
     }
 
@@ -680,7 +720,9 @@ export function AssistantPanel({
         return next;
       });
 
-    abortRef.current = assistantTurnSse(
+    const turnId = id;
+    abortById.current.set(turnId, () => undefined); // 占位，真函数在下面赋值
+    const abort = assistantTurnSse(
       id,
       question,
       {
@@ -694,7 +736,7 @@ export function AssistantPanel({
         onMeta: (meta) => setModel(meta.model),
         onBlocks: patch,
         onDone: () => {
-          setBusy(false);
+          finish(turnId);
           setRailRefresh((n) => n + 1);
           // 标题是这一轮结束后才生成的，回头取一次
           void api
@@ -708,10 +750,11 @@ export function AssistantPanel({
             ...blocks,
             { kind: 'text', text: `⚠️ ${errorText(detail)}\n\n\`${detail}\`` },
           ]);
-          setBusy(false);
+          finish(turnId);
         },
       },
     );
+    abortById.current.set(turnId, abort);
     },
     [busy, convId, contextOn, pageContext, topicId, mode, goal],
   );
@@ -885,7 +928,9 @@ export function AssistantPanel({
           onPick={(id) => void loadConversation(id)}
           onNew={newConversation}
           refreshKey={railRefresh}
-          runningId={busy ? convId : null}
+          // 列表里**所有**在跑的都亮，不只是当前这场——切走之后那条还在跑，
+          // 灯就该一直亮到它结束。
+          runningIds={running}
         />
       )}
       {/* overflowWrap: anywhere 是给长 URL、DOI、无空格的模型名留的后路——它们不换行，
@@ -942,7 +987,9 @@ export function AssistantPanel({
                       }
                     />
                   ))}
-                  {isLast && <TurnStatus blocks={liveBlocks} busy={busy} onStop={stop} />}
+                  {isLast && (
+                    <TurnStatus blocks={liveBlocks} busy={busy} onStop={() => stopConv(convId)} />
+                  )}
                   {/* 答完之后的操作行：复制、重来。**不放点赞/点踩**——没有接收端的
                       反馈按钮是摆设，点了之后什么都没发生比没有按钮更伤信任。 */}
                   {!busy && turn.blocks.some((b) => b.kind === 'text') && (
