@@ -766,6 +766,29 @@ export function AssistantPanel({
     void ask(question);
   }, [input, ask]);
 
+  /** 重问某个回答对应的问题：从 ``at`` 往回找最近的**用户**轮。
+
+      以前这里写的是 ``turns[i - 1]``，假定问题就在回答的前一格。新发起的一轮确实
+      如此，但回放历史之后不是：``loadConversation`` 会把 tool_results 并进上一轮，
+      用户轮与助手轮之间未必相邻。取不到就得到空串，``if (text)`` 不成立，于是这个
+      按钮**点了什么都不发生**——最难查的那种坏，因为它看起来完好。 */
+  const retryFrom = useCallback(
+    (at: number) => {
+      for (let i = at - 1; i >= 0; i -= 1) {
+        const turn = turns[i];
+        if (turn?.role !== 'user') continue;
+        const text = turn.blocks
+          .map((b) => (b.kind === 'text' ? b.text : ''))
+          .join('')
+          .trim();
+        if (text) return ask(text);
+        break; // 找到了用户轮却没有正文：那就没什么可重问的
+      }
+      return undefined;
+    },
+    [turns, ask],
+  );
+
   // 论文被拖到悬浮球上：直接问一句解读。id 写进问题里，Buddy 自己去 get_paper。
   useEffect(() => {
     if (!droppedPaperId || busy) return;
@@ -1012,14 +1035,7 @@ export function AssistantPanel({
                         <button
                           className="icon-btn"
                           title={tr('换一个回答', 'Answer again')}
-                          onClick={() => {
-                            const question = turns[i - 1];
-                            const text =
-                              question?.role === 'user'
-                                ? question.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('')
-                                : '';
-                            if (text) void ask(text);
-                          }}
+                          onClick={() => void retryFrom(i)}
                           style={{ width: 24, height: 24 }}
                         >
                           <Icon name="refresh" size={12} />

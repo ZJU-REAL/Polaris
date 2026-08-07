@@ -57,3 +57,15 @@ describe('并行对话的状态', () => {
     expect(panel).toContain('next.delete(NEW_CONV)');
   });
 });
+
+describe('「换一个回答」', () => {
+  it('往回找最近的用户轮，而不是假定就在前一格', () => {
+    // 以前是 turns[i - 1]。新发起的一轮确实是「用户 + 助手」相邻，所以刚问完点是好的；
+    // 但回放历史之后 tool_results 会并进上一轮，两者未必相邻，取到空串就什么都不发生。
+    // 这个按钮于是变成「看起来完好、点了没反应」，是最难查的那种坏。
+    expect(panel).toContain('const retryFrom = useCallback(');
+    expect(panel).toContain('if (turn?.role !== \'user\') continue');
+    expect(panel).toContain('onClick={() => void retryFrom(i)}');
+    expect(panel).not.toContain('const question = turns[i - 1]');
+  });
+});
