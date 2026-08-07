@@ -4930,6 +4930,17 @@ export const api = {
   createAssistantConversation(scope: { scope_kind?: string; project_id?: string } = {}): Promise<{ id: string; title: string }> {
     return requestJson<{ id: string; title: string }>('/chat/conversations', 'POST', scope);
   },
+  /** 记一次浏览（尽力而为：失败不影响页面，去重由后端做）。 */
+  recordView(kind: 'library' | 'paper', targetId: string): Promise<{ counted: boolean }> {
+    return request('/views', { method: 'POST', body: JSON.stringify({ kind, target_id: targetId }) });
+  },
+  /** 最近 N 天的文献库/论文热度（只出计数）。 */
+  getLabHot(days = 7, limit = 5): Promise<{
+    libraries: { id: string; name: string; views: number }[];
+    papers: { id: string; title: string; views: number }[];
+  }> {
+    return request(`/lab/hot?days=${days}&limit=${limit}`);
+  },
   getDailySyncStatus(): Promise<DailySyncStatus> {
     return request<DailySyncStatus>('/daily/sync-status');
   },

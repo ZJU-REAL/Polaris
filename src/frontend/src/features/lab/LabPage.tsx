@@ -33,6 +33,7 @@ import {
   matchFilter,
   type Filter,
 } from '../voyages/VoyagesPage';
+import { HotLists } from './HotLists';
 
 /* ============================================================
    /lab — 实验室工作台
@@ -911,6 +912,7 @@ function OverviewTab() {
 
   return (
     <>
+      <HotLists />
       <div className="row gap16 dash-stats" style={{ marginBottom: 20 }}>
         <StatCard
           icon="book"

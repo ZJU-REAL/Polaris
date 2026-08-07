@@ -44,6 +44,7 @@ from app.models.system_setting import SystemSetting
 from app.models.topic_shelf import TopicPaper
 from app.models.user import User
 from app.models.vectors import IdeaVector, PaperChunkVector, PaperVector
+from app.models.view_event import ViewEvent
 from app.models.voyage import VoyageMessage, VoyageRun, VoyageStep
 
 __all__ = [
@@ -100,6 +101,7 @@ __all__ = [
     "TimestampMixin",
     "TopicPaper",
     "User",
+    "ViewEvent",
     "UserAuthorProfile",
     "UserLibraryEntry",
     "UserPaperTag",

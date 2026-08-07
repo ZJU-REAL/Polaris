@@ -22,8 +22,27 @@ from app.schemas.lab import (
 from app.schemas.llm_admin import UsageRow
 from app.services import lab as lab_service
 from app.services import llm_admin as llm_admin_service
+from app.services import view_stats
 
 router = APIRouter(prefix="/lab", tags=["lab"])
+
+
+@router.get("/hot")
+async def lab_hot(
+    days: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=5, ge=1, le=20),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> dict[str, list[dict[str, object]]]:
+    """最近 N 天被打开得最多的文献库与论文。
+
+    只返回计数，不按人展开——实验室里「谁在读什么」是敏感信息，热度需要的只是总数。
+    库按可见性过滤：看不见的库不该出现在榜上，哪怕它很热。
+    """
+    return {
+        "libraries": await view_stats.hot_libraries(session, user=user, days=days, limit=limit),
+        "papers": await view_stats.hot_papers(session, user=user, days=days, limit=limit),
+    }
 
 
 @router.get("/stats", response_model=LabStats)

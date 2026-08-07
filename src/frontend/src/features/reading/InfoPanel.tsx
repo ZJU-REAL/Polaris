@@ -65,7 +65,7 @@ export function InfoPanel({
     <div className="scroll" style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 40px' }}>
       {/* —— 头部 —— */}
       <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
-        <PaperStatusPill status={paper.status} sm />
+        <PaperStatusPill status={paper.status} hasWiki={paper.has_wiki} sm />
         {paper.venue && (
           <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
             {paper.venue}

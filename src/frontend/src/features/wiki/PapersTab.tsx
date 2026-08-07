@@ -601,7 +601,7 @@ const PaperRow = memo(function PaperRow({
         <AddToButton paperId={p.id} />
       </div>
       <div className="row gap8" style={{ marginTop: 6 }}>
-        <PaperStatusPill status={p.status} sm />
+        <PaperStatusPill status={p.status} hasWiki={p.has_wiki} sm />
         <ReadingDot status={p.reading_status} />
         <PaperMyTagChips myTags={p.my_tags} />
         {(p.note_count ?? 0) > 0 && (
@@ -764,7 +764,7 @@ function PaperDetailPane({
       <div className="row" style={{ alignItems: 'flex-start', gap: 20 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="row gap8 wrap" style={{ marginBottom: 8 }}>
-            <PaperStatusPill status={paper.status} sm />
+            <PaperStatusPill status={paper.status} hasWiki={paper.has_wiki} sm />
             {paper.venue && (
               <span className="pill sm" style={{ background: 'var(--surface-3)' }}>
                 {paper.venue}

@@ -68,9 +68,15 @@ const PAPER_STATUS: Record<string, StatusMeta> = {
   excluded: { cls: 'st-rejected', zh: '已删除', en: 'removed' },
 };
 
-/** 论文状态 pill：把内部六种 status 折叠为用户可见三态。 */
-export function PaperStatusPill({ status, sm }: StatusPillProps) {
-  const s = PAPER_STATUS[status] ?? { cls: '', zh: status, en: status };
+/** 论文状态 pill：把内部六种 status 折叠为用户可见三态。
+
+    ``hasWiki`` 优先于 status：**「编译过没有」是论文级的事实**（解读存在 paper_wikis
+    上，全平台一份），而 status 是成员行上的判断。人工纳入的论文状态一直是 included，
+    编译完也不会变——只看 status 的话，明明已经编译出解读的论文在列表里仍写着「已纳入」。
+    以事实为准，别让用户去分辨两套口径。 */
+export function PaperStatusPill({ status, hasWiki, sm }: StatusPillProps) {
+  const effective = hasWiki && status !== 'excluded' ? 'compiled' : status;
+  const s = PAPER_STATUS[effective] ?? { cls: '', zh: status, en: status };
   return (
     <span className={`pill ${s.cls}${sm ? ' sm' : ''}`}>
       <span className="dot" />
@@ -80,6 +86,8 @@ export function PaperStatusPill({ status, sm }: StatusPillProps) {
 }
 
 export interface StatusPillProps {
+  /** 这篇有没有编译出解读（论文级事实，优先于成员行 status） */
+  hasWiki?: boolean;
   status: string;
   sm?: boolean;
 }

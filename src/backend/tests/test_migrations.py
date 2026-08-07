@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "63133f647463"  # 任务对话流：voyage_messages 表（用户与任务 agent 的双向通道）
+HEAD_REVISION = "a1c9e73b5d20"  # 浏览事件（文献库/论文点击量）
+VOYAGE_MESSAGES_REVISION = "63133f647463"  # 任务对话流：voyage_messages 表
 READ_ONLY_REVISION = "b3f5c1e07a92"  # 只读账号（游客）
 SKILLS_GLOBAL_REVISION = "07e7faea4c7a"  # 技能全局启用（user_skills，不再绑定课题）
 MEMORY_KIND_REVISION = "d4e8b19c7a55"  # 记忆分层：fact 每轮带上 / note 检索到才回上下文
@@ -102,6 +103,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "agent_skill_files",
                     "skills",
                     "buddy_memories",
+                    "view_events",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -362,7 +364,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 任务对话流：用户与任务 agent 的双向消息
     assert "voyage_messages" in columns["_tables"]
 
-    # 最新 revision 可往返：先退掉任务对话流。
+    # 浏览事件：文献库/论文的点击量
+    assert "view_events" in columns["_tables"]
+
+    # 最新 revision 可往返：先退掉浏览事件。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == VOYAGE_MESSAGES_REVISION
+    assert "view_events" not in columns["_tables"]
+
+    # 再退掉任务对话流。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == READ_ONLY_REVISION
