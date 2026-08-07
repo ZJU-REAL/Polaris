@@ -1485,3 +1485,87 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* —— PolarisBuddy 输入框上方的课题选择 ——
+   和加号并排的一枚小按钮。没选时是安静的灰字（「全部文献库」是常态，不必强调），
+   选了才染上强调色——扫一眼就知道这次问话被收窄到哪。 */
+.buddy-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  padding: 2px 7px;
+  border: 0.5px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-4);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.buddy-scope:hover {
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.buddy-scope[data-picked] {
+  border-color: var(--accent-soft);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.buddy-scope-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.buddy-scope-menu {
+  position: absolute;
+  left: 30px;          /* 贴着课题按钮，不压住加号 */
+  bottom: 34px;        /* 弹在上方：下面就是输入框 */
+  z-index: 50;
+  width: 268px;
+  padding: 6px;
+  background: var(--surface);
+  border: 0.5px solid var(--border-2);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+}
+.buddy-scope-list {
+  max-height: 268px;
+  overflow-y: auto;
+}
+.buddy-scope-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.buddy-scope-item:hover {
+  background: var(--surface-2);
+}
+.buddy-scope-item[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.buddy-scope-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.buddy-scope-empty {
+  padding: 10px 8px;
+  font-size: 12px;
+  color: var(--text-4);
+}

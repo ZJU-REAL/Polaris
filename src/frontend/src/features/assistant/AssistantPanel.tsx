@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
 import { PolarisMark } from '../../components/ui/PolarisLogo';
@@ -454,7 +454,27 @@ export function AssistantPanel({
   const [convId, setConvId] = useState<string | null>(null);
   // dock 形态下会话列表是常驻一栏（不再是头部时钟弹层）；overlay 形态屏幕太窄，
   // 仍然用弹层。
-  const [railOpen, setRailOpen] = useState(true);
+  //
+  // **默认收起**：打开 Buddy 是为了问一句话，不是为了翻旧账。两栏一起铺开会把本来
+  // 就窄的对话区再切一刀，而历史一天用不上一次。手动开过就记住，别每次都要再点。
+  const [railOpen, setRailOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('polaris.buddyRailOpen') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleRail = useCallback(() => {
+    setRailOpen((o) => {
+      const next = !o;
+      try {
+        localStorage.setItem('polaris.buddyRailOpen', next ? '1' : '0');
+      } catch {
+        /* 隐私模式：仅本次会话生效 */
+      }
+      return next;
+    });
+  }, []);
   const [historyOpen, setHistoryOpen] = useState(false);
   //: 发完一轮之后标题才生成，列表要跟着刷新一次
   const [railRefresh, setRailRefresh] = useState(0);
@@ -469,11 +489,24 @@ export function AssistantPanel({
   const abortRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
-  // 对话里的「项目」就是平台里的课题。**默认不绑**：绑上之后检索范围就收窄到这个
-  // 课题，而用户多数问题是跨课题的；想收窄时自己勾一下，比默认收窄再去发现「怎么
+  // 对话里的「项目」就是平台里的课题。**默认不选**：选了之后检索范围就收窄到这个
+  // 课题，而用户多数问题是跨课题的；想收窄时自己挑一个，比默认收窄再去发现「怎么
   // 查不到别的库」要好。
-  const { currentProject } = useProject();
-  const [bindProject, setBindProject] = useState(false);
+  //
+  // 以前这里是个开关，只能绑「你现在正在看的那个课题」——想问另一个课题，得先把整个
+  // 界面切过去。现在存的是选中的课题 id，输入框上方那个按钮直接挑。
+  const { projects } = useProject();
+  const [topicId, setTopicId] = useState<string | null>(null);
+  const [topicOpen, setTopicOpen] = useState(false);
+  const [topicQuery, setTopicQuery] = useState('');
+  const topic = useMemo(
+    () => projects.find((p) => p.id === topicId) ?? null,
+    [projects, topicId],
+  );
+  const topicMatches = useMemo(() => {
+    const q = topicQuery.trim().toLowerCase();
+    return q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : projects;
+  }, [projects, topicQuery]);
   // chat = 默认（行为一个字没变）；plan = 只调研出计划等人点头；goal = 带着一个持续目标
   const [mode, setMode] = useState<'chat' | 'plan' | 'goal'>('chat');
   const [goal, setGoal] = useState('');
@@ -529,7 +562,9 @@ export function AssistantPanel({
         const messages = await api.getAssistantMessages(id);
         setConvId(id);
         setHistoryOpen(false);
-        // 会话上存着的课题才是这场对话真正的作用域，跟着切过去
+        // 会话上存着的课题才是这场对话真正的作用域，跟着切过去。
+        // （这句注释以前是空头支票：写着「跟着切」，却没有一行代码在切。）
+        setTopicId(conversations.find((c) => c.id === id)?.project_id ?? null);
         setTurns(
           messages
             // 一轮会落成几条消息：assistant（正文/调用）+ 携带工具结果的那条。
@@ -603,7 +638,7 @@ export function AssistantPanel({
         // 那条路上的权限校验一点没少。用户可以关掉。
         page:
           contextOn && pageContext ? { kind: pageContext.kind, id: pageContext.id } : undefined,
-        projectId: bindProject ? (currentProject?.id ?? null) : null,
+        projectId: topicId,
         mode,
         goal: mode === 'goal' ? goal : undefined,
         onMeta: (meta) => setModel(meta.model),
@@ -628,7 +663,7 @@ export function AssistantPanel({
       },
     );
     },
-    [busy, convId, contextOn, pageContext, currentProject, bindProject, mode, goal],
+    [busy, convId, contextOn, pageContext, topicId, mode, goal],
   );
 
   const send = useCallback(() => {
@@ -725,7 +760,7 @@ export function AssistantPanel({
         {variant === 'dock' ? (
           <button
             className="icon-btn"
-            onClick={() => setRailOpen((o) => !o)}
+            onClick={toggleRail}
             title={tr('会话列表', 'Conversations')}
             style={{ color: railOpen ? 'var(--accent)' : undefined }}
           >
@@ -940,21 +975,29 @@ export function AssistantPanel({
             <Icon name="plus" size={13} />
           </button>
 
-          {bindProject && currentProject ? (
-            <span
-              className="row gap6 hoverable"
-              style={{ alignItems: 'center', cursor: 'pointer', minWidth: 0 }}
-              onClick={() => setBindProject(false)}
-              title={tr('只在这个课题的语料里查；点掉恢复全部', 'Restricted to this topic; click to clear')}
-            >
-              <Icon name="layers" size={12} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {currentProject.name}
-              </span>
+          {/* 课题选择：和加号并排。以前这里是一行说明文字，只告诉你现在查的是什么，
+              要换得去别处切；现在它自己就是入口——点开挑一个，再点「全部文献库」放开。 */}
+          <button
+            className="buddy-scope"
+            onClick={() => {
+              setTopicQuery('');
+              setTopicOpen((o) => !o);
+            }}
+            aria-haspopup="listbox"
+            aria-expanded={topicOpen}
+            title={
+              topic
+                ? `${tr('只在这个课题的语料里查', 'Restricted to this topic')} · ${topic.name}`
+                : tr('选一个课题来收窄检索范围', 'Pick a topic to narrow the search')
+            }
+            data-picked={topic ? '1' : undefined}
+          >
+            <Icon name="layers" size={12} />
+            <span className="buddy-scope-label">
+              {topic ? topic.name : tr('全部文献库', 'All libraries')}
             </span>
-          ) : (
-            <span style={{ color: 'var(--text-4)' }}>{tr('全部文献库', 'All libraries')}</span>
-          )}
+            <Icon name="chevDown" size={11} />
+          </button>
 
           {mode !== 'chat' && (
             <>
@@ -977,6 +1020,75 @@ export function AssistantPanel({
             </span>
           )}
 
+          {topicOpen && (
+            <>
+              <div onClick={() => setTopicOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 49 }} />
+              <div className="buddy-scope-menu" role="listbox">
+                {/* 课题可能有几十个，光靠滚的找不到——列表一长就先给个搜索框 */}
+                {projects.length > 7 && (
+                  <input
+                    className="input sm"
+                    autoFocus
+                    value={topicQuery}
+                    onChange={(e) => setTopicQuery(e.target.value)}
+                    placeholder={tr('搜课题…', 'Search topics…')}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setTopicOpen(false);
+                      // 搜到只剩一个时回车直接选它
+                      const only = topicMatches.length === 1 ? topicMatches[0] : undefined;
+                      if (e.key === 'Enter' && only) {
+                        setTopicId(only.id);
+                        setTopicOpen(false);
+                      }
+                    }}
+                    style={{ marginBottom: 4 }}
+                  />
+                )}
+                <div className="buddy-scope-list">
+                  <button
+                    className="buddy-scope-item"
+                    role="option"
+                    aria-selected={!topicId}
+                    onClick={() => {
+                      setTopicId(null);
+                      setTopicOpen(false);
+                    }}
+                  >
+                    <Icon name="book" size={13} />
+                    <span className="buddy-scope-item-label">{tr('全部文献库', 'All libraries')}</span>
+                    {!topicId && <Icon name="check" size={12} />}
+                  </button>
+                  {projects.length > 0 && <div className="hr" style={{ margin: '4px 2px' }} />}
+                  {topicMatches.map((p) => (
+                    <button
+                      key={p.id}
+                      className="buddy-scope-item"
+                      role="option"
+                      aria-selected={p.id === topicId}
+                      title={p.name}
+                      onClick={() => {
+                        setTopicId(p.id);
+                        setTopicOpen(false);
+                      }}
+                    >
+                      <Icon name="layers" size={13} />
+                      <span className="buddy-scope-item-label">{p.name}</span>
+                      {p.id === topicId && <Icon name="check" size={12} />}
+                    </button>
+                  ))}
+                  {/* 一个课题都没有和「搜不到」是两回事，分开说 */}
+                  {topicMatches.length === 0 && (
+                    <div className="buddy-scope-empty">
+                      {projects.length === 0
+                        ? tr('还没有可见的课题', 'No topics you can see yet')
+                        : tr('没有匹配的课题', 'No topic matches that')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
           {plusOpen && (
             <>
               <div onClick={() => setPlusOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 49 }} />
@@ -996,15 +1108,6 @@ export function AssistantPanel({
                 }}
                 onClick={() => setPlusOpen(false)}
               >
-                {currentProject && (
-                  <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setBindProject((b) => !b)}>
-                    <Icon name="layers" size={13} />
-                    <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {tr('只查课题', 'Work in a topic')} · {currentProject.name}
-                    </span>
-                    {bindProject && <Icon name="check" size={12} />}
-                  </button>
-                )}
                 <button className="btn btn-ghost sm" style={{ justifyContent: 'flex-start' }} onClick={() => setMode(mode === 'plan' ? 'chat' : 'plan')}>
                   <Icon name="bulb" size={13} />
                   <span style={{ flex: 1, textAlign: 'left' }}>{tr('计划模式 · 先出方案再动手', 'Plan mode · propose before doing')}</span>
