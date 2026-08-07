@@ -12,12 +12,14 @@ from app.models.base import JSONVariant, TimestampMixin, UUIDPrimaryKeyMixin
 
 # 状态与 voyage 流水线联动（docs/api-m4.md §2）：
 #   planning →(计划写入) awaiting_gate →(闸门批准) setup → running → reporting → done
-#   任一环节失败 → failed；用户取消 → cancelled
+#   AI 提问等回答 → waiting_user（镜像 voyage paused_ask，回答后恢复原状态）
+#   用户拍板放弃 / 闸门驳回 → failed；用户取消 → cancelled
 EXPERIMENT_STATUSES = (
     "planning",
     "awaiting_gate",
     "setup",
     "running",
+    "waiting_user",
     "reporting",
     "done",
     "failed",

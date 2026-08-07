@@ -339,9 +339,9 @@ async def test_smoke_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus
 
 
 async def test_smoke_exhausted_asks_user(client, queue_stub, fake_ssh, bus_recorder):
-    """冒烟连续失败（1 次 + 2 次修复重试）→ 不再打死任务：转向用户提问（paused_ask），
-    等人拍板重试/换方案/放弃；不自动走 LLM 重规划。"""
-    fake_ssh.smoke_exits = [1, 1, 1]
+    """冒烟连续失败（1 次 + 2 次修复重试）→ 不再打死任务：动作主动提问（paused_ask），
+    节点回 pending 不烧尝试预算；实验镜像「等你回复」；回答重试后修复计数清零续跑。"""
+    fake_ssh.smoke_exits = [1, 1, 1, 0]  # 前 3 次失败（额度用尽提问），回答重试后第 4 次通过
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
@@ -356,16 +356,31 @@ async def test_smoke_exhausted_asks_user(client, queue_stub, fake_ssh, bus_recor
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
     assert voyage["status"] == "paused_ask"
-    assert voyage["open_ask"] is not None
-    assert voyage["open_ask"]["payload"]["ask_kind"] == "fatal_step"
+    ask = voyage["open_ask"]
+    assert ask is not None and ask["payload"]["ask_kind"] == "fatal_step"
+    assert "代码试跑连续失败" in ask["text"]
     statuses = [e[2]["status"] for e in bus.voyage_events if e[1] == "status"]
-    assert "replanning" not in statuses  # on_failure=fail：不走 LLM 重规划
+    assert "replanning" not in statuses  # 不走 LLM 重规划
     smoke_step = voyage["steps"][2]
-    assert "冒烟测试连续失败" in smoke_step["observation"]["error"]
+    assert smoke_step["action"] == "experiment.smoke"
+    assert smoke_step["status"] == "pending"  # 提问不烧尝试预算，节点等回答后重跑
 
-    # PR3 前实验行仍由 _guarded 置 failed（联动改造在 experiment 接入批次）
+    # 实验镜像「等你回复」，不再被 _guarded 提前打成 failed
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
-    assert resp.json()["status"] == "failed"
+    assert resp.json()["status"] == "waiting_user"
+
+    # 回答「重试」并附指示 → 恢复执行；冒烟重跑通过，整条流水线走完
+    resp = await client.post(
+        f"/api/voyages/{voyage_id}/asks/{ask['id']}/answer",
+        json={"choice": "retry", "text": "换个更小的冒烟配置"},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    await engine.resume(uuid.UUID(voyage_id))
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "done"
+    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
+    assert resp.json()["status"] == "done"
 
 
 async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus_recorder):
@@ -595,7 +610,7 @@ async def test_probe_resources_records_facts_and_missing(client, fake_ssh, bus_r
 
 
 async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_recorder):
-    """超 budget.max_hours → kill 远端进程 + run/experiment 置 failed，voyage 转提问。"""
+    """超 budget.max_hours → kill 远端进程 + run 置 failed；voyage 转提问、实验「等你回复」。"""
     fake_ssh.run_exit = None  # 进程一直不结束
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
@@ -613,7 +628,7 @@ async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_record
     assert fake_ssh.pid in fake_ssh.killed
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     detail = resp.json()
-    assert detail["status"] == "failed"
+    assert detail["status"] == "waiting_user"  # 不再提前打死实验，镜像「等你回复」
     assert detail["runs"][0]["status"] == "failed"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["status"] == "paused_ask"  # run 级失败转提问，等人拍板
@@ -801,7 +816,7 @@ async def test_path_violation_rejected(client, queue_stub, fake_ssh, bus_recorde
     assert "replanning" in statuses  # 重试尽后走了计划调整
     assert fake_ssh.files == {}  # 一个文件都没写出去
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
-    assert resp.json()["status"] == "failed"
+    assert resp.json()["status"] == "waiting_user"  # 提问中，未被提前打死
 
 
 def test_relpath_whitelist_unit():

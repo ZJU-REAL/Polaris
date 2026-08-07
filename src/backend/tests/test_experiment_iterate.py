@@ -59,6 +59,7 @@ def _reflection_json(
     updates: list[dict] | None = None,
     planned_change: str | None = "调大学习率（test）",
     stop_reason: str | None = None,
+    question: str | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -70,6 +71,7 @@ def _reflection_json(
             "decision": decision,
             "planned_change": planned_change,
             "stop_reason": stop_reason,
+            "question": question,
         },
         ensure_ascii=False,
     )
@@ -97,6 +99,32 @@ class _FixedReflectionProvider(FakeProvider):
         full = "\n".join(m.content for m in messages)
         if not images and '"hypothesis_updates"' in full:
             return _result(_reflection_json(self._decision, updates=self._updates), model)
+        return await super().complete(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
+        )
+
+
+class _AskOnceProvider(FakeProvider):
+    """第一次 reflection 拿不准（decision=ask），之后 stop；记录是否看到用户指示。"""
+
+    def __init__(self) -> None:
+        self.reflection_calls = 0
+        self.saw_guidance = False
+
+    async def complete(
+        self, messages, *, model, temperature=0.7, max_tokens=None, images=None
+    ) -> CompletionResult:
+        full = "\n".join(m.content for m in messages)
+        if not images and '"hypothesis_updates"' in full:
+            self.reflection_calls += 1
+            if "用户指示" in full:
+                self.saw_guidance = True
+            if self.reflection_calls == 1:
+                return _result(
+                    _reflection_json("ask", question="指标反常，继续当前方案还是换路线？"),
+                    model,
+                )
+            return _result(_reflection_json("stop", stop_reason="用户指示收尾（test）"), model)
         return await super().complete(
             messages, model=model, temperature=temperature, max_tokens=max_tokens, images=images
         )
@@ -207,7 +235,11 @@ async def test_no_improve_stop_budget_param(client, queue_stub, fake_ssh, bus_re
 
 
 async def test_debug_limit_terminates(client, queue_stub, fake_ssh, bus_recorder):
-    """运行失败走 debug 分支：独立限额 3 次，第 4 次 debug 决策直接终止。"""
+    """运行失败走 debug 分支：独立限额 3 次，第 4 次 debug 决策直接终止。
+
+    全部轮次失败 → 一个主指标都没产出 → 完成标准终检不过：不再一律 paused_error，
+    转向用户提问（接受为完成 / 继续补做 / 放弃），实验镜像 waiting_user。
+    """
     fake_ssh.run_exit = 1  # 每轮正式运行都失败
     fake_ssh.run_log = "Traceback: train boom\n"
     project_id, headers, exp_id, voyage_id = await _launch_experiment(client)
@@ -216,20 +248,61 @@ async def test_debug_limit_terminates(client, queue_stub, fake_ssh, bus_recorder
     )
 
     voyage_status, observation = await _iterate_observation(client, headers, voyage_id)
-    assert voyage_status == "done"
+    assert voyage_status == "paused_ask"
     assert observation["stopped_reason"] == "debug_limit"
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["open_ask"]["payload"]["ask_kind"] == "done_criteria"
     detail = await _get_detail(client, headers, exp_id)
     assert len(detail["runs"]) == 4  # 首轮 + 3 次 debug 修复重跑
     assert all(r["status"] == "failed" for r in detail["runs"])
     assert all(r["reflection"]["decision"] == "debug" for r in detail["runs"])
-    assert detail["iteration_state"] == {
-        "no_improve_streak": 0,  # 失败轮无主指标，不计入无提升
-        "debug_count": 3,
-        "stopped_reason": "debug_limit",
-    }
-    # 末轮 failed → 报告收口为 failed
+    state = detail["iteration_state"]
+    assert state["no_improve_streak"] == 0  # 失败轮无主指标，不计入无提升
+    assert state["debug_count"] == 3
+    assert state["stopped_reason"] == "debug_limit"
+    # 末轮全失败 → 报告仍按事实收口为 failed（终态在先，提问镜像不覆盖终态）；
+    # 但 voyage 的完成标准提问仍开着，用户可拍板接受/放弃
     assert detail["status"] == "failed"
     assert detail["report"].startswith("## 实验报告")
+
+
+async def test_analyze_ask_pauses_then_guidance_continues(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """analyze 拿不准（decision=ask）→ 实验转「等你回复」；回答后重跑分析，
+    回答文本作为用户指示进入 reflection prompt。"""
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(client)
+    provider = _AskOnceProvider()
+    engine, _ = _make_engine(_router_with(provider))
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    voyage = resp.json()
+    assert voyage["status"] == "paused_ask"
+    ask = voyage["open_ask"]
+    assert ask is not None and ask["payload"]["ask_kind"] == "action_ask"
+    assert "指标反常" in ask["text"]
+    detail = await _get_detail(client, headers, exp_id)
+    assert detail["status"] == "waiting_user"
+
+    resp = await client.post(
+        f"/api/voyages/{voyage_id}/asks/{ask['id']}/answer",
+        json={"choice": "continue", "text": "指标没问题，按当前结果收尾"},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    # 镜像状态恢复（后续动作会继续推进）
+    detail = await _get_detail(client, headers, exp_id)
+    assert detail["status"] != "waiting_user"
+
+    engine, _ = _make_engine(_router_with(provider))
+    await engine.resume(uuid.UUID(voyage_id))
+    detail = await _get_detail(client, headers, exp_id)
+    assert detail["status"] == "done"
+    assert provider.saw_guidance  # 重跑的 reflection 看到了用户指示
+    assert detail["iteration_state"]["stopped_reason"] == "用户指示收尾（test）"
 
 
 async def test_max_runs_truncates_iteration(client, queue_stub, fake_ssh, bus_recorder):

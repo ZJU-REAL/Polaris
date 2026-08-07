@@ -8,11 +8,14 @@
 约定：
 - LLM 只产出 plan JSON / 代码文件内容 / reflection JSON / 绘图脚本 / 报告 markdown，
   远程命令一律走 services/ssh_exec 的白名单模板（LLM 永远不拼 shell）；
-- Experiment.status 与步骤联动（awaiting_gate/setup/running/reporting/done），
-  每次流转发 WS ``experiment.status``；
-- 步骤均声明 ``on_failure="fail"``：执行异常即 voyage failed，动作内部先把
-  Experiment 置 failed 再抛错（_guarded）；轮次的非零退出码**不是**步骤失败——
-  observation 携带 exit_code，由 analyze 诊断走 debug 分支；
+- Experiment.status 与步骤联动（awaiting_gate/setup/running/waiting_user/
+  reporting/done），每次流转发 WS ``experiment.status``；
+- smoke/run 声明 ``on_failure="fail"``：不自动重规划，失败转向用户提问
+  （paused_ask，见 docs/task-system.md）；动作异常只留 Activity 痕迹再抛错
+  （_guarded），不再抢先把 Experiment 打成 failed——failed 只由人拍板（闸门
+  驳回 / 回答「放弃」）。轮次的非零退出码**不是**步骤失败——observation 携带
+  exit_code，由 analyze 诊断走 debug 分支；analyze 拿不准时可 decision=ask
+  向用户提问，smoke 修复额度用尽同样转提问；
 - experiment.run：单轮 launch → 轮询（30s，协作式 cancel / 日志镜像 /
   POLARIS_METRIC + 可选 metrics.json 解析 / 预算超时）→ 主指标 direction 感知比较；
 - experiment.analyze：LLM structured reflection → 假设回写 → 终止判定
@@ -463,13 +466,18 @@ REFLECTION_SYSTEM_PROMPT = """\
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"observation": "本轮结果观察", "diagnosis": "原因诊断",
  "hypothesis_updates": [{"index": 0, "status": "verified|falsified|testing", "evidence": "证据"}],
- "decision": "improve|debug|stop", "planned_change": "下一轮计划修改", "stop_reason": null}
+ "decision": "improve|debug|stop|ask", "planned_change": "下一轮计划修改", "stop_reason": null,
+ "question": null}
 约束：
 - hypothesis_updates 的 index 是假设清单下标（从 0 开始），status 只能取 verified/falsified/testing
 - 本轮运行失败（exit_code 非 0）时 decision 用 debug；结果已足以回答全部假设时用 stop
 - 本轮失败时，diagnosis 要点明**失败类别**（依赖/环境、模型或框架不兼容、配置/超时/OOM、代码 bug）
   与根因，并在 planned_change 里给出方案级修法（可换依赖/框架/加载方式，不限于改几行代码）
 - decision=stop 时 stop_reason 必填一句话；decision=improve 时 planned_change 必填
+- **拿不准时用 decision=ask 向用户提问**（question 必填一句具体的问题）：比如结果反常到
+  怀疑度量有误、两个改进方向证据相当难以取舍、或继续下去要花大算力而收益存疑。
+  能自己判断就别问；问题里给出候选方向让用户好回答
+- 若给了「用户指示」，那是用户在对话里的最新意见，**优先遵循**
 - 对照实验：若给了「对照汇总」，据 baseline vs treatment 的 delta 判断假设成立与否
   （处理组是否优于 baseline），别只看单个 primary_value；对照结果已清晰时可直接 stop
 """
@@ -538,8 +546,14 @@ async def _set_status(
     )
 
 
-async def _mark_failed(ctx: ActionContext, reason: str) -> None:
-    """异常路径：实验（非终态）置 failed + WS + Activity。"""
+async def _mark_attention(ctx: ActionContext, reason: str) -> None:
+    """异常路径：只留 Activity 痕迹，不再抢先把实验打成 failed。
+
+    命运交给引擎的失败分派——原地重试 / 计划调整 / 转向用户提问（paused_ask）
+    都可能救回来；提前写死终态后 EXPERIMENT_TERMINAL_STATUSES 检查会挡住一切
+    后续状态更新，任务明明救活了实验行却永远躺在 failed。failed 只在两处写：
+    闸门驳回联动与用户回答「放弃」（都走 experiments_service.fail_by_voyage）。
+    """
     async with get_sessionmaker()() as session:
         experiment = await session.get(Experiment, _experiment_id(ctx))
         if experiment is None or experiment.status in EXPERIMENT_TERMINAL_STATUSES:
@@ -548,16 +562,17 @@ async def _mark_failed(ctx: ActionContext, reason: str) -> None:
             Activity(
                 project_id=experiment.project_id,
                 actor="agent:experiment",
-                kind="experiment.failed",
-                message=f"实验失败：{reason[:300]}",
+                kind="experiment.attention",
+                message=f"实验步骤出错：{reason[:300]}",
                 payload={"experiment_id": str(experiment.id), "reason": reason[:1000]},
             )
         )
-        await _set_status(ctx, session, experiment, "failed")
+        await session.commit()
 
 
 def _guarded(func):
-    """动作异常时先把实验置 failed 再抛给 helm（helm 记 observation.error）。"""
+    """动作异常时留 Activity 痕迹再抛给 helm（helm 记 observation.error，
+    引擎分派决定重试 / 调整计划 / 向用户提问）。"""
 
     @functools.wraps(func)
     async def wrapper(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
@@ -566,7 +581,7 @@ def _guarded(func):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            await _mark_failed(ctx, f"{type(e).__name__}: {e}")
+            await _mark_attention(ctx, f"{type(e).__name__}: {e}")
             raise
 
     return wrapper
@@ -636,7 +651,7 @@ async def _open_executor(
 
 _HYP_STATUSES = ("testing", "verified", "falsified")
 _PM_DIRECTIONS = ("maximize", "minimize")
-_DECISIONS = ("improve", "debug", "stop")
+_DECISIONS = ("improve", "debug", "stop", "ask")
 # 实验类型：驱动执行后端(Runner)与策略选择——eval 评测 / training 训练 / agent 智能体任务 /
 # analysis 数据分析 / other 其它。plan 归类，向后兼容缺省 other。
 _EXPERIMENT_KINDS = ("eval", "training", "agent", "analysis", "other")
@@ -818,9 +833,12 @@ def validate_reflection(data: Any) -> dict[str, Any]:
         )
     decision = data.get("decision")
     if decision not in _DECISIONS:
-        raise ValueError("decision must be improve|debug|stop")
+        raise ValueError("decision must be improve|debug|stop|ask")
     planned_change = data.get("planned_change")
     stop_reason = data.get("stop_reason")
+    question = data.get("question")
+    if decision == "ask" and not (isinstance(question, str) and question.strip()):
+        raise ValueError('decision "ask" requires a non-empty "question"')
     return {
         "observation": observation.strip(),
         "diagnosis": diagnosis.strip(),
@@ -828,6 +846,7 @@ def validate_reflection(data: Any) -> dict[str, Any]:
         "decision": decision,
         "planned_change": str(planned_change).strip() if planned_change else None,
         "stop_reason": str(stop_reason).strip() if stop_reason else None,
+        "question": str(question).strip() if question else None,
     }
 
 
@@ -1396,16 +1415,56 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 if exit_status == 0:
                     return {"exit_code": 0, "attempts": attempts, "fixes": fixes}
                 if fixes >= MAX_SMOKE_FIXES:
-                    raise RuntimeError(
-                        f"冒烟测试连续失败（{attempts} 次，exit={exit_status}）：{err_text[-500:]}"
+                    # 修复额度用尽不再抛错打死：转向用户提问（引擎收到 observation.ask
+                    # 会把节点回 pending、任务转 paused_ask）。回答「重试」会从头重跑
+                    # 本动作（修复计数随之清零），回答文本经 params["user_guidance"] 注入。
+                    await _mark_attention(
+                        ctx, f"冒烟测试连续失败（{attempts} 次，exit={exit_status}）"
                     )
+                    return {
+                        "exit_code": exit_status,
+                        "attempts": attempts,
+                        "fixes": fixes,
+                        "ask": {
+                            "ask_kind": "fatal_step",
+                            "question": (
+                                f"代码试跑连续失败（{attempts} 次，自动修复 {fixes} 次已用尽），"
+                                f"最后的报错：{err_text[-300:]}。怎么处理？"
+                            ),
+                            "context": {
+                                "stderr_tail": err_text[-2000:],
+                                "attempts": attempts,
+                                "fixes": fixes,
+                            },
+                            "options": [
+                                {
+                                    "id": "retry",
+                                    "zh": "带指示重试（换依赖/改配置等）",
+                                    "en": "Retry with instructions",
+                                },
+                                {
+                                    "id": "replan",
+                                    "zh": "换个方案（请说明思路）",
+                                    "en": "Change approach (describe how)",
+                                },
+                                {"id": "abort", "zh": "放弃实验", "en": "Give up"},
+                            ],
+                        },
+                    }
                 # 把诊断提示 + stderr 回给 LLM 修文件（方案级修复）。
                 # 超时那类已经在上面给了 hint；其余按 stderr 签名归类，认不出就留空。
                 fixes += 1
                 hint = hint or diagnose_failure(err_text, env_settings)
+                guidance = params.get("user_guidance")
+                guidance_line = (
+                    f"用户指示（务必优先遵循）：{json.dumps(guidance, ensure_ascii=False)}\n"
+                    if guidance
+                    else ""
+                )
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
-                    f"冒烟测试退出码：{exit_status}\n"
+                    + guidance_line
+                    + f"冒烟测试退出码：{exit_status}\n"
                     + (f"诊断提示：{hint}\n" if hint else "")
                     + f"stderr：\n{err_text[-_STDERR_CHARS:]}"
                     + _env_facts_prompt(env_settings)
@@ -1669,9 +1728,17 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             else ""
         )
         run_lasts = {k: _last_value(v) for k, v in (run.metrics or {}).items()}
+        # 用户在对话里的建议 / 对提问的回答（引擎注入 step params，见 docs/task-system.md）
+        user_guidance = params.get("user_guidance")
+        guidance_line = (
+            f"用户指示（务必优先遵循）：{json.dumps(user_guidance, ensure_ascii=False)}\n"
+            if user_guidance
+            else ""
+        )
         reflection_user = (
             f"实验计划：{json.dumps(plan, ensure_ascii=False)[:4000]}\n"
             f"主指标：{json.dumps(pm, ensure_ascii=False)}（假设共 {hyp_count} 条）\n"
+            f"{guidance_line}"
             f"本轮运行：seq={run.seq} status={run.status} exit_code={run.exit_code} "
             f"primary_value={run.primary_value}\n"
             f"本轮各指标末值：{json.dumps(run_lasts, ensure_ascii=False)[:1500]}\n"
@@ -1710,8 +1777,28 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
         experiment.iteration_state = dict(state)
         await session.commit()
 
-        # decision 分支与终止条件（顺序与原 iterate 一致，docs/api-m5-a.md §1）
+        # decision=ask：AI 拿不准，向用户提问（引擎收到 observation.ask 转 paused_ask；
+        # 回答后本步骤重跑，回答文本经 params["user_guidance"] 注入上面的反思 prompt）
         decision = reflection["decision"]
+        if decision == "ask":
+            question = reflection.get("question") or "AI 需要你的判断才能继续，这轮结果怎么处理？"
+            return {
+                "seq": run.seq,
+                "decision": decision,
+                "rounds": len(runs),
+                "ask": {
+                    "ask_kind": "action_ask",
+                    "question": question,
+                    "context": {
+                        "observation": reflection.get("observation"),
+                        "diagnosis": reflection.get("diagnosis"),
+                        "primary_value": run.primary_value,
+                        "history": history[-6:],
+                    },
+                },
+            }
+
+        # decision 分支与终止条件（顺序与原 iterate 一致，docs/api-m5-a.md §1）
         hyps = plan.get("hypotheses", [])
         iterate_cp = dict(ctx.checkpoint.get("iterate") or {})
         iterate_started = (
@@ -1763,6 +1850,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             archive_ctx = _render_attempt_archive(prior) if prior else ""
             fix_user = (
                 (archive_ctx + "\n" if archive_ctx else "")
+                + guidance_line
                 + f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
                 + f"reflection 观察：{reflection['observation']}\n"
                 + f"诊断：{reflection['diagnosis']}\n"
@@ -1775,6 +1863,7 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             system_prompt = _prompt_with_context(IMPROVE_SYSTEM_PROMPT, ctx)
             fix_user = (
                 _render_attempt_archive(archive)
+                + ("\n" + guidance_line if guidance_line else "")
                 + f"\n主指标：{json.dumps(pm, ensure_ascii=False)}\n"
                 + f"当前尝试 seq={run.seq} 主指标={run.primary_value}；"
                 + f"reflection 诊断：{reflection['diagnosis']}\n"

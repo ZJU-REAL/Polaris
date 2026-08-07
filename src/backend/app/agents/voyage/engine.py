@@ -329,6 +329,20 @@ class VoyageEngine:
         # 终端叙事镜像（level=gate：黄色提示，与人工审批同一视觉家族）
         await self._emit_log(run, f"AI 有问题需要你回答：{question}", level="gate")
         await self._set_status(session, run, "paused_ask")
+        # 实验状态镜像：详情页/列表不用轮询 voyage 也能显示「等你回复」
+        if run.kind == "experiment":
+            from app.services import experiments as experiments_service
+
+            experiment = await experiments_service.mark_waiting_by_voyage(session, run.id)
+            if experiment is not None:
+                await self._emit_notify(
+                    experiment.project_id,
+                    {
+                        "type": "experiment.status",
+                        "experiment_id": str(experiment.id),
+                        "status": experiment.status,
+                    },
+                )
 
     async def _consume_answered_asks(self, session: AsyncSession, run: VoyageRun) -> bool:
         """把已回答的提问变成行为（_drive 开头调用）。返回 False 表示任务已停。

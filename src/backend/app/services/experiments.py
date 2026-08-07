@@ -18,7 +18,12 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.models.activity import Activity
-from app.models.experiment import EXPERIMENT_TERMINAL_STATUSES, Experiment, ExperimentRun
+from app.models.experiment import (
+    EXPERIMENT_STATUSES,
+    EXPERIMENT_TERMINAL_STATUSES,
+    Experiment,
+    ExperimentRun,
+)
 from app.models.idea import Idea
 from app.models.project import Project
 from app.models.ssh_credential import SSHCredential
@@ -301,12 +306,51 @@ def latest_run(experiment: Experiment) -> ExperimentRun | None:
 
 
 async def fail_by_voyage(session: AsyncSession, voyage_id: uuid.UUID) -> Experiment | None:
-    """闸门驳回等场景：关联实验（非终态）置 failed，返回该实验。"""
+    """闸门驳回 / 用户拍板放弃等场景：关联实验（非终态）置 failed，返回该实验。"""
     stmt = select(Experiment).where(Experiment.voyage_id == voyage_id)
     experiment = (await session.execute(stmt)).scalar_one_or_none()
     if experiment is None or experiment.status in EXPERIMENT_TERMINAL_STATUSES:
         return None
     experiment.status = "failed"
+    await session.commit()
+    await session.refresh(experiment)
+    return experiment
+
+
+async def mark_waiting_by_voyage(session: AsyncSession, voyage_id: uuid.UUID) -> Experiment | None:
+    """voyage 转 paused_ask：实验镜像 waiting_user（原状态记进 iteration_state，
+    回答后由 :func:`resume_from_waiting_by_voyage` 恢复）。"""
+    stmt = select(Experiment).where(Experiment.voyage_id == voyage_id)
+    experiment = (await session.execute(stmt)).scalar_one_or_none()
+    if (
+        experiment is None
+        or experiment.status in EXPERIMENT_TERMINAL_STATUSES
+        or experiment.status == "waiting_user"
+    ):
+        return None
+    state = dict(experiment.iteration_state or {})
+    state["status_before_ask"] = experiment.status
+    experiment.iteration_state = state
+    experiment.status = "waiting_user"
+    await session.commit()
+    await session.refresh(experiment)
+    return experiment
+
+
+async def resume_from_waiting_by_voyage(
+    session: AsyncSession, voyage_id: uuid.UUID
+) -> Experiment | None:
+    """回答提问后：waiting_user 恢复为提问前的状态（后续动作会自行推进状态）。"""
+    stmt = select(Experiment).where(Experiment.voyage_id == voyage_id)
+    experiment = (await session.execute(stmt)).scalar_one_or_none()
+    if experiment is None or experiment.status != "waiting_user":
+        return None
+    state = dict(experiment.iteration_state or {})
+    previous = state.pop("status_before_ask", None)
+    experiment.iteration_state = state
+    if previous not in EXPERIMENT_STATUSES or previous in EXPERIMENT_TERMINAL_STATUSES:
+        previous = "running"
+    experiment.status = str(previous)
     await session.commit()
     await session.refresh(experiment)
     return experiment

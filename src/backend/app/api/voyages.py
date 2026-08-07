@@ -300,6 +300,17 @@ async def answer_voyage_ask(
         .values(status="executing")
     )
     await session.commit()
+    # 实验镜像状态恢复（waiting_user → 提问前的状态）
+    experiment = await experiments_service.resume_from_waiting_by_voyage(session, run.id)
+    if experiment is not None:
+        await bus.publish_notify(
+            experiment.project_id,
+            {
+                "type": "experiment.status",
+                "experiment_id": str(experiment.id),
+                "status": experiment.status,
+            },
+        )
     await queue.enqueue("resume_voyage", str(run.id))
     return VoyageMessageRead.model_validate(answer)
 
