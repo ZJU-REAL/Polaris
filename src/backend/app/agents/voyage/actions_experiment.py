@@ -361,6 +361,16 @@ EXTRA_NOTES_PROMPT_SECTION = """\
 {notes}
 """
 
+STACK_GUARD_PROMPT_SECTION = """\
+
+预装环境保护（硬约束）：若依赖装在系统/镜像 Python（dist-packages）而非全新 venv，
+镜像自带的核心框架（torch / transformer_engine / triton / flash-attn / CUDA 相关库）
+**严禁重装、升级或改版本**——它们按二进制 ABI 配套编译，动其一就会出现
+undefined symbol / ImportError。requirements 只补装缺失的轻量依赖；遇到 ABI/导入类
+报错时，优先卸载冲突的可选扩展（如 transformer_engine）或回退到镜像既有版本组合，
+而不是重装框架。
+"""
+
 INTAKE_PROMPT_SECTION = """\
 
 开题问答（创建实验时按想法向用户确认的关键信息，务必遵循）：
@@ -373,7 +383,7 @@ HF_MIRROR_ENDPOINT = "https://hf-mirror.com"
 def _prompt_with_context(base: str, ctx: ActionContext) -> str:
     """按 params.eval_model / hf_mirror / extra_notes 给 system prompt 条件追加段落。"""
     params = _params(ctx)
-    parts = [base]
+    parts = [base, STACK_GUARD_PROMPT_SECTION]
     if str(params.get("eval_model") or "").strip():
         parts.append(EVAL_MODEL_PROMPT_SECTION)
     if params.get("hf_mirror"):
@@ -1126,6 +1136,41 @@ def is_improvement(value: float, best: float | None, direction: str) -> bool:
     return value > best if direction == "maximize" else value < best
 
 
+# 同一错误签名连续出现的升级阈值：2 次起强制换根本策略，4 次转向用户提问。
+# 这不是修复次数上限（错误在变 = 有进展 = 一直修下去），是**零进展检测**——
+# 线上实测 import 类错误秒级失败，无界修复循环一小时烧了 178 次 LLM 调用，
+# 却始终在对同一个 ABI 冲突微调版本号。
+_SIGNATURE_ESCALATE_AT = 2
+_SIGNATURE_ASK_AT = 4
+
+
+def _error_signature(err_text: str) -> str:
+    """报错文本 → 规范化签名（数字/十六进制/路径抹平，取 traceback 尾部关键行）。
+
+    同签名 = 同一个错误在原地打转；不同签名 = 修复改变了故障面（算进展）。"""
+    lines = [ln.strip() for ln in (err_text or "").strip().splitlines() if ln.strip()]
+    # 取最像「结论」的尾部行：异常类型行优先，否则最后两行
+    tail = [ln for ln in lines[-6:] if re.match(r"^[A-Za-z_.]+(Error|Exception|error)\b", ln)]
+    picked = tail[-1:] if tail else lines[-2:]
+    sig = " | ".join(picked)[:300]
+    sig = re.sub(r"0x[0-9a-fA-F]+", "0xX", sig)
+    sig = re.sub(r"\d+", "N", sig)
+    sig = re.sub(r"/[^\s'\"]+", "/PATH", sig)
+    return sig
+
+
+def _render_fix_ledger(ledger: list[dict[str, Any]]) -> str:
+    """修复台账 → prompt 注入段（空台账返回空串）。"""
+    if not ledger:
+        return ""
+    lines = ["此前的修复台账（同签名 = 那次修复没起作用）："]
+    for i, entry in enumerate(ledger[-8:], 1):
+        lines.append(
+            f"{i}. 错误签名：{entry.get('signature')}；改动文件：{entry.get('changed') or '（无）'}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _phase_deadline_exceeded(budget: dict[str, Any] | None, phase_started: datetime) -> bool:
     """修复循环的唯一刹车：本阶段耗时超出 budget.max_hours（0/缺省 = 无限时）。
 
@@ -1466,6 +1511,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             container = plan.get("container") if isinstance(plan.get("container"), dict) else None
             gpus = await executor.probe_gpu()
             resources, preflight_warnings = await _probe_resources(executor, plan)
+            preflight_warnings = list(dict.fromkeys(preflight_warnings))  # 去重（曾三连重复）
             needs_gpu = plan.get("kind") == "training" or bool(container and container.get("gpus"))
             if needs_gpu and not gpus:
                 preflight_warnings.append(
@@ -1474,6 +1520,41 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     "请换一台有空闲 GPU 的服务器，或把方案改成不需要 GPU 的实现。"
                 )
 
+            # 资源硬缺失（声明的本机模型/数据集不存在）不再只是告警：以前预检连告
+            # 三次没人消费、流程照走，直到冒烟才炸。现在转向用户提问（只问一次，
+            # 答案经建议通道注入后续 codegen；用户也可选择硬跑）。
+            fatal_missing = [w for w in preflight_warnings if "不存在" in w]
+            if fatal_missing and not ctx.checkpoint.get("setup_resource_asked"):
+                ctx.checkpoint["setup_resource_asked"] = True
+                _remember(ctx, "资源缺口", "；".join(fatal_missing)[:400] + "，已转向用户提问")
+                await _sync_memory_file(ctx, executor)
+                return {
+                    "workdir": experiment.workdir,
+                    "preflight_warnings": preflight_warnings,
+                    "ask": {
+                        "ask_kind": "fatal_step",
+                        "question": (
+                            "预检发现声明的本机资源不存在："
+                            + "；".join(w[:120] for w in fatal_missing[:3])
+                            + " 请给出正确路径，或选择改为在线下载/硬跑。"
+                        ),
+                        "context": {"preflight_warnings": preflight_warnings},
+                        "options": [
+                            {
+                                "id": "provide_path",
+                                "zh": "我来给正确路径（在输入框写明）",
+                                "en": "I'll provide the correct path",
+                            },
+                            {
+                                "id": "use_hf",
+                                "zh": "改为在线下载（HF）",
+                                "en": "Download from HF instead",
+                            },
+                            {"id": "abort", "zh": "放弃实验", "en": "Give up"},
+                        ],
+                    },
+                }
+
             # 依赖安装自愈（对称 smoke）：装不上/太慢/断连都当「可修的失败」而非硬崩——
             # 超时/断连→重连重试；pip 报错→回 LLM 修 requirements.txt/run.sh 再装。
             # 修复次数不设上限（用户定调：只受时间预算约束，默认无限时）；
@@ -1481,6 +1562,9 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             fixes = 0
             attempts = 0
             phase_started = utcnow()
+            last_signature = ""
+            sig_streak = 0
+            fix_ledger: list[dict[str, Any]] = []
             while True:
                 attempts += 1
                 await executor.write_files(files)  # 每次（修复后）重写 LLM 产出文件
@@ -1577,6 +1661,51 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                             ],
                         },
                     }
+                # 零进展检测（不是次数上限）：同签名错误在原地打转 → 先升级策略，
+                # 仍打转 → 转向用户提问。import 类错误秒级失败，没有这个刹车时
+                # 无界修复循环会变成高频 token 空转（线上实测一小时 178 次 LLM 调用）。
+                signature = _error_signature(err_text)
+                sig_streak = sig_streak + 1 if signature == last_signature else 1
+                last_signature = signature
+                if sig_streak >= _SIGNATURE_ASK_AT:
+                    _remember(
+                        ctx,
+                        "环境障碍",
+                        f"依赖安装在同一错误上连续失败 {sig_streak} 次（{signature[:150]}），"
+                        "自动修复无进展，已转向用户提问",
+                    )
+                    await _sync_memory_file(ctx, executor)
+                    return {
+                        "workdir": experiment.workdir,
+                        "venv_exit": exit_status,
+                        "attempts": attempts,
+                        "fixes": fixes,
+                        "ask": {
+                            "ask_kind": "fatal_step",
+                            "question": (
+                                f"依赖安装反复失败在同一个错误上（连续 {sig_streak} 次）："
+                                f"{signature[:200]}。自动修复没有进展，怎么处理？"
+                            ),
+                            "context": {
+                                "error_signature": signature,
+                                "fix_ledger": fix_ledger[-8:],
+                                "setup_log_tail": (err_text or "")[-2000:],
+                            },
+                            "options": [
+                                {
+                                    "id": "retry",
+                                    "zh": "带指示重试（告诉我换什么思路）",
+                                    "en": "Retry with instructions",
+                                },
+                                {
+                                    "id": "replan",
+                                    "zh": "换个方案（请说明思路）",
+                                    "en": "Change approach (describe how)",
+                                },
+                                {"id": "abort", "zh": "放弃实验", "en": "Give up"},
+                            ],
+                        },
+                    }
                 # 把诊断 + 报错回给 LLM 修 requirements.txt/run.sh（方案级修复）。
                 # 环境事实必须一起带上：修复循环原本只有 stderr，模型照样不知道这台机器
                 # 上模型放哪、有没有配镜像源，只能接着猜。修复前先拉取对话流里
@@ -1585,21 +1714,36 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 hint = hint or diagnose_failure(err_text, env_settings)
                 guidance_line = await _refresh_user_guidance(ctx, params)
                 _remember_guidance(ctx, params)
+                escalate_line = (
+                    f"⚠️ 同一个错误已连续出现 {sig_streak} 次，之前的修复完全没起作用。"
+                    "**禁止再微调版本号重试**——换根本不同的策略：卸载/固定冲突的包、"
+                    "绕开该库、遵循预装栈的版本组合、或换完全不同的实现路径；"
+                    "先一句话说明新策略为什么能避开这个错误。\n"
+                    if sig_streak >= _SIGNATURE_ESCALATE_AT
+                    else ""
+                )
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
                     + _memory_prompt(ctx)
                     + guidance_line
+                    + escalate_line
+                    + _render_fix_ledger(fix_ledger)
                     + f"依赖安装退出码：{exit_status}\n"
                     + (f"诊断提示：{hint}\n" if hint else "")
                     + f"报错：\n{err_text}"
                     + _env_facts_prompt(env_settings)
                 )
-                files = await _complete_json(
+                new_files = await _complete_json(
                     ctx,
                     system=_prompt_with_context(SETUP_FIX_SYSTEM_PROMPT, ctx),
                     user=user_prompt,
                     validate=validate_files,
                 )
+                changed = sorted(
+                    k for k in new_files if new_files.get(k) != files.get(k)
+                )
+                fix_ledger.append({"signature": signature, "changed": ", ".join(changed)})
+                files = new_files
                 ctx.checkpoint["exp_files"] = files
         finally:
             await executor.close()
@@ -1622,6 +1766,9 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             attempts = 0
             fixes = 0
             phase_started = utcnow()  # 修复不限次数，只受时间预算约束（用户定调）
+            last_signature = ""
+            sig_streak = 0
+            fix_ledger: list[dict[str, Any]] = []
             while True:
                 attempts += 1
                 # 超时/断连也当作「可修的失败」（多为规模太大/太慢或环境问题），而非硬崩：
@@ -1696,26 +1843,83 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     }
                 # 把诊断提示 + stderr 回给 LLM 修文件（方案级修复）。
                 # 超时那类已经在上面给了 hint；其余按 stderr 签名归类，认不出就留空。
+                # 零进展检测（同 setup）：同签名连发先升级策略、再转提问
+                signature = _error_signature(err_text)
+                sig_streak = sig_streak + 1 if signature == last_signature else 1
+                last_signature = signature
+                if sig_streak >= _SIGNATURE_ASK_AT:
+                    _remember(
+                        ctx,
+                        "试跑障碍",
+                        f"冒烟在同一错误上连续失败 {sig_streak} 次（{signature[:150]}），"
+                        "自动修复无进展，已转向用户提问",
+                    )
+                    await _sync_memory_file(ctx, executor)
+                    return {
+                        "exit_code": exit_status,
+                        "attempts": attempts,
+                        "fixes": fixes,
+                        "ask": {
+                            "ask_kind": "fatal_step",
+                            "question": (
+                                f"代码试跑反复失败在同一个错误上（连续 {sig_streak} 次）："
+                                f"{signature[:200]}。自动修复没有进展，怎么处理？"
+                            ),
+                            "context": {
+                                "error_signature": signature,
+                                "fix_ledger": fix_ledger[-8:],
+                                "stderr_tail": (err_text or "")[-2000:],
+                            },
+                            "options": [
+                                {
+                                    "id": "retry",
+                                    "zh": "带指示重试（告诉我换什么思路）",
+                                    "en": "Retry with instructions",
+                                },
+                                {
+                                    "id": "replan",
+                                    "zh": "换个方案（请说明思路）",
+                                    "en": "Change approach (describe how)",
+                                },
+                                {"id": "abort", "zh": "放弃实验", "en": "Give up"},
+                            ],
+                        },
+                    }
                 fixes += 1
                 hint = hint or diagnose_failure(err_text, env_settings)
                 # 修复前拉取对话流里新到的用户建议（试跑修复同样是长循环）
                 guidance_line = await _refresh_user_guidance(ctx, params)
                 _remember_guidance(ctx, params)
+                escalate_line = (
+                    f"⚠️ 同一个错误已连续出现 {sig_streak} 次，之前的修复完全没起作用。"
+                    "**禁止再微调版本号重试**——换根本不同的策略：卸载/固定冲突的包、"
+                    "绕开该库、遵循预装栈的版本组合、或换完全不同的实现路径；"
+                    "先一句话说明新策略为什么能避开这个错误。\n"
+                    if sig_streak >= _SIGNATURE_ESCALATE_AT
+                    else ""
+                )
                 user_prompt = (
                     f"当前文件：{json.dumps(files, ensure_ascii=False)[:8000]}\n\n"
                     + _memory_prompt(ctx)
                     + guidance_line
+                    + escalate_line
+                    + _render_fix_ledger(fix_ledger)
                     + f"冒烟测试退出码：{exit_status}\n"
                     + (f"诊断提示：{hint}\n" if hint else "")
                     + f"stderr：\n{err_text[-_STDERR_CHARS:]}"
                     + _env_facts_prompt(env_settings)
                 )
-                files = await _complete_json(
+                new_files = await _complete_json(
                     ctx,
                     system=_prompt_with_context(FIX_SYSTEM_PROMPT, ctx),
                     user=user_prompt,
                     validate=validate_files,
                 )
+                changed = sorted(
+                    k for k in new_files if new_files.get(k) != files.get(k)
+                )
+                fix_ledger.append({"signature": signature, "changed": ", ".join(changed)})
+                files = new_files
                 ctx.checkpoint["exp_files"] = files
                 await executor.write_files(files)
         finally:

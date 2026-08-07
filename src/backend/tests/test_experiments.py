@@ -703,6 +703,145 @@ async def test_intake_questions_and_answers_reach_plan(client, queue_stub, fake_
     assert spy.saw_intake
 
 
+def test_error_signature_normalizes():
+    """同一错误不同行号/地址/路径 → 同签名；不同异常 → 不同签名。"""
+    a = ax._error_signature(
+        'File "/usr/local/lib/python3.12/dist-packages/x.py", line 1474, in _get\n'
+        "RuntimeError: Failed to import transformers.training_args because of error 0x7f2a"
+    )
+    b = ax._error_signature(
+        'File "/usr/local/lib/python3.12/dist-packages/x.py", line 99, in _get\n'
+        "RuntimeError: Failed to import transformers.training_args because of error 0xdead"
+    )
+    assert a == b
+    c = ax._error_signature("ImportError: No module named 'triton.backends'")
+    assert c != a
+
+
+def test_prompt_carries_stack_guard():
+    """所有 codegen/修复 system prompt 常驻「预装环境保护」硬约束。"""
+    ctx = ax.ActionContext(run=None, llm=None, checkpoint={"params": {}})
+    out = ax._prompt_with_context(ax.CODE_SYSTEM_PROMPT, ctx)
+    assert "预装环境保护" in out and "严禁重装" in out
+
+
+async def test_smoke_same_error_escalates_then_asks(client, queue_stub, fake_ssh, bus_recorder):
+    """零进展检测：同签名错误连发 → 第 2 次起修复 prompt 升级换根本策略，
+    第 4 次转向用户提问（带签名与修复台账）；这不是次数上限。"""
+    fake_ssh.smoke_exits = [1, 1, 1, 1]
+    fake_ssh.smoke_stderr = "ImportError: cannot import name 'foo' from 'bar'"
+
+    class _FixSpy(FakeProvider):
+        def __init__(self) -> None:
+            self.fix_prompts: list[str] = []
+
+        async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+            full = "\n".join(m.content for m in messages)
+            if "冒烟测试退出码" in full:
+                self.fix_prompts.append(full)
+            return await super().complete(
+                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                images=images,
+            )
+
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    provider = _FixSpy()
+    router = LLMRouter()
+    router.override_provider(provider)
+    engine, _ = _make_engine(router)
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    voyage = resp.json()
+    assert voyage["status"] == "paused_ask", voyage
+    ask = voyage["open_ask"]
+    assert "同一个错误" in ask["text"]
+    assert ask["payload"]["context"]["error_signature"]
+    assert len(ask["payload"]["context"]["fix_ledger"]) == 3  # 三次修复全记了台账
+    # 第 2/3 次修复 prompt 带升级指令；第 1 次不带
+    assert len(provider.fix_prompts) == 3
+    assert "禁止再微调版本号" not in provider.fix_prompts[0]
+    assert "禁止再微调版本号" in provider.fix_prompts[1]
+    assert "修复台账" in provider.fix_prompts[1]
+
+
+async def test_smoke_different_errors_keep_fixing(client, queue_stub, fake_ssh, bus_recorder):
+    """错误在变 = 有进展：连续 5 个不同错误不触发零进展提问，修到通过为止。"""
+    fake_ssh.smoke_exits = [1, 1, 1, 1, 1, 0]
+    attempt_no = 0
+
+    kinds = ["Import", "Value", "Type", "Key", "Attribute"]
+
+    async def rotate_error(command: str) -> None:
+        nonlocal attempt_no
+        if "--smoke" in command:
+            attempt_no += 1
+            kind = kinds[min(attempt_no, len(kinds)) - 1]
+            fake_ssh.smoke_stderr = f"{kind}Error: failure in {kind.lower()} stage"
+
+    fake_ssh.on_command = rotate_error
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "done", resp.json()
+    smoke_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.smoke")
+    assert smoke_step["observation"]["fixes"] == 5
+
+
+async def test_setup_missing_local_resource_asks_once(
+    client, queue_stub, fake_ssh, bus_recorder, monkeypatch
+):
+    """预检发现声明的本机模型不存在 → 主动提问（只问一次）；
+    回答给出正确路径后 setup 继续走完，不再重复提问。"""
+
+    async def fake_probe(executor, plan):
+        return [], ["资源预检告警：声明的本机模型 ~/hf/model/x 不存在（找不到 config.json）。"]
+
+    monkeypatch.setattr(ax, "_probe_resources", fake_probe)
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    voyage = resp.json()
+    assert voyage["status"] == "paused_ask", voyage
+    ask = voyage["open_ask"]
+    assert "本机资源不存在" in ask["text"]
+
+    resp = await client.post(
+        f"/api/voyages/{voyage_id}/asks/{ask['id']}/answer",
+        json={"choice": "provide_path", "text": "模型在 /home/shenyl/hf/model/x"},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    await engine.resume(uuid.UUID(voyage_id))
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "done", resp.json()  # 只问一次，答后走完
+
+
 def test_parse_gpu_csv_unit():
     """nvidia-smi CSV 解析：正常行解析、非法/短行跳过、空输入 → 空列表。"""
     text = "0, 49140, 48000\n1, 49140, 12000\nbad line\n2, x, y\n"
