@@ -338,8 +338,9 @@ async def test_smoke_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus
     assert resp.json()["status"] == "done"
 
 
-async def test_smoke_exhausted_fails_experiment(client, queue_stub, fake_ssh, bus_recorder):
-    """冒烟连续失败（1 次 + 2 次修复重试）→ 实验 failed，固定管线不重规划，voyage failed。"""
+async def test_smoke_exhausted_asks_user(client, queue_stub, fake_ssh, bus_recorder):
+    """冒烟连续失败（1 次 + 2 次修复重试）→ 不再打死任务：转向用户提问（paused_ask），
+    等人拍板重试/换方案/放弃；不自动走 LLM 重规划。"""
     fake_ssh.smoke_exits = [1, 1, 1]
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
@@ -354,12 +355,15 @@ async def test_smoke_exhausted_fails_experiment(client, queue_stub, fake_ssh, bu
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
-    assert voyage["status"] == "failed"
+    assert voyage["status"] == "paused_ask"
+    assert voyage["open_ask"] is not None
+    assert voyage["open_ask"]["payload"]["ask_kind"] == "fatal_step"
     statuses = [e[2]["status"] for e in bus.voyage_events if e[1] == "status"]
     assert "replanning" not in statuses  # on_failure=fail：不走 LLM 重规划
     smoke_step = voyage["steps"][2]
     assert "冒烟测试连续失败" in smoke_step["observation"]["error"]
 
+    # PR3 前实验行仍由 _guarded 置 failed（联动改造在 experiment 接入批次）
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.json()["status"] == "failed"
 
@@ -591,7 +595,7 @@ async def test_probe_resources_records_facts_and_missing(client, fake_ssh, bus_r
 
 
 async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_recorder):
-    """超 budget.max_hours → kill 远端进程 + run/experiment/voyage 置 failed。"""
+    """超 budget.max_hours → kill 远端进程 + run/experiment 置 failed，voyage 转提问。"""
     fake_ssh.run_exit = None  # 进程一直不结束
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
@@ -612,7 +616,8 @@ async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_record
     assert detail["status"] == "failed"
     assert detail["runs"][0]["status"] == "failed"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
-    assert resp.json()["status"] == "failed"
+    assert resp.json()["status"] == "paused_ask"  # run 级失败转提问，等人拍板
+    assert resp.json()["open_ask"]["payload"]["ask_kind"] == "fatal_step"
     run_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.run")
     assert "max_hours" in run_step["observation"]["error"]
 
@@ -769,7 +774,7 @@ class _PathViolationProvider(FakeProvider):
 
 async def test_path_violation_rejected(client, queue_stub, fake_ssh, bus_recorder):
     """LLM 产出 workdir 外路径 → SSHPathViolationError：不写任何文件（安全护栏），
-    实验 failed；voyage 走 loop 失败回灌（重试 → 计划调整）仍无法推进 → paused_error 等人工。"""
+    实验 failed；voyage 走 loop 失败回灌（重试 → 计划调整）仍无法推进 → 转提问等用户指示。"""
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
@@ -785,7 +790,10 @@ async def test_path_violation_rejected(client, queue_stub, fake_ssh, bus_recorde
 
     resp = await client.get(f"/api/voyages/{voyage_id}?include_obsolete=true", headers=headers)
     voyage = resp.json()
-    assert voyage["status"] == "paused_error"
+    assert voyage["status"] == "paused_ask"
+    # fake navigator 的替代步骤能通过，最终停在完成标准终检的提问上
+    # （真实场景会在更早的调整超限处停下，同样是 paused_ask）
+    assert voyage["open_ask"]["payload"]["ask_kind"] == "done_criteria"
     setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
     assert "越界" in setup_step["observation"]["error"]
     assert setup_step["attempt"] == 2  # 执行类错误带诊断原地重试过一次

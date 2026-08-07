@@ -180,9 +180,16 @@ async def delete_voyage(session: AsyncSession, run: VoyageRun) -> None:
 
 
 async def cancel_voyage(session: AsyncSession, run: VoyageRun) -> VoyageRun:
-    """协作式取消：置 cancelled，运行中的引擎在下一步边界自行退出。"""
+    """协作式取消：置 cancelled，运行中的引擎在下一步边界自行退出。
+
+    等回答的提问一并置 superseded——任务都取消了，问题不再需要答案，
+    也不能留着一个能把 cancelled 任务重新拉起来的回答入口。
+    """
     if run.status in TERMINAL_STATUSES:
         raise VoyageAlreadyFinishedError(str(run.id))
+    from app.services import voyage_messages as messages_service
+
+    await messages_service.supersede_open_asks(session, run.id)
     run.status = "cancelled"
     await session.commit()
     await session.refresh(run)

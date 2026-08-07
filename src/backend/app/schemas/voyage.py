@@ -113,6 +113,19 @@ class VoyageMessageRead(BaseModel):
     created_at: datetime
 
 
+class VoyageAskAnswer(BaseModel):
+    """用户对 agent 提问的回答：自由文本 + 可选的快捷选项。
+
+    - ``choice``：提问 options 里的候选 id（retry/replan/abort/…），引擎按它走
+      确定性分支；不选也行，纯文本回答默认按「继续（附指示）」处理。
+    - ``payload``：选项附加参数（如追加预算 {"add_tokens": 100000}）。
+    """
+
+    text: str = Field(default="", max_length=8000)
+    choice: str | None = Field(default=None, max_length=32)
+    payload: dict[str, Any] | None = None
+
+
 class VoyageTerminalLogRead(BaseModel):
     """任务终端历史日志的一条：结构化日志行（event=log）或大模型完整输出（event=llm）。"""
 
@@ -132,3 +145,5 @@ class VoyageDetailRead(VoyageRead):
     skills: list[VoyageSkillUse] = Field(default_factory=list)
     # 计划调整历史（路由从 checkpoint["plan_history"] 填充；无调整为 []）
     plan_history: list[VoyagePlanEvent] = Field(default_factory=list)
+    # 当前等回答的提问（paused_ask 时非空；路由填充）
+    open_ask: VoyageMessageRead | None = None

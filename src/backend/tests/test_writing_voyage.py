@@ -297,8 +297,8 @@ async def test_invalid_cite_degrades_with_todo_and_continues(client, queue_stub)
     assert acts[0].payload["section"] == "introduction"
 
 
-async def test_final_compile_failure_fails_voyage(client, queue_stub, monkeypatch):
-    """终编译不 ok → voyage failed（全文编译 ok 为完成条件）。"""
+async def test_final_compile_failure_asks_user(client, queue_stub, monkeypatch):
+    """终编译不 ok → 不再打死任务：转向用户提问（重试/换方案/放弃），等人拍板。"""
 
     def bad_run(engine: str, binary: str, workdir: Path, main_name: str) -> TectonicRun:
         (workdir / "main.log").write_text(
@@ -311,7 +311,8 @@ async def test_final_compile_failure_fails_voyage(client, queue_stub, monkeypatc
     engine, _ = _make_engine()
     await engine.run(uuid.UUID(voyage["id"]))
     run = (await client.get(f"/api/voyages/{voyage['id']}", headers=headers)).json()
-    assert run["status"] == "failed"
+    assert run["status"] == "paused_ask"
+    assert run["open_ask"]["payload"]["ask_kind"] == "fatal_step"
     assert "终编译未通过" in run["steps"][-1]["observation"]["error"]
 
 

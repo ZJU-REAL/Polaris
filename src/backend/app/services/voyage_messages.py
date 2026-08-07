@@ -138,3 +138,78 @@ def mark_chat_consumed(messages: list[VoyageMessage], *, step_id: uuid.UUID | No
 def guidance_text(messages: list[VoyageMessage]) -> str:
     """把待消费建议拼成注入 prompt / params 的纯文本（一行一条）。"""
     return "\n".join(f"- {m.text}" for m in messages)
+
+
+# ---- ask（agent 向用户提问）----
+
+
+async def open_ask(session: AsyncSession, run_id: uuid.UUID) -> VoyageMessage | None:
+    """当前等回答的提问（最多一个活跃；防御性取最新一条）。"""
+    stmt = (
+        select(VoyageMessage)
+        .where(
+            VoyageMessage.run_id == run_id,
+            VoyageMessage.kind == "ask",
+            VoyageMessage.status == "open",
+        )
+        .order_by(VoyageMessage.seq.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def find_open_ask(
+    session: AsyncSession, run_id: uuid.UUID, *, ask_kind: str, step_id: uuid.UUID | None
+) -> VoyageMessage | None:
+    """幂等锚点：同 run 同 (ask_kind, step_id) 已有 open 提问则复用，不重复插。"""
+    stmt = select(VoyageMessage).where(
+        VoyageMessage.run_id == run_id,
+        VoyageMessage.kind == "ask",
+        VoyageMessage.status == "open",
+        VoyageMessage.step_id == step_id,
+    )
+    for m in (await session.execute(stmt)).scalars().all():
+        if (m.payload or {}).get("ask_kind") == ask_kind:
+            return m
+    return None
+
+
+async def answered_asks(session: AsyncSession, run_id: uuid.UUID) -> list[VoyageMessage]:
+    """已回答、等引擎消费的提问，按 seq 升序。"""
+    stmt = (
+        select(VoyageMessage)
+        .where(
+            VoyageMessage.run_id == run_id,
+            VoyageMessage.kind == "ask",
+            VoyageMessage.status == "answered",
+        )
+        .order_by(VoyageMessage.seq)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def answer_of(session: AsyncSession, ask: VoyageMessage) -> VoyageMessage | None:
+    """某提问的（最新一条）回答。"""
+    stmt = (
+        select(VoyageMessage)
+        .where(VoyageMessage.reply_to == ask.id, VoyageMessage.kind == "answer")
+        .order_by(VoyageMessage.seq.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def supersede_open_asks(session: AsyncSession, run_id: uuid.UUID) -> int:
+    """把所有 open 提问置 superseded（cancel / 新提问覆盖旧提问时用）。
+
+    只改内存对象并 flush，由调用方 commit。返回受影响条数。
+    """
+    stmt = select(VoyageMessage).where(
+        VoyageMessage.run_id == run_id,
+        VoyageMessage.kind == "ask",
+        VoyageMessage.status == "open",
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+    for m in rows:
+        m.status = "superseded"
+    return len(rows)

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
@@ -18,8 +19,9 @@ from app.core.events import EventBus, get_event_bus, voyage_channel
 from app.core.queue import TaskQueue, get_task_queue
 from app.core.redis import get_redis_dep
 from app.models.user import User
-from app.models.voyage import TERMINAL_STATUSES, VoyageRun
+from app.models.voyage import TERMINAL_STATUSES, VoyageMessage, VoyageRun
 from app.schemas.voyage import (
+    VoyageAskAnswer,
     VoyageCreate,
     VoyageDetailRead,
     VoyageMessageCreate,
@@ -29,6 +31,7 @@ from app.schemas.voyage import (
     VoyageSkillUse,
     VoyageTerminalLogRead,
 )
+from app.services import experiments as experiments_service
 from app.services import projects as projects_service
 from app.services import voyage_messages as messages_service
 from app.services import voyages as voyages_service
@@ -118,6 +121,9 @@ async def get_voyage(
         detail.plan_history = [
             VoyagePlanEvent.model_validate(e) for e in history if isinstance(e, dict)
         ]
+    open_ask = await messages_service.open_ask(session, run.id)
+    if open_ask is not None:
+        detail.open_ask = VoyageMessageRead.model_validate(open_ask)
     return detail
 
 
@@ -184,6 +190,120 @@ async def post_voyage_message(
     return VoyageMessageRead.model_validate(message)
 
 
+@router.post(
+    "/{voyage_id}/asks/{message_id}/answer",
+    response_model=VoyageMessageRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def answer_voyage_ask(
+    voyage_id: uuid.UUID,
+    message_id: uuid.UUID,
+    data: VoyageAskAnswer,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    queue: TaskQueue = Depends(get_task_queue),
+    bus: EventBus = Depends(get_event_bus),
+) -> VoyageMessageRead:
+    """回答 AI 的提问并恢复任务。
+
+    - ``choice='abort'``：人拍板放弃 → 任务 failed（唯一由用户决定的失败路径）；
+    - 其余：回答落库、文本镜像成一条建议消息（引擎在下一个决策点消费）、
+      确定性即时效果（如追加预算）、paused_ask → executing 并入队续跑。
+    - 重复回答（并发双答）由 ask 行的条件 UPDATE 挡住，409。
+    """
+    run = await _get_owned_voyage(session, voyage_id, user)
+    ask = await session.get(VoyageMessage, message_id)
+    if ask is None or ask.run_id != run.id or ask.kind != "ask":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ASK_NOT_FOUND")
+    text = data.text.strip()
+    if not text and not data.choice:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ANSWER_EMPTY"
+        )
+    # 条件 UPDATE 防并发双答（两个成员同时点回答只有一个生效）
+    result = await session.execute(
+        sa_update(VoyageMessage)
+        .where(VoyageMessage.id == ask.id, VoyageMessage.status == "open")
+        .values(status="answered")
+    )
+    if result.rowcount == 0:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="ASK_NOT_OPEN")
+
+    answer_payload: dict = {}
+    if data.choice:
+        answer_payload["choice"] = data.choice
+    if data.payload:
+        answer_payload["extra"] = data.payload
+    answer = await messages_service.append_message(
+        session,
+        run.id,
+        role="user",
+        kind="answer",
+        text=text or (data.choice or ""),
+        author_id=user.id,
+        payload=answer_payload or None,
+        reply_to=ask.id,
+        step_id=ask.step_id,
+    )
+    await bus.publish_voyage_event(
+        run.id,
+        "ask.answered",
+        {"message": messages_service.serialize_message(answer), "ask_id": str(ask.id)},
+    )
+
+    if data.choice == "abort":
+        # 人拍板放弃：真终态。ask 直接置 consumed（不再有引擎消费）。
+        ask.status = "consumed"
+        run.status = "failed"
+        await session.commit()
+        await bus.publish_voyage_event(
+            run.id, "status", {"status": run.status, "cursor": run.cursor}
+        )
+        if run.project_id is not None:
+            await bus.publish_notify(
+                run.project_id,
+                {"type": "voyage.status", "voyage_id": str(run.id), "status": run.status},
+            )
+        experiment = await experiments_service.fail_by_voyage(session, run.id)
+        if experiment is not None:
+            await bus.publish_notify(
+                experiment.project_id,
+                {
+                    "type": "experiment.status",
+                    "experiment_id": str(experiment.id),
+                    "status": experiment.status,
+                },
+            )
+        return VoyageMessageRead.model_validate(answer)
+
+    # 确定性即时效果：追加预算（缺省翻倍——比让用户拍一个数更省事）
+    ask_kind = (ask.payload or {}).get("ask_kind")
+    if ask_kind == "budget" and data.choice == "add_budget":
+        budget = dict(run.budget or {})
+        current = int(budget.get("max_tokens") or 0)
+        add = int((data.payload or {}).get("add_tokens") or 0)
+        used = int((run.usage or {}).get("total_tokens", 0))
+        budget["max_tokens"] = current + add if add > 0 else max(current * 2, used + 10_000)
+        run.budget = budget
+
+    # 回答文本镜像成建议消息：引擎既有的注入点会把它带给下一个决策
+    if text:
+        await messages_service.append_message(
+            session, run.id, role="user", kind="chat", text=text, author_id=user.id
+        )
+
+    # 恢复执行（条件 UPDATE：不覆盖 cancelled 等外部写入）
+    await session.execute(
+        sa_update(VoyageRun)
+        .where(VoyageRun.id == run.id, VoyageRun.status == "paused_ask")
+        .values(status="executing")
+    )
+    await session.commit()
+    await queue.enqueue("resume_voyage", str(run.id))
+    return VoyageMessageRead.model_validate(answer)
+
+
 @router.post("/{voyage_id}/cancel", response_model=VoyageRead)
 async def cancel_voyage(
     voyage_id: uuid.UUID,
@@ -223,8 +343,14 @@ async def resume_voyage(
     user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
-    """重试 paused_error 的航程（如外部 API 暂时不可达），从断点续跑。"""
+    """重试 paused_error 的航程（如外部 API 暂时不可达），从断点续跑。
+
+    paused_ask 不在此列：AI 在等回答，回答本身就是恢复入口（answer 端点），
+    不给绕过提问的直通门。
+    """
     run = await _get_owned_voyage(session, voyage_id, user)
+    if run.status == "paused_ask":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_WAITING_ANSWER")
     if run.status != "paused_error":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="VOYAGE_NOT_PAUSED_ERROR")
     run.status = "executing"

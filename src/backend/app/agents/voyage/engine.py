@@ -7,13 +7,16 @@ voyage_steps 行，run.plan 只是派生快照），调度规则 = 按 rank 取�
                                       ├→ 原地重试（执行类错误，attempt < max）
                                       ├→ replanning → executing（template/loop）
                                       ├→ paused_gate（审批后 resume）
-                                      ├→ paused_error（pipeline 失败/重规划超限，可修复后重试）
-                                      └→ done / failed
+                                      ├→ paused_ask（agent 死路转向用户提问，回答后 resume）
+                                      ├→ paused_error（pipeline 失败；无人值守 run 的降级兜底）
+                                      └→ done / failed（failed 只由人拍板：cancel/驳回/放弃）
 要点：
 - 失败分派按 run.mode（docs/voyage-loop.md §5.1）：
   执行类错误（observation.error）在节点 max_attempts 内带诊断原地重试；
-  判断类失败（校验未过）不重试——pipeline 直接停（on_failure="fail" → failed，
-  否则 paused_error 等人工修复后断点重试），template/loop 走重规划；
+  判断类失败（校验未过）不重试——pipeline 直接停（paused_error 等人工修复后
+  断点重试），template/loop 走重规划；on_failure="fail" 步骤（smoke/run 这类
+  盲目重跑烧算力的）与各类重规划死路一律转 paused_ask 向用户提问
+  （无人值守 run 没人回答，降级保持旧 paused_error 语义）；
 - 重规划不再删行：旧尾部节点标 obsolete 留痕，新节点按 rank 间隙追加（seq 只增不改）；
 - 每次尝试完整归档进 step.attempts（SSE 事件不持久，审计留痕一律落库）；
 - requires_gate 步骤执行前创建 Gate 并暂停（结束本次 ARQ 任务），approve 后
@@ -47,6 +50,34 @@ from app.services import voyage_messages as messages_service
 
 MAX_REPLANS = 2
 _RANK_GAP = 100.0
+
+# ask 的候选选项（消息是数据，标签存 zh/en 两份，前端渲染处按语言取）。
+# 自由文本回答始终允许；choice 只是给用户的快捷入口与引擎的确定性分支键。
+_ASK_OPTIONS: dict[str, list[dict[str, Any]]] = {
+    "fatal_step": [
+        {"id": "retry", "zh": "重试这一步（可附指示）", "en": "Retry (with instructions)"},
+        {"id": "replan", "zh": "换个方案（请说明思路）", "en": "Change approach (describe how)"},
+        {"id": "abort", "zh": "放弃任务", "en": "Give up"},
+    ],
+    "continue_abort": [
+        {"id": "continue", "zh": "继续（可附指示）", "en": "Continue (with instructions)"},
+        {"id": "abort", "zh": "放弃任务", "en": "Give up"},
+    ],
+    "no_progress": [
+        {"id": "continue", "zh": "给出指示继续", "en": "Continue with instructions"},
+        {"id": "finish", "zh": "按当前结果收尾", "en": "Wrap up with current results"},
+        {"id": "abort", "zh": "放弃任务", "en": "Give up"},
+    ],
+    "done_criteria": [
+        {"id": "accept", "zh": "接受当前结果为完成", "en": "Accept as done"},
+        {"id": "continue", "zh": "继续补做（请说明）", "en": "Keep going (describe what)"},
+        {"id": "abort", "zh": "放弃任务", "en": "Give up"},
+    ],
+    "budget": [
+        {"id": "add_budget", "zh": "追加预算", "en": "Add budget"},
+        {"id": "abort", "zh": "放弃任务", "en": "Give up"},
+    ],
+}
 
 
 class _ExternallyTerminated(Exception):
@@ -232,6 +263,245 @@ class VoyageEngine:
         resume 重放时要么建议已随效果生效、要么原样留在队列。"""
         return await messages_service.pending_chat_messages(session, run.id)
 
+    # ---- 向用户提问（paused_ask）：agent 死路不再打死任务，转成等人回答 ----
+
+    async def _raise_ask(
+        self,
+        session: AsyncSession,
+        run: VoyageRun,
+        *,
+        ask_kind: str,
+        question: str,
+        context: dict[str, Any] | None = None,
+        options: list[dict[str, Any]] | None = None,
+        step: VoyageStep | None = None,
+        fallback_status: str = "paused_error",
+    ) -> None:
+        """插入一条 ask 消息并把任务转 paused_ask（与 paused_gate 同构：结束本次
+        ARQ 任务，回答后由 resume_voyage 续跑）。
+
+        - 幂等：同 run 同 (ask_kind, step_id) 已有 open 提问则不重复插
+          （防 reconcile 重放 executing 状态时重复建）；
+        - 无人值守 run（created_by 为空，cron 发起）没人会来回答，降级为
+          ``fallback_status``（保持旧的 paused_error 语义，交 reclaim 机制处理）。
+        """
+        if run.created_by is None:
+            await self._emit_log(run, f"需要人工处理：{question}", level="error")
+            await self._set_status(session, run, fallback_status)
+            return
+        step_id = step.id if step is not None else None
+        existing = await messages_service.find_open_ask(
+            session, run.id, ask_kind=ask_kind, step_id=step_id
+        )
+        if existing is None:
+            payload: dict[str, Any] = {"ask_kind": ask_kind}
+            if context:
+                payload["context"] = context
+            if options:
+                payload["options"] = options
+            try:
+                message = await messages_service.append_message(
+                    session,
+                    run.id,
+                    role="agent",
+                    kind="ask",
+                    text=question,
+                    payload=payload,
+                    status="open",
+                    step_id=step_id,
+                )
+            except messages_service.MessageSeqConflictError:
+                message = None
+            if message is not None:
+                await self._emit_voyage(
+                    run.id,
+                    "ask.created",
+                    {"message": messages_service.serialize_message(message)},
+                )
+                await self._emit_notify(
+                    run.project_id,
+                    {
+                        "type": "voyage.ask",
+                        "voyage_id": str(run.id),
+                        "question": question[:200],
+                    },
+                )
+        # 终端叙事镜像（level=gate：黄色提示，与人工审批同一视觉家族）
+        await self._emit_log(run, f"AI 有问题需要你回答：{question}", level="gate")
+        await self._set_status(session, run, "paused_ask")
+
+    async def _consume_answered_asks(self, session: AsyncSession, run: VoyageRun) -> bool:
+        """把已回答的提问变成行为（_drive 开头调用）。返回 False 表示任务已停。
+
+        - abort 类回答在 API 侧直接置 failed，不会走到这里；
+        - 回答文本由 API 侧镜像成一条建议消息（kind=chat），随 PR1 的注入点在
+          下一个决策点生效——这里只做确定性效果与状态推进；
+        - 效果与 ask.status='consumed' 同一事务提交（resume 重放幂等）。
+        """
+        asks = await messages_service.answered_asks(session, run.id)
+        if not asks:
+            return True
+        for ask in asks:
+            payload = ask.payload if isinstance(ask.payload, dict) else {}
+            ask_kind = str(payload.get("ask_kind") or "")
+            answer = await messages_service.answer_of(session, ask)
+            answer_payload = (answer.payload if answer else None) or {}
+            choice = str(answer_payload.get("choice") or "")
+
+            # 人给了新输入 = 新的自主额度：重规划计数清零
+            checkpoint = dict(run.checkpoint or {})
+            checkpoint["replans"] = 0
+            run.checkpoint = checkpoint
+
+            if ask_kind == "done_criteria" and choice == "accept":
+                ask.status = "consumed"
+                await session.commit()
+                await self._emit_log(run, "你确认按当前结果完成，任务收束", level="success")
+                await self._set_status(session, run, "done")
+                return False
+
+            if ask_kind == "planning_failed":
+                run.plan = None  # 重新规划（用户指示经建议消息注入 _plan）
+                ask.status = "consumed"
+                await session.commit()
+                continue
+
+            if ask_kind == "fatal_step" and choice == "replan" and ask.step_id is not None:
+                node = await session.get(VoyageStep, ask.step_id)
+                if node is not None and node.status not in ("passed", "obsolete"):
+                    # 回答文本已由 API 镜像成建议消息，_navigator_edit 内部会 drain
+                    step_def = _step_def_from_row(node, run.plan)
+                    ok = await self._navigator_edit(
+                        session,
+                        run,
+                        node,
+                        step_def,
+                        ignore_limit=True,
+                        consume_ask=ask,
+                    )
+                    if not ok:
+                        return False
+                    continue
+
+            if ask_kind in ("no_progress", "done_criteria") and choice == "finish":
+                ask.status = "consumed"
+                await self._wrapup_remaining(session, run, reason="你选择按当前结果收尾")
+                continue
+
+            if ask_kind == "done_criteria":
+                # 继续补做：按用户指示扩展计划（否则所有步骤已 passed，
+                # 循环会直接再撞一次完成标准终检）；指示文本经镜像建议消息 drain
+                if not await self._extend_plan_from_user(session, run, ask):
+                    return False
+                continue
+
+            # 其余（retry / continue / budget 追加等）：确定性效果已在 API 侧完成，
+            # 失败节点由 resume() 复位、指示由建议消息注入，这里只标记消费
+            ask.status = "consumed"
+            await session.commit()
+        return True
+
+    async def _extend_plan_from_user(
+        self,
+        session: AsyncSession,
+        run: VoyageRun,
+        consume_ask: Any,
+    ) -> bool:
+        """完成标准未达成、用户要求继续：按其指示让 Navigator 在计划尾部补步骤。
+
+        用户指示 = 未消费的建议消息（含 API 镜像的回答文本）。
+        编辑生效与 ask 消费同一事务；Navigator 失败/空编辑转新的提问。
+        返回 False 表示任务已停（转 paused_ask）。
+        """
+        await self._set_status(session, run, "replanning")
+        rows = await self._active_rows(session, run)
+        guidance_msgs = await self._drain_user_messages(session, run)
+        combined = messages_service.guidance_text(guidance_msgs)
+        synthetic = {"title": "完成标准未达成", "action": "", "params": {}}
+        try:
+            edit = await self.navigator.on_result(
+                run,
+                synthetic,
+                "完成标准未达成，用户要求继续补做",
+                self._plan_state_summary(rows),
+                user_guidance=combined or None,
+            )
+        except NavigatorError as e:
+            await self._emit_log(run, f"计划扩展失败：{e}", level="error")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="replan_error",
+                question="按你的指示扩展计划时 AI 未能给出有效方案，请补充更具体的指示，或选择放弃",
+                context={"error": str(e)},
+                options=_ASK_OPTIONS["continue_abort"],
+            )
+            return False
+        if edit.get("finish") or not edit.get("edits"):
+            consume_ask.status = "consumed"
+            await self._wrapup_remaining(session, run, reason="AI 判断无需补做，按当前结果收尾")
+            return True
+        try:
+            added = await self._apply_plan_edit(session, run, edit, anchor=None)
+        except PlanEditError as e:
+            await self._emit_log(run, f"计划编辑被拒绝：{e}", level="error")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="replan_error",
+                question="按你的指示扩展计划时编辑未通过校验，请补充更具体的指示，或选择放弃",
+                context={"error": str(e)},
+                options=_ASK_OPTIONS["continue_abort"],
+            )
+            return False
+        run.plan_iteration = run.plan_iteration + 1
+        self._record_plan_event(
+            run,
+            source="user",
+            reason=str(edit.get("reason") or "") or "用户要求继续补做",
+            added=added,
+            obsoleted=0,
+            trigger_step=None,
+        )
+        if guidance_msgs:
+            messages_service.mark_chat_consumed(guidance_msgs)
+        consume_ask.status = "consumed"
+        await self._regen_plan_snapshot(session, run)
+        await session.commit()
+        await self._emit_log(run, f"已按你的指示扩展计划（新增 {added} 步）", level="plan")
+        await self._set_status(session, run, "executing")
+        return True
+
+    async def _wrapup_remaining(
+        self, session: AsyncSession, run: VoyageRun, *, reason: str
+    ) -> None:
+        """按用户指令收束：作废剩余非收尾步骤，放行收尾步骤（与预算降级收尾同构）。
+
+        与触发它的 ask 消费同一事务提交（调用方已把 ask.status 置 consumed 未提交）。
+        """
+        rows = await self._active_rows(session, run)
+        finishing = self._budget_finishing_steps(run, rows)
+        dropped = [
+            r for r in rows if r.status not in ("passed", "obsolete") and r not in finishing
+        ]
+        for r in dropped:
+            r.status = "obsolete"
+        if dropped:
+            run.plan_iteration = run.plan_iteration + 1
+            self._record_plan_event(
+                run,
+                source="user",
+                reason=reason,
+                added=0,
+                obsoleted=len(dropped),
+                trigger_step=None,
+            )
+            await self._regen_plan_snapshot(session, run)
+        await session.commit()
+        await self._emit_log(
+            run, f"{reason}：作废 {len(dropped)} 个未执行步骤", level="plan"
+        )
+
     # ---- 状态持久化 ----
 
     async def _current_db_status(self, session: AsyncSession, run_id: uuid.UUID) -> str:
@@ -268,6 +538,9 @@ class VoyageEngine:
                     run.mode = expected_mode
                     await session.commit()
                 await self._ensure_skills_snapshot(session, run)
+                # 已回答的提问先变成行为（可能重置计划 / 扩展计划 / 直接收束）
+                if not await self._consume_answered_asks(session, run):
+                    return
                 if run.plan is None:
                     await self._plan(session, run)
                 await self._ensure_step_rows(session, run)
@@ -300,16 +573,34 @@ class VoyageEngine:
     async def _plan(self, session: AsyncSession, run: VoyageRun) -> None:
         await self._set_status(session, run, "planning")
         context = (run.checkpoint or {}).get("params")
+        context = dict(context) if isinstance(context, dict) else None
+        # 用户建议注入规划（重规划场景：回答提问后 plan 被清空重来）
+        guidance_msgs = await self._drain_user_messages(session, run)
+        if guidance_msgs:
+            context = context or {}
+            context["user_guidance"] = messages_service.guidance_text(guidance_msgs)
         try:
-            steps = await self.navigator.plan(run, context if isinstance(context, dict) else None)
+            steps = await self.navigator.plan(run, context)
         except NavigatorError as e:
             run.plan = []
+            await session.commit()
             await self._emit_log(run, f"规划失败：{e}", level="error")
-            await self._set_status(session, run, "failed")
-            raise _ExternallyTerminated("failed") from e
+            # 有人值守：转提问等指示；无人值守（cron）保持旧行为直接 failed
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="planning_failed",
+                question="AI 没能为这个目标规划出有效的执行计划，请补充更具体的指示，或选择放弃",
+                context={"error": str(e)},
+                options=_ASK_OPTIONS["continue_abort"],
+                fallback_status="failed",
+            )
+            raise _ExternallyTerminated(run.status) from e
         run.plan = steps
         if run.done_criteria is None:
             run.done_criteria = done_criteria_for_kind(run.kind)
+        if guidance_msgs:
+            messages_service.mark_chat_consumed(guidance_msgs)
         await session.commit()
         await self._emit_log(run, f"计划就绪，共 {len(steps)} 步", level="success")
 
@@ -419,10 +710,20 @@ class VoyageEngine:
                     )
                     continue
                 else:
-                    await self._emit_log(
-                        run, "预算超限，尚无产出可收尾，任务暂停（paused_error）", level="error"
+                    await self._emit_log(run, "预算超限，尚无产出可收尾", level="error")
+                    usage = run.usage or {}
+                    await self._raise_ask(
+                        session,
+                        run,
+                        ask_kind="budget",
+                        question="token 预算已用尽，而且还没有可以收尾的产出。"
+                "追加预算继续，还是放弃？",
+                        context={
+                            "used_tokens": int(usage.get("total_tokens", 0)),
+                            "max_tokens": int((run.budget or {}).get("max_tokens", 0) or 0),
+                        },
+                        options=_ASK_OPTIONS["budget"],
                     )
-                    await self._set_status(session, run, "paused_error")
                     return
 
             # 复位失败节点（直接 run() 再驱动而未经 resume 复位时）
@@ -437,7 +738,8 @@ class VoyageEngine:
             ):
                 return
 
-            await self._execute_and_verify(session, run, step_def, node)
+            if not await self._execute_and_verify(session, run, step_def, node):
+                return  # 动作主动向用户提问，任务已暂停
 
             if node.verdict and node.verdict.get("passed"):
                 # 节点可携带 plan_signal（如 experiment.analyze 的继续/收束判定）：
@@ -458,8 +760,16 @@ class VoyageEngine:
             )
             if verdict is not None and not verdict.get("passed"):
                 await self._emit_log(run, f"完成标准未达成：{verdict.get('reason')}", level="error")
-                # 终检回灌（loop 模式）留待后续：先一律暂停等人工，防"过早宣告完成"
-                await self._set_status(session, run, "paused_error")
+                # 防"过早宣告完成"：转提问让用户裁决（接受为完成 / 指示补做 / 放弃）
+                await self._raise_ask(
+                    session,
+                    run,
+                    ask_kind="done_criteria",
+                    question=f"所有步骤已执行完，但完成标准还没达成：{verdict.get('reason')}。"
+                    "接受当前结果为完成，还是继续补做？",
+                    context={"reason": str(verdict.get("reason") or "")},
+                    options=_ASK_OPTIONS["done_criteria"],
+                )
                 return
         await self._set_status(session, run, "done")
 
@@ -542,7 +852,8 @@ class VoyageEngine:
         run: VoyageRun,
         step_def: dict[str, Any],
         step_row: VoyageStep,
-    ) -> None:
+    ) -> bool:
+        """执行 + 验证一个节点。返回 False 表示动作主动提问、任务已暂停。"""
         # 注入点①：把未消费的用户建议注入本步骤 params（消费标记与 running 同一事务，
         # resume 重放天然幂等——建议随步骤持久化，不会二次注入）
         guidance_msgs = await self._drain_user_messages(session, run)
@@ -590,6 +901,28 @@ class VoyageEngine:
         await session.commit()
         await self._emit_step(run, step_row)
 
+        # 动作主动提问（observation["ask"]，与 plan_signal 同族约定）：不进验证、
+        # 不消耗尝试预算，节点回 pending 等回答后重跑（回答文本经建议消息注入 params）
+        ask_req = observation.get("ask") if isinstance(observation, dict) else None
+        if isinstance(ask_req, dict) and ask_req.get("question"):
+            self._archive_attempt(step_row)  # 留痕：这次尝试以提问收场
+            step_row.status = "pending"
+            step_row.attempt = max(0, step_row.attempt - 1)
+            await session.commit()
+            await self._emit_step(run, step_row)
+            context = ask_req.get("context")
+            options = ask_req.get("options")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind=str(ask_req.get("ask_kind") or "action_ask"),
+                question=str(ask_req["question"]),
+                context=context if isinstance(context, dict) else None,
+                options=options if isinstance(options, list) else _ASK_OPTIONS["continue_abort"],
+                step=step_row,
+            )
+            return False
+
         await self._set_status(session, run, "verifying")
         verdict, verify_usage = await self.sextant.verify(run, step_def, observation)
         step_row.verdict = verdict
@@ -611,6 +944,7 @@ class VoyageEngine:
         await self._refresh_usage_from_ledger(session, run)
         await session.commit()
         await self._emit_step(run, step_row)
+        return True
 
     @staticmethod
     def _archive_attempt(step_row: VoyageStep) -> None:
@@ -721,18 +1055,44 @@ class VoyageEngine:
             )
             return True
 
-        # 固定管线步骤可声明 on_failure="fail"：不重规划，直接判 voyage 失败
+        # on_failure="fail" 步骤（如 experiment 的 smoke/run：盲目重跑烧算力）：
+        # 不自动重规划，但也不再打死任务——转成向用户提问，等人拍板
+        # （重试 / 换方案 / 放弃）。无人值守 run 降级 paused_error（可 resume）。
         if step_def.get("on_failure") == "fail":
             await self._emit_log(
-                run, f"步骤失败（on_failure=fail，不重规划）：{diagnosis}", level="error"
+                run, f"步骤失败（不自动重试）：{diagnosis}", level="error"
             )
-            await self._set_status(session, run, "failed")
+            attempts_note = (
+                f"（已尝试 {node.attempt} 次）" if node.attempt > 1 else ""
+            )
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="fatal_step",
+                question=f"步骤「{node.title}」失败了{attempts_note}：{diagnosis[:500]}。"
+                "怎么处理？",
+                context={
+                    "step_title": node.title,
+                    "diagnosis": diagnosis[:2000],
+                    "attempt": node.attempt,
+                },
+                options=_ASK_OPTIONS["fatal_step"],
+                step=node,
+            )
             return False
 
         if run.mode == "pipeline":
             # 确定性管线不经 LLM 重规划：暂停等人工（修复代码后可从断点重试，
-            # 前面步骤的成果不作废）
+            # 前面步骤的成果不作废）。语义保持 paused_error（多为无人值守 cron，
+            # reclaim 机制依赖它），但补一条 info 消息让对话流里也看得到诊断。
             await self._emit_log(run, f"步骤失败，任务暂停等待人工处理：{diagnosis}", level="error")
+            await self._post_agent_message(
+                session,
+                run,
+                kind="info",
+                text=f"步骤「{node.title}」失败，任务已暂停：{diagnosis[:500]}",
+                step_id=node.id,
+            )
             await self._set_status(session, run, "paused_error")
             return False
 
@@ -907,20 +1267,36 @@ class VoyageEngine:
         run: VoyageRun,
         failed_node: VoyageStep,
         failed_step: dict[str, Any],
+        *,
+        user_guidance: str | None = None,
+        ignore_limit: bool = False,
+        consume_ask: Any = None,
     ) -> bool:
         """loop 模式失败回灌：Navigator 产出计划编辑。返回 True 表示可继续循环。
 
-        无进展硬停（docs/voyage-loop.md §5.4）：存在失败步骤而 Navigator 返回
-        finish/noop → paused_error 等人工；编辑生效后失败节点自动作废并归档。
+        死路不再 paused_error 硬停，转成向用户提问（无人值守 run 降级）：
+        - 计划调整达上限 → 问「继续/收尾/放弃」（回答会把计数清零）；
+        - Navigator finish/noop / 输出非法 / 编辑被拒 → 问用户要更具体的指示。
+        ``user_guidance``/``ignore_limit``/``consume_ask`` 供 ask 消费路径复用：
+        用户明确要求换方案时不受次数限制，且 ask 的消费标记与编辑生效同一事务。
         """
         checkpoint = dict(run.checkpoint or {})
         replans = int(checkpoint.get("replans", 0))
         diagnosis = str((failed_node.verdict or {}).get("reason", ""))
-        if replans >= MAX_REPLANS:
+        if not ignore_limit and replans >= MAX_REPLANS:
             await self._emit_log(
-                run, f"计划调整已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理", level="error"
+                run, f"计划调整已达上限（{MAX_REPLANS} 次）", level="error"
             )
-            await self._set_status(session, run, "paused_error")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="no_progress",
+                question=f"自动调整计划已达 {MAX_REPLANS} 次仍未通过"
+                f"（最近的问题：{diagnosis[:300]}）。需要你给出指示，或选择收尾/放弃",
+                context={"diagnosis": diagnosis[:2000], "replans": replans},
+                options=_ASK_OPTIONS["no_progress"],
+                step=failed_node,
+            )
             return False
 
         await self._set_status(session, run, "replanning")
@@ -929,34 +1305,63 @@ class VoyageEngine:
         # 注入点②：计划调整时把未消费的用户建议交给 Navigator（标记与编辑生效同一事务；
         # LLM 失败 / 编辑被拒时不标记，建议留在队列等下一个决策点）
         guidance_msgs = await self._drain_user_messages(session, run)
-        user_guidance = messages_service.guidance_text(guidance_msgs) or None
+        combined_guidance = (
+            "\n".join(
+                filter(None, [messages_service.guidance_text(guidance_msgs), user_guidance])
+            )
+            or None
+        )
         try:
             edit = await self.navigator.on_result(
                 run,
                 failed_def,
                 diagnosis,
                 self._plan_state_summary(rows),
-                user_guidance=user_guidance,
+                user_guidance=combined_guidance,
             )
         except NavigatorError as e:
             await self._emit_log(run, f"计划调整失败：{e}", level="error")
-            await self._set_status(session, run, "paused_error")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="replan_error",
+                question="AI 调整计划时没能给出有效方案，请补充更具体的指示，或选择放弃",
+                context={"error": str(e), "diagnosis": diagnosis[:1000]},
+                options=_ASK_OPTIONS["continue_abort"],
+                step=failed_node,
+            )
             return False
 
         if edit.get("finish") or not edit.get("edits"):
+            reason = str(edit.get("reason") or "noop")
             await self._emit_log(
-                run,
-                f"Navigator 未给出有效调整（{edit.get('reason') or 'noop'}），任务暂停等待人工",
-                level="error",
+                run, f"AI 认为不必再调整（{reason}），等你裁决", level="error"
             )
-            await self._set_status(session, run, "paused_error")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="no_progress",
+                question=f"这一步失败后 AI 认为不必再调整计划（理由：{reason[:300]}）。"
+                "按当前结果收尾，还是给出指示继续？",
+                context={"navigator_reason": reason, "diagnosis": diagnosis[:1000]},
+                options=_ASK_OPTIONS["no_progress"],
+                step=failed_node,
+            )
             return False
 
         try:
             added = await self._apply_plan_edit(session, run, edit, anchor=failed_node)
         except PlanEditError as e:
             await self._emit_log(run, f"计划编辑被拒绝：{e}", level="error")
-            await self._set_status(session, run, "paused_error")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="replan_error",
+                question="AI 给出的计划调整未通过校验，请补充更具体的指示，或选择放弃",
+                context={"error": str(e), "diagnosis": diagnosis[:1000]},
+                options=_ASK_OPTIONS["continue_abort"],
+                step=failed_node,
+            )
             return False
 
         # 失败节点归档（保留失败态）后自动作废——Navigator 只需给出替代/补充步骤
@@ -980,6 +1385,8 @@ class VoyageEngine:
         )
         if guidance_msgs:
             messages_service.mark_chat_consumed(guidance_msgs, step_id=failed_node.id)
+        if consume_ask is not None:
+            consume_ask.status = "consumed"
         await self._regen_plan_snapshot(session, run)
         await session.commit()
         if guidance_msgs:
@@ -1017,10 +1424,17 @@ class VoyageEngine:
         replans = int(checkpoint.get("replans", 0))
         diagnosis = str((failed_node.verdict or {}).get("reason", ""))
         if replans >= MAX_REPLANS:
-            await self._emit_log(
-                run, f"重规划已达上限（{MAX_REPLANS} 次），任务暂停等待人工处理", level="error"
+            await self._emit_log(run, f"重规划已达上限（{MAX_REPLANS} 次）", level="error")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="no_progress",
+                question=f"自动重规划已达 {MAX_REPLANS} 次仍未通过"
+                f"（最近的问题：{diagnosis[:300]}）。需要你给出指示，或选择收尾/放弃",
+                context={"diagnosis": diagnosis[:2000], "replans": replans},
+                options=_ASK_OPTIONS["no_progress"],
+                step=failed_node,
             )
-            await self._set_status(session, run, "paused_error")
             return False
 
         await self._set_status(session, run, "replanning")
@@ -1033,7 +1447,15 @@ class VoyageEngine:
             )
         except NavigatorError as e:
             await self._emit_log(run, f"重规划失败：{e}", level="error")
-            await self._set_status(session, run, "paused_error")
+            await self._raise_ask(
+                session,
+                run,
+                ask_kind="replan_error",
+                question="AI 重规划时没能给出有效方案，请补充更具体的指示，或选择放弃",
+                context={"error": str(e), "diagnosis": diagnosis[:1000]},
+                options=_ASK_OPTIONS["continue_abort"],
+                step=failed_node,
+            )
             return False
 
         # 失败节点起的旧尾部整体作废（留痕；失败节点本身归档进 checkpoint 兼容回放）

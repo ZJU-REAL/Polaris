@@ -29,7 +29,7 @@ _LOG_CHARS = 2000  # 单条日志上限（大模型完整输出可能极长）
 _GOAL_CHARS = 300
 _MAX_GATES = 50
 
-_PAUSED_STATUSES = frozenset({"paused_gate", "paused_error"})
+_PAUSED_STATUSES = frozenset({"paused_gate", "paused_error", "paused_ask"})
 
 
 def _task_brief(run: VoyageRun) -> dict[str, Any]:
