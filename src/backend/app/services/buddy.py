@@ -130,7 +130,11 @@ def compose_greeting(stats: BuddyStats, *, name: str | None = None) -> str:
             "要我帮你把它们串一串，看看有没有共同的线索？"
         )
     if stats.daily_today:
-        return f"{who}今天新到了 {stats.daily_today} 篇论文。要我先替你筛一遍吗？"
+        # 这里曾经报「今天新到了 N 篇论文，要我先替你筛一遍吗」。两个毛病：N 每天在变
+        # 却不帮人做任何决定；而「替你筛一遍」是张兑现不了的支票——筛论文是每日池
+        # 打分收录那条流水线的活，一轮对话干不了，答应了只能敷衍。
+        # 有新论文的日子就正常打个招呼，把话头让给用户。
+        return f"{who}今天有新论文进来了。想从哪儿看起？"
     if stats.saved_total:
         return f"{who}你的库里已经有 {stats.saved_total} 篇论文了。今天想从哪儿看起？"
     return f"{who}我是 PolarisBuddy。你在平台上做的事我都能帮上手——先从一个问题开始吧。"
@@ -148,7 +152,9 @@ def compose_nudge(stats: BuddyStats) -> str | None:
     if stats.experiments_running:
         return f"你有 {stats.experiments_running} 个实验在跑，要看看进展吗？"
     if stats.daily_today:
-        return f"今天到了 {stats.daily_today} 篇新论文，要我先替你筛一遍吗？"
+        # 主动提示不能是「打个招呼」——敲肩膀是为了报事，不是问好。所以这里保留数字
+        # （它就是那件事本身），只去掉同样兑现不了的「替你筛一遍」。
+        return f"今天到了 {stats.daily_today} 篇新论文。"
     return None
 
 

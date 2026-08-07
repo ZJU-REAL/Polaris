@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { PolarisMark } from '../../components/ui/PolarisLogo';
 import { Markdown } from '../../lib/markdown';
@@ -481,7 +482,9 @@ export function AssistantPanel({
   const [conversations, setConversations] = useState<
     { id: string; title: string; project_id: string | null }[]
   >([]);
-  const [greeting, setGreeting] = useState<string>('');
+  // 问候语改成前端按本地时间算（见 greeting.ts），这里只要名字。
+  // queryKey 与 AppShell 一致，命中同一份缓存，不多发一次请求。
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false });
   const [model, setModel] = useState<string>('');
   const [title, setTitle] = useState<string>('');
   // 页面上下文照常发给模型，但不在输入框上占一行——它是背景信息，不是待办事项。
@@ -531,13 +534,6 @@ export function AssistantPanel({
   // 开面板时取一次问候语。数字是 SQL 数出来的，**不过模型**——每次开面板过一次 LLM
   // 既慢又费钱，而且模型会把数字说错。取不到就不说，不要兜一句假的（0 和「没数出来」
   // 在界面上长得一样，对用户却是两回事）。
-  useEffect(() => {
-    if (!open || greeting) return;
-    void api
-      .getBuddyGreeting()
-      .then((g) => setGreeting(g.greeting))
-      .catch(() => setGreeting(''));
-  }, [open, greeting]);
 
   const stop = useCallback(() => {
     // 掐掉 SSE 连接。后端会把已生成的部分落库标成 interrupted，重开会话还能看到。
@@ -853,7 +849,7 @@ export function AssistantPanel({
         }}
       >
         {turns.length === 0 && (
-          <BuddyHome greeting={greeting} onPick={(prompt) => setInput(prompt)} />
+          <BuddyHome name={me?.display_name} onPick={(prompt) => setInput(prompt)} />
         )}
         {turns.map((turn, i) => {
           const isLast = i === turns.length - 1;
@@ -1145,7 +1141,7 @@ export function AssistantPanel({
             className="textarea"
             rows={1}
             value={input}
-            placeholder={tr('问点什么…', 'Ask anything…')}
+            placeholder={tr('今天想让我做点什么？', 'How can I help you today?')}
             onChange={(e) => {
               setInput(e.target.value);
               const el = e.target;

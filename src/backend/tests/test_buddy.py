@@ -41,7 +41,19 @@ def test_greeting_reports_the_real_numbers():
     assert "3 个实验" in buddy.compose_greeting(_stats(experiments_running=3))
     assert "5 个新想法" in buddy.compose_greeting(_stats(ideas_recent=5))
     assert "7 篇论文进库" in buddy.compose_greeting(_stats(saved_recent=7))
-    assert "12 篇论文" in buddy.compose_greeting(_stats(daily_today=12))
+
+
+def test_greeting_does_not_count_todays_papers():
+    """有新论文的日子只是打个招呼，不报数、不许诺筛选。
+
+    这句话以前是「今天新到了 N 篇论文，要我先替你筛一遍吗」。N 每天在变却不帮人做
+    任何决定；而「替你筛一遍」一轮对话根本干不了——筛论文是每日池打分收录那条流水线
+    的活。答应下来只能敷衍，不如不说。
+    """
+    line = buddy.compose_greeting(_stats(daily_today=384))
+    assert "384" not in line
+    assert "筛" not in line
+    assert line  # 但仍然要有一句话
 
 
 def test_greeting_says_one_thing_at_a_time():
