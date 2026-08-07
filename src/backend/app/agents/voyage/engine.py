@@ -451,6 +451,15 @@ class VoyageEngine:
                 options=_ASK_OPTIONS["continue_abort"],
             )
             return False
+        # 全部步骤已完成的场景下，唯一合法的扩展是**追加到末尾**：LLM 常给
+        # insert_after 指向已完成节点 / update 已完成节点，会撞上应用期不变量
+        # 「插入位置必须在当前执行点之后」（线上实测把用户逼到只能放弃）。
+        # 归一化：只保留 add_nodes 且一律追加。
+        appended_ops = []
+        for op in edit.get("edits") or []:
+            if op.get("op") == "add_nodes":
+                appended_ops.append({**op, "insert_after": None})
+        edit = {**edit, "edits": appended_ops}
         if edit.get("finish") or not edit.get("edits"):
             consume_ask.status = "consumed"
             await self._wrapup_remaining(session, run, reason="AI 判断无需补做，按当前结果收尾")

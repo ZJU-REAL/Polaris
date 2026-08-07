@@ -391,6 +391,85 @@ async def test_action_initiated_ask_pauses_without_burning_attempt(
         assert "继续，注意记录中间结果" in (step.params.get("user_guidance") or [])
 
 
+async def test_done_criteria_continue_appends_even_with_bad_anchor(
+    client, queue_stub, bus_recorder
+):
+    """完成标准未达成 → 用户「继续补做」：LLM 给的扩展哪怕 insert_after 指向
+    已完成节点 / 混入 update 操作，也被归一化为末尾追加——不再被应用期不变量
+    拒绝、把用户逼进「补充指示 → 再被拒」的死循环（线上实测致死原因）。"""
+    project_id, headers = await _make_project(client)
+    run_id = await _run(
+        project_id,
+        plan=[_OK_STEP],
+        done_criteria={"checks": [{"kind": "artifact_exists", "key": "artifacts.missing"}]},
+    )
+    engine, _ = _engine()
+    await engine.run(run_id)
+    ask = await _open_ask_of(run_id)
+    assert ask is not None and (ask.payload or {}).get("ask_kind") == "done_criteria"
+
+    async with get_sessionmaker()() as session:
+        first_step_id = (
+            await session.execute(select(VoyageStep.id).where(VoyageStep.run_id == run_id))
+        ).scalars().first()
+
+    async def bad_anchor_edit(run, failed_step, diagnosis, plan_state, user_guidance=None):
+        return {
+            "finish": False,
+            "reason": "按用户指示补一步",
+            "edits": [
+                {  # update 已完成节点：应被归一化丢弃
+                    "op": "update_node",
+                    "step_id": str(first_step_id),
+                    "patch": {"title": "不该生效"},
+                },
+                {  # insert_after 指向已完成节点：应被强制改为末尾追加
+                    "op": "add_nodes",
+                    "insert_after": str(first_step_id),
+                    "nodes": [
+                        {
+                            "title": "补做一步",
+                            "action": "sleep",
+                            "params": {"seconds": 0},
+                            "acceptance": "已完成",
+                            "checks": [{"kind": "no_error"}],
+                        }
+                    ],
+                }
+            ],
+        }
+
+    engine.navigator.on_result = bad_anchor_edit
+
+    resp = await client.post(
+        f"/api/voyages/{run_id}/asks/{ask.id}/answer",
+        json={"choice": "continue", "text": "补一步收集指标"},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    await engine.resume(run_id)
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        steps = (
+            (
+                await session.execute(
+                    select(VoyageStep).where(VoyageStep.run_id == run_id).order_by(VoyageStep.rank)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # 扩展生效：新步骤追加在末尾并执行通过；没有陷入 replan_error 提问
+        assert len(steps) == 2
+        assert steps[-1].title == "补做一步" and steps[-1].status == "passed"
+        assert steps[0].title != "不该生效"
+        # 完成标准依旧未达成 → 再次转提问（而非报编辑被拒）
+        assert run.status == "paused_ask"
+    ask2 = await _open_ask_of(run_id)
+    assert (ask2.payload or {}).get("ask_kind") == "done_criteria"
+
+
 async def test_replan_limit_asks_then_guidance_continues(client, queue_stub, bus_recorder):
     """计划调整超限 → 提问；用户给指示后计数清零、按指示继续到完成。"""
     project_id, headers = await _make_project(client)
