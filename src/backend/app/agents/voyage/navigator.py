@@ -551,8 +551,15 @@ def _extract_json(content: str) -> Any:
     return json.loads(content[start : end + 1])
 
 
-def validate_steps(data: Any) -> list[dict[str, Any]]:
-    """校验 {"steps": [...]} schema，返回规范化步骤列表；非法则抛 ValueError。"""
+def validate_steps(
+    data: Any, *, allowed_actions: frozenset[str] | set[str] | None = None
+) -> list[dict[str, Any]]:
+    """校验 {"steps": [...]} schema，返回规范化步骤列表；非法则抛 ValueError。
+
+    ``allowed_actions``：进一步收窄可用动作域（None = 整个注册表）。计划调整时
+    必须按任务的动作族收窄——线上实测过 LLM 给实验任务插入 wiki/每日抓论文动作，
+    步骤"通过"了但干的完全是别的领域的事，终端里满屏「cs.AI 抓到 N 篇」。
+    """
     if not isinstance(data, dict) or not isinstance(data.get("steps"), list):
         raise ValueError('expected {"steps": [...]}')
     steps: list[dict[str, Any]] = []
@@ -567,6 +574,11 @@ def validate_steps(data: Any) -> list[dict[str, Any]]:
             raise ValueError(f"step {i} missing title")
         if action not in actions:
             raise ValueError(f"step {i} has unknown action: {action!r}")
+        if allowed_actions is not None and action not in allowed_actions:
+            raise ValueError(
+                f"step {i} action {action!r} 不在本任务可用的动作域内，"
+                f"只能使用：{', '.join(sorted(allowed_actions))}"
+            )
         if not isinstance(params, dict):
             raise ValueError(f"step {i} params is not an object")
         requires_gate = raw.get("requires_gate")
@@ -621,6 +633,33 @@ def _expand_workflow(slug: str, workflows: list[dict[str, Any]]) -> list[dict[st
     return validate_steps({"steps": entry.get("steps") or []})
 
 
+# 计划调整时不分领域都可用的通用动作（推理/等待类，无副作用域）
+_GENERIC_EDIT_ACTIONS = frozenset({"sleep", "llm.complete", "artifact.write"})
+
+
+def allowed_edit_actions(run: VoyageRun) -> frozenset[str]:
+    """计划调整（replan/on_result）可用的动作域：现有计划的动作族 + 通用动作。
+
+    动作族按前缀推导（experiment. / wiki. / …）：实验任务的调整只能继续用
+    experiment.* 与通用动作，不能引入 wiki/daily 等其他领域的平台动作——
+    那些动作各有自己的任务类型与作用域假设，跨域插入会拿着错误的
+    checkpoint 干别的领域的事。计划无前缀信息（纯通用动作）时不设限。
+    """
+    prefixes: set[str] = set()
+    for step in run.plan or []:
+        if not isinstance(step, dict):
+            continue
+        action = str(step.get("action") or "")
+        if "." in action:
+            prefixes.add(action.split(".", 1)[0] + ".")
+    registry = frozenset(known_actions())
+    if not prefixes:
+        return registry
+    allowed = {a for a in registry if any(a.startswith(p) for p in prefixes)}
+    allowed |= _GENERIC_EDIT_ACTIONS & registry
+    return frozenset(allowed)
+
+
 class Navigator:
     def __init__(self, llm: LLMRouter) -> None:
         self._llm = llm
@@ -631,6 +670,7 @@ class Navigator:
         system: str,
         user_prompt: str,
         workflows: list[dict[str, Any]] | None = None,
+        allowed_actions: frozenset[str] | None = None,
     ) -> list[dict[str, Any]]:
         last_error: Exception | None = None
         for _attempt in range(_MAX_ATTEMPTS):
@@ -649,7 +689,7 @@ class Navigator:
                 data = _extract_json(result.content)
                 if workflows and isinstance(data, dict) and data.get("use_skill"):
                     return _expand_workflow(str(data["use_skill"]), workflows)
-                return validate_steps(data)
+                return validate_steps(data, allowed_actions=allowed_actions)
             except (ValueError, json.JSONDecodeError) as e:
                 last_error = e
         raise NavigatorError(f"navigator produced invalid plan: {last_error}")
@@ -699,7 +739,8 @@ class Navigator:
         """
         if run.kind == "idea_proposal":
             return proposal_replan(run, failed_step, diagnosis)
-        system = REPLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
+        allowed = allowed_edit_actions(run)
+        system = REPLAN_SYSTEM_PROMPT % {"actions": ", ".join(sorted(allowed))}
         user_prompt = (
             f"目标：{run.goal}\n"
             f"原计划：{json.dumps(run.plan or [], ensure_ascii=False, default=str)}\n"
@@ -708,7 +749,7 @@ class Navigator:
         )
         if user_guidance:
             user_prompt += f"\n用户对这次调整的补充指示（务必优先遵循）：\n{user_guidance}"
-        return await self._ask_for_steps(run, system, user_prompt)
+        return await self._ask_for_steps(run, system, user_prompt, allowed_actions=allowed)
 
     async def on_result(
         self,
@@ -720,11 +761,12 @@ class Navigator:
     ) -> dict[str, Any]:
         """loop 模式失败回灌：LLM 产出**计划编辑**而非替换尾部（docs/voyage-loop.md §5.3）。
 
-        输出经 validate_plan_edit 严格校验（schema / 动作注册表 / 新增节点上限 /
-        新节点必须带验收）；连续非法抛 NavigatorError（engine 转 paused_error）。
+        输出经 validate_plan_edit 严格校验（schema / 动作域（按任务动作族收窄）/
+        新增节点上限 / 新节点必须带验收）；连续非法抛 NavigatorError。
         ``user_guidance``：用户在任务对话流里的未消费建议（优先遵循）。
         """
-        system = PLAN_EDIT_SYSTEM_PROMPT % {"actions": ", ".join(sorted(known_actions()))}
+        allowed = allowed_edit_actions(run)
+        system = PLAN_EDIT_SYSTEM_PROMPT % {"actions": ", ".join(sorted(allowed))}
         user_prompt = (
             f"目标：{run.goal}\n"
             f"当前计划状态：\n{plan_state}\n"
@@ -748,7 +790,10 @@ class Navigator:
             )
             try:
                 data = _extract_json(result.content)
-                return validate_plan_edit(data, step_validator=validate_steps)
+                return validate_plan_edit(
+                    data,
+                    step_validator=lambda d: validate_steps(d, allowed_actions=allowed),
+                )
             except (ValueError, json.JSONDecodeError) as e:
                 last_error = e
         raise NavigatorError(f"navigator produced invalid plan edit: {last_error}")

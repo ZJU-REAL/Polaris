@@ -305,6 +305,37 @@ async def test_analyze_ask_pauses_then_guidance_continues(
     assert detail["iteration_state"]["stopped_reason"] == "用户指示收尾（test）"
 
 
+async def test_analyze_without_runs_self_heals(client, queue_stub, fake_ssh, bus_recorder):
+    """analyze 在零轮次上不再报错（报错会触发 LLM 重排、实测螺旋出跨域乱步骤）：
+    确定性发 plan_signal 补一轮 run + analyze，从头跑起。"""
+    from sqlalchemy import delete
+
+    from app.agents.voyage.actions import ActionContext
+    from app.agents.voyage.actions_experiment import experiment_analyze
+    from app.models.experiment import ExperimentRun as ExperimentRunModel
+
+    project_id, headers, exp_id, voyage_id = await _launch_experiment(client)
+    await _drive_pipeline(
+        client, headers, project_id, voyage_id, _router_with(_FixedReflectionProvider("stop"))
+    )
+
+    async with get_sessionmaker()() as session:
+        await session.execute(
+            delete(ExperimentRunModel).where(
+                ExperimentRunModel.experiment_id == uuid.UUID(exp_id)
+            )
+        )
+        await session.commit()
+        run = await session.get(VoyageRun, uuid.UUID(voyage_id))
+        ctx = ActionContext(
+            run=run, llm=LLMRouter(), checkpoint=dict(run.checkpoint or {})
+        )
+        observation = await experiment_analyze(ctx, {})
+
+    assert observation["skipped"] is True and observation["reason"] == "no_runs"
+    assert observation["plan_signal"] == {"decision": "continue", "next_round": 1}
+
+
 async def test_max_runs_truncates_iteration(client, queue_stub, fake_ssh, bus_recorder):
     """达 budget.max_runs 截断（指标仍在提升、decision 一直 improve）。"""
     fake_ssh.run_logs = [metric_log(0.7), metric_log(0.8)]

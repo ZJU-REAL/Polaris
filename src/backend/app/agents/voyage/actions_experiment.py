@@ -1703,7 +1703,15 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
             .all()
         )
         if not runs:
-            raise ValueError("没有可分析的运行轮次")
+            # 计划调整可能把本轮 run 作废/漏排（如换方案后直接落到 analyze）。
+            # 报错会触发又一轮 LLM 重排（实测螺旋出跨域乱步骤）；确定性自愈：
+            # 发 plan_signal 让分支表补一轮 run + analyze，从头跑起。
+            await ctx.log("没有可分析的运行轮次，自动补一轮运行")
+            return {
+                "skipped": True,
+                "reason": "no_runs",
+                "plan_signal": {"decision": "continue", "next_round": 1},
+            }
         run = runs[-1]
         history = [
             {

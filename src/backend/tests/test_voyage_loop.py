@@ -139,6 +139,39 @@ class _RowStub:
         self.status = status
 
 
+def test_plan_edit_actions_scoped_to_run_domain():
+    """计划调整的动作域按任务动作族收窄：实验任务只能用 experiment.* + 通用动作，
+    不能插入 wiki/daily 等其他领域的平台动作（线上实测 LLM 干过，终端满屏抓论文）。"""
+    from app.agents.voyage.navigator import allowed_edit_actions, experiment_plan
+
+    class _RunStub:
+        plan = experiment_plan(None)
+
+    allowed = allowed_edit_actions(_RunStub())
+    assert any(a.startswith("experiment.") for a in allowed)
+    assert not any(a.startswith("wiki.") for a in allowed)
+    assert not any(a.startswith("daily.") for a in allowed)
+    assert "sleep" in allowed  # 通用动作不分领域
+
+    # 校验器按动作域拒绝越域步骤
+    step = {
+        "title": "检查日志文件",
+        "action": "wiki.search_candidates",
+        "params": {},
+        "acceptance": "完成",
+    }
+    with pytest.raises(ValueError, match="动作域"):
+        validate_steps({"steps": [step]}, allowed_actions=allowed)
+
+    # 无前缀信息的计划（纯通用动作）不设限
+    class _GenericRunStub:
+        plan = [{"title": "t", "action": "sleep", "params": {}}]
+
+    from app.agents.voyage.actions import known_actions
+
+    assert allowed_edit_actions(_GenericRunStub()) == frozenset(known_actions())
+
+
 def test_experiment_node_failure_semantics():
     """experiment mode=loop 的节点级失败语义（docs/voyage-loop.md §7）：
     run/smoke 硬停（on_failure=fail + max_attempts=1，防盲目重跑烧算力/重复修复循环），
