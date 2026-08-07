@@ -93,7 +93,12 @@ def render_template(template: str, ctx: ActionContext, params: dict[str, Any]) -
     extra = params.get("vars")
     if isinstance(extra, dict):
         mapping.update(extra)
-    return template.format_map(mapping)
+    try:
+        return template.format_map(mapping)
+    except (ValueError, IndexError):
+        # 内容不是合法模板时（花括号来自代码/JSON 本身）原样放行——{goal} 替换只是
+        # 便利功能，动作绝不能因为内容含 "{" 就崩掉
+        return template
 
 
 @register("llm.complete")

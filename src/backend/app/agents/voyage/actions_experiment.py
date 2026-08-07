@@ -40,6 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
+from app.agents.voyage.errorsig import error_signature
 from app.agents.voyage.runner import Runner, open_runner, parse_container_spec
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
@@ -66,7 +67,7 @@ RUN_POLL_SECONDS = 30.0  # 正式运行轮询间隔（测试 monkeypatch 为 0�
 MAX_FIGURE_FIXES = 2  # 绘图脚本执行失败 / VLM 质检不合格的修复次数上限
 DEFAULT_NO_IMPROVE_STOP = 2  # 连续 N 轮主指标无提升即停（budget.no_improve_stop 可覆盖）
 MAX_QC_IMAGES = 8  # 单次质检最多送 LLM 的图数
-_MAX_JSON_ATTEMPTS = 3  # 首次 + 重试 2 次
+_MAX_JSON_ATTEMPTS = 5  # 首次 + 重试 4 次——重试都带错误回喂，只有失败才多花调用
 _WIKI_CONTEXT_PAPERS = 6
 _WIKI_EXCERPT_CHARS = 600
 _LOG_TAIL_FOR_REPORT = 60
@@ -765,9 +766,18 @@ async def _complete_json(ctx: ActionContext, *, system: str, user: str, validate
     for attempt in range(_MAX_JSON_ATTEMPTS):
         prompt = user
         if last_error is not None:
+            hint = ""
+            if "语法错误" in str(last_error):
+                # 线上高频根因：代码经 JSON 字符串转义后被写坏（反斜杠续行/转义错位）。
+                # 光回喂错误行模型常在原地打转，点破成因才改得动。
+                hint = (
+                    "\n常见根因：代码放进 JSON 字符串时转义出错（多余或缺失的反斜杠、"
+                    "\\n 与真实换行混用、行尾反斜杠续行）。请重写出错行附近的代码，"
+                    "避免行尾反斜杠与复杂转义写法（如把长 f-string 拆成多次拼接）。"
+                )
             prompt = (
                 f"{user}\n\n---\n"
-                f"上一次输出没通过校验（第 {attempt} 次尝试）：{last_error}\n"
+                f"上一次输出没通过校验（第 {attempt} 次尝试）：{last_error}{hint}\n"
                 "请针对这个错误修正后重新输出完整 JSON，不要重复同样的问题。"
             )
         result = await ctx.llm.complete(
@@ -1144,19 +1154,8 @@ _SIGNATURE_ESCALATE_AT = 2
 _SIGNATURE_ASK_AT = 4
 
 
-def _error_signature(err_text: str) -> str:
-    """报错文本 → 规范化签名（数字/十六进制/路径抹平，取 traceback 尾部关键行）。
-
-    同签名 = 同一个错误在原地打转；不同签名 = 修复改变了故障面（算进展）。"""
-    lines = [ln.strip() for ln in (err_text or "").strip().splitlines() if ln.strip()]
-    # 取最像「结论」的尾部行：异常类型行优先，否则最后两行
-    tail = [ln for ln in lines[-6:] if re.match(r"^[A-Za-z_.]+(Error|Exception|error)\b", ln)]
-    picked = tail[-1:] if tail else lines[-2:]
-    sig = " | ".join(picked)[:300]
-    sig = re.sub(r"0x[0-9a-fA-F]+", "0xX", sig)
-    sig = re.sub(r"\d+", "N", sig)
-    sig = re.sub(r"/[^\s'\"]+", "/PATH", sig)
-    return sig
+# 签名实现提到共享模块（引擎重规划计数同用）；保留旧名给既有调用点/测试
+_error_signature = error_signature
 
 
 def _render_fix_ledger(ledger: list[dict[str, Any]]) -> str:

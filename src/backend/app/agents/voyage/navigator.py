@@ -59,6 +59,10 @@ POLARIS_PLAN_EDIT
 - 每个新节点必须带 acceptance；单次编辑新增节点 ≤ 8 个
 - 只能引用未完成的步骤 id；已通过/已作废的步骤不可编辑
 - 失败步骤会在编辑生效后自动作废，你只需给出替代/补充步骤
+- artifact.write 只是把文本记录成平台产物（报告/笔记），**不会**修改任何执行环境或
+  远端文件；修复代码/环境/依赖问题必须重跑对应的领域动作步骤（把诊断写进该步 params，
+  例如失败的是 experiment.setup 就新增一个 experiment.setup 节点），不要用 artifact.write
+  去"改文件"
 """
 
 

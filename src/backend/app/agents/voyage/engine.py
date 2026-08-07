@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.voyage.actions import ActionContext
 from app.agents.voyage.checks import run_deterministic_checks
+from app.agents.voyage.errorsig import error_signature
 from app.agents.voyage.helm import Helm
 from app.agents.voyage.navigator import Navigator, NavigatorError, done_criteria_for_kind
 from app.agents.voyage.plan_edit import SIGNAL_TABLES, PlanEditError
@@ -50,6 +51,27 @@ from app.services import voyage_messages as messages_service
 
 MAX_REPLANS = 2
 _RANK_GAP = 100.0
+
+
+def _replan_progress(checkpoint: dict[str, Any], diagnosis: str) -> tuple[int, str, bool]:
+    """签名感知的重规划计数：错误签名变了 = 有进展 = 计数清零（同 #354 的零进展哲学）。
+
+    计数只累积「同一签名连续未解决」的调整次数——一路在换新错误的 run 永远不会
+    因 MAX_REPLANS 打断用户。没存过上次签名（旧 checkpoint / 空诊断）时不清零，
+    维持原计数语义。返回 (生效计数, 本次签名, 是否同签名重复)。"""
+    sig = error_signature(diagnosis)
+    last_sig = str(checkpoint.get("replan_signature") or "")
+    replans = int(checkpoint.get("replans", 0))
+    repeated = bool(sig) and sig == last_sig
+    if sig and last_sig and not repeated:
+        replans = 0
+    return replans, sig, repeated
+
+
+_ZERO_PROGRESS_DIRECTIVE = (
+    "\n【零进展警告】上一次计划调整后错误签名没有变化——上次的方案没起作用。"
+    "必须换一个根本不同的思路（换动作、换方法、绕开该依赖），不要再微调同类修复。"
+)
 
 # ask 的候选选项（消息是数据，标签存 zh/en 两份，前端渲染处按语言取）。
 # 自由文本回答始终允许；choice 只是给用户的快捷入口与引擎的确定性分支键。
@@ -1304,18 +1326,19 @@ class VoyageEngine:
         用户明确要求换方案时不受次数限制，且 ask 的消费标记与编辑生效同一事务。
         """
         checkpoint = dict(run.checkpoint or {})
-        replans = int(checkpoint.get("replans", 0))
         diagnosis = str((failed_node.verdict or {}).get("reason", ""))
+        # 签名感知：只有「同一错误连续多次调整仍未解决」才打断用户；错误在变=有进展
+        replans, replan_sig, sig_repeated = _replan_progress(checkpoint, diagnosis)
         if not ignore_limit and replans >= MAX_REPLANS:
             await self._emit_log(
-                run, f"计划调整已达上限（{MAX_REPLANS} 次）", level="error"
+                run, f"同一问题连续 {MAX_REPLANS} 次计划调整仍未解决", level="error"
             )
             await self._raise_ask(
                 session,
                 run,
                 ask_kind="no_progress",
-                question=f"自动调整计划已达 {MAX_REPLANS} 次仍未通过"
-                f"（最近的问题：{diagnosis[:300]}）。需要你给出指示，或选择收尾/放弃",
+                question=f"同一个问题连续 {MAX_REPLANS} 次计划调整仍未解决"
+                f"（问题：{diagnosis[:300]}）。需要你给出指示，或选择收尾/放弃",
                 context={"diagnosis": diagnosis[:2000], "replans": replans},
                 options=_ASK_OPTIONS["no_progress"],
                 step=failed_node,
@@ -1334,11 +1357,13 @@ class VoyageEngine:
             )
             or None
         )
+        # 同签名重复时明确告诉 Navigator：上次的编辑没改变故障面，必须换思路
+        nav_diagnosis = diagnosis + _ZERO_PROGRESS_DIRECTIVE if sig_repeated else diagnosis
         try:
             edit = await self.navigator.on_result(
                 run,
                 failed_def,
-                diagnosis,
+                nav_diagnosis,
                 self._plan_state_summary(rows),
                 user_guidance=combined_guidance,
             )
@@ -1393,6 +1418,7 @@ class VoyageEngine:
         failed_node.status = "obsolete"
         checkpoint["replaced_steps"] = replaced
         checkpoint["replans"] = replans + 1
+        checkpoint["replan_signature"] = replan_sig
         run.checkpoint = checkpoint
         run.plan_iteration = run.plan_iteration + 1
         obsoleted = 1 + sum(
@@ -1444,16 +1470,19 @@ class VoyageEngine:
         run.plan 快照由节点行重新派生。
         """
         checkpoint = dict(run.checkpoint or {})
-        replans = int(checkpoint.get("replans", 0))
         diagnosis = str((failed_node.verdict or {}).get("reason", ""))
+        # 签名感知（同 _navigator_edit）：错误在变=有进展，不打断用户
+        replans, replan_sig, sig_repeated = _replan_progress(checkpoint, diagnosis)
         if replans >= MAX_REPLANS:
-            await self._emit_log(run, f"重规划已达上限（{MAX_REPLANS} 次）", level="error")
+            await self._emit_log(
+                run, f"同一问题连续 {MAX_REPLANS} 次重规划仍未解决", level="error"
+            )
             await self._raise_ask(
                 session,
                 run,
                 ask_kind="no_progress",
-                question=f"自动重规划已达 {MAX_REPLANS} 次仍未通过"
-                f"（最近的问题：{diagnosis[:300]}）。需要你给出指示，或选择收尾/放弃",
+                question=f"同一个问题连续 {MAX_REPLANS} 次重规划仍未解决"
+                f"（问题：{diagnosis[:300]}）。需要你给出指示，或选择收尾/放弃",
                 context={"diagnosis": diagnosis[:2000], "replans": replans},
                 options=_ASK_OPTIONS["no_progress"],
                 step=failed_node,
@@ -1464,9 +1493,10 @@ class VoyageEngine:
         # 注入点②（template 同 loop）：用户建议交给重规划，失败不标记消费
         guidance_msgs = await self._drain_user_messages(session, run)
         user_guidance = messages_service.guidance_text(guidance_msgs) or None
+        nav_diagnosis = diagnosis + _ZERO_PROGRESS_DIRECTIVE if sig_repeated else diagnosis
         try:
             new_tail = await self.navigator.replan(
-                run, failed_step, diagnosis, user_guidance=user_guidance
+                run, failed_step, nav_diagnosis, user_guidance=user_guidance
             )
         except NavigatorError as e:
             await self._emit_log(run, f"重规划失败：{e}", level="error")
@@ -1490,6 +1520,7 @@ class VoyageEngine:
         replaced.append(_serialize_step(failed_node))
         checkpoint["replaced_steps"] = replaced
         checkpoint["replans"] = replans + 1
+        checkpoint["replan_signature"] = replan_sig
         run.checkpoint = checkpoint
         run.plan_iteration = run.plan_iteration + 1
 

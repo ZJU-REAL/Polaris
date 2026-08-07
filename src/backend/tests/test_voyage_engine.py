@@ -179,3 +179,59 @@ async def test_cancelled_voyage_engine_noop(client, queue_stub):
     detail = resp.json()
     assert detail["status"] == "cancelled"
     assert all(s["status"] == "pending" for s in detail["steps"]) or detail["steps"] == []
+
+
+# ---- #360 harness 健壮性：模板渲染放行非模板内容 / 签名感知重规划计数 ----
+
+
+def _fake_ctx(checkpoint: dict | None = None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        run=SimpleNamespace(goal="测试目标", kind="demo"),
+        checkpoint=checkpoint if checkpoint is not None else {},
+    )
+
+
+def test_render_template_passes_through_code_content():
+    """含花括号的代码/JSON 不是模板：必须原样放行，绝不能 ValueError。"""
+    from app.agents.voyage.actions import render_template
+
+    code = 'def f(x):\n    d = {"a": {"b": 1}}\n    return f"{d[\'a\']}{x:.2f}"\n'
+    assert render_template(code, _fake_ctx(), {}) == code
+    # 正常模板路径不受影响
+    assert render_template("目标：{goal}", _fake_ctx(), {}) == "目标：测试目标"
+    # 缺失变量原样保留（旧行为）
+    assert render_template("{unknown}", _fake_ctx(), {}) == "{unknown}"
+
+
+async def test_artifact_write_accepts_brace_content():
+    """线上案例：navigator 用 artifact.write 写修复代码，内容含 { 直接炸步骤。"""
+    from app.agents.voyage.actions import artifact_write
+
+    ctx = _fake_ctx(checkpoint={})
+    out = await artifact_write(ctx, {"name": "fix.py", "content": 'print("{ok}", {1: 2})'})
+    assert out["artifact"] == "fix.py"
+    assert ctx.checkpoint["artifacts"]["fix.py"] == 'print("{ok}", {1: 2})'
+
+
+def test_replan_progress_signature_semantics():
+    """错误签名变了=有进展计数清零；同签名累积；无历史签名维持原计数。"""
+    from app.agents.voyage.engine import _replan_progress
+    from app.agents.voyage.errorsig import error_signature
+
+    err_a = "ImportError: No module named 'triton'"
+    err_b = "SSHExecError: docker run 启动容器失败"
+    sig_a = error_signature(err_a)
+
+    # 无历史签名（旧 checkpoint）：计数保持
+    replans, sig, repeated = _replan_progress({"replans": 2}, err_a)
+    assert (replans, repeated) == (2, False) and sig == sig_a
+    # 同签名重复：计数保持、标记重复（触发零进展指令）
+    replans, _, repeated = _replan_progress({"replans": 1, "replan_signature": sig_a}, err_a)
+    assert (replans, repeated) == (1, True)
+    # 签名变化：计数清零（换了新错误=有进展，不打断用户）
+    replans, sig_new, repeated = _replan_progress(
+        {"replans": 2, "replan_signature": sig_a}, err_b
+    )
+    assert (replans, repeated) == (0, False) and sig_new != sig_a
