@@ -13,6 +13,7 @@ export type NotificationMessage =
   | { type: 'gate.created'; gate: GateRead }
   | { type: 'gate.decided'; gate: GateRead }
   | { type: 'voyage.status'; voyage_id: string; status: string }
+  | { type: 'voyage.ask'; voyage_id: string; question: string }
   | { type: 'review.message'; session_id: string; project_id?: string; message: ReviewMessageRead }
   | { type: 'idea.status'; idea_id: string; status: string }
   | { type: 'experiment.status'; experiment_id: string; status: string }

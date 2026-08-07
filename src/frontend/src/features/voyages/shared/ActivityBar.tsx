@@ -80,6 +80,8 @@ export function activityText(voyage: VoyageDetail, steps: VoyageStepRead[]): str
       return tr('已暂停：等待人工审批', 'Paused: waiting for approval');
     case 'paused_error':
       return tr('已暂停：执行出错', 'Paused: an error occurred');
+    case 'paused_ask':
+      return tr('已暂停：AI 有问题想问你', 'Paused: the AI has a question for you');
     case 'done': {
       const passed = live.filter((s) => s.status === 'passed').length;
       const adj = voyage.plan_iteration ?? 0;
@@ -98,6 +100,7 @@ export function activityText(voyage: VoyageDetail, steps: VoyageStepRead[]): str
 export function activityDot(status: VoyageStatus): { color: string; pulse: boolean } {
   switch (status) {
     case 'paused_gate':
+    case 'paused_ask':
       return { color: 'var(--warn-tx)', pulse: false };
     case 'paused_error':
     case 'failed':
@@ -117,12 +120,15 @@ export function ActivityBar({
   onOpenGates,
   onResume,
   resuming,
+  onReply,
 }: {
   voyage: VoyageDetail;
   steps: VoyageStepRead[];
   onOpenGates: () => void;
   onResume?: () => void;
   resuming?: boolean;
+  /** paused_ask 时「去回复」按钮的回调（滚动/聚焦到对话输入框） */
+  onReply?: () => void;
 }) {
   const status = voyage.status;
   const dot = activityDot(status);
@@ -160,6 +166,28 @@ export function ActivityBar({
           <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onOpenGates}>
             {tr('前往审批', 'Go to approvals')}
           </button>
+        </div>
+      )}
+      {status === 'paused_ask' && (
+        <div
+          className="row gap8"
+          style={{
+            marginTop: 12,
+            padding: '10px 14px',
+            background: 'var(--warn-bg)',
+            color: 'var(--warn-tx)',
+            borderRadius: 10,
+            fontSize: 12.5,
+            fontWeight: 600,
+          }}
+        >
+          <Icon name="sparkle" size={15} />
+          {tr('AI 有问题想问你，回复后任务会继续。', 'The AI has a question — reply to continue the task.')}
+          {onReply && (
+            <button className="btn btn-primary sm" style={{ marginLeft: 'auto' }} onClick={onReply}>
+              {tr('去回复', 'Reply')}
+            </button>
+          )}
         </div>
       )}
       {status === 'paused_error' && (

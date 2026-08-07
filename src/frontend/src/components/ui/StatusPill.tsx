@@ -36,6 +36,7 @@ export const STATUS: Record<string, StatusMeta> = {
   replanning: { cls: 'st-drafted', zh: '调整计划', en: 'replanning' },
   paused_gate: { cls: 'st-candidate', zh: '等待审批', en: 'paused' },
   paused_error: { cls: 'st-failed', zh: '出错暂停', en: 'error' },
+  paused_ask: { cls: 'st-candidate', zh: '等你回复', en: 'waiting for you' },
   failed: { cls: 'st-failed', zh: '失败', en: 'failed' },
   cancelled: { cls: 'st-rejected', zh: '已取消', en: 'cancelled' },
   // —— Voyage 步骤（任务板，docs/voyage-loop.md §4） ——
@@ -44,6 +45,7 @@ export const STATUS: Record<string, StatusMeta> = {
   // —— Experiment 状态（M4 Experiment Lab） ——
   awaiting_gate: { cls: 'st-candidate', zh: '等待审批', en: 'awaiting gate' },
   setup: { cls: 'st-drafted', zh: '建环境', en: 'setup' },
+  waiting_user: { cls: 'st-candidate', zh: '等你回复', en: 'waiting for you' },
   reporting: { cls: 'st-reviewed', zh: '报告中', en: 'reporting' },
   succeeded: { cls: 'st-implemented', zh: '成功', en: 'succeeded' },
   // —— Manuscript 状态（M5-B Paper Writer） ——

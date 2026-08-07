@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
@@ -28,8 +28,11 @@ import {
   stepMarker,
   stepTokenCount,
 } from './shared/stepUtils';
-import { TaskTerminal } from './shared/terminal';
+import { TaskTerminal, type TerminalExtraEntry } from './shared/terminal';
 import { useVoyageChannel } from './shared/useVoyageChannel';
+import { openAskOf, useVoyageMessages } from './shared/useVoyageMessages';
+import { messageNode } from './shared/AskBlock';
+import { ConsoleComposer } from './shared/ConsoleComposer';
 
 /* ============================================================
    /voyages/:id — 任务详情：循环感知的活动状态 + 步骤时间线 + SSE 实时。
@@ -148,8 +151,25 @@ export function VoyageDetailPage() {
 
   const active = !!voyage && !VOYAGE_TERMINAL.has(voyage.status);
 
-  // 终端 + SSE 实时通道（状态/步骤事件自动合并进 ['voyage', id] 缓存）
-  const { terminal, live, clearTerminal } = useVoyageChannel(id, active);
+  // 对话流（用户建议 / AI 提问）+ 终端 SSE 实时通道
+  const { messages, handleExtraEvent } = useVoyageMessages(id);
+  const { terminal, live, clearTerminal } = useVoyageChannel(id, active, {
+    onExtraEvent: handleExtraEvent,
+  });
+  const openAsk = openAskOf(voyage, messages);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const extraEntries = useMemo<TerminalExtraEntry[]>(() => {
+    const out: TerminalExtraEntry[] = [];
+    for (const m of messages) {
+      const node = messageNode(m);
+      if (node) out.push({ id: m.id, at: m.created_at, node });
+    }
+    return out;
+  }, [messages]);
+  const focusComposer = () => {
+    composerRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    composerRef.current?.focus();
+  };
 
   if (isLoading) {
     return (
@@ -253,6 +273,7 @@ export function VoyageDetailPage() {
           onOpenGates={() => openGates(null)}
           onResume={() => resumeMutation.mutate()}
           resuming={resumeMutation.isPending}
+          onReply={focusComposer}
         />
       </div>
 
@@ -329,8 +350,21 @@ export function VoyageDetailPage() {
         </Timeline>
       )}
 
-      {/* 运行日志终端：结构化日志 + 大模型流式输出，常驻显示 */}
-      <TaskTerminal state={terminal} live={live} onClear={clearTerminal} />
+      {/* 运行日志终端：结构化日志 + 大模型流式输出 + 对话混排，常驻显示 */}
+      <TaskTerminal
+        state={terminal}
+        live={live}
+        onClear={clearTerminal}
+        extraEntries={extraEntries}
+        footer={
+          <ConsoleComposer
+            voyageId={id}
+            openAsk={openAsk}
+            disabled={!!voyage && VOYAGE_TERMINAL.has(voyage.status)}
+            inputRef={composerRef}
+          />
+        }
+      />
     </div>
   );
 }

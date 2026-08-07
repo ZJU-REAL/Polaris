@@ -1,13 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { MetricChart, type MetricChartSeries } from '../../components/ui/MetricChart';
-import { subscribeSse } from '../../lib/sse';
 import { fmtDuration, fmtTime } from '../../lib/format';
 import {
-  api,
   type ExperimentDetail,
   type ExperimentRunRead,
   type IterationDecision,
@@ -23,129 +21,8 @@ import { stopReasonText } from './shared';
    - 迭代时间线：每轮一卡（#seq、状态、主指标 + 与上轮差值、
      AI 决定徽章 improve/debug/stop、reflection 三字段折叠）
    - 全部指标曲线（POLARIS_METRIC by step）
-   - 实时日志（GET logs 初始 500 行 + SSE 追加，跟踪最新一轮）
+   实时日志已并入运行台（ConsoleTab 的「脚本输出」源）。
    ============================================================ */
-
-const MAX_LOG_LINES = 2000;
-
-/** SSE data → 日志行数组：兼容 JSON {line}/{lines} 与纯文本。 */
-function parseLogEvent(data: string): string[] {
-  try {
-    const p: unknown = JSON.parse(data);
-    if (p && typeof p === 'object') {
-      const rec = p as { line?: unknown; lines?: unknown; message?: unknown };
-      if (typeof rec.line === 'string') return [rec.line];
-      if (Array.isArray(rec.lines)) return rec.lines.filter((l): l is string => typeof l === 'string');
-      if (typeof rec.message === 'string') return [rec.message];
-      return [];
-    }
-    if (typeof p === 'string') return [p];
-  } catch {
-    /* 非 JSON：按纯文本处理 */
-  }
-  return data.split('\n').filter((l) => l !== '');
-}
-
-function LogPanel({ expId, active }: { expId: string; active: boolean }) {
-  const [lines, setLines] = useState<string[]>([]);
-  const [truncated, setTruncated] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [live, setLive] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-
-  // 初始拉取尾部 500 行
-  useEffect(() => {
-    let cancelled = false;
-    setLines([]);
-    setLoadError(false);
-    api
-      .getExperimentLogs(expId, { tail: 500 })
-      .then((r) => {
-        if (cancelled) return;
-        setLines(r.lines.slice(-MAX_LOG_LINES));
-        setTruncated(r.truncated);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [expId]);
-
-  // 活动状态：SSE 追加
-  useEffect(() => {
-    if (!active) return;
-    const stop = subscribeSse(`/experiments/${expId}/logs/stream`, {
-      onOpen: () => setLive(true),
-      onError: () => setLive(false),
-      onEvent: (_event, data) => {
-        const next = parseLogEvent(data);
-        if (next.length > 0) setLines((l) => [...l, ...next].slice(-MAX_LOG_LINES));
-      },
-    });
-    return () => {
-      stop();
-      setLive(false);
-    };
-  }, [expId, active]);
-
-  // 自动滚底（未暂停时）
-  useEffect(() => {
-    if (paused) return;
-    const box = boxRef.current;
-    if (box) box.scrollTop = box.scrollHeight;
-  }, [lines, paused]);
-
-  return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <div className="row card-pad" style={{ justifyContent: 'space-between', paddingBottom: 12 }}>
-        <span className="section-h">
-          <Icon name="file" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('实时日志', 'Live log')} <span className="en-label" style={{ fontSize: 11 }}>run.log · {tr('跟踪最新一轮', 'follows the latest run')}</span>
-        </span>
-        <div className="row gap8">
-          {live && (
-            <span className="pill sm" style={{ background: 'var(--ok-bg)', color: 'var(--ok-tx)' }}>
-              <span className="dot pulse" />
-              LIVE
-            </span>
-          )}
-          <button className="btn btn-soft sm" onClick={() => setPaused((p) => !p)}>
-            <Icon name={paused ? 'play' : 'pause'} size={12} />
-            {paused ? tr('恢复滚动', 'Resume scroll') : tr('暂停滚动', 'Pause scroll')}
-          </button>
-        </div>
-      </div>
-      <div
-        ref={boxRef}
-        className="scroll"
-        style={{
-          fontFamily: 'var(--mono)',
-          fontSize: 11,
-          lineHeight: 1.6,
-          background: 'var(--surface-2)',
-          borderTop: '0.5px solid var(--border)',
-          padding: '10px 16px',
-          height: 320,
-          overflowY: 'auto',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-        }}
-      >
-        {truncated && <div style={{ color: 'var(--text-4)' }}>{tr('…（更早日志已截断，仅显示尾部）', '… (earlier log truncated, showing the tail)')}</div>}
-        {loadError && lines.length === 0 ? (
-          <div style={{ color: 'var(--text-4)' }}>{tr('暂无日志（尚未开始运行，或后端不可用）', 'No logs yet (not running, or backend unavailable)')}</div>
-        ) : lines.length === 0 ? (
-          <div style={{ color: 'var(--text-4)' }}>{tr('等待日志输出…', 'Waiting for log output…')}</div>
-        ) : (
-          lines.map((l, i) => <div key={i}>{l}</div>)
-        )}
-      </div>
-    </div>
-  );
-}
 
 /* ---------------- 迭代小件 ---------------- */
 
@@ -391,7 +268,7 @@ function IterationStateBar({ exp, runCount }: { exp: ExperimentDetail; runCount:
 
 /* ---------------- Tab 主体 ---------------- */
 
-export function RunTab({ exp, active }: { exp: ExperimentDetail; active: boolean }) {
+export function RunTab({ exp }: { exp: ExperimentDetail }) {
   const runs = [...(exp.runs ?? [])].sort((a, b) => a.seq - b.seq);
   const primary = exp.plan?.primary_metric;
   const direction: PrimaryMetric['direction'] = primary?.direction === 'minimize' ? 'minimize' : 'maximize';
@@ -490,9 +367,6 @@ export function RunTab({ exp, active }: { exp: ExperimentDetail; active: boolean
           <MetricChart series={allSeries} />
         </div>
       )}
-
-      {/* 实时日志 */}
-      <LogPanel expId={exp.id} active={active} />
     </div>
   );
 }

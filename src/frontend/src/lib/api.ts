@@ -307,6 +307,7 @@ export type VoyageStatus =
   | 'replanning'
   | 'paused_gate'
   | 'paused_error'
+  | 'paused_ask'
   | 'done'
   | 'failed'
   | 'cancelled';
@@ -445,6 +446,51 @@ export interface VoyageDetail extends VoyageRead {
   skills?: { slug: string; name: string; kind: string; version: number; target: string }[];
   /** 计划调整历史（无调整为 [] / 缺失） */
   plan_history?: VoyagePlanEvent[] | null;
+  /** 当前等回答的 AI 提问（paused_ask 时非空） */
+  open_ask?: VoyageMessageRead | null;
+}
+
+// —— 任务对话流：用户建议 / AI 提问与播报（docs/task-system.md）——
+
+export type VoyageMessageKind = 'chat' | 'ask' | 'answer' | 'info';
+
+/** ask 的候选选项（标签 zh/en 两份，渲染处按语言取）。 */
+export interface VoyageAskOption {
+  id: string;
+  zh?: string;
+  en?: string;
+  [extra: string]: unknown;
+}
+
+export interface VoyageMessagePayload {
+  /** kind=ask：提问类别（fatal_step / no_progress / done_criteria / budget / action_ask …） */
+  ask_kind?: string;
+  /** kind=ask：诊断等上下文（结构随 ask_kind 而变，防御式渲染） */
+  context?: Record<string, unknown> | null;
+  /** kind=ask：候选选项 */
+  options?: VoyageAskOption[] | null;
+  /** kind=answer：选中的选项 id */
+  choice?: string | null;
+  [extra: string]: unknown;
+}
+
+export interface VoyageMessageRead {
+  id: string;
+  run_id: string;
+  /** 流内定序 */
+  seq: number;
+  role: 'user' | 'agent';
+  kind: VoyageMessageKind;
+  author_id: string | null;
+  text: string;
+  payload: VoyageMessagePayload | null;
+  /** 仅 kind=ask：open | answered | consumed | superseded（其余恒 none） */
+  status: string;
+  reply_to: string | null;
+  step_id: string | null;
+  /** 仅 kind=chat：被 AI 采纳的时间 */
+  consumed_at: string | null;
+  created_at: string;
 }
 
 /** 任务终端历史日志的一条：结构化日志行（log）或大模型完整输出（llm）。 */
@@ -1702,6 +1748,7 @@ export type ExperimentStatus =
   | 'awaiting_gate'
   | 'setup'
   | 'running'
+  | 'waiting_user'
   | 'reporting'
   | 'done'
   | 'failed'
@@ -3097,6 +3144,23 @@ export const api = {
   /** 任务终端历史日志（结构化日志 + 大模型完整输出），供刷新后 / 事后回看。 */
   getVoyageLogs(id: string): Promise<VoyageTerminalLogRead[]> {
     return request<VoyageTerminalLogRead[]>(`/voyages/${id}/logs`);
+  },
+  /** 任务对话流（用户建议 / AI 提问与播报），按 seq 升序。 */
+  listVoyageMessages(id: string, afterSeq?: number): Promise<VoyageMessageRead[]> {
+    const qs = typeof afterSeq === 'number' ? `?after_seq=${afterSeq}` : '';
+    return request<VoyageMessageRead[]>(`/voyages/${id}/messages${qs}`);
+  },
+  /** 给运行中的任务发一条建议（非阻塞：AI 在下一个决策点参考）。 */
+  postVoyageMessage(id: string, text: string): Promise<VoyageMessageRead> {
+    return requestJson<VoyageMessageRead>(`/voyages/${id}/messages`, 'POST', { text });
+  },
+  /** 回答 AI 的提问并恢复任务（choice='abort' 表示放弃）。 */
+  answerVoyageAsk(
+    id: string,
+    messageId: string,
+    answer: { text?: string; choice?: string; payload?: Record<string, unknown> },
+  ): Promise<VoyageMessageRead> {
+    return requestJson<VoyageMessageRead>(`/voyages/${id}/asks/${messageId}/answer`, 'POST', answer);
   },
 
   // —— Gates ——

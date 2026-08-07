@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { Timeline, TimelineItem } from '../../components/ui/Timeline';
 import { toast } from '../../components/ui/Toast';
 import { Markdown } from '../../lib/markdown';
 import { useShell } from '../../app/AppShell';
@@ -20,28 +19,28 @@ import {
   type ExperimentDataset,
   type ExperimentDetail,
   type ExperimentPlan,
-  type VoyageStepRead,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { budgetText, HypChip } from './shared';
+import { ConsoleTab } from './ConsoleTab';
 import { RunTab } from './RunTab';
 import { CodeTab } from './CodeTab';
-import { SysinfoPanel } from '../../components/ui/SysinfoPanel';
 import { ExperimentFigures } from './ExperimentFigures';
 
 /* ============================================================
-   /experiment/:id — 实验详情：Plan / Setup / Run / Report 四 Tab。
-   数据源 GET /experiments/{id}（活动状态 5s 轮询 + WS invalidate），
-   Setup 复用关联 voyage 的 steps，Run 内嵌 SSE 日志与指标图。
+   /experiment/:id — 实验详情：运行台 / 计划 / 指标与轮次 / 代码 / 报告。
+   数据源 GET /experiments/{id}（活动状态 5s 轮询 + WS invalidate）；
+   运行台（ConsoleTab）是主视图：任务地图 + 终端对话 + 用户干预入口，
+   原环境 Tab 的服务器状态并入运行台概览、搭建步骤并入任务地图。
    ============================================================ */
 
-type TabKey = 'plan' | 'setup' | 'run' | 'code' | 'report';
+type TabKey = 'console' | 'plan' | 'run' | 'code' | 'report';
 
 /* 文案在渲染处 tr()，避免模块级求值不随语言切换 */
 const TABS: { k: TabKey; zh: string; en: string }[] = [
+  { k: 'console', zh: '运行台', en: 'Console' },
   { k: 'plan', zh: '计划', en: 'Plan' },
-  { k: 'setup', zh: '环境', en: 'Setup' },
-  { k: 'run', zh: '运行与迭代', en: 'Run & iterate' },
+  { k: 'run', zh: '指标与轮次', en: 'Metrics & runs' },
   { k: 'code', zh: '代码', en: 'Code' },
   { k: 'report', zh: '报告', en: 'Report' },
 ];
@@ -506,143 +505,6 @@ function PlanTab({ exp, onOpenGates }: { exp: ExperimentDetail; onOpenGates: () 
   );
 }
 
-/* ---------------- Setup ---------------- */
-
-const SETUP_STEP_RE = /setup|env|smoke|ssh|code|file|install|provision|venv|环境|冒烟|代码|连接/i;
-
-function stepMarker(step: VoyageStepRead): { bg: string; color: string } {
-  if (step.verdict && !step.verdict.passed) return { bg: 'var(--danger-bg)', color: 'var(--danger-tx)' };
-  switch (step.status) {
-    case 'done':
-      return { bg: 'var(--ok-bg)', color: 'var(--ok-tx)' };
-    case 'running':
-      return { bg: 'var(--accent)', color: '#fff' };
-    case 'failed':
-      return { bg: 'var(--danger-bg)', color: 'var(--danger-tx)' };
-    default:
-      return { bg: 'var(--surface-2)', color: 'var(--text-3)' };
-  }
-}
-
-function SetupTab({ exp }: { exp: ExperimentDetail }) {
-  const navigate = useNavigate();
-  const vid = exp.voyage_id;
-  const { data: voyage, isLoading, isError } = useQuery({
-    queryKey: ['voyage', vid],
-    queryFn: () => api.getVoyage(vid!),
-    enabled: !!vid,
-    retry: false,
-  });
-  // 实验所在服务器的系统状态：搭建/运行期间实时刷新（20s）
-  const sysActive = !EXPERIMENT_TERMINAL.has(exp.status);
-  const sysinfo = useQuery({
-    queryKey: ['experiment', exp.id, 'sysinfo'],
-    queryFn: () => api.getExperimentSysinfo(exp.id),
-    retry: false,
-    refetchInterval: sysActive ? 20_000 : false,
-  });
-  const sysinfoCard = (
-    <div className="card card-pad" style={{ marginBottom: 18 }}>
-      <span className="section-h" style={{ marginBottom: 10 }}>
-        <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-        {tr('服务器状态', 'Server status')}
-        {exp.server_host && <span className="mono muted" style={{ fontSize: 11 }}>{exp.server_host}</span>}
-      </span>
-      <SysinfoPanel
-        loading={sysinfo.isLoading}
-        error={sysinfo.isError}
-        info={sysinfo.data}
-        onRefresh={() => void sysinfo.refetch()}
-      />
-    </div>
-  );
-
-  if (!vid) {
-    return (
-      <div className="card">
-        <EmptyState
-          compact
-          icon="server"
-          title={tr('尚未关联任务', 'No linked task yet')}
-        />
-      </div>
-    );
-  }
-  if (isLoading) return <div className="empty" style={{ padding: 40 }}>{tr('加载环境搭建步骤…', 'Loading setup steps…')}</div>;
-  if (isError || !voyage) {
-    return (
-      <div className="card">
-        <EmptyState
-          compact
-          icon="x"
-          title={tr('无法加载关联任务', 'Could not load the linked task')}
-          desc={tr('后端不可用或接口尚未就绪。', 'Backend unavailable or the API is not ready yet.')}
-        />
-      </div>
-    );
-  }
-
-  const all = [...(voyage.steps ?? [])].sort((a, b) => a.seq - b.seq);
-  const matched = all.filter((s) => SETUP_STEP_RE.test(`${s.action} ${s.title}`));
-  const steps = matched.length > 0 ? matched : all;
-
-  return (
-    <div className="fadeup" style={{ maxWidth: 860 }}>
-      {sysinfoCard}
-      <div className="row gap8" style={{ marginBottom: 12, justifyContent: 'space-between' }}>
-        <span className="section-h">
-          <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-          {tr('环境搭建步骤', 'Setup steps')} <span className="en-label" style={{ fontSize: 11 }}>{tr('来自关联任务', 'from the linked task')}</span>
-        </span>
-        <button
-          className="btn btn-ghost sm mono"
-          style={{ fontSize: 11 }}
-          onClick={() => navigate(`/voyages/${vid}`)}
-        >
-          voyage {vid.slice(0, 8)} →
-        </button>
-      </div>
-      {steps.length === 0 ? (
-        <div className="card empty" style={{ padding: 32, marginBottom: 24 }}>{tr('任务尚未产生步骤', 'The task has no steps yet')}</div>
-      ) : (
-        <div style={{ marginBottom: 24 }}>
-          <Timeline>
-            {steps.map((s, i) => {
-              const m = stepMarker(s);
-              return (
-                <TimelineItem key={s.id} marker={s.seq} markerBg={m.bg} markerColor={m.color} last={i === steps.length - 1}>
-                  <div className="card" style={{ padding: '12px 16px' }}>
-                    <div className="row gap8" style={{ flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 13, fontWeight: 650 }}>{s.title}</span>
-                      <span className="tag mono" style={{ fontSize: 10.5 }}>{s.action}</span>
-                      <div style={{ marginLeft: 'auto' }}>
-                        <StatusPill status={s.status} sm />
-                      </div>
-                    </div>
-                    {s.started_at && (
-                      <div className="mono muted" style={{ fontSize: 11, marginTop: 7 }}>
-                        {fmtTime(s.started_at)} · {s.finished_at ? `${tr('耗时', 'took')} ${fmtDuration(s.started_at, s.finished_at)}` : tr('进行中', 'in progress')}
-                      </div>
-                    )}
-                    {/* 同任务详情页：reason 可能是一整条没有断点的长 URL，
-                        默认 overflow-wrap 下会溢出盒子而不是换行 */}
-                    {s.verdict && !s.verdict.passed && s.verdict.reason && (
-                      <div style={{ marginTop: 7, fontSize: 12, color: 'var(--danger-tx)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
-                        {tr('自动校验：', 'Auto check: ')}{s.verdict.reason}
-                      </div>
-                    )}
-                  </div>
-                </TimelineItem>
-              );
-            })}
-          </Timeline>
-        </div>
-      )}
-
-    </div>
-  );
-}
-
 /* ---------------- Report ---------------- */
 
 function ReportTab({ exp }: { exp: ExperimentDetail }) {
@@ -692,7 +554,7 @@ export function ExperimentDetailPage() {
   const queryClient = useQueryClient();
   const { openGates } = useShell();
   const { currentProjectId } = useProject();
-  const [tab, setTab] = useState<TabKey>('plan');
+  const [tab, setTab] = useState<TabKey>('console');
   const defaultedRef = useRef(false);
 
   const { data: exp, isLoading, isError, error, refetch } = useQuery({
@@ -704,14 +566,13 @@ export function ExperimentDetailPage() {
       q.state.data && !EXPERIMENT_TERMINAL.has(q.state.data.status) ? 5_000 : false,
   });
 
-  // 首次加载后按状态定位默认 Tab
+  // 首次加载后按状态定位默认 Tab：活动态一律进运行台（干预入口在那里），
+  // 完成且有报告的进报告页
   useEffect(() => {
     if (!exp || defaultedRef.current) return;
     defaultedRef.current = true;
-    if (exp.status === 'setup') setTab('setup');
-    else if (exp.status === 'running') setTab('run');
-    else if (exp.status === 'reporting' || (exp.status === 'done' && exp.report)) setTab('report');
-    else if (exp.status === 'done' || exp.status === 'failed') setTab('run');
+    if (exp.status === 'done' && exp.report) setTab('report');
+    else setTab('console');
   }, [exp]);
 
   const cancelMutation = useMutation({
@@ -833,9 +694,9 @@ export function ExperimentDetailPage() {
         ))}
       </div>
 
+      {tab === 'console' && <ConsoleTab exp={exp} />}
       {tab === 'plan' && <PlanTab exp={exp} onOpenGates={() => openGates(null)} />}
-      {tab === 'setup' && <SetupTab exp={exp} />}
-      {tab === 'run' && <RunTab exp={exp} active={active} />}
+      {tab === 'run' && <RunTab exp={exp} />}
       {tab === 'code' && <CodeTab exp={exp} active={active} />}
       {tab === 'report' && <ReportTab exp={exp} />}
     </div>

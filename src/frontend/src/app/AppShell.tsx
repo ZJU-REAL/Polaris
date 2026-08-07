@@ -563,6 +563,12 @@ export function AppShell() {
           toast(tr('任务失败', 'Task failed'), 'error');
           notifyDesktop(tr('任务失败', 'Task failed'));
         }
+      } else if (msg.type === 'voyage.ask') {
+        void queryClient.invalidateQueries({ queryKey: ['voyages'] });
+        void queryClient.invalidateQueries({ queryKey: ['voyage', msg.voyage_id] });
+        void queryClient.invalidateQueries({ queryKey: ['voyage-messages', msg.voyage_id] });
+        toast(`${tr('AI 有问题想问你', 'The AI has a question for you')}：${msg.question}`, 'info');
+        notifyDesktop(tr('AI 有问题想问你', 'The AI has a question for you'), msg.question);
       } else if (msg.type === 'review.message') {
         // 正在看该 session 的组件共享此 query cache → 直接乐观追加（按 id 去重）
         queryClient.setQueryData<ReviewMessageRead[]>(['session-messages', msg.session_id], (old) =>
@@ -597,6 +603,9 @@ export function AppShell() {
         if (msg.status === 'awaiting_gate') {
           toast(tr('实验等待预算审批', 'Experiment awaiting budget approval'), 'info');
           notifyDesktop(tr('实验等待预算审批', 'Experiment awaiting budget approval'));
+        } else if (msg.status === 'waiting_user') {
+          toast(tr('实验暂停：AI 有问题想问你', 'Experiment paused — the AI has a question'), 'info');
+          notifyDesktop(tr('实验暂停：AI 有问题想问你', 'Experiment paused — the AI has a question'));
         } else if (msg.status === 'running') {
           toast(tr('实验正式运行中', 'Experiment running'), 'info');
         } else if (msg.status === 'done') {
