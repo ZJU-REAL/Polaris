@@ -151,7 +151,11 @@ def test_plan_edit_actions_scoped_to_run_domain():
     assert any(a.startswith("experiment.") for a in allowed)
     assert not any(a.startswith("wiki.") for a in allowed)
     assert not any(a.startswith("daily.") for a in allowed)
-    assert "sleep" in allowed  # 通用动作不分领域
+    assert "sleep" in allowed  # 无副作用的通用动作不分领域
+    # 内容型通用动作对领域计划禁用（#373）：navigator 曾拿它们"修远端文件"/
+    # "顶替分析步骤"，产出看似完成实则堵死完成标准
+    assert "llm.complete" not in allowed
+    assert "artifact.write" not in allowed
 
     # 校验器按动作域拒绝越域步骤
     step = {
@@ -581,3 +585,62 @@ async def test_llm_multimodal_stage_also_streams(app):
     assert kinds[0] == "llm_start" and kinds[-1] == "llm_end"
     deltas = [d["delta"] for _v, e, d in bus.voyage_events if e == "llm_delta"]
     assert deltas and "".join(deltas) == result.content
+
+
+async def test_llm_stream_retries_transient_network_error(app):
+    """流式路径网络瞬断（ReadTimeout/ConnectError）整段重试而不是打失败步骤（#373）：
+    重试会重新广播 llm_start（前端另起输出块），最终 content 完整。"""
+    import httpx
+
+    from app.core.llm.base import Message
+    from app.core.llm.fake import FakeProvider
+    from app.core.llm.router import LLMRouter
+
+    class _FlakyProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def stream(self, messages, *, model, temperature=0.7, max_tokens=None, **kw):
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.ReadTimeout("")  # str() 为空的典型网络异常
+            async for chunk in super().stream(
+                messages, model=model, temperature=temperature, max_tokens=max_tokens
+            ):
+                yield chunk
+
+    bus = RecordingBus()
+    provider = _FlakyProvider()
+    router = LLMRouter()
+    router.event_bus = bus
+    router.override_provider(provider)
+    vid = uuid.uuid4()
+
+    result = await router.complete(
+        "navigator", [Message(role="user", content="规划")], voyage_id=vid
+    )
+    assert provider.calls == 2  # 第一次超时，第二次成功
+    assert result.content
+    kinds = [e for _v, e, _d in bus.voyage_events]
+    assert kinds.count("llm_start") == 2 and kinds.count("llm_end") == 2
+
+
+def test_error_text_never_empty():
+    """异常文本兜底（#373）：httpx.ReadTimeout 的 str() 是空串，不能把
+    「ReadTimeout: 」这种零信息文本放进给用户的提问里。"""
+    import httpx
+
+    from app.agents.voyage.errorsig import error_text
+
+    assert error_text(ValueError("boom")) == "ValueError: boom"
+    empty = error_text(httpx.ReadTimeout(""))
+    assert empty.startswith("ReadTimeout") and len(empty) > len("ReadTimeout: ")
+    # cause 链回退
+    try:
+        try:
+            raise ConnectionError("connection refused")
+        except ConnectionError as ce:
+            raise RuntimeError("") from ce
+    except RuntimeError as e:
+        assert "connection refused" in error_text(e)

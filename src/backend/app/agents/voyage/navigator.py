@@ -637,8 +637,11 @@ def _expand_workflow(slug: str, workflows: list[dict[str, Any]]) -> list[dict[st
     return validate_steps({"steps": entry.get("steps") or []})
 
 
-# 计划调整时不分领域都可用的通用动作（推理/等待类，无副作用域）
+# 纯通用计划（无领域前缀）调整时可用的通用动作
 _GENERIC_EDIT_ACTIONS = frozenset({"sleep", "llm.complete", "artifact.write"})
+# 领域计划（experiment.* 等）调整时唯一放行的通用动作：无副作用、不产出"看似完成"
+# 的内容。llm.complete/artifact.write 见 allowed_edit_actions 内注释。
+_DOMAIN_SAFE_GENERIC_ACTIONS = frozenset({"sleep"})
 
 
 def allowed_edit_actions(run: VoyageRun) -> frozenset[str]:
@@ -660,7 +663,11 @@ def allowed_edit_actions(run: VoyageRun) -> frozenset[str]:
     if not prefixes:
         return registry
     allowed = {a for a in registry if any(a.startswith(p) for p in prefixes)}
-    allowed |= _GENERIC_EDIT_ACTIONS & registry
+    # 领域计划只放行无副作用的通用动作（sleep）。内容型通用动作（llm.complete /
+    # artifact.write）曾被 Navigator 拿来"修远端文件"/"顶替分析步骤"——既执行不了
+    # 任何东西，还把完成标准（依赖领域动作产出的 iterate 指标）永久堵死；prompt 里
+    # 写明语义拦不住（#363 上线后线上仍复发），改为结构性禁止。
+    allowed |= _DOMAIN_SAFE_GENERIC_ACTIONS & registry
     return frozenset(allowed)
 
 

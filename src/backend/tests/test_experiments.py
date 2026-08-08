@@ -1216,9 +1216,10 @@ async def test_path_violation_rejected(client, queue_stub, fake_ssh, bus_recorde
     resp = await client.get(f"/api/voyages/{voyage_id}?include_obsolete=true", headers=headers)
     voyage = resp.json()
     assert voyage["status"] == "paused_ask"
-    # fake navigator 的替代步骤能通过，最终停在完成标准终检的提问上
-    # （真实场景会在更早的调整超限处停下，同样是 paused_ask）
-    assert voyage["open_ask"]["payload"]["ask_kind"] == "done_criteria"
+    # fake navigator 的替代步骤是 llm.complete——领域计划禁用内容型通用动作（#373）
+    # 后编辑被校验拒绝，转 replan_error 提问等用户指示（同样是 paused_ask 停住，
+    # 越界文件依然一个都没落盘）
+    assert voyage["open_ask"]["payload"]["ask_kind"] == "replan_error"
     setup_step = next(s for s in voyage["steps"] if s["action"] == "experiment.setup")
     assert "越界" in setup_step["observation"]["error"]
     assert setup_step["attempt"] == 2  # 执行类错误带诊断原地重试过一次

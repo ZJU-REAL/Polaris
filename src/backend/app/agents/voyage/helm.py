@@ -6,6 +6,7 @@
 from typing import Any
 
 from app.agents.voyage.actions import ActionContext, get_action
+from app.agents.voyage.errorsig import error_text
 
 
 class Helm:
@@ -17,4 +18,4 @@ class Helm:
         try:
             return await action(ctx, step_def.get("params") or {})
         except Exception as e:  # noqa: BLE001 —— 步骤失败要落 observation 而非炸掉状态机
-            return {"error": f"{type(e).__name__}: {e}"}
+            return {"error": error_text(e)}

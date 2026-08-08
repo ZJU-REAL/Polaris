@@ -9,6 +9,23 @@ from __future__ import annotations
 import re
 
 
+def error_text(e: BaseException) -> str:
+    """异常 → 人可读文本，空 str() 兜底。
+
+    httpx.ReadTimeout 等异常的 str() 是空串，直接拼 f"{type}: {e}" 会产出
+    「ReadTimeout: 」——用户被提问"怎么处理？"却拿到零信息（线上实测，用户只能
+    回"详细原因"）。空时依次回退：cause 链 → 异常全名标注。"""
+    name = type(e).__name__
+    detail = str(e).strip()
+    if not detail and e.__cause__ is not None:
+        cause = e.__cause__
+        cause_str = str(cause).strip()
+        detail = f"{type(cause).__name__}: {cause_str}" if cause_str else type(cause).__name__
+    if detail:
+        return f"{name}: {detail}"
+    return f"{name}（{type(e).__module__}.{name}，异常未附带详细信息）"
+
+
 def error_signature(err_text: str) -> str:
     """报错文本 → 规范化签名（数字/十六进制/路径抹平，取 traceback 尾部关键行）。"""
     lines = [ln.strip() for ln in (err_text or "").strip().splitlines() if ln.strip()]

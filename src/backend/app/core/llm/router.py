@@ -7,6 +7,7 @@
   另带 library_id 记到方向库账上（P6 库级月度预算的依据）。
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -126,6 +127,8 @@ STREAM_STAGES = frozenset(
     {"navigator", "debate", "experiment", "writing", "proposal", "review", "librarian"}
 )
 _STREAM_FLUSH_CHARS = 80  # token 增量攒到此长度再广播一段（节流，防刷爆 pub/sub）
+_STREAM_RETRY_ATTEMPTS = 3  # 流式请求网络瞬断整段重试次数
+_STREAM_RETRY_BASE_SECONDS = 2.0
 
 # 一次调用能等多久、重试几次，按环节分两档——两者的合理耐心程度差一个数量级。
 #
@@ -515,41 +518,72 @@ class LLMRouter:
         节流见 _STREAM_FLUSH_CHARS：攒够长度再发一段，避免每 token 刷爆 pub/sub；始终
         返回完整 content，对调用方与 complete() 等价（流式 provider 拿不到精确 usage，
         由 _ensure_usage 估算）。
+
+        网络瞬断重试：非流式路径的 _post_with_retry 会自动重试 TransportError，流式
+        路径以前没有——LLM 网关一次 ReadTimeout 就把整个任务步骤打失败（线上实测，
+        冒烟/分析步接连因此转向用户提问）。这里整段重来：每次重试重新广播 llm_start
+        （前端会另起一个输出块），退避后拉新流，收齐才算成功。
         """
+        import httpx
+
+        stream_extra: dict[str, Any] = {"effort": effort} if effort is not None else {}
         collected: list[str] = []
-        buf: list[str] = []
-        buf_len = 0
-        seq = 0
+        last_exc: Exception | None = None
+        for attempt in range(_STREAM_RETRY_ATTEMPTS):
+            collected = []
+            buf: list[str] = []
+            buf_len = 0
+            seq = 0
 
-        async def flush() -> None:
-            nonlocal buf, buf_len, seq
-            if not buf:
-                return
-            await self.event_bus.publish_voyage_event(
-                voyage_id, "llm_delta", {"stage": stage, "delta": "".join(buf), "seq": seq}
-            )
-            seq += 1
-            buf, buf_len = [], 0
+            async def flush() -> None:
+                nonlocal buf, buf_len, seq
+                if not buf:
+                    return
+                await self.event_bus.publish_voyage_event(
+                    voyage_id, "llm_delta", {"stage": stage, "delta": "".join(buf), "seq": seq}
+                )
+                seq += 1
+                buf, buf_len = [], 0
 
-        await self.event_bus.publish_voyage_event(voyage_id, "llm_start", {"stage": stage})
-        try:
-            stream_extra: dict[str, Any] = {"effort": effort} if effort is not None else {}
-            async for chunk in provider.stream(
-                messages,
-                model=route.model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                images=images,
-                **stream_extra,
-            ):
-                collected.append(chunk)
-                buf.append(chunk)
-                buf_len += len(chunk)
-                if buf_len >= _STREAM_FLUSH_CHARS:
-                    await flush()
-            await flush()
-        finally:
+            await self.event_bus.publish_voyage_event(voyage_id, "llm_start", {"stage": stage})
+            try:
+                async for chunk in provider.stream(
+                    messages,
+                    model=route.model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    images=images,
+                    **stream_extra,
+                ):
+                    collected.append(chunk)
+                    buf.append(chunk)
+                    buf_len += len(chunk)
+                    if buf_len >= _STREAM_FLUSH_CHARS:
+                        await flush()
+                await flush()
+            except (httpx.TransportError, httpx.TimeoutException) as e:
+                await self.event_bus.publish_voyage_event(voyage_id, "llm_end", {"stage": stage})
+                last_exc = e
+                if attempt >= _STREAM_RETRY_ATTEMPTS - 1:
+                    raise
+                delay = _STREAM_RETRY_BASE_SECONDS * (2**attempt)
+                logger.warning(
+                    "LLM 流式请求网络错误（%s），%.0fs 后整段重试（%d/%d）",
+                    type(e).__name__,
+                    delay,
+                    attempt + 1,
+                    _STREAM_RETRY_ATTEMPTS,
+                )
+                await asyncio.sleep(delay)
+                continue
+            except BaseException:
+                await self.event_bus.publish_voyage_event(voyage_id, "llm_end", {"stage": stage})
+                raise
             await self.event_bus.publish_voyage_event(voyage_id, "llm_end", {"stage": stage})
+            last_exc = None
+            break
+        if last_exc is not None:  # 理论上到不了（最后一次失败已 raise），防御性兜底
+            raise last_exc
         full_text = "".join(collected)
         # 大模型完整输出落库，供刷新后 / 事后回放（实时增量已通过 llm_delta 走 SSE）。
         if full_text:

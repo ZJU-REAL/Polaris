@@ -40,7 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
-from app.agents.voyage.errorsig import error_signature
+from app.agents.voyage.errorsig import error_signature, error_text
 from app.agents.voyage.runner import Runner, open_runner, parse_container_spec
 from app.core.db import get_sessionmaker
 from app.core.llm.base import Message
@@ -741,7 +741,7 @@ def _guarded(func):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            await _mark_attention(ctx, f"{type(e).__name__}: {e}")
+            await _mark_attention(ctx, error_text(e))
             raise
 
     return wrapper
@@ -1170,6 +1170,12 @@ _SIGNATURE_ASK_AT = 4
 _error_signature = error_signature
 
 
+
+def _err_tail_line(err_text: str) -> str:
+    """报错文本 → 给用户看的尾部关键行（原文，非归一化签名）。"""
+    lines = [ln.strip() for ln in (err_text or "").strip().splitlines() if ln.strip()]
+    return (lines[-1] if lines else "")[:200]
+
 def _render_fix_ledger(ledger: list[dict[str, Any]]) -> str:
     """修复台账 → prompt 注入段（空台账返回空串）。"""
     if not ledger:
@@ -1595,7 +1601,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     if not (isinstance(e, TimeoutError) or ssh_exec.is_connection_error(e)):
                         raise
                     exit_status = -1
-                    err_text = f"{type(e).__name__}: {e}"
+                    err_text = error_text(e)
                     hint = (
                         "依赖安装超时或中断——大概率是依赖太重/编译太慢/下载太慢或连接断开。"
                         "请精简依赖、用更轻的包或预编译 wheel、去掉可选依赖，让安装更快更稳。"
@@ -1695,7 +1701,7 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                             "ask_kind": "fatal_step",
                             "question": (
                                 f"依赖安装反复失败在同一个错误上（连续 {sig_streak} 次）："
-                                f"{signature[:200]}。自动修复没有进展，怎么处理？"
+                                f"{_err_tail_line(err_text)}。自动修复没有进展，怎么处理？"
                             ),
                             "context": {
                                 "error_signature": signature,
@@ -1793,7 +1799,7 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                     if not (isinstance(e, TimeoutError) or ssh_exec.is_connection_error(e)):
                         raise
                     exit_status = -1
-                    err_text = f"{type(e).__name__}: {e}"
+                    err_text = error_text(e)
                     hint = (
                         "冒烟超时或中断——大概率是模型/数据太大、步数太多、装依赖太慢。请把冒烟规模"
                         "改到极小：更小样本/更少步数/更小或更省显存的配置/精简依赖/缩短生成长度，"
@@ -1874,7 +1880,7 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                             "ask_kind": "fatal_step",
                             "question": (
                                 f"代码试跑反复失败在同一个错误上（连续 {sig_streak} 次）："
-                                f"{signature[:200]}。自动修复没有进展，怎么处理？"
+                                f"{_err_tail_line(err_text)}。自动修复没有进展，怎么处理？"
                             ),
                             "context": {
                                 "error_signature": signature,
