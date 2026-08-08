@@ -179,9 +179,11 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
   const voyageActive = !!voyage && !VOYAGE_TERMINAL.has(voyage.status);
 
   const { messages, handleExtraEvent } = useVoyageMessages(vid);
-  const { terminal, live, clearTerminal } = useVoyageChannel(vid, voyageActive, {
-    onExtraEvent: handleExtraEvent,
-  });
+  const { terminal, live, clearTerminal, historyLoading, historyError } = useVoyageChannel(
+    vid,
+    voyageActive,
+    { onExtraEvent: handleExtraEvent },
+  );
 
   const openAsk = openAskOf(voyage, messages);
 
@@ -335,6 +337,8 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
             onClear={clearTerminal}
             height={420}
             extraEntries={extraEntries}
+            historyLoading={historyLoading}
+            historyError={historyError}
             filter={chatOnly ? () => false : undefined}
             headerExtras={
               <>

@@ -153,9 +153,11 @@ export function VoyageDetailPage() {
 
   // 对话流（用户建议 / AI 提问）+ 终端 SSE 实时通道
   const { messages, handleExtraEvent } = useVoyageMessages(id);
-  const { terminal, live, clearTerminal } = useVoyageChannel(id, active, {
-    onExtraEvent: handleExtraEvent,
-  });
+  const { terminal, live, clearTerminal, historyLoading, historyError } = useVoyageChannel(
+    id,
+    active,
+    { onExtraEvent: handleExtraEvent },
+  );
   const openAsk = openAskOf(voyage, messages);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const extraEntries = useMemo<TerminalExtraEntry[]>(() => {
@@ -356,6 +358,8 @@ export function VoyageDetailPage() {
         live={live}
         onClear={clearTerminal}
         extraEntries={extraEntries}
+        historyLoading={historyLoading}
+        historyError={historyError}
         footer={
           <ConsoleComposer
             voyageId={id}

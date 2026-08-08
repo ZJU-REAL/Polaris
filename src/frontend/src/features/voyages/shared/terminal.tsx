@@ -235,6 +235,8 @@ export function TaskTerminal({
   footer,
   headerExtras,
   filter,
+  historyLoading,
+  historyError,
 }: {
   state: TerminalState;
   live: boolean;
@@ -249,6 +251,10 @@ export function TaskTerminal({
   headerExtras?: ReactNode;
   /** 条目过滤（只作用于日志/LLM 条目，不影响 extraEntries） */
   filter?: (entry: TerminalEntry) => boolean;
+  /** 历史日志仍在加载（数 MB 的慢请求期间显示占位，避免被当成"没有输出"） */
+  historyLoading?: boolean;
+  /** 历史日志加载失败（重试用尽）：提示只剩实时输出 */
+  historyError?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
@@ -356,11 +362,26 @@ export function TaskTerminal({
             color: 'var(--terminal-fg)',
           }}
         >
+          {historyLoading && (
+            <div style={{ color: 'var(--terminal-dim)', padding: '2px 2px 6px' }}>
+              {tr('正在加载历史日志…', 'Loading log history…')}
+            </div>
+          )}
+          {historyError && (
+            <div style={{ color: 'var(--terminal-dim)', padding: '2px 2px 6px' }}>
+              {tr(
+                '历史日志加载失败，下面只显示实时输出（刷新页面可重试）',
+                'Failed to load log history — showing live output only (refresh to retry)',
+              )}
+            </div>
+          )}
           {empty ? (
             <div style={{ color: 'var(--terminal-dim)', padding: '8px 2px' }}>
-              {live
-                ? tr('等待任务输出…', 'Waiting for task output…')
-                : tr('暂无运行日志', 'No terminal output yet')}
+              {historyLoading
+                ? null
+                : live
+                  ? tr('等待任务输出…', 'Waiting for task output…')
+                  : tr('暂无运行日志', 'No terminal output yet')}
             </div>
           ) : (
             <>

@@ -30,7 +30,13 @@ export function useVoyageChannel(
   voyageId: string | null,
   active: boolean,
   opts?: { onExtraEvent?: (event: string, data: unknown) => void },
-): { terminal: TerminalState; live: boolean; clearTerminal: () => void } {
+): {
+  terminal: TerminalState;
+  live: boolean;
+  clearTerminal: () => void;
+  historyLoading: boolean;
+  historyError: boolean;
+} {
   const id = voyageId ?? '';
   const queryClient = useQueryClient();
   const [live, setLive] = useState(false);
@@ -66,13 +72,19 @@ export function useVoyageChannel(
 
   // —— 历史日志回放：刷新后 / 打开已结束任务时，从后端拉持久化日志回填终端 ——
   const showHistory = useTaskLogHistory();
-  const { data: logHistory } = useQuery({
+  const {
+    data: logHistory,
+    isLoading: historyLoading,
+    isError: historyError,
+  } = useQuery({
     queryKey: ['voyage-logs', id],
     queryFn: () => api.getVoyageLogs(id),
     enabled: !!id && showHistory,
     staleTime: Infinity, // 历史只在挂载 / 切任务时拉一次，实时增量走 SSE
     refetchOnWindowFocus: false,
-    retry: false,
+    // 历史日志可达数 MB，慢链路/瞬断下一次失败就永远空白（终端只剩对话消息，
+    // 像"没有 AI 输出"）——重试两次，加载与失败状态透出给终端显示占位
+    retry: 2,
   });
   const historyLoadedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -181,5 +193,11 @@ export function useVoyageChannel(
     };
   }, [id, active, queryClient, scheduleTermFlush]);
 
-  return { terminal, live, clearTerminal };
+  return {
+    terminal,
+    live,
+    clearTerminal,
+    historyLoading: !!id && showHistory && historyLoading,
+    historyError: !!id && showHistory && historyError,
+  };
 }
