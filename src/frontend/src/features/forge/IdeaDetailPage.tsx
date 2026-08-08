@@ -42,11 +42,26 @@ function GoalField({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
+/** goal JSON 由 LLM/脚本产出，列表字段可能被写成单个字符串（线上实测
+ *  resources_needed.data 是字符串，`.join` 直接把整页炸成错误屏）——统一容错。 */
+function asList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map((x) => (typeof x === 'string' ? x : JSON.stringify(x)));
+  if (typeof v === 'string' && v.trim()) return [v];
+  return [];
+}
+
 function GoalCard({ goal }: { goal: IdeaGoal }) {
   const [showSmoke, setShowSmoke] = useState(false);
   const res = goal.resources_needed;
-  const inScope = goal.scope?.in_scope ?? [];
-  const outScope = goal.scope?.out_of_scope ?? [];
+  // scope 本身也可能是字符串（此时没有 in/out 子列表）
+  const scopeObj = goal.scope && typeof goal.scope === 'object' ? goal.scope : undefined;
+  const scopeText = typeof goal.scope === 'string' ? goal.scope : null;
+  const inScope = asList(scopeObj?.in_scope);
+  const outScope = asList(scopeObj?.out_of_scope);
+  const objectives = asList(goal.objectives);
+  const successCriteria = asList(goal.success_criteria);
+  const keyConcepts = asList(goal.key_concepts);
+  const resData = asList(res?.data);
   return (
     <div className="card card-pad">
       <div className="row gap8" style={{ marginBottom: 14 }}>
@@ -64,15 +79,16 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
           <b>{goal.question}</b>
         </GoalField>
       )}
-      {(goal.objectives?.length ?? 0) > 0 && (
+      {objectives.length > 0 && (
         <GoalField label={tr('研究目标', 'Objectives')}>
           <ol style={{ margin: 0, paddingLeft: 18 }}>
-            {goal.objectives!.map((o, i) => (
+            {objectives.map((o, i) => (
               <li key={i} style={{ marginBottom: 3 }}>{o}</li>
             ))}
           </ol>
         </GoalField>
       )}
+      {scopeText && <GoalField label={tr('研究范围', 'Scope')}>{scopeText}</GoalField>}
       {(inScope.length > 0 || outScope.length > 0) && (
         <GoalField label={tr('研究范围', 'Scope')}>
           <div className="row gap12 wrap" style={{ alignItems: 'flex-start' }}>
@@ -99,19 +115,19 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
           </div>
         </GoalField>
       )}
-      {(goal.success_criteria?.length ?? 0) > 0 && (
+      {successCriteria.length > 0 && (
         <GoalField label={tr('成功标准', 'Success criteria')}>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {goal.success_criteria!.map((c, i) => (
+            {successCriteria.map((c, i) => (
               <li key={i} style={{ marginBottom: 3 }}>{c}</li>
             ))}
           </ul>
         </GoalField>
       )}
-      {(goal.key_concepts?.length ?? 0) > 0 && (
+      {keyConcepts.length > 0 && (
         <GoalField label={tr('关键概念', 'Key concepts')}>
           <div className="row gap6 wrap">
-            {goal.key_concepts!.map((c, i) => (
+            {keyConcepts.map((c, i) => (
               <span key={i} className="pill sm" style={{ background: 'var(--surface-3)', color: 'var(--text-2)' }}>
                 {c}
               </span>
@@ -128,10 +144,10 @@ function GoalCard({ goal }: { goal: IdeaGoal }) {
                 <span>{tr('算力：', 'Compute: ')}{res.compute}</span>
               </div>
             )}
-            {(res.data?.length ?? 0) > 0 && (
+            {resData.length > 0 && (
               <div className="row gap6" style={{ alignItems: 'flex-start' }}>
                 <Icon name="grid" size={13} style={{ color: 'var(--text-3)', flexShrink: 0, marginTop: 3 }} />
-                <span>{tr('数据：', 'Data: ')}{res.data!.join(tr('、', ', '))}</span>
+                <span>{tr('数据：', 'Data: ')}{resData.join(tr('、', ', '))}</span>
               </div>
             )}
             {res.time_weeks != null && (
@@ -175,7 +191,7 @@ const EVIDENCE_SOURCE_META: Record<IdeaEvidenceSource, { zh: string; en: string;
 
 function EvidenceCard({ idea }: { idea: IdeaDetail }) {
   const navigate = useNavigate();
-  const evidence = idea.evidence ?? [];
+  const evidence = Array.isArray(idea.evidence) ? idea.evidence : [];
   if (evidence.length === 0) return null;
   return (
     <div className="card card-pad">
