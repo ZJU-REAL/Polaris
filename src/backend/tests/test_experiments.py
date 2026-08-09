@@ -1606,3 +1606,33 @@ async def test_smoke_fix_reinstalls_deps_when_requirements_change(
         c for c in fake_ssh.commands if "-r requirements.txt" in c and "setup.log" not in c
     ]
     assert len(reinstalls) == 2, fake_ssh.commands
+
+
+async def test_trash_running_experiment_cancels_voyage(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """删除/移入回收站会先取消运行中的实验（#379 现场：purge 后孤儿 voyage
+    拿着已删实验的 id 反复重规划烧 LLM，直到有人手动叫停）。"""
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(voyage_id))  # 跑到 compute_budget 闸门（voyage 在途）
+
+    resp = await client.delete(f"/api/experiments/{exp_id}", headers=headers)
+    assert resp.status_code == 204
+
+    async with get_sessionmaker()() as session:
+        voyage = await session.get(VoyageRun, uuid.UUID(voyage_id))
+        assert voyage.status == "cancelled"
+        experiment = await session.get(Experiment, uuid.UUID(exp_id))
+        assert experiment.status == "cancelled" and experiment.trashed_at is not None
+
+    # 已终态的实验回收：不再走取消（幂等，不报错）
+    resp = await client.post(f"/api/experiments/{exp_id}/restore", headers=headers)
+    assert resp.status_code == 200
+    resp = await client.delete(f"/api/experiments/{exp_id}", headers=headers)
+    assert resp.status_code == 204

@@ -255,6 +255,14 @@ async def trash_experiments(
     n = 0
     for exp in await _owned_experiments(session, project_id=project_id, ids=ids):
         if exp.trashed_at is None:
+            if exp.status not in EXPERIMENT_TERMINAL_STATUSES:
+                # 运行中的实验先取消（协作式停 voyage + 尽力 kill 远端进程）。
+                # 否则 voyage 成为孤儿：拿着已删实验的 id 反复失败重规划——线上实测
+                # purge 后 voyage 在「experiment not found」上烧了两轮计划调整才被人叫停。
+                try:
+                    await cancel_experiment(session, exp)
+                except Exception:  # noqa: BLE001 — 取消失败不能挡住回收本身
+                    logger.exception("cancel before trash failed: %s", exp.id)
             exp.trashed_at = now
             n += 1
     await session.commit()
