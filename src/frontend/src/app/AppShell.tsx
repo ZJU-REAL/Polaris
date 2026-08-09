@@ -17,7 +17,7 @@ import { SearchPalette } from './SearchPalette';
 import { UserMenu } from './UserMenu';
 import { FeedbackWidget } from '../features/feedback/FeedbackWidget';
 import { api, getToken, isAdmin, isLabScopedTask, type GateDecision, type GateRead, type ReviewMessageRead } from '../lib/api';
-import { tr } from '../lib/i18n';
+import { tr, useLang } from '../lib/i18n';
 import { LangToggle } from '../components/ui/LangToggle';
 import { connectNotifications } from '../lib/ws';
 import { useIsMobile } from '../lib/useBreakpoint';
@@ -391,6 +391,9 @@ function NavItem({ n }: { n: NavEntry }) {
 }
 
 export function AppShell() {
+  // 壳层自己订阅语言：它的文案就地重渲染即可，侧栏状态、Buddy 里正在跑的对话都留着。
+  // 路由出口下面那一层则要真重挂载，见下面 <Fragment key={lang}>。
+  const lang = useLang();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -946,7 +949,12 @@ export function AppShell() {
           </div>
         )}
         <div className="content scroll">
-          <Outlet context={ctx} />
+          {/* 业务页按语言重挂载：这些页面的文案埋在深层子树里，而路由表给出的元素是稳定
+              引用，父组件重渲染带不动它们——换 key 是这里唯一可靠的重新求值方式。
+              壳层与登录页都在这个边界之外，各自就地重渲染，不再陪着丢状态。 */}
+          <Fragment key={lang}>
+            <Outlet context={ctx} />
+          </Fragment>
         </div>
       </div>
 

@@ -8,7 +8,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { useAuth } from '../../app/auth';
 import { ApiError, api } from '../../lib/api';
 import { getLastAccount, isRemembered } from '../../lib/token-store';
-import { tr } from '../../lib/i18n';
+import { tr, useLang } from '../../lib/i18n';
 
 type Mode = 'login' | 'register';
 type View = 'auth' | 'forgot';
@@ -182,6 +182,10 @@ function CodeField({
 }
 
 export function LoginPage() {
+  // 订阅语言，就地重渲染。这一页曾经跟着整棵树被 key={lang} 重建：切一下语言，填到一半的
+  // 注册信息、当前选中的标签全部归零，账号框还退回上次登录的账号（issue #377）。文案要
+  // 跟着变，但输入框里的东西是用户刚打的，不能陪葬。
+  useLang();
   const navigate = useNavigate();
   const { isAuthenticated, login, register } = useAuth();
   const [view, setView] = useState<View>('auth');

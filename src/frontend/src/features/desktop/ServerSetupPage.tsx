@@ -5,7 +5,7 @@ import { PolarisMark, PolarisWordmark } from '../../components/ui/PolarisLogo';
 import { setToken } from '../../lib/api';
 import { serverOrigin } from '../../lib/endpoint';
 import { setServerUrl, testServer, type ServerProbe } from '../../lib/host';
-import { tr } from '../../lib/i18n';
+import { tr, useLang } from '../../lib/i18n';
 
 /**
  * 桌面端首启（或从菜单「Server…」进入）的服务器配置页。
@@ -15,6 +15,8 @@ import { tr } from '../../lib/i18n';
  * web 分叉了。
  */
 export function ServerSetupPage({ onCancel }: { onCancel?: () => void }) {
+  // 同登录页：就地重渲染，别把用户正在填的服务器地址和刚探测出的结果冲掉。
+  useLang();
   const [url, setUrl] = useState(serverOrigin());
   const [probe, setProbe] = useState<ServerProbe | null>(null);
   const [testing, setTesting] = useState(false);
