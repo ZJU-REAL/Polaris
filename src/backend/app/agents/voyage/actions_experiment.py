@@ -1939,6 +1939,20 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 files = new_files
                 ctx.checkpoint["exp_files"] = files
                 await executor.write_files(files)
+                if "requirements.txt" in changed:
+                    # 依赖清单变了必须重装，否则修复根本不落地——线上实测：修复循环
+                    # 连续三轮都正确地在 requirements.txt 里升级 transformers，但依赖
+                    # 只在 setup 步装过一次，环境纹丝不动、同签名三连触发零进展提问。
+                    # 模型做对了，平台把它的修复扔了。安装失败不在这里打断：下一轮
+                    # 试跑的 stderr 会带出真实症状，交回修复循环。
+                    await ctx.log("requirements.txt 有变更，重装依赖后再试跑")
+                    with contextlib.suppress(Exception):
+                        dep = await executor.setup_venv()
+                        if dep.exit_status != 0:
+                            await ctx.log(
+                                f"依赖重装未成功（exit={dep.exit_status}），试跑将带错重修",
+                                level="warn",
+                            )
         finally:
             await executor.close()
 
@@ -2364,12 +2378,24 @@ async def experiment_analyze(ctx: ActionContext, params: dict[str, Any]) -> dict
                     "（例如：不同的算法/建模方式/训练目标或损失/数据处理/检索或提示策略等），"
                     "先用一句话说明为什么之前那条路已经到顶、你这次新方向的依据，再给完整文件集合。"
                 )
+        prev_files = ctx.checkpoint.get("exp_files") or {}
         files = await _complete_json(
             ctx, system=system_prompt, user=fix_user, validate=validate_files
         )
         executor = await _open_executor(session, ctx, experiment)
         try:
             await executor.write_files(files)
+            if files.get("requirements.txt") != prev_files.get("requirements.txt"):
+                # 与冒烟修复循环同理：requirements 变更必须真正重装（增量 pip），
+                # 否则下一轮 run 还在旧依赖上跑
+                await ctx.log("requirements.txt 有变更，重装依赖供下一轮使用")
+                with contextlib.suppress(Exception):
+                    dep = await executor.setup_venv()
+                    if dep.exit_status != 0:
+                        await ctx.log(
+                            f"依赖重装未成功（exit={dep.exit_status}），下一轮将带错重修",
+                            level="warn",
+                        )
             await _sync_memory_file(ctx, executor)
         finally:
             await executor.close()

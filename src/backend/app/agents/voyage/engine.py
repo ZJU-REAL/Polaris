@@ -1290,8 +1290,35 @@ class VoyageEngine:
                     added += 1
             elif op["op"] == "update_node":
                 row = by_id.get(str(op["step_id"]))
-                if row is None or row.status == "passed":
-                    raise PlanEditError(f"update_node 只能修改未完成步骤：{op['step_id']}")
+                if row is None:
+                    raise PlanEditError(f"update_node 引用不存在的步骤：{op['step_id']}")
+                if row.status == "passed":
+                    # 「修改已通过的步骤」的真实语义 = 带新参数重跑：自动降级为
+                    # 克隆新增（线上实测 navigator 把"重新执行建环境"表达成
+                    # update_node 已通过的 setup 节点，一律拒绝只会逼它绕路或放弃）。
+                    patch = op["patch"]
+                    clone_def = {
+                        "title": str(patch.get("title") or f"重跑：{row.title}")[:255],
+                        "action": row.action,
+                        "params": dict(row.params or {}) | dict(patch.get("params") or {}),
+                        "acceptance": patch.get("acceptance")
+                        or (row.acceptance or {}).get("text"),
+                        "checks": patch.get("checks") or (row.acceptance or {}).get("checks"),
+                        "requires_gate": None,  # 重跑不再重复人工审批
+                        "on_failure": (row.provenance or {}).get("on_failure"),
+                        "budget": row.budget,
+                    }
+                    base = anchor.rank if anchor is not None else max_passed_rank
+                    following = min((r.rank for r in rows if r.rank > base), default=None)
+                    gap = (following - base) / 2 if following is not None else _RANK_GAP
+                    session.add(
+                        self._new_step_row(
+                            run, seq=next_seq, rank=base + gap, step_def=clone_def
+                        )
+                    )
+                    next_seq += 1
+                    added += 1
+                    continue
                 patch = op["patch"]
                 if "params" in patch:
                     row.params = dict(row.params or {}) | dict(patch["params"])

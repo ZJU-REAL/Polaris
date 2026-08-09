@@ -574,6 +574,16 @@ class LLMRouter:
                     attempt + 1,
                     _STREAM_RETRY_ATTEMPTS,
                 )
+                # 终端可见（线上实测：重试只在 worker 日志里，用户盯着终端静默十几分钟）
+                await self.event_bus.publish_voyage_event(
+                    voyage_id,
+                    "log",
+                    {
+                        "message": f"大模型网络请求中断（{type(e).__name__}），"
+                        f"{delay:.0f} 秒后自动重试（{attempt + 1}/{_STREAM_RETRY_ATTEMPTS}）",
+                        "level": "info",
+                    },
+                )
                 await asyncio.sleep(delay)
                 continue
             except BaseException:

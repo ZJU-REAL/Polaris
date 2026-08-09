@@ -1550,3 +1550,59 @@ async def test_complete_by_voyage_finalizes_nonterminal(client, queue_stub, fake
         assert out is not None and out.status == "done"
         # 已终态：noop（failed/cancelled 同理，不会被覆盖）
         assert await experiments_service.complete_by_voyage(session, uuid.UUID(voyage_id)) is None
+
+
+async def test_smoke_fix_reinstalls_deps_when_requirements_change(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """修复改了 requirements.txt 必须重装依赖（#377）：线上实测修复循环三轮都正确
+    升级 transformers，但依赖只在 setup 装过一次，修复从未落地、同签名死循环。"""
+    fake_ssh.smoke_exits = [1, 0]
+    fake_ssh.smoke_stderr = "ImportError: transformers too old"
+
+    class _ReqBumpProvider(FakeProvider):
+        def __init__(self) -> None:
+            self.bump = 0
+
+        async def complete(self, messages, *, model, temperature=0.7, max_tokens=None, images=None):
+            full = "\n".join(m.content for m in messages)
+            if "冒烟测试退出码" in full:
+                self.bump += 1
+                files = {
+                    "requirements.txt": f"transformers==5.{self.bump}",
+                    "run.sh": "bash --smoke",
+                    "train.py": "print('ok')",
+                }
+                return CompletionResult(
+                    content=json.dumps({"files": files}),
+                    model=model,
+                    finish_reason="stop",
+                    usage={"prompt_tokens": 1, "completion_tokens": 1},
+                )
+            return await super().complete(
+                messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                images=images,
+            )
+
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    cred_id = await _create_credential(client, headers)
+    resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
+    voyage_id = resp.json()["voyage_id"]
+
+    router = LLMRouter()
+    router.override_provider(_ReqBumpProvider())
+    engine, _ = _make_engine(router)
+    await engine.run(uuid.UUID(voyage_id))
+    await _approve_gate(client, headers, project_id)
+    await engine.resume(uuid.UUID(voyage_id))
+
+    resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
+    assert resp.json()["status"] == "done", resp.json()["status"]
+    # 前台依赖重装（setup_venv：含 -r requirements.txt 且非后台 setup.log 版）出现两次：
+    # ①冒烟修复改了 requirements.txt 后；②第 1 轮 improve 的新文件把 requirements 又改回
+    # 默认内容后（analyze 路径同样受保护）。第 2 轮 improve 文件不变 → 不再重装。
+    reinstalls = [
+        c for c in fake_ssh.commands if "-r requirements.txt" in c and "setup.log" not in c
+    ]
+    assert len(reinstalls) == 2, fake_ssh.commands

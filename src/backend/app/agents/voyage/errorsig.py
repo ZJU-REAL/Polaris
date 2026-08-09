@@ -20,7 +20,11 @@ def error_text(e: BaseException) -> str:
     if not detail and e.__cause__ is not None:
         cause = e.__cause__
         cause_str = str(cause).strip()
-        detail = f"{type(cause).__name__}: {cause_str}" if cause_str else type(cause).__name__
+        if cause_str:
+            detail = f"{type(cause).__name__}: {cause_str}"
+        elif type(cause).__name__ != name:
+            # 同名空 cause 不重复自己（曾产出「ReadTimeout: ReadTimeout」）
+            detail = type(cause).__name__
     if detail:
         return f"{name}: {detail}"
     return f"{name}（{type(e).__module__}.{name}，异常未附带详细信息）"

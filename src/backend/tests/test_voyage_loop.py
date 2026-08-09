@@ -644,3 +644,58 @@ def test_error_text_never_empty():
             raise RuntimeError("") from ce
     except RuntimeError as e:
         assert "connection refused" in error_text(e)
+
+
+async def test_update_passed_step_degrades_to_clone(client, queue_stub):
+    """update_node 指向已通过步骤 = 「带新参数重跑」：自动降级为克隆新增，
+    不再一律拒绝（线上实测 navigator 把"重新执行建环境"表达成改已通过的 setup）。"""
+    from tests.conftest import register_and_login
+
+    token = await register_and_login(client, "clone-degrade@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = await client.post("/api/projects", json={"name": "cd-proj"}, headers=headers)
+    project_id = uuid.UUID(resp.json()["id"])
+
+    async with get_sessionmaker()() as session:
+        run = VoyageRun(
+            project_id=project_id, kind="demo", mode="loop", goal="t", status="executing"
+        )
+        session.add(run)
+        await session.flush()
+        passed = VoyageStep(
+            run_id=run.id, seq=0, rank=0.0, title="建环境", action="sleep",
+            params={"seconds": 0}, acceptance={"text": "ok"}, status="passed",
+        )
+        failed = VoyageStep(
+            run_id=run.id, seq=1, rank=100.0, title="后续", action="sleep",
+            params={"seconds": 0}, acceptance={"text": "ok"}, status="failed",
+        )
+        session.add_all([passed, failed])
+        await session.commit()
+        passed_id, failed_id, run_id = str(passed.id), str(failed.id), run.id
+
+    engine = VoyageEngine(event_bus=RecordingBus(), llm_router=LLMRouter())
+    async with get_sessionmaker()() as session:
+        run = await session.get(VoyageRun, run_id)
+        anchor = await session.get(VoyageStep, uuid.UUID(failed_id))
+        edit = {
+            "reason": "重跑建环境",
+            "finish": False,
+            "edits": [
+                {"op": "update_node", "step_id": passed_id,
+                 "patch": {"params": {"seconds": 1}, "title": "重装依赖"}}
+            ],
+        }
+        added = await engine._apply_plan_edit(session, run, edit, anchor=anchor)
+        await session.commit()
+        assert added == 1
+        steps = (
+            (await session.execute(
+                select(VoyageStep).where(VoyageStep.run_id == run_id).order_by(VoyageStep.rank)
+            )).scalars().all()
+        )
+        # 原已通过节点原封不动；新克隆节点携带 patch 参数、pending 待跑
+        assert steps[0].id == uuid.UUID(passed_id) and steps[0].status == "passed"
+        clone = next(s for s in steps if s.title == "重装依赖")
+        assert clone.status == "pending" and clone.action == "sleep"
+        assert clone.params == {"seconds": 1}
