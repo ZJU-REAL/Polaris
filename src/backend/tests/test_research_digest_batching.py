@@ -223,3 +223,106 @@ async def test_a_batch_that_never_completes_degrades_instead_of_raising():
         if item["paper_id"] != papers[12]["paper_id"]
     )
     assert retries == 2, "该批应当补跑到上限（共三轮）"
+
+
+class _BrokenTrendLLM:
+    """趋势综合永远返回截断的 JSON——2026-08-10 生产上网关提前断流的形态。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, stage, messages, **kwargs):
+        assert stage == "digest"
+        assert "POLARIS_TREND_SYNTHESIS" in messages[0].content
+        self.calls += 1
+        # 结尾停在半个字符串上，和线上那次一模一样
+        return CompletionResult(
+            content='{"trends":[{"title":"半截","paper_ids":["8793c979-',
+            model="fake-trend",
+        )
+
+
+@pytest.mark.asyncio
+async def test_broken_trend_json_carries_forward_instead_of_failing_the_sync(client):
+    """趋势综合拿不到可用 JSON 时沿用上一份，不把整轮同步打成 paused_error。
+
+    2026-08-10 生产上三个库就是这么停的：前七步（候选、打分、全文、编译、上链、
+    简报）全部落库了，最后一步一次 json.loads 失败，整轮同步停下等人，而水位线
+    也就没记上。趋势快照是附加产物，不该有这个权力。
+    """
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.models.library_direction import DirectionLibrary as _Library
+    from app.models.research_digest import LibraryResearchDigest
+    from app.models.voyage import VoyageRun as _Run
+    from app.services.research_digest import synthesize_rolling_trends
+
+    library_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    yesterday_trends = [
+        {
+            "title": "昨天那条主线",
+            "status": "active",
+            "summary": "昨天的判断",
+            "evidence_trajectory": "昨天的证据",
+            "concepts": [],
+            "paper_ids": [],
+            "last_seen": "2026-08-09",
+        }
+    ]
+
+    async with get_sessionmaker()() as session:
+        session.add(_Library(id=library_id, name="趋势降级库", definition={"statement": "agent"}))
+        session.add(_Run(id=run_id, kind="wiki_ingest", goal="每日自动同步：趋势降级库"))
+        await session.flush()
+        session.add(
+            LibraryResearchDigest(
+                library_id=library_id,
+                report_date=dt.date(2026, 8, 9),
+                source="voyage",
+                mode="incremental",
+                counts={},
+                source_diagnostics={},
+                paper_insights=[],
+                excluded_papers=[],
+                cross_paper_signals=[],
+                summary="昨天的简报",
+                content="# 昨天",
+                rolling_trends=yesterday_trends,
+                trend_content="# 昨天的趋势",
+                trend_model="fake-trend",
+            )
+        )
+        session.add(
+            LibraryResearchDigest(
+                library_id=library_id,
+                voyage_id=run_id,
+                report_date=dt.date(2026, 8, 10),
+                source="voyage",
+                mode="incremental",
+                counts={},
+                source_diagnostics={},
+                paper_insights=[{"paper_id": str(uuid.uuid4()), "highlight": "今天有货"}],
+                excluded_papers=[],
+                cross_paper_signals=[],
+                summary="今天的简报",
+                content="# 今天",
+                rolling_trends=[],
+                trend_content="",
+            )
+        )
+        await session.commit()
+
+    llm = _BrokenTrendLLM()
+    async with get_sessionmaker()() as session:
+        run = await session.get(_Run, run_id)
+        library = await session.get(_Library, library_id)
+        digest = await synthesize_rolling_trends(
+            session, run=run, library=library, llm=llm, user_id=None, extra_guidance=""
+        )
+
+    assert llm.calls == 3, "坏 JSON 该重试到上限，而不是一次就放弃"
+    assert digest.trend_model == "carried-forward"
+    assert digest.rolling_trends == yesterday_trends, "应当沿用昨天的趋势线"
+    assert digest.trend_content == "# 昨天的趋势"

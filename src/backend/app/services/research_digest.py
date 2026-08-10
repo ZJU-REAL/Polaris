@@ -754,7 +754,8 @@ async def synthesize_rolling_trends(
         .scalars()
         .all()
     )
-    if not digest.paper_insights:
+    async def carry_forward() -> LibraryResearchDigest:
+        """沿用上一份趋势收尾。今天没有新洞察、或综合实在做不出来时都走这里。"""
         prior = previous[0] if previous else None
         digest.rolling_trends = list(prior.rolling_trends or []) if prior else []
         digest.trend_content = (
@@ -765,6 +766,9 @@ async def synthesize_rolling_trends(
         digest.trend_model = "carried-forward"
         await session.commit()
         return digest
+
+    if not digest.paper_insights:
+        return await carry_forward()
 
     history = [
         {
@@ -787,47 +791,68 @@ async def synthesize_rolling_trends(
             }
         ],
     }
-    result = await llm.complete(
-        "digest",
-        [
-            Message(role="system", content=TREND_SYSTEM_PROMPT + extra_guidance),
-            Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
-        ],
-        user_id=user_id,
-        project_id=run.project_id,
-        library_id=library.id,
-        voyage_id=run.id,
+    # 和逐批生成洞察一样：重试几次，再不行就降级，**不抛错**。
+    # 2026-08-10 生产上模型返回了一段被截断的 JSON（网关提前断流，却报 200），
+    # 这里一次 json.loads 失败就把三个库的整轮同步打成 paused_error——而前七步
+    # 的成果（候选、打分、全文、编译、上链、简报）都已经落库了，趋势快照只是
+    # 最后一件附加产物。让它拖死整轮同步，代价和收益完全不成比例。
+    last_error: Exception | None = None
+    for attempt in range(1, _DIGEST_MAX_ATTEMPTS + 1):
+        try:
+            result = await llm.complete(
+                "digest",
+                [
+                    Message(role="system", content=TREND_SYSTEM_PROMPT + extra_guidance),
+                    Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
+                ],
+                user_id=user_id,
+                project_id=run.project_id,
+                library_id=library.id,
+                voyage_id=run.id,
+            )
+            generated = _extract_json_object(result.content)
+            if not isinstance(generated.get("trends"), list):
+                raise ValueError("trend synthesis JSON misses trends")
+        except Exception as error:  # noqa: BLE001 — 连不上、超时、JSON 坏了，处理方式一样
+            last_error = error
+            if attempt < _DIGEST_MAX_ATTEMPTS:
+                await _retry_pause(attempt)
+            continue
+
+        allowed_status = {"emerging", "active", "converging", "stale"}
+        trends: list[dict[str, Any]] = []
+        for item in generated["trends"][:12]:
+            if not isinstance(item, dict):
+                continue
+            title = _string(item.get("title"))
+            summary = _string(item.get("summary"))
+            trajectory = _string(item.get("evidence_trajectory"))
+            if not (title and summary and trajectory):
+                continue
+            status = str(item.get("status") or "active")
+            trends.append(
+                {
+                    "title": title,
+                    "status": status if status in allowed_status else "active",
+                    "summary": summary,
+                    "evidence_trajectory": trajectory,
+                    "concepts": [str(name) for name in (item.get("concepts") or [])],
+                    "paper_ids": [str(pid) for pid in (item.get("paper_ids") or [])],
+                    "last_seen": _string(item.get("last_seen"), digest.report_date.isoformat()),
+                }
+            )
+        digest.rolling_trends = trends
+        digest.trend_content = _render_trends_markdown(trends, digest.report_date)
+        digest.trend_model = result.model or "unknown"
+        await session.commit()
+        return digest
+
+    logger.warning(
+        "trend synthesis failed after %s attempts, carrying previous trends forward: %s",
+        _DIGEST_MAX_ATTEMPTS,
+        last_error,
     )
-    generated = _extract_json_object(result.content)
-    if not isinstance(generated.get("trends"), list):
-        raise ValueError("trend synthesis JSON misses trends")
-    allowed_status = {"emerging", "active", "converging", "stale"}
-    trends: list[dict[str, Any]] = []
-    for item in generated["trends"][:12]:
-        if not isinstance(item, dict):
-            continue
-        title = _string(item.get("title"))
-        summary = _string(item.get("summary"))
-        trajectory = _string(item.get("evidence_trajectory"))
-        if not (title and summary and trajectory):
-            continue
-        status = str(item.get("status") or "active")
-        trends.append(
-            {
-                "title": title,
-                "status": status if status in allowed_status else "active",
-                "summary": summary,
-                "evidence_trajectory": trajectory,
-                "concepts": [str(name) for name in (item.get("concepts") or [])],
-                "paper_ids": [str(pid) for pid in (item.get("paper_ids") or [])],
-                "last_seen": _string(item.get("last_seen"), digest.report_date.isoformat()),
-            }
-        )
-    digest.rolling_trends = trends
-    digest.trend_content = _render_trends_markdown(trends, digest.report_date)
-    digest.trend_model = result.model or "unknown"
-    await session.commit()
-    return digest
+    return await carry_forward()
 
 
 async def list_digest_summaries(
