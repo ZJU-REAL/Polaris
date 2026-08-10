@@ -541,6 +541,7 @@ export const LLM_STAGES = [
   'embedding',
   'rerank',
   'forge',
+  'forge_generate',
   'forge_signal',
   'goal_explore',
   'proposal',

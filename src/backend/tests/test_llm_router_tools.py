@@ -11,7 +11,14 @@ from app.core.llm.base import (
     ToolUseStart,
 )
 from app.core.llm.fake import FakeProvider
-from app.core.llm.router import STAGES, call_profile
+from app.core.llm.router import (
+    _LONG_CALL_STAGES,
+    _MEDIUM_CALL_STAGES,
+    _SHORT_CALL_STAGES,
+    STAGES,
+    STREAM_STAGES,
+    call_profile,
+)
 from app.core.llm.tool_stream import ToolCallAccumulator
 
 
@@ -20,18 +27,35 @@ def test_agent_stage_exists():
     assert "agent" in STAGES
 
 
-def test_agent_gets_its_own_patience_not_the_long_profile():
-    """agent 单独一档，既不是短档也不是长档。
+def test_medium_stages_get_more_patience_without_the_long_profile():
+    """代理、目标构建和方案评审使用中档，既不是短档也不是长档。
 
     短档（60s×2）不够想完一轮；长档（300s×4）最坏 20 分钟攥着一个 HTTP 连接不放，
     而对话是同步的——用户早走了。
     """
-    agent = call_profile("agent")
-    assert agent == (180.0, 2)
-    assert agent != call_profile("relevance"), "不能是短档"
-    assert agent != call_profile("librarian"), "也不能是长档"
+    for stage in ("agent", "goal_explore", "proposal_review"):
+        profile = call_profile(stage)
+        assert profile == (180.0, 2)
+        assert profile != call_profile("relevance"), "不能是短档"
+        assert profile != call_profile("librarian"), "也不能是长档"
     # reading（现有对话）必须保持短档不变
     assert call_profile("reading") == call_profile("relevance")
+
+
+def test_every_known_stage_has_exactly_one_call_profile():
+    """新增 stage 时必须显式归类，避免长任务静默回落到 60 秒短档。"""
+    known = set(STAGES)
+    short = set(_SHORT_CALL_STAGES)
+    medium = set(_MEDIUM_CALL_STAGES)
+    long = set(_LONG_CALL_STAGES)
+
+    classified = short | medium | long
+    assert known <= classified
+    assert classified - known == {"digest"}, "仅允许已知的内部 profile key 不公开为路由"
+    assert short.isdisjoint(medium)
+    assert short.isdisjoint(long)
+    assert medium.isdisjoint(long)
+    assert set(STREAM_STAGES) <= long
 
 
 @pytest.mark.asyncio

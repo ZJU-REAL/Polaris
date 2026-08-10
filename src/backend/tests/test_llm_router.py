@@ -122,6 +122,7 @@ def test_stage_catalog():
     assert "extract" in STAGES
     assert "librarian" in STAGES
     assert "feedback_issue" in STAGES
+    assert "forge_generate" in STAGES
     assert len(set(STAGES)) == len(STAGES)  # 无重复
 
 
@@ -338,3 +339,45 @@ async def test_an_explicit_digest_route_wins(client, monkeypatch):
     monkeypatch.setattr(router, "_get_routes", fake_routes)
     _provider, route = await router.resolve("digest")
     assert route.model == "digest-model"
+
+
+# ---- forge 候选生成：长 JSON，路由遵循统一的 default 回退规则 ----
+
+
+def test_forge_generate_gets_the_long_call_budget_without_streaming():
+    """一次生成多个完整 Idea 可能超过 60 秒，但 JSON 不应流式灌入终端。"""
+    from app.core.llm.router import STREAM_STAGES, call_profile
+
+    timeout, attempts = call_profile("forge_generate")
+    assert timeout >= 300
+    assert attempts >= 3
+    assert "forge_generate" not in STREAM_STAGES
+    assert call_profile("forge") == (60.0, 2), "分析和逐条评分仍应保持短调用预算"
+
+
+async def test_forge_generate_falls_back_to_default_when_unset(client, monkeypatch):
+    """未显式配置候选生成路由时跟随 default，与设置页展示保持一致。"""
+    from app.core.llm.router import LLMRouter, ResolvedRoute
+
+    router = LLMRouter()
+
+    def _route(model):
+        return ResolvedRoute(
+            provider_kind="fake",
+            base_url=None,
+            api_key="",
+            model=model,
+            temperature=None,
+            provider_name="fake",
+            effort=None,
+        )
+
+    async def fake_routes(owner_id):
+        return {
+            "forge": _route("forge-model"),
+            "default": _route("default-model"),
+        }
+
+    monkeypatch.setattr(router, "_get_routes", fake_routes)
+    _provider, route = await router.resolve("forge_generate")
+    assert route.model == "default-model", "应跟随 default，而不是隐藏继承 forge"

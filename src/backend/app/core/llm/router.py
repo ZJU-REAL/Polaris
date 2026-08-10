@@ -61,6 +61,7 @@ STAGES = (
     "embedding",
     "rerank",
     "forge",
+    "forge_generate",
     "forge_signal",
     "goal_explore",
     "proposal",
@@ -137,7 +138,7 @@ _STREAM_FLUSH_CHARS = 80  # token 增量攒到此长度再广播一段（节流�
 _STREAM_RETRY_ATTEMPTS = 3  # 流式请求网络瞬断整段重试次数
 _STREAM_RETRY_BASE_SECONDS = 2.0
 
-# 一次调用能等多久、重试几次，按环节分两档——两者的合理耐心程度差一个数量级。
+# 一次调用能等多久、重试几次，按环节分三档。
 #
 # 生产实测（gpt-5.6-luna，6 小时）：relevance 中位 13.3s，但 p95 达到 1215s。
 # 那不是模型在慢慢想——4 次尝试 × 300s 超时 + 退避 3+6+12 正好是 1221s，也就是
@@ -148,23 +149,41 @@ _STREAM_RETRY_BASE_SECONDS = 2.0
 # 更没理由等四次；卡住的短请求重试也极少能救回来。长文本环节（编译 / 写作 /
 # 评审）本来就要跑几分钟，保持宽松。
 _SHORT_CALL = (60.0, 2)  # (timeout 秒, 最多尝试次数) → 最坏 60+3+60 = 123s
+_MEDIUM_CALL = (180.0, 2)
 _LONG_CALL = (300.0, 4)
+
+_SHORT_CALL_STAGES = frozenset(
+    {
+        "default",
+        "sextant",
+        "relevance",
+        "extract",
+        "embedding",
+        "rerank",
+        "forge",
+        "forge_signal",
+        "reading",
+        "feedback_issue",
+    }
+)
 
 # 「要给长耐心」与「要流式播出去」是两件事，不能共用一个集合。
 # digest 就是反例：它输出 JSON（不该流式，否则整段 JSON 灌进任务终端日志），
 # 但一次要为一批论文生成洞察，实测 p95 313 秒，必须给长档预算。
-_LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest"})
+# forge_generate 同理：默认一次生成 8 个含方法、实验与风险的完整想法，生产请求
+# 会超过 60 秒；仍保持非流式，避免把半截 JSON 写进任务终端。
+_LONG_CALL_STAGES = STREAM_STAGES | frozenset({"digest", "forge_generate"})
 
-# agent 单独一档。一轮 agent 调用 = 思考 + 发起工具调用，比短 JSON 长得多，但**不能**
+# 中档用于多轮代理和较长的结构化生成。一次调用比短 JSON 长得多，但**不能**
 # 直接塞进长档：那是 300s × 4 尝试，最坏 20 分钟攥着一个 HTTP 连接不放，而对话是同步的，
 # 用户早走了。180s × 2 是"够想完一轮、又不至于把连接耗死"的折中。
-_AGENT_CALL = (180.0, 2)
+_MEDIUM_CALL_STAGES = frozenset({"agent", "goal_explore", "proposal_review"})
 
 
 def call_profile(stage: str) -> tuple[float, int]:
     """该环节单次调用的 (超时, 最大尝试次数)。"""
-    if stage == "agent":
-        return _AGENT_CALL
+    if stage in _MEDIUM_CALL_STAGES:
+        return _MEDIUM_CALL
     return _LONG_CALL if stage in _LONG_CALL_STAGES else _SHORT_CALL
 
 

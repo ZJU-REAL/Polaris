@@ -619,7 +619,7 @@ async def forge_generate(ctx: ActionContext, params: dict[str, Any]) -> dict[str
 
     candidates = await _complete_json(
         ctx,
-        stage="forge",
+        stage="forge_generate",
         system=GENERATE_SYSTEM_PROMPT + ctx.skill_guidance("forge.generate"),
         user=user_prompt,
         validate=validate,

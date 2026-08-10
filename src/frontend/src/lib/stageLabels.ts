@@ -16,6 +16,7 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   embedding: { zh: '向量嵌入', en: 'Embeddings' },
   rerank: { zh: '重排序', en: 'Reranking' },
   forge: { zh: '想法生成', en: 'Idea generation' },
+  forge_generate: { zh: '候选想法生成', en: 'Candidate idea generation' },
   forge_signal: { zh: '信号摘要', en: 'Signal digest' },
   goal_explore: { zh: '目标构建', en: 'Goal building' },
   proposal: { zh: '方案起草', en: 'Proposal drafting' },
