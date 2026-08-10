@@ -166,6 +166,31 @@ flowchart LR
 | LLM | 多提供商抽象（OpenAI 兼容与 Anthropic）,配数据库模型路由表 |
 | 部署 | Docker Compose（postgres、redis、api、worker、frontend） |
 
+## 桌面客户端
+
+Polaris 提供 macOS、Windows 和 Linux 桌面应用。**安装包请到
+[Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) 下载**——`.dmg` / `.zip`(macOS,
+universal)、`.exe` / 便携版 `.zip`(Windows)、`.AppImage` / `.deb`(Linux),由 CI 在每个 `v*`
+tag 上构建。应用会检查更新，能不重启就直接应用。
+
+这些构建**既未签名也未公证**,所以每个平台都要先告诉系统一次它是安全的：macOS 执行
+`xattr -dr com.apple.quarantine /Applications/Polaris.app`(或右键 → 打开）;Windows 在
+SmartScreen 上选「更多信息 → 仍要运行」;Linux 的 AppImage 需要 `libnss3 libgtk-3-0 libasound2`,
+在 Ubuntu 24.04+ 的 AppArmor 限制下要加 `--no-sandbox`。首次启动时应用会让你填实验室的 Polaris
+服务器地址，并用 `/api/health` 校验；服务端必须放行桌面端来源，因为页面由 `app://polaris` 提供，
+每个请求都是跨域的。
+
+Electron 外壳（`src/desktop/`）是「外壳 + 一个小的本地进程」,不是离线版：Postgres、Redis、worker
+以及所有 LLM 调用都留在远程服务器上，渲染进程直接与之通信。想自己构建：
+
+```bash
+make desktop-deps           # 安装外壳的依赖（只需一次）
+make desktop-dev            # 构建前端并启动外壳（app:// 协议）
+make desktop-dist           # 为当前平台打一个未签名的安装包
+```
+
+进程模型、IPC 约定和打包注意事项见 [docs/desktop.md](docs/desktop.md)。
+
 ## 快速开始
 
 > [!TIP]
@@ -215,31 +240,6 @@ docker compose -f docker/docker-compose.yml exec api alembic upgrade head   # �
 
 如果你想改为本地构建，或需要绑定挂载、备份和受限网络的说明，见
 [docs/deployment.md](docs/deployment.md)。
-
-## 桌面客户端
-
-Polaris 提供 macOS、Windows 和 Linux 桌面应用。**安装包请到
-[Releases](https://github.com/ZJU-REAL/Polaris/releases/latest) 下载**——`.dmg` / `.zip`(macOS,
-universal)、`.exe` / 便携版 `.zip`(Windows)、`.AppImage` / `.deb`(Linux),由 CI 在每个 `v*`
-tag 上构建。应用会检查更新，能不重启就直接应用。
-
-这些构建**既未签名也未公证**,所以每个平台都要先告诉系统一次它是安全的：macOS 执行
-`xattr -dr com.apple.quarantine /Applications/Polaris.app`(或右键 → 打开）;Windows 在
-SmartScreen 上选「更多信息 → 仍要运行」;Linux 的 AppImage 需要 `libnss3 libgtk-3-0 libasound2`,
-在 Ubuntu 24.04+ 的 AppArmor 限制下要加 `--no-sandbox`。首次启动时应用会让你填实验室的 Polaris
-服务器地址，并用 `/api/health` 校验；服务端必须放行桌面端来源，因为页面由 `app://polaris` 提供，
-每个请求都是跨域的。
-
-Electron 外壳（`src/desktop/`）是「外壳 + 一个小的本地进程」,不是离线版：Postgres、Redis、worker
-以及所有 LLM 调用都留在远程服务器上，渲染进程直接与之通信。想自己构建：
-
-```bash
-make desktop-deps           # 安装外壳的依赖（只需一次）
-make desktop-dev            # 构建前端并启动外壳（app:// 协议）
-make desktop-dist           # 为当前平台打一个未签名的安装包
-```
-
-进程模型、IPC 约定和打包注意事项见 [docs/desktop.md](docs/desktop.md)。
 
 ## 文档
 

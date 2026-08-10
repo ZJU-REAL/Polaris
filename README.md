@@ -182,6 +182,33 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
 | LLM | Multi-provider abstraction (OpenAI-compatible and Anthropic) with a DB model-routing table |
 | Deployment | Docker Compose (postgres, redis, api, worker, frontend) |
 
+## Desktop client
+
+Polaris ships as a desktop app for macOS, Windows, and Linux. **Download the installer from
+[Releases](https://github.com/ZJU-REAL/Polaris/releases/latest)** — `.dmg` / `.zip` (macOS, universal),
+`.exe` / portable `.zip` (Windows), `.AppImage` / `.deb` (Linux), built by CI on every `v*` tag. The
+app checks for updates and applies them without a restart where it can.
+
+The builds are **neither signed nor notarized**, so each platform needs to be told once that the app is
+safe to run: on macOS `xattr -dr com.apple.quarantine /Applications/Polaris.app` (or right-click →
+Open); on Windows choose More info → Run anyway past SmartScreen; on Linux the AppImage needs
+`libnss3 libgtk-3-0 libasound2`, and `--no-sandbox` under Ubuntu 24.04+ AppArmor. On first run the app
+asks for your lab's Polaris server address and validates it against `/api/health`; the server must
+whitelist the desktop origin, since the page is served from `app://polaris` and every request is
+cross-origin.
+
+The Electron shell (`src/desktop/`) is a shell plus a small local process, not an offline build:
+Postgres, Redis, the worker, and all LLM calls stay on the remote server, and the renderer talks to it
+directly. To build it yourself:
+
+```bash
+make desktop-deps           # install the shell's dependencies (once)
+make desktop-dev            # build the frontend and run the shell (app:// protocol)
+make desktop-dist           # package an unsigned installer for the current platform
+```
+
+See [docs/desktop.md](docs/desktop.md) for the process model, the IPC contract, and packaging notes.
+
 ## Quick start
 
 > [!TIP]
@@ -231,33 +258,6 @@ tasks), and the first-run migration is mandatory (Postgres tables are not auto-c
 
 For building locally instead, bind mounts, backups, and restricted networks, see
 [docs/deployment.md](docs/deployment.md).
-
-## Desktop client
-
-Polaris ships as a desktop app for macOS, Windows, and Linux. **Download the installer from
-[Releases](https://github.com/ZJU-REAL/Polaris/releases/latest)** — `.dmg` / `.zip` (macOS, universal),
-`.exe` / portable `.zip` (Windows), `.AppImage` / `.deb` (Linux), built by CI on every `v*` tag. The
-app checks for updates and applies them without a restart where it can.
-
-The builds are **neither signed nor notarized**, so each platform needs to be told once that the app is
-safe to run: on macOS `xattr -dr com.apple.quarantine /Applications/Polaris.app` (or right-click →
-Open); on Windows choose More info → Run anyway past SmartScreen; on Linux the AppImage needs
-`libnss3 libgtk-3-0 libasound2`, and `--no-sandbox` under Ubuntu 24.04+ AppArmor. On first run the app
-asks for your lab's Polaris server address and validates it against `/api/health`; the server must
-whitelist the desktop origin, since the page is served from `app://polaris` and every request is
-cross-origin.
-
-The Electron shell (`src/desktop/`) is a shell plus a small local process, not an offline build:
-Postgres, Redis, the worker, and all LLM calls stay on the remote server, and the renderer talks to it
-directly. To build it yourself:
-
-```bash
-make desktop-deps           # install the shell's dependencies (once)
-make desktop-dev            # build the frontend and run the shell (app:// protocol)
-make desktop-dist           # package an unsigned installer for the current platform
-```
-
-See [docs/desktop.md](docs/desktop.md) for the process model, the IPC contract, and packaging notes.
 
 ## Documentation
 
