@@ -128,6 +128,11 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
   compilation; agent drafting bound to real metrics and real citations.
 - **Paper Review with citation verification.** Existence and support are checked per citation against the
   library, Semantic Scholar, and OpenAlex; numbers are fact-checked against the experiment record.
+- **PolarisBuddy, an in-app assistant.** A global companion that rides along on every page: a Claude
+  Code-style multi-turn tool loop (streamed over SSE, with tool cards and inline figures) over the same
+  read-only tool layer, in `chat`, `plan` (research-only, propose before acting), and `goal` (loop toward
+  an objective) modes. Its greeting is stitched from real SQL counts rather than the model, it carries
+  page context and persistent per-user memory, and it is off unless the account may call a model.
 - **Skill system.** Agent behavior is packaged as data, not code: versionable, composable `guidance`,
   `rubric`, `persona`, and `workflow` packs injected at named points into agent prompts, with a
   publish-approve-install-rate marketplace. Each Voyage snapshots the skills it used for reproducibility.
@@ -147,6 +152,7 @@ plan-execute-verify loop) activates only for open-ended kinds such as experiment
 | Layer | Technology |
 | --- | --- |
 | Frontend | React 18 + TypeScript 5 + Vite 5, TanStack Query for all server state, CodeMirror 6, Yjs (CRDT), react-pdf, KaTeX |
+| Desktop | Electron shell (macOS / Windows / Linux) that reuses the web bundle over an `app://` protocol; all heavy state stays on the remote server |
 | Backend | FastAPI (fully async) + SQLAlchemy 2 + Alembic + fastapi-users (JWT) |
 | Task queue | ARQ (Redis broker); every long task runs off the request thread |
 | Data | PostgreSQL 16 with pgvector + Redis 7 |
@@ -205,6 +211,20 @@ tasks), and the first-run migration is mandatory (Postgres tables are not auto-c
 For building locally instead, bind mounts, backups, and restricted networks, see
 [docs/deployment.md](docs/deployment.md).
 
+## Desktop client
+
+An optional Electron shell (`src/desktop/`) wraps the existing web UI for macOS, Windows, and Linux. It
+is a shell plus a small local process, not an offline build: Postgres, Redis, the worker, and all LLM
+calls stay on the remote server, and the renderer talks to it directly.
+
+```bash
+make desktop-deps           # install the shell's dependencies (once)
+make desktop-dev            # build the frontend and run the shell (app:// protocol)
+make desktop-dist           # package an unsigned installer for the current platform
+```
+
+See [docs/desktop.md](docs/desktop.md) for the process model, the IPC contract, and packaging notes.
+
 ## Documentation
 
 Full documentation lives in [docs/](docs/):
@@ -213,6 +233,7 @@ Full documentation lives in [docs/](docs/):
 - [Architecture](docs/architecture.md): system design and the Voyage agent core
 - [Concepts](docs/concepts.md): the research pipeline, Voyage, skills, and MCP tools
 - [Deployment](docs/deployment.md): production deployment with Docker Compose
+- [Desktop](docs/desktop.md): the Electron shell — process model, IPC contract, and packaging
 - [Configuration](docs/configuration.md): environment variables and settings
 - [Development](docs/development.md): local workflow and conventions
 
@@ -229,6 +250,7 @@ src/
       core/        config, db, queue (ARQ), events (SSE), llm/ abstraction
       tools/, mcp/ read-only tool registry and the external MCP server
   frontend/      React + Vite (src/features/ has one folder per product area)
+  desktop/       Electron shell that wraps the web bundle (macOS / Windows / Linux)
 docker/          Dockerfiles and compose (base, dev override, prod overlay)
 docs/            English project documentation
 ```
