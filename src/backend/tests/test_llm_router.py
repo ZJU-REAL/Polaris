@@ -277,11 +277,13 @@ def test_digest_gets_the_long_call_budget_without_streaming():
     assert "digest" not in STREAM_STAGES, "digest 输出 JSON，不该流式"
 
 
-async def test_digest_falls_back_to_the_librarian_route_when_unset(client, monkeypatch):
-    """没显式配 digest 路由时沿用 librarian 的，存量部署行为不变。
+async def test_digest_falls_back_to_default_not_to_librarian(client, monkeypatch):
+    """没显式配 digest 路由时跟随 default，哪怕 librarian 配着别的模型。
 
-    digest 原先就是直接复用 librarian 的调用，拆出来只为能单独设模型。若回退到
-    default，存量部署会悄悄换成另一类模型——那不是拆分该带来的后果。
+    这里曾经回退 librarian（digest 是从它拆出来的），于是设置页说的和实际打的不是
+    一回事：界面显示「每日研究简报 · 跟随默认」并列着 default 的模型名，调用却走
+    librarian。2026-08-10 生产因此排查了半天——默认明明配的 qwen-flash，日志里
+    却全是 gpt-5.6-luna。界面承诺什么，解析就得给什么。
     """
     from app.core.llm.router import LLMRouter, ResolvedRoute
 
@@ -310,11 +312,11 @@ async def test_digest_falls_back_to_the_librarian_route_when_unset(client, monke
 
     monkeypatch.setattr(router, "_get_routes", fake_routes)
     _provider, route = await router.resolve("digest")
-    assert route.model == "librarian-model", "应当沿用 librarian，而不是掉到 default"
+    assert route.model == "default-model", "应当跟随 default，而不是偷偷继承 librarian"
 
 
-async def test_an_explicit_digest_route_wins_over_the_fallback(client, monkeypatch):
-    """显式配了 digest 就用它——拆分的意义就在这里。"""
+async def test_an_explicit_digest_route_wins(client, monkeypatch):
+    """显式配了 digest 就用它——拆成独立环节的意义就在这里。"""
     from app.core.llm.router import LLMRouter, ResolvedRoute
 
     router = LLMRouter()

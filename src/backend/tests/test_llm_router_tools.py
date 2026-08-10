@@ -11,14 +11,13 @@ from app.core.llm.base import (
     ToolUseStart,
 )
 from app.core.llm.fake import FakeProvider
-from app.core.llm.router import _STAGE_ROUTE_FALLBACKS, STAGES, call_profile
+from app.core.llm.router import STAGES, call_profile
 from app.core.llm.tool_stream import ToolCallAccumulator
 
 
-def test_agent_stage_exists_and_falls_back_to_reading():
-    """新 stage 未配置时继承 reading 的路由——存量部署不用改任何配置就能跑。"""
+def test_agent_stage_exists():
+    """agent 是个可单独配路由的环节；没配时和别的环节一样跟随 default。"""
     assert "agent" in STAGES
-    assert _STAGE_ROUTE_FALLBACKS["agent"] == "reading"
 
 
 def test_agent_gets_its_own_patience_not_the_long_profile():

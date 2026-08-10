@@ -87,10 +87,17 @@ _CAPABILITY_STAGES = frozenset({"embedding", "rerank"})
 # rerank 不在此列：它是逐条打分，不涉及跨调用可比性，各用各的没有问题。
 GLOBAL_ONLY_STAGES = frozenset({"embedding"})
 
-# 新环节拆出来时的兼容回退：没显式配路由就沿用原来那个环节的，行为不变。
-# digest 原先是直接复用 librarian 的调用，拆开只是为了能单独设模型——
-# 存量部署不配也不该因此改变行为（default 路由指向的往往是另一类模型）。
-_STAGE_ROUTE_FALLBACKS = {"digest": "librarian", "agent": "reading"}
+# 没显式配路由的环节一律回退 default——设置页就是这么写的（「未单独设置的环节自动
+# 跟随默认」），那一行还直接显示着 default 的模型名。
+#
+# 这里曾经有一张兼容表：digest 拆出来时回退 librarian、agent 回退 reading，理由是
+# 「存量部署不配也不该改变行为」。代价是设置页从此在说谎——管理员把默认设成 A、
+# 界面上「每日研究简报」显示跟随默认 A，实际调用打的却是 B。2026-08-10 生产就栽在
+# 这上面：默认配的是 qwen-flash，简报却一直走 librarian 的 gpt-5.6-luna，那天网关
+# 抖动返回截断 JSON，三个库的同步全停了，排查时谁也想不到它没走默认。
+#
+# 「行为不变」保的是没人看的存量默认值，「界面说什么就是什么」保的是每一次人工配置。
+# 后者更值钱：想要原来的模型，显式配一行就是了，而界面骗人是查不出来的。
 
 
 @dataclass(slots=True, frozen=True)
@@ -284,6 +291,9 @@ class LLMRouter:
     ) -> tuple[LLMProvider, ResolvedRoute]:
         """按有效 owner 查路由表（缓存 60s），无则回退 default 路由。
 
+        没显式配的环节一律回退 ``default``，不存在「继承另一个环节」这回事——设置页
+        就是这么告诉管理员的，界面显示跟随默认哪个模型，实际就得打那个模型。
+
         owner 由 user 的接管状态决定：自管用户用自己的 owner=user 配置（admin 的
         对他失效——即"配好前不可用"）；被接管用户及无 user_id 的系统调用用
         全局(owner=NULL, admin)配置。``GLOBAL_ONLY_STAGES``（嵌入）不吃这一套，
@@ -300,8 +310,6 @@ class LLMRouter:
         owner_id = await self._effective_owner(user_id, stage)
         routes = await self._get_routes(owner_id)
         route = routes.get(stage)
-        if route is None and (inherited := _STAGE_ROUTE_FALLBACKS.get(stage)):
-            route = routes.get(inherited)
         if route is None:
             if stage in _CAPABILITY_STAGES:
                 if not routes and get_settings().llm_fake_fallback:
