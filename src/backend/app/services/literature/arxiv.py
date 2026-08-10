@@ -11,6 +11,7 @@ import asyncio
 import logging
 import random
 import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -59,6 +60,8 @@ _VERSION_RE = re.compile(r"v\d+$")
 _RETRY_STATUSES = frozenset({403, 429, 500, 502, 503, 504})
 # 单次退避上限：Retry-After 可能给出很大的值，voyage 任务不能被一个响应头挂住半天
 _MAX_BACKOFF_SECONDS = 120.0
+_QUERY_COOLDOWN_KEY = "arxiv:query:cooldown_until"
+_QUERY_COOLDOWN_SECONDS = 10 * 60
 
 
 class ArxivError(RuntimeError):
@@ -67,6 +70,10 @@ class ArxivError(RuntimeError):
 
 class ArxivRateLimitedError(ArxivError):
     """被 arXiv 限流，且重试次数耗尽。"""
+
+    def __init__(self, message: str, *, retry_after: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 def _parse_iso_dt(raw: Any) -> datetime | None:
@@ -267,6 +274,7 @@ class ArxivClient:
             headers={"User-Agent": f"Polaris/1.0 (+mailto:{settings.openalex_mailto})"},
         )
         self._cache = ResponseCache(redis)
+        self._redis = redis
         # RSS 新鲜源用独立的短 TTL 缓存（3h），跨用户/项目共享当天新公告
         self._rss_cache = ResponseCache(redis, ttl=_RSS_CACHE_TTL)
         # 闸门放 Redis 上，让 api 与 worker 两个进程共享同一个间隔（见 MinIntervalLimiter）
@@ -274,6 +282,30 @@ class ArxivClient:
         self._page_size = page_size
         self._max_retries = max(1, max_retries)
         self._backoff_base = backoff_base
+
+    async def _query_cooldown_remaining(self) -> int:
+        if self._redis is None:
+            return 0
+        try:
+            raw = await self._redis.get(_QUERY_COOLDOWN_KEY)
+        except Exception:  # noqa: BLE001 - Redis loss must not make arXiv unusable
+            return 0
+        if raw is None:
+            return 0
+        try:
+            until = float(raw.decode() if isinstance(raw, bytes) else raw)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, int(until - time.time() + 0.999))
+
+    async def _start_query_cooldown(self, seconds: int) -> int:
+        seconds = max(_QUERY_COOLDOWN_SECONDS, seconds)
+        if self._redis is not None:
+            try:
+                await self._redis.setex(_QUERY_COOLDOWN_KEY, seconds, str(time.time() + seconds))
+            except Exception:  # noqa: BLE001
+                logger.warning("failed to persist arxiv query cooldown", exc_info=True)
+        return seconds
 
     async def _request(self, url: str, *, params: dict[str, Any] | None = None) -> httpx.Response:
         """所有 arXiv 请求的唯一出口：限速 + 遇限流/超时退避重试。
@@ -285,7 +317,13 @@ class ArxivClient:
         进程、各自独立重试，加满抖动才能把它们错开）。退避的同时 ``penalize`` 共享限流器，
         否则同进程里别的协程会接着打过去，等于没退避。
         """
+        if url == API_URL and (remaining := await self._query_cooldown_remaining()):
+            raise ArxivRateLimitedError(
+                f"arXiv query cooling down; retry after {remaining}s", retry_after=remaining
+            )
         last_exc: Exception | None = None
+        last_status: int | None = None
+        last_retry_after: float | None = None
         for attempt in range(self._max_retries):
             await self._limiter.acquire()
             retry_after: float | None = None
@@ -301,6 +339,8 @@ class ArxivClient:
                     resp.raise_for_status()
                     return resp
                 retry_after = _retry_after_seconds(resp)
+                last_status = resp.status_code
+                last_retry_after = retry_after
                 last_exc = httpx.HTTPStatusError(
                     f"{resp.status_code} from arXiv", request=resp.request, response=resp
                 )
@@ -327,10 +367,15 @@ class ArxivClient:
                 url,
             )
             await self._limiter.penalize(delay)
-            await asyncio.sleep(delay)
+            if attempt + 1 < self._max_retries:
+                await asyncio.sleep(delay)
+        cooldown = None
+        if url == API_URL and last_status in (403, 429):
+            cooldown = await self._start_query_cooldown(int(last_retry_after or 0))
         raise ArxivRateLimitedError(
             f"arXiv unavailable after {self._max_retries} attempts"
-            f" ({type(last_exc).__name__}): {url}"
+            f" ({type(last_exc).__name__}): {url}",
+            retry_after=cooldown,
         ) from last_exc
 
     async def _query(self, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -373,6 +418,29 @@ class ArxivClient:
                 break
             start += len(entries)
         return results[:limit]
+
+    async def search_page(
+        self,
+        *,
+        categories: list[str] | None = None,
+        keywords: list[str] | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        exclude: list[str] | None = None,
+        start: int = 0,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Fetch one stable page so callers can commit a resumable checkpoint."""
+        query = build_search_query(categories or [], keywords or [], since, until, exclude)
+        return await self._query(
+            {
+                "search_query": query,
+                "start": max(0, start),
+                "max_results": max(1, min(self._page_size, limit)),
+                "sortBy": "submittedDate",
+                "sortOrder": "descending",
+            }
+        )
 
     async def fetch_new(self, category: str) -> tuple[list[dict[str, Any]], datetime | None]:
         """抓一个分类的当天新公告（RSS /new，即时无索引滞后）。

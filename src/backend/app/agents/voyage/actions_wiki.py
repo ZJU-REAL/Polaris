@@ -13,13 +13,15 @@
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voyage.actions import ActionContext, register
@@ -32,7 +34,7 @@ from app.models.daily_feed import DailyFeedEntry
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper, new_paper
 from app.models.research_digest import LibraryResearchDigest
-from app.models.voyage import VoyageStep
+from app.models.voyage import VoyageRun, VoyageStep
 from app.schemas.ingest import TIME_RANGE_DAYS
 from app.services.affiliations import (
     apply_author_affiliations,
@@ -569,15 +571,63 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         params = _params(ctx)
         terms = [t for t in (params.get("query_terms") or []) if str(t).strip()] or include
         days = TIME_RANGE_DAYS.get(str(params.get("time_range") or ""))
-        since = now - timedelta(days=days or 30 * int(knobs["months_back"]))
-        entries = await get_arxiv_client().search(
-            categories=categories,
-            keywords=terms,
-            exclude=exclude,
-            since=since,
-            until=now,
-            limit=limit,
-        )
+        query_signature = hashlib.sha256(
+            json.dumps(
+                {
+                    "categories": categories,
+                    "terms": terms,
+                    "exclude": exclude,
+                    "days": days,
+                    "months_back": int(knobs["months_back"]),
+                    "limit": limit,
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode()
+        ).hexdigest()
+        resume = ctx.checkpoint.get("arxiv_search_resume") or {}
+        if resume.get("query_signature") == query_signature and not resume.get("done"):
+            since = _parse_iso(resume.get("since")) or (
+                now - timedelta(days=days or 30 * int(knobs["months_back"]))
+            )
+            until = _parse_iso(resume.get("until")) or now
+            next_start = max(0, int(resume.get("next_start") or 0))
+            fetched_total = max(0, int(resume.get("fetched") or 0))
+            inserted_total = max(0, int(resume.get("inserted") or 0))
+            source_latest_at = resume.get("source_latest_at")
+        else:
+            since = now - timedelta(days=days or 30 * int(knobs["months_back"]))
+            until = now
+            next_start = 0
+            fetched_total = 0
+            inserted_total = 0
+            source_latest_at = None
+
+        def _checkpoint(*, done: bool) -> dict[str, Any]:
+            return {
+                "query_signature": query_signature,
+                "since": since.isoformat(),
+                "until": until.isoformat(),
+                "next_start": next_start,
+                "limit": limit,
+                "fetched": fetched_total,
+                "inserted": inserted_total,
+                "source_latest_at": source_latest_at,
+                "done": done,
+            }
+
+        async def _persist_checkpoint(*, done: bool) -> None:
+            ctx.checkpoint["arxiv_search_resume"] = _checkpoint(done=done)
+            await session.execute(
+                update(VoyageRun)
+                .where(VoyageRun.id == ctx.run.id)
+                .values(checkpoint=dict(ctx.checkpoint))
+            )
+            await session.commit()
+
+        # Persist the fixed time window before the first HTTP call. If page 1 is rate-limited,
+        # resume still uses the exact same result set instead of moving "until" forward.
+        await _persist_checkpoint(done=False)
 
         arxiv_ids, dois, titles = await _existing_keys(session, library.id)
         new_papers: list[Paper] = []
@@ -633,17 +683,44 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             new_papers.append(paper)
             return True
 
-        for entry in entries:
-            await _try_insert(entry, "arxiv")
+        arxiv = get_arxiv_client()
+        while next_start < limit:
+            page_size = min(100, limit - next_start)
+            entries = await arxiv.search_page(
+                categories=categories,
+                keywords=terms,
+                exclude=exclude,
+                since=since,
+                until=until,
+                start=next_start,
+                limit=page_size,
+            )
+            if not entries:
+                await _persist_checkpoint(done=True)
+                break
+            inserted_page = 0
+            for entry in entries:
+                if await _try_insert(entry, "arxiv"):
+                    inserted_page += 1
+            await session.flush()
+            fetched_total += len(entries)
+            inserted_total += inserted_page
+            next_start += len(entries)
+            page_latest = _latest_source_date(entries)
+            if page_latest and (source_latest_at is None or page_latest > source_latest_at):
+                source_latest_at = page_latest
+            done = len(entries) < page_size or next_start >= limit
+            # Paper rows/memberships and next_start are committed atomically. A later 429 can
+            # therefore resume at the next page without losing or replaying this page.
+            await _persist_checkpoint(done=done)
+            if done:
+                break
 
-        await session.flush()  # 拿到新论文 id，供 observation 清单
         brief = _paper_brief(new_papers)
-        await session.commit()
 
-    source_latest_at = _latest_source_date(entries)
     messages: list[str] = []
-    source_fetched = len(entries)
-    cap_hit = len(entries) >= limit
+    source_fetched = fetched_total
+    cap_hit = fetched_total >= limit
     if source_fetched == 0:
         messages.append("本次所有数据源均返回 0 篇；请复查检索配置、源站状态和时间窗口。")
     if cap_hit:
@@ -653,9 +730,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
     diagnostics = {
         "source": "arxiv",
         "source_fetched": source_fetched,
-        "prescreened": len(entries),
-        "query_found": len(entries),
-        "inserted": len(new_papers),
+        "prescreened": fetched_total,
+        "query_found": fetched_total,
+        "inserted": inserted_total,
         "window_since": since.isoformat(),
         "source_latest_at": source_latest_at,
         "cap_hit": cap_hit,
@@ -667,8 +744,8 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
     ctx.checkpoint["watermark_candidate"] = now.isoformat()
     return {
         "source": "arxiv",
-        "found": len(entries),
-        "inserted": len(new_papers),
+        "found": fetched_total,
+        "inserted": inserted_total,
         "new_papers": brief,
         "window_since": since.isoformat(),
         "mode": mode,
