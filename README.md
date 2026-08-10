@@ -15,6 +15,10 @@
 </p>
 
 <p align="center">
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <img src="docs/assets/polaris-banner.jpg" alt="Polaris: from literature to a reviewed paper" width="100%">
 </p>
 
