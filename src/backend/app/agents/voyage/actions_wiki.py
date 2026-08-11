@@ -595,6 +595,12 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             fetched_total = max(0, int(resume.get("fetched") or 0))
             inserted_total = max(0, int(resume.get("inserted") or 0))
             source_latest_at = resume.get("source_latest_at")
+            # 清单也要跨续跑累计。只留 id+title 且有条数上限，带着走很便宜；
+            # 不带的话，续跑那一轮的 observation 会写着「新增 101 篇」却只列出最后
+            # 一页的 1 篇——数字和清单当场打架，看的人只能怀疑是不是漏了 100 篇。
+            brief_acc = [
+                dict(item) for item in (resume.get("brief") or []) if isinstance(item, dict)
+            ]
         else:
             since = now - timedelta(days=days or 30 * int(knobs["months_back"]))
             until = now
@@ -602,6 +608,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             fetched_total = 0
             inserted_total = 0
             source_latest_at = None
+            brief_acc = []
 
         def _checkpoint(*, done: bool) -> dict[str, Any]:
             return {
@@ -613,6 +620,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 "fetched": fetched_total,
                 "inserted": inserted_total,
                 "source_latest_at": source_latest_at,
+                "brief": brief_acc,
                 "done": done,
             }
 
@@ -685,7 +693,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
 
         arxiv = get_arxiv_client()
         while next_start < limit:
-            page_size = min(100, limit - next_start)
+            # 页大小问客户端要，别写死：下面拿 len(entries) < page_size 判末页，
+            # 一旦要的比客户端肯给的多，第一页就会被误判成末页，搜索静默截断。
+            page_size = min(arxiv.page_size, limit - next_start)
             entries = await arxiv.search_page(
                 categories=categories,
                 keywords=terms,
@@ -706,6 +716,9 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             fetched_total += len(entries)
             inserted_total += inserted_page
             next_start += len(entries)
+            if inserted_page:
+                brief_acc.extend(_paper_brief(new_papers[-inserted_page:]))
+                del brief_acc[_OBS_LIST_CAP:]
             page_latest = _latest_source_date(entries)
             if page_latest and (source_latest_at is None or page_latest > source_latest_at):
                 source_latest_at = page_latest
@@ -716,7 +729,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             if done:
                 break
 
-        brief = _paper_brief(new_papers)
+        brief = brief_acc
 
     messages: list[str] = []
     source_fetched = fetched_total

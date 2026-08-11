@@ -283,6 +283,11 @@ class ArxivClient:
         self._max_retries = max(1, max_retries)
         self._backoff_base = backoff_base
 
+    @property
+    def page_size(self) -> int:
+        """一次最多取几条。翻页的调用方按它要页，别自己写死。"""
+        return self._page_size
+
     async def _query_cooldown_remaining(self) -> int:
         if self._redis is None:
             return 0
@@ -299,7 +304,16 @@ class ArxivClient:
         return max(0, int(until - time.time() + 0.999))
 
     async def _start_query_cooldown(self, seconds: int) -> int:
-        seconds = max(_QUERY_COOLDOWN_SECONDS, seconds)
+        """冻结全平台的 arXiv 检索一段时间。**服务器说等多久就等多久。**
+
+        这里原本是 ``max(_QUERY_COOLDOWN_SECONDS, seconds)``——服务器回 ``Retry-After: 5``
+        也照样停 10 分钟。这个冷却是平台级的单键，一个人的建库搜索踩到限流，所有人
+        的检索都跟着停，所以分寸得由对方定：给了 ``Retry-After`` 就信它，没给才用
+        我们自己的保守默认。上限仍然压住，免得一个离谱的响应头把检索冻住半天
+        （和 ``_MAX_BACKOFF_SECONDS`` 同一个道理）。
+        """
+        seconds = seconds if seconds > 0 else _QUERY_COOLDOWN_SECONDS
+        seconds = max(1, min(seconds, _QUERY_COOLDOWN_SECONDS))
         if self._redis is not None:
             try:
                 await self._redis.setex(_QUERY_COOLDOWN_KEY, seconds, str(time.time() + seconds))
@@ -370,7 +384,10 @@ class ArxivClient:
             if attempt + 1 < self._max_retries:
                 await asyncio.sleep(delay)
         cooldown = None
-        if url == API_URL and last_status in (403, 429):
+        # 只有 429 才冻结全平台。403 一并算限流是过度反应：arXiv 的 403 更常见的原因
+        # 是 User-Agent / 来源被拦，那种情况等十分钟不会变好，却把所有人的检索连坐了。
+        # 冷却是单键、平台级的，触发条件必须是「对方明确说你太快了」。
+        if url == API_URL and last_status == 429:
             cooldown = await self._start_query_cooldown(int(last_retry_after or 0))
         raise ArxivRateLimitedError(
             f"arXiv unavailable after {self._max_retries} attempts"
@@ -398,20 +415,24 @@ class ArxivClient:
         exclude: list[str] | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """分类+关键词搜索（日期窗口、可排除词），自动翻页至 limit。"""
-        query = build_search_query(categories or [], keywords or [], since, until, exclude)
+        """分类+关键词搜索（日期窗口、可排除词），自动翻页至 limit。
+
+        翻页逻辑就是 :meth:`search_page` 的循环，不再各写一份：可续跑的建库搜索把
+        循环挪到了调用方（每页一个 checkpoint），这里留一份给不需要断点的调用方。
+        两份各自实现过一次分页终止条件，而只有其中一份有测试——那正是分歧的开始。
+        """
         results: list[dict[str, Any]] = []
         start = 0
         while len(results) < limit:
-            batch = min(self._page_size, limit - len(results))
-            entries = await self._query(
-                {
-                    "search_query": query,
-                    "start": start,
-                    "max_results": batch,
-                    "sortBy": "submittedDate",
-                    "sortOrder": "descending",
-                }
+            batch = min(self.page_size, limit - len(results))
+            entries = await self.search_page(
+                categories=categories,
+                keywords=keywords,
+                since=since,
+                until=until,
+                exclude=exclude,
+                start=start,
+                limit=batch,
             )
             results.extend(entries)
             if len(entries) < batch:  # 已到末页
@@ -430,13 +451,18 @@ class ArxivClient:
         start: int = 0,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Fetch one stable page so callers can commit a resumable checkpoint."""
+        """取一页（稳定窗口），让调用方能按页提交可续跑的断点。
+
+        ``limit`` 会被压到 :attr:`page_size` 以内，所以调用方判断「到末页了没有」时
+        必须拿 :attr:`page_size` 去要页，别自己写死一个数——写死 100 而客户端页大小
+        是 50 的话，返回 50 会被误判成末页，搜索**静默截断**且不报错。
+        """
         query = build_search_query(categories or [], keywords or [], since, until, exclude)
         return await self._query(
             {
                 "search_query": query,
                 "start": max(0, start),
-                "max_results": max(1, min(self._page_size, limit)),
+                "max_results": max(1, min(self.page_size, limit)),
                 "sortBy": "submittedDate",
                 "sortOrder": "descending",
             }
