@@ -11,6 +11,7 @@ asyncio 任务跑，自开新 AsyncSession，按阶段向 redis 频道发进度�
 import asyncio
 import logging
 import uuid
+import weakref
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,27 @@ EMBED_TEXT_MAX_CHARS = 2000
 # 读不到就取新默认（开）。
 
 _OWNER_TTL_SECONDS = 3600  # 批量任务可能较久；归属 key 与事件回放保留 1 小时
-_ENRICH_SEMAPHORE = asyncio.Semaphore(3)  # 批量导入时限制 PDF/向量/LLM 并发
+
+#: 批量导入时限制 PDF/向量/LLM 并发。**按事件循环各持一个**，不能做成模块级单例：
+#: ``asyncio.Semaphore`` 一旦真的被争用过就绑死在那个循环上，换一个循环再用会抛
+#: ``RuntimeError: ... is bound to a different event loop``。生产是单循环，碰不到；
+#: 测试每个用例一个新循环，于是「先跑一个会争用的批量导入，再跑第二个」必炸——而且
+#: 炸的是后一个用例，看起来像它自己的毛病。已实测复现：同一个信号量在第二个
+#: ``asyncio.run`` 里争用即抛。
+_ENRICH_CONCURRENCY = 3
+_ENRICH_SEMAPHORES: "weakref.WeakKeyDictionary[Any, asyncio.Semaphore]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _enrich_semaphore() -> asyncio.Semaphore:
+    """当前事件循环的补全并发闸。循环消失后条目自动回收。"""
+    loop = asyncio.get_running_loop()
+    sem = _ENRICH_SEMAPHORES.get(loop)
+    if sem is None:
+        sem = asyncio.Semaphore(_ENRICH_CONCURRENCY)
+        _ENRICH_SEMAPHORES[loop] = sem
+    return sem
 
 
 def paper_task_owner_key(task_id: str) -> str:
@@ -362,7 +383,7 @@ async def _run_enrichment(
     redis: Redis,
 ) -> None:
     """限制单进程内补全并发，避免一次批量导入同时压满上游服务。"""
-    async with _ENRICH_SEMAPHORE:
+    async with _enrich_semaphore():
         await _run_enrichment_unbounded(
             task_id=task_id,
             paper_id=paper_id,
@@ -566,7 +587,15 @@ async def launch_paper_batch_import(
 
 
 async def await_task(task_id: str) -> None:
-    """等待某后台任务跑完（测试用；生产不需要）。"""
+    """等待某后台任务跑完。
+
+    批量导入用它等各篇的补全子任务收尾，好在全部完成后发一条 ``done``——所以这不再
+    只是测试用的助手，docstring 曾经这么写，改坏它会让批量导入的完成事件失准。
+
+    只看得见**本进程**起的任务：``_TASKS`` 是进程内字典。任务已经跑完并被回调摘掉，
+    或者压根是别的进程起的，这里都直接返回——对调用方而言「不知道」和「已完成」
+    同样处理，因为真正的完成信号走 SSE，不靠这个函数。
+    """
     task = _TASKS.get(task_id)
     if task is not None:
         await task

@@ -1,5 +1,6 @@
 """手动添加文献（docs/api-lit.md §4）：三来源 + 去重 409 + 解析失败/互斥 422，全离线。"""
 
+import asyncio
 import json
 import uuid
 
@@ -490,3 +491,58 @@ async def test_both_sources_down_is_a_parse_error_not_a_crash(monkeypatch):
     with pytest.raises(paper_import.ParseFailedError) as excinfo:
         await paper_import.resolve_fields(arxiv_id="2607.04425")
     assert "限流" in str(excinfo.value)
+
+
+def test_enrich_semaphore_survives_a_second_event_loop():
+    """补全并发闸不能是模块级单例——争用过一次就绑死在那个循环上。
+
+    ``asyncio.Semaphore`` 只在真的需要排队时才记住自己的循环，所以「创建即复用」
+    看起来没问题，直到某个用例的批量导入把它用到争用，下一个用例换了新循环再用
+    就抛 ``RuntimeError: ... is bound to a different event loop``——而且报在后一个
+    用例头上，看起来像它自己的毛病。生产是单循环碰不到，测试必踩。
+    """
+    import asyncio
+
+    from app.services.paper_enrich import _ENRICH_CONCURRENCY, _enrich_semaphore
+
+    async def contend() -> list[int]:
+        async def one(i: int) -> int:
+            async with _enrich_semaphore():
+                await asyncio.sleep(0)
+                return i
+
+        # 并发数必须超过闸门宽度，否则根本不会排队，也就测不到绑定
+        return await asyncio.gather(*(one(i) for i in range(_ENRICH_CONCURRENCY + 2)))
+
+    assert asyncio.run(contend()) == list(range(_ENRICH_CONCURRENCY + 2))
+    assert asyncio.run(contend()) == list(range(_ENRICH_CONCURRENCY + 2)), "换个循环就用不了了"
+
+
+async def test_batch_anchor_resolution_gives_up_instead_of_hanging(monkeypatch):
+    """逐项兜底有墙钟预算；超了把剩下的记成查不到，不把同步请求拖到网关超时。
+
+    arXiv 一限流，缺失项就变成逐个打 OpenAlex。50 个锚点串行请求远超网关耐心，
+    用户看到的是转圈到断线、一条都拿不到——那还不如拿回大部分加几条明确的失败。
+    """
+    from app.services import paper_import as svc
+
+    async def never_returns_quickly(arxiv_id: str):
+        await asyncio.sleep(0.05)
+        raise svc.ParseFailedError(f"nope {arxiv_id}")
+
+    class _RateLimited:
+        async def fetch_by_ids(self, ids):
+            raise svc.ArxivRateLimitedError("simulated")
+
+    monkeypatch.setattr(svc, "get_arxiv_client", lambda: _RateLimited())
+    monkeypatch.setattr(svc, "_fields_from_openalex_arxiv", never_returns_quickly)
+    monkeypatch.setattr(svc, "_BATCH_FALLBACK_BUDGET_SECONDS", 0.12)
+
+    ids = [f"2608.{i:05d}" for i in range(30)]
+    results = await svc.resolve_arxiv_fields_batch(ids)
+
+    assert len(results) == len(ids), "顺序与条数必须和输入一一对应"
+    assert all(r.get("error") for r in results), "这一批全都该带错误"
+    timed_out = [r for r in results if "解析超时" in str(r.get("error"))]
+    assert timed_out, "预算用尽后剩下的该直接记成超时，而不是继续逐个等"
+    assert len(timed_out) < len(ids), "预算没用完之前该老老实实地查"

@@ -153,6 +153,11 @@ async def _fields_from_arxiv(arxiv_id: str) -> dict[str, Any]:
     return _fields_from_arxiv_entry(entry, normalized)
 
 
+#: 批量解析里「逐项兜底」的墙钟预算。接口是同步的，超了就把剩下的记成查不到，
+#: 让调用方拿到一份大部分可用的结果，而不是等到网关掐断、什么都没有。
+_BATCH_FALLBACK_BUDGET_SECONDS = 20.0
+
+
 async def resolve_arxiv_fields_batch(arxiv_ids: list[str]) -> list[dict[str, Any]]:
     """一次请求批量解析 arXiv 元数据，结果与输入顺序一一对应。
 
@@ -177,8 +182,17 @@ async def resolve_arxiv_fields_batch(arxiv_ids: list[str]) -> list[dict[str, Any
         if entry.get("arxiv_id") and entry.get("title")
     }
     errors_by_id: dict[str, str] = {}
-    for arxiv_id in unique_ids:
-        if arxiv_id in fields_by_id:
+    missing = [arxiv_id for arxiv_id in unique_ids if arxiv_id not in fields_by_id]
+
+    # 兜底整体设一个墙钟预算。这个接口是同步 POST，前端开着解析中的对话框等它；
+    # 而缺失项是逐个打 OpenAlex 的，arXiv 一限流就变成「50 个 id 串行请求」——
+    # 最坏情况远超网关超时，用户看到的是转圈转到断线，一条元数据也没拿到。
+    # 超预算的部分不再去查，按「查不到」返回：拿到 45 条加 5 条错误，
+    # 比整个请求超时有用得多。
+    deadline = asyncio.get_running_loop().time() + _BATCH_FALLBACK_BUDGET_SECONDS
+    for arxiv_id in missing:
+        if asyncio.get_running_loop().time() >= deadline:
+            errors_by_id[arxiv_id] = f"解析超时，未能确认 {arxiv_id}（可稍后重试）"
             continue
         try:
             fields_by_id[arxiv_id] = await _fields_from_openalex_arxiv(arxiv_id)
