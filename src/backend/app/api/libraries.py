@@ -63,6 +63,8 @@ from app.schemas.paper import (
     PaperChatRequest,
     PaperDetail,
     PaperListPage,
+    PaperManualBatchCreate,
+    PaperManualBatchTaskRead,
     PaperManualCreate,
     PaperRead,
     ScoredConcept,
@@ -915,6 +917,32 @@ async def add_library_paper_manually(
     )
     detail = await _paper_detail(session, view, user_id)
     return detail.model_copy(update={"task_id": task_id})
+
+
+@router.post(
+    "/libraries/{library_id}/paper-imports/batch",
+    response_model=PaperManualBatchTaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def add_library_papers_manually_batch(
+    library_id: uuid.UUID,
+    data: PaperManualBatchCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
+) -> PaperManualBatchTaskRead:
+    """批量添加 1–50 篇文献到指定库；逐项结果通过 paper-task SSE 返回。"""
+    library = await _get_managed_library(session, library_id, user)
+    task_id = await paper_enrich_service.launch_paper_batch_import(
+        redis=redis,
+        items=[item.model_dump() for item in data.items],
+        library_id=library.id,
+        user_id=user.id,
+        project_id=library.project_id,
+    )
+    if task_id is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="TASK_SERVICE_UNAVAILABLE")
+    return PaperManualBatchTaskRead(task_id=task_id, total=len(data.items))
 
 
 @router.post("/libraries/{library_id}/papers/batch-delete")

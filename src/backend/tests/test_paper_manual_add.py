@@ -1,5 +1,6 @@
 """手动添加文献（docs/api-lit.md §4）：三来源 + 去重 409 + 解析失败/互斥 422，全离线。"""
 
+import json
 import uuid
 
 import fakeredis.aioredis
@@ -262,6 +263,146 @@ async def test_add_mutual_exclusion_422(client):
     assert resp.status_code == 404
 
 
+async def test_batch_add_is_partial_and_reports_each_item(client, fake_redis):
+    """批量导入逐项提交：有效、无效、重复项互不回滚，SSE 给出完整汇总。"""
+    from app.core.events import paper_task_log_key
+    from app.services import paper_enrich
+
+    project_id, headers = await _setup(client)
+    resp = await client.post(
+        f"/api/projects/{project_id}/paper-imports/batch",
+        json={
+            "items": [
+                {"bibtex": BIBTEX_ENTRY},
+                {"bibtex": "@article{missing, author={Nobody}}"},
+                {"bibtex": BIBTEX_ENTRY},
+            ]
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["total"] == 3 and body["task_id"]
+    await paper_enrich.await_task(body["task_id"])
+
+    events = [
+        json.loads(raw)
+        for raw in await fake_redis.lrange(paper_task_log_key(body["task_id"]), 0, -1)
+    ]
+    item_events = [event["data"] for event in events if event["event"] == "batch_item"]
+    assert [item["status"] for item in item_events] == ["created", "invalid", "existing"]
+    assert item_events[0]["paper_id"] == item_events[2]["paper_id"]
+    assert "title" in item_events[0]
+    assert item_events[1]["error"]
+    assert any(event["event"] == "batch_enriched" for event in events)
+    assert events[-1] == {
+        "event": "done",
+        "data": {"total": 3, "created": 1, "existing": 1, "invalid": 1, "failed": 0},
+    }
+
+
+async def test_library_batch_add_endpoint_and_limit(client, fake_redis):
+    """独立的库作用域入口复用同一任务；服务端硬限制最多 50 项。"""
+    from app.services import paper_enrich
+
+    token = await register_and_login(client, email="library-batch@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    _project_id, library_id = await make_project_with_library(
+        client, headers, name="library-batch"
+    )
+    resp = await client.post(
+        f"/api/libraries/{library_id}/paper-imports/batch",
+        json={"items": [{"bibtex": BIBTEX_ENTRY}]},
+        headers=headers,
+    )
+    assert resp.status_code == 202, resp.text
+    await paper_enrich.await_task(resp.json()["task_id"])
+
+    too_many = [{"arxiv_id": f"2406.{index:05d}"} for index in range(51)]
+    resp = await client.post(
+        f"/api/libraries/{library_id}/paper-imports/batch",
+        json={"items": too_many},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_resolve_anchor_batch_keeps_order_and_item_errors(client, monkeypatch):
+    """批量锚点解析一次返回全部结果，失败项不让整个请求变成 422。"""
+    from app.services import paper_import
+
+    async def _fake(arxiv_ids):  # noqa: ANN001
+        assert arxiv_ids == ["2005.11401", "9999.99999"]
+        return [
+            {
+                "arxiv_id": "2005.11401",
+                "title": "Retrieval-Augmented Generation",
+                "year": 2020,
+                "authors": [{"name": "Lewis"}],
+            },
+            {"arxiv_id": "9999.99999", "error": "not found"},
+        ]
+
+    monkeypatch.setattr(paper_import, "resolve_arxiv_fields_batch", _fake)
+    headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
+    resp = await client.post(
+        "/api/papers/resolve-batch",
+        json={"arxiv_ids": ["2005.11401", "9999.99999"]},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert [item["index"] for item in items] == [0, 1]
+    assert items[0]["title"] == "Retrieval-Augmented Generation"
+    assert items[1]["error"] == "not found" and items[1]["title"] == ""
+
+
+async def test_resolve_anchor_batch_uses_one_arxiv_request_and_falls_back(monkeypatch):
+    """锚点批量解析应合并 arXiv 请求，并只为缺失项调用 OpenAlex。"""
+    from app.services import paper_import
+
+    class _Arxiv:
+        calls: list[list[str]] = []
+
+        async def fetch_by_ids(self, arxiv_ids):  # noqa: ANN001
+            self.calls.append(arxiv_ids)
+            return [
+                {
+                    "arxiv_id": "2005.11401",
+                    "title": "RAG",
+                    "authors": [{"name": "Lewis"}],
+                    "year": 2020,
+                }
+            ]
+
+    class _OpenAlex:
+        calls: list[str] = []
+
+        async def get_by_arxiv(self, arxiv_id):  # noqa: ANN001
+            self.calls.append(arxiv_id)
+            if arxiv_id == "2406.00001":
+                return {"title": "Fallback title", "year": 2024}
+            return None
+
+    arxiv = _Arxiv()
+    openalex = _OpenAlex()
+    monkeypatch.setattr(paper_import, "get_arxiv_client", lambda: arxiv)
+    monkeypatch.setattr(paper_import, "get_openalex_client", lambda: openalex)
+
+    results = await paper_import.resolve_arxiv_fields_batch(
+        ["2005.11401v2", "2406.00001", "9999.99999"]
+    )
+    assert arxiv.calls == [["2005.11401", "2406.00001", "9999.99999"]]
+    assert openalex.calls == ["2406.00001", "9999.99999"]
+    assert [result["arxiv_id"] for result in results] == [
+        "2005.11401",
+        "2406.00001",
+        "9999.99999",
+    ]
+    assert results[1]["title"] == "Fallback title"
+    assert results[2]["error"] == "arxiv 上查不到编号 9999.99999"
+
+
 async def test_resolve_by_arxiv_id_fills_in_the_title(client, monkeypatch):
     """锚点论文只填 arXiv id，题目由系统补上。
 
@@ -277,7 +418,9 @@ async def test_resolve_by_arxiv_id_fills_in_the_title(client, monkeypatch):
     monkeypatch.setattr(paper_import, "resolve_fields", _fake)
     headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
 
-    resp = await client.get("/api/papers/resolve", params={"arxiv_id": "2005.11401"}, headers=headers)
+    resp = await client.get(
+        "/api/papers/resolve", params={"arxiv_id": "2005.11401"}, headers=headers
+    )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["title"] == "Retrieval-Augmented Generation"
@@ -294,7 +437,9 @@ async def test_resolve_unknown_arxiv_id_is_422(client, monkeypatch):
 
     monkeypatch.setattr(paper_import, "resolve_fields", _fail)
     headers = {"Authorization": f"Bearer {await register_and_login(client)}"}
-    resp = await client.get("/api/papers/resolve", params={"arxiv_id": "9999.99999"}, headers=headers)
+    resp = await client.get(
+        "/api/papers/resolve", params={"arxiv_id": "9999.99999"}, headers=headers
+    )
     assert resp.status_code == 422
     assert resp.json()["detail"] == "ARXIV_ID_NOT_RESOLVED"
 

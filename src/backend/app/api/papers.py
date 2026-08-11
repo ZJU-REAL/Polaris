@@ -34,6 +34,8 @@ from app.schemas.paper import (
     PaperIndexRebuild,
     PaperIndexStatusRead,
     PaperListPage,
+    PaperManualBatchCreate,
+    PaperManualBatchTaskRead,
     PaperManualCreate,
     PaperMyMetaRead,
     PaperMyMetaUpdate,
@@ -42,6 +44,9 @@ from app.schemas.paper import (
     PaperRead,
     PaperTagsUpdate,
     PaperUpdate,
+    ResolvedPaperBatchCreate,
+    ResolvedPaperBatchItem,
+    ResolvedPaperBatchRead,
     ResolvedPaperRead,
     TagRead,
 )
@@ -256,6 +261,39 @@ async def add_paper_manually(
     return detail.model_copy(update={"task_id": task_id})
 
 
+@router.post(
+    "/projects/{project_id}/paper-imports/batch",
+    response_model=PaperManualBatchTaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def add_papers_manually_batch(
+    project_id: uuid.UUID,
+    data: PaperManualBatchCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    redis: Redis = Depends(get_redis_dep),
+) -> PaperManualBatchTaskRead:
+    """批量添加 1–50 篇文献；逐项提交，部分失败不影响已成功项。"""
+    project = await libraries_service.get_managed_project(session, project_id=project_id, user=user)
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
+    library = await libraries_service.get_library_for_project(session, project_id)
+    if library is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="PROJECT_LIBRARY_NOT_FOUND"
+        )
+    task_id = await paper_enrich_service.launch_paper_batch_import(
+        redis=redis,
+        items=[item.model_dump() for item in data.items],
+        library_id=library.id,
+        user_id=user.id,
+        project_id=project.id,
+    )
+    if task_id is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="TASK_SERVICE_UNAVAILABLE")
+    return PaperManualBatchTaskRead(task_id=task_id, total=len(data.items))
+
+
 @router.get("/paper-tasks/{task_id}/events")
 async def paper_task_events(
     task_id: str,
@@ -446,6 +484,31 @@ async def resolve_paper_meta(
             str(a.get("name") if isinstance(a, dict) else a)
             for a in (fields.get("authors") or [])
         ][:8],
+    )
+
+
+@router.post("/papers/resolve-batch", response_model=ResolvedPaperBatchRead)
+async def resolve_paper_meta_batch(
+    data: ResolvedPaperBatchCreate,
+    _: User = Depends(current_active_user),
+) -> ResolvedPaperBatchRead:
+    """批量解析锚点元数据；单项失败留在结果中，不影响其它 arXiv id。"""
+    results = await paper_import_service.resolve_arxiv_fields_batch(data.arxiv_ids)
+    return ResolvedPaperBatchRead(
+        items=[
+            ResolvedPaperBatchItem(
+                index=index,
+                arxiv_id=str(fields.get("arxiv_id") or data.arxiv_ids[index]),
+                title=str(fields.get("title") or ""),
+                year=fields.get("year"),
+                authors=[
+                    str(author.get("name") if isinstance(author, dict) else author)
+                    for author in (fields.get("authors") or [])
+                ][:8],
+                error=fields.get("error"),
+            )
+            for index, fields in enumerate(results)
+        ]
     )
 
 

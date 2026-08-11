@@ -13,6 +13,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,8 @@ EMBED_TEXT_MAX_CHARS = 2000
 # 推送来的论文在语义检索里根本搜不到，而只管一条路径又名不副实。旧键的存量值不迁移，
 # 读不到就取新默认（开）。
 
-_OWNER_TTL_SECONDS = 600  # paper_task_owner 归属 key 存活时间
+_OWNER_TTL_SECONDS = 3600  # 批量任务可能较久；归属 key 与事件回放保留 1 小时
+_ENRICH_SEMAPHORE = asyncio.Semaphore(3)  # 批量导入时限制 PDF/向量/LLM 并发
 
 
 def paper_task_owner_key(task_id: str) -> str:
@@ -298,7 +300,7 @@ async def enrich_paper(
                 await emit("score", "error", f"{type(e).__name__}: {e}")
 
 
-async def _run_enrichment(
+async def _run_enrichment_unbounded(
     *,
     task_id: str,
     paper_id: uuid.UUID,
@@ -350,6 +352,157 @@ async def _run_enrichment(
             logger.warning("failed to publish paper task error event", exc_info=True)
 
 
+async def _run_enrichment(
+    *,
+    task_id: str,
+    paper_id: uuid.UUID,
+    library_id: uuid.UUID | None,
+    user_id: uuid.UUID | None,
+    project_id: uuid.UUID | None,
+    redis: Redis,
+) -> None:
+    """限制单进程内补全并发，避免一次批量导入同时压满上游服务。"""
+    async with _ENRICH_SEMAPHORE:
+        await _run_enrichment_unbounded(
+            task_id=task_id,
+            paper_id=paper_id,
+            library_id=library_id,
+            user_id=user_id,
+            project_id=project_id,
+            redis=redis,
+        )
+
+
+def _batch_input_summary(item: dict[str, Any]) -> tuple[str, str]:
+    for source in ("arxiv_id", "doi", "bibtex"):
+        value = item.get(source)
+        if value:
+            compact = " ".join(str(value).split())
+            return source, compact[:180]
+    return "unknown", ""
+
+
+async def _run_batch_import(
+    *,
+    task_id: str,
+    items: list[dict[str, Any]],
+    library_id: uuid.UUID,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID | None,
+    redis: Redis,
+) -> None:
+    """逐项导入、独立提交，再受控并发补全；一项失败不回滚其它项。"""
+    from app.core.db import get_sessionmaker
+    from app.core.events import EventBus, publish_paper_task_event
+    from app.services import paper_import as paper_import_service
+
+    bus = EventBus(redis)
+    totals = {"created": 0, "existing": 0, "invalid": 0, "failed": 0}
+    enrichment_tasks: list[tuple[int, str]] = []
+
+    try:
+        for index, item in enumerate(items):
+            source, input_value = _batch_input_summary(item)
+            event: dict[str, Any] = {
+                "index": index,
+                "source": source,
+                "input": input_value,
+                "status": "failed",
+            }
+            try:
+                async with get_sessionmaker()() as session:
+                    library = await session.get(DirectionLibrary, library_id)
+                    if library is None:
+                        await publish_paper_task_event(
+                            bus, task_id, "error", {"message": "library not found"}
+                        )
+                        return
+                    try:
+                        result = await paper_import_service.add_manual_paper_to_library(
+                            session,
+                            library=library,
+                            arxiv_id=item.get("arxiv_id"),
+                            doi=item.get("doi"),
+                            bibtex=item.get("bibtex"),
+                            project_id=project_id,
+                        )
+                    except paper_import_service.DuplicatePaperError as e:
+                        paper = await session.get(Paper, e.paper_id)
+                        event.update(
+                            status="existing",
+                            paper_id=str(e.paper_id),
+                            title=paper.title if paper is not None else "",
+                            processing=False,
+                        )
+                    except paper_import_service.ParseFailedError as e:
+                        event.update(status="invalid", error=str(e), processing=False)
+                    else:
+                        paper = result.paper
+                        processing = result.created or not await paper_processing_complete(
+                            session, paper
+                        )
+                        child_task_id: str | None = None
+                        if processing:
+                            child_task_id = await launch_paper_enrichment(
+                                redis=redis,
+                                paper_id=paper.id,
+                                user_id=user_id,
+                                library_id=library_id,
+                                project_id=project_id,
+                            )
+                        if child_task_id:
+                            enrichment_tasks.append((index, child_task_id))
+                        event.update(
+                            status="created",
+                            paper_id=str(paper.id),
+                            title=paper.title,
+                            processing=bool(child_task_id),
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 单项隔离，继续处理后续输入
+                logger.exception("batch paper import item %d failed", index)
+                event.update(status="failed", error=f"{type(e).__name__}: {e}", processing=False)
+
+            status_name = str(event["status"])
+            totals[status_name] += 1
+            await publish_paper_task_event(bus, task_id, "batch_item", event)
+            await publish_paper_task_event(
+                bus,
+                task_id,
+                "batch_progress",
+                {"completed": index + 1, "total": len(items), **totals},
+            )
+
+        async def wait_for_enrichment(index: int, child_task_id: str) -> int:
+            await await_task(child_task_id)
+            return index
+
+        waits = [wait_for_enrichment(index, child_id) for index, child_id in enrichment_tasks]
+        for completed in asyncio.as_completed(waits):
+            index = await completed
+            await publish_paper_task_event(
+                bus, task_id, "batch_enriched", {"index": index}
+            )
+
+        await publish_paper_task_event(
+            bus,
+            task_id,
+            "done",
+            {"total": len(items), **totals},
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.exception("batch paper import task failed: %s", task_id)
+        try:
+            await publish_paper_task_event(
+                bus, task_id, "error", {"message": f"{type(e).__name__}: {e}"}
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("failed to publish batch paper task error event", exc_info=True)
+
+
 async def launch_paper_enrichment(
     *,
     redis: Redis,
@@ -370,6 +523,37 @@ async def launch_paper_enrichment(
         _run_enrichment(
             task_id=task_id,
             paper_id=paper_id,
+            library_id=library_id,
+            user_id=user_id,
+            project_id=project_id,
+            redis=redis,
+        )
+    )
+    _TASKS[task_id] = task
+    task.add_done_callback(lambda t: _TASKS.pop(task_id, None))
+    return task_id
+
+
+async def launch_paper_batch_import(
+    *,
+    redis: Redis,
+    items: list[dict[str, Any]],
+    library_id: uuid.UUID,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
+) -> str | None:
+    """登记并启动批量导入父任务；逐项结果与补全状态走同一 SSE 通道。"""
+    task_id = uuid.uuid4().hex
+    try:
+        await redis.setex(paper_task_owner_key(task_id), _OWNER_TTL_SECONDS, str(user_id))
+    except Exception:  # noqa: BLE001
+        logger.warning("batch paper task owner registration failed; import not launched")
+        return None
+
+    task = asyncio.create_task(
+        _run_batch_import(
+            task_id=task_id,
+            items=items,
             library_id=library_id,
             user_id=user_id,
             project_id=project_id,

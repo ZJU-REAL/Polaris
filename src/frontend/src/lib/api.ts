@@ -907,6 +907,28 @@ export interface HighlightCreateInput {
 /** 手动添加文献：三选一。 */
 export type PaperImportInput = { arxiv_id: string } | { doi: string } | { bibtex: string };
 
+export interface PaperBatchImportInput {
+  items: PaperImportInput[];
+}
+
+export interface PaperBatchTask {
+  task_id: string;
+  total: number;
+}
+
+export type PaperBatchItemStatus = 'created' | 'existing' | 'invalid' | 'failed';
+
+export interface PaperBatchItemResult {
+  index: number;
+  source: 'arxiv_id' | 'doi' | 'bibtex' | 'unknown';
+  input: string;
+  status: PaperBatchItemStatus;
+  paper_id?: string;
+  title?: string;
+  error?: string;
+  processing?: boolean;
+}
+
 export interface TagRead {
   id: string;
   name: string;
@@ -2916,6 +2938,11 @@ export interface ResolvedPaper {
   authors: string[];
 }
 
+export interface ResolvedPaperBatchItem extends ResolvedPaper {
+  index: number;
+  error: string | null;
+}
+
 /** 收录了某篇论文的文献库（带相关度分）。 */
 export interface CollectingLibrary {
   library_id: string;
@@ -3394,6 +3421,10 @@ export const api = {
   importPaper(projectId: string, input: PaperImportInput): Promise<PaperDetail> {
     return requestJson<PaperDetail>(`/projects/${projectId}/papers`, 'POST', input);
   },
+  /** 批量导入 1–50 篇；逐项结果通过返回 task_id 的 SSE 流获取。 */
+  importPapersBatch(projectId: string, input: PaperBatchImportInput): Promise<PaperBatchTask> {
+    return requestJson<PaperBatchTask>(`/projects/${projectId}/paper-imports/batch`, 'POST', input);
+  },
 
   // —— Lit · 标签与个人状态 ——
   listTags(projectId: string): Promise<TagRead[]> {
@@ -3689,6 +3720,10 @@ export const api = {
   /** 手动添加文献到库；409 → PAPER_EXISTS（body 含 paper_id）；422 → PARSE_FAILED。 */
   importLibraryPaper(id: string, input: PaperImportInput): Promise<PaperDetail> {
     return requestJson<PaperDetail>(`/libraries/${id}/papers`, 'POST', input);
+  },
+  /** 批量手动添加到指定库；逐项结果通过 paper-task SSE 获取。 */
+  importLibraryPapersBatch(id: string, input: PaperBatchImportInput): Promise<PaperBatchTask> {
+    return requestJson<PaperBatchTask>(`/libraries/${id}/paper-imports/batch`, 'POST', input);
   },
   /** 批量删除库内论文：默认软删（回收站），hard=true 彻底删除。 */
   batchDeleteLibraryPapers(id: string, paperIds: string[], hard = false): Promise<{ deleted: number }> {
@@ -4957,6 +4992,11 @@ export const api = {
   },
   resolvePaperByArxivId(arxivId: string): Promise<ResolvedPaper> {
     return request<ResolvedPaper>(`/papers/resolve?arxiv_id=${encodeURIComponent(arxivId)}`);
+  },
+  resolvePapersByArxivIds(arxivIds: string[]): Promise<{ items: ResolvedPaperBatchItem[] }> {
+    return requestJson<{ items: ResolvedPaperBatchItem[] }>('/papers/resolve-batch', 'POST', {
+      arxiv_ids: arxivIds,
+    });
   },
   refreshDailyFeed(): Promise<{ status: string; voyage_id: string }> {
     return request<{ status: string; voyage_id: string }>('/daily/refresh', { method: 'POST' });

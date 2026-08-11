@@ -23,8 +23,8 @@ import {
   ApiError,
   type CitationFormat,
   type MyMeta,
+  type PaperBatchImportInput,
   type PaperDetail,
-  type PaperImportInput,
   type PaperRead,
   type PaperSort,
   type PaperStatusFilter,
@@ -47,9 +47,10 @@ import { READING_STATUS, ReadingDot } from '../reading/shared';
 import { PaperMyTagChips, PaperMyTagsRow, PaperNotesSection } from '../shared/PaperDetailBlocks';
 import { TrashModal, type TrashItemView } from '../shared/TrashModal';
 import { AddToButton } from '../library/AddToPopover';
-import { PaperProgressModal } from '../library/PaperProgressModal';
+import { PaperBatchProgressModal } from '../library/PaperBatchProgressModal';
 import { paperDragProps } from '../assistant/paperDrag';
 import { clampLines } from '../../lib/clamp';
+import { splitPaperInput } from './paperInput';
 
 /* ============================================================
    论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
@@ -121,6 +122,52 @@ export interface PapersTabProps {
 
 type ImportMethod = 'arxiv' | 'doi' | 'bibtex';
 
+/** 按 BibTeX 条目的配对大括号/圆括号切分，保留坏条目交给后端逐项报错。 */
+function splitBibtexEntries(raw: string): string[] {
+  const entries: string[] = [];
+  let start = -1;
+  let opener = '';
+  let closer = '';
+  let depth = 0;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const char = raw[i];
+    if (start < 0) {
+      if (char !== '@') continue;
+      let cursor = i + 1;
+      while (cursor < raw.length && /[A-Za-z]/.test(raw.charAt(cursor))) cursor += 1;
+      while (cursor < raw.length && /\s/.test(raw.charAt(cursor))) cursor += 1;
+      const opening = raw.charAt(cursor);
+      if (opening !== '{' && opening !== '(') continue;
+      start = i;
+      opener = opening;
+      closer = opener === '{' ? '}' : ')';
+      depth = 1;
+      i = cursor;
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === opener) depth += 1;
+    if (char === closer) depth -= 1;
+    if (depth === 0) {
+      entries.push(raw.slice(start, i + 1).trim());
+      start = -1;
+    }
+  }
+
+  if (start >= 0) entries.push(raw.slice(start).trim());
+  if (entries.length === 0 && raw.trim()) entries.push(raw.trim());
+  return entries;
+}
+
 function AddPaperModal({
   pid,
   libraryId,
@@ -142,26 +189,19 @@ function AddPaperModal({
   const [doi, setDoi] = useState('');
   const [bibtex, setBibtex] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
-  // 手动添加后若后端返回 task_id，弹出分阶段处理进度
-  const [progress, setProgress] = useState<{ taskId: string; title: string } | null>(null);
+  const [progress, setProgress] = useState<{ taskId: string; total: number } | null>(null);
 
   const invalidateLists = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['papers', scopeId] });
     void queryClient.invalidateQueries({ queryKey: ['ingest-state', scopeId] });
   }, [queryClient, scopeId]);
 
-  const input: PaperImportInput | null =
-    method === 'arxiv'
-      ? arxivId.trim()
-        ? { arxiv_id: arxivId.trim() }
-        : null
-      : method === 'doi'
-        ? doi.trim()
-          ? { doi: doi.trim() }
-          : null
-        : bibtex.trim()
-          ? { bibtex: bibtex.trim() }
-          : null;
+  const batchItems = useMemo<PaperBatchImportInput['items']>(() => {
+    if (method === 'arxiv') return splitPaperInput(arxivId).map((value) => ({ arxiv_id: value }));
+    if (method === 'doi') return splitPaperInput(doi).map((value) => ({ doi: value }));
+    return splitBibtexEntries(bibtex).map((value) => ({ bibtex: value }));
+  }, [arxivId, bibtex, doi, method]);
+  const tooMany = batchItems.length > 50;
 
   const reset = () => {
     setArxivId('');
@@ -171,38 +211,22 @@ function AddPaperModal({
   };
 
   const importMutation = useMutation({
-    mutationFn: (inp: PaperImportInput) => (libraryId ? api.importLibraryPaper(libraryId, inp) : api.importPaper(pid, inp)),
-    onSuccess: (p) => {
-      invalidateLists();
+    mutationFn: (input: PaperBatchImportInput) => (
+      libraryId ? api.importLibraryPapersBatch(libraryId, input) : api.importPapersBatch(pid, input)
+    ),
+    onSuccess: (task) => {
       reset();
       onClose();
-      onImported(p.id);
-      if (p.task_id) {
-        // 还需后处理：弹进度弹窗替代成功 toast，避免重复打扰
-        setProgress({ taskId: p.task_id, title: p.title });
-      } else {
-        toast(tr('文献已加进论文库', 'Paper added to the library'), 'ok');
-      }
+      setProgress({ taskId: task.task_id, total: task.total });
     },
     onError: (e) => {
-      if (e instanceof ApiError && e.status === 409) {
-        const paperId = (e.body as { paper_id?: string } | null | undefined)?.paper_id;
-        toast(tr('这篇论文已经在库中，已为你打开', 'This paper is already in the library — opened it for you'), 'info');
-        reset();
-        onClose();
-        if (paperId) onImported(paperId);
-      } else if (e instanceof ApiError && e.status === 422) {
+      if (e instanceof ApiError && e.status === 422) {
         setParseError(
-          e.message.replace(/^PARSE_FAILED:?\s*/, '') || tr('内容解析失败，请检查格式', 'Failed to parse — check the format'),
+          tr('输入格式不正确，或一次超过 50 篇。', 'Invalid input, or more than 50 papers were submitted.'),
         );
       } else if (e instanceof ApiError && e.status === 503) {
-        // 上游（arXiv/OpenAlex）在限流。说清楚是别人家的问题、以及能怎么办——
-        // 「添加失败」三个字会让用户以为是自己输错了编号。
         setParseError(
-          tr(
-            'arXiv 正在限流，暂时查不到这个编号的元数据。过几分钟再试，或者改用 DOI / BibTeX 添加。',
-            'arXiv is rate-limiting us and the metadata cannot be fetched right now. Try again in a few minutes, or add it by DOI / BibTeX.',
-          ),
+          tr('后台任务服务暂时不可用，请稍后再试。', 'The background task service is temporarily unavailable.'),
         );
       } else {
         toast(`${tr('添加失败：', 'Failed to add: ')}${e instanceof Error ? e.message : String(e)}`, 'error');
@@ -224,8 +248,8 @@ function AddPaperModal({
           </button>
           <button
             className="btn btn-primary sm"
-            disabled={!input || importMutation.isPending}
-            onClick={() => input && importMutation.mutate(input)}
+            disabled={batchItems.length === 0 || tooMany || importMutation.isPending}
+            onClick={() => importMutation.mutate({ items: batchItems })}
           >
             {importMutation.isPending ? (
               <>
@@ -235,7 +259,9 @@ function AddPaperModal({
             ) : (
               <>
                 <Icon name="plus" size={13} />
-                {tr('添加', 'Add')}
+                {batchItems.length > 1
+                  ? tr(`添加 ${batchItems.length} 篇`, `Add ${batchItems.length}`)
+                  : tr('添加', 'Add')}
               </>
             )}
           </button>
@@ -257,10 +283,13 @@ function AddPaperModal({
       <div style={{ marginTop: 14 }}>
         {method === 'arxiv' ? (
           <>
-            <input
-              className="input mono"
-              style={{ width: '100%' }}
-              placeholder={tr('例如 2405.01234 或 2405.01234v2', 'e.g. 2405.01234 or 2405.01234v2')}
+            <textarea
+              className="textarea mono"
+              style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
+              placeholder={tr(
+                '多个 arXiv ID 可用空格、逗号或换行分隔\n2405.01234, 2405.01235v2',
+                'Separate multiple arXiv IDs with spaces, commas, or new lines\n2405.01234, 2405.01235v2',
+              )}
               value={arxivId}
               onChange={(e) => {
                 setArxivId(e.target.value);
@@ -270,10 +299,13 @@ function AddPaperModal({
           </>
         ) : method === 'doi' ? (
           <>
-            <input
-              className="input mono"
-              style={{ width: '100%' }}
-              placeholder={tr('例如 10.1145/3567890.1234567', 'e.g. 10.1145/3567890.1234567')}
+            <textarea
+              className="textarea mono"
+              style={{ width: '100%', minHeight: 112, resize: 'vertical', fontSize: 12 }}
+              placeholder={tr(
+                '多个 DOI 可用空格、逗号或换行分隔\n10.1145/3567890.1234567, 10.1000/example',
+                'Separate multiple DOIs with spaces, commas, or new lines\n10.1145/3567890.1234567, 10.1000/example',
+              )}
               value={doi}
               onChange={(e) => {
                 setDoi(e.target.value);
@@ -281,7 +313,7 @@ function AddPaperModal({
               }}
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
-              {tr('适合期刊 / 会议论文。', 'Best for journal and conference papers.')}
+              {tr('适合期刊 / 会议论文；最多 50 篇。', 'Best for journal and conference papers; up to 50.')}
             </div>
           </>
         ) : (
@@ -290,8 +322,8 @@ function AddPaperModal({
               className="textarea mono"
               style={{ width: '100%', minHeight: 150, resize: 'vertical', fontSize: 12 }}
               placeholder={tr(
-                '粘贴单条 BibTeX 条目，例如：\n@inproceedings{smith2024example,\n  title = {...},\n  author = {...},\n  year = {2024},\n}',
-                'Paste one BibTeX entry, e.g.:\n@inproceedings{smith2024example,\n  title = {...},\n  author = {...},\n  year = {2024},\n}',
+                '可连续粘贴多条 BibTeX：\n@inproceedings{smith2024example,\n  title = {...},\n  year = {2024},\n}\n\n@article{doe2025example, ...}',
+                'Paste multiple BibTeX entries:\n@inproceedings{smith2024example,\n  title = {...},\n  year = {2024},\n}\n\n@article{doe2025example, ...}',
               )}
               value={bibtex}
               onChange={(e) => {
@@ -301,11 +333,16 @@ function AddPaperModal({
             />
             <div className="muted" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.6 }}>
               {tr(
-                '一次粘贴一条；title 必填，作者/年份/期刊/DOI 能解析多少取多少。',
-                'One entry at a time; title is required — authors/year/venue/DOI are parsed on a best-effort basis.',
+                '最多 50 条；title 必填。无效条目不会阻断其它条目。',
+                'Up to 50 entries; title is required. Invalid entries do not block the others.',
               )}
             </div>
           </>
+        )}
+        {tooMany && (
+          <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--danger-tx)' }}>
+            {tr(`当前识别到 ${batchItems.length} 篇，一次最多 50 篇。`, `${batchItems.length} detected; the limit is 50.`)}
+          </div>
         )}
         {parseError && (
           <div
@@ -325,11 +362,15 @@ function AddPaperModal({
       </div>
     </Modal>
     {progress && (
-      <PaperProgressModal
+      <PaperBatchProgressModal
         taskId={progress.taskId}
-        paperTitle={progress.title}
+        total={progress.total}
         onClose={() => setProgress(null)}
         onDone={invalidateLists}
+        onOpenPaper={(paperId) => {
+          onImported(paperId);
+          setProgress(null);
+        }}
       />
     )}
     </>

@@ -123,6 +123,21 @@ async def _fields_from_openalex_arxiv(arxiv_id: str) -> dict[str, Any]:
     }
 
 
+def _fields_from_arxiv_entry(entry: dict[str, Any], fallback_id: str) -> dict[str, Any]:
+    """把 arXiv 客户端条目转成统一字段；单篇与批量解析共用。"""
+    return {
+        "title": entry["title"],
+        "authors": entry.get("authors"),
+        "abstract": entry.get("abstract"),
+        "year": entry.get("year"),
+        "venue": entry.get("primary_category"),
+        "doi": entry.get("doi"),
+        "url": entry.get("url"),
+        "arxiv_id": entry.get("arxiv_id") or fallback_id,
+        "published_at": _parse_iso(entry.get("published")),
+    }
+
+
 async def _fields_from_arxiv(arxiv_id: str) -> dict[str, Any]:
     normalized = normalize_arxiv_id(arxiv_id)
     try:
@@ -135,17 +150,56 @@ async def _fields_from_arxiv(arxiv_id: str) -> dict[str, Any]:
     entry = next((e for e in entries if e.get("title")), None)
     if entry is None:
         raise ParseFailedError(f"arxiv 上查不到编号 {normalized}")
-    return {
-        "title": entry["title"],
-        "authors": entry.get("authors"),
-        "abstract": entry.get("abstract"),
-        "year": entry.get("year"),
-        "venue": entry.get("primary_category"),
-        "doi": entry.get("doi"),
-        "url": entry.get("url"),
-        "arxiv_id": entry.get("arxiv_id") or normalized,
-        "published_at": _parse_iso(entry.get("published")),
+    return _fields_from_arxiv_entry(entry, normalized)
+
+
+async def resolve_arxiv_fields_batch(arxiv_ids: list[str]) -> list[dict[str, Any]]:
+    """一次请求批量解析 arXiv 元数据，结果与输入顺序一一对应。
+
+    arXiv 支持 ``id_list``，因此 50 个锚点只占一次受限请求。缺失条目再逐项用
+    OpenAlex 兜底；某一项失败只在该项返回 ``error``，不拖垮整批。
+    """
+    normalized = [normalize_arxiv_id(value) for value in arxiv_ids]
+    unique_ids = list(dict.fromkeys(normalized))
+    rate_limited = False
+    try:
+        entries = await get_arxiv_client().fetch_by_ids(unique_ids)
+    except ArxivRateLimitedError:
+        logger.warning("arxiv rate-limited while resolving %d anchors", len(unique_ids))
+        entries = []
+        rate_limited = True
+
+    fields_by_id = {
+        normalize_arxiv_id(str(entry.get("arxiv_id") or "")): _fields_from_arxiv_entry(
+            entry, normalize_arxiv_id(str(entry.get("arxiv_id") or ""))
+        )
+        for entry in entries
+        if entry.get("arxiv_id") and entry.get("title")
     }
+    errors_by_id: dict[str, str] = {}
+    for arxiv_id in unique_ids:
+        if arxiv_id in fields_by_id:
+            continue
+        try:
+            fields_by_id[arxiv_id] = await _fields_from_openalex_arxiv(arxiv_id)
+        except ParseFailedError:
+            errors_by_id[arxiv_id] = (
+                f"arXiv 正在限流，OpenAlex 上也查不到 {arxiv_id}"
+                if rate_limited
+                else f"arxiv 上查不到编号 {arxiv_id}"
+            )
+        except Exception as e:  # noqa: BLE001 — 单个兜底源失败不影响其它锚点
+            logger.warning("anchor metadata fallback failed for %s", arxiv_id, exc_info=True)
+            errors_by_id[arxiv_id] = f"{type(e).__name__}: {e}"
+
+    results: list[dict[str, Any]] = []
+    for arxiv_id in normalized:
+        fields = fields_by_id.get(arxiv_id)
+        if fields is None:
+            results.append({"arxiv_id": arxiv_id, "error": errors_by_id[arxiv_id]})
+        else:
+            results.append(fields)
+    return results
 
 
 async def _fields_from_doi(doi: str) -> dict[str, Any]:

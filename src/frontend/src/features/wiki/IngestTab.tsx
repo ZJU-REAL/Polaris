@@ -18,6 +18,7 @@ import {
   type IngestTimeRange,
 } from '../../lib/api';
 import { tr } from '../../lib/i18n';
+import { splitPaperInput } from './paperInput';
 
 /* ============================================================
    文献收集 Tab：
@@ -98,7 +99,24 @@ function KnobRange({
   );
 }
 
-/** 锚点论文编辑器：只填 arXiv id，题目由系统补上。
+const MAX_ANCHOR_PAPERS = 50;
+
+function normalizeAnchorArxivId(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^arxiv:\s*/i, '')
+    .replace(/^https?:\/\/(?:www\.)?arxiv\.org\/abs\//i, '')
+    .replace(/v\d+$/i, '');
+}
+
+function parseAnchorIds(raw: string): string[] {
+  const normalized = splitPaperInput(raw)
+    .map(normalizeAnchorArxivId)
+    .filter(Boolean);
+  return [...new Set(normalized)];
+}
+
+/** 锚点论文编辑器：批量填写 arXiv id，题目由系统一次性补上。
  *
  * 从「收录设置」搬到这里——锚点是给「从锚点论文扩展」用的输入，放在收录设置里
  * 与检索/打分的配置混在一起，用户找不到它跟哪个动作有关。 */
@@ -117,23 +135,45 @@ function AnchorEditor({
   const [busy, setBusy] = useState(false);
 
   async function add() {
-    const id = draft.trim();
-    if (!id) return;
-    if (anchors.some((a) => (a.arxiv_id || '').trim() === id)) {
+    const existing = new Set(anchors.map((anchor) => normalizeAnchorArxivId(anchor.arxiv_id || '')));
+    const ids = parseAnchorIds(draft).filter((id) => !existing.has(id));
+    if (ids.length === 0) {
       toast(tr('这篇已经在列表里了', 'Already in the list'), 'info');
+      return;
+    }
+    if (anchors.length + ids.length > MAX_ANCHOR_PAPERS) {
+      toast(
+        tr(
+          `锚点论文最多 ${MAX_ANCHOR_PAPERS} 篇；当前已有 ${anchors.length} 篇。`,
+          `Anchor papers are limited to ${MAX_ANCHOR_PAPERS}; ${anchors.length} already exist.`,
+        ),
+        'error',
+      );
       return;
     }
     setBusy(true);
     try {
-      // 题目自动补：解析不出也照样加进去（id 是有效输入，题目只是给人看的确认）
-      let title = '';
-      try {
-        title = (await api.resolvePaperByArxivId(id)).title;
-      } catch {
-        toast(tr('没解析出题目，已按 id 添加', 'Could not resolve the title — added by id'), 'info');
+      const resolved = await api.resolvePapersByArxivIds(ids);
+      const additions = ids.map((id, index) => ({
+        arxiv_id: resolved.items[index]?.arxiv_id || id,
+        title: resolved.items[index]?.title || '',
+      }));
+      const failed = resolved.items.filter((item) => item.error).length;
+      onChange([...anchors, ...additions]);
+      if (failed > 0) {
+        toast(
+          tr(`${failed} 篇未解析出题目，已按 arXiv ID 添加。`, `${failed} titles could not be resolved; IDs were added.`),
+          'info',
+        );
       }
-      onChange([...anchors, { arxiv_id: id, title }]);
       setDraft('');
+    } catch {
+      onChange([...anchors, ...ids.map((id) => ({ arxiv_id: id, title: '' }))]);
+      setDraft('');
+      toast(
+        tr('题目批量解析暂时不可用，已按 arXiv ID 添加。', 'Title resolution is unavailable; the arXiv IDs were added.'),
+        'info',
+      );
     } finally {
       setBusy(false);
     }
@@ -165,18 +205,32 @@ function AnchorEditor({
         </div>
       )}
       {!disabled && (
-        <div className="row gap8">
-          <input
-            className="input"
-            style={{ flex: 1 }}
+        <div className="col gap8">
+          <textarea
+            className="textarea mono"
+            style={{ width: '100%', minHeight: 94, resize: 'vertical', fontSize: 12 }}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void add(); } }}
-            placeholder={tr('填 arXiv id，如 2005.11401', 'arXiv id, e.g. 2005.11401')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                void add();
+              }
+            }}
+            placeholder={tr(
+              '多个 arXiv ID 或 URL 可用空格、逗号或换行分隔\n2005.11401, https://arxiv.org/abs/2406.00001',
+              'Separate multiple arXiv IDs or URLs with spaces, commas, or new lines\n2005.11401, https://arxiv.org/abs/2406.00001',
+            )}
           />
-          <button type="button" className="btn btn-soft sm" disabled={busy || !draft.trim()} onClick={() => void add()}>
-            {busy ? tr('解析中…', 'Resolving…') : tr('添加', 'Add')}
-          </button>
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-soft sm" disabled={busy || !draft.trim()} onClick={() => void add()}>
+              {busy
+                ? tr('解析中…', 'Resolving…')
+                : parseAnchorIds(draft).length > 1
+                  ? tr(`添加 ${parseAnchorIds(draft).length} 篇`, `Add ${parseAnchorIds(draft).length}`)
+                  : tr('添加', 'Add')}
+            </button>
+          </div>
         </div>
       )}
       {libraryId && anchors.length === 0 && (

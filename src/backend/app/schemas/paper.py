@@ -182,6 +182,38 @@ class PaperManualCreate(BaseModel):
         return self
 
 
+class PaperManualBatchCreate(BaseModel):
+    """批量手动添加文献；每项仍遵守三来源互斥规则。"""
+
+    items: list[PaperManualCreate] = Field(min_length=1, max_length=50)
+
+
+class PaperManualBatchTaskRead(BaseModel):
+    """批量导入任务已受理；逐项结果通过 paper-task SSE 返回。"""
+
+    task_id: str
+    total: int
+
+
+class ResolvedPaperBatchCreate(BaseModel):
+    """批量解析锚点论文元数据（只读，不入库）。"""
+
+    arxiv_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class ResolvedPaperBatchItem(BaseModel):
+    index: int
+    arxiv_id: str
+    title: str = ""
+    year: int | None = None
+    authors: list[str] = []
+    error: str | None = None
+
+
+class ResolvedPaperBatchRead(BaseModel):
+    items: list[ResolvedPaperBatchItem]
+
+
 class PaperBatchIds(BaseModel):
     """批量操作（删除/导出）的论文 id 列表。"""
 
