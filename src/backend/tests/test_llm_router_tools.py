@@ -43,15 +43,25 @@ def test_medium_stages_get_more_patience_without_the_long_profile():
 
 
 def test_every_known_stage_has_exactly_one_call_profile():
-    """新增 stage 时必须显式归类，避免长任务静默回落到 60 秒短档。"""
+    """新增 stage 时必须显式归类，避免长任务静默回落到 60 秒短档。
+
+    这里一度写着 ``classified - known == {"digest"}``，注解是「仅允许已知的内部
+    profile key 不公开为路由」。那不是不变量，是当时 digest 漏进 ``STAGES`` 的
+    bug 被顺手固化了——digest 在设置页上一直是公开可配的一行，只是后端不认，
+    管理员一配整张路由表就存不进去。断言把这个错状态钉成了「约定」，谁去修
+    ``STAGES`` 都会先被它拦下，还以为自己破坏了什么。
+
+    档位集合里不该出现 ``STAGES`` 之外的名字：那种名字要么是拼错的（对应的环节
+    因此静默落回短档），要么就是又一个该公开却没公开的环节。
+    """
     known = set(STAGES)
     short = set(_SHORT_CALL_STAGES)
     medium = set(_MEDIUM_CALL_STAGES)
     long = set(_LONG_CALL_STAGES)
 
     classified = short | medium | long
-    assert known <= classified
-    assert classified - known == {"digest"}, "仅允许已知的内部 profile key 不公开为路由"
+    assert known <= classified, f"这些环节没归档位：{sorted(known - classified)}"
+    assert classified <= known, f"档位集合里有不存在的环节：{sorted(classified - known)}"
     assert short.isdisjoint(medium)
     assert short.isdisjoint(long)
     assert medium.isdisjoint(long)

@@ -528,9 +528,14 @@ export interface GateRead {
 
 export type LlmProviderKind = 'openai_compat' | 'anthropic' | 'fake';
 
-/** 与后端 `app/core/llm/router.py` 的 STAGES 保持一致（大白话名字见 lib/stageLabels.ts）。 */
+/** 与后端 `app/core/llm/router.py` 的 STAGES 保持一致（大白话名字见 lib/stageLabels.ts）。
+ *
+ * 逐项对齐不是洁癖：这里多一个后端没有的，管理员一配就会让**整张路由表**存不进去
+ * （PUT 是整表覆盖，遇到未知 stage 直接 400）；这里少一个后端有的，那个环节在界面上
+ * 就不存在，只能改数据库。两边都真实发生过。 */
 export const LLM_STAGES = [
   'default',
+  'agent',
   'navigator',
   'sextant',
   'relevance',

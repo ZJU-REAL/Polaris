@@ -6,6 +6,7 @@
  */
 export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   default: { zh: '默认', en: 'Default' },
+  agent: { zh: '文献助手对话', en: 'Literature assistant chat' },
   navigator: { zh: '任务规划', en: 'Task planning' },
   sextant: { zh: '自动校验', en: 'Auto verification' },
   relevance: { zh: '相关度打分', en: 'Relevance scoring' },

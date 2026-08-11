@@ -50,6 +50,12 @@ class LLMNotConfiguredError(RuntimeError):
 # librarian 与 extract 的分工：librarian = 长文本 + 多模态（wiki 图文精读编译、
 # 论文图筛选注释、幻灯片大纲/内容/视觉评审），要强模型；extract = 纯文本短 JSON
 # 结构化抽取（作者↔机构解析、概念定义批量生成、建库向导收录设置），小模型够用。
+#
+# **这个元组必须和前端 ``src/frontend/src/lib/api.ts`` 的 ``LLM_STAGES`` 逐项对齐。**
+# 两边漂了就是双向坏：这里少一个，设置页照样把它画出来，管理员一配，整表覆盖的
+# PUT 被 400 `unknown stage` 顶回来——不是那一行被忽略，是**整张路由表存不进去**；
+# 这里多一个，那个环节在界面上根本不存在，只能改数据库。digest 少了一年多没人发现，
+# 因为它当时偷偷继承 librarian，看起来「能用」（见下面的回退说明）。
 STAGES = (
     "default",
     "agent",
@@ -57,6 +63,7 @@ STAGES = (
     "sextant",
     "relevance",
     "librarian",
+    "digest",
     "extract",
     "embedding",
     "rerank",
@@ -181,10 +188,27 @@ _MEDIUM_CALL_STAGES = frozenset({"agent", "goal_explore", "proposal_review"})
 
 
 def call_profile(stage: str) -> tuple[float, int]:
-    """该环节单次调用的 (超时, 最大尝试次数)。"""
+    """该环节单次调用的 (超时, 最大尝试次数)。
+
+    三个集合都真的参与判定。曾经只判中/长两档、``else`` 一律短档，于是
+    ``_SHORT_CALL_STAGES`` 成了只有测试在读的摆设——它和真实行为可以静默漂移，
+    而测试还一直是绿的。现在漏归类的环节走 ``_SHORT_CALL`` 之前先喊一声：
+    短档 60s 对一个长生成环节是致命的（#386 就是这么把想法生成掐死的），
+    而这种事从日志里看只是「provider 失败」。
+    """
     if stage in _MEDIUM_CALL_STAGES:
         return _MEDIUM_CALL
-    return _LONG_CALL if stage in _LONG_CALL_STAGES else _SHORT_CALL
+    if stage in _LONG_CALL_STAGES:
+        return _LONG_CALL
+    if stage not in _SHORT_CALL_STAGES:
+        logger.warning(
+            "stage %r has no call profile; defaulting to the short budget %s. "
+            "Classify it in router.py, a long stage silently capped at 60s looks "
+            "like a provider outage.",
+            stage,
+            _SHORT_CALL,
+        )
+    return _SHORT_CALL
 
 
 class LLMRouter:
