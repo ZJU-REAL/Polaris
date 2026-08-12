@@ -150,50 +150,49 @@ async def test_arxiv_search_parses_and_caches(cache_redis):
 
 
 @respx.mock
-async def test_arxiv_fetch_new_rss_parses_filters_and_caches(cache_redis):
-    import datetime as _dt
+async def test_arxiv_fetch_new_parses_the_listing_page_and_caches(cache_redis):
+    """当天新公告改从 ``/list/{cat}/new`` 取。
 
-    today = _dt.datetime.now(_dt.UTC).date()
-    route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/cs\.CL").mock(
-        return_value=httpx.Response(200, text=_rss_with_batch_date(today))
+    换源的原因见 arxiv_listing 模块头：rss.arxiv.org 会按分类各自陈旧，而且把
+    lastBuildDate 照写成当天，于是「拿到旧批次」在下游和「今天没新论文」完全一样。
+    """
+    from pathlib import Path
+
+    sample = (Path(__file__).parent / "fixtures" / "arxiv_listing_sample.html").read_text()
+    route = respx.get(url__regex=r"https://arxiv\.org/list/cs\.CL/new.*").mock(
+        return_value=httpx.Response(200, text=sample)
     )
     client = ArxivClient(redis=cache_redis, min_interval=0)
     entries, batch_at = await client.fetch_new("cs.CL")
-    assert batch_at is not None and batch_at.astimezone(_dt.UTC).date() == today
 
-    # 只留 announce_type ∈ {new, cross}；replace / replace-cross（旧论文更新）被跳过
-    assert [e["announce_type"] for e in entries] == ["new", "cross"]
+    # 公告日期取页面页头自己写的那一行，不取会滞后一天的 RSS pubDate
+    assert batch_at is not None and batch_at.date().isoformat() == "2026-08-12"
+    # 只留 new + cross；Replacement（旧论文更新）按分段剔除
+    assert {e["announce_type"] for e in entries} == {"new", "cross"}
     first = entries[0]
-    assert first["arxiv_id"] == "2607.10001"  # guid 的 v1 版本号被 normalize 去掉
-    assert first["title"] == "Computer-Use Agents at Scale"
-    # description "Abstract:" 之后截取为摘要
-    assert first["abstract"] == (
-        "We study computer use agents operating at scale with strong results."
-    )
-    assert first["authors"] == [{"name": "Alice Smith"}, {"name": "Bob Jones"}]
-    assert first["categories"] == ["cs.CL", "cs.AI"]
-    assert first["primary_category"] == "cs.CL"
-    assert first["year"] == 2026
-    assert first["published"].startswith("2026-07-20")
-    assert first["pdf_url"].endswith("/pdf/2607.10001")
+    assert first["arxiv_id"] == "2608.09949"
+    assert first["title"] == "Closed-Loop LLM Co-Pilots for Digital Agriculture"
+    assert first["authors"] == [{"name": "Serge Kernbach"}]
+    assert first["primary_category"] == "cs.AI"
+    assert first["abstract"].startswith("This study evaluates")
+    assert first["pdf_url"].endswith("/pdf/2608.09949")
     assert first["doi"] is None
-    assert entries[1]["arxiv_id"] == "2607.10002"  # v2 也被去版本号
 
     # 短 TTL 缓存命中：相同分类第二次调用不再发 HTTP
     again, _ = await client.fetch_new("cs.CL")
-    assert [e["arxiv_id"] for e in again] == ["2607.10001", "2607.10002"]
+    assert [e["arxiv_id"] for e in again] == [e["arxiv_id"] for e in entries]
     assert route.call_count == 1
     await client.aclose()
 
 
 @respx.mock
 async def test_arxiv_fetch_new_raises_after_exhausted_retries(cache_redis):
-    """RSS 失败原样上抛，**不再吞成 []**。
+    """取数失败原样上抛，**不再吞成 []**。
 
     吞掉的话「被限流」和「今天确实没有新论文」就成了同一个结果，而每日池是所有
     文献库的唯一供给——静默的空池等于全实验室当天颗粒无收却无人知晓。
     """
-    route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/.*").mock(
+    route = respx.get(url__regex=r"https://arxiv\.org/list/.*").mock(
         return_value=httpx.Response(503)
     )
     client = ArxivClient(redis=cache_redis, min_interval=0, backoff_base=0.0, max_retries=2)
@@ -458,8 +457,8 @@ async def test_penalize_extends_the_shared_gate(cache_redis):
     assert ttl > 1000
     assert b._interval > 0  # b 会在 acquire 时撞上这个闸门
 @respx.mock
-async def test_rss_is_cached_regardless_of_the_declared_date(cache_redis):
-    """RSS 一律进缓存，陈旧程度由**短 TTL**控制。
+async def test_listing_is_cached_regardless_of_the_declared_date(cache_redis):
+    """取回的公告一律进缓存，陈旧程度由**短 TTL**控制。
 
     这条原来钉的是「陈旧批次不进缓存」——判据是 RSS 里声明的批次日期。现实推翻了它：
     arXiv 的日期字段会整体滞后一天（网页版已经是次日的清单、条目 id 也是当天的，而
@@ -469,11 +468,13 @@ async def test_rss_is_cached_regardless_of_the_declared_date(cache_redis):
     「今天那批出来了没有」现在按内容判（见 daily_feed.todays_batch_available），
     缓存只需保证别太旧。
     """
-    import datetime as _dt
 
-    yesterday = _dt.datetime.now(_dt.UTC).date() - _dt.timedelta(days=1)
-    route = respx.get(url__regex=r"https://rss\.arxiv\.org/rss/cs\.CL").mock(
-        return_value=httpx.Response(200, text=_rss_with_batch_date(yesterday))
+    from pathlib import Path
+
+    # 样本页头写的是 2026-08-12，对「今天」而言早已是过去
+    sample = (Path(__file__).parent / "fixtures" / "arxiv_listing_sample.html").read_text()
+    route = respx.get(url__regex=r"https://arxiv\.org/list/cs\.CL/new.*").mock(
+        return_value=httpx.Response(200, text=sample)
     )
     client = ArxivClient(redis=cache_redis, min_interval=0)
 

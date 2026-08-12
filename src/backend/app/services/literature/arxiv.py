@@ -206,6 +206,24 @@ def _parse_rss_item(item: ET.Element) -> dict[str, Any] | None:
     }
 
 
+def _parse_listing_date(raw: str | None) -> datetime | None:
+    """把列表页页头的日期（``12 August 2026``）转成 UTC datetime。
+
+    这是**页面自己声明的公告日期**，比 RSS 的 ``pubDate`` 可信：后者会整体滞后一天，
+    历史上「一直等待今天的批次」就是被它坑的。解析不出来返回 None，交由调用方按
+    「不知道是哪天」处理，而不是瞎猜一个今天。
+    """
+    if not raw:
+        return None
+    for fmt in ("%d %B %Y", "%d %b %Y"):
+        try:
+            return datetime.strptime(raw.strip(), fmt).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+    logger.warning("unrecognised arxiv listing date: %r", raw)
+    return None
+
+
 def _parse_rss(text: str) -> tuple[list[dict[str, Any]], datetime | None]:
     """解析 RSS，返回 (条目, **这一批的公告日期**)。
 
@@ -469,10 +487,17 @@ class ArxivClient:
         )
 
     async def fetch_new(self, category: str) -> tuple[list[dict[str, Any]], datetime | None]:
-        """抓一个分类的当天新公告（RSS /new，即时无索引滞后）。
+        """抓一个分类的当天新公告（``/list/{category}/new`` 列表页）。
 
-        只返回 announce_type ∈ {new, cross} 的条目（replace/replace-cross 是旧论文更新，
-        已在解析时剔除）；字段与 ``search`` 返回的 entry 对齐，便于复用入库逻辑。
+        只返回 announce_type ∈ {new, cross} 的条目（Replacement 是旧论文更新，
+        解析时按分段剔除）；字段与 ``search`` 返回的 entry 对齐，便于复用入库逻辑。
+
+        **数据源从 rss.arxiv.org 换成了列表页。** RSS 会按分类各自陈旧，而且毫无迹象：
+        2026-08-12 生产上 cs.AI 的 RSS 供的是上一批（最大 id ``2608.09930``），同一时刻
+        网页已经是 ``2608.11204``，两边只重合 16 篇；同一天 cs.CL 的 RSS 却是新的。
+        ``lastBuildDate`` 照样写着当天，于是「拿到旧批次」和「今天没新论文」在下游长得
+        一模一样——去重后一条不进，每一步都报成功。列表页每段自带 ``showing X of Y``，
+        这两件事才分得开（见 :mod:`.arxiv_listing`）。
 
         **失败原样上抛**（限流已在 :meth:`_request` 里重试过，走到这里是真失败）。
         这里曾经把任何异常吞成 []，于是「被限流」和「今天确实没有新论文」变成同一个
@@ -481,15 +506,37 @@ class ArxivClient:
         :func:`app.services.daily_feed.fetch_new_by_category`。
         失败不写缓存，下次重试。
         """
-        key = cache_key("arxiv", "rss_new", {"category": category})
+        from app.services.literature.arxiv_listing import (
+            LISTING_PAGE_SIZE,
+            LISTING_URL_TEMPLATE,
+            ArxivListingError,
+            parse_listing,
+        )
+
+        key = cache_key("arxiv", "listing_new", {"category": category})
         if (cached := await self._rss_cache.get(key)) is not None:
-            # 不再按「声明的日期是不是今天」决定能不能用缓存：arXiv 的 RSS 日期字段
-            # 会整体滞后一天（见 daily_feed.todays_batch_available），那样判的结果是
-            # 缓存永远写不进、每次探测都真打 arXiv。改用短 TTL 控制陈旧程度。
+            # 不按「声明的日期是不是今天」决定能不能用缓存——那样判的结果是缓存永远
+            # 写不进、每次探测都真打 arXiv。改用短 TTL 控制陈旧程度。
             return cached["entries"], _parse_iso_dt(cached.get("batch_at"))
-        resp = await self._request(RSS_URL_TEMPLATE.format(category=category))
-        entries, batch_at = _parse_rss(resp.text)
-        # 失败不写缓存（见 _request）；成功的一律写，靠短 TTL 控制陈旧程度
+
+        entries: list[dict[str, Any]] = []
+        announced: str | None = None
+        skip = 0
+        # 实测单个分类 200–350 条、整个 cs 也才 1096，一页就够；翻页是给「页面说没给全」
+        # 兜底的，正常不会走到。上限防的是解析出错导致的死循环。
+        for _page in range(10):
+            url = LISTING_URL_TEMPLATE.format(category=category)
+            resp = await self._request(url, params={"skip": skip, "show": LISTING_PAGE_SIZE})
+            page_entries, page_date, incomplete = parse_listing(resp.text)
+            announced = announced or page_date
+            entries.extend(page_entries)
+            if not incomplete or not page_entries:
+                break
+            skip += len(page_entries)
+        else:
+            raise ArxivListingError(f"{category} 列表页翻了 10 页仍未取完")
+
+        batch_at = _parse_listing_date(announced)
         await self._rss_cache.set(
             key, {"entries": entries, "batch_at": batch_at.isoformat() if batch_at else None}
         )
