@@ -52,7 +52,7 @@ flowchart TB
     CORE -- "core/llm abstraction" --> LLM["LLM providers\n(OpenAI-compatible, Anthropic)"]
     PIPE -- "asyncssh (gated writes)" --> GPU["Lab GPU servers"]
     PIPE -- "httpx" --> LIT["arXiv, Semantic Scholar, OpenAlex"]
-    MCP -- "Streamable HTTP / stdio" --> EXT["Claude Desktop, Cursor"]
+    MCP -- "Streamable HTTP / stdio" --> EXT["Claude Code, Codex, Cursor"]
 ```
 
 ## Layered backend

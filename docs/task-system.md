@@ -20,9 +20,9 @@ Sextant), see [Core Concepts](concepts.md#the-voyage-long-running-agent).
 
 ## 1. What a task is
 
-### 1.1 The three tables
+### 1.1 The four tables
 
-Everything about a run lives in three tables, all defined in `app/models/voyage.py`.
+Everything about a run lives in four tables, all defined in `app/models/voyage.py`.
 
 #### `voyage_runs` — `VoyageRun`
 
@@ -33,7 +33,7 @@ One row per task.
 | `id` | UUID primary key; the id in the URL `/voyages/{id}` and in the SSE channel name. |
 | `kind` | What sort of task this is (`wiki_ingest`, `experiment`, `daily_feed_sync`, …). Everything else — run mode, task level, starting plan, done criteria — is derived from it. See [§1.3](#13-the-kind-catalogue). |
 | `mode` | `pipeline` \| `template` \| `loop`. Not chosen by the user or the LLM: the engine recomputes it from `kind` via `mode_for_kind()` on the first drive and overwrites whatever is stored (this is also how runs created before the field existed get fixed up). |
-| `goal` | Human-readable one-liner shown in the list ("文献调研增量更新：<library>"). Also fed to the LLM as `{goal}` in prompt templates. |
+| `goal` | Human-readable one-liner shown in the list ("文献调研增量更新：`<library>`"). Also fed to the LLM as `{goal}` in prompt templates. |
 | `status` | Run state, see [§1.2](#12-the-run-state-machine). Indexed — the worker's startup reconcile scans it. |
 | `plan` | JSON snapshot of the current step list. **Derived, not authoritative**: the real plan is the `voyage_steps` rows, and `_regen_plan_snapshot()` rebuilds this from them after every plan change. It exists so the API and the progress bar have something cheap to read. |
 | `cursor` | Index of the current step within the active (non-obsolete) step list. Rewritten on every loop iteration; used for the "step 3 of 7" display. |
@@ -95,19 +95,33 @@ events. Those exist only on the live stream. Rows older than 30 days are deleted
 (at most once every 10 minutes, piggy-backed on a write), and reads return at most the newest 3 000
 rows. Writing a log line is best-effort — a failure is logged as a warning and never affects the run.
 
+#### `voyage_messages` — `VoyageMessage`
+
+The task's conversation stream: user suggestions and the agent's questions and announcements. One
+row per message, `seq`-ordered per run, with `role` (`user` / `agent`) and `kind` (`chat` / `ask` /
+`answer` / `info`). A `chat` message is a non-blocking suggestion the engine consumes at its next
+decision point; an `ask` is a blocking question from the agent — the run sits in `paused_ask` until
+someone answers it (only `ask` rows carry a `status`: `open` / `answered` / `superseded`). Answers
+record who answered and are mirrored into the suggestion stream; the endpoints are in
+[§3.3](#33-cancel-retry-and-talking-to-a-run).
+
 ### 1.2 The run state machine
 
 ```text
 planning ──> executing ──> verifying ──┬──> executing        (next step)
                   ^                    ├──> executing        (retry the same step, with diagnosis)
                   │                    ├──> replanning ──> executing
-                  │                    ├──> paused_gate      (waiting for a human)
+                  │                    ├──> paused_gate      (waiting for a human approval)
+                  │                    ├──> paused_ask       (agent asked the user a question)
                   ├────────────────────┼──> paused_error     (stopped, fixable, retryable)
                                        └──> done / failed
 ```
 
 `done`, `failed` and `cancelled` are terminal (`TERMINAL_STATUSES`). `cancelled` can be written from
-outside at any time; see [§3.3](#33-cancel-and-retry).
+outside at any time; see [§3.3](#33-cancel-retry-and-talking-to-a-run). `failed` is only ever the
+result of a human decision — cancelling, rejecting a gate, or answering an ask with "abort"; the
+engine itself turns its dead ends into `paused_ask` (or `paused_error` when nobody is around to
+answer) rather than declaring failure.
 
 ### 1.3 The kind catalogue
 
@@ -117,8 +131,8 @@ outside at any time; see [§3.3](#33-cancel-and-retry).
 | kind | Mode | Level | Starting plan | Created by |
 | --- | --- | --- | --- | --- |
 | `wiki_bootstrap` | pipeline | library | `wiki_plan()` (7 steps) | `POST /projects/{id}/ingest` or `POST /libraries/{id}/ingest/run` with `mode=bootstrap` |
-| `wiki_ingest` | pipeline | library | `wiki_plan()` (7 steps) | same two endpoints with `mode=incremental`; also the 03:00 UTC cron |
-| `daily_feed_sync` | pipeline | library (platform-level) | `daily_feed_plan()` (4 steps) | the 01:30 UTC cron, or `POST /daily/refresh` (admin only) |
+| `wiki_ingest` | pipeline | library | `wiki_plan()` (7 steps) | same two endpoints with `mode=incremental`; also enqueued once per day by the daily feed run's `daily.sync_libraries` step |
+| `daily_feed_sync` | pipeline | library (platform-level) | `daily_feed_plan()` (5 steps) | the daily checkpoint cron (probes for the day's arXiv batch from an admin-configurable start time), or `POST /daily/refresh` (admin only) |
 | `idea_forge` | pipeline | topic | `forge_plan()` (7 steps) | `POST /projects/{id}/forge` |
 | `idea_review` | pipeline | topic | `review_plan()` (2 steps, expands at runtime) | `POST /projects/{id}/review/tournament` |
 | `idea_proposal` | template | topic | `proposal_plan()` (8–9 steps) | `POST /projects/{id}/ideas/deep` |
@@ -158,7 +172,7 @@ What actually differs in the engine:
 | --- | --- | --- | --- |
 | Default retries on a crash (`observation.error`) | 1 attempt — no implicit retry | 2 attempts | 2 attempts |
 | A step that ran but did not meet its acceptance criteria | stop; no replanning | deterministic branch table (`proposal_replan`), LLM fallback | LLM produces an incremental plan edit (`Navigator.on_result`) |
-| Where it stops | `paused_error` (or `failed` if the step declares `on_failure: "fail"`) | `paused_error` after 2 replans | `paused_error` after 2 plan edits, or if the model returns "finish"/nothing |
+| Where it stops | `paused_error` (or an `ask` to the user if the step declares `on_failure: "fail"`) | asks the user after repeated replans on the same error | asks the user after repeated plan edits on the same error, or if the model returns "finish"/nothing |
 | Plan can grow while running | only via the runtime signal table (see below) | yes | yes |
 
 Notes:
@@ -255,10 +269,10 @@ libraries merely linked to my topic, the detail required library write access, s
 `can_view_voyage()` needs the full `User` object (role, creator, curator lookups); `get_voyage()`
 loads it when the call site only has a `user_id`.
 
-### 3.3 Cancel and retry
+### 3.3 Cancel, retry, and talking to a run
 
-Both live in `app/api/voyages.py` and are open to anyone who can reach the task detail — there is no
-extra role check beyond §3.2.
+All of these live in `app/api/voyages.py` and are open to anyone who can reach the task detail —
+there is no extra role check beyond §3.2.
 
 - **Cancel** — `POST /voyages/{id}/cancel`. Cooperative: it just writes `status = "cancelled"`.
   `409 VOYAGE_ALREADY_FINISHED` if the run is already terminal. A running engine notices at the next
@@ -266,12 +280,25 @@ extra role check beyond §3.2.
   write goes through a conditional `UPDATE ... WHERE status != 'cancelled'` so an in-flight engine can
   never resurrect a cancelled run.
 - **Retry** — `POST /voyages/{id}/resume`. Only valid from `paused_error`
-  (`409 VOYAGE_NOT_PAUSED_ERROR` otherwise). It flips the status to `executing` and enqueues
+  (`409 VOYAGE_NOT_PAUSED_ERROR` otherwise; a `paused_ask` run answers `409 VOYAGE_WAITING_ANSWER`
+  instead — the answer endpoint is the only way back, so the question cannot be bypassed). It flips
+  the status to `executing` and enqueues
   `resume_voyage`. The engine's `resume()` resets every `failed` or `running` step back to `pending`
   with `attempt = 0` (history is already archived in `attempts`), then drives from there. Work that
   already passed is not redone — this is the "fix the bug, pick up where it stopped" path.
 - **Approval** — approving a gate in `POST /gates/{id}/approve` also enqueues `resume_voyage`.
   Rejecting it sets the run to `failed`.
+- **Suggestions** — `POST /voyages/{id}/messages` appends a non-blocking `chat` message the engine
+  reads at its next decision point (`409 VOYAGE_ALREADY_FINISHED` on a terminal run; a paused run
+  accepts it and consumes it after resuming). `GET /voyages/{id}/messages` returns the stream.
+- **Answering an ask** — `POST /voyages/{id}/asks/{message_id}/answer` answers an open `ask` and
+  resumes a `paused_ask` run. `choice="abort"` is the one user-decided failure path (the run goes
+  to `failed`); any other answer is stored, mirrored as a suggestion, may apply a deterministic
+  immediate effect (e.g. topping up the budget), and flips the run back to `executing`. A
+  conditional `UPDATE` on the ask row makes concurrent double-answers a `409`.
+- **Delete** — `DELETE /voyages/{id}` removes a finished run with its steps and logs
+  (`409 VOYAGE_STILL_RUNNING` otherwise — cancel first). Token usage and experiment records are
+  de-referenced, not deleted: removing a task does not erase money already spent.
 
 ### 3.4 Where tasks appear in the UI
 
@@ -508,6 +535,7 @@ terminal when you connect gets one status frame and then the stream ends.
 | `log` | `{message, level, at, step_id?}` | **yes**, as a `log` row |
 | `llm_start` / `llm_end` | `{stage}` | no |
 | `llm_delta` | `{stage, delta, seq}` | **no** — throttled token increments, live only |
+| `message` | one conversation-stream message (a user suggestion, an agent ask, an answer, an info line) | **yes**, as a `voyage_messages` row |
 | the completed model output | — | **yes**, as an `llm` row, written when the stream ends |
 
 So the rule is: the terminal you see live is SSE; the terminal you see after a refresh is
@@ -531,11 +559,14 @@ default the detail response hides `obsolete` steps; pass `include_obsolete=true`
    The reason is written into `params["diagnosis"]` (truncated to 2 000 chars), the step is reset to
    `pending`, and the loop retries it. `max_attempts` defaults to 1 for pipeline and 2 for
    template/loop, overridable per step.
-2. **`on_failure: "fail"`** — the step declared that failing is fatal. The run goes straight to
-   `failed`, no replanning. Every step in `paper_writing`, `paper_review` and `presentation` sets
-   this, as does `experiment.smoke` (which already runs its own internal LLM repair loop, so a
-   failure there means the generated code is fundamentally broken and pretending otherwise would
-   waste GPU time).
+2. **`on_failure: "fail"`** — the step declared that blind retries are pointless. The run no longer
+   goes straight to `failed`: it raises an **ask** (`fatal_step`) and waits in `paused_ask` for a
+   person to decide — retry, change course, or abort (abort is what produces `failed`). Unattended
+   runs (`created_by` is null, i.e. cron-created) have nobody to answer, so they degrade to the old
+   `paused_error` semantics. Every step in `paper_writing`, `paper_review` and `presentation` sets
+   this flag, as does `experiment.smoke` (which already runs its own internal LLM repair loop, so a
+   failure there means the generated code is fundamentally broken and burning GPU time on a rerun
+   would be waste).
 3. **pipeline** — no LLM replanning, by design. The run goes to `paused_error` with the diagnosis in
    the log. This is the "a human looks at it, fixes the cause, and hits retry" state: earlier steps
    keep their results, and `POST /voyages/{id}/resume` picks up from the broken step.
@@ -549,9 +580,12 @@ default the detail response hides `obsolete` steps; pass `include_obsolete=true`
    `update_node` / `obsolete_nodes`), validated against the action registry, a max of 8 new steps,
    and the rule that only unfinished steps may be referenced. Applying it obsoletes the failed step
    automatically. If the model says `finish`, returns nothing usable, or the edit is rejected, the
-   run goes to `paused_error` — "no progress" is never allowed to look like success.
+   run raises an ask — "no progress" is never allowed to look like success.
 
-Both 4 and 5 stop after `MAX_REPLANS = 2` and land in `paused_error`.
+Both 4 and 5 stop after `MAX_REPLANS = 2` and raise an ask (`paused_ask`; unattended runs degrade
+to `paused_error`). The counter is **error-signature-aware** (`_replan_progress`): it only counts
+consecutive plan edits that failed to resolve the *same* error — a run that keeps hitting new,
+different errors is making progress and is never cut off by the cap.
 
 Invariants held while editing a plan: `seq` only ever increases and is never rewritten; `rank` takes
 a value in the gap between neighbours; nothing may be inserted before the current execution point;
@@ -559,13 +593,23 @@ passed steps can be neither edited nor obsoleted.
 
 ### 4.8 Scheduled triggers and recovery
 
-`src/backend/worker/settings.py` registers three cron jobs. All times are **UTC**.
+`src/backend/worker/settings.py` registers three cron jobs — but none of them is a fixed "run at
+HH:MM" trigger anymore. arq fixes cron times at worker startup, and the fetch time is an
+admin-editable setting (`daily_feed_sync_time`, Admin → Daily papers), so the crons run as cheap
+**checkpoints** that decide for themselves whether it is time to act. All times are **UTC**.
 
-| Time (UTC) | Job | What it does |
+| Cadence | Job | What it does |
 | --- | --- | --- |
-| 01:30 | `daily_feed_sync` | Creates one `daily_feed_sync` task and enqueues it. arXiv publishes new announcements around 00:00 UTC; 01:30 leaves it time to settle and stays clear of the 03:00 job. Globally single-flight — if a fetch is already running it returns `None` and skips. |
-| 03:00 | `daily_wiki_ingest` | For every active topic whose library has `cadence=daily` and has already been built (has a sync marker), creates a `wiki_ingest` task and enqueues it. Time comes from `DAILY_SYNC_UTC_HOUR/MINUTE` in `app/services/ingest.py`, so the cron and the "next sync at" shown in the UI cannot drift apart. |
-| 04:00 | `daily_publication_match` | Not a task-system job — scans the library for publication matches for users who opted in. Scheduled at `DAILY_SYNC_UTC_HOUR + 1` so it runs after the incremental ingest. |
+| every 15 min (:00/:15/:30/:45) | `daily_feed_sync` | From the configured start time (default 01:30 UTC), probes whether arXiv has published **today's** batch; only then creates one `daily_feed_sync` task and enqueues it. arXiv's actual publish time drifts, and betting on a fixed hour loses as "fetched yesterday's batch, deduped to zero, reported success" — so the probe compares batch dates instead. Probing has an attempt cap (then falls back to an hourly recheck), runs at most once per day, and is globally single-flight. |
+| every 15 min (:00/:15/:30/:45) | `daily_publication_match` | Runs publication matching (new papers → name+affiliation hits for users who opted in) once per day, 150 minutes after the configured fetch time — derived from the same setting, so the two cannot drift apart. |
+| every 10 min (:05/:15/…/:55) | `reconcile_stale_voyages` | Re-enqueues `resume_voyage` for in-flight runs whose terminal has been silent for 30+ minutes. The startup reconcile below only rescues orphans of a worker restart; runs lost mid-flight (a hung LLM call killed, ARQ's exponential retry backoff) are caught here. The criterion is conservative — live long steps keep producing log lines — and the engine is idempotent, so an occasional concurrent resume is harmless. |
+
+Library incremental sync (`daily_wiki_ingest`) is **not** on the cron anymore: it is enqueued by
+the daily feed run's final `daily.sync_libraries` step, once the pool is actually refreshed —
+scheduling it at a fixed later hour meant betting the fetch had finished, and losing that bet
+synced every library against a stale pool. It runs at most once per day, and each library is
+wrapped in its own exception handler so one library's exhausted monthly budget cannot stop the
+libraries queued after it.
 
 Two more operational details:
 
@@ -584,8 +628,9 @@ Two more operational details:
 
 ### 5.1 Building a library — `wiki_ingest`
 
-**Trigger.** Someone hits `POST /libraries/{id}/ingest/run` (or `POST /projects/{id}/ingest`), or the
-03:00 cron picks the library up. `create_ingest_voyage()`:
+**Trigger.** Someone hits `POST /libraries/{id}/ingest/run` (or `POST /projects/{id}/ingest`), or
+the daily feed run's `daily.sync_libraries` step picks the library up after the day's pool is
+refreshed. `create_ingest_voyage()`:
 
 1. refuses with `IngestConflictError` → `409 INGEST_ALREADY_RUNNING` if a non-terminal
    `wiki_bootstrap`/`wiki_ingest` run already exists **for this library** (mutual exclusion is keyed
@@ -611,7 +656,7 @@ with `checks: [{"kind": "no_error"}]`, no approvals:
 | 7 | `wiki.update_watermark` | Writes `library.ingest_state = {watermark, last_run: {voyage_id, finished_at}}` and an `ingest.completed` activity row. |
 
 Steps 1–6 hand values forward through `ctx.checkpoint` (`watermark_candidate`, `compiled_count`, …)
-and call `ctx.log()` per paper, so the terminal shows "scoring 12/50: <title>" rather than sitting
+and call `ctx.log()` per paper, so the terminal shows "scoring 12/50: `<title>`" rather than sitting
 mute for twenty minutes. Billing follows library ownership: a public library uses the system key, a
 personal one uses the creator's, and either way tokens are recorded against `library_id`.
 
@@ -632,13 +677,15 @@ someone into a 404.
 
 ### 5.2 Daily new papers — `daily_feed_sync`
 
-**Trigger.** The 01:30 UTC cron, or an admin hitting `POST /daily/refresh`.
+**Trigger.** The 15-minute checkpoint cron, once it probes that today's arXiv batch is actually
+out (see [§4.8](#48-scheduled-triggers-and-recovery)) — or an admin hitting `POST /daily/refresh`.
 `create_daily_feed_voyage()` is single-flight globally (`409 DAILY_FEED_RUNNING` if one is already
 running — deliberately stricter than a per-day job id, so a failed run can be retried immediately
 while a running one can never be double-triggered). The row it writes has **no `project_id` and no
-`library_id`**, and `budget = {"max_tokens": None}` because only the last step spends anything.
+`library_id`**, and `budget = {"max_tokens": None}` because only the embedding step spends
+anything.
 
-**Planning.** Mode is `pipeline`; `daily_feed_plan()` is four fixed steps, each with `no_error`:
+**Planning.** Mode is `pipeline`; `daily_feed_plan()` is five fixed steps, each with `no_error`:
 
 | # | Action | What it does |
 | --- | --- | --- |
@@ -646,6 +693,7 @@ while a running one can never be double-triggered). The row it writes has **no `
 | 2 | `daily.upsert` | Deduplicates into the content pool and creates/merges feed entries; records the touched paper ids in `checkpoint["daily_touched_papers"]` and drops `daily_entries`. |
 | 3 | `daily.cleanup` | Expires entries outside the rolling 7-day window and reclaims papers nobody collected. |
 | 4 | `daily.embed` | Only if the admin setting `daily_feed_embed_enabled` is on: builds paper-level vectors for the papers touched in step 2. Deliberately best-effort — a failure is reported as `embed_error`, *not* `error`, so it cannot fail the run. |
+| 5 | `daily.sync_libraries` | Enqueues the incremental `wiki_ingest` for each built library — the pool is refreshed, so the sync has something to sync. Skipped when the fetch brought in nothing new; at most once per day; one library's failure (e.g. an exhausted monthly budget) does not stop the rest. |
 
 Handing the fetched entries forward through the checkpoint rather than re-fetching in step 2 is not
 just an optimisation: re-querying arXiv could return a different result set, and step 2's dedup keys

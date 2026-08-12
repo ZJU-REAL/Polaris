@@ -79,14 +79,16 @@ Find your topic id in the web app's URL: `/t/<topic-id>`.
 
 ## 2. Tools
 
-38 tools in eight groups. Names are stable; treat them as API.
+45 tools in nine groups. Names are stable; treat them as API.
 
 ### Papers and reading
 
 | Tool | What it gives you |
 | --- | --- |
 | `search_papers` | Search papers in the topic's corpus. `mode=semantic` (default) falls back to keyword when embeddings are unavailable. |
+| `scan_papers` | A cheap wide scan: titles and years only, up to 50 at a time. Use it to map the corpus before deep-reading a few papers. |
 | `search_chunks` | Passage-level search — lands on the paragraph rather than the paper. |
+| `grep_fulltext` | Literal string match across the full texts, with a small context window per hit. Better than semantic search for exact terms, model names, dataset names, or formula symbols. |
 | `get_paper` | Metadata, authors, status, abstract, concept tags. |
 | `read_wiki` | The platform's compiled reading note for a paper (falls back to the abstract). |
 | `read_fulltext` | Full text; give a `query` for the most relevant passage, or page through it. |
@@ -151,6 +153,15 @@ is linked yet.
 tree, compile entry point and engine, compile diagnostics) · `read_manuscript_file` (a file's
 contents by path, paged) · `get_fact_pack` (the hypotheses, metrics, figures, and citations a
 manuscript is allowed to draw on — the antidote to invented numbers).
+
+### Assistant workflow
+
+These exist primarily for PolarisBuddy, the in-app assistant that shares this tool layer, but they
+appear in the MCP catalog too: `run_subagent` (delegate a retrieval-heavy sub-task to a fresh agent
+that only reports its conclusion) · `skill_load` and `skill_read_file` (fetch an agent skill's body
+and attachments on demand) · `recall` (search your own PolarisBuddy memory; its writing counterpart
+`remember` is not exposed over MCP) · `submit_plan` (hand a step plan over for approval — only
+meaningful in a conversation that can render it).
 
 ---
 

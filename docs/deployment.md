@@ -134,10 +134,14 @@ Run this on the first deployment and after any deploy that adds migrations.
 
 - The `frontend` service serves the built React app through nginx on host port `8080` (container
   port 80).
-- nginx reverse-proxies `/api` to the backend (with response buffering disabled so SSE streams flow)
-  and `/ws` with the WebSocket upgrade.
+- nginx reverse-proxies `/api` to the backend (with response buffering disabled so SSE streams
+  flow), `/ws` with the WebSocket upgrade, and `/mcp` (the external MCP endpoint, see
+  [MCP](mcp.md)).
 - The `api` service also publishes port `8000` directly, which exposes the OpenAPI docs at
   `/docs`. In a locked-down deployment you may choose to expose only nginx.
+- Both host ports are configurable: set `POLARIS_API_PORT` / `POLARIS_FRONTEND_PORT` in the
+  repo-root `.env` and run compose with `--env-file .env` (they are interpolation variables, so the
+  same caveat as `POLARIS_IMAGE_TAG` above applies).
 
 ## Backups
 

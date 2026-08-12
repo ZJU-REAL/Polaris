@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polaris · 端到端 AI 科研智能体平台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:ital@0;1&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="announce">面向科研实验室的端到端 AI 智能体平台，已在 GitHub 开源<a href="#demo">观看 2 分钟演示 ↗</a></div>
+
+<div class="nav" id="nav">
+  <div class="nav-inner">
+    <a class="logo" href="index.html">
+      <svg viewBox="0 0 38 38"><path fill-rule="evenodd" clip-rule="evenodd" fill="#126DFF" d="M14.5888 7.77765C16.2401 7.14973 18.1314 7.84717 18.8512 9.33629L18.8813 9.40059L23.3166 19.1746L27.4553 17.3081C28.7126 16.7409 30.2298 17.1971 30.8786 18.3257L30.9103 18.3827C31.204 18.9283 31.256 19.5557 31.0576 20.1341L31.0315 20.2062L28.3231 27.2981C27.8528 28.5294 26.381 29.1787 25.0358 28.7482C24.3677 28.5344 23.826 28.0792 23.5357 27.4906L23.5045 27.4247L21.6269 23.288L8.74766 29.098C7.98987 29.4398 7.11299 29.4778 6.32588 29.2067L6.2419 29.1765L6.20584 29.1625L6.10859 29.1229C4.60563 28.4799 3.94394 26.8582 4.60616 25.4749L4.63717 25.4122L12.8735 9.28094C13.208 8.62579 13.7888 8.10382 14.5083 7.80942L14.5888 7.77765ZM16.1618 10.3778L8.30761 26.1502L20.6214 20.4547L16.1618 10.3778ZM27.6579 20.4883L25.0192 21.7538L26.2052 24.5325L27.6579 20.4883Z"/><circle cx="30.961" cy="14.23" r="1.921" fill="#19D3A7"/></svg>
+      Polaris
+    </a>
+    <div class="nav-links">
+      <a href="#pipeline">研究流水线</a>
+      <a href="agent-core.html">Agent Core</a>
+      <a href="features.html">能力中心</a>
+      <a href="#demo">演示</a>
+      <a href="docs/">文档</a>
+    </div>
+    <div class="nav-right">
+      <a class="gh-pill" href="https://github.com/ZJU-REAL/Polaris">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+      <a class="cta-dark" href="https://github.com/ZJU-REAL/Polaris">立即体验 ↗</a>
+    </div>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-glow"></div>
+  <div class="wrap">
+    <p class="kicker rv in">面向科研实验室的端到端 AI 智能体平台</p>
+    <h1 class="display rv in d1">让 AI 与你一起做研究，<br><span class="blue">迈向自主科学发现</span></h1>
+    <p class="hero-sub rv in d2">文献调研、想法生成、想法评审、实验、论文写作与论文评审，六个阶段连成一条流水线。AI 自主推进，关键决定由你来做。Polaris 开源、自托管、为多人实验室而生。</p>
+    <div class="hero-ctas rv in d3">
+      <a class="cta-blue" href="https://github.com/ZJU-REAL/Polaris">部署开源版 →</a>
+      <a class="cta-ghost" href="#demo">观看 2 分钟演示</a>
+    </div>
+
+    <!-- interactive voyage experiment demo -->
+    <div class="browser rv in d3" id="vd">
+      <div class="b-bar"><i></i><i></i><i></i><span class="b-url">polaris.local · 实验详情 · 运行台</span>
+        <div class="pev-ind"><span id="pv-P">PLAN</span><span id="pv-E">EXECUTE</span><span id="pv-V">VERIFY</span></div>
+      </div>
+      <div class="vd-body">
+        <div class="vd-plan">
+          <div class="cap"><span>任务步骤</span><span class="grow-badge" id="vd-grow">+3 步 · 计划生长</span></div>
+          <div id="vd-steps"></div>
+        </div>
+        <div class="vd-log">
+          <div class="vd-lines" id="vd-lines"></div>
+          <div class="vd-card" id="vd-gate">
+            <b><span class="vd-gate-dot"></span>审批门禁 · 动用 GPU 预算</b>
+            <p>接下来要连上实验室 GPU 服务器（≤2h · ≤4 runs）。人不点头，任务不往下走。</p>
+            <div class="row"><button class="vd-btn pri" id="vd-approve">批准，继续实验</button><button class="vd-btn sec" id="vd-reject">驳回</button></div>
+          </div>
+          <div class="vd-card" id="vd-ask">
+            <b>AI 提问 · 需要你的判断</b>
+            <p>当前切片准确率高达 98%，误差样本太少，各组差异淹没在噪声里。接下来怎么走？</p>
+            <div class="row"><button class="vd-btn pri" data-a="换更难的切片，把准确率压进区分区间">换更难的切片</button><button class="vd-btn sec" data-a="先补充过度自信度量，再验证假设">先补充度量</button></div>
+          </div>
+        </div>
+        <div class="vd-rail">
+          <span class="cap">主指标 · ACCURACY</span>
+          <div class="vd-metric">
+            <div class="v" id="vd-mv">—</div><div class="d" id="vd-md"></div>
+            <svg viewBox="0 0 180 64"><polyline id="vd-line" points=""></polyline><g id="vd-dots"></g></svg>
+          </div>
+          <span class="cap">当前状态</span>
+          <div class="vd-status" id="vd-status"><b>等待开始</b><br>进入视野后自动运行</div>
+          <div class="vd-done" id="vd-done"><button class="vd-btn pri" id="vd-replay">↻ 重播这次实验</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="wrap" id="pipeline">
+  <p class="kick2 rv">END-TO-END PIPELINE</p>
+  <h2 class="big rv d1">每一步的产出，<span class="blue">都是下一步的起点</span></h2>
+  <p class="sec-sub rv d2">研究不是六件孤立的事。Polaris 把它连成一条流水线：每一步产出真实的制品，交给下一步继续使用。</p>
+
+  <div class="outcomes rv d2">
+    <div class="lab">端到端研究的四个结果</div>
+    <div class="oc"><span class="num">01</span><b>文献变成想法</b></div>
+    <div class="oc"><span class="num">02</span><b>想法变成实验</b></div>
+    <div class="oc"><span class="num">03</span><b>实验变成论文</b></div>
+    <div class="oc"><span class="num">04</span><b>全程可审可控</b></div>
+  </div>
+
+  <div class="arch rv">
+    <div class="arch-plane">
+      <span class="cp">AGENT CORE</span>
+      <b>Polaris 智能体核心</b>
+      <p>持久化任务循环 · 断点续跑 · 审批门禁 · 全程留痕，任务可以跨小时、跨天推进而不丢状态。</p>
+    </div>
+    <div class="arch-rows">
+      <div class="arow">
+        <span class="tag">01 / ACCESS</span>
+        <span class="nm">平台与接入层</span>
+        <span class="ds">Web · 桌面客户端（macOS / Windows / Linux）· MCP 接入 · 开放接口</span>
+      </div>
+      <div class="arow">
+        <span class="tag">02 / RUNTIME</span>
+        <span class="nm">任务运行层</span>
+        <span class="ds">长任务引擎 · 实时进度流 · 预算控制 · 人工审批 · 崩溃恢复</span>
+      </div>
+      <div class="arow hl">
+        <span class="tag">03 / ENGINES</span>
+        <span class="nm">三引擎协同</span>
+        <span class="ds">规划 · 执行 · 校验，一个循环推动整项研究</span>
+        <div class="engines">
+          <div class="eng"><b>Navigator · 规划</b><span>起草并修订步骤清单，计划随证据生长而不是推倒重来</span><span class="core-tag">核心模块</span></div>
+          <div class="eng"><b>Helm · 执行</b><span>一次执行一个动作，异常绝不外抛，失败也变成可推理的观察</span><span class="core-tag">核心模块</span></div>
+          <div class="eng"><b>Sextant · 校验</b><span>逐步核对验收标准，确定性检查先行，模型只在规则无法判定时出场</span><span class="core-tag">核心模块</span></div>
+        </div>
+      </div>
+      <div class="arow">
+        <span class="tag">04 / FOUNDATION</span>
+        <span class="nm">数据与基础设施</span>
+        <span class="ds">PostgreSQL + pgvector · Redis · Docker Compose · GPU 服务器接入</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="dark-block rv">
+    <p class="kick2">RUN · 先审后行</p>
+    <h2>关键动作先过门禁，<br>结论与执行全程可回放</h2>
+    <div class="run-flow">
+      <div class="rf-col">
+        <div class="rf-cap">命中的关键动作</div>
+        <div class="rf-cells">
+          <div class="rf-cell">想法晋级</div>
+          <div class="rf-cell">动用 GPU 预算</div>
+          <div class="rf-cell">写入远端服务器</div>
+          <div class="rf-cell">论文投稿</div>
+        </div>
+      </div>
+      <div class="rf-arrow">→</div>
+      <div class="rf-gate">
+        <b>审批门禁</b>
+        <p>任务停在门禁上，把预算和方案摆给你看。暂停零成本：状态落库、进程退出，三天后批准照样从断点继续。</p>
+      </div>
+      <div class="rf-arrow">→</div>
+      <div class="rf-col">
+        <div class="rf-cap">按步进入自动校验</div>
+        <div class="rf-list">
+          <div class="rf-item"><b>确定性检查</b><span>退出码 · 产物存在 · 指标达标</span></div>
+          <div class="rf-item"><b>事实对账</b><span>论文数字只认真实实验记录</span></div>
+          <div class="rf-item"><b>引用核验</b><span>一条编造引用直接打回</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <p class="kick2 rv">WHY POLARIS</p>
+  <h2 class="big rv d1">不只是问答，<span class="blue">是会做研究的智能体</span></h2>
+  <div class="grid6">
+    <div class="vcard rv">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 11.4 2.1 2.1 4-4.3"/></svg></div>
+      <b>可信</b>
+      <p>每一步产出先过确定性校验，通过才继续；论文数字与引用逐项对账，编造即打回。</p>
+    </div>
+    <div class="vcard rv d1">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+      <b>可插手</b>
+      <p>实验跑到拿不准的地方会停下来问你，你回一句，建议被采纳进下一轮继续推进。</p>
+    </div>
+    <div class="vcard rv d2">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg></div>
+      <b>可进化</b>
+      <p>评审标准、辩论人设、代码规范都能做成技能挂到对应环节，还有技能市场共享。</p>
+    </div>
+    <div class="vcard rv">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15h6M9 11h2"/></svg></div>
+      <b>可审计</b>
+      <p>每个计划、动作、判定与重试全部落库，界面上看得见，事后也回放得了。</p>
+    </div>
+    <div class="vcard rv d1">
+      <div class="ic"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><circle cx="17" cy="7" r="3"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/></svg></div>
+      <b>为实验室而生</b>
+      <p>方向文献库全组共建，一篇论文全平台只解析一次；成员用量透明可查。</p>
+    </div>
+    <div class="vcard rv d2">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5"/><rect x="4" y="17" width="16" height="4" rx="1.5"/></svg></div>
+      <b>开放生态</b>
+      <p>文献管理、实验资产通过 MCP 与技能对外开放，Claude Code、Codex 里直接调用。</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <p class="kick2 rv">HOW IT WORKS</p>
+  <h2 class="big rv d1">一个研究方向，<span class="blue">如何变成一篇论文</span></h2>
+  <div class="steps rv d2">
+    <div class="step"><span class="n">1</span><b>读透文献</b><span>论文编译成互链知识库，每天自动追 arXiv</span></div>
+    <div class="step"><span class="n">2</span><b>辩论想法</b><span>AI 评审员两两辩论，Elo 排名，晋级由你拍板</span></div>
+    <div class="step"><span class="n">3</span><b>自动实验</b><span>连上真 GPU，跑完自己分析，不行换思路再跑</span></div>
+    <div class="step"><span class="n">4</span><b>写成论文</b><span>LaTeX 起草编译，先过 AI 同行评审再谈投稿</span></div>
+  </div>
+</section>
+
+<section class="wrap" id="demo">
+  <p class="kick2 rv">DEMO</p>
+  <h2 class="big rv d1">两分钟，看一次<span class="blue">完整的运行</span></h2>
+  <div class="video-shell rv d2">
+    <video src="https://github.com/user-attachments/assets/388972c1-7ffa-45f2-94c4-07f388379ba2" poster="demo-cover.jpg" controls preload="metadata"></video>
+  </div>
+  <p class="v-cap rv d3">1080p · 2 分 24 秒 · 流水线 / Agent Core / 真实实验 / PolarisBuddy</p>
+</section>
+
+<section class="wrap">
+  <div class="band rv">
+    <h2>现在就部署你的科研智能体</h2>
+    <p>Docker Compose 一键起服务，接入实验室 GPU 与模型供应商，几分钟内让整条流水线跑起来。</p>
+    <a class="cta-blue" href="https://github.com/ZJU-REAL/Polaris">前往 GitHub 部署 →</a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="f-grid">
+      <div class="f-col f-brand">
+        <a class="logo" href="index.html">
+          <svg viewBox="0 0 38 38" width="24" height="24"><path fill-rule="evenodd" clip-rule="evenodd" fill="#126DFF" d="M14.5888 7.77765C16.2401 7.14973 18.1314 7.84717 18.8512 9.33629L18.8813 9.40059L23.3166 19.1746L27.4553 17.3081C28.7126 16.7409 30.2298 17.1971 30.8786 18.3257L30.9103 18.3827C31.204 18.9283 31.256 19.5557 31.0576 20.1341L31.0315 20.2062L28.3231 27.2981C27.8528 28.5294 26.381 29.1787 25.0358 28.7482C24.3677 28.5344 23.826 28.0792 23.5357 27.4906L23.5045 27.4247L21.6269 23.288L8.74766 29.098C7.98987 29.4398 7.11299 29.4778 6.32588 29.2067L6.2419 29.1765L6.20584 29.1625L6.10859 29.1229C4.60563 28.4799 3.94394 26.8582 4.60616 25.4749L4.63717 25.4122L12.8735 9.28094C13.208 8.62579 13.7888 8.10382 14.5083 7.80942L14.5888 7.77765ZM16.1618 10.3778L8.30761 26.1502L20.6214 20.4547L16.1618 10.3778ZM27.6579 20.4883L25.0192 21.7538L26.2052 24.5325L27.6579 20.4883Z"/><circle cx="30.961" cy="14.23" r="1.921" fill="#19D3A7"/></svg>
+          Polaris
+        </a>
+        <p>北极星：在浩瀚文献与漫长研究中指引方向。</p>
+      </div>
+      <div class="f-col">
+        <b>产品</b>
+        <a href="index.html#pipeline">研究流水线</a>
+        <a href="agent-core.html">Agent Core</a>
+        <a href="features.html">能力中心</a>
+        <a href="index.html#demo">演示视频</a>
+      </div>
+      <div class="f-col">
+        <b>资源</b>
+        <a href="https://github.com/ZJU-REAL/Polaris">GitHub</a>
+        <a href="docs/deployment">部署文档</a>
+        <a href="https://github.com/ZJU-REAL/Polaris/issues">问题反馈</a>
+      </div>
+      <div class="f-col">
+        <b>关于</b>
+        <a href="https://github.com/ZJU-REAL">ZJU-REAL</a>
+        <a href="https://github.com/ZJU-REAL/Polaris">开源协议 Apache-2.0</a>
+      </div>
+    </div>
+    <div class="f-meta"><span>© 2026 Polaris · ZJU-REAL</span><span>迈向自主科学发现</span></div>
+  </div>
+</footer>
+
+<a class="topbtn" id="topbtn" href="#" aria-label="回到顶部">↑</a>
+
+<script src="site.js"></script>
+<script>
+(function () {
+  var STEPS = [
+    ['设计实验', ''], ['生成代码 · 部署', ''], ['冒烟测试', ''],
+    ['Run 1 · 训练', ''], ['分析 Run 1', '']
+  ];
+  var GROWN = [['Run 2 · 换思路重跑', '新增'], ['分析 Run 2', '新增'], ['图表与报告', '收尾']];
+  var stepsEl = document.getElementById('vd-steps');
+  var linesEl = document.getElementById('vd-lines');
+  var gateEl = document.getElementById('vd-gate');
+  var askEl = document.getElementById('vd-ask');
+  var statusEl = document.getElementById('vd-status');
+  var doneEl = document.getElementById('vd-done');
+  var growEl = document.getElementById('vd-grow');
+  var mv = document.getElementById('vd-mv'), md = document.getElementById('vd-md');
+  var lineEl = document.getElementById('vd-line'), dotsEl = document.getElementById('vd-dots');
+  var pts = [];
+
+  function renderSteps(list, fresh) {
+    list.forEach(function (s) {
+      var d = document.createElement('div');
+      d.className = 'pstep' + (fresh ? ' new' : '');
+      d.innerHTML = '<span class="dot"></span><span>' + s[0] + '</span><span class="tail">' + s[1] + '</span>';
+      stepsEl.appendChild(d);
+      if (fresh) requestAnimationFrame(function () { requestAnimationFrame(function () { d.classList.add('show'); }); });
+    });
+  }
+  function setStep(i, cls, tail) {
+    var el = stepsEl.children[i]; if (!el) return;
+    el.className = 'pstep' + (cls ? ' ' + cls : '');
+    if (tail !== undefined) el.querySelector('.tail').textContent = tail;
+  }
+  function phase(p, label) {
+    ['P', 'E', 'V'].forEach(function (k) {
+      document.getElementById('pv-' + k).classList.toggle('on', k === p);
+    });
+    if (label) statusEl.innerHTML = '<b>' + { P: '规划中', E: '执行中', V: '校验中' }[p] + '</b><br>' + label;
+  }
+  function log(text, cls) {
+    var d = document.createElement('div');
+    d.className = 'vd-line' + (cls ? ' ' + cls : '');
+    var t = new Date(); var hh = ('0' + t.getMinutes()).slice(-2) + ':' + ('0' + t.getSeconds()).slice(-2);
+    d.innerHTML = '<span class="t">' + hh + '</span>' + text;
+    linesEl.appendChild(d);
+    while (linesEl.children.length > 13) linesEl.removeChild(linesEl.firstChild);
+    requestAnimationFrame(function () { d.classList.add('show'); });
+  }
+  function metric(v) {
+    pts.push(v);
+    mv.textContent = v.toFixed(2);
+    if (pts.length > 1) md.textContent = '+' + (pts[pts.length - 1] - pts[pts.length - 2]).toFixed(2) + ' · 换思路后提升';
+    var xs = pts.map(function (p, i) { return [16 + i * 120, 56 - (p - 0.6) * 120]; });
+    lineEl.setAttribute('points', xs.map(function (c) { return c.join(','); }).join(' '));
+    dotsEl.innerHTML = xs.map(function (c) { return '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="3.5"/>'; }).join('');
+  }
+
+  var script = [
+    [700,  function () { phase('P', 'Navigator 起草步骤清单'); log('⟡ Navigator 起草计划：5 个步骤，每步带验收标准', 'plan'); }],
+    [1100, function () { phase('E', '第 1 步 · 设计实验'); log('▶ 执行 第 1 步 · 设计实验'); setStep(0, 'running'); }],
+    [1300, function () { log('&nbsp;&nbsp;实验归类：评测 · baseline + 2 个对照条件'); }],
+    [1000, function () { phase('V', '确定性检查'); log('✓ 通过 · 方案字段完整（零 LLM 调用）', 'ok'); setStep(0, 'passed', ''); }],
+    [900,  function () { phase('E', '第 2 步 · 生成代码'); log('▶ 执行 第 2 步 · 生成代码并部署'); setStep(1, 'running'); }],
+    [1200, function () { log('&nbsp;&nbsp;本地编译检查 ✓ · 依赖就绪 · 待部署'); }],
+    [1000, function () { phase('E', '等待人工审批'); log('⏸ 命中审批门禁：动用 GPU 预算', 'warn'); setStep(1, 'gated', '等待审批'); gateEl.classList.add('show'); }]
+  ];
+  var script2 = [
+    [600,  function () { log('🟢 已批准 · 任务从断点继续', 'ok'); setStep(1, 'passed', ''); gateEl.classList.remove('show'); }],
+    [900,  function () { phase('E', '第 3 步 · 冒烟测试'); log('▶ 执行 第 3 步 · 冒烟测试'); setStep(2, 'running'); }],
+    [1100, function () { log('&nbsp;&nbsp;run.sh --smoke · exit 0'); }],
+    [800,  function () { phase('V', '退出码检查'); log('✓ 通过 · 退出码 = 0', 'ok'); setStep(2, 'passed', ''); }],
+    [900,  function () { phase('E', '第 4 步 · Run 1 训练'); log('▶ 执行 第 4 步 · Run 1 训练'); setStep(3, 'running'); }],
+    [1500, function () { log('&nbsp;&nbsp;POLARIS_METRIC {"acc": 0.71}', 'metric'); metric(0.71); }],
+    [900,  function () { phase('V', '指标核对'); log('✓ 通过 · 指标已产出', 'ok'); setStep(3, 'passed', 'acc 0.71'); }],
+    [900,  function () { phase('E', '第 5 步 · 分析 Run 1'); log('▶ 执行 第 5 步 · 分析 Run 1'); setStep(4, 'running'); }],
+    [1300, function () { log('&nbsp;&nbsp;诊断：各组差异不显著，方向拿不准', 'warn'); askEl.classList.add('show'); phase('E', 'AI 停下来问你'); }]
+  ];
+  var script3 = [
+    [800,  function () { phase('P', '计划随证据生长'); log('↻ Navigator 调整计划：+3 步', 'plan'); renderSteps(GROWN, true); growEl.classList.add('show'); setStep(4, 'passed', ''); }],
+    [1000, function () { phase('E', '第 6 步 · Run 2'); log('▶ 执行 第 6 步 · Run 2 重跑'); setStep(5, 'running'); }],
+    [1500, function () { log('&nbsp;&nbsp;POLARIS_METRIC {"acc": 0.83} ▲', 'metric'); metric(0.83); }],
+    [900,  function () { phase('V', '对比 Run 1'); log('✓ 通过 · 较 Run 1 提升 +0.12', 'ok'); setStep(5, 'passed', 'acc 0.83'); }],
+    [900,  function () { phase('E', '第 7 步 · 分析 2'); log('▶ 第 7 步 · 分析 2：终止条件命中'); setStep(6, 'running'); }],
+    [800,  function () { setStep(6, 'passed', ''); phase('E', '第 8 步 · 图表与报告'); log('▶ 第 8 步 · 图表与 VLM 质检 · 报告'); setStep(7, 'running'); }],
+    [1200, function () { phase('V', '全部通过'); log('✓ 实验完成 · 报告已生成，全程可回放', 'ok'); setStep(7, 'passed', ''); statusEl.innerHTML = '<b>实验完成</b><br>2 轮 · acc 0.71 → 0.83 · 全程留痕'; doneEl.classList.add('show'); }]
+  ];
+
+  function run(seq, done) {
+    var i = 0;
+    (function next() {
+      if (i >= seq.length) { if (done) done(); return; }
+      var it = seq[i++];
+      setTimeout(function () { it[1](); next(); }, it[0]);
+    })();
+  }
+
+  var started = false;
+  function start() {
+    if (started) return; started = true;
+    stepsEl.innerHTML = ''; linesEl.innerHTML = ''; pts = [];
+    mv.textContent = '—'; md.textContent = '';
+    lineEl.setAttribute('points', ''); dotsEl.innerHTML = '';
+    gateEl.classList.remove('show'); askEl.classList.remove('show');
+    doneEl.classList.remove('show'); growEl.classList.remove('show');
+    renderSteps(STEPS, false);
+    run(script);
+  }
+  document.getElementById('vd-approve').onclick = function () { run(script2); };
+  document.getElementById('vd-reject').onclick = function () {
+    gateEl.classList.remove('show');
+    log('⛔ 已驳回 · 实验终止，不动用任何算力', 'warn');
+    statusEl.innerHTML = '<b>已驳回</b><br>预算未动用，任务安全终止';
+    doneEl.classList.add('show');
+  };
+  askEl.querySelectorAll('[data-a]').forEach(function (b) {
+    b.onclick = function () {
+      askEl.classList.remove('show');
+      log('💬 你的建议已采纳：' + b.getAttribute('data-a'), 'plan');
+      run(script3);
+    };
+  });
+  document.getElementById('vd-replay').onclick = function () { started = false; start(); };
+
+  new IntersectionObserver(function (es, ob) {
+    es.forEach(function (e) { if (e.isIntersecting) { start(); ob.disconnect(); } });
+  }, { threshold: 0.35 }).observe(document.getElementById('vd'));
+})();
+</script>
+</body>
+</html>

@@ -60,9 +60,9 @@ make frontend-dev  # npm install && vite dev on :5173
 ## Migrations, tests, and linting
 
 ```bash
-make migrate   # cd src/backend && alembic upgrade head
+make migrate   # cd src/backend && alembic upgrade head (uses the local venv)
 make test      # backend pytest + frontend build
-make lint      # ruff check (backend) + tsc --noEmit (frontend)
+make lint      # ruff check (backend) + tsc --noEmit (frontend and desktop)
 make build     # build production images
 ```
 
@@ -135,10 +135,14 @@ single handler in `app/tools/`; it then becomes visible to both consumers. See t
 [Core Concepts](concepts.md#the-mcp-read-only-tool-layer) and the user-facing guide in [MCP](mcp.md).
 
 Modules are grouped by what they read: `literature.py` and `knowledge.py` (papers, chunks, concepts,
-graph), `figures.py` (images), `external.py` (third-party APIs), `project_state.py` (ideas,
-experiments, fact packs), `workspace.py` (topic status, tasks, gates), `libraries.py` (direction
-libraries, daily pool), `writing.py` (manuscripts). A new tool goes in whichever module already owns
-its subject, and gets registered by importing that module in `app/tools/__init__.py`.
+graph), `agentic_search.py` (cheap wide scans and full-text grep), `figures.py` (images),
+`external.py` (third-party APIs), `project_state.py` (ideas, experiments, fact packs),
+`workspace.py` (topic status, tasks, gates), `libraries.py` (direction libraries, daily pool),
+`writing.py` (manuscripts), plus the assistant-oriented modules `plan.py` (conversation plans),
+`skills.py` (agent-skill loading), `subagent.py` (delegated search), and `memory.py`
+(PolarisBuddy's per-user memory — `remember` is the registry's one write tool and is filtered out
+of the external MCP list). A new tool goes in whichever module already owns its subject, and gets
+registered by importing that module in `app/tools/__init__.py`.
 
 Two rules keep the layer honest. **Tools are thin wrappers over `services/*`** — no business logic
 lives here, so REST and MCP can never drift apart. **Every tool is topic-scoped**: an id belonging to

@@ -121,7 +121,11 @@ Server… menu item (Cmd+,).
 
 CI covers both: `desktop-build.yml` runs the smoke test on pull requests that touch the
 frontend or the shell, and `desktop-release.yml` builds all three platforms on a `v*` tag
-and publishes a GitHub release.
+and publishes a GitHub release. The release also ships the renderer separately as
+`renderer-<version>-c<contract>.tar.gz` (built once, on Linux — the bundle is
+platform-independent), so a frontend-only release can be applied in place: the client swaps
+the bundle in and reloads, without reinstalling. The contract version in the filename tells
+the client whether its preload is new enough to run it; see `src/desktop/src/main/updates`.
 
 ### Local packaging failures worth recognising
 
@@ -166,10 +170,12 @@ and publishes a GitHub release.
 
 ## Backend side
 
-The production CORS whitelist must include `app://polaris` (see
-`src/backend/app/main.py`). Every desktop request carries an `Authorization` header, so
-every request triggers a preflight, and with `allow_origins=[]` Starlette answers those
-preflights with 400. This cannot be worked around on the client — injecting response
-headers cannot change a status code.
+The production CORS whitelist always includes `app://polaris` — it is a constant
+(`DESKTOP_ORIGIN` in `src/backend/app/main.py`), not something to configure per deployment;
+`POLARIS_CORS_ORIGINS` only adds further origins for deployments where the web frontend
+lives on a different domain. The whitelist matters because every desktop request carries an
+`Authorization` header, so every request triggers a preflight, and with an empty
+`allow_origins` Starlette answers those preflights with 400. This cannot be worked around on
+the client — injecting response headers cannot change a status code.
 
 For other deployment topics see `docs/deployment.md`.
