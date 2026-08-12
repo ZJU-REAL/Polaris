@@ -1757,3 +1757,84 @@ async def test_probe_says_no_when_everything_is_already_in_the_pool(client, monk
         fresh, _ = await daily_feed.todays_batch_available(session)
     assert fresh is False
 
+
+
+async def test_probe_asks_every_category_not_just_the_first(client, monkeypatch):
+    """首个分类全都收过了，也要接着问后面的分类。
+
+    2026-08-12 生产漏了一整天就是这么来的：探测只问 cs.AI，那天 cs.AI 公告的 486 篇
+    我们碰巧全有，于是判定「没有可收的」，整轮同步一次都没启动——而同一时刻 cs.CL /
+    cs.CV / cs.RO / cs.LG 合计 386 篇是新的。界面上只是「今日文献没更新」，日志里
+    一条错误也没有，所以没人会去查。
+
+    正式抓取本来就按全部分类取（fetch_new_by_category），探测却拿一个分类替所有分类
+    作答；判据和它守护的动作口径不一致，迟早对不上。
+    """
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    await register_and_login(client)
+
+    # 先让 cs.AI 的这篇真的进池，这样它对下一次探测就是「已收过」
+    seen_id = "2608.88001"
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv({"cs.AI": [_rss_entry(seen_id, "已经收过的")]}),
+    )
+    async with get_sessionmaker()() as session:
+        await daily_feed.sync_daily_feed(session)
+
+    # cs.AI 全是收过的，cs.CV 有新的：必须判成「该抓」
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {
+                "cs.AI": [_rss_entry(seen_id, "已经收过的")],
+                "cs.CV": [_rss_entry("2608.88002", "还没收过的")],
+            }
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        fresh, _ = await daily_feed.todays_batch_available(session)
+    assert fresh is True, "首个分类没有新论文，就不再看别的分类了"
+
+    # 所有分类都收过了才算没有可做的
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv({"cs.AI": [_rss_entry(seen_id, "已经收过的")]}),
+    )
+    async with get_sessionmaker()() as session:
+        fresh, _ = await daily_feed.todays_batch_available(session)
+    assert fresh is False
+
+
+async def test_probe_stops_at_the_first_category_with_news(client, monkeypatch):
+    """命中即返回：常态下不该为了探测把每个分类都打一遍。"""
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    asked: list[str] = []
+
+    class _Counting(_StubArxiv):
+        async def fetch_new(self, category: str):
+            asked.append(category)
+            return await super().fetch_new(category)
+
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _Counting(
+            {
+                "cs.AI": [_rss_entry("2608.88010", "新的")],
+                "cs.CV": [_rss_entry("2608.88011", "也是新的")],
+            }
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        fresh, _ = await daily_feed.todays_batch_available(session)
+    assert fresh is True
+    assert asked == ["cs.AI"], f"第一个分类就有新论文，不该继续问下去：{asked}"

@@ -1529,35 +1529,53 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
     于是每次探测都真去打 arXiv——把我们自己打到 429。
 
     「有没有新论文可收」本来就是这个探测唯一关心的事，直接问它。
+
+    **每个订阅分类都要问。** 这里曾经只问 ``categories[0]``，拿它当整批的代表。
+    2026-08-12 生产就栽在这上面：那天 cs.AI 公告的 486 篇碰巧我们全都有了，探测
+    据此判定「没有可收的」，整轮同步一次都没启动；而同一时刻 cs.CL 有 93 篇、
+    cs.CV 148 篇、cs.RO 40 篇、cs.LG 163 篇是新的——一天漏掉 386 篇，界面上只
+    表现为「今日文献没更新」，日志里一条错误也没有。
+
+    正式抓取本来就是按全部分类取的（``fetch_new_by_category``），只有这个探测在
+    用一个分类替所有分类作答；判据和它要守护的动作口径不一致，迟早对不上。
+
+    找到一个没收过的就够了，所以命中即返回：常态下 cs.AI 有新论文，仍然只发一次
+    请求；只有像那天一样首个分类全中时才会继续往后问。
     """
     categories = await get_categories(session)
     if not categories:
         return True, None
-    try:
-        entries, batch_at = await get_arxiv_client().fetch_new(categories[0])
-    except Exception:  # noqa: BLE001 — 探测失败不下结论，交给正式抓取去报错
-        logger.warning("daily feed probe failed", exc_info=True)
-        return True, None
 
-    declared = batch_at.astimezone(dt.UTC).date().isoformat() if batch_at else None
-    arxiv_ids = [str(e.get("arxiv_id")) for e in entries if e.get("arxiv_id")]
-    if not arxiv_ids:
-        # 一条都没有：周末/节假日的正常形态，没什么可收的
-        return False, declared
+    declared: str | None = None
+    for category in categories:
+        try:
+            entries, batch_at = await get_arxiv_client().fetch_new(category)
+        except Exception:  # noqa: BLE001 — 探测失败不下结论，交给正式抓取去报错
+            logger.warning("daily feed probe failed for %s", category, exc_info=True)
+            return True, None
 
-    known = set(
-        (
-            await session.execute(
-                select(Paper.arxiv_id)
-                .join(DailyFeedEntry, DailyFeedEntry.paper_id == Paper.id)
-                .where(Paper.arxiv_id.in_(arxiv_ids))
+        if declared is None and batch_at is not None:
+            declared = batch_at.astimezone(dt.UTC).date().isoformat()
+        arxiv_ids = [str(e.get("arxiv_id")) for e in entries if e.get("arxiv_id")]
+        if not arxiv_ids:
+            continue
+        known = set(
+            (
+                await session.execute(
+                    select(Paper.arxiv_id)
+                    .join(DailyFeedEntry, DailyFeedEntry.paper_id == Paper.id)
+                    .where(Paper.arxiv_id.in_(arxiv_ids))
+                )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
-    fresh = any(aid not in known for aid in arxiv_ids)
-    return fresh, declared
+        if any(aid not in known for aid in arxiv_ids):
+            return True, declared
+
+    # 全部分类都问过了：要么一条都没公告（周末/节假日的正常形态），
+    # 要么公告的我们已经全收了。两种都没有可做的事。
+    return False, declared
 
 
 # ---- 保留期（可配置） ----
