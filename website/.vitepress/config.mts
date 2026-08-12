@@ -38,7 +38,7 @@ export default withMermaid(
     description:
       'An end-to-end AI research platform: literature, ideas, experiments, paper writing and review.',
 
-    head: [['link', { rel: 'icon', href: '/Polaris/logo.svg' }]],
+    head: [['link', { rel: 'icon', href: '/Polaris/logo-mark.svg' }]],
 
     // Map repo paths to site URLs: docs/foo.md → /docs/foo, docs/zh/foo.md → /zh/docs/foo
     rewrites: {
@@ -139,7 +139,9 @@ export default withMermaid(
     },
 
     themeConfig: {
-      logo: '/logo.svg',
+      // the bare mark only — the full logo.svg carries its own wordmark and
+      // would repeat the site title next to it
+      logo: '/logo-mark.svg',
       socialLinks: [{ icon: 'github', link: 'https://github.com/ZJU-REAL/Polaris' }],
       search: {
         provider: 'local',
