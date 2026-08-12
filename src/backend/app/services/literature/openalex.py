@@ -99,6 +99,12 @@ class OpenAlexClient:
         """按 arxiv id 反查（经 DataCite DOI 10.48550/arXiv.<id>）。"""
         return await self.get_by_doi(ARXIV_DOI_TEMPLATE.format(arxiv_id=arxiv_id))
 
+    async def get_by_id(self, openalex_id: str) -> dict[str, Any] | None:
+        """Resolve an OpenAlex work ID such as ``W2741809807``."""
+        work_id = openalex_id.strip().rsplit("/", 1)[-1]
+        work = await self._get(f"/works/{work_id}")
+        return _simplify(work) if work else None
+
     async def search_works(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
         """按标题/关键词全文检索 works（M5-C 引用核验的 S2 降级通道）。"""
         data = await self._get("/works", {"search": query, "per-page": limit})

@@ -13,8 +13,6 @@
 """
 
 import asyncio
-import hashlib
-import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -66,8 +64,16 @@ from app.services.libraries import (
 )
 from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
 from app.services.literature.arxiv import normalize_arxiv_id
+from app.services.literature.contracts import Identifier, SearchQuery
+from app.services.literature.orchestration import (
+    load_provider_resume,
+    search_query_signature,
+    store_provider_resume,
+)
 from app.services.literature.pdf_extract import extract_figures, extract_full_text, save_pdf
+from app.services.literature.providers import ArxivSearchProvider
 from app.services.paper_enrich import paper_embedding_text
+from app.services.paper_identity import ensure_paper_identifiers, identifiers_from_fields
 from app.services.paper_wiki import upsert_wiki
 from app.services.papers import delete_membership_hard
 from app.services.projects import DEFAULT_ARXIV_CATEGORIES
@@ -255,7 +261,11 @@ def _scored_in_this_run(ctx: ActionContext):
 
 
 async def _insert_pooled_with_retry(
-    session: AsyncSession, **kwargs: Any
+    session: AsyncSession,
+    *,
+    identifiers: list[Identifier] | None = None,
+    identifier_source: str | None = None,
+    **kwargs: Any,
 ) -> tuple[Paper | None, str | None]:
     """插入一篇池论文并**立刻提交**；撞上并发冲突就回滚重试。返回 (论文, 放弃原因)。
 
@@ -270,6 +280,14 @@ async def _insert_pooled_with_retry(
     for attempt in range(_DEADLOCK_RETRIES):
         try:
             paper = await _pool_paper_or_new(session, **kwargs)
+            if paper is not None and identifiers:
+                await ensure_paper_identifiers(
+                    session,
+                    paper_id=paper.id,
+                    identifiers=identifiers,
+                    source=identifier_source or paper.source or "unknown",
+                    verified=True,
+                )
             await session.commit()
             return paper, None
         except asyncio.CancelledError:
@@ -571,21 +589,19 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
         params = _params(ctx)
         terms = [t for t in (params.get("query_terms") or []) if str(t).strip()] or include
         days = TIME_RANGE_DAYS.get(str(params.get("time_range") or ""))
-        query_signature = hashlib.sha256(
-            json.dumps(
-                {
-                    "categories": categories,
-                    "terms": terms,
-                    "exclude": exclude,
-                    "days": days,
-                    "months_back": int(knobs["months_back"]),
-                    "limit": limit,
-                },
-                sort_keys=True,
-                ensure_ascii=False,
-            ).encode()
-        ).hexdigest()
-        resume = ctx.checkpoint.get("arxiv_search_resume") or {}
+        query_signature = search_query_signature(
+            {
+                "categories": categories,
+                "terms": terms,
+                "exclude": exclude,
+                "days": days,
+                "months_back": int(knobs["months_back"]),
+                "limit": limit,
+            }
+        )
+        resume = load_provider_resume(
+            ctx.checkpoint, provider_id="arxiv", legacy_key="arxiv_search_resume"
+        )
         if resume.get("query_signature") == query_signature and not resume.get("done"):
             since = _parse_iso(resume.get("since")) or (
                 now - timedelta(days=days or 30 * int(knobs["months_back"]))
@@ -616,6 +632,7 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 "since": since.isoformat(),
                 "until": until.isoformat(),
                 "next_start": next_start,
+                "cursor": str(next_start),
                 "limit": limit,
                 "fetched": fetched_total,
                 "inserted": inserted_total,
@@ -625,7 +642,12 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             }
 
         async def _persist_checkpoint(*, done: bool) -> None:
-            ctx.checkpoint["arxiv_search_resume"] = _checkpoint(done=done)
+            store_provider_resume(
+                ctx.checkpoint,
+                provider_id="arxiv",
+                resume=_checkpoint(done=done),
+                legacy_key="arxiv_search_resume",
+            )
             await session.execute(
                 update(VoyageRun)
                 .where(VoyageRun.id == ctx.run.id)
@@ -681,6 +703,16 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
                 year=entry.get("year"),
                 authors=entry.get("authors"),
             )
+            if paper is not None:
+                await ensure_paper_identifiers(
+                    session,
+                    paper_id=paper.id,
+                    identifiers=identifiers_from_fields(
+                        {"arxiv_id": aid, "doi": entry.get("doi")}
+                    ),
+                    source=source,
+                    verified=True,
+                )
             if aid:
                 arxiv_ids.add(aid)
             if doi:
@@ -692,19 +724,25 @@ async def search_candidates(ctx: ActionContext, params: dict[str, Any]) -> dict[
             return True
 
         arxiv = get_arxiv_client()
+        provider = ArxivSearchProvider(arxiv)
         while next_start < limit:
             # 页大小问客户端要，别写死：下面拿 len(entries) < page_size 判末页，
             # 一旦要的比客户端肯给的多，第一页就会被误判成末页，搜索静默截断。
             page_size = min(arxiv.page_size, limit - next_start)
-            entries = await arxiv.search_page(
-                categories=categories,
-                keywords=terms,
-                exclude=exclude,
-                since=since,
-                until=until,
-                start=next_start,
-                limit=page_size,
+            page = await provider.search(
+                SearchQuery(
+                    date_from=since,
+                    date_to=until,
+                    limit=page_size,
+                    filters={
+                        "categories": categories,
+                        "keywords": terms,
+                        "exclude": exclude,
+                    },
+                ),
+                cursor=str(next_start),
             )
+            entries = [record.raw_metadata or {} for record in page.records]
             if not entries:
                 await _persist_checkpoint(done=True)
                 break
@@ -879,6 +917,14 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
 
                     paper, conflict = await _insert_pooled_with_retry(
                         session,
+                        identifiers=identifiers_from_fields(
+                            {
+                                "arxiv_id": aid,
+                                "doi": ext.get("DOI"),
+                                "external_ids": {"s2": item.get("paperId")},
+                            }
+                        ),
+                        identifier_source="semantic_scholar",
                         library_id=library.id,
                         make_paper=make_paper,
                         arxiv_id=aid,

@@ -119,6 +119,7 @@ async def test_arxiv_search_resumes_after_the_last_committed_page(client, monkey
         )
     assert saved["next_start"] == saved["fetched"] == saved["inserted"] == inserted == 100
     assert saved["done"] is False
+    assert run.checkpoint["search_resume"]["arxiv"] == saved
 
     resume_ctx = ActionContext(run=run, llm=LLMRouter(), checkpoint=dict(run.checkpoint))
     result = await actions_wiki.search_candidates(resume_ctx, {})
@@ -149,6 +150,7 @@ async def test_arxiv_search_resumes_after_the_last_committed_page(client, monkey
         )
     assert completed["next_start"] == completed["fetched"] == inserted == 101
     assert completed["done"] is True
+    assert run.checkpoint["search_resume"]["arxiv"] == completed
 
 
 @respx.mock

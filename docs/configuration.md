@@ -34,9 +34,9 @@ noted below.
 | `POLARIS_OPENAI_COMPAT_API_KEY` | API key for the OpenAI-compatible provider. | (empty) |
 | `POLARIS_ANTHROPIC_API_KEY` | API key for Anthropic. | (empty) |
 | `POLARIS_S2_API_KEY` | Semantic Scholar API key. Optional; without it rate limits are stricter. | (empty) |
-| `POLARIS_OPENALEX_MAILTO` | Contact email for the OpenAlex polite pool. | `polaris@example.org` |
+| `POLARIS_OPENALEX_MAILTO` | Contact email for the OpenAlex and Crossref polite pools. | `polaris@example.org` |
 | `POLARIS_DATA_DIR` | Directory for PDFs and generated artifacts. In containers this is set to `/srv/data` and bind-mounted; keep it out of the code tree. | `./data` (containers: `/srv/data`) |
-| `POLARIS_OUTBOUND_PROXY` | HTTP proxy for outbound literature API calls (arXiv, Semantic Scholar, OpenAlex) when direct access is unreliable. Not used for LLM or internal traffic. From inside Docker, reach a host proxy via `host.docker.internal`. | (empty), e.g. `http://host.docker.internal:7897` |
+| `POLARIS_OUTBOUND_PROXY` | HTTP proxy for outbound literature API calls (arXiv, Semantic Scholar, OpenAlex, Crossref) when direct access is unreliable. Not used for LLM or internal traffic. From inside Docker, reach a host proxy via `host.docker.internal`. | (empty), e.g. `http://host.docker.internal:7897` |
 | `POLARIS_PIP_INDEX_URL` | Optional pip mirror used on the remote experiment servers. | (empty), e.g. `https://pypi.tuna.tsinghua.edu.cn/simple` |
 
 Speech settings aren't environment variables. Configure the external endpoint,
