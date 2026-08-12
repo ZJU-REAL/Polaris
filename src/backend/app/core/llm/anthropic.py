@@ -41,6 +41,18 @@ _DEFAULT_MAX_TOKENS = 4096
 _EFFORT_REJECT_MARKERS = ("effort", "output_config")
 
 
+def _messages_url(base_url: str | None) -> str:
+    """把根地址、版本化 Base URL 或完整端点统一成 Messages API 地址。"""
+    if not base_url:
+        return _API_URL
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/messages"):
+        return normalized
+    if normalized.endswith("/v1"):
+        return f"{normalized}/messages"
+    return f"{normalized}/v1/messages"
+
+
 def _rejects_effort(body: str) -> bool:
     low = body.lower()
     return any(marker in low for marker in _EFFORT_REJECT_MARKERS)
@@ -114,14 +126,21 @@ class AnthropicProvider(LLMProvider):
         self,
         api_key: str,
         *,
+        base_url: str | None = None,
+        user_agent: str | None = None,
         client: httpx.AsyncClient | None = None,
         timeout: float = 300.0,
     ) -> None:
         self._api_key = api_key
+        self._api_url = _messages_url(base_url)
+        self._user_agent = user_agent.strip() if user_agent else None
         self._client = client or httpx.AsyncClient(timeout=timeout)
 
     def _headers(self) -> dict[str, str]:
-        return {"x-api-key": self._api_key, "anthropic-version": _API_VERSION}
+        headers = {"x-api-key": self._api_key, "anthropic-version": _API_VERSION}
+        if self._user_agent:
+            headers["user-agent"] = self._user_agent
+        return headers
 
     @staticmethod
     def _payload(
@@ -213,7 +232,7 @@ class AnthropicProvider(LLMProvider):
     ) -> CompletionResult:
         # TODO(M2): 重试/限速/错误分类
         resp = await self._client.post(
-            _API_URL,
+            self._api_url,
             headers=self._headers(),
             json=self._payload(
                 messages,
@@ -231,7 +250,7 @@ class AnthropicProvider(LLMProvider):
             # 该模型不认这个档位：去掉参数重试一次，别让配错档位打断整个环节
             logger.warning("模型 %s 不支持 effort=%s，已去掉该参数重试", model, effort)
             resp = await self._client.post(
-                _API_URL,
+                self._api_url,
                 headers=self._headers(),
                 json=self._payload(
                     messages,
@@ -326,7 +345,7 @@ class AnthropicProvider(LLMProvider):
         usage: dict[str, Any] = {}
         finish_reason: str | None = None
         async with self._client.stream(
-            "POST", _API_URL, headers=self._headers(), json=payload
+            "POST", self._api_url, headers=self._headers(), json=payload
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():

@@ -45,6 +45,12 @@ def masked_key_of(provider: LLMProviderConfig) -> str:
     return mask_api_key(decrypt_secret(provider.api_key_encrypted))
 
 
+def _normalize_user_agent(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 # ---- providers ----
 
 
@@ -82,6 +88,7 @@ async def create_provider(
         name=data.name,
         kind=data.kind,
         base_url=data.base_url,
+        user_agent=_normalize_user_agent(data.user_agent),
         api_key_encrypted=encrypt_secret(data.api_key) if data.api_key else None,
         enabled=data.enabled,
         models=data.models,
@@ -102,6 +109,8 @@ async def update_provider(
         provider.kind = data.kind
     if data.base_url is not None:
         provider.base_url = data.base_url
+    if data.user_agent is not None:
+        provider.user_agent = _normalize_user_agent(data.user_agent)
     if data.api_key:  # 空字符串/None = 不变
         provider.api_key_encrypted = encrypt_secret(data.api_key)
     if data.enabled is not None:
@@ -189,7 +198,11 @@ def _build_provider(provider: LLMProviderConfig) -> LLMProvider:
         base_url = provider.base_url or get_settings().openai_compat_base_url
         return OpenAICompatProvider(base_url=base_url, api_key=api_key)
     if provider.kind == "anthropic":
-        return AnthropicProvider(api_key=api_key)
+        return AnthropicProvider(
+            api_key=api_key,
+            base_url=provider.base_url,
+            user_agent=provider.user_agent,
+        )
     return FakeProvider()
 
 

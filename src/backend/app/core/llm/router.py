@@ -116,6 +116,7 @@ class ResolvedRoute:
     model: str
     temperature: float | None
     provider_name: str = "fake"  # 管理端 provider 名称（调用日志用）
+    user_agent: str | None = None  # Provider 级客户端标识；None = HTTP 客户端默认值
     effort: EffortLevel | None = None  # 推理档位，None = 不发送该参数（用模型默认）
     #: 模型的上下文窗口（token）。None = 管理端没填，调用方按保守常量走。
     #: agent 的历史回放预算靠它——不知道窗口多大，裁剪阈值就只能拍脑袋。
@@ -270,6 +271,7 @@ class LLMRouter:
                     model=route.model,
                     temperature=route.temperature,
                     provider_name=provider.name,
+                    user_agent=provider.user_agent,
                     effort=route.effort,
                     context_window=route.context_window,
                 )
@@ -311,7 +313,14 @@ class LLMRouter:
             return self._override
         # 耐心程度进缓存键：同一个 provider 配置在长/短两档下各持一个客户端
         timeout, attempts = call_profile(stage)
-        key = (route.provider_kind, route.base_url, route.api_key, timeout, attempts)
+        key = (
+            route.provider_kind,
+            route.base_url,
+            route.api_key,
+            route.user_agent,
+            timeout,
+            attempts,
+        )
         if key not in self._providers:
             if route.provider_kind == "openai_compat":
                 base_url = route.base_url or get_settings().openai_compat_base_url
@@ -322,7 +331,12 @@ class LLMRouter:
                     max_attempts=attempts,
                 )
             elif route.provider_kind == "anthropic":
-                self._providers[key] = AnthropicProvider(api_key=route.api_key, timeout=timeout)
+                self._providers[key] = AnthropicProvider(
+                    api_key=route.api_key,
+                    base_url=route.base_url,
+                    user_agent=route.user_agent,
+                    timeout=timeout,
+                )
             elif route.provider_kind == "fake":
                 self._providers[key] = FakeProvider()
             else:

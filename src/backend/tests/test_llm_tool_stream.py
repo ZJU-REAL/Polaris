@@ -288,6 +288,51 @@ def _anthropic_provider(events: list[dict]):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "expected_url"),
+    [
+        (None, "https://api.anthropic.com/v1/messages"),
+        ("https://relay.test", "https://relay.test/v1/messages"),
+        ("https://relay.test/v1", "https://relay.test/v1/messages"),
+        ("https://relay.test/v1/messages", "https://relay.test/v1/messages"),
+    ],
+)
+async def test_anthropic_custom_base_url(
+    base_url: str | None, expected_url: str
+) -> None:
+    """自定义 Anthropic Base URL 必须覆盖完整与流式请求使用的硬编码地址。"""
+    from app.core.llm.anthropic import AnthropicProvider
+
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["api_key"] = request.headers["x-api-key"]
+        return httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "pong"}],
+                "model": "m",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+
+    provider = AnthropicProvider(
+        "k",
+        base_url=base_url,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        result = await provider.complete([Message(role="user", content="ping")], model="m")
+    finally:
+        await provider.aclose()
+
+    assert seen == {"url": expected_url, "api_key": "k"}
+    assert result.content == "pong"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_tool_use_blocks_and_usage():
     """content_block_start/input_json_delta/stop 的三段式，外加两处 usage。
 

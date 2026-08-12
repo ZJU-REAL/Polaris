@@ -260,6 +260,28 @@ def test_profile_is_part_of_the_provider_cache_key():
     assert len(router._providers) == 2, "长短档共用了同一个客户端"
 
 
+async def test_user_agent_is_part_of_the_provider_cache_key():
+    """同一端点使用不同客户端标识时不能复用旧 Provider。"""
+    from app.core.llm.router import LLMRouter, ResolvedRoute
+
+    router = LLMRouter()
+    base = dict(
+        provider_kind="anthropic",
+        base_url="https://relay.test/v1",
+        api_key="key",
+        model="m",
+        temperature=None,
+        provider_name="relay",
+    )
+    first = router._provider_for(ResolvedRoute(**base, user_agent="client/1"), "relevance")
+    second = router._provider_for(ResolvedRoute(**base, user_agent="client/2"), "relevance")
+    assert first is not second
+    assert first._headers()["user-agent"] == "client/1"  # type: ignore[attr-defined]
+    assert second._headers()["user-agent"] == "client/2"  # type: ignore[attr-defined]
+    await first.aclose()
+    await second.aclose()
+
+
 # ---- digest 拆成独立 stage（可单独设模型）----
 
 

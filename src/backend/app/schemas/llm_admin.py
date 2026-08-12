@@ -2,19 +2,21 @@
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.llm.base import EffortLevel
 
 ProviderKind = Literal["openai_compat", "anthropic", "fake"]
+UserAgent = Annotated[str, Field(max_length=255, pattern=r"^[^\r\n]*$")]
 
 
 class ProviderCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     kind: ProviderKind
     base_url: str | None = None
+    user_agent: UserAgent | None = None
     api_key: str | None = None  # 只写不读；入库前 Fernet 加密
     enabled: bool = True
     models: list[str] | None = None  # 可用模型 id 列表（None = 未配置）
@@ -24,6 +26,7 @@ class ProviderUpdate(BaseModel):
     name: str | None = None
     kind: ProviderKind | None = None
     base_url: str | None = None
+    user_agent: UserAgent | None = None  # 空字符串 = 恢复 HTTP 客户端默认值
     api_key: str | None = None  # 空字符串 = 不变
     enabled: bool | None = None
     models: list[str] | None = None  # 整体替换；None = 不变（清空传 []）
@@ -36,6 +39,7 @@ class ProviderRead(BaseModel):
     name: str
     kind: str
     base_url: str | None
+    user_agent: str | None
     api_key_masked: str
     enabled: bool
     models: list[str] | None = None

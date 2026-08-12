@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a1c9e73b5d20"  # 浏览事件（文献库/论文点击量）
+HEAD_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
+VIEW_EVENTS_REVISION = "a1c9e73b5d20"  # 浏览事件（文献库/论文点击量）
 VOYAGE_MESSAGES_REVISION = "63133f647463"  # 任务对话流：voyage_messages 表
 READ_ONLY_REVISION = "b3f5c1e07a92"  # 只读账号（游客）
 SKILLS_GLOBAL_REVISION = "07e7faea4c7a"  # 技能全局启用（user_skills，不再绑定课题）
@@ -245,8 +246,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"is_binary", "is_folder"} <= columns["manuscript_files"]
     # 用户名列（更早版本）
     assert {"username", "username_locked"} <= columns["users"]
-    # llm_providers.models 列（可用模型列表，更早版本）
-    assert "models" in columns["llm_providers"]
+    # llm_providers 模型列表与可选客户端标识
+    assert {"models", "user_agent"} <= columns["llm_providers"]
     # llm_call_logs / system_settings 表（更早版本）
     assert {"llm_call_logs", "system_settings"} <= columns["_tables"]
     assert {
@@ -367,7 +368,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 浏览事件：文献库/论文的点击量
     assert "view_events" in columns["_tables"]
 
-    # 最新 revision 可往返：先退掉浏览事件。
+    # 最新 revision 可往返：先退掉 Provider 级 User-Agent。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == VIEW_EVENTS_REVISION
+    assert "user_agent" not in columns["llm_providers"]
+    assert "view_events" in columns["_tables"]
+
+    # 再退掉浏览事件。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == VOYAGE_MESSAGES_REVISION

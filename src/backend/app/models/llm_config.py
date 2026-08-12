@@ -39,6 +39,8 @@ class LLMProviderConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)  # openai_compat|anthropic|fake
     base_url: Mapped[str | None] = mapped_column(String(1024))
+    # 可选的 Provider 级客户端标识；仅在显式配置时覆盖 HTTP 客户端默认值。
+    user_agent: Mapped[str | None] = mapped_column(String(255))
     # 明文 key 不落库：core/security.py Fernet 加密后存这里
     api_key_encrypted: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

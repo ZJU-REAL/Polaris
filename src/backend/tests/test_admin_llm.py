@@ -49,6 +49,7 @@ async def test_provider_crud_and_key_masking(client):
             "name": "deepseek",
             "kind": "openai_compat",
             "base_url": "https://api.deepseek.com/v1",
+            "user_agent": "relay-client/1.0",
             "api_key": API_KEY,
             "enabled": True,
         },
@@ -57,16 +58,18 @@ async def test_provider_crud_and_key_masking(client):
     assert resp.status_code == 201, resp.text
     provider = resp.json()
     assert provider["api_key_masked"] == "sk-...abcd"  # 只写不读
+    assert provider["user_agent"] == "relay-client/1.0"
     assert "api_key" not in provider
     provider_id = provider["id"]
 
     # 空 api_key = 不变
     resp = await client.patch(
         f"/api/admin/llm/providers/{provider_id}",
-        json={"api_key": "", "enabled": False},
+        json={"api_key": "", "user_agent": "", "enabled": False},
         headers=admin,
     )
     assert resp.json()["api_key_masked"] == "sk-...abcd"
+    assert resp.json()["user_agent"] is None
     assert resp.json()["enabled"] is False
 
     # 换 key → 掩码变化
@@ -316,6 +319,59 @@ async def test_test_model_openai_compat_chat(client):
     assert payload["model"] == "gpt-5.5"
     assert payload["max_tokens"] <= 8
     assert payload["messages"] == [{"role": "user", "content": "ping"}]
+
+
+@respx.mock
+async def test_test_model_anthropic_custom_user_agent(client):
+    admin, _ = await _admin_and_member(client)
+    resp = await client.post(
+        "/api/admin/llm/providers",
+        json={
+            "name": "claude-relay",
+            "kind": "anthropic",
+            "base_url": "http://claude-relay.test/v1",
+            "user_agent": "claude-cli/test",
+            "api_key": API_KEY,
+        },
+        headers=admin,
+    )
+    assert resp.status_code == 201, resp.text
+    provider_id = resp.json()["id"]
+    route = respx.post("http://claude-relay.test/v1/messages").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "model": "claude-opus-5",
+                "content": [{"type": "text", "text": "pong"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+    )
+    resp = await client.post(
+        "/api/admin/llm/test-model",
+        json={"provider_id": provider_id, "model": "claude-opus-5", "capability": "chat"},
+        headers=admin,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+    assert route.calls.last.request.headers["user-agent"] == "claude-cli/test"
+
+    # 真实路由也必须从数据库带出 User-Agent；否则会出现“测试成功、工作流失败”。
+    resp = await client.put(
+        "/api/admin/llm/routes",
+        json=[{"stage": "default", "provider_id": provider_id, "model": "claude-opus-5"}],
+        headers=admin,
+    )
+    assert resp.status_code == 200, resp.text
+    from app.core.llm.router import LLMRouter
+
+    router = LLMRouter()
+    resolved = (await router._load_routes(None))["default"]
+    assert resolved.user_agent == "claude-cli/test"
+    llm = router._provider_for(resolved, "default")
+    assert llm._headers()["user-agent"] == "claude-cli/test"  # type: ignore[attr-defined]
+    await llm.aclose()
 
 
 @respx.mock

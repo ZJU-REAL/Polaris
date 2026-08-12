@@ -40,6 +40,7 @@ def _provider_read(p: LLMProviderConfig) -> ProviderRead:
         name=p.name,
         kind=p.kind,
         base_url=p.base_url,
+        user_agent=p.user_agent,
         api_key_masked=svc.masked_key_of(p),
         enabled=p.enabled,
         models=p.models,

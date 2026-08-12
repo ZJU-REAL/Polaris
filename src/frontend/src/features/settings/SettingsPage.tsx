@@ -822,6 +822,7 @@ interface ProviderDraft {
   name: string;
   kind: LlmProviderKind;
   base_url: string;
+  user_agent: string;
   api_key: string;
   enabled: boolean;
   /** 可用模型列表原始输入（逗号/换行分隔），保存时解析为数组 */
@@ -834,7 +835,7 @@ function parseModels(raw: string): string[] {
 }
 
 function emptyDraft(): ProviderDraft {
-  return { name: '', kind: 'openai_compat', base_url: '', api_key: '', enabled: true, models: '' };
+  return { name: '', kind: 'openai_compat', base_url: '', user_agent: '', api_key: '', enabled: true, models: '' };
 }
 
 function draftFrom(p: LlmProviderRead): ProviderDraft {
@@ -842,6 +843,7 @@ function draftFrom(p: LlmProviderRead): ProviderDraft {
     name: p.name,
     kind: p.kind,
     base_url: p.base_url ?? '',
+    user_agent: p.user_agent ?? '',
     api_key: '',
     enabled: p.enabled,
     models: (p.models ?? []).join('\n'),
@@ -853,6 +855,7 @@ function toInput(d: ProviderDraft): LlmProviderInput {
     name: d.name.trim(),
     kind: d.kind,
     base_url: d.base_url.trim() || undefined,
+    user_agent: d.kind === 'anthropic' ? d.user_agent.trim() : '',
     api_key: d.api_key, // 空字符串 = 不变（PATCH）；POST 时后端忽略空 key
     enabled: d.enabled,
     models: parseModels(d.models), // 整体替换（清空 = []）
@@ -883,6 +886,14 @@ function ProviderForm({ draft, setDraft, isNew }: {
             placeholder="https://api.example.com/v1" disabled={draft.kind === 'fake'} />
         </FormField>
       </div>
+      {draft.kind === 'anthropic' && (
+        <FormField label={tr('User-Agent（可选）', 'User-Agent (optional)')}
+          hint={tr('留空则使用 HTTP 客户端默认值', 'Leave empty to use the HTTP client default')}>
+          <input className="input mono" value={draft.user_agent}
+            onChange={(e) => setDraft({ ...draft, user_agent: e.target.value })}
+            placeholder="claude-cli/2.1.226 (external, sdk-cli)" />
+        </FormField>
+      )}
       <FormField label="API Key"
         hint={isNew ? undefined : tr('留空 = 保持不变；后端只写不读，展示为 masked', 'Leave empty to keep unchanged; write-only on the backend, shown masked')}>
         <input className="input mono" type="password" autoComplete="new-password" value={draft.api_key}

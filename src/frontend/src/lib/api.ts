@@ -565,6 +565,7 @@ export interface LlmProviderRead {
   name: string;
   kind: LlmProviderKind;
   base_url: string | null;
+  user_agent: string | null;
   api_key_masked: string | null;
   enabled: boolean;
   /** 可用模型 id 列表（null = 未配置） */
@@ -575,6 +576,8 @@ export interface LlmProviderInput {
   name: string;
   kind: LlmProviderKind;
   base_url?: string;
+  /** 可选；仅 Anthropic Provider 使用，空字符串恢复客户端默认值 */
+  user_agent?: string;
   /** 空字符串 = 不变（PATCH 时） */
   api_key?: string;
   enabled: boolean;
