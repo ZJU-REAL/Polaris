@@ -421,3 +421,26 @@ async def test_patch_idea_rejected_only(client, queue_stub, bus_recorder):
         headers={"Authorization": f"Bearer {token_b}"},
     )
     assert resp.status_code == 404
+
+
+async def test_idea_counts_exclude_the_recycle_bin(client, queue_stub):
+    """界面上的想法计数不算回收站里的。
+
+    扔进回收站却看不到数字变化，人只会以为删除没生效然后再删一次。#397 修好了
+    锦标赛那条路，计数这条当时没跟上。
+    """
+    project_id, headers = await _setup_project(client, name="counts-exclude-trashed")
+    for i in range(3):
+        await _seed_idea(project_id, f"留着的想法{i}")
+    trashed_id = await _seed_idea(project_id, "要扔的想法")
+
+    resp = await client.get(f"/api/projects/{project_id}/forge/state", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["idea_counts"]["total"] == 4
+
+    assert (await client.delete(f"/api/ideas/{trashed_id}", headers=headers)).status_code == 204
+
+    resp = await client.get(f"/api/projects/{project_id}/forge/state", headers=headers)
+    counts = resp.json()["idea_counts"]
+    assert counts["total"] == 3, "回收站里的想法仍被计入"
+    assert counts["candidate"] == 3

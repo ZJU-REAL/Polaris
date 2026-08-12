@@ -322,7 +322,9 @@ async def idea_counts(session: AsyncSession, project_id: uuid.UUID) -> dict[str,
     rows = (
         await session.execute(
             select(Idea.status, func.count())
-            .where(Idea.project_id == project_id)
+            # 回收站里的不算。这个计数直接喂给界面上的想法数，扔进回收站却看不到数字
+            # 变化，人只会以为删除没生效，然后再删一次。
+            .where(Idea.project_id == project_id, Idea.trashed_at.is_(None))
             .group_by(Idea.status)
         )
     ).all()

@@ -38,6 +38,9 @@ async def global_search(
 ) -> list[GlobalSearchHit]:
     pattern = f"%{q}%"
     hits: list[GlobalSearchHit] = []
+    # 加新类型时注意：凡是带 ``trashed_at`` 的实体都要排掉回收站里的。搜索是回收站最容易
+    # 漏掉的出口——列表页都记得过滤，搜索却把删掉的东西照样捞回来，点进去还是活的。
+    # 目前 idea / experiment / manuscript 三种是软删的。
     # 论文/概念按课题关联库并集检索；无关联库 = 无语料时跳过它们，
     # ideas/实验/航程/稿件等课题作用域实体照常匹配（不受关联库影响）。
     library_ids = await get_source_library_ids(session, project_id)
@@ -106,6 +109,7 @@ async def global_search(
                 select(Idea)
                 .where(
                     Idea.project_id == project_id,
+                    Idea.trashed_at.is_(None),
                     or_(Idea.title.ilike(pattern), Idea.summary.ilike(pattern)),
                 )
                 .order_by(Idea.updated_at.desc())
@@ -126,7 +130,12 @@ async def global_search(
         await session.execute(
             select(Experiment, Idea.title)
             .join(Idea, Experiment.idea_id == Idea.id)
-            .where(Experiment.project_id == project_id, Idea.title.ilike(pattern))
+            .where(
+                Experiment.project_id == project_id,
+                Experiment.trashed_at.is_(None),
+                Idea.trashed_at.is_(None),
+                Idea.title.ilike(pattern),
+            )
             .order_by(Experiment.updated_at.desc())
             .limit(limit_per_type)
         )
@@ -163,7 +172,11 @@ async def global_search(
         (
             await session.execute(
                 select(Manuscript)
-                .where(Manuscript.project_id == project_id, Manuscript.title.ilike(pattern))
+                .where(
+                    Manuscript.project_id == project_id,
+                    Manuscript.trashed_at.is_(None),
+                    Manuscript.title.ilike(pattern),
+                )
                 .order_by(Manuscript.updated_at.desc())
                 .limit(limit_per_type)
             )

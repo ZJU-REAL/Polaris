@@ -2,6 +2,8 @@
 
 import uuid
 
+from sqlalchemy import select
+
 from app.core.db import get_sessionmaker
 from app.models.experiment import Experiment
 from app.models.idea import Idea
@@ -107,3 +109,47 @@ async def test_search_requires_membership(client):
         headers={"Authorization": f"Bearer {other}"},
     )
     assert resp.status_code == 404
+
+
+async def test_search_skips_the_recycle_bin(client):
+    """回收站里的想法/实验/稿件不得被搜出来。
+
+    这条原则代码里早就定了（见 test_search_excludes_trash.py：论文那半边），只是全局
+    搜索这条路一直没跟上。列表页看不见、搜索却照样捞出来，点进去还是活的——用户会
+    以为删除压根没生效。稿件和实验同样是软删的，一起钉住，免得下次只修一种。
+    """
+    import datetime as dt
+
+    project_id, headers = await _setup(client)
+    pid = uuid.UUID(project_id)
+
+    async def types_for(q: str) -> set[str]:
+        r = await client.get(
+            f"/api/projects/{project_id}/global-search", params={"q": q}, headers=headers
+        )
+        assert r.status_code == 200, r.text
+        return {hit["type"] for hit in r.json()["hits"]}
+
+    before = await types_for("graph")
+    assert {"idea", "experiment", "manuscript"} <= before, "先确认这三类本来搜得到"
+
+    now = dt.datetime.now(dt.UTC)
+    async with get_sessionmaker()() as session:
+        idea = (await session.execute(select(Idea).where(Idea.project_id == pid))).scalar_one()
+        idea.trashed_at = now
+        manuscript = (
+            await session.execute(select(Manuscript).where(Manuscript.project_id == pid))
+        ).scalar_one()
+        manuscript.trashed_at = now
+        experiment = (
+            await session.execute(select(Experiment).where(Experiment.project_id == pid))
+        ).scalar_one()
+        experiment.trashed_at = now
+        await session.commit()
+
+    after = await types_for("graph")
+    assert "idea" not in after, "回收站里的想法仍被搜出来"
+    assert "manuscript" not in after, "回收站里的稿件仍被搜出来"
+    assert "experiment" not in after, "回收站里的实验仍被搜出来"
+    # 没有回收站概念的类型不受影响
+    assert "paper" in after and "voyage" in after

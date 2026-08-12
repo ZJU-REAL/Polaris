@@ -728,12 +728,17 @@ async def forge_dedup(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
             ctx.checkpoint["forge_dedup_done"] = True
             return {"candidates": len(candidates), "dropped": 0, "skipped_reason": "no embedding"}
 
-        # 库内既有 idea：激活空间下无向量的现场补嵌并落库
+        # 库内既有 idea：激活空间下无向量的现场补嵌并落库。
+        # 回收站里的不参与：用户把一个想法扔掉，正是不想再看到它，结果它却留在去重基准里
+        # 把新生成的近似想法判成重复——扔得越多，越生不出东西，而且没有任何提示。
+        # 顺带省掉给这些死记录现场补向量的那一趟嵌入调用。
         existing = (
             (
                 await session.execute(
                     select(Idea).where(
-                        Idea.project_id == ctx.run.project_id, Idea.status != "rejected"
+                        Idea.project_id == ctx.run.project_id,
+                        Idea.status != "rejected",
+                        Idea.trashed_at.is_(None),
                     )
                 )
             )
