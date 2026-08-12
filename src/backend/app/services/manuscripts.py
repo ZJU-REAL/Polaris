@@ -10,6 +10,7 @@
   decide_submission_from_gate；review_passed 缺失时管理员可用 override 审批跳过）。
 """
 
+import contextlib
 import json
 import re
 import uuid
@@ -839,6 +840,22 @@ async def create_writing_voyage(
         raise WritingInProgressError(str(manuscript.id))
     known = await manuscript_templates.template_section_keys(session, manuscript.template)
     body, related = resolve_sections(known, sections)
+    # 起草前置：主文件还是模板原文（无 POLARIS_SECTION 骨架）时自动骨架化。
+    # 原来靠前端在起草前调用 initialize-structure——API 直接 POST /draft 会跳过，
+    # 分节内容 fallback 写进模板演示正文，模板的示例引用（\cite{langley00} 等）与
+    # 示例数字原样混进成稿（线上实测：论文评审判出 8 条"虚构引用"全是模板样例）。
+    main_path = manuscript.main_tex or "main.tex"
+    main = (
+        await session.execute(
+            select(ManuscriptFile).where(
+                ManuscriptFile.manuscript_id == manuscript.id,
+                ManuscriptFile.path == main_path,
+            )
+        )
+    ).scalar_one_or_none()
+    if main is not None and not main.is_binary and "POLARIS_SECTION" not in (main.content or ""):
+        with contextlib.suppress(StructureError):  # 无 document 环境的奇葩主文件：保持原行为
+            await initialize_structure(session, manuscript, user_id=created_by)
     # 起草永远基于最新事实源：先自动重建 fact-pack（库/实验更新后不必手动刷新）
     await refresh_fact_pack(session, manuscript)
     # 事实包刷新后同步 references.bib 文件，保证 AI 起草的 \cite 能解析

@@ -476,11 +476,16 @@ class VoyageEngine:
         # 全部步骤已完成的场景下，唯一合法的扩展是**追加到末尾**：LLM 常给
         # insert_after 指向已完成节点 / update 已完成节点，会撞上应用期不变量
         # 「插入位置必须在当前执行点之后」（线上实测把用户逼到只能放弃）。
-        # 归一化：只保留 add_nodes 且一律追加。
+        # 归一化：只保留 add_nodes 且一律追加；顺带剥掉 requires_gate——
+        # 用户刚拍板「继续补做」，LLM 生成的节点还带闸门（甚至塞动作名当闸门
+        # 种类）会让用户对着自己的决定连环审批（线上实测连弹两次）。
         appended_ops = []
         for op in edit.get("edits") or []:
             if op.get("op") == "add_nodes":
-                appended_ops.append({**op, "insert_after": None})
+                nodes = [
+                    {**node, "requires_gate": None} for node in (op.get("nodes") or [])
+                ]
+                appended_ops.append({**op, "insert_after": None, "nodes": nodes})
         edit = {**edit, "edits": appended_ops}
         if edit.get("finish") or not edit.get("edits"):
             consume_ask.status = "consumed"
@@ -567,11 +572,21 @@ class VoyageEngine:
             raise _ExternallyTerminated(run.status)
         run.status = status
         if status == "done":
-            # 终态联动：仍非终态的关联实验随 voyage 落定为 done（报告动作不再自判
-            # failed，用户「接受当前结果」等路径都汇到这里；无关联实验时是 noop）
+            # 终态联动：仍非终态的关联实验随 voyage 落定为 done（报告动作完全不写
+            # 终态，用户「接受当前结果」等路径都汇到这里；无关联实验时是 noop）
             from app.services import experiments as experiments_service
 
-            await experiments_service.complete_by_voyage(session, run.id)
+            experiment = await experiments_service.complete_by_voyage(session, run.id)
+            if experiment is not None:
+                # WS 状态联动：原先由报告动作的 _set_status 发，现在终态在这里落定
+                await self._emit_notify(
+                    run.project_id,
+                    {
+                        "type": "experiment.status",
+                        "experiment_id": str(experiment.id),
+                        "status": "done",
+                    },
+                )
         await self._emit_status(run)
 
     # ---- 主流程 ----

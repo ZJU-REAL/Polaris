@@ -1142,13 +1142,37 @@ def merge_metrics(target: dict[str, Any] | None, points: list[dict[str, Any]]) -
     return merged
 
 
+def _metric_base(key: str) -> str:
+    """指标键 → 归一化基名：剥掉 /条件/切片 后缀、统一小写。"""
+    return key.split("/", 1)[0].strip().lower()
+
+
 def extract_primary_value(metrics: dict[str, Any] | None, metric_name: str) -> float | None:
-    """从 run.metrics 取主指标最后一个值（无该指标返回 None）。"""
-    series = (metrics or {}).get(metric_name)
-    if not isinstance(series, list) or not series:
-        return None
-    value = series[-1].get("value") if isinstance(series[-1], dict) else None
-    return float(value) if isinstance(value, int | float) else None
+    """从 run.metrics 取主指标最后一个值（无该指标返回 None）。
+
+    匹配做归一化（#20，线上实测）：生成代码打的指标名带条件/切片后缀
+    （``gsm8k_accuracy/baseline/val``），计划主指标叫 ``accuracy``——精确匹配
+    把成功的轮次全计成 0，完成标准死锁。匹配顺序：精确 → 基名相等 →
+    基名包含主指标名（多键命中时取键名最短的，倾向裸指标/baseline）。"""
+    metrics = metrics or {}
+    want = metric_name.strip().lower()
+
+    def last_value(series: Any) -> float | None:
+        if not isinstance(series, list) or not series:
+            return None
+        value = series[-1].get("value") if isinstance(series[-1], dict) else None
+        return float(value) if isinstance(value, int | float) else None
+
+    if metric_name in metrics:
+        return last_value(metrics[metric_name])
+    exact_base = [k for k in metrics if _metric_base(k) == want]
+    containing = [k for k in metrics if want in _metric_base(k)]
+    for candidates in (exact_base, containing):
+        for key in sorted(candidates, key=len):
+            value = last_value(metrics[key])
+            if value is not None:
+                return value
+    return None
 
 
 def is_improvement(value: float, best: float | None, direction: str) -> bool:
@@ -1418,10 +1442,28 @@ def _summarize_model_config(config_text: str) -> dict[str, Any]:
     return facts
 
 
+def _host_path_for(ref: str, plan: dict[str, Any]) -> str:
+    """容器内路径 → 宿主机路径（按 plan.container.mounts 反向映射）。
+
+    预检在宿主机上探测，而容器计划声明的是容器内路径（如挂载 ~/hf→/hf 后的
+    /hf/model/...）——不映射就必然误报「资源不存在」（线上实测，白打断用户一次）。
+    非容器计划或无匹配挂载时原样返回。"""
+    container = plan.get("container") if isinstance(plan.get("container"), dict) else None
+    mounts = container.get("mounts") if container else None
+    if not isinstance(mounts, dict):
+        return ref
+    for host_path, ctr_path in mounts.items():
+        ctr_root = str(ctr_path).split(":", 1)[0]  # "/hf:ro" → "/hf"
+        if ctr_root and (ref == ctr_root or ref.startswith(ctr_root.rstrip("/") + "/")):
+            return str(host_path) + ref[len(ctr_root) :]
+    return ref
+
+
 async def _probe_resources(executor: Runner, plan: dict[str, Any]) -> tuple[list[dict], list[str]]:
     """资源预检（通用，不针对具体失败模式）：探 plan 声明的模型/数据集，把**事实**记进 resources
     （本机模型的 model_type/架构/配置分节、存在性），只对**普适**问题告警（声明的本机资源不存在）。
-    ref 以 ~ 或 / 开头 = 本机路径；否则视为 HF id（会下载，跳过）。探测异常不冒泡，不崩 setup。"""
+    ref 以 ~ 或 / 开头 = 本机路径（容器内路径先经挂载表反向映射）；否则视为 HF id
+    （会下载，跳过）。探测异常不冒泡，不崩 setup。"""
     resources: list[dict] = []
     warnings: list[str] = []
     for m in plan.get("models") or []:
@@ -1431,8 +1473,9 @@ async def _probe_resources(executor: Runner, plan: dict[str, Any]) -> tuple[list
         role = m.get("role") if isinstance(m, dict) else ""
         entry: dict[str, Any] = {"kind": "model", "ref": ref, "role": role}
         if ref.startswith(("~", "/")):  # 本机模型
+            host_ref = _host_path_for(ref, plan)
             try:
-                cfg = await executor.read_host_file(f"{ref}/config.json")
+                cfg = await executor.read_host_file(f"{host_ref}/config.json")
             except Exception:  # noqa: BLE001 — 预检探测失败不阻断 setup
                 cfg = None
             entry["found"] = cfg is not None
@@ -1451,7 +1494,7 @@ async def _probe_resources(executor: Runner, plan: dict[str, Any]) -> tuple[list
         name = (d.get("name") if isinstance(d, dict) else str(d)) or ""
         if name and str(name).startswith(("~", "/")):  # 只查本机路径数据集；HF 名会下载
             try:
-                exists = await executor.host_path_exists(str(name))
+                exists = await executor.host_path_exists(_host_path_for(str(name), plan))
             except Exception:  # noqa: BLE001
                 continue
             resources.append({"kind": "dataset", "ref": name, "found": exists})
@@ -2857,21 +2900,20 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
         experiment.report = result.content.strip()
         _remember(ctx, "报告", f"实验报告已生成（约 {len(experiment.report)} 字）")
         run_ok = last_run is not None and last_run.status == "succeeded"
-        # failed 只由人拍板：最后一轮未成功时**不写终态**——紧随其后的完成标准检查
-        # 会向用户提问（接受/补做/放弃），终态由用户答案或 voyage 终态联动落定。
-        # 原来这里直接置 failed，把实验锁进终态，waiting_user 镜像与后续状态全部失效。
-        final_status = "done" if run_ok else experiment.status
-        if run_ok:
-            await _set_status(ctx, session, experiment, "done")
-        else:
+        # 报告步**完全不写终态**（#367 去掉了提前 failed；线上随后实测提前 done 同样
+        # 有害：done_criteria 后置失败转提问时 waiting_user 镜像被终态挡住，实验显示
+        # done 而 voyage 在等人）。done 统一由 voyage 终态联动落定
+        # （engine._set_status(done) → experiments_service.complete_by_voyage），
+        # failed 只由人拍板。
+        if not run_ok:
             await ctx.log("最后一轮运行未成功——不自动判失败，等完成标准检查和你的裁决")
         session.add(
             Activity(
                 project_id=experiment.project_id,
                 actor="agent:experiment",
                 kind="experiment.completed",
-                message=f"实验报告已生成（最终状态 {final_status}）",
-                payload={"experiment_id": str(experiment.id), "final_status": final_status},
+                message="实验报告已生成",
+                payload={"experiment_id": str(experiment.id), "last_run_ok": run_ok},
             )
         )
         await session.commit()
@@ -2880,6 +2922,6 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
     ctx.checkpoint["report_done"] = True
     return {
         "report_chars": len(experiment.report or ""),
-        "final_status": final_status,
+        "last_run_ok": run_ok,
         "usage": result.usage,
     }

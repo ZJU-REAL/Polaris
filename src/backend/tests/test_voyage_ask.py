@@ -423,7 +423,9 @@ async def test_done_criteria_continue_appends_even_with_bad_anchor(
                     "step_id": str(first_step_id),
                     "patch": {"title": "不该生效"},
                 },
-                {  # insert_after 指向已完成节点：应被强制改为末尾追加
+                {  # insert_after 指向已完成节点：应被强制改为末尾追加；
+                    # requires_gate 应被剥掉（用户刚拍板补做，不该再连环审批——
+                    # 线上实测 LLM 还会塞动作名当闸门种类）
                     "op": "add_nodes",
                     "insert_after": str(first_step_id),
                     "nodes": [
@@ -433,6 +435,7 @@ async def test_done_criteria_continue_appends_even_with_bad_anchor(
                             "params": {"seconds": 0},
                             "acceptance": "已完成",
                             "checks": [{"kind": "no_error"}],
+                            "requires_gate": "experiment.run",
                         }
                     ],
                 }

@@ -12,10 +12,13 @@ import uuid
 from pathlib import Path
 
 import pytest_asyncio
+from sqlalchemy import select
 
 from app.agents.voyage import VoyageEngine, actions_writing
 from app.agents.voyage.actions_writing import validate_section_text
+from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
+from app.models.manuscript import Manuscript
 from app.services import latex_compile
 from app.services.latex_compile import TectonicRun
 from tests.conftest import RecordingBus
@@ -369,3 +372,54 @@ async def test_related_candidates_dedup(client):
     candidates = build_related_candidates(pack, hits)
     # 同名（大小写不敏感）去重；不同题命中 key 冲突 → smith2017attentiona
     assert [c["bibkey"] for c in candidates] == ["smith2017attention", "smith2017attentiona"]
+
+
+async def test_draft_auto_initializes_template_demo_main(client, queue_stub):
+    """主文件是模板原文（无 POLARIS_SECTION 骨架，如下载的官方模板）时，POST /draft
+    自动骨架化：新建 draft.tex 并切换编译主文件——否则分节内容混进模板演示正文，
+    模板示例引用（\\cite{langley00}）原样进成稿（线上实测被论文评审判"虚构引用"）。"""
+    project_id, headers = await _setup_project(client)
+    idea_id = await _seed_idea(project_id)
+    exp_id = await _seed_experiment(project_id, idea_id)
+    await _seed_paper(project_id, "Attention Is All You Need", 2017)
+    resp = await _create_manuscript(
+        client, headers, project_id, idea_id=idea_id, experiment_id=exp_id
+    )
+    ms_id = resp.json()["id"]
+
+    demo = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "Example body with a template citation \\cite{langley00}.\n"
+        "\\end{document}\n"
+    )
+    # 内容编辑走 CRDT 房间而非 REST：测试直接改库模拟「下载的官方模板原文」
+    from app.models.manuscript import ManuscriptFile as MF
+
+    async with get_sessionmaker()() as session:
+        ms_uuid = uuid.UUID(ms_id)
+        main_path = (
+            await session.execute(
+                select(Manuscript.main_tex).where(Manuscript.id == ms_uuid)
+            )
+        ).scalar_one() or "main.tex"
+        row = (
+            await session.execute(
+                select(MF).where(MF.manuscript_id == ms_uuid, MF.path == main_path)
+            )
+        ).scalar_one()
+        row.content = demo
+        await session.commit()
+
+    resp = await client.post(f"/api/manuscripts/{ms_id}/draft", json={}, headers=headers)
+    assert resp.status_code == 201, resp.text
+
+    resp = await client.get(f"/api/manuscripts/{ms_id}", headers=headers)
+    detail = resp.json()
+    assert detail["main_tex"] == "draft.tex"  # 编译主文件已切换到骨架稿
+    draft = next(f for f in detail["files"] if f["path"] == "draft.tex")
+    resp = await client.get(
+        f"/api/manuscripts/{ms_id}/files/{draft['id']}", headers=headers
+    )
+    content = resp.json()["content"]
+    assert "POLARIS_SECTION" in content
+    assert "langley00" not in content  # 模板演示正文不再进入起草主文件

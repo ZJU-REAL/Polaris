@@ -514,6 +514,9 @@ def aggregate_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]:
                 "weights": [],
                 "median": None,
                 "method": "median-outlier-suppressed",
+                # 线上实测：全员 unreliable 时前端只看到 0.0 分 + 空列表，
+                # 像聚合坏了。显式说明「没有可信意见」，评分不可用而非零分。
+                "all_unreliable": True,
             },
         }
     ratings = [float(r["rating"]) for r in reliable]
@@ -536,6 +539,7 @@ def aggregate_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]:
         "weights": weights,
         "median": median,
         "method": "median-outlier-suppressed",
+        "all_unreliable": False,
     }
     return result
 

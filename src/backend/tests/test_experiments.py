@@ -1636,3 +1636,36 @@ async def test_trash_running_experiment_cancels_voyage(
     assert resp.status_code == 200
     resp = await client.delete(f"/api/experiments/{exp_id}", headers=headers)
     assert resp.status_code == 204
+
+
+def test_extract_primary_value_normalizes_names():
+    """主指标匹配归一化（#20 线上实测）：代码打的指标带条件/切片后缀
+    （gsm8k_accuracy/baseline/val），计划主指标叫 accuracy，精确匹配计 0。"""
+    metrics = {
+        "context_tokens/baseline/val": [{"step": 0, "value": 636.0}],
+        "gsm8k_accuracy/baseline/val": [{"step": 0, "value": 0.9}],
+        "gsm8k_accuracy/treatment/val": [{"step": 0, "value": 0.92}],
+    }
+    # 基名包含匹配：多键命中取键名最短（baseline 先于 treatment）
+    assert ax.extract_primary_value(metrics, "accuracy") == 0.9
+    # 精确匹配优先
+    exact = {"accuracy": [{"step": 0, "value": 0.5}]} | metrics
+    assert ax.extract_primary_value(exact, "accuracy") == 0.5
+    # 基名相等优先于包含
+    base_eq = {"accuracy/val": [{"step": 0, "value": 0.7}]} | metrics
+    assert ax.extract_primary_value(base_eq, "accuracy") == 0.7
+    # 无关指标不误匹配
+    assert ax.extract_primary_value({"loss": [{"step": 0, "value": 1.0}]}, "accuracy") is None
+
+
+def test_host_path_for_reverse_maps_container_mounts():
+    """预检容器路径反向映射（#16 线上实测）：容器计划声明 /hf/...（挂载 ~/hf→/hf），
+    预检在宿主机探测，不映射必误报「资源不存在」。"""
+    plan = {"container": {"image": "x", "mounts": {"~/hf": "/hf:ro"}}}
+    assert ax._host_path_for("/hf/model/Qwen/Qwen3.5-4B", plan) == "~/hf/model/Qwen/Qwen3.5-4B"
+    assert ax._host_path_for("/hf", plan) == "~/hf"
+    # 非挂载路径 / 非容器计划：原样
+    assert ax._host_path_for("/data/x", plan) == "/data/x"
+    assert ax._host_path_for("/hf/model", {}) == "/hf/model"
+    # 前缀不整段匹配不误映射（/hfx 不是 /hf 下的路径）
+    assert ax._host_path_for("/hfx/model", plan) == "/hfx/model"
