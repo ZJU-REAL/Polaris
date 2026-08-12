@@ -167,6 +167,12 @@ class PaperListPage(BaseModel):
     size: int
 
 
+class PaperPdfUrlIn(BaseModel):
+    """按公开链接补 PDF。链接本身的安全校验在服务层（见 literature/pdf_source.py）。"""
+
+    url: str = Field(min_length=1, max_length=2048)
+
+
 class PaperManualCreate(BaseModel):
     """手动添加文献：arxiv_id / doi / bibtex 三选一（docs/api-lit.md §4）。"""
 

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { toast } from '../../components/ui/Toast';
@@ -19,6 +19,10 @@ function uploadError(error: unknown): string {
     if (error.message.includes('PDF_ALREADY_EXISTS')) {
       return tr('这篇论文已经有 PDF', 'This paper already has a PDF');
     }
+    // 后端把不可用的原因拼在错误码后面（粘成落地页、站点要登录、指向内网……）。
+    // 这类失败几乎都是用户自己能修的，所以原样透出去，不要压成一句「失败」。
+    const unusable = /PDF_URL_UNUSABLE:\s*(.+)$/.exec(error.message);
+    if (unusable) return unusable[1]!.trim();
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -31,22 +35,40 @@ export function PdfUploadButton({
   pdfAvailable: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [url, setUrl] = useState('');
   const queryClient = useQueryClient();
+  const applyDetail = (detail: PaperDetail) => {
+    queryClient.setQueriesData<PaperDetail>({ queryKey: ['paper'] }, (old) =>
+      old?.id === paperId ? detail : old,
+    );
+    void queryClient.invalidateQueries({ queryKey: ['papers'] });
+    void queryClient.invalidateQueries({ queryKey: ['library'] });
+    void queryClient.invalidateQueries({ queryKey: ['shelf'] });
+  };
   const mutation = useMutation({
     mutationFn: (file: File) => api.uploadPaperPdf(paperId, file),
     onSuccess: (detail) => {
-      queryClient.setQueriesData<PaperDetail>({ queryKey: ['paper'] }, (old) =>
-        old?.id === paperId ? detail : old,
-      );
-      void queryClient.invalidateQueries({ queryKey: ['papers'] });
-      void queryClient.invalidateQueries({ queryKey: ['library'] });
-      void queryClient.invalidateQueries({ queryKey: ['shelf'] });
+      applyDetail(detail);
       toast(tr('PDF 已上传，可以阅读全文了', 'PDF uploaded — the full paper is ready to read'), 'ok');
     },
     onError: (error) => toast(`${tr('上传 PDF 失败：', 'PDF upload failed: ')}${uploadError(error)}`, 'error'),
   });
 
+  const urlMutation = useMutation({
+    mutationFn: (url: string) => api.uploadPaperPdfFromUrl(paperId, url),
+    onSuccess: (detail) => {
+      applyDetail(detail);
+      setUrl('');
+      setLinkOpen(false);
+      toast(tr('PDF 已取回，可以阅读全文了', 'PDF fetched — the full paper is ready to read'), 'ok');
+    },
+    onError: (error) => toast(`${tr('按链接取 PDF 失败：', 'Fetching the PDF failed: ')}${uploadError(error)}`, 'error'),
+  });
+
   if (pdfAvailable) return null;
+
+  const busy = mutation.isPending || urlMutation.isPending;
 
   return (
     <>
@@ -66,7 +88,7 @@ export function PdfUploadButton({
         className="btn btn-ghost sm"
         aria-label={tr('上传 PDF', 'Upload PDF')}
         aria-busy={mutation.isPending}
-        disabled={mutation.isPending}
+        disabled={busy}
         onClick={() => inputRef.current?.click()}
       >
         <Icon
@@ -76,6 +98,38 @@ export function PdfUploadButton({
         />
         {mutation.isPending ? tr('上传处理中…', 'Uploading…') : tr('上传 PDF', 'Upload PDF')}
       </button>
+      <button
+        type="button"
+        className="btn btn-ghost sm"
+        aria-label={tr('用链接添加 PDF', 'Add PDF from a link')}
+        disabled={busy}
+        onClick={() => setLinkOpen((open) => !open)}
+      >
+        <Icon name="link" size={13} />
+        {tr('用链接', 'From link')}
+      </button>
+      {linkOpen && (
+        <form
+          className="row gap-xs"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const trimmed = url.trim();
+            if (trimmed) urlMutation.mutate(trimmed);
+          }}
+        >
+          <input
+            className="input sm"
+            type="url"
+            value={url}
+            autoFocus
+            placeholder={tr('可直接下载的 PDF 链接', 'Direct link to a PDF')}
+            onChange={(event) => setUrl(event.target.value)}
+          />
+          <button type="submit" className="btn sm" disabled={busy || !url.trim()}>
+            {urlMutation.isPending ? tr('取回中…', 'Fetching…') : tr('取回', 'Fetch')}
+          </button>
+        </form>
+      )}
     </>
   );
 }

@@ -41,6 +41,7 @@ from app.schemas.paper import (
     PaperMyMetaUpdate,
     PaperMyTagsRead,
     PaperMyTagsUpdate,
+    PaperPdfUrlIn,
     PaperRead,
     PaperTagsUpdate,
     PaperUpdate,
@@ -60,6 +61,7 @@ from app.services import paper_wiki as paper_wiki_service
 from app.services import papers as papers_service
 from app.services import wiki_compile as wiki_compile_service
 from app.services.literature.pdf_extract import figure_path
+from app.services.literature.pdf_source import PdfUrlError
 
 logger = logging.getLogger(__name__)
 
@@ -657,6 +659,43 @@ async def upload_paper_pdf(
         )
     except papers_service.PdfAlreadyExistsError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="PDF_ALREADY_EXISTS") from exc
+    except papers_service.PdfUploadInvalidError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="PDF_UPLOAD_INVALID"
+        ) from exc
+    return await _paper_detail(session, view, user.id)
+
+
+@router.post("/papers/{paper_id}/pdf-url", response_model=PaperDetail)
+async def upload_paper_pdf_from_url(
+    paper_id: uuid.UUID,
+    data: PaperPdfUrlIn,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperDetail:
+    """给尚无 PDF 的可见论文按公开链接取原件；后处理与本地上传完全一致。
+
+    链接不可用（内网、下载失败、拿回来的不是 PDF）统一回 422 并把原因带上——
+    这类失败几乎都是用户能自己修的（粘成了落地页而不是 PDF、站点要登录），
+    只回一个错误码等于让人猜。
+    """
+    view = await _get_member_paper(
+        session, paper_id, user, with_concepts=True, include_pool=True
+    )
+    try:
+        await papers_service.upload_pdf_from_url(
+            session,
+            view.paper,
+            data.url,
+            user_id=user.id,
+            project_id=view.project_id,
+        )
+    except papers_service.PdfAlreadyExistsError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="PDF_ALREADY_EXISTS") from exc
+    except PdfUrlError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"PDF_URL_UNUSABLE: {exc}"
+        ) from exc
     except papers_service.PdfUploadInvalidError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="PDF_UPLOAD_INVALID"

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import fakeredis.aioredis
 import httpx
+import pytest
 import pytest_asyncio
 import respx
 from sqlalchemy import select
@@ -319,3 +320,91 @@ async def test_chat_with_referenced_papers(client):
     ) as resp:
         body2 = (await resp.aread()).decode("utf-8")
     assert "event: sources" not in body2
+
+
+# ---- 按公开链接补 PDF（issue #398）----
+
+
+async def test_pdf_url_import_runs_the_same_pipeline_and_never_overwrites(client, monkeypatch):
+    """链接补下来的 PDF 与本地上传同权：同样抽全文，同样拒绝覆盖原件。"""
+    from app.services.literature import pdf_source
+
+    _, headers, paper_id = await _setup(client, arxiv_id=None, email="pdfurl@example.com")
+    content = _pdf_bytes("fetched over http")
+
+    async def fake_download(url: str) -> bytes:
+        assert url == "https://example.org/paper.pdf"
+        return content
+
+    monkeypatch.setattr(pdf_source, "download_pdf", fake_download)
+
+    resp = await client.post(
+        f"/api/papers/{paper_id}/pdf-url",
+        json={"url": "https://example.org/paper.pdf"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["pdf_available"] is True
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(paper_id))
+        assert "fetched over http" in Path(paper.full_text_path).read_text(encoding="utf-8")
+
+    # 已经有原件了：链接这条路同样不许覆盖，和上传一个规矩
+    again = await client.post(
+        f"/api/papers/{paper_id}/pdf-url",
+        json={"url": "https://example.org/other.pdf"},
+        headers=headers,
+    )
+    assert again.status_code == 409
+    assert again.json()["detail"] == "PDF_ALREADY_EXISTS"
+
+
+async def test_pdf_url_rejects_private_targets(client):
+    """URL 由用户给，所以按「域名完全受攻击者控制」来防。"""
+    from app.services.literature.pdf_source import PdfUrlError, download_pdf
+
+    _, headers, paper_id = await _setup(client, arxiv_id=None, email="ssrf@example.com")
+
+    # 必须校验**拒绝的理由**：连不上内网地址同样会抛 PdfUrlError，
+    # 只断言异常类型的话，把整个 is_global 检查删掉测试照样绿（实测如此）。
+    private = (
+        "http://127.0.0.1/x.pdf",
+        "http://169.254.169.254/latest/meta-data",  # 云元数据服务
+        "http://10.0.0.5/internal.pdf",
+        "http://[::1]/x.pdf",
+    )
+    for bad in private:
+        with pytest.raises(PdfUrlError, match="本机|内网|保留"):
+            await download_pdf(bad)
+
+    with pytest.raises(PdfUrlError, match="http/https"):
+        await download_pdf("file:///etc/passwd")
+    with pytest.raises(PdfUrlError, match="用户名或密码"):
+        await download_pdf("http://user:pw@example.org/x.pdf")
+
+    # 走 API 时同样是可读的 422，而不是 500
+    resp = await client.post(
+        f"/api/papers/{paper_id}/pdf-url",
+        json={"url": "http://127.0.0.1/x.pdf"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"].startswith("PDF_URL_UNUSABLE")
+
+
+async def test_pdf_url_revalidates_every_redirect_hop():
+    """只验第一个 URL 挡不住 302 到内网——每一跳都要重新校验。"""
+    import httpx
+    import respx
+
+    from app.services.literature.pdf_source import PdfUrlError, download_pdf
+
+    with respx.mock:
+        respx.get("https://example.org/paper.pdf").mock(
+            return_value=httpx.Response(
+                302, headers={"location": "http://169.254.169.254/latest/meta-data"}
+            )
+        )
+        with pytest.raises(PdfUrlError, match="内网|本机|保留"):
+            await download_pdf("https://example.org/paper.pdf")

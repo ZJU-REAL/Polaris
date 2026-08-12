@@ -3316,6 +3316,13 @@ export const api = {
     form.append('file', file);
     return request<PaperDetail>(`/papers/${id}/pdf`, { method: 'POST', body: form });
   },
+  /** 按公开链接给尚无 PDF 的论文补原件（后端做 SSRF 校验，见 literature/pdf_source.py）。 */
+  uploadPaperPdfFromUrl(id: string, url: string): Promise<PaperDetail> {
+    return request<PaperDetail>(`/papers/${id}/pdf-url`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    });
+  },
 
   // —— Lit · 论文图片（docs/api-lit.md §6.5） ——
   /** 论文图片元数据列表；无图返回 []。 */

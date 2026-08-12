@@ -1083,6 +1083,34 @@ async def upload_pdf(
     )
 
 
+async def upload_pdf_from_url(
+    session: AsyncSession,
+    paper: Paper,
+    url: str,
+    *,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+) -> Paper:
+    """按用户给的公开链接取 PDF，接到现有论文上。
+
+    和本地上传共用同一套规矩：已有 PDF 就拒绝（不覆盖原件）、同样的内容校验、
+    同一条后处理流水线。差别只在字节从哪里来——而那一段是有 SSRF 面的，
+    单独放在 :mod:`app.services.literature.pdf_source` 里。
+    """
+    from app.services.literature.pdf_extract import save_pdf
+    from app.services.literature.pdf_source import download_pdf
+
+    # 先挡住已有 PDF 再下载：否则每被拒一次都白跑一趟外网。
+    if paper.pdf_path and Path(paper.pdf_path).exists():
+        raise PdfAlreadyExistsError(str(paper.id))
+    content = await download_pdf(url)
+    await asyncio.to_thread(_validate_pdf_content, content)
+    pdf_path = save_pdf(str(paper.id), content)
+    return await _process_saved_pdf(
+        session, paper, pdf_path, user_id=user_id, project_id=project_id
+    )
+
+
 async def fetch_pdf(
     session: AsyncSession,
     paper: Paper,
