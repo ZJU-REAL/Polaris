@@ -732,11 +732,22 @@ async def writing_compile(ctx: ActionContext, params: dict[str, Any]) -> dict[st
                     "status": manuscript.status,
                 }
             )
-    errors = [d["message"] for d in result["diagnostics"] if d["severity"] == "error"]
+    error_diags = [d for d in result["diagnostics"] if d["severity"] == "error"]
+    errors = [d["message"] for d in error_diags]
     if phase == "final" and result["status"] != "ok":
-        raise RuntimeError(
-            f"终编译未通过（status={result['status']}）：{'；'.join(errors[:3]) or '无诊断'}"
+        # 根因优先：latex_error（如 Undefined control sequence）排最前——编译中止后
+        # 未定义引用是海量**症状**，按 log 顺序取前三条会把根因整个淹没（线上实测：
+        # 缺 hyperref 的 \autoref 报错被三条 undefined_citation 顶出消息之外）。
+        def _root_first(d: dict) -> tuple[int, int]:
+            return (0 if d["rule"] == "latex_error" else 1, 0)
+
+        picked = sorted(error_diags, key=_root_first)[:3]
+        summary = "；".join(
+            (f"{d['file']}:{d['line']}: " if d.get("file") and d.get("line") else "")
+            + d["message"]
+            for d in picked
         )
+        raise RuntimeError(f"终编译未通过（status={result['status']}）：{summary or '无诊断'}")
     return {
         "phase": phase,
         "status": result["status"],
