@@ -72,6 +72,36 @@ async def test_tournament_fans_out_per_match_nodes(client, queue_stub):
     assert [s["observation"]["match_index"] for s in match_steps] == [0, 1]
 
 
+async def test_tournament_excludes_trashed_ideas(client, queue_stub):
+    project_id, headers = await _setup_project(client, name="exclude-trashed")
+    visible_ids = [await _seed_idea(project_id, f"当前想法{i}") for i in range(4)]
+    trashed_id = await _seed_idea(project_id, "回收站想法")
+    resp = await client.delete(f"/api/ideas/{trashed_id}", headers=headers)
+    assert resp.status_code == 204, resp.text
+
+    # Explicit selection must not provide a way to re-introduce a trashed idea.
+    resp = await client.post(
+        f"/api/projects/{project_id}/review/tournament",
+        json={"idea_ids": [visible_ids[0], trashed_id], "rounds": 1},
+        headers=headers,
+    )
+    assert resp.status_code == 400 and resp.json()["detail"] == "INVALID_IDEA_IDS"
+
+    # Automatic selection sees only the four current ideas, hence two matches.
+    resp = await client.post(
+        f"/api/projects/{project_id}/review/tournament", json={"rounds": 1}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+    detail = (await client.get(f"/api/voyages/{resp.json()['id']}", headers=headers)).json()
+    pair_observation = next(
+        s["observation"] for s in detail["steps"] if s["action"] == "review.pair"
+    )
+    assert pair_observation["participants"] == 4
+    assert pair_observation["pairs"] == 2
+
+
 async def test_tournament_debate_elo_and_leaderboard(client, queue_stub):
     project_id, headers = await _setup_project(client)
     idea_a = await _seed_idea(project_id, "想法甲：agent 规划新范式")

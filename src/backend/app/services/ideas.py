@@ -122,7 +122,11 @@ async def create_tournament_voyage(
 
     if data.idea_ids:
         wanted = list(dict.fromkeys(data.idea_ids))
-        stmt = select(Idea.id).where(Idea.project_id == project.id, Idea.id.in_(wanted))
+        stmt = select(Idea.id).where(
+            Idea.project_id == project.id,
+            Idea.id.in_(wanted),
+            Idea.trashed_at.is_(None),
+        )
         found = {row for (row,) in (await session.execute(stmt)).all()}
         missing = [str(i) for i in wanted if i not in found]
         if missing:
@@ -130,7 +134,9 @@ async def create_tournament_voyage(
         participant_count = len(wanted)
     else:
         stmt = select(func.count()).where(
-            Idea.project_id == project.id, Idea.status.in_(("candidate", "under_review"))
+            Idea.project_id == project.id,
+            Idea.status.in_(("candidate", "under_review")),
+            Idea.trashed_at.is_(None),
         )
         participant_count = int((await session.execute(stmt)).scalar_one())
     if participant_count < 2:

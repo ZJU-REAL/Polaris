@@ -915,7 +915,10 @@ async def review_pair(ctx: ActionContext, params: dict[str, Any]) -> dict[str, A
     explicit_ids = _params(ctx).get("idea_ids")
 
     async with get_sessionmaker()() as session:
-        stmt = select(Idea).where(Idea.project_id == ctx.run.project_id)
+        stmt = select(Idea).where(
+            Idea.project_id == ctx.run.project_id,
+            Idea.trashed_at.is_(None),
+        )
         if explicit_ids:
             stmt = stmt.where(Idea.id.in_([uuid.UUID(str(i)) for i in explicit_ids]))
         else:
