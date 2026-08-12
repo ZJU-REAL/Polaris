@@ -3307,6 +3307,12 @@ export const api = {
   requestPaperPdf(id: string): Promise<PaperDetail> {
     return request<PaperDetail>(`/papers/${id}/fetch-pdf`, { method: 'POST' });
   },
+  /** 给尚无 PDF 的论文上传本地原件；后端会继续抽全文、分块并建立索引。 */
+  uploadPaperPdf(id: string, file: File): Promise<PaperDetail> {
+    const form = new FormData();
+    form.append('file', file);
+    return request<PaperDetail>(`/papers/${id}/pdf`, { method: 'POST', body: form });
+  },
 
   // —— Lit · 论文图片（docs/api-lit.md §6.5） ——
   /** 论文图片元数据列表；无图返回 []。 */

@@ -16,6 +16,7 @@ import { tr } from '../../lib/i18n';
 import { libraryPath, useLibraries } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
 import { PaperReader } from '../wiki/PaperReader';
+import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { AffiliationChips, AuthorLinks, MetaFold, usePoolConceptNav } from '../wiki/shared';
 import {
@@ -348,6 +349,7 @@ export function ShelfDetailPane({
             {tr('原文链接', 'Source link')}
           </a>
         )}
+        {paper && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
         {onShelf ? (
           <button
             className="btn btn-ghost sm"

@@ -14,6 +14,7 @@ import { type PaperConceptRef, type PaperDetail } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { topicPath } from '../../app/project';
 import { PaperMyTagsRow } from '../shared/PaperDetailBlocks';
+import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { MetaFold } from '../wiki/shared';
 
 /* ============================================================
@@ -123,18 +124,21 @@ export function InfoPanel({
           ))}
         </div>
       )}
-      {extUrl && (
-        <a
-          className="btn btn-ghost sm"
-          href={extUrl}
-          target="_blank"
-          rel="noreferrer noopener"
-          style={{ textDecoration: 'none', marginTop: 10, display: 'inline-flex' }}
-        >
-          <Icon name="link" size={12} />
-          {arxivUrl ? tr('arXiv 原文', 'View on arXiv') : tr('原文链接', 'Source link')}
-        </a>
-      )}
+      <div className="row gap8 wrap" style={{ marginTop: 10 }}>
+        {extUrl && (
+          <a
+            className="btn btn-ghost sm"
+            href={extUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            style={{ textDecoration: 'none' }}
+          >
+            <Icon name="link" size={12} />
+            {arxivUrl ? tr('arXiv 原文', 'View on arXiv') : tr('原文链接', 'Source link')}
+          </a>
+        )}
+        <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />
+      </div>
 
       {/* —— 元信息（默认折叠） —— */}
       <MetaFold style={{ margin: '14px 0 0' }}>

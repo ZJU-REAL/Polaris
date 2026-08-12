@@ -22,6 +22,7 @@ import { tr } from '../../lib/i18n';
 import { libraryPath, useTopicLibrary } from '../libraries/hooks';
 import { readerFrom } from '../reading/shared';
 import { PaperReader } from '../wiki/PaperReader';
+import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { AffiliationChips, AuthorLinks, MetaFold, usePoolConceptNav } from '../wiki/shared';
 import {
@@ -304,6 +305,7 @@ export function LibraryDetailPane({
             {tr('原文链接', 'Source link')}
           </a>
         )}
+        {alive && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
       </div>
 
       {/* —— 个人状态：星标 + 阅读状态（论文还在才有） —— */}

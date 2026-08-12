@@ -79,6 +79,14 @@ class PdfFetchFailedError(Exception):
     """PDF 下载失败（上游不可达 / 非 200 等）。"""
 
 
+class PdfAlreadyExistsError(Exception):
+    """论文已经有可用 PDF；上传接口不允许静默覆盖原件。"""
+
+
+class PdfUploadInvalidError(Exception):
+    """上传内容不是可读取的 PDF。"""
+
+
 class PaperView:
     """内容池论文 + 库成员行的合并视角（字段口径与旧单表 Paper 一致）。
 
@@ -954,34 +962,38 @@ async def empty_library_trash(session: AsyncSession, *, library: Any) -> int:
 # ---- PDF 按需补下（docs/api-lit.md §1） ----
 
 
-async def fetch_pdf(
+def _validate_pdf_content(content: bytes) -> None:
+    """校验上传内容确实是至少含一页、无需密码的 PDF。"""
+    if not content.startswith(b"%PDF-"):
+        raise PdfUploadInvalidError("文件头不是 PDF")
+    try:
+        import pymupdf
+
+        with pymupdf.open(stream=content, filetype="pdf") as doc:
+            if doc.needs_pass:
+                raise PdfUploadInvalidError("暂不支持加密 PDF")
+            if doc.page_count < 1:
+                raise PdfUploadInvalidError("PDF 没有页面")
+    except PdfUploadInvalidError:
+        raise
+    except Exception as exc:
+        raise PdfUploadInvalidError(f"PDF 无法读取：{exc}") from exc
+
+
+async def _process_saved_pdf(
     session: AsyncSession,
     paper: Paper,
+    pdf_path: Path,
     *,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
 ) -> Paper:
-    """按需补下 PDF + 抽全文；已有 PDF 文件时幂等直接返回（只动内容池本体字段）。
+    """对已经落盘的 PDF 执行统一后处理：全文、分块、向量和机构。"""
+    from app.services.literature.pdf_extract import extract_full_text
 
-    - 无 arxiv_id → PdfSourceUnsupportedError（路由映射 400）
-    - 下载失败 → PdfFetchFailedError（路由映射 502）
-    - 全文抽取失败只记日志，不影响 PDF 落盘
-    """
-    from app.services.literature import get_arxiv_client
-    from app.services.literature.pdf_extract import extract_full_text, save_pdf
-
-    if paper.pdf_path and Path(paper.pdf_path).exists():
-        return paper
-    if not paper.arxiv_id:
-        raise PdfSourceUnsupportedError("论文没有 arxiv 编号，暂不支持自动获取 PDF")
-    try:
-        content = await get_arxiv_client().download_pdf(paper.arxiv_id)
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        raise PdfFetchFailedError(f"{type(e).__name__}: {e}") from e
-    pdf_path = save_pdf(str(paper.id), content)
     paper.pdf_path = str(pdf_path)
+    # 新上传/重新取得原件时不能沿用旧全文路径；抽取失败就明确退化为仅有 PDF。
+    paper.full_text_path = None
     try:
         txt_path = await extract_full_text(str(paper.id), pdf_path)
         paper.full_text_path = str(txt_path)
@@ -1006,18 +1018,23 @@ async def fetch_pdf(
     # 发表机构：on_add 模式下全文到手后 LLM 从标题页逐位作者解析机构（此路径原先不补
     # 机构）；on_compile 模式跳过，改由 wiki 编译折叠抽取。失败不影响主流程
     if not paper.affiliations and paper.full_text_path:
-        from app.core.llm.router import get_llm_router
-        from app.services.affiliations import (
-            apply_author_affiliations,
-            extract_author_affiliations_llm,
-            get_affiliation_extraction_mode,
-        )
-
-        if await get_affiliation_extraction_mode(session) == "on_add":
-            mapping = await extract_author_affiliations_llm(
-                paper, llm=get_llm_router(), user_id=user_id, project_id=project_id
+        try:
+            from app.core.llm.router import get_llm_router
+            from app.services.affiliations import (
+                apply_author_affiliations,
+                extract_author_affiliations_llm,
+                get_affiliation_extraction_mode,
             )
-            apply_author_affiliations(paper, mapping)
+
+            if await get_affiliation_extraction_mode(session) == "on_add":
+                mapping = await extract_author_affiliations_llm(
+                    paper, llm=get_llm_router(), user_id=user_id, project_id=project_id
+                )
+                apply_author_affiliations(paper, mapping)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "affiliation extraction failed for paper %s", paper.id, exc_info=True
+            )
     await session.commit()
     # 摘要兜底块的向量 = 论文级向量的拷贝（零 token，不受任何开关控制）
     from app.services.chunks import sync_abstract_chunk_vectors
@@ -1044,6 +1061,58 @@ async def fetch_pdf(
         logger.warning("chunk embed failed for paper %s", paper.id, exc_info=True)
     await session.refresh(paper)
     return paper
+
+
+async def upload_pdf(
+    session: AsyncSession,
+    paper: Paper,
+    content: bytes,
+    *,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+) -> Paper:
+    """把用户提供的 PDF 接到现有论文，并走与自动下载相同的后处理流水线。"""
+    from app.services.literature.pdf_extract import save_pdf
+
+    if paper.pdf_path and Path(paper.pdf_path).exists():
+        raise PdfAlreadyExistsError(str(paper.id))
+    await asyncio.to_thread(_validate_pdf_content, content)
+    pdf_path = save_pdf(str(paper.id), content)
+    return await _process_saved_pdf(
+        session, paper, pdf_path, user_id=user_id, project_id=project_id
+    )
+
+
+async def fetch_pdf(
+    session: AsyncSession,
+    paper: Paper,
+    *,
+    user_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+) -> Paper:
+    """按需补下 PDF + 抽全文；已有 PDF 文件时幂等直接返回（只动内容池本体字段）。
+
+    - 无 arxiv_id → PdfSourceUnsupportedError（路由映射 400）
+    - 下载失败 → PdfFetchFailedError（路由映射 502）
+    - 全文抽取失败只记日志，不影响 PDF 落盘
+    """
+    from app.services.literature import get_arxiv_client
+    from app.services.literature.pdf_extract import save_pdf
+
+    if paper.pdf_path and Path(paper.pdf_path).exists():
+        return paper
+    if not paper.arxiv_id:
+        raise PdfSourceUnsupportedError("论文没有 arxiv 编号，暂不支持自动获取 PDF")
+    try:
+        content = await get_arxiv_client().download_pdf(paper.arxiv_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        raise PdfFetchFailedError(f"{type(e).__name__}: {e}") from e
+    pdf_path = save_pdf(str(paper.id), content)
+    return await _process_saved_pdf(
+        session, paper, pdf_path, user_id=user_id, project_id=project_id
+    )
 
 
 # ---- AI 伴读上下文（docs/api-lit.md §3） ----

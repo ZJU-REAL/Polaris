@@ -30,6 +30,7 @@ import {
   type PaperDetail,
 } from '../../lib/api';
 import { HIGHLIGHT_COLORS, HIGHLIGHT_STYLES, highlightColorMeta } from './shared';
+import { PdfUploadButton } from '../shared/PdfUploadButton';
 
 /* ============================================================
    自建 PDF 阅读器（pdf.js / react-pdf）：
@@ -485,38 +486,41 @@ export function PdfReader({
               ? undefined
               : '这篇论文不是 arXiv 来源，暂时不支持自动下载 PDF，可以通过右上角原文链接查看。'
           }
-          action={
-            canFetch ? (
-              <button
-                className="btn btn-primary"
-                disabled={fetchPdfMutation.isPending}
-                onClick={() => fetchPdfMutation.mutate()}
-              >
-                {fetchPdfMutation.isPending ? (
-                  <>
-                    <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                    正在下载…
-                  </>
-                ) : (
-                  <>
-                    <Icon name="download" size={14} />
-                    获取 PDF
-                  </>
-                )}
-              </button>
-            ) : paper.url ? (
-              <a
-                className="btn btn-ghost"
-                href={paper.url}
-                target="_blank"
-                rel="noreferrer noopener"
-                style={{ textDecoration: 'none' }}
-              >
-                <Icon name="link" size={14} />
-                打开原文链接
-              </a>
-            ) : undefined
-          }
+          action={(
+            <div className="row gap8 wrap" style={{ justifyContent: 'center' }}>
+              {canFetch ? (
+                <button
+                  className="btn btn-primary"
+                  disabled={fetchPdfMutation.isPending}
+                  onClick={() => fetchPdfMutation.mutate()}
+                >
+                  {fetchPdfMutation.isPending ? (
+                    <>
+                      <Icon name="refresh" size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                      {tr('正在下载…', 'Downloading…')}
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="download" size={14} />
+                      {tr('获取 PDF', 'Fetch PDF')}
+                    </>
+                  )}
+                </button>
+              ) : paper.url ? (
+                <a
+                  className="btn btn-ghost"
+                  href={paper.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  style={{ textDecoration: 'none' }}
+                >
+                  <Icon name="link" size={14} />
+                  {tr('打开原文链接', 'Open source link')}
+                </a>
+              ) : null}
+              <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />
+            </div>
+          )}
         />
       </div>
     );

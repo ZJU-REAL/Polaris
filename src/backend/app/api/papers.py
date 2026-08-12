@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,6 +66,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["papers"])
 
 _HEARTBEAT_SECONDS = 15.0
+MAX_PDF_UPLOAD_BYTES = 100 * 1024 * 1024
 
 
 async def _reads_with_extras(
@@ -625,6 +626,41 @@ async def fetch_paper_pdf(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="PDF_SOURCE_UNSUPPORTED") from e
     except papers_service.PdfFetchFailedError as e:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="PDF_FETCH_FAILED") from e
+    return await _paper_detail(session, view, user.id)
+
+
+@router.post("/papers/{paper_id}/pdf", response_model=PaperDetail)
+async def upload_paper_pdf(
+    paper_id: uuid.UUID,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperDetail:
+    """给尚无 PDF 的可见论文上传原件，并同步完成全文抽取、分块与索引。"""
+    view = await _get_member_paper(
+        session, paper_id, user, with_concepts=True, include_pool=True
+    )
+    content = await file.read(MAX_PDF_UPLOAD_BYTES + 1)
+    if not content:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="PDF_UPLOAD_EMPTY")
+    if len(content) > MAX_PDF_UPLOAD_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="PDF_UPLOAD_TOO_LARGE"
+        )
+    try:
+        await papers_service.upload_pdf(
+            session,
+            view.paper,
+            content,
+            user_id=user.id,
+            project_id=view.project_id,
+        )
+    except papers_service.PdfAlreadyExistsError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="PDF_ALREADY_EXISTS") from exc
+    except papers_service.PdfUploadInvalidError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="PDF_UPLOAD_INVALID"
+        ) from exc
     return await _paper_detail(session, view, user.id)
 
 

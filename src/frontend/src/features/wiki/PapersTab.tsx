@@ -14,6 +14,7 @@ import { CompileBadge } from '../../components/ui/CompileBadge';
 import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { PaperReader } from './PaperReader';
 import { readerFrom } from '../reading/shared';
+import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { toast } from '../../components/ui/Toast';
 import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
@@ -916,6 +917,7 @@ function PaperDetailPane({
             {tr('原文链接', 'Source link')}
           </a>
         )}
+        <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />
       </div>
 
       {/* —— 个人状态：星标 + 阅读状态 —— */}

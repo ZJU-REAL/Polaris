@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from pathlib import Path
 
 import fakeredis.aioredis
 import httpx
@@ -143,6 +144,58 @@ async def test_fetch_pdf_download_failure_502(client, lit_clients):
     resp = await client.post(f"/api/papers/{paper_id}/fetch-pdf", headers=headers)
     assert resp.status_code == 502
     assert resp.json()["detail"] == "PDF_FETCH_FAILED"
+
+
+async def test_upload_pdf_for_non_arxiv_paper_and_prevent_overwrite(client):
+    _, headers, paper_id = await _setup(client, arxiv_id=None, email="upload@example.com")
+    content = _pdf_bytes("locally supplied full text")
+
+    resp = await client.post(
+        f"/api/papers/{paper_id}/pdf",
+        files={"file": ("paper.pdf", content, "application/pdf")},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["pdf_available"] is True
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(paper_id))
+        assert paper.pdf_path and paper.full_text_path
+        assert "locally supplied full text" in Path(paper.full_text_path).read_text(
+            encoding="utf-8"
+        )
+
+    served = await client.get(f"/api/papers/{paper_id}/pdf", headers=headers)
+    assert served.status_code == 200
+    assert served.content == content
+
+    duplicate = await client.post(
+        f"/api/papers/{paper_id}/pdf",
+        files={"file": ("replacement.pdf", _pdf_bytes("replacement"), "application/pdf")},
+        headers=headers,
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "PDF_ALREADY_EXISTS"
+
+
+async def test_upload_pdf_rejects_empty_and_invalid_files(client):
+    _, headers, paper_id = await _setup(client, arxiv_id=None, email="bad-upload@example.com")
+
+    empty = await client.post(
+        f"/api/papers/{paper_id}/pdf",
+        files={"file": ("empty.pdf", b"", "application/pdf")},
+        headers=headers,
+    )
+    assert empty.status_code == 422
+    assert empty.json()["detail"] == "PDF_UPLOAD_EMPTY"
+
+    invalid = await client.post(
+        f"/api/papers/{paper_id}/pdf",
+        files={"file": ("fake.pdf", b"%PDF-not-really-a-pdf", "application/pdf")},
+        headers=headers,
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == "PDF_UPLOAD_INVALID"
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
