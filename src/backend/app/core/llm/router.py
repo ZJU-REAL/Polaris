@@ -212,6 +212,11 @@ def call_profile(stage: str) -> tuple[float, int]:
     return _SHORT_CALL
 
 
+#: provider 客户端缓存的键：(kind, base_url, api_key, user_agent, timeout, attempts)。
+#: 与 ``_provider_for`` 构造键的地方保持一致。
+_ProviderKey = dict[tuple[str, str | None, str, str | None, float, int], LLMProvider]
+
+
 class LLMRouter:
     """stage → (provider 实例, model)；complete/stream 自动记账。
 
@@ -227,7 +232,11 @@ class LLMRouter:
         self._self_managed: dict[uuid.UUID, tuple[bool, float]] = {}
         # 键含耐心档位（见 call_profile）：长/短两档各持一个客户端。键是实现细节，
         # 要在测试里替换 provider 请用 override_provider()，别直接往这个字典里塞。
-        self._providers: dict[tuple[str, str | None, str, float, int], LLMProvider] = {}
+        #
+        # 凡是会改变客户端行为的字段都必须在键里，否则两份配置会共用同一个客户端，
+        # 后配的那份静默用着前一份的连接参数。加 user_agent 时键跟着加了，
+        # 这行标注没跟上——标注是给下一个改键的人看的，写错就等于没有。
+        self._providers: _ProviderKey = {}
         self._override: LLMProvider | None = None
         self.event_bus: Any | None = None
 

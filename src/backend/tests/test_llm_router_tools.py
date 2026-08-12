@@ -231,3 +231,31 @@ def test_tools_unsupported_is_detected_from_the_body():
     assert _tools_unsupported('{"error":{"message":"tools is not supported for this model"}}')
     assert _tools_unsupported("Unsupported parameter: 'tools'")
     assert not _tools_unsupported('{"error":{"message":"context length exceeded"}}')
+
+
+def test_provider_cache_key_covers_every_client_affecting_field():
+    """会改变客户端行为的字段必须全在缓存键里。
+
+    漏一个的表现是：两份配置共用同一个 HTTP 客户端，后配的那份静默用着前一份的
+    连接参数——base_url 指向 A、请求却发去 B，日志里两边都看不出问题。user_agent
+    加进来时键跟着加了，这条用来保证下一个字段不会漏。
+    """
+    import inspect
+
+    from app.core.llm import router as router_mod
+
+    src = inspect.getsource(router_mod.LLMRouter._provider_for)
+    key_block = src.split("key = (", 1)[1].split(")", 1)[0]
+    for field in ("provider_kind", "base_url", "api_key", "user_agent"):
+        assert f"route.{field}" in key_block, f"缓存键漏了 route.{field}"
+    assert "timeout" in key_block and "attempts" in key_block, "耐心档位也要进键"
+
+
+def test_provider_cache_key_annotation_matches_the_real_key():
+    """键的类型标注要和实际构造的键等长，否则标注是错的还没人发现。"""
+    import typing
+
+    from app.core.llm.router import _ProviderKey
+
+    key_type = typing.get_args(typing.get_args(_ProviderKey)[0])
+    assert len(key_type) == 6, f"标注是 {len(key_type)} 元组，实际键是 6 元组"
