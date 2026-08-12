@@ -13,6 +13,7 @@
   <a href="https://github.com/ZJU-REAL/Polaris/releases/latest"><img src="https://img.shields.io/github/v/release/ZJU-REAL/Polaris?style=flat-square&color=7438F0&label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Compose">
+  <a href="docs/assets/wechat-group-qr.jpg"><img src="https://img.shields.io/badge/WeChat-join_group-07C160?style=flat-square&logo=wechat&logoColor=white" alt="Join the WeChat group"></a>
 </p>
 
 <p align="center">
