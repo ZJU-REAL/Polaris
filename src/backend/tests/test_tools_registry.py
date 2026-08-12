@@ -34,6 +34,7 @@ def _ctx(project_id: uuid.UUID) -> ToolContext:
 def test_registry_has_expected_tools():
     names = tools.known_tools()
     for expected in [
+        "list_accessible_projects",
         "search_papers",
         "read_wiki",
         "read_fulltext",
@@ -64,6 +65,10 @@ def test_registry_has_expected_tools():
     # 写工具进来时必须有人改这一行——而不是悄悄混进去。
     writers = {spec.name for spec in tools.list_tools() if not spec.read_only}
     assert writers == {"remember"}
+
+    # 目前只有项目发现不需要 project_id；其余工具默认保持项目隔离。
+    user_scoped = {spec.name for spec in tools.list_tools() if spec.scope == "user"}
+    assert user_scoped == {"list_accessible_projects"}
 
 
 def test_tool_descriptions_are_formal():

@@ -1,8 +1,9 @@
 """MCP 协议核心（传输无关）：把统一工具注册表包装成 MCP 的 tools/list + tools/call。
 
 实现 MCP JSON-RPC 2.0 的核心方法（initialize / tools.list / tools.call / ping），
-HTTP 与 stdio 两种传输共用这里的 ``handle_rpc``。工具全部只读、按项目隔离：
-每个工具的 inputSchema 追加一个必填 ``project_id``，调用时校验用户是否为该项目成员。
+HTTP 与 stdio 两种传输共用这里的 ``handle_rpc``。工具全部只读：项目级工具
+的 inputSchema 追加必填 ``project_id`` 并在调用时校验成员身份；用户级发现工具
+只依赖传输层已认证的 user_id。
 """
 
 from __future__ import annotations
@@ -35,11 +36,13 @@ _PROJECT_ID_PROP = {
 }
 
 
-def _mcp_input_schema(base: dict[str, Any]) -> dict[str, Any]:
-    """给工具原始 inputSchema 追加必填 project_id（MCP 客户端需显式指定项目）。"""
+def _mcp_input_schema(base: dict[str, Any], *, project_scoped: bool) -> dict[str, Any]:
+    """项目级工具追加 project_id；用户级工具保留原始入参。"""
+    if not project_scoped:
+        return dict(base)
     props = {"project_id": _PROJECT_ID_PROP, **(base.get("properties") or {})}
     required = ["project_id", *(base.get("required") or [])]
-    return {"type": "object", "properties": props, "required": required}
+    return {**base, "type": "object", "properties": props, "required": required}
 
 
 #: 只在对话里有意义的工具，不进 MCP 清单。``update_plan`` 记的是「这场对话的计划」，
@@ -48,16 +51,23 @@ _CONVERSATION_ONLY = frozenset({"update_plan"})
 
 
 def tool_definitions() -> list[dict[str, Any]]:
-    """MCP tools/list 载荷：只读工具的 name/description/inputSchema。"""
+    """MCP tools/list 载荷：用户级发现工具优先，其余保持注册顺序。"""
+    specs = [
+        spec
+        for spec in list_tools()
+        if spec.read_only  # 外部 MCP 客户端只拿只读工具，见下方注释
+        and spec.name not in _CONVERSATION_ONLY
+    ]
+    specs.sort(key=lambda spec: spec.scope != "user")
     return [
         {
             "name": spec.name,
             "description": spec.description,
-            "inputSchema": _mcp_input_schema(spec.input_schema),
+            "inputSchema": _mcp_input_schema(
+                spec.input_schema, project_scoped=spec.scope == "project"
+            ),
         }
-        for spec in list_tools()
-        if spec.read_only  # 外部 MCP 客户端只拿只读工具，见下方注释
-        and spec.name not in _CONVERSATION_ONLY
+        for spec in specs
     ]
 
 
@@ -95,19 +105,31 @@ async def call_tool(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """执行一个只读工具；成员校验 + 参数错误都转成 isError 结果（不抛给协议层）。"""
-    if get_tool(name) is None:
+    spec = get_tool(name)
+    if spec is None:
         return _text_result(f"未知工具：{name}", is_error=True)
     args = dict(arguments or {})
-    raw_pid = args.pop("project_id", None)
-    try:
-        project_id = uuid.UUID(str(raw_pid))
-    except (ValueError, TypeError):
-        return _text_result("缺少或非法的 project_id", is_error=True)
+    project_id: uuid.UUID | None = None
+    if spec.scope == "project":
+        raw_pid = args.pop("project_id", None)
+        try:
+            project_id = uuid.UUID(str(raw_pid))
+        except (ValueError, TypeError):
+            return _text_result(
+                "缺少或非法的 project_id；请先调用 list_accessible_projects "
+                "获取当前用户可访问的课题",
+                is_error=True,
+            )
 
-    # 越权隔离：非项目成员一律当作项目不存在
-    project = await projects_service.get_project(session, project_id=project_id, user_id=user_id)
-    if project is None:
-        return _text_result("项目不存在或无权访问", is_error=True)
+        # 越权隔离：非项目成员一律当作项目不存在
+        project = await projects_service.get_project(
+            session, project_id=project_id, user_id=user_id
+        )
+        if project is None:
+            return _text_result("项目不存在或无权访问", is_error=True)
+    else:
+        # 自检等内部调用方可能仍统一注入 project_id，用户级工具不向 handler 泄漏它。
+        args.pop("project_id", None)
 
     # allow_writes 保持默认 False：外部 MCP 客户端（Claude Desktop / Cursor）只有平台
     # JWT，没有经过任何对话内审批，不该拿到写能力。上面的 tools/list 也只列只读工具，

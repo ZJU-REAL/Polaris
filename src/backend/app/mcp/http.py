@@ -2,7 +2,7 @@
 
 单端点 ``POST /mcp``，JSON-RPC 2.0（支持单条与批量）。认证复用平台 JWT
 （``Authorization: Bearer <token>``，即 /api/auth/jwt/login 拿到的令牌）；
-project_id 作为每个工具的入参，服务端校验用户是否为该项目成员。
+项目级工具携带 project_id 并校验访问权，用户级发现工具直接使用 JWT 身份。
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project, ProjectInvite, ProjectMember
@@ -77,6 +77,35 @@ async def list_projects(session: AsyncSession, user_id: uuid.UUID) -> Sequence[P
         .order_by(Project.created_at.desc())
     )
     return (await session.execute(stmt)).scalars().all()
+
+
+async def list_projects_page(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    query: str | None,
+    status: str | None,
+    limit: int,
+    offset: int,
+) -> tuple[Sequence[Project], int]:
+    """Paginate projects visible to a user for project discovery surfaces."""
+    filters = [in_my_projects(Project.id, user_id)]
+    if query:
+        pattern = f"%{query}%"
+        filters.append(or_(Project.name.ilike(pattern), Project.slug.ilike(pattern)))
+    if status:
+        filters.append(Project.status == status)
+
+    total = await session.scalar(select(func.count()).select_from(Project).where(*filters))
+    stmt = (
+        select(Project)
+        .where(*filters)
+        .order_by(Project.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    projects = (await session.execute(stmt)).scalars().all()
+    return projects, int(total or 0)
 
 
 async def create_project(

@@ -314,7 +314,7 @@ def _safe_json(text: str) -> Any:
 def _paper_refs(payload: Any) -> list[dict[str, str]]:
     """从工具结果里认出论文（paper_id + title）。
 
-    通用遍历而不是按工具写死：search_papers 给 results、scan_papers 给 papers、
+    通用遍历而不是按工具写死：search_papers 和 scan_papers 给 results、
     get_paper 直接就是一篇……逐个工具适配的话，每加一个工具就得记得回来改这里，
     而漏改的表现是「引用列表少了几篇」——没人会注意到。
 

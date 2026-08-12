@@ -138,17 +138,21 @@ Modules are grouped by what they read: `literature.py` and `knowledge.py` (paper
 graph), `agentic_search.py` (cheap wide scans and full-text grep), `figures.py` (images),
 `external.py` (third-party APIs), `project_state.py` (ideas, experiments, fact packs),
 `workspace.py` (topic status, tasks, gates), `libraries.py` (direction libraries, daily pool),
-`writing.py` (manuscripts), plus the assistant-oriented modules `plan.py` (conversation plans),
-`skills.py` (agent-skill loading), `subagent.py` (delegated search), and `memory.py`
-(PolarisBuddy's per-user memory — `remember` is the registry's one write tool and is filtered out
-of the external MCP list). A new tool goes in whichever module already owns its subject, and gets
-registered by importing that module in `app/tools/__init__.py`.
+`projects.py` (user-level topic discovery), and `writing.py` (manuscripts), plus the
+assistant-oriented modules `plan.py` (conversation plans), `skills.py` (agent-skill loading),
+`subagent.py` (delegated search), and `memory.py` (PolarisBuddy's per-user memory — `remember` is the
+registry's one write tool and is filtered out of the external MCP list). A new tool goes in whichever
+module already owns its subject, and gets registered by importing that module in
+`app/tools/__init__.py`.
 
 Two rules keep the layer honest. **Tools are thin wrappers over `services/*`** — no business logic
-lives here, so REST and MCP can never drift apart. **Every tool is topic-scoped**: an id belonging to
-another topic must read as not found, even when the caller has access to it elsewhere, because an
-MCP session is bound to one `project_id`. `tests/test_mcp_workspace_tools.py` pins that for tasks,
-manuscripts, and libraries; a new tool that takes an id needs the same case.
+lives here, so REST and MCP can never drift apart. **Tools declare their scope in `ToolSpec`**:
+`scope="project"` is the default and makes MCP require and authorize `project_id`;
+`scope="user"` is reserved for authenticated-user discovery such as
+`list_accessible_projects`. An id passed to a project-scoped tool must read as not found when it
+belongs to another topic, even when the caller has access through a different topic.
+`tests/test_mcp_workspace_tools.py` pins that for tasks, manuscripts, and libraries; a new tool that
+takes an id needs the same case.
 
 ### Testing the tools
 

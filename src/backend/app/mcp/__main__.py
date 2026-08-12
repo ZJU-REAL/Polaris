@@ -2,7 +2,7 @@
 
 逐行读 stdin 的 JSON-RPC 消息，经 ``dispatch.handle_rpc`` 处理后把响应逐行写 stdout。
 本地进程视为可信：用户由环境变量 ``POLARIS_MCP_USER_EMAIL`` 指定（该用户须已注册）；
-每个工具调用仍需在参数里带 project_id，服务端照常校验成员身份。
+项目级工具仍需在参数里带 project_id，服务端照常校验访问权。
 """
 
 from __future__ import annotations

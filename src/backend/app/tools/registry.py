@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from app.tools.context import ToolContext
 
@@ -56,6 +56,7 @@ class ToolWriteDenied(PermissionError):
 ToolReturn = dict[str, Any] | ToolResult
 ToolHandler = Callable[[ToolContext, dict[str, Any]], Awaitable[ToolReturn]]
 Summarizer = Callable[[dict[str, Any], dict[str, Any]], str]
+ToolScope = Literal["project", "user"]
 
 
 def result_payload(result: ToolReturn) -> dict[str, Any]:
@@ -78,6 +79,7 @@ class ToolSpec:
     handler: ToolHandler
     read_only: bool = True
     network: bool = False  # True = 访问外部 HTTP API（arxiv/S2/OpenAlex）
+    scope: ToolScope = "project"  # project = 需显式 project_id；user = 只按登录用户隔离
     summarize: Summarizer | None = None  # 生成一句人读的调用摘要（日志用）
 
     def summary(self, args: dict[str, Any], result: dict[str, Any]) -> str:
@@ -99,6 +101,7 @@ def tool(
     input_schema: dict[str, Any],
     read_only: bool = True,
     network: bool = False,
+    scope: ToolScope = "project",
     summarize: Summarizer | None = None,
 ) -> Callable[[ToolHandler], ToolHandler]:
     """把一个 ``async (ToolContext, args) -> dict`` handler 注册为工具。"""
@@ -113,6 +116,7 @@ def tool(
             handler=func,
             read_only=read_only,
             network=network,
+            scope=scope,
             summarize=summarize,
         )
         return func

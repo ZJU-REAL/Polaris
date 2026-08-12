@@ -62,11 +62,49 @@ async def test_initialize_and_tools_list(client):
     assert resp.status_code == 200
     tools = resp.json()["result"]["tools"]
     names = {t["name"] for t in tools}
-    assert {"search_papers", "get_concept", "external_search"} <= names
-    # 每个工具 inputSchema 都追加了必填 project_id
+    assert {
+        "list_accessible_projects",
+        "search_papers",
+        "get_concept",
+        "external_search",
+    } <= names
+    # 用户级发现工具是 project_id 的获取入口，自身不能再要 project_id。
     for t in tools:
-        assert "project_id" in t["inputSchema"]["properties"]
-        assert "project_id" in t["inputSchema"]["required"]
+        if t["name"] == "list_accessible_projects":
+            assert "project_id" not in t["inputSchema"]["properties"]
+            assert "project_id" not in t["inputSchema"].get("required", [])
+        else:
+            assert "project_id" in t["inputSchema"]["properties"]
+            assert "project_id" in t["inputSchema"]["required"]
+
+
+async def test_list_accessible_projects_without_project_id(client):
+    """发现工具按当前认证用户隔离，无需预先知道 project_id。"""
+    # 首个注册用户会自动成为平台管理员（可见全部课题），先建自举账号。
+    await _setup(client, email="project-list-admin@example.com")
+    project_a, headers_a = await _setup(client, email="project-list-a@example.com")
+    project_b, _ = await _setup(client, email="project-list-b@example.com")
+
+    resp = await client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {"name": "list_accessible_projects", "arguments": {}},
+        },
+        headers=headers_a,
+    )
+
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    payload = json.loads(result["content"][0]["text"])
+    ids = {project["project_id"] for project in payload["projects"]}
+    assert project_a in ids
+    assert project_b not in ids
+    assert payload["total_count"] == 1
+    assert payload["has_more"] is False
 
 
 async def test_tools_call(client):
@@ -91,6 +129,29 @@ async def test_tools_call(client):
     payload = json.loads(result["content"][0]["text"])
     assert any(p["title"] == "MCP retrieval paper" for p in payload["results"])
 
+    # scan_papers 可不带 query，直接按精确字段浏览和排序。
+    resp = await client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": {
+                "name": "scan_papers",
+                "arguments": {
+                    "project_id": project_id,
+                    "author": "missing author",
+                    "sort": "-created_at",
+                },
+            },
+        },
+        headers=headers,
+    )
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["mode"] == "filtered" and payload["total"] == 0
+
 
 async def test_tools_call_missing_project_id(client):
     _, headers = await _setup(client)
@@ -107,6 +168,7 @@ async def test_tools_call_missing_project_id(client):
     result = resp.json()["result"]
     assert result["isError"] is True
     assert "project_id" in result["content"][0]["text"]
+    assert "list_accessible_projects" in result["content"][0]["text"]
 
 
 async def test_tools_call_cross_project_denied(client):
@@ -145,6 +207,20 @@ async def test_catalog_endpoint(client):
     assert {"get_paper_figure", "list_paper_figures", "find_figures"} <= names
     search = next(t for t in body["tools"] if t["name"] == "search_papers")
     assert any(p["name"] == "query" and p["required"] for p in search["params"])
+    scan = next(t for t in body["tools"] if t["name"] == "scan_papers")
+    scan_params = {p["name"]: p for p in scan["params"]}
+    assert scan_params["query"]["required"] is False
+    assert {
+        "author",
+        "affiliation",
+        "published_from",
+        "published_to",
+        "created_from",
+        "created_to",
+        "sort",
+        "page",
+        "limit",
+    } <= scan_params.keys()
     # 需登录
     assert (await client.get("/api/mcp/tools")).status_code == 401
 

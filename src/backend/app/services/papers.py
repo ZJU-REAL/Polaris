@@ -52,7 +52,13 @@ from app.services.libraries import (
 
 logger = logging.getLogger(__name__)
 
-PAPER_SORTS = ("relevance", "-published_at")
+PAPER_SORTS = (
+    "relevance",
+    "-published_at",
+    "published_at",
+    "-created_at",
+    "created_at",
+)
 
 # 语义检索重排：向量召回候选数 / 送重排的文档截断长度
 RERANK_CANDIDATES = 30
@@ -268,6 +274,7 @@ async def list_papers(
     *,
     project_id: uuid.UUID | None = None,
     library_id: uuid.UUID | None = None,
+    library_ids: Sequence[uuid.UUID] | None = None,
     status: str | None = None,
     q: str | None = None,
     tag: str | None = None,
@@ -287,12 +294,18 @@ async def list_papers(
     daily_only: bool = False,
     last_sync_only: bool = False,
 ) -> tuple[Sequence[PaperView], int]:
-    """库内论文列表。入口二选一：library_id（单库读视图/库工作台）或 project_id
-    （课题成员视角 = 关联库并集，P7）。project_id 兼作 PaperView 的课题上下文回填。
+    """库内论文列表。入口可为 library_id（单库读视图/库工作台）、project_id
+    （课题成员视角 = 关联库并集，P7），或调用方已经完成权限计算的 library_ids。
+    project_id 兼作 PaperView 的课题上下文回填。
 
     单库（含课题只关联一个库的常见情形）走 SQL 分页快路径；课题关联多库时跨库
     同一论文按确定性视角归并（相关性分高者优先），Python 侧排序 + 分页保证可移植。"""
-    library_ids = await _read_library_ids(session, project_id=project_id, library_id=library_id)
+    library_ids = await _read_library_ids(
+        session,
+        project_id=project_id,
+        library_id=library_id,
+        library_ids=library_ids,
+    )
     if not library_ids:
         return [], 0
 
@@ -343,11 +356,25 @@ async def list_papers(
         total = (await session.execute(stmt.with_only_columns(func.count()))).scalar_one()
         if sort == "-published_at":
             stmt = stmt.order_by(
-                Paper.published_at.desc().nulls_last(), LibraryPaper.created_at.desc()
+                Paper.published_at.desc().nulls_last(),
+                LibraryPaper.created_at.desc(),
+                Paper.id.asc(),
             )
+        elif sort == "published_at":
+            stmt = stmt.order_by(
+                Paper.published_at.asc().nulls_last(),
+                LibraryPaper.created_at.asc(),
+                Paper.id.asc(),
+            )
+        elif sort == "-created_at":
+            stmt = stmt.order_by(LibraryPaper.created_at.desc(), Paper.id.asc())
+        elif sort == "created_at":
+            stmt = stmt.order_by(LibraryPaper.created_at.asc(), Paper.id.asc())
         else:  # relevance（默认）
             stmt = stmt.order_by(
-                LibraryPaper.relevance_score.desc().nulls_last(), LibraryPaper.created_at.desc()
+                LibraryPaper.relevance_score.desc().nulls_last(),
+                LibraryPaper.created_at.desc(),
+                Paper.id.asc(),
             )
         stmt = stmt.offset((page - 1) * size).limit(size)
         rows = (await session.execute(stmt)).all()
@@ -364,13 +391,28 @@ async def list_papers(
                 pm[0].published_at is None,
                 -(pm[0].published_at.timestamp() if pm[0].published_at else 0.0),
                 -pm[1].created_at.timestamp(),
+                str(pm[0].id),
             )
         )
+    elif sort == "published_at":
+        all_rows.sort(
+            key=lambda pm: (
+                pm[0].published_at is None,
+                pm[0].published_at.timestamp() if pm[0].published_at else 0.0,
+                pm[1].created_at.timestamp(),
+                str(pm[0].id),
+            )
+        )
+    elif sort == "-created_at":
+        all_rows.sort(key=lambda pm: (-pm[1].created_at.timestamp(), str(pm[0].id)))
+    elif sort == "created_at":
+        all_rows.sort(key=lambda pm: (pm[1].created_at.timestamp(), str(pm[0].id)))
     else:  # relevance（默认）
         all_rows.sort(
             key=lambda pm: (
                 -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18),
                 -pm[1].created_at.timestamp(),
+                str(pm[0].id),
             )
         )
     total = len(all_rows)

@@ -67,13 +67,18 @@ env = { POLARIS_MCP_USER_EMAIL = "you@example.edu" }
 
 ### Scoping and permissions
 
-Every tool call carries a `project_id` — the research topic you want the agent to look at. The
-server verifies you are a member of that topic on every single call, and tools only ever see data
-inside it: a task, manuscript, or library belonging to another topic is reported as not found even
-when you personally have access to it elsewhere. Library visibility follows the platform's own rule
-— your own personal libraries plus every shared library, nothing more.
+Call `list_accessible_projects` first when the agent doesn't know which topic to
+use. This user-scoped tool needs no `project_id`; it returns the IDs, names,
+slugs, status, and statements of the topics available to the authenticated user.
 
-Find your topic id in the web app's URL: `/t/<topic-id>`.
+Every other tool call carries a `project_id`, which identifies the research
+topic you want the agent to inspect. The server verifies your access on every
+call. A task, manuscript, or library belonging to another topic is reported as
+not found, even when you can access it through another topic. Library visibility
+follows the platform's existing rules: your own personal libraries plus every
+shared library, and nothing more.
+
+You can also find a topic ID in the web app's URL: `/t/<topic-id>`.
 
 ---
 
@@ -81,12 +86,20 @@ Find your topic id in the web app's URL: `/t/<topic-id>`.
 
 45 tools in nine groups. Names are stable; treat them as API.
 
+### Project discovery
+
+`list_accessible_projects` is the bootstrap tool. It lists the topics available
+to the current authenticated user and returns the `project_id` values required
+by the rest of the catalog. It supports name or slug filtering, status
+filtering, and pagination. The server derives the user identity from the bearer
+token or `POLARIS_MCP_USER_EMAIL`; the caller never supplies a user ID.
+
 ### Papers and reading
 
 | Tool | What it gives you |
 | --- | --- |
+| `scan_papers` | Browse or precisely filter the topic's papers without loading abstracts. Filter by library, author, affiliation, publication date, ingestion date, status, tags, or reading state, and sort and paginate the result. |
 | `search_papers` | Search papers in the topic's corpus. `mode=semantic` (default) falls back to keyword when embeddings are unavailable. |
-| `scan_papers` | A cheap wide scan: titles and years only, up to 50 at a time. Use it to map the corpus before deep-reading a few papers. |
 | `search_chunks` | Passage-level search — lands on the paragraph rather than the paper. |
 | `grep_fulltext` | Literal string match across the full texts, with a small context window per hit. Better than semantic search for exact terms, model names, dataset names, or formula symbols. |
 | `get_paper` | Metadata, authors, status, abstract, concept tags. |
@@ -96,6 +109,35 @@ Find your topic id in the web app's URL: `/t/<topic-id>`.
 | `get_paper_citation` | BibTeX or CSL-JSON entry. |
 | `get_paper_notes`, `get_paper_highlights` | Your own notes and highlights on a paper. |
 | `global_search` | One keyword across papers, concepts, ideas, experiments, manuscripts, tasks. |
+
+Use `scan_papers` when you need an inventory rather than a small relevance-ranked
+answer. You can omit `query` to list papers. The date filters accept ISO 8601
+dates or timestamps and include both boundaries:
+
+```json
+{
+  "project_id": "<PROJECT_UUID>",
+  "author": "Carol Zhang",
+  "affiliation": "Zhejiang University",
+  "published_from": "2024-01-01",
+  "published_to": "2024-12-31",
+  "sort": "-published_at",
+  "page": 1,
+  "limit": 30
+}
+```
+
+The `sort` values are `relevance`, `published_at`, `-published_at`,
+`created_at`, and `-created_at`. A leading minus sign means descending order.
+`created_at` is the time the paper entered the library. The response includes
+`total`, `has_more`, and `next_page`. Set `library_id` only to a library linked
+to the selected topic; call `list_libraries` with `linked_only=true` to discover
+those IDs.
+
+For compatibility, a query-only call still supports `mode=semantic` and the old
+`k` argument. When you combine `query` with exact filters or time sorting,
+`scan_papers` uses deterministic title and abstract matching and reports
+`mode=filtered`.
 
 ### Concepts and graph
 
@@ -170,9 +212,11 @@ meaningful in a conversation that can render it).
 **Orient yourself in an unfamiliar topic**
 
 ```
+list_accessible_projects              → choose a project_id when one is not already known
 get_project_status                  → counts, source libraries, what is running
 list_libraries linked_only=true     → where the corpus comes from
 list_concepts                       → the vocabulary of this topic
+scan_papers sort="-created_at"       → newest additions across the corpus
 search_papers query="…" k=5         → the papers that matter
 ```
 
@@ -239,7 +283,8 @@ that breaks a tool fails the build rather than surfacing in your agent.
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `项目不存在或无权访问` | Wrong `project_id`, or you are not a member of that topic. Copy the id from `/t/<id>`. |
+| `缺少或非法的 project_id` | Call `list_accessible_projects`, select the matching topic, and pass its `project_id` to the next tool. |
+| `项目不存在或无权访问` | The `project_id` is wrong, or you can't access that topic. Call `list_accessible_projects` again to get the current accessible set. |
 | `该任务不属于本课题` / `本课题内不存在该稿件` | The id belongs to another topic. MCP sessions are scoped to one topic at a time. |
 | `文献库不存在或无权访问` | Someone else's personal library. Only your own and shared libraries are visible. |
 | Empty corpus, no papers found | No library is linked to the topic yet — check `get_project_status`'s `source_libraries`. |

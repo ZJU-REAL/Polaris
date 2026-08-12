@@ -6,15 +6,20 @@
 
 import json
 import uuid
+from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.agents.chat.events import DeltaEvent
 from app.agents.chat.loop import ChatAgentLoop, ChatTurnRequest
+from app.core.db import get_sessionmaker
 from app.core.llm.fake import FakeProvider
 from app.core.llm.router import LLMRouter
+from app.models.user import User
 from app.tools.context import ToolContext
-from app.tools.registry import get_tool, tool
+from app.tools.registry import get_tool, run_tool, tool
+from tests.conftest import add_paper, membership_of, register_and_login
 
 
 @pytest.fixture(autouse=True)
@@ -49,11 +54,11 @@ def _loop(provider: FakeProvider, **kw):
     return ChatAgentLoop(llm=_ScriptedRouter(provider), tool_ctx=ctx, **kw)
 
 
-# ---- agentic search：宽扫刻意不带摘要 ----
+# ---- agentic search：可筛选宽扫刻意不带摘要 ----
 
 
 def test_scan_returns_one_line_per_paper_not_snippets():
-    """宽扫每篇只给标题和年份。
+    """宽扫返回紧凑元数据和完整筛选 schema，但不把摘要塞进结果。
 
     回了摘要就又变成 top-k RAG——k 也就不敢往大了要，而"能一次看 50 篇"正是它存在的
     理由。这条用 schema 与描述来钉：它承诺的就是便宜。
@@ -61,9 +66,155 @@ def test_scan_returns_one_line_per_paper_not_snippets():
     spec = get_tool("scan_papers")
     assert spec is not None and spec.read_only
     props = spec.input_schema["properties"]
-    assert props["k"]["type"] == "integer"
-    assert "不给摘要" in spec.description
-    assert "50" in props["k"]["description"]
+    assert "query" not in spec.input_schema.get("required", [])
+    assert props["limit"]["maximum"] == 50
+    assert {
+        "library_id",
+        "author",
+        "affiliation",
+        "published_from",
+        "published_to",
+        "created_from",
+        "created_to",
+        "sort",
+        "page",
+    }.issubset(props)
+    assert "不返回摘要" in spec.description
+
+
+@pytest.mark.asyncio
+async def test_scan_filters_sorts_and_paginates_library_papers(client):
+    """作者、机构、发表/入库时间、排序和分页走与网页列表相同的服务。"""
+    token = await register_and_login(client, email="scan-filters@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    response = await client.post(
+        "/api/projects",
+        json={"name": "Scan filters", "statement": "agentic search"},
+        headers=headers,
+    )
+    project_id = uuid.UUID(response.json()["id"])
+
+    async with get_sessionmaker()() as session:
+        user_id = (
+            await session.execute(select(User.id).where(User.email == "scan-filters@example.com"))
+        ).scalar_one()
+        oldest = await add_paper(
+            session,
+            project_id=project_id,
+            title="Early systems paper",
+            authors=[{"name": "Carol Zhang"}],
+            affiliations=["MIT"],
+            published_at=datetime(2022, 1, 5, tzinfo=UTC),
+            year=2022,
+            status="compiled",
+        )
+        target = await add_paper(
+            session,
+            project_id=project_id,
+            title="Institutional agents",
+            authors=[{"name": "Carol Zhang"}, {"name": "Dana Li"}],
+            affiliations=["Zhejiang University", "MIT"],
+            published_at=datetime(2024, 3, 1, tzinfo=UTC),
+            year=2024,
+            status="compiled",
+        )
+        newest = await add_paper(
+            session,
+            project_id=project_id,
+            title="New planning paper",
+            authors=[{"name": "Eve Kim"}],
+            affiliations=["Stanford University"],
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
+            year=2025,
+            status="included",
+        )
+        for paper, created_at in (
+            (oldest, datetime(2024, 1, 1, tzinfo=UTC)),
+            (target, datetime(2024, 2, 1, tzinfo=UTC)),
+            (newest, datetime(2024, 3, 1, tzinfo=UTC)),
+        ):
+            membership = await membership_of(
+                session, project_id=project_id, paper_id=paper.id
+            )
+            membership.created_at = created_at
+        library_id = membership.library_id
+        await session.commit()
+
+    ctx = ToolContext(project_id=project_id, llm=LLMRouter(), user_id=user_id)
+    filtered = await run_tool(
+        ctx,
+        "scan_papers",
+        {
+            "library_id": str(library_id),
+            "author": "carol",
+            "affiliation": "zhejiang",
+            "published_from": "2024-01-01",
+            "published_to": "2024-12-31",
+            "created_from": "2024-02-01",
+            "created_to": "2024-02-29",
+            "sort": "-published_at",
+        },
+    )
+    assert filtered["mode"] == "filtered"
+    assert filtered["total"] == 1
+    assert filtered["results"][0]["paper_id"] == str(target.id)
+    assert filtered["results"][0]["authors"] == ["Carol Zhang", "Dana Li"]
+    assert filtered["results"][0]["affiliations"] == ["Zhejiang University", "MIT"]
+    assert "abstract" not in filtered["results"][0]
+
+    newest_first = await run_tool(
+        ctx,
+        "scan_papers",
+        {"sort": "-published_at", "limit": 2, "page": 1},
+    )
+    assert newest_first["total"] == 3
+    assert newest_first["has_more"] is True and newest_first["next_page"] == 2
+    assert [row["paper_id"] for row in newest_first["results"]] == [
+        str(newest.id),
+        str(target.id),
+    ]
+
+    added_second_page = await run_tool(
+        ctx,
+        "scan_papers",
+        {"sort": "created_at", "limit": 2, "page": 2},
+    )
+    assert added_second_page["has_more"] is False
+    assert [row["paper_id"] for row in added_second_page["results"]] == [str(newest.id)]
+
+
+@pytest.mark.asyncio
+async def test_scan_keeps_query_only_compatibility_and_rejects_unlinked_library(client):
+    """旧的 query + k 调用继续可用，library_id 不能越过当前课题的关联库。"""
+    token = await register_and_login(client, email="scan-compat@example.com")
+    response = await client.post(
+        "/api/projects",
+        json={"name": "Scan compatibility", "statement": "compat"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    project_id = uuid.UUID(response.json()["id"])
+    async with get_sessionmaker()() as session:
+        user_id = (
+            await session.execute(select(User.id).where(User.email == "scan-compat@example.com"))
+        ).scalar_one()
+        paper = await add_paper(
+            session,
+            project_id=project_id,
+            title="Retrieval planning",
+            abstract="agent memory",
+            status="compiled",
+        )
+        await session.commit()
+
+    ctx = ToolContext(project_id=project_id, llm=LLMRouter(), user_id=user_id)
+    result = await run_tool(
+        ctx, "scan_papers", {"query": "retrieval", "mode": "keyword", "k": 5}
+    )
+    assert result["mode"] == "keyword"
+    assert [row["paper_id"] for row in result["results"]] == [str(paper.id)]
+
+    with pytest.raises(ValueError, match="未关联到当前项目"):
+        await run_tool(ctx, "scan_papers", {"library_id": str(uuid.uuid4())})
 
 
 def test_grep_returns_excerpts_not_whole_chunks():
