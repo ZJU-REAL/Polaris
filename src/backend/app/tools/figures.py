@@ -1,17 +1,13 @@
 """围绕 Paper 的图片与支撑只读工具（docs/mcp.md）。
 
-核心：把论文里已抽取、已分类（motivation/method/architecture/experiment/other）、
-已配中文图注的图片，作为 MCP image content 暴露出去——外部客户端（Claude Code /
-Cursor）可直接取「方法图 / 实验图」做 PPT。图片工具返回 ``ToolResult``（文本 + 图片）。
-支撑工具（引用/笔记/划线/相关论文）为纯文本 dict。
+论文图片对 MCP 返回短期签名下载链接，不内联 base64；内部 Buddy 仍通过 ``ToolImage``
+引用把图片交给前端显示。支撑工具（引用/笔记/划线/相关论文）为纯文本 dict。
 """
 
 from __future__ import annotations
 
-import io
 import uuid
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import selectinload
@@ -23,13 +19,13 @@ from app.services import concepts as concepts_service
 from app.services import highlights as highlights_service
 from app.services import notes as notes_service
 from app.services.literature.pdf_extract import figure_path
+from app.services.paper_figure_downloads import create_download_link
 from app.tools.context import ToolContext
 from app.tools.literature import search_papers as _search_papers
 from app.tools.registry import ToolImage, ToolResult, tool
 from app.tools.scope import membership_in_scope
 
 FIGURE_KINDS = ["motivation", "method", "architecture", "experiment", "other"]
-_DEFAULT_MAX_DIM = 1600
 _MAX_BATCH = 8
 
 
@@ -70,35 +66,39 @@ def _fig_meta(fig: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _png_bytes(path: Path, max_dim: int) -> bytes:
-    """读取图片并等比缩到单边 ≤ max_dim，重编码 PNG（控制 MCP payload 体积）。"""
-    from PIL import Image
+def _download_fields(ctx: ToolContext, paper_id: uuid.UUID, index: int) -> dict[str, str | None]:
+    """返回下载地址；无用户身份的内部任务退回需要 JWT 的相对 API 地址。"""
+    if ctx.user_id is None:
+        return {
+            "download_url": f"/api/papers/{paper_id}/figures/{index}/image",
+            "download_url_expires_at": None,
+        }
+    link = create_download_link(
+        user_id=ctx.user_id,
+        paper_id=paper_id,
+        index=index,
+        base_url=ctx.base_url,
+    )
+    return {
+        "download_url": link.url,
+        "download_url_expires_at": link.expires_at,
+    }
 
-    with Image.open(path) as im:
-        im.load()
-        if max(im.width, im.height) > max_dim:
-            scale = max_dim / max(im.width, im.height)
-            im = im.resize(
-                (max(1, round(im.width * scale)), max(1, round(im.height * scale))),
-                Image.LANCZOS,
-            )
-        if im.mode not in ("RGB", "L", "RGBA"):
-            im = im.convert("RGB")
-        buf = io.BytesIO()
-        im.save(buf, format="PNG", optimize=True)
-        return buf.getvalue()
 
-
-def _clamp_max_dim(raw: Any) -> int:
-    try:
-        return max(256, min(4096, int(raw)))
-    except (ValueError, TypeError):
-        return _DEFAULT_MAX_DIM
+def _download_fields_if_available(
+    ctx: ToolContext,
+    paper_id: uuid.UUID,
+    index: int,
+) -> dict[str, str | None]:
+    """只为实际存在的图片签发链接，避免清单暴露必然返回 404 的地址。"""
+    if not figure_path(str(paper_id), index).exists():
+        return {"download_url": None, "download_url_expires_at": None}
+    return _download_fields(ctx, paper_id, index)
 
 
 @tool(
     "list_paper_figures",
-    description="列出某篇论文全部插图的元数据，含编号、页码、类型与图注，不含图片本体",
+    description="列出论文全部插图的元数据和下载链接；链接短期有效，不内联图片本体",
     input_schema={
         "type": "object",
         "properties": {"paper_id": {"type": "string", "description": "论文 uuid"}},
@@ -113,19 +113,28 @@ async def list_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str
         return {
             "paper_id": str(paper.id),
             "title": paper.title,
-            "figures": [_fig_meta(f) for f in figs],
+            "figures": [
+                {
+                    **_fig_meta(fig),
+                    **_download_fields_if_available(
+                        ctx,
+                        paper.id,
+                        int(fig["index"]),
+                    ),
+                }
+                for fig in figs
+            ],
         }
 
 
 @tool(
     "get_paper_figure",
-    description="取某篇论文指定编号的插图，返回 PNG 图片与图注",
+    description="取某篇论文指定编号的插图，返回短期有效的 PNG 下载链接与图注，不内联图片",
     input_schema={
         "type": "object",
         "properties": {
             "paper_id": {"type": "string", "description": "论文 uuid"},
             "index": {"type": "integer", "description": "图编号（见 list_paper_figures）"},
-            "max_dim": {"type": "integer", "description": "单边最大像素，默认 1600"},
         },
         "required": ["paper_id", "index"],
     },
@@ -135,7 +144,6 @@ async def get_paper_figure(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
     index = int(args.get("index")) if str(args.get("index", "")).lstrip("-").isdigit() else None
     if index is None:
         raise ValueError("get_paper_figure 需要整数 index")
-    max_dim = _clamp_max_dim(args.get("max_dim"))
     async with get_sessionmaker()() as session:
         paper = await _project_paper(session, ctx, args.get("paper_id"))
         fig = next((f for f in (paper.figures or []) if int(f["index"]) == index), None)
@@ -144,17 +152,16 @@ async def get_paper_figure(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
         path = figure_path(str(paper.id), index)
         if not path.exists():
             raise ValueError(f"图片文件缺失：index={index}")
-        data = _png_bytes(path, max_dim)
         payload = {
             "paper_id": str(paper.id),
             "title": paper.title,
             **_fig_meta(fig),
+            **_download_fields(ctx, paper.id, index),
         }
     return ToolResult(
         payload=payload,
         images=(
             ToolImage(
-                data=data,
                 label=fig.get("caption"),
                 ref=_figure_ref(paper.id, int(fig["index"])),
             ),
@@ -164,14 +171,13 @@ async def get_paper_figure(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
 
 @tool(
     "get_paper_figures",
-    description="批量取某篇论文的插图，默认只取重要图，可按类型筛选",
+    description="批量取论文插图的短期下载链接，默认只取重要图，可按类型筛选",
     input_schema={
         "type": "object",
         "properties": {
             "paper_id": {"type": "string", "description": "论文 uuid"},
             "kind": {"type": "string", "enum": FIGURE_KINDS, "description": "只取某类型（可选）"},
             "only_important": {"type": "boolean", "description": "只取重要图，默认 true"},
-            "max_dim": {"type": "integer", "description": "单边最大像素，默认 1600"},
         },
         "required": ["paper_id"],
     },
@@ -180,7 +186,6 @@ async def get_paper_figure(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
 async def get_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     kind = str(args.get("kind") or "").strip() or None
     only_important = args.get("only_important", True) is not False
-    max_dim = _clamp_max_dim(args.get("max_dim"))
     async with get_sessionmaker()() as session:
         paper = await _project_paper(session, ctx, args.get("paper_id"))
         selected: list[dict[str, Any]] = []
@@ -201,17 +206,20 @@ async def get_paper_figures(ctx: ToolContext, args: dict[str, Any]) -> ToolResul
         path = figure_path(paper_id, int(fig["index"]))
         if not path.exists():
             continue
-        try:
-            images.append(
-                ToolImage(
-                    data=_png_bytes(path, max_dim),
-                    label=fig.get("caption"),
-                    ref=_figure_ref(uuid.UUID(paper_id), int(fig["index"])),
-                )
+        index = int(fig["index"])
+        paper_uuid = uuid.UUID(paper_id)
+        images.append(
+            ToolImage(
+                label=fig.get("caption"),
+                ref=_figure_ref(paper_uuid, index),
             )
-            metas.append(_fig_meta(fig))
-        except Exception:  # noqa: BLE001 — 单图解码失败跳过，不阻断其余
-            continue
+        )
+        metas.append(
+            {
+                **_fig_meta(fig),
+                **_download_fields(ctx, paper_uuid, index),
+            }
+        )
     return ToolResult(
         payload={"paper_id": paper_id, "title": title, "figures": metas}, images=tuple(images)
     )

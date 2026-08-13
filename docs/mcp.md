@@ -146,12 +146,17 @@ inventory) · `knowledge_graph` (paper/concept/author nodes and edges).
 
 ### Figures
 
-`list_paper_figures` (figure metadata) · `get_paper_figure` and `get_paper_figures` (the images
-themselves, as MCP image blocks — useful for slides) · `find_figures` (search figures by topic
-across the corpus).
+`list_paper_figures` returns figure metadata. `get_paper_figure` and
+`get_paper_figures` return PNG download URLs and captions. `find_figures`
+searches figures by topic across the corpus.
 
-These return real image data and are the most context-expensive tools here; ask for them
-deliberately.
+Figure download URLs are signed bearer links. They expire after 15 minutes by
+default, and the download endpoint checks that the user who created the link
+can still access the paper. The image bytes don't enter the MCP response or the
+model context. HTTP figure links always use the same origin as the MCP endpoint:
+for example, `https://polaris.example.edu/mcp` returns a link under
+`https://polaris.example.edu/api/`. Download the URL when you need the actual
+file.
 
 ### Outside the library
 
@@ -259,7 +264,8 @@ get_fact_pack manuscript_id=…                       → the sanctioned facts f
 - **Timeout** is 60 seconds per call.
 - **Semantic search degrades.** If the embedding service is unreachable, semantic modes fall back to
   keyword search and say so in the response's `mode` field — results get worse, nothing breaks.
-- **Images** come back as MCP image blocks, at most 4 per call.
+- **Images use download links.** Figure tools return signed URLs instead of
+  base64 MCP image blocks. A batch call returns at most eight links.
 
 ---
 
@@ -289,6 +295,8 @@ that breaks a tool fails the build rather than surfacing in your agent.
 | `文献库不存在或无权访问` | Someone else's personal library. Only your own and shared libraries are visible. |
 | Empty corpus, no papers found | No library is linked to the topic yet — check `get_project_status`'s `source_libraries`. |
 | `mode` comes back `keyword` when you asked for `semantic` | The embedding service is down; results are degraded but usable. |
+| A figure download URL returns `FIGURE_LINK_INVALID` | The signed URL expired or was modified. Call `get_paper_figure` again to create a new link. |
+| A stdio figure result contains a relative URL | Set `POLARIS_PUBLIC_BASE_URL` to the server root that the agent can reach. |
 | Tools missing from `tools/list` | Old server version, or the client cached an earlier list — reconnect. |
 
 ---
@@ -299,4 +307,5 @@ that breaks a tool fails the build rather than surfacing in your agent.
   platform's internal agent.
 - [Development](development.md#the-mcp-tools-during-development) — adding a tool, and the testing
   contract.
-- [Configuration](configuration.md#mcp-stdio-variable) — environment variables for the stdio server.
+- [Configuration](configuration.md#application-settings-polaris_-prefix) — public URL and link
+  lifetime settings.

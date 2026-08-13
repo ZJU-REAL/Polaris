@@ -81,12 +81,14 @@ def _text_result(payload: Any, *, is_error: bool = False) -> dict[str, Any]:
 
 
 def _content_blocks(result: Any) -> dict[str, Any]:
-    """把工具返回（dict 或 ToolResult）转成 MCP content：文本块 + 若干图片块。"""
+    """把工具返回转成 MCP content；只有显式携带字节的图片才内联。"""
     payload = result_payload(result)
     blocks: list[dict[str, Any]] = [
         {"type": "text", "text": json.dumps(payload, ensure_ascii=False, default=str)}
     ]
     for img in result_images(result):
+        if img.data is None:
+            continue
         blocks.append(
             {
                 "type": "image",
@@ -103,6 +105,7 @@ async def call_tool(
     user_id: uuid.UUID,
     name: str,
     arguments: dict[str, Any],
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     """执行一个只读工具；成员校验 + 参数错误都转成 isError 结果（不抛给协议层）。"""
     spec = get_tool(name)
@@ -134,7 +137,12 @@ async def call_tool(
     # allow_writes 保持默认 False：外部 MCP 客户端（Claude Desktop / Cursor）只有平台
     # JWT，没有经过任何对话内审批，不该拿到写能力。上面的 tools/list 也只列只读工具，
     # 两道一起才算数——只过滤清单挡不住知道名字直接调的。
-    ctx = ToolContext(project_id=project_id, llm=get_llm_router(), user_id=user_id)
+    ctx = ToolContext(
+        project_id=project_id,
+        llm=get_llm_router(),
+        user_id=user_id,
+        base_url=base_url,
+    )
     try:
         result = await run_tool(ctx, name, args)
     except PermissionError as e:
@@ -157,6 +165,7 @@ async def handle_rpc(
     *,
     session: AsyncSession,
     user_id: uuid.UUID,
+    base_url: str | None = None,
 ) -> dict[str, Any] | None:
     """派发单条 JSON-RPC 消息；通知（无 id / notifications.*）返回 None（无响应）。"""
     method = message.get("method")
@@ -187,7 +196,13 @@ async def handle_rpc(
         if not isinstance(name, str):
             return _rpc_err(msg_id, -32602, "Invalid params: name required")
         arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-        result = await call_tool(session, user_id=user_id, name=name, arguments=arguments)
+        result = await call_tool(
+            session,
+            user_id=user_id,
+            name=name,
+            arguments=arguments,
+            base_url=base_url,
+        )
         return _rpc_ok(msg_id, result)
 
     return _rpc_err(msg_id, -32601, f"Method not found: {method}")

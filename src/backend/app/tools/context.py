@@ -33,6 +33,9 @@ class ToolContext:
     library_ids: tuple[uuid.UUID, ...] | None = None
     user_id: uuid.UUID | None = None
     voyage_id: uuid.UUID | None = None
+    #: 生成可下载资源链接时使用。HTTP MCP 取当前 /mcp 请求的 origin；stdio 可由
+    #: POLARIS_PUBLIC_BASE_URL 提供；内部工具调用没有地址时返回相对 URL。
+    base_url: str | None = None
     #: 允许执行会改数据的工具吗。**默认 False 是整套安全性的支点**——MCP、voyage 的
     #: tool_loop、以及所有现存调用点因此自动保持只读，一行不用改。只有明确开了它的
     #: 调用方（走完审批的对话轮次）才拿得到写能力。

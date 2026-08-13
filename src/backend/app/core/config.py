@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # 24h 会让用户每天重登一次。没有 refresh token 机制，所以直接给长有效期；
     # 想收紧就调小这个值（单位：秒）。
     session_lifetime_seconds: int = 60 * 60 * 24 * 30
+    # stdio MCP 没有 HTTP 请求 URL；需要返回绝对图片链接时通过这里提供服务根地址。
+    # HTTP MCP 始终复用当前 /mcp 请求的 origin，不读取此项。
+    public_base_url: str = ""
+    mcp_download_link_ttl_seconds: int = 15 * 60
     # prod 下额外放行的跨域前端来源（逗号分隔）。桌面客户端的 app://polaris 恒在白名单内、
     # 无需在此配置；这一项留给「前端与 API 不同域」的部署形态。web 生产走 nginx 同源反代，
     # 根本不进 CORS 分支。用逗号分隔的 str 而非 list[str]：pydantic-settings 对 list[str]

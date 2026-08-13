@@ -15,6 +15,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.mcp.dispatch import handle_rpc
 from app.models.user import User
@@ -33,6 +34,7 @@ async def _resolve_user_id() -> uuid.UUID:
 
 async def _serve() -> None:
     user_id = await _resolve_user_id()
+    base_url = get_settings().public_base_url.strip() or None
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
     await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
@@ -49,7 +51,12 @@ async def _serve() -> None:
         except json.JSONDecodeError:
             continue
         async with get_sessionmaker()() as session:
-            resp = await handle_rpc(message, session=session, user_id=user_id)
+            resp = await handle_rpc(
+                message,
+                session=session,
+                user_id=user_id,
+                base_url=base_url,
+            )
         if resp is not None:
             sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
             sys.stdout.flush()

@@ -41,7 +41,6 @@ from app.tools import ToolSpec, list_tools
 TOOL_TIMEOUT = 60.0
 _PREVIEW_CHARS = 400
 _SAMPLE_PAPERS = 40  # 取多少篇论文来找样本（找带图的、带 DOI 的）
-_PROBE_MAX_DIM = 512  # 自检取图时缩到小图：只验证能不能取出来，不需要原尺寸
 
 # 样本缺失时给用户看的原因（大白话）
 _MISSING_REASON = {
@@ -210,8 +209,6 @@ def _sample_value(
         return samples.manuscript_path
     if name == "mode" and "keyword" in (schema.get("enum") or []):
         return "keyword"  # 确定性、不触发 embedding
-    if name == "max_dim":
-        return _PROBE_MAX_DIM
     return None  # 过滤类可选参数（kind/category/status/format/k/page…）不填
 
 

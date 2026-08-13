@@ -1,15 +1,23 @@
-"""围绕 Paper 的图片/支撑工具：直接调用 + MCP image content block。"""
+"""围绕 Paper 的图片/支撑工具：直接调用 + MCP 签名下载链接。"""
 
-import base64
 import io
+import json
 import uuid
 
+import pytest
 from PIL import Image
+from sqlalchemy import select
 
 import app.tools as tools
 from app.core.db import get_sessionmaker
 from app.core.llm.router import LLMRouter
+from app.models.user import User
 from app.services.literature.pdf_extract import figure_path
+from app.services.paper_figure_downloads import (
+    InvalidFigureDownloadToken,
+    create_token,
+    verify_token,
+)
 from app.tools import ToolContext, ToolResult
 from tests.conftest import add_concept, add_paper
 
@@ -82,23 +90,44 @@ def _ctx(project_id: str) -> ToolContext:
     return ToolContext(project_id=uuid.UUID(project_id), llm=LLMRouter())
 
 
+def test_figure_download_token_expires_and_rejects_tampering():
+    token, expected = create_token(
+        user_id=uuid.uuid4(),
+        paper_id=uuid.uuid4(),
+        index=3,
+        ttl_seconds=60,
+        now=1_000,
+    )
+    assert verify_token(token, now=1_059) == expected
+    with pytest.raises(InvalidFigureDownloadToken):
+        verify_token(token, now=1_060)
+    with pytest.raises(InvalidFigureDownloadToken):
+        verify_token(token + "x", now=1_001)
+
+
 async def test_figure_tools_direct(client):
     project_id, _ = await _project(client)
     paper_id = await _seed_paper_with_figures(project_id)
     ctx = _ctx(project_id)
 
-    # list：3 张元数据
+    # list：保留全部 3 张元数据；有文件的图带下载地址，缺文件的不伪造链接
     res = await tools.run_tool(ctx, "list_paper_figures", {"paper_id": paper_id})
     assert len(res["figures"]) == 3
     assert res["figures"][0]["kind"] == "method"
+    assert res["figures"][0]["download_url"].endswith(
+        f"/papers/{paper_id}/figures/0/image"
+    )
+    assert res["figures"][0]["download_url_expires_at"] is None
+    assert res["figures"][2]["download_url"] is None
+    assert res["figures"][2]["download_url_expires_at"] is None
 
-    # get_paper_figure：ToolResult + 1 张图
+    # get_paper_figure：文本载荷给下载地址，图片引用留给内部 Buddy 前端
     res = await tools.run_tool(ctx, "get_paper_figure", {"paper_id": paper_id, "index": 0})
     assert isinstance(res, ToolResult)
     assert res.payload["caption"] == "方法总览图"
+    assert res.payload["download_url"].endswith(f"/papers/{paper_id}/figures/0/image")
     assert len(res.images) == 1
-    with Image.open(io.BytesIO(res.images[0].data)) as im:  # 解码得回真图
-        assert im.format == "PNG"
+    assert res.images[0].data is None
 
     # get_paper_figures：默认只重要图 → 2 张
     res = await tools.run_tool(ctx, "get_paper_figures", {"paper_id": paper_id})
@@ -151,8 +180,8 @@ async def test_related_papers_shared_concept(client):
     assert any(r["title"] == "Paper B" and r["shared_concepts"] == 1 for r in res["related"])
 
 
-async def test_mcp_get_figure_returns_image_block(client):
-    """MCP tools/call get_paper_figure → content 里带 image content block（base64 PNG）。"""
+async def test_mcp_get_figure_returns_download_link(client):
+    """MCP 返回短期下载链接，图像字节不再进入 JSON-RPC 或模型上下文。"""
     project_id, headers = await _project(client, email="fig4@example.com")
     paper_id = await _seed_paper_with_figures(project_id)
 
@@ -167,12 +196,71 @@ async def test_mcp_get_figure_returns_image_block(client):
                 "arguments": {"project_id": project_id, "paper_id": paper_id, "index": 0},
             },
         },
-        headers=headers,
+        headers={**headers, "Host": "mcp.polaris.test:9443"},
     )
     assert resp.status_code == 200, resp.text
     content = resp.json()["result"]["content"]
     images = [c for c in content if c["type"] == "image"]
-    assert len(images) == 1
-    assert images[0]["mimeType"] == "image/png"
-    with Image.open(io.BytesIO(base64.b64decode(images[0]["data"]))) as im:
+    assert images == []
+    payload = json.loads(next(c["text"] for c in content if c["type"] == "text"))
+    assert payload["download_url"].startswith(
+        "http://mcp.polaris.test:9443/api/paper-figure-download/"
+    )
+    assert payload["download_url_expires_at"]
+    assert "data" not in payload
+    assert len(resp.content) < 4_000
+
+    download = await client.get(payload["download_url"])
+    assert download.status_code == 200, download.text
+    assert download.headers["content-type"] == "image/png"
+    assert "attachment" in download.headers["content-disposition"]
+    with Image.open(io.BytesIO(download.content)) as im:
         assert im.format == "PNG"
+
+    tampered = await client.get(payload["download_url"] + "x")
+    assert tampered.status_code == 404
+
+    async with get_sessionmaker()() as session:
+        user = (
+            await session.execute(select(User).where(User.email == "fig4@example.com"))
+        ).scalar_one()
+        user.is_active = False
+        await session.commit()
+    revoked = await client.get(payload["download_url"])
+    assert revoked.status_code == 404
+
+
+async def test_mcp_list_figures_returns_downloadable_links(client):
+    """MCP 图清单应直接提供可下载链接，而不要求再逐张调用取图工具。"""
+    project_id, headers = await _project(client, email="fig-list@example.com")
+    paper_id = await _seed_paper_with_figures(project_id)
+
+    resp = await client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "list_paper_figures",
+                "arguments": {"project_id": project_id, "paper_id": paper_id},
+            },
+        },
+        headers={**headers, "Host": "mcp.polaris.test:9443"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    content = resp.json()["result"]["content"]
+    payload = json.loads(next(c["text"] for c in content if c["type"] == "text"))
+    figures = payload["figures"]
+    assert len(figures) == 3
+    assert figures[0]["download_url"].startswith(
+        "http://mcp.polaris.test:9443/api/paper-figure-download/"
+    )
+    assert figures[0]["download_url_expires_at"]
+    assert figures[2]["download_url"] is None
+    assert figures[2]["download_url_expires_at"] is None
+
+    download = await client.get(figures[0]["download_url"])
+    assert download.status_code == 200, download.text
+    assert download.headers["content-type"] == "image/png"

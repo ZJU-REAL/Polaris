@@ -25,6 +25,8 @@ noted below.
 | `POLARIS_CHAT_AGENT_ENABLED` | Enable PolarisBuddy's multi-turn tool loop. Off by default because each round re-sends the conversation history and tool schemas, which costs far more than one-shot chat. | (unset), set `1` to enable |
 | `POLARIS_GITHUB_TOKEN` | GitHub PAT (repo scope) used by the in-app feedback feature to file issues. Empty disables issue creation (feedback still produces a draft). | (empty) |
 | `POLARIS_GITHUB_REPO` | Target `owner/name` repository for feedback issues. | `ZJU-REAL/Polaris` |
+| `POLARIS_PUBLIC_BASE_URL` | Public server root used to build stdio MCP download links. HTTP MCP always reuses the origin of its current `/mcp` request and ignores this setting. | (empty), for example, `https://polaris.example.edu` |
+| `POLARIS_MCP_DOWNLOAD_LINK_TTL_SECONDS` | Lifetime of signed paper-figure download links, in seconds. Values are limited to 60 seconds through 24 hours. | `900` |
 | `POLARIS_DATABASE_URL` | Async SQLAlchemy database URL. Falls back to local SQLite when unset, which enables a no-Docker quick start; production uses Postgres with asyncpg. | `postgresql+asyncpg://polaris:polaris@postgres:5432/polaris` (default when unset: `sqlite+aiosqlite:///./polaris_dev.db`) |
 | `POLARIS_DB_POOL_SIZE` / `POLARIS_DB_MAX_OVERFLOW` / `POLARIS_DB_POOL_TIMEOUT` | SQLAlchemy connection pool sizing. The defaults are tuned for the worker's concurrency (parallel scoring sessions per voyage); shrink them only if your Postgres `max_connections` is low. | `20` / `50` / `30` |
 | `POLARIS_REDIS_URL` | Redis URL for the ARQ broker and cache. | `redis://redis:6379/0` (local default `redis://localhost:6379/0`) |
@@ -98,7 +100,9 @@ Set these when invoking Docker Compose (not in `.env`); see [Deployment](deploym
 ## MCP stdio variable
 
 When running the external MCP server over stdio for a local desktop client
-(`python -m app.mcp`), the caller is identified by an environment variable rather than a JWT.
+(`python -m app.mcp`), the caller is identified by an environment variable
+rather than a JWT. Set `POLARIS_PUBLIC_BASE_URL` in the application settings
+table when you need figure tools to return absolute download URLs.
 
 | Variable | Purpose | Example |
 | --- | --- | --- |

@@ -62,6 +62,7 @@ from app.services import papers as papers_service
 from app.services import wiki_compile as wiki_compile_service
 from app.services.literature.pdf_extract import figure_path
 from app.services.literature.pdf_source import PdfUrlError
+from app.services.paper_figure_downloads import InvalidFigureDownloadToken, verify_token
 
 logger = logging.getLogger(__name__)
 
@@ -714,6 +715,44 @@ async def list_paper_figures(
 ) -> list[PaperFigure]:
     paper = await _get_member_paper(session, paper_id, user, include_pool=True)
     return [PaperFigure(**f) for f in (paper.figures or [])]
+
+
+@router.get("/paper-figure-download/{token}")
+async def download_paper_figure(
+    token: str,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    """Download a figure through a short-lived bearer URL returned by MCP.
+
+    The signature proves who requested the link, while the database lookup makes
+    permission revocation take effect even before the URL expires.
+    """
+    try:
+        claims = verify_token(token)
+    except InvalidFigureDownloadToken as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FIGURE_LINK_INVALID") from exc
+    user = await session.get(User, claims.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FIGURE_NOT_FOUND")
+    paper = await papers_service.get_paper_for_user(
+        session,
+        paper_id=claims.paper_id,
+        user_id=claims.user_id,
+        include_pool=True,
+    )
+    if paper is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FIGURE_NOT_FOUND")
+    known = {int(f["index"]) for f in (paper.figures or [])}
+    path = figure_path(str(claims.paper_id), claims.index)
+    if claims.index not in known or not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="FIGURE_NOT_FOUND")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        filename=f"fig_{claims.index}.png",
+        content_disposition_type="attachment",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.get("/papers/{paper_id}/figures/{index}/image")
