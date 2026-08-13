@@ -1582,7 +1582,8 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
     if not categories:
         return True, None
 
-    declared: str | None = None
+    today = _today_utc()
+    latest: dt.date | None = None
     for category in categories:
         try:
             entries, batch_at = await get_arxiv_client().fetch_new(category)
@@ -1590,8 +1591,29 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
             logger.warning("daily feed probe failed for %s", category, exc_info=True)
             return True, None
 
-        if declared is None and batch_at is not None:
-            declared = batch_at.astimezone(dt.UTC).date().isoformat()
+        batch_date = batch_at.astimezone(dt.UTC).date() if batch_at else None
+        if batch_date is not None and (latest is None or batch_date > latest):
+            latest = batch_date
+        # 拿到的还是上一批公告时要分两种情况，因为它们的正确处置正好相反：
+        #
+        # 1. **那一批我们已经收过了**——剩下这些没见过的只是尾巴。为它跑一轮的代价极大：
+        #    already_ran_today 会把当天锁死，两小时后 arXiv 真正放出当天批次时再没人去取。
+        #    2026-08-13 生产就是这样：02:00 UTC（北京 10:00）跑了一轮收了 96 篇尾巴，
+        #    而当天 446 篇 04:00 UTC 才发布，一整天都没进来。
+        # 2. **那一批我们整批没收过**（比如昨天服务挂了）——这是最后的补救窗口。
+        #    ``/new`` 只显示最近一次公告，等今天那批一发布，昨天那批就永远拿不到了。
+        #
+        # 判据是「池子里有没有那天的条目」。feed_date 现在记的正是公告日，所以问得出来。
+        #
+        # 日期判据当年被放弃过，因为 RSS 的 pubDate 会整体滞后一天、判了永远为假。
+        # 换成列表页之后公告日期是页头自己写的，可以信；读不出日期时仍按内容判，
+        # 不因为解析不出日期就整天停摆。
+        if batch_date is not None and batch_date < today:
+            already_have_that_batch = await session.scalar(
+                select(DailyFeedEntry.id).where(DailyFeedEntry.feed_date == batch_date).limit(1)
+            )
+            if already_have_that_batch is not None:
+                continue
         arxiv_ids = [str(e.get("arxiv_id")) for e in entries if e.get("arxiv_id")]
         if not arxiv_ids:
             continue
@@ -1607,11 +1629,11 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
             .all()
         )
         if any(aid not in known for aid in arxiv_ids):
-            return True, declared
+            return True, latest.isoformat() if latest else None
 
-    # 全部分类都问过了：要么一条都没公告（周末/节假日的正常形态），
-    # 要么公告的我们已经全收了。两种都没有可做的事。
-    return False, declared
+    # 全部分类都问过了：要么当天那批还没发布、要么一条都没公告（周末/节假日的正常
+    # 形态）、要么公告的我们已经全收了。三种都没有可做的事，等下一个检查点。
+    return False, latest.isoformat() if latest else None
 
 
 # ---- 保留期（可配置） ----

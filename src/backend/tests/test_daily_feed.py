@@ -1923,3 +1923,123 @@ async def test_stale_and_fresh_categories_keep_their_own_dates(client, monkeypat
     by_id = dict(rows)
     assert by_id["2608.99010"] == yesterday, "滞后的分类要如实记成昨天"
     assert by_id["2608.99011"] == today
+
+
+async def test_leftovers_from_yesterday_do_not_count_as_todays_batch(client, monkeypatch):
+    """上一批公告**我们已经收过**时，里面剩下的零星几篇不算「今天那批出来了」。
+
+    这是最坏的一种失败：抓取跑一轮、只捡到几十篇昨天的尾巴，而 already_ran_today
+    从此把当天锁死；两小时后 arXiv 真正放出当天批次时，再也没有人去取。
+    2026-08-13 生产就是这样——抓取时刻设的是 02:00 UTC（北京 10:00），而 arXiv 约
+    04:00 UTC（北京 12:00）才发布，那一轮收了 96 篇尾巴，当天 446 篇一整天没进来。
+    """
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+
+    # 先把昨天那批收进来（于是池子里有 feed_date=昨天 的条目）
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {"cs.AI": [_rss_entry("2608.95000", "昨天那批")]}, batch_date=yesterday
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        await daily_feed.sync_daily_feed(session)
+
+    # 同一批公告里又冒出一篇没见过的：这是尾巴，不是今天那批
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {
+                "cs.AI": [
+                    _rss_entry("2608.95000", "昨天那批"),
+                    _rss_entry("2608.95001", "昨天那批的尾巴"),
+                ]
+            },
+            batch_date=yesterday,
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        fresh, declared = await daily_feed.todays_batch_available(session)
+    assert fresh is False, "拿到的是已收过的上一批，不该判成今天那批已发布"
+    assert declared == yesterday.isoformat()
+
+
+async def test_a_batch_we_missed_entirely_is_still_worth_fetching(client, monkeypatch):
+    """整批没收过的旧公告仍要抓——那是最后的补救窗口。
+
+    ``/new`` 只显示最近一次公告：今天那批一发布，昨天那批就永远拿不到了。所以
+    「跳过旧批次」只能针对已经收过的，不能一刀切，否则服务挂一天就等于永久丢一天。
+    """
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+
+    # 池子是空的：昨天那批一篇都没收过
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {"cs.AI": [_rss_entry("2608.95009", "昨天那批，我们整批没收")]},
+            batch_date=yesterday,
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        fresh, _ = await daily_feed.todays_batch_available(session)
+    assert fresh is True, "整批没收过就该抓，这是过了今天就没有的补救机会"
+
+
+async def test_todays_batch_still_triggers_once_published(client, monkeypatch):
+    """当天批次一发布就照常判为「该抓」——加日期判据不能把正常路径也堵死。"""
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    today = dt.datetime.now(dt.UTC).date()
+
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {"cs.AI": [_rss_entry("2608.95002", "今天那批")]}, batch_date=today
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        fresh, declared = await daily_feed.todays_batch_available(session)
+    assert fresh is True
+    assert declared == today.isoformat()
+
+
+async def test_probe_without_a_readable_date_falls_back_to_content(client, monkeypatch):
+    """读不出公告日期时仍按内容判——不能因为日期解析不出来就整天不抓。"""
+    from app.core.db import get_sessionmaker
+    from app.services import daily_feed
+
+    await register_and_login(client)
+
+    class _NoDate(_StubArxiv):
+        async def fetch_new(self, category: str):
+            entries, _ = await super().fetch_new(category)
+            return entries, None
+
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _NoDate({"cs.AI": [_rss_entry("2608.95003", "日期不明")]}),
+    )
+    async with get_sessionmaker()() as session:
+        fresh, declared = await daily_feed.todays_batch_available(session)
+    assert fresh is True and declared is None
