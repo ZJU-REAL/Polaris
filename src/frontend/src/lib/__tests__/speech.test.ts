@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitSpeechText } from '../speech';
+import { pcm16LeToFloat32, splitSpeechText } from '../speech';
 
 async function playWithProviderLimit(text: string, maxChars: number): Promise<void> {
   for (const part of splitSpeechText(text, maxChars)) {
@@ -33,5 +33,18 @@ describe('splitSpeechText', () => {
     const parts = splitSpeechText('研'.repeat(50_920), 500);
     expect(parts).toHaveLength(102);
     expect(parts.every((part) => part.length <= 500)).toBe(true);
+  });
+});
+
+describe('pcm16LeToFloat32', () => {
+  it('decodes signed PCM and carries an odd network byte into the next chunk', () => {
+    const first = pcm16LeToFloat32(new Uint8Array([0x00, 0x80, 0xff]));
+    expect(Array.from(first.samples)).toEqual([-1]);
+    expect(first.trailingByte).toBe(0xff);
+
+    const second = pcm16LeToFloat32(new Uint8Array([0x7f, 0x00, 0x00]), first.trailingByte);
+    expect(second.samples[0]).toBe(1);
+    expect(second.samples[1]).toBe(0);
+    expect(second.trailingByte).toBeNull();
   });
 });

@@ -155,6 +155,17 @@ export function AdminSpeechSettings() {
   });
   const [draft, setDraft] = useState<TTSAdminSettings | null>(null);
 
+  const voicesQuery = useQuery({
+    queryKey: [
+      'admin-tts-voices',
+      settingsQuery.data?.base_url,
+      settingsQuery.data?.model,
+    ],
+    queryFn: () => api.getAdminTtsVoices(settingsQuery.data!),
+    enabled: Boolean(settingsQuery.data),
+    retry: false,
+  });
+
   useEffect(() => {
     if (settingsQuery.data && !draft) setDraft(settingsQuery.data);
   }, [draft, settingsQuery.data]);
@@ -165,6 +176,7 @@ export function AdminSpeechSettings() {
       setDraft(saved);
       queryClient.setQueryData(['admin-tts-settings'], saved);
       void queryClient.invalidateQueries({ queryKey: ['tts-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-tts-voices'] });
       toast(tr('平台语音设置已保存', 'Platform speech settings saved'), 'ok');
     },
     onError: (error) => toast(`${tr('保存失败', 'Save failed')}：${errorText(error)}`, 'error'),
@@ -173,6 +185,17 @@ export function AdminSpeechSettings() {
     mutationFn: (value: TTSAdminSettings) => api.testAdminTtsSettings(value),
     onSuccess: (result) => toast(tr(`连接成功，生成 ${result.audio_bytes.toLocaleString()} 字节音频`, `Connected; generated ${result.audio_bytes.toLocaleString()} bytes of audio`), 'ok'),
     onError: (error) => toast(`${tr('连接测试失败', 'Connection test failed')}：${errorText(error)}`, 'error'),
+  });
+  const voicesMutation = useMutation({
+    mutationFn: (value: TTSAdminSettings) => api.getAdminTtsVoices(value),
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        ['admin-tts-voices', draft?.base_url, draft?.model],
+        result,
+      );
+      toast(tr(`已发现 ${result.voices.length} 个音色`, `Found ${result.voices.length} voice(s)`), 'ok');
+    },
+    onError: (error) => toast(`${tr('读取音色失败', 'Failed to load voices')}：${errorText(error)}`, 'error'),
   });
 
   if (settingsQuery.isLoading) return <LoadingCard />;
@@ -184,6 +207,8 @@ export function AdminSpeechSettings() {
   const patch = <K extends keyof TTSAdminSettings>(key: K, value: TTSAdminSettings[K]) => {
     setDraft((current) => current ? { ...current, [key]: value } : current);
   };
+  const discoveredVoices = voicesMutation.data?.voices ?? voicesQuery.data?.voices ?? [];
+  const voiceOptions = Array.from(new Set([draft.default_voice, ...discoveredVoices]));
 
   return (
     <div className="card card-pad" style={{ marginTop: 20 }}>
@@ -194,7 +219,7 @@ export function AdminSpeechSettings() {
             {tr('语音模型', 'Speech model')}
           </div>
           <div style={{ marginTop: 5, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
-            {tr('配置 OpenAI Speech 兼容接口。Polaris 会鉴权、清理 Markdown，并缓存生成的 WAV。', 'Configure an OpenAI Speech-compatible endpoint. Polaris authenticates requests, cleans Markdown, and caches generated WAV files.')}
+            {tr('配置 OpenAI Speech 兼容接口。Polaris 会鉴权、清理 Markdown，并把语音实时传到浏览器播放。', 'Configure an OpenAI Speech-compatible endpoint. Polaris authenticates requests, cleans Markdown, and streams speech to the browser in real time.')}
           </div>
         </div>
         <Switch checked={draft.enabled} onChange={(enabled) => patch('enabled', enabled)} aria-label={tr('启用平台语音服务', 'Enable platform speech')} />
@@ -207,8 +232,29 @@ export function AdminSpeechSettings() {
         <FormField label={tr('模型', 'Model')}>
           <input className="input mono" value={draft.model} onChange={(event) => patch('model', event.target.value)} />
         </FormField>
-        <FormField label={tr('默认音色', 'Default voice')}>
-          <input className="input mono" value={draft.default_voice} onChange={(event) => patch('default_voice', event.target.value)} />
+        <FormField
+          label={tr('默认音色', 'Default voice')}
+          hint={tr('音色列表由独立 TTS 服务提供。修改接口地址后可点击刷新。', 'Voices come from the standalone TTS service. Refresh after changing the endpoint.')}
+        >
+          <div className="row gap8">
+            <select
+              className="input mono"
+              value={draft.default_voice}
+              onChange={(event) => patch('default_voice', event.target.value)}
+              style={{ flex: 1 }}
+            >
+              {voiceOptions.map((voice) => <option key={voice} value={voice}>{voice}</option>)}
+            </select>
+            <button
+              type="button"
+              className="btn btn-ghost sm"
+              disabled={voicesMutation.isPending || voicesQuery.isFetching}
+              onClick={() => voicesMutation.mutate(draft)}
+            >
+              <Icon name="refresh" size={13} />
+              {tr('刷新', 'Refresh')}
+            </button>
+          </div>
         </FormField>
         <FormField
           label={tr('每段最长文本', 'Maximum segment length')}

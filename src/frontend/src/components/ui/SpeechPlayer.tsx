@@ -2,14 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { splitSpeechText } from '../../lib/speech';
+import { pcm16LeToFloat32, splitSpeechText } from '../../lib/speech';
 import { Icon } from './Icon';
 import { toast } from './Toast';
 
-type PlayerState = 'idle' | 'loading' | 'playing' | 'paused';
-type ChunkLoadResult = { ok: true; blob: Blob } | { ok: false; error: unknown };
+type PlayerState = 'idle' | 'connecting' | 'playing' | 'paused';
 
 const PLAYBACK_CHUNK_CHARS = 500;
+const START_BUFFER_SECONDS = 0.04;
 
 let stopActivePlayer: (() => void) | null = null;
 
@@ -27,6 +27,13 @@ function speechError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function audioContextConstructor(): typeof AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  return window.AudioContext
+    ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    ?? null;
+}
+
 export interface SpeechPlayerProps {
   text: string;
   context?: 'assistant' | 'digest';
@@ -34,7 +41,7 @@ export interface SpeechPlayerProps {
   className?: string;
 }
 
-/** 按需生成并播放语音；长文本按服务端限制分段并自动连续播放。 */
+/** Stream provider PCM directly into Web Audio while later text segments generate. */
 export function SpeechPlayer({
   text,
   context = 'assistant',
@@ -51,167 +58,182 @@ export function SpeechPlayer({
   const maxChars = settings?.max_chars ?? 20_000;
   const [state, setState] = useState<PlayerState>('idle');
   const [elapsed, setElapsed] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const urlRef = useRef<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const stopRef = useRef<(() => void) | null>(null);
-  const chunksRef = useRef<string[]>([]);
-  const chunkLoadsRef = useRef(new Map<number, Promise<ChunkLoadResult>>());
-  const startChunkRef = useRef<(index: number, controller: AbortController) => Promise<void>>(
-    async () => undefined,
-  );
   const [chunkIndex, setChunkIndex] = useState(0);
-
-  const clearAudio = useCallback(() => {
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load();
-    }
-    audioRef.current = null;
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    urlRef.current = null;
-  }, []);
+  const [chunkCount, setChunkCount] = useState(0);
+  const contextRef = useRef<AudioContext | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
+  const nextStartRef = useRef(0);
+  const playbackStartRef = useRef(0);
+  const streamDoneRef = useRef(false);
+  const stopRef = useRef<(() => void) | null>(null);
 
   const release = useCallback(() => {
     if (stopActivePlayer === stopRef.current) stopActivePlayer = null;
     abortRef.current?.abort();
     abortRef.current = null;
-    clearAudio();
-    chunksRef.current = [];
-    chunkLoadsRef.current.clear();
+    const sources = [...sourcesRef.current];
+    sourcesRef.current.clear();
+    for (const source of sources) {
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {
+        /* already ended */
+      }
+    }
+    const audioContext = contextRef.current;
+    contextRef.current = null;
+    if (audioContext && audioContext.state !== 'closed') void audioContext.close();
+    nextStartRef.current = 0;
+    playbackStartRef.current = 0;
+    streamDoneRef.current = false;
     setChunkIndex(0);
+    setChunkCount(0);
     setElapsed(0);
-    setDuration(0);
     setState('idle');
-  }, [clearAudio]);
+  }, []);
+  stopRef.current = release;
 
   useEffect(() => release, [release]);
   useEffect(() => {
     release();
   }, [text, context, release]);
 
-  const stop = release;
-  stopRef.current = stop;
+  useEffect(() => {
+    if (state !== 'playing' && state !== 'paused') return undefined;
+    const timer = window.setInterval(() => {
+      const audioContext = contextRef.current;
+      const start = playbackStartRef.current;
+      if (audioContext && start > 0) setElapsed(Math.max(0, audioContext.currentTime - start));
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [state]);
 
-  const loadChunk = useCallback((index: number, controller: AbortController) => {
-    const existing = chunkLoadsRef.current.get(index);
-    if (existing) return existing;
-    const chunk = chunksRef.current[index];
-    const request = chunk
-      ? api.synthesizeSpeech(chunk, context, controller.signal).then<ChunkLoadResult, ChunkLoadResult>(
-          (blob) => ({ ok: true, blob }),
-          (error: unknown) => ({ ok: false, error }),
-        )
-      : Promise.resolve<ChunkLoadResult>({ ok: false, error: new Error('TTS_EMPTY_CHUNK') });
-    chunkLoadsRef.current.set(index, request);
-    return request;
-  }, [context]);
-
-  const startChunk = useCallback(async (index: number, controller: AbortController) => {
-    const chunk = chunksRef.current[index];
-    if (!chunk || controller.signal.aborted) return;
-    setChunkIndex(index);
-    setElapsed(0);
-    setDuration(0);
-    setState('loading');
+  const runPlayback = useCallback(async (
+    chunks: string[],
+    audioContext: AudioContext,
+    controller: AbortController,
+  ) => {
+    let scheduledAudio = false;
     try {
-      const result = await loadChunk(index, controller);
-      chunkLoadsRef.current.delete(index);
-      if (!result.ok) throw result.error;
-      if (controller.signal.aborted) return;
-      clearAudio();
-      const url = URL.createObjectURL(result.blob);
-      const audio = new Audio(url);
-      urlRef.current = url;
-      audioRef.current = audio;
-      audio.addEventListener('loadedmetadata', () => setDuration(audio.duration));
-      audio.addEventListener('timeupdate', () => setElapsed(audio.currentTime));
-      audio.addEventListener('ended', () => {
+      for (let index = 0; index < chunks.length; index += 1) {
         if (controller.signal.aborted) return;
-        clearAudio();
-        const next = index + 1;
-        if (next < chunksRef.current.length) {
-          void startChunkRef.current(next, controller);
-        } else {
-          release();
+        setChunkIndex(index);
+        const chunk = chunks[index];
+        if (!chunk) continue;
+        const stream = await api.streamSpeech(chunk, context, controller.signal);
+        const reader = stream.body.getReader();
+        let trailingByte: number | null = null;
+        try {
+          while (!controller.signal.aborted) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const decoded = pcm16LeToFloat32(value, trailingByte);
+            trailingByte = decoded.trailingByte;
+            if (decoded.samples.length === 0) continue;
+
+            const buffer = audioContext.createBuffer(
+              1,
+              decoded.samples.length,
+              stream.sampleRate,
+            );
+            buffer.getChannelData(0).set(decoded.samples);
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.playbackRate.value = stream.playbackRate;
+            source.connect(audioContext.destination);
+
+            const startAt = scheduledAudio && nextStartRef.current >= audioContext.currentTime
+              ? nextStartRef.current
+              : audioContext.currentTime + START_BUFFER_SECONDS;
+            if (!scheduledAudio) playbackStartRef.current = startAt;
+            nextStartRef.current = startAt + buffer.duration / stream.playbackRate;
+            sourcesRef.current.add(source);
+            source.onended = () => {
+              sourcesRef.current.delete(source);
+              if (streamDoneRef.current && sourcesRef.current.size === 0) release();
+            };
+            source.start(startAt);
+            if (!scheduledAudio) {
+              scheduledAudio = true;
+              setState('playing');
+            }
+          }
+        } finally {
+          reader.releaseLock();
         }
-      });
-      await audio.play();
-      if (!controller.signal.aborted) {
-        setState('playing');
-        if (index + 1 < chunksRef.current.length) {
-          // CosyVoice runs slightly faster than real time. Preparing one part
-          // while the current part plays normally removes the segment gap.
-          void loadChunk(index + 1, controller);
-        }
+        if (trailingByte !== null) throw new Error('TTS_INVALID_PCM_STREAM');
       }
+      if (!scheduledAudio) throw new Error('TTS_EMPTY_STREAM');
+      streamDoneRef.current = true;
+      if (sourcesRef.current.size === 0) release();
     } catch (error) {
       if (!controller.signal.aborted) {
         release();
         toast(`${tr('播放失败', 'Playback failed')}：${speechError(error)}`, 'error');
       }
     }
-  }, [clearAudio, loadChunk, release]);
-  startChunkRef.current = startChunk;
+  }, [context, release]);
 
   const play = useCallback(async () => {
     const cleanText = text.trim();
     if (!cleanText) return;
 
-    if (state === 'loading') {
+    if (state === 'connecting') {
       release();
       return;
     }
     if (state === 'playing') {
-      audioRef.current?.pause();
+      await contextRef.current?.suspend();
       setState('paused');
       return;
     }
-
-    if (audioRef.current) {
-      if (stopActivePlayer !== stop) stopActivePlayer?.();
-      stopActivePlayer = stop;
-      try {
-        await audioRef.current.play();
-        setState('playing');
-      } catch (error) {
-        toast(`${tr('播放失败', 'Playback failed')}：${speechError(error)}`, 'error');
-      }
+    if (state === 'paused') {
+      if (stopActivePlayer !== release) stopActivePlayer?.();
+      stopActivePlayer = release;
+      await contextRef.current?.resume();
+      setState('playing');
       return;
     }
 
+    const AudioContextClass = audioContextConstructor();
+    if (!AudioContextClass) {
+      toast(tr('当前浏览器不支持实时语音播放', 'This browser does not support live speech playback'), 'error');
+      return;
+    }
+    if (stopActivePlayer !== release) stopActivePlayer?.();
+    stopActivePlayer = release;
     const controller = new AbortController();
+    const audioContext = new AudioContextClass({ latencyHint: 'interactive' });
     abortRef.current = controller;
-    if (stopActivePlayer !== stop) stopActivePlayer?.();
-    stopActivePlayer = stop;
-    setState('loading');
+    contextRef.current = audioContext;
+    setState('connecting');
     try {
-      // Leave a small normalization margin because the API replaces omitted
-      // Markdown code blocks with a short spoken marker.
+      await audioContext.resume();
+      // Leave a normalization margin because omitted Markdown code blocks are
+      // replaced by a short spoken marker on the server.
       const providerLimit = Math.max(1, maxChars - 64);
-      chunksRef.current = splitSpeechText(
+      const chunks = splitSpeechText(
         cleanText,
         Math.min(PLAYBACK_CHUNK_CHARS, providerLimit),
       );
-      await startChunk(0, controller);
+      setChunkCount(chunks.length);
+      void runPlayback(chunks, audioContext, controller);
     } catch (error) {
       if (!controller.signal.aborted) {
         release();
         toast(`${tr('播放失败', 'Playback failed')}：${speechError(error)}`, 'error');
       }
     }
-  }, [maxChars, release, startChunk, state, stop, text]);
+  }, [maxChars, release, runPlayback, state, text]);
 
   if (!settings || !settings.available || !settings.enabled || !text.trim()) return null;
 
-  const active = state === 'playing' || state === 'paused';
-  const chunkCount = chunksRef.current.length;
+  const active = state !== 'idle';
   const chunkProgress = chunkCount > 1 ? `${chunkIndex + 1}/${chunkCount}` : '';
-  const title = state === 'loading'
-    ? `${tr('取消生成语音', 'Cancel speech generation')}${chunkProgress ? ` · ${chunkProgress}` : ''}`
+  const title = state === 'connecting'
+    ? tr('取消实时语音', 'Cancel live speech')
     : state === 'playing'
       ? tr('暂停', 'Pause')
       : state === 'paused'
@@ -229,37 +251,36 @@ export function SpeechPlayer({
         style={{ width: 24, height: 24 }}
       >
         <Icon
-          name={state === 'playing' ? 'pause' : state === 'loading' ? 'refresh' : 'play'}
+          name={state === 'playing' ? 'pause' : state === 'connecting' ? 'refresh' : 'play'}
           size={12}
-          style={state === 'loading' ? { animation: 'spin 1s linear infinite' } : undefined}
+          style={state === 'connecting' ? { animation: 'spin 1s linear infinite' } : undefined}
         />
       </button>
     );
   }
 
-  const progress = duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0;
   return (
     <div className={`speech-player ${active ? 'active' : ''} ${className}`.trim()}>
       <button type="button" className="speech-player-button" onClick={() => void play()} aria-label={title}>
         <span className="speech-player-icon">
           <Icon
-            name={state === 'playing' ? 'pause' : state === 'loading' ? 'refresh' : 'play'}
+            name={state === 'playing' ? 'pause' : state === 'connecting' ? 'refresh' : 'play'}
             size={14}
-            style={state === 'loading' ? { animation: 'spin 1s linear infinite' } : undefined}
+            style={state === 'connecting' ? { animation: 'spin 1s linear infinite' } : undefined}
           />
         </span>
         <span>
-          {state === 'loading'
-            ? `${tr('正在生成语音…', 'Generating speech…')}${chunkProgress ? ` ${chunkProgress}` : ''}`
+          {state === 'connecting'
+            ? tr('正在连接实时语音…', 'Connecting live speech…')
             : title}
         </span>
       </button>
       <div className="speech-player-track" aria-hidden="true">
-        <span style={{ width: `${progress}%` }} />
+        <span style={{ width: active ? '100%' : '0%' }} />
       </div>
-      {active && (
+      {(state === 'playing' || state === 'paused') && (
         <span className="speech-player-time">
-          {chunkProgress ? `${chunkProgress} · ` : ''}{formatTime(elapsed)} / {formatTime(duration)}
+          {chunkProgress ? `${chunkProgress} · ` : ''}{tr('实时', 'Live')} · {formatTime(elapsed)}
         </span>
       )}
     </div>

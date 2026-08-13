@@ -21,6 +21,11 @@ class TTSTestResult(BaseModel):
     audio_bytes: int
 
 
+class TTSVoicesResult(BaseModel):
+    voices: list[str]
+    sample_rate: int | None = None
+
+
 class TTSUserSettingsUpdate(BaseModel):
     enabled: bool = True
     # None means "follow the administrator's current model".

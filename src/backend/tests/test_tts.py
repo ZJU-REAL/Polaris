@@ -107,6 +107,37 @@ async def test_admin_and_personal_tts_settings(client):
     assert invalid.json()["detail"] == "INVALID_TTS_SETTING:model"
 
 
+@respx.mock
+async def test_admin_discovers_provider_voices(client):
+    admin = await _headers(client)
+    config = {
+        "enabled": True,
+        "provider": "openai_compatible",
+        "base_url": "http://speech.test/v1",
+        "model": "cosy-test",
+        "default_voice": "default",
+        "default_speed": 1.0,
+        "max_chars": 2000,
+    }
+    respx.get("http://speech.test/v1/voices").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "sample_rate": 24000,
+                "data": [{"id": "default"}, {"id": "calm"}],
+            },
+        )
+    )
+
+    response = await client.post(
+        "/api/admin/settings/tts/voices", headers=admin, json=config
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"voices": ["default", "calm"], "sample_rate": 24000}
+
+
 async def test_invalid_admin_url_is_rejected(client):
     admin = await _headers(client)
     response = await client.put(
@@ -164,6 +195,47 @@ async def test_speech_is_authenticated_and_cached(client):
     body = upstream.calls[0].request.content.decode()
     assert "**" not in body
     assert "[1]" not in body
+
+
+@respx.mock
+async def test_speech_pcm_is_streamed_without_wav_buffering(client):
+    admin = await _headers(client)
+    config = {
+        "enabled": True,
+        "provider": "openai_compatible",
+        "base_url": "http://speech.test/v1",
+        "model": "cosy-test",
+        "default_voice": "default",
+        "default_speed": 1.25,
+        "max_chars": 2000,
+    }
+    assert (
+        await client.put("/api/admin/settings/tts", headers=admin, json=config)
+    ).status_code == 200
+    upstream = respx.post("http://speech.test/v1/audio/speech").mock(
+        return_value=httpx.Response(
+            200,
+            content=b"\x00\x80\xff\x7f",
+            headers={"X-Audio-Sample-Rate": "24000"},
+        )
+    )
+
+    response = await client.post(
+        "/api/tts/speech/stream",
+        headers=admin,
+        json={"text": "# Hello\n\n**stream** [1]", "context": "digest"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.content == b"\x00\x80\xff\x7f"
+    assert response.headers["content-type"].startswith("audio/pcm")
+    assert response.headers["x-audio-sample-rate"] == "24000"
+    assert response.headers["x-audio-playback-rate"] == "1.25"
+    request_body = upstream.calls[0].request.content.decode()
+    assert '"response_format":"pcm"' in request_body
+    assert '"speed":1.0' in request_body
+    assert "**" not in request_body
+    assert "[1]" not in request_body
 
 
 async def test_disabled_tts_returns_service_unavailable(client):

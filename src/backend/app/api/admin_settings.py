@@ -16,7 +16,7 @@ from app.schemas.admin_settings import (
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
 )
-from app.schemas.tts import TTSAdminSettings, TTSTestResult
+from app.schemas.tts import TTSAdminSettings, TTSTestResult, TTSVoicesResult
 from app.services import affiliations as affiliations_service
 from app.services import daily_feed as daily_service
 from app.services import embedding as embedding_service
@@ -192,3 +192,17 @@ async def test_tts_settings(payload: TTSAdminSettings) -> TTSTestResult:
     except tts_service.TTSNotAvailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return TTSTestResult(ok=True, model=payload.model, audio_bytes=audio_bytes)
+
+
+@router.post("/tts/voices", response_model=TTSVoicesResult)
+async def get_tts_voices(payload: TTSAdminSettings) -> TTSVoicesResult:
+    """Discover voices from an unsaved draft endpoint."""
+    try:
+        voices, sample_rate = await tts_service.discover_voices(payload.model_dump())
+    except tts_service.InvalidTTSSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_TTS_SETTING:{exc.field}"
+        ) from exc
+    except tts_service.TTSNotAvailableError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return TTSVoicesResult(voices=voices, sample_rate=sample_rate)

@@ -1,7 +1,7 @@
 """Authenticated speech synthesis and personal playback settings."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
@@ -62,4 +62,34 @@ async def synthesize_speech(
         media_type="audio/wav",
         filename=f"polaris-{payload.context}.wav",
         headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@router.post("/speech/stream")
+async def stream_speech(
+    payload: TTSSpeechRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> StreamingResponse:
+    try:
+        stream = await tts_service.open_speech_stream(
+            session, user=user, source=payload.text
+        )
+    except tts_service.TTSNotAvailableError as exc:
+        detail = str(exc)
+        code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if detail.startswith(
+            "TTS_TEXT_TOO_LONG"
+        ) else status.HTTP_503_SERVICE_UNAVAILABLE
+        raise HTTPException(code, detail=detail) from exc
+    return StreamingResponse(
+        stream.content,
+        media_type="audio/pcm",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+            "X-Audio-Sample-Rate": str(stream.sample_rate),
+            "X-Audio-Channels": "1",
+            "X-Audio-Sample-Format": "s16le",
+            "X-Audio-Playback-Rate": str(stream.playback_rate),
+        },
     )

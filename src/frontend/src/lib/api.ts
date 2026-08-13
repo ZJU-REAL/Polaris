@@ -140,6 +140,36 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
   return res.blob();
 }
 
+/** Streaming response that deliberately leaves the body unread for Web Audio. */
+async function requestStream(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = getToken();
+  if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
+  if (res.status === 401 && token && !path.startsWith('/auth/')) {
+    setToken(null);
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.assign('/login');
+    }
+  }
+  if (!res.ok) {
+    let detail = res.statusText || `HTTP ${res.status}`;
+    let body: unknown;
+    try {
+      body = await res.json();
+      if (body && typeof body === 'object' && 'detail' in body) {
+        const value = (body as { detail: unknown }).detail;
+        detail = typeof value === 'string' ? value : JSON.stringify(value);
+      }
+    } catch {
+      /* keep statusText */
+    }
+    throw new ApiError(res.status, readOnlyMessage(detail), body);
+  }
+  if (!res.body) throw new ApiError(502, 'TTS_EMPTY_STREAM');
+  return res;
+}
+
 // ============================================================
 // Users
 // ============================================================
@@ -189,6 +219,17 @@ export interface TTSTestResult {
   ok: boolean;
   model: string;
   audio_bytes: number;
+}
+
+export interface TTSVoicesResult {
+  voices: string[];
+  sample_rate: number | null;
+}
+
+export interface TTSSpeechStream {
+  body: ReadableStream<Uint8Array>;
+  sampleRate: number;
+  playbackRate: number;
 }
 
 export interface TTSUserSettings {
@@ -4492,6 +4533,9 @@ export const api = {
   testAdminTtsSettings(payload: TTSAdminSettings): Promise<TTSTestResult> {
     return requestJson<TTSTestResult>('/admin/settings/tts/test', 'POST', payload);
   },
+  getAdminTtsVoices(payload: TTSAdminSettings): Promise<TTSVoicesResult> {
+    return requestJson<TTSVoicesResult>('/admin/settings/tts/voices', 'POST', payload);
+  },
   /** 给最近 7 天里还没有向量的每日论文补建向量（可能耗时几十秒）。 */
   backfillDailyEmbeddings(): Promise<DailyEmbedBackfillResult> {
     return request<DailyEmbedBackfillResult>('/admin/settings/daily-embed/backfill', { method: 'POST' });
@@ -4540,6 +4584,25 @@ export const api = {
       body: JSON.stringify({ text, context }),
       signal,
     });
+  },
+  async streamSpeech(
+    text: string,
+    context: 'assistant' | 'digest',
+    signal?: AbortSignal,
+  ): Promise<TTSSpeechStream> {
+    const response = await requestStream('/tts/speech/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, context }),
+      signal,
+    });
+    const sampleRate = Number(response.headers.get('X-Audio-Sample-Rate'));
+    const playbackRate = Number(response.headers.get('X-Audio-Playback-Rate'));
+    return {
+      body: response.body!,
+      sampleRate: Number.isFinite(sampleRate) && sampleRate >= 8_000 ? sampleRate : 24_000,
+      playbackRate: Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1,
+    };
   },
 
   // —— 我的 LLM（每个用户自管那一层，/me/llm） ——

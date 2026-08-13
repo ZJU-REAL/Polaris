@@ -37,3 +37,37 @@ export function splitSpeechText(text: string, maxChars: number): string[] {
   }
   return parts;
 }
+
+/** Decode arbitrary network chunks of mono signed 16-bit little-endian PCM. */
+export function pcm16LeToFloat32(
+  bytes: Uint8Array,
+  leadingByte: number | null = null,
+): { samples: Float32Array; trailingByte: number | null } {
+  const totalBytes = bytes.byteLength + (leadingByte === null ? 0 : 1);
+  const evenBytes = totalBytes - (totalBytes % 2);
+  const samples = new Float32Array(evenBytes / 2);
+  let sampleIndex = 0;
+  let byteIndex = 0;
+
+  if (bytes.byteLength === 0) {
+    return { samples, trailingByte: leadingByte };
+  }
+
+  if (leadingByte !== null && bytes.byteLength > 0) {
+    const value = (leadingByte | (bytes[0]! << 8)) << 16 >> 16;
+    samples[sampleIndex] = value / (value < 0 ? 32_768 : 32_767);
+    sampleIndex += 1;
+    byteIndex = 1;
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  while (sampleIndex < samples.length && byteIndex + 1 < bytes.byteLength) {
+    const value = view.getInt16(byteIndex, true);
+    samples[sampleIndex] = value / (value < 0 ? 32_768 : 32_767);
+    sampleIndex += 1;
+    byteIndex += 2;
+  }
+  return {
+    samples,
+    trailingByte: byteIndex < bytes.byteLength ? bytes[bytes.byteLength - 1]! : null,
+  };
+}

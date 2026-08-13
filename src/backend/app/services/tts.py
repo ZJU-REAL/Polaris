@@ -8,6 +8,8 @@ import html
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -46,6 +48,13 @@ class InvalidTTSSettingError(ValueError):
 
 class TTSNotAvailableError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class SpeechStream:
+    content: AsyncIterator[bytes]
+    sample_rate: int
+    playback_rate: float
 
 
 def _defaults() -> dict[str, Any]:
@@ -246,6 +255,121 @@ async def test_admin_settings(raw: Any) -> int:
         "effective_speed": config["default_speed"],
     }
     return len(await _request_audio(effective, "Polaris 语音服务连接测试。"))
+
+
+async def discover_voices(raw: Any) -> tuple[list[str], int | None]:
+    """Read provider capabilities for the admin voice selector."""
+    config = validate_system(raw)
+    timeout = httpx.Timeout(connect=10, read=20, write=10, pool=10)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.get(f"{config['base_url']}/voices")
+    except httpx.HTTPError as exc:
+        raise TTSNotAvailableError(f"TTS_UPSTREAM_UNREACHABLE:{type(exc).__name__}") from exc
+
+    # OpenAI's public API does not expose voice discovery. Keep configured
+    # values usable with compatible providers that follow that behavior.
+    if response.status_code in {404, 405}:
+        return [config["default_voice"]], None
+    if response.status_code >= 400:
+        raise TTSNotAvailableError(f"TTS_UPSTREAM_ERROR:{response.status_code}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise TTSNotAvailableError("TTS_INVALID_VOICES") from exc
+
+    raw_voices = payload.get("data", []) if isinstance(payload, dict) else []
+    voices: list[str] = []
+    if isinstance(raw_voices, list):
+        for item in raw_voices:
+            value = item.get("id") if isinstance(item, dict) else item
+            voice = str(value or "").strip()
+            if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", voice) and voice not in voices:
+                voices.append(voice)
+    if config["default_voice"] not in voices:
+        voices.insert(0, config["default_voice"])
+    if not voices:
+        raise TTSNotAvailableError("TTS_INVALID_VOICES")
+
+    sample_rate: int | None = None
+    if isinstance(payload, dict):
+        try:
+            candidate = int(payload.get("sample_rate"))
+            if 8_000 <= candidate <= 192_000:
+                sample_rate = candidate
+        except (TypeError, ValueError):
+            pass
+    return voices, sample_rate
+
+
+async def open_speech_stream(
+    session: AsyncSession,
+    *,
+    user: User,
+    source: str,
+) -> SpeechStream:
+    """Open an upstream PCM stream without buffering it in Polaris."""
+    admin, effective = await effective_settings(session, user)
+    if not effective["available"]:
+        raise TTSNotAvailableError("TTS_DISABLED")
+    text = text_for_speech(source)
+    if not text:
+        raise TTSNotAvailableError("TTS_EMPTY_TEXT")
+    if len(text) > admin["max_chars"]:
+        raise TTSNotAvailableError(f"TTS_TEXT_TOO_LONG:{admin['max_chars']}")
+
+    timeout = httpx.Timeout(connect=10, read=600, write=30, pool=10)
+    client = httpx.AsyncClient(timeout=timeout, trust_env=False)
+    request = client.build_request(
+        "POST",
+        f"{admin['base_url']}/audio/speech",
+        json={
+            "model": effective["effective_model"],
+            "input": text,
+            "voice": effective["effective_voice"],
+            # Streaming CosyVoice emits natural-speed PCM. The browser uses
+            # the effective speed as AudioBufferSourceNode.playbackRate.
+            "speed": 1.0,
+            "response_format": "pcm",
+        },
+    )
+    try:
+        response = await client.send(request, stream=True)
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        raise TTSNotAvailableError(f"TTS_UPSTREAM_UNREACHABLE:{type(exc).__name__}") from exc
+    if response.status_code >= 400:
+        body = await response.aread()
+        logger.warning("TTS stream upstream returned %d: %s", response.status_code, body[:500])
+        await response.aclose()
+        await client.aclose()
+        raise TTSNotAvailableError(f"TTS_UPSTREAM_ERROR:{response.status_code}")
+
+    try:
+        sample_rate = int(response.headers.get("X-Audio-Sample-Rate", "24000"))
+    except ValueError:
+        sample_rate = 24_000
+    if not 8_000 <= sample_rate <= 192_000:
+        sample_rate = 24_000
+
+    async def content() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in response.aiter_raw():
+                if chunk:
+                    yield chunk
+        except httpx.HTTPError as exc:
+            raise TTSNotAvailableError(
+                f"TTS_UPSTREAM_UNREACHABLE:{type(exc).__name__}"
+            ) from exc
+        finally:
+            await response.aclose()
+            await client.aclose()
+
+    return SpeechStream(
+        content=content(),
+        sample_rate=sample_rate,
+        playback_rate=effective["effective_speed"],
+    )
 
 
 async def synthesize_to_cache(
