@@ -25,7 +25,13 @@ RELEVANCE_SYSTEM_PROMPT = """\
 你是文献相关性评审，对照研究方向定义评估一篇论文（只看标题与摘要）。
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
 {"score": 0 到 1 之间的小数, "reason": "简要理由", "tldr": "一句话中文总结"}
-"""
+
+reason 与 tldr 是两回事，别写成同一句：
+- reason 是**给这个方向的判词**，可以说相关或不相关、缺了什么。
+- tldr 是**这篇论文本身**的一句话总结：它解决什么问题、方法核心是什么、效果如何。
+  **不要提研究方向，不要出现「相关性较低」「不涉及……」这类判断。**
+  一篇论文全平台只有一份 tldr，被所有文献库共用——写成对某个方向的判词，别的库
+  看到的就是一句与自己无关的评价。"""
 
 
 @dataclass
@@ -143,7 +149,10 @@ async def score_paper_relevance(
     data = _extract_json(result.content)
     score = min(1.0, max(0.0, float(data["score"])))
     membership.relevance_score = score
-    paper.tldr = str(data.get("tldr") or "") or paper.tldr
+    # **只在空的时候填。** 打分是库侧判断，而 tldr 挂在全平台共享的论文上：谁最后
+    # 打分谁就覆盖掉前一个库（乃至编译产出的正式 TL;DR），于是所有库看到的都是最后
+    # 那个库的判词。这里只当「还没有摘要时的临时占位」，编译一跑就由正式的接管。
+    paper.tldr = paper.tldr or str(data.get("tldr") or "")
     membership.scored_at = utcnow()
     membership.scored_run_id = voyage_id  # 手动加论文没有任务，留 NULL
     return RelevanceResult(score=score, reason=str(data.get("reason") or ""), tldr=paper.tldr or "")

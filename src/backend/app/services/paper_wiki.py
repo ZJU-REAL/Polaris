@@ -43,6 +43,13 @@ async def upsert_wiki(
         wiki.model = model
         wiki.compiled_by = compiled_by
         wiki.updated_at = utcnow()  # 内容不变时也算一次新编译
+    # 解读里的 ## TL;DR 是这篇论文**权威的**一句话总结：编译提示词不带任何库的方向
+    # 陈述或 rubric，所以它对全平台是同一份。同步回 paper.tldr，覆盖掉打分阶段可能
+    # 留下的临时占位——那份是对着某一个库的方向写的，不该被别的库当成论文摘要看。
+    from app.services.obsidian_vault_sync import extract_tldr
+
+    if (compiled_tldr := extract_tldr(content)):
+        paper.tldr = compiled_tldr
     await session.flush()
     # 内存里的 paper 跟上（后续 link_paper_concepts / 出参都直接读 paper.wiki_content）
     set_committed_value(paper, "wiki", wiki)
