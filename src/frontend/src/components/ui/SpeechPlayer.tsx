@@ -8,8 +8,11 @@ import { toast } from './Toast';
 
 type PlayerState = 'idle' | 'connecting' | 'playing' | 'paused';
 
-const PLAYBACK_CHUNK_CHARS = 500;
+// Keep one GPU reservation short. Long 500-character requests can monopolize
+// the single CosyVoice runtime for tens of seconds and make another click wait.
+const PLAYBACK_CHUNK_CHARS = 80;
 const START_BUFFER_SECONDS = 0.04;
+const STREAM_TIMEOUT_MS = 15_000;
 
 let stopActivePlayer: (() => void) | null = null;
 
@@ -24,7 +27,27 @@ function speechError(error: unknown): string {
     if (error.status === 413) return tr('语音分段失败，请重试', 'Speech segmentation failed; try again');
     if (error.status === 503) return tr('语音服务暂时不可用', 'Speech service is temporarily unavailable');
   }
+  if (error instanceof Error && error.message === 'TTS_STREAM_TIMEOUT') {
+    return tr('语音响应超时，请重试', 'Speech response timed out; try again');
+  }
   return error instanceof Error ? error.message : String(error);
+}
+
+async function withStreamTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = window.setTimeout(
+          () => reject(new Error('TTS_STREAM_TIMEOUT')),
+          STREAM_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
+  }
 }
 
 function audioContextConstructor(): typeof AudioContext | null {
@@ -122,12 +145,14 @@ export function SpeechPlayer({
         setChunkIndex(index);
         const chunk = chunks[index];
         if (!chunk) continue;
-        const stream = await api.streamSpeech(chunk, context, controller.signal);
+        const stream = await withStreamTimeout(
+          api.streamSpeech(chunk, context, controller.signal),
+        );
         const reader = stream.body.getReader();
         let trailingByte: number | null = null;
         try {
           while (!controller.signal.aborted) {
-            const { done, value } = await reader.read();
+            const { done, value } = await withStreamTimeout(reader.read());
             if (done) break;
             const decoded = pcm16LeToFloat32(value, trailingByte);
             trailingByte = decoded.trailingByte;
@@ -161,6 +186,13 @@ export function SpeechPlayer({
             }
           }
         } finally {
+          if (controller.signal.aborted) {
+            try {
+              await reader.cancel();
+            } catch {
+              /* fetch abort already closed the body */
+            }
+          }
           reader.releaseLock();
         }
         if (trailingByte !== null) throw new Error('TTS_INVALID_PCM_STREAM');
