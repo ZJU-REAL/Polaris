@@ -42,6 +42,7 @@ import {
   type SshCredentialInput,
 } from '../../lib/api';
 import { BuddySettings } from './BuddySettings';
+import { PersonalSpeechSettings } from './SpeechSettings';
 
 /* ============================================================
    /settings — 普通用户设置：个人信息 / 文献对话 / 界面偏好 / SSH 凭据 /
@@ -2745,7 +2746,7 @@ function MyUsageTab() {
 // ---------------- 页面 ----------------
 
 /** 普通用户设置的标签页（管理员那组在 /admin，见 AdminSettingsPage）。 */
-type Tab = 'personal' | 'prefs' | 'buddy' | 'bots' | 'ssh' | 'mymodels' | 'myusage' | 'mcp';
+type Tab = 'personal' | 'prefs' | 'buddy' | 'speech' | 'bots' | 'ssh' | 'mymodels' | 'myusage' | 'mcp';
 
 /** 旧的 /settings?tab=xxx 深链里属于管理员组的值 → 统一改跳 /admin。 */
 export const ADMIN_TABS = ['llm', 'daily', 'usage', 'users', 'codes', 'feedback'] as const;
@@ -4022,7 +4023,7 @@ export function CodesTab() {
   );
 }
 
-const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'bots', 'ssh', 'mymodels', 'myusage', 'mcp'];
+const PERSONAL_TABS: Tab[] = ['personal', 'prefs', 'buddy', 'speech', 'bots', 'ssh', 'mymodels', 'myusage', 'mcp'];
 
 export function SettingsPage() {
   // 支持 /settings?tab=mcp 这类深链（如旧 /mcp-tools 路由的重定向）
@@ -4041,6 +4042,7 @@ export function SettingsPage() {
     { v: 'personal', label: tr('个人信息', 'Profile') },
     { v: 'prefs', label: tr('界面偏好', 'Interface') },
     { v: 'buddy', label: 'PolarisBuddy' },
+    { v: 'speech', label: tr('语音听读', 'Speech') },
     { v: 'bots', label: tr('群机器人', 'Group bots') },
     { v: 'ssh', label: tr('SSH 凭据', 'SSH credentials') },
     { v: 'mymodels', label: tr('我的模型', 'My LLM') },
@@ -4057,6 +4059,7 @@ export function SettingsPage() {
       {tab === 'personal' && <PersonalTab />}
       {tab === 'prefs' && <PreferencesTab />}
       {tab === 'buddy' && <BuddySettings />}
+      {tab === 'speech' && <PersonalSpeechSettings />}
       {tab === 'bots' && <ChatBotsTab />}
       {tab === 'ssh' && <SshTab />}
       {tab === 'mymodels' && <MyLlmTab />}

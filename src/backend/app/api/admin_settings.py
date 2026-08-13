@@ -16,11 +16,13 @@ from app.schemas.admin_settings import (
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
 )
+from app.schemas.tts import TTSAdminSettings, TTSTestResult
 from app.services import affiliations as affiliations_service
 from app.services import daily_feed as daily_service
 from app.services import embedding as embedding_service
 from app.services import experiment_settings as experiment_settings_service
 from app.services import lab as lab_service
+from app.services import tts as tts_service
 
 router = APIRouter(
     prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(require_admin)]
@@ -154,3 +156,39 @@ async def set_experiment_env(
             detail=f"INVALID_EXPERIMENT_SETTING:{exc.field}",
         ) from exc
     return ExperimentEnvSettings(**saved)
+
+
+@router.get("/tts", response_model=TTSAdminSettings)
+async def get_tts_settings(
+    session: AsyncSession = Depends(get_session),
+) -> TTSAdminSettings:
+    """Platform speech provider and default model."""
+    return TTSAdminSettings(**await tts_service.get_admin_settings(session))
+
+
+@router.put("/tts", response_model=TTSAdminSettings)
+async def set_tts_settings(
+    payload: TTSAdminSettings,
+    session: AsyncSession = Depends(get_session),
+) -> TTSAdminSettings:
+    try:
+        saved = await tts_service.set_admin_settings(session, payload.model_dump())
+    except tts_service.InvalidTTSSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_TTS_SETTING:{exc.field}"
+        ) from exc
+    return TTSAdminSettings(**saved)
+
+
+@router.post("/tts/test", response_model=TTSTestResult)
+async def test_tts_settings(payload: TTSAdminSettings) -> TTSTestResult:
+    """Synthesize a short sample with the unsaved draft configuration."""
+    try:
+        audio_bytes = await tts_service.test_admin_settings(payload.model_dump())
+    except tts_service.InvalidTTSSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"INVALID_TTS_SETTING:{exc.field}"
+        ) from exc
+    except tts_service.TTSNotAvailableError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return TTSTestResult(ok=True, model=payload.model, audio_bytes=audio_bytes)

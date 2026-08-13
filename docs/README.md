@@ -24,6 +24,7 @@ For a high-level tour of the product and its feature set, start with the
 | [Writing guide](writing.md) | The paper-writing stage: LaTeX projects and templates, collaborative editing, agent drafting bound to real metrics and citations, and compilation. |
 | [Paper review guide](paper-review.md) | The paper-review stage: citation existence and support verification, number fact-checking, and the multi-perspective reviewer agents. |
 | [PolarisBuddy](buddy.md) | The in-app assistant: chat, plan, and goal modes, the tool loop, page context, and per-user memory. |
+| [AI read-aloud through a TTS API](tts.md) | Playing AI answers and daily digests through a separately deployed OpenAI Speech-compatible API. |
 | [Skills](skills.md) | Packaging agent behavior as data: skill types, injection points, the marketplace, and per-run snapshots. |
 | [The Task System](task-system.md) | The long-running agent tasks (`VoyageRun`): the data model, the three run modes, library vs. topic tasks, who can see what, the action registry, acceptance checks, checkpoints, budgets, logs, failure handling, and the cron schedules. |
 | [Literature Management](literature-management.md) | The single content pool and the four collections on top of it (direction library, topic shelf, personal library, daily feed), library ownership and management rights, tags, the trash, and the paper lifecycle: download, extract, chunk, embed, extract figures, compile, delete + orphan GC. |

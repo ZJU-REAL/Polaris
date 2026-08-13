@@ -36,8 +36,17 @@ noted below.
 | `POLARIS_S2_API_KEY` | Semantic Scholar API key. Optional; without it rate limits are stricter. | (empty) |
 | `POLARIS_OPENALEX_MAILTO` | Contact email for the OpenAlex polite pool. | `polaris@example.org` |
 | `POLARIS_DATA_DIR` | Directory for PDFs and generated artifacts. In containers this is set to `/srv/data` and bind-mounted; keep it out of the code tree. | `./data` (containers: `/srv/data`) |
+| `POLARIS_TTS_ENABLED` | Initial availability of AI read-aloud. An administrator can override this value from **Manage > Speech model**. | `false` |
+| `POLARIS_TTS_BASE_URL` | Base URL of a separately deployed OpenAI Speech-compatible API. The Polaris Docker stack can reach a host service through `host.docker.internal`. | `http://host.docker.internal:50000/v1` |
+| `POLARIS_TTS_MODEL` | Initial administrator-approved model name sent to the external API. | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` |
+| `POLARIS_TTS_MAX_CHARS` | Maximum normalized characters in one synthesis request. | `20000` |
 | `POLARIS_OUTBOUND_PROXY` | HTTP proxy for outbound literature API calls (arXiv, Semantic Scholar, OpenAlex) when direct access is unreliable. Not used for LLM or internal traffic. From inside Docker, reach a host proxy via `host.docker.internal`. | (empty), e.g. `http://host.docker.internal:7897` |
 | `POLARIS_PIP_INDEX_URL` | Optional pip mirror used on the remote experiment servers. | (empty), e.g. `https://pypi.tuna.tsinghua.edu.cn/simple` |
+
+The `POLARIS_TTS_*` variables seed the speech settings when no database-backed
+administrator setting exists. Polaris doesn't deploy a model runtime. For the
+provider contract and runtime behavior, see
+[AI read-aloud through a TTS API](tts.md).
 
 > [!NOTE]
 > LLM provider keys are the initial seed. The provider keys and the model routing table can also be

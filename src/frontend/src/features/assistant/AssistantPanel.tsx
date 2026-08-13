@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
+import { SpeechPlayer } from '../../components/ui/SpeechPlayer';
 import { PolarisMark } from '../../components/ui/PolarisLogo';
 import { Markdown } from '../../lib/markdown';
 import { api } from '../../lib/api';
@@ -1094,6 +1095,12 @@ export function AssistantPanel({
                       反馈按钮是摆设，点了之后什么都没发生比没有按钮更伤信任。 */}
                   {!busy && turn.blocks.some((b) => b.kind === 'text') && (
                     <div className="row gap4" style={{ marginTop: 8, alignItems: 'center' }}>
+                      <SpeechPlayer
+                        text={turn.blocks
+                          .filter((b) => b.kind === 'text')
+                          .map((b) => (b.kind === 'text' ? b.text : ''))
+                          .join('\n')}
+                      />
                       <button
                         className="icon-btn"
                         title={tr('复制回答', 'Copy answer')}

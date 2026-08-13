@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icon, type IconName } from '../../components/ui/Icon';
+import { SpeechPlayer } from '../../components/ui/SpeechPlayer';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { ApiError, api, skillKindLabel, type ChatTurn } from '../../lib/api';
@@ -426,6 +427,11 @@ export function ChatSurface(cfg: ChatSurfaceConfig) {
                       cfg.renderAssistant(m)
                     )}
                     {cfg.assistantExtras?.(m)}
+                    {m.done && !m.failed && m.content && (
+                      <div className="row gap4" style={{ marginTop: 8 }}>
+                        <SpeechPlayer text={m.content} />
+                      </div>
+                    )}
                     {m.done && !m.failed && m.content && cfg.messageActions?.(m, questionFor(i))}
                   </div>
                 </div>

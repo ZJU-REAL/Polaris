@@ -99,11 +99,12 @@ function requestJson<T>(path: string, method: string, body: unknown): Promise<T>
 }
 
 /** 二进制下载（PDF / zip / .bib 等），带 Bearer，错误时解析 detail。 */
-async function requestBlob(path: string): Promise<Blob> {
-  const local = resolveLocalHandler('GET', path);
+async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const local = resolveLocalHandler(method, path);
   if (local) {
     try {
-      const value = await local.route.handler({ method: 'GET', path, params: local.params, init: {} });
+      const value = await local.route.handler({ method, path, params: local.params, init });
       if (!(value instanceof Blob)) throw new LocalUnavailable('local handler did not return a Blob');
       return value;
     } catch (err) {
@@ -112,10 +113,16 @@ async function requestBlob(path: string): Promise<Blob> {
     }
   }
 
-  const headers = new Headers();
+  const headers = new Headers(init.headers);
   const token = getToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  const res = await fetch(`${apiBase()}${path}`, { headers });
+  if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(`${apiBase()}${path}`, { ...init, headers });
+  if (res.status === 401 && token && !path.startsWith('/auth/')) {
+    setToken(null);
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.assign('/login');
+    }
+  }
   if (!res.ok) {
     let detail = res.statusText || `HTTP ${res.status}`;
     let body: unknown;
@@ -128,7 +135,7 @@ async function requestBlob(path: string): Promise<Blob> {
     } catch {
       /* keep statusText */
     }
-    throw new ApiError(res.status, detail, body);
+    throw new ApiError(res.status, readOnlyMessage(detail), body);
   }
   return res.blob();
 }
@@ -162,6 +169,47 @@ export interface UserRead {
 export interface UsageSummary {
   tokens_used: number;
   token_quota: number | null;
+}
+
+// ============================================================
+// Speech / TTS
+// ============================================================
+
+export interface TTSAdminSettings {
+  enabled: boolean;
+  provider: 'openai_compatible';
+  base_url: string;
+  model: string;
+  default_voice: string;
+  default_speed: number;
+  max_chars: number;
+}
+
+export interface TTSTestResult {
+  ok: boolean;
+  model: string;
+  audio_bytes: number;
+}
+
+export interface TTSUserSettings {
+  enabled: boolean;
+  available: boolean;
+  model: string | null;
+  effective_model: string;
+  voice: string | null;
+  effective_voice: string;
+  speed: number | null;
+  effective_speed: number;
+  available_models: string[];
+  available_voices: string[];
+  max_chars: number;
+}
+
+export interface TTSUserSettingsUpdate {
+  enabled: boolean;
+  model: string | null;
+  voice: string | null;
+  speed: number | null;
 }
 
 export interface AdminUserRead {
@@ -4434,6 +4482,16 @@ export const api = {
   setExperimentEnv(payload: ExperimentEnvSettings): Promise<ExperimentEnvSettings> {
     return requestJson<ExperimentEnvSettings>('/admin/settings/experiment-env', 'PUT', payload);
   },
+  /** 平台语音服务与默认模型（admin）。 */
+  getAdminTtsSettings(): Promise<TTSAdminSettings> {
+    return request<TTSAdminSettings>('/admin/settings/tts');
+  },
+  setAdminTtsSettings(payload: TTSAdminSettings): Promise<TTSAdminSettings> {
+    return requestJson<TTSAdminSettings>('/admin/settings/tts', 'PUT', payload);
+  },
+  testAdminTtsSettings(payload: TTSAdminSettings): Promise<TTSTestResult> {
+    return requestJson<TTSTestResult>('/admin/settings/tts/test', 'POST', payload);
+  },
   /** 给最近 7 天里还没有向量的每日论文补建向量（可能耗时几十秒）。 */
   backfillDailyEmbeddings(): Promise<DailyEmbedBackfillResult> {
     return request<DailyEmbedBackfillResult>('/admin/settings/daily-embed/backfill', { method: 'POST' });
@@ -4462,6 +4520,26 @@ export const api = {
   },
   clearLlmCallLogs(): Promise<{ deleted: number }> {
     return request<{ deleted: number }>('/admin/llm/call-logs', { method: 'DELETE' });
+  },
+
+  // —— 语音听读 ——
+  getTtsSettings(): Promise<TTSUserSettings> {
+    return request<TTSUserSettings>('/tts/settings');
+  },
+  setTtsSettings(payload: TTSUserSettingsUpdate): Promise<TTSUserSettings> {
+    return requestJson<TTSUserSettings>('/tts/settings', 'PUT', payload);
+  },
+  synthesizeSpeech(
+    text: string,
+    context: 'assistant' | 'digest',
+    signal?: AbortSignal,
+  ): Promise<Blob> {
+    return requestBlob('/tts/speech', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, context }),
+      signal,
+    });
   },
 
   // —— 我的 LLM（每个用户自管那一层，/me/llm） ——

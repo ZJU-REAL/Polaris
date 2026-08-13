@@ -41,6 +41,9 @@ services:
         condition: service_healthy
     ports:
       - "${POLARIS_API_PORT:-8000}:8000"
+    extra_hosts:
+      # External model APIs deployed on this host remain separate Compose projects.
+      - "host.docker.internal:host-gateway"
     volumes:
       - appdata:/srv/data          # PDF / 编译产物等
       - tectonic-cache:/root/.cache/Tectonic   # tectonic 宏包缓存（首次编译联网下载）

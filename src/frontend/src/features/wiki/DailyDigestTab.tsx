@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Icon } from '../../components/ui/Icon';
 import { Segmented } from '../../components/ui/Segmented';
+import { SpeechPlayer } from '../../components/ui/SpeechPlayer';
 import { toast } from '../../components/ui/Toast';
 import { api, ApiError, type LibraryDigestCounts } from '../../lib/api';
 import { tr } from '../../lib/i18n';
@@ -269,6 +270,13 @@ export function DailyDigestTab({
                 </div>
               </div>
               <div className="row gap8" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {(view === 'brief' ? detail.content : detail.trend_content) && (
+                  <SpeechPlayer
+                    compact={false}
+                    context="digest"
+                    text={view === 'brief' ? detail.content : detail.trend_content ?? ''}
+                  />
+                )}
                 {canGenerate && (
                   <button
                     type="button"

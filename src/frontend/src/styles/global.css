@@ -1624,3 +1624,99 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
     grid-template-columns: 1fr;
   }
 }
+
+/* —— AI 语音听读 —— */
+.speech-player-compact.active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.speech-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 142px;
+  height: 30px;
+  padding: 0 10px 0 5px;
+  border: 0.5px solid var(--border-2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+.speech-player.active {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-2));
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.speech-player-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.speech-player-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+}
+.speech-player-track {
+  width: 54px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+.speech-player-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transition: width 0.2s linear;
+}
+.speech-player-time {
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.speech-settings-notice {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--border-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.speech-settings-summary dl {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 0;
+}
+.speech-settings-summary dl > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.speech-settings-summary dt {
+  color: var(--text-4);
+  font-size: 10.5px;
+}
+.speech-settings-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
