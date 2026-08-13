@@ -24,6 +24,15 @@ logger = logging.getLogger(__name__)
 SETTING_KEY = "tts_config"
 USER_SETTING_KEY = "tts"
 _WAV_LIMIT_BYTES = 128 * 1024 * 1024
+_DEFAULT_ADMIN_SETTINGS: dict[str, Any] = {
+    "enabled": False,
+    "provider": "openai_compatible",
+    "base_url": "http://host.docker.internal:50000/v1",
+    "model": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+    "default_voice": "default",
+    "default_speed": 1.0,
+    "max_chars": 20_000,
+}
 _cache_locks: dict[str, asyncio.Lock] = {}
 _cache_lock_users: dict[str, int] = {}
 
@@ -40,16 +49,9 @@ class TTSNotAvailableError(RuntimeError):
 
 
 def _defaults() -> dict[str, Any]:
-    app = get_app_settings()
-    return {
-        "enabled": app.tts_enabled,
-        "provider": "openai_compatible",
-        "base_url": app.tts_base_url,
-        "model": app.tts_model,
-        "default_voice": "default",
-        "default_speed": 1.0,
-        "max_chars": app.tts_max_chars,
-    }
+    # Runtime configuration is database-backed and managed from the admin UI.
+    # These values only make the empty form useful on a fresh installation.
+    return dict(_DEFAULT_ADMIN_SETTINGS)
 
 
 def _clean_system(raw: Any) -> dict[str, Any]:

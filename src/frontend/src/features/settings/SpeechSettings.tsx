@@ -139,7 +139,7 @@ export function PersonalSpeechSettings() {
         <dl>
           <div><dt>{tr('模型', 'Model')}</dt><dd>{settings.effective_model}</dd></div>
           <div><dt>{tr('音色', 'Voice')}</dt><dd>{settings.effective_voice}</dd></div>
-          <div><dt>{tr('最长文本', 'Text limit')}</dt><dd>{settings.max_chars.toLocaleString()} {tr('字', 'chars')}</dd></div>
+          <div><dt>{tr('每段上限', 'Segment limit')}</dt><dd>{settings.max_chars.toLocaleString()} {tr('字', 'chars')}</dd></div>
         </dl>
       </div>
     </div>
@@ -186,12 +186,12 @@ export function AdminSpeechSettings() {
   };
 
   return (
-    <div className="card card-pad">
+    <div className="card card-pad" style={{ marginTop: 20 }}>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
         <div>
           <div className="section-h">
             <Icon name="server" size={15} style={{ color: 'var(--accent)' }} />
-            {tr('平台语音服务', 'Platform speech service')}
+            {tr('语音模型', 'Speech model')}
           </div>
           <div style={{ marginTop: 5, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
             {tr('配置 OpenAI Speech 兼容接口。Polaris 会鉴权、清理 Markdown，并缓存生成的 WAV。', 'Configure an OpenAI Speech-compatible endpoint. Polaris authenticates requests, cleans Markdown, and caches generated WAV files.')}
@@ -210,7 +210,10 @@ export function AdminSpeechSettings() {
         <FormField label={tr('默认音色', 'Default voice')}>
           <input className="input mono" value={draft.default_voice} onChange={(event) => patch('default_voice', event.target.value)} />
         </FormField>
-        <FormField label={tr('单次最长文本', 'Maximum text length')}>
+        <FormField
+          label={tr('每段最长文本', 'Maximum segment length')}
+          hint={tr('长简报会自动切成多段连续播放。这里填写语音接口单次请求支持的上限。', 'Long digests play continuously in segments. Set the maximum length accepted by one speech API request.')}
+        >
           <input className="input mono" type="number" min={200} max={50000} value={draft.max_chars} onChange={(event) => patch('max_chars', Number(event.target.value))} />
         </FormField>
       </div>

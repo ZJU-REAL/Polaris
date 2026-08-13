@@ -32,9 +32,9 @@ This builds the images, starts everything detached, and restarts services unless
 updates only rebuild the pip/source layers of `api`/`worker`, which takes minutes.
 
 Speech synthesis is an external dependency, not part of the Polaris stack.
-Deploy an OpenAI Speech-compatible service as a separate project, set
-`POLARIS_TTS_BASE_URL`, and then enable speech in the administrator settings.
-See [AI read-aloud through a TTS API](tts.md) for the API contract.
+Deploy an OpenAI Speech-compatible service separately, then configure its
+endpoint and model under **Manage > LLM admin > Speech model**. Polaris stores
+this configuration in the database, not in `.env`.
 
 ## Deploy from published images (no build)
 

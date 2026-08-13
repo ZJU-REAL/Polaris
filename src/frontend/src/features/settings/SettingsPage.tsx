@@ -42,7 +42,7 @@ import {
   type SshCredentialInput,
 } from '../../lib/api';
 import { BuddySettings } from './BuddySettings';
-import { PersonalSpeechSettings } from './SpeechSettings';
+import { AdminSpeechSettings, PersonalSpeechSettings } from './SpeechSettings';
 
 /* ============================================================
    /settings — 普通用户设置：个人信息 / 文献对话 / 界面偏好 / SSH 凭据 /
@@ -2076,6 +2076,7 @@ export function LlmTab() {
       <ProvidersSection adapter={adminLlmAdapter} />
       <RoutesSection adapter={adminLlmAdapter} />
       <EmbeddingSpaceSection />
+      <AdminSpeechSettings />
       <AffiliationModeSection />
       <CallLogsSection />
     </>

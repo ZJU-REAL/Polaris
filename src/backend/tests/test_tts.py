@@ -51,6 +51,20 @@ print('do not read me')
     assert "代码块已略过" in spoken
 
 
+async def test_tts_configuration_is_database_backed(client, monkeypatch):
+    monkeypatch.setenv("POLARIS_TTS_ENABLED", "true")
+    monkeypatch.setenv("POLARIS_TTS_BASE_URL", "http://ignored.example/v1")
+    monkeypatch.setenv("POLARIS_TTS_MODEL", "ignored-model")
+    admin = await _headers(client)
+
+    response = await client.get("/api/admin/settings/tts", headers=admin)
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+    assert response.json()["base_url"] == "http://host.docker.internal:50000/v1"
+    assert response.json()["model"] == "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
+
+
 async def test_admin_and_personal_tts_settings(client):
     admin = await _headers(client)
     member = await _headers(client, "tts-member@example.com")

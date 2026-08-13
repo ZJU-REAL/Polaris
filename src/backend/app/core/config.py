@@ -66,14 +66,6 @@ class Settings(BaseSettings):
     #: 成本与现有一次性对话不是一个量级，先按部署开。
     chat_agent_enabled: bool = False
 
-    # ---- Speech / TTS ----
-    # The model runtime is an external API. Polaris owns only authentication,
-    # settings, text normalization, upstream calls, and the derived WAV cache.
-    tts_enabled: bool = False
-    tts_base_url: str = "http://host.docker.internal:50000/v1"
-    tts_model: str = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
-    tts_max_chars: int = 20_000
-
     # ---- 文献 API ----
     s2_api_key: str = ""  # Semantic Scholar（可空，限流更严）
     openalex_mailto: str = "polaris@example.org"  # OpenAlex polite pool
