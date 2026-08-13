@@ -41,4 +41,23 @@ describe('每日列表的加载方式', () => {
     // 已经在取下一页时不能重复触发
     expect(code).toContain('isFetchingNextPage');
   });
+
+  it('observer 的 root 是滚动容器，不是视口', () => {
+    // 第一版漏了这个：默认 root 是视口，而列表在 overflow:auto 的盒子里滚，
+    // 哨兵就一直「可见」，页面一打开连着触发到把所有页拉完。
+    expect(code).toMatch(/\{\s*root\s*,/);
+    expect(code).toContain('listScrollRef');
+    expect(code).toMatch(/ref=\{listScrollRef\}/);
+  });
+
+  it('哨兵在滚动容器内部，不是它的兄弟节点', () => {
+    // 同一个 bug 的另一半：ref 设对了但 DOM 位置在容器外，照样永远可见。
+    const container = code.indexOf('ref={listScrollRef}');
+    const sentinel = code.indexOf('ref={sentinelRef}');
+    expect(container).toBeGreaterThan(-1);
+    expect(sentinel).toBeGreaterThan(container);
+    // 容器的收尾必须在哨兵之后
+    const closing = code.indexOf('</div>', sentinel);
+    expect(closing).toBeGreaterThan(sentinel);
+  });
 });

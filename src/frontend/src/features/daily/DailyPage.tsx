@@ -804,19 +804,26 @@ export function DailyPage() {
   // 触底自动加载：拿 IntersectionObserver 盯列表末尾的哨兵，不做「上一页/下一页」。
   // 用 observer 而不是监听 scroll 事件——后者要自己算阈值、还得节流，而且列表容器
   // 的高度是弹性的，算出来的阈值在窄屏上经常提前或永远不触发。
+  //
+  // **root 必须是那个滚动容器。** 默认 root 是视口，而列表是在一个
+  // ``overflow: auto`` 的盒子里滚的：拿视口去判，哨兵一直「可见」，于是页面一打开就
+  // 连着触发到把所有页拉完——上一版就是这样，看起来像根本没有分批加载。
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = listQuery;
   useEffect(() => {
     const node = sentinelRef.current;
-    if (!node || !hasNextPage) return;
+    const root = listScrollRef.current;
+    if (!node || !root || !hasNextPage) return;
     const observer = new IntersectionObserver(
       (entries) => {
         // isFetchingNextPage 由 react-query 保证同一时刻只有一个在途请求，
         // 不然快速滚动会连着触发好几页。
         if (entries.some((e) => e.isIntersecting) && !isFetchingNextPage) void fetchNextPage();
       },
-      // 提前一屏开始取，滚到底时下一批通常已经到了
-      { rootMargin: '400px' },
+      // 提前小半屏开始取，滚到底时下一批通常已经到了。别给太大：预取距离超过一屏
+      // 内容的高度，新一批刚拼上哨兵仍在预取范围内，又会立刻触发下一页。
+      { root, rootMargin: '200px' },
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -1112,7 +1119,7 @@ export function DailyPage() {
               </div>
             </div>
 
-            <div className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
+            <div ref={listScrollRef} className="scroll" style={{ overflowY: 'auto', flex: 1 }}>
               {listQuery.isLoading ? (
                 <div className="empty">{tr('加载论文…', 'Loading papers…')}</div>
               ) : listQuery.isError ? (
@@ -1172,24 +1179,25 @@ export function DailyPage() {
                   );
                 })
               )}
-            </div>
 
-            {/* 触底自动加载的哨兵。放在滚动容器内、列表末尾，滚到它就取下一批。 */}
-            {items.length > 0 && (
-              <div
-                ref={sentinelRef}
-                className="row"
-                style={{ padding: '10px 14px 16px', justifyContent: 'center' }}
-              >
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                  {isFetchingNextPage
-                    ? tr('加载中…', 'Loading…')
-                    : hasNextPage
-                      ? tr(`已显示 ${items.length} / ${total} 篇`, `${items.length} of ${total}`)
-                      : tr(`共 ${total} 篇，已到底`, `${total} papers — that's all`)}
-                </span>
-              </div>
-            )}
+              {/* 触底自动加载的哨兵。**必须在滚动容器内**：放到容器外面它就永远待在
+                  视口里，一进页面就连续触发，直到把所有页都拉完——那正是这次的表现。 */}
+              {items.length > 0 && (
+                <div
+                  ref={sentinelRef}
+                  className="row"
+                  style={{ padding: '10px 14px 16px', justifyContent: 'center' }}
+                >
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                    {isFetchingNextPage
+                      ? tr('加载中…', 'Loading…')
+                      : hasNextPage
+                        ? tr(`已显示 ${items.length} / ${total} 篇`, `${items.length} of ${total}`)
+                        : tr(`共 ${total} 篇，已到底`, `${total} papers — that's all`)}
+                  </span>
+                </div>
+              )}
+            </div>
 
             {/* —— 底部固定操作栏：多选 + 导出引用 —— */}
             <div
