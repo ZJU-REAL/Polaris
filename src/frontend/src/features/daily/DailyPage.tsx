@@ -1,6 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { Icon } from '../../components/ui/Icon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import {
@@ -649,7 +655,6 @@ export function DailyPage() {
   const q = useDebounced(qInput.trim());
   // 语义检索开关（true=按意思检索，false=关键词字面匹配）
   const [semanticOn, setSemanticOn] = useState(false);
-  const [page, setPage] = useState(1);
   // —— 日期（null=全部，默认就停在全部）留在工具栏；分类 / 类型收进高级检索面板 ——
   // 只看被某个文献库收录的论文（#218）。空 = 不限
   // 日期：勾上「全部」就是跨天一起看（默认）；取消勾选后在有数据的日期间前后切换。
@@ -678,7 +683,6 @@ export function DailyPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => setPage(1), [q, semanticOn, category, announce, author, affiliation, showAll, day]);
   useEffect(() => {
     setSelected(new Set());
     setSelectMode(false);
@@ -750,15 +754,16 @@ export function DailyPage() {
 
   // 语义检索：只在有关键词时生效；结果按相关度排序、不分页
   const semantic = !!q && semanticOn;
-  const listQuery = useQuery({
+  const listQuery = useInfiniteQuery({
     queryKey: [
       'daily-papers',
-      semanticOn, page, q, category, announce, author, affiliation, showAll, day,
+      semanticOn, q, category, announce, author, affiliation, showAll, day,
     ],
-    queryFn: () =>
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) =>
       api.listDailyPapers({
         sort: semantic ? undefined : DAILY_SORT,
-        page: semantic ? undefined : page,
+        page: semantic ? undefined : pageParam,
         size: PAGE_SIZE,
         q: q || undefined,
         category: category || undefined,
@@ -769,17 +774,22 @@ export function DailyPage() {
         date: showAll ? undefined : day || undefined,
         mode: semantic ? 'semantic' : undefined,
       }),
+    // 语义检索按相关度返回一整批、本来就不分页，所以它永远没有下一页
+    getNextPageParam: (last, all) =>
+      semantic || all.flatMap((x) => x.items).length >= (last.total ?? 0)
+        ? undefined
+        : all.length + 1,
     retry: false,
     placeholderData: keepPreviousData,
   });
   // 默认口径（当天 + 新工作）之外还加了条件才算「筛过」——空列表时给的话术不一样
   // 选了某一天也算「筛过」——空列表时给的话术不一样
   const filtered = !!q || advActive || !showAll;
-  const items = listQuery.data?.items ?? [];
-  const total = listQuery.data?.total ?? 0;
-  const pages = semantic ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageList = listQuery.data?.pages ?? [];
+  const items = pageList.flatMap((x) => x.items);
+  const total = pageList[0]?.total ?? 0;
   // 后端明确回了「用的是关键词」→ 说明语义检索这会儿不可用
-  const fallbackNotice = semantic && listQuery.data?.mode_used === 'keyword';
+  const fallbackNotice = semantic && pageList[0]?.mode_used === 'keyword';
 
   // 首条自动选中
   // 默认选中列表第一篇，**并在列表变了之后跟着走**。
@@ -790,6 +800,27 @@ export function DailyPage() {
   useEffect(() => {
     if (firstId && !selectedInList) setSelectedId(firstId);
   }, [firstId, selectedInList]);
+
+  // 触底自动加载：拿 IntersectionObserver 盯列表末尾的哨兵，不做「上一页/下一页」。
+  // 用 observer 而不是监听 scroll 事件——后者要自己算阈值、还得节流，而且列表容器
+  // 的高度是弹性的，算出来的阈值在窄屏上经常提前或永远不触发。
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = listQuery;
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !hasNextPage) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // isFetchingNextPage 由 react-query 保证同一时刻只有一个在途请求，
+        // 不然快速滚动会连着触发好几页。
+        if (entries.some((e) => e.isIntersecting) && !isFetchingNextPage) void fetchNextPage();
+      },
+      // 提前一屏开始取，滚到底时下一批通常已经到了
+      { rootMargin: '400px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const toggleSelected = (paperId: string) =>
     setSelected((prev) => {
@@ -1143,20 +1174,20 @@ export function DailyPage() {
               )}
             </div>
 
-            {pages > 1 && (
+            {/* 触底自动加载的哨兵。放在滚动容器内、列表末尾，滚到它就取下一批。 */}
+            {items.length > 0 && (
               <div
-                className="row gap8"
-                style={{ padding: '8px 14px', borderTop: '0.5px solid var(--border)', justifyContent: 'center' }}
+                ref={sentinelRef}
+                className="row"
+                style={{ padding: '10px 14px 16px', justifyContent: 'center' }}
               >
-                <button className="btn btn-ghost sm" disabled={page <= 1} onClick={() => setPage((x) => x - 1)}>
-                  {tr('上一页', 'Prev')}
-                </button>
                 <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                  {page} / {pages}
+                  {isFetchingNextPage
+                    ? tr('加载中…', 'Loading…')
+                    : hasNextPage
+                      ? tr(`已显示 ${items.length} / ${total} 篇`, `${items.length} of ${total}`)
+                      : tr(`共 ${total} 篇，已到底`, `${total} papers — that's all`)}
                 </span>
-                <button className="btn btn-ghost sm" disabled={page >= pages} onClick={() => setPage((x) => x + 1)}>
-                  {tr('下一页', 'Next')}
-                </button>
               </div>
             )}
 
