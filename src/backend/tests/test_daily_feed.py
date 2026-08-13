@@ -599,6 +599,8 @@ def _action_ctx():
 
 async def test_daily_actions_observation_shapes(client, monkeypatch):
     """四个动作各自的 observation 形状 + 跨步骤用 checkpoint 传值。"""
+    from sqlalchemy import select
+
     from app.agents.voyage.actions import get_action
     from app.core.db import get_sessionmaker
     from app.models.daily_feed import DailyFeedEntry
@@ -1838,3 +1840,86 @@ async def test_probe_stops_at_the_first_category_with_news(client, monkeypatch):
         fresh, _ = await daily_feed.todays_batch_available(session)
     assert fresh is True
     assert asked == ["cs.AI"], f"第一个分类就有新论文，不该继续问下去：{asked}"
+
+
+async def test_feed_date_records_the_announcement_day_not_the_run_day(client, monkeypatch):
+    """entry 的 feed_date 记 arXiv 哪天公告的，不记我们哪天跑的抓取。
+
+    平时两者一致，所以看不出区别；而恰恰在数据源滞后的那天——唯一会出事的那天——
+    它们不一致。按跑批日期记，昨天的论文就会被标成今天的：2026-08-13 生产页面上写着
+    「8月13日 · 96 篇」，那 96 篇其实是 8-12 那批，而当天真正的 446 篇一篇没进。
+    数字看着完全合理，所以没人会去查。
+    """
+    import datetime as dt
+
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.daily_feed import DailyFeedEntry
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    yesterday = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)
+
+    monkeypatch.setattr(
+        daily_feed,
+        "get_arxiv_client",
+        lambda: _StubArxiv(
+            {"cs.AI": [_rss_entry("2608.99001", "滞后那批里的论文")]}, batch_date=yesterday
+        ),
+    )
+    async with get_sessionmaker()() as session:
+        await daily_feed.sync_daily_feed(session)
+
+    async with get_sessionmaker()() as session:
+        rows = (await session.execute(select(DailyFeedEntry))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].feed_date == yesterday, (
+        "数据源给的是昨天那批，却被记成今天——漏收就是这样被藏起来的"
+    )
+
+
+async def test_stale_and_fresh_categories_keep_their_own_dates(client, monkeypatch):
+    """按分类各记各的：数据源会**按分类分别**滞后，不能取一个全局日期。
+
+    2026-08-12 生产上 cs.AI 供的是前一批、cs.CL 是当天的。取最大值会把滞后那批也
+    标成当天，等于把这个故障重新藏起来。
+    """
+    import datetime as dt
+
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.daily_feed import DailyFeedEntry
+    from app.models.paper import Paper
+    from app.services import daily_feed
+
+    await register_and_login(client)
+    today = dt.datetime.now(dt.UTC).date()
+    yesterday = today - dt.timedelta(days=1)
+
+    class _MixedArxiv:
+        async def fetch_new(self, category: str):
+            at = dt.datetime.combine(
+                yesterday if category == "cs.AI" else today, dt.time(), tzinfo=dt.UTC
+            )
+            entry = _rss_entry(
+                "2608.99010" if category == "cs.AI" else "2608.99011", f"{category} 的论文"
+            )
+            return ([entry] if category in ("cs.AI", "cs.CL") else []), at
+
+    monkeypatch.setattr(daily_feed, "get_arxiv_client", lambda: _MixedArxiv())
+    async with get_sessionmaker()() as session:
+        await daily_feed.sync_daily_feed(session)
+
+    async with get_sessionmaker()() as session:
+        rows = (
+            await session.execute(
+                select(Paper.arxiv_id, DailyFeedEntry.feed_date).join(
+                    DailyFeedEntry, DailyFeedEntry.paper_id == Paper.id
+                )
+            )
+        ).all()
+    by_id = dict(rows)
+    assert by_id["2608.99010"] == yesterday, "滞后的分类要如实记成昨天"
+    assert by_id["2608.99011"] == today

@@ -323,22 +323,53 @@ async def fetch_new_by_category(
     return categories, by_category, statuses
 
 
+def batch_dates_from_statuses(
+    statuses: dict[str, dict[str, Any]],
+) -> dict[str, dt.date | None]:
+    """从 :func:`fetch_new_by_category` 的分类状态里取出各自声明的公告日期。
+
+    按分类分别取，不取一个「全局最大值」：数据源会**按分类各自滞后**（2026-08-12 生产上
+    cs.AI 供的是前一批而 cs.CL 是当天的），取最大值会把滞后那批也标成当天，等于把这个
+    故障重新藏起来。
+    """
+    out: dict[str, dt.date | None] = {}
+    for category, status in statuses.items():
+        raw = status.get("batch_date")
+        try:
+            out[category] = dt.date.fromisoformat(str(raw)) if raw else None
+        except ValueError:
+            out[category] = None
+    return out
+
+
 async def upsert_entries(
     session: AsyncSession,
     *,
     by_category: dict[str, list[dict[str, Any]]],
     today: dt.date | None = None,
+    batch_dates: dict[str, dt.date | None] | None = None,
 ) -> dict[str, Any]:
-    """RSS 条目 → 全局内容池去重 + 建/合并推送 entry；返回 {created, merged, touched}。
+    """当天公告条目 → 全局内容池去重 + 建/合并推送 entry；返回 {created, merged, touched}。
 
     同一篇多分类命中（cross-list）合并进 categories、不重复建行；paper_id 唯一约束
     保证同日重跑幂等（created=0）。``touched`` 是本次涉及的池论文 id（补向量用）。
+
+    ``feed_date`` 记的是 **arXiv 哪天公告的**（``batch_dates``，来自数据源自己声明的
+    日期），不是我们哪天跑的抓取。两者平时一致，所以看不出区别；而恰恰在数据源滞后
+    的那天——也就是唯一会出事的那天——它们不一致，按跑批日期记就会把昨天的论文标成
+    今天的。2026-08-13 生产就是这样：页面上写着「8月13日 · 96 篇」，那 96 篇其实是
+    8-12 那批（id 最大 ``2608.11195``，正是前一天列表页的量级），而当天真正的 446 篇
+    一篇没进。数字看着合理，所以没人会去查。
+
+    拿不到声明日期时才回落到今天：那是「不知道」，不是「就是今天」。
     """
-    feed_date = today or _today_utc()
+    fallback = today or _today_utc()
+    batch_dates = batch_dates or {}
     created = merged = 0
     touched: list[uuid.UUID] = []
 
     for category, entries in by_category.items():
+        feed_date = batch_dates.get(category) or fallback
         for entry in entries:
             title = (entry.get("title") or "").strip()
             arxiv_id = entry.get("arxiv_id")
@@ -462,9 +493,14 @@ async def sync_daily_feed(session: AsyncSession) -> dict[str, Any]:
     （app/agents/voyage/actions_daily.py），两条路径共用下面这几个步骤函数。
     """
     today = _today_utc()
-    categories, by_category, _statuses = await fetch_new_by_category(session)
+    categories, by_category, statuses = await fetch_new_by_category(session)
     fetched = sum(len(v) for v in by_category.values())
-    stats = await upsert_entries(session, by_category=by_category, today=today)
+    stats = await upsert_entries(
+        session,
+        by_category=by_category,
+        today=today,
+        batch_dates=batch_dates_from_statuses(statuses),
+    )
     expired = await cleanup_expired(session, today=today)
     await session.commit()
     embed = await embed_touched_papers(session, paper_ids=stats["touched"])

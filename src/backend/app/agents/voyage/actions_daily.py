@@ -62,6 +62,11 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
 
     # 条目原样带给下一步（daily.upsert）：重抓一次既多打一遍 arXiv，也可能拿到不同结果
     ctx.checkpoint["daily_entries"] = by_category
+    # 各分类声明的公告日期也要带过去：entry 的 feed_date 记的是「arXiv 哪天公告的」，
+    # 不是「我们哪天跑的」。数据源滞后那天两者才会不同，而那正是唯一会出事的一天。
+    ctx.checkpoint["daily_batch_dates"] = {
+        category: state.get("batch_date") for category, state in statuses.items()
+    }
 
     result: dict[str, Any] = {
         "categories": categories,
@@ -103,8 +108,15 @@ async def fetch(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
 @register("daily.upsert")
 async def upsert(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     by_category = ctx.checkpoint.get("daily_entries") or {}
+    raw_dates = ctx.checkpoint.get("daily_batch_dates") or {}
     async with get_sessionmaker()() as session:
-        stats = await daily_feed_service.upsert_entries(session, by_category=by_category)
+        stats = await daily_feed_service.upsert_entries(
+            session,
+            by_category=by_category,
+            batch_dates=daily_feed_service.batch_dates_from_statuses(
+                {category: {"batch_date": value} for category, value in raw_dates.items()}
+            ),
+        )
 
     touched = [str(pid) for pid in stats["touched"]]
     ctx.checkpoint["daily_touched_papers"] = touched
