@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
+HEAD_REVISION = "8ff89f7fcdeb"  # DeepSeek Harness integration tokens
+PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
 VIEW_EVENTS_REVISION = "a1c9e73b5d20"  # 浏览事件（文献库/论文点击量）
 VOYAGE_MESSAGES_REVISION = "63133f647463"  # 任务对话流：voyage_messages 表
 READ_ONLY_REVISION = "b3f5c1e07a92"  # 只读账号（游客）
@@ -105,6 +106,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "skills",
                     "buddy_memories",
                     "view_events",
+                    "integration_tokens",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -127,9 +129,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"conversations", "conversation_messages"} <= columns["_tables"]
     # Skills v2：技能是「一句 description 常驻 + 正文按需加载」，附件单独一张表
     assert {"agent_skills", "agent_skill_files"} <= columns["_tables"]
-    assert {"slug", "description", "body", "allowed_tools", "invocation"} <= columns[
-        "agent_skills"
-    ]
+    assert {"slug", "description", "body", "allowed_tools", "invocation"} <= columns["agent_skills"]
     assert {"scope_kind", "scope_id", "usage", "active_stream_id"} <= columns["conversations"]
     assert {"blocks", "text", "seq", "status", "sources"} <= columns["conversation_messages"]
     # 这场对话花了多少 token（voyage_id 的对偶）
@@ -368,7 +368,27 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 浏览事件：文献库/论文的点击量
     assert "view_events" in columns["_tables"]
 
-    # 最新 revision 可往返：先退掉 Provider 级 User-Agent。
+    # 外部 agent 使用有 scope、可撤销、只存摘要的长期凭证。
+    assert "integration_tokens" in columns["_tables"]
+    assert {
+        "user_id",
+        "name",
+        "token_prefix",
+        "token_hash",
+        "scopes",
+        "expires_at",
+        "revoked_at",
+        "last_used_at",
+    } <= columns["integration_tokens"]
+
+    # 先退掉集成令牌。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == PROVIDER_UA_REVISION
+    assert "integration_tokens" not in columns["_tables"]
+    assert "user_agent" in columns["llm_providers"]
+
+    # 再退掉 Provider 级 User-Agent。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == VIEW_EVENTS_REVISION

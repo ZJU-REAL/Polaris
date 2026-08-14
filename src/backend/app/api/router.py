@@ -19,6 +19,7 @@ from app.api import (
     highlights,
     ideas,
     ingest,
+    integration_tokens,
     invites,
     lab,
     libraries,
@@ -42,6 +43,7 @@ from app.api import (
     voyages,
     wiki,
 )
+from app.integrations.deepseek_harness.api import router as deepseek_harness_router
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -69,11 +71,13 @@ api_router.include_router(notes.router)
 api_router.include_router(highlights.router)
 api_router.include_router(concepts.router)
 api_router.include_router(ingest.router)
+api_router.include_router(integration_tokens.router)
 api_router.include_router(wiki.router)
 api_router.include_router(ideas.router)
 api_router.include_router(search.router)
 api_router.include_router(shelf.router)
 api_router.include_router(daily.router)
+api_router.include_router(deepseek_harness_router)
 api_router.include_router(skills.router)
 api_router.include_router(market.router)
 api_router.include_router(mcp_meta.router)

@@ -1,4 +1,4 @@
-"""Polaris MCP 服务：把统一只读工具注册表暴露给外部 MCP 客户端。
+"""Polaris MCP 服务：把统一工具注册表按授权 Profile 暴露给外部 MCP 客户端。
 
 - HTTP：``app.mcp.http.router`` 挂在 FastAPI 主应用 ``POST /mcp``（见 app/main.py）。
 - stdio：``python -m app.mcp``（本地桌面客户端，如 Claude Desktop）。

@@ -66,9 +66,9 @@ def test_registry_has_expected_tools():
     writers = {spec.name for spec in tools.list_tools() if not spec.read_only}
     assert writers == {"remember"}
 
-    # 目前只有项目发现不需要 project_id；其余工具默认保持项目隔离。
+    # 项目发现与个人记忆按认证用户隔离，不要求调用方伪造 project_id。
     user_scoped = {spec.name for spec in tools.list_tools() if spec.scope == "user"}
-    assert user_scoped == {"list_accessible_projects"}
+    assert user_scoped == {"list_accessible_projects", "recall", "remember"}
 
 
 def test_tool_descriptions_are_formal():
@@ -169,14 +169,16 @@ async def test_search_chunks_keyword_mode_skips_embedding(client, monkeypatch):
 async def test_library_tools_end_to_end(client):
     project_id = await _project(client)
     async with get_sessionmaker()() as session:
-        concept = await add_concept(session,
+        concept = await add_concept(
+            session,
             project_id=project_id,
             name="Retrieval",
             slug="retrieval",
             definition="按需取信息",
             category="method",
         )
-        paper = await add_paper(session,
+        paper = await add_paper(
+            session,
             project_id=project_id,
             source="manual",
             title="Retrieval Augmented Agents",

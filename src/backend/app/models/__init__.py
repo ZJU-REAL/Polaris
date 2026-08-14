@@ -12,6 +12,7 @@ from app.models.experiment import Experiment, ExperimentRun
 from app.models.feedback import Feedback, FeedbackImage
 from app.models.gate import Gate
 from app.models.idea import Idea
+from app.models.integration_token import IntegrationToken
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
@@ -68,6 +69,7 @@ __all__ = [
     "Gate",
     "Idea",
     "IdeaVector",
+    "IntegrationToken",
     "LLMCallLog",
     "LibraryPaper",
     "LibraryResearchDigest",

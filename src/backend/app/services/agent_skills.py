@@ -9,7 +9,7 @@ import re
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_skill import (
@@ -104,16 +104,24 @@ def parse_skill_md(text: str) -> dict[str, Any]:
 
 
 async def visible_skills(session: AsyncSession, *, user_id: uuid.UUID | None) -> list[AgentSkill]:
-    """这个用户能看到的技能：内置的 + 自己的。"""
+    """这个用户能看到的技能：内置的 + 自己的，同 slug 时自己的优先。"""
     stmt = select(AgentSkill).where(AgentSkill.enabled.is_(True))
     if user_id is None:
         stmt = stmt.where(AgentSkill.scope == "builtin")
     else:
-        stmt = stmt.where(
-            (AgentSkill.scope == "builtin") | (AgentSkill.owner_id == user_id)
+        stmt = stmt.where((AgentSkill.scope == "builtin") | (AgentSkill.owner_id == user_id))
+        stmt = stmt.order_by(
+            case((AgentSkill.owner_id == user_id, 0), else_=1),
+            AgentSkill.load_count.desc(),
+            AgentSkill.slug,
         )
-    stmt = stmt.order_by(AgentSkill.load_count.desc(), AgentSkill.slug)
-    return list((await session.execute(stmt)).scalars().all())
+    rows = list((await session.execute(stmt)).scalars().all())
+    # 用户技能是对同名内置技能的显式覆盖。先按上面的优先级选胜者，再恢复目录按
+    # 使用频率排序的既有行为，避免同一个 slug 在目录里出现两次。
+    winners: dict[str, AgentSkill] = {}
+    for skill in rows:
+        winners.setdefault(skill.slug, skill)
+    return sorted(winners.values(), key=lambda skill: (-skill.load_count, skill.slug))
 
 
 async def render_catalog(session: AsyncSession, *, user_id: uuid.UUID | None) -> str:
@@ -146,17 +154,13 @@ async def load_skill(
     if skill is None:
         return None
     files = (
-        (
-            await session.execute(
-                select(AgentSkillFile.path, AgentSkillFile.size).where(
-                    AgentSkillFile.skill_id == skill.id
-                )
+        await session.execute(
+            select(AgentSkillFile.path, AgentSkillFile.size).where(
+                AgentSkillFile.skill_id == skill.id
             )
         )
-        .all()
-    )
-    skill.load_count += 1
-    await session.flush()
+    ).all()
+    await increment_load_count(session, skill=skill)
     return {
         "slug": skill.slug,
         "name": skill.name,
@@ -185,15 +189,40 @@ async def read_skill_file(
     return row[:FILE_MAX_CHARS] if row is not None else None
 
 
-async def _find(
+async def get_visible_skill(
     session: AsyncSession, *, slug: str, user_id: uuid.UUID | None
 ) -> AgentSkill | None:
+    """按目录同一规则解析一个技能；用户同名覆盖内置。"""
+
     stmt = select(AgentSkill).where(AgentSkill.slug == slug, AgentSkill.enabled.is_(True))
     if user_id is None:
         stmt = stmt.where(AgentSkill.scope == "builtin")
     else:
-        stmt = stmt.where((AgentSkill.scope == "builtin") | (AgentSkill.owner_id == user_id))
+        stmt = stmt.where(
+            (AgentSkill.scope == "builtin") | (AgentSkill.owner_id == user_id)
+        ).order_by(case((AgentSkill.owner_id == user_id, 0), else_=1))
     return (await session.execute(stmt)).scalars().first()
+
+
+async def increment_load_count(session: AsyncSession, *, skill: AgentSkill) -> None:
+    """Record a load without changing the skill's semantic update timestamp."""
+
+    await session.execute(
+        update(AgentSkill)
+        .where(AgentSkill.id == skill.id)
+        .values(
+            load_count=AgentSkill.load_count + 1,
+            updated_at=AgentSkill.updated_at,
+        )
+    )
+
+
+async def _find(
+    session: AsyncSession, *, slug: str, user_id: uuid.UUID | None
+) -> AgentSkill | None:
+    """Backward-compatible private alias for the tool-facing loaders."""
+
+    return await get_visible_skill(session, slug=slug, user_id=user_id)
 
 
 async def upsert_from_md(

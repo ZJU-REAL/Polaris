@@ -142,6 +142,23 @@ delegates broad surveys to a sub-agent. Your own skills are created by POSTing a
 `POST /api/chat/skills` (same slug overwrites your copy; built-ins are untouchable), and everything
 visible to you is listed — and yours deletable — under **Settings → PolarisBuddy → Skills**.
 
+### DeepSeek Harness
+
+The Polaris DSH bundle carries assistant skills through Harness's native
+`ctx.skills` provider API. It does not map each skill to an MCP tool. The normal
+DSH `skill` tool performs body loading, while `polaris_skill_resource` reads one
+declared attachment on demand. The official DSH MCP bridge carries the separate
+Polaris tool catalog.
+
+User skills shadow same-slug built-ins. Manual skills remain available through
+DSH's standard `/skill-name` gesture, and automatic skills remain visible to
+the model. After a Polaris skill loads, its `allowed-tools` list restricts only
+the current turn's Polaris MCP tools. Multiple skill lists intersect, and the
+restriction never widens the existing DSH tool surface.
+
+See [Polaris for DeepSeek Harness](../integrations/deepseek-harness/README.md)
+for installation, token scopes, failure behavior, and configuration.
+
 ## Tips and limits
 
 - **Skills are declarative.** No skill layer executes code. Task skills carry markdown, rubrics,
