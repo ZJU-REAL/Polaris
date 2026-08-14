@@ -2,12 +2,14 @@
 
 import hashlib
 import json
+import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,8 @@ from app.integrations.deepseek_harness.schemas import (
 )
 from app.models.agent_skill import AgentSkill, AgentSkillFile
 from app.services import agent_skills
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +90,22 @@ def _skill_revision(skill: AgentSkill, files: Sequence[_FileRecord]) -> str:
     )
 
 
+def _safe_catalog_item(
+    skill: AgentSkill, files: Sequence[_FileRecord]
+) -> HarnessSkillCatalogItem | None:
+    """A row that predates the current slug rule must not 500 the whole catalog.
+
+    Creation now enforces the Harness slug rule, but a legacy row could still
+    violate the response contract; skip it rather than fail discovery for every
+    other skill this user has.
+    """
+    try:
+        return _catalog_item(skill, files)
+    except ValidationError:
+        logger.warning("skipping skill %s: not representable in the Harness catalog", skill.slug)
+        return None
+
+
 def _catalog_item(skill: AgentSkill, files: Sequence[_FileRecord]) -> HarnessSkillCatalogItem:
     return HarnessSkillCatalogItem(
         id=skill.id,
@@ -107,7 +127,11 @@ def _catalog_item(skill: AgentSkill, files: Sequence[_FileRecord]) -> HarnessSki
 async def skill_catalog(session: AsyncSession, *, user_id: uuid.UUID) -> HarnessSkillCatalog:
     skills = await agent_skills.visible_skills(session, user_id=user_id)
     files = await _files_by_skill(session, [skill.id for skill in skills])
-    items = [_catalog_item(skill, files.get(skill.id, ())) for skill in skills]
+    items = [
+        item
+        for skill in skills
+        if (item := _safe_catalog_item(skill, files.get(skill.id, ()))) is not None
+    ]
     items.sort(key=lambda item: item.slug)
     return HarnessSkillCatalog(
         revision=_hash_json([[item.slug, item.revision] for item in items]), skills=items
@@ -121,7 +145,9 @@ async def skill_definition(
     if skill is None:
         return None
     files = (await _files_by_skill(session, [skill.id])).get(skill.id, [])
-    item = _catalog_item(skill, files)
+    item = _safe_catalog_item(skill, files)
+    if item is None:
+        return None
     return HarnessSkillDefinition(**item.model_dump(), body=skill.body)
 
 

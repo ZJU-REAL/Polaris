@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, OAuth2PasswordRequestForm
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
@@ -25,6 +25,7 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.services import email as email_service
+from app.services import integration_tokens as token_service
 from app.services import projects as projects_service
 from app.services import registration_codes as codes_service
 from app.services import verification
@@ -129,20 +130,46 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # 登出是 POST，但它只销毁调用者自己的会话。不放行的话游客连退出登录都做不到。
 _READ_ONLY_ALLOWED_PATHS = frozenset({"/api/auth/jwt/logout"})
 
+# 这道闸门也要认得 Integration Token：否则只读账号用它先前签发的 token 就能绕过
+# JWT 身份、继续写 /api 与 /mcp。auto_error=False 让无凭据的请求照常落到各端点自己
+# 的鉴权依赖去处理。
+_bearer = HTTPBearer(auto_error=False)
+
 
 async def block_read_only_writes(
     request: Request,
     user: User | None = Depends(current_user_optional),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    session: AsyncSession = Depends(get_session),
 ) -> None:
     """只读账号的写入闸门（挂在整个 /api 与 /mcp 上，见 main.py）。
 
     未登录直接放行——该拦的由各端点自己的鉴权依赖去拦，这里只管「登录了但只读」。
+    JWT 与 Integration Token 都算「登录」：只要背后的账号是只读，任何非安全方法都拦，
+    这样降级为只读后先前签发的 token 也立即失去写权限。
     """
-    if user is None or not user.read_only:
-        return
     if request.method in _SAFE_METHODS or request.url.path in _READ_ONLY_ALLOWED_PATHS:
         return
-    raise HTTPException(status.HTTP_403_FORBIDDEN, detail="READ_ONLY_ACCOUNT")
+    if await _caller_is_read_only(session, user, credentials):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="READ_ONLY_ACCOUNT")
+
+
+async def _caller_is_read_only(
+    session: AsyncSession,
+    jwt_user: User | None,
+    credentials: HTTPAuthorizationCredentials | None,
+) -> bool:
+    """这次请求背后的账号是不是只读——JWT 身份优先，其次认 Integration Token。"""
+    if jwt_user is not None:
+        return jwt_user.read_only
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        return False
+    raw_token = credentials.credentials
+    if not raw_token.startswith(token_service.TOKEN_MARKER):
+        return False
+    # touch=False：闸门只做判断，不刷新 last_used_at，那由端点自己的鉴权去记。
+    authenticated = await token_service.authenticate_token(session, raw_token, touch=False)
+    return authenticated is not None and authenticated.user.read_only
 
 
 async def require_admin(user: User = Depends(current_active_user)) -> User:

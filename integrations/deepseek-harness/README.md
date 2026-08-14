@@ -68,13 +68,16 @@ Available scopes are:
 - `mcp:read`: connect to `/mcp` and use read-only tools.
 - `mcp:write`: select `dsh-full-v1`; this also requires `mcp:read`.
 
-The only write tool currently exposed by `dsh-full-v1` is `remember`. A
+The only write tool currently exposed by `dsh-full-v1` is `remember`, and it
+appears only after the account turns Buddy memory on; until then it is hidden
+from both discovery and invocation, matching the in-app tool surface. A
 read-only Polaris account cannot use the full profile even if its token names
 the write scope.
 
 List or revoke credentials with `GET /api/integration-tokens` and
 `DELETE /api/integration-tokens/{id}`. Revocation takes effect on the next
-request.
+request. Demoting an account to read-only likewise blocks `/mcp` for its
+existing tokens on the next request, not only for its browser session.
 
 ## Build and install the bundle
 

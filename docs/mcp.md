@@ -9,8 +9,10 @@ got.
 The default MCP surface is read-only. An agent connected with the ordinary
 profile can inform itself about your work but cannot change it. A separately
 authorized DeepSeek Harness profile can expose `remember`, which writes only to
-the current user's assistant memory. Starting an ingest, forging ideas,
-launching an experiment, approving a gate, and drafting a paper remain web-only.
+the current user's assistant memory, and only once that user has turned Buddy
+memory on — the same opt-in the in-app tool surface requires. Starting an
+ingest, forging ideas, launching an experiment, approving a gate, and drafting a
+paper remain web-only.
 
 ---
 

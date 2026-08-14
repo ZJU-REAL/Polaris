@@ -25,7 +25,11 @@ CATALOG_MAX_CHARS = 4000
 #: 单个附件的大小上限
 FILE_MAX_CHARS = 256 * 1024
 
-_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
+# slug 用短横线分段，段间单横线、无结尾横线。与 DeepSeek Harness 目录契约
+# （app/integrations/deepseek_harness/schemas.py 与插件 zod）同规则，否则一个能建成
+# 但序列化不出去的 slug（如 ``paper--triage``/``triage-``）会把整份目录接口打成 500。
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_SLUG_MAX_CHARS = 63
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.S)
 
 
@@ -82,7 +86,7 @@ def parse_skill_md(text: str) -> dict[str, Any]:
         fields["description"] = " ".join(lines)
 
     slug = str(fields.get("name") or "").strip()
-    if not _SLUG_RE.match(slug):
+    if not _SLUG_RE.match(slug) or len(slug) > _SLUG_MAX_CHARS:
         raise SkillParseError(f"name 必须是小写短横线 slug：{slug!r}")
     description = str(fields.get("description") or "").strip()
     if not description:

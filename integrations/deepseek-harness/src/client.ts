@@ -76,7 +76,15 @@ export class PolarisClient {
     path: string,
     signal?: AbortSignal,
   ): Promise<{ readonly content: string; readonly revision?: string } | undefined> {
-    const encodedPath = path.split('/').map(segment => encodeURIComponent(segment)).join('/')
+    const segments = path.split('/')
+    // A skill declares attachments as fixed relative paths; encodeURIComponent
+    // leaves '.'/'..' intact and new URL() collapses them, so an empty, dot, or
+    // dot-dot segment would retarget the authenticated request outside the
+    // skill-files route. Reject before encoding: an undeclared path is absent.
+    if (segments.some(segment => segment === '' || segment === '.' || segment === '..')) {
+      return undefined
+    }
+    const encodedPath = segments.map(segment => encodeURIComponent(segment)).join('/')
     const response = await this.request(
       `api/integrations/deepseek-harness/v1/skills/${encodeURIComponent(slug)}/files/${encodedPath}`,
       { signal, accept: 'text/plain' },

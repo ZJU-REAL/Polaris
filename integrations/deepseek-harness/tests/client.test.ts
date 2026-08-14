@@ -74,4 +74,15 @@ describe('PolarisClient', () => {
       expect.objectContaining<Partial<PolarisApiError>>({ status: 403 }),
     )
   })
+
+  it('refuses dot-segment paths that would escape the skill-files route', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new PolarisClient('https://polaris.example', 'secret', 1000)
+
+    for (const path of ['../../api/integration-tokens', 'refs/../../secret', '.', 'refs//x.md']) {
+      await expect(client.fetchSkillFile('paper-triage', path)).resolves.toBeUndefined()
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })

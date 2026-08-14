@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -17,8 +18,24 @@ from app.api.integration_auth import IntegrationPrincipal, require_mcp_read
 from app.core.db import get_session
 from app.integrations import resolve_mcp_profile
 from app.mcp.dispatch import handle_rpc
+from app.mcp.profiles import MCPToolProfile
+from app.services import buddy
+from app.tools.memory import MEMORY_TOOL_NAMES
 
 router = APIRouter(tags=["mcp"])
+
+
+def _apply_memory_gate(profile: MCPToolProfile, principal: IntegrationPrincipal) -> MCPToolProfile:
+    """Hide the memory tools unless the user turned memory on.
+
+    Buddy memory is an opt-in that defaults off; the in-app tool surface omits
+    ``remember``/``recall`` entirely until then. Mirror that here so an MCP
+    write token cannot persist memory the user never enabled — the exclusion
+    covers both discovery and invocation, since both consult ``profile.exposes``.
+    """
+    if buddy.memory_enabled(principal.user):
+        return profile
+    return replace(profile, excluded=profile.excluded | frozenset(MEMORY_TOOL_NAMES))
 
 
 @router.post("/mcp")
@@ -32,6 +49,7 @@ async def mcp_endpoint(
         profile = resolve_mcp_profile(tool_profile)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    profile = _apply_memory_gate(profile, principal)
     allow_writes = "mcp:write" in principal.scopes and not principal.user.read_only
     if profile.include_writes and not allow_writes:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="MCP_WRITE_SCOPE_REQUIRED")
