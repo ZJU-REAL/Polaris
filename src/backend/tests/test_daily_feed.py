@@ -1205,6 +1205,44 @@ async def test_probe_creates_the_run_once_the_batch_appears(client, monkeypatch)
     assert enqueued == [("run_voyage", run_id)]
 
 
+async def test_probe_can_start_current_batch_after_same_day_catch_up(client, monkeypatch):
+    """今天先补完昨天批次，也不能把稍后发布的今天批次锁死。"""
+    import datetime as dt
+
+    from app.core.db import get_sessionmaker
+    from app.models.voyage import VoyageRun
+    from app.services import daily_feed
+    from worker.tasks import daily_feed_sync
+
+    await register_and_login(client)
+    now = dt.datetime.now(dt.UTC)
+    async with get_sessionmaker()() as session:
+        await daily_feed.set_sync_time(session, 0, 0)
+        caught_up = VoyageRun(
+            kind=daily_feed.DAILY_FEED_VOYAGE_KIND,
+            mode="pipeline",
+            goal=f"补抓上一批（{now.date() - dt.timedelta(days=1)}）",
+            status="done",
+        )
+        session.add(caught_up)
+        await session.commit()
+
+    monkeypatch.setattr(
+        daily_feed,
+        "todays_batch_available",
+        _fake_batch_available(now.date().isoformat()),
+    )
+    enqueued: list[tuple[str, str]] = []
+
+    class _Redis:
+        async def enqueue_job(self, name, run_id, **kwargs):
+            enqueued.append((name, run_id))
+
+    run_id = await daily_feed_sync({"redis": _Redis()})
+    assert run_id is not None, "补昨天批次的任务不应阻止今天批次建任务"
+    assert enqueued == [("run_voyage", run_id)]
+
+
 async def test_max_probe_attempts_defaults_to_ten_and_is_configurable(client):
     """默认 10 次；管理员可改，普通用户只读。"""
     admin = {"Authorization": f"Bearer {await register_and_login(client)}"}

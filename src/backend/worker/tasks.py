@@ -246,7 +246,11 @@ async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
     arq 的 cron 时刻在 worker 启动时固定，改设置得重启才生效，所以让 cron 空转、
     由设置决定是否动手。空转一次只是一条查询加一次 RSS 探测。
 
-    返回入队的 voyage id；未到点 / 今天已跑过 / 今天那批还没出来，都返回 None。
+    返回入队的 voyage id；未到点 / 没有尚未收录的批次，都返回 None。
+
+    这里不能按 ``VoyageRun.created_at`` 做「今天跑过」判重：一次在今天执行的昨日补抓，
+    不代表今天稍后发布的新批次也已经收过。是否有工作可做由内容探测判断；并发重复建
+    任务则由 ``create_daily_feed_voyage`` 的全局运行中互斥兜底。
     """
     import datetime as dt
 
@@ -255,10 +259,6 @@ async def daily_feed_sync(ctx: dict[str, Any]) -> str | None:
     now = dt.datetime.now(dt.UTC)
     async with get_sessionmaker()() as session:
         if not await daily_feed_service.due_now(session, now=now):
-            return None
-        if await daily_feed_service.already_ran_today(
-            session, daily_feed_service.DAILY_FEED_VOYAGE_KIND, now=now
-        ):
             return None
         # 探测有次数上限：「今天 arXiv 就是没发」是正常情况（周末、节假日、发布故障），
         # 不该从早探到晚每 15 分钟敲一次。但**探满不等于当天收工**：/new 只带当天那批，

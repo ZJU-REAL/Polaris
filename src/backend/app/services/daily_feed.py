@@ -1515,8 +1515,8 @@ async def due_now(session: AsyncSession, *, now: dt.datetime, delay_minutes: int
     """现在是否到了该跑的时刻（供每 15 分钟一次的检查点判断）。
 
     arq 的 cron 时刻在 worker 启动时就固定了，改设置得重启才生效。所以改成让 cron 高频
-    空转、由这里判断是否真的该跑：``now`` 已过今天的目标时刻即为 True。调用方还要自己
-    确认今天没跑过（见 :func:`already_ran_today`），否则每个检查点都会重复触发。
+    空转、由这里判断是否真的该跑：``now`` 已过今天的目标时刻即为 True。每日论文任务
+    不能按任务创建日判重；调用方应按公告内容判断是否仍有未收录论文。
     """
     hour, minute = await get_sync_time(session)
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -1596,8 +1596,8 @@ async def todays_batch_available(session: AsyncSession) -> tuple[bool, str | Non
             latest = batch_date
         # 拿到的还是上一批公告时要分两种情况，因为它们的正确处置正好相反：
         #
-        # 1. **那一批我们已经收过了**——剩下这些没见过的只是尾巴。为它跑一轮的代价极大：
-        #    already_ran_today 会把当天锁死，两小时后 arXiv 真正放出当天批次时再没人去取。
+        # 1. **那一批我们已经收过了**——剩下这些没见过的只是尾巴。为它跑一轮的代价极大；
+        #    旧调度还会按任务创建日把当天锁死，两小时后真正批次发布时再没人去取。
         #    2026-08-13 生产就是这样：02:00 UTC（北京 10:00）跑了一轮收了 96 篇尾巴，
         #    而当天 446 篇 04:00 UTC 才发布，一整天都没进来。
         # 2. **那一批我们整批没收过**（比如昨天服务挂了）——这是最后的补救窗口。
