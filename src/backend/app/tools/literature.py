@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +21,7 @@ from app.services.paper_review import relevant_excerpt
 from app.services.papers import PaperView
 from app.tools.context import ToolContext
 from app.tools.registry import tool
-from app.tools.scope import library_ids_for, membership_in_scope
+from app.tools.scope import library_ids_for, readable_paper
 
 _WIKI_CHARS = 8000
 _FULLTEXT_PAGE_CHARS = 6000
@@ -55,17 +54,7 @@ def _paper_brief(paper: PaperView, score: float | None = None) -> dict[str, Any]
 
 
 async def _get_project_paper(session: Any, ctx: ToolContext, raw_id: Any) -> PaperView:
-    try:
-        paper_id = uuid.UUID(str(raw_id))
-    except ValueError as e:
-        raise ValueError(f"paper_id 不是合法 uuid：{raw_id}") from e
-    paper = await session.get(Paper, paper_id)
-    membership = (
-        await membership_in_scope(session, ctx, paper_id) if paper is not None else None
-    )
-    if paper is None or membership is None:
-        raise ValueError(f"库内不存在该论文：{raw_id}")
-    return PaperView(paper, membership, ctx.project_id)
+    return (await readable_paper(session, ctx, raw_id)).view
 
 
 @tool(

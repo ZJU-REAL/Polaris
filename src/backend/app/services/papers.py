@@ -421,7 +421,7 @@ async def list_papers(
     return [PaperView(paper, membership, project_id) for paper, membership in page_rows], int(total)
 
 
-async def _paper_in_daily_feed(session: AsyncSession, paper_id: uuid.UUID) -> bool:
+async def paper_in_daily_feed(session: AsyncSession, paper_id: uuid.UUID) -> bool:
     """论文是否在当前每日推送里——每日池全实验室可读，登录用户即可读它。"""
     from app.models.daily_feed import DailyFeedEntry
 
@@ -488,7 +488,7 @@ async def _pool_paper_view(
     topic_id = (await session.execute(stmt)).scalar_one_or_none()
     if topic_id is None:
         entry = await user_library.entry_for_paper(session, user_id=user_id, paper=paper)
-        if entry is None and not await _paper_in_daily_feed(session, paper_id):
+        if entry is None and not await paper_in_daily_feed(session, paper_id):
             # 书架 / 个人库都不可达，也不在每日推送里 → 视为不存在
             return None
     membership = LibraryPaper(

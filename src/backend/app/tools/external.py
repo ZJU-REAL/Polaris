@@ -6,15 +6,13 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
 from app.services.literature import get_openalex_client, get_s2_client
 from app.tools.context import ToolContext
 from app.tools.registry import tool
-from app.tools.scope import membership_in_scope
+from app.tools.scope import readable_paper
 
 _MAX_K = 10
 
@@ -81,16 +79,8 @@ async def _resolve_ref(ctx: ToolContext, args: dict[str, Any]) -> str:
     raw = str(args.get("paper_id") or "").strip()
     if not raw:
         raise ValueError("需要 paper_ref（arXiv:xxx / DOI:xxx / S2 id）或库内 paper_id")
-    try:
-        pid = uuid.UUID(raw)
-    except ValueError as e:
-        raise ValueError(f"paper_id 不是合法 uuid：{raw}") from e
     async with get_sessionmaker()() as session:
-        paper = await session.get(Paper, pid)
-        if paper is None or (
-            await membership_in_scope(session, ctx, pid)
-        ) is None:
-            raise ValueError(f"库内不存在该论文：{raw}")
+        paper = (await readable_paper(session, ctx, raw)).view
         if paper.arxiv_id:
             return f"arXiv:{paper.arxiv_id}"
         if paper.doi:

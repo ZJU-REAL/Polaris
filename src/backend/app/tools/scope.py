@@ -14,11 +14,15 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.library_direction import DirectionLibrary, LibraryPaper
+from app.models.paper import Paper
 from app.models.project import ProjectMember
 from app.models.user import User
 from app.services.libraries import (
@@ -26,6 +30,7 @@ from app.services.libraries import (
     library_visible_to,
     membership_rank,
 )
+from app.services.papers import PaperView, paper_in_daily_feed
 from app.tools.context import ToolContext
 
 
@@ -99,3 +104,70 @@ async def membership_in_scope(
     if not rows:
         return None
     return min(rows, key=membership_rank)
+
+
+@dataclass(frozen=True, slots=True)
+class PaperAccess:
+    """一篇读得到的论文，外加「它进库了没有」。
+
+    ``in_library`` 为假就是每日新论文池里那种**还没被任何库收录**的论文。工具要把
+    这个区别如实告诉模型，否则它会把一篇今天刚出的新论文说成「你库里的工作」。
+    """
+
+    view: PaperView
+    in_library: bool
+
+
+async def paper_access(
+    session: AsyncSession, ctx: ToolContext, paper_id: uuid.UUID, *, with_concepts: bool = False
+) -> PaperAccess | None:
+    """这次能不能读这篇论文；读不到返回 None。**所有**按 id 读单篇论文的工具走这里。
+
+    先按本次范围取成员行（:func:`membership_in_scope`），范围外再看它在不在每日新论文
+    池里——每日新论文全实验室可读（``paper_in_daily_feed``，与 HTTP 端点的池级兜底同
+    一条判据），登录用户就能读。
+
+    为什么非兜底不可：``search_daily_pool`` 交给模型的，按定义就是**尚未收录进任何库**
+    的当日新论文。只认成员行的话，助手拿自己上一步搜出来的 id 挨个读详情，20 篇能错
+    20 篇，还都报「库内不存在该论文」——而那些论文就在用户眼前的每日新论文页上。这与
+    :func:`project_ids_for` 修过的是同一类毛病：范围判严了，症状却长得像数据没了。
+
+    兜底只开每日池这一条：它是唯一会把库外论文 id 交到模型手上的工具。书架 / 个人库
+    那些 HTTP 端点也放行的路径这里一概不认——工具没有渠道拿到那些 id，放开只会平白
+    松掉课题范围。
+    """
+    membership = await membership_in_scope(session, ctx, paper_id)
+    options = [selectinload(Paper.concepts)] if with_concepts else None
+    if membership is not None:
+        paper = await session.get(Paper, paper_id, options=options)
+        if paper is not None:
+            return PaperAccess(PaperView(paper, membership, ctx.project_id), True)
+    if ctx.user_id is None:  # 系统内部调用没有身份，每日池的「登录即可读」无从谈起
+        return None
+    if not await paper_in_daily_feed(session, paper_id):
+        return None
+    paper = await session.get(Paper, paper_id, options=options)
+    if paper is None:
+        return None
+    # 临时成员行（不入 session、永不落库），口径同 services/papers 的池级兜底视角。
+    # status=candidate：它确实还只是个候选，别让它看起来像已收录。
+    pooled = LibraryPaper(
+        status="candidate", created_at=paper.created_at, updated_at=paper.updated_at
+    )
+    return PaperAccess(PaperView(paper, pooled, None), False)
+
+
+async def readable_paper(
+    session: AsyncSession, ctx: ToolContext, raw_id: Any, *, with_concepts: bool = False
+) -> PaperAccess:
+    """:func:`paper_access` 加上参数解析与报错，给「拿一个 id 读一篇」的工具用。"""
+    try:
+        paper_id = uuid.UUID(str(raw_id))
+    except (ValueError, AttributeError, TypeError) as e:
+        raise ValueError(f"paper_id 不是合法 uuid：{raw_id}") from e
+    access = await paper_access(session, ctx, paper_id, with_concepts=with_concepts)
+    if access is None:
+        # 不可见与不存在一律同一口径，不泄露存在性；但话要说清找过哪几处，
+        # 否则「库内不存在」会让人以为论文丢了。
+        raise ValueError(f"读不到这篇论文（不在本次能检索的文献库，也不在每日新论文里）：{raw_id}")
+    return access

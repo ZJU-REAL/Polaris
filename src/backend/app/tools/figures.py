@@ -10,8 +10,6 @@ import uuid
 from collections import Counter
 from typing import Any
 
-from sqlalchemy.orm import selectinload
-
 from app.core.db import get_sessionmaker
 from app.models.paper import Paper
 from app.services import citations as citations_service
@@ -23,7 +21,7 @@ from app.services.paper_figure_downloads import create_download_link
 from app.tools.context import ToolContext
 from app.tools.literature import search_papers as _search_papers
 from app.tools.registry import ToolImage, ToolResult, tool
-from app.tools.scope import membership_in_scope
+from app.tools.scope import paper_access, readable_paper
 
 FIGURE_KINDS = ["motivation", "method", "architecture", "experiment", "other"]
 _MAX_BATCH = 8
@@ -32,20 +30,8 @@ _MAX_BATCH = 8
 async def _project_paper(
     session: Any, ctx: ToolContext, raw_id: Any, *, with_concepts: bool = False
 ) -> Paper:
-    try:
-        pid = uuid.UUID(str(raw_id))
-    except ValueError as e:
-        raise ValueError(f"paper_id 不是合法 uuid：{raw_id}") from e
-    opts = [selectinload(Paper.concepts)] if with_concepts else None
-    paper = await session.get(Paper, pid, options=opts)
-    membership = (
-        await membership_in_scope(session, ctx, pid)
-        if paper is not None
-        else None
-    )
-    if paper is None or membership is None:
-        raise ValueError(f"库内不存在该论文：{raw_id}")
-    return paper
+    access = await readable_paper(session, ctx, raw_id, with_concepts=with_concepts)
+    return access.view.paper
 
 
 def _figure_ref(paper_id: uuid.UUID, index: int) -> dict[str, Any]:
@@ -256,11 +242,10 @@ async def find_figures(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]
     out: list[dict[str, Any]] = []
     async with get_sessionmaker()() as session:
         for pid in paper_ids:
-            paper = await session.get(Paper, pid)
-            if paper is None or (
-                await membership_in_scope(session, ctx, pid)
-            ) is None:
+            access = await paper_access(session, ctx, pid)
+            if access is None:
                 continue
+            paper = access.view
             for fig in paper.figures or []:
                 if not fig.get("important"):
                     continue
@@ -320,9 +305,7 @@ async def get_paper_notes(ctx: ToolContext, args: dict[str, Any]) -> dict[str, A
         paper = await _project_paper(session, ctx, args.get("paper_id"))
         # 笔记仅作者本人可见：无用户语境（系统内部调用）时返回空
         rows = (
-            await notes_service.list_paper_notes(
-                session, paper_id=paper.id, author_id=ctx.user_id
-            )
+            await notes_service.list_paper_notes(session, paper_id=paper.id, author_id=ctx.user_id)
             if ctx.user_id is not None
             else []
         )

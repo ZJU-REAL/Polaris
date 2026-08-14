@@ -244,5 +244,19 @@ async def test_cross_project_isolation(client):
         b_paper_id = str(paper.id)
 
     ctx_a = _ctx(proj_a)
-    with pytest.raises(ValueError, match="库内不存在"):
+    with pytest.raises(ValueError, match="读不到这篇论文"):
         await tools.run_tool(ctx_a, "get_paper", {"paper_id": b_paper_id})
+
+    # 带上身份也一样：每日池兜底只认每日新论文，不是「这个人能看到的都放行」——
+    # 否则课题范围会顺着兜底悄悄松掉（B 的起源库是公共库，HTTP 端点确实放行它）。
+    from sqlalchemy import select
+
+    from app.models.user import User
+
+    async with get_sessionmaker()() as session:
+        user_a = (
+            await session.execute(select(User).where(User.email == "a@example.com"))
+        ).scalar_one()
+    ctx_a_with_identity = ToolContext(project_id=proj_a, llm=LLMRouter(), user_id=user_a.id)
+    with pytest.raises(ValueError, match="读不到这篇论文"):
+        await tools.run_tool(ctx_a_with_identity, "get_paper", {"paper_id": b_paper_id})

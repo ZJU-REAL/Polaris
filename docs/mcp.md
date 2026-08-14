@@ -132,7 +132,7 @@ token or `POLARIS_MCP_USER_EMAIL`; the caller never supplies a user ID.
 | `search_papers` | Search papers in the topic's corpus. `mode=semantic` (default) falls back to keyword when embeddings are unavailable. |
 | `search_chunks` | Passage-level search — lands on the paragraph rather than the paper. |
 | `grep_fulltext` | Literal string match across the full texts, with a small context window per hit. Better than semantic search for exact terms, model names, dataset names, or formula symbols. |
-| `get_paper` | Metadata, authors, status, abstract, concept tags. |
+| `get_paper` | Metadata, authors, status, abstract, concept tags. `in_library` tells you whether the paper is actually collected into a library — `false` means it is still only a daily-pool candidate. |
 | `read_wiki` | The platform's compiled reading note for a paper (falls back to the abstract). |
 | `read_fulltext` | Full text; give a `query` for the most relevant passage, or page through it. |
 | `related_papers` | Nearest neighbours by shared concepts. |
@@ -213,6 +213,11 @@ decision and tell you, but the decision stays with a person in the web app.
 linked to this topic) · `get_library` (its statement, keywords, anchors, sync cadence) ·
 `search_daily_pool` (the upstream feed of new arXiv announcements not yet collected into any
 library).
+
+Papers returned by `search_daily_pool` are, by definition, in no library at all, so the reading
+tools accept their ids as a deliberate exception: `get_paper`, `read_wiki` and `read_fulltext` will
+resolve a daily-pool paper even though it has no library membership, and report `in_library: false`.
+Everything else stays scoped to the libraries this session can search.
 
 A topic holds no papers of its own — its corpus is the union of the libraries linked to it. That is
 why `get_project_status` lists `source_libraries`, and why an empty corpus usually means no library

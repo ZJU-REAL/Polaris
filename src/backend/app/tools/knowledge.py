@@ -6,7 +6,6 @@ import uuid
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.core.db import get_sessionmaker
 from app.models.paper import Paper, PaperChunk
@@ -16,7 +15,7 @@ from app.services import search as search_service
 from app.services.embedding import embed_query
 from app.tools.context import ToolContext
 from app.tools.registry import tool
-from app.tools.scope import library_ids_for, membership_in_scope
+from app.tools.scope import library_ids_for, readable_paper
 
 _CHUNK_CHARS = 1200
 _MAX_K = 12
@@ -111,22 +110,9 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     summarize=lambda a, r: f"论文详情：{r.get('title', a.get('paper_id', ''))}",
 )
 async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
-    try:
-        paper_id = uuid.UUID(str(args.get("paper_id")))
-    except ValueError as e:
-        raise ValueError(f"paper_id 不是合法 uuid：{args.get('paper_id')}") from e
     async with get_sessionmaker()() as session:
-        stmt = (
-            select(Paper)
-            .where(Paper.id == paper_id)
-            .options(selectinload(Paper.concepts))
-        )
-        paper = (await session.execute(stmt)).scalar_one_or_none()
-        membership = (
-            await membership_in_scope(session, ctx, paper_id) if paper is not None else None
-        )
-        if paper is None or membership is None:
-            raise ValueError(f"库内不存在该论文：{args.get('paper_id')}")
+        access = await readable_paper(session, ctx, args.get("paper_id"), with_concepts=True)
+        paper = access.view
         authors = [a.get("name") for a in (paper.authors or []) if isinstance(a, dict)]
         return {
             "paper_id": str(paper.id),
@@ -137,11 +123,14 @@ async def get_paper(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
             "arxiv_id": paper.arxiv_id,
             "doi": paper.doi,
             "url": paper.url,
-            "status": membership.status,
+            "status": paper.status,
+            # 没进库的论文（每日新论文/书架/个人库）也读得到，但别让模型把它当成
+            # 「你库里的工作」——status 在这种情况下是合成的，说明不了收录与否。
+            "in_library": access.in_library,
             "tldr": paper.tldr,
             "abstract": (paper.abstract or "")[:2000] or None,
             "concepts": [c.name for c in paper.concepts],
-            "has_wiki": paper.wiki is not None,
+            "has_wiki": paper.has_wiki,
             "has_fulltext": bool(paper.full_text_path),
         }
 
