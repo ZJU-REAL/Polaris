@@ -113,6 +113,7 @@ async def test_forge_full_pipeline(client, queue_stub):
         "concept_holes",
         "limitations",
         "trends",
+        "method_knobs",
     ]
     assert detail["steps"][2]["observation"]["gaps"] == 2  # 无概念/全文/近期趋势 → 仅综述 gap
     assert detail["steps"][3]["observation"]["generated"] == 2
@@ -454,3 +455,69 @@ async def test_idea_trash_flow(client):
     r = await client.post(f"/api/projects/{project_id}/ideas/trash/empty", headers=headers)
     assert r.json()["affected"] == 2
     assert (await client.get(f"/api/ideas/{ids[1]}", headers=headers)).status_code == 404
+
+
+def test_knob_openings_finds_coarse_fixed_knobs():
+    """机制旋钮信号：多篇论文把同一旋钮设成全局/固定 → 细化开口；已有人做细/自适应则不算。
+
+    线上 OPD 库实测：排名第一的开口正是「蒸馏损失权重 = 全局常数 λ、无人做 token 级
+    自适应」，而这恰好是 REOPD（把全局 λ 换成 token 级可靠性自适应）的来源。
+    """
+    from app.agents.voyage.actions_ideas import _knob_openings
+
+    # 各文叫法不同（线上实测 51 张卡产出 152 个互不相同的名字），对齐只能靠 category
+    cards = [
+        {
+            "title": "A",
+            "knobs": [{"name": "蒸馏损失权重 λ", "category": "loss_weight",
+                       "setting": "全局常数 λ", "granularity": "global", "adaptivity": "fixed"}],
+        },
+        {
+            "title": "B",
+            "knobs": [{"name": "KL 项系数", "category": "loss_weight", "setting": "固定 0.5",
+                       "granularity": "global", "adaptivity": "fixed"}],
+        },
+        {
+            "title": "C",
+            "knobs": [{"name": "监督强度", "category": "loss_weight", "setting": "逐 token 自适应",
+                       "granularity": "per-token", "adaptivity": "adaptive"}],
+        },
+        {
+            "title": "D",
+            "knobs": [{"name": "教师反馈粒度", "category": "granularity", "setting": "逐 token",
+                       "granularity": "per-token", "adaptivity": "adaptive"}],
+        },
+        {
+            "title": "E",
+            "knobs": [{"name": "对齐单元", "category": "granularity", "setting": "token 级评分",
+                       "granularity": "per-token", "adaptivity": "adaptive"}],
+        },
+        # 词表外的 category 回退 other；other 不产出开口
+        {"title": "F", "knobs": [{"name": "某个旋钮", "category": "自造类目",
+                                  "granularity": "global", "adaptivity": "fixed"}]},
+    ]
+    openings = _knob_openings(cards)
+    knobs = [o["knob"] for o in openings]
+    # loss_weight：2 处全局固定 vs 1 处 token 级自适应 → 仍是开口，且排第一
+    assert knobs and openings[0]["category"] == "loss_weight"
+    assert openings[0]["papers"] == 3 and openings[0]["coarse"] == 2
+    assert "蒸馏损失权重 λ" in openings[0]["aliases"]  # 展示保留各文原名
+    # granularity 类目已普遍 per-token + adaptive → 不是开口；other 类目一律不算
+    assert not any(o["category"] in {"granularity", "other"} for o in openings)
+
+
+def test_gaps_interleaved_by_signal():
+    """gap 清单按信号轮转：每个信号源都有靠前位置，最后加入的信号不会沉到清单末尾。"""
+    from app.agents.voyage.actions_ideas import _interleave_by_signal
+
+    gaps = (
+        [{"title": f"s{i}", "signal": "survey_gap"} for i in range(6)]
+        + [{"title": f"c{i}", "signal": "concept_holes"} for i in range(5)]
+        + [{"title": f"k{i}", "signal": "method_knobs"} for i in range(3)]
+    )
+    out = _interleave_by_signal(gaps)
+    assert len(out) == len(gaps)
+    # 三个信号的首条都落在前 3 位
+    assert {g["signal"] for g in out[:3]} == {"survey_gap", "concept_holes", "method_knobs"}
+    # 条目不丢不重
+    assert sorted(g["title"] for g in out) == sorted(g["title"] for g in gaps)

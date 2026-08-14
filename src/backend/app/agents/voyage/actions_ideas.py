@@ -55,6 +55,7 @@ DEFAULT_FORGE_KNOBS: dict[str, Any] = {
     "num_ideas": 8,
     "dedup_threshold": 0.85,
     "max_context_papers": 20,
+    "max_card_papers": 60,
     "signals": list(FORGE_SIGNALS),
 }
 DEFAULT_ROUNDS = 2
@@ -80,14 +81,54 @@ LIMITATIONS_SYSTEM_PROMPT = """\
 给出 2-4 个研究空白。
 """
 
+METHOD_CARD_SYSTEM_PROMPT = """\
+你是方法结构分析师。给定若干论文（标题/TL;DR/wiki 摘录），为每篇抽出「方法卡」。
+重点是**可被后续工作改动的设计旋钮**：论文里被设成某个具体取值或某种粒度的机制部件。
+只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
+{"cards": [{"idx": 0, "mechanism": "一句话说明核心机制",
+ "knobs": [{"name": "本文里的叫法（如 蒸馏损失权重 λ / 采样温度）",
+            "category": "见下方受控词表，必须原样取其一",
+            "setting": "该论文怎么设的（如 全局常数 λ / 逐 token 均匀 / 固定阈值 0.9）",
+            "granularity": "global|per-domain|per-batch|per-sequence|per-token|per-layer|other",
+            "adaptivity": "fixed|scheduled|learned|adaptive"}],
+ "limitation": "论文自陈或明显可见的局限"}]}
+
+category 受控词表（**只能从中选，不要自造**——跨论文对齐靠它）：
+loss_weight（损失/目标项的权重、系数）、threshold（阈值、门控开关）、
+granularity（监督或更新作用的单元/粒度）、selection（选谁：教师/数据/样本/专家）、
+schedule（随训练进程变化的调度、课程、预热）、temperature（温度、分布锐化与平滑）、
+objective（目标函数或散度的形式）、budget（采样数、轮数、算力或长度预算）、
+normalization（归一化、裁剪、标准化）、architecture（结构性组件：适配器、投影层等）、other
+
+每篇至多 3 个旋钮，只列真正影响效果、且后续工作可以改的部件；idx 必须回填输入里的 idx。
+"""
+
 GENERATE_SYSTEM_PROMPT = """\
 你是 Idea Forge 的想法生成器，围绕研究空白提出具体可执行的研究想法。
 研究空白清单中每条带有下标与信号来源（signal），生成时注意：
 - 每个想法通过 gap_index 绑定它主要针对的空白（0 起下标）；
 - 不同想法尽量覆盖不同空白与不同信号来源，避免扎堆。
+
+**每条想法必须是一个可实现的机制，而不是一项研究计划。**
+「系统评估 X」「分析 Y 的理论性质」「构建 Z 的消融矩阵」这类只做测量、不改机制的选题一律不要。
+判据：读完 method 后，工程师应当能说出「代码里具体改哪一处、改成什么」。
+
+优先使用下列**推进招式**（尤其前三个，它们是文献里最高产的推进方式）：
+1. 细化粒度：把全局/统一的量改成按 token / 层 / 样本 / 批次 / 领域分别取值；
+2. 自适应化：把固定超参改成由某个可观测信号（置信度、一致性、不确定度、梯度范数等）驱动，
+   并给出预算或归一化以防失控；
+3. 放松假设：去掉方法依赖的某个前提（如需要真值/验证器/额外前向），用更弱的信号替代；
+4. 跨域迁移：把 A 领域成熟机制搬到 B 领域并处理其特有约束；
+5. 组合：把两个互补机制合成一个目标，说明为何互补而非简单叠加；
+6. 取反：把方法里被当作噪声/丢弃的部分变成信号。
+
 只输出一个 JSON 对象，不要输出任何其他文字或 Markdown 代码块，格式：
-{"ideas": [{"title": "想法标题", "summary": "一句话概述", "gap_index": 0, "motivation": "动机",
-"method": "方法概述", "experiments": "预期实验", "risks": "风险"}]}
+{"ideas": [{"title": "想法标题", "summary": "一句话概述", "gap_index": 0,
+"builds_on": "被改进的已有方法或论文（没有就写「无」）",
+"move": "上面 6 种招式之一的名称",
+"delta": "把【什么】从【原来的样子】改成【新的样子】——一句话，要具体到机制层面",
+"motivation": "动机", "method": "方法概述（含关键公式或伪代码级描述）",
+"experiments": "预期实验", "risks": "风险"}]}
 """
 
 SCORE_SYSTEM_PROMPT = """\
@@ -183,7 +224,17 @@ def _idea_markdown(item: dict[str, Any]) -> str:
         ("预期实验", "experiments"),
         ("风险", "risks"),
     )
-    parts = [f"## {zh}\n\n{str(item.get(key) or '（待补充）').strip()}" for zh, key in sections]
+    parts = []
+    # 「改了什么」置顶：builds_on/move/delta 是想法能否落地的判据（缺失时不占版面）
+    delta = str(item.get("delta") or "").strip()
+    if delta:
+        builds_on = str(item.get("builds_on") or "").strip() or "无"
+        move = str(item.get("move") or "").strip() or "未标注"
+        parts.append(
+            "## 相对已有方法的改动\n\n"
+            f"- 基于：{builds_on}\n- 招式：{move}\n- 改动：{delta}"
+        )
+    parts += [f"## {zh}\n\n{str(item.get(key) or '（待补充）').strip()}" for zh, key in sections]
     return "\n\n".join(parts)
 
 
@@ -258,10 +309,15 @@ def _context(ctx: ActionContext) -> dict[str, Any]:
 def _context_prompt(ctx: ActionContext, statement: str) -> str:
     context = _context(ctx)
     concepts = "、".join(context.get("concepts") or []) or "（无）"
+    # 方法卡索引（若已采集）：wiki 摘录只够放下相关性最高的 max_context_papers 篇，
+    # 卡片是压缩表示，能让生成器额外看见库里其余论文的机制与旋钮。
+    cards = ctx.checkpoint.get("forge_cards")
+    cards_block = _cards_prompt(cards if isinstance(cards, list) else [])
     return (
         f"研究方向：{statement}\n"
         f"知识库概念：{concepts}\n"
-        f"知识库综述（compiled wiki 摘要）：\n{context.get('text') or '（知识库为空）'}"
+        + (f"{cards_block}\n" if cards_block else "")
+        + f"知识库综述（compiled wiki 摘要）：\n{context.get('text') or '（知识库为空）'}"
     )
 
 
@@ -389,6 +445,209 @@ def _limitation_excerpts(full_text: str) -> list[str]:
     return excerpts
 
 
+# ---- 方法旋钮信号（method_knobs）----
+#
+# 前四个信号只能产出「A 与 B 没人组合过」「X 很热」这类**组合式**空白，而文献里大量的
+# 真实推进是**细化式**的：某方法的关键旋钮当前是全局/固定的，后续工作把它按更细粒度、
+# 依据某个可靠性信号自适应。这类开口在旧信号里完全不可见（实测：OPD 库 106 篇里
+# 「蒸馏损失权重 = 全局常数 λ、无人做 token 级自适应」是排名第一的开口，而基线生成器
+# 从未看到它——它只能看见相关性最高的 20 篇的 wiki 摘录）。
+_CARD_BATCH = 10  # 每次 LLM 抽卡的论文数
+_CARD_BODY_CHARS = 700
+_KNOB_MIN_PAPERS = 2  # 至少多少篇共享同一旋钮才算一个开口
+_KNOB_MAX_OPENINGS = 6
+_CARDS_PROMPT_CHARS = 8000  # 方法卡索引注入 prompt 的上限
+# 粗粒度 = 还有细化空间的粒度
+_COARSE_GRANULARITY = frozenset({"global", "per-domain", "per-sequence", "other", ""})
+_RIGID_ADAPTIVITY = frozenset({"fixed", "scheduled", ""})
+
+
+# 旋钮的受控词表：跨论文对齐**只能靠它**。实测（OPD 库 51 张卡）LLM 自由命名会产出
+# 152 个互不相同的旋钮名、仅 1 个重复两次——字符串归并（含子串合并）在这种分布下
+# 完全聚不起来，聚合必须落在固定类目上，自由名字只用于展示。
+_KNOB_CATEGORY_LABELS: dict[str, str] = {
+    "loss_weight": "损失/目标项权重",
+    "threshold": "阈值与门控",
+    "granularity": "监督作用粒度",
+    "selection": "教师/数据选择策略",
+    "schedule": "训练调度与课程",
+    "temperature": "温度与分布锐化",
+    "objective": "目标函数形式",
+    "budget": "采样/计算预算",
+    "normalization": "归一化与裁剪",
+    "architecture": "结构性组件",
+    "other": "其他",
+}
+
+
+def _canon_knob(name: str) -> str:
+    """旋钮名归一：去空白/标点、小写化。只用于同名合并与展示，不承担跨论文对齐。"""
+    return re.sub(r"[\s　·・/／()（）\[\]【】,，.。:：-]+", "", str(name)).lower()
+
+
+def _knob_category(knob: dict[str, Any]) -> str:
+    """旋钮 → 受控类目；LLM 给了词表外的值时回退 other。"""
+    raw = str(knob.get("category") or "").strip().lower()
+    return raw if raw in _KNOB_CATEGORY_LABELS else "other"
+
+
+async def _method_cards(
+    ctx: ActionContext, session: AsyncSession, project_id: uuid.UUID, limit: int
+) -> list[dict[str, Any]]:
+    """抽方法卡（机制 + 关键旋钮 + 局限），失败的批次静默跳过。"""
+    library_ids = await get_source_library_ids(session, project_id)
+    if not library_ids or limit <= 0:
+        return []
+    rows = dedupe_member_rows(
+        (
+            await session.execute(
+                member_papers_stmt(library_ids).where(
+                    LibraryPaper.status.in_(("compiled", "included"))
+                )
+            )
+        ).all()
+    )
+    rows.sort(
+        key=lambda pm: (
+            -(pm[1].relevance_score if pm[1].relevance_score is not None else -1e18),
+            pm[1].created_at,
+        )
+    )
+    rows = rows[:limit]
+    papers = [
+        {
+            "idx": i,
+            "title": p.title,
+            "tldr": (p.tldr or "")[:300],
+            "body": ((m.wiki_content if m.wiki_content else None) or p.abstract or "")[
+                :_CARD_BODY_CHARS
+            ],
+        }
+        for i, (p, m) in enumerate(rows)
+    ]
+
+    def validate(data: Any) -> list[dict[str, Any]]:
+        cards = data.get("cards") if isinstance(data, dict) else None
+        if not isinstance(cards, list):
+            raise ValueError('expected {"cards": [...]}')
+        return cards
+
+    async def one_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        try:
+            cards = await _complete_json(
+                ctx,
+                stage="forge_signal",
+                system=METHOD_CARD_SYSTEM_PROMPT,
+                user=json.dumps(batch, ensure_ascii=False),
+                validate=validate,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 单批失败不影响其余批
+            return []
+        out = []
+        by_idx = {b["idx"]: b for b in batch}
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            src = by_idx.get(card.get("idx"))
+            if src is None:
+                continue
+            knobs = [k for k in (card.get("knobs") or []) if isinstance(k, dict) and k.get("name")]
+            out.append(
+                {
+                    "title": src["title"],
+                    "mechanism": str(card.get("mechanism") or "")[:300],
+                    "limitation": str(card.get("limitation") or "")[:300],
+                    "knobs": knobs[:3],
+                }
+            )
+        return out
+
+    batches = [papers[i : i + _CARD_BATCH] for i in range(0, len(papers), _CARD_BATCH)]
+    groups = await asyncio.gather(*[one_batch(b) for b in batches])
+    return [c for g in groups for c in g]
+
+
+def _knob_openings(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """方法卡 → 细化开口（确定性聚合，按受控类目对齐）。
+
+    一类旋钮在库内多数论文里都是粗粒度（全局/序列级）且固定，而做细粒度或自适应的
+    很少 → 这是一个「细化开口」：后续工作可以把它按 token/层/样本拆开，或让它随
+    可靠性、不确定度等可观测信号自适应。
+    """
+    slots: dict[str, dict[str, Any]] = {}
+    for card in cards:
+        for knob in card.get("knobs") or []:
+            if not str(knob.get("name") or "").strip():
+                continue
+            category = _knob_category(knob)
+            slot = slots.setdefault(category, {"entries": [], "names": []})
+            gran = str(knob.get("granularity") or "other").lower()
+            adap = str(knob.get("adaptivity") or "fixed").lower()
+            slot["names"].append(str(knob.get("name")))
+            slot["entries"].append(
+                {
+                    "paper": card.get("title", "")[:120],
+                    "name": str(knob.get("name"))[:60],
+                    "setting": str(knob.get("setting") or "")[:120],
+                    "granularity": gran,
+                    "adaptivity": adap,
+                }
+            )
+
+    openings: list[dict[str, Any]] = []
+    for category, slot in slots.items():
+        entries = slot["entries"]
+        n = len(entries)
+        if n < _KNOB_MIN_PAPERS or category == "other":
+            continue
+        coarse = sum(1 for e in entries if e["granularity"] in _COARSE_GRANULARITY)
+        fine = n - coarse
+        rigid = sum(1 for e in entries if e["adaptivity"] in _RIGID_ADAPTIVITY)
+        adaptive = n - rigid
+        # 粗粒度/固定占多数才算开口；已经普遍做细、做自适应的类目不是机会
+        if coarse < fine or rigid < adaptive:
+            continue
+        score = coarse * 2 + rigid - fine * 3 - adaptive * 2
+        if score <= 0:
+            continue
+        coarse_entries = [e for e in entries if e["granularity"] in _COARSE_GRANULARITY]
+        openings.append(
+            {
+                "knob": _KNOB_CATEGORY_LABELS[category],
+                "category": category,
+                "papers": n,
+                "score": score,
+                "coarse": coarse,
+                "rigid": rigid,
+                "aliases": sorted({e["name"] for e in coarse_entries})[:6],
+                "examples": (coarse_entries or entries)[:3],
+            }
+        )
+    openings.sort(key=lambda o: (-o["score"], -o["papers"]))
+    return openings[:_KNOB_MAX_OPENINGS]
+
+
+def _cards_prompt(cards: list[dict[str, Any]]) -> str:
+    """方法卡索引：压缩表示，让生成器看见整个库的机制而非前 20 篇的 wiki 摘录。"""
+    if not cards:
+        return ""
+    lines = []
+    for card in cards:
+        knobs = "；".join(
+            f"{k.get('name')}={k.get('setting')}"
+            f"（{k.get('granularity')}/{k.get('adaptivity')}）"
+            for k in (card.get("knobs") or [])[:3]
+        )
+        lines.append(
+            f"- {card['title']}｜{card.get('mechanism') or ''}｜旋钮：{knobs or '（未识别）'}"
+        )
+    return ("方法卡索引（库内论文的核心机制与关键旋钮当前取值）：\n" + "\n".join(lines))[
+        :_CARDS_PROMPT_CHARS
+    ]
+
+
 @register("forge.collect_signals")
 async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]:
     """确定性信号采集：概念组合空白 / 时间趋势 / 论文局限（LLM 仅做局限归纳）。"""
@@ -396,6 +655,7 @@ async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> d
         signals = ctx.checkpoint["forge_signals"]
         return {"skipped": True, **{k: len(v) for k, v in signals.items() if isinstance(v, list)}}
     enabled = _signals_enabled(ctx)
+    knobs = _forge_knobs(ctx)
     signals: dict[str, Any] = {}
 
     async with get_sessionmaker()() as session:
@@ -404,6 +664,13 @@ async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> d
             signals["concept_holes"] = _concept_holes(concept_map)
         if "trends" in enabled:
             signals["trends"] = await _trend_concepts(session, ctx.run.project_id)
+        if "method_knobs" in enabled:
+            cards = await _method_cards(
+                ctx, session, ctx.run.project_id, int(knobs["max_card_papers"])
+            )
+            ctx.checkpoint["forge_cards"] = cards  # 生成步复用作「方法卡索引」上下文
+            signals["method_knobs"] = _knob_openings(cards)
+            signals["method_cards"] = len(cards)
         excerpt_blocks: list[str] = []
         if "limitations" in enabled:
             library_ids = await get_source_library_ids(session, ctx.run.project_id)
@@ -542,9 +809,30 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
         )
     for gap in signals.get("limitations") or []:
         gaps.append({**gap, "signal": "limitations"})
+    for opening in signals.get("method_knobs") or []:
+        examples = "；".join(
+            f"{e['paper']}的「{e.get('name')}」={e['setting']}"
+            for e in (opening.get("examples") or [])[:3]
+        )
+        aliases = "、".join(opening.get("aliases") or [])
+        gaps.append(
+            {
+                "title": f"细化开口：{opening['knob']} 仍是粗粒度/固定的",
+                "description": (
+                    f"库内 {opening['papers']} 处用到「{opening['knob']}」这类旋钮"
+                    + (f"（各文叫法：{aliases}）" if aliases else "")
+                    + f"，其中 {opening['coarse']} 处是全局/序列级粗粒度、{opening['rigid']} 处"
+                    "是固定或预设调度，很少有工作把它按更细粒度（token/层/样本/批次）拆开，"
+                    "或让它依据可靠性、不确定度等可观测信号自适应并配预算约束。"
+                    f"现有取值示例：{examples}"
+                ),
+                "signal": "method_knobs",
+            }
+        )
 
     if not gaps:
         raise ValueError("没有可用的研究空白（所有信号源均为空）")
+    gaps = _interleave_by_signal(gaps)
     ctx.checkpoint["forge_gaps"] = gaps
     return {
         "gaps": len(gaps),
@@ -553,6 +841,27 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
         },
         "titles": [g["title"] for g in gaps],
     }
+
+
+def _interleave_by_signal(gaps: list[dict[str, str]]) -> list[dict[str, str]]:
+    """按信号轮转交错，保证每个信号源都有靠前的位置。
+
+    原来是各信号顺序拼接（survey_gap 全部 → concept_holes 全部 → …），最后一个信号的
+    空白排在 20+ 条清单的末尾；生成器只取 num_ideas 条来写，靠后的条目实际很少被选中，
+    等于新信号加了也白加。轮转后每个信号的第一条都排在前几位。
+    """
+    buckets: dict[str, list[dict[str, str]]] = {}
+    for gap in gaps:
+        buckets.setdefault(str(gap.get("signal") or "other"), []).append(gap)
+    order = [s for s in FORGE_SIGNALS if s in buckets] + [
+        s for s in buckets if s not in FORGE_SIGNALS
+    ]
+    out: list[dict[str, str]] = []
+    while any(buckets[s] for s in order):
+        for signal in order:
+            if buckets[signal]:
+                out.append(buckets[signal].pop(0))
+    return out
 
 
 # ---- forge 3. 生成候选（LLM stage=forge） ----

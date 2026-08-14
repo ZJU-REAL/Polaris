@@ -7,17 +7,23 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # 阶段0 方向发散的信号源（docs/api-idea2.md §1）
-FORGE_SIGNALS = ("survey_gap", "concept_holes", "limitations", "trends")
+# method_knobs：机制旋钮细化开口——把「某方法的关键旋钮当前是全局/固定的」这件事变成
+# 可检索的空白。前四个信号都只能产出「A 与 B 没人组合过」「X 很热」这类**组合式**空白，
+# 而真实论文里大量的推进是**细化式**的（如把全局系数改成 token 级可靠性自适应）。
+FORGE_SIGNALS = ("survey_gap", "concept_holes", "limitations", "trends", "method_knobs")
+
+ForgeSignal = Literal["survey_gap", "concept_holes", "limitations", "trends", "method_knobs"]
 
 
 class ForgeKnobs(BaseModel):
     num_ideas: int = Field(default=8, ge=1, le=20)  # 生成候选数
     dedup_threshold: float = Field(default=0.85, ge=0.0, le=1.0)  # 余弦相似度阈值
     max_context_papers: int = Field(default=20, ge=1, le=100)  # 知识库上下文论文数上限
+    # 方法卡覆盖的论文数：卡片是压缩表示（一行机制 + 旋钮），比 wiki 摘录省得多，
+    # 因此可以覆盖远多于 max_context_papers 的文献，让生成器看见整个库而非前 20 篇。
+    max_card_papers: int = Field(default=60, ge=0, le=200)
     # 信号源开关（默认全开）
-    signals: list[Literal["survey_gap", "concept_holes", "limitations", "trends"]] = Field(
-        default_factory=lambda: list(FORGE_SIGNALS)
-    )
+    signals: list[ForgeSignal] = Field(default_factory=lambda: list(FORGE_SIGNALS))
 
 
 class ForgeRequest(BaseModel):
