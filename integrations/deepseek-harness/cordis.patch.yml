@@ -1,0 +1,30 @@
+# Polaris tools use the official DSH MCP bridge.  Polaris skills use the native
+# provider below, so the DSH tool profile removes the duplicate skill tools.
+- insert:
+    - id: polaris-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: polaris
+        transport: streamable-http
+        url: !!js '(process.env.POLARIS_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "") + "/mcp"'
+        headers:
+          Authorization: !!js '`Bearer ${process.env.POLARIS_DSH_TOKEN ?? ""}`'
+          X-Polaris-Tool-Profile: !!js 'process.env.POLARIS_DSH_TOOL_PROFILE ?? "dsh-readonly-v1"'
+        toolCallTimeoutMs: 60000
+        failOnStartupError: false
+        reconnect:
+          enabled: true
+          initialDelayMs: 500
+          maxDelayMs: 30000
+          maxAttempts: 10
+
+    - id: polaris-skills
+      name: '@polaris-ai/deepseek-harness-plugin'
+      config:
+        baseUrl: !!js 'process.env.POLARIS_BASE_URL ?? "http://127.0.0.1:8000"'
+        token: !!js 'process.env.POLARIS_DSH_TOKEN ?? ""'
+        serverName: polaris
+        refreshIntervalMs: 30000
+        requestTimeoutMs: 10000
+        failOnStartupError: false
+        allowedToolsMode: enforce

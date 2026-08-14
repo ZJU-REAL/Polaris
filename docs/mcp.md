@@ -6,16 +6,18 @@ you have collected, read their wiki pages and full text, look at concepts and th
 see which AI tasks are running, what is waiting on a human decision, and how far a manuscript has
 got.
 
-**Everything exposed today is read-only.** No tool creates, edits, or deletes anything, and no tool
-runs anything on a remote machine. An agent connected to this server can inform itself about your
-work; it cannot change it. Writes (starting an ingest, forging ideas, launching an experiment,
-drafting a paper) remain web-only for now.
+The default MCP surface is read-only. An agent connected with the ordinary
+profile can inform itself about your work but cannot change it. A separately
+authorized DeepSeek Harness profile can expose `remember`, which writes only to
+the current user's assistant memory. Starting an ingest, forging ideas,
+launching an experiment, approving a gate, and drafting a paper remain web-only.
 
 ---
 
 ## 1. Connect
 
-Two transports, same tools, same permissions.
+Both transports expose the legacy catalog by default. Streamable HTTP also
+supports the scoped profiles described below.
 
 ### Streamable HTTP (recommended)
 
@@ -71,20 +73,47 @@ Call `list_accessible_projects` first when the agent doesn't know which topic to
 use. This user-scoped tool needs no `project_id`; it returns the IDs, names,
 slugs, status, and statements of the topics available to the authenticated user.
 
-Every other tool call carries a `project_id`, which identifies the research
-topic you want the agent to inspect. The server verifies your access on every
-call. A task, manuscript, or library belonging to another topic is reported as
-not found, even when you can access it through another topic. Library visibility
-follows the platform's existing rules: your own personal libraries plus every
-shared library, and nothing more.
+Every project-scoped tool call carries a `project_id`, which identifies the
+research topic you want the agent to inspect. The user-scoped `recall` and
+`remember` tools derive identity from the credential and need no project ID.
+The server verifies your access on every call. A task, manuscript, or library
+belonging to another topic is reported as not found, even when you can access
+it through another topic. Library visibility follows the platform's existing
+rules: your own personal libraries plus every shared library, and nothing more.
 
 You can also find a topic ID in the web app's URL: `/t/<topic-id>`.
 
 ---
 
+### Long-lived integration tokens and profiles
+
+Persistent agents should use a scoped integration token instead of a browser
+JWT. Create one with `POST /api/integration-tokens`; the plaintext is returned
+once, while Polaris stores only a digest. Tokens can carry `skills:read`,
+`mcp:read`, and `mcp:write`, expire after a configured number of days, and can
+be revoked with `DELETE /api/integration-tokens/{id}`.
+
+The optional `X-Polaris-Tool-Profile` request header selects a stable catalog:
+
+| Profile | Tools | Required scope |
+| --- | --- | --- |
+| Omitted | Legacy read-only catalog | `mcp:read` |
+| `dsh-readonly-v1` | Read-only catalog without DSH-native duplicates | `mcp:read` |
+| `dsh-full-v1` | DSH catalog plus approved write tools | `mcp:read`, `mcp:write` |
+
+Profiles govern both discovery and direct invocation. A client cannot call a
+hidden tool by guessing its name. See the
+[DeepSeek Harness bundle](../integrations/deepseek-harness/README.md) for token,
+installation, and skill-provider instructions.
+
+---
+
 ## 2. Tools
 
-45 tools in nine groups. Names are stable; treat them as API.
+The legacy catalog contains 46 tools in nine groups. The DSH read-only profile
+contains 42 because Harness already provides native skill, planning, and
+sub-agent facilities. Names are stable within a versioned profile; treat them
+as API.
 
 ### Project discovery
 
@@ -207,8 +236,10 @@ These exist primarily for PolarisBuddy, the in-app assistant that shares this to
 appear in the MCP catalog too: `run_subagent` (delegate a retrieval-heavy sub-task to a fresh agent
 that only reports its conclusion) · `skill_load` and `skill_read_file` (fetch an agent skill's body
 and attachments on demand) · `recall` (search your own PolarisBuddy memory; its writing counterpart
-`remember` is not exposed over MCP) · `submit_plan` (hand a step plan over for approval — only
-meaningful in a conversation that can render it).
+`remember` is excluded from read-only profiles) · `submit_plan` (hand a step
+plan over for approval — only meaningful in a conversation that can render it).
+The `dsh-full-v1` profile exposes `remember` only when the integration token has
+`mcp:write` and the account itself is not read-only.
 
 ---
 
@@ -255,7 +286,9 @@ get_fact_pack manuscript_id=…                       → the sanctioned facts f
 
 ## 4. Behaviour and limits
 
-- **Read-only.** Every tool is a query. `tools/list` reports `read_only: true` for all of them.
+- **Read-only by default.** The legacy and `dsh-readonly-v1` catalogs contain
+  only query tools. `dsh-full-v1` additionally exposes explicitly approved
+  writes and requires a scoped credential.
 - **Truncation is explicit.** Long text is capped (wiki 8 000 chars, full text 6 000 per page, chunks
   1 200, logs by line count) and the response says so — `truncated: true`, or `page`/`pages` so you
   know a next call exists.
@@ -298,6 +331,7 @@ that breaks a tool fails the build rather than surfacing in your agent.
 | A figure download URL returns `FIGURE_LINK_INVALID` | The signed URL expired or was modified. Call `get_paper_figure` again to create a new link. |
 | A stdio figure result contains a relative URL | Set `POLARIS_PUBLIC_BASE_URL` to the server root that the agent can reach. |
 | Tools missing from `tools/list` | Old server version, or the client cached an earlier list — reconnect. |
+| `MCP_WRITE_SCOPE_REQUIRED` | `dsh-full-v1` needs both `mcp:read` and `mcp:write`, and the account must not be read-only. |
 
 ---
 
@@ -309,3 +343,5 @@ that breaks a tool fails the build rather than surfacing in your agent.
   contract.
 - [Configuration](configuration.md#application-settings-polaris_-prefix) — public URL and link
   lifetime settings.
+- [DeepSeek Harness bundle](../integrations/deepseek-harness/README.md) — native
+  skills, MCP profiles, installation, and operations.

@@ -41,6 +41,7 @@ _KINDS = ("fact", "note")
         "required": ["text"],
     },
     read_only=False,
+    scope="user",
     summarize=lambda a, r: f"记住（{a.get('kind', 'fact')}）：{str(a.get('text', ''))[:40]}",
 )
 async def remember(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
@@ -72,6 +73,7 @@ async def remember(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
             "k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
         },
     },
+    scope="user",
     summarize=lambda a, r: f"回忆「{a.get('query', '')}」→ {len(r.get('items') or [])} 条",
 )
 async def recall(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:

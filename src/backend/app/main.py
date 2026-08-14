@@ -87,7 +87,7 @@ def create_app() -> FastAPI:
     # WS 不挂 /api 前缀：nginx 按 /ws 反代（Upgrade），见 docs/architecture.md §7
     # WS 走不到 HTTP 依赖，只读账号在 ws.py 里各自挡（协同房间是写，通知只是收）
     app.include_router(ws_router)
-    # MCP 只读工具服务：POST /mcp（Streamable HTTP，JSON-RPC 2.0），见 docs/mcp.md
+    # MCP 工具服务：默认只读；受 scope 保护的 Profile 可显式开放写工具。
     app.include_router(mcp_router, dependencies=read_only_gate)
     return app
 

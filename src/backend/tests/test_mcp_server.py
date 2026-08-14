@@ -17,7 +17,8 @@ async def _setup(client, email="mcp@example.com"):
     project_id = resp.json()["id"]
     async with get_sessionmaker()() as session:
         session.add(
-            await add_paper(session,
+            await add_paper(
+                session,
                 project_id=uuid.UUID(project_id),
                 source="manual",
                 title="MCP retrieval paper",
@@ -68,9 +69,10 @@ async def test_initialize_and_tools_list(client):
         "get_concept",
         "external_search",
     } <= names
-    # 用户级发现工具是 project_id 的获取入口，自身不能再要 project_id。
+    # 用户级工具由凭证身份隔离，自身不能再要 project_id。
+    user_scoped = {"list_accessible_projects", "recall"}
     for t in tools:
-        if t["name"] == "list_accessible_projects":
+        if t["name"] in user_scoped:
             assert "project_id" not in t["inputSchema"]["properties"]
             assert "project_id" not in t["inputSchema"].get("required", [])
         else:
