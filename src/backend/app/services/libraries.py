@@ -263,13 +263,17 @@ def dedupe_member_rows(
     return list(best.values())
 
 
-def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
-    """用户可见论文（其课题关联的库 ∪ 被任命策展的库 ∪ 平台 admin 全库）的
-    成员行：SELECT (Paper, LibraryPaper, project_id)。
+def visible_library_clause(user_id: uuid.UUID):
+    """「这个库我够得着吗」——库作用域读取口的统一条件，作用于 ``DirectionLibrary.id``。
+
+    够得着 = 库被我参与的某个课题关联 ∪ 我被任命为它的策展人 ∪ 我是平台管理员。
 
     「我课题的库」走关联表 ``topic_source_libraries`` —— 课题与库是多对多关联，
     不是 project_id 回指。按 project_id 判会漏掉课题关联的独立库（那才是常态：
     P9c 起建课题不再自动建库），也会算进已经不再关联的历史起源库。
+
+    单独抽出来是因为不止论文要用：全局搜索的论文与概念两支都得用同一条判据，
+    各写一遍迟早会分叉——而搜索一旦比列表页宽，就是越权，比漏搜严重得多。
     """
     my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
     my_topic_libraries = select(TopicSourceLibrary.library_id).where(
@@ -279,17 +283,28 @@ def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
         DirectionLibraryCurator.user_id == user_id
     )
     is_admin = select(User.id).where(User.id == user_id, User.role == "admin").exists()
+    return or_(
+        DirectionLibrary.id.in_(my_topic_libraries),
+        DirectionLibrary.id.in_(my_curated),
+        is_admin,
+    )
+
+
+def visible_library_ids_stmt(user_id: uuid.UUID) -> Select:
+    """用户够得着的库 id（子查询用）。判据见 :func:`visible_library_clause`。"""
+    return select(DirectionLibrary.id).where(visible_library_clause(user_id))
+
+
+def user_visible_paper_stmt(user_id: uuid.UUID) -> Select:
+    """用户可见论文的成员行：SELECT (Paper, LibraryPaper, project_id)。
+
+    可见性判据见 :func:`visible_library_clause`。
+    """
     return (
         select(Paper, LibraryPaper, DirectionLibrary.project_id)
         .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
         .join(DirectionLibrary, DirectionLibrary.id == LibraryPaper.library_id)
-        .where(
-            or_(
-                DirectionLibrary.id.in_(my_topic_libraries),
-                DirectionLibrary.id.in_(my_curated),
-                is_admin,
-            )
-        )
+        .where(visible_library_clause(user_id))
     )
 
 

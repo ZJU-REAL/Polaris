@@ -3337,9 +3337,10 @@ export const api = {
   },
 
   // —— 全局搜索（顶栏 ⌘K）：论文/概念/想法/实验/AI 任务/稿件跨实体检索 ——
-  globalSearch(projectId: string, q: string, limit = 5): Promise<GlobalSearchResponse> {
+  /** 搜索范围 = 我够得着的一切，**不挂课题**（后端按可见性判，与列表页同一口径）。 */
+  globalSearch(q: string, limit = 5): Promise<GlobalSearchResponse> {
     const params = new URLSearchParams({ q, limit: String(limit) });
-    return request<GlobalSearchResponse>(`/projects/${projectId}/global-search?${params}`);
+    return request<GlobalSearchResponse>(`/global-search?${params}`);
   },
 
   // —— M2 · Papers ——

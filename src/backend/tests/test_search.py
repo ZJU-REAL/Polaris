@@ -64,7 +64,7 @@ async def test_search_across_entities(client):
     project_id, headers = await _setup(client)
 
     resp = await client.get(
-        f"/api/projects/{project_id}/global-search", params={"q": "graph"}, headers=headers
+        "/api/global-search", params={"q": "graph"}, headers=headers
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -85,7 +85,7 @@ async def test_search_matches_are_case_insensitive_and_scoped(client):
     project_id, headers = await _setup(client)
 
     resp = await client.get(
-        f"/api/projects/{project_id}/global-search",
+        "/api/global-search",
         params={"q": "GRAPH RETRIEVAL FOR"},
         headers=headers,
     )
@@ -94,21 +94,54 @@ async def test_search_matches_are_case_insensitive_and_scoped(client):
     assert types == {"paper"}
 
     resp = await client.get(
-        f"/api/projects/{project_id}/global-search", params={"q": "不存在的关键词"}, headers=headers
+        "/api/global-search", params={"q": "不存在的关键词"}, headers=headers
     )
     assert resp.status_code == 200
     assert resp.json()["hits"] == []
 
 
-async def test_search_requires_membership(client):
-    project_id, _ = await _setup(client)
+async def test_search_never_leaks_other_peoples_work(client):
+    """搜索范围 = 我够得着的一切，**一点都不能多**。
+
+    这条以前靠「路由上带课题 id，非成员回 404」来保证。现在搜索不挂课题了，那道
+    门没有了，可见性判据成了唯一的防线——所以它必须被直接钉住，而不是顺带成立。
+
+    越权比漏搜严重得多：漏搜用户会抱怨，越权没人会发现。
+    """
+    await _setup(client)
     other = await register_and_login(client, email="bob@example.com")
+
     resp = await client.get(
-        f"/api/projects/{project_id}/global-search",
+        "/api/global-search",
         params={"q": "graph"},
         headers={"Authorization": f"Bearer {other}"},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["hits"] == [], "陌生人不该搜到别人课题里的任何东西"
+
+
+async def test_search_spans_every_topic_i_can_reach(client):
+    """跨课题：搜索不再只看「当前课题」。
+
+    这是这次改动的由来——一篇好端端收录在某个库里的论文，站在别的课题上就是搜不到，
+    而界面不会说明原因，看起来就像根本没收录（生产上真的这么误判过一次）。
+    """
+    first_id, headers = await _setup(client)
+
+    # 同一个用户再建一个课题，并在里面放一个可被搜到的想法
+    resp = await client.post("/api/projects", json={"name": "second-proj"}, headers=headers)
+    assert resp.status_code == 201, resp.text
+    second_id = uuid.UUID(resp.json()["id"])
+    async with get_sessionmaker()() as session:
+        session.add(Idea(project_id=second_id, title="Graph idea in the other topic"))
+        await session.commit()
+
+    resp = await client.get("/api/global-search", params={"q": "graph"}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    titles = [h["title"] for h in resp.json()["hits"] if h["type"] == "idea"]
+    assert "Graph retrieval idea" in titles, "第一个课题的想法"
+    assert "Graph idea in the other topic" in titles, "第二个课题的想法——以前这条搜不到"
+    assert first_id  # 两个课题的东西同时出现在一次搜索里
 
 
 async def test_search_skips_the_recycle_bin(client):
@@ -125,7 +158,7 @@ async def test_search_skips_the_recycle_bin(client):
 
     async def types_for(q: str) -> set[str]:
         r = await client.get(
-            f"/api/projects/{project_id}/global-search", params={"q": q}, headers=headers
+            "/api/global-search", params={"q": q}, headers=headers
         )
         assert r.status_code == 200, r.text
         return {hit["type"] for hit in r.json()["hits"]}

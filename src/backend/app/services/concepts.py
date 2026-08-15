@@ -138,18 +138,22 @@ def normalize_category(raw: Any) -> str:
     return value if value in CONCEPT_CATEGORIES else "other"
 
 
-def library_concept_ids(library_ids: Sequence[uuid.UUID]) -> Select:
+def library_concept_ids(library_ids: Sequence[uuid.UUID] | Select) -> Select:
     """「这些库有哪些**正式**概念」的 concept_id 子查询：库的论文 → 关联概念（去重由 IN 保证）。
 
     候选概念（还没被第 2 篇论文用到）不算数——所有以库/课题为作用域的读路径
     （概念列表、搜索、导出、图谱统计、agent 工具、idea 种子校验）都经此收口。
+
+    ``library_ids`` 也接受一个**子查询**（如「用户够得着的全部库」），这样全局搜索
+    不必绕开这个收口自己拼一遍——绕开的那份迟早会漏掉「候选概念不算数」这一条。
     """
+    scope = library_ids if isinstance(library_ids, Select) else list(library_ids)
     return (
         select(paper_concepts.c.concept_id)
         .join(LibraryPaper, LibraryPaper.paper_id == paper_concepts.c.paper_id)
         .join(Concept, Concept.id == paper_concepts.c.concept_id)
         .where(
-            LibraryPaper.library_id.in_(list(library_ids)),
+            LibraryPaper.library_id.in_(scope),
             Concept.status == CONCEPT_STATUS_ACTIVE,
         )
     )

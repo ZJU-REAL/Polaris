@@ -5,15 +5,15 @@ import { Icon, type IconName } from '../components/ui/Icon';
 import { PaperStatusPill, StatusPill } from '../components/ui/StatusPill';
 import { api, type GlobalSearchHit, type GlobalSearchHitType } from '../lib/api';
 import { tr } from '../lib/i18n';
-import { topicPath, useProject } from './project';
 
 /** 各实体类型的展示顺序 / 文案 / 图标 / 跳转目标（pid = 当前课题，课题域列表页需要拼前缀）。 */
 const TYPE_META: Record<
   GlobalSearchHitType,
-  { zh: string; en: string; icon: IconName; to: (h: GlobalSearchHit, pid: string | null) => string }
+  { zh: string; en: string; icon: IconName; to: (h: GlobalSearchHit) => string }
 > = {
   paper: { zh: '论文', en: 'Papers', icon: 'book', to: (h) => `/papers/${h.id}/read` },
-  concept: { zh: '概念', en: 'Concepts', icon: 'sparkle', to: (h, pid) => topicPath(pid, `wiki?concept=${encodeURIComponent(h.title)}`) },
+  // 概念走非课题路由：搜索现在跨课题，拿「当前课题」拼链接会指到一个根本没有这个概念的课题去
+  concept: { zh: '概念', en: 'Concepts', icon: 'sparkle', to: (h) => `/concepts/${h.id}` },
   idea: { zh: '想法', en: 'Ideas', icon: 'bulb', to: (h) => `/ideas/${h.id}` },
   experiment: { zh: '实验', en: 'Experiments', icon: 'flask', to: (h) => `/experiment/${h.id}` },
   voyage: { zh: 'AI 任务', en: 'Tasks', icon: 'compass', to: (h) => `/voyages/${h.id}` },
@@ -25,7 +25,6 @@ const TYPE_ORDER = Object.keys(TYPE_META) as GlobalSearchHitType[];
 /** 顶栏 ⌘K 全局搜索面板：跨论文/概念/想法/实验/AI 任务/论文稿检索并跳转。 */
 export function SearchPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
-  const { currentProjectId } = useProject();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [q, setQ] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -48,9 +47,11 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   }, [q]);
 
   const query = useQuery({
-    queryKey: ['global-search', currentProjectId, debounced],
-    queryFn: () => api.globalSearch(currentProjectId!, debounced),
-    enabled: open && !!currentProjectId && debounced.length > 0,
+    queryKey: ['global-search', debounced],
+    queryFn: () => api.globalSearch(debounced),
+    // 不再要求先选课题：搜索范围是「我够得着的一切」，在 /libraries、/daily
+    // 这类非课题页面上同样该能用——以前这里是禁用的。
+    enabled: open && debounced.length > 0,
     staleTime: 30_000,
     retry: false,
     placeholderData: keepPreviousData,
@@ -69,7 +70,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
 
   function go(hit: GlobalSearchHit) {
     onClose();
-    navigate(TYPE_META[hit.type].to(hit, currentProjectId));
+    navigate(TYPE_META[hit.type].to(hit));
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -91,9 +92,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
 
   const showing = debounced.length > 0;
   let body: React.ReactNode;
-  if (!currentProjectId) {
-    body = <div className="empty" style={{ padding: 24 }}>{tr('请先在侧边栏选择一个课题', 'Pick a topic in the sidebar first')}</div>;
-  } else if (!showing) {
+  if (!showing) {
     body = (
       <div className="empty" style={{ padding: 24 }}>
         {tr('输入关键词开始搜索', 'Type keywords to search')}
