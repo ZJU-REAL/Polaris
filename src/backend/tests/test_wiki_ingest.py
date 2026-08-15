@@ -2255,3 +2255,45 @@ async def test_next_sync_reads_the_setting_not_a_hardcoded_hour(client):
 
     assert state["next_sync_at"]
     assert state["next_sync_at"][11:16] == "06:15"
+
+
+async def test_snowball_seeds_from_included_members(client, queue_stub, wiki_mocks):
+    """引文雪球也从已收录成员出发。
+
+    只追锚点与 candidate 的话，一篇论文一旦被收录就再没人看它的参考文献，库里会缺
+    自己成员明确引用的前作（线上实测：OPD 库收了 REOPD，却没有它引用的
+    "Learning beyond Teacher"=2602.12125 与 "LLM-Oriented Token-Adaptive KD"）。
+    """
+    token = await register_and_login(client, email="snowball-member@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await _promote_admin("snowball-member@example.com")
+    library_id = await _create_standalone_library(client, headers, name="独立库-成员种子")
+    client_ = client
+    member_arxiv = "2601.99999"
+    async with get_sessionmaker()() as session:
+        paper = new_paper(
+            source="arxiv",
+            arxiv_id=member_arxiv,
+            title="Already included member paper",
+            abstract="member abstract",
+        )
+        session.add(paper)
+        await session.flush()
+        session.add(
+            LibraryPaper(
+                library_id=uuid.UUID(library_id), paper_id=paper.id, status="compiled"
+            )
+        )
+        await session.commit()
+
+    resp = await client_.post(
+        f"/api/libraries/{library_id}/ingest/run",
+        json={"mode": "snowball", "knobs": KNOBS},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    engine, _ = _make_engine()
+    await engine.run(uuid.UUID(resp.json()["id"]))
+
+    requested = [str(call.request.url) for call in wiki_mocks.calls]
+    assert any(f"arXiv:{member_arxiv}/references" in url for url in requested), requested[:10]

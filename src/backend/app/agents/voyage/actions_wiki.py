@@ -116,6 +116,10 @@ _OBS_LIST_CAP = 30
 # 断点续跑语义（按 Paper.status 幂等）保持不变。
 _LLM_CONCURRENCY = 5
 
+# 引文雪球额外从「最近收录的成员」取多少篇当种子（见 wiki.snowball 里的说明）。
+# 按收录时间倒序，所以每次同步追的是刚进库那批论文的引文，无需额外状态。
+_SNOWBALL_MEMBER_SEEDS = 10
+
 
 async def _gather_bounded(limit: int, coros: list[Any]) -> list[Any]:
     """信号量限流地并发跑一批协程，返回结果列表（异常以对象形式就地保留）。
@@ -813,7 +817,32 @@ async def snowball(ctx: ActionContext, params: dict[str, Any]) -> dict[str, Any]
             .scalars()
             .all()
         )
-        frontier: list[str] = list(dict.fromkeys(anchors + list(candidate_ids)))
+        # 已收录成员也当种子（按最近收录排序）：候选只是「刚抓到、还没判定」的那批，
+        # 一篇论文一旦被收录就再没人追过它的参考文献，于是库里会缺自己成员明确引用的
+        # 前作。实测：OPD 库收了 REOPD（其摘要明说自己改进 reward extrapolation），
+        # 但被它引用的 "Learning beyond Teacher"（2602.12125，外推法本尊）与
+        # "LLM-Oriented Token-Adaptive KD" 从未入库——两篇恰好是 REOPD 想法的两个来源，
+        # 缺了它们，想法生成再强也推不出这条路。
+        member_ids = (
+            (
+                await session.execute(
+                    select(Paper.arxiv_id)
+                    .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+                    .where(
+                        LibraryPaper.library_id == library.id,
+                        LibraryPaper.status.in_(("included", "compiled")),
+                        Paper.arxiv_id.is_not(None),
+                    )
+                    .order_by(LibraryPaper.created_at.desc())
+                    .limit(_SNOWBALL_MEMBER_SEEDS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        frontier: list[str] = list(
+            dict.fromkeys(anchors + list(candidate_ids) + list(member_ids))
+        )
         arxiv_ids, dois, titles = await _existing_keys(session, library.id)
         processed_seeds = 0
 
