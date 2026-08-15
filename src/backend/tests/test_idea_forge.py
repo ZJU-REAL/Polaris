@@ -521,3 +521,52 @@ def test_gaps_interleaved_by_signal():
     assert {g["signal"] for g in out[:3]} == {"survey_gap", "concept_holes", "method_knobs"}
     # 条目不丢不重
     assert sorted(g["title"] for g in out) == sorted(g["title"] for g in gaps)
+
+
+async def test_method_cards_surface_batch_failures(monkeypatch):
+    """抽卡整批失败必须留痕：只返回空列表的话，观测上与「确实没有开口」无法区分
+    （线上踩过：网关抽风让所有批次全灭，signal 只显示 method_knobs: 0）。"""
+    from types import SimpleNamespace
+
+    from app.agents.voyage import actions_ideas as ai
+
+    calls = {"n": 0}
+
+    async def always_fail(*_a, **_k):
+        calls["n"] += 1
+        raise RuntimeError("gateway 400")
+
+    async def fake_rows(*_a, **_k):
+        return [uuid.uuid4()]
+
+    async def no_sleep(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(ai, "_complete_json", always_fail)
+    monkeypatch.setattr(ai, "get_source_library_ids", fake_rows)
+    monkeypatch.setattr(ai.asyncio, "sleep", no_sleep)  # 重试退避不真等
+
+    class _Session:
+        async def execute(self, *_a, **_k):
+            return SimpleNamespace(all=lambda: [])
+
+    ctx = SimpleNamespace(
+        checkpoint={},
+        run=SimpleNamespace(created_by=None, project_id=None, id=None),
+    )
+    monkeypatch.setattr(
+        ai,
+        "dedupe_member_rows",
+        lambda rows: [
+            (
+                SimpleNamespace(title="T", tldr="", abstract="a"),
+                SimpleNamespace(wiki_content=None, relevance_score=1.0, created_at=None),
+            )
+        ],
+    )
+
+    cards = await ai._method_cards(ctx, _Session(), uuid.uuid4(), 10)
+    assert cards == []
+    assert calls["n"] == 2  # 失败重试一次
+    err = ctx.checkpoint.get("forge_cards_error")
+    assert err and err["failed_batches"] == 1 and "gateway 400" in err["sample"]

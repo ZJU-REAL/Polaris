@@ -311,13 +311,20 @@ def _context_prompt(ctx: ActionContext, statement: str) -> str:
     concepts = "、".join(context.get("concepts") or []) or "（无）"
     # 方法卡索引（若已采集）：wiki 摘录只够放下相关性最高的 max_context_papers 篇，
     # 卡片是压缩表示，能让生成器额外看见库里其余论文的机制与旋钮。
+    # 卡片与 wiki 摘要**共享** _CONTEXT_CHARS 预算而不是各占一份——卡片本就是同一批
+    # 论文的浓缩，两者叠加只是把同样的信息说两遍，还会让请求体涨到网关会另作路由
+    # 的大小（实测：加卡片后 gap 分析必现网关 400，缩回预算内即恢复）。
     cards = ctx.checkpoint.get("forge_cards")
     cards_block = _cards_prompt(cards if isinstance(cards, list) else [])
+    wiki_text = context.get("text") or "（知识库为空）"
+    if cards_block:
+        wiki_budget = max(_MIN_WIKI_CHARS, _CONTEXT_CHARS - len(cards_block))
+        wiki_text = wiki_text[:wiki_budget]
     return (
         f"研究方向：{statement}\n"
         f"知识库概念：{concepts}\n"
         + (f"{cards_block}\n" if cards_block else "")
-        + f"知识库综述（compiled wiki 摘要）：\n{context.get('text') or '（知识库为空）'}"
+        + f"知识库综述（compiled wiki 摘要）：\n{wiki_text}"
     )
 
 
@@ -456,7 +463,8 @@ _CARD_BATCH = 10  # 每次 LLM 抽卡的论文数
 _CARD_BODY_CHARS = 700
 _KNOB_MIN_PAPERS = 2  # 至少多少篇共享同一旋钮才算一个开口
 _KNOB_MAX_OPENINGS = 6
-_CARDS_PROMPT_CHARS = 8000  # 方法卡索引注入 prompt 的上限
+_CARDS_PROMPT_CHARS = 6000  # 方法卡索引注入 prompt 的上限（与 wiki 摘要共享 _CONTEXT_CHARS）
+_MIN_WIKI_CHARS = 3000  # 卡片再多也要给 wiki 摘要留的下限
 # 粗粒度 = 还有细化空间的粒度
 _COARSE_GRANULARITY = frozenset({"global", "per-domain", "per-sequence", "other", ""})
 _RIGID_ADAPTIVITY = frozenset({"fixed", "scheduled", ""})
@@ -532,19 +540,30 @@ async def _method_cards(
             raise ValueError('expected {"cards": [...]}')
         return cards
 
+    failures: list[str] = []
+
     async def one_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        try:
-            cards = await _complete_json(
-                ctx,
-                stage="forge_signal",
-                system=METHOD_CARD_SYSTEM_PROMPT,
-                user=json.dumps(batch, ensure_ascii=False),
-                validate=validate,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 — 单批失败不影响其余批
-            return []
+        # 供应商偶发 4xx/断连时整批会丢；重试一次再放弃，并记下失败原因——
+        # 全批失败时若只返回空列表，观测上与「确实没有开口」无法区分（线上踩过：
+        # 网关抽风让 6 个批次全灭，signal 显示 method_knobs: 0，看起来像信号没用）。
+        for attempt in range(2):
+            try:
+                cards = await _complete_json(
+                    ctx,
+                    stage="forge_signal",
+                    system=METHOD_CARD_SYSTEM_PROMPT,
+                    user=json.dumps(batch, ensure_ascii=False),
+                    validate=validate,
+                )
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — 单批失败不影响其余批
+                if attempt == 0:
+                    await asyncio.sleep(2.0)
+                    continue
+                failures.append(f"{type(e).__name__}: {e}"[:200])
+                return []
         out = []
         by_idx = {b["idx"]: b for b in batch}
         for card in cards:
@@ -566,6 +585,12 @@ async def _method_cards(
 
     batches = [papers[i : i + _CARD_BATCH] for i in range(0, len(papers), _CARD_BATCH)]
     groups = await asyncio.gather(*[one_batch(b) for b in batches])
+    if failures:
+        ctx.checkpoint["forge_cards_error"] = {
+            "failed_batches": len(failures),
+            "total_batches": len(batches),
+            "sample": failures[0],
+        }
     return [c for g in groups for c in g]
 
 
@@ -671,6 +696,9 @@ async def forge_collect_signals(ctx: ActionContext, params: dict[str, Any]) -> d
             ctx.checkpoint["forge_cards"] = cards  # 生成步复用作「方法卡索引」上下文
             signals["method_knobs"] = _knob_openings(cards)
             signals["method_cards"] = len(cards)
+            card_error = ctx.checkpoint.get("forge_cards_error")
+            if card_error:  # 抽卡整批失败要看得见，否则与「没有开口」无法区分
+                signals["method_knobs_error"] = card_error
         excerpt_blocks: list[str] = []
         if "limitations" in enabled:
             library_ids = await get_source_library_ids(session, ctx.run.project_id)
