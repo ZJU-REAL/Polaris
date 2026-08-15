@@ -498,11 +498,13 @@ def test_knob_openings_finds_coarse_fixed_knobs():
     ]
     openings = _knob_openings(cards)
     knobs = [o["knob"] for o in openings]
-    # loss_weight：2 处全局固定 vs 1 处 token 级自适应 → 仍是开口，且排第一
+    # loss_weight：2 处全局固定 → 机会 2；另 1 处已做 token 级自适应 = 先例（可行性佐证，
+    # 不是减分项——最初的打分把先例当负分，把最有价值的混合类目全筛掉了）
     assert knobs and openings[0]["category"] == "loss_weight"
     assert openings[0]["papers"] == 3 and openings[0]["coarse"] == 2
+    assert openings[0]["score"] == 2 and openings[0]["precedent"] == 1
     assert "蒸馏损失权重 λ" in openings[0]["aliases"]  # 展示保留各文原名
-    # granularity 类目已普遍 per-token + adaptive → 不是开口；other 类目一律不算
+    # granularity 类目全是 per-token + adaptive → 无机会处，不算开口；other 一律不算
     assert not any(o["category"] in {"granularity", "other"} for o in openings)
 
 

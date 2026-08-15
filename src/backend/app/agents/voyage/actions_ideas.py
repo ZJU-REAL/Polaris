@@ -628,26 +628,36 @@ def _knob_openings(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if n < _KNOB_MIN_PAPERS or category == "other":
             continue
         coarse = sum(1 for e in entries if e["granularity"] in _COARSE_GRANULARITY)
-        fine = n - coarse
         rigid = sum(1 for e in entries if e["adaptivity"] in _RIGID_ADAPTIVITY)
-        adaptive = n - rigid
-        # 粗粒度/固定占多数才算开口；已经普遍做细、做自适应的类目不是机会
-        if coarse < fine or rigid < adaptive:
+        # 「还留在粗粒度或固定」的处数就是机会大小；至少两处才算一个开口。
+        # 注意不能因为「已经有人做细/做自适应」就把类目筛掉：那恰恰是**先例**，
+        # 说明这条细化路线可行、只是没铺开——最初的打分把先例当减分项（
+        # 2*粗 + 固定 - 3*细 - 2*自适应），于是最有价值的混合类目全被过滤，
+        # 线上一整轮只剩一个无人做过的冷门旋钮。
+        opportunity = sum(
+            1
+            for e in entries
+            if e["granularity"] in _COARSE_GRANULARITY or e["adaptivity"] in _RIGID_ADAPTIVITY
+        )
+        if opportunity < _KNOB_MIN_PAPERS:
             continue
-        score = coarse * 2 + rigid - fine * 3 - adaptive * 2
-        if score <= 0:
-            continue
-        coarse_entries = [e for e in entries if e["granularity"] in _COARSE_GRANULARITY]
+        precedent = n - opportunity
+        open_entries = [
+            e
+            for e in entries
+            if e["granularity"] in _COARSE_GRANULARITY or e["adaptivity"] in _RIGID_ADAPTIVITY
+        ]
         openings.append(
             {
                 "knob": _KNOB_CATEGORY_LABELS[category],
                 "category": category,
                 "papers": n,
-                "score": score,
+                "score": opportunity,
                 "coarse": coarse,
                 "rigid": rigid,
-                "aliases": sorted({e["name"] for e in coarse_entries})[:6],
-                "examples": (coarse_entries or entries)[:3],
+                "precedent": precedent,  # 已有几处做了细粒度/自适应（可行性佐证）
+                "aliases": sorted({e["name"] for e in open_entries})[:6],
+                "examples": open_entries[:3],
             }
         )
     openings.sort(key=lambda o: (-o["score"], -o["papers"]))
@@ -843,6 +853,7 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
             for e in (opening.get("examples") or [])[:3]
         )
         aliases = "、".join(opening.get("aliases") or [])
+        precedent = int(opening.get("precedent") or 0)
         gaps.append(
             {
                 "title": f"细化开口：{opening['knob']} 仍是粗粒度/固定的",
@@ -850,9 +861,15 @@ async def forge_gap_analysis(ctx: ActionContext, params: dict[str, Any]) -> dict
                     f"库内 {opening['papers']} 处用到「{opening['knob']}」这类旋钮"
                     + (f"（各文叫法：{aliases}）" if aliases else "")
                     + f"，其中 {opening['coarse']} 处是全局/序列级粗粒度、{opening['rigid']} 处"
-                    "是固定或预设调度，很少有工作把它按更细粒度（token/层/样本/批次）拆开，"
+                    "是固定或预设调度，可以把它按更细粒度（token/层/样本/批次）拆开，"
                     "或让它依据可靠性、不确定度等可观测信号自适应并配预算约束。"
-                    f"现有取值示例：{examples}"
+                    + (
+                        f"库内已有 {precedent} 处做了细粒度或自适应，说明这条路线可行，"
+                        "但尚未在这类旋钮上铺开。"
+                        if precedent
+                        else "库内尚无工作这样做。"
+                    )
+                    + f"现有取值示例：{examples}"
                 ),
                 "signal": "method_knobs",
             }
