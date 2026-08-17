@@ -324,13 +324,14 @@ function DailyCard() {
 
           {/*
             单序列迷你分布：柱子统一 accent 色（明度区分靠高度），标签用文本色。
-            /daily 目前不认 ?date=，柱子统一进列表页（日期在那里再选）。
+            每根柱子带 ?date= 直达那一天——以前统一跳 /daily 再让人自己翻日期，
+            点“8月4日 · 903 篇”却落在最新一天，看着像没生效。
           */}
           <div className="row" style={{ gap: 8, alignItems: 'flex-end' }}>
             {days.map((d) => (
               <Link
                 key={d.date}
-                to="/daily"
+                to={`/daily?date=${encodeURIComponent(d.date)}`}
                 title={`${d.date} · ${d.count}`}
                 style={{ flex: 1, minWidth: 0, textDecoration: 'none', display: 'block' }}
               >

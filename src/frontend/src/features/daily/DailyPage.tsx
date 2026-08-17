@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -660,7 +660,11 @@ export function DailyPage() {
   // 日期：勾上「全部」就是跨天一起看（默认）；取消勾选后在有数据的日期间前后切换。
   // 只在这些日期间跳，而不是任意日历日——中间没有公告的日子点进去是空的。
   const [showAll, setShowAll] = useState(false);
-  const [day, setDay] = useState('');
+  // 深链 ?date=YYYY-MM-DD（实验室工作台的柱子点进来）。**初值直接取 URL**，
+  // 不只靠下面那个 effect：默认「停在最新一天」的 effect 会先跑，只走 effect 的话
+  // 会先闪一下最新那天再跳到目标日期。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [day, setDay] = useState(() => searchParams.get('date') ?? '');
   // 高级检索默认展开：分类 / 类型是常用筛选，藏起来用户找不到
   // 默认收起：日期切换已经在工具栏上，高级条件是偶尔才用的东西
   const [advOpen, setAdvOpen] = useState(false);
@@ -715,9 +719,16 @@ export function DailyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAll, day, dates.join(',')]);
 
+  // 深链落地：带 ?date= 进来就停在那一天，然后**把参数清掉**——留着的话，之后在
+  // 页内切到别的日期再刷新，又会被它按回去。清参数用 replace，不往历史里塞一条。
+  useEffect(() => {
+    const target = searchParams.get('date');
+    if (!target) return;
+    setShowAll(false);
+    setDay(target);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
 
-  // 默认停在「全部」：跨天一起看、按时间倒排，最新的自然在最前。以前默认落到最新
-  // 一天，那一天恰好没有新公告（周末）时页面就是空的，看着像坏了。
 
 
   // 点作者/机构 → 列表只留匹配的论文（走已有的高级检索），其余条件重置并展开面板；
