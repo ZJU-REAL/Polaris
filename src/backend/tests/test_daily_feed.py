@@ -257,6 +257,24 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
     resp = await client.get("/api/daily/papers", headers=headers)
     item = resp.json()["items"][0]
 
+    # 即使池论文的共享内容已经齐全，新方向库成员尚未打分时也必须启动补全。
+    from app.core.db import get_sessionmaker
+    from app.models.paper import Paper
+    from app.services import paper_enrich
+    from tests.vector_helpers import set_paper_vector
+
+    async with get_sessionmaker()() as session:
+        paper = await session.get(Paper, uuid.UUID(item["paper_id"]))
+        assert paper is not None
+        paper.pdf_path = "/tmp/complete.pdf"
+        paper.full_text_path = "/tmp/complete.txt"
+        await session.commit()
+        await set_paper_vector(session, paper.id)
+        assert await paper_enrich.paper_processing_complete(session, paper)
+        assert not await paper_enrich.paper_processing_complete(
+            session, paper, library_id=library_id
+        )
+
     payload = {
         "paper_ids": [item["paper_id"]],
         "direction_library_ids": [str(library_id)],
@@ -270,8 +288,6 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
         launched.append(kwargs)
         return "task-stub"
 
-    from app.services import paper_enrich
-
     monkeypatch.setattr(paper_enrich, "launch_paper_enrichment", _fake_launch)
 
     resp = await client.post("/api/daily/collect", json=payload, headers=headers)
@@ -282,7 +298,7 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
     # 入架必入个人库（add_to_shelf 自带同步），个人库目标看到的是「已存在」
     assert results["personal"]["added"] + results["personal"]["skipped_existing"] == 1
 
-    # 池论文是轻量行（无 PDF）→ 必然触发补全，且目标库/课题归因正确
+    # 共享内容已齐全，但目标库尚无评分 → 仍须补全，且目标库/课题归因正确
     assert len(launched) == 1
     assert str(launched[0]["paper_id"]) == item["paper_id"]
     assert launched[0]["library_id"] == library_id
@@ -303,7 +319,6 @@ async def test_collect_to_library_topic_personal(client, monkeypatch):
     # 成员行 status=included
     from sqlalchemy import select
 
-    from app.core.db import get_sessionmaker
     from app.models.library_direction import LibraryPaper
 
     async with get_sessionmaker()() as session:

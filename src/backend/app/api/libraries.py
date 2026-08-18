@@ -900,7 +900,9 @@ async def add_library_paper_manually(
         ) from e
     paper_id, user_id, project_id = result.paper.id, user.id, library.project_id
     task_id: str | None = None
-    already_done = await paper_enrich_service.paper_processing_complete(session, result.paper)
+    already_done = await paper_enrich_service.paper_processing_complete(
+        session, result.paper, library_id=library.id
+    )
     if result.created or not already_done:
         task_id = await paper_enrich_service.launch_paper_enrichment(
             redis=redis,

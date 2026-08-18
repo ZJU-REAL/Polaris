@@ -149,13 +149,14 @@ async def score_paper_relevance(
     data = _extract_json(result.content)
     score = min(1.0, max(0.0, float(data["score"])))
     membership.relevance_score = score
+    membership.relevance_reason = str(data.get("reason") or "")
     # **只在空的时候填。** 打分是库侧判断，而 tldr 挂在全平台共享的论文上：谁最后
     # 打分谁就覆盖掉前一个库（乃至编译产出的正式 TL;DR），于是所有库看到的都是最后
     # 那个库的判词。这里只当「还没有摘要时的临时占位」，编译一跑就由正式的接管。
     paper.tldr = paper.tldr or str(data.get("tldr") or "")
     membership.scored_at = utcnow()
     membership.scored_run_id = voyage_id  # 手动加论文没有任务，留 NULL
-    return RelevanceResult(score=score, reason=str(data.get("reason") or ""), tldr=paper.tldr or "")
+    return RelevanceResult(score=score, reason=membership.relevance_reason, tldr=paper.tldr or "")
 
 
 async def score_added_paper_best_effort(

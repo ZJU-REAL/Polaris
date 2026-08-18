@@ -309,7 +309,9 @@ async def collect(
     tasks: list[DailyCollectTask] = []
     for paper_id in payload.paper_ids:
         paper = await session.get(Paper, paper_id)
-        if paper is None or await paper_enrich_service.paper_processing_complete(session, paper):
+        if paper is None or await paper_enrich_service.paper_processing_complete(
+            session, paper, library_id=target_library_id
+        ):
             continue
         task_id = await paper_enrich_service.launch_paper_enrichment(
             redis=redis,

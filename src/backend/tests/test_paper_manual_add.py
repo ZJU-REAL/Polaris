@@ -242,8 +242,88 @@ async def test_add_scores_relevance_best_effort(client, fake_redis):
     async with get_sessionmaker()() as session:
         membership = await membership_of(session, project_id=project_id, paper_id=body["id"])
         assert membership.relevance_score is not None and membership.relevance_score > 0.6
+        assert membership.relevance_reason
         assert membership.scored_at is not None
         assert membership.status == "included"  # 人工纳入，打分不改状态
+
+
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
+async def test_complete_pool_hit_still_scores_new_library_membership(
+    client, fake_redis, tmp_path, batch
+):
+    """共享内容已完整的池命中仍须为新方向库成员打分。"""
+    from app.models.paper import new_paper
+    from app.services import paper_enrich
+    from app.services.libraries import get_membership
+    from app.services.paper_import import pool_dedup_key
+    from tests.vector_helpers import set_paper_vector
+
+    project_id, headers = await _setup(client)
+    async with get_sessionmaker()() as session:
+        from app.services.libraries import get_library_for_project
+
+        library = await get_library_for_project(session, uuid.UUID(project_id))
+        assert library is not None
+        library_id = library.id
+
+        suffix = "batch" if batch else "single"
+        title = f"Complete Pool Paper {suffix}"
+        doi = f"10.1000/complete-{suffix}"
+        pdf_path = tmp_path / f"{suffix}.pdf"
+        text_path = tmp_path / f"{suffix}.txt"
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+        text_path.write_text("Complete paper full text.", encoding="utf-8")
+        paper = new_paper(
+            source="manual",
+            dedup_key=pool_dedup_key(
+                arxiv_id=None,
+                doi=doi,
+                title=title,
+                year=2025,
+                authors=[{"name": "Test Author"}],
+            ),
+            title=title,
+            authors=[{"name": "Test Author"}],
+            affiliations=["Test Lab"],
+            abstract="A relevant completed pool paper.",
+            year=2025,
+            doi=doi,
+            pdf_path=str(pdf_path),
+            full_text_path=str(text_path),
+        )
+        session.add(paper)
+        await session.flush()
+        paper_id = paper.id
+        await set_paper_vector(session, paper_id)
+
+    bibtex = (
+        f"@article{{complete-{suffix},\n"
+        f" title={{{title}}},\n author={{Test Author}},\n year={{2025}},\n doi={{{doi}}}\n}}"
+    )
+    if batch:
+        resp = await client.post(
+            f"/api/libraries/{library_id}/paper-imports/batch",
+            json={"items": [{"bibtex": bibtex}]},
+            headers=headers,
+        )
+    else:
+        resp = await client.post(
+            f"/api/libraries/{library_id}/papers",
+            json={"bibtex": bibtex},
+            headers=headers,
+        )
+    assert resp.status_code in (201, 202), resp.text
+    assert resp.json()["task_id"]
+    await paper_enrich.await_task(resp.json()["task_id"])
+
+    async with get_sessionmaker()() as session:
+        membership = await get_membership(
+            session, library_id=library_id, paper_id=paper_id
+        )
+        assert membership is not None
+        assert membership.relevance_score is not None
+        assert membership.relevance_reason
+        assert membership.scored_at is not None
 
 
 async def test_add_low_score_keeps_included(client, fake_redis):

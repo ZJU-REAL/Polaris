@@ -70,15 +70,29 @@ _TASKS: dict[str, asyncio.Task] = {}
 Emit = Callable[..., Awaitable[None]]
 
 
-async def paper_processing_complete(session: AsyncSession, paper: Paper) -> bool:
-    """论文是否已处理完整（PDF + 全文 + 当前空间下的向量都在）——完整则无需再补全。
+async def paper_processing_complete(
+    session: AsyncSession,
+    paper: Paper,
+    *,
+    library_id: uuid.UUID | None = None,
+) -> bool:
+    """论文是否已处理完整（共享内容齐备，且目标库成员已打分）。
 
     「有向量」按**激活空间**算：换了嵌入模型之后，旧空间的向量对检索已经不可见，
     这篇论文就该重新走一遍补全，而不是因为库里还留着旧向量就认为它已就绪。
+    ``library_id`` 为空时只检查共享内容；指定目标库时还要求该成员行已有相关性分。
     """
     if not (paper.pdf_path and paper.full_text_path):
         return False
-    return await has_current_paper_vector(session, paper)
+    if not await has_current_paper_vector(session, paper):
+        return False
+    if library_id is None:
+        return True
+
+    from app.services.libraries import get_membership
+
+    membership = await get_membership(session, library_id=library_id, paper_id=paper.id)
+    return membership is not None and membership.relevance_score is not None
 
 
 def paper_embedding_text(paper: Paper) -> str:
@@ -461,7 +475,7 @@ async def _run_batch_import(
                     else:
                         paper = result.paper
                         processing = result.created or not await paper_processing_complete(
-                            session, paper
+                            session, paper, library_id=library_id
                         )
                         child_task_id: str | None = None
                         if processing:

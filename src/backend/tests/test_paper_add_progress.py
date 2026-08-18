@@ -76,8 +76,8 @@ async def test_manual_add_returns_task_id_for_new_paper(client, lit_clients, fak
     await paper_enrich.await_task(task_id)  # 排空后台任务（触发 pdf 404 download）
 
 
-async def test_manual_add_task_id_null_when_pool_hit_complete(client, fake_redis):
-    """池命中且已处理完整（有 pdf/全文/embedding）→ task_id 为 null。"""
+async def test_manual_add_pool_hit_complete_still_scores_new_membership(client, fake_redis):
+    """池命中且共享内容完整时，仍为新方向库成员启动打分。"""
     token = await register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     proj_a, _ = await make_project_with_library(client, headers, name="seed-proj")
@@ -95,13 +95,23 @@ async def test_manual_add_task_id_null_when_pool_hit_complete(client, fake_redis
         )
         await session.commit()
 
-    # 加同一 DOI 到另一课题：池命中、本库无成员行、论文已完整 → 不启动任务
+    # 加同一 DOI 到另一课题：共享内容已完整，但目标库成员尚未打分 → 仍启动任务
     bibtex = "@article{c,\n title={Fully Processed Paper},\n doi={10.5555/complete},\n}"
     resp = await client.post(
         f"/api/projects/{proj_b}/papers", json={"bibtex": bibtex}, headers=headers
     )
     assert resp.status_code == 201, resp.text
-    assert resp.json()["task_id"] is None
+    task_id = resp.json()["task_id"]
+    assert task_id
+    await paper_enrich.await_task(task_id)
+
+    async with get_sessionmaker()() as session:
+        membership = await membership_of(
+            session, project_id=proj_b, paper_id=resp.json()["id"]
+        )
+        assert membership.relevance_score is not None
+        assert membership.relevance_reason
+        assert membership.scored_at is not None
 
 
 # ---- 2. enrich_paper 阶段事件顺序 + 出错继续 + done ----
