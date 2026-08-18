@@ -3,7 +3,9 @@
 import io
 import uuid
 
+import pytest
 from pptx import Presentation as PptxFile
+from pydantic import ValidationError
 
 from app.services.presentation import DeckSpec, build_deck, validate_deck_spec
 from tests.conftest import add_paper, register_and_login
@@ -171,3 +173,146 @@ async def test_create_presentation_voyage(client, queue_stub):
         headers=headers,
     )
     assert resp.status_code == 422
+
+
+# ---- 视觉审查必须覆盖整份 deck（#436）----
+
+
+class _RecordingVLM:
+    """记录每次视觉审查收到几张图、提示词声称的是哪几页。
+
+    第一轮全部回 ok，用来验证覆盖范围；把 ``fail_page`` 设成某个绝对页码，
+    那一批会回一条问题，用来验证页码基准。
+    """
+
+    def __init__(self, fail_page: int | None = None) -> None:
+        self.calls: list[dict] = []
+        self.fix_prompts: list[str] = []
+        self.deck: dict = {}  # 由 _run_build 填成被测 deck，修复调用原样回它
+        self.fail_page = fail_page
+
+    async def complete(self, stage, messages, *, images=None, **kwargs):
+        import json as _json
+        import re as _re
+
+        from app.core.llm.base import CompletionResult
+
+        user = messages[-1].content
+        if not images:
+            # 没带图 = 修复调用。deck 本身是合规的，所以只该由视觉问题触发；
+            # 没报问题却走到这里说明文本校验规则变了，此时"审了几页"的断言已不成立。
+            assert self.fail_page is not None, "deck 应当已合规，不该触发文本修复"
+            self.fix_prompts.append(user)
+            return CompletionResult(content=_json.dumps(self.deck), model="fake-llm")
+
+        span = _re.search(r"第 (\d+)-(\d+) 页", user)
+        first, last = (int(span.group(1)), int(span.group(2))) if span else (0, 0)
+        self.calls.append({"images": len(images or []), "first": first, "last": last, "user": user})
+
+        issues = []
+        if self.fail_page is not None and first <= self.fail_page <= last:
+            issues = [{"slide": self.fail_page, "problem": "文字溢出", "fix": "缩短标题"}]
+        return CompletionResult(
+            content=_json.dumps({"ok": not issues, "issues": issues}), model="fake-vlm"
+        )
+
+
+def _wide_deck(pages: int) -> dict:
+    """一份 pages 页的合法 deck（首页封面、末页结语，中间填内容页）。"""
+    slides = [DECK["slides"][0], DECK["slides"][1]]
+    slides += [
+        {"kind": "content", "title": f"第 {i} 节", "bullets": [f"要点 {i}", f"补充 {i}"]}
+        for i in range(len(slides) + 1, pages)
+    ]
+    slides.append(DECK["slides"][-1])
+    return {"title": "长 deck", "slides": slides}
+
+
+async def _run_build(monkeypatch, *, pages: int, vlm: _RecordingVLM):
+    """跑 present.build，把渲染与 soffice 探测都替换掉（CI 没有 soffice）。"""
+    from app.agents.voyage import actions_present
+    from app.agents.voyage.actions import ActionContext
+    from app.models.voyage import VoyageRun
+
+    monkeypatch.setattr(actions_present, "soffice_available", lambda: True)
+    monkeypatch.setattr(actions_present, "render_slide_images", lambda _pptx: [_PNG] * pages)
+
+    async def _no_papers(_ctx):
+        return []
+
+    monkeypatch.setattr(actions_present, "_load_papers", _no_papers)
+
+    vlm.deck = _wide_deck(pages)
+    run = VoyageRun(id=uuid.uuid4(), kind="presentation", goal="测试")
+    ctx = ActionContext(run=run, llm=vlm, checkpoint={"present_deck": vlm.deck})
+    return await actions_present.present_build(ctx, {})
+
+
+def test_render_page_cap_matches_deck_cap():
+    """渲染上限必须等于 deck 页数上限，否则超出的页连图都没有，更谈不上被审。
+
+    #436 报的是 images[:8]，但其实有两道截断：render_slide_images 的 max_pages 曾默认 12，
+    而 DeckSpec 允许 25 页——13-25 页从来没被渲染过，也从来没人发现。两个上限分处两个文件、
+    各写各的字面量，这条用例就是不让它们再各自漂。
+    """
+    import inspect
+
+    from app.services.presentation import MAX_DECK_SLIDES, DeckSpec, render_slide_images
+
+    default = inspect.signature(render_slide_images).parameters["max_pages"].default
+    assert default == MAX_DECK_SLIDES, f"渲染上限 {default} ≠ deck 上限 {MAX_DECK_SLIDES}"
+
+    # 且 MAX_DECK_SLIDES 确实是 deck 真正能达到的页数（常量与校验规则也得对得上）
+    DeckSpec.model_validate(_wide_deck(MAX_DECK_SLIDES))
+    with pytest.raises(ValidationError):
+        DeckSpec.model_validate(_wide_deck(MAX_DECK_SLIDES + 1))
+
+
+async def test_visual_review_covers_every_rendered_page(monkeypatch, tmp_path):
+    """25 页的 deck，每一页都要恰好被送审一次。
+
+    以前提示词说「共 N 页」却只发 images[:8]：第 9 页往后从未被看过，而模型对收到的
+    8 张回 ok=true，循环就退出，对外表现为整份 deck 视觉审查通过。这种失败没有任何
+    报错，只能靠读代码发现——所以这里直接钉住覆盖范围。
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "data_dir", str(tmp_path), raising=False)
+    vlm = _RecordingVLM()
+    result = await _run_build(monkeypatch, pages=25, vlm=vlm)
+
+    covered: list[int] = []
+    for call in vlm.calls:
+        covered.extend(range(call["first"], call["last"] + 1))
+        # 提示词声称的页数必须等于真正附上的图片数——这两者不一致正是 #436 的成因
+        assert call["last"] - call["first"] + 1 == call["images"], call["user"]
+
+    assert covered == list(range(1, 26)), f"每页恰好一次，实际：{covered}"
+    assert result["rendered_pages"] == 25
+    assert result["reviewed_pages"] == 25
+
+
+async def test_visual_issue_pages_are_absolute(monkeypatch, tmp_path):
+    """第二批里报的问题，页码要是整份 deck 的绝对页码，不是批内序号。
+
+    不要求绝对页码的话，每批都会从 1 开始编号，修复时会照着改错页。
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "data_dir", str(tmp_path), raising=False)
+    vlm = _RecordingVLM(fail_page=9)  # 第二批的第一页
+    result = await _run_build(monkeypatch, pages=25, vlm=vlm)
+
+    assert result["visual_fix_rounds"] >= 1, "报了问题就该进修复轮"
+
+    # 第 9 页落在第二批（9-16）的第一张。诊断必须说"第 9 页"——若按批内序号编号就成了"第 1 页"，
+    # 修复会照着改封面。
+    assert vlm.fix_prompts, "视觉问题应当触发一次修复调用"
+    assert "第 9 页" in vlm.fix_prompts[0], vlm.fix_prompts[0]
+
+    # 且送审提示词本身要向模型交代绝对页码基准，否则上面那个页码只是碰巧对
+    second = vlm.calls[1]
+    assert (second["first"], second["last"]) == (9, 16), vlm.calls
+    assert "绝对页码" in second["user"], second["user"]
+    pages = [i["slide"] for i in result["last_visual_issues"]]
+    assert pages == [9], f"应当是绝对页码 9，实际 {pages}"

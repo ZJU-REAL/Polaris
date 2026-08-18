@@ -105,11 +105,17 @@ class DeckSlide(BaseModel):
     notes: str = ""
 
 
+#: 一份 deck 最多几页。**视觉审查的渲染上限跟着它走**（见 render_slide_images）——
+#: 两个上限分处两个文件、各写各的字面量，正是「13-25 页从未被渲染、更没被审查，
+#: 而流程照报通过」的来源（#436）。要改页数上限，改这一个地方。
+MAX_DECK_SLIDES = 25
+
+
 class DeckSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str
-    slides: list[DeckSlide] = Field(min_length=3, max_length=25)
+    slides: list[DeckSlide] = Field(min_length=3, max_length=MAX_DECK_SLIDES)
 
 
 # ---- 确定性校验 ----
@@ -466,7 +472,13 @@ def soffice_available() -> bool:
     return shutil.which("soffice") is not None
 
 
-def render_slide_images(pptx_bytes: bytes, *, max_pages: int = 12) -> list[bytes]:
+def render_slide_images(pptx_bytes: bytes, *, max_pages: int = MAX_DECK_SLIDES) -> list[bytes]:
+    """把 pptx 渲染成每页一张 PNG。
+
+    默认渲染上限 = :data:`MAX_DECK_SLIDES`，即「deck 能有多少页就渲染多少页」。
+    以前默认 12，而 deck 最多 25 页，于是第 13 页往后从来没被渲染过——调用方拿到
+    12 张图，也就只可能审 12 页，而它对外报告的是整份 deck 通过。
+    """
     if not soffice_available():
         return []
     import fitz

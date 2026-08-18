@@ -40,6 +40,12 @@ _MAX_JSON_ATTEMPTS = 3
 _SINGLE_BODY_CHARS = 12000
 _SURVEY_BODY_CHARS = 4000
 _FIX_ROUNDS = 2
+
+#: 视觉审查一次送审几页。上限本身是合理的——一次塞满整份 deck 既贵也可能超上下文；
+#: 错的是**在上限之内假装看全了**：以前提示词说「共 N 页」却只发 images[:8]，
+#: 模型对收到的图回 ok=true，循环就退出，对外表现为整份 deck 视觉审查通过（#436）。
+#: 现在按这个大小分批，每批都送审，提示词只描述本批实际发出去的东西。
+_VISUAL_BATCH = 8
 _STAGE = "librarian"  # 多模态路由（大纲/甲板/视觉评审共用）
 
 DECK_JSON_SPEC = """\
@@ -293,31 +299,47 @@ async def present_build(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
 
     # ②视觉反馈迭代：soffice 渲染成图 → VLM 审 → LLM 修（无 soffice 降级跳过）
     visual_rounds, visual_issues = 0, []
+    rendered_pages = reviewed_pages = 0
     if soffice_available():
         for _ in range(_FIX_ROUNDS):
             images = render_slide_images(pptx)
             if not images:
                 break
+            rendered_pages = len(images)
 
             def validate(data: Any) -> dict[str, Any]:
                 if not isinstance(data, dict) or not isinstance(data.get("ok"), bool):
                     raise ValueError("expected {ok, issues}")
                 return {"ok": data["ok"], "issues": data.get("issues") or []}
 
-            review = await _complete_json(
-                ctx,
-                system=VISUAL_SYSTEM,
-                user=f"共 {len(images)} 页渲染图，按顺序对应第 1-{len(images)} 页。",
-                validate=validate,
-                images=images[:8],
-            )
-            if review["ok"] or not review["issues"]:
+            # 整份 deck 逐批过一遍：每批只声明自己那几页，并要求 slide 填**绝对页码**——
+            # 不要求的话每批都会从 1 开始编号，修复时会照着改错页。
+            round_issues: list[Any] = []
+            for start in range(0, len(images), _VISUAL_BATCH):
+                chunk = images[start : start + _VISUAL_BATCH]
+                first, last = start + 1, start + len(chunk)
+                review = await _complete_json(
+                    ctx,
+                    system=VISUAL_SYSTEM,
+                    user=(
+                        f"这是整份 deck（共 {len(images)} 页）中第 {first}-{last} 页的渲染图，"
+                        f"随消息附上 {len(chunk)} 张，顺序与页码一致。"
+                        f"issues 里的 slide 请填**整份 deck 的绝对页码**（即 {first}-{last} 之间）。"
+                    ),
+                    validate=validate,
+                    images=chunk,
+                )
+                if not review["ok"]:
+                    round_issues.extend(review["issues"])
+            reviewed_pages = len(images)
+
+            if not round_issues:
                 break
             visual_rounds += 1
-            visual_issues = review["issues"]
+            visual_issues = round_issues
             diagnosis = "\n".join(
                 f"- 第 {i.get('slide')} 页：{i.get('problem')}（建议：{i.get('fix')}）"
-                for i in review["issues"]
+                for i in round_issues
                 if isinstance(i, dict)
             )
             deck = await _fix_deck(ctx, spec.model_dump(), "视觉审查未通过：\n" + diagnosis)
@@ -344,6 +366,10 @@ async def present_build(ctx: ActionContext, params: dict[str, Any]) -> dict[str,
         "text_fix_rounds": text_rounds,
         "visual_fix_rounds": visual_rounds,
         "render_feedback": "soffice" if soffice_available() else "skipped",
+        # 审了几页要能从外面看见。以前只报「视觉审查跑过」，审的是 8 页还是 25 页
+        # 完全看不出来——看不出来就意味着这类缺口只能靠人读代码发现（#436 正是如此）。
+        "rendered_pages": rendered_pages,
+        "reviewed_pages": reviewed_pages,
         "unresolved_text_issues": remaining,
         "last_visual_issues": visual_issues,
     }
