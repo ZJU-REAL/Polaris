@@ -114,6 +114,68 @@ async def test_manual_add_pool_hit_complete_still_scores_new_membership(client, 
         assert membership.scored_at is not None
 
 
+async def test_manual_add_pool_hit_already_scored_does_not_relaunch(client, fake_redis):
+    """目标库成员已打分 → 不再启动补全（与上一条对称）。
+
+    上一条守的是「该打分时要打」，这条守的是「打过就别重跑」。少了这一侧，
+    把 paper_processing_complete 里的库级判据误反转或删掉都不会有测试变红，
+    代价是每次加库都重跑一遍补全——浪费，而且完全静默。
+    """
+    token = await register_and_login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    proj_a, _ = await make_project_with_library(client, headers, name="seed-proj")
+    proj_b, _ = await make_project_with_library(client, headers, name="target-proj")
+
+    async with get_sessionmaker()() as session:
+        await add_paper(
+            session,
+            project_id=uuid.UUID(proj_a),
+            title="Already Scored Paper",
+            doi="10.5555/scored",
+            pdf_path="/tmp/y.pdf",
+            full_text_path="/tmp/y.txt",
+            embedding=[0.0] * 1024,
+        )
+        await session.commit()
+
+    bibtex = "@article{s,\n title={Already Scored Paper},\n doi={10.5555/scored},\n}"
+    first = await client.post(
+        f"/api/projects/{proj_b}/papers", json={"bibtex": bibtex}, headers=headers
+    )
+    assert first.status_code == 201, first.text
+    paper_id = first.json()["id"]
+    assert first.json()["task_id"]  # 首次：目标库还没分 → 启动补全
+    await paper_enrich.await_task(first.json()["task_id"])
+
+    # 另开一个课题/库作反向对照：同一篇论文，那边还没打分
+    proj_c, _ = await make_project_with_library(client, headers, name="other-proj")
+
+    async with get_sessionmaker()() as session:
+        from app.models.paper import Paper
+        from app.services.libraries import get_library_for_project
+
+        membership = await membership_of(
+            session, project_id=proj_b, paper_id=paper_id
+        )
+        assert membership.relevance_score is not None  # 前提：这一轮确实打上分了
+
+        paper = await session.get(Paper, uuid.UUID(paper_id))
+        scored_library = await get_library_for_project(session, uuid.UUID(proj_b))
+        unscored_library = await get_library_for_project(session, uuid.UUID(proj_c))
+        assert scored_library is not None and unscored_library is not None
+
+        # 已打分的库：视为完整 → 不会再启动补全（本用例要守的那一侧）
+        assert await paper_enrich.paper_processing_complete(
+            session, paper, library_id=scored_library.id
+        )
+        # 对照：换一个还没打分的库，同一篇论文就不算完整
+        assert not await paper_enrich.paper_processing_complete(
+            session, paper, library_id=unscored_library.id
+        )
+        # 对照：不给目标库时只看共享内容，也算完整
+        assert await paper_enrich.paper_processing_complete(session, paper)
+
+
 # ---- 2. enrich_paper 阶段事件顺序 + 出错继续 + done ----
 
 
