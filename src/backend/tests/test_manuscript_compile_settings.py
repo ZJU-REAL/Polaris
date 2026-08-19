@@ -22,6 +22,44 @@ def test_build_structured_document_adds_markers():
     assert "old body text" not in out  # document 环境正文被替换成骨架
 
 
+def test_build_structured_document_preserves_icml_frontmatter():
+    src = r"""\documentclass{article}
+\usepackage[accepted]{icml2026}
+\begin{document}
+\twocolumn[
+\icmltitle{A Verified ICML Draft}
+\begin{icmlauthorlist}
+\icmlauthor{Ada Smith}{lab}
+\end{icmlauthorlist}
+\icmlaffiliation{lab}{Research Lab}
+\vskip 0.3in
+]
+\printAffiliationsAndNotice{}
+\begin{abstract}
+Official sample abstract that must be replaced.
+\end{abstract}
+\section{Introduction}
+Official sample body that must be replaced.
+\bibliographystyle{icml2026}
+\bibliography{example_paper}
+\end{document}
+"""
+
+    out = manuscripts_service.build_structured_document(src)
+
+    assert "\\twocolumn[" in out
+    assert "\\icmltitle{A Verified ICML Draft}" in out
+    assert "\\icmlauthor{Ada Smith}{lab}" in out
+    assert "\\icmlaffiliation{lab}{Research Lab}" in out
+    assert "\\printAffiliationsAndNotice{}" in out
+    assert "Official sample abstract" not in out
+    assert "Official sample body" not in out
+    assert "% POLARIS_SECTION: abstract" in out
+    assert "\\bibliographystyle{icml2026}" in out
+    assert "\\bibliography{references}" in out
+    assert "\\bibliography{example_paper}" not in out
+
+
 def test_build_structured_document_requires_document_env():
     with pytest.raises(manuscripts_service.StructureError):
         manuscripts_service.build_structured_document("\\documentclass{article} no doc env")
