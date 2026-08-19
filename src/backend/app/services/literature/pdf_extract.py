@@ -133,9 +133,25 @@ def _white_fraction(img: Any) -> float:
     return sum(1 for v in pixels if v >= 245) / len(pixels)
 
 
+def _pix_png_bytes(pix: Any) -> bytes:
+    """Encode a pixmap as PNG, normalizing colorspaces unsupported by PyMuPDF."""
+    try:
+        return pix.tobytes("png")
+    except ValueError as exc:
+        if "unsupported colorspace" not in str(exc).lower() or pix.colorspace is None:
+            raise
+        import pymupdf
+
+        return pymupdf.Pixmap(pymupdf.csRGB, pix).tobytes("png")
+
+
 def _pix_white_fraction(pix: Any) -> float:
     """Pixmap 铺白后的近白占比（判断 SMask 合并是否把图压成空白 / 候选是否空白）。"""
-    return _white_fraction(_flatten_to_white_rgb(pix.tobytes("png")))
+    try:
+        return _white_fraction(_flatten_to_white_rgb(_pix_png_bytes(pix)))
+    except (RuntimeError, ValueError):
+        logger.warning("cannot normalize PDF pixmap for blank detection", exc_info=True)
+        return 1.0
 
 
 def _flatten_png_white(png_bytes: bytes) -> bytes:
@@ -333,7 +349,11 @@ def _candidate_from_pix(page_no: int, order: int, pix: Any) -> tuple | None:
 
     返回 (页码, 页内序号, 宽, 高, PNG bytes)——预编码好落盘用的字节，避免二次编码。
     """
-    flat = _flatten_to_white_rgb(pix.tobytes("png"))
+    try:
+        flat = _flatten_to_white_rgb(_pix_png_bytes(pix))
+    except (RuntimeError, ValueError):
+        logger.warning("cannot normalize PDF figure candidate on page %d", page_no, exc_info=True)
+        return None
     if _white_fraction(flat) > FIGURE_MAX_WHITE_FRAC:
         return None  # 空矢量簇 / 白色卡片框 / 空白页
     return (page_no, order, pix.width, pix.height, _png_bytes(flat))
