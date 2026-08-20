@@ -132,6 +132,18 @@ of this section is the quick reference.
 
 ### 1. Entering the pool
 
+External discovery and metadata clients expose a small provider-neutral contract
+(`SearchQuery`, `SearchPage`, `ProviderRecord`, and capability declarations). arXiv,
+Semantic Scholar, and OpenAlex are adapters over their existing clients; Crossref supplies DOI
+metadata and relation records and is the fallback when OpenAlex cannot resolve a DOI. Providers do
+not write ORM rows directly: normalized records enter through `paper_import`.
+
+`paper_identifiers` stores normalized external identities independently of the compatibility
+columns on `papers`. Existing `Paper.arxiv_id`, `Paper.doi`, and `external_ids` remain in place;
+manual import and provider ingestion keep both representations synchronized. The global uniqueness
+of `(namespace, normalized_value)` prevents one DOI, arXiv ID, OpenAlex ID, or Semantic Scholar ID
+from silently belonging to multiple pool papers.
+
 A pool paper is created (deduped first) by one of:
 
 - **Direction-library ingest** (`agents/voyage/actions_wiki.py`): the `wiki.search_candidates` /
@@ -141,6 +153,8 @@ A pool paper is created (deduped first) by one of:
 - **Manual add** (`POST /projects/{id}/papers`, `POST /libraries/{id}/papers`, shelf import): resolves
   metadata from arxiv / doi / bibtex, dedupes, creates the pool row (metadata only) + a membership,
   and hands the heavy work to a background task (below).
+  The three public input fields remain mutually exclusive and backward compatible; internally they
+  are converted to a typed `ImportInput` before resolution.
 - **Manual add into the personal library** (`POST /me/library/import`, body is one of `arxiv_id` /
   `doi` / `bibtex`): same resolve-or-create pool path as shelf import
   (`paper_import.resolve_or_create_pool_paper`; a parse failure is `422 PARSE_FAILED`) but **no

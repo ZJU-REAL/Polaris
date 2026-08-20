@@ -23,6 +23,7 @@ from app.models.paper import (
     Paper,
     PaperChunk,
     PaperHighlight,
+    PaperIdentifier,
     PaperNote,
     PaperUserMeta,
     PaperWiki,
@@ -313,6 +314,34 @@ async def merge_papers(
     report["vectors_moved"] = await _merge_paper_vectors(
         session, keep_id=keep_id, drop_id=drop_id
     )
+
+    # ---- 7b. 外部标识符：keep 没有的迁入；同标识符已存在则删 drop 侧重复行 ----
+    keep_identifiers = {
+        (row.namespace, row.normalized_value)
+        for row in (
+            await session.execute(
+                select(PaperIdentifier).where(PaperIdentifier.paper_id == keep_id)
+            )
+        ).scalars()
+    }
+    identifiers_moved = identifiers_deduped = 0
+    for row in (
+        await session.execute(
+            select(PaperIdentifier).where(PaperIdentifier.paper_id == drop_id)
+        )
+    ).scalars():
+        key = (row.namespace, row.normalized_value)
+        if key in keep_identifiers:
+            await session.delete(row)
+            identifiers_deduped += 1
+            continue
+        row.paper_id = keep_id
+        keep_identifiers.add(key)
+        identifiers_moved += 1
+    report["identifiers"] = {
+        "moved": identifiers_moved,
+        "deduped": identifiers_deduped,
+    }
 
     # ---- 8. 内容池行缺项回填（keep 缺 → 用 drop 的） ----
     filled: list[str] = []

@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.paper import Paper, new_paper
+from app.services import paper_identity
 from app.services.dedup import dedup_key_for, pool_dedup_key
 from app.services.libraries import (
     ensure_membership,
@@ -18,8 +19,15 @@ from app.services.libraries import (
     get_library_for_project,
     get_membership,
 )
-from app.services.literature import get_arxiv_client, get_openalex_client, get_s2_client
+from app.services.literature import (
+    get_arxiv_client,
+    get_crossref_client,
+    get_openalex_client,
+    get_s2_client,
+)
 from app.services.literature.arxiv import ArxivRateLimitedError, normalize_arxiv_id
+from app.services.literature.contracts import ImportInput, ProviderRecord
+from app.services.literature.providers import crossref_record, semantic_scholar_record
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +228,10 @@ async def _fields_from_doi(doi: str) -> dict[str, Any]:
     doi = doi.strip().removeprefix("https://doi.org/")
     meta = await get_openalex_client().get_by_doi(doi)
     if meta is None or not meta.get("title"):
-        raise ParseFailedError(f"OpenAlex 上查不到 DOI {doi}")
+        crossref = await get_crossref_client().get_work(doi)
+        if crossref is None or not crossref.get("title"):
+            raise ParseFailedError(f"OpenAlex 和 Crossref 均查不到 DOI {doi}")
+        return crossref_record(crossref).to_paper_fields()
     return {
         "title": meta["title"],
         "authors": meta.get("authors"),
@@ -251,37 +262,14 @@ async def _fields_from_corpus_id(corpus_id: str) -> dict[str, Any]:
         raise ParseFailedError(
             f"Semantic Scholar 上查不到 Corpus ID {normalized}（{type(e).__name__}）"
         ) from e
-    title = _clean(meta.get("title"))
-    if not title:
+    record = semantic_scholar_record(meta)
+    if not record.title:
         raise ParseFailedError(f"Semantic Scholar 上查不到 Corpus ID {normalized}")
-    external = meta.get("externalIds") or {}
-    arxiv_id = normalize_arxiv_id(str(external["ArXiv"])) if external.get("ArXiv") else None
-    doi = _clean(str(external["DOI"])) if external.get("DOI") else None
-    authors = [
-        {"name": str(author["name"]).strip()}
-        for author in (meta.get("authors") or [])
-        if isinstance(author, dict) and str(author.get("name") or "").strip()
-    ]
+    identifiers = {item.namespace: item.value for item in record.identifiers}
+    identifiers.setdefault("s2_corpus", normalized)
     return {
-        "title": title,
-        "authors": authors or None,
-        "abstract": _clean(meta.get("abstract")),
-        "year": meta.get("year"),
-        "venue": _clean(meta.get("venue")),
-        "doi": doi,
-        "url": _clean(meta.get("url")),
-        "arxiv_id": arxiv_id,
-        "published_at": _parse_iso(meta.get("publicationDate")),
-        "external_ids": {
-            key: value
-            for key, value in (
-                ("s2", meta.get("paperId")),
-                ("corpus_id", normalized),
-                ("arxiv", arxiv_id),
-                ("doi", doi),
-            )
-            if value
-        },
+        **record.to_paper_fields(),
+        "external_ids": identifiers,
     }
 
 
@@ -293,13 +281,47 @@ async def resolve_fields(
     bibtex: str | None = None,
 ) -> dict[str, Any]:
     """按来源解析论文字段（arxiv > doi > bibtex）；失败抛 ParseFailedError。"""
-    if arxiv_id:
-        return await _fields_from_arxiv(arxiv_id)
-    if doi:
-        return await _fields_from_doi(doi)
-    if corpus_id:
-        return await _fields_from_corpus_id(corpus_id)
-    return parse_bibtex_entry(bibtex or "")
+    return await resolve_import_input(
+        legacy_import_input(
+            arxiv_id=arxiv_id,
+            doi=doi,
+            corpus_id=corpus_id,
+            bibtex=bibtex,
+        )
+    )
+
+
+def legacy_import_input(
+    *,
+    arxiv_id: str | None = None,
+    doi: str | None = None,
+    corpus_id: str | None = None,
+    bibtex: str | None = None,
+) -> ImportInput:
+    values = [
+        ImportInput("arxiv", arxiv_id.strip()) if arxiv_id and arxiv_id.strip() else None,
+        ImportInput("doi", doi.strip()) if doi and doi.strip() else None,
+        ImportInput("corpus_id", corpus_id.strip())
+        if corpus_id and corpus_id.strip()
+        else None,
+        ImportInput("bibtex", bibtex.strip()) if bibtex and bibtex.strip() else None,
+    ]
+    provided = [value for value in values if value is not None]
+    if len(provided) != 1:
+        raise ParseFailedError("arxiv_id / doi / corpus_id / bibtex 必须且只能填一个")
+    return provided[0]
+
+
+async def resolve_import_input(item: ImportInput) -> dict[str, Any]:
+    if item.kind == "arxiv":
+        return await _fields_from_arxiv(item.value)
+    if item.kind == "doi":
+        return await _fields_from_doi(item.value)
+    if item.kind == "corpus_id":
+        return await _fields_from_corpus_id(item.value)
+    if item.kind == "bibtex":
+        return parse_bibtex_entry(item.value)
+    raise ParseFailedError(f"不支持的导入类型：{item.kind}")
 
 
 async def create_pool_paper(
@@ -320,7 +342,7 @@ async def create_pool_paper(
     if fields.get("doi"):
         external_ids["doi"] = fields["doi"]
     paper = new_paper(
-        source="manual",
+        source=fields.get("source") or "manual",
         dedup_key=pool_dedup_key(
             arxiv_id=fields.get("arxiv_id"),
             doi=fields.get("doi"),
@@ -342,6 +364,13 @@ async def create_pool_paper(
     )
     session.add(paper)
     await session.flush()
+    await paper_identity.ensure_paper_identifiers(
+        session,
+        paper_id=paper.id,
+        identifiers=paper_identity.identifiers_from_fields(fields),
+        source=paper.source or "manual",
+        verified=bool(fields.get("source") and fields.get("source") != "manual"),
+    )
 
     if paper.arxiv_id:
         # 尽力而为补下 PDF + 抽全文；失败只记日志，不阻塞创建
@@ -392,7 +421,7 @@ async def create_pool_paper_stub(
     if fields.get("doi"):
         external_ids["doi"] = fields["doi"]
     paper = new_paper(
-        source="manual",
+        source=fields.get("source") or "manual",
         dedup_key=pool_dedup_key(
             arxiv_id=fields.get("arxiv_id"),
             doi=fields.get("doi"),
@@ -414,6 +443,13 @@ async def create_pool_paper_stub(
     )
     session.add(paper)
     await session.flush()
+    await paper_identity.ensure_paper_identifiers(
+        session,
+        paper_id=paper.id,
+        identifiers=paper_identity.identifiers_from_fields(fields),
+        source=paper.source or "manual",
+        verified=bool(fields.get("source") and fields.get("source") != "manual"),
+    )
     return paper
 
 
@@ -422,6 +458,43 @@ class ManualAddResult(NamedTuple):
 
     paper: Paper
     created: bool  # True=新建池行；False=池命中（论文已存在）
+
+
+async def import_provider_record(
+    session: AsyncSession, *, record: ProviderRecord
+) -> ManualAddResult:
+    """Canonical provider-record entry point for the global paper pool.
+
+    It deliberately creates no library membership. Search orchestration owns
+    membership and page-checkpoint transactions.
+    """
+    if not record.title.strip():
+        raise ParseFailedError(f"{record.source} 返回的记录缺少 title")
+    paper_id = await paper_identity.find_paper_id_by_identifiers(
+        session, list(record.identifiers)
+    )
+    paper = await session.get(Paper, paper_id) if paper_id else None
+    fields = record.to_paper_fields()
+    if paper is None:
+        paper = await find_pool_paper(
+            session,
+            arxiv_id=fields.get("arxiv_id"),
+            doi=fields.get("doi"),
+            dedup_key=pool_dedup_key(
+                arxiv_id=fields.get("arxiv_id"),
+                doi=fields.get("doi"),
+                title=fields["title"],
+                year=fields.get("year"),
+                authors=fields.get("authors"),
+            ),
+        )
+    if paper is not None:
+        await paper_identity.ensure_record_identifiers(
+            session, paper_id=paper.id, record=record
+        )
+        return ManualAddResult(paper=paper, created=False)
+    paper = await create_pool_paper_stub(session, fields=fields)
+    return ManualAddResult(paper=paper, created=True)
 
 
 async def resolve_or_create_pool_paper(
@@ -442,42 +515,76 @@ async def resolve_or_create_pool_paper(
     """
     normalized_arxiv = normalize_arxiv_id(arxiv_id) if arxiv_id else None
     clean_doi = doi.strip().removeprefix("https://doi.org/") if doi else None
-    paper = await find_pool_paper(
-        session,
-        arxiv_id=normalized_arxiv,
-        doi=clean_doi,
-        dedup_key=dedup_key_for(arxiv_id=normalized_arxiv, doi=clean_doi, title=title),
+    normalized_corpus_id = normalize_corpus_id(corpus_id) if corpus_id else None
+    input_identifiers = paper_identity.identifiers_from_fields(
+        {
+            "arxiv_id": normalized_arxiv,
+            "doi": clean_doi,
+            "external_ids": {"s2_corpus": normalized_corpus_id}
+            if normalized_corpus_id
+            else {},
+        }
     )
+    identifier_paper_id = await paper_identity.find_paper_id_by_identifiers(
+        session, input_identifiers
+    )
+    paper = await session.get(Paper, identifier_paper_id) if identifier_paper_id else None
+    if paper is None:
+        paper = await find_pool_paper(
+            session,
+            arxiv_id=normalized_arxiv,
+            doi=clean_doi,
+            dedup_key=dedup_key_for(arxiv_id=normalized_arxiv, doi=clean_doi, title=title),
+        )
     if paper is None and title and title.strip():
         # 标题兜底：池键掺年份/首作者，纯标题哈希未必命中 → 退回大小写不敏感精确匹配
         stmt = select(Paper).where(func.lower(Paper.title) == title.strip().lower()).limit(1)
         paper = (await session.execute(stmt)).scalars().first()
     if paper is not None:
+        await paper_identity.ensure_paper_identifiers(
+            session,
+            paper_id=paper.id,
+            identifiers=input_identifiers,
+            source="manual",
+        )
         return ManualAddResult(paper=paper, created=False)
     if not (
         normalized_arxiv
         or clean_doi
-        or (corpus_id and corpus_id.strip())
+        or normalized_corpus_id
         or (bibtex and bibtex.strip())
     ):
-        raise ParseFailedError("按标题没有找到这篇论文，请提供 arXiv 编号或 DOI")
+        raise ParseFailedError("按标题没有找到这篇论文，请提供 arXiv 编号、DOI 或 Corpus ID")
     fields = await resolve_fields(
         arxiv_id=arxiv_id, doi=doi, corpus_id=corpus_id, bibtex=bibtex
     )
-    # 解析出的规范 id 再查一次池（输入可能是版本号 / 别名，bibtex 里也可能带 DOI）
-    paper = await find_pool_paper(
-        session,
-        arxiv_id=fields.get("arxiv_id"),
-        doi=fields.get("doi"),
-        dedup_key=pool_dedup_key(
+    # 解析出的规范 id 再查一次池（输入可能是版本号 / 别名，bibtex 里也可能带 DOI）。
+    resolved_identifiers = paper_identity.identifiers_from_fields(fields)
+    resolved_paper_id = await paper_identity.find_paper_id_by_identifiers(
+        session, resolved_identifiers
+    )
+    paper = await session.get(Paper, resolved_paper_id) if resolved_paper_id else None
+    if paper is None:
+        paper = await find_pool_paper(
+            session,
             arxiv_id=fields.get("arxiv_id"),
             doi=fields.get("doi"),
-            title=fields["title"],
-            year=fields.get("year"),
-            authors=fields.get("authors"),
-        ),
-    )
+            dedup_key=pool_dedup_key(
+                arxiv_id=fields.get("arxiv_id"),
+                doi=fields.get("doi"),
+                title=fields["title"],
+                year=fields.get("year"),
+                authors=fields.get("authors"),
+            ),
+        )
     if paper is not None:
+        await paper_identity.ensure_paper_identifiers(
+            session,
+            paper_id=paper.id,
+            identifiers=resolved_identifiers,
+            source=fields.get("source") or "manual",
+            verified=bool(fields.get("source") and fields.get("source") != "manual"),
+        )
         return ManualAddResult(paper=paper, created=False)
     paper = await create_pool_paper_stub(session, fields=fields)
     return ManualAddResult(paper=paper, created=True)
@@ -539,10 +646,26 @@ async def add_manual_paper_to_library(
         year=fields.get("year"),
         authors=fields.get("authors"),
     )
-    pooled = await find_pool_paper(
-        session, arxiv_id=fields.get("arxiv_id"), doi=fields.get("doi"), dedup_key=dedup_key
+    resolved_identifiers = paper_identity.identifiers_from_fields(fields)
+    resolved_paper_id = await paper_identity.find_paper_id_by_identifiers(
+        session, resolved_identifiers
     )
+    pooled = await session.get(Paper, resolved_paper_id) if resolved_paper_id else None
+    if pooled is None:
+        pooled = await find_pool_paper(
+            session,
+            arxiv_id=fields.get("arxiv_id"),
+            doi=fields.get("doi"),
+            dedup_key=dedup_key,
+        )
     if pooled is not None:
+        await paper_identity.ensure_paper_identifiers(
+            session,
+            paper_id=pooled.id,
+            identifiers=resolved_identifiers,
+            source=fields.get("source") or "manual",
+            verified=bool(fields.get("source") and fields.get("source") != "manual"),
+        )
         if await get_membership(session, library_id=library.id, paper_id=pooled.id) is not None:
             raise DuplicatePaperError(pooled.id)
         logger.info("paper pool hit for manual import: %s", pooled.id)

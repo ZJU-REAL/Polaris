@@ -11,6 +11,7 @@ from app.models.paper import (
     Paper,
     PaperChunk,
     PaperHighlight,
+    PaperIdentifier,
     PaperNote,
     PaperUserMeta,
     paper_concepts,
@@ -73,6 +74,28 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
         session.add(LibraryPaper(library_id=lib_b.id, paper_id=drop.id, status="candidate"))
         session.add(PaperChunk(paper_id=drop.id, seq=0, text="chunk one"))
         session.add(PaperChunk(paper_id=drop.id, seq=1, text="chunk two"))
+        session.add(
+            PaperIdentifier(
+                paper_id=keep.id,
+                namespace="arxiv",
+                raw_value="2501.00001",
+                normalized_value="2501.00001",
+                source="arxiv",
+                confidence=1.0,
+                is_verified=True,
+            )
+        )
+        session.add(
+            PaperIdentifier(
+                paper_id=drop.id,
+                namespace="doi",
+                raw_value="10.1000/sparse",
+                normalized_value="10.1000/sparse",
+                source="crossref",
+                confidence=1.0,
+                is_verified=True,
+            )
+        )
         shared = await add_concept(
             session, project_id=project_id, name="Attention", slug="attention"
         )
@@ -146,6 +169,7 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
     assert report["highlights_repointed"] == 1
     assert report["concept_links"] == {"repointed": 1, "deduped": 1}
     assert report["chunks_moved"] == 2
+    assert report["identifiers"] == {"moved": 1, "deduped": 0}
     assert report["library_entries_repointed"] == 1
     assert report["publications_repointed"] == 1
     assert "doi" in report["fields_filled"]
@@ -155,6 +179,15 @@ async def test_merge_papers_full_repoint_with_conflicts(client):
         keep = await session.get(Paper, keep_id)
         assert keep.doi == "10.1000/sparse"  # 缺项回填
         assert keep.arxiv_id == "2501.00001"  # keep 原值不被覆盖
+        identifiers = (
+            await session.execute(
+                select(PaperIdentifier).where(PaperIdentifier.paper_id == keep_id)
+            )
+        ).scalars().all()
+        assert {(row.namespace, row.normalized_value) for row in identifiers} == {
+            ("arxiv", "2501.00001"),
+            ("doi", "10.1000/sparse"),
+        }
         # A 库成员行合并：wiki 补上、状态升为 compiled、分数保留 keep 原值
         member_a = (
             await session.execute(
