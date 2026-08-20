@@ -17,6 +17,13 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from app.models.ssh_credential import SSHCredential
+from app.services.managed_commands import CommandSnapshot, OperationContext, RepairScope
+from app.services.managed_ssh import (
+    ManagedCommandHandle,
+    ManagedGPUUsage,
+    ManagedStopResult,
+    OutputChunk,
+)
 from app.services.ssh_exec import (
     ENV_SOURCE_PREFIX,
     PLOT_TIMEOUT_SECONDS,
@@ -57,11 +64,14 @@ class Runner(Protocol):
 
     # —— 备环境（后台脱离版：断连可重连接续跟踪同一安装进程）——
     async def launch_setup(self) -> tuple[int, str]: ...
+    async def launch_managed_setup(self) -> ManagedCommandHandle: ...
+    async def prepare_managed(self) -> ManagedCommandHandle | None: ...
     async def read_setup_exit(self) -> int | None: ...
     async def read_setup_log(self, tail_chars: int = 2000) -> str: ...
 
     # —— 跑实验入口（前台，冒烟/绘图用）——
     async def run_smoke(self, timeout: float = SMOKE_TIMEOUT_SECONDS) -> RunResult: ...
+    async def launch_managed_smoke(self) -> ManagedCommandHandle: ...
     async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> RunResult: ...
     async def ensure_plot_deps(self, timeout: float = SETUP_TIMEOUT_SECONDS) -> RunResult: ...
 
@@ -72,6 +82,31 @@ class Runner(Protocol):
 
     # —— 跑实验入口（后台脱离 + 轮询观测）——
     async def launch_run(self) -> tuple[int, str]: ...
+    async def launch_managed_run(self) -> ManagedCommandHandle: ...
+    async def recover_managed_command(
+        self, context: OperationContext
+    ) -> ManagedCommandHandle | None: ...
+    async def inspect_managed_command(
+        self,
+        handle: ManagedCommandHandle,
+        *,
+        previous_token: str | None = None,
+        diagnostic_evidence: dict[str, str] | None = None,
+    ) -> CommandSnapshot: ...
+    async def read_managed_output(
+        self,
+        handle: ManagedCommandHandle,
+        *,
+        stdout_offset: int = 0,
+        stderr_offset: int = 0,
+    ) -> tuple[list[OutputChunk], int, int]: ...
+    async def diagnose_managed_command(
+        self, handle: ManagedCommandHandle
+    ) -> dict[str, str]: ...
+    async def managed_command_gpu_usage(
+        self, handle: ManagedCommandHandle
+    ) -> ManagedGPUUsage: ...
+    async def stop_managed_command(self, handle: ManagedCommandHandle) -> ManagedStopResult: ...
     async def check_pid(self, pid: int) -> bool: ...
     async def read_exit_code(self) -> int | None: ...
     async def tail_log(self, offset: int = 0) -> tuple[str, int]: ...
@@ -223,6 +258,28 @@ class ContainerRunner(SSHExecutor):
             detail = (res.stderr or res.stdout or "").strip()[:300]
             raise SSHExecError(f"docker run 启动容器失败：{detail}")
 
+    async def prepare_managed(self) -> ManagedCommandHandle | None:
+        """Start container preparation through the generic command envelope."""
+        name = self._container_name
+        probe = await self._run(
+            f"docker inspect -f '{{{{.State.Running}}}}' {name} 2>/dev/null"
+        )
+        if probe.stdout.strip() == "true":
+            return None
+        await self._run(f"docker rm -f {name} >/dev/null 2>&1 || true")
+        return await self.start_managed_command(
+            OperationContext(
+                phase="environment.prepare",
+                operation="environment-prepare",
+                display_command=f"start container from {self._spec.image}",
+                target=self.host,
+                soft_timeout_seconds=600,
+                stall_timeout_seconds=900,
+                repair_scope=RepairScope.INFRASTRUCTURE,
+            ),
+            self._docker_run_cmd(),
+        )
+
     # ---- 执行原语（改成容器内执行；镜像自带框架，故不建 venv、用镜像 python） ----
 
     async def setup_venv(self, timeout: float = SETUP_TIMEOUT_SECONDS) -> SSHResult:
@@ -268,11 +325,50 @@ class ContainerRunner(SSHExecutor):
             raise SSHExecError(f"launch_setup 未返回 PID：{result.stdout!r}") from e
         return pid, command
 
+    async def launch_managed_setup(self) -> ManagedCommandHandle:
+        from app.core.config import get_settings
+
+        await self._ensure_container()
+        index = get_settings().pip_index_url
+        index_arg = f" -i {index}" if index else ""
+        inner = (
+            f"{self._proxy_prefix()}"
+            f"if [ -f requirements.txt ]; then pip install{index_arg} -r requirements.txt; "
+            "else echo no requirements.txt: using image base; fi"
+        )
+        return await self.start_managed_command(
+            OperationContext(
+                phase="dependency.install",
+                operation="dependency-install",
+                display_command="install generated experiment dependencies",
+                target=self.host,
+                soft_timeout_seconds=600,
+                stall_timeout_seconds=900,
+                repair_scope=RepairScope.DEPENDENCY_FILES,
+            ),
+            self._dexec_workdir(inner),
+        )
+
     async def run_smoke(self, timeout: float = SMOKE_TIMEOUT_SECONDS) -> SSHResult:
         await self._ensure_container()
         return await self._run(
             self._dexec_workdir(f"{{ {ENV_SOURCE_PREFIX} bash run.sh --smoke; }}"),
             timeout=timeout,
+        )
+
+    async def launch_managed_smoke(self) -> ManagedCommandHandle:
+        await self._ensure_container()
+        return await self.start_managed_command(
+            OperationContext(
+                phase="application.smoke",
+                operation="application-smoke",
+                display_command="bash run.sh --smoke",
+                target=self.host,
+                soft_timeout_seconds=300,
+                stall_timeout_seconds=600,
+                repair_scope=RepairScope.APPLICATION_FILES,
+            ),
+            self._dexec_workdir(f"{{ {ENV_SOURCE_PREFIX} bash run.sh --smoke; }}"),
         )
 
     async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> SSHResult:
@@ -318,6 +414,22 @@ class ContainerRunner(SSHExecutor):
         except (ValueError, IndexError) as e:
             raise SSHExecError(f"launch_run 未返回 PID：{result.stdout!r}") from e
         return pid, command
+
+    async def launch_managed_run(self) -> ManagedCommandHandle:
+        await self._ensure_container()
+        inner = f"export PYTHONUNBUFFERED=1; {ENV_SOURCE_PREFIX} stdbuf -oL -eL bash run.sh"
+        return await self.start_managed_command(
+            OperationContext(
+                phase="application.run",
+                operation="experiment-run",
+                display_command="bash run.sh",
+                target=self.host,
+                soft_timeout_seconds=600,
+                stall_timeout_seconds=900,
+                repair_scope=RepairScope.APPLICATION_FILES,
+            ),
+            self._dexec_workdir(inner),
+        )
 
     async def check_pid(self, pid: int) -> bool:
         result = await self._run(

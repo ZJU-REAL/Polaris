@@ -187,6 +187,20 @@ async def _get_detail(client, headers, exp_id):
     return resp.json()
 
 
+def _managed_launches(fake_ssh, operation: str) -> int:
+    """某个 managed 操作被真正启动了几次。
+
+    数「启动」原本靠 run.sh/setup 那几条命令模板的字面量；改走 managed 封套后
+    真正的启动动作是 `nohup setsid bash <operation 目录>/<attempt>.sh`，用它来数。
+    重挂已在跑的进程不会再产生这条命令，所以这个计数仍然区分得开「重挂」与「重启一轮」。
+    """
+    return sum(
+        1
+        for command in fake_ssh.commands
+        if "nohup setsid bash " in command and f"/operations/{operation}/" in command
+    )
+
+
 async def _iterate_observation(client, headers, voyage_id):
     """末个 analyze 节点的 observation（迭代终止判定所在，docs/voyage-loop.md §7）。"""
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
@@ -486,9 +500,7 @@ async def test_cancel_at_round_start(client, queue_stub, fake_ssh, bus_recorder)
     assert detail["runs"][0]["status"] == "succeeded"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["status"] == "cancelled"
-    assert (
-        "\n".join(fake_ssh.commands).count("run.sh > run.log") == 1
-    )  # 只数 run 启动（setup 也 nohup）
+    assert _managed_launches(fake_ssh, "experiment-run") == 1  # 第 2 轮没有启动
 
 
 # ---- figures 步骤 ----
@@ -652,8 +664,15 @@ async def test_poll_survives_ssh_reconnect(client, queue_stub, fake_ssh, bus_rec
     state = {"raised": 0}
 
     async def drop_once(command: str) -> None:
-        # 第一轮正式运行读取退出码时断连一次（cat run.exit），之后恢复
-        if command.startswith("cat") and "run.exit" in command and state["raised"] == 0:
+        # 第一轮正式运行读取退出码时断连一次，之后恢复。
+        # 退出码已随 managed 化搬到 .polaris/operations/experiment-run/attempts/<id>.exit，
+        # 原来按 run.exit 匹配的注入自此再没命中过——测试照常绿，但什么都没测。
+        if (
+            command.startswith("cat")
+            and "/operations/experiment-run/" in command
+            and ".exit" in command
+            and state["raised"] == 0
+        ):
             state["raised"] += 1
             raise ConnectionError("SSH connection closed")
 
@@ -690,8 +709,14 @@ async def test_setup_survives_ssh_reconnect(
     state = {"raised": 0}
 
     async def drop_once(command: str) -> None:
-        # 首次读 setup.exit（轮询依赖安装进度）时断连一次，之后恢复
-        if command.startswith("cat") and "setup.exit" in command and state["raised"] == 0:
+        # 首次读安装退出码（轮询依赖安装进度）时断连一次，之后恢复。
+        # 同上：managed 化后退出码在 operations/dependency-install/attempts/<id>.exit。
+        if (
+            command.startswith("cat")
+            and "/operations/dependency-install/" in command
+            and ".exit" in command
+            and state["raised"] == 0
+        ):
             state["raised"] += 1
             raise ConnectionError("SSH connection closed")
 
@@ -705,7 +730,7 @@ async def test_setup_survives_ssh_reconnect(
     assert voyage_status == "done"  # 断连没毒死航程
     assert state["raised"] == 1  # 确实注入了一次断连
     # 只启动了**一次**安装——断连是「重连接着轮询」而非「从头重装」
-    assert "\n".join(fake_ssh.commands).count("rm -f setup.exit") == 1
+    assert _managed_launches(fake_ssh, "dependency-install") == 1
     assert len(fake_ssh.connects) >= 2  # 重连过
 
     detail = await _get_detail(client, headers, exp_id)
@@ -774,19 +799,16 @@ async def test_stuck_escalates_to_approach_change(client, queue_stub, fake_ssh, 
     assert "已连续" in provider.improve_prompts[1]
 
 
-async def test_smoke_timeout_is_recoverable(client, queue_stub, fake_ssh, bus_recorder):
-    """冒烟超时不再硬崩：诊断为『太慢/超时』→ 自动改小重试 → 通过，航程继续。
+async def test_slow_smoke_asks_without_interrupting_remote_command(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """低置信度的 smoke 超时保留远程进程，并把决定交给用户。
 
-    回归自适应循环的一类失败：训练类实验冒烟常因规模太大而超时(TimeoutError),
-    以前直接判失败;现在当作可修失败,重连+让 LLM 把冒烟改小再试。"""
-    state = {"raised": 0}
-
-    async def timeout_once(command: str) -> None:
-        if "--smoke" in command and state["raised"] == 0:
-            state["raised"] += 1
-            raise TimeoutError("smoke timed out")
-
-    fake_ssh.on_command = timeout_once
+    这与 launch SSH 调用自身抛 TimeoutError 不同：这里命令已有 durable handle、仍在运行，
+    只是超过 soft/stall 阈值且没有足够证据证明卡死。平台不得擅自停止或重写生成文件。
+    """
+    fake_ssh.smoke_exits = [None]
+    fake_ssh.managed_output_age_seconds = 1000
     project_id, headers, exp_id, voyage_id = await _launch_experiment(
         client, budget={"max_hours": 2, "max_runs": 1}
     )
@@ -794,15 +816,19 @@ async def test_smoke_timeout_is_recoverable(client, queue_stub, fake_ssh, bus_re
         client, headers, project_id, voyage_id, _router_with(_FixedReflectionProvider("improve"))
     )
 
-    assert state["raised"] == 1  # 确实注入了一次冒烟超时
     voyage_status, _ = await _iterate_observation(client, headers, voyage_id)
-    assert voyage_status == "done"  # 没在 smoke 硬崩,跑到 analyze 并收尾
+    assert voyage_status == "paused_ask"
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
-    smoke = next(s for s in resp.json()["steps"] if s["action"] == "experiment.smoke")
-    assert smoke["status"] == "passed"
-    assert (smoke["observation"] or {}).get("fixes", 0) >= 1  # 记录了一次方案级修复
-    assert len(fake_ssh.connects) >= 2  # 超时后重连过
+    payload = resp.json()
+    assert payload["open_ask"]["payload"]["ask_kind"] == "managed_command"
+    assert payload["open_ask"]["payload"]["context"]["remote_operation_continues"] is True
+    smoke = next(s for s in payload["steps"] if s["action"] == "experiment.smoke")
+    assert smoke["status"] == "pending"
+    assert _managed_launches(fake_ssh, "application-smoke") == 1
+    assert _managed_launches(fake_ssh, "experiment-run") == 0
+    detail = await _get_detail(client, headers, exp_id)
+    assert detail["status"] == "waiting_user"
 
 
 async def test_run_reattaches_after_worker_restart(client, queue_stub, fake_ssh, bus_recorder):
@@ -822,22 +848,25 @@ async def test_run_reattaches_after_worker_restart(client, queue_stub, fake_ssh,
     task = asyncio.ensure_future(engine.resume(uuid.UUID(voyage_id)))
     for _ in range(200):  # 等 run 真正启动（出现 launch 命令）
         await asyncio.sleep(0.02)
-        if any("rm -f run.exit &&" in c for c in fake_ssh.commands):
+        if _managed_launches(fake_ssh, "experiment-run") >= 1:
             break
     await asyncio.sleep(0.1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    launches_before = "\n".join(fake_ssh.commands).count("rm -f run.exit &&")
+    launches_before = _managed_launches(fake_ssh, "experiment-run")
     assert launches_before == 1  # 第一次 launch 已发生
 
     # 阶段二：远端进程已结束（run.exit=0 落盘），新 worker 重跑 resume → 应重挂而非再 launch
     fake_ssh.run_exit = 0
+    managed_prefix = fake_ssh.managed_prefix_by_pid[fake_ssh.pid]
+    fake_ssh.managed_files[f"{managed_prefix}.exit"] = "0"
     engine2, _ = _make_engine(_router_with(_FixedReflectionProvider("improve")))
-    await engine2.resume(uuid.UUID(voyage_id))
+    # 界限防止未来回归再次卡住整个测试会话。
+    await asyncio.wait_for(engine2.resume(uuid.UUID(voyage_id)), 10)
 
-    assert "\n".join(fake_ssh.commands).count("rm -f run.exit &&") == 1  # 没有第二次 launch
+    assert _managed_launches(fake_ssh, "experiment-run") == 1  # 没有第二次 launch
     detail = await _get_detail(client, headers, exp_id)
     assert len(detail["runs"]) == 1  # 没孤儿轮
     assert detail["runs"][0]["status"] == "succeeded"

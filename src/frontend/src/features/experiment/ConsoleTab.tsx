@@ -56,8 +56,16 @@ function parseLogEvent(data: string): string[] {
   return data.split('\n').filter((l) => l !== '');
 }
 
-/** 脚本输出（run.log）：与 AI 过程终端同一深色外观的简单日志框。 */
-function ScriptLogView({ expId, active }: { expId: string; active: boolean }) {
+/** 脚本或远端命令输出：与 AI 过程终端同一深色外观。 */
+function RemoteLogView({
+  expId,
+  active,
+  source,
+}: {
+  expId: string;
+  active: boolean;
+  source: 'script' | 'terminal';
+}) {
   const [lines, setLines] = useState<string[]>([]);
   const [truncated, setTruncated] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -65,8 +73,10 @@ function ScriptLogView({ expId, active }: { expId: string; active: boolean }) {
   useEffect(() => {
     let cancelled = false;
     setLines([]);
-    api
-      .getExperimentLogs(expId, { tail: 500 })
+    const initial = source === 'script'
+      ? api.getExperimentLogs(expId, { tail: 500 })
+      : api.getExperimentTerminalLogs(expId, 500);
+    initial
       .then((r) => {
         if (cancelled) return;
         setLines(r.lines.slice(-MAX_SCRIPT_LINES));
@@ -76,18 +86,19 @@ function ScriptLogView({ expId, active }: { expId: string; active: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [expId]);
+  }, [expId, source]);
 
   useEffect(() => {
     if (!active) return;
-    const stop = subscribeSse(`/experiments/${expId}/logs/stream`, {
+    const endpoint = source === 'script' ? 'logs' : 'terminal-logs';
+    const stop = subscribeSse(`/experiments/${expId}/${endpoint}/stream`, {
       onEvent: (_event, data) => {
         const next = parseLogEvent(data);
         if (next.length > 0) setLines((l) => [...l, ...next].slice(-MAX_SCRIPT_LINES));
       },
     });
     return stop;
-  }, [expId, active]);
+  }, [expId, active, source]);
 
   useEffect(() => {
     const box = boxRef.current;
@@ -120,7 +131,9 @@ function ScriptLogView({ expId, active }: { expId: string; active: boolean }) {
       )}
       {lines.length === 0 ? (
         <div style={{ color: 'var(--terminal-dim)' }}>
-          {tr('暂无脚本输出（尚未开始运行）', 'No script output yet (not running)')}
+          {source === 'script'
+            ? tr('暂无脚本输出（尚未开始运行）', 'No script output yet (not running)')
+            : tr('暂无远端命令输出', 'No remote command output yet')}
         </div>
       ) : (
         lines.map((l, i) => <div key={i}>{l}</div>)
@@ -165,7 +178,7 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
   const queryClient = useQueryClient();
   const vid = exp.voyage_id;
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [source, setSource] = useState<'ai' | 'script'>('ai');
+  const [source, setSource] = useState<'ai' | 'script' | 'terminal'>('ai');
   const [chatOnly, setChatOnly] = useState(false);
   const [showObsolete, setShowObsolete] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -351,10 +364,11 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
                 </label>
                 <Segmented
                   value={source}
-                  onChange={(v) => setSource(v as 'ai' | 'script')}
+                  onChange={(v) => setSource(v as 'ai' | 'script' | 'terminal')}
                   options={[
                     { v: 'ai' as const, label: tr('AI 过程', 'AI process') },
                     { v: 'script' as const, label: tr('脚本输出', 'Script output') },
+                    { v: 'terminal' as const, label: tr('终端输出', 'Terminal output') },
                   ]}
                 />
               </>
@@ -373,21 +387,28 @@ export function ConsoleTab({ exp }: { exp: ExperimentDetail }) {
             <div className="row" style={{ margin: '20px 0 12px' }}>
               <span className="section-h">
                 <Icon name="cpu" size={15} style={{ color: 'var(--accent)' }} />
-                {tr('运行日志', 'Terminal')}
-                <span className="en-label" style={{ fontSize: 11 }}>run.log</span>
+                {source === 'script' ? tr('运行日志', 'Run log') : tr('远端命令输出', 'Remote terminal')}
+                <span className="en-label" style={{ fontSize: 11 }}>
+                  {source === 'script' ? 'run.log' : 'stdout / stderr'}
+                </span>
               </span>
               <div className="row gap8" style={{ marginLeft: 'auto' }}>
                 <Segmented
                   value={source}
-                  onChange={(v) => setSource(v as 'ai' | 'script')}
+                  onChange={(v) => setSource(v as 'ai' | 'script' | 'terminal')}
                   options={[
                     { v: 'ai' as const, label: tr('AI 过程', 'AI process') },
                     { v: 'script' as const, label: tr('脚本输出', 'Script output') },
+                    { v: 'terminal' as const, label: tr('终端输出', 'Terminal output') },
                   ]}
                 />
               </div>
             </div>
-            <ScriptLogView expId={exp.id} active={!EXPERIMENT_TERMINAL.has(exp.status)} />
+            <RemoteLogView
+              expId={exp.id}
+              active={!EXPERIMENT_TERMINAL.has(exp.status)}
+              source={source}
+            />
             <ConsoleComposer
               voyageId={vid}
               openAsk={openAsk}

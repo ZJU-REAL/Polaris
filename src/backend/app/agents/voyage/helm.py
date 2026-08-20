@@ -7,6 +7,7 @@ from typing import Any
 
 from app.agents.voyage.actions import ActionContext, get_action
 from app.agents.voyage.errorsig import error_text
+from app.services.managed_commands import failure_from_exception
 
 
 class Helm:
@@ -18,4 +19,5 @@ class Helm:
         try:
             return await action(ctx, step_def.get("params") or {})
         except Exception as e:  # noqa: BLE001 —— 步骤失败要落 observation 而非炸掉状态机
-            return {"error": error_text(e)}
+            report = failure_from_exception(e)
+            return {"error": error_text(e), "failure": report.to_dict()}

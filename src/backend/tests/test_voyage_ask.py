@@ -288,6 +288,25 @@ async def test_cancel_supersedes_open_ask(client, queue_stub):
     assert resp.status_code == 409
 
 
+async def test_cancel_supersedes_an_in_flight_stop_claim(client, queue_stub):
+    project_id, headers = await _make_project(client)
+    run_id = await _run(project_id, plan=FATAL_PLAN)
+    engine, _ = _engine()
+    await engine.run(run_id)
+    ask = await _open_ask_of(run_id)
+    assert ask is not None
+
+    async with get_sessionmaker()() as session:
+        claimed = await messages_service.claim_open_ask_for_stop(session, ask.id)
+        assert claimed is True
+
+    resp = await client.post(f"/api/voyages/{run_id}/cancel", headers=headers)
+    assert resp.status_code == 200
+    async with get_sessionmaker()() as session:
+        stopped_ask = await session.get(VoyageMessage, ask.id)
+        assert stopped_ask.status == "superseded"
+
+
 async def test_done_criteria_unmet_asks_then_accept(client, queue_stub, bus_recorder):
     """完成标准未达成 → 提问；用户接受为完成 → done（不再一律 paused_error）。"""
     project_id, headers = await _make_project(client)

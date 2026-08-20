@@ -85,6 +85,16 @@ class UsernameUpdate(BaseModel):
     username: str = Field(pattern=USERNAME_PATTERN)
 
 
+class ManagedCommandWatchdogUserUpdate(BaseModel):
+    unanswered_minutes: int = Field(ge=15, le=10_080)
+
+
+class ManagedCommandWatchdogUserRead(BaseModel):
+    unanswered_minutes: int
+    admin_max_unanswered_minutes: int
+    effective_unanswered_minutes: int
+
+
 # ---- 管理端（/admin/users） ----
 
 

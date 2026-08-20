@@ -22,6 +22,14 @@ from app.core.db import get_sessionmaker
 from app.core.security import decrypt_secret
 from app.models.activity import Activity
 from app.models.ssh_credential import SSHCredential
+from app.services.managed_commands import CommandSnapshot, OperationContext, RepairScope
+from app.services.managed_ssh import (
+    ManagedCommandHandle,
+    ManagedGPUUsage,
+    ManagedStopResult,
+    OutputChunk,
+    SSHManagedCommands,
+)
 
 logger = logging.getLogger("polaris.ssh")
 
@@ -474,6 +482,72 @@ class SSHExecutor:
         await self._audit(command)
         return await self._session.run(command, timeout=timeout)
 
+    def _managed_commands(self) -> SSHManagedCommands:
+        """Return the command-name-agnostic durable execution backend."""
+        return SSHManagedCommands(
+            session=self._session,
+            run=self._run,
+            shell_workdir=self.workdir,
+            sftp_workdir=self._sftp_dir,
+        )
+
+    async def start_managed_command(
+        self,
+        context: OperationContext,
+        command: str,
+        *,
+        attempt_id: str | None = None,
+    ) -> ManagedCommandHandle:
+        return await self._managed_commands().start(
+            context,
+            command,
+            attempt_id=attempt_id,
+        )
+
+    async def recover_managed_command(
+        self, context: OperationContext
+    ) -> ManagedCommandHandle | None:
+        return await self._managed_commands().recover_current(context)
+
+    async def inspect_managed_command(
+        self,
+        handle: ManagedCommandHandle,
+        *,
+        previous_token: str | None = None,
+        diagnostic_evidence: dict[str, str] | None = None,
+    ) -> CommandSnapshot:
+        return await self._managed_commands().snapshot(
+            handle,
+            previous_token=previous_token,
+            diagnostic_evidence=diagnostic_evidence,
+        )
+
+    async def read_managed_output(
+        self,
+        handle: ManagedCommandHandle,
+        *,
+        stdout_offset: int = 0,
+        stderr_offset: int = 0,
+    ) -> tuple[list[OutputChunk], int, int]:
+        return await self._managed_commands().read_output(
+            handle,
+            stdout_offset=stdout_offset,
+            stderr_offset=stderr_offset,
+        )
+
+    async def diagnose_managed_command(
+        self, handle: ManagedCommandHandle
+    ) -> dict[str, str]:
+        return await self._managed_commands().diagnose(handle)
+
+    async def managed_command_gpu_usage(
+        self, handle: ManagedCommandHandle
+    ) -> ManagedGPUUsage:
+        return await self._managed_commands().gpu_usage(handle)
+
+    async def stop_managed_command(self, handle: ManagedCommandHandle) -> ManagedStopResult:
+        return await self._managed_commands().stop(handle)
+
     # ---- 白名单命令模板（唯一的远程命令来源） ----
 
     async def mkdir_workdir(self) -> SSHResult:
@@ -516,6 +590,21 @@ class SSHExecutor:
         return await self._run(
             f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} bash run.sh --smoke; }}",
             timeout=timeout,
+        )
+
+    async def launch_managed_smoke(self) -> ManagedCommandHandle:
+        command = f"cd {self.workdir} && {{ {ENV_SOURCE_PREFIX} bash run.sh --smoke; }}"
+        return await self.start_managed_command(
+            OperationContext(
+                phase="application.smoke",
+                operation="application-smoke",
+                display_command="bash run.sh --smoke",
+                target=self.host,
+                soft_timeout_seconds=300,
+                stall_timeout_seconds=600,
+                repair_scope=RepairScope.APPLICATION_FILES,
+            ),
+            command,
         )
 
     async def run_plot(self, timeout: float = PLOT_TIMEOUT_SECONDS) -> SSHResult:
@@ -602,6 +691,24 @@ class SSHExecutor:
             raise SSHExecError(f"launch_run 未返回 PID：{result.stdout!r}") from e
         return pid, command
 
+    async def launch_managed_run(self) -> ManagedCommandHandle:
+        command = (
+            f"cd {self.workdir} && {{ export PYTHONUNBUFFERED=1; "
+            f"{ENV_SOURCE_PREFIX} stdbuf -oL -eL bash run.sh; }}"
+        )
+        return await self.start_managed_command(
+            OperationContext(
+                phase="application.run",
+                operation="experiment-run",
+                display_command="bash run.sh",
+                target=self.host,
+                soft_timeout_seconds=600,
+                stall_timeout_seconds=900,
+                repair_scope=RepairScope.APPLICATION_FILES,
+            ),
+            command,
+        )
+
     async def check_pid(self, pid: int) -> bool:
         result = await self._run(f"kill -0 {int(pid)} 2>/dev/null && echo alive || echo dead")
         return "alive" in result.stdout
@@ -654,6 +761,24 @@ class SSHExecutor:
         except (ValueError, IndexError) as e:
             raise SSHExecError(f"launch_setup 未返回 PID：{result.stdout!r}") from e
         return pid, command
+
+    async def launch_managed_setup(self) -> ManagedCommandHandle:
+        command = f"cd {self.workdir} && {self._install_script()}"
+        return await self.start_managed_command(
+            OperationContext(
+                phase="dependency.install",
+                operation="dependency-install",
+                display_command="install generated experiment dependencies",
+                target=self.host,
+                soft_timeout_seconds=600,
+                stall_timeout_seconds=900,
+                repair_scope=RepairScope.DEPENDENCY_FILES,
+            ),
+            command,
+        )
+
+    async def prepare_managed(self) -> ManagedCommandHandle | None:
+        return None
 
     async def read_setup_exit(self) -> int | None:
         result = await self._run(f"cat {self.workdir}/setup.exit 2>/dev/null")

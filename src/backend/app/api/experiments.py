@@ -662,3 +662,78 @@ async def stream_experiment_logs(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/experiments/{experiment_id}/terminal-logs", response_model=ExperimentLogsRead)
+async def get_experiment_terminal_logs(
+    experiment_id: uuid.UUID,
+    tail: int = Query(default=500, ge=1, le=5000),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ExperimentLogsRead:
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    path = experiments_service.terminal_log_path(experiment.id)
+    lines, truncated = experiments_service.read_local_log_tail(str(path), tail)
+    return ExperimentLogsRead(lines=lines, truncated=truncated)
+
+
+@router.get("/experiments/{experiment_id}/terminal-logs/stream")
+async def stream_experiment_terminal_logs(
+    experiment_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> StreamingResponse:
+    """Stream raw managed-command stdout/stderr independently from run.log."""
+    experiment, _ = await _member_experiment(session, experiment_id, user)
+    exp_id = experiment.id
+    path = experiments_service.terminal_log_path(exp_id)
+
+    async def _status() -> str:
+        async with get_sessionmaker()() as current_session:
+            row = await experiments_service.get_experiment_for_user(
+                current_session,
+                experiment_id=exp_id,
+                user_id=user.id,
+            )
+        return row[0].status if row is not None else "failed"
+
+    async def stream() -> AsyncIterator[str]:
+        status_now = await _status()
+        yield _sse_frame("status", {"status": status_now})
+        lines, _truncated = experiments_service.read_local_log_tail(
+            str(path), _STREAM_INITIAL_TAIL
+        )
+        offset = path.stat().st_size if path.is_file() else 0
+        if lines:
+            yield _sse_frame("log", {"lines": lines})
+        last_ping = time.monotonic()
+        try:
+            while True:
+                status_now = await _status()
+                if path.is_file():
+                    size = path.stat().st_size
+                    if size > offset:
+                        with path.open("r", encoding="utf-8", errors="replace") as file:
+                            file.seek(offset)
+                            chunk = file.read()
+                        offset = size
+                        yield _sse_frame("log", {"lines": chunk.splitlines()})
+                if status_now in EXPERIMENT_TERMINAL_STATUSES:
+                    yield _sse_frame("end", {"status": status_now})
+                    return
+                if time.monotonic() - last_ping >= _HEARTBEAT_SECONDS:
+                    yield ": ping\n\n"
+                    last_ping = time.monotonic()
+                await asyncio.sleep(_STREAM_POLL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

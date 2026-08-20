@@ -132,6 +132,7 @@ export function ExperimentSettings() {
   }
 
   return (
+    <>
     <div className="card card-pad">
       <div className="section-h" style={{ marginBottom: 4 }}>
         <Icon name="flask" size={15} style={{ color: 'var(--accent)' }} />
@@ -177,9 +178,75 @@ export function ExperimentSettings() {
         </button>
       </div>
     </div>
+    <ManagedCommandWatchdogAdminCard />
+    </>
   );
 }
 
 function labelOf(field: string): string {
   return FIELDS.find((f) => f.key === field)?.zh ?? field;
+}
+
+function ManagedCommandWatchdogAdminCard() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: ['managed-command-watchdog', 'admin'],
+    queryFn: () => api.getManagedCommandWatchdog(),
+    retry: false,
+  });
+  const [minutes, setMinutes] = useState<number | null>(null);
+  const shown = minutes ?? query.data?.max_unanswered_minutes ?? 120;
+  const mutation = useMutation({
+    mutationFn: () => api.setManagedCommandWatchdog(shown),
+    onSuccess: (saved) => {
+      setMinutes(saved.max_unanswered_minutes);
+      queryClient.setQueryData(['managed-command-watchdog', 'admin'], saved);
+      void queryClient.invalidateQueries({ queryKey: ['managed-command-watchdog', 'user'] });
+      toast(tr('无人答复策略已保存', 'Unanswered-command policy saved'), 'ok');
+    },
+    onError: (error) => toast(
+      `${tr('保存失败', 'Save failed')}：${error instanceof Error ? error.message : String(error)}`,
+      'error',
+    ),
+  });
+  return (
+    <div className="card card-pad" style={{ marginTop: 16 }}>
+      <div className="section-h" style={{ marginBottom: 4 }}>
+        <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('远端命令无人答复策略', 'Unanswered remote-command policy')}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 16 }}>
+        {tr(
+          '当远端命令超时后转为等待用户决定，此值是允许等待的最长时间。到期后仅在确认该命令本身仍占用 GPU 时自动终止；未占用 GPU 或无法可靠归属时继续保留。用户可以选择更短时间，但不能超过此上限。',
+          'Maximum wait after a timed-out remote command asks for a decision. Once reached, Polaris stops it only when GPU use is attributable to that command; idle or uncertain commands remain running. Users may choose a shorter wait, never a longer one.',
+        )}
+      </div>
+      {query.isError ? (
+        <div className="empty">{tr('无法加载设置', 'Failed to load settings')}</div>
+      ) : (
+        <FormField
+          label={tr('最长等待时间（分钟）', 'Maximum wait (minutes)')}
+          hint={tr('范围 15 分钟至 7 天，默认 120 分钟。', '15 minutes to 7 days; default 120 minutes.')}
+        >
+          <input
+            className="input mono"
+            type="number"
+            min={15}
+            max={10080}
+            value={shown}
+            onChange={(event) => setMinutes(Number(event.target.value))}
+          />
+        </FormField>
+      )}
+      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
+        <button
+          className="btn btn-primary"
+          disabled={query.isLoading || shown < 15 || shown > 10080 || mutation.isPending || shown === query.data?.max_unanswered_minutes}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+        </button>
+      </div>
+    </div>
+  );
 }

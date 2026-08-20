@@ -23,7 +23,7 @@ from app.core.llm.router import LLMRouter
 from app.models.activity import Activity
 from app.models.experiment import Experiment, ExperimentRun
 from app.models.idea import Idea
-from app.models.voyage import VoyageRun
+from app.models.voyage import VoyageMessage, VoyageRun
 from app.services import ssh_exec
 from tests.conftest import RecordingBus, register_and_login
 from tests.fake_ssh import FakeSSHConnector, FakeSSHServer, FakeSSHSession
@@ -259,7 +259,13 @@ async def test_experiment_full_pipeline(client, queue_stub, fake_ssh, bus_record
     assert f"mkdir -p ~/polaris_runs/{exp_id}" in joined
     assert "pip install -r requirements.txt" in joined
     assert "bash run.sh --smoke" in joined
-    assert joined.count("run.sh > run.log") == 3  # 3 轮 run launch（setup 也 nohup，按 run 标记数）
+    assert joined.count("stdbuf -oL -eL bash run.sh") == 3
+
+    resp = await client.get(f"/api/experiments/{exp_id}/terminal-logs", headers=headers)
+    assert resp.status_code == 200
+    terminal_lines = resp.json()["lines"]
+    assert any("[application-smoke][stdout]" in line for line in terminal_lines)
+    assert any("[experiment-run][stdout]" in line for line in terminal_lines)
     assert ".venv/bin/python plot_figures.py" in joined
 
     # 审计：每条远程命令都有 Activity(kind=ssh.exec)
@@ -338,30 +344,29 @@ async def test_smoke_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus
     assert resp.json()["status"] == "done"
 
 
-async def test_smoke_fixes_unbounded_until_success(client, queue_stub, fake_ssh, bus_recorder):
-    """冒烟修复不再按次数设限：连续失败 3 次（超过旧上限）仍继续修，第 4 次通过，
-    全程不提问、不打断，整条流水线走完。"""
+async def test_smoke_repeated_failure_stops_after_two_repairs(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """同一冒烟错误经过两次修复仍无进展时停止自动改写并请求用户判断。"""
     fake_ssh.smoke_exits = [1, 1, 1, 0]
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
     resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
-    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+    voyage_id = resp.json()["voyage_id"]
 
-    engine, bus = _make_engine()
+    engine, _ = _make_engine()
     await engine.run(uuid.UUID(voyage_id))
     await _approve_gate(client, headers, project_id)
     await engine.resume(uuid.UUID(voyage_id))
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     voyage = resp.json()
-    assert voyage["status"] == "done", voyage
+    assert voyage["status"] == "paused_ask", voyage
     smoke_step = next(s for s in voyage["steps"] if s["action"] == "experiment.smoke")
-    assert smoke_step["observation"] == {"exit_code": 0, "attempts": 4, "fixes": 3}
-    statuses = [e[2]["status"] for e in bus.voyage_events if e[1] == "status"]
-    assert "paused_ask" not in statuses  # 修复期间不打断
-    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
-    assert resp.json()["status"] == "done"
+    assert smoke_step["observation"]["attempts"] == 3
+    assert smoke_step["observation"]["fixes"] == 2
+    assert "同一个错误" in voyage["open_ask"]["text"]
 
 async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh, bus_recorder):
     """依赖安装第一次失败 → 报错回 LLM 修 requirements/run.sh → 重装通过（对称 smoke 自愈）。"""
@@ -389,15 +394,16 @@ async def test_setup_dep_failure_fixed_and_retried(client, queue_stub, fake_ssh,
     assert resp.json()["status"] == "done"
 
 
-async def test_setup_fixes_unbounded_until_success(client, queue_stub, fake_ssh, bus_recorder):
-    """修复不再按次数设限（用户定调）：连续失败 3 次（超过旧上限 2）仍继续修，
-    第 4 次装通、整条流水线走完，全程不提问。"""
+async def test_setup_repeated_failure_stops_after_two_repairs(
+    client, queue_stub, fake_ssh, bus_recorder
+):
+    """同一依赖错误经过两次修复仍无进展时停止自动改写并请求用户判断。"""
     fake_ssh.setup_exits = [1, 1, 1, 0]
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
     cred_id = await _create_credential(client, headers)
     resp = await _create_experiment(client, headers, project_id, idea_id, cred_id)
-    exp_id, voyage_id = resp.json()["id"], resp.json()["voyage_id"]
+    voyage_id = resp.json()["voyage_id"]
 
     engine, _ = _make_engine()
     await engine.run(uuid.UUID(voyage_id))
@@ -405,11 +411,11 @@ async def test_setup_fixes_unbounded_until_success(client, queue_stub, fake_ssh,
     await engine.resume(uuid.UUID(voyage_id))
 
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
-    assert resp.json()["status"] == "done", resp.json()
+    assert resp.json()["status"] == "paused_ask", resp.json()
     setup_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.setup")
-    assert setup_step["observation"]["fixes"] == 3  # 旧上限是 2：现在不设限
-    resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
-    assert resp.json()["status"] == "done"
+    assert setup_step["observation"]["attempts"] == 3
+    assert setup_step["observation"]["fixes"] == 2
+    assert "同一个错误" in resp.json()["open_ask"]["text"]
 
 
 async def test_setup_time_budget_exceeded_asks(
@@ -496,7 +502,7 @@ async def test_setup_fix_loop_picks_up_mid_action_suggestions(
     async def post_suggestion(command: str) -> None:
         # 首次装依赖启动后（= setup 动作执行中途）用户发来建议
         nonlocal posted
-        if "setup.exit" in command and not posted:
+        if "/operations/dependency-install/" in command and not posted:
             posted = True
             async with get_sessionmaker()() as session:
                 await messages_service.append_message(
@@ -764,9 +770,9 @@ async def test_smoke_same_error_escalates_then_asks(client, queue_stub, fake_ssh
     ask = voyage["open_ask"]
     assert "同一个错误" in ask["text"]
     assert ask["payload"]["context"]["error_signature"]
-    assert len(ask["payload"]["context"]["fix_ledger"]) == 3  # 三次修复全记了台账
-    # 第 2/3 次修复 prompt 带升级指令；第 1 次不带
-    assert len(provider.fix_prompts) == 3
+    assert len(ask["payload"]["context"]["fix_ledger"]) == 2
+    # 第 2 次修复 prompt 带升级指令；第 1 次不带
+    assert len(provider.fix_prompts) == 2
     assert "禁止再微调版本号" not in provider.fix_prompts[0]
     assert "禁止再微调版本号" in provider.fix_prompts[1]
     assert "修复台账" in provider.fix_prompts[1]
@@ -1019,8 +1025,8 @@ async def test_probe_resources_records_facts_and_missing(client, fake_ssh, bus_r
     assert not any("多模态" in w for w in warnings)
 
 
-async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_recorder):
-    """超 budget.max_hours → kill 远端进程 + run 置 failed；voyage 转提问、实验「等你回复」。"""
+async def test_budget_timeout_keeps_run_and_asks(client, queue_stub, fake_ssh, bus_recorder):
+    """硬时限只触发用户决策；证据不足时保留远端进程，不把超时等同失败。"""
     fake_ssh.run_exit = None  # 进程一直不结束
     project_id, headers = await _setup_project(client)
     idea_id = await _seed_idea(project_id)
@@ -1035,16 +1041,37 @@ async def test_budget_timeout_kills_run(client, queue_stub, fake_ssh, bus_record
     await _approve_gate(client, headers, project_id)
     await engine.resume(uuid.UUID(voyage_id))
 
-    assert fake_ssh.pid in fake_ssh.killed
+    assert fake_ssh.pid not in fake_ssh.killed
     resp = await client.get(f"/api/experiments/{exp_id}", headers=headers)
     detail = resp.json()
     assert detail["status"] == "waiting_user"  # 不再提前打死实验，镜像「等你回复」
-    assert detail["runs"][0]["status"] == "failed"
+    assert detail["runs"][0]["status"] == "running"
     resp = await client.get(f"/api/voyages/{voyage_id}", headers=headers)
     assert resp.json()["status"] == "paused_ask"  # run 级失败转提问，等人拍板
-    assert resp.json()["open_ask"]["payload"]["ask_kind"] == "fatal_step"
+    assert resp.json()["open_ask"]["payload"]["ask_kind"] == "managed_command"
+    ask_id = resp.json()["open_ask"]["id"]
     run_step = next(s for s in resp.json()["steps"] if s["action"] == "experiment.run")
-    assert "max_hours" in run_step["observation"]["error"]
+    assert run_step["observation"]["remote_operation_continues"] is True
+
+    observed_stop_status: list[str] = []
+
+    async def observe_claim_before_signal(command: str) -> None:
+        if "# polaris-managed-stop" not in command:
+            return
+        async with get_sessionmaker()() as session:
+            ask = await session.get(VoyageMessage, uuid.UUID(ask_id))
+            observed_stop_status.append(ask.status)
+
+    fake_ssh.on_command = observe_claim_before_signal
+    resp = await client.post(
+        f"/api/voyages/{voyage_id}/asks/{ask_id}/answer",
+        headers=headers,
+        json={"choice": "stop_remote", "text": "停止并诊断"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert fake_ssh.pid in fake_ssh.killed
+    assert observed_stop_status == ["stopping"]
+    assert resp.json()["payload"]["stop_status"] == "stopped"
 
 
 async def test_cancel_during_run_polling(client, queue_stub, fake_ssh, bus_recorder):
@@ -1052,10 +1079,13 @@ async def test_cancel_during_run_polling(client, queue_stub, fake_ssh, bus_recor
     fake_ssh.run_exit = None  # 进程一直存活，直到被取消
 
     cancelled = False
+    run_launched = False
 
     async def cancel_on_first_alive_check(command: str) -> None:
-        nonlocal cancelled
-        if "kill -0" in command and not cancelled:
+        nonlocal cancelled, run_launched
+        if "/operations/experiment-run/" in command:
+            run_launched = True
+        if run_launched and "kill -0" in command and not cancelled:
             cancelled = True
             async with get_sessionmaker()() as session:
                 run = (
@@ -1603,7 +1633,9 @@ async def test_smoke_fix_reinstalls_deps_when_requirements_change(
     # ①冒烟修复改了 requirements.txt 后；②第 1 轮 improve 的新文件把 requirements 又改回
     # 默认内容后（analyze 路径同样受保护）。第 2 轮 improve 文件不变 → 不再重装。
     reinstalls = [
-        c for c in fake_ssh.commands if "-r requirements.txt" in c and "setup.log" not in c
+        c
+        for c in fake_ssh.commands
+        if "-r requirements.txt" in c and "/operations/dependency-install/" not in c
     ]
     assert len(reinstalls) == 2, fake_ssh.commands
 

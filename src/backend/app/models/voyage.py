@@ -168,8 +168,16 @@ class VoyageStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 # answer = 用户对 ask 的回答（reply_to 指向 ask）；info = agent 播报（如「已采纳你的建议」）。
 VOYAGE_MESSAGE_KINDS = ("chat", "ask", "answer", "info")
 # ask 生命周期：open（等回答）→ answered（已答，等引擎消费）→ consumed（引擎已把回答
-# 变成行为，与该行为同事务提交）；superseded = 被取消/新 ask 覆盖。其余 kind 恒为 none。
-VOYAGE_MESSAGE_STATUSES = ("none", "open", "answered", "consumed", "superseded")
+# 变成行为，与该行为同事务提交）；stopping 是 stop_remote 已原子抢占、正在停止远端
+# attempt 的短暂状态；superseded = 被取消/新 ask 覆盖。其余 kind 恒为 none。
+VOYAGE_MESSAGE_STATUSES = (
+    "none",
+    "open",
+    "stopping",
+    "answered",
+    "consumed",
+    "superseded",
+)
 
 
 class VoyageMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):

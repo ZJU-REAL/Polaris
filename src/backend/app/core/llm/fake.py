@@ -58,6 +58,8 @@ _EXP_REPORT_MARKER = "## 实验报告"  # experiment 报告
 _EXP_REFLECTION_MARKER = '"hypothesis_updates"'  # experiment 迭代 reflection（M5-A）
 _EXP_PLOT_MARKER = '"plot_figures.py"'  # experiment 绘图脚本（M5-A）
 _EXP_FIGQC_MARKER = "图表质检员"  # experiment 图表 VLM 质检（M5-A，多模态）
+_COMMAND_ADVISOR_MARKER = "POLARIS_COMMAND_ADVISOR"
+_RECOVERY_ADVISOR_MARKER = "POLARIS_RECOVERY_ADVISOR"
 _READING_MARKER = "论文阅读助手"  # AI 伴读（papers.py CHAT_SYSTEM_PROMPT_TEMPLATE）
 _LIBRARY_MARKER = "文献库研究助手"  # 文献库对话（library_chat.py）
 _WRITE_SECTION_MARKER = "POLARIS_WRITING_SECTION"  # 论文分节撰写（M5-B）
@@ -317,6 +319,42 @@ class FakeProvider(LLMProvider):
             (m.text for m in reversed(messages) if m.role == "user"),
             full_text,
         )
+        if _COMMAND_ADVISOR_MARKER in full_text:
+            return json.dumps(
+                {
+                    "state": "unknown",
+                    "confidence": 0.4,
+                    "reason": "fake advisor has insufficient evidence",
+                    "evidence": [],
+                    "proposed_action": "ask_user_while_running",
+                    "next_check_seconds": 5,
+                    "safe_to_interrupt": False,
+                    "user_message": None,
+                },
+                ensure_ascii=False,
+            )
+        if _RECOVERY_ADVISOR_MARKER in full_text:
+            try:
+                report = json.loads(last_user)
+            except json.JSONDecodeError:
+                report = {}
+            scope = str(report.get("repair_scope") or "none")
+            changes = {
+                "dependency_files": ["requirements.txt", "run.sh"],
+                "application_files": ["run.sh", "train.py"],
+            }.get(scope, [])
+            return json.dumps(
+                {
+                    "diagnosis": "fake structured command failure",
+                    "confidence": 0.95 if changes else 0.4,
+                    "repair_scope": scope if changes else "none",
+                    "proposed_changes": changes,
+                    "expected_evidence": "the minimal retry exits successfully",
+                    "minimal_retry": "retry the failed operation",
+                    "next_step": "Inspect the captured stdout and stderr before retrying.",
+                },
+                ensure_ascii=False,
+            )
         # M5-C 论文评审五 marker：prompt 内嵌 LaTeX 源/评审意见（可能撞其他 marker），
         # 且 guardrail/支撑性输出与 sextant 的 '"passed"' 形态重叠，须最先判断
         if _REVIEW_GUARDRAIL_MARKER in full_text:

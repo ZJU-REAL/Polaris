@@ -36,7 +36,7 @@ export function useVoyageMessages(voyageId: string | null) {
   /** 交给 useVoyageChannel 的 onExtraEvent：消费 message / ask.* 事件。 */
   const handleExtraEvent = useCallback(
     (event: string, data: unknown) => {
-      if (event !== 'message' && event !== 'ask.created' && event !== 'ask.answered') return;
+      if (event !== 'message' && event !== 'ask.created' && event !== 'ask.updated' && event !== 'ask.answered') return;
       const payload = data as { message?: VoyageMessageRead; ask_id?: string };
       if (!payload?.message) return;
       queryClient.setQueryData<VoyageMessageRead[]>(['voyage-messages', id], (old) =>

@@ -20,6 +20,10 @@ The page lives in the topic workspace under **Experiment Lab**.
   credential you own. The private key and passphrase are encrypted at rest with Fernet and are never
   returned by any API. Each experiment gets an isolated working directory
   `~/polaris_runs/<experiment-id>` on the target server.
+- **A GNU/Linux experiment host.** Durable command monitoring uses standard GNU/Linux facilities
+  from Bash, coreutils, procps, and iproute2. GPU-aware unattended cleanup additionally uses
+  `nvidia-smi` when it is available; if GPU ownership cannot be established reliably, Polaris keeps
+  the command running and leaves the question open rather than stopping it speculatively.
 
 <!-- screenshot: Settings page, SSH credentials section with one credential added -->
 
