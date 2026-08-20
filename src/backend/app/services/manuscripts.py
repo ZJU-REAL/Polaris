@@ -430,11 +430,26 @@ _STRUCTURE_SECTIONS: tuple[tuple[str, str], ...] = (
     ("conclusion", "Conclusion"),
 )
 _STRUCTURE_PLACEHOLDER = "To be drafted."
-_BIB_LINE_RE = re.compile(r"^[ \t]*\\bibliography(?:style)?\{[^{}]*\}[ \t]*$", re.MULTILINE)
+_BIB_STYLE_LINE_RE = re.compile(r"^[ \t]*\\bibliographystyle\{[^{}]*\}[ \t]*$", re.MULTILINE)
+_ICML_STYLE_RE = re.compile(r"\\usepackage(?:\[[^\]]*\])?\{icml\d{4}\}")
+_ICML_NOTICE_RE = re.compile(r"\\printAffiliationsAndNotice(?:\[[^\]]*\])?\{[^{}]*\}")
 
 
 def _section_marker_block(key: str) -> str:
     return f"% POLARIS_SECTION: {key}\n{_STRUCTURE_PLACEHOLDER}\n% POLARIS_SECTION_END: {key}\n"
+
+
+def _icml_frontmatter(preamble: str, body: str) -> str | None:
+    """Return the official ICML title block without retaining sample paper content."""
+    if _ICML_STYLE_RE.search(preamble) is None:
+        return None
+    notice = _ICML_NOTICE_RE.search(body)
+    if notice is None:
+        return None
+    prefix = body[: notice.end()].strip()
+    if "\\twocolumn" not in prefix or "\\icmltitle" not in prefix:
+        return None
+    return prefix + "\n"
 
 
 def build_structured_document(content: str) -> str:
@@ -447,17 +462,18 @@ def build_structured_document(content: str) -> str:
     old_body, tail = rest.split("\\end{document}", 1)
 
     parts: list[str] = []
-    if "\\title" in preamble or "\\maketitle" in old_body:
+    icml_frontmatter = _icml_frontmatter(preamble, old_body)
+    if icml_frontmatter is not None:
+        parts.append(icml_frontmatter)
+    elif "\\title" in preamble or "\\maketitle" in old_body:
         parts.append("\\maketitle\n")
     parts.append("\n\\begin{abstract}\n" + _section_marker_block("abstract") + "\\end{abstract}\n")
     for key, heading in _STRUCTURE_SECTIONS:
         parts.append(f"\n\\section{{{heading}}}\\label{{sec:{key}}}\n" + _section_marker_block(key))
-    # 保留原有的 \bibliographystyle / \bibliography 声明（顺序不变），否则兜底指向 references
-    bib_lines = _BIB_LINE_RE.findall(old_body)
-    if bib_lines:
-        parts.append("\n" + "\n".join(m.strip() for m in bib_lines) + "\n")
-    else:
-        parts.append("\n\\bibliographystyle{plainnat}\n\\bibliography{references}\n")
+    # 保留模板的 bibliography style，但统一使用 Polaris 维护的 references.bib。
+    style_lines = _BIB_STYLE_LINE_RE.findall(old_body)
+    style = style_lines[0].strip() if style_lines else "\\bibliographystyle{plainnat}"
+    parts.append(f"\n{style}\n\\bibliography{{references}}\n")
     middle = "".join(parts)
     return f"{preamble}\\begin{{document}}\n{middle}\\end{{document}}{tail}"
 
