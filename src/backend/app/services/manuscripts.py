@@ -12,6 +12,7 @@
 
 import contextlib
 import json
+import logging
 import re
 import uuid
 from collections.abc import Sequence
@@ -42,6 +43,8 @@ from app.services.libraries import (
     member_papers_stmt,
 )
 from app.services.projects import in_my_projects
+
+logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "assets" / "templates"
 TEMPLATE_KEYS = ("neurips2026", "iclr2026", "acl")
@@ -431,12 +434,30 @@ _STRUCTURE_SECTIONS: tuple[tuple[str, str], ...] = (
 )
 _STRUCTURE_PLACEHOLDER = "To be drafted."
 _BIB_STYLE_LINE_RE = re.compile(r"^[ \t]*\\bibliographystyle\{[^{}]*\}[ \t]*$", re.MULTILINE)
-_ICML_STYLE_RE = re.compile(r"\\usepackage(?:\[[^\]]*\])?\{icml\d{4}\}")
-_ICML_NOTICE_RE = re.compile(r"\\printAffiliationsAndNotice(?:\[[^\]]*\])?\{[^{}]*\}")
+# 包名可能与别的包写在同一条 \usepackage 里（{icml2026,times}），所以不要求它独占花括号。
+_ICML_STYLE_RE = re.compile(r"\\usepackage(?:\[[^\]]*\])?\{[^{}]*\bicml\d{4}\b[^{}]*\}")
+_ICML_NOTICE_RE = re.compile(r"\\printAffiliationsAndNotice(?:\[[^\]]*\])?\{")
 
 
 def _section_marker_block(key: str) -> str:
     return f"% POLARIS_SECTION: {key}\n{_STRUCTURE_PLACEHOLDER}\n% POLARIS_SECTION_END: {key}\n"
+
+
+def _brace_group_end(text: str, open_pos: int) -> int | None:
+    """从 text[open_pos] 这个 ``{`` 起找配平的 ``}``，返回它之后一位；不配平则 None。
+
+    不能用 ``\\{[^{}]*\\}`` 一把梭：``\\printAffiliationsAndNotice{\\icmlEqualContribution{}}``
+    这种带嵌套花括号的参数会匹配失败，进而整块标题块被丢掉、draft.tex 又变回不可编译。
+    """
+    depth = 0
+    for i in range(open_pos, len(text)):
+        if text[i] == "{" and (i == 0 or text[i - 1] != "\\"):
+            depth += 1
+        elif text[i] == "}" and text[i - 1] != "\\":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return None
 
 
 def _icml_frontmatter(preamble: str, body: str) -> str | None:
@@ -444,9 +465,10 @@ def _icml_frontmatter(preamble: str, body: str) -> str | None:
     if _ICML_STYLE_RE.search(preamble) is None:
         return None
     notice = _ICML_NOTICE_RE.search(body)
-    if notice is None:
+    end = _brace_group_end(body, notice.end() - 1) if notice else None
+    if end is None:
         return None
-    prefix = body[: notice.end()].strip()
+    prefix = body[:end].strip()
     if "\\twocolumn" not in prefix or "\\icmltitle" not in prefix:
         return None
     return prefix + "\n"
@@ -465,15 +487,31 @@ def build_structured_document(content: str) -> str:
     icml_frontmatter = _icml_frontmatter(preamble, old_body)
     if icml_frontmatter is not None:
         parts.append(icml_frontmatter)
-    elif "\\title" in preamble or "\\maketitle" in old_body:
-        parts.append("\\maketitle\n")
+    else:
+        if _ICML_STYLE_RE.search(preamble) is not None:
+            # 认出是 ICML 模板却没能取出标题块 —— 产出的 draft.tex 必然编译不过（#346）。
+            # 这里不静默回退：不留痕的话，用户看到的只是"编译失败"，排查会从头再来一遍。
+            logger.warning(
+                "icml template detected but title block not extractable; "
+                "structured draft will not compile until \\twocolumn[\\icmltitle...] "
+                "and \\printAffiliationsAndNotice are present in the template body"
+            )
+        if "\\title" in preamble or "\\maketitle" in old_body:
+            parts.append("\\maketitle\n")
     parts.append("\n\\begin{abstract}\n" + _section_marker_block("abstract") + "\\end{abstract}\n")
     for key, heading in _STRUCTURE_SECTIONS:
         parts.append(f"\n\\section{{{heading}}}\\label{{sec:{key}}}\n" + _section_marker_block(key))
-    # 保留模板的 bibliography style，但统一使用 Polaris 维护的 references.bib。
+    # 保留模板的 bibliography style，但统一使用 Polaris 维护的 references.bib
+    # （工作区必然有这一份，见下方 initialize_structure 的兜底；模板自带的
+    #  \bibliography{example_paper} 指向一个不存在的文件，保留它只会让每条 \cite 都 undefined）。
     style_lines = _BIB_STYLE_LINE_RE.findall(old_body)
-    style = style_lines[0].strip() if style_lines else "\\bibliographystyle{plainnat}"
-    parts.append(f"\n{style}\n\\bibliography{{references}}\n")
+    if style_lines:
+        style = style_lines[0].strip() + "\n"
+    elif _BIB_STYLE_LINE_RE.search(preamble):
+        style = ""  # preamble 里已经声明过，再补一条会把它覆盖掉（BibTeX 取最后一条）
+    else:
+        style = "\\bibliographystyle{plainnat}\n"
+    parts.append(f"\n{style}\\bibliography{{references}}\n")
     middle = "".join(parts)
     return f"{preamble}\\begin{{document}}\n{middle}\\end{{document}}{tail}"
 
