@@ -60,6 +60,72 @@ Official sample body that must be replaced.
     assert "\\bibliography{example_paper}" not in out
 
 
+_ICML_HEAD = (
+    "\\twocolumn[\n\\icmltitle{T}\n"
+    "\\begin{icmlauthorlist}\\icmlauthor{A}{l}\\end{icmlauthorlist}\n"
+    "\\icmlaffiliation{l}{Lab}\n\\vskip 0.3in\n]\n"
+    "\\printAffiliationsAndNotice{\\icmlEqualContribution}\n"
+)
+
+
+def _icml_doc(pkg: str, head: str = _ICML_HEAD) -> str:
+    return (
+        "\\documentclass{article}\n" + pkg + "\n\\begin{document}\n" + head +
+        "Sample body.\n\\bibliographystyle{icml2026}\n"
+        "\\bibliography{example_paper}\n\\end{document}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "pkg",
+    [
+        "\\usepackage[accepted]{icml2026}",
+        "\\usepackage{icml2026}",
+        # 与别的包写在同一条 \usepackage 里也算 ICML —— 要求它独占花括号的话，这份模板
+        # 会被判成普通模板，标题块照丢，draft.tex 又回到 #346 的不可编译状态。
+        "\\usepackage{icml2026,times}",
+    ],
+)
+def test_icml_frontmatter_survives_package_spelling(pkg):
+    out = manuscripts_service.build_structured_document(_icml_doc(pkg))
+    assert "\\icmltitle{T}" in out
+    assert "\\printAffiliationsAndNotice" in out
+
+
+def test_icml_frontmatter_survives_nested_braces_in_notice():
+    """notice 的参数带嵌套花括号时也要认出来（\\{[^{}]*\\} 这种写法会在这里失配）。"""
+    head = _ICML_HEAD.replace(
+        "{\\icmlEqualContribution}", "{\\icmlEqualContribution\\footnote{eq}}"
+    )
+    out = manuscripts_service.build_structured_document(_icml_doc("\\usepackage{icml2026}", head))
+    assert "\\icmltitle{T}" in out
+    assert "\\footnote{eq}}" in out
+
+
+def test_icml_without_title_block_warns_instead_of_failing_silently(caplog):
+    """认出是 ICML 却取不出标题块 → 产物必然编译不过，至少要留痕。"""
+    src = _icml_doc("\\usepackage{icml2026}", head="\\icmltitle{T}\n")
+    with caplog.at_level("WARNING"):
+        out = manuscripts_service.build_structured_document(src)
+    assert "\\printAffiliationsAndNotice" not in out
+    assert any("icml template detected" in r.message for r in caplog.records), caplog.text
+
+
+def test_preamble_bibliography_style_is_not_overridden():
+    """模板把 \\bibliographystyle 写在 preamble 时，别在 body 里再补一条把它盖掉。
+
+    BibTeX 取最后一条声明，多补的 plainnat 会静默替换掉用户模板指定的样式。
+    """
+    src = (
+        "\\documentclass{article}\n\\bibliographystyle{acm}\n"
+        "\\begin{document}\nBody\n\\bibliography{mybib}\n\\end{document}\n"
+    )
+    out = manuscripts_service.build_structured_document(src)
+    assert "\\bibliographystyle{acm}" in out
+    assert "\\bibliographystyle{plainnat}" not in out
+    assert "\\bibliography{references}" in out  # bib 文件仍统一到 Polaris 维护的那份
+
+
 def test_build_structured_document_requires_document_env():
     with pytest.raises(manuscripts_service.StructureError):
         manuscripts_service.build_structured_document("\\documentclass{article} no doc env")
