@@ -53,3 +53,22 @@ def test_candidate_skips_pixmap_that_still_cannot_be_encoded():
             raise ValueError("unsupported colorspace for 'png'")
 
     assert pdf_extract._candidate_from_pix(3, 0, BrokenPixmap()) is None
+
+
+def test_nonblank_cmyk_pixmap_becomes_a_real_candidate():
+    """整条路径要走通，不能只证明编码函数不抛异常。
+
+    上面的 CMYK 用例填的是 0 —— CMYK 里 0 = 无墨 = 白，这样的候选会先被空白判据
+    丢掉，所以它测到的只是 _pix_png_bytes 本身。真正修的是"一张 CMYK 图能不能被
+    抽成图"，那就得用一张非空白的图走完 _candidate_from_pix。
+    """
+    pix = pymupdf.Pixmap(pymupdf.csCMYK, pymupdf.IRect(0, 0, 64, 64), 0)
+    pix.clear_with(200)  # 满墨 = 深色，绝不会被当成空白
+
+    candidate = pdf_extract._candidate_from_pix(3, 0, pix)
+
+    assert candidate is not None, "非空白 CMYK 图不该被丢弃"
+    page_no, order, width, height, png = candidate
+    assert (page_no, order, width, height) == (3, 0, 64, 64)
+    assert png.startswith(b"\x89PNG")
+    assert pdf_extract._pix_white_fraction(pix) < pdf_extract.FIGURE_MAX_WHITE_FRAC

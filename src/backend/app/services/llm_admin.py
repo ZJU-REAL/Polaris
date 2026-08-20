@@ -45,9 +45,15 @@ def masked_key_of(provider: LLMProviderConfig) -> str:
         return ""
     try:
         return mask_api_key(decrypt_secret(provider.api_key_encrypted))
-    except (InvalidToken, ValueError):
-        # Keep the settings page recoverable after an encryption-key rotation.
-        # Runtime provider construction still decrypts strictly and fails closed.
+    except InvalidToken:
+        # 这一条记录解不开（多半是加密密钥轮换过）→ 让设置页仍能打开、能重填。
+        # 运行时构造 provider 走的是另一条 decrypt_secret，仍然严格 fail closed。
+        #
+        # 只接 InvalidToken，不接 ValueError：token 无论怎么坏，Fernet.decrypt 抛的都是
+        # InvalidToken；真正会抛 ValueError 的是 Fernet(key) 本身——也就是服务端
+        # POLARIS_ENCRYPTION_KEY 配错了。那是部署错误，不是某个 provider 的数据问题，
+        # 接住它会让每个 provider 都显示"去重填 key"，而管理员照做时 encrypt_secret 会
+        # 抛同一个 ValueError 报 500，唯一的线索却已经被吞掉了。
         return "*** (needs reconfiguration)"
 
 
