@@ -5,6 +5,7 @@ import uuid
 
 import httpx
 import respx
+from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
@@ -14,6 +15,36 @@ from app.services import llm_admin
 from tests.conftest import register_and_login
 
 API_KEY = "sk-abcdef1234567890abcd"
+
+
+def test_masked_key_of_survives_encryption_key_rotation(monkeypatch):
+    provider = llm_admin.LLMProviderConfig(
+        name="rotated",
+        kind="openai_compat",
+        api_key_encrypted="encrypted-with-old-key",
+    )
+
+    def stale_secret(_token):
+        raise InvalidToken
+
+    monkeypatch.setattr(llm_admin, "decrypt_secret", stale_secret)
+
+    assert llm_admin.masked_key_of(provider) == "*** (needs reconfiguration)"
+
+
+def test_masked_key_of_keeps_short_or_unrelated_decrypt_errors(monkeypatch):
+    provider = llm_admin.LLMProviderConfig(
+        name="broken",
+        kind="openai_compat",
+        api_key_encrypted="broken-token",
+    )
+
+    def malformed_secret(_token):
+        raise ValueError("malformed token")
+
+    monkeypatch.setattr(llm_admin, "decrypt_secret", malformed_secret)
+
+    assert llm_admin.masked_key_of(provider) == "*** (needs reconfiguration)"
 
 
 async def _admin_and_member(client):

@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
+from cryptography.fernet import InvalidToken
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,7 +43,12 @@ def mask_api_key(key: str | None) -> str:
 def masked_key_of(provider: LLMProviderConfig) -> str:
     if not provider.api_key_encrypted:
         return ""
-    return mask_api_key(decrypt_secret(provider.api_key_encrypted))
+    try:
+        return mask_api_key(decrypt_secret(provider.api_key_encrypted))
+    except (InvalidToken, ValueError):
+        # Keep the settings page recoverable after an encryption-key rotation.
+        # Runtime provider construction still decrypts strictly and fails closed.
+        return "*** (needs reconfiguration)"
 
 
 def _normalize_user_agent(value: str | None) -> str | None:
