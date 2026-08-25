@@ -1,5 +1,9 @@
 """alembic 迁移 sqlite 实跑：全链 upgrade head + 最新 revision 往返。"""
 
+import json
+import logging
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from alembic.config import Config
@@ -9,8 +13,9 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "8ff89f7fcdeb"  # DeepSeek Harness integration tokens
-PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
+HEAD_REVISION = "8c4a6f1d2e90"  # 论文外部标识符规范化
+INTEGRATION_TOKENS_REVISION = "8ff89f7fcdeb"  # DeepSeek Harness integration tokens
+PROVIDER_USER_AGENT_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
 VIEW_EVENTS_REVISION = "a1c9e73b5d20"  # 浏览事件（文献库/论文点击量）
 VOYAGE_MESSAGES_REVISION = "63133f647463"  # 任务对话流：voyage_messages 表
 READ_ONLY_REVISION = "b3f5c1e07a92"  # 只读账号（游客）
@@ -32,8 +37,13 @@ PREV_REVISION = "a7d0c9e51b34"  # 解读统一到 paper_wikis
 
 
 def _make_config(db_path: Path) -> Config:
-    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    # Build the small test config directly. Alembic reads config files using
+    # the platform locale, which cannot decode this repository's UTF-8 comments
+    # on some Windows installations.
+    cfg = Config()
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    cfg.set_main_option("prepend_sys_path", str(BACKEND_DIR))
+    cfg.set_main_option("path_separator", "os")
     cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db_path}")
     return cfg
 
@@ -47,6 +57,74 @@ def _index_names(db_path: Path, table: str) -> set[str]:
         engine.dispose()
 
 
+def test_paper_identifier_migration_backfills_legacy_json(tmp_path, caplog):
+    db_path = tmp_path / "identifier-backfill.db"
+    cfg = _make_config(db_path)
+    command.upgrade(cfg, INTEGRATION_TOKENS_REVISION)
+
+    first_id = uuid.UUID(int=1).hex
+    second_id = uuid.UUID(int=2).hex
+    now = datetime(2026, 8, 12, tzinfo=UTC).isoformat()
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO papers "
+                "(id, source, arxiv_id, doi, external_ids, title, created_at, updated_at) "
+                "VALUES (:id, 'legacy', :arxiv, :doi, :external, :title, :created, :created)"
+            ),
+            [
+                {
+                    "id": first_id,
+                    "arxiv": "2401.00001v2",
+                    "doi": "https://doi.org/10.1000/ABC",
+                    "external": json.dumps(
+                        {
+                            "semantic_scholar": "S2-ONE",
+                            "corpus_id": "13756489",
+                            "pmcid": "42",
+                        }
+                    ),
+                    "title": "First legacy paper",
+                    "created": now,
+                },
+                {
+                    "id": second_id,
+                    "arxiv": None,
+                    "doi": "10.1000/abc",
+                    "external": json.dumps({"openalex": "W123"}),
+                    "title": "Duplicate legacy paper",
+                    "created": now,
+                },
+            ],
+        )
+    engine.dispose()
+
+    caplog.set_level(logging.WARNING, logger="alembic.runtime.migration")
+    command.upgrade(cfg, HEAD_REVISION)
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT paper_id, namespace, normalized_value FROM paper_identifiers "
+                "ORDER BY namespace"
+            )
+        ).all()
+    engine.dispose()
+
+    assert {(namespace, value) for _, namespace, value in rows} == {
+        ("arxiv", "2401.00001"),
+        ("doi", "10.1000/abc"),
+        ("pmcid", "PMC42"),
+        ("s2", "s2-one"),
+        ("s2_corpus", "13756489"),
+        ("openalex", "w123"),
+    }
+    doi_owner = next(paper_id for paper_id, namespace, _ in rows if namespace == "doi")
+    assert str(doi_owner).replace("-", "") == first_id
+    assert "backfill skipped 1 identifier collision(s)" in caplog.text
+
+
 def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
     engine = create_engine(f"sqlite:///{db_path}")
     try:
@@ -58,6 +136,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                 table: {c["name"] for c in inspector.get_columns(table)}
                 for table in (
                     "papers",
+                    "paper_identifiers",
                     "ideas",
                     "review_sessions",
                     "review_messages",
@@ -381,10 +460,29 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "last_used_at",
     } <= columns["integration_tokens"]
 
-    # 先退掉集成令牌。
+    # 规范化外部标识符：同一 DOI/arXiv/S2/OpenAlex ID 只能属于一个池论文。
+    assert "paper_identifiers" in columns["_tables"]
+    assert {
+        "paper_id",
+        "namespace",
+        "raw_value",
+        "normalized_value",
+        "source",
+        "confidence",
+        "is_verified",
+    } <= columns["paper_identifiers"]
+
+    # 最新 revision 可往返：先退掉论文外部标识符。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
-    assert version == PROVIDER_UA_REVISION
+    assert version == INTEGRATION_TOKENS_REVISION
+    assert "paper_identifiers" not in columns["_tables"]
+    assert "integration_tokens" in columns["_tables"]
+
+    # 再退掉集成令牌。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == PROVIDER_USER_AGENT_REVISION
     assert "integration_tokens" not in columns["_tables"]
     assert "user_agent" in columns["llm_providers"]
 
@@ -573,6 +671,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert version == HEAD_REVISION
     assert "effort" in columns["model_routes"]
     assert "chat_bot_configs" in columns["_tables"]
+    assert "paper_identifiers" in columns["_tables"]
     # 索引回归；个人标签表、回收站列与两张备份表也仍在
     assert "ix_llm_usage_created_at" in _index_names(db_path, "llm_usage")
     assert "user_paper_tags" in columns["_tables"]

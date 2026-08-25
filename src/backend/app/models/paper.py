@@ -94,6 +94,9 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     wiki: Mapped["PaperWiki | None"] = relationship(
         back_populates="paper", uselist=False, lazy="selectin", cascade="all, delete-orphan"
     )
+    identifiers: Mapped[list["PaperIdentifier"]] = relationship(
+        back_populates="paper", lazy="raise", cascade="all, delete-orphan"
+    )
 
     @property
     def pdf_available(self) -> bool:
@@ -103,6 +106,29 @@ class Paper(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     def wiki_content(self) -> str | None:
         """解读正文（没有解读为 None）——全平台唯一一份，见 :class:`PaperWiki`。"""
         return self.wiki.content if self.wiki is not None else None
+
+
+class PaperIdentifier(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A normalized external identifier attached to one global-pool paper."""
+
+    __tablename__ = "paper_identifiers"
+    __table_args__ = (
+        UniqueConstraint("namespace", "normalized_value", name="uq_paper_identifier_value"),
+        UniqueConstraint("paper_id", "namespace", "normalized_value", name="uq_paper_identifier"),
+        Index("ix_paper_identifiers_paper_namespace", "paper_id", "namespace"),
+    )
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    namespace: Mapped[str] = mapped_column(String(32), nullable=False)
+    raw_value: Mapped[str] = mapped_column(String(512), nullable=False)
+    normalized_value: Mapped[str] = mapped_column(String(512), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence: Mapped[float] = mapped_column(nullable=False, default=1.0)
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    paper: Mapped[Paper] = relationship(back_populates="identifiers")
 
 
 class PaperWiki(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -139,6 +165,7 @@ def new_paper(**fields: Any) -> Paper:
     """
     paper = Paper(**fields)
     set_committed_value(paper, "wiki", None)
+    set_committed_value(paper, "identifiers", [])
     return paper
 
 

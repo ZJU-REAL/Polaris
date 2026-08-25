@@ -9,9 +9,10 @@ import httpx
 import pytest
 import pytest_asyncio
 import respx
+from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
-from app.models.paper import Paper
+from app.models.paper import Paper, PaperIdentifier
 from app.services.literature import reset_clients, set_clients
 from app.services.literature.arxiv import ArxivClient
 from app.services.literature.openalex import OpenAlexClient
@@ -162,10 +163,20 @@ async def test_add_by_semantic_scholar_corpus_id(client, monkeypatch):
         paper = await session.get(Paper, uuid.UUID(body["id"]))
         assert paper.external_ids == {
             "s2": "s2-paper-id",
-            "corpus_id": "13756489",
+            "s2_corpus": "13756489",
             "arxiv": "2405.00001",
             "doi": "10.1000/corpus",
         }
+        identifiers = {
+            (row.namespace, row.normalized_value)
+            for row in (
+                await session.execute(
+                    select(PaperIdentifier).where(PaperIdentifier.paper_id == paper.id)
+                )
+            ).scalars()
+        }
+        assert ("s2", "s2-paper-id") in identifiers
+        assert ("s2_corpus", "13756489") in identifiers
 
 
 @pytest.mark.parametrize("value", ["", "0", "-1", "abc", "CorpusId:nope"])
