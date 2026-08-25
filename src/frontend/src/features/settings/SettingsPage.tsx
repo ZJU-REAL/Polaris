@@ -261,7 +261,28 @@ function PersonalTab() {
 
 function PreferencesTab() {
   const showHistory = useTaskLogHistory();
+  const queryClient = useQueryClient();
+  const watchdog = useQuery({
+    queryKey: ['managed-command-watchdog', 'user'],
+    queryFn: () => api.getMyManagedCommandWatchdog(),
+    retry: false,
+  });
+  const [watchdogMinutes, setWatchdogMinutes] = useState<number | null>(null);
+  const shownMinutes = watchdogMinutes ?? watchdog.data?.unanswered_minutes ?? 120;
+  const saveWatchdog = useMutation({
+    mutationFn: () => api.setMyManagedCommandWatchdog(shownMinutes),
+    onSuccess: (saved) => {
+      setWatchdogMinutes(saved.unanswered_minutes);
+      queryClient.setQueryData(['managed-command-watchdog', 'user'], saved);
+      toast(tr('远端命令等待时间已保存', 'Remote-command wait saved'), 'ok');
+    },
+    onError: (error) => toast(
+      `${tr('保存失败', 'Save failed')}：${error instanceof Error ? error.message : String(error)}`,
+      'error',
+    ),
+  });
   return (
+    <>
     <div className="card card-pad">
       <div className="section-h" style={{ marginBottom: 4 }}>
         <Icon name="sliders" size={15} style={{ color: 'var(--accent)' }} />
@@ -295,6 +316,48 @@ function PreferencesTab() {
         </div>
       </div>
     </div>
+    <div className="card card-pad" style={{ marginTop: 16 }}>
+      <div className="section-h" style={{ marginBottom: 4 }}>
+        <Icon name="clock" size={15} style={{ color: 'var(--accent)' }} />
+        {tr('远端命令等待策略', 'Remote-command wait policy')}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 16 }}>
+        {tr(
+          '远端命令超时并等待你决定后，超过此时间仍未回复时，系统会检查该命令是否占用 GPU。仅确认占用时自动终止；不占用或无法可靠归属时继续等待。管理员设置的上限优先生效。',
+          'After a timed-out remote command asks for your decision, Polaris checks its GPU use once this wait expires. It stops only GPU use attributable to that command; idle or uncertain commands keep waiting. The administrator cap takes precedence.',
+        )}
+      </div>
+      {watchdog.isError ? (
+        <div className="empty">{tr('无法加载设置', 'Failed to load settings')}</div>
+      ) : (
+        <FormField
+          label={tr('等待时间（分钟）', 'Wait (minutes)')}
+          hint={watchdog.data ? tr(
+            `管理员上限 ${watchdog.data.admin_max_unanswered_minutes} 分钟；当前实际生效 ${watchdog.data.effective_unanswered_minutes} 分钟。`,
+            `Administrator cap: ${watchdog.data.admin_max_unanswered_minutes} minutes; effective: ${watchdog.data.effective_unanswered_minutes} minutes.`,
+          ) : undefined}
+        >
+          <input
+            className="input mono"
+            type="number"
+            min={15}
+            max={10080}
+            value={shownMinutes}
+            onChange={(event) => setWatchdogMinutes(Number(event.target.value))}
+          />
+        </FormField>
+      )}
+      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
+        <button
+          className="btn btn-primary"
+          disabled={watchdog.isLoading || shownMinutes < 15 || shownMinutes > 10080 || saveWatchdog.isPending || shownMinutes === watchdog.data?.unanswered_minutes}
+          onClick={() => saveWatchdog.mutate()}
+        >
+          {saveWatchdog.isPending ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}
+        </button>
+      </div>
+    </div>
+    </>
   );
 }
 

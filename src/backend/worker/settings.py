@@ -16,6 +16,7 @@ from worker.tasks import (
     reconcile_stuck_voyages,
     resume_voyage,
     run_voyage,
+    watch_unanswered_managed_commands,
 )
 
 # 航程任务超时：GPU 训练轮合法地跑数小时；1h 的默认会把轮询任务掐死→ARQ 按任务
@@ -50,6 +51,11 @@ class WorkerSettings:
         # 僵死回收：启动对账只救 worker 重启的孤儿；运行中途丢任务（LLM 调用悬死、
         # ARQ 指数延迟重试）的僵死靠周期兜底（判据=终端 30 分钟无动静，见 tasks.py）
         cron(reconcile_stale_voyages, minute={5, 15, 25, 35, 45, 55}),
+        # paused_ask 没有 worker 持有；单独巡检长时间无人回答且仍占用 GPU 的命令。
+        cron(
+            watch_unanswered_managed_commands,
+            minute={2, 7, 12, 17, 22, 27, 32, 37, 42, 47, 52, 57},
+        ),
     ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     # 其余任务保持 1h 上限

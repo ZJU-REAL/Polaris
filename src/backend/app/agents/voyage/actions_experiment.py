@@ -62,8 +62,24 @@ from app.services.libraries import (
     get_source_library_ids,
     member_papers_stmt,
 )
+from app.services.managed_commands import (
+    CommandAction,
+    CommandSnapshot,
+    CommandState,
+    CommandVerdict,
+    FailureReport,
+    ModelAssessment,
+    OperationContext,
+    RecoveryPlan,
+    RepairScope,
+    adjudicate_command,
+    failure_from_snapshot,
+    may_apply_recovery_automatically,
+)
+from app.services.managed_ssh import ManagedCommandHandle
 
 RUN_POLL_SECONDS = 30.0  # 正式运行轮询间隔（测试 monkeypatch 为 0）
+MANAGED_COMMAND_POLL_SECONDS = 2.0
 MAX_FIGURE_FIXES = 2  # 绘图脚本执行失败 / VLM 质检不合格的修复次数上限
 DEFAULT_NO_IMPROVE_STOP = 2  # 连续 N 轮主指标无提升即停（budget.no_improve_stop 可覆盖）
 MAX_QC_IMAGES = 8  # 单次质检最多送 LLM 的图数
@@ -73,6 +89,102 @@ _WIKI_EXCERPT_CHARS = 600
 _LOG_TAIL_FOR_REPORT = 60
 _LOG_TAIL_FOR_REFLECTION = 40
 _STDERR_CHARS = 2000
+
+COMMAND_ADVISOR_SYSTEM_PROMPT = """\
+POLARIS_COMMAND_ADVISOR
+You assess one evidence snapshot from a detached remote command. Return JSON only:
+{"state":"progressing|slow|stalled|failed|succeeded|unknown","confidence":0.0,
+ "reason":"evidence-based explanation","evidence":["observed facts"],
+ "proposed_action":"continue_monitoring|extend_observation|run_diagnostic|ask_user_while_running|stop_and_repair",
+ "next_check_seconds":30,"safe_to_interrupt":false,"user_message":null}
+Use only the supplied snapshot. A timeout checkpoint is not a failure. Changed output or
+resource activity is progress. If evidence is insufficient use unknown. Never emit shell
+commands. Interruption requires explicit failure or sustained high-confidence zero progress.
+"""
+
+RECOVERY_ADVISOR_SYSTEM_PROMPT = """\
+POLARIS_RECOVERY_ADVISOR
+You diagnose a completed command failure from one structured report. Return JSON only:
+{"diagnosis":"root cause","confidence":0.0,
+ "repair_scope":"none|connection|infrastructure|dependency_files|application_files|experiment_plan|user_action",
+ "proposed_changes":["specific generated files or actions"],
+ "expected_evidence":"what proves the fix worked","minimal_retry":"smallest operation to retry",
+ "next_step":"concise recommendation for the user"}
+Do not invent missing evidence. Infrastructure, connection, authentication and external-service
+failures must not propose changes to generated dependency or application files.
+"""
+
+
+class ManagedCommandNeedsUser(RuntimeError):
+    def __init__(
+        self,
+        handle: ManagedCommandHandle,
+        snapshot: CommandSnapshot,
+        assessment: ModelAssessment | None,
+        verdict: CommandVerdict,
+    ) -> None:
+        self.handle = handle
+        self.snapshot = snapshot
+        self.assessment = assessment
+        self.verdict = verdict
+        super().__init__(verdict.reason)
+
+
+class ManagedCommandCancelled(RuntimeError):
+    def __init__(
+        self,
+        snapshot: CommandSnapshot,
+        executor: Runner,
+    ) -> None:
+        self.snapshot = snapshot
+        self.executor = executor
+        super().__init__("voyage cancelled while remote command was running")
+
+
+def _serialize_managed_handle(handle: ManagedCommandHandle) -> dict[str, Any]:
+    context = handle.context
+    return {
+        "operation_id": handle.operation_id,
+        "attempt_id": handle.attempt_id,
+        "process_id": handle.process_id,
+        "process_group_id": handle.process_group_id,
+        "context": {
+            "phase": context.phase,
+            "operation": context.operation,
+            "display_command": context.display_command,
+            "target": context.target,
+            "soft_timeout_seconds": context.soft_timeout_seconds,
+            "stall_timeout_seconds": context.stall_timeout_seconds,
+            "hard_timeout_seconds": context.hard_timeout_seconds,
+            "repair_scope": context.repair_scope,
+        },
+    }
+
+
+def _restore_managed_handle(data: Any) -> ManagedCommandHandle | None:
+    if not isinstance(data, dict) or not isinstance(data.get("context"), dict):
+        return None
+    try:
+        context_data = data["context"]
+        context = OperationContext(
+            phase=str(context_data["phase"]),
+            operation=str(context_data["operation"]),
+            display_command=str(context_data["display_command"]),
+            target=str(context_data["target"]) if context_data.get("target") else None,
+            soft_timeout_seconds=context_data.get("soft_timeout_seconds"),
+            stall_timeout_seconds=context_data.get("stall_timeout_seconds"),
+            hard_timeout_seconds=context_data.get("hard_timeout_seconds"),
+            repair_scope=RepairScope(str(context_data.get("repair_scope") or "none")),
+        )
+        return ManagedCommandHandle(
+            operation_id=str(data["operation_id"]),
+            attempt_id=str(data["attempt_id"]),
+            context=context,
+            process_id=int(data["process_id"]),
+            process_group_id=int(data["process_group_id"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 METRIC_LINE_RE = re.compile(r"POLARIS_METRIC\s+(\{.*\})")
 _FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")  # 远端文件名白名单（防目录穿越）
@@ -806,6 +918,327 @@ async def _complete_json(ctx: ActionContext, *, system: str, user: str, validate
     raise ValueError(f"LLM 连续输出非法 JSON：{last_error}")
 
 
+def _validate_command_assessment(data: Any) -> ModelAssessment:
+    if not isinstance(data, dict):
+        raise ValueError("command assessment must be an object")
+    evidence = data.get("evidence")
+    return ModelAssessment(
+        state=CommandState(str(data.get("state") or "unknown")),
+        confidence=max(0.0, min(float(data.get("confidence") or 0), 1.0)),
+        reason=str(data.get("reason") or "no reason supplied")[:1000],
+        evidence=tuple(str(item)[:500] for item in evidence[:12])
+        if isinstance(evidence, list)
+        else (),
+        proposed_action=CommandAction(
+            str(data.get("proposed_action") or "continue_monitoring")
+        ),
+        next_check_seconds=max(
+            5.0, min(float(data.get("next_check_seconds") or 30), 600.0)
+        ),
+        safe_to_interrupt=data.get("safe_to_interrupt") is True,
+        user_message=str(data["user_message"])[:1000]
+        if data.get("user_message")
+        else None,
+    )
+
+
+async def _assess_managed_command(
+    ctx: ActionContext, snapshot: CommandSnapshot
+) -> ModelAssessment | None:
+    try:
+        result = await ctx.llm.complete(
+            "experiment",
+            [
+                Message(role="system", content=COMMAND_ADVISOR_SYSTEM_PROMPT),
+                Message(role="user", content=json.dumps(snapshot.to_dict(), ensure_ascii=False)),
+            ],
+            user_id=ctx.run.created_by,
+            project_id=ctx.run.project_id,
+            voyage_id=ctx.run.id,
+        )
+        assessment = _validate_command_assessment(_extract_json(result.content))
+        await ctx.log(
+            f"远端命令判断：{snapshot.context.phase} state={assessment.state} "
+            f"confidence={assessment.confidence:.2f} action={assessment.proposed_action}"
+        )
+        return assessment
+    except Exception as exc:  # noqa: BLE001 - policy handles missing advice
+        await ctx.log(f"远端命令判断不可用，保留远端进程：{type(exc).__name__}")
+        return None
+
+
+def _validate_recovery_plan(data: Any) -> tuple[RecoveryPlan, str]:
+    if not isinstance(data, dict):
+        raise ValueError("recovery plan must be an object")
+    proposed = data.get("proposed_changes")
+    plan = RecoveryPlan(
+        diagnosis=str(data.get("diagnosis") or "unknown")[:2000],
+        confidence=max(0.0, min(float(data.get("confidence") or 0), 1.0)),
+        repair_scope=RepairScope(str(data.get("repair_scope") or "none")),
+        proposed_changes=tuple(str(item)[:500] for item in proposed[:20])
+        if isinstance(proposed, list)
+        else (),
+        expected_evidence=str(data.get("expected_evidence") or "")[:1000],
+        minimal_retry=str(data.get("minimal_retry") or "")[:200],
+    )
+    return plan, str(data.get("next_step") or plan.diagnosis)[:1500]
+
+
+async def _plan_failure_recovery(
+    ctx: ActionContext, report: FailureReport
+) -> tuple[RecoveryPlan | None, str]:
+    try:
+        result = await ctx.llm.complete(
+            "experiment",
+            [
+                Message(role="system", content=RECOVERY_ADVISOR_SYSTEM_PROMPT),
+                Message(
+                    role="user",
+                    content=json.dumps(report.to_dict(), ensure_ascii=False, default=str),
+                ),
+            ],
+            user_id=ctx.run.created_by,
+            project_id=ctx.run.project_id,
+            voyage_id=ctx.run.id,
+        )
+        return _validate_recovery_plan(_extract_json(result.content))
+    except Exception as exc:  # noqa: BLE001 - real failure remains visible
+        return None, f"自动诊断不可用：{type(exc).__name__}: {exc}"
+
+
+async def _monitor_managed_command(
+    ctx: ActionContext,
+    session: AsyncSession,
+    executor: Runner,
+    experiment: Experiment,
+    handle: ManagedCommandHandle,
+    run: ExperimentRun | None = None,
+) -> tuple[CommandSnapshot, Runner]:
+    stdout_offset = 0
+    stderr_offset = 0
+    previous_token: str | None = None
+    silent_extensions = 0
+    diagnostics_run = 0
+    diagnostic_evidence: dict[str, str] | None = None
+    next_assessment_at = 0.0
+    reconnect_streak = 0
+
+    def append_lifecycle(message: str) -> None:
+        experiments_service.append_terminal_output(
+            experiment.id,
+            operation=handle.operation_id,
+            stream="system",
+            text=message,
+        )
+
+    append_lifecycle(
+        f"monitoring attempt {handle.attempt_id} (pid={handle.process_id}): "
+        f"{handle.context.display_command}"
+    )
+
+    async def reconnect() -> None:
+        nonlocal executor
+        with contextlib.suppress(Exception):
+            await executor.close()
+        executor = await _open_executor(session, ctx, experiment)
+
+    while True:
+        try:
+            chunks, stdout_offset, stderr_offset = await executor.read_managed_output(
+                handle,
+                stdout_offset=stdout_offset,
+                stderr_offset=stderr_offset,
+            )
+            for chunk in chunks:
+                experiments_service.append_terminal_output(
+                    experiment.id,
+                    operation=handle.operation_id,
+                    stream=chunk.stream,
+                    text=chunk.text,
+                )
+                if run is not None:
+                    experiments_service.append_local_log(experiment.id, run.seq, chunk.text)
+                    points = parse_metric_lines(chunk.text)
+                    if points:
+                        run.metrics = merge_metrics(run.metrics, points)
+                        experiment.metrics = merge_metrics(experiment.metrics, points)
+            if run is not None and chunks:
+                await session.commit()
+            snapshot = await executor.inspect_managed_command(
+                handle,
+                previous_token=previous_token,
+                diagnostic_evidence=diagnostic_evidence,
+            )
+        except Exception as exc:  # noqa: BLE001 - reconnect never restarts command
+            if not ssh_exec.is_connection_error(exc):
+                raise
+            reconnect_streak += 1
+            session.add(
+                Activity(
+                    project_id=ctx.run.project_id,
+                    actor="system:voyage",
+                    kind="experiment.ssh_reconnect",
+                    message=(
+                        "Managed command polling lost SSH; reconnecting "
+                        f"(attempt {reconnect_streak}): {type(exc).__name__}"
+                    ),
+                    payload={
+                        "experiment_id": str(experiment.id),
+                        "operation_id": handle.operation_id,
+                        "attempt_id": handle.attempt_id,
+                        "run_seq": run.seq if run is not None else None,
+                        "attempt": reconnect_streak,
+                    },
+                )
+            )
+            await session.commit()
+            append_lifecycle(
+                f"SSH connection lost; reconnecting to the same managed attempt "
+                f"({reconnect_streak}): {type(exc).__name__}"
+            )
+            await reconnect()
+            await asyncio.sleep(_reconnect_backoff(reconnect_streak))
+            continue
+
+        reconnect_streak = 0
+
+        if await _voyage_cancelled(session, ctx):
+            append_lifecycle("voyage cancelled; stopping the current remote command")
+            stopped = await executor.stop_managed_command(handle)
+            snapshot.process_alive = not stopped
+            if snapshot.exit_status is None:
+                snapshot.exit_status = -15 if stopped else -1
+            snapshot.stderr_tail = snapshot.stderr_tail or (
+                "remote command stopped after the voyage was cancelled"
+                if stopped
+                else "voyage was cancelled but the remote command could not be verified stopped"
+            )
+            if run is not None:
+                run.exit_code = snapshot.exit_status
+                run.status = "failed"
+                run.finished_at = utcnow()
+                await session.commit()
+            await session.refresh(experiment)
+            if experiment.status not in EXPERIMENT_TERMINAL_STATUSES:
+                await _set_status(ctx, session, experiment, "cancelled")
+            raise ManagedCommandCancelled(snapshot, executor)
+
+        if snapshot.output_changed:
+            silent_extensions = 0
+            diagnostics_run = 0
+            diagnostic_evidence = None
+        previous_token = snapshot.progress_token
+        if snapshot.exit_status is not None:
+            append_lifecycle(f"command completed with exit status {snapshot.exit_status}")
+            return snapshot, executor
+        if not snapshot.process_alive:
+            final = await executor.inspect_managed_command(handle, previous_token=previous_token)
+            if final.exit_status is None:
+                final.exit_status = -1
+                final.stderr_tail = final.stderr_tail or (
+                    "remote process disappeared without recording an exit status"
+                )
+            append_lifecycle(
+                f"command process disappeared with exit status {final.exit_status}"
+            )
+            return final, executor
+
+        soft_reached = bool(
+            snapshot.context.soft_timeout_seconds
+            and snapshot.elapsed_seconds >= snapshot.context.soft_timeout_seconds
+        )
+        stalled = bool(
+            snapshot.context.stall_timeout_seconds
+            and snapshot.seconds_since_output >= snapshot.context.stall_timeout_seconds
+        )
+        if (soft_reached or stalled) and asyncio.get_running_loop().time() >= next_assessment_at:
+            assessment = await _assess_managed_command(ctx, snapshot)
+            verdict = adjudicate_command(
+                snapshot,
+                assessment,
+                silent_extensions=silent_extensions,
+                diagnostics_run=diagnostics_run,
+            )
+            next_assessment_at = asyncio.get_running_loop().time() + verdict.next_check_seconds
+            if verdict.action == CommandAction.ASK_USER_WHILE_RUNNING:
+                append_lifecycle(
+                    f"command remains running; waiting for user decision: {verdict.reason}"
+                )
+                raise ManagedCommandNeedsUser(handle, snapshot, assessment, verdict)
+            if verdict.action == CommandAction.RUN_DIAGNOSTIC:
+                append_lifecycle("collecting read-only diagnostics before the next decision")
+                diagnostic_evidence = await executor.diagnose_managed_command(handle)
+                diagnostics_run += 1
+            elif verdict.action == CommandAction.EXTEND_OBSERVATION:
+                silent_extensions += 1
+            elif verdict.action == CommandAction.STOP_AND_REPAIR:
+                append_lifecycle("stopping command after a high-confidence stalled assessment")
+                stopped = await executor.stop_managed_command(handle)
+                if not stopped:
+                    raise ManagedCommandNeedsUser(handle, snapshot, assessment, verdict)
+                snapshot.process_alive = False
+                snapshot.exit_status = -1
+                snapshot.stderr_tail = snapshot.stderr_tail or (
+                    "stopped after a confirmed sustained stall"
+                )
+                return snapshot, executor
+
+        await asyncio.sleep(MANAGED_COMMAND_POLL_SECONDS)
+
+
+def _managed_command_waiting_result(
+    ctx: ActionContext,
+    experiment: Experiment,
+    pending: ManagedCommandNeedsUser,
+) -> dict[str, Any]:
+    handle_data = _serialize_managed_handle(pending.handle)
+    ctx.checkpoint["managed_command_waiting"] = handle_data
+    assessment = pending.assessment
+    question = (
+        assessment.user_message
+        if assessment and assessment.user_message
+        else (
+            f"远端命令 {pending.handle.context.display_command} 仍在运行，但当前无法可靠判断"
+            f"是否继续推进：{pending.verdict.reason}。远端进程未被中断。"
+        )
+    )
+    return {
+        "workdir": experiment.workdir,
+        "remote_operation_continues": True,
+        "managed_command": pending.snapshot.to_dict(),
+        "ask": {
+            "ask_kind": "managed_command",
+            "question": question,
+            "context": {
+                "remote_operation_continues": True,
+                "handle": handle_data,
+                "snapshot": pending.snapshot.to_dict(),
+                "assessment": {
+                    "state": assessment.state,
+                    "confidence": assessment.confidence,
+                    "reason": assessment.reason,
+                    "evidence": assessment.evidence,
+                }
+                if assessment
+                else None,
+                "safety_verdict": pending.verdict.reason,
+            },
+            "options": [
+                {
+                    "id": "retry",
+                    "zh": "保持运行并恢复监控",
+                    "en": "Keep running and resume monitoring",
+                },
+                {
+                    "id": "stop_remote",
+                    "zh": "停止当前命令并根据错误修复",
+                    "en": "Stop this command and repair",
+                },
+            ],
+        },
+    }
+
+
 async def _open_executor(
     session: AsyncSession, ctx: ActionContext, experiment: Experiment
 ) -> Runner:
@@ -1182,12 +1615,12 @@ def is_improvement(value: float, best: float | None, direction: str) -> bool:
     return value > best if direction == "maximize" else value < best
 
 
-# 同一错误签名连续出现的升级阈值：2 次起强制换根本策略，4 次转向用户提问。
+# 同一错误签名连续出现 2 次起强制换根本策略；两次修复都没有产生
+# 可验证进展时，统一恢复策略会在第 3 次失败后转向用户。
 # 这不是修复次数上限（错误在变 = 有进展 = 一直修下去），是**零进展检测**——
 # 线上实测 import 类错误秒级失败，无界修复循环一小时烧了 178 次 LLM 调用，
 # 却始终在对同一个 ABI 冲突微调版本号。
 _SIGNATURE_ESCALATE_AT = 2
-_SIGNATURE_ASK_AT = 4
 
 
 # 签名实现提到共享模块（引擎重规划计数同用）；保留旧名给既有调用点/测试
@@ -1625,33 +2058,65 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             last_signature = ""
             sig_streak = 0
             fix_ledger: list[dict[str, Any]] = []
+            resumed_handle = _restore_managed_handle(
+                ctx.checkpoint.pop("managed_command_waiting", None)
+            )
+            prepare_handle = (
+                resumed_handle
+                if resumed_handle and resumed_handle.operation_id == "environment-prepare"
+                else await executor.prepare_managed()
+            )
+            if prepare_handle is not None:
+                try:
+                    prepare_snapshot, executor = await _monitor_managed_command(
+                        ctx, session, executor, experiment, prepare_handle
+                    )
+                except ManagedCommandNeedsUser as pending:
+                    return _managed_command_waiting_result(ctx, experiment, pending)
+                except ManagedCommandCancelled as cancelled:
+                    executor = cancelled.executor
+                    return {"cancelled": True, "workdir": experiment.workdir}
+                if prepare_snapshot.exit_status != 0:
+                    report = failure_from_snapshot(prepare_snapshot)
+                    _plan, next_step = await _plan_failure_recovery(ctx, report)
+                    return {
+                        "workdir": experiment.workdir,
+                        "failure": report.to_dict(),
+                        "ask": {
+                            "ask_kind": "command_recovery",
+                            "question": (
+                                f"远端环境准备失败：{report.message[-500:]}\n\n"
+                                f"建议：{next_step}"
+                            ),
+                            "context": {"failure": report.to_dict(), "next_step": next_step},
+                            "options": [
+                                {"id": "retry", "zh": "重试环境准备", "en": "Retry setup"},
+                                {"id": "replan", "zh": "更换运行方案", "en": "Change plan"},
+                                {"id": "abort", "zh": "放弃实验", "en": "Give up"},
+                            ],
+                        },
+                    }
+                resumed_handle = None
             while True:
                 attempts += 1
                 await executor.write_files(files)  # 每次（修复后）重写 LLM 产出文件
                 hint = ""
+                failure_report: FailureReport | None = None
                 try:
-                    # 后台脱离启动装依赖 + 轮询：轮询期间 SSH 瞬时断连可**重连接着跟同一安装进程**
-                    # （而非从头重装），比同步单条命令更抗断连。退出码经 setup.exit 落盘再读。
-                    pid, _cmd = await executor.launch_setup()
-                    exit_status, executor = await _poll_setup(
-                        ctx, session, executor, experiment, pid
+                    handle = resumed_handle or await executor.launch_managed_setup()
+                    resumed_handle = None
+                    snapshot, executor = await _monitor_managed_command(
+                        ctx, session, executor, experiment, handle
                     )
-                    err_text = ""
+                    exit_status = int(snapshot.exit_status or 0)
+                    err_text = snapshot.stderr_tail or snapshot.stdout_tail
                     if exit_status != 0:
-                        with contextlib.suppress(Exception):  # 读日志失败不该翻盘
-                            err_text = (await executor.read_setup_log())[-_STDERR_CHARS:]
-                except Exception as e:  # noqa: BLE001 — 超时/断连转成可修失败，其它异常照抛
-                    if not (isinstance(e, TimeoutError) or ssh_exec.is_connection_error(e)):
-                        raise
-                    exit_status = -1
-                    err_text = error_text(e)
-                    hint = (
-                        "依赖安装超时或中断——大概率是依赖太重/编译太慢/下载太慢或连接断开。"
-                        "请精简依赖、用更轻的包或预编译 wheel、去掉可选依赖，让安装更快更稳。"
-                    )
-                    with contextlib.suppress(Exception):  # 超时后通道可能已坏，重连
-                        await executor.close()
-                    executor = await _open_executor(session, ctx, experiment)
+                        failure_report = failure_from_snapshot(snapshot)
+                except ManagedCommandNeedsUser as pending:
+                    return _managed_command_waiting_result(ctx, experiment, pending)
+                except ManagedCommandCancelled as cancelled:
+                    executor = cancelled.executor
+                    return {"cancelled": True, "workdir": experiment.workdir}
                 if exit_status == 0:
                     env_bits = [f"探测到 GPU {len(gpus)} 卡" if gpus else "未探测到 GPU"]
                     for warning in preflight_warnings:
@@ -1727,45 +2192,68 @@ async def experiment_setup(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 signature = _error_signature(err_text)
                 sig_streak = sig_streak + 1 if signature == last_signature else 1
                 last_signature = signature
-                if sig_streak >= _SIGNATURE_ASK_AT:
-                    _remember(
-                        ctx,
-                        "环境障碍",
-                        f"依赖安装在同一错误上连续失败 {sig_streak} 次（{signature[:150]}），"
-                        "自动修复无进展，已转向用户提问",
-                    )
-                    await _sync_memory_file(ctx, executor)
+                if failure_report is None:
+                    raise RuntimeError("managed dependency command failed without a failure report")
+                recovery_plan, next_step = await _plan_failure_recovery(ctx, failure_report)
+                repeated_without_progress = sig_streak - 1
+                if recovery_plan is None or not may_apply_recovery_automatically(
+                    recovery_plan,
+                    repeated_without_progress=repeated_without_progress,
+                ):
+                    repeated = repeated_without_progress >= 2
                     return {
                         "workdir": experiment.workdir,
                         "venv_exit": exit_status,
                         "attempts": attempts,
                         "fixes": fixes,
+                        "failure": failure_report.to_dict(),
+                        "recovery_plan": {
+                            "diagnosis": recovery_plan.diagnosis,
+                            "confidence": recovery_plan.confidence,
+                            "repair_scope": recovery_plan.repair_scope,
+                            "proposed_changes": recovery_plan.proposed_changes,
+                            "expected_evidence": recovery_plan.expected_evidence,
+                            "minimal_retry": recovery_plan.minimal_retry,
+                        }
+                        if recovery_plan
+                        else None,
                         "ask": {
-                            "ask_kind": "fatal_step",
+                            "ask_kind": "command_recovery",
                             "question": (
                                 f"依赖安装反复失败在同一个错误上（连续 {sig_streak} 次）："
-                                f"{_err_tail_line(err_text)}。自动修复没有进展，怎么处理？"
+                                f"{_err_tail_line(err_text)}。自动修复没有取得可验证的进展，"
+                                "远端命令已结束，请决定下一步。"
+                                if repeated
+                                else (
+                                    f"远端命令失败：{failure_report.message[-500:]}\n\n"
+                                    f"建议：{next_step}"
+                                )
                             ),
                             "context": {
+                                "failure": failure_report.to_dict(),
+                                "next_step": next_step,
                                 "error_signature": signature,
                                 "fix_ledger": fix_ledger[-8:],
-                                "setup_log_tail": (err_text or "")[-2000:],
                             },
                             "options": [
                                 {
                                     "id": "retry",
-                                    "zh": "带指示重试（告诉我换什么思路）",
-                                    "en": "Retry with instructions",
+                                    "zh": "按建议调整后重试",
+                                    "en": "Apply the suggestion and retry",
                                 },
                                 {
                                     "id": "replan",
-                                    "zh": "换个方案（请说明思路）",
-                                    "en": "Change approach (describe how)",
+                                    "zh": "更换实验方案",
+                                    "en": "Change the experiment plan",
                                 },
                                 {"id": "abort", "zh": "放弃实验", "en": "Give up"},
                             ],
                         },
                     }
+                hint = (
+                    f"模型诊断（置信度 {recovery_plan.confidence:.2f}）："
+                    f"{recovery_plan.diagnosis}；预期证据：{recovery_plan.expected_evidence}"
+                )
                 # 把诊断 + 报错回给 LLM 修 requirements.txt/run.sh（方案级修复）。
                 # 环境事实必须一起带上：修复循环原本只有 stderr，模型照样不知道这台机器
                 # 上模型放哪、有没有配镜像源，只能接着猜。修复前先拉取对话流里
@@ -1829,28 +2317,30 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
             last_signature = ""
             sig_streak = 0
             fix_ledger: list[dict[str, Any]] = []
+            resumed_handle = _restore_managed_handle(
+                ctx.checkpoint.pop("managed_command_waiting", None)
+            )
             while True:
                 attempts += 1
                 # 超时/断连也当作「可修的失败」（多为规模太大/太慢或环境问题），而非硬崩：
                 # 诊断为「太慢/超时」→ 让 LLM 把冒烟改小改快再试，正是自适应循环该自愈的一类。
                 hint = ""
+                failure_report: FailureReport | None = None
                 try:
-                    result = await executor.run_smoke()
-                    exit_status = result.exit_status
-                    err_text = result.stderr or result.stdout
-                except Exception as e:  # noqa: BLE001 — 超时/断连转成可修失败，其它异常照抛
-                    if not (isinstance(e, TimeoutError) or ssh_exec.is_connection_error(e)):
-                        raise
-                    exit_status = -1
-                    err_text = error_text(e)
-                    hint = (
-                        "冒烟超时或中断——大概率是模型/数据太大、步数太多、装依赖太慢。请把冒烟规模"
-                        "改到极小：更小样本/更少步数/更小或更省显存的配置/精简依赖/缩短生成长度，"
-                        "让 --smoke 很快跑完。"
+                    handle = resumed_handle or await executor.launch_managed_smoke()
+                    resumed_handle = None
+                    snapshot, executor = await _monitor_managed_command(
+                        ctx, session, executor, experiment, handle
                     )
-                    with contextlib.suppress(Exception):  # 超时后通道可能已坏，重连
-                        await executor.close()
-                    executor = await _open_executor(session, ctx, experiment)
+                    exit_status = int(snapshot.exit_status or 0)
+                    err_text = snapshot.stderr_tail or snapshot.stdout_tail
+                    if exit_status != 0:
+                        failure_report = failure_from_snapshot(snapshot)
+                except ManagedCommandNeedsUser as pending:
+                    return _managed_command_waiting_result(ctx, experiment, pending)
+                except ManagedCommandCancelled as cancelled:
+                    executor = cancelled.executor
+                    return {"cancelled": True, "workdir": experiment.workdir}
                 if exit_status == 0:
                     if fixes:
                         _remember(ctx, "试跑", f"自动修复 {fixes} 次后通过")
@@ -1907,44 +2397,49 @@ async def experiment_smoke(ctx: ActionContext, params: dict[str, Any]) -> dict[s
                 signature = _error_signature(err_text)
                 sig_streak = sig_streak + 1 if signature == last_signature else 1
                 last_signature = signature
-                if sig_streak >= _SIGNATURE_ASK_AT:
-                    _remember(
-                        ctx,
-                        "试跑障碍",
-                        f"冒烟在同一错误上连续失败 {sig_streak} 次（{signature[:150]}），"
-                        "自动修复无进展，已转向用户提问",
-                    )
-                    await _sync_memory_file(ctx, executor)
+                if failure_report is None:
+                    raise RuntimeError("managed smoke command failed without a failure report")
+                recovery_plan, next_step = await _plan_failure_recovery(ctx, failure_report)
+                repeated_without_progress = sig_streak - 1
+                if recovery_plan is None or not may_apply_recovery_automatically(
+                    recovery_plan,
+                    repeated_without_progress=repeated_without_progress,
+                ):
+                    repeated = repeated_without_progress >= 2
                     return {
                         "exit_code": exit_status,
                         "attempts": attempts,
                         "fixes": fixes,
+                        "failure": failure_report.to_dict(),
                         "ask": {
-                            "ask_kind": "fatal_step",
+                            "ask_kind": "command_recovery",
                             "question": (
                                 f"代码试跑反复失败在同一个错误上（连续 {sig_streak} 次）："
-                                f"{_err_tail_line(err_text)}。自动修复没有进展，怎么处理？"
+                                f"{_err_tail_line(err_text)}。自动修复没有取得可验证的进展，"
+                                "远端命令已结束，请决定下一步。"
+                                if repeated
+                                else (
+                                    f"冒烟命令失败：{failure_report.message[-500:]}\n\n"
+                                    f"建议：{next_step}"
+                                )
                             ),
                             "context": {
+                                "failure": failure_report.to_dict(),
+                                "next_step": next_step,
                                 "error_signature": signature,
                                 "fix_ledger": fix_ledger[-8:],
-                                "stderr_tail": (err_text or "")[-2000:],
                             },
                             "options": [
-                                {
-                                    "id": "retry",
-                                    "zh": "带指示重试（告诉我换什么思路）",
-                                    "en": "Retry with instructions",
-                                },
-                                {
-                                    "id": "replan",
-                                    "zh": "换个方案（请说明思路）",
-                                    "en": "Change approach (describe how)",
-                                },
+                                {"id": "retry", "zh": "按建议修复并重试", "en": "Repair and retry"},
+                                {"id": "replan", "zh": "更换实验方案", "en": "Change plan"},
                                 {"id": "abort", "zh": "放弃实验", "en": "Give up"},
                             ],
                         },
                     }
+                hint = (
+                    f"模型诊断（置信度 {recovery_plan.confidence:.2f}）："
+                    f"{recovery_plan.diagnosis}；预期证据：{recovery_plan.expected_evidence}"
+                )
                 fixes += 1
                 hint = hint or diagnose_failure(err_text, env_settings)
                 # 修复前拉取对话流里新到的用户建议（试跑修复同样是长循环）
@@ -2122,31 +2617,98 @@ async def experiment_run(ctx: ActionContext, params: dict[str, Any]) -> dict[str
 
         executor = await _open_executor(session, ctx, experiment)
         try:
+            managed_handle = _restore_managed_handle(
+                ctx.checkpoint.pop("managed_command_waiting", None)
+            )
             if stale is not None:
                 run = stale
                 seq = run.seq
                 # 重挂从日志头重放：清掉该轮已存的 metrics 避免重复合并（本地日志允许少量重复行）
                 run.metrics = None
                 await session.commit()
+                if managed_handle is None:
+                    recovered = await executor.recover_managed_command(
+                        OperationContext(
+                            phase="application.run",
+                            operation="experiment-run",
+                            display_command=run.command,
+                            target=experiment.server_host,
+                            soft_timeout_seconds=600,
+                            stall_timeout_seconds=900,
+                            hard_timeout_seconds=max_hours * 3600 if max_hours else None,
+                            repair_scope=RepairScope.APPLICATION_FILES,
+                        )
+                    )
+                    # The remote current pointer is authoritative only when it still
+                    # names the process recorded for this database run.  A mismatch
+                    # falls back to the pre-managed compatibility path; it must never
+                    # attach an unrelated attempt merely because it shares a workdir.
+                    if recovered is not None and recovered.process_id == int(run.pid):
+                        managed_handle = recovered
             else:
-                pid, command = await executor.launch_run()
+                managed_handle = await executor.launch_managed_run()
+                base_context = managed_handle.context
+                managed_handle = ManagedCommandHandle(
+                    operation_id=managed_handle.operation_id,
+                    attempt_id=managed_handle.attempt_id,
+                    context=OperationContext(
+                        phase=base_context.phase,
+                        operation=base_context.operation,
+                        display_command=base_context.display_command,
+                        target=base_context.target,
+                        soft_timeout_seconds=base_context.soft_timeout_seconds,
+                        stall_timeout_seconds=base_context.stall_timeout_seconds,
+                        hard_timeout_seconds=max_hours * 3600 if max_hours else None,
+                        repair_scope=base_context.repair_scope,
+                    ),
+                    process_id=managed_handle.process_id,
+                    process_group_id=managed_handle.process_group_id,
+                )
                 log_path = experiments_service.append_local_log(experiment.id, seq, "")
                 run = ExperimentRun(
                     experiment_id=experiment.id,
                     seq=seq,
-                    command=command,
+                    command=managed_handle.context.display_command,
                     status="running",
-                    pid=pid,
+                    pid=managed_handle.process_id,
                     log_path=str(log_path),
                     started_at=utcnow(),
                 )
                 session.add(run)
                 await session.commit()
                 await session.refresh(run)
-            # _poll_run 可能因断连重连返回新的 executor，后续读取/关闭都用返回的这个
-            observation, executor = await _poll_run(
-                ctx, session, executor, experiment, run, max_hours
-            )
+            if managed_handle is not None:
+                try:
+                    run_snapshot, executor = await _monitor_managed_command(
+                        ctx, session, executor, experiment, managed_handle, run=run
+                    )
+                except ManagedCommandNeedsUser as pending:
+                    return _managed_command_waiting_result(ctx, experiment, pending)
+                except ManagedCommandCancelled as cancelled:
+                    executor = cancelled.executor
+                    return {
+                        "cancelled": True,
+                        "run_id": str(run.id),
+                        "seq": run.seq,
+                    }
+                run.exit_code = run_snapshot.exit_status
+                run.status = "succeeded" if run_snapshot.exit_status == 0 else "failed"
+                run.finished_at = utcnow()
+                await session.commit()
+                observation = {
+                    "run_id": str(run.id),
+                    "seq": run.seq,
+                    "exit_code": run_snapshot.exit_status,
+                    "run_status": run.status,
+                    "metric_names": sorted((run.metrics or {}).keys()),
+                }
+                if run_snapshot.exit_status != 0:
+                    observation["failure"] = failure_from_snapshot(run_snapshot).to_dict()
+            else:
+                # Compatibility for runs launched by versions before managed commands.
+                observation, executor = await _poll_run(
+                    ctx, session, executor, experiment, run, max_hours
+                )
             if observation.get("cancelled"):
                 return observation  # _poll_run 已 kill 进程并同步实验状态
 

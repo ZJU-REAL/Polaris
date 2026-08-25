@@ -9,7 +9,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from app.models.voyage import VoyageMessage
 
 _APPEND_RETRIES = 3
 TEXT_MAX_CHARS = 8_000
+STOPPING_STATUS = "stopping"
 
 
 class MessageSeqConflictError(Exception):
@@ -143,6 +144,41 @@ def guidance_text(messages: list[VoyageMessage]) -> str:
 # ---- ask（agent 向用户提问）----
 
 
+async def claim_open_ask_for_stop(session: AsyncSession, ask_id: uuid.UUID) -> bool:
+    """Atomically reserve one open ask before any remote stop side effect.
+
+    User answers and the unattended watchdog share this transition.  Exactly
+    one caller can move ``open -> stopping``; losers must not signal the remote
+    process.  The commit deliberately precedes SSH so no database transaction
+    is held while SSH audit writes use an independent session.
+    """
+    result = await session.execute(
+        update(VoyageMessage)
+        .where(
+            VoyageMessage.id == ask_id,
+            VoyageMessage.kind == "ask",
+            VoyageMessage.status == "open",
+        )
+        .values(status=STOPPING_STATUS)
+    )
+    if result.rowcount == 0:
+        await session.rollback()
+        return False
+    await session.commit()
+    return True
+
+
+async def release_stop_claim(session: AsyncSession, ask_id: uuid.UUID) -> bool:
+    """Return an uncompleted stop claim to the answerable state."""
+    result = await session.execute(
+        update(VoyageMessage)
+        .where(VoyageMessage.id == ask_id, VoyageMessage.status == STOPPING_STATUS)
+        .values(status="open")
+    )
+    await session.commit()
+    return result.rowcount == 1
+
+
 async def open_ask(session: AsyncSession, run_id: uuid.UUID) -> VoyageMessage | None:
     """当前等回答的提问（最多一个活跃；防御性取最新一条）。"""
     stmt = (
@@ -200,14 +236,16 @@ async def answer_of(session: AsyncSession, ask: VoyageMessage) -> VoyageMessage 
 
 
 async def supersede_open_asks(session: AsyncSession, run_id: uuid.UUID) -> int:
-    """把所有 open 提问置 superseded（cancel / 新提问覆盖旧提问时用）。
+    """把所有仍活跃的提问置 superseded（cancel / 新提问覆盖旧提问时用）。
 
+    ``stopping`` 也必须覆盖：取消可能发生在停止权已抢占、SSH 尚未返回的窗口；
+    让取消赢得任务状态，同时远端停止仍可安全完成，但旧回答不能重新拉起任务。
     只改内存对象并 flush，由调用方 commit。返回受影响条数。
     """
     stmt = select(VoyageMessage).where(
         VoyageMessage.run_id == run_id,
         VoyageMessage.kind == "ask",
-        VoyageMessage.status == "open",
+        VoyageMessage.status.in_(("open", STOPPING_STATUS)),
     )
     rows = list((await session.execute(stmt)).scalars().all())
     for m in rows:

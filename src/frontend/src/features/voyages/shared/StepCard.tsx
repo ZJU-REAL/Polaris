@@ -652,8 +652,41 @@ export function ObservationBlock({ observation, compact }: { observation: unknow
   );
 }
 
+function FailureEvidenceCard({ failure }: { failure: Record<string, unknown> }) {
+  const stdout = typeof failure.stdout_tail === 'string' ? failure.stdout_tail : '';
+  const stderr = typeof failure.stderr_tail === 'string' ? failure.stderr_tail : '';
+  const raw = [stderr && `stderr:\n${stderr}`, stdout && `stdout:\n${stdout}`].filter(Boolean).join('\n\n');
+  return (
+    <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--danger-bg)', color: 'var(--danger-tx)' }}>
+      <div style={{ fontWeight: 650, overflowWrap: 'anywhere' }}>
+        {String(failure.phase ?? 'unknown')} · {String(failure.message ?? failure.exception_type ?? 'Command failed')}
+      </div>
+      <div className="mono" style={{ marginTop: 5, fontSize: 11, overflowWrap: 'anywhere' }}>
+        {failure.command_display ? `${tr('命令', 'Command')}: ${String(failure.command_display)}` : ''}
+        {failure.exit_status !== null && failure.exit_status !== undefined
+          ? ` · exit=${String(failure.exit_status)}`
+          : ''}
+        {failure.elapsed_seconds !== null && failure.elapsed_seconds !== undefined
+          ? ` · ${Number(failure.elapsed_seconds).toFixed(1)}s`
+          : ''}
+      </div>
+      {raw && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11.5 }}>
+            {tr('查看原始输出摘要', 'Show raw output tail')}
+          </summary>
+          <pre style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 11 }}>
+            {raw}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvents: VoyagePlanEvent[] }) {
   const obs = asObj(step.observation);
+  const failure = obs ? asObj(obs.failure) : null;
   const friendly = obs ? wikiStepFriendly(step.action, obs) : null;
   const expFriendly = obs && step.action.startsWith('experiment.') ? experimentStepFriendly(step.action, obs) : null;
   const obsolete = step.status === 'obsolete';
@@ -761,6 +794,7 @@ export function StepCard({ step, planEvents }: { step: VoyageStepRead; planEvent
       )}
       {friendly && <WikiStepSummary friendly={friendly} />}
       {expFriendly && <ExperimentStepSummary friendly={expFriendly} />}
+      {failure && <FailureEvidenceCard failure={failure} />}
       {step.acceptance && <AcceptanceBlock acceptance={step.acceptance} />}
       {attempts.length > 1 && <AttemptsBlock attempts={attempts} />}
       <ObservationBlock observation={step.observation} compact={!!friendly || !!expFriendly} />

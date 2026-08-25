@@ -16,16 +16,54 @@ from app.core.db import get_session
 from app.models.user import User
 from app.schemas.llm_admin import UsageRow
 from app.schemas.user import (
+    ManagedCommandWatchdogUserRead,
+    ManagedCommandWatchdogUserUpdate,
     UsageSummary,
     UsernameUpdate,
     UserRead,
     UserSearchResult,
-    )
+)
 from app.services import llm_admin as llm_admin_service
+from app.services import managed_command_watchdog as watchdog_service
 from app.services import users as users_service
 from app.services.users import tokens_used_by_user
 
 router = APIRouter(tags=["users"])
+
+
+@router.get(
+    "/users/me/managed-command-watchdog",
+    response_model=ManagedCommandWatchdogUserRead,
+)
+async def get_my_managed_command_watchdog(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ManagedCommandWatchdogUserRead:
+    admin_max = await watchdog_service.get_admin_max_minutes(session)
+    own = watchdog_service.get_user_minutes(user, fallback=admin_max)
+    return ManagedCommandWatchdogUserRead(
+        unanswered_minutes=own,
+        admin_max_unanswered_minutes=admin_max,
+        effective_unanswered_minutes=min(own, admin_max),
+    )
+
+
+@router.put(
+    "/users/me/managed-command-watchdog",
+    response_model=ManagedCommandWatchdogUserRead,
+)
+async def set_my_managed_command_watchdog(
+    payload: ManagedCommandWatchdogUserUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> ManagedCommandWatchdogUserRead:
+    own = await watchdog_service.set_user_minutes(session, user, payload.unanswered_minutes)
+    admin_max = await watchdog_service.get_admin_max_minutes(session)
+    return ManagedCommandWatchdogUserRead(
+        unanswered_minutes=own,
+        admin_max_unanswered_minutes=admin_max,
+        effective_unanswered_minutes=min(own, admin_max),
+    )
 
 
 @router.patch("/users/me/username", response_model=UserRead)

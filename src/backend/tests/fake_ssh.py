@@ -7,7 +7,9 @@
 - ``on_command`` 钩子可在特定命令时机注入副作用（如把 voyage 置 cancelled）。
 """
 
+import base64
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -20,6 +22,10 @@ class FakeSSHServer:
     files: dict[str, str | bytes] = field(default_factory=dict)
     connects: list[tuple[str, int, str]] = field(default_factory=list)
     killed: list[int] = field(default_factory=list)
+    managed_files: dict[str, str] = field(default_factory=dict)
+    managed_pid: int = 7373
+    managed_prefix_by_pid: dict[int, str] = field(default_factory=dict)
+    managed_output_age_seconds: int = 0
 
     connect_error: str | None = None  # 置为字符串则 connect 抛 ConnectionError
     venv_exit: int = 0
@@ -37,7 +43,9 @@ class FakeSSHServer:
     # 资源预检用：本机文件内容（cat <path> → 内容，如模型 config.json）；未登记 = 缺失
     host_files: dict[str, str] = field(default_factory=dict)
     host_paths: set[str] = field(default_factory=set)  # test -e <path> 存在的路径（数据集目录等）
-    smoke_exits: list[int] = field(default_factory=list)  # 逐次弹出；耗尽后恒 0
+    smoke_exits: list[int | None] = field(
+        default_factory=list
+    )  # 逐次弹出；None = managed smoke 仍在运行，耗尽后恒 0
     smoke_stderr: str = "Traceback (most recent call last): boom"
     run_log: str = ""
     run_exit: int | None = 0  # None = 进程一直不结束（cat run.exit 读不到）
@@ -68,6 +76,125 @@ class FakeSSHSession:
         server.commands.append(command)
         if server.on_command is not None:
             await server.on_command(command)
+
+        # Generic managed-command envelope.  Tests vary the resulting output/exit
+        # through the existing setup/smoke/run fields; lifecycle handling itself
+        # is command-name agnostic.
+        if "nohup setsid bash " in command and ".polaris/operations/" in command:
+            match = re.search(r"nohup setsid bash (\S+)\.sh", command)
+            assert match is not None
+            prefix = match.group(1)
+            operation_match = re.search(r"/operations/([^/]+)/attempts/", prefix)
+            operation = operation_match.group(1) if operation_match else "unknown"
+            launcher_path = f"{prefix[2:] if prefix.startswith('~/') else prefix}.sh"
+            launcher = server.files.get(launcher_path)
+            if isinstance(launcher, str):
+                server.commands.append(launcher)
+                if server.on_command is not None:
+                    await server.on_command(launcher)
+            exit_status: int | None = 0
+            stdout = ""
+            stderr = ""
+            if operation == "dependency-install":
+                exit_status = (
+                    server.setup_exits.pop(0)
+                    if server.setup_exits
+                    else server.setup_exit
+                )
+                stderr = server.setup_log if exit_status else ""
+            elif operation == "application-smoke":
+                exit_status = server.smoke_exits.pop(0) if server.smoke_exits else 0
+                stdout = "smoke ok\n" if exit_status == 0 else ""
+                stderr = server.smoke_stderr if exit_status else ""
+            elif operation == "experiment-run":
+                if server.run_logs:
+                    server.run_log = server.run_logs.pop(0)
+                if server.run_exits:
+                    server.run_exit = server.run_exits.pop(0)
+                exit_status = server.run_exit
+                stdout = server.run_log
+            if operation == "experiment-run":
+                pid = server.pid
+            else:
+                pid = server.managed_pid
+                server.managed_pid += 1
+            server.managed_prefix_by_pid[pid] = prefix
+            server.managed_files[f"{prefix}.pid"] = str(pid)
+            server.managed_files[f"{prefix}.pgid"] = str(pid)
+            server.managed_files[f"{prefix}.start_ticks"] = str(pid * 100)
+            started = int(time.time()) - (1000 if exit_status is None else 1)
+            server.managed_files[f"{prefix}.started"] = str(started)
+            server.managed_files[f"{prefix}.stdout"] = stdout
+            server.managed_files[f"{prefix}.stderr"] = stderr
+            if exit_status is not None:
+                server.managed_files[f"{prefix}.exit"] = str(exit_status)
+            return SSHResult(0, f"{pid}\n", "")
+        if command.startswith("printf ") and "/operations/" in command and "/current" in command:
+            match = re.search(
+                r"printf '%s\\n' ([0-9a-f-]+) > (\S+)\.tmp && mv \S+ (\S+)", command
+            )
+            if match:
+                server.managed_files[match.group(3)] = match.group(1)
+            return SSHResult(0, "", "")
+        if command.startswith("cat ") and ".polaris/operations/" in command:
+            path = command.split()[1]
+            value = server.managed_files.get(path)
+            return SSHResult(0, f"{value}\n", "") if value is not None else SSHResult(1, "", "")
+        if command.startswith("stat -c") and ".polaris/operations/" in command:
+            paths = command.split(" 2>/dev/null", 1)[0].split()[-2:]
+            mtime = int(time.time()) - server.managed_output_age_seconds
+            rows = [
+                f"{len(server.managed_files.get(path, '').encode())} {mtime}" for path in paths
+            ]
+            return SSHResult(0, "\n".join(rows) + "\n", "")
+        if command.startswith("tail -c") and ".polaris/operations/" in command:
+            path = command.split(" 2>/dev/null", 1)[0].split()[-1]
+            raw = server.managed_files.get(path, "").encode()
+            offset_match = re.search(r"tail -c \+(\d+)", command)
+            if offset_match:
+                raw = raw[int(offset_match.group(1)) - 1 :]
+            # 增量读取那条管道是 `tail -c +N | head -c CAP | base64 | tr -d '\n'`，
+            # 按字节截断后原样编码；快照的 `tail -c N` 走下面的原文分支。
+            head_match = re.search(r"\|\s*head -c (\d+)", command)
+            if head_match:
+                raw = raw[: int(head_match.group(1))]
+            if "base64" in command:
+                return SSHResult(0, base64.b64encode(raw).decode(), "")
+            return SSHResult(0, raw.decode(errors="replace"), "")
+        if "# polaris-managed-stop" in command:
+            def assignment(name: str) -> str | None:
+                match = re.search(rf"^{name}=([^\n]+)$", command, re.MULTILINE)
+                return match.group(1) if match else None
+
+            operation_dir = assignment("operation_dir")
+            prefix = assignment("prefix")
+            attempt = assignment("expected_attempt")
+            expected_pid = assignment("expected_pid")
+            expected_pgid = assignment("expected_pgid")
+            if not all((operation_dir, prefix, attempt, expected_pid, expected_pgid)):
+                return SSHResult(76, "invalid_identity\n", "")
+            current = server.managed_files.get(f"{operation_dir}/current")
+            if current != attempt:
+                return SSHResult(76, "attempt_changed\n", "")
+            pid = server.managed_files.get(f"{prefix}.pid")
+            pgid = server.managed_files.get(f"{prefix}.pgid")
+            if pid != expected_pid or pgid != expected_pgid:
+                return SSHResult(76, "identity_changed\n", "")
+            if f"{prefix}.exit" in server.managed_files:
+                return SSHResult(0, "already_exited\n", "")
+            server.managed_files[f"{prefix}.exit"] = "-15"
+            server.killed.append(int(expected_pgid))
+            return SSHResult(0, "stopped\n", "")
+        if command.startswith("ps -o etimes="):
+            return SSHResult(0, "1 00:00:01 S wait\n", "")
+        if "kill -TERM -- -" in command:
+            match = re.search(r"kill -TERM -- -(\d+)", command)
+            pgid = int(match.group(1)) if match else -1
+            prefix = server.managed_prefix_by_pid.get(pgid)
+            if prefix is not None:
+                server.managed_files.setdefault(f"{prefix}.exit", "-15")
+                server.killed.append(pgid)
+            return SSHResult(0, "", "")
 
         # —— 后台脱离装依赖（launch_setup + setup.exit/setup.log 轮询）；须在通用 launch/cat 之前 ——
         if ("setup.exit" in command or "_setup_container.sh" in command) and "echo $!" in command:
@@ -135,11 +262,14 @@ class FakeSSHSession:
         if "kill -0" in command:  # check_pid：exit 已就绪则进程视为已退出
             m = re.search(r"kill -0 (\d+)", command)
             q = int(m.group(1)) if m else -1
-            if q == server.setup_pid:
+            if q in server.managed_prefix_by_pid:
+                prefix = server.managed_prefix_by_pid[q]
+                alive = f"{prefix}.exit" not in server.managed_files
+            elif q == server.setup_pid:
                 alive = server.setup_launched and server.setup_exit is None
             else:
                 alive = server.launched and server.run_exit is None
-            return SSHResult(0, "alive\n" if alive else "dead\n", "")
+            return SSHResult(0 if alive else 1, "alive\n" if alive else "dead\n", "")
         if "tail -c" in command:
             if not server.launched:
                 return SSHResult(1, "", "")

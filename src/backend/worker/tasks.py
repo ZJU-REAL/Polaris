@@ -146,6 +146,33 @@ async def reconcile_stale_voyages(
         )
 
 
+async def watch_unanswered_managed_commands(ctx: dict[str, Any]) -> int:
+    """Enforce the unattended GPU wait policy for open managed-command asks."""
+    from app.core.events import EventBus
+    from app.services.managed_command_watchdog import check_unanswered_managed_commands
+
+    async with get_sessionmaker()() as session:
+        events = await check_unanswered_managed_commands(session)
+    bus = EventBus(ctx["redis"])
+    for event in events:
+        await bus.publish_voyage_event(
+            event.voyage_id,
+            "ask.updated",
+            {"message": event.message, "action": event.action},
+        )
+        if event.project_id is not None:
+            await bus.publish_notify(
+                event.project_id,
+                {
+                    "type": "voyage.ask.updated",
+                    "voyage_id": str(event.voyage_id),
+                    "action": event.action,
+                    "used_memory_mib": event.used_memory_mib,
+                },
+            )
+    return len(events)
+
+
 async def daily_wiki_ingest(ctx: dict[str, Any]) -> list[str]:
     """给已建库的**文献库**入队同步。由每日论文抓取跑完后触发（daily.sync_libraries）。
 

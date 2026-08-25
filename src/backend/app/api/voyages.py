@@ -220,10 +220,43 @@ async def answer_voyage_ask(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail="ANSWER_EMPTY"
         )
+    claimed_stop = False
+    stop_status: str | None = None
+    if data.choice == "stop_remote":
+        payload = ask.payload if isinstance(ask.payload, dict) else {}
+        context = payload.get("context")
+        handle = context.get("handle") if isinstance(context, dict) else None
+        if payload.get("ask_kind") != "managed_command" or not isinstance(handle, dict):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="STOP_REMOTE_NOT_ALLOWED",
+            )
+        # Claim the ask before SSH.  A concurrent keep-running answer or watchdog
+        # can no longer win the database decision after this caller has already
+        # killed the process (or vice versa).
+        claimed_stop = await messages_service.claim_open_ask_for_stop(session, ask.id)
+        if not claimed_stop:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="ASK_NOT_OPEN")
+        try:
+            stop_result = await experiments_service.stop_managed_command_by_voyage(
+                session, run.id, handle
+            )
+        except Exception:
+            await messages_service.release_stop_claim(session, ask.id)
+            raise
+        stop_status = stop_result.status
+        if not stop_result:
+            await messages_service.release_stop_claim(session, ask.id)
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="REMOTE_OPERATION_STOP_NOT_CONFIRMED",
+            )
+
     # 条件 UPDATE 防并发双答（两个成员同时点回答只有一个生效）
+    expected_status = messages_service.STOPPING_STATUS if claimed_stop else "open"
     result = await session.execute(
         sa_update(VoyageMessage)
-        .where(VoyageMessage.id == ask.id, VoyageMessage.status == "open")
+        .where(VoyageMessage.id == ask.id, VoyageMessage.status == expected_status)
         .values(status="answered")
     )
     if result.rowcount == 0:
@@ -235,6 +268,8 @@ async def answer_voyage_ask(
         answer_payload["choice"] = data.choice
     if data.payload:
         answer_payload["extra"] = data.payload
+    if stop_status:
+        answer_payload["stop_status"] = stop_status
     answer = await messages_service.append_message(
         session,
         run.id,

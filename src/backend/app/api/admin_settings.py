@@ -15,6 +15,7 @@ from app.schemas.admin_settings import (
     ExperimentEnvSettings,
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
+    ManagedCommandWatchdogAdminSettings,
 )
 from app.schemas.tts import TTSAdminSettings, TTSTestResult, TTSVoicesResult
 from app.services import affiliations as affiliations_service
@@ -22,6 +23,7 @@ from app.services import daily_feed as daily_service
 from app.services import embedding as embedding_service
 from app.services import experiment_settings as experiment_settings_service
 from app.services import lab as lab_service
+from app.services import managed_command_watchdog as watchdog_service
 from app.services import tts as tts_service
 
 router = APIRouter(
@@ -156,6 +158,32 @@ async def set_experiment_env(
             detail=f"INVALID_EXPERIMENT_SETTING:{exc.field}",
         ) from exc
     return ExperimentEnvSettings(**saved)
+
+
+@router.get(
+    "/managed-command-watchdog",
+    response_model=ManagedCommandWatchdogAdminSettings,
+)
+async def get_managed_command_watchdog(
+    session: AsyncSession = Depends(get_session),
+) -> ManagedCommandWatchdogAdminSettings:
+    return ManagedCommandWatchdogAdminSettings(
+        max_unanswered_minutes=await watchdog_service.get_admin_max_minutes(session)
+    )
+
+
+@router.put(
+    "/managed-command-watchdog",
+    response_model=ManagedCommandWatchdogAdminSettings,
+)
+async def set_managed_command_watchdog(
+    payload: ManagedCommandWatchdogAdminSettings,
+    session: AsyncSession = Depends(get_session),
+) -> ManagedCommandWatchdogAdminSettings:
+    saved = await watchdog_service.set_admin_max_minutes(
+        session, payload.max_unanswered_minutes
+    )
+    return ManagedCommandWatchdogAdminSettings(max_unanswered_minutes=saved)
 
 
 @router.get("/tts", response_model=TTSAdminSettings)

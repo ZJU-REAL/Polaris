@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 AffiliationMode = Literal["on_add", "on_compile"]
 
@@ -78,3 +78,9 @@ class ExperimentEnvSettings(BaseModel):
     pip_index_url: str = ""  # pip 镜像源
     hf_endpoint: str = ""  # HF 镜像端点，如 https://hf-mirror.com
     proxy_url: str = ""  # 实验机出外网的 HTTP 代理
+
+
+class ManagedCommandWatchdogAdminSettings(BaseModel):
+    """Maximum unattended wait before a GPU-using command is stopped."""
+
+    max_unanswered_minutes: int = Field(default=120, ge=15, le=10_080)

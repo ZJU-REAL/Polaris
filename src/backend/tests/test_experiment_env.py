@@ -162,14 +162,20 @@ async def test_command_templates_source_env(client, queue_stub, fake_ssh, bus_re
     assert f"polaris_runs/{exp['id']}/llm_config.json" not in fake_ssh.files
 
     workdir = f"~/polaris_runs/{exp['id']}"
-    smoke = next(c for c in fake_ssh.commands if "--smoke" in c)
-    assert smoke == f"cd {workdir} && {{ {ENV_PREFIX} bash run.sh --smoke; }}"
-    launch = next(c for c in fake_ssh.commands if "nohup" in c and "run.sh" in c)  # run launch
+    # smoke / run 已改走 managed 封套：真正执行的命令写在启动脚本里，重定向与退出码
+    # 由封套接管，所以这里核对的是脚本里那一行内层命令——前缀固定、无可变参数的
+    # 断言意图不变，只是从「整条 SSH 命令」挪到「启动脚本里的命令行」。
+    smoke_launcher = next(c for c in fake_ssh.commands if "--smoke" in c)
+    assert f"cd {workdir} && {{ {ENV_PREFIX} bash run.sh --smoke; }}" in smoke_launcher
+    run_launcher = next(
+        c for c in fake_ssh.commands if "stdbuf -oL -eL bash run.sh" in c
+    )
     # 前缀先 export PYTHONUNBUFFERED=1、再 source env.sh、stdbuf 行缓冲跑 run.sh（日志实时刷新）
     assert (
-        f"nohup bash -c 'export PYTHONUNBUFFERED=1; {ENV_PREFIX} "
-        f"stdbuf -oL -eL bash run.sh > run.log 2>&1; echo $? > run.exit'"
-    ) in launch
+        f"cd {workdir} && {{ export PYTHONUNBUFFERED=1; "
+        f"{ENV_PREFIX} stdbuf -oL -eL bash run.sh; }}"
+    ) in run_launcher
+    # plot 仍是前台白名单模板，没有 managed 化
     plot = next(c for c in fake_ssh.commands if "plot_figures.py" in c and ".venv" in c)
     assert plot == f"cd {workdir} && {{ {ENV_PREFIX} .venv/bin/python plot_figures.py; }}"
 

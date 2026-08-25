@@ -194,6 +194,7 @@ export interface UserRead {
   token_quota?: number | null;
   features?: Record<string, boolean> | null;
   /** 用户个人设置（后端可能暂未返回，可选） */
+  settings?: Record<string, unknown> | null;
 }
 
 export interface UsageSummary {
@@ -1480,6 +1481,16 @@ export interface ExperimentEnvSettings {
   hf_endpoint: string;
   /** 实验机出外网的 HTTP 代理（凭据上单独配了的以凭据为准） */
   proxy_url: string;
+}
+
+export interface ManagedCommandWatchdogAdminSettings {
+  max_unanswered_minutes: number;
+}
+
+export interface ManagedCommandWatchdogUserSettings {
+  unanswered_minutes: number;
+  admin_max_unanswered_minutes: number;
+  effective_unanswered_minutes: number;
 }
 
 // ============================================================
@@ -3111,6 +3122,18 @@ export const api = {
   me(): Promise<UserRead> {
     return request<UserRead>('/users/me');
   },
+
+  getMyManagedCommandWatchdog(): Promise<ManagedCommandWatchdogUserSettings> {
+    return request<ManagedCommandWatchdogUserSettings>('/users/me/managed-command-watchdog');
+  },
+
+  setMyManagedCommandWatchdog(unansweredMinutes: number): Promise<ManagedCommandWatchdogUserSettings> {
+    return requestJson<ManagedCommandWatchdogUserSettings>(
+      '/users/me/managed-command-watchdog',
+      'PUT',
+      { unanswered_minutes: unansweredMinutes },
+    );
+  },
   updateMe(input: { display_name?: string }): Promise<UserRead> {
     return requestJson<UserRead>('/users/me', 'PATCH', input);
   },
@@ -4230,6 +4253,9 @@ export const api = {
     const qs = params.toString();
     return request<ExperimentLogs>(`/experiments/${id}/logs${qs ? `?${qs}` : ''}`);
   },
+  getExperimentTerminalLogs(id: string, tail = 500): Promise<ExperimentLogs> {
+    return request<ExperimentLogs>(`/experiments/${id}/terminal-logs?tail=${tail}`);
+  },
   /** 单张实验图表 PNG（blob → objectURL 显示，模式同论文 figures）。 */
   fetchExperimentFigureImage(id: string, index: number): Promise<Blob> {
     return requestBlob(`/experiments/${id}/figures/${index}/image`);
@@ -4546,6 +4572,16 @@ export const api = {
   },
   setExperimentEnv(payload: ExperimentEnvSettings): Promise<ExperimentEnvSettings> {
     return requestJson<ExperimentEnvSettings>('/admin/settings/experiment-env', 'PUT', payload);
+  },
+  getManagedCommandWatchdog(): Promise<ManagedCommandWatchdogAdminSettings> {
+    return request<ManagedCommandWatchdogAdminSettings>('/admin/settings/managed-command-watchdog');
+  },
+  setManagedCommandWatchdog(maxUnansweredMinutes: number): Promise<ManagedCommandWatchdogAdminSettings> {
+    return requestJson<ManagedCommandWatchdogAdminSettings>(
+      '/admin/settings/managed-command-watchdog',
+      'PUT',
+      { max_unanswered_minutes: maxUnansweredMinutes },
+    );
   },
   /** 平台语音服务与默认模型（admin）。 */
   getAdminTtsSettings(): Promise<TTSAdminSettings> {
