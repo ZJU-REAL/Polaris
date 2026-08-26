@@ -9,7 +9,7 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e0f1a2b3c4d5"  # Merge OA discovery and versioned content heads
+HEAD_REVISION = "fa1b2c3d4e5f"  # Merge OA discovery and versioned content heads
 LITERATURE_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
 PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
