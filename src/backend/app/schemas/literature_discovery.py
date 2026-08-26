@@ -96,3 +96,73 @@ class SearchRunRead(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class SourceAttemptRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    source: str
+    status: Literal["pending", "running", "completed", "partial", "failed", "skipped"]
+    query: str | None
+    cursor: str | None
+    requested_count: int | None
+    fetched_count: int
+    accepted_count: int
+    retryable: bool
+    error_code: str | None
+    error_detail: str | None
+    metadata_snapshot: dict[str, Any] | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SearchHitRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    paper_id: uuid.UUID | None
+    status: Literal["candidate", "promoted", "dismissed"]
+    source: str
+    dedup_key: str
+    title: str
+    abstract: str | None
+    authors: list[dict[str, Any]] | None
+    year: int | None
+    venue: str | None
+    doi: str | None
+    pmid: str | None
+    arxiv_id: str | None
+    semantic_scholar_id: str | None
+    url: str | None
+    pdf_url: str | None
+    oa_status: str | None
+    citation_count: int | None
+    scores: dict[str, Any] | None
+    metadata_snapshot: dict[str, Any] | None
+    promoted_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SearchHitPage(BaseModel):
+    items: list[SearchHitRead]
+    total: int
+    page: int
+    size: int
+    sort: str
+
+
+class SearchRunDetail(SearchRunRead):
+    source_attempts: list[SourceAttemptRead]
+
+
+class SearchRunPage(BaseModel):
+    items: list[SearchRunRead]
+    total: int
+    page: int
+    size: int
