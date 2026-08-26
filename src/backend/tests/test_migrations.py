@@ -93,6 +93,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "concepts",
                     "paper_chunks",
                     "paper_vectors",
+                    "paper_evidence_anchors",
                     "paper_wikis",
                     "library_papers",
                     "daily_feed_entries",
