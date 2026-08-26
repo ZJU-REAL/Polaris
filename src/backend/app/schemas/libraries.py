@@ -15,6 +15,8 @@ class DirectionLibrarySummary(BaseModel):
 
     id: uuid.UUID
     name: str
+    library_kind: str = "standard"
+    interdisciplinary_domains: list[str] | None = None
     statement: str | None
     # 过渡期隐式库回指的课题；未来共享库可为 None
     project_id: uuid.UUID | None

@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
+HEAD_REVISION = "e9f0a1b2c3d4"  # interdisciplinary profiles and dedicated libraries
+INTERDISCIPLINARY_PREVIOUS_HEAD = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
 PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
 VIEW_EVENTS_REVISION = "a1c9e73b5d20"  # 浏览事件（文献库/论文点击量）
@@ -99,6 +100,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "topic_source_libraries",
                     "activities",
                     "direction_libraries",
+                    "interdisciplinary_research_profiles",
                     "projects",
                     "chat_bot_configs",
                     "library_research_digests",
@@ -218,6 +220,27 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
     # 文献库归属 P10：direction_libraries.is_public 个人/公共
     assert "is_public" in columns["direction_libraries"]
+    assert {
+        "research_mode",
+    } <= columns["projects"]
+    assert {
+        "library_kind",
+        "interdisciplinary_domains",
+        "interdisciplinary_project_id",
+    } <= columns["direction_libraries"]
+    assert {
+        "project_id",
+        "version",
+        "status",
+        "research_scope",
+        "core_questions",
+        "primary_domain",
+        "related_domains",
+        "created_by",
+    } <= columns["interdisciplinary_research_profiles"]
+    assert "uq_direction_libraries_interdisciplinary_project" in _index_names(
+        db_path, "direction_libraries"
+    )
     # P9e：课题 statement 上列；project.definition / projects.ingest_state 退役删列
     assert "statement" in columns["projects"]
     assert "definition" not in columns["projects"]
@@ -418,6 +441,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "accepted_count",
         "retryable",
     } <= columns["literature_source_attempts"]
+
+    # 跨学科迁移回退：回到文献发现合同 head。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == INTERDISCIPLINARY_PREVIOUS_HEAD
+    assert "interdisciplinary_research_profiles" not in columns["_tables"]
+    assert "interdisciplinary_project_id" not in columns["direction_libraries"]
 
     # 文献发现合同迁移回退：保留原有 integration_tokens head。
     command.downgrade(cfg, "-1")
