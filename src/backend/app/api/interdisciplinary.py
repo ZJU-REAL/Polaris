@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
@@ -138,7 +139,24 @@ async def confirm_interdisciplinary_scope(
     else:
         library.statement = profile.research_scope
         library.interdisciplinary_domains = [profile.primary_domain, *profile.related_domains]
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The partial unique index makes confirmation idempotent under concurrent
+        # requests. Re-read the winner instead of leaking a transient 500.
+        await session.rollback()
+        profile = await _profile(session, project.id)
+        library = await session.scalar(
+            select(DirectionLibrary).where(
+                DirectionLibrary.interdisciplinary_project_id == project.id,
+                DirectionLibrary.library_kind == "interdisciplinary",
+            )
+        )
+        if library is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="INTERDISCIPLINARY_LIBRARY_CONFLICT",
+            ) from exc
     await session.refresh(profile)
     return InterdisciplinaryConfirmation(
         profile=InterdisciplinaryScopeRead.model_validate(profile), library_id=library.id

@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -25,6 +25,15 @@ from app.models.paper import Paper
 
 class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "direction_libraries"
+    __table_args__ = (
+        Index(
+            "uq_direction_libraries_interdisciplinary_project",
+            "interdisciplinary_project_id",
+            unique=True,
+            sqlite_where=text("library_kind = 'interdisciplinary'"),
+            postgresql_where=text("library_kind = 'interdisciplinary'"),
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     # standard | interdisciplinary; preserves the existing membership model.
@@ -33,7 +42,7 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     interdisciplinary_domains: Mapped[list[str] | None] = mapped_column(JSONVariant)
     interdisciplinary_project_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("projects.id", ondelete="SET NULL"), index=True
+        ForeignKey("projects.id", ondelete="SET NULL")
     )
     statement: Mapped[str | None] = mapped_column(Text)  # 方向陈述（一段话）
     rubric: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # 相关性评分标准

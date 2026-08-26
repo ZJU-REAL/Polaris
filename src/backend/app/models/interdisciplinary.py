@@ -25,8 +25,8 @@ class InterdisciplinaryResearchProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base
     evidence_boundary: Mapped[str | None] = mapped_column(Text)
     validation_conditions: Mapped[list[str] | None] = mapped_column(JSONVariant)
     user_questions: Mapped[list[dict] | None] = mapped_column(JSONVariant)
-    created_by: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
