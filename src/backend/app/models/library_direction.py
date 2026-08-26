@@ -27,6 +27,14 @@ class DirectionLibrary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "direction_libraries"
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # standard | interdisciplinary; preserves the existing membership model.
+    library_kind: Mapped[str] = mapped_column(
+        String(24), default="standard", server_default="standard", nullable=False
+    )
+    interdisciplinary_domains: Mapped[list[str] | None] = mapped_column(JSONVariant)
+    interdisciplinary_project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), index=True
+    )
     statement: Mapped[str | None] = mapped_column(Text)  # 方向陈述（一段话）
     rubric: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)  # 相关性评分标准
     anchors: Mapped[list[Any] | None] = mapped_column(JSONVariant)  # 锚点论文/关键词

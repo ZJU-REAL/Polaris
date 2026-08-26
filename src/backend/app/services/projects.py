@@ -124,6 +124,7 @@ async def create_project(
         name=data.name,
         slug=slug,
         statement=statement or None,
+        research_mode=data.research_mode,
         owner_id=owner_id,
     )
     session.add(project)
@@ -186,6 +187,8 @@ async def update_project(session: AsyncSession, project: Project, data: ProjectU
         project.statement = data.statement.strip() or None
     if data.status is not None:
         project.status = data.status
+    if data.research_mode is not None:
+        project.research_mode = data.research_mode
     await session.commit()
     await session.refresh(project)
     return project
