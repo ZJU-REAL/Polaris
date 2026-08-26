@@ -24,8 +24,6 @@ from app.api import (
     lab,
     libraries,
     library,
-    literature_discovery,
-    literature_discovery,
     manuscripts,
     market,
     mcp_meta,
@@ -67,8 +65,6 @@ api_router.include_router(lab.router)
 api_router.include_router(me_llm.router)
 api_router.include_router(papers.router)
 api_router.include_router(library.router)
-api_router.include_router(literature_discovery.router)
-api_router.include_router(literature_discovery.router)
 api_router.include_router(libraries.router)
 api_router.include_router(publications.router)
 api_router.include_router(notes.router)
