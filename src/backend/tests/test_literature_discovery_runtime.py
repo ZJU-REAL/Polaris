@@ -13,7 +13,14 @@ from app.models.literature_discovery import (
 )
 from app.models.paper import Paper
 from app.schemas.literature_discovery import LiteratureCandidate, SourceSearchPage
-from app.services.literature.runtime import AdapterRegistry, run_discovery
+from app.services.literature.openalex import _simplify
+from app.services.literature.runtime import (
+    AdapterRegistry,
+    OpenAlexAdapter,
+    SemanticScholarAdapter,
+    _candidate_from_openalex,
+    run_discovery,
+)
 from tests.conftest import register_and_login
 
 
@@ -177,3 +184,48 @@ async def test_start_endpoint_enqueues_without_overwriting_requested_count(clien
     assert response.status_code == 202, response.text
     assert response.json()["requested_count"] == 7
     assert queue_stub.jobs == [("run_literature_discovery", (str(run_id),), {})]
+
+
+@pytest.mark.asyncio
+async def test_provider_adapters_forward_year_window_and_restore_openalex_abstract():
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def search_works(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return []
+
+        async def search_papers(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return []
+
+    request = type(
+        "Request",
+        (),
+        {"query": "impact response", "limit": 12, "start_year": 2016, "end_year": 2020},
+    )()
+    openalex_client = Client()
+    semantic_client = Client()
+    await OpenAlexAdapter(openalex_client).search(request)
+    await SemanticScholarAdapter(semantic_client).search(request)
+    assert openalex_client.calls[0][1] == {
+        "limit": 12,
+        "start_year": 2016,
+        "end_year": 2020,
+    }
+    assert semantic_client.calls[0][1] == {
+        "limit": 12,
+        "start_year": 2016,
+        "end_year": 2020,
+    }
+
+    candidate = _candidate_from_openalex(
+        _simplify(
+        {
+            "title": "Indexed abstract",
+            "abstract_inverted_index": {"impact": [1], "Dynamic": [0], "response": [2]},
+        }
+        )
+    )
+    assert candidate.abstract == "Dynamic impact response"

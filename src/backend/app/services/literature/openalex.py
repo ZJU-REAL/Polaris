@@ -16,9 +16,22 @@ ARXIV_DOI_TEMPLATE = "10.48550/arXiv.{arxiv_id}"
 
 def _simplify(work: dict[str, Any]) -> dict[str, Any]:
     primary_location = work.get("primary_location") or {}
+    inverted = work.get("abstract_inverted_index")
+    abstract = None
+    if isinstance(inverted, dict):
+        tokens = [
+            (int(position), str(token))
+            for token, positions in inverted.items()
+            if isinstance(positions, list)
+            for position in positions
+            if isinstance(position, int)
+        ]
+        if tokens:
+            abstract = " ".join(token for _, token in sorted(tokens))
     return {
         "openalex_id": work.get("id"),
         "title": work.get("title"),
+        "abstract": abstract,
         "doi": (work.get("doi") or "").removeprefix("https://doi.org/") or None,
         "url": (
             primary_location.get("landing_page_url") if isinstance(primary_location, dict) else None
@@ -99,9 +112,24 @@ class OpenAlexClient:
         """按 arxiv id 反查（经 DataCite DOI 10.48550/arXiv.<id>）。"""
         return await self.get_by_doi(ARXIV_DOI_TEMPLATE.format(arxiv_id=arxiv_id))
 
-    async def search_works(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    async def search_works(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        start_year: int | None = None,
+        end_year: int | None = None,
+    ) -> list[dict[str, Any]]:
         """按标题/关键词全文检索 works（M5-C 引用核验的 S2 降级通道）。"""
-        data = await self._get("/works", {"search": query, "per-page": limit})
+        params: dict[str, Any] = {"search": query, "per-page": limit}
+        filters: list[str] = []
+        if start_year is not None:
+            filters.append(f"from_publication_date:{start_year}-01-01")
+        if end_year is not None:
+            filters.append(f"to_publication_date:{end_year}-12-31")
+        if filters:
+            params["filter"] = ",".join(filters)
+        data = await self._get("/works", params)
         results = (data or {}).get("results") or []
         return [_simplify(w) for w in results if isinstance(w, dict)]
 

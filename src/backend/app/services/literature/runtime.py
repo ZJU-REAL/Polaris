@@ -62,7 +62,12 @@ class OpenAlexAdapter:
         self.client = client
 
     async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
-        rows = await self.client.search_works(request.query, limit=request.limit)
+        rows = await self.client.search_works(
+            request.query,
+            limit=request.limit,
+            start_year=request.start_year,
+            end_year=request.end_year,
+        )
         return SourceSearchPage(
             source=self.name,
             items=[_candidate_from_openalex(row) for row in rows],
@@ -77,7 +82,12 @@ class SemanticScholarAdapter:
         self.client = client
 
     async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
-        rows = await self.client.search_papers(request.query, limit=request.limit)
+        rows = await self.client.search_papers(
+            request.query,
+            limit=request.limit,
+            start_year=request.start_year,
+            end_year=request.end_year,
+        )
         return SourceSearchPage(
             source=self.name,
             items=[_candidate_from_semantic(row) for row in rows],
