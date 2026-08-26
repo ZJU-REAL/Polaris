@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
+from app.models.evidence import PaperEvidenceAnchor
 from app.models.library_direction import LibraryPaper
 from app.models.paper import (
     CONCEPT_STATUS_ACTIVE,
@@ -28,6 +29,7 @@ from app.models.paper import (
 from app.models.project import Project
 from app.services import chunks as chunks_service
 from app.services.embedding import embed_query
+from app.services.evidence import normalize_evidence_text
 from app.services.libraries import (
     dedupe_member_rows,
     get_source_library_ids,
@@ -51,7 +53,8 @@ LIBRARY_CHAT_SYSTEM_TEMPLATE = """\
 你是文献库研究助手，基于下面从文献库中检索到的资料，帮用户做跨文献的分析、比较与综合梳理。
 回答要求：
 - 只依据资料回答；资料没有覆盖的，直接说明「文献库中未检索到相关内容」，不要编造；
-- 引用某篇论文的内容时，在句末标注对应编号，如 [1] 或 [1][3]；
+- 引用论文正文时，在句末标注论文和句子编号，如 [1·句2]；跨论文引用可写 [1·句2][3·句1]。
+  只有资料中明确提供的证据标记才能使用；没有句子证据时才使用论文级编号 [1]，不要猜造句号；
 - 提到资料「概念」清单里列出的概念时，用双链 [[概念名]] 标注（只用清单里出现过的概念名，
   别的词不要加双链）；
 - 当某篇论文的「配图」能直观说明你的观点时，在合适位置插入该图标记 [[fig:论文id:图号]]
@@ -185,6 +188,73 @@ class ChatSource:
     status: str | None = None
     relevance: float | None = None
     concepts: list[str] = field(default_factory=list)
+    evidence: list[dict[str, object]] = field(default_factory=list)
+
+
+def _evidence_ref(anchor: PaperEvidenceAnchor) -> dict[str, object]:
+    """把持久化锚点压缩成前端可直接跳转的证据引用。"""
+    locator = anchor.locator if isinstance(anchor.locator, dict) else {}
+    return {
+        "anchor_id": str(anchor.id),
+        "anchor_type": anchor.anchor_type,
+        "seq": anchor.seq,
+        "paragraph_index": anchor.paragraph_index,
+        "sentence_index": anchor.sentence_index,
+        "sentence_no": (anchor.sentence_index + 1) if anchor.sentence_index is not None else None,
+        "quoted_text": anchor.quoted_text,
+        "page_start": locator.get("page_start"),
+        "page_end": locator.get("page_end"),
+        "rects": locator.get("rects") if isinstance(locator.get("rects"), list) else [],
+        "href": f"/papers/{anchor.paper_id}/read?evidence=1&evidence={anchor.id}",
+    }
+
+
+async def _sentence_evidence_for_chunks(
+    session: AsyncSession, chunks: list[PaperChunk]
+) -> dict[uuid.UUID, list[dict[str, object]]]:
+    """把旧全文索引块映射到当前内容版本的句子锚点。"""
+    paper_ids = list({chunk.paper_id for chunk in chunks})
+    if not paper_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(PaperEvidenceAnchor)
+            .where(
+                PaperEvidenceAnchor.paper_id.in_(paper_ids),
+                PaperEvidenceAnchor.anchor_type == "sentence",
+            )
+            .order_by(
+                PaperEvidenceAnchor.paper_id,
+                PaperEvidenceAnchor.seq,
+                PaperEvidenceAnchor.paragraph_index,
+                PaperEvidenceAnchor.sentence_index,
+            )
+        )
+    ).scalars().all()
+    anchors_by_paper: dict[uuid.UUID, list[PaperEvidenceAnchor]] = {}
+    for anchor in rows:
+        anchors_by_paper.setdefault(anchor.paper_id, []).append(anchor)
+    refs: dict[uuid.UUID, list[dict[str, object]]] = {}
+    for chunk in chunks:
+        normalized_chunk = normalize_evidence_text(chunk.text)
+        bucket = refs.setdefault(chunk.id, [])
+        for anchor in anchors_by_paper.get(chunk.paper_id, []):
+            if anchor.normalized_text and anchor.normalized_text in normalized_chunk:
+                bucket.append(_evidence_ref(anchor))
+                if len(bucket) >= 8:
+                    break
+    return refs
+
+
+def _evidence_lines(index: int, refs: list[dict[str, object]]) -> str:
+    if not refs:
+        return ""
+    lines = ["\n正文证据（引用格式 [论文编号·句编号]）："]
+    for ref in refs:
+        sentence_no = ref.get("citation_no") or ref.get("sentence_no")
+        label = f"[{index}·句{sentence_no}]" if sentence_no else f"[{index}]"
+        lines.append(f"  {label} {ref.get('quoted_text', '')}")
+    return "\n".join(lines)
 
 
 async def _retrieve_chunks(
@@ -428,12 +498,26 @@ async def build_messages_for_libraries(
 
     sources: list[ChatSource] = []
     blocks: list[str] = []
+    retrieved_chunks = [chunk for chunk, _score in rows]
+    evidence_by_chunk = await _sentence_evidence_for_chunks(session, retrieved_chunks)
+    evidence_by_paper: dict[uuid.UUID, list[dict[str, object]]] = {}
+    for chunk in retrieved_chunks:
+        bucket = evidence_by_paper.setdefault(chunk.paper_id, [])
+        for ref in evidence_by_chunk.get(chunk.id, []):
+            if len(bucket) >= 12:
+                break
+            if any(existing.get("anchor_id") == ref.get("anchor_id") for existing in bucket):
+                continue
+            bucket.append({**ref, "citation_no": len(bucket) + 1})
     for i, (paper, body) in enumerate(entries, start=1):
         names = concepts_by_paper.get(paper.id, [])[:10]
+        evidence_refs = evidence_by_paper.get(paper.id, [])
         concept_line = f"\n概念：{'、'.join(names)}" if names else ""
         fig_line = _figure_hints(paper)
+        evidence_line = _evidence_lines(i, evidence_refs)
         blocks.append(
             f"[{i}] {paper.title}（{_dateline(paper)}）{concept_line}{fig_line}\n{body}"
+            f"{evidence_line}"
         )
         membership = memberships.get(paper.id)
         sources.append(
@@ -445,6 +529,7 @@ async def build_messages_for_libraries(
                 status=membership.status if membership else None,
                 relevance=membership.relevance_score if membership else None,
                 concepts=names,
+                evidence=evidence_refs,
             )
         )
 
