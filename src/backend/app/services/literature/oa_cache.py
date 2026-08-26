@@ -136,6 +136,34 @@ async def _download(url: str) -> tuple[bytes, str, int | None]:
     raise OaDownloadError("PDF_REDIRECT_LIMIT", "too many PDF redirects")
 
 
+async def _unpaywall_urls(hit: LiteratureSearchHit) -> list[tuple[str, str]]:
+    """Resolve DOI OA locations as a fallback when providers omitted a PDF URL."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    if not hit.doi or not settings.unpaywall_email:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"https://api.unpaywall.org/v2/{hit.doi}",
+                params={"email": settings.unpaywall_email},
+            )
+            if response.status_code >= 400:
+                return []
+            payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return []
+    locations = [payload.get("best_oa_location") or {}, *(payload.get("oa_locations") or [])]
+    return [
+        (str(location["url_for_pdf"]), "unpaywall")
+        for location in locations
+        if isinstance(location, dict)
+        and location.get("url_for_pdf")
+        and _public_url(str(location["url_for_pdf"]))
+    ]
+
+
 async def cache_hit_pdf(
     session: AsyncSession, hit: LiteratureSearchHit
 ) -> LiteratureOaCache:
@@ -150,6 +178,10 @@ async def cache_hit_pdf(
         return cache
 
     urls = candidate_urls(hit)
+    if hit.doi:
+        for url, source in await _unpaywall_urls(hit):
+            if url not in {item[0] for item in urls}:
+                urls.append((url, source))
     if not urls:
         cache.status = "unavailable"
         cache.error_code = "OA_PDF_NOT_FOUND"
