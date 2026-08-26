@@ -35,12 +35,13 @@ reader feature is already production-ready.
 | #468 | Polaris Extension | Browser-side batch bridge, local PDF cache, checksum/identity validation, and batch archive client |
 | #469 | Interdisciplinary profile | Versioned scope draft/confirmation, project research mode, and dedicated cross-disciplinary library |
 | #470 | Interdisciplinary Skill | Builtin skill-market workflow for scope, retrieval, evidence, ideas, experiments, writing, and review |
-| #474 | Discovery runtime | Worker-executed OpenAlex/Semantic Scholar/arXiv adapters, year-window propagation, source isolation, progress snapshots, cross-source deduplication, deterministic ranking, and candidate-only persistence |
+| #474 | Discovery runtime | Worker-executed OpenAlex, Semantic Scholar, arXiv, PubMed, Crossref, Europe PMC, HAL, CORE, BASE, and Sciverse adapters; Unpaywall DOI OA resolution; source isolation, progress snapshots, cross-source deduplication, deterministic ranking, and candidate-only persistence |
+| #476 | OA cache and promotion | Durable OA download attempts, content-addressed PDF cache, PDF identity validation, and idempotent candidate-to-library promotion into `PaperAsset`/`AssetGrant` |
 
-These PRs provide backend contracts, a worker-executed runtime, and one
-extension client. They do not yet provide the Polaris main-site discovery
-screen, the extended provider/key-health matrix, OA cache promotion, MinerU
-Cloud production client, or universal evidence injection into every AI
+These PRs provide backend contracts, a worker-executed multi-source runtime,
+durable OA caching/promotion, and one extension client. They do not yet provide
+the Polaris main-site discovery screen, the administrator key-health matrix,
+MinerU Cloud production polling, or universal evidence injection into every AI
 workflow.
 
 ## Required follow-up series
@@ -52,19 +53,11 @@ must be rebased and parent files removed from its final diff.
 
 ### Runtime and provider series
 
-1. **Extended sources and credential health**
-   - Add Crossref, Europe PMC, HAL, CORE, BASE, Unpaywall, and Sciverse
-     adapters where credentials and service contracts permit.
-   - Support encrypted key pools, rotation, per-source connection tests, and
-     source-level capability reporting.
+1. **Provider credential health**
+   - Add encrypted key pools, rotation, per-source connection tests, and
+     source-level capability reporting for the adapters already present in
+     #474.
    - Keep missing metadata null; never use `Unknown journal` as a data value.
-
-2. **OA discovery cache and promotion**
-   - Download every verifiable OA candidate into a temporary, content-addressed
-     cache during discovery.
-   - Do not parse or vectorize an unpromoted candidate.
-   - On user promotion, validate identity and convert the cache into a formal
-     `PaperAsset` and processing job idempotently.
 
 ### Polaris product series
 
@@ -128,7 +121,8 @@ The recommended dependency order is:
 #464 -> #465 -> #466
              └-> #467 -> #468
 #469 -> #470
-runtime adapters (#474) -> extended sources -> OA promotion
+runtime adapters (#474) -> OA promotion (#476)
+provider credential health -> discovery UI
 discovery UI -> admin settings
 MinerU production -> reader evidence -> workflow injection
 profile orchestration -> Skill injection
