@@ -12,6 +12,7 @@ from app.api import (
     chat_bots,
     concepts,
     daily,
+    download_client,
     experiments,
     feedback,
     gates,
@@ -81,6 +82,7 @@ api_router.include_router(ideas.router)
 api_router.include_router(search.router)
 api_router.include_router(shelf.router)
 api_router.include_router(daily.router)
+api_router.include_router(download_client.router)
 api_router.include_router(deepseek_harness_router)
 api_router.include_router(skills.router)
 api_router.include_router(market.router)
