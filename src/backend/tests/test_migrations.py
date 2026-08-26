@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
+HEAD_REVISION = "e5f6a7b8c9d0"  # Versioned sentence/paragraph evidence anchors
+EVIDENCE_PREV_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
 CONTENT_PREV_REVISION = "c8d9e0f1a2b3"  # Content-addressed PDF assets and grants
 ASSET_PREV_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
@@ -454,8 +455,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "paper_content_version_vectors"
     ]
     assert {"chunk_id", "space", "embedding"} <= columns["paper_content_chunk_vectors"]
+    assert "paper_evidence_anchors" in columns["_tables"]
 
-    # 先退掉版本化内容。
+    # 先退掉证据锚点。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == EVIDENCE_PREV_REVISION
+    assert "paper_evidence_anchors" not in columns["_tables"]
+
+    # 再退掉版本化内容。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == CONTENT_PREV_REVISION
