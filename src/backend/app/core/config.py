@@ -67,8 +67,18 @@ class Settings(BaseSettings):
     chat_agent_enabled: bool = False
 
     # ---- 文献 API ----
-    s2_api_key: str = ""  # Semantic Scholar（可空，限流更严）
-    openalex_mailto: str = "polaris@example.org"  # OpenAlex polite pool
+    s2_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "POLARIS_S2_API_KEY",
+            "SEMANTIC_SCHOLAR_API_KEY",
+            "PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY",
+        ),
+    )  # Semantic Scholar（可空，限流更严）
+    openalex_mailto: str = Field(
+        default="polaris@example.org",
+        validation_alias=AliasChoices("POLARIS_OPENALEX_MAILTO", "OPENALEX_MAILTO"),
+    )  # OpenAlex polite pool
     pubmed_email: str = Field(
         default="",
         validation_alias=AliasChoices(
