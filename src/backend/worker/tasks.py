@@ -32,6 +32,29 @@ async def ping_task(ctx: dict[str, Any], message: str = "ping") -> str:
     return f"pong: {message}"
 
 
+async def parse_paper_content_task(
+    ctx: dict[str, Any], version_id: str, user_id: str | None = None, library_id: str | None = None
+) -> None:
+    """Parse one immutable content version; MinerU adapters can be injected later."""
+    from app.models.paper_content import PaperContentVersion
+    from app.services.paper_content import parse_content_version, vectorize_content_version
+
+    async with get_sessionmaker()() as session:
+        version = await session.get(PaperContentVersion, uuid.UUID(version_id))
+        if version is None:
+            return
+        await parse_content_version(session, version=version)
+        try:
+            await vectorize_content_version(
+                session,
+                version=version,
+                user_id=uuid.UUID(user_id) if user_id else None,
+                library_id=uuid.UUID(library_id) if library_id else None,
+            )
+        except Exception:
+            logger.exception("content vectorization failed for %s", version_id)
+
+
 def _make_engine() -> VoyageEngine:
     return VoyageEngine(event_bus=EventBus(get_redis()))
 

@@ -40,6 +40,12 @@ from app.models.paper import (
     paper_tag_links,
 )
 from app.models.paper_assets import AssetGrant, PaperAsset, PdfBlob
+from app.models.paper_content import (
+    PaperContentChunk,
+    PaperContentChunkVector,
+    PaperContentVersion,
+    PaperContentVersionVector,
+)
 from app.models.project import Project, ProjectInvite, ProjectMember
 from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.registration_code import RegistrationCode
@@ -93,6 +99,10 @@ __all__ = [
     "PdfBlob",
     "PaperAsset",
     "AssetGrant",
+    "PaperContentVersion",
+    "PaperContentChunk",
+    "PaperContentVersionVector",
+    "PaperContentChunkVector",
     "PaperChunk",
     "PaperChunkVector",
     "PaperHighlight",
