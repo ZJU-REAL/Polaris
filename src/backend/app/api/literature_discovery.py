@@ -344,6 +344,7 @@ async def promote_hits(
                 select(LiteratureSearchHit).where(
                     LiteratureSearchHit.run_id == run.id,
                     LiteratureSearchHit.id.in_(body.hit_ids),
+                    LiteratureSearchHit.status.in_(["candidate", "promoted"]),
                 )
             )
         )
@@ -353,6 +354,11 @@ async def promote_hits(
     promoted: list[LiteratureSearchHit] = []
     task_inputs: list[tuple[uuid.UUID, bool]] = []
     for hit in hits:
+        # Repeating a promotion request is safe, but it must not relaunch
+        # enrichment or mutate an already-promoted paper a second time.
+        if hit.status == "promoted":
+            promoted.append(hit)
+            continue
         paper = await session.get(Paper, hit.paper_id) if hit.paper_id else None
         if paper is None:
             dedup_key = pool_dedup_key(
@@ -382,13 +388,18 @@ async def promote_hits(
                 session.add(paper)
                 await session.flush()
         scores = hit.scores if isinstance(hit.scores, dict) else {}
+        reasons = scores.get("reasons")
+        if isinstance(reasons, list):
+            rationale = "; ".join(str(reason) for reason in reasons if str(reason).strip())
+        else:
+            rationale = scores.get("reason") or scores.get("rationale")
         membership, _ = await ensure_membership(
             session,
             library_id=library.id,
             paper_id=paper.id,
             status="candidate",
             relevance_score=scores.get("relevance"),
-            relevance_reason=scores.get("reason") or scores.get("rationale"),
+            relevance_reason=rationale,
         )
         cache = await session.scalar(
             select(LiteratureOaCache).where(LiteratureOaCache.hit_id == hit.id)
