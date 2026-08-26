@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column(
             "chunk_id",
             sa.Uuid(),
-            sa.ForeignKey("paper_chunks.id", ondelete="SET NULL"),
+            sa.ForeignKey("paper_content_chunks.id", ondelete="SET NULL"),
             nullable=True,
         ),
         sa.Column("source", sa.String(16), nullable=False),

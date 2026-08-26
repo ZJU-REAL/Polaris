@@ -162,4 +162,11 @@ def test_migration_upgrade_and_downgrade_roundtrip(tmp_path: Path) -> None:
     cfg.set_main_option("script_location", str(backend_dir / "alembic"))
     cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{tmp_path / 'evidence.db'}")
     command.upgrade(cfg, "head")
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / "evidence.db") as connection:
+        foreign_keys = connection.execute(
+            "PRAGMA foreign_key_list('paper_evidence_anchors')"
+        ).fetchall()
+    assert any(row[2] == "paper_content_chunks" for row in foreign_keys)
     command.downgrade(cfg, "-1")
