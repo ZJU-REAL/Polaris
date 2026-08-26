@@ -35,11 +35,13 @@ reader feature is already production-ready.
 | #468 | Polaris Extension | Browser-side batch bridge, local PDF cache, checksum/identity validation, and batch archive client |
 | #469 | Interdisciplinary profile | Versioned scope draft/confirmation, project research mode, and dedicated cross-disciplinary library |
 | #470 | Interdisciplinary Skill | Builtin skill-market workflow for scope, retrieval, evidence, ideas, experiments, writing, and review |
+| #474 | Discovery runtime | Worker-executed OpenAlex/Semantic Scholar/arXiv adapters, year-window propagation, source isolation, progress snapshots, cross-source deduplication, deterministic ranking, and candidate-only persistence |
 
-These PRs provide backend contracts and one extension client. They do not yet
-provide the Polaris main-site discovery screen, real multi-source runtime
-orchestration, MinerU Cloud production client, or universal evidence injection
-into every AI workflow.
+These PRs provide backend contracts, a worker-executed runtime, and one
+extension client. They do not yet provide the Polaris main-site discovery
+screen, the extended provider/key-health matrix, OA cache promotion, MinerU
+Cloud production client, or universal evidence injection into every AI
+workflow.
 
 ## Required follow-up series
 
@@ -50,24 +52,14 @@ must be rebased and parent files removed from its final diff.
 
 ### Runtime and provider series
 
-1. **Discovery runtime adapters**
-   - Execute persisted query plans through OpenAlex, Semantic Scholar, arXiv,
-     and PubMed.
-   - Preserve requested count separately from internal candidate budget.
-   - Pass start/end years to every capable source.
-   - Record source progress, retries, rate limits, authentication failures, and
-     partial results.
-   - Reuse existing Polaris clients and YFR-derived provider logic through a
-     narrow adapter interface. Do not copy the standalone YFR application.
-
-2. **Extended sources and credential health**
+1. **Extended sources and credential health**
    - Add Crossref, Europe PMC, HAL, CORE, BASE, Unpaywall, and Sciverse
      adapters where credentials and service contracts permit.
    - Support encrypted key pools, rotation, per-source connection tests, and
      source-level capability reporting.
    - Keep missing metadata null; never use `Unknown journal` as a data value.
 
-3. **OA discovery cache and promotion**
+2. **OA discovery cache and promotion**
    - Download every verifiable OA candidate into a temporary, content-addressed
      cache during discovery.
    - Do not parse or vectorize an unpromoted candidate.
@@ -76,14 +68,14 @@ must be rebased and parent files removed from its final diff.
 
 ### Polaris product series
 
-4. **Library discovery workspace**
+3. **Library discovery workspace**
    - Add the discovery entry to the existing library navigation.
    - Show title, abstract, authors, venue, DOI, OA state, source evidence,
      score dimensions, inclusion rationale, progress, history, filters, and
      sorting.
    - Enforce creator/curator write access and public-library read-only access.
 
-5. **Administrator literature settings**
+4. **Administrator literature settings**
    - Add source enablement, query limits, year defaults, scoring rubric,
      provider keys, key-pool editing, and connection-test dialogs.
    - Reuse the existing LLM settings interaction style instead of introducing a
@@ -91,7 +83,7 @@ must be rebased and parent files removed from its final diff.
 
 ### Processing and evidence series
 
-6. **MinerU Cloud production adapter**
+5. **MinerU Cloud production adapter**
    - Implement upload, acceptance, processing, result download, polling,
      multi-key rotation, concurrency limits, retry windows, and persisted
      status transitions.
@@ -100,13 +92,13 @@ must be rebased and parent files removed from its final diff.
    - Reparse by creating a new content version; retain the previous active
      version until replacement succeeds.
 
-7. **Reader and PDF evidence navigation**
+6. **Reader and PDF evidence navigation**
    - Render persisted Markdown, figures, and tables safely.
    - Resolve sentence anchors to structured content and PDF text-layer
      coordinates, with quote matching and paper-page fallback.
    - Add visible parsed/vector status and retry controls.
 
-8. **Workflow evidence injection**
+7. **Workflow evidence injection**
    - Make Wiki, chat, ideas, experiments, writing, review, presentations, and
      MCP use the same authorized content-version context and evidence manifest.
    - Do not emit a fine-grained citation when the source text cannot resolve it.
@@ -114,14 +106,14 @@ must be rebased and parent files removed from its final diff.
 
 ### Interdisciplinary runtime series
 
-9. **Profile orchestration**
+8. **Profile orchestration**
    - Repair invalid LLM scope responses into editable drafts.
    - Persist query matrices, primary/associated subject boundaries, bridge-paper
      coverage, and profile-version references.
    - Run per-subject retrieval before cross-subject fusion and report coverage
      separately from relevance.
 
-10. **Skill injection and regression**
+9. **Skill injection and regression**
     - Bind a project to a profile version and Skill template version.
     - Carry the profile constraints into idea, experiment, writing, review, and
       presentation workflows.
@@ -136,7 +128,7 @@ The recommended dependency order is:
 #464 -> #465 -> #466
              └-> #467 -> #468
 #469 -> #470
-runtime adapters -> extended sources -> OA promotion
+runtime adapters (#474) -> extended sources -> OA promotion
 discovery UI -> admin settings
 MinerU production -> reader evidence -> workflow injection
 profile orchestration -> Skill injection
