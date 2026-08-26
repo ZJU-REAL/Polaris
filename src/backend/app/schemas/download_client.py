@@ -24,12 +24,6 @@ class DownloadBatchCreate(BaseModel):
     targets: list[DownloadTarget] = Field(min_length=1, max_length=500)
 
 
-class DownloadBatchCreated(BaseModel):
-    id: uuid.UUID
-    status: str
-    item_count: int
-
-
 class DownloadItemRead(BaseModel):
     id: uuid.UUID
     batch_id: uuid.UUID
@@ -44,6 +38,13 @@ class DownloadItemRead(BaseModel):
     attempt_count: int
     error: str | None = None
     result: dict[str, Any] | None = None
+
+
+class DownloadBatchCreated(BaseModel):
+    id: uuid.UUID
+    status: str
+    item_count: int
+    items: list[DownloadItemRead]
 
 
 class DownloadBatchRead(BaseModel):

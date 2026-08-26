@@ -88,6 +88,8 @@ async def test_batch_creates_one_batch_and_rotates_key(client):
     )
     assert created.status_code == 200, created.text
     assert created.json()["item_count"] == 2
+    assert len(created.json()["items"]) == 2
+    assert {item["status"] for item in created.json()["items"]} == {"queued"}
     batches = (await client.get("/api/download-batches", headers=auth)).json()
     batch = next(value for value in batches if value["id"] == created.json()["id"])
     assert len(batch["items"]) == 2
@@ -176,6 +178,26 @@ async def test_cached_target_is_skipped_without_losing_item(client):
     )
     assert batch["items"][0]["status"] == "skipped"
     assert batch["items"][0]["result"]["reason"] == "already_cached"
+
+
+@pytest.mark.asyncio
+async def test_extension_api_key_can_create_batch_and_receives_item_status(client):
+    token = await register_and_login(client, email="extension-batch-owner@example.com")
+    auth = {"Authorization": f"Bearer {token}"}
+    library_id, paper_ids = await _target("extension-batch-owner@example.com", papers=2)
+    api_key = (await client.post("/api/me/download-api-key", headers=auth)).json()["api_key"]
+    created = await client.post(
+        "/api/download-batches",
+        headers={"X-Polaris-API-Key": api_key},
+        json={
+            "targets": [
+                {"library_id": library_id, "paper_id": paper_id} for paper_id in paper_ids
+            ]
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["item_count"] == 2
+    assert [item["paper_id"] for item in created.json()["items"]] == paper_ids
 
 
 @pytest.mark.asyncio

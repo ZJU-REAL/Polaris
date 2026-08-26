@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Uploa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user
+from app.api.auth import current_active_user, current_user_optional
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
@@ -127,6 +127,19 @@ async def download_client_user(
     key.last_used_at = now
     await session.commit()
     return user
+
+
+async def download_batch_user(
+    x_polaris_api_key: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+    bearer_user: User | None = Depends(current_user_optional),
+) -> User:
+    """Authenticate batch creation from the UI session or the extension API key."""
+    if x_polaris_api_key:
+        return await download_client_user(x_polaris_api_key, session)
+    if bearer_user is not None:
+        return bearer_user
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="DOWNLOAD_AUTH_REQUIRED")
 
 
 def _new_api_key() -> str:
@@ -250,11 +263,23 @@ async def _refresh_batch(session: AsyncSession, batch_id: uuid.UUID) -> None:
         batch.status = "running"
 
 
+async def _batch_items(session: AsyncSession, batch_id: uuid.UUID) -> list[DownloadBatchItem]:
+    return list(
+        (
+            await session.execute(
+                select(DownloadBatchItem)
+                .where(DownloadBatchItem.batch_id == batch_id)
+                .order_by(DownloadBatchItem.created_at)
+            )
+        ).scalars()
+    )
+
+
 @router.post("/download-batches", response_model=DownloadBatchCreated)
 async def create_download_batch(
     data: DownloadBatchCreate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(download_batch_user),
 ) -> DownloadBatchCreated:
     batch = DownloadBatch(created_by=user.id, status="queued")
     session.add(batch)
@@ -292,7 +317,12 @@ async def create_download_batch(
         session.add(item)
     await _refresh_batch(session, batch.id)
     await session.commit()
-    return DownloadBatchCreated(id=batch.id, status=batch.status, item_count=len(data.targets))
+    return DownloadBatchCreated(
+        id=batch.id,
+        status=batch.status,
+        item_count=len(data.targets),
+        items=[_item_read(item) for item in await _batch_items(session, batch.id)],
+    )
 
 
 @router.get("/download-batches", response_model=list[DownloadBatchRead])
