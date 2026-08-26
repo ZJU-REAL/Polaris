@@ -22,6 +22,7 @@ WORKER_FUNCTIONS = frozenset(
         "resume_voyage",
         "match_user_publications",
         "index_papers_fulltext_task",
+        "parse_paper_content_task",
         "daily_feed_sync",
         "daily_wiki_ingest",
         "daily_publication_match",

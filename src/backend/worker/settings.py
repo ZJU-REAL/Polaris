@@ -11,6 +11,7 @@ from worker.tasks import (
     daily_wiki_ingest,
     index_papers_fulltext_task,
     match_user_publications,
+    parse_paper_content_task,
     ping_task,
     reconcile_stale_voyages,
     reconcile_stuck_voyages,
@@ -32,6 +33,7 @@ class WorkerSettings:
         func(resume_voyage, timeout=VOYAGE_JOB_TIMEOUT_SECONDS),
         match_user_publications,
         index_papers_fulltext_task,
+        parse_paper_content_task,
         daily_feed_sync,
         # 库同步：由「每日论文抓取」跑完后入队触发。它一度只挂在 cron 上，改成
         # 事件驱动后忘了加到这里，于是每次入队都被 arq 丢掉（#216）。
