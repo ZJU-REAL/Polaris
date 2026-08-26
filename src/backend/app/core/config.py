@@ -4,7 +4,7 @@ import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("polaris.config")
@@ -69,6 +69,44 @@ class Settings(BaseSettings):
     # ---- 文献 API ----
     s2_api_key: str = ""  # Semantic Scholar（可空，限流更严）
     openalex_mailto: str = "polaris@example.org"  # OpenAlex polite pool
+    pubmed_email: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "POLARIS_PUBMED_EMAIL", "PUBMED_EMAIL", "PAPER_SEARCH_MCP_UNPAYWALL_EMAIL"
+        ),
+    )
+    pubmed_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "POLARIS_PUBMED_API_KEY", "PUBMED_API_KEY", "PAPER_SEARCH_MCP_PUBMED_API_KEY"
+        ),
+    )
+    crossref_mailto: str = Field(
+        default="",
+        validation_alias=AliasChoices("POLARIS_CROSSREF_MAILTO", "CROSSREF_MAILTO"),
+    )
+    core_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "POLARIS_CORE_API_KEY", "CORE_API_KEY", "PAPER_SEARCH_MCP_CORE_API_KEY"
+        ),
+    )
+    unpaywall_email: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "POLARIS_UNPAYWALL_EMAIL", "UNPAYWALL_EMAIL", "PAPER_SEARCH_MCP_UNPAYWALL_EMAIL"
+        ),
+    )
+    sciverse_base_url: str = Field(
+        default="https://api.sciverse.space",
+        validation_alias=AliasChoices("POLARIS_SCIVERSE_BASE_URL", "SCIVERSE_BASE_URL"),
+    )
+    sciverse_api_tokens: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "POLARIS_SCIVERSE_API_TOKENS", "SCIVERSE_API_TOKENS", "SCIVERSE_API_TOKEN"
+        ),
+    )
 
     # ---- 邮件（密码重置等事务邮件）----
     # smtp_host 为空 = 关闭发信：忘记密码入口在前端自动隐藏（见 /auth/capabilities）。
@@ -92,6 +130,9 @@ class Settings(BaseSettings):
 
     @field_validator(
         "s2_api_key",
+        "pubmed_api_key",
+        "core_api_key",
+        "sciverse_api_tokens",
         "openai_compat_api_key",
         "anthropic_api_key",
         "github_token",
@@ -116,9 +157,7 @@ class Settings(BaseSettings):
         """生产环境结构性禁用 fake provider 回退：即便误设 POLARIS_LLM_FAKE_FALLBACK=1
         也一律钉死为 False，杜绝把演示假内容当成真实 AI 输出发给用户。"""
         if self.env == "prod" and self.llm_fake_fallback:
-            logger.warning(
-                "env=prod：忽略 POLARIS_LLM_FAKE_FALLBACK=1，生产禁止 fake LLM 回退"
-            )
+            logger.warning("env=prod：忽略 POLARIS_LLM_FAKE_FALLBACK=1，生产禁止 fake LLM 回退")
             object.__setattr__(self, "llm_fake_fallback", False)
         return self
 

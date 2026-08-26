@@ -13,9 +13,11 @@ from app.models.literature_discovery import (
 )
 from app.models.paper import Paper
 from app.schemas.literature_discovery import LiteratureCandidate, SourceSearchPage
+from app.services.literature.multi_source import MultiSourceClient
 from app.services.literature.openalex import _simplify
 from app.services.literature.runtime import (
     AdapterRegistry,
+    MultiSourceAdapter,
     OpenAlexAdapter,
     SemanticScholarAdapter,
     _candidate_from_openalex,
@@ -229,3 +231,34 @@ async def test_provider_adapters_forward_year_window_and_restore_openalex_abstra
         )
     )
     assert candidate.abstract == "Dynamic impact response"
+
+
+@pytest.mark.asyncio
+async def test_extended_sources_share_candidate_contract_and_keep_unpaywall_as_resolver():
+    class Client:
+        async def search_source(self, source, request):
+            assert source == "crossref"
+            assert request.start_year == 2016
+            return [
+                {
+                    "title": "Crossref result",
+                    "abstract": "An abstract",
+                    "authors": [{"name": "Author"}],
+                    "year": 2020,
+                    "venue": "Journal",
+                    "doi": "10.1000/example",
+                    "metadata": {"source_id": "cr-1"},
+                }
+            ]
+
+    request = type(
+        "Request",
+        (),
+        {"query": "topic", "limit": 10, "start_year": 2016, "end_year": 2025},
+    )()
+    page = await MultiSourceAdapter("crossref", Client()).search(request)
+    assert page.fetched_count == 1
+    assert page.items[0].source == "crossref"
+    assert page.items[0].doi == "10.1000/example"
+    assert page.items[0].metadata == {"source_id": "cr-1"}
+    assert await MultiSourceClient(client=Client()).search_source("unpaywall", request) == []

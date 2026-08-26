@@ -29,6 +29,7 @@ from app.schemas.literature_discovery import (
 from app.services.literature import discovery_runs
 from app.services.literature.discovery import candidate_dedup_key, validate_candidate
 from app.services.literature.discovery_ranking import rank_candidates
+from app.services.literature.multi_source import MultiSourceClient
 
 logger = logging.getLogger(__name__)
 _DEFAULT_REGISTRY: AdapterRegistry | None = None
@@ -115,6 +116,22 @@ class ArxivAdapter:
         )
 
 
+class MultiSourceAdapter:
+    """Adapter for providers that share the normalized YFR-compatible client."""
+
+    def __init__(self, name: str, client: MultiSourceClient) -> None:
+        self.name = name
+        self.client = client
+
+    async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
+        rows = await self.client.search_source(self.name, request)
+        return SourceSearchPage(
+            source=self.name,
+            items=[validate_candidate(_candidate_from_generic(self.name, row)) for row in rows],
+            fetched_count=len(rows),
+        )
+
+
 def _candidate_from_openalex(row: Mapping[str, Any]) -> LiteratureCandidate:
     return validate_candidate(
         LiteratureCandidate(
@@ -170,6 +187,24 @@ def _candidate_from_arxiv(row: Mapping[str, Any]) -> LiteratureCandidate:
     )
 
 
+def _candidate_from_generic(source: str, row: Mapping[str, Any]) -> LiteratureCandidate:
+    return LiteratureCandidate(
+        source=source,
+        title=str(row.get("title") or "Untitled"),
+        abstract=row.get("abstract"),
+        authors=row.get("authors") or [],
+        year=row.get("year"),
+        venue=row.get("venue"),
+        doi=row.get("doi"),
+        pmid=row.get("pmid"),
+        url=row.get("url"),
+        pdf_url=row.get("pdf_url"),
+        oa_status=row.get("oa_status"),
+        citation_count=row.get("citation_count"),
+        metadata=dict(row.get("metadata") or row),
+    )
+
+
 def _config_values(run: LiteratureSearchRun) -> tuple[list[str], list[str], dict[str, float]]:
     config = run.source_config if isinstance(run.source_config, dict) else {}
     sources = discovery_runs.enabled_sources(run.source_config, run.query_plan)
@@ -198,11 +233,25 @@ async def _default_registry() -> AdapterRegistry:
     from app.services.literature.openalex import OpenAlexClient
     from app.services.literature.semantic_scholar import SemanticScholarClient
 
+    multi_source = MultiSourceClient()
     _DEFAULT_REGISTRY = AdapterRegistry(
         (
             OpenAlexAdapter(OpenAlexClient()),
             SemanticScholarAdapter(SemanticScholarClient()),
             ArxivAdapter(ArxivClient()),
+            *(
+                MultiSourceAdapter(source, multi_source)
+                for source in (
+                    "pubmed",
+                    "crossref",
+                    "europepmc",
+                    "hal",
+                    "core",
+                    "base",
+                    "sciverse",
+                    "unpaywall",
+                )
+            ),
         )
     )
     return _DEFAULT_REGISTRY
@@ -310,8 +359,10 @@ async def run_discovery(
             attempt.completed_at = datetime.now(UTC)
         except Exception as exc:  # noqa: BLE001 - provider isolation is intentional
             logger.warning("literature source failed: %s", source, exc_info=True)
-            error = exc if isinstance(exc, SourceExecutionError) else SourceExecutionError(
-                "SOURCE_REQUEST_FAILED", str(exc), retryable=True
+            error = (
+                exc
+                if isinstance(exc, SourceExecutionError)
+                else SourceExecutionError("SOURCE_REQUEST_FAILED", str(exc), retryable=True)
             )
             attempt.status = "partial" if candidates else "failed"
             attempt.retryable = error.retryable
