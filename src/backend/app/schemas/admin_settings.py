@@ -1,6 +1,6 @@
 """管理端全局设置 schema（system_settings 表读写）。"""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -84,3 +84,43 @@ class ManagedCommandWatchdogAdminSettings(BaseModel):
     """Maximum unattended wait before a GPU-using command is stopped."""
 
     max_unanswered_minutes: int = Field(default=120, ge=15, le=10_080)
+
+
+class LiteratureProviderKeyStatus(BaseModel):
+    index: int
+    configured: bool
+    preview: str
+
+
+class LiteratureSearchSettings(BaseModel):
+    sources: list[str]
+    requested_count: int = Field(ge=1, le=200)
+    candidate_budget: int = Field(ge=1, le=1000)
+    start_year: int | None = Field(default=None, ge=1800, le=3000)
+    end_year: int | None = Field(default=None, ge=1800, le=3000)
+    score_weights: dict[str, float]
+    provider_keys: dict[str, list[LiteratureProviderKeyStatus]] = {}
+    provider_health: dict[str, dict[str, Any]] = {}
+
+
+class LiteratureSearchSettingsUpdate(BaseModel):
+    sources: list[str] | None = None
+    requested_count: int | None = Field(default=None, ge=1, le=200)
+    candidate_budget: int | None = Field(default=None, ge=1, le=1000)
+    start_year: int | None = Field(default=None, ge=1800, le=3000)
+    end_year: int | None = Field(default=None, ge=1800, le=3000)
+    score_weights: dict[str, float] | None = None
+    provider_keys: dict[str, list[str]] | None = None
+
+
+class LiteratureProviderTestRequest(BaseModel):
+    source: str
+    query: str = Field(min_length=1, max_length=4000)
+
+
+class LiteratureProviderTestResult(BaseModel):
+    source: str
+    ok: bool
+    latency_ms: int
+    fetched_count: int = 0
+    detail: str
