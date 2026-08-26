@@ -157,6 +157,35 @@ class SearchHitPage(BaseModel):
     sort: str
 
 
+class OaCacheRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    hit_id: uuid.UUID
+    status: str
+    source_url: str | None
+    final_url: str | None
+    source: str | None
+    blob_id: uuid.UUID | None
+    sha256: str | None
+    byte_size: int | None
+    verification: dict[str, Any] | None
+    error_code: str | None
+    error_detail: str | None
+    attempt_count: int
+    downloaded_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OaCacheBatchRequest(BaseModel):
+    hit_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
+class PromoteHitsRequest(BaseModel):
+    hit_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
 class SearchRunDetail(SearchRunRead):
     source_attempts: list[SourceAttemptRead]
 

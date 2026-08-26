@@ -1,5 +1,7 @@
 """Library-scoped literature discovery workspace API."""
 
+import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -10,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
+from app.core.redis import get_redis_dep
 from app.models.library_direction import DirectionLibrary
 from app.models.literature_discovery import (
+    LiteratureOaCache,
     LiteratureSearchHit,
     LiteratureSearchRun,
     LiteratureSourceAttempt,
@@ -19,6 +23,9 @@ from app.models.literature_discovery import (
 from app.models.user import User
 from app.schemas.literature_discovery import (
     LiteratureSearchRequest,
+    OaCacheBatchRequest,
+    OaCacheRead,
+    PromoteHitsRequest,
     SearchHitPage,
     SearchHitRead,
     SearchRunDetail,
@@ -27,9 +34,10 @@ from app.schemas.literature_discovery import (
     SourceAttemptRead,
 )
 from app.services import libraries as libraries_service
-from app.services.literature import discovery_runs
+from app.services.literature import discovery_runs, oa_cache
 
 router = APIRouter(tags=["literature-discovery"])
+logger = logging.getLogger(__name__)
 
 
 async def _library(session: AsyncSession, library_id: uuid.UUID, user: User) -> DirectionLibrary:
@@ -242,6 +250,188 @@ async def list_hits(
         size=size,
         sort=sort,
     )
+
+
+@router.post(
+    "/libraries/{library_id}/literature/runs/{run_id}/oa-cache",
+    response_model=list[OaCacheRead],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cache_oa_pdfs(
+    library_id: uuid.UUID,
+    run_id: uuid.UUID,
+    body: OaCacheBatchRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[OaCacheRead]:
+    """Cache OA PDFs for selected discovery candidates; this does not promote them."""
+    await _managed_library(session, library_id, user)
+    run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
+    hits = list(
+        (
+            await session.execute(
+                select(LiteratureSearchHit).where(
+                    LiteratureSearchHit.run_id == run.id,
+                    LiteratureSearchHit.id.in_(body.hit_ids),
+                    LiteratureSearchHit.status == "candidate",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    cached = []
+    for hit in hits:
+        cached.append(await oa_cache.cache_hit_pdf(session, hit))
+    await session.commit()
+    return [OaCacheRead.model_validate(item) for item in cached]
+
+
+@router.get(
+    "/libraries/{library_id}/literature/runs/{run_id}/oa-cache",
+    response_model=list[OaCacheRead],
+)
+async def list_oa_cache(
+    library_id: uuid.UUID,
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[OaCacheRead]:
+    await _library(session, library_id, user)
+    run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
+    rows = (
+        await session.execute(
+            select(LiteratureOaCache)
+            .join(LiteratureSearchHit, LiteratureSearchHit.id == LiteratureOaCache.hit_id)
+            .where(LiteratureSearchHit.run_id == run.id)
+            .order_by(LiteratureOaCache.created_at.desc())
+        )
+    ).scalars().all()
+    return [OaCacheRead.model_validate(item) for item in rows]
+
+
+@router.post(
+    "/libraries/{library_id}/literature/runs/{run_id}/promote",
+    response_model=list[SearchHitRead],
+    status_code=status.HTTP_201_CREATED,
+)
+async def promote_hits(
+    library_id: uuid.UUID,
+    run_id: uuid.UUID,
+    body: PromoteHitsRequest,
+    session: AsyncSession = Depends(get_session),
+    redis=Depends(get_redis_dep),
+    user: User = Depends(current_active_user),
+) -> list[SearchHitRead]:
+    """Promote candidates into the library, then launch the normal enrichment pipeline."""
+    library = await _managed_library(session, library_id, user)
+    run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
+    from app.models.paper import Paper, new_paper
+    from app.services.dedup import pool_dedup_key
+    from app.services.libraries import ensure_membership, find_pool_paper
+    from app.services.paper_assets import create_or_reuse_asset, storage_path_for_blob
+    from app.services.paper_enrich import launch_paper_enrichment
+
+    hits = list(
+        (
+            await session.execute(
+                select(LiteratureSearchHit).where(
+                    LiteratureSearchHit.run_id == run.id,
+                    LiteratureSearchHit.id.in_(body.hit_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    promoted: list[LiteratureSearchHit] = []
+    task_inputs: list[tuple[uuid.UUID, bool]] = []
+    for hit in hits:
+        paper = await session.get(Paper, hit.paper_id) if hit.paper_id else None
+        if paper is None:
+            dedup_key = pool_dedup_key(
+                arxiv_id=hit.arxiv_id,
+                doi=hit.doi,
+                title=hit.title,
+                year=hit.year,
+                authors=hit.authors,
+            )
+            paper = await find_pool_paper(
+                session, arxiv_id=hit.arxiv_id, doi=hit.doi, dedup_key=dedup_key
+            )
+            if paper is None:
+                paper = new_paper(
+                    source=hit.source,
+                    dedup_key=dedup_key,
+                    arxiv_id=hit.arxiv_id,
+                    doi=hit.doi,
+                    external_ids=hit.metadata_snapshot,
+                    title=hit.title,
+                    authors=hit.authors,
+                    abstract=hit.abstract,
+                    year=hit.year,
+                    venue=hit.venue,
+                    url=hit.url,
+                )
+                session.add(paper)
+                await session.flush()
+        scores = hit.scores if isinstance(hit.scores, dict) else {}
+        membership, _ = await ensure_membership(
+            session,
+            library_id=library.id,
+            paper_id=paper.id,
+            status="candidate",
+            relevance_score=scores.get("relevance"),
+            relevance_reason=scores.get("reason") or scores.get("rationale"),
+        )
+        cache = await session.scalar(
+            select(LiteratureOaCache).where(LiteratureOaCache.hit_id == hit.id)
+        )
+        if cache is not None and cache.status == "ready" and cache.blob_id is not None:
+            blob = await session.get(oa_cache.PdfBlob, cache.blob_id)
+            if blob is not None:
+                path = storage_path_for_blob(blob)
+                if path.is_file():
+                    content = await asyncio.to_thread(path.read_bytes)
+                    identity = f"doi:{hit.doi.lower()}" if hit.doi else (
+                        f"arxiv:{hit.arxiv_id.lower()}" if hit.arxiv_id else None
+                    )
+                    await create_or_reuse_asset(
+                        session,
+                        paper=paper,
+                        library=library,
+                        content=content,
+                        user=user,
+                        source="oa",
+                        source_locator=cache.final_url or cache.source_url,
+                        identity_key=identity,
+                        identity_status="verified" if identity else "unverified",
+                        sharing_scope="public",
+                    )
+        hit.paper_id = paper.id
+        hit.status = "promoted"
+        hit.promoted_at = datetime.now(UTC)
+        promoted.append(hit)
+        task_inputs.append((paper.id, True))
+    await session.commit()
+    for paper_id, _ in task_inputs:
+        try:
+            await launch_paper_enrichment(
+                redis=redis,
+                paper_id=paper_id,
+                user_id=user.id,
+                library_id=library.id,
+                project_id=library.project_id,
+            )
+        except Exception:  # noqa: BLE001 - promotion remains durable if worker is unavailable
+            logger.exception("failed to launch enrichment for promoted paper %s", paper_id)
+    return [SearchHitRead.model_validate(item) for item in promoted]
 
 
 @router.post(

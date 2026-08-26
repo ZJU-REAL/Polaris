@@ -431,6 +431,29 @@ async def run_discovery(
             )
         )
 
+    # Cache explicit OA PDFs while hits are still candidates.  This never
+    # creates a Paper, asset, parse job, or vector; promotion remains the gate.
+    await session.flush()
+    from app.services.literature.oa_cache import cache_hit_pdf
+
+    oa_hits = list(
+        (
+            await session.execute(
+                select(LiteratureSearchHit).where(
+                    LiteratureSearchHit.run_id == run.id,
+                    LiteratureSearchHit.pdf_url.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for hit in oa_hits:
+        try:
+            await cache_hit_pdf(session, hit)
+        except Exception:  # noqa: BLE001 - metadata results must survive OA failures
+            logger.warning("OA pre-cache failed for hit %s", hit.id, exc_info=True)
+
     run.status = "partial" if failures and ranked else "failed" if failures else "completed"
     run.error_summary = "; ".join(failures) if failures else None
     run.completed_at = datetime.now(UTC)

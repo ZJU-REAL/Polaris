@@ -9,7 +9,7 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c8d9e0f1a2b3"  # Content-addressed PDF assets and grants
+HEAD_REVISION = "d1e2f3a4b5c6"  # Persistent OA cache and promotion audit
 ASSET_PREV_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
 PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
@@ -117,6 +117,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "pdf_blobs",
                     "paper_assets",
                     "asset_grants",
+                    "literature_oa_caches",
+                    "literature_oa_attempts",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -430,8 +432,16 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"asset_id", "library_id", "status", "can_read", "can_process"} <= columns[
         "asset_grants"
     ]
+    assert {"hit_id", "status", "blob_id", "attempt_count"} <= columns["literature_oa_caches"]
+    assert {"cache_id", "url", "status"} <= columns["literature_oa_attempts"]
 
-    # 先退掉 PDF 资产，回到文献发现合同迁移。
+    # First remove the OA cache migration, returning to the asset head.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == "c8d9e0f1a2b3"
+    assert not {"literature_oa_caches", "literature_oa_attempts"} & columns["_tables"]
+
+    # Then remove the asset migration, returning to the literature contract head.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == ASSET_PREV_REVISION
