@@ -31,6 +31,7 @@ from app.services.literature.discovery import candidate_dedup_key, validate_cand
 from app.services.literature.discovery_ranking import rank_candidates
 
 logger = logging.getLogger(__name__)
+_DEFAULT_REGISTRY: AdapterRegistry | None = None
 
 
 class SourceExecutionError(RuntimeError):
@@ -190,17 +191,21 @@ def _planned_query(run: LiteratureSearchRun, source: str, keywords: Sequence[str
 
 
 async def _default_registry() -> AdapterRegistry:
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is not None:
+        return _DEFAULT_REGISTRY
     from app.services.literature.arxiv import ArxivClient
     from app.services.literature.openalex import OpenAlexClient
     from app.services.literature.semantic_scholar import SemanticScholarClient
 
-    return AdapterRegistry(
+    _DEFAULT_REGISTRY = AdapterRegistry(
         (
             OpenAlexAdapter(OpenAlexClient()),
             SemanticScholarAdapter(SemanticScholarClient()),
             ArxivAdapter(ArxivClient()),
         )
     )
+    return _DEFAULT_REGISTRY
 
 
 async def run_discovery(
