@@ -43,4 +43,3 @@ class EvidenceResolution(BaseModel):
     page_end: int | None = None
     rects: list[dict[str, float]] = Field(default_factory=list)
     href: str
-
