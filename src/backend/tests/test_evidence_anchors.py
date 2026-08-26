@@ -4,9 +4,9 @@ import uuid
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config
 
+from alembic import command
 from app.core.db import get_sessionmaker
 from app.models.evidence import PaperEvidenceAnchor
 from app.models.paper import new_paper
@@ -42,7 +42,14 @@ def test_payloads_include_sentence_paragraph_and_chunk_anchors() -> None:
         rects=[{"x0": 0.1, "y0": 0.2, "x1": 0.5, "y1": 0.3}],
     )
     assert {payload.anchor_type for payload in payloads} == {"chunk", "paragraph", "sentence"}
-    assert all(payload.content_revision == content_revision(payload.quoted_text if payload.anchor_type == "chunk" else "First sentence. Second sentence.\n\nA new paragraph.") for payload in payloads)
+    full_text = "First sentence. Second sentence.\n\nA new paragraph."
+    assert all(
+        payload.content_revision
+        == content_revision(
+            payload.quoted_text if payload.anchor_type == "chunk" else full_text
+        )
+        for payload in payloads
+    )
     assert all(payload.locator["page_start"] == 4 for payload in payloads)
 
 
