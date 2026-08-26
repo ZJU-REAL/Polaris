@@ -9,7 +9,7 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
+HEAD_REVISION = "e0f1a2b3c4d5"  # Merge OA discovery and versioned content heads
 LITERATURE_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
 PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
@@ -119,6 +119,10 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "asset_grants",
                     "literature_oa_caches",
                     "literature_oa_attempts",
+                    "paper_content_versions",
+                    "paper_content_chunks",
+                    "paper_content_version_vectors",
+                    "paper_content_chunk_vectors",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -433,18 +437,27 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     ]
     assert {"hit_id", "status", "blob_id", "attempt_count"} <= columns["literature_oa_caches"]
     assert {"cache_id", "url", "status"} <= columns["literature_oa_attempts"]
+    assert {
+        "paper_id",
+        "asset_id",
+        "version_no",
+        "parser",
+        "status",
+        "is_current",
+    } <= columns["paper_content_versions"]
+    assert {"content_version_id", "seq", "text"} <= columns["paper_content_chunks"]
 
-    # First remove the content migration, returning to the OA cache head.
-    command.downgrade(cfg, "-1")
-    version, columns = _inspect_db(db_path)
-    assert version == "d1e2f3a4b5c6"
-    assert not {"paper_content_versions", "paper_content_chunks"} & columns["_tables"]
-
-    # Then remove the OA cache migration, returning to the asset head.
-    command.downgrade(cfg, "-1")
+    # Remove both merged branches and return to their common asset head.
+    command.downgrade(cfg, "c8d9e0f1a2b3")
     version, columns = _inspect_db(db_path)
     assert version == "c8d9e0f1a2b3"
     assert not {"literature_oa_caches", "literature_oa_attempts"} & columns["_tables"]
+    assert not {
+        "paper_content_versions",
+        "paper_content_chunks",
+        "paper_content_version_vectors",
+        "paper_content_chunk_vectors",
+    } & columns["_tables"]
 
     # Then remove the asset migration, returning to the literature contract head.
     command.downgrade(cfg, "-1")
