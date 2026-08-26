@@ -9,7 +9,7 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "fa1b2c3d4e5f"  # Merge OA discovery and versioned content heads
+HEAD_REVISION = "fa1b2c3d4e5f"  # Merge OA, evidence, download, and content heads
 LITERATURE_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
 PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
@@ -123,6 +123,9 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_content_chunks",
                     "paper_content_version_vectors",
                     "paper_content_chunk_vectors",
+                    "download_api_keys",
+                    "download_batches",
+                    "download_batch_items",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -446,6 +449,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "is_current",
     } <= columns["paper_content_versions"]
     assert {"content_version_id", "seq", "text"} <= columns["paper_content_chunks"]
+    assert {"user_id", "key_prefix", "secret_hash", "status"} <= columns[
+        "download_api_keys"
+    ]
+    assert {"created_by", "status", "completed_at"} <= columns["download_batches"]
+    assert {"batch_id", "created_by", "library_id", "paper_id"} <= columns[
+        "download_batch_items"
+    ]
 
     # Remove both merged branches and return to their common asset head.
     command.downgrade(cfg, "c8d9e0f1a2b3")
