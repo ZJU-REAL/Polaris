@@ -39,6 +39,7 @@ from app.models.paper import (
     paper_concepts,
     paper_tag_links,
 )
+from app.models.paper_assets import AssetGrant, PaperAsset, PdfBlob
 from app.models.project import Project, ProjectInvite, ProjectMember
 from app.models.publication import UserAuthorProfile, UserPublication
 from app.models.registration_code import RegistrationCode
@@ -89,6 +90,9 @@ __all__ = [
     "ManuscriptTemplate",
     "ModelRoute",
     "Paper",
+    "PdfBlob",
+    "PaperAsset",
+    "AssetGrant",
     "PaperChunk",
     "PaperChunkVector",
     "PaperHighlight",

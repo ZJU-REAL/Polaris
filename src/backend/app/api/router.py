@@ -30,6 +30,7 @@ from app.api import (
     mcp_meta,
     me_llm,
     notes,
+    paper_assets,
     papers,
     presentations,
     projects,
@@ -67,6 +68,7 @@ api_router.include_router(me_llm.router)
 api_router.include_router(papers.router)
 api_router.include_router(library.router)
 api_router.include_router(literature_discovery.router)
+api_router.include_router(paper_assets.router)
 api_router.include_router(libraries.router)
 api_router.include_router(publications.router)
 api_router.include_router(notes.router)
