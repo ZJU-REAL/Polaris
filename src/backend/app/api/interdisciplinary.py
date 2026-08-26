@@ -21,6 +21,7 @@ from app.schemas.interdisciplinary import (
 )
 from app.services import libraries as libraries_service
 from app.services import projects as projects_service
+from app.services.interdisciplinary_retrieval import build_query_matrix, normalize_query_matrix
 
 router = APIRouter(prefix="/projects/{project_id}/interdisciplinary", tags=["interdisciplinary"])
 
@@ -92,6 +93,15 @@ async def save_interdisciplinary_scope(
     profile.evidence_boundary = data.evidence_boundary.strip() if data.evidence_boundary else None
     profile.validation_conditions = data.validation_conditions
     profile.user_questions = data.user_questions
+    profile.query_matrix = normalize_query_matrix(data.query_matrix or []) or build_query_matrix(
+        topic=project.statement or project.name,
+        primary_domain=profile.primary_domain,
+        related_domains=profile.related_domains,
+    )
+    profile.evidence_balance = data.evidence_balance or {
+        profile.primary_domain: 0.5,
+        **{domain: 0.5 / len(profile.related_domains) for domain in profile.related_domains},
+    }
     project.research_mode = "interdisciplinary"
     await session.commit()
     await session.refresh(profile)

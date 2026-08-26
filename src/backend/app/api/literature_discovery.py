@@ -27,6 +27,7 @@ from app.schemas.literature_discovery import (
     SourceAttemptRead,
 )
 from app.services import libraries as libraries_service
+from app.services.interdisciplinary_retrieval import apply_profile_to_query_plan
 from app.services.literature import discovery_runs
 
 router = APIRouter(tags=["literature-discovery"])
@@ -67,6 +68,13 @@ async def create_run(
     user: User = Depends(current_active_user),
 ) -> SearchRunDetail:
     library = await _managed_library(session, library_id, user)
+    query_plan = await apply_profile_to_query_plan(
+        session,
+        library=library,
+        topic=data.topic,
+        query_plan=data.query_plan,
+        source_config=data.source_config,
+    )
     run = LiteratureSearchRun(
         library_id=library.id,
         created_by=user.id,
@@ -75,14 +83,14 @@ async def create_run(
         start_year=data.start_year,
         end_year=data.end_year,
         topic=data.topic,
-        query_plan=data.query_plan,
+        query_plan=query_plan,
         source_config=data.source_config,
         model_version=data.model_version,
         progress={"phase": "queued", "fetched": 0, "accepted": 0},
     )
     session.add(run)
     await session.flush()
-    for source in discovery_runs.enabled_sources(data.source_config, data.query_plan):
+    for source in discovery_runs.enabled_sources(data.source_config, query_plan):
         session.add(
             LiteratureSourceAttempt(
                 run_id=run.id,

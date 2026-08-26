@@ -26,6 +26,7 @@ from app.schemas.literature_discovery import (
     SourceSearchPage,
     SourceSearchRequest,
 )
+from app.services.interdisciplinary_retrieval import rerank_interdisciplinary
 from app.services.literature import discovery_runs
 from app.services.literature.discovery import candidate_dedup_key, validate_candidate
 from app.services.literature.discovery_ranking import rank_candidates
@@ -213,16 +214,37 @@ def _config_values(run: LiteratureSearchRun) -> tuple[list[str], list[str], dict
     return sources, keywords, weights if isinstance(weights, dict) else {}
 
 
-def _planned_query(run: LiteratureSearchRun, source: str, keywords: Sequence[str]) -> str:
+def _planned_queries(
+    run: LiteratureSearchRun, source: str, keywords: Sequence[str]
+) -> list[dict[str, str]]:
     plan = run.query_plan if isinstance(run.query_plan, dict) else {}
     queries = plan.get("queries")
+    planned: list[dict[str, str]] = []
     if isinstance(queries, list):
         for item in queries:
             if isinstance(item, dict) and str(item.get("source", "")).lower() == source:
                 query = str(item.get("query") or "").strip()
                 if query:
-                    return query
-    return str(plan.get("query") or run.topic or (keywords[0] if keywords else "")).strip()
+                    planned.append(
+                        {
+                            "query": query,
+                            "channel_id": str(item.get("id") or "default"),
+                            "discipline": str(item.get("discipline") or ""),
+                            "role": str(item.get("role") or "core"),
+                        }
+                    )
+    if planned:
+        return planned
+    return [
+        {
+            "query": str(
+                plan.get("query") or run.topic or (keywords[0] if keywords else "")
+            ).strip(),
+            "channel_id": "default",
+            "discipline": "",
+            "role": "core",
+        }
+    ]
 
 
 async def _default_registry() -> AdapterRegistry:
@@ -334,28 +356,63 @@ async def run_discovery(
             await session.commit()
             continue
 
-        query = _planned_query(run, source, keywords)
+        planned_queries = _planned_queries(run, source, keywords)
         attempt.status = "running"
-        attempt.query = query
+        attempt.query = "\n".join(item["query"] for item in planned_queries)
         attempt.requested_count = run.candidate_budget
+        attempt.metadata_snapshot = {"query_channels": planned_queries}
         attempt.started_at = datetime.now(UTC)
         await session.commit()
         try:
-            page = await adapter.search(
-                SourceSearchRequest(
-                    query=query,
-                    start_year=run.start_year,
-                    end_year=run.end_year,
-                    limit=run.candidate_budget,
+            source_candidates: list[LiteratureCandidate] = []
+            source_fetched = 0
+            channel_failures: list[dict[str, str]] = []
+            per_query_limit = max(1, run.candidate_budget // len(planned_queries))
+            for planned in planned_queries:
+                try:
+                    page = await adapter.search(
+                        SourceSearchRequest(
+                            query=planned["query"],
+                            start_year=run.start_year,
+                            end_year=run.end_year,
+                            limit=per_query_limit,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 - isolate channel failures
+                    channel_failures.append(
+                        {"channel_id": planned["channel_id"], "error": type(exc).__name__}
+                    )
+                    continue
+                source_fetched += page.fetched_count
+                for item in page.items:
+                    candidate = validate_candidate(item)
+                    metadata = dict(candidate.metadata or {})
+                    metadata.setdefault("retrieval_hits", []).append(
+                        {
+                            "source": source,
+                            "query": planned["query"],
+                            "channel_id": planned["channel_id"],
+                            "discipline": planned["discipline"],
+                            "role": planned["role"],
+                        }
+                    )
+                    source_candidates.append(candidate.model_copy(update={"metadata": metadata}))
+            if not source_candidates and channel_failures:
+                raise SourceExecutionError(
+                    "SOURCE_CHANNELS_FAILED",
+                    f"All {len(planned_queries)} query channels failed",
+                    retryable=True,
                 )
-            )
-            validated = [validate_candidate(item) for item in page.items]
-            candidates.extend(validated)
-            fetched_total += page.fetched_count
-            attempt.fetched_count = page.fetched_count
-            attempt.accepted_count = len(validated)
-            attempt.cursor = page.next_cursor
-            attempt.status = "completed"
+            candidates.extend(source_candidates)
+            fetched_total += source_fetched
+            attempt.fetched_count = source_fetched
+            attempt.accepted_count = len(source_candidates)
+            attempt.status = "partial" if channel_failures else "completed"
+            attempt.metadata_snapshot = {
+                "query_channels": planned_queries,
+                "channel_failures": channel_failures,
+                "per_query_limit": per_query_limit,
+            }
             attempt.completed_at = datetime.now(UTC)
         except Exception as exc:  # noqa: BLE001 - provider isolation is intentional
             logger.warning("literature source failed: %s", source, exc_info=True)
@@ -381,8 +438,14 @@ async def run_discovery(
         }
         await session.commit()
 
+    candidate_rows = []
+    for candidate in candidates:
+        row = candidate.model_dump()
+        metadata = candidate.metadata if isinstance(candidate.metadata, dict) else {}
+        row["retrieval_hits"] = list(metadata.get("retrieval_hits") or [])
+        candidate_rows.append(row)
     ranked = rank_candidates(
-        [candidate.model_dump() for candidate in candidates],
+        candidate_rows,
         topic=run.topic,
         keywords=keywords,
         excluded_keywords=(run.source_config or {}).get("excluded_keywords", [])
@@ -390,7 +453,10 @@ async def run_discovery(
         else (),
         weights=weights,
         current_year=(now or datetime.now(UTC)).year,
-        limit=run.requested_count,
+        limit=min(len(candidate_rows), max(run.requested_count, run.requested_count * 3)),
+    )
+    ranked = rerank_interdisciplinary(
+        ranked, query_plan=run.query_plan, limit=run.requested_count
     )
     for item in ranked:
         # ``sources`` and ``retrieval_hits`` are ranking metadata, not part of the
@@ -426,7 +492,11 @@ async def run_discovery(
                 metadata_snapshot={
                     **(candidate.metadata or {}),
                     "sources": list(raw_candidate.get("sources") or [candidate.source]),
-                    "retrieval_hits": list(raw_candidate.get("retrieval_hits") or []),
+                    "retrieval_hits": list(
+                        raw_candidate.get("retrieval_hits")
+                        or (candidate.metadata or {}).get("retrieval_hits")
+                        or []
+                    ),
                 },
             )
         )
