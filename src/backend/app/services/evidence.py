@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 import uuid
@@ -10,15 +11,20 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.evidence import PaperEvidenceAnchor
+from app.models.library_direction import LibraryPaper
+from app.models.paper_assets import AssetGrant
 from app.models.paper_content import PaperContentChunk, PaperContentVersion
 from app.schemas.evidence import EvidenceResolution
 
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?。！？])(?:[\"'”’»\)\]]+)?\s+|\n+")
 _JOINED_HYPHEN = "\ufff0"
+_WORD_RE = re.compile(r"[\w\u4e00-\u9fff]+")
+_READY_CONTENT_STATUSES = ("ready", "ready_fallback", "vector_ready")
 
 
 def normalize_evidence_text(value: str) -> str:
@@ -103,7 +109,7 @@ def build_chunk_anchor_payloads(
     payloads = [
         AnchorPayload(
             **common,
-            anchor_key=f"chunk:{seq if seq is not None else 'na'}",
+            anchor_key=f"chunk:{chunk_id or 'na'}:{seq if seq is not None else 'na'}",
             anchor_type="chunk",
             paragraph_index=None,
             sentence_index=None,
@@ -116,7 +122,10 @@ def build_chunk_anchor_payloads(
         payloads.append(
             AnchorPayload(
                 **common,
-                anchor_key=f"paragraph:{seq if seq is not None else 'na'}:{paragraph_index}",
+                anchor_key=(
+                    f"paragraph:{chunk_id or 'na'}:"
+                    f"{seq if seq is not None else 'na'}:{paragraph_index}"
+                ),
                 anchor_type="paragraph",
                 paragraph_index=paragraph_index,
                 sentence_index=None,
@@ -130,7 +139,7 @@ def build_chunk_anchor_payloads(
                 AnchorPayload(
                     **common,
                     anchor_key=(
-                        f"sentence:{seq if seq is not None else 'na'}:"
+                        f"sentence:{chunk_id or 'na'}:{seq if seq is not None else 'na'}:"
                         f"{paragraph_index}:{sentence_index}"
                     ),
                     anchor_type="sentence",
@@ -280,3 +289,291 @@ async def resolve_evidence_anchor(
         quoted_text=anchor.quoted_text,
         href=_href(anchor.paper_id, anchor.id),
     )
+
+
+async def current_fulltext_evidence(
+    session: AsyncSession,
+    *,
+    paper_id: uuid.UUID,
+    library_ids: Sequence[uuid.UUID] | None = None,
+    query: str | None = None,
+    offset: int = 0,
+    limit: int = 8,
+) -> dict[str, Any] | None:
+    """Return current parsed chunks with sentence anchors for agent and MCP tools."""
+    version_query = select(PaperContentVersion).where(
+            PaperContentVersion.paper_id == paper_id,
+            PaperContentVersion.is_current.is_(True),
+            PaperContentVersion.status.in_(_READY_CONTENT_STATUSES),
+        )
+    if library_ids is not None:
+        if not library_ids:
+            return None
+        version_query = version_query.where(_asset_grant_exists(library_ids))
+    version = await session.scalar(version_query)
+    if version is None:
+        return None
+    chunks = list(
+        (
+            await session.execute(
+                select(PaperContentChunk)
+                .where(PaperContentChunk.content_version_id == version.id)
+                .order_by(PaperContentChunk.seq)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if query:
+        terms = {part for part in normalize_evidence_text(query).split() if len(part) > 1}
+        chunks.sort(
+            key=lambda chunk: (
+                -sum(term in normalize_evidence_text(chunk.text) for term in terms),
+                chunk.seq,
+            )
+        )
+    selected = chunks[max(0, offset) : max(0, offset) + max(1, min(limit, 20))]
+    if not selected:
+        return {
+            "version_id": str(version.id),
+            "parser": version.parser,
+            "chunks": [],
+            "next_offset": None,
+        }
+    anchors = list(
+        (
+            await session.execute(
+                select(PaperEvidenceAnchor)
+                .where(
+                    PaperEvidenceAnchor.chunk_id.in_([chunk.id for chunk in selected]),
+                    PaperEvidenceAnchor.anchor_type == "sentence",
+                )
+                .order_by(
+                    PaperEvidenceAnchor.seq,
+                    PaperEvidenceAnchor.paragraph_index,
+                    PaperEvidenceAnchor.sentence_index,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_chunk: dict[uuid.UUID, list[PaperEvidenceAnchor]] = {}
+    for anchor in anchors:
+        by_chunk.setdefault(anchor.chunk_id, []).append(anchor)
+    rows: list[dict[str, Any]] = []
+    citation_no = 0
+    for chunk in selected:
+        references = []
+        for anchor in by_chunk.get(chunk.id, []):
+            citation_no += 1
+            page_start, page_end, rects = _locator_values(anchor)
+            references.append(
+                {
+                    "citation_no": citation_no,
+                    "anchor_id": str(anchor.id),
+                    "quoted_text": anchor.quoted_text,
+                    "page_start": page_start,
+                    "page_end": page_end,
+                    "rects": rects,
+                    "href": _href(paper_id, anchor.id),
+                }
+            )
+        rows.append(
+            {
+                "chunk_id": str(chunk.id),
+                "seq": chunk.seq,
+                "text": chunk.text,
+                "page_start": chunk.page_start,
+                "page_end": chunk.page_end,
+                "evidence": references,
+            }
+        )
+    next_offset = offset + len(selected) if offset + len(selected) < len(chunks) else None
+    return {
+        "version_id": str(version.id),
+        "parser": version.parser,
+        "chunks": rows,
+        "next_offset": next_offset,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class FulltextChunkHit:
+    chunk: PaperContentChunk
+    paper_id: uuid.UUID
+    score: float
+
+
+def fulltext_vector_search_supported(session: AsyncSession) -> bool:
+    return session.get_bind().dialect.name == "postgresql"
+
+
+def _library_scope_exists(library_ids: Sequence[uuid.UUID]):
+    from app.services.papers import PAPER_STATUS_GROUPS
+
+    return exists(
+        select(LibraryPaper.paper_id).where(
+            LibraryPaper.paper_id == PaperContentVersion.paper_id,
+            LibraryPaper.library_id.in_(library_ids),
+            LibraryPaper.status.in_(PAPER_STATUS_GROUPS["library"]),
+        )
+    )
+
+
+def _asset_grant_exists(library_ids: Sequence[uuid.UUID]):
+    return exists(
+        select(AssetGrant.id).where(
+            AssetGrant.asset_id == PaperContentVersion.asset_id,
+            AssetGrant.library_id.in_(library_ids),
+            AssetGrant.status == "active",
+            AssetGrant.can_read.is_(True),
+        )
+    )
+
+
+async def keyword_search_current_fulltext(
+    session: AsyncSession,
+    *,
+    library_ids: Sequence[uuid.UUID],
+    query: str,
+    limit: int,
+) -> list[FulltextChunkHit]:
+    """Search current parsed content without selecting JSON columns through DISTINCT."""
+    if not library_ids:
+        return []
+    terms = [term for term in _WORD_RE.findall(query.casefold()) if len(term) >= 2][:8]
+    if not terms:
+        return []
+    condition = PaperContentChunk.text.ilike(f"%{terms[0]}%")
+    for term in terms[1:]:
+        condition |= PaperContentChunk.text.ilike(f"%{term}%")
+    rows = (
+        await session.execute(
+            select(PaperContentChunk, PaperContentVersion.paper_id)
+            .join(
+                PaperContentVersion,
+                PaperContentVersion.id == PaperContentChunk.content_version_id,
+            )
+            .where(
+                PaperContentVersion.is_current.is_(True),
+                PaperContentVersion.status.in_(_READY_CONTENT_STATUSES),
+                _library_scope_exists(library_ids),
+                _asset_grant_exists(library_ids),
+                condition,
+            )
+            .limit(max(1, limit) * 5)
+        )
+    ).all()
+
+    def score_of(chunk: PaperContentChunk) -> float:
+        lowered = chunk.text.casefold()
+        return float(sum(term in lowered for term in terms))
+
+    hits = [
+        FulltextChunkHit(chunk=chunk, paper_id=paper_id, score=score_of(chunk))
+        for chunk, paper_id in rows
+    ]
+    return sorted(hits, key=lambda hit: (-hit.score, hit.chunk.seq))[:limit]
+
+
+async def semantic_search_current_fulltext(
+    session: AsyncSession,
+    *,
+    library_ids: Sequence[uuid.UUID],
+    query_vector: list[float],
+    space_key: str,
+    limit: int,
+) -> list[FulltextChunkHit]:
+    """Search current full-text vectors with permission checks in correlated EXISTS."""
+    if not library_ids or not fulltext_vector_search_supported(session):
+        return []
+    from app.services.papers import PAPER_STATUS_GROUPS
+
+    rows = (
+        await session.execute(
+            sa_text(
+                "SELECT c.id, cv.paper_id, "
+                "1 - (v.embedding <=> CAST(:qv AS vector)) AS score "
+                "FROM paper_content_chunk_vectors v "
+                "JOIN paper_content_chunks c ON c.id = v.chunk_id "
+                "JOIN paper_content_versions cv ON cv.id = c.content_version_id "
+                "WHERE v.space = :space AND cv.is_current = true "
+                "AND cv.status = ANY(CAST(:content_statuses AS varchar[])) "
+                "AND EXISTS (SELECT 1 FROM library_papers lp "
+                "WHERE lp.paper_id = cv.paper_id "
+                "AND lp.library_id = ANY(CAST(:libs AS uuid[])) "
+                "AND lp.status = ANY(CAST(:paper_statuses AS varchar[]))) "
+                "AND EXISTS (SELECT 1 FROM asset_grants ag "
+                "WHERE ag.asset_id = cv.asset_id "
+                "AND ag.library_id = ANY(CAST(:libs AS uuid[])) "
+                "AND ag.status = 'active' AND ag.can_read = true) "
+                "ORDER BY score DESC LIMIT :k"
+            ),
+            {
+                "qv": json.dumps(query_vector),
+                "space": space_key,
+                "libs": [str(value) for value in library_ids],
+                "content_statuses": list(_READY_CONTENT_STATUSES),
+                "paper_statuses": list(PAPER_STATUS_GROUPS["library"]),
+                "k": max(1, limit),
+            },
+        )
+    ).all()
+    if not rows:
+        return []
+    scores = {row.id: float(row.score) for row in rows}
+    paper_ids = {row.id: row.paper_id for row in rows}
+    chunks = list(
+        (
+            await session.execute(
+                select(PaperContentChunk).where(PaperContentChunk.id.in_(scores))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {chunk.id: chunk for chunk in chunks}
+    return [
+        FulltextChunkHit(
+            chunk=by_id[row.id],
+            paper_id=paper_ids[row.id],
+            score=scores[row.id],
+        )
+        for row in rows
+        if row.id in by_id
+    ]
+
+
+async def sentence_evidence_for_chunks(
+    session: AsyncSession,
+    chunks: Sequence[PaperContentChunk],
+) -> dict[uuid.UUID, list[dict[str, Any]]]:
+    if not chunks:
+        return {}
+    anchors = list(
+        (
+            await session.execute(
+                select(PaperEvidenceAnchor).where(
+                    PaperEvidenceAnchor.chunk_id.in_([chunk.id for chunk in chunks]),
+                    PaperEvidenceAnchor.anchor_type == "sentence",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    result: dict[uuid.UUID, list[dict[str, Any]]] = {}
+    for anchor in anchors:
+        page_start, page_end, rects = _locator_values(anchor)
+        result.setdefault(anchor.chunk_id, []).append(
+            {
+                "anchor_id": str(anchor.id),
+                "quoted_text": anchor.quoted_text,
+                "page_start": page_start,
+                "page_end": page_end,
+                "rects": rects,
+                "href": _href(anchor.paper_id, anchor.id),
+            }
+        )
+    return result

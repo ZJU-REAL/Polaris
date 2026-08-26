@@ -21,6 +21,7 @@ from app.models.paper_content import (
     PaperContentVersion,
     PaperContentVersionVector,
 )
+from app.services.evidence import persist_chunk_anchors
 from app.services.paper_assets import storage_path_for_blob
 
 logger = logging.getLogger(__name__)
@@ -197,22 +198,30 @@ async def parse_content_version(
             PaperContentChunk.content_version_id == version.id
         )
     )
+    persisted_chunks: list[PaperContentChunk] = []
     for seq, item in enumerate(chunks):
         chunk_text = _clean_text(str(item.get("text") or ""))
         if not chunk_text:
             continue
-        session.add(
-            PaperContentChunk(
-                content_version_id=version.id,
-                seq=seq,
-                text=chunk_text,
-                page_start=item.get("page_start"),
-                page_end=item.get("page_end"),
-                rects=item.get("rects") or [],
-                section_path=item.get("section_path") or [],
-                anchor_meta=item.get("anchor_meta") or {},
-            )
+        chunk = PaperContentChunk(
+            content_version_id=version.id,
+            seq=seq,
+            text=chunk_text,
+            page_start=item.get("page_start"),
+            page_end=item.get("page_end"),
+            rects=item.get("rects") or [],
+            section_path=item.get("section_path") or [],
+            anchor_meta=item.get("anchor_meta") or {},
         )
+        session.add(chunk)
+        persisted_chunks.append(chunk)
+    await session.flush()
+    await persist_chunk_anchors(
+        session,
+        paper_id=version.paper_id,
+        chunks=persisted_chunks,
+        source=parser_name,
+    )
     version.parser = parser_name
     version.parser_version = str(
         result.get("parser_version") or version.parser_version or "unknown"
