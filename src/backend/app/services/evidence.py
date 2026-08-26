@@ -61,7 +61,12 @@ class AnchorPayload:
     locator: dict[str, Any]
 
 
-def _locator(*, page_start: int | None, page_end: int | None, rects: list[dict[str, float]] | None) -> dict[str, Any]:
+def _locator(
+    *,
+    page_start: int | None,
+    page_end: int | None,
+    rects: list[dict[str, float]] | None,
+) -> dict[str, Any]:
     value: dict[str, Any] = {}
     if page_start is not None:
         value["page_start"] = page_start
@@ -182,7 +187,9 @@ async def persist_chunk_anchors(
     return created
 
 
-def _locator_values(anchor: PaperEvidenceAnchor) -> tuple[int | None, int | None, list[dict[str, float]]]:
+def _locator_values(
+    anchor: PaperEvidenceAnchor,
+) -> tuple[int | None, int | None, list[dict[str, float]]]:
     locator = anchor.locator if isinstance(anchor.locator, dict) else {}
     rects = locator.get("rects") if isinstance(locator.get("rects"), list) else []
     return locator.get("page_start"), locator.get("page_end"), rects
@@ -193,7 +200,13 @@ def _href(paper_id: uuid.UUID, anchor_id: uuid.UUID | None) -> str:
     return f"/papers/{paper_id}/read?evidence=1{suffix}"
 
 
-def _resolution(anchor: PaperEvidenceAnchor, *, status: str, anchor_type: str, quoted_text: str) -> EvidenceResolution:
+def _resolution(
+    anchor: PaperEvidenceAnchor,
+    *,
+    status: str,
+    anchor_type: str,
+    quoted_text: str,
+) -> EvidenceResolution:
     page_start, page_end, rects = _locator_values(anchor)
     return EvidenceResolution(
         paper_id=anchor.paper_id,
@@ -236,13 +249,27 @@ async def resolve_evidence_anchor(
         )
     current = next((chunk for chunk in chunks if chunk.id == anchor.chunk_id), None)
     if current is not None and content_revision(current.text) == anchor.content_revision:
-        return _resolution(anchor, status="exact", anchor_type=anchor.anchor_type, quoted_text=anchor.quoted_text)
+        return _resolution(
+            anchor,
+            status="exact",
+            anchor_type=anchor.anchor_type,
+            quoted_text=anchor.quoted_text,
+        )
     needle = anchor.normalized_text
     for chunk in chunks:
         normalized = normalize_evidence_text(chunk.text)
         if needle and (needle in normalized or normalized in needle):
-            status = anchor.anchor_type if anchor.anchor_type in {"sentence", "paragraph"} else "chunk"
-            return _resolution(anchor, status=status, anchor_type=status, quoted_text=anchor.quoted_text)
+            status = (
+                anchor.anchor_type
+                if anchor.anchor_type in {"sentence", "paragraph"}
+                else "chunk"
+            )
+            return _resolution(
+                anchor,
+                status=status,
+                anchor_type=status,
+                quoted_text=anchor.quoted_text,
+            )
     if current is not None:
         return _resolution(anchor, status="chunk", anchor_type="chunk", quoted_text=current.text)
     return EvidenceResolution(

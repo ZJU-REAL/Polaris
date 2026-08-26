@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 EvidenceAnchorType = Literal["sentence", "paragraph", "chunk", "paper"]
 EvidenceFallback = Literal["exact", "sentence", "paragraph", "chunk", "paper"]
 
