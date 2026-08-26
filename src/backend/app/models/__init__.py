@@ -15,6 +15,11 @@ from app.models.idea import Idea
 from app.models.integration_token import IntegrationToken
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
+from app.models.literature_discovery import (
+    LiteratureSearchHit,
+    LiteratureSearchRun,
+    LiteratureSourceAttempt,
+)
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
 from app.models.manuscript import (
     Manuscript,
@@ -73,6 +78,9 @@ __all__ = [
     "LLMCallLog",
     "LibraryPaper",
     "LibraryResearchDigest",
+    "LiteratureSearchHit",
+    "LiteratureSearchRun",
+    "LiteratureSourceAttempt",
     "LLMProviderConfig",
     "LLMUsage",
     "Manuscript",

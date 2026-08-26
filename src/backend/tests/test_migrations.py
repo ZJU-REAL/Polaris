@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "8ff89f7fcdeb"  # DeepSeek Harness integration tokens
+HEAD_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
+PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
 PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
 VIEW_EVENTS_REVISION = "a1c9e73b5d20"  # 浏览事件（文献库/论文点击量）
 VOYAGE_MESSAGES_REVISION = "63133f647463"  # 任务对话流：voyage_messages 表
@@ -32,7 +33,9 @@ PREV_REVISION = "a7d0c9e51b34"  # 解读统一到 paper_wikis
 
 
 def _make_config(db_path: Path) -> Config:
-    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    # 不读取带中文注释的 alembic.ini，避免 Windows locale=GBK 导致迁移测试在
+    # 非 UTF-8 环境下失败。迁移运行只需要这两个配置项。
+    cfg = Config()
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db_path}")
     return cfg
@@ -107,6 +110,9 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "buddy_memories",
                     "view_events",
                     "integration_tokens",
+                    "literature_search_runs",
+                    "literature_search_hits",
+                    "literature_source_attempts",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -380,6 +386,48 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "revoked_at",
         "last_used_at",
     } <= columns["integration_tokens"]
+    assert {
+        "literature_search_runs",
+        "literature_search_hits",
+        "literature_source_attempts",
+    } <= columns["_tables"]
+    assert {
+        "library_id",
+        "created_by",
+        "requested_count",
+        "candidate_budget",
+        "topic",
+        "query_plan",
+        "source_config",
+        "progress",
+    } <= columns["literature_search_runs"]
+    assert {
+        "run_id",
+        "paper_id",
+        "source",
+        "dedup_key",
+        "title",
+        "scores",
+        "metadata_snapshot",
+    } <= columns["literature_search_hits"]
+    assert {
+        "run_id",
+        "source",
+        "status",
+        "fetched_count",
+        "accepted_count",
+        "retryable",
+    } <= columns["literature_source_attempts"]
+
+    # 文献发现合同迁移回退：保留原有 integration_tokens head。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == PREVIOUS_HEAD_REVISION
+    assert not {
+        "literature_search_runs",
+        "literature_search_hits",
+        "literature_source_attempts",
+    } & columns["_tables"]
 
     # 先退掉集成令牌。
     command.downgrade(cfg, "-1")
