@@ -1,0 +1,282 @@
+"""句子/段落级证据锚点的生成、持久化和内容版本回退。"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import unicodedata
+import uuid
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.evidence import PaperEvidenceAnchor
+from app.models.paper_content import PaperContentChunk, PaperContentVersion
+from app.schemas.evidence import EvidenceResolution
+
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?。！？])(?:[\"'”’»\)\]]+)?\s+|\n+")
+_JOINED_HYPHEN = "\ufff0"
+
+
+def normalize_evidence_text(value: str) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).replace("\u00ad", "")
+    text = re.sub(r"-\s*\n\s*", "", text)
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def content_revision(text: str) -> str:
+    return hashlib.sha256(normalize_evidence_text(text).encode("utf-8")).hexdigest()
+
+
+def split_paragraphs(text: str) -> list[str]:
+    return [part.strip() for part in re.split(r"\n\s*\n+", text) if part.strip()]
+
+
+def split_sentences(text: str) -> list[str]:
+    protected = re.sub(r"-\s*\n\s*", f"-{_JOINED_HYPHEN}", text)
+    sentences = [
+        part.replace(_JOINED_HYPHEN, "\n").strip()
+        for part in _SENTENCE_BOUNDARY.split(protected)
+        if part.strip()
+    ]
+    return sentences or ([text.strip()] if text.strip() else [])
+
+
+@dataclass(frozen=True, slots=True)
+class AnchorPayload:
+    paper_id: uuid.UUID
+    chunk_id: uuid.UUID | None
+    source: str
+    content_revision: str
+    anchor_key: str
+    anchor_type: str
+    seq: int | None
+    paragraph_index: int | None
+    sentence_index: int | None
+    quoted_text: str
+    normalized_text: str
+    locator: dict[str, Any]
+
+
+def _locator(
+    *,
+    page_start: int | None,
+    page_end: int | None,
+    rects: list[dict[str, float]] | None,
+) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    if page_start is not None:
+        value["page_start"] = page_start
+    if page_end is not None:
+        value["page_end"] = page_end
+    if rects:
+        value["rects"] = rects
+    return value
+
+
+def build_chunk_anchor_payloads(
+    *,
+    paper_id: uuid.UUID,
+    chunk_id: uuid.UUID | None,
+    seq: int | None,
+    text: str,
+    source: str,
+    page_start: int | None = None,
+    page_end: int | None = None,
+    rects: list[dict[str, float]] | None = None,
+) -> list[AnchorPayload]:
+    raw = text.strip()
+    if not raw:
+        return []
+    revision = content_revision(raw)
+    common = {
+        "paper_id": paper_id,
+        "chunk_id": chunk_id,
+        "source": source,
+        "content_revision": revision,
+        "seq": seq,
+    }
+    base_locator = _locator(page_start=page_start, page_end=page_end, rects=rects)
+    payloads = [
+        AnchorPayload(
+            **common,
+            anchor_key=f"chunk:{seq if seq is not None else 'na'}",
+            anchor_type="chunk",
+            paragraph_index=None,
+            sentence_index=None,
+            quoted_text=raw,
+            normalized_text=normalize_evidence_text(raw),
+            locator=base_locator,
+        )
+    ]
+    for paragraph_index, paragraph in enumerate(split_paragraphs(raw)):
+        payloads.append(
+            AnchorPayload(
+                **common,
+                anchor_key=f"paragraph:{seq if seq is not None else 'na'}:{paragraph_index}",
+                anchor_type="paragraph",
+                paragraph_index=paragraph_index,
+                sentence_index=None,
+                quoted_text=paragraph,
+                normalized_text=normalize_evidence_text(paragraph),
+                locator=base_locator,
+            )
+        )
+        for sentence_index, sentence in enumerate(split_sentences(paragraph)):
+            payloads.append(
+                AnchorPayload(
+                    **common,
+                    anchor_key=(
+                        f"sentence:{seq if seq is not None else 'na'}:"
+                        f"{paragraph_index}:{sentence_index}"
+                    ),
+                    anchor_type="sentence",
+                    paragraph_index=paragraph_index,
+                    sentence_index=sentence_index,
+                    quoted_text=sentence,
+                    normalized_text=normalize_evidence_text(sentence),
+                    locator=base_locator,
+                )
+            )
+    return payloads
+
+
+async def persist_chunk_anchors(
+    session: AsyncSession,
+    *,
+    paper_id: uuid.UUID,
+    chunks: Iterable[PaperContentChunk],
+    source: str | None = None,
+    locators: Mapping[uuid.UUID, Mapping[str, Any]] | None = None,
+) -> int:
+    created = 0
+    for chunk in chunks:
+        raw = str(chunk.text or "").strip()
+        if not raw:
+            continue
+        locator = dict(locators.get(chunk.id, {}) if locators else {})
+        locator.setdefault("page_start", chunk.page_start)
+        locator.setdefault("page_end", chunk.page_end)
+        if not locator.get("rects") and isinstance(chunk.rects, list):
+            locator["rects"] = chunk.rects
+        for payload in build_chunk_anchor_payloads(
+            paper_id=paper_id,
+            chunk_id=chunk.id,
+            seq=chunk.seq,
+            text=raw,
+            source=source or "content",
+            page_start=locator.get("page_start"),
+            page_end=locator.get("page_end"),
+            rects=locator.get("rects"),
+        ):
+            exists = await session.scalar(
+                select(PaperEvidenceAnchor.id).where(
+                    PaperEvidenceAnchor.paper_id == payload.paper_id,
+                    PaperEvidenceAnchor.content_revision == payload.content_revision,
+                    PaperEvidenceAnchor.anchor_key == payload.anchor_key,
+                )
+            )
+            if exists is None:
+                session.add(PaperEvidenceAnchor(**asdict(payload)))
+                created += 1
+    if created:
+        await session.flush()
+    return created
+
+
+def _locator_values(
+    anchor: PaperEvidenceAnchor,
+) -> tuple[int | None, int | None, list[dict[str, float]]]:
+    locator = anchor.locator if isinstance(anchor.locator, dict) else {}
+    rects = locator.get("rects") if isinstance(locator.get("rects"), list) else []
+    return locator.get("page_start"), locator.get("page_end"), rects
+
+
+def _href(paper_id: uuid.UUID, anchor_id: uuid.UUID | None) -> str:
+    suffix = f"&evidence={anchor_id}" if anchor_id else ""
+    return f"/papers/{paper_id}/read?evidence=1{suffix}"
+
+
+def _resolution(
+    anchor: PaperEvidenceAnchor,
+    *,
+    status: str,
+    anchor_type: str,
+    quoted_text: str,
+) -> EvidenceResolution:
+    page_start, page_end, rects = _locator_values(anchor)
+    return EvidenceResolution(
+        paper_id=anchor.paper_id,
+        anchor_id=anchor.id,
+        status=status,
+        anchor_type=anchor_type,
+        quoted_text=quoted_text,
+        chunk_id=anchor.chunk_id,
+        seq=anchor.seq,
+        page_start=page_start,
+        page_end=page_end,
+        rects=rects,
+        href=_href(anchor.paper_id, anchor.id),
+    )
+
+
+async def resolve_evidence_anchor(
+    session: AsyncSession,
+    anchor: PaperEvidenceAnchor,
+    *,
+    current_chunks: Sequence[PaperContentChunk] | None = None,
+) -> EvidenceResolution:
+    chunks = list(current_chunks or [])
+    if not chunks:
+        chunks = list(
+            (
+                await session.execute(
+                    select(PaperContentChunk)
+                    .join(
+                        PaperContentVersion,
+                        PaperContentVersion.id == PaperContentChunk.content_version_id,
+                    )
+                    .where(
+                        PaperContentVersion.paper_id == anchor.paper_id,
+                        PaperContentVersion.is_current.is_(True),
+                    )
+                )
+            )
+            .scalars()
+        )
+    current = next((chunk for chunk in chunks if chunk.id == anchor.chunk_id), None)
+    if current is not None and content_revision(current.text) == anchor.content_revision:
+        return _resolution(
+            anchor,
+            status="exact",
+            anchor_type=anchor.anchor_type,
+            quoted_text=anchor.quoted_text,
+        )
+    needle = anchor.normalized_text
+    for chunk in chunks:
+        normalized = normalize_evidence_text(chunk.text)
+        if needle and (needle in normalized or normalized in needle):
+            status = (
+                anchor.anchor_type
+                if anchor.anchor_type in {"sentence", "paragraph"}
+                else "chunk"
+            )
+            return _resolution(
+                anchor,
+                status=status,
+                anchor_type=status,
+                quoted_text=anchor.quoted_text,
+            )
+    if current is not None:
+        return _resolution(anchor, status="chunk", anchor_type="chunk", quoted_text=current.text)
+    return EvidenceResolution(
+        paper_id=anchor.paper_id,
+        anchor_id=anchor.id,
+        status="paper",
+        anchor_type="paper",
+        quoted_text=anchor.quoted_text,
+        href=_href(anchor.paper_id, anchor.id),
+    )

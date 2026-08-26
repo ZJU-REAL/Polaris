@@ -12,6 +12,7 @@ from app.api import (
     chat_bots,
     concepts,
     daily,
+    evidence,
     experiments,
     feedback,
     gates,
@@ -88,5 +89,6 @@ api_router.include_router(mcp_meta.router)
 api_router.include_router(presentations.router)
 api_router.include_router(ssh_credentials.router)
 api_router.include_router(tts.router)
+api_router.include_router(evidence.router)
 api_router.include_router(experiments.router)
 api_router.include_router(manuscripts.router)
