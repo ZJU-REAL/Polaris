@@ -141,6 +141,42 @@ class Settings(BaseSettings):
             "POLARIS_LITERATURE_SOURCE_RETRIES", "PAPER_SEARCH_SOURCE_RETRIES"
         ),
     )
+    mineru_base_url: str = Field(
+        default="https://mineru.net/api/v4",
+        validation_alias=AliasChoices("POLARIS_MINERU_BASE_URL", "MINERU_BASE_URL"),
+    )
+    mineru_api_tokens: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "POLARIS_MINERU_API_TOKENS", "MINERU_API_TOKENS", "MINERU_API_KEY"
+        ),
+    )
+    mineru_timeout_seconds: float = Field(
+        default=3600.0,
+        gt=30,
+        le=86_400,
+        validation_alias=AliasChoices("POLARIS_MINERU_TIMEOUT_SECONDS", "MINERU_TIMEOUT_SECONDS"),
+    )
+    mineru_poll_interval_seconds: float = Field(
+        default=10.0,
+        ge=1,
+        le=300,
+        validation_alias=AliasChoices(
+            "POLARIS_MINERU_POLL_INTERVAL_SECONDS", "MINERU_POLL_INTERVAL_SECONDS"
+        ),
+    )
+    mineru_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        validation_alias=AliasChoices("POLARIS_MINERU_RETRIES", "MINERU_RETRIES"),
+    )
+    mineru_concurrency: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        validation_alias=AliasChoices("POLARIS_MINERU_CONCURRENCY", "MINERU_CONCURRENCY"),
+    )
 
     # ---- 邮件（密码重置等事务邮件）----
     # smtp_host 为空 = 关闭发信：忘记密码入口在前端自动隐藏（见 /auth/capabilities）。
@@ -167,6 +203,7 @@ class Settings(BaseSettings):
         "pubmed_api_key",
         "core_api_key",
         "sciverse_api_tokens",
+        "mineru_api_tokens",
         "openai_compat_api_key",
         "anthropic_api_key",
         "github_token",

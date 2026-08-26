@@ -46,12 +46,9 @@ async def run_literature_discovery(ctx: dict[str, Any], run_id: str) -> dict[str
 
 
 async def parse_paper_content_task(
-    ctx: dict[str, Any],
-    version_id: str,
-    user_id: str | None = None,
-    library_id: str | None = None,
+    ctx: dict[str, Any], version_id: str, user_id: str | None = None, library_id: str | None = None
 ) -> None:
-    """Parse and vectorize one immutable paper content version."""
+    """Parse and vectorize one immutable content version."""
     from app.models.paper_content import PaperContentVersion
     from app.services.paper_content import parse_content_version, vectorize_content_version
 
@@ -60,15 +57,12 @@ async def parse_paper_content_task(
         if version is None:
             return
         await parse_content_version(session, version=version)
-        try:
-            await vectorize_content_version(
-                session,
-                version=version,
-                user_id=uuid.UUID(user_id) if user_id else None,
-                library_id=uuid.UUID(library_id) if library_id else None,
-            )
-        except Exception:
-            logger.exception("content vectorization failed for %s", version_id)
+        await vectorize_content_version(
+            session,
+            version=version,
+            user_id=uuid.UUID(user_id) if user_id else None,
+            library_id=uuid.UUID(library_id) if library_id else None,
+        )
 
 
 def _make_engine() -> VoyageEngine:
