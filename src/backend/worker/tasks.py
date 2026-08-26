@@ -32,6 +32,19 @@ async def ping_task(ctx: dict[str, Any], message: str = "ping") -> str:
     return f"pong: {message}"
 
 
+async def run_literature_discovery(ctx: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """Execute one persisted library literature-discovery run."""
+    from app.services.literature.runtime import run_discovery
+
+    async with get_sessionmaker()() as session:
+        run = await run_discovery(session, uuid.UUID(run_id))
+        return {
+            "run_id": str(run.id),
+            "status": run.status,
+            "returned_count": (run.progress or {}).get("returned_count", 0),
+        }
+
+
 def _make_engine() -> VoyageEngine:
     return VoyageEngine(event_bus=EventBus(get_redis()))
 
