@@ -1,6 +1,6 @@
 """Add immutable sentence and paragraph evidence anchors.
 
-Revision ID: b8c9d0e1f2a3
+Revision ID: e5f6a7b8c9d0
 Revises: d9e0f1a2b3c4
 """
 
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "b8c9d0e1f2a3"
+revision: str = "e5f6a7b8c9d0"
 down_revision: str | None = "d9e0f1a2b3c4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
