@@ -470,7 +470,11 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == DOWNLOAD_PREV_REVISION
-    assert not {"download_api_keys", "download_batches", "download_batch_items"} & columns["_tables"]
+    assert not {
+        "download_api_keys",
+        "download_batches",
+        "download_batch_items",
+    } & columns["_tables"]
 
     # 先退掉版本化内容。
     command.downgrade(cfg, "-1")
