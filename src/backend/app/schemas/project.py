@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -19,12 +20,14 @@ class ProjectCreate(BaseModel):
     slug: str | None = None  # 缺省时由 name 生成
     statement: str | None = Field(default=None, max_length=2000)
     source_library_ids: list[uuid.UUID] = Field(default_factory=list)
+    research_mode: Literal["conventional", "interdisciplinary"] = "conventional"
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     statement: str | None = Field(default=None, max_length=2000)
     status: str | None = None  # active | archived
+    research_mode: Literal["conventional", "interdisciplinary"] | None = None
 
 
 class ProjectRead(BaseModel):
@@ -35,6 +38,7 @@ class ProjectRead(BaseModel):
     slug: str
     statement: str | None
     status: str
+    research_mode: Literal["conventional", "interdisciplinary"]
     owner_id: uuid.UUID
     created_at: datetime
     updated_at: datetime

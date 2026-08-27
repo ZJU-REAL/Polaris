@@ -401,6 +401,8 @@ def _overview_dict(
     return {
         "id": library.id,
         "name": library.name,
+        "library_kind": library.library_kind,
+        "interdisciplinary_domains": library.interdisciplinary_domains,
         "statement": library.statement,
         "cadence": library.cadence,
         "monthly_budget": library.monthly_budget,

@@ -10,6 +10,7 @@ Create Date: 2026-08-05
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "c31f7a9d40b2"

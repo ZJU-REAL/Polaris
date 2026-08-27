@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d1e2f3a4b5c6"  # Persistent OA cache and promotion audit
+HEAD_REVISION = "e9f0a1b2c3d4"  # Interdisciplinary research profiles
+OA_CACHE_REVISION = "d1e2f3a4b5c6"  # Persistent OA cache and promotion audit
 DOWNLOAD_BATCH_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
 EVIDENCE_ANCHOR_REVISION = "e5f6a7b8c9d0"  # Version-aware sentence/paragraph evidence anchors
 CONTENT_VERSION_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
@@ -131,6 +132,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "download_batch_items",
                     "literature_oa_caches",
                     "literature_oa_attempts",
+                    "interdisciplinary_research_profiles",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -468,7 +470,20 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
 
     assert {"literature_oa_caches", "literature_oa_attempts"} <= columns["_tables"]
 
-    # 先退掉 OA 缓存迁移，回到下载批次协议版本。
+    assert {"primary_domain", "related_domains", "status", "version"} <= columns[
+        "interdisciplinary_research_profiles"
+    ]
+    assert {"library_kind", "interdisciplinary_project_id"} <= columns["direction_libraries"]
+    assert "research_mode" in columns["projects"]
+
+    # 先退掉跨学科档案迁移，回到 OA 缓存版本。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == OA_CACHE_REVISION
+    assert "interdisciplinary_research_profiles" not in columns["_tables"]
+    assert "library_kind" not in columns["direction_libraries"]
+
+    # 再退掉 OA 缓存迁移，回到下载批次协议版本。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == DOWNLOAD_BATCH_REVISION

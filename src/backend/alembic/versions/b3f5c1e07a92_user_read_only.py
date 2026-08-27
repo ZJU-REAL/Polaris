@@ -9,6 +9,7 @@ Create Date: 2026-08-06
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "b3f5c1e07a92"

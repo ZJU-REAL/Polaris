@@ -15,6 +15,7 @@ from app.models.feedback import Feedback, FeedbackImage
 from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.integration_token import IntegrationToken
+from app.models.interdisciplinary import InterdisciplinaryResearchProfile
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
 from app.models.literature_discovery import (
@@ -84,6 +85,7 @@ __all__ = [
     "FeedbackImage",
     "Gate",
     "Idea",
+    "InterdisciplinaryResearchProfile",
     "IdeaVector",
     "IntegrationToken",
     "LLMCallLog",
