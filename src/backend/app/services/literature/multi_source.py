@@ -7,6 +7,7 @@ lookup), so its keyword-search method returns no candidates by design.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -16,6 +17,16 @@ from urllib.parse import quote
 import httpx
 
 from app.core.config import get_settings
+
+
+class ProviderRequestError(RuntimeError):
+    """A provider request failed after bounded retries."""
+
+    def __init__(self, source: str, code: str, detail: str, *, retryable: bool = True) -> None:
+        super().__init__(detail)
+        self.source = source
+        self.code = code
+        self.retryable = retryable
 
 
 def _text(value: Any) -> str:
@@ -70,11 +81,60 @@ class MultiSourceClient:
         settings = get_settings()
         self._client = client or httpx.AsyncClient(
             proxy=settings.outbound_proxy or None,
-            timeout=30.0,
+            timeout=settings.literature_source_timeout_seconds,
             follow_redirects=True,
             headers={"User-Agent": f"Polaris/1.0 (mailto:{settings.openalex_mailto})"},
         )
         self._owns_client = client is None
+        self._timeout = settings.literature_source_timeout_seconds
+        self._retries = settings.literature_source_retries
+
+    async def _request_json(
+        self,
+        source: str,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """Request JSON with bounded retry and explicit provider errors."""
+        last_error: Exception | None = None
+        for attempt in range(self._retries + 1):
+            try:
+                response = await self._client.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json,
+                    headers=headers,
+                    timeout=timeout or self._timeout,
+                )
+                if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                    response.raise_for_status()
+                if response.status_code >= 400:
+                    raise ProviderRequestError(
+                        source,
+                        f"HTTP_{response.status_code}",
+                        f"{source} returned HTTP {response.status_code}",
+                        retryable=False,
+                    )
+                return response.json()
+            except ProviderRequestError as exc:
+                if not exc.retryable:
+                    raise
+                last_error = exc
+            except (httpx.HTTPError, ValueError) as exc:
+                last_error = exc
+            if attempt < self._retries:
+                await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
+        raise ProviderRequestError(
+            source,
+            "REQUEST_FAILED",
+            f"{type(last_error).__name__}: {last_error}" if last_error else "request failed",
+        ) from last_error
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -98,15 +158,14 @@ class MultiSourceClient:
         if not settings.unpaywall_email or not doi:
             return None
         try:
-            response = await self._client.get(
+            payload = await self._request_json(
+                "unpaywall",
+                "GET",
                 f"https://api.unpaywall.org/v2/{quote(doi, safe='/')}",
                 params={"email": settings.unpaywall_email},
-                timeout=15.0,
+                timeout=min(15.0, self._timeout),
             )
-            if response.status_code >= 400:
-                return None
-            payload = response.json()
-        except (httpx.HTTPError, ValueError):
+        except ProviderRequestError:
             return None
         return payload if isinstance(payload, dict) else None
 
@@ -130,24 +189,27 @@ class MultiSourceClient:
         if settings.pubmed_email:
             params["email"] = settings.pubmed_email
         try:
-            response = await self._client.get(
-                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi", params=params
+            payload = await self._request_json(
+                "pubmed",
+                "GET",
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+                params=params,
             )
-            response.raise_for_status()
-            ids = (response.json().get("esearchresult") or {}).get("idlist") or []
+            ids = (payload.get("esearchresult") or {}).get("idlist") or []
             if not ids:
                 return []
             summary_params = {"db": "pubmed", "id": ",".join(ids), "retmode": "json"}
             if settings.pubmed_api_key:
                 summary_params["api_key"] = settings.pubmed_api_key
-            summary = await self._client.get(
+            summary = await self._request_json(
+                "pubmed",
+                "GET",
                 "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
                 params=summary_params,
             )
-            summary.raise_for_status()
-            result = summary.json().get("result") or {}
-        except (httpx.HTTPError, ValueError):
-            return []
+            result = summary.get("result") or {}
+        except ProviderRequestError:
+            raise
         rows: list[dict[str, Any]] = []
         for pmid in ids:
             item = result.get(str(pmid))
@@ -190,13 +252,12 @@ class MultiSourceClient:
         }
         headers = {"User-Agent": f"Polaris/1.0 (mailto:{settings.crossref_mailto})"}
         try:
-            response = await self._client.get(
-                "https://api.crossref.org/works", params=params, headers=headers
+            payload = await self._request_json(
+                "crossref", "GET", "https://api.crossref.org/works", params=params, headers=headers
             )
-            response.raise_for_status()
-            items = (response.json().get("message") or {}).get("items") or []
-        except (httpx.HTTPError, ValueError):
-            return []
+            items = (payload.get("message") or {}).get("items") or []
+        except ProviderRequestError:
+            raise
         return [self._crossref_item(item) for item in items if isinstance(item, dict)]
 
     async def _search_europepmc(self, request: Any) -> list[dict[str, Any]]:
@@ -210,13 +271,15 @@ class MultiSourceClient:
             "sort": "CITED desc",
         }
         try:
-            response = await self._client.get(
-                "https://www.ebi.ac.uk/europepmc/webservices/rest/search", params=params
+            payload = await self._request_json(
+                "europepmc",
+                "GET",
+                "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+                params=params,
             )
-            response.raise_for_status()
-            items = (response.json().get("resultList") or {}).get("result") or []
-        except (httpx.HTTPError, ValueError):
-            return []
+            items = (payload.get("resultList") or {}).get("result") or []
+        except ProviderRequestError:
+            raise
         return [self._europepmc_item(item) for item in items if isinstance(item, dict)]
 
     async def _search_hal(self, request: Any) -> list[dict[str, Any]]:
@@ -233,13 +296,12 @@ class MultiSourceClient:
             "wt": "json",
         }
         try:
-            response = await self._client.get(
-                "https://api.archives-ouvertes.fr/search/", params=params
+            payload = await self._request_json(
+                "hal", "GET", "https://api.archives-ouvertes.fr/search/", params=params
             )
-            response.raise_for_status()
-            items = (response.json().get("response") or {}).get("docs") or []
-        except (httpx.HTTPError, ValueError):
-            return []
+            items = (payload.get("response") or {}).get("docs") or []
+        except ProviderRequestError:
+            raise
         return [self._hal_item(item) for item in items if isinstance(item, dict)]
 
     async def _search_core(self, request: Any) -> list[dict[str, Any]]:
@@ -251,15 +313,16 @@ class MultiSourceClient:
             "limit": min(request.limit, 100),
         }
         try:
-            response = await self._client.post(
+            payload = await self._request_json(
+                "core",
+                "POST",
                 "https://api.core.ac.uk/v3/search/works",
                 json=params,
                 headers={"Authorization": f"Bearer {settings.core_api_key}"},
             )
-            response.raise_for_status()
-            items = response.json().get("results") or []
-        except (httpx.HTTPError, ValueError):
-            return []
+            items = payload.get("results") or []
+        except ProviderRequestError:
+            raise
         return [self._core_item(item) for item in items if isinstance(item, dict)]
 
     async def _search_base(self, request: Any) -> list[dict[str, Any]]:
@@ -271,15 +334,15 @@ class MultiSourceClient:
             "hits": min(request.limit, 100),
         }
         try:
-            response = await self._client.get(
+            payload = await self._request_json(
+                "base",
+                "GET",
                 "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi",
                 params=params,
             )
-            response.raise_for_status()
-            payload = response.json()
             items = (payload.get("response") or {}).get("docs") or payload.get("docs") or []
-        except (httpx.HTTPError, ValueError):
-            return []
+        except ProviderRequestError:
+            raise
         return [self._base_item(item) for item in items if isinstance(item, dict)]
 
     async def _search_sciverse(self, request: Any) -> list[dict[str, Any]]:
@@ -295,7 +358,9 @@ class MultiSourceClient:
         if not token:
             return []
         try:
-            response = await self._client.post(
+            payload = await self._request_json(
+                "sciverse",
+                "POST",
                 f"{settings.sciverse_base_url.rstrip('/')}/meta-search",
                 json={
                     "query": request.query,
@@ -304,10 +369,8 @@ class MultiSourceClient:
                 },
                 headers={"Authorization": f"Bearer {token}"},
             )
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.HTTPError, ValueError):
-            return []
+        except ProviderRequestError:
+            raise
         items = payload.get("results") or payload.get("items") or payload.get("data") or []
         return [self._sciverse_item(item) for item in items if isinstance(item, dict)]
 

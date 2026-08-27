@@ -117,6 +117,30 @@ class Settings(BaseSettings):
             "POLARIS_SCIVERSE_API_TOKENS", "SCIVERSE_API_TOKENS", "SCIVERSE_API_TOKEN"
         ),
     )
+    literature_source_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=32,
+        validation_alias=AliasChoices(
+            "POLARIS_LITERATURE_SOURCE_CONCURRENCY", "PAPER_SEARCH_SOURCE_CONCURRENCY"
+        ),
+    )
+    literature_source_timeout_seconds: float = Field(
+        default=25.0,
+        gt=0,
+        le=300,
+        validation_alias=AliasChoices(
+            "POLARIS_LITERATURE_SOURCE_TIMEOUT_SECONDS", "PAPER_SEARCH_SOURCE_TIMEOUT_SECONDS"
+        ),
+    )
+    literature_source_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        validation_alias=AliasChoices(
+            "POLARIS_LITERATURE_SOURCE_RETRIES", "PAPER_SEARCH_SOURCE_RETRIES"
+        ),
+    )
 
     # ---- 邮件（密码重置等事务邮件）----
     # smtp_host 为空 = 关闭发信：忘记密码入口在前端自动隐藏（见 /auth/capabilities）。
