@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Polaris 扩展</title>
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="brand-block">
+          <strong class="brand-mark">POLARIS<span>.</span></strong>
+        <div><h1>Polaris 扩展</h1><p id="current-task-label">尚未选择任务</p></div>
+        </div>
+        <div class="header-actions">
+          <span id="bridge-status" class="status-indicator">本地桥检测中</span>
+          <button id="resume-task" class="secondary-command compact" type="button" hidden>继续</button>
+          <button id="stop-task" class="stop-command" type="button" hidden>停止</button>
+        </div>
+      </header>
+
+      <section class="task-switcher">
+        <label for="job-select">当前任务</label>
+        <select id="job-select"><option value="">暂无任务</option></select>
+      </section>
+
+      <section class="polaris-connect" aria-labelledby="polaris-connect-title">
+        <strong id="polaris-connect-title">Polaris 连接</strong>
+        <label class="polaris-field" for="polaris-origin">
+          <span>工作台地址</span>
+          <input id="polaris-origin" type="url" inputmode="url" autocomplete="url" placeholder="https://polaris.example.com" />
+        </label>
+        <label class="polaris-field" for="polaris-api-key">
+          <span>API Key</span>
+          <input id="polaris-api-key" type="password" autocomplete="off" placeholder="输入用户专属 API Key" />
+        </label>
+        <div class="polaris-actions">
+          <button id="test-polaris" class="secondary-command compact" type="button">测试</button>
+          <button id="save-polaris" class="primary-command compact" type="button">保存</button>
+        </div>
+        <span id="polaris-status" class="polaris-status" role="status">尚未连接</span>
+      </section>
+
+      <section id="bridge-setup" class="bridge-setup-card" aria-labelledby="bridge-setup-title">
+        <div class="bridge-setup-copy">
+          <span class="eyebrow">OPTIONAL LOCAL BRIDGE</span>
+          <strong id="bridge-setup-title">安装本地下载桥</strong>
+          <p id="bridge-setup-description">PDF 先写入浏览器内部缓存；最终归档由本地桥严格校验后写入所选目录。</p>
+          <progress id="bridge-install-progress" max="100" value="0" hidden></progress>
+        </div>
+        <div class="bridge-setup-actions">
+          <button id="download-bridge-installer" class="secondary-command compact" type="button">下载安装程序</button>
+          <button id="open-bridge-installer" class="primary-command compact" type="button" hidden>打开安装程序</button>
+          <button id="show-bridge-installer" class="secondary-command compact" type="button" hidden>显示文件</button>
+          <button id="refresh-bridge-status" class="icon-command" type="button" title="重新检测本地桥" aria-label="重新检测本地桥">↻</button>
+        </div>
+      </section>
+
+      <section id="zotero-setup" class="zotero-setup-card" aria-labelledby="zotero-setup-title">
+        <div class="zotero-setup-copy">
+          <span class="eyebrow">ZOTERO LOCAL LINK</span>
+          <strong id="zotero-setup-title">检测 Zotero Companion</strong>
+          <p id="zotero-setup-description">归档完成后，可自动创建或复用 Zotero 条目并链接本地 PDF。</p>
+        </div>
+        <div id="zotero-pairing" class="zotero-pairing" hidden>
+          <label for="zotero-pairing-code">配对码</label>
+          <div class="zotero-pairing-row">
+            <input id="zotero-pairing-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="6 位配对码" />
+            <button id="pair-zotero" class="primary-command compact" type="button">配对</button>
+          </div>
+        </div>
+        <div class="zotero-setup-actions">
+          <label class="toggle-control" for="zotero-auto-sync">
+            <input id="zotero-auto-sync" type="checkbox" checked />
+            <span>自动同步</span>
+          </label>
+          <div class="zotero-command-group">
+            <button id="retry-zotero-pending" class="secondary-command compact" type="button">重试待同步</button>
+            <button id="refresh-zotero-status" class="secondary-command compact" type="button">检测连接</button>
+          </div>
+          <button id="disconnect-zotero" class="secondary-command compact" type="button" hidden>解除配对</button>
+        </div>
+      </section>
+
+      <nav class="workflow-tabs" aria-label="下载流程">
+        <button type="button" data-tab="import" class="active">1 文献</button>
+        <button type="button" data-tab="process">2 获取 PDF</button>
+        <button type="button" data-tab="download">3 归档</button>
+      </nav>
+
+      <section class="activity-panel" aria-labelledby="activity-title">
+        <div class="activity-head">
+          <div><span class="live-dot" aria-hidden="true"></span><strong id="activity-title">实时日志</strong></div>
+          <span id="activity-count">0 条</span>
+        </div>
+        <div id="activity-log" class="activity-log" role="log" aria-live="polite"></div>
+      </section>
+
+      <section id="tab-import" class="tab-panel active">
+        <div class="section-head"><div><span class="eyebrow">MANUAL IMPORT</span><h2>导入文献</h2></div></div>
+        <label for="import-topic">任务主题</label>
+        <input id="import-topic" type="text" maxlength="500" placeholder="文献主题或任务名称" />
+        <label for="doi-input">DOI 列表</label>
+        <textarea id="doi-input" rows="7" placeholder="每行一个 DOI，也可粘贴包含 DOI 的文本"></textarea>
+        <button id="import-doi" class="primary-command" type="button">导入 DOI</button>
+        <div class="file-import-row">
+          <label class="file-command" for="file-input">选择 CSV / BibTeX</label>
+          <input id="file-input" type="file" accept=".csv,.bib,.bibtex,text/csv,application/x-bibtex" />
+          <span id="file-name">未选择文件</span>
+        </div>
+      </section>
+
+      <section id="tab-process" class="tab-panel">
+        <div class="section-head"><div><span class="eyebrow">AUTOMATED PIPELINE</span><h2>自动获取与缓存</h2></div></div>
+        <div id="summary-grid" class="summary-grid"></div>
+        <div id="pipeline-overview" class="pipeline-overview"></div>
+        <div id="storage-meter" class="storage-meter"></div>
+        <div id="current-action" class="current-action" hidden></div>
+        <div class="bulk-toolbar">
+          <strong id="selected-count">0 篇已选</strong>
+          <button type="button" data-select="all">全选</button>
+          <button type="button" data-select="invert">反选</button>
+          <button type="button" data-select="eligible">可下载</button>
+          <button type="button" data-select="unsuccessful">未下载成功</button>
+          <button type="button" data-select="clear">清空</button>
+        </div>
+        <button id="start-registration" class="primary-command wide" type="button">逐篇预检并缓存所选文献</button>
+        <div id="publisher-groups" class="publisher-groups"></div>
+      </section>
+
+      <section id="tab-download" class="tab-panel">
+        <div class="section-head"><div><span class="eyebrow">LOCAL ARCHIVE</span><h2>统一归档</h2></div></div>
+        <div class="destination-band">
+          <label>目标目录</label>
+          <div class="destination-row"><code id="destination-path">尚未选择归档目录</code><button id="choose-destination" type="button">选择目录</button></div>
+          <label for="naming-template">命名模板</label>
+          <input id="naming-template" type="text" value="{taskCode}_{index}" maxlength="160" />
+          <label for="max-pdf-mb">单篇大小上限（MB）</label>
+          <input id="max-pdf-mb" type="number" min="1" max="150" value="150" />
+          <button id="save-settings" class="secondary-command" type="button">保存设置</button>
+        </div>
+        <div id="download-summary" class="download-summary"></div>
+        <button id="start-downloads" class="primary-command wide" type="button">将所选缓存归档到目标目录</button>
+      </section>
+
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+    </main>
+    <script type="module" src="src/sidepanel/app.js"></script>
+  </body>
+</html>

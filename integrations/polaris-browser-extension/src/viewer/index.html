@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>YFR 缓存 PDF 核验</title>
+    <link rel="stylesheet" href="viewer.css" />
+  </head>
+  <body>
+    <header class="viewer-header">
+      <div class="identity-block">
+        <strong class="brand-mark">YFR<span>.</span></strong>
+        <div>
+          <h1 id="paper-title">缓存 PDF 核验</h1>
+          <p id="paper-meta">正在读取浏览器缓存</p>
+        </div>
+      </div>
+      <div class="viewer-actions">
+        <span id="viewer-status" class="viewer-status">校验中</span>
+        <button id="approve-pdf" type="button" disabled>人工确认通过</button>
+      </div>
+    </header>
+    <section class="evidence-strip" aria-label="自动身份校验证据">
+      <div><span>期望 DOI</span><strong id="expected-doi">-</strong></div>
+      <div><span>检测 DOI</span><strong id="detected-doi">-</strong></div>
+      <div><span>标题相似度</span><strong id="title-score">-</strong></div>
+      <div><span>自动判定</span><strong id="decision-basis">尚未归档复验</strong></div>
+    </section>
+    <main class="viewer-stage">
+      <div id="viewer-error" class="viewer-error" hidden></div>
+      <iframe id="pdf-frame" title="浏览器缓存 PDF" hidden></iframe>
+    </main>
+    <script type="module" src="viewer.js"></script>
+  </body>
+</html>

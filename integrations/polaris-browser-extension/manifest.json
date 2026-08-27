@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Polaris 扩展",
+  "description": "从 Polaris 论文库接收任务，使用当前浏览器授权会话缓存 PDF，并归档回正确的论文位置。",
+  "version": "0.7.4",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjBUVx2lLS0zIheN/2xw+9s0Exlk4e0NR4U0HkZPc4auiEET7m2924ljP5+SV05HwMaTSOGLtrcVjEB4gFcinAY2fzaGzSCuUI8fXuBGy2pEfZN45LNSZP8/pqshAYMWxry1s8NuiIzhxALIPTO6sJM+pcfgPDO1tJ2Jaun78e6TDugJ9YfJ3oQGx+2XhiDOmM9eoTMwky5X3EmrQA1B5knemFFlp5WYBXsQabWIZnC5TfbpmWSOE7i/5qMUFFJ4rPuNynwDJG6Ylfdx4TIca4vNNRuG68j7w2Yxb5BXweuhoS17GMuBqujlXYCD0OYAcN8d0MeWC1QMIqlg5286OnQIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "downloads",
+    "declarativeNetRequestWithHostAccess",
+    "debugger",
+    "nativeMessaging",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs",
+    "unlimitedStorage",
+    "webRequest"
+  ],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "action": {"default_title": "打开 Polaris 扩展"},
+  "side_panel": {"default_path": "index.html"},
+  "content_scripts": [
+    {
+      "matches": [
+        "https://polaris-lab.zeabur.app/*",
+        "https://yfr.yangy.cn/*",
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "js": [
+        "src/content/polaris-bridge.js",
+        "src/content/yfr-bridge.js",
+        "src/content/yfr-page-selection.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "exclude_matches": [
+        "https://polaris-lab.zeabur.app/*",
+        "https://yfr.yangy.cn/*",
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "js": ["src/content/publisher-probe.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.scnet.cn/*", "https://scnet.cn/*"],
+      "js": ["src/content/scnet-gui-control.js", "src/content/scnet-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-src blob:"
+  }
+}
