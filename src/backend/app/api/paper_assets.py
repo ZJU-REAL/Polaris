@@ -8,15 +8,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.core.queue import TaskQueue, get_task_queue
 from app.models.user import User
 from app.schemas.paper_assets import (
     AssetGrantRead,
     AssetReuseRequest,
     PaperAssetPage,
     PaperAssetRead,
+    PaperContentChunkRead,
+    PaperContentVersionRead,
 )
 from app.services import libraries as libraries_service
 from app.services import paper_assets as asset_service
+from app.services import paper_content as content_service
 from app.services import papers as papers_service
 
 router = APIRouter(tags=["paper-assets"])
@@ -219,3 +223,78 @@ async def download_paper_asset(
         content_disposition_type="inline",
         headers={"Cache-Control": "private, max-age=300"},
     )
+
+
+@router.post(
+    "/libraries/{library_id}/papers/{paper_id}/assets/{asset_id}/content-versions",
+    response_model=PaperContentVersionRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_paper_content_version(
+    library_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    asset_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+    queue: TaskQueue = Depends(get_task_queue),
+) -> PaperContentVersionRead:
+    """Queue a fresh parse attempt for an explicitly granted PDF asset."""
+    library = await _library_for_manager(session, library_id, user)
+    paper = await _paper_in_library(session, library_id, paper_id, user)
+    row = await asset_service.readable_asset(
+        session, asset_id=asset_id, library_id=library_id
+    )
+    if row is None or row[0].paper_id != paper.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="ASSET_NOT_FOUND")
+    version = await content_service.create_content_version(
+        session, asset=row[0], parser="mineru"
+    )
+    await session.commit()
+    await queue.enqueue(
+        "parse_paper_content_task", str(version.id), str(user.id), str(library.id)
+    )
+    return PaperContentVersionRead.model_validate(version)
+
+
+@router.get(
+    "/libraries/{library_id}/papers/{paper_id}/content-version",
+    response_model=PaperContentVersionRead,
+)
+async def get_current_paper_content_version(
+    library_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> PaperContentVersionRead:
+    library = await libraries_service.get_library(session, library_id)
+    if library is None or not libraries_service.library_visible_to(library, user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
+    await _paper_in_library(session, library_id, paper_id, user)
+    version = await content_service.current_content_version(session, paper_id=paper_id)
+    if version is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONTENT_VERSION_NOT_FOUND")
+    readable = await asset_service.readable_asset(
+        session, asset_id=version.asset_id, library_id=library_id
+    )
+    if readable is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CONTENT_VERSION_NOT_FOUND")
+    return PaperContentVersionRead.model_validate(version)
+
+
+@router.get(
+    "/libraries/{library_id}/papers/{paper_id}/content-version/chunks",
+    response_model=list[PaperContentChunkRead],
+)
+async def get_current_paper_content_chunks(
+    library_id: uuid.UUID,
+    paper_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[PaperContentChunkRead]:
+    version = await get_current_paper_content_version(
+        library_id=library_id, paper_id=paper_id, session=session, user=user
+    )
+    rows = await content_service.list_content_chunks(
+        session, version_id=version.id
+    )
+    return [PaperContentChunkRead.model_validate(row) for row in rows]

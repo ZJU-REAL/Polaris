@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "c8d9e0f1a2b3"  # Content-addressed PDF assets and grants
+HEAD_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
+PDF_ASSET_REVISION = "c8d9e0f1a2b3"  # Content-addressed PDF assets and grants
 LITERATURE_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
 PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
@@ -117,6 +118,10 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "pdf_blobs",
                     "paper_assets",
                     "asset_grants",
+                    "paper_content_versions",
+                    "paper_content_chunks",
+                    "paper_content_version_vectors",
+                    "paper_content_chunk_vectors",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -430,7 +435,29 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "asset_grants"
     ]
 
-    # 先退掉 PDF 资产迁移，回到文献发现合同版本。
+    assert {"paper_id", "asset_id", "version_no", "parser", "status", "is_current"} <= columns[
+        "paper_content_versions"
+    ]
+    assert {"content_version_id", "seq", "text", "section_path"} <= columns[
+        "paper_content_chunks"
+    ]
+    assert {"content_version_id", "space", "dim", "embedding"} <= columns[
+        "paper_content_version_vectors"
+    ]
+    assert {"chunk_id", "space", "dim", "embedding"} <= columns["paper_content_chunk_vectors"]
+
+    # 先退掉解析内容版本迁移，回到 PDF 资产版本。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == PDF_ASSET_REVISION
+    assert not {
+        "paper_content_versions",
+        "paper_content_chunks",
+        "paper_content_version_vectors",
+        "paper_content_chunk_vectors",
+    } & columns["_tables"]
+
+    # 再退掉 PDF 资产迁移，回到文献发现合同版本。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == LITERATURE_REVISION
