@@ -55,3 +55,49 @@ async def test_literature_settings_reject_invalid_source_and_year_window(client)
     )
     assert response.status_code == 422
     assert "INVALID_LITERATURE_SETTING:year_window" in response.text
+
+
+async def test_discovery_run_inherits_admin_defaults_without_persisting_keys(client):
+    admin, _ = await _admin_and_member(client)
+    response = await client.put(
+        "/api/admin/settings/literature-search",
+        json={
+            "sources": ["pubmed", "core"],
+            "requested_count": 50,
+            "candidate_budget": 150,
+            "start_year": 2016,
+            "end_year": 2025,
+            "score_weights": {"relevance": 0.8, "quality": 0.2},
+            "provider_keys": {"pubmed": ["private-pubmed-key"]},
+        },
+        headers=admin,
+    )
+    assert response.status_code == 200, response.text
+    library = await client.post(
+        "/api/libraries",
+        json={"name": "Admin defaults", "statement": "Runtime wiring"},
+        headers=admin,
+    )
+    assert library.status_code == 201, library.text
+
+    response = await client.post(
+        f"/api/libraries/{library.json()['id']}/literature/runs",
+        json={
+            "topic": "structural impact response",
+            "source_config": {"provider_keys": {"pubmed": ["request-injected-secret"]}},
+        },
+        headers=admin,
+    )
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assert run["requested_count"] == 50
+    assert run["candidate_budget"] == 150
+    assert run["start_year"] == 2016
+    assert run["end_year"] == 2025
+    assert run["source_config"] == {
+        "sources": ["pubmed", "core"],
+        "score_weights": {"relevance": 0.8, "quality": 0.2},
+    }
+    assert [attempt["source"] for attempt in run["source_attempts"]] == ["core", "pubmed"]
+    assert "private-pubmed-key" not in response.text
+    assert "request-injected-secret" not in response.text

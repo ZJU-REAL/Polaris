@@ -10,8 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class LiteratureSearchRequest(BaseModel):
     """创建一次检索运行时保存的用户参数。"""
 
-    requested_count: int = Field(default=20, ge=1, le=200)
-    candidate_budget: int = Field(default=80, ge=1, le=1000)
+    requested_count: int | None = Field(default=None, ge=1, le=200)
+    candidate_budget: int | None = Field(default=None, ge=1, le=1000)
     start_year: int | None = Field(default=None, ge=1800, le=3000)
     end_year: int | None = Field(default=None, ge=1800, le=3000)
     topic: str = Field(min_length=1, max_length=4000)
