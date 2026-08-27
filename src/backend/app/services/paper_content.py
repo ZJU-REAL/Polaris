@@ -138,7 +138,7 @@ async def parse_content_version(
         raise ContentParseError("PDF_FILE_MISSING")
 
     version.attempt += 1
-    version.status = "parsing"
+    version.status = "mineru_uploading" if version.parser == "mineru" else "parsing"
     version.error_code = None
     version.error_detail = None
     await session.commit()
@@ -147,8 +147,25 @@ async def parse_content_version(
     parser_name = version.parser
     try:
         if mineru_parser is None:
-            raise ContentParseError("MINERU_ADAPTER_NOT_CONFIGURED")
-        result = await mineru_parser(pdf_path)
+            if version.parser == "mineru":
+                from app.services.mineru import MineruCloudParser
+
+                mineru_parser = MineruCloudParser()
+            else:
+                raise ContentParseError("MINERU_ADAPTER_NOT_CONFIGURED")
+        if hasattr(mineru_parser, "parse"):
+            async def update_status(value: str) -> None:
+                version.status = value
+                await session.commit()
+
+            try:
+                result = await mineru_parser.parse(pdf_path, on_status=update_status)  # type: ignore[attr-defined]
+            finally:
+                close = getattr(mineru_parser, "aclose", None)
+                if close is not None:
+                    await close()
+        else:
+            result = await mineru_parser(pdf_path)
         parser_name = "mineru"
     except Exception as exc:  # noqa: BLE001 - fallback is an explicit policy
         if not allow_fallback:
