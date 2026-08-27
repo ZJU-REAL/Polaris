@@ -357,6 +357,13 @@ def test_multi_source_key_pool_rotates_and_pubmed_xml_keeps_full_abstract():
     assert abstracts == {"123": "BACKGROUND: First sentence.\nSecond sentence."}
 
 
+def test_explicit_empty_key_pool_does_not_fall_back_to_environment_key():
+    client = MultiSourceClient(client=object(), provider_keys={"core": []})
+
+    assert client._key("core", "environment-key") == ""
+    assert client._key("unconfigured", "environment-key") == "environment-key"
+
+
 @pytest.mark.asyncio
 async def test_pubmed_adapter_fetches_abstract_and_forwards_years_and_admin_key():
     class Response:

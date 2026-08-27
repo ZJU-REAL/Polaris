@@ -131,8 +131,9 @@ class MultiSourceClient:
         }
 
     def _key(self, source: str, fallback: str | list[str] = "") -> str:
+        configured = source in self._provider_keys
         pool = self._provider_keys.get(source, ())
-        if not pool:
+        if not configured:
             values = fallback if isinstance(fallback, list) else re.split(r"[,;\s]+", fallback)
             pool = tuple(str(value).strip() for value in values if str(value).strip())
         if not pool:
