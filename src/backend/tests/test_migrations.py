@@ -2,14 +2,15 @@
 
 from pathlib import Path
 
-from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
 from alembic import command
+from alembic.config import Config
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "f0a1b2c3d4e5"  # Interdisciplinary query matrix and evidence balance
+HEAD_REVISION = "f1a2b3c4d5e6"  # Immutable interdisciplinary scope versions
+QUERY_MATRIX_REVISION = "f0a1b2c3d4e5"  # Interdisciplinary query matrix and evidence balance
 INTERDISCIPLINARY_REVISION = "e9f0a1b2c3d4"  # Interdisciplinary research profiles
 OA_CACHE_REVISION = "d1e2f3a4b5c6"  # Persistent OA cache and promotion audit
 DOWNLOAD_BATCH_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
@@ -134,6 +135,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "literature_oa_caches",
                     "literature_oa_attempts",
                     "interdisciplinary_research_profiles",
+                    "interdisciplinary_research_profile_versions",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -478,8 +480,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "research_mode" in columns["projects"]
 
     assert {"query_matrix", "evidence_balance"} <= columns["interdisciplinary_research_profiles"]
+    assert {
+        "profile_id",
+        "project_id",
+        "version",
+        "research_scope",
+        "query_matrix",
+        "evidence_balance",
+    } <= columns["interdisciplinary_research_profile_versions"]
 
-    # 先退掉查询矩阵迁移，回到跨学科档案版本。
+    # First remove immutable scope versions and return to the query-matrix head.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == QUERY_MATRIX_REVISION
+    assert "interdisciplinary_research_profile_versions" not in columns["_tables"]
+
+    # Then remove the query matrix and return to the profile revision.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == INTERDISCIPLINARY_REVISION
