@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
+HEAD_REVISION = "d1e2f3a4b5c6"  # Persistent OA cache and promotion audit
+DOWNLOAD_BATCH_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
 EVIDENCE_ANCHOR_REVISION = "e5f6a7b8c9d0"  # Version-aware sentence/paragraph evidence anchors
 CONTENT_VERSION_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
 PDF_ASSET_REVISION = "c8d9e0f1a2b3"  # Content-addressed PDF assets and grants
@@ -128,6 +129,8 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "download_api_keys",
                     "download_batches",
                     "download_batch_items",
+                    "literature_oa_caches",
+                    "literature_oa_attempts",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -463,7 +466,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
 
     assert {"download_api_keys", "download_batches", "download_batch_items"} <= columns["_tables"]
 
-    # 先退掉下载批次协议迁移，回到证据锚点版本。
+    assert {"literature_oa_caches", "literature_oa_attempts"} <= columns["_tables"]
+
+    # 先退掉 OA 缓存迁移，回到下载批次协议版本。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == DOWNLOAD_BATCH_REVISION
+    assert not {"literature_oa_caches", "literature_oa_attempts"} & columns["_tables"]
+
+    # 再退掉下载批次协议迁移，回到证据锚点版本。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == EVIDENCE_ANCHOR_REVISION

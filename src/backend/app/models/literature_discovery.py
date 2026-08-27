@@ -118,3 +118,54 @@ class LiteratureSourceAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     metadata_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LiteratureOaCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Persistent OA download state for a discovery hit.
+
+    This cache is deliberately separate from ``PaperAsset``: discovery results
+    may be cached before the user accepts them into a library.
+    """
+
+    __tablename__ = "literature_oa_caches"
+    __table_args__ = (
+        UniqueConstraint("hit_id", name="uq_literature_oa_caches_hit"),
+        Index("ix_literature_oa_caches_status", "status"),
+    )
+
+    hit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("literature_search_hits.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default="pending", server_default="pending", nullable=False
+    )
+    source_url: Mapped[str | None] = mapped_column(String(2048))
+    final_url: Mapped[str | None] = mapped_column(String(2048))
+    source: Mapped[str | None] = mapped_column(String(64))
+    blob_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("pdf_blobs.id", ondelete="SET NULL"), index=True
+    )
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    byte_size: Mapped[int | None]
+    verification: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    attempt_count: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LiteratureOaAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Immutable audit row for each OA URL attempt."""
+
+    __tablename__ = "literature_oa_attempts"
+    __table_args__ = (Index("ix_literature_oa_attempts_cache", "cache_id"),)
+
+    cache_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("literature_oa_caches.id", ondelete="CASCADE"), nullable=False
+    )
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    http_status: Mapped[int | None]
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    verification: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
