@@ -26,6 +26,7 @@ WORKER_FUNCTIONS = frozenset(
         "daily_feed_sync",
         "daily_wiki_ingest",
         "daily_publication_match",
+        "run_literature_discovery",
     }
 )
 

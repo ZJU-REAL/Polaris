@@ -377,3 +377,16 @@ async def daily_publication_match(ctx: dict[str, Any]) -> int:
         async with get_sessionmaker()() as session:
             total += await publications_service.match_from_library(session, user_id=uid)
     return total
+
+
+async def run_literature_discovery(ctx: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """Execute one persisted library literature-discovery run."""
+    from app.services.literature.runtime import run_discovery
+
+    async with get_sessionmaker()() as session:
+        run = await run_discovery(session, uuid.UUID(run_id))
+        return {
+            "run_id": str(run.id),
+            "status": run.status,
+            "returned_count": (run.progress or {}).get("returned_count", 0),
+        }

@@ -16,6 +16,7 @@ from worker.tasks import (
     reconcile_stale_voyages,
     reconcile_stuck_voyages,
     resume_voyage,
+    run_literature_discovery,
     run_voyage,
     watch_unanswered_managed_commands,
 )
@@ -38,6 +39,7 @@ class WorkerSettings:
         # 事件驱动后忘了加到这里，于是每次入队都被 arq 丢掉（#216）。
         daily_wiki_ingest,
         daily_publication_match,
+        func(run_literature_discovery, timeout=3600),
     ]
     # 抓取时刻可由管理员配置（SystemSetting daily_feed_sync_time，默认 UTC 02:30 =
     # 北京 10:30；arXiv 约北京 10:00 放新公告）。arq 的 cron 时刻在 worker 启动时就固定
