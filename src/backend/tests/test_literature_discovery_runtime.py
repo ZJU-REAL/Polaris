@@ -13,7 +13,7 @@ from app.models.literature_discovery import (
 )
 from app.models.paper import Paper
 from app.schemas.literature_discovery import LiteratureCandidate, SourceSearchPage
-from app.services.literature.multi_source import MultiSourceClient
+from app.services.literature.multi_source import MultiSourceClient, ProviderRequestError
 from app.services.literature.openalex import _simplify
 from app.services.literature.runtime import (
     AdapterRegistry,
@@ -262,3 +262,34 @@ async def test_extended_sources_share_candidate_contract_and_keep_unpaywall_as_r
     assert page.items[0].doi == "10.1000/example"
     assert page.items[0].metadata == {"source_id": "cr-1"}
     assert await MultiSourceClient(client=Client()).search_source("unpaywall", request) == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_persists_provider_error_instead_of_reporting_zero_hit_success(client):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["pubmed"]},
+        requested_count=5,
+        candidate_budget=10,
+    )
+
+    class BrokenAdapter:
+        name = "pubmed"
+
+        async def search(self, request):
+            raise ProviderRequestError(
+                "pubmed", "HTTP_503", "PubMed temporarily unavailable", retryable=True
+            )
+
+    async with get_sessionmaker()() as session:
+        run = await run_discovery(session, run_id, registry=AdapterRegistry((BrokenAdapter(),)))
+        attempt = await session.scalar(
+            select(LiteratureSourceAttempt).where(LiteratureSourceAttempt.run_id == run_id)
+        )
+
+    assert run.status == "failed"
+    assert run.progress["returned_count"] == 0
+    assert attempt.status == "failed"
+    assert attempt.error_code == "HTTP_503"
+    assert attempt.retryable is True
+    assert "HTTP_503" in (run.error_summary or "")

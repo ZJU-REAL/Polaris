@@ -6,6 +6,7 @@ separate steps. Unpromoted hits never create a Paper or a PDF processing job.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
@@ -15,6 +16,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.literature_discovery import (
     LiteratureSearchHit,
     LiteratureSearchRun,
@@ -29,7 +31,7 @@ from app.schemas.literature_discovery import (
 from app.services.literature import discovery_runs
 from app.services.literature.discovery import candidate_dedup_key, validate_candidate
 from app.services.literature.discovery_ranking import rank_candidates
-from app.services.literature.multi_source import MultiSourceClient
+from app.services.literature.multi_source import MultiSourceClient, ProviderRequestError
 
 logger = logging.getLogger(__name__)
 _DEFAULT_REGISTRY: AdapterRegistry | None = None
@@ -311,6 +313,7 @@ async def run_discovery(
     failures: list[str] = []
     fetched_total = 0
 
+    runnable: list[tuple[str, Any, LiteratureSourceAttempt, str]] = []
     for source in sources:
         attempt = attempt_by_source.get(source)
         if attempt is None:
@@ -339,16 +342,45 @@ async def run_discovery(
         attempt.query = query
         attempt.requested_count = run.candidate_budget
         attempt.started_at = datetime.now(UTC)
-        await session.commit()
-        try:
-            page = await adapter.search(
-                SourceSearchRequest(
-                    query=query,
-                    start_year=run.start_year,
-                    end_year=run.end_year,
-                    limit=run.candidate_budget,
+        runnable.append((source, adapter, attempt, query))
+
+    await session.commit()
+
+    semaphore = asyncio.Semaphore(get_settings().literature_source_concurrency)
+
+    async def fetch(
+        source: str, adapter: Any, query: str
+    ) -> tuple[SourceSearchPage | None, SourceExecutionError | None]:
+        async with semaphore:
+            try:
+                page = await adapter.search(
+                    SourceSearchRequest(
+                        query=query,
+                        start_year=run.start_year,
+                        end_year=run.end_year,
+                        limit=run.candidate_budget,
+                    )
                 )
-            )
+                return page, None
+            except ProviderRequestError as exc:
+                return None, SourceExecutionError(
+                    exc.code, str(exc), retryable=exc.retryable
+                )
+            except Exception as exc:  # noqa: BLE001 - provider isolation is intentional
+                return None, SourceExecutionError(
+                    "SOURCE_REQUEST_FAILED", str(exc), retryable=True
+                )
+
+    results = await asyncio.gather(
+        *(fetch(source, adapter, query) for source, adapter, _, query in runnable)
+    )
+    for (source, _, attempt, _query), (page, source_error) in zip(
+        runnable, results, strict=True
+    ):
+        try:
+            if source_error is not None:
+                raise source_error
+            assert page is not None
             validated = [validate_candidate(item) for item in page.items]
             candidates.extend(validated)
             fetched_total += page.fetched_count

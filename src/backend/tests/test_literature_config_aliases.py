@@ -13,3 +13,15 @@ def test_semantic_scholar_and_openalex_aliases(monkeypatch):
 
     assert settings.s2_api_key == "s2-legacy-key"
     assert settings.openalex_mailto == "research@example.org"
+
+
+def test_source_runtime_aliases(monkeypatch):
+    monkeypatch.setenv("PAPER_SEARCH_SOURCE_CONCURRENCY", "7")
+    monkeypatch.setenv("PAPER_SEARCH_SOURCE_TIMEOUT_SECONDS", "18")
+    monkeypatch.setenv("PAPER_SEARCH_SOURCE_RETRIES", "3")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.literature_source_concurrency == 7
+    assert settings.literature_source_timeout_seconds == 18
+    assert settings.literature_source_retries == 3
