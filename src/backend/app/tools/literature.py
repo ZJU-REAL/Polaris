@@ -17,6 +17,7 @@ from app.services import concepts as concepts_service
 from app.services import papers as papers_service
 from app.services.concepts import library_concept_ids
 from app.services.embedding import embed_query
+from app.services.evidence import current_fulltext_evidence
 from app.services.paper_review import relevant_excerpt
 from app.services.papers import PaperView
 from app.tools.context import ToolContext
@@ -168,6 +169,30 @@ def _read_fulltext_summary(a: dict[str, Any], r: dict[str, Any]) -> str:
 async def read_fulltext(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         paper = await _get_project_paper(session, ctx, args.get("paper_id"))
+        library_ids = await library_ids_for(session, ctx)
+        query = str(args.get("query") or "").strip()
+        page = max(0, int(args.get("page") or 0))
+        parsed = await current_fulltext_evidence(
+            session,
+            paper_id=paper.id,
+            library_ids=library_ids,
+            query=query or None,
+            offset=page * 8,
+            limit=8,
+        )
+        if parsed is not None and parsed["chunks"]:
+            chunks = parsed["chunks"]
+            return {
+                "paper_id": str(paper.id),
+                "title": paper.title,
+                "query": query or None,
+                "page": page,
+                "parser": parsed["parser"],
+                "content_version_id": parsed["version_id"],
+                "text": "\n\n".join(str(chunk["text"]) for chunk in chunks)[:_FULLTEXT_PAGE_CHARS],
+                "evidence": [ref for chunk in chunks for ref in chunk["evidence"]],
+                "next_page": page + 1 if parsed["next_offset"] is not None else None,
+            }
         path = Path(paper.full_text_path) if paper.full_text_path else None
         title = paper.title
         paper_id = str(paper.id)
@@ -181,7 +206,6 @@ async def read_fulltext(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
             }
         full_text = path.read_text(encoding="utf-8", errors="ignore")
 
-    query = str(args.get("query") or "").strip()
     if query:
         return {
             "paper_id": paper_id,

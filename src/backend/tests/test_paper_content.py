@@ -9,12 +9,17 @@ from app.core.db import get_sessionmaker
 from app.core.embedding_space import EmbeddingSpace
 from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import new_paper
+from app.models.paper_assets import AssetGrant
 from app.models.paper_content import (
     PaperContentChunkVector,
     PaperContentVersion,
     PaperContentVersionVector,
 )
 from app.models.user import User
+from app.services.evidence import (
+    current_fulltext_evidence,
+    keyword_search_current_fulltext,
+)
 from app.services.paper_assets import create_or_reuse_asset
 from app.services.paper_content import (
     ContentParseError,
@@ -72,6 +77,15 @@ async def test_mineru_failure_falls_back_to_pymupdf_and_persists_version(app, cl
         assert parsed.chunk_count == 1
         assert parsed.attempt == 1
         assert await current_content_version(session, paper_id=paper.id)
+        context = await current_fulltext_evidence(
+            session, paper_id=paper.id, query="full text", limit=4
+        )
+        assert context is not None
+        assert context["parser"] == "pymupdf"
+        assert context["chunks"][0]["text"]
+        assert context["chunks"][0]["evidence"][0]["href"].startswith(
+            f"/papers/{paper.id}/read?evidence=1"
+        )
 
 
 @pytest.mark.asyncio
@@ -82,6 +96,7 @@ async def test_reparse_creates_new_current_version_without_mutating_old(app, cli
         await parse_content_version(session, version=first, mineru_parser=None)
         second = await create_content_version(session, asset=asset)
         assert second.version_no == first.version_no + 1
+        await parse_content_version(session, version=second, mineru_parser=None)
         await session.refresh(first)
         assert first.is_current is False
         assert second.is_current is True
@@ -89,6 +104,43 @@ async def test_reparse_creates_new_current_version_without_mutating_old(app, cli
             select(PaperContentVersion).where(PaperContentVersion.id == first.id)
         )
         assert saved is not None and saved.is_current is False
+        context = await current_fulltext_evidence(session, paper_id=paper.id)
+        assert context is not None
+        assert context["version_id"] == str(second.id)
+        assert context["chunks"][0]["evidence"]
+
+
+@pytest.mark.asyncio
+async def test_current_fulltext_search_enforces_asset_grant(app, client):
+    _user_row, library, _paper, asset = await _setup(client)
+    async with get_sessionmaker()() as session:
+        version = await create_content_version(session, asset=asset)
+        await parse_content_version(session, version=version, mineru_parser=None)
+        hits = await keyword_search_current_fulltext(
+            session,
+            library_ids=[library.id],
+            query="full text",
+            limit=4,
+        )
+        assert len(hits) == 1
+        assert hits[0].paper_id == asset.paper_id
+
+        grant = await session.scalar(
+            select(AssetGrant).where(
+                AssetGrant.asset_id == asset.id,
+                AssetGrant.library_id == library.id,
+            )
+        )
+        assert grant is not None
+        grant.can_read = False
+        await session.flush()
+        denied = await keyword_search_current_fulltext(
+            session,
+            library_ids=[library.id],
+            query="full text",
+            limit=4,
+        )
+        assert denied == []
 
 
 @pytest.mark.asyncio
