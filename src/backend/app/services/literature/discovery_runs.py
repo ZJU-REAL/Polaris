@@ -34,9 +34,10 @@ async def can_manage_discovery(
 def enabled_sources(source_config: dict | None, query_plan: dict | None) -> list[str]:
     """从已保存快照中取得稳定来源顺序；没有配置时不凭空创建来源任务。"""
     sources: Iterable[str] = ()
+    sources_declared = isinstance(source_config, dict) and "sources" in source_config
     if isinstance(source_config, dict):
-        sources = source_config.get("sources") or source_config.keys()
-    if not list(sources) and isinstance(query_plan, dict):
+        sources = source_config["sources"] if "sources" in source_config else source_config.keys()
+    if not list(sources) and not sources_declared and isinstance(query_plan, dict):
         sources = query_plan.get("sources") or ()
     return list(dict.fromkeys(str(s).strip().lower() for s in sources if str(s).strip()))
 

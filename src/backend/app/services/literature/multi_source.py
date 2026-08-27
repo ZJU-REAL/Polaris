@@ -11,12 +11,18 @@ import asyncio
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from itertools import count
+from threading import Lock
 from typing import Any
 from urllib.parse import quote
+from xml.etree import ElementTree
 
 import httpx
 
 from app.core.config import get_settings
+
+_KEY_INDEX: dict[str, count] = {}
+_KEY_LOCK = Lock()
 
 
 class ProviderRequestError(RuntimeError):
@@ -74,10 +80,39 @@ def _date_window(request: Any) -> tuple[int | None, int | None]:
     return request.start_year, request.end_year
 
 
+def _within_year(row: Mapping[str, Any], start: int | None, end: int | None) -> bool:
+    year = row.get("year")
+    return year is None or ((start is None or year >= start) and (end is None or year <= end))
+
+
+def _pubmed_abstracts(xml_text: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    try:
+        root = ElementTree.fromstring(xml_text)
+    except ElementTree.ParseError:
+        return result
+    for article in root.findall(".//PubmedArticle"):
+        pmid = _text(article.findtext(".//MedlineCitation/PMID"))
+        parts: list[str] = []
+        for node in article.findall(".//Article/Abstract/AbstractText"):
+            text = _text("".join(node.itertext()))
+            label = _text(node.attrib.get("Label"))
+            if text:
+                parts.append(f"{label}: {text}" if label else text)
+        if pmid and parts:
+            result[pmid] = "\n".join(parts)
+    return result
+
+
 class MultiSourceClient:
     """HTTP client for the non-core providers in the YFR-compatible source set."""
 
-    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient | None = None,
+        *,
+        provider_keys: Mapping[str, list[str]] | None = None,
+    ) -> None:
         settings = get_settings()
         self._client = client or httpx.AsyncClient(
             proxy=settings.outbound_proxy or None,
@@ -88,6 +123,23 @@ class MultiSourceClient:
         self._owns_client = client is None
         self._timeout = settings.literature_source_timeout_seconds
         self._retries = settings.literature_source_retries
+        self._provider_keys = {
+            str(source).strip().lower(): tuple(
+                str(value).strip() for value in values if str(value).strip()
+            )
+            for source, values in (provider_keys or {}).items()
+        }
+
+    def _key(self, source: str, fallback: str | list[str] = "") -> str:
+        pool = self._provider_keys.get(source, ())
+        if not pool:
+            values = fallback if isinstance(fallback, list) else re.split(r"[,;\s]+", fallback)
+            pool = tuple(str(value).strip() for value in values if str(value).strip())
+        if not pool:
+            return ""
+        with _KEY_LOCK:
+            index = next(_KEY_INDEX.setdefault(source, count()))
+        return pool[index % len(pool)]
 
     async def _request_json(
         self,
@@ -136,6 +188,32 @@ class MultiSourceClient:
             f"{type(last_error).__name__}: {last_error}" if last_error else "request failed",
         ) from last_error
 
+    async def _request_text(
+        self,
+        source: str,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> str:
+        last_error: Exception | None = None
+        for attempt in range(self._retries + 1):
+            try:
+                response = await self._client.request(
+                    method, url, params=params, timeout=self._timeout
+                )
+                response.raise_for_status()
+                return response.text
+            except httpx.HTTPError as exc:
+                last_error = exc
+            if attempt < self._retries:
+                await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
+        raise ProviderRequestError(
+            source,
+            "REQUEST_FAILED",
+            f"{type(last_error).__name__}: {last_error}" if last_error else "request failed",
+        ) from last_error
+
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
@@ -151,7 +229,9 @@ class MultiSourceClient:
             "sciverse": self._search_sciverse,
         }
         handler = handlers.get(source.strip().lower())
-        return await handler(request) if handler else []
+        rows = await handler(request) if handler else []
+        start, end = _date_window(request)
+        return [row for row in rows if _within_year(row, start, end)]
 
     async def lookup_unpaywall(self, doi: str) -> dict[str, Any] | None:
         settings = get_settings()
@@ -171,6 +251,7 @@ class MultiSourceClient:
 
     async def _search_pubmed(self, request: Any) -> list[dict[str, Any]]:
         settings = get_settings()
+        api_key = self._key("pubmed", settings.pubmed_api_key)
         start, end = _date_window(request)
         query = request.query
         if start or end:
@@ -184,8 +265,8 @@ class MultiSourceClient:
             "retmax": min(request.limit, 1000),
             "sort": "relevance",
         }
-        if settings.pubmed_api_key:
-            params["api_key"] = settings.pubmed_api_key
+        if api_key:
+            params["api_key"] = api_key
         if settings.pubmed_email:
             params["email"] = settings.pubmed_email
         try:
@@ -199,8 +280,8 @@ class MultiSourceClient:
             if not ids:
                 return []
             summary_params = {"db": "pubmed", "id": ",".join(ids), "retmode": "json"}
-            if settings.pubmed_api_key:
-                summary_params["api_key"] = settings.pubmed_api_key
+            if api_key:
+                summary_params["api_key"] = api_key
             summary = await self._request_json(
                 "pubmed",
                 "GET",
@@ -208,6 +289,20 @@ class MultiSourceClient:
                 params=summary_params,
             )
             result = summary.get("result") or {}
+            fetch_params = {"db": "pubmed", "id": ",".join(ids), "retmode": "xml"}
+            if api_key:
+                fetch_params["api_key"] = api_key
+            try:
+                abstracts = _pubmed_abstracts(
+                    await self._request_text(
+                        "pubmed",
+                        "GET",
+                        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+                        params=fetch_params,
+                    )
+                )
+            except ProviderRequestError:
+                abstracts = {}
         except ProviderRequestError:
             raise
         rows: list[dict[str, Any]] = []
@@ -225,7 +320,7 @@ class MultiSourceClient:
                     "source": "pubmed",
                     "pmid": str(pmid),
                     "title": _text(item.get("title")),
-                    "abstract": None,
+                    "abstract": abstracts.get(str(pmid)),
                     "authors": _authors(item.get("authors")),
                     "year": _year(item.get("pubdate")),
                     "venue": _text(item.get("fulljournalname") or item.get("source")),
@@ -306,10 +401,14 @@ class MultiSourceClient:
 
     async def _search_core(self, request: Any) -> list[dict[str, Any]]:
         settings = get_settings()
-        if not settings.core_api_key:
+        api_key = self._key("core", settings.core_api_key)
+        if not api_key:
             return []
+        year_filters = [f"yearPublished>={request.start_year or 1800}"]
+        if request.end_year is not None:
+            year_filters.append(f"yearPublished<={request.end_year}")
         params = {
-            "q": f"{request.query} yearPublished>={request.start_year or 1800}",
+            "q": f"{request.query} {' '.join(year_filters)}",
             "limit": min(request.limit, 100),
         }
         try:
@@ -318,7 +417,7 @@ class MultiSourceClient:
                 "POST",
                 "https://api.core.ac.uk/v3/search/works",
                 json=params,
-                headers={"Authorization": f"Bearer {settings.core_api_key}"},
+                headers={"Authorization": f"Bearer {api_key}"},
             )
             items = payload.get("results") or []
         except ProviderRequestError:
@@ -347,14 +446,7 @@ class MultiSourceClient:
 
     async def _search_sciverse(self, request: Any) -> list[dict[str, Any]]:
         settings = get_settings()
-        token = next(
-            (
-                item.strip()
-                for item in re.split(r"[,;\s]+", settings.sciverse_api_tokens)
-                if item.strip()
-            ),
-            "",
-        )
+        token = self._key("sciverse", settings.sciverse_api_tokens)
         if not token:
             return []
         try:

@@ -78,12 +78,14 @@ class OpenAlexClient:
         client: httpx.AsyncClient | None = None,
         redis: Redis | None = None,
         mailto: str | None = None,
+        api_key: str | None = None,
     ) -> None:
         self._client = client or httpx.AsyncClient(
             proxy=get_settings().outbound_proxy or None, timeout=30.0
         )
         self._cache = ResponseCache(redis)
         self._mailto = mailto if mailto is not None else get_settings().openalex_mailto
+        self._api_key = api_key
 
     async def _get(
         self, path: str, extra_params: dict[str, Any] | None = None
@@ -91,6 +93,8 @@ class OpenAlexClient:
         params: dict[str, Any] = dict(extra_params or {})
         if self._mailto:
             params["mailto"] = self._mailto
+        if self._api_key:
+            params["api_key"] = self._api_key
         key = cache_key("openalex", path, params)
         if (cached := await self._cache.get(key)) is not None:
             return cached or None  # 缓存的 {} 表示 404
