@@ -7,6 +7,7 @@ from app.models.buddy_memory import BuddyMemory
 from app.models.chat_bot import ChatBotConfig
 from app.models.conversation import Conversation, ConversationMessage
 from app.models.daily_feed import DailyFeedEntry, DailyFeedLike
+from app.models.download_client import DownloadApiKey, DownloadBatch, DownloadBatchItem
 from app.models.email_code import EmailVerificationCode
 from app.models.evidence import PaperEvidenceAnchor
 from app.models.experiment import Experiment, ExperimentRun
@@ -86,6 +87,9 @@ __all__ = [
     "LLMCallLog",
     "LibraryPaper",
     "LibraryResearchDigest",
+    "DownloadApiKey",
+    "DownloadBatch",
+    "DownloadBatchItem",
     "PaperEvidenceAnchor",
     "PaperContentVersion",
     "PaperContentChunk",
