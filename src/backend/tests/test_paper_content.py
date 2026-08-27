@@ -1,6 +1,7 @@
 """Issue #455: versioned parser lifecycle and vector-state persistence."""
 
 import uuid
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -108,6 +109,57 @@ async def test_reparse_creates_new_current_version_without_mutating_old(app, cli
         assert context is not None
         assert context["version_id"] == str(second.id)
         assert context["chunks"][0]["evidence"]
+
+
+@pytest.mark.asyncio
+async def test_failed_reparse_keeps_previous_current_version(app, client):
+    _user_row, _library, paper, asset = await _setup(client)
+    async with get_sessionmaker()() as session:
+        first = await create_content_version(session, asset=asset, parser="pymupdf")
+        await parse_content_version(session, version=first, mineru_parser=None)
+        second = await create_content_version(session, asset=asset)
+
+        async def failing_mineru(_path):
+            raise RuntimeError("cloud timeout")
+
+        with pytest.raises(ContentParseError, match="MINERU_FAILED"):
+            await parse_content_version(
+                session,
+                version=second,
+                mineru_parser=failing_mineru,
+                allow_fallback=False,
+            )
+        current = await current_content_version(session, paper_id=paper.id)
+        assert current is not None
+        assert current.id == first.id
+        assert second.is_current is False
+
+
+@pytest.mark.asyncio
+async def test_mineru_artifacts_are_persisted_with_content_version(app, client):
+    _user_row, _library, _paper, asset = await _setup(client)
+    async with get_sessionmaker()() as session:
+        version = await create_content_version(session, asset=asset)
+
+        async def fake_mineru(_path):
+            return {
+                "parser": "mineru",
+                "parser_version": "cloud-test",
+                "markdown": "# Full text\n\n![Figure](images/figure.png)",
+                "text": "Full text",
+                "pages": 1,
+                "chunks": [{"text": "Full text", "page_start": 1, "page_end": 1}],
+                "markdown_path": "paper.md",
+                "artifacts": [
+                    {"path": "images/figure.png", "kind": "image", "content": b"png"}
+                ],
+                "manifest": {"pages": 1, "images": ["images/figure.png"]},
+            }
+
+        parsed = await parse_content_version(session, version=version, mineru_parser=fake_mineru)
+        version_dir = Path(parsed.markdown_key).parent
+        assert (version_dir / "paper.md").read_text(encoding="utf-8").startswith("# Full")
+        assert (version_dir / "images" / "figure.png").read_bytes() == b"png"
 
 
 @pytest.mark.asyncio

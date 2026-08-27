@@ -1,5 +1,7 @@
 """MinerU Cloud upload/poll normalization contract tests."""
 
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -69,5 +71,74 @@ async def test_mineru_cloud_upload_poll_and_normalize(tmp_path: Path, monkeypatc
     assert result["parser"] == "mineru"
     assert result["pages"] == 2
     assert result["chunks"]
-    assert statuses == ["mineru_uploading", "mineru_parsing"]
+    assert statuses == [
+        "mineru_uploading",
+        "mineru_parsing",
+        "mineru_polling",
+        "mineru_downloading_result",
+    ]
     assert [method for method, _url in client.calls] == ["POST", "PUT", "GET", "GET"]
+
+
+def test_zip_result_keeps_markdown_images_and_tables():
+    from app.services.mineru import _zip_result
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr("paper.md", "# Title\n\n![Figure](images/figure.png)\n\n| A | B |")
+        bundle.writestr("images/figure.png", b"png-bytes")
+        bundle.writestr("tables/data.csv", "a,b\n1,2")
+    result = _zip_result(buffer.getvalue(), pages=3)
+
+    assert result["pages"] == 3
+    assert result["markdown_path"] == "paper.md"
+    assert {item["path"] for item in result["artifacts"]} == {
+        "images/figure.png",
+        "tables/data.csv",
+    }
+    assert result["manifest"]["images"] == ["images/figure.png"]
+    assert result["manifest"]["tables"] == ["tables/data.csv"]
+
+
+def test_zip_result_ignores_archive_traversal_entries():
+    from app.services.mineru import _zip_result
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr("paper.md", "# Safe")
+        bundle.writestr("../outside.png", b"not-written")
+
+    result = _zip_result(buffer.getvalue())
+
+    assert result["manifest"]["images"] == []
+
+
+def test_zip_result_rejects_invalid_archive():
+    from app.services.mineru import MineruCloudError, _zip_result
+
+    with pytest.raises(MineruCloudError, match="MINERU_ARCHIVE_INVALID"):
+        _zip_result(b"not-a-zip")
+
+
+def test_zip_result_rejects_invalid_markdown_encoding():
+    from app.services.mineru import MineruCloudError, _zip_result
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr("paper.md", b"\xff\xfe")
+
+    with pytest.raises(MineruCloudError, match="MINERU_MARKDOWN_ENCODING_INVALID"):
+        _zip_result(buffer.getvalue())
+
+
+def test_scheduler_rotates_configured_tokens():
+    from app.services.mineru import _MineruScheduler
+
+    scheduler = _MineruScheduler(["key-a", "key-b"], concurrency=2)
+
+    assert [scheduler.next_token() for _ in range(4)] == [
+        "key-a",
+        "key-b",
+        "key-a",
+        "key-b",
+    ]
