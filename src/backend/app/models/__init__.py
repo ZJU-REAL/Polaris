@@ -18,6 +18,8 @@ from app.models.integration_token import IntegrationToken
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
 from app.models.literature_discovery import (
+    LiteratureOaAttempt,
+    LiteratureOaCache,
     LiteratureSearchHit,
     LiteratureSearchRun,
     LiteratureSourceAttempt,
@@ -95,6 +97,8 @@ __all__ = [
     "PaperContentChunk",
     "PaperContentVersionVector",
     "PaperContentChunkVector",
+    "LiteratureOaCache",
+    "LiteratureOaAttempt",
     "LiteratureSearchHit",
     "LiteratureSearchRun",
     "LiteratureSourceAttempt",
