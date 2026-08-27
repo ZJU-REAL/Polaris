@@ -6,7 +6,7 @@ import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pymupdf
@@ -48,6 +48,23 @@ def _content_root() -> Path:
 def _version_dir(version_id: uuid.UUID) -> Path:
     path = _content_root() / str(version_id)
     path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _output_path(root: Path, name: object, *, fallback: str | None = None) -> Path | None:
+    """Resolve an archive-relative output path below the immutable version directory."""
+    relative = PurePosixPath(str(name or "").replace("\\", "/"))
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or ".." in relative.parts
+        or ":" in relative.parts[0]
+    ):
+        if fallback is None:
+            return None
+        relative = PurePosixPath(fallback)
+    path = root.joinpath(*relative.parts)
+    path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
@@ -95,11 +112,12 @@ async def create_content_version(
     parser: str = "mineru",
     parser_version: str | None = None,
 ) -> PaperContentVersion:
-    """Create a new immutable attempt and retire the previous current version."""
-    await session.execute(
-        PaperContentVersion.__table__.update()
-        .where(PaperContentVersion.paper_id == asset.paper_id)
-        .values(is_current=False)
+    """Create an immutable attempt without replacing usable content prematurely."""
+    current = await session.scalar(
+        select(PaperContentVersion.id).where(
+            PaperContentVersion.paper_id == asset.paper_id,
+            PaperContentVersion.is_current.is_(True),
+        )
     )
     latest = await session.scalar(
         select(func.max(PaperContentVersion.version_no)).where(
@@ -113,7 +131,7 @@ async def create_content_version(
         parser=parser,
         parser_version=parser_version,
         status="queued",
-        is_current=True,
+        is_current=current is None,
     )
     session.add(version)
     await session.flush()
@@ -203,10 +221,20 @@ async def parse_content_version(
 
     directory = _version_dir(version.id)
     text_path = directory / "content.txt"
-    markdown_path = directory / "content.md"
+    markdown_path = _output_path(
+        directory, result.get("markdown_path"), fallback="content.md"
+    )
+    if markdown_path is None:
+        raise ContentParseError("MARKDOWN_PATH_INVALID")
     manifest_path = directory / "manifest.json"
     text_path.write_text(text, encoding="utf-8")
     markdown_path.write_text(markdown, encoding="utf-8")
+    for artifact in result.get("artifacts") or []:
+        if not isinstance(artifact, dict) or not isinstance(artifact.get("content"), bytes):
+            continue
+        artifact_path = _output_path(directory, artifact.get("path"))
+        if artifact_path is not None:
+            artifact_path.write_bytes(artifact["content"])
     manifest_path.write_text(
         json.dumps(result.get("manifest") or {}, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -251,6 +279,15 @@ async def parse_content_version(
     version.chunk_count = len([item for item in chunks if str(item.get("text") or "").strip()])
     version.chunk_vector_state = "pending"
     version.document_vector_state = "pending"
+    await session.execute(
+        PaperContentVersion.__table__.update()
+        .where(
+            PaperContentVersion.paper_id == version.paper_id,
+            PaperContentVersion.id != version.id,
+        )
+        .values(is_current=False)
+    )
+    version.is_current = True
     await session.commit()
     return version
 
