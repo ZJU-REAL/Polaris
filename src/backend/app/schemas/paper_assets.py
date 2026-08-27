@@ -59,3 +59,39 @@ class AssetReuseRequest(BaseModel):
 class PaperAssetPage(BaseModel):
     items: list[PaperAssetRead]
     grants: list[AssetGrantRead]
+
+
+class PaperContentVersionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    paper_id: uuid.UUID
+    asset_id: uuid.UUID
+    version_no: int
+    parser: str
+    parser_version: str | None
+    status: str
+    error_code: str | None
+    error_detail: str | None
+    attempt: int
+    page_count: int
+    chunk_count: int
+    document_vector_state: str
+    chunk_vector_state: str
+    is_current: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class PaperContentChunkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    content_version_id: uuid.UUID
+    seq: int
+    text: str
+    page_start: int | None
+    page_end: int | None
+    rects: list | None
+    section_path: list[str] | None
+    anchor_meta: dict | None
