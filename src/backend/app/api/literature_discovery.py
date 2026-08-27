@@ -37,6 +37,7 @@ from app.services import libraries as libraries_service
 from app.services import literature_settings as literature_settings_service
 from app.services.interdisciplinary_retrieval import apply_profile_to_query_plan
 from app.services.literature import discovery_runs, oa_cache
+from app.services.literature.discovery_ranking import normalized_score_weights
 
 router = APIRouter(tags=["literature-discovery"])
 logger = logging.getLogger(__name__)
@@ -79,7 +80,10 @@ async def create_run(
     library = await _managed_library(session, library_id, user)
     defaults = await literature_settings_service.get_runtime_settings(session)
     requested_count = data.requested_count or int(defaults["requested_count"])
-    candidate_budget = data.candidate_budget or int(defaults["candidate_budget"])
+    candidate_budget = max(
+        requested_count,
+        data.candidate_budget or int(defaults["candidate_budget"]),
+    )
     start_year = data.start_year if data.start_year is not None else defaults.get("start_year")
     end_year = data.end_year if data.end_year is not None else defaults.get("end_year")
     source_config = {
@@ -87,6 +91,11 @@ async def create_run(
         "score_weights": dict(defaults["score_weights"]),
         **(data.source_config or {}),
     }
+    source_config["score_weights"] = normalized_score_weights(
+        source_config.get("score_weights")
+        if isinstance(source_config.get("score_weights"), dict)
+        else None
+    )
     # Provider credentials are resolved by workers and never enter run snapshots.
     source_config.pop("provider_keys", None)
     query_plan = await apply_profile_to_query_plan(
@@ -107,7 +116,16 @@ async def create_run(
         query_plan=query_plan,
         source_config=source_config,
         model_version=data.model_version,
-        progress={"phase": "queued", "fetched": 0, "accepted": 0},
+        progress={
+            "phase": "queued",
+            "fetched": 0,
+            "accepted": 0,
+            "requested_count": requested_count,
+            "candidate_budget": candidate_budget,
+            "returned_count": 0,
+            "start_year": start_year,
+            "end_year": end_year,
+        },
     )
     session.add(run)
     await session.flush()
@@ -117,7 +135,7 @@ async def create_run(
                 run_id=run.id,
                 source=source,
                 status="pending",
-                requested_count=candidate_budget,
+                requested_count=None,
             )
         )
     await session.commit()
