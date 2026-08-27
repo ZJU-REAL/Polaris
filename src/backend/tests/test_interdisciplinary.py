@@ -61,6 +61,31 @@ async def test_scope_confirmation_creates_one_dedicated_library(client):
         "Data-driven mechanics",
     ]
 
+    run = await client.post(
+        f"/api/libraries/{library_id}/literature/runs",
+        headers=auth,
+        json={
+            "requested_count": 50,
+            "candidate_budget": 80,
+            "start_year": 2016,
+            "end_year": 2026,
+            "topic": "vision measurements for structural impact response",
+            "source_config": {
+                "sources": ["openalex", "pubmed"],
+                "keywords": ["dynamic impact", "segmentation"],
+            },
+        },
+    )
+    assert run.status_code == 201, run.text
+    body = run.json()
+    assert body["requested_count"] == 50
+    assert body["candidate_budget"] == 80
+    assert body["start_year"] == 2016
+    assert body["query_plan"]["interdisciplinary"]["profile_version"] == 1
+    queries = body["query_plan"]["queries"]
+    assert {item["source"] for item in queries} == {"openalex", "pubmed"}
+    assert {item["role"] for item in queries} >= {"primary", "related", "bridge"}
+
 
 @pytest.mark.asyncio
 async def test_interdisciplinary_scope_is_owner_managed(client):

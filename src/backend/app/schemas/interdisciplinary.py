@@ -14,6 +14,8 @@ class InterdisciplinaryScopeDraft(BaseModel):
     evidence_boundary: str | None = Field(default=None, max_length=4000)
     validation_conditions: list[str] | None = Field(default=None, max_length=12)
     user_questions: list[dict] | None = Field(default=None, max_length=12)
+    query_matrix: list[dict] | None = Field(default=None, max_length=24)
+    evidence_balance: dict[str, float] | None = None
 
 
 class InterdisciplinaryScopeRead(InterdisciplinaryScopeDraft):

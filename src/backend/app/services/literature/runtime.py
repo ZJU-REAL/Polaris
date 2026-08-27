@@ -28,6 +28,7 @@ from app.schemas.literature_discovery import (
     SourceSearchPage,
     SourceSearchRequest,
 )
+from app.services.interdisciplinary_retrieval import rerank_interdisciplinary
 from app.services.literature import discovery_runs
 from app.services.literature.discovery import candidate_dedup_key, validate_candidate
 from app.services.literature.discovery_ranking import rank_candidates
@@ -422,8 +423,10 @@ async def run_discovery(
         else (),
         weights=weights,
         current_year=(now or datetime.now(UTC)).year,
-        limit=run.requested_count,
+        # 先排一个更宽的池子，跨学科重排要在里面挑平衡，再截到请求量。
+        limit=min(len(candidates), max(run.requested_count, run.requested_count * 3)),
     )
+    ranked = rerank_interdisciplinary(ranked, query_plan=run.query_plan, limit=run.requested_count)
     for item in ranked:
         # ``sources`` and ``retrieval_hits`` are ranking metadata, not part of the
         # strict candidate DTO. Read them from the ranked mapping before validation
