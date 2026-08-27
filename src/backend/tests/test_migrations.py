@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
+HEAD_REVISION = "c8d9e0f1a2b3"  # Content-addressed PDF assets and grants
+LITERATURE_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
 PROVIDER_UA_REVISION = "7b3e91c4a2d8"  # Provider 级可选 User-Agent
 VIEW_EVENTS_REVISION = "a1c9e73b5d20"  # 浏览事件（文献库/论文点击量）
@@ -113,6 +114,9 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "literature_search_runs",
                     "literature_search_hits",
                     "literature_source_attempts",
+                    "pdf_blobs",
+                    "paper_assets",
+                    "asset_grants",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -418,8 +422,21 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "accepted_count",
         "retryable",
     } <= columns["literature_source_attempts"]
+    assert {"sha256", "byte_size", "storage_key", "state"} <= columns["pdf_blobs"]
+    assert {"paper_id", "blob_id", "source", "sharing_scope", "identity_status"} <= columns[
+        "paper_assets"
+    ]
+    assert {"asset_id", "library_id", "status", "can_read", "can_process"} <= columns[
+        "asset_grants"
+    ]
 
-    # 文献发现合同迁移回退：保留原有 integration_tokens head。
+    # 先退掉 PDF 资产迁移，回到文献发现合同版本。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == LITERATURE_REVISION
+    assert not {"pdf_blobs", "paper_assets", "asset_grants"} & columns["_tables"]
+
+    # 再退掉文献发现合同，回到集成令牌版本。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PREVIOUS_HEAD_REVISION
@@ -429,7 +446,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "literature_source_attempts",
     } & columns["_tables"]
 
-    # 先退掉集成令牌。
+    # 再退掉集成令牌。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PROVIDER_UA_REVISION
