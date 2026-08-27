@@ -13,6 +13,13 @@ from app.services import chunks as chunks_service
 from app.services import graph as graph_service
 from app.services import search as search_service
 from app.services.embedding import embed_query
+from app.services.evidence import (
+    FulltextChunkHit,
+    fulltext_vector_search_supported,
+    keyword_search_current_fulltext,
+    semantic_search_current_fulltext,
+    sentence_evidence_for_chunks,
+)
 from app.tools.context import ToolContext
 from app.tools.registry import tool
 from app.tools.scope import library_ids_for, readable_paper
@@ -44,12 +51,16 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
 
     async with get_sessionmaker()() as session:
         library_ids = await library_ids_for(session, ctx)
+        fulltext_rows: list[FulltextChunkHit] = []
         rows: list[tuple[PaperChunk, float]] = []
         used_mode = "keyword"
         if (
             mode == "semantic"
             and library_ids
-            and chunks_service.chunk_vector_search_supported(session)
+            and (
+                fulltext_vector_search_supported(session)
+                or chunks_service.chunk_vector_search_supported(session)
+            )
         ):
             try:
                 vector, space = await embed_query(
@@ -59,24 +70,56 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
                     project_id=ctx.project_id,
                     voyage_id=ctx.voyage_id,
                 )
-                rows = await chunks_service.semantic_search_chunks(
-                    session,
-                    library_ids=library_ids,
-                    query_vector=vector,
-                    space=space,
-                    limit=k,
-                )
-                used_mode = "semantic"
             except Exception:  # noqa: BLE001 — embedding 服务挂了也要能用，降级到关键词
-                rows = []
-        if not rows and library_ids:
-            rows = await chunks_service.keyword_search_chunks(
-                session, library_ids=library_ids, q=query, limit=k
+                vector = None
+                space = None
+            if vector is not None and space is not None:
+                try:
+                    fulltext_rows = await semantic_search_current_fulltext(
+                        session,
+                        library_ids=library_ids,
+                        query_vector=vector,
+                        space_key=space.key,
+                        limit=k,
+                    )
+                except Exception:  # noqa: BLE001 — 版本化索引失败时保留旧索引兜底
+                    fulltext_rows = []
+                try:
+                    if len(fulltext_rows) < k:
+                        rows = await chunks_service.semantic_search_chunks(
+                            session,
+                            library_ids=library_ids,
+                            query_vector=vector,
+                            space=space,
+                            limit=k,
+                        )
+                except Exception:  # noqa: BLE001 — 旧索引失败不丢弃已命中的版本化全文
+                    rows = []
+                if fulltext_rows or rows:
+                    used_mode = "semantic"
+        if not fulltext_rows and not rows and library_ids:
+            fulltext_rows = await keyword_search_current_fulltext(
+                session, library_ids=library_ids, query=query, limit=k
             )
-            used_mode = used_mode if rows and used_mode == "semantic" else "keyword"
+            if len(fulltext_rows) < k:
+                rows = await chunks_service.keyword_search_chunks(
+                    session, library_ids=library_ids, q=query, limit=k
+                )
+            used_mode = "keyword"
+
+        versioned_paper_ids = {hit.paper_id for hit in fulltext_rows}
+        rows = [
+            (chunk, score)
+            for chunk, score in rows
+            if chunk.paper_id not in versioned_paper_ids
+        ]
+        rows = rows[: max(0, k - len(fulltext_rows))]
+        evidence = await sentence_evidence_for_chunks(
+            session, [hit.chunk for hit in fulltext_rows]
+        )
 
         # 补论文标题（一次批量查询，避免 N+1）
-        paper_ids = {c.paper_id for c, _ in rows}
+        paper_ids = versioned_paper_ids | {c.paper_id for c, _ in rows}
         titles: dict[uuid.UUID, str] = {}
         if paper_ids:
             title_rows = await session.execute(
@@ -87,6 +130,18 @@ async def search_chunks(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
     return {
         "mode": used_mode,
         "chunks": [
+            {
+                "paper_id": str(hit.paper_id),
+                "title": titles.get(hit.paper_id),
+                "seq": hit.chunk.seq,
+                "text": (hit.chunk.text or "")[:_CHUNK_CHARS],
+                "score": round(float(hit.score), 3),
+                "content_version_id": str(hit.chunk.content_version_id),
+                "evidence": evidence.get(hit.chunk.id, []),
+            }
+            for hit in fulltext_rows
+        ]
+        + [
             {
                 "paper_id": str(c.paper_id),
                 "title": titles.get(c.paper_id),
