@@ -82,10 +82,21 @@ class SemanticScholarClient:
         return [row["citedPaper"] for row in data.get("data", []) if row.get("citedPaper")]
 
     async def search_papers(
-        self, query: str, *, limit: int = 10, fields: str = LINK_FIELDS
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        fields: str = LINK_FIELDS,
+        start_year: int | None = None,
+        end_year: int | None = None,
     ) -> list[dict[str, Any]]:
         """按题目/关键词全文检索（Related Work 候选集，docs/api-m5-b.md §5）。"""
-        data = await self._get("/paper/search", {"query": query, "fields": fields, "limit": limit})
+        params: dict[str, Any] = {"query": query, "fields": fields, "limit": limit}
+        if start_year is not None or end_year is not None:
+            lo = start_year or end_year
+            hi = end_year or start_year
+            params["year"] = f"{lo}-{hi}" if lo != hi else str(lo)
+        data = await self._get("/paper/search", params)
         return [row for row in data.get("data", []) if isinstance(row, dict)]
 
     async def get_citations(

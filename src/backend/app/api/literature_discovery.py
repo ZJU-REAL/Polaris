@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.core.queue import TaskQueue, get_task_queue
 from app.models.library_direction import DirectionLibrary
 from app.models.literature_discovery import (
     LiteratureSearchHit,
@@ -104,6 +105,29 @@ async def create_run(
         .all()
     )
     return _detail(run, attempts)
+
+
+@router.post(
+    "/libraries/{library_id}/literature/runs/{run_id}/start",
+    response_model=SearchRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_run(
+    library_id: uuid.UUID,
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    queue: TaskQueue = Depends(get_task_queue),
+    user: User = Depends(current_active_user),
+) -> SearchRunRead:
+    """Queue a persisted run without changing its user-requested count."""
+    library = await _managed_library(session, library_id, user)
+    run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
+    if run.status != "queued":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="SEARCH_RUN_NOT_QUEUED")
+    await queue.enqueue("run_literature_discovery", str(run.id))
+    return SearchRunRead.model_validate(run)
 
 
 @router.get("/libraries/{library_id}/literature/runs", response_model=SearchRunPage)
