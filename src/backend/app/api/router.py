@@ -22,6 +22,7 @@ from app.api import (
     ideas,
     ingest,
     integration_tokens,
+    interdisciplinary,
     invites,
     lab,
     libraries,
@@ -77,6 +78,7 @@ api_router.include_router(notes.router)
 api_router.include_router(highlights.router)
 api_router.include_router(concepts.router)
 api_router.include_router(ingest.router)
+api_router.include_router(interdisciplinary.router)
 api_router.include_router(integration_tokens.router)
 api_router.include_router(wiki.router)
 api_router.include_router(ideas.router)

@@ -309,6 +309,89 @@ BUILTIN_SKILLS: list[dict[str, Any]] = [
 - 指标写成结构化 jsonl（step, metric, value），不要只打印到 stdout。
 - 数据处理与训练解耦：预处理产物落盘并带版本号，训练脚本只读产物。
 - 脚本必须支持 --smoke 模式：小数据/少步数跑通全流程后立即退出。
-- 失败要响亮：不吞异常，断言输入形状与数值范围。""",
+        - 失败要响亮：不吞异常，断言输入形状与数值范围。""",
+    },
+    {
+        "slug": "interdisciplinary-research-workflow",
+        "kind": "workflow",
+        "name": "跨学科研究工作流",
+        "name_en": "Interdisciplinary Research Workflow",
+        "description": "跨学科课题从范围确认、分学科检索到证据驱动的想法、实验、写作和评审",
+        "targets": [
+            "navigator.free_plan",
+            "wiki.score_relevance",
+            "forge.generate",
+            "experiment.plan",
+            "writing.section",
+            "writing.related_work",
+            "review.referees",
+            "present.outline",
+        ],
+        "steps": [
+            {
+                "title": "确认交叉研究范围",
+                "action": "llm.complete",
+                "params": {
+                    "stage": "planning",
+                    "prompt": (
+                        "读取课题已确认的主学科、关联学科、核心问题和证据边界。"
+                        "如果任一字段缺失，先提出最少的澄清问题，不要自行补全学科。"
+                    ),
+                },
+                "acceptance": "输出主学科、关联学科、核心问题和证据边界，并标明待确认项",
+                "requires_gate": None,
+            },
+            {
+                "title": "分学科检索并合并证据",
+                "action": "llm.complete",
+                "params": {
+                    "stage": "librarian",
+                    "prompt": (
+                        "先按主学科与各关联学科分别检索，再用统一 DOI/标题身份合并去重。"
+                        "每篇文献保留来源学科、贡献类型、相关性理由和句子级证据，"
+                        "不能把共享关键词当作跨学科关联。"
+                    ),
+                },
+                "acceptance": "输出分学科证据表，并有跨学科合并后的去重文献清单",
+                "requires_gate": None,
+            },
+            {
+                "title": "生成可证伪研究想法",
+                "action": "llm.complete",
+                "params": {
+                    "stage": "ideation",
+                    "prompt": (
+                        "基于已确认范围和分学科证据，生成有明确机制的交叉想法。"
+                        "每个想法必须说明主学科承担的核心问题、关联学科提供的不可替代方法、"
+                        "最小可行实验、风险和可证伪判据。"
+                    ),
+                },
+                "acceptance": "每个想法都有机制差异、最小实验和证据引用",
+                "requires_gate": None,
+            },
+            {
+                "title": "贯穿实验、写作和评审",
+                "action": "llm.complete",
+                "params": {
+                    "stage": "research",
+                    "prompt": (
+                        "后续实验计划、论文写作、PPT提纲和评审均携带同一交叉范围版本。"
+                        "所有引用采用文献编号+句子编号，找不到句子时退回段落或论文级，"
+                        "不得把某一学科的指标冒充另一学科的结论。"
+                    ),
+                },
+                "acceptance": "产物标注交叉研究上下文版本并保留可回溯引用",
+                "requires_gate": None,
+            },
+        ],
+        "body": (
+            "跨学科研究必须先确认范围资产，再进入后续流程。\n\n"
+            "- 主学科负责定义核心科学问题；关联学科必须提供不可替代的方法、数据或评价标准。\n"
+            "- 检索阶段按学科分桶以避免中文/英文术语和领域评价标准互相污染；合并阶段按 DOI、"
+            "外部标识和规范化标题去重。\n"
+            "- 任何 AI 结论都要携带交叉范围版本和证据锚点；句子级找不到时按既定规则回退，"
+            "不能静默改成无来源的摘要推断。\n"
+            "- 常规课题不注入本技能，不改变原有的单学科检索和写作流程。"
+        ),
     },
 ]

@@ -18,6 +18,10 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # P9e：课题语境提示（一句话）。收录配置（rubric/anchors/keywords/goals/scope/
     # questions/cadence）权威源在文献库 ``DirectionLibrary.definition``，不在课题上。
     statement: Mapped[str | None] = mapped_column(Text)
+    # conventional | interdisciplinary; durable project context.
+    research_mode: Mapped[str] = mapped_column(
+        String(24), default="conventional", server_default="conventional", nullable=False
+    )
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     owner_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
