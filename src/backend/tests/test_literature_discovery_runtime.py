@@ -1,7 +1,9 @@
 """Issue #473: execute source adapters and persist ranked candidates."""
 
+import json
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -68,7 +70,9 @@ def _candidate(source: str, title: str, *, doi: str | None = None, year: int = 2
     )
 
 
-async def _create_run(client, *, source_config, requested_count=2, candidate_budget=5):
+async def _create_run(
+    client, *, source_config, requested_count=2, candidate_budget=5, query_plan=None
+):
     token = await register_and_login(client, email=f"runtime-{uuid.uuid4().hex}@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     library = await client.post(
@@ -86,11 +90,90 @@ async def _create_run(client, *, source_config, requested_count=2, candidate_bud
             "end_year": 2025,
             "topic": "structural impact response",
             "source_config": source_config,
+            "query_plan": query_plan,
         },
         headers=headers,
     )
     assert response.status_code == 201, response.text
     return uuid.UUID(response.json()["id"]), headers, response.json()["library_id"]
+
+
+class RetrievalRouter:
+    async def complete(self, stage, messages, **kwargs):
+        del messages, kwargs
+        assert stage == "extract"
+        return SimpleNamespace(
+            content=json.dumps(
+                {
+                    "queries": [
+                        {
+                            "seed_id": "core",
+                            "purpose": "core",
+                            "query": '"structural impact" AND response',
+                        },
+                        {
+                            "seed_id": "coverage",
+                            "purpose": "coverage",
+                            "query": '"damage mechanics" OR failure',
+                        },
+                    ]
+                }
+            ),
+            model="query-model",
+        )
+
+    async def rerank(self, query, documents, **kwargs):
+        del query, documents, kwargs
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_runtime_executes_multiple_queries_with_aggregate_budget_and_year_filter(client):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["openalex"]},
+        requested_count=3,
+        candidate_budget=6,
+        query_plan={
+            "queries": [
+                {"id": "core", "purpose": "core", "query": "structural impact"},
+                {"id": "coverage", "purpose": "coverage", "query": "damage mechanics"},
+            ]
+        },
+    )
+    adapter = FakeAdapter(
+        "openalex",
+        [
+            _candidate("openalex", "Out of range", year=2015),
+            _candidate("openalex", "In range", year=2020),
+        ],
+    )
+
+    async with get_sessionmaker()() as session:
+        run = await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((adapter,)),
+            llm_router=RetrievalRouter(),
+            now=datetime(2026, 8, 26, tzinfo=UTC),
+        )
+        hits = list(
+            (
+                await session.execute(
+                    select(LiteratureSearchHit).where(LiteratureSearchHit.run_id == run_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert len(adapter.requests) == 2
+    assert sum(request.limit for request in adapter.requests) == 6
+    assert all(request.start_year == 2016 for request in adapter.requests)
+    assert all(request.end_year == 2025 for request in adapter.requests)
+    assert {hit.title for hit in hits} == {"In range"}
+    assert len(hits[0].metadata_snapshot["retrieval_hits"]) == 2
+    assert run.query_plan["ranking"]["mode"] == "deterministic_fallback"
 
 
 @pytest.mark.asyncio
@@ -124,15 +207,18 @@ async def test_runtime_deduplicates_isolates_failures_and_persists_progress(clie
             now=datetime(2026, 8, 26, tzinfo=UTC),
         )
         assert run.status == "partial"
-        assert run.progress == {
-            "phase": "completed",
-            "source": "core",
-            "fetched": 4,
-            "accepted": 2,
-            "requested_count": 2,
-            "candidate_budget": 5,
-            "returned_count": 2,
-        }
+        assert run.progress["phase"] == "completed"
+        assert run.progress["source"] == "core"
+        assert run.progress["fetched"] == 4
+        assert run.progress["accepted"] == 2
+        assert run.progress["requested_count"] == 2
+        assert run.progress["candidate_budget"] == 5
+        assert run.progress["returned_count"] == 2
+        assert run.progress["deduplicated"] == 3
+        assert run.progress["pending_rerank"] == 0
+        assert run.progress["ranked_count"] == 3
+        assert run.progress["start_year"] == 2016
+        assert run.progress["end_year"] == 2025
         attempts = list(
             (
                 await session.execute(
@@ -147,7 +233,7 @@ async def test_runtime_deduplicates_isolates_failures_and_persists_progress(clie
             "semantic": "completed",
             "arxiv": "completed",
             "crossref": "skipped",
-            "core": "partial",
+            "core": "failed",
         }
         hits = list(
             (
@@ -165,7 +251,7 @@ async def test_runtime_deduplicates_isolates_failures_and_persists_progress(clie
 
     assert [request.start_year for request in openalex.requests] == [2016]
     assert [request.end_year for request in arxiv.requests] == [2025]
-    assert [request.limit for request in semantic.requests] == [5]
+    assert [request.limit for request in semantic.requests] == [1]
 
 
 @pytest.mark.asyncio

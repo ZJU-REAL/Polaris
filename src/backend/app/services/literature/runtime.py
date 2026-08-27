@@ -20,11 +20,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.llm.router import get_llm_router
+from app.models.library_direction import LibraryPaper
 from app.models.literature_discovery import (
     LiteratureSearchHit,
     LiteratureSearchRun,
     LiteratureSourceAttempt,
 )
+from app.models.paper import Paper
 from app.schemas.literature_discovery import (
     LiteratureCandidate,
     SourceAdapter,
@@ -35,8 +38,16 @@ from app.services import literature_settings
 from app.services.interdisciplinary_retrieval import rerank_interdisciplinary
 from app.services.literature import discovery_runs
 from app.services.literature.discovery import candidate_dedup_key, validate_candidate
-from app.services.literature.discovery_ranking import rank_candidates
+from app.services.literature.discovery_ranking import SCORING_VERSION, rank_candidates
 from app.services.literature.multi_source import MultiSourceClient, ProviderRequestError
+from app.services.literature.retrieval_quality import (
+    ExecutableQuery,
+    add_retrieval_hit,
+    allocate_query_budget,
+    fuse_candidates,
+    generate_query_families,
+    model_rerank,
+)
 
 logger = logging.getLogger(__name__)
 _REGISTRY_CACHE: tuple[str, AdapterRegistry] | None = None
@@ -132,9 +143,14 @@ class ArxivAdapter:
     async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
         since = datetime(request.start_year, 1, 1, tzinfo=UTC) if request.start_year else None
         until = datetime(request.end_year, 12, 31, 23, 59, tzinfo=UTC) if request.end_year else None
-        rows = await self.client.search(
-            keywords=[request.query], since=since, until=until, limit=request.limit
-        )
+        if hasattr(self.client, "search_raw"):
+            rows = await self.client.search_raw(
+                request.query, since=since, until=until, limit=request.limit
+            )
+        else:
+            rows = await self.client.search(
+                keywords=[request.query], since=since, until=until, limit=request.limit
+            )
         return SourceSearchPage(
             source=self.name,
             items=[_candidate_from_arxiv(row) for row in rows],
@@ -234,21 +250,14 @@ def _candidate_from_generic(source: str, row: Mapping[str, Any]) -> LiteratureCa
 def _config_values(run: LiteratureSearchRun) -> tuple[list[str], list[str], dict[str, float]]:
     config = run.source_config if isinstance(run.source_config, dict) else {}
     sources = discovery_runs.enabled_sources(run.source_config, run.query_plan)
-    keywords = [str(v) for v in config.get("keywords") or [] if str(v).strip()]
+    raw_keywords = config.get("keywords")
+    keywords = (
+        [str(v) for v in raw_keywords if str(v).strip()]
+        if isinstance(raw_keywords, list)
+        else []
+    )
     weights = config.get("score_weights")
     return sources, keywords, weights if isinstance(weights, dict) else {}
-
-
-def _planned_query(run: LiteratureSearchRun, source: str, keywords: Sequence[str]) -> str:
-    plan = run.query_plan if isinstance(run.query_plan, dict) else {}
-    queries = plan.get("queries")
-    if isinstance(queries, list):
-        for item in queries:
-            if isinstance(item, dict) and str(item.get("source", "")).lower() == source:
-                query = str(item.get("query") or "").strip()
-                if query:
-                    return query
-    return str(plan.get("query") or run.topic or (keywords[0] if keywords else "")).strip()
 
 
 def _credential_pool(settings: Mapping[str, Any], source: str, fallback: str = "") -> list[str]:
@@ -326,6 +335,7 @@ async def run_discovery(
     run_id: uuid.UUID,
     *,
     registry: AdapterRegistry | None = None,
+    llm_router: Any | None = None,
     now: datetime | None = None,
 ) -> LiteratureSearchRun:
     """Execute one persisted run and return its final state."""
@@ -364,6 +374,53 @@ async def run_discovery(
         await session.commit()
         await session.refresh(run)
         return run
+    llm_router = llm_router or get_llm_router()
+    source_config = run.source_config if isinstance(run.source_config, dict) else {}
+    raw_exclusions = source_config.get("excluded_keywords")
+    excluded_keywords = (
+        [str(item) for item in raw_exclusions if str(item).strip()]
+        if isinstance(raw_exclusions, list)
+        else []
+    )
+    families, generation_snapshot = await generate_query_families(
+        llm_router=llm_router,
+        topic=run.topic,
+        keywords=keywords,
+        excluded_keywords=excluded_keywords,
+        query_plan=run.query_plan,
+        user_id=run.created_by,
+        library_id=run.library_id,
+    )
+    tasks = allocate_query_budget(
+        sources=sources,
+        families=families,
+        candidate_budget=run.candidate_budget,
+    )
+    plan_snapshot = dict(run.query_plan or {})
+    plan_snapshot.update(
+        {
+            "version": generation_snapshot["version"],
+            "query_generation": generation_snapshot,
+            "queries": [task.snapshot() for task in tasks],
+            "candidate_budget": run.candidate_budget,
+            "start_year": run.start_year,
+            "end_year": run.end_year,
+        }
+    )
+    run.query_plan = plan_snapshot
+    if run.model_version is None:
+        run.model_version = generation_snapshot.get("model")
+    run.progress = {
+        **(run.progress or {}),
+        "phase": "retrieving",
+        "query_total": len(tasks),
+        "query_completed": 0,
+        "requested_count": run.requested_count,
+        "candidate_budget": run.candidate_budget,
+        "start_year": run.start_year,
+        "end_year": run.end_year,
+    }
+    await session.commit()
     attempts = list(
         (
             await session.execute(
@@ -374,16 +431,26 @@ async def run_discovery(
         .all()
     )
     attempt_by_source = {attempt.source.lower(): attempt for attempt in attempts}
-    candidates: list[LiteratureCandidate] = []
+    candidates: list[dict[str, Any]] = []
     failures: list[str] = []
     fetched_total = 0
 
-    runnable: list[tuple[str, Any, LiteratureSourceAttempt, str]] = []
+    tasks_by_source: dict[str, list[ExecutableQuery]] = {source: [] for source in sources}
+    for task in tasks:
+        tasks_by_source.setdefault(task.source, []).append(task)
+    runnable: list[tuple[ExecutableQuery, Any, LiteratureSourceAttempt]] = []
     for source in sources:
         attempt = attempt_by_source.get(source)
         if attempt is None:
             attempt = LiteratureSourceAttempt(run_id=run.id, source=source)
             session.add(attempt)
+            attempt_by_source[source] = attempt
+        source_tasks = tasks_by_source.get(source, [])
+        if not source_tasks:
+            attempt.status = "skipped"
+            attempt.error_code = "BUDGET_NOT_ALLOCATED"
+            attempt.error_detail = "Aggregate candidate budget did not allocate this source"
+            continue
         adapter = registry.get(source)
         if adapter is None:
             attempt.status = "skipped"
@@ -402,28 +469,32 @@ async def run_discovery(
             await session.commit()
             continue
 
-        query = _planned_query(run, source, keywords)
         attempt.status = "running"
-        attempt.query = query
-        attempt.requested_count = run.candidate_budget
+        attempt.query = "\n".join(task.query for task in source_tasks)
+        attempt.requested_count = sum(task.limit for task in source_tasks)
         attempt.started_at = datetime.now(UTC)
-        runnable.append((source, adapter, attempt, query))
+        attempt.metadata_snapshot = {
+            "queries": [task.snapshot() for task in source_tasks],
+            "start_year": run.start_year,
+            "end_year": run.end_year,
+        }
+        runnable.extend((task, adapter, attempt) for task in source_tasks)
 
     await session.commit()
 
     semaphore = asyncio.Semaphore(get_settings().literature_source_concurrency)
 
     async def fetch(
-        source: str, adapter: Any, query: str
+        task: ExecutableQuery, adapter: Any
     ) -> tuple[SourceSearchPage | None, SourceExecutionError | None]:
         async with semaphore:
             try:
                 page = await adapter.search(
                     SourceSearchRequest(
-                        query=query,
+                        query=task.query,
                         start_year=run.start_year,
                         end_year=run.end_year,
-                        limit=run.candidate_budget,
+                        limit=task.limit,
                     )
                 )
                 return page, None
@@ -437,23 +508,37 @@ async def run_discovery(
                 )
 
     results = await asyncio.gather(
-        *(fetch(source, adapter, query) for source, adapter, _, query in runnable)
+        *(fetch(task, adapter) for task, adapter, _ in runnable)
     )
-    for (source, _, attempt, _query), (page, source_error) in zip(
-        runnable, results, strict=True
+    source_stats: dict[str, dict[str, Any]] = {
+        source: {"fetched": 0, "accepted": 0, "succeeded": 0, "failed": []}
+        for source in sources
+    }
+    for query_index, ((task, _, attempt), (page, source_error)) in enumerate(
+        zip(runnable, results, strict=True), start=1
     ):
+        source = task.source
+        stats = source_stats[source]
         try:
             if source_error is not None:
                 raise source_error
             assert page is not None
             validated = [validate_candidate(item) for item in page.items]
-            candidates.extend(validated)
+            filtered = [
+                item
+                for item in validated
+                if (run.start_year is None or item.year is None or item.year >= run.start_year)
+                and (run.end_year is None or item.year is None or item.year <= run.end_year)
+            ]
+            candidates.extend(
+                add_retrieval_hit(item.model_dump(), task=task, rank=rank)
+                for rank, item in enumerate(filtered, start=1)
+            )
             fetched_total += page.fetched_count
-            attempt.fetched_count = page.fetched_count
-            attempt.accepted_count = len(validated)
-            attempt.cursor = page.next_cursor
-            attempt.status = "completed"
-            attempt.completed_at = datetime.now(UTC)
+            stats["fetched"] += page.fetched_count
+            stats["accepted"] += len(filtered)
+            stats["succeeded"] += 1
+            attempt.cursor = page.next_cursor or attempt.cursor
         except Exception as exc:  # noqa: BLE001 - provider isolation is intentional
             logger.warning("literature source failed: %s", source, exc_info=True)
             error = (
@@ -461,16 +546,18 @@ async def run_discovery(
                 if isinstance(exc, SourceExecutionError)
                 else SourceExecutionError("SOURCE_REQUEST_FAILED", str(exc), retryable=True)
             )
-            attempt.status = "partial" if candidates else "failed"
             attempt.retryable = error.retryable
             attempt.error_code = error.code
             attempt.error_detail = str(error)
-            attempt.completed_at = datetime.now(UTC)
-            failures.append(f"{source}: {error.code}")
+            stats["failed"].append(error.code)
         run.progress = {
             **(run.progress or {}),
             "phase": "retrieving",
             "source": source,
+            "query_purpose": task.purpose,
+            "query_index": query_index,
+            "query_total": len(runnable),
+            "query_completed": query_index,
             "fetched": fetched_total,
             "accepted": len(candidates),
             "requested_count": run.requested_count,
@@ -478,18 +565,82 @@ async def run_discovery(
         }
         await session.commit()
 
+    for source in sources:
+        attempt = attempt_by_source.get(source)
+        if attempt is None or attempt.status == "skipped":
+            continue
+        stats = source_stats[source]
+        attempt.fetched_count = stats["fetched"]
+        attempt.accepted_count = stats["accepted"]
+        if stats["failed"]:
+            attempt.status = "partial" if stats["succeeded"] else "failed"
+            failures.append(f"{source}: {','.join(stats['failed'])}")
+        else:
+            attempt.status = "completed"
+        attempt.completed_at = datetime.now(UTC)
+    await session.commit()
+
+    reference_rows = (
+        await session.execute(
+            select(Paper.title, Paper.abstract)
+            .join(LibraryPaper, LibraryPaper.paper_id == Paper.id)
+            .where(
+                LibraryPaper.library_id == run.library_id,
+                LibraryPaper.status.in_(("scored", "fetched", "compiled", "included")),
+            )
+            .limit(2000)
+        )
+    ).all()
+    reference_texts = [
+        "\n".join(part for part in (title, abstract) if part)
+        for title, abstract in reference_rows
+    ]
+    fused = fuse_candidates(candidates, executed_query_count=len(runnable))
+    run.progress = {
+        **(run.progress or {}),
+        "phase": "ranking",
+        "fetched": fetched_total,
+        "accepted": len(candidates),
+        "deduplicated": len(fused),
+        "pending_rerank": len(fused),
+        "query_completed": len(runnable),
+        "query_total": len(runnable),
+        "requested_count": run.requested_count,
+        "candidate_budget": run.candidate_budget,
+        "start_year": run.start_year,
+        "end_year": run.end_year,
+    }
+    await session.commit()
     ranked = rank_candidates(
-        [candidate.model_dump() for candidate in candidates],
+        fused,
         topic=run.topic,
         keywords=keywords,
-        excluded_keywords=(run.source_config or {}).get("excluded_keywords", [])
-        if isinstance(run.source_config, dict)
-        else (),
+        excluded_keywords=excluded_keywords,
         weights=weights,
         current_year=(now or datetime.now(UTC)).year,
+        reference_texts=reference_texts,
         # 先排一个更宽的池子，跨学科重排要在里面挑平衡，再截到请求量。
-        limit=min(len(candidates), max(run.requested_count, run.requested_count * 3)),
+        limit=min(len(fused), max(run.requested_count, run.requested_count * 3)),
     )
+    ranked, ranking_snapshot = await model_rerank(
+        llm_router=llm_router,
+        topic=run.topic,
+        ranked=ranked,
+        weights=weights,
+        limit=len(ranked),
+        user_id=run.created_by,
+        library_id=run.library_id,
+    )
+    run.progress = {
+        **(run.progress or {}),
+        "phase": "ranking",
+        "pending_rerank": 0,
+        "ranked_count": len(ranked),
+    }
+    await session.commit()
+    plan_snapshot = dict(run.query_plan or {})
+    plan_snapshot["ranking"] = ranking_snapshot
+    run.query_plan = plan_snapshot
     ranked = rerank_interdisciplinary(ranked, query_plan=run.query_plan, limit=run.requested_count)
     for item in ranked:
         # ``sources`` and ``retrieval_hits`` are ranking metadata, not part of the
@@ -521,11 +672,26 @@ async def run_discovery(
                     "overall": item.score,
                     "tier": item.tier,
                     "reasons": list(item.reasons),
+                    "scoring_version": SCORING_VERSION,
+                    "ranking_mode": ranking_snapshot["mode"],
+                    "ranking_model": ranking_snapshot.get("model"),
+                    "open_access": bool(
+                        candidate.pdf_url
+                        or candidate.oa_status
+                        or (
+                            candidate.metadata.get("is_oa")
+                            if isinstance(candidate.metadata, dict)
+                            else False
+                        )
+                    ),
+                    "pdf_cached": False,
                 },
                 metadata_snapshot={
                     **(candidate.metadata or {}),
                     "sources": list(raw_candidate.get("sources") or [candidate.source]),
-                    "retrieval_hits": list(raw_candidate.get("retrieval_hits") or []),
+                    "retrieval_hits": list(
+                        (candidate.metadata or {}).get("retrieval_hits") or []
+                    ),
                 },
             )
         )
@@ -564,6 +730,9 @@ async def run_discovery(
         "requested_count": run.requested_count,
         "candidate_budget": run.candidate_budget,
         "returned_count": len(ranked),
+        "ranking_mode": ranking_snapshot["mode"],
+        "start_year": run.start_year,
+        "end_year": run.end_year,
     }
     await session.commit()
     await session.refresh(run)

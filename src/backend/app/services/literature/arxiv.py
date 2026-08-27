@@ -53,6 +53,10 @@ _RSS_CACHE_TTL = 10 * 60
 _RSS_KEEP_TYPES = frozenset({"new", "cross"})
 
 _VERSION_RE = re.compile(r"v\d+$")
+_BOOLEAN_QUERY_TOKEN_RE = re.compile(
+    r'"[^"\r\n]+"|\(|\)|\bAND\b|\bOR\b|\bNOT\b|[^\s()]+', re.IGNORECASE
+)
+_ARXIV_FIELD_RE = re.compile(r"^(?:all|ti|au|abs|co|jr|cat|rn|id):", re.IGNORECASE)
 
 # 值得重试的状态码。429 是标准限流；**403 也算**——arXiv 历史上对它认为过量的客户端
 # 直接返 403 而不是 429，当成永久失败会让整批论文白白丢掉。5xx 是服务端抖动。
@@ -272,6 +276,32 @@ def build_search_query(
     return query
 
 
+def build_raw_search_query(
+    query: str, since: datetime | None = None, until: datetime | None = None
+) -> str:
+    """Compile a validated Boolean query without quoting its operators as one phrase."""
+
+    compiled: list[str] = []
+    for token in _BOOLEAN_QUERY_TOKEN_RE.findall(query):
+        upper = token.upper()
+        if upper in {"AND", "OR", "ANDNOT"} or token in {"(", ")"}:
+            compiled.append(upper if upper in {"AND", "OR", "ANDNOT"} else token)
+        elif upper == "NOT":
+            compiled.append("ANDNOT")
+        elif _ARXIV_FIELD_RE.match(token):
+            compiled.append(token)
+        elif token.startswith('"') and token.endswith('"'):
+            compiled.append(f"all:{token}")
+        else:
+            compiled.append(f"all:{token}")
+    expression = " ".join(compiled) if compiled else "all:*"
+    if since or until:
+        lo = since.strftime("%Y%m%d%H%M") if since else "000001010000"
+        hi = until.strftime("%Y%m%d%H%M") if until else "999912312359"
+        expression = f"({expression}) AND submittedDate:[{lo} TO {hi}]"
+    return expression
+
+
 class ArxivClient:
     def __init__(
         self,
@@ -454,6 +484,36 @@ class ArxivClient:
             )
             results.extend(entries)
             if len(entries) < batch:  # 已到末页
+                break
+            start += len(entries)
+        return results[:limit]
+
+    async def search_raw(
+        self,
+        query: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Search a preplanned Boolean expression while preserving its operators."""
+
+        search_query = build_raw_search_query(query, since, until)
+        results: list[dict[str, Any]] = []
+        start = 0
+        while len(results) < limit:
+            batch = min(self.page_size, limit - len(results))
+            entries = await self._query(
+                {
+                    "search_query": search_query,
+                    "start": start,
+                    "max_results": batch,
+                    "sortBy": "submittedDate",
+                    "sortOrder": "descending",
+                }
+            )
+            results.extend(entries)
+            if len(entries) < batch:
                 break
             start += len(entries)
         return results[:limit]

@@ -96,7 +96,13 @@ async def test_discovery_run_inherits_admin_defaults_without_persisting_keys(cli
     assert run["end_year"] == 2025
     assert run["source_config"] == {
         "sources": ["pubmed", "core"],
-        "score_weights": {"relevance": 0.8, "quality": 0.2},
+        "score_weights": {
+            "relevance": 0.8,
+            "evidence_quality": 0.2,
+            "impact": 0.0,
+            "novelty": 0.0,
+            "recency": 0.0,
+        },
     }
     assert [attempt["source"] for attempt in run["source_attempts"]] == ["core", "pubmed"]
     assert "private-pubmed-key" not in response.text
