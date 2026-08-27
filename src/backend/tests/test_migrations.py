@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
+HEAD_REVISION = "e5f6a7b8c9d0"  # Version-aware sentence/paragraph evidence anchors
+CONTENT_VERSION_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
 PDF_ASSET_REVISION = "c8d9e0f1a2b3"  # Content-addressed PDF assets and grants
 LITERATURE_REVISION = "a7c8d9e0f1b2"  # library-scoped literature discovery contracts
 PREVIOUS_HEAD_REVISION = "8ff89f7fcdeb"  # integration tokens
@@ -122,6 +123,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "paper_content_chunks",
                     "paper_content_version_vectors",
                     "paper_content_chunk_vectors",
+                    "paper_evidence_anchors",
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -446,7 +448,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     ]
     assert {"chunk_id", "space", "dim", "embedding"} <= columns["paper_content_chunk_vectors"]
 
-    # 先退掉解析内容版本迁移，回到 PDF 资产版本。
+    assert {
+        "anchor_type",
+        "anchor_key",
+        "content_revision",
+        "quoted_text",
+        "normalized_text",
+        "locator",
+    } <= columns["paper_evidence_anchors"]
+
+    # 先退掉证据锚点迁移，回到解析内容版本。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == CONTENT_VERSION_REVISION
+    assert "paper_evidence_anchors" not in columns["_tables"]
+
+    # 再退掉解析内容版本迁移，回到 PDF 资产版本。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == PDF_ASSET_REVISION
