@@ -15,6 +15,10 @@ from app.schemas.admin_settings import (
     ExperimentEnvSettings,
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
+    LiteratureProviderTestRequest,
+    LiteratureProviderTestResult,
+    LiteratureSearchSettings,
+    LiteratureSearchSettingsUpdate,
     ManagedCommandWatchdogAdminSettings,
 )
 from app.schemas.tts import TTSAdminSettings, TTSTestResult, TTSVoicesResult
@@ -23,6 +27,7 @@ from app.services import daily_feed as daily_service
 from app.services import embedding as embedding_service
 from app.services import experiment_settings as experiment_settings_service
 from app.services import lab as lab_service
+from app.services import literature_settings as literature_settings_service
 from app.services import managed_command_watchdog as watchdog_service
 from app.services import tts as tts_service
 
@@ -192,6 +197,71 @@ async def get_tts_settings(
 ) -> TTSAdminSettings:
     """Platform speech provider and default model."""
     return TTSAdminSettings(**await tts_service.get_admin_settings(session))
+
+
+@router.get("/literature-search", response_model=LiteratureSearchSettings)
+async def get_literature_search_settings(
+    session: AsyncSession = Depends(get_session),
+) -> LiteratureSearchSettings:
+    return LiteratureSearchSettings(**await literature_settings_service.get_settings(session))
+
+
+@router.put("/literature-search", response_model=LiteratureSearchSettings)
+async def set_literature_search_settings(
+    payload: LiteratureSearchSettingsUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> LiteratureSearchSettings:
+    try:
+        saved = await literature_settings_service.update_settings(
+            session, payload.model_dump(exclude_none=True)
+        )
+    except literature_settings_service.InvalidLiteratureSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"INVALID_LITERATURE_SETTING:{exc.field}",
+        ) from exc
+    return LiteratureSearchSettings(**saved)
+
+
+@router.post("/literature-search/test", response_model=LiteratureProviderTestResult)
+async def test_literature_provider(
+    payload: LiteratureProviderTestRequest,
+    session: AsyncSession = Depends(get_session),
+) -> LiteratureProviderTestResult:
+    """Run a one-result health probe through the same adapter registry as workers."""
+    import time
+
+    source = payload.source.strip().lower()
+    started = time.perf_counter()
+    try:
+        from app.services.literature.runtime import _default_registry
+
+        registry = await _default_registry()
+        adapter = registry.get(source)
+        if adapter is None:
+            raise ValueError(f"unsupported source: {source}")
+        from app.schemas.literature_discovery import SourceSearchRequest
+
+        page = await adapter.search(SourceSearchRequest(query=payload.query, limit=1))
+        detail = "provider responded"
+        result = LiteratureProviderTestResult(
+            source=source,
+            ok=True,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            fetched_count=page.fetched_count,
+            detail=detail,
+        )
+    except Exception as exc:  # noqa: BLE001 - health endpoint returns structured failure
+        result = LiteratureProviderTestResult(
+            source=source,
+            ok=False,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            detail=f"{type(exc).__name__}: {exc}"[:500],
+        )
+    await literature_settings_service.record_provider_health(
+        session, source=source, ok=result.ok, detail=result.detail
+    )
+    return result
 
 
 @router.put("/tts", response_model=TTSAdminSettings)
