@@ -87,9 +87,33 @@ class ManagedCommandWatchdogAdminSettings(BaseModel):
 
 
 class LiteratureProviderKeyStatus(BaseModel):
-    index: int
+    id: str
+    source: str
+    index: int | None = None
     configured: bool
     preview: str
+    enabled: bool = True
+    label: str | None = None
+    health: dict[str, Any] | None = None
+    created_at: float | None = None
+    updated_at: float | None = None
+
+
+class LiteratureProviderCredentialCreate(BaseModel):
+    source: str = Field(min_length=1, max_length=64)
+    secret: str = Field(min_length=1, max_length=20_000)
+    label: str | None = Field(default=None, max_length=120)
+    enabled: bool = True
+
+
+class LiteratureProviderCredentialUpdate(BaseModel):
+    secret: str | None = Field(default=None, min_length=1, max_length=20_000)
+    label: str | None = Field(default=None, max_length=120)
+    enabled: bool | None = None
+
+
+class LiteratureProviderCredentialTestRequest(BaseModel):
+    query: str = Field(default="research", min_length=1, max_length=4000)
 
 
 class LiteratureSearchSettings(BaseModel):
@@ -99,8 +123,8 @@ class LiteratureSearchSettings(BaseModel):
     start_year: int | None = Field(default=None, ge=1800, le=3000)
     end_year: int | None = Field(default=None, ge=1800, le=3000)
     score_weights: dict[str, float]
-    provider_keys: dict[str, list[LiteratureProviderKeyStatus]] = {}
-    provider_health: dict[str, dict[str, Any]] = {}
+    provider_keys: dict[str, list[LiteratureProviderKeyStatus]] = Field(default_factory=dict)
+    provider_health: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class LiteratureSearchSettingsUpdate(BaseModel):

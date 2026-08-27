@@ -15,6 +15,10 @@ from app.schemas.admin_settings import (
     ExperimentEnvSettings,
     LabLeaderboardSettingRead,
     LabLeaderboardSettingUpdate,
+    LiteratureProviderCredentialCreate,
+    LiteratureProviderCredentialTestRequest,
+    LiteratureProviderCredentialUpdate,
+    LiteratureProviderKeyStatus,
     LiteratureProviderTestRequest,
     LiteratureProviderTestResult,
     LiteratureSearchSettings,
@@ -262,6 +266,113 @@ async def test_literature_provider(
         )
     await literature_settings_service.record_provider_health(
         session, source=source, ok=result.ok, detail=result.detail
+    )
+    return result
+
+
+@router.post(
+    "/literature-search/credentials",
+    response_model=LiteratureProviderKeyStatus,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_literature_provider_credential(
+    payload: LiteratureProviderCredentialCreate,
+    session: AsyncSession = Depends(get_session),
+) -> LiteratureProviderKeyStatus:
+    try:
+        result = await literature_settings_service.create_provider_credential(
+            session, **payload.model_dump()
+        )
+    except literature_settings_service.InvalidLiteratureSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"INVALID_LITERATURE_CREDENTIAL:{exc.field}",
+        ) from exc
+    return LiteratureProviderKeyStatus(**result)
+
+
+@router.patch(
+    "/literature-search/credentials/{credential_id}",
+    response_model=LiteratureProviderKeyStatus,
+)
+async def update_literature_provider_credential(
+    credential_id: str,
+    payload: LiteratureProviderCredentialUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> LiteratureProviderKeyStatus:
+    changes = payload.model_dump(exclude_unset=True)
+    if "label" in changes and changes["label"] is None:
+        changes["label"] = ""
+    try:
+        result = await literature_settings_service.update_provider_credential(
+            session, credential_id, **changes
+        )
+    except literature_settings_service.InvalidLiteratureSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"INVALID_LITERATURE_CREDENTIAL:{exc.field}",
+        ) from exc
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_CREDENTIAL_NOT_FOUND")
+    return LiteratureProviderKeyStatus(**result)
+
+
+@router.delete(
+    "/literature-search/credentials/{credential_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_literature_provider_credential(
+    credential_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    if not await literature_settings_service.delete_provider_credential(session, credential_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_CREDENTIAL_NOT_FOUND")
+
+
+@router.post(
+    "/literature-search/credentials/{credential_id}/test",
+    response_model=LiteratureProviderTestResult,
+)
+async def test_literature_provider_credential(
+    credential_id: str,
+    payload: LiteratureProviderCredentialTestRequest,
+    session: AsyncSession = Depends(get_session),
+) -> LiteratureProviderTestResult:
+    import time
+
+    credential = await literature_settings_service.get_provider_credential_secret(
+        session, credential_id
+    )
+    if credential is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_CREDENTIAL_NOT_FOUND")
+    source, secret = credential
+    started = time.perf_counter()
+    try:
+        from app.schemas.literature_discovery import SourceSearchRequest
+        from app.services.literature.runtime import build_adapter_registry
+
+        runtime_settings = await literature_settings_service.get_runtime_settings(session)
+        runtime_settings["provider_keys"] = {source: [secret]}
+        adapter = (await build_adapter_registry(runtime_settings)).get(source)
+        if adapter is None:
+            raise ValueError(f"unsupported source: {source}")
+        page = await adapter.search(SourceSearchRequest(query=payload.query, limit=1))
+        result = LiteratureProviderTestResult(
+            source=source,
+            ok=True,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            fetched_count=page.fetched_count,
+            detail="credential responded",
+        )
+    except Exception as exc:  # noqa: BLE001 - probe failures are returned as health state
+        result = LiteratureProviderTestResult(
+            source=source,
+            ok=False,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            detail=f"{type(exc).__name__}: {exc}"[:500],
+        )
+    await literature_settings_service.record_credential_health(
+        session, credential_id, ok=result.ok, detail=result.detail
     )
     return result
 

@@ -261,9 +261,10 @@ def _config_values(run: LiteratureSearchRun) -> tuple[list[str], list[str], dict
 
 def _credential_pool(settings: Mapping[str, Any], source: str, fallback: str = "") -> list[str]:
     configured = settings.get("provider_keys")
-    values = configured.get(source) if isinstance(configured, Mapping) else None
+    declared = isinstance(configured, Mapping) and source in configured
+    values = configured.get(source) if declared else None
     pool = [str(value).strip() for value in values or [] if str(value).strip()]
-    if pool:
+    if declared:
         return pool
     return [item for value in fallback.replace(";", ",").split(",") if (item := value.strip())]
 

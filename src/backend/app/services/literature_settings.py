@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import time
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -134,21 +135,74 @@ def _mask(token: str) -> str:
     return f"••••{token[-4:]}" if len(token) >= 4 else "••••"
 
 
-def _masked(value: Mapping[str, Any] | None) -> dict[str, Any]:
+def _credential_entry(source: str, item: Any, index: int) -> dict[str, Any] | None:
+    """Normalize legacy encrypted strings and current credential objects."""
+
+    if isinstance(item, str) and item:
+        stable = uuid.uuid5(uuid.NAMESPACE_URL, f"polaris:{source}:{index}:{item}")
+        return {
+            "id": str(stable),
+            "secret": item,
+            "enabled": True,
+            "label": None,
+            "health": None,
+            "created_at": None,
+            "updated_at": None,
+        }
+    if not isinstance(item, Mapping) or not item.get("secret"):
+        return None
+    credential_id = str(item.get("id") or uuid.uuid4())
+    try:
+        uuid.UUID(credential_id)
+    except ValueError:
+        credential_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"polaris:{source}:{credential_id}"))
+    return {
+        "id": credential_id,
+        "secret": str(item["secret"]),
+        "enabled": bool(item.get("enabled", True)),
+        "label": str(item.get("label") or "").strip() or None,
+        "health": dict(item.get("health") or {}) or None,
+        "created_at": item.get("created_at"),
+        "updated_at": item.get("updated_at"),
+    }
+
+
+def _credential_pools(value: Mapping[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
     keys = value.get("provider_keys") if isinstance(value, Mapping) else {}
+    pools: dict[str, list[dict[str, Any]]] = {}
+    if not isinstance(keys, Mapping):
+        return pools
+    for source, items in keys.items():
+        if not isinstance(items, list):
+            continue
+        normalized = [
+            entry
+            for index, item in enumerate(items)
+            if (entry := _credential_entry(str(source), item, index)) is not None
+        ]
+        if normalized:
+            pools[str(source)] = normalized
+    return pools
+
+
+def _masked(value: Mapping[str, Any] | None) -> dict[str, Any]:
     result: dict[str, list[dict[str, Any]]] = {}
-    if isinstance(keys, Mapping):
-        for source, pool in keys.items():
-            if isinstance(pool, list):
-                result[str(source)] = [
-                    {
-                        "index": index,
-                        "configured": bool(item),
-                        "preview": _mask(decrypt_secret(str(item))) if item else "••••",
-                    }
-                    for index, item in enumerate(pool)
-                    if item
-                ]
+    for source, pool in _credential_pools(value).items():
+        result[source] = [
+            {
+                "id": item["id"],
+                "source": source,
+                "index": index,
+                "configured": True,
+                "preview": _mask(decrypt_secret(item["secret"])),
+                "enabled": item["enabled"],
+                "label": item["label"],
+                "health": item["health"],
+                "created_at": item["created_at"],
+                "updated_at": item["updated_at"],
+            }
+            for index, item in enumerate(pool)
+        ]
     return result
 
 
@@ -166,12 +220,13 @@ async def get_runtime_settings(session: AsyncSession) -> dict[str, Any]:
     row = await session.get(SystemSetting, SETTING_KEY)
     value = row.value if row is not None and isinstance(row.value, Mapping) else {}
     normalized = {**DEFAULTS, **_normalize(value)}
-    encrypted = value.get("provider_keys") if isinstance(value, Mapping) else {}
     pools: dict[str, list[str]] = {}
-    if isinstance(encrypted, Mapping):
-        for source, items in encrypted.items():
-            if isinstance(items, list):
-                pools[str(source)] = [decrypt_secret(str(item)) for item in items if item]
+    for source, items in _credential_pools(value).items():
+        pools[source] = [
+            decrypt_secret(item["secret"])
+            for item in items
+            if item["enabled"]
+        ]
     normalized["provider_keys"] = pools
     return normalized
 
@@ -195,7 +250,19 @@ async def update_settings(session: AsyncSession, data: Mapping[str, Any]) -> dic
                 raise InvalidLiteratureSettingError(
                     f"provider_keys.{source_name}", "must be a non-empty string list"
                 )
-            encrypted[source_name] = [encrypt_secret(str(item).strip()) for item in values]
+            now = time.time()
+            encrypted[source_name] = [
+                {
+                    "id": str(uuid.uuid4()),
+                    "secret": encrypt_secret(str(item).strip()),
+                    "enabled": True,
+                    "label": None,
+                    "health": None,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for item in values
+            ]
         normalized["provider_keys"] = encrypted
     else:
         normalized["provider_keys"] = (
@@ -209,6 +276,142 @@ async def update_settings(session: AsyncSession, data: Mapping[str, Any]) -> dic
         row.value = normalized
     await session.commit()
     return await get_settings(session)
+
+
+def _validate_credential_source(source: str) -> str:
+    source = source.strip().lower()
+    if source not in SUPPORTED_SOURCES:
+        raise InvalidLiteratureSettingError("source", f"unsupported source: {source}")
+    if source == "arxiv":
+        raise InvalidLiteratureSettingError("source", "arxiv does not require credentials")
+    return source
+
+
+async def create_provider_credential(
+    session: AsyncSession,
+    *,
+    source: str,
+    secret: str,
+    label: str | None,
+    enabled: bool,
+) -> dict[str, Any]:
+    source = _validate_credential_source(source)
+    secret = secret.strip()
+    if not secret:
+        raise InvalidLiteratureSettingError("secret", "must not be empty")
+    row = await session.get(SystemSetting, SETTING_KEY)
+    value = dict(row.value) if row is not None and isinstance(row.value, Mapping) else {}
+    pools = _credential_pools(value)
+    now = time.time()
+    entry = {
+        "id": str(uuid.uuid4()),
+        "secret": encrypt_secret(secret),
+        "enabled": enabled,
+        "label": str(label or "").strip() or None,
+        "health": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    pools.setdefault(source, []).append(entry)
+    value["provider_keys"] = pools
+    if row is None:
+        session.add(SystemSetting(key=SETTING_KEY, value=value))
+    else:
+        row.value = value
+    await session.commit()
+    return next(item for item in _masked(value)[source] if item["id"] == entry["id"])
+
+
+async def update_provider_credential(
+    session: AsyncSession,
+    credential_id: str,
+    *,
+    secret: str | None = None,
+    label: str | None = None,
+    enabled: bool | None = None,
+) -> dict[str, Any] | None:
+    row = await session.get(SystemSetting, SETTING_KEY)
+    if row is None or not isinstance(row.value, Mapping):
+        return None
+    value = dict(row.value)
+    pools = _credential_pools(value)
+    for source, entries in pools.items():
+        for entry in entries:
+            if entry["id"] != credential_id:
+                continue
+            if secret is not None:
+                if not secret.strip():
+                    raise InvalidLiteratureSettingError("secret", "must not be empty")
+                entry["secret"] = encrypt_secret(secret.strip())
+            if label is not None:
+                entry["label"] = label.strip() or None
+            if enabled is not None:
+                entry["enabled"] = enabled
+            entry["updated_at"] = time.time()
+            value["provider_keys"] = pools
+            row.value = value
+            await session.commit()
+            return next(
+                item for item in _masked(value)[source] if item["id"] == credential_id
+            )
+    return None
+
+
+async def delete_provider_credential(session: AsyncSession, credential_id: str) -> bool:
+    row = await session.get(SystemSetting, SETTING_KEY)
+    if row is None or not isinstance(row.value, Mapping):
+        return False
+    value = dict(row.value)
+    pools = _credential_pools(value)
+    found = False
+    for source, entries in list(pools.items()):
+        kept = [entry for entry in entries if entry["id"] != credential_id]
+        found = found or len(kept) != len(entries)
+        if kept:
+            pools[source] = kept
+        else:
+            pools.pop(source, None)
+    if not found:
+        return False
+    value["provider_keys"] = pools
+    row.value = value
+    await session.commit()
+    return True
+
+
+async def get_provider_credential_secret(
+    session: AsyncSession, credential_id: str
+) -> tuple[str, str] | None:
+    row = await session.get(SystemSetting, SETTING_KEY)
+    value = row.value if row is not None and isinstance(row.value, Mapping) else {}
+    for source, entries in _credential_pools(value).items():
+        for entry in entries:
+            if entry["id"] == credential_id:
+                return source, decrypt_secret(entry["secret"])
+    return None
+
+
+async def record_credential_health(
+    session: AsyncSession, credential_id: str, *, ok: bool, detail: str
+) -> None:
+    row = await session.get(SystemSetting, SETTING_KEY)
+    if row is None or not isinstance(row.value, Mapping):
+        return
+    value = dict(row.value)
+    pools = _credential_pools(value)
+    for entries in pools.values():
+        for entry in entries:
+            if entry["id"] == credential_id:
+                entry["health"] = {
+                    "ok": ok,
+                    "detail": detail[:500],
+                    "checked_at": time.time(),
+                }
+                entry["updated_at"] = time.time()
+                value["provider_keys"] = pools
+                row.value = value
+                await session.commit()
+                return
 
 
 async def record_provider_health(
