@@ -90,6 +90,9 @@ class SearchRunRead(BaseModel):
     query_plan: dict[str, Any] | None
     source_config: dict[str, Any] | None
     model_version: str | None
+    trigger: Literal["manual", "scheduled"]
+    schedule_version: int | None
+    scheduled_for: datetime | None
     progress: dict[str, Any] | None
     error_summary: str | None
     started_at: datetime | None
@@ -196,3 +199,48 @@ class SearchRunPage(BaseModel):
     total: int
     page: int
     size: int
+
+
+class LiteratureDiscoveryScheduleUpdate(BaseModel):
+    enabled: bool = False
+    timezone: str = Field(default="UTC", min_length=1, max_length=64)
+    hour: int = Field(default=1, ge=0, le=23)
+    minute: int = Field(default=30, ge=0, le=59)
+    requested_count: int = Field(default=50, ge=1, le=200)
+    candidate_budget: int = Field(default=200, ge=1, le=1000)
+    start_year: int | None = Field(default=None, ge=1800, le=3000)
+    end_year: int | None = Field(default=None, ge=1800, le=3000)
+
+    @model_validator(mode="after")
+    def validate_schedule_window(self) -> "LiteratureDiscoveryScheduleUpdate":
+        if self.candidate_budget < self.requested_count:
+            raise ValueError("candidate_budget must not be less than requested_count")
+        if (
+            self.start_year is not None
+            and self.end_year is not None
+            and self.start_year > self.end_year
+        ):
+            raise ValueError("start_year must not be greater than end_year")
+        return self
+
+
+class LiteratureDiscoveryScheduleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    library_id: uuid.UUID
+    enabled: bool
+    timezone: str
+    hour: int
+    minute: int
+    requested_count: int
+    candidate_budget: int
+    start_year: int | None
+    end_year: int | None
+    config_version: int
+    created_by: uuid.UUID | None
+    next_run_at: datetime | None
+    last_run_id: uuid.UUID | None
+    last_enqueued_at: datetime | None
+    last_error_code: str | None
+    created_at: datetime
+    updated_at: datetime

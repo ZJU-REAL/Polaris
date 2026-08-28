@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.models.literature_discovery import (
     LiteratureSearchHit,
+    LiteratureSearchRun,
     LiteratureSourceAttempt,
 )
 from app.models.paper import Paper
@@ -349,6 +350,70 @@ async def test_runtime_persists_versioned_metric_snapshot_and_uses_impact(client
     assert hit is not None
     assert hit.venue_metric_snapshot["version"] == "venue-metrics-v1"
     assert hit.scores["impact"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_scheduled_runtime_excludes_library_history_before_ranking(client, monkeypatch):
+    run_id, _, library_id = await _create_run(
+        client,
+        source_config={"sources": ["openalex"]},
+        requested_count=2,
+        candidate_budget=4,
+    )
+    adapter = FakeAdapter(
+        "openalex",
+        [
+            _candidate("openalex", "Historical candidate", doi="10.1000/history"),
+            _candidate("openalex", "New candidate", doi="10.1000/new"),
+        ],
+    )
+
+    async def no_oa_cache(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(oa_cache, "cache_hit_pdf", no_oa_cache)
+    async with get_sessionmaker()() as session:
+        current = await session.get(LiteratureSearchRun, run_id)
+        assert current is not None
+        current.trigger = "scheduled"
+        prior = LiteratureSearchRun(
+            library_id=uuid.UUID(library_id),
+            status="completed",
+            requested_count=1,
+            candidate_budget=1,
+            topic="prior run",
+            trigger="scheduled",
+        )
+        session.add(prior)
+        await session.flush()
+        session.add(
+            LiteratureSearchHit(
+                run_id=prior.id,
+                source="crossref",
+                dedup_key="doi:10.1000/history",
+                title="Historical candidate",
+            )
+        )
+        await session.commit()
+
+        run = await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((adapter,)),
+            llm_router=RetrievalRouter(),
+        )
+        hits = list(
+            (
+                await session.execute(
+                    select(LiteratureSearchHit).where(LiteratureSearchHit.run_id == run.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert [hit.title for hit in hits] == ["New candidate"]
+    assert run.progress["historical_duplicates"] == 1
 
 
 @pytest.mark.asyncio

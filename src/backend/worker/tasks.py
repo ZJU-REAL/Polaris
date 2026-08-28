@@ -390,3 +390,37 @@ async def run_literature_discovery(ctx: dict[str, Any], run_id: str) -> dict[str
             "status": run.status,
             "returned_count": (run.progress or {}).get("returned_count", 0),
         }
+
+
+async def dispatch_literature_discovery_schedules(ctx: dict[str, Any]) -> list[str]:
+    """Create due incremental runs and idempotently dispatch them to ARQ."""
+
+    from datetime import UTC, datetime
+
+    from app.services.literature import discovery_schedules
+
+    current = datetime.now(UTC)
+    async with get_sessionmaker()() as session:
+        run_ids = await discovery_schedules.claim_due_schedules(session, now=current)
+    dispatched: list[str] = []
+    bucket = int(current.timestamp() // (15 * 60))
+    for run_id in run_ids:
+        ok = False
+        try:
+            await ctx["redis"].enqueue_job(
+                "run_literature_discovery",
+                str(run_id),
+                _job_id=f"scheduled-literature-{run_id}-{bucket}",
+            )
+            ok = True
+            dispatched.append(str(run_id))
+        except Exception:
+            logger.exception("scheduled literature dispatch failed for %s", run_id)
+        async with get_sessionmaker()() as session:
+            await discovery_schedules.record_dispatch_result(
+                session,
+                run_id=run_id,
+                ok=ok,
+                now=current,
+            )
+    return dispatched

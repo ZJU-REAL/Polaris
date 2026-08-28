@@ -22,6 +22,7 @@ from app.models.interdisciplinary import (
 from app.models.library import UserLibraryEntry
 from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
 from app.models.literature_discovery import (
+    LiteratureDiscoverySchedule,
     LiteratureOaAttempt,
     LiteratureOaCache,
     LiteratureSearchHit,
@@ -96,6 +97,7 @@ __all__ = [
     "LLMCallLog",
     "LibraryPaper",
     "LibraryResearchDigest",
+    "LiteratureDiscoverySchedule",
     "DownloadApiKey",
     "DownloadBatch",
     "DownloadBatchItem",

@@ -162,3 +162,109 @@ async def test_personal_library_is_isolated_and_public_library_is_read_only(clie
         headers=stranger,
     )
     assert response.status_code == 403
+
+
+async def test_owner_configures_and_triggers_incremental_schedule(client, queue_stub):
+    owner = await _headers(client, "discovery-schedule-owner@example.com")
+    library_id = await _personal_library(client, owner)
+    payload = {
+        "enabled": True,
+        "timezone": "UTC",
+        "hour": 3,
+        "minute": 45,
+        "requested_count": 50,
+        "candidate_budget": 200,
+        "start_year": 2016,
+        "end_year": 2026,
+    }
+
+    response = await client.put(
+        f"/api/libraries/{library_id}/literature/schedule",
+        json=payload,
+        headers=owner,
+    )
+    assert response.status_code == 200, response.text
+    schedule = response.json()
+    assert schedule["config_version"] == 1
+    assert schedule["requested_count"] == 50
+    assert schedule["start_year"] == 2016
+    assert schedule["next_run_at"] is not None
+
+    response = await client.post(
+        f"/api/libraries/{library_id}/literature/schedule/run",
+        headers=owner,
+    )
+    assert response.status_code == 202, response.text
+    run = response.json()
+    assert run["trigger"] == "scheduled"
+    assert run["schedule_version"] == 1
+    assert run["requested_count"] == 50
+    assert run["start_year"] == 2016
+    assert run["source_config"]["incremental_discovery"]["schedule_version"] == 1
+    assert queue_stub.jobs == [("run_literature_discovery", (run["id"],), {})]
+
+    response = await client.post(
+        f"/api/libraries/{library_id}/literature/schedule/run",
+        headers=owner,
+    )
+    assert response.status_code == 409
+    assert "LITERATURE_SCHEDULE_RUN_ACTIVE" in response.text
+
+    response = await client.get(
+        f"/api/libraries/{library_id}/literature/schedule",
+        headers=owner,
+    )
+    assert response.status_code == 200
+    assert response.json()["last_run_id"] == run["id"]
+    assert response.json()["last_enqueued_at"] is not None
+
+
+async def test_public_schedule_is_read_only_for_non_curators(client):
+    owner = await _headers(client, "public-schedule-owner@example.com")
+    stranger = await _headers(client, "public-schedule-reader@example.com")
+    library_id = await _personal_library(client, owner)
+    response = await client.put(
+        f"/api/libraries/{library_id}/literature/schedule",
+        json={"enabled": False, "timezone": "UTC"},
+        headers=owner,
+    )
+    assert response.status_code == 200, response.text
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        assert library is not None
+        library.is_public = True
+        await session.commit()
+
+    response = await client.get(
+        f"/api/libraries/{library_id}/literature/schedule", headers=stranger
+    )
+    assert response.status_code == 200
+    response = await client.put(
+        f"/api/libraries/{library_id}/literature/schedule",
+        json={"enabled": True, "timezone": "UTC"},
+        headers=stranger,
+    )
+    assert response.status_code == 403
+    response = await client.delete(
+        f"/api/libraries/{library_id}/literature/schedule", headers=stranger
+    )
+    assert response.status_code == 403
+
+
+async def test_schedule_rejects_invalid_timezone_and_year_window(client):
+    owner = await _headers(client, "invalid-schedule-owner@example.com")
+    library_id = await _personal_library(client, owner)
+    response = await client.put(
+        f"/api/libraries/{library_id}/literature/schedule",
+        json={"enabled": True, "timezone": "Not/A_Real_Zone"},
+        headers=owner,
+    )
+    assert response.status_code == 422
+    assert "INVALID_TIMEZONE" in response.text
+
+    response = await client.put(
+        f"/api/libraries/{library_id}/literature/schedule",
+        json={"start_year": 2026, "end_year": 2016},
+        headers=owner,
+    )
+    assert response.status_code == 422
