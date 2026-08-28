@@ -23,6 +23,7 @@ from app.models.library import UserLibraryEntry
 from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator, LibraryPaper
 from app.models.literature_discovery import (
     LiteratureDiscoverySchedule,
+    LiteratureHitTranslation,
     LiteratureOaAttempt,
     LiteratureOaCache,
     LiteratureSearchHit,
@@ -98,6 +99,7 @@ __all__ = [
     "LibraryPaper",
     "LibraryResearchDigest",
     "LiteratureDiscoverySchedule",
+    "LiteratureHitTranslation",
     "DownloadApiKey",
     "DownloadBatch",
     "DownloadBatchItem",

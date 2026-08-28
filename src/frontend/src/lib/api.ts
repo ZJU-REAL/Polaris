@@ -632,6 +632,7 @@ export const LLM_STAGES = [
   'librarian',
   'digest',
   'extract',
+  'translation',
   'reading',
   'embedding',
   'rerank',

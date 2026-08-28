@@ -19,6 +19,7 @@ from worker.tasks import (
     resume_voyage,
     run_literature_discovery,
     run_voyage,
+    translate_literature_hit,
     watch_unanswered_managed_commands,
 )
 
@@ -41,6 +42,7 @@ class WorkerSettings:
         daily_wiki_ingest,
         daily_publication_match,
         func(run_literature_discovery, timeout=3600),
+        func(translate_literature_hit, timeout=600),
     ]
     # 抓取时刻可由管理员配置（SystemSetting daily_feed_sync_time，默认 UTC 02:30 =
     # 北京 10:30；arXiv 约北京 10:00 放新公告）。arq 的 cron 时刻在 worker 启动时就固定
