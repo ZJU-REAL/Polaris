@@ -102,6 +102,39 @@ async def test_candidate_budget_cannot_be_smaller_than_requested_result_count(cl
     assert response.json()["candidate_budget"] == 50
 
 
+async def test_run_snapshot_inherits_library_keywords_exclusions_and_rubric(client):
+    owner = await _headers(client, "discovery-library-config@example.com")
+    library_id = await _personal_library(client, owner)
+    rubric = [{"name": "mechanism evidence", "description": "Prefer validated mechanics"}]
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        assert library is not None
+        library.definition = {
+            "statement": "Impact response of structural members",
+            "keywords": {
+                "include": ["impact response", "damage mechanics"],
+                "exclude": ["review"],
+            },
+            "rubric": rubric,
+        }
+        await session.commit()
+
+    response = await client.post(
+        f"/api/libraries/{library_id}/literature/runs",
+        json={
+            "topic": "structural impact response",
+            "source_config": {"sources": ["openalex"]},
+        },
+        headers=owner,
+    )
+
+    assert response.status_code == 201, response.text
+    source_config = response.json()["source_config"]
+    assert source_config["keywords"] == ["impact response", "damage mechanics"]
+    assert source_config["excluded_keywords"] == ["review"]
+    assert source_config["score_rubric"] == rubric
+
+
 async def test_personal_library_is_isolated_and_public_library_is_read_only(client):
     await _headers(client, "visibility-admin@example.com")
     owner = await _headers(client, "visibility-owner@example.com")

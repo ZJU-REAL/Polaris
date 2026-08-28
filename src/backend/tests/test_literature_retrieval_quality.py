@@ -7,9 +7,10 @@ import pytest
 from app.services.literature.discovery_ranking import rank_candidates
 from app.services.literature.retrieval_quality import (
     QueryFamily,
-    _is_english_query,
+    QueryGenerationError,
     add_retrieval_hit,
     allocate_query_budget,
+    compile_source_query,
     fuse_candidates,
     generate_query_families,
     model_rerank,
@@ -33,9 +34,7 @@ class QueryRouter:
 async def test_query_generation_retries_until_the_plan_is_valid_english():
     router = QueryRouter(
         [
-            json.dumps(
-                {"queries": [{"seed_id": "core", "purpose": "core", "query": "结构冲击"}]}
-            ),
+            json.dumps({"queries": [{"seed_id": "core", "purpose": "core", "query": "结构冲击"}]}),
             json.dumps(
                 {
                     "queries": [
@@ -72,9 +71,7 @@ async def test_query_generation_retries_until_the_plan_is_valid_english():
         "mode": "model",
         "model": "query-model",
         "attempts": 2,
-        "validation_errors": [
-            "ValueError: valid English query purposes missing: core, coverage"
-        ],
+        "validation_errors": ["ValueError: valid English query purposes missing: core, coverage"],
     }
 
 
@@ -82,19 +79,24 @@ async def test_query_generation_retries_until_the_plan_is_valid_english():
 async def test_query_generation_fallback_does_not_execute_raw_chinese_topic():
     router = QueryRouter(["not json", "still not json", "no structured response"])
 
-    families, snapshot = await generate_query_families(
-        llm_router=router,
-        topic="基于视觉模型的结构冲击损伤识别",
-        keywords=["结构响应"],
-        excluded_keywords=[],
-        query_plan=None,
-        user_id=None,
-        library_id=uuid4(),
-    )
+    with pytest.raises(QueryGenerationError, match="QUERY_GENERATION_FAILED"):
+        await generate_query_families(
+            llm_router=router,
+            topic="基于视觉模型的结构冲击损伤识别",
+            keywords=["结构响应"],
+            excluded_keywords=[],
+            query_plan=None,
+            user_id=None,
+            library_id=uuid4(),
+        )
 
-    assert families[0].query == '"scientific research" AND "research study"'
-    assert all(_is_english_query(item.query) for item in families)
-    assert snapshot["mode"] == "deterministic_fallback"
+
+def test_source_query_compiler_preserves_boolean_sources_and_simplifies_plain_search():
+    query = '("structural impact" AND response) NOT review'
+
+    assert compile_source_query("pubmed", query) == query
+    assert compile_source_query("openalex", query) == "structural impact response"
+    assert compile_source_query("semantic", query) == "structural impact response"
 
 
 def test_candidate_budget_is_aggregate_across_sources_and_queries():
