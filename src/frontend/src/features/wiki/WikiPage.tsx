@@ -218,6 +218,7 @@ export function WikiWorkbench({
           <PapersTab
             pid={pid}
             libraryId={tabLibraryId}
+            canManage={canManage}
             selectedId={paperId}
             onSelect={setPaperId}
             onOpenConcept={goConcept}

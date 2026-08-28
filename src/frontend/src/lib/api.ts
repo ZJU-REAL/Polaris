@@ -1,5 +1,5 @@
 import { tr } from './i18n';
-import { apiBase } from './endpoint';
+import { apiBase, serverOrigin } from './endpoint';
 import { readToken, writeToken } from './token-store';
 import { LocalUnavailable, noteLocalFailure, resolveLocalHandler } from './local-routes';
 /* ============================================================
@@ -138,6 +138,24 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
     throw new ApiError(res.status, readOnlyMessage(detail), body);
   }
   return res.blob();
+}
+
+/** Resolve a short-lived API resource URL in both web and Electron renderers. */
+export function apiResourceUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  return `${serverOrigin()}${url.startsWith('/') ? url : `/${url}`}`;
+}
+
+/** Fetch text from a signed resource URL returned by the API. */
+async function requestResourceText(url: string): Promise<string> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(apiResourceUrl(url), { headers });
+  if (!res.ok) {
+    throw new ApiError(res.status, res.statusText || `HTTP ${res.status}`);
+  }
+  return res.text();
 }
 
 /** Streaming response that deliberately leaves the body unread for Web Audio. */
@@ -931,6 +949,91 @@ export interface PaperDetail extends PaperRead {
   figures?: FigureInfo[];
   /** 手动添加后若仍需分阶段后处理，返回可订阅进度的任务 id；已处理完整时为 null。 */
   task_id?: string | null;
+}
+
+export interface PaperAssetRead {
+  id: string;
+  paper_id: string;
+  blob_id: string;
+  source: string;
+  source_locator: string | null;
+  identity_key: string | null;
+  identity_status: string;
+  sharing_scope: string;
+  state: string;
+  is_preferred: boolean;
+  byte_size: number;
+  sha256: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaperAssetGrantRead {
+  id: string;
+  asset_id: string;
+  library_id: string;
+  status: string;
+  can_read: boolean;
+  can_process: boolean;
+  granted_by: string | null;
+  revoked_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaperAssetPage {
+  items: PaperAssetRead[];
+  grants: PaperAssetGrantRead[];
+}
+
+export interface PaperContentVersionRead {
+  id: string;
+  paper_id: string;
+  asset_id: string;
+  version_no: number;
+  parser: string;
+  parser_version: string | null;
+  status: string;
+  error_code: string | null;
+  error_detail: string | null;
+  attempt: number;
+  page_count: number;
+  chunk_count: number;
+  document_vector_state: string;
+  chunk_vector_state: string;
+  is_current: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StructuredContentAssetRead {
+  kind: 'image' | 'table';
+  path: string;
+  media_type: string;
+  byte_size: number;
+  sha256: string;
+  url: string;
+  expires_at: string;
+}
+
+export interface StructuredContentManifestRead {
+  content_version_id: string;
+  paper_id: string;
+  asset_id: string;
+  version_no: number;
+  parser: string;
+  parser_version: string | null;
+  parse_status: string;
+  page_count: number;
+  chunk_count: number;
+  document_vector_state: string;
+  chunk_vector_state: string;
+  content_format: 'mineru_markdown' | 'plain_text' | 'unavailable';
+  content_hash: string | null;
+  markdown_url: string | null;
+  text_url: string | null;
+  assets: StructuredContentAssetRead[];
+  urls_expire_at: string | null;
 }
 
 export interface PageOf<T> {
@@ -3451,6 +3554,50 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url }),
     });
+  },
+
+  // —— Library-scoped PDF assets and versioned structured content ——
+  listLibraryPaperAssets(libraryId: string, paperId: string): Promise<PaperAssetPage> {
+    return request<PaperAssetPage>(`/libraries/${libraryId}/papers/${paperId}/assets`);
+  },
+  uploadLibraryPaperAsset(
+    libraryId: string,
+    paperId: string,
+    file: File,
+    options: { sharingScope?: 'private' | 'library' | 'public'; identityKey?: string | null } = {},
+  ): Promise<PaperAssetRead> {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('source', 'upload');
+    form.append('sharing_scope', options.sharingScope ?? 'private');
+    form.append('identity_status', 'verified');
+    if (options.identityKey) form.append('identity_key', options.identityKey);
+    return request<PaperAssetRead>(`/libraries/${libraryId}/papers/${paperId}/assets`, {
+      method: 'POST',
+      body: form,
+    });
+  },
+  downloadLibraryPaperAsset(libraryId: string, paperId: string, assetId: string): Promise<Blob> {
+    return requestBlob(`/libraries/${libraryId}/papers/${paperId}/assets/${assetId}/download`);
+  },
+  createLibraryPaperContentVersion(
+    libraryId: string,
+    paperId: string,
+    assetId: string,
+  ): Promise<PaperContentVersionRead> {
+    return request<PaperContentVersionRead>(
+      `/libraries/${libraryId}/papers/${paperId}/assets/${assetId}/content-versions`,
+      { method: 'POST' },
+    );
+  },
+  getLibraryPaperContentVersion(libraryId: string, paperId: string): Promise<PaperContentVersionRead> {
+    return request<PaperContentVersionRead>(`/libraries/${libraryId}/papers/${paperId}/content-version`);
+  },
+  getLibraryPaperStructuredContent(libraryId: string, paperId: string): Promise<StructuredContentManifestRead> {
+    return request<StructuredContentManifestRead>(`/libraries/${libraryId}/papers/${paperId}/structured-content`);
+  },
+  fetchStructuredContentText(url: string): Promise<string> {
+    return requestResourceText(url);
   },
 
   // —— Lit · 论文图片（docs/api-lit.md §6.5） ——

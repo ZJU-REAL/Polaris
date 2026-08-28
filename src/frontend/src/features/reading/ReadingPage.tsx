@@ -352,6 +352,7 @@ export function ReadingPage() {
           >
             <PdfReader
               paper={paper}
+              libraryId={paperLibId}
               highlights={highlights}
               activeHighlightId={activeHl}
               creating={createHlMutation.isPending}
