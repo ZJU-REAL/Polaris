@@ -42,6 +42,7 @@ from app.api import (
     shelf,
     skills,
     ssh_credentials,
+    structured_content,
     tts,
     users_profile,
     views,
@@ -72,6 +73,7 @@ api_router.include_router(papers.router)
 api_router.include_router(library.router)
 api_router.include_router(literature_discovery.router)
 api_router.include_router(paper_assets.router)
+api_router.include_router(structured_content.router)
 api_router.include_router(libraries.router)
 api_router.include_router(publications.router)
 api_router.include_router(notes.router)

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # HTTP MCP 始终复用当前 /mcp 请求的 origin，不读取此项。
     public_base_url: str = ""
     mcp_download_link_ttl_seconds: int = 15 * 60
+    structured_content_link_ttl_seconds: int = 5 * 60
     # prod 下额外放行的跨域前端来源（逗号分隔）。桌面客户端的 app://polaris 恒在白名单内、
     # 无需在此配置；这一项留给「前端与 API 不同域」的部署形态。web 生产走 nginx 同源反代，
     # 根本不进 CORS 分支。用逗号分隔的 str 而非 list[str]：pydantic-settings 对 list[str]
