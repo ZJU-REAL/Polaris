@@ -141,6 +141,18 @@ class Settings(BaseSettings):
             "POLARIS_LITERATURE_SOURCE_RETRIES", "PAPER_SEARCH_SOURCE_RETRIES"
         ),
     )
+    venue_metrics_cache_ttl_days: int = Field(default=30, ge=1, le=3650)
+    venue_metrics_concurrency: int = Field(default=4, ge=1, le=16)
+    easyscholar_base_url: str = Field(
+        default="https://www.easyscholar.cc/open/getPublicationRank",
+        validation_alias=AliasChoices("POLARIS_EASYSCHOLAR_BASE_URL", "EASYSCHOLAR_BASE_URL"),
+    )
+    easyscholar_secret_keys: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "POLARIS_EASYSCHOLAR_SECRET_KEYS", "EASYSCHOLAR_SECRET_KEYS"
+        ),
+    )
     mineru_base_url: str = Field(
         default="https://mineru.net/api/v4",
         validation_alias=AliasChoices("POLARIS_MINERU_BASE_URL", "MINERU_BASE_URL"),

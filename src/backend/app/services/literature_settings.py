@@ -34,6 +34,7 @@ SUPPORTED_SOURCES = (
     "base",
     "sciverse",
 )
+CREDENTIAL_SOURCES = (*SUPPORTED_SOURCES, "easyscholar")
 DEFAULT_SCORE_WEIGHTS = {
     "relevance": 0.45,
     "evidence_quality": 0.20,
@@ -254,7 +255,7 @@ async def update_settings(session: AsyncSession, data: Mapping[str, Any]) -> dic
         encrypted: dict[str, list[str]] = {}
         for source, values in raw_pools.items():
             source_name = str(source).strip().lower()
-            if source_name not in SUPPORTED_SOURCES:
+            if source_name not in CREDENTIAL_SOURCES:
                 raise InvalidLiteratureSettingError(
                     "provider_keys", f"unsupported source: {source_name}"
                 )
@@ -290,7 +291,7 @@ async def update_settings(session: AsyncSession, data: Mapping[str, Any]) -> dic
 
 def _validate_credential_source(source: str) -> str:
     source = source.strip().lower()
-    if source not in SUPPORTED_SOURCES:
+    if source not in CREDENTIAL_SOURCES:
         raise InvalidLiteratureSettingError("source", f"unsupported source: {source}")
     if source == "arxiv":
         raise InvalidLiteratureSettingError("source", "arxiv does not require credentials")

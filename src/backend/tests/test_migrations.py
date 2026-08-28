@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "f1a2b3c4d5e6"  # Immutable interdisciplinary scope versions
+HEAD_REVISION = "f2a3b4c5d6e7"  # Versioned literature venue metrics
+SCOPE_VERSION_REVISION = "f1a2b3c4d5e6"  # Immutable interdisciplinary scope versions
 QUERY_MATRIX_REVISION = "f0a1b2c3d4e5"  # Interdisciplinary query matrix and evidence balance
 INTERDISCIPLINARY_REVISION = "e9f0a1b2c3d4"  # Interdisciplinary research profiles
 OA_CACHE_REVISION = "d1e2f3a4b5c6"  # Persistent OA cache and promotion audit
@@ -121,6 +122,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "literature_search_runs",
                     "literature_search_hits",
                     "literature_source_attempts",
+                    "literature_venue_metric_cache",
                     "pdf_blobs",
                     "paper_assets",
                     "asset_grants",
@@ -163,6 +165,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"blocks", "text", "seq", "status", "sources"} <= columns["conversation_messages"]
     # 这场对话花了多少 token（voyage_id 的对偶）
     assert "conversation_id" in columns["llm_usage"]
+    assert "venue_metric_snapshot" in columns["literature_search_hits"]
+    assert {"provider", "identity_key", "metrics", "expires_at"} <= columns[
+        "literature_venue_metric_cache"
+    ]
     # 压缩阈值要知道模型的窗口有多大，此前 router 只能拍脑袋
     assert "context_window" in columns["model_routes"]
     # 向量搬进三张侧表，主表上的向量列与元信息列一并删除
@@ -489,7 +495,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First remove immutable scope versions and return to the query-matrix head.
+    # First remove venue metrics and return to immutable scope versions.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == SCOPE_VERSION_REVISION
+    assert "literature_venue_metric_cache" not in columns["_tables"]
+    assert "venue_metric_snapshot" not in columns["literature_search_hits"]
+
+    # Then remove immutable scope versions and return to the query-matrix head.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == QUERY_MATRIX_REVISION

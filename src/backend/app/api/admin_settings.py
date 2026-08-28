@@ -235,6 +235,25 @@ async def test_literature_provider(
     source = payload.source.strip().lower()
     started = time.perf_counter()
     try:
+        if source == "easyscholar":
+            from app.services.literature.venue_metrics import probe_venue_metric_provider
+
+            matched = await probe_venue_metric_provider(
+                await literature_settings_service.get_runtime_settings(session),
+                source=source,
+                venue_name=payload.query,
+            )
+            result = LiteratureProviderTestResult(
+                source=source,
+                ok=True,
+                latency_ms=round((time.perf_counter() - started) * 1000),
+                fetched_count=int(matched),
+                detail="metric provider responded",
+            )
+            await literature_settings_service.record_provider_health(
+                session, source=source, ok=result.ok, detail=result.detail
+            )
+            return result
         from app.services.literature.runtime import build_adapter_registry
 
         registry = await build_adapter_registry(
@@ -345,6 +364,25 @@ async def test_literature_provider_credential(
     source, secret = credential
     started = time.perf_counter()
     try:
+        if source == "easyscholar":
+            from app.services.literature.venue_metrics import probe_venue_metric_provider
+
+            runtime_settings = await literature_settings_service.get_runtime_settings(session)
+            runtime_settings["provider_keys"] = {source: [secret]}
+            matched = await probe_venue_metric_provider(
+                runtime_settings, source=source, venue_name=payload.query
+            )
+            result = LiteratureProviderTestResult(
+                source=source,
+                ok=True,
+                latency_ms=round((time.perf_counter() - started) * 1000),
+                fetched_count=int(matched),
+                detail="credential responded",
+            )
+            await literature_settings_service.record_credential_health(
+                session, credential_id, ok=result.ok, detail=result.detail
+            )
+            return result
         from app.schemas.literature_discovery import SourceSearchRequest
         from app.services.literature.runtime import build_adapter_registry
 
