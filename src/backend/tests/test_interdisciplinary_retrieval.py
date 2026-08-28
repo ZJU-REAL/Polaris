@@ -30,7 +30,7 @@ def test_bridge_evidence_reranks_without_discarding_base_quality():
         ),
         RankedCandidate(
             identity="bridge",
-            candidate={"metadata": {"retrieval_hits": [{"role": "bridge", "discipline": "A + B"}]}},
+            candidate={"retrieval_hits": [{"role": "bridge", "discipline": "A + B"}]},
             score=0.85,
             tier="supporting",
             dimensions={"relevance": 0.85},
