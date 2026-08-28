@@ -45,7 +45,11 @@ async def test_owner_can_create_inspect_filter_and_cancel_run(client):
     run = response.json()
     assert run["requested_count"] == 12
     assert run["candidate_budget"] == 40
+    assert run["progress"]["requested_count"] == 12
+    assert run["progress"]["candidate_budget"] == 40
+    assert run["progress"]["returned_count"] == 0
     assert [a["source"] for a in run["source_attempts"]] == ["openalex", "semantic"]
+    assert all(attempt["requested_count"] is None for attempt in run["source_attempts"])
 
     run_id = run["id"]
     response = await client.get(
@@ -76,6 +80,59 @@ async def test_owner_can_create_inspect_filter_and_cancel_run(client):
     assert response.status_code == 200
     assert response.json()["total"] == 1
     assert response.json()["items"][0]["title"] == "Impact response"
+
+
+async def test_candidate_budget_cannot_be_smaller_than_requested_result_count(client):
+    owner = await _headers(client, "discovery-budget-owner@example.com")
+    library_id = await _personal_library(client, owner)
+
+    response = await client.post(
+        f"/api/libraries/{library_id}/literature/runs",
+        json={
+            "requested_count": 50,
+            "candidate_budget": 20,
+            "topic": "structural impact response",
+            "source_config": {"sources": ["openalex"]},
+        },
+        headers=owner,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["requested_count"] == 50
+    assert response.json()["candidate_budget"] == 50
+
+
+async def test_run_snapshot_inherits_library_keywords_exclusions_and_rubric(client):
+    owner = await _headers(client, "discovery-library-config@example.com")
+    library_id = await _personal_library(client, owner)
+    rubric = [{"name": "mechanism evidence", "description": "Prefer validated mechanics"}]
+    async with get_sessionmaker()() as session:
+        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
+        assert library is not None
+        library.definition = {
+            "statement": "Impact response of structural members",
+            "keywords": {
+                "include": ["impact response", "damage mechanics"],
+                "exclude": ["review"],
+            },
+            "rubric": rubric,
+        }
+        await session.commit()
+
+    response = await client.post(
+        f"/api/libraries/{library_id}/literature/runs",
+        json={
+            "topic": "structural impact response",
+            "source_config": {"sources": ["openalex"]},
+        },
+        headers=owner,
+    )
+
+    assert response.status_code == 201, response.text
+    source_config = response.json()["source_config"]
+    assert source_config["keywords"] == ["impact response", "damage mechanics"]
+    assert source_config["excluded_keywords"] == ["review"]
+    assert source_config["score_rubric"] == rubric
 
 
 async def test_personal_library_is_isolated_and_public_library_is_read_only(client):

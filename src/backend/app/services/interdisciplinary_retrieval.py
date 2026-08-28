@@ -131,7 +131,12 @@ async def apply_profile_to_query_plan(
 def rerank_interdisciplinary(
     ranked: Sequence[RankedCandidate], *, query_plan: dict[str, Any] | None, limit: int
 ) -> list[RankedCandidate]:
-    """Reward evidenced discipline bridges while retaining base literature quality."""
+    """Expose discipline coverage and use it only as a stable tie-breaker.
+
+    Discipline coverage is useful for balancing an interdisciplinary result set,
+    but it is not a research-quality dimension and therefore must not change the
+    candidate's quality score.
+    """
     config = (query_plan or {}).get("interdisciplinary") if isinstance(query_plan, dict) else None
     if not isinstance(config, dict):
         return list(ranked)[:limit]
@@ -146,20 +151,24 @@ def rerank_interdisciplinary(
         roles = {str(hit.get("role")) for hit in hits if hit.get("role")}
         bridge = bool(roles & {"bridge", "method_transfer"}) or len(disciplines) >= 2
         bridge_score = 1.0 if bridge else min(1.0, len(disciplines) / 2)
-        dimensions = {**item.dimensions, "interdisciplinary_bridge": bridge_score}
-        score = round(item.score * 0.85 + bridge_score * 0.15, 6)
+        dimensions = {**item.dimensions, "discipline_coverage": bridge_score}
         reason = "cross-discipline bridge evidence" if bridge else "single-discipline support"
         reasons = (*item.reasons, reason)
-        tier = "core" if bridge and item.tier != "exploratory" else item.tier
         output.append(
             RankedCandidate(
                 identity=item.identity,
                 candidate=item.candidate,
-                score=score,
-                tier=tier,
+                score=item.score,
+                tier=item.tier,
                 dimensions=dimensions,
                 reasons=reasons,
             )
         )
-    output.sort(key=lambda item: (-item.score, item.identity))
+    output.sort(
+        key=lambda item: (
+            -(item.score * 0.85 + item.dimensions["discipline_coverage"] * 0.15),
+            -item.score,
+            item.identity,
+        )
+    )
     return output[:limit]
