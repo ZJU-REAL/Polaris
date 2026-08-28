@@ -143,6 +143,7 @@ class SearchHitRead(BaseModel):
     oa_status: str | None
     citation_count: int | None
     scores: dict[str, Any] | None
+    venue_metric_snapshot: dict[str, Any] | None
     metadata_snapshot: dict[str, Any] | None
     promoted_at: datetime | None
     created_at: datetime

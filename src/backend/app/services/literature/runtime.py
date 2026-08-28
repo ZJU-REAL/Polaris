@@ -338,6 +338,7 @@ async def run_discovery(
     *,
     registry: AdapterRegistry | None = None,
     llm_router: Any | None = None,
+    venue_metric_service: Any | None = None,
     now: datetime | None = None,
 ) -> LiteratureSearchRun:
     """Execute one persisted run and return its final state."""
@@ -353,10 +354,11 @@ async def run_discovery(
     if run.status != "queued":
         return run
 
-    if registry is None:
-        registry = await build_adapter_registry(
-            await literature_settings.get_runtime_settings(session)
-        )
+    owns_registry = registry is None
+    runtime_settings: Mapping[str, Any] | None = None
+    if owns_registry:
+        runtime_settings = await literature_settings.get_runtime_settings(session)
+        registry = await build_adapter_registry(runtime_settings)
     started = now or datetime.now(UTC)
     run.status = "running"
     run.started_at = run.started_at or started
@@ -644,6 +646,19 @@ async def run_discovery(
         "\n".join(part for part in (title, abstract) if part) for title, abstract in reference_rows
     ]
     fused = fuse_candidates(candidates, executed_query_count=len(runnable))
+    owns_metric_service = venue_metric_service is None and owns_registry
+    if owns_metric_service:
+        from app.services.literature.venue_metrics import build_venue_metric_service
+
+        venue_metric_service = build_venue_metric_service(runtime_settings or {})
+    if venue_metric_service is not None:
+        try:
+            fused = await venue_metric_service.enrich_candidates(session, fused)
+        except Exception:  # metrics must never make discovery candidates unusable
+            logger.warning("venue metric enrichment failed", exc_info=True)
+        finally:
+            if owns_metric_service and hasattr(venue_metric_service, "aclose"):
+                await venue_metric_service.aclose()
     run.progress = {
         **(run.progress or {}),
         "phase": "ranking",
@@ -735,6 +750,7 @@ async def run_discovery(
                     ),
                     "pdf_cached": False,
                 },
+                venue_metric_snapshot=raw_candidate.get("venue_metric_snapshot"),
                 metadata_snapshot={
                     **(candidate.metadata or {}),
                     "sources": list(raw_candidate.get("sources") or [candidate.source]),

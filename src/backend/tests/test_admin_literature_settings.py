@@ -184,6 +184,40 @@ async def test_arxiv_rejects_credentials_because_public_api_needs_no_key(client)
     assert "INVALID_LITERATURE_CREDENTIAL:source" in response.text
 
 
+async def test_easyscholar_credential_uses_metric_probe(client, monkeypatch):
+    admin, _ = await _admin_and_member(client)
+    response = await client.post(
+        "/api/admin/settings/literature-search/credentials",
+        json={"source": "easyscholar", "secret": "easyscholar-secret"},
+        headers=admin,
+    )
+    assert response.status_code == 201, response.text
+    credential_id = response.json()["id"]
+    observed = {}
+
+    async def fake_probe(settings, *, source, venue_name):
+        observed.update(settings=settings, source=source, venue_name=venue_name)
+        return True
+
+    monkeypatch.setattr(
+        "app.services.literature.venue_metrics.probe_venue_metric_provider", fake_probe
+    )
+    response = await client.post(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}/test",
+        json={"query": "Journal of Tests"},
+        headers=admin,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    assert response.json()["fetched_count"] == 1
+    assert observed["source"] == "easyscholar"
+    assert observed["venue_name"] == "Journal of Tests"
+    assert observed["settings"]["provider_keys"] == {
+        "easyscholar": ["easyscholar-secret"]
+    }
+
+
 async def test_single_credential_probe_updates_only_that_entry(client, monkeypatch):
     admin, _ = await _admin_and_member(client)
     response = await client.post(
