@@ -143,6 +143,37 @@ class LiteratureSearchHit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class LiteratureHitTranslation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Versioned translated discovery metadata; source hit fields remain immutable."""
+
+    __tablename__ = "literature_hit_translations"
+    __table_args__ = (
+        UniqueConstraint(
+            "hit_id",
+            "target_language",
+            "source_hash",
+            "model_version",
+            name="uq_literature_hit_translation_cache",
+        ),
+        Index("ix_literature_hit_translations_hit_status", "hit_id", "status"),
+    )
+
+    hit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("literature_search_hits.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    target_language: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default="queued", server_default="queued", nullable=False
+    )
+    translated_fields: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    attempt_count: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class LiteratureSourceAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """某次运行对单个来源的执行状态、分页和失败信息。"""
 

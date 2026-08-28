@@ -13,6 +13,7 @@ export const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   librarian: { zh: '图文精读编译', en: 'Paper compile (with figures)' },
   digest: { zh: '每日研究简报', en: 'Daily research digest' },
   extract: { zh: '结构化抽取', en: 'Structured extraction' },
+  translation: { zh: '文献翻译', en: 'Literature translation' },
   reading: { zh: 'AI 伴读对话', en: 'Reading companion chat' },
   embedding: { zh: '向量嵌入', en: 'Embeddings' },
   rerank: { zh: '重排序', en: 'Reranking' },

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
+from app.core.llm.router import get_llm_router
 from app.core.queue import TaskQueue, get_task_queue
 from app.core.redis import get_redis_dep
 from app.models.library_direction import DirectionLibrary
@@ -25,6 +26,9 @@ from app.schemas.literature_discovery import (
     LiteratureDiscoveryScheduleRead,
     LiteratureDiscoveryScheduleUpdate,
     LiteratureSearchRequest,
+    LiteratureTranslationBatchRequest,
+    LiteratureTranslationRead,
+    LiteratureTranslationRequest,
     OaCacheBatchRequest,
     OaCacheRead,
     PromoteHitsRequest,
@@ -36,7 +40,7 @@ from app.schemas.literature_discovery import (
     SourceAttemptRead,
 )
 from app.services import libraries as libraries_service
-from app.services.literature import discovery_runs, discovery_schedules, oa_cache
+from app.services.literature import discovery_runs, discovery_schedules, oa_cache, translations
 
 router = APIRouter(tags=["literature-discovery"])
 logger = logging.getLogger(__name__)
@@ -316,6 +320,161 @@ async def list_hits(
         size=size,
         sort=sort,
     )
+
+
+async def _translation_hit(
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    hit_id: uuid.UUID,
+) -> LiteratureSearchHit:
+    hit = await session.scalar(
+        select(LiteratureSearchHit).where(
+            LiteratureSearchHit.id == hit_id,
+            LiteratureSearchHit.run_id == run_id,
+        )
+    )
+    if hit is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_HIT_NOT_FOUND")
+    return hit
+
+
+async def _request_hit_translation(
+    session: AsyncSession,
+    queue: TaskQueue,
+    *,
+    hit: LiteratureSearchHit,
+    target_language: str,
+    model: str,
+) -> LiteratureTranslationRead:
+    try:
+        row, should_enqueue = await translations.request_translation(
+            session,
+            hit=hit,
+            target_language=target_language,
+            model=model,
+        )
+    except translations.InvalidTargetLanguageError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    if should_enqueue:
+        try:
+            await queue.enqueue("translate_literature_hit", str(row.id))
+        except Exception:  # one failed queue dispatch must not abort a batch
+            row = await translations.mark_dispatch_failed(session, row.id) or row
+    return LiteratureTranslationRead.model_validate(row)
+
+
+@router.post(
+    "/libraries/{library_id}/literature/runs/{run_id}/hits/{hit_id}/translation",
+    response_model=LiteratureTranslationRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def translate_hit(
+    library_id: uuid.UUID,
+    run_id: uuid.UUID,
+    hit_id: uuid.UUID,
+    body: LiteratureTranslationRequest,
+    session: AsyncSession = Depends(get_session),
+    queue: TaskQueue = Depends(get_task_queue),
+    user: User = Depends(current_active_user),
+) -> LiteratureTranslationRead:
+    library = await _managed_library(session, library_id, user)
+    run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
+    hit = await _translation_hit(session, run_id=run.id, hit_id=hit_id)
+    model = await translations.model_version(get_llm_router(), user.id)
+    return await _request_hit_translation(
+        session,
+        queue,
+        hit=hit,
+        target_language=body.target_language,
+        model=model,
+    )
+
+
+@router.post(
+    "/libraries/{library_id}/literature/runs/{run_id}/translations",
+    response_model=list[LiteratureTranslationRead],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def translate_hits(
+    library_id: uuid.UUID,
+    run_id: uuid.UUID,
+    body: LiteratureTranslationBatchRequest,
+    session: AsyncSession = Depends(get_session),
+    queue: TaskQueue = Depends(get_task_queue),
+    user: User = Depends(current_active_user),
+) -> list[LiteratureTranslationRead]:
+    library = await _managed_library(session, library_id, user)
+    run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
+    rows = list(
+        (
+            await session.execute(
+                select(LiteratureSearchHit).where(
+                    LiteratureSearchHit.run_id == run.id,
+                    LiteratureSearchHit.id.in_(body.hit_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {row.id: row for row in rows}
+    model = await translations.model_version(get_llm_router(), user.id)
+    output = []
+    for hit_id in dict.fromkeys(body.hit_ids):
+        hit = by_id.get(hit_id)
+        if hit is None:
+            continue
+        output.append(
+            await _request_hit_translation(
+                session,
+                queue,
+                hit=hit,
+                target_language=body.target_language,
+                model=model,
+            )
+        )
+    return output
+
+
+@router.get(
+    "/libraries/{library_id}/literature/runs/{run_id}/hits/{hit_id}/translation",
+    response_model=LiteratureTranslationRead,
+)
+async def get_hit_translation(
+    library_id: uuid.UUID,
+    run_id: uuid.UUID,
+    hit_id: uuid.UUID,
+    target_language: str = Query("zh-CN", min_length=2, max_length=32),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LiteratureTranslationRead:
+    library = await _library(session, library_id, user)
+    run = await discovery_runs.get_visible_run(session, library_id=library.id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
+    hit = await _translation_hit(session, run_id=run.id, hit_id=hit_id)
+    try:
+        row = await translations.get_translation(
+            session,
+            hit_id=hit.id,
+            target_language=target_language,
+        )
+    except translations.InvalidTargetLanguageError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_TRANSLATION_NOT_FOUND")
+    return LiteratureTranslationRead.model_validate(row)
 
 
 @router.post(

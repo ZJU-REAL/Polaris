@@ -244,3 +244,29 @@ class LiteratureDiscoveryScheduleRead(BaseModel):
     last_error_code: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class LiteratureTranslationRequest(BaseModel):
+    target_language: str = Field(default="zh-CN", min_length=2, max_length=32)
+
+
+class LiteratureTranslationBatchRequest(LiteratureTranslationRequest):
+    hit_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+
+class LiteratureTranslationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    hit_id: uuid.UUID
+    target_language: str
+    source_hash: str
+    model_version: str
+    status: Literal["queued", "running", "ready", "failed"]
+    translated_fields: dict[str, Any] | None
+    error_code: str | None
+    attempt_count: int
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
