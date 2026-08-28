@@ -646,6 +646,15 @@ async def run_discovery(
         "\n".join(part for part in (title, abstract) if part) for title, abstract in reference_rows
     ]
     fused = fuse_candidates(candidates, executed_query_count=len(runnable))
+    historical_duplicates = 0
+    if run.trigger == "scheduled":
+        from app.services.literature.incremental_filter import filter_known_candidates
+
+        fused, historical_duplicates = await filter_known_candidates(
+            session,
+            library_id=run.library_id,
+            candidates=fused,
+        )
     owns_metric_service = venue_metric_service is None and owns_registry
     if owns_metric_service:
         from app.services.literature.venue_metrics import build_venue_metric_service
@@ -665,6 +674,7 @@ async def run_discovery(
         "fetched": fetched_total,
         "accepted": len(candidates),
         "deduplicated": len(fused),
+        "historical_duplicates": historical_duplicates,
         "pending_rerank": len(fused),
         "query_completed": len(runnable),
         "query_total": len(runnable),
@@ -796,6 +806,7 @@ async def run_discovery(
         "requested_count": run.requested_count,
         "candidate_budget": run.candidate_budget,
         "returned_count": len(ranked),
+        "historical_duplicates": historical_duplicates,
         "ranking_mode": ranking_snapshot["mode"],
         "start_year": run.start_year,
         "end_year": run.end_year,
