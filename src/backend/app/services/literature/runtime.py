@@ -7,7 +7,10 @@ separate steps. Unpromoted hits never create a Paper or a PDF processing job.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import threading
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -28,6 +31,7 @@ from app.schemas.literature_discovery import (
     SourceSearchPage,
     SourceSearchRequest,
 )
+from app.services import literature_settings
 from app.services.interdisciplinary_retrieval import rerank_interdisciplinary
 from app.services.literature import discovery_runs
 from app.services.literature.discovery import candidate_dedup_key, validate_candidate
@@ -35,7 +39,10 @@ from app.services.literature.discovery_ranking import rank_candidates
 from app.services.literature.multi_source import MultiSourceClient, ProviderRequestError
 
 logger = logging.getLogger(__name__)
-_DEFAULT_REGISTRY: AdapterRegistry | None = None
+_REGISTRY_CACHE: tuple[str, AdapterRegistry] | None = None
+_REGISTRY_LOCK = asyncio.Lock()
+_ROTATION_LOCK = threading.Lock()
+_ROTATION_INDEX: dict[str, int] = {}
 
 
 class SourceExecutionError(RuntimeError):
@@ -58,6 +65,22 @@ class AdapterRegistry:
 
     def names(self) -> set[str]:
         return set(self._adapters)
+
+
+class RotatingAdapter:
+    """Select one configured credential without persisting it in a run."""
+
+    def __init__(self, name: str, adapters: Sequence[SourceAdapter]) -> None:
+        if not adapters:
+            raise ValueError("at least one adapter is required")
+        self.name = name
+        self._adapters = tuple(adapters)
+
+    async def search(self, request: SourceSearchRequest) -> SourceSearchPage:
+        with _ROTATION_LOCK:
+            index = _ROTATION_INDEX.get(self.name, 0)
+            _ROTATION_INDEX[self.name] = index + 1
+        return await self._adapters[index % len(self._adapters)].search(request)
 
 
 class OpenAlexAdapter:
@@ -228,36 +251,74 @@ def _planned_query(run: LiteratureSearchRun, source: str, keywords: Sequence[str
     return str(plan.get("query") or run.topic or (keywords[0] if keywords else "")).strip()
 
 
-async def _default_registry() -> AdapterRegistry:
-    global _DEFAULT_REGISTRY
-    if _DEFAULT_REGISTRY is not None:
-        return _DEFAULT_REGISTRY
-    from app.services.literature.arxiv import ArxivClient
-    from app.services.literature.openalex import OpenAlexClient
-    from app.services.literature.semantic_scholar import SemanticScholarClient
+def _credential_pool(settings: Mapping[str, Any], source: str, fallback: str = "") -> list[str]:
+    configured = settings.get("provider_keys")
+    values = configured.get(source) if isinstance(configured, Mapping) else None
+    pool = [str(value).strip() for value in values or [] if str(value).strip()]
+    if pool:
+        return pool
+    return [item for value in fallback.replace(";", ",").split(",") if (item := value.strip())]
 
-    multi_source = MultiSourceClient()
-    _DEFAULT_REGISTRY = AdapterRegistry(
-        (
-            OpenAlexAdapter(OpenAlexClient()),
-            SemanticScholarAdapter(SemanticScholarClient()),
-            ArxivAdapter(ArxivClient()),
-            *(
-                MultiSourceAdapter(source, multi_source)
-                for source in (
-                    "pubmed",
-                    "crossref",
-                    "europepmc",
-                    "hal",
-                    "core",
-                    "base",
-                    "sciverse",
-                    "unpaywall",
-                )
-            ),
+
+def _registry_fingerprint(settings: Mapping[str, Any]) -> str:
+    payload = json.dumps(settings, sort_keys=True, ensure_ascii=True, default=str).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+async def build_adapter_registry(runtime_settings: Mapping[str, Any]) -> AdapterRegistry:
+    """Build or reuse adapters from trusted, decrypted administrator settings."""
+    global _REGISTRY_CACHE
+    fingerprint = _registry_fingerprint(runtime_settings)
+    async with _REGISTRY_LOCK:
+        if _REGISTRY_CACHE is not None and _REGISTRY_CACHE[0] == fingerprint:
+            return _REGISTRY_CACHE[1]
+
+        app_settings = get_settings()
+        openalex_keys = _credential_pool(runtime_settings, "openalex") or [""]
+        semantic_keys = _credential_pool(runtime_settings, "semantic", app_settings.s2_api_key) or [
+            ""
+        ]
+
+        from app.services.literature.arxiv import ArxivClient
+        from app.services.literature.openalex import OpenAlexClient
+        from app.services.literature.semantic_scholar import SemanticScholarClient
+
+        multi_source = MultiSourceClient(
+            provider_keys=runtime_settings.get("provider_keys")
+            if isinstance(runtime_settings.get("provider_keys"), Mapping)
+            else None
         )
-    )
-    return _DEFAULT_REGISTRY
+        registry = AdapterRegistry(
+            (
+                RotatingAdapter(
+                    "openalex",
+                    [OpenAlexAdapter(OpenAlexClient(api_key=key or None)) for key in openalex_keys],
+                ),
+                RotatingAdapter(
+                    "semantic",
+                    [
+                        SemanticScholarAdapter(SemanticScholarClient(api_key=key or None))
+                        for key in semantic_keys
+                    ],
+                ),
+                ArxivAdapter(ArxivClient()),
+                *(
+                    MultiSourceAdapter(source, multi_source)
+                    for source in (
+                        "pubmed",
+                        "crossref",
+                        "europepmc",
+                        "hal",
+                        "core",
+                        "base",
+                        "sciverse",
+                        "unpaywall",
+                    )
+                ),
+            )
+        )
+        _REGISTRY_CACHE = (fingerprint, registry)
+        return registry
 
 
 async def run_discovery(
@@ -275,7 +336,10 @@ async def run_discovery(
     if run.status == "cancelled":
         return run
 
-    registry = registry or await _default_registry()
+    if registry is None:
+        registry = await build_adapter_registry(
+            await literature_settings.get_runtime_settings(session)
+        )
     started = now or datetime.now(UTC)
     run.status = "running"
     run.started_at = run.started_at or started
