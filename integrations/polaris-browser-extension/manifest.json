@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Polaris Extension",
+  "description": "Receive Polaris literature batches, cache verified PDFs, and archive them to the correct library papers.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "scripting",
+    "sidePanel",
+    "unlimitedStorage"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open Polaris Extension"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  }
+}
