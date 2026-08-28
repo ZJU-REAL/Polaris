@@ -497,6 +497,7 @@ def _prompt_with_context(base: str, ctx: ActionContext) -> str:
     """按 params.eval_model / hf_mirror / extra_notes 给 system prompt 条件追加段落。"""
     params = _params(ctx)
     parts = [base, STACK_GUARD_PROMPT_SECTION]
+    parts.append(ctx.skill_guidance("experiment.plan"))
     if str(params.get("eval_model") or "").strip():
         parts.append(EVAL_MODEL_PROMPT_SECTION)
     if params.get("hf_mirror"):
