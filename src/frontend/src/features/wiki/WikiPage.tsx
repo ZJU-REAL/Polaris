@@ -267,7 +267,7 @@ export function WikiWorkbench({
             onGoGovern={libraryId ? () => setTab('govern') : undefined}
           />
         ) : tab === 'govern' && libraryId ? (
-          <GovernanceTab libraryId={libraryId} />
+          <GovernanceTab libraryId={libraryId} readOnly={!canManage} />
         ) : (
           <NotesTab pid={pid} libraryId={tabLibraryId} />
         )}

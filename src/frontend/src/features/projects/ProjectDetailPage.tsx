@@ -14,6 +14,7 @@ import { portalUrl } from '../../lib/endpoint';
 import { copyText } from '../../lib/clipboard';
 import { useLibraries } from '../libraries/hooks';
 import { LibraryPicker } from '../libraries/LibraryPicker';
+import { InterdisciplinaryScopePanel } from './InterdisciplinaryScopePanel';
 
 /* ============================================================
    /projects/:id — 课题设置：只留真正的课题属性
@@ -134,13 +135,20 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
   });
   const librariesQuery = useLibraries();
   const allLibraries = librariesQuery.data ?? [];
+  const protectedLibraryIds = new Set(
+    (sourceLibraries ?? [])
+      .filter((library) => library.library_kind === 'interdisciplinary')
+      .map((library) => library.id),
+  );
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkDraft, setLinkDraft] = useState<Set<string>>(new Set());
   function openLinkEditor() {
+    if (!sourceLibraries) return;
     setLinkDraft(new Set((sourceLibraries ?? []).map((l) => l.id)));
     setLinkOpen(true);
   }
   function toggleLinkDraft(libId: string) {
+    if (protectedLibraryIds.has(libId)) return;
     setLinkDraft((prev) => {
       const next = new Set(prev);
       if (next.has(libId)) next.delete(libId);
@@ -149,7 +157,10 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
     });
   }
   const setSourceLibsMutation = useMutation({
-    mutationFn: (ids: string[]) => api.setSourceLibraries(id, ids),
+    mutationFn: (ids: string[]) => api.setSourceLibraries(
+      id,
+      [...new Set([...ids, ...protectedLibraryIds])],
+    ),
     onSuccess: (libs) => {
       queryClient.setQueryData(['sourceLibraries', id], libs);
       // 课题语料 = 关联库并集：相关缓存全部失效
@@ -325,12 +336,25 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
           <div className="empty" style={{ padding: 30 }}>{tr('平台还没有文献库。', 'No libraries on the platform yet.')}</div>
         ) : (
           <div style={{ maxHeight: '55vh', overflowY: 'auto', marginTop: 4 }}>
-            <LibraryPicker libraries={allLibraries} selectedIds={linkDraft} onToggle={toggleLinkDraft} disabled={setSourceLibsMutation.isPending} />
+            <LibraryPicker
+              libraries={allLibraries}
+              selectedIds={linkDraft}
+              onToggle={toggleLinkDraft}
+              disabled={setSourceLibsMutation.isPending}
+              disabledIds={protectedLibraryIds}
+            />
           </div>
         )}
       </Modal>
 
       <div className="col gap16">
+        {project.research_mode === 'interdisciplinary' && (
+          <InterdisciplinaryScopePanel
+            project={project}
+            dedicatedLibrary={sourceLibraries?.find((library) => library.library_kind === 'interdisciplinary')}
+          />
+        )}
+
         {/* 一句话定义 */}
         <SectionCard icon="sparkle" zh="课题定义" en="Statement">
           <EditableText value={project.statement ?? ''} placeholder={tr('尚未填写一句话定义', 'No one-line statement yet')}
@@ -340,7 +364,7 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
         {/* 关联文献库 */}
         <SectionCard icon="book" zh="关联文献库" en="Linked libraries"
           action={
-            <button className="btn btn-soft sm" onClick={openLinkEditor}>
+            <button className="btn btn-soft sm" onClick={openLinkEditor} disabled={!sourceLibraries}>
               <Icon name="pen" size={12} />
               {tr('管理', 'Manage')}
             </button>
@@ -360,8 +384,18 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
                     <Icon name="book" size={14} />
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{lib.name}</div>
+                    <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>{lib.name}</span>
+                      {lib.library_kind === 'interdisciplinary' && (
+                        <span className="pill sm">{tr('专属交叉库', 'Dedicated interdisciplinary')}</span>
+                      )}
+                    </div>
                     {lib.statement && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.4 }}>{lib.statement}</div>}
+                    {!!lib.interdisciplinary_domains?.length && (
+                      <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
+                        {lib.interdisciplinary_domains.join(' · ')}
+                      </div>
+                    )}
                   </div>
                   <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>{tr(`${lib.paper_count} 篇`, `${lib.paper_count} papers`)}</span>
                 </div>
