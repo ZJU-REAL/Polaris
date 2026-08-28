@@ -213,7 +213,7 @@ async def set_literature_search_settings(
 ) -> LiteratureSearchSettings:
     try:
         saved = await literature_settings_service.update_settings(
-            session, payload.model_dump(exclude_none=True)
+            session, payload.model_dump(exclude_unset=True)
         )
     except literature_settings_service.InvalidLiteratureSettingError as exc:
         raise HTTPException(
@@ -234,9 +234,11 @@ async def test_literature_provider(
     source = payload.source.strip().lower()
     started = time.perf_counter()
     try:
-        from app.services.literature.runtime import _default_registry
+        from app.services.literature.runtime import build_adapter_registry
 
-        registry = await _default_registry()
+        registry = await build_adapter_registry(
+            await literature_settings_service.get_runtime_settings(session)
+        )
         adapter = registry.get(source)
         if adapter is None:
             raise ValueError(f"unsupported source: {source}")

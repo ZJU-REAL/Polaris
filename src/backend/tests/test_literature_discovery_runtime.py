@@ -12,8 +12,17 @@ from app.models.literature_discovery import (
     LiteratureSourceAttempt,
 )
 from app.models.paper import Paper
-from app.schemas.literature_discovery import LiteratureCandidate, SourceSearchPage
-from app.services.literature.multi_source import MultiSourceClient, ProviderRequestError
+from app.schemas.literature_discovery import (
+    LiteratureCandidate,
+    SourceSearchPage,
+    SourceSearchRequest,
+)
+from app.services.literature import runtime as runtime_service
+from app.services.literature.multi_source import (
+    MultiSourceClient,
+    ProviderRequestError,
+    _pubmed_abstracts,
+)
 from app.services.literature.openalex import _simplify
 from app.services.literature.runtime import (
     AdapterRegistry,
@@ -161,7 +170,7 @@ async def test_runtime_deduplicates_isolates_failures_and_persists_progress(clie
 
 @pytest.mark.asyncio
 async def test_runtime_marks_missing_sources_as_failed(client):
-    run_id, _, _ = await _create_run(client, source_config={})
+    run_id, _, _ = await _create_run(client, source_config={"sources": []})
     async with get_sessionmaker()() as session:
         run = await run_discovery(session, run_id, registry=AdapterRegistry())
         assert run.status == "failed"
@@ -293,3 +302,153 @@ async def test_runtime_persists_provider_error_instead_of_reporting_zero_hit_suc
     assert attempt.error_code == "HTTP_503"
     assert attempt.retryable is True
     assert "HTTP_503" in (run.error_summary or "")
+
+
+@pytest.mark.asyncio
+async def test_runtime_builds_default_registry_from_decrypted_admin_settings(client, monkeypatch):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["pubmed"]},
+        requested_count=1,
+        candidate_budget=3,
+    )
+    adapter = FakeAdapter("pubmed", [_candidate("pubmed", "Configured provider")])
+    runtime_settings = {
+        "sources": ["pubmed"],
+        "provider_keys": {"pubmed": ["decrypted-key"]},
+    }
+    observed = {}
+
+    async def fake_runtime_settings(session):
+        return runtime_settings
+
+    async def fake_registry(settings):
+        observed.update(settings)
+        return AdapterRegistry((adapter,))
+
+    monkeypatch.setattr(
+        runtime_service.literature_settings, "get_runtime_settings", fake_runtime_settings
+    )
+    monkeypatch.setattr(runtime_service, "build_adapter_registry", fake_registry)
+
+    async with get_sessionmaker()() as session:
+        run = await run_discovery(session, run_id)
+
+    assert run.status == "completed"
+    assert observed["provider_keys"] == {"pubmed": ["decrypted-key"]}
+    assert adapter.requests[0].limit == 3
+
+
+def test_multi_source_key_pool_rotates_and_pubmed_xml_keeps_full_abstract():
+    client = MultiSourceClient(
+        client=object(), provider_keys={"provider-under-test": ["key-a", "key-b"]}
+    )
+    assert {
+        client._key("provider-under-test"),
+        client._key("provider-under-test"),
+    } == {"key-a", "key-b"}
+
+    abstracts = _pubmed_abstracts(
+        """<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID>123</PMID>
+        <Article><Abstract><AbstractText Label="BACKGROUND">First sentence.</AbstractText>
+        <AbstractText>Second sentence.</AbstractText></Abstract></Article>
+        </MedlineCitation></PubmedArticle></PubmedArticleSet>"""
+    )
+    assert abstracts == {"123": "BACKGROUND: First sentence.\nSecond sentence."}
+
+
+@pytest.mark.asyncio
+async def test_pubmed_adapter_fetches_abstract_and_forwards_years_and_admin_key():
+    class Response:
+        status_code = 200
+
+        def __init__(self, *, payload=None, text=""):
+            self._payload = payload
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def request(self, method, url, **kwargs):
+            self.calls.append((method, url, kwargs))
+            if "esearch" in url:
+                return Response(payload={"esearchresult": {"idlist": ["123"]}})
+            if "esummary" in url:
+                return Response(
+                    payload={
+                        "result": {
+                            "123": {
+                                "title": "PubMed full abstract",
+                                "pubdate": "2020",
+                                "authors": [{"name": "A. Author"}],
+                                "articleids": [{"idtype": "doi", "value": "10.1/pubmed"}],
+                            }
+                        }
+                    }
+                )
+            return Response(
+                text=(
+                    "<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID>123</PMID>"
+                    "<Article><Abstract><AbstractText>Full indexed abstract.</AbstractText>"
+                    "</Abstract></Article></MedlineCitation></PubmedArticle></PubmedArticleSet>"
+                )
+            )
+
+    http_client = Client()
+    client = MultiSourceClient(client=http_client, provider_keys={"pubmed": ["admin-pubmed-key"]})
+    rows = await client.search_source(
+        "pubmed",
+        SourceSearchRequest(query="impact response", start_year=2016, end_year=2025, limit=5),
+    )
+
+    assert rows[0]["abstract"] == "Full indexed abstract."
+    search_params = http_client.calls[0][2]["params"]
+    assert search_params["term"] == "(impact response) AND (2016:2025[pdat])"
+    assert search_params["api_key"] == "admin-pubmed-key"
+    assert all(call[2]["params"]["api_key"] == "admin-pubmed-key" for call in http_client.calls)
+
+
+async def test_provider_keys_never_reach_the_run_snapshot(client):
+    """请求里带 provider_keys 也不能落进 run 快照。
+
+    凭据只应由 worker 从管理端设置里解密取用。快照是会被读取、导出、进日志的，
+    一旦混进明文 key，泄漏点就从"一处解密"扩散成"任何读 run 的地方"，而且没有任何
+    报错提示——所以这条不变量必须有测试钉着，不能只靠建 run 时那一行 pop。
+    """
+    import uuid as _uuid
+
+    from app.core.db import get_sessionmaker
+    from app.models.literature_discovery import LiteratureSearchRun
+
+    token = await register_and_login(client, email="provider-keys@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    library = await client.post(
+        "/api/libraries", json={"name": "L", "statement": "s"}, headers=headers
+    )
+    library_id = library.json()["id"]
+
+    created = await client.post(
+        f"/api/libraries/{library_id}/literature/runs",
+        json={
+            "topic": "t",
+            "source_config": {
+                "sources": ["openalex"],
+                "provider_keys": {"openalex": ["sk-SECRET-LEAK"]},
+            },
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(LiteratureSearchRun, _uuid.UUID(created.json()["id"]))
+        persisted = repr(run.source_config) + repr(run.query_plan) + repr(run.progress)
+    assert "SECRET-LEAK" not in persisted, persisted
+    assert "provider_keys" not in (run.source_config or {})
