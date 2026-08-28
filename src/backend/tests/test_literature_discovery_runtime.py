@@ -6,9 +6,11 @@ import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from sqlalchemy import func, select
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.models.literature_discovery import (
     LiteratureSearchHit,
@@ -567,6 +569,33 @@ async def test_runtime_persists_provider_error_instead_of_reporting_zero_hit_suc
     assert attempt.error_code == "HTTP_503"
     assert attempt.retryable is True
     assert "HTTP_503" in (run.error_summary or "")
+
+
+@pytest.mark.asyncio
+async def test_multi_source_retry_error_does_not_expose_query_credentials(monkeypatch):
+    secret = "SECRET_SENTINEL"
+    settings = get_settings()
+    monkeypatch.setattr(settings, "literature_source_retries", 0, raising=False)
+
+    class BrokenClient:
+        async def request(self, method, url, **kwargs):
+            del method, url, kwargs
+            request = httpx.Request(
+                "GET", f"https://eutils.ncbi.nlm.nih.gov/esearch?api_key={secret}"
+            )
+            return httpx.Response(503, request=request)
+
+    provider = MultiSourceClient(client=BrokenClient())
+    with pytest.raises(ProviderRequestError) as caught:
+        await provider._request_json(
+            "pubmed",
+            "GET",
+            "https://eutils.ncbi.nlm.nih.gov/esearch",
+            params={"api_key": secret},
+        )
+
+    assert caught.value.code == "HTTP_503"
+    assert secret not in str(caught.value)
 
 
 @pytest.mark.asyncio

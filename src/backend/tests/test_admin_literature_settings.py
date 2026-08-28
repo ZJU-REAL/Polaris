@@ -1,5 +1,7 @@
 """管理员文献检索设置：持久化、脱敏、校验和权限。"""
 
+import httpx
+
 from app.core.db import get_sessionmaker
 from app.schemas.literature_discovery import SourceSearchPage
 from app.services import literature_settings
@@ -226,3 +228,52 @@ async def test_single_credential_probe_updates_only_that_entry(client, monkeypat
     item = response.json()["provider_keys"]["semantic"][0]
     assert item["id"] == credential_id
     assert item["health"]["ok"] is True
+
+
+async def test_credential_probe_never_returns_or_persists_secret_url(client, monkeypatch):
+    admin, _ = await _admin_and_member(client)
+    secret = "SECRET_SENTINEL"
+    response = await client.post(
+        "/api/admin/settings/literature-search/credentials",
+        json={"source": "openalex", "secret": secret},
+        headers=admin,
+    )
+    credential_id = response.json()["id"]
+
+    class Adapter:
+        async def search(self, request):
+            del request
+            request = httpx.Request(
+                "GET", f"https://api.openalex.org/works?api_key={secret}&search=x"
+            )
+            upstream = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError("unauthorized", request=request, response=upstream)
+
+    class Registry:
+        def get(self, source):
+            assert source == "openalex"
+            return Adapter()
+
+    async def fake_registry(settings):
+        assert settings["provider_keys"] == {"openalex": [secret]}
+        return Registry()
+
+    from app.services.literature import runtime
+
+    monkeypatch.setattr(runtime, "build_adapter_registry", fake_registry)
+    response = await client.post(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}/test",
+        json={"query": "impact response"},
+        headers=admin,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is False
+    assert response.json()["detail"] == "openalex provider request failed (HTTP_401)"
+    assert secret not in response.text
+    saved = await client.get("/api/admin/settings/literature-search", headers=admin)
+    assert secret not in saved.text
+    assert (
+        saved.json()["provider_keys"]["openalex"][0]["health"]["detail"]
+        == response.json()["detail"]
+    )

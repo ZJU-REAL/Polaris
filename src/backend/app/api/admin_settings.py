@@ -34,6 +34,7 @@ from app.services import lab as lab_service
 from app.services import literature_settings as literature_settings_service
 from app.services import managed_command_watchdog as watchdog_service
 from app.services import tts as tts_service
+from app.services.literature.multi_source import provider_failure_detail
 
 router = APIRouter(
     prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(require_admin)]
@@ -122,9 +123,7 @@ async def adopt_embedding_space(
             "active": True,
         },
     )
-    return EmbeddingSpaceAdoptResult(
-        active=EmbeddingSpaceItem(**current), previous=previous
-    )
+    return EmbeddingSpaceAdoptResult(active=EmbeddingSpaceItem(**current), previous=previous)
 
 
 @router.get("/lab-leaderboard", response_model=LabLeaderboardSettingRead)
@@ -189,9 +188,7 @@ async def set_managed_command_watchdog(
     payload: ManagedCommandWatchdogAdminSettings,
     session: AsyncSession = Depends(get_session),
 ) -> ManagedCommandWatchdogAdminSettings:
-    saved = await watchdog_service.set_admin_max_minutes(
-        session, payload.max_unanswered_minutes
-    )
+    saved = await watchdog_service.set_admin_max_minutes(session, payload.max_unanswered_minutes)
     return ManagedCommandWatchdogAdminSettings(max_unanswered_minutes=saved)
 
 
@@ -262,7 +259,7 @@ async def test_literature_provider(
             source=source,
             ok=False,
             latency_ms=round((time.perf_counter() - started) * 1000),
-            detail=f"{type(exc).__name__}: {exc}"[:500],
+            detail=provider_failure_detail(source, exc)[1],
         )
     await literature_settings_service.record_provider_health(
         session, source=source, ok=result.ok, detail=result.detail
@@ -369,7 +366,7 @@ async def test_literature_provider_credential(
             source=source,
             ok=False,
             latency_ms=round((time.perf_counter() - started) * 1000),
-            detail=f"{type(exc).__name__}: {exc}"[:500],
+            detail=provider_failure_detail(source, exc)[1],
         )
     await literature_settings_service.record_credential_health(
         session, credential_id, ok=result.ok, detail=result.detail
