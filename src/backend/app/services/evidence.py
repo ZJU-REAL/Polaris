@@ -313,18 +313,18 @@ async def current_fulltext_evidence(
     version = await session.scalar(version_query)
     if version is None:
         return None
-    chunks = list(
-        (
-            await session.execute(
-                select(PaperContentChunk)
-                .where(PaperContentChunk.content_version_id == version.id)
-                .order_by(PaperContentChunk.seq)
-            )
-        )
-        .scalars()
-        .all()
+    page_size = max(1, min(limit, 20))
+    chunk_query = select(PaperContentChunk).where(
+        PaperContentChunk.content_version_id == version.id
     )
     if query:
+        chunks = list(
+            (
+                await session.execute(chunk_query.order_by(PaperContentChunk.seq))
+            )
+            .scalars()
+            .all()
+        )
         terms = {part for part in normalize_evidence_text(query).split() if len(part) > 1}
         chunks.sort(
             key=lambda chunk: (
@@ -332,7 +332,22 @@ async def current_fulltext_evidence(
                 chunk.seq,
             )
         )
-    selected = chunks[max(0, offset) : max(0, offset) + max(1, min(limit, 20))]
+        selected = chunks[max(0, offset) : max(0, offset) + page_size]
+        has_more = max(0, offset) + len(selected) < len(chunks)
+    else:
+        rows = list(
+            (
+                await session.execute(
+                    chunk_query.order_by(PaperContentChunk.seq)
+                    .offset(max(0, offset))
+                    .limit(page_size + 1)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        selected = rows[:page_size]
+        has_more = len(rows) > page_size
     if not selected:
         return {
             "version_id": str(version.id),
@@ -386,10 +401,11 @@ async def current_fulltext_evidence(
                 "text": chunk.text,
                 "page_start": chunk.page_start,
                 "page_end": chunk.page_end,
+                "section_path": chunk.section_path or [],
                 "evidence": references,
             }
         )
-    next_offset = offset + len(selected) if offset + len(selected) < len(chunks) else None
+    next_offset = max(0, offset) + len(selected) if has_more else None
     return {
         "version_id": str(version.id),
         "parser": version.parser,

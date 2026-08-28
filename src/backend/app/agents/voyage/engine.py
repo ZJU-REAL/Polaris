@@ -48,6 +48,10 @@ from app.models.llm_config import LLMUsage
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep, mode_for_kind
 from app.services import skills as skills_service
 from app.services import voyage_messages as messages_service
+from app.services.ai_evidence_context import (
+    attach_observation_evidence,
+    ensure_voyage_evidence_snapshot,
+)
 
 MAX_REPLANS = 2
 _RANK_GAP = 100.0
@@ -952,16 +956,27 @@ class VoyageEngine:
             step_id=step_row.id,
         )
 
+        checkpoint = await ensure_voyage_evidence_snapshot(
+            session,
+            run=run,
+            checkpoint=dict(run.checkpoint or {}),
+        )
+        if checkpoint != dict(run.checkpoint or {}):
+            run.checkpoint = checkpoint
+            await session.commit()
+
         ctx = ActionContext(
             run=run,
             llm=self._llm,
-            checkpoint=dict(run.checkpoint or {}),
+            checkpoint=checkpoint,
             bus=self._bus,
             step_id=step_row.id,
         )
         observation = await self.helm.execute(ctx, step_def)
         run.checkpoint = dict(ctx.checkpoint)
-        step_row.observation = observation
+        snapshot = ctx.checkpoint.get("ai_evidence")
+        manifest = snapshot.get("manifest") if isinstance(snapshot, dict) else []
+        step_row.observation = attach_observation_evidence(observation, manifest or [])
         step_row.finished_at = utcnow()
         action_usage = observation.get("usage") if isinstance(observation, dict) else None
         await session.commit()

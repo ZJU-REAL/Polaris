@@ -153,7 +153,10 @@ async def _complete_json(
     for _attempt in range(_MAX_JSON_ATTEMPTS):
         result = await ctx.llm.complete(
             stage,
-            [Message(role="system", content=system), Message(role="user", content=user)],
+            [
+                Message(role="system", content=system + ctx.evidence_guidance()),
+                Message(role="user", content=user),
+            ],
             user_id=ctx.run.created_by,
             project_id=ctx.run.project_id,
             voyage_id=ctx.run.id,
@@ -1096,7 +1099,11 @@ async def _run_match(
             result = await ctx.llm.complete(
                 "debate",
                 [
-                    Message(role="system", content=_persona_system(persona, side, idea.title)),
+                    Message(
+                        role="system",
+                        content=_persona_system(persona, side, idea.title)
+                        + ctx.evidence_guidance(),
+                    ),
                     Message(role="user", content=user_prompt),
                 ],
                 user_id=ctx.run.created_by,

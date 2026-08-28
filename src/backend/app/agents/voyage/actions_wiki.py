@@ -1277,6 +1277,7 @@ async def compile_wiki(ctx: ActionContext, params: dict[str, Any]) -> dict[str, 
             collect_affs = affil_mode == "on_compile" and not paper.affiliations
             compiled = await compile_paper(
                 paper,
+                session=session,
                 llm=ctx.llm,
                 user_id=billing_user_id,
                 project_id=project_id,

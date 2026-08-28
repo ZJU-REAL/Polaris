@@ -16,6 +16,7 @@ from app.core.events import EventBus
 from app.core.llm.base import Message
 from app.core.llm.router import LLMRouter
 from app.models.voyage import VoyageRun
+from app.services.ai_evidence_context import evidence_guidance
 
 
 @dataclass(slots=True)
@@ -58,6 +59,10 @@ class ActionContext:
     def skill_personas(self, target: str) -> list[dict[str, Any]] | None:
         """persona 技能人设列表；None = 用调用方内置默认。"""
         return skill_personas(self.checkpoint, target)
+
+    def evidence_guidance(self) -> str:
+        """返回本次 Voyage 固定的授权全文证据；未配置时为空。"""
+        return evidence_guidance(self.checkpoint.get("ai_evidence"))
 
 
 ActionFunc = Callable[[ActionContext, dict[str, Any]], Awaitable[dict[str, Any]]]

@@ -12,6 +12,7 @@ from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import new_paper
 from app.models.paper_assets import AssetGrant
 from app.models.paper_content import (
+    PaperContentChunk,
     PaperContentChunkVector,
     PaperContentVersion,
     PaperContentVersionVector,
@@ -107,6 +108,42 @@ async def test_reparse_creates_new_current_version_without_mutating_old(app, cli
         assert context is not None
         assert context["version_id"] == str(second.id)
         assert context["chunks"][0]["evidence"]
+
+
+@pytest.mark.asyncio
+async def test_current_fulltext_evidence_paginates_chunks_without_gaps(app, client):
+    _user_row, library, paper, asset = await _setup(client)
+    async with get_sessionmaker()() as session:
+        version = await create_content_version(session, asset=asset, parser="pymupdf")
+        await parse_content_version(session, version=version, mineru_parser=None)
+        session.add_all(
+            PaperContentChunk(
+                content_version_id=version.id,
+                seq=index,
+                text=f"Additional chunk {index}.",
+            )
+            for index in range(1, 22)
+        )
+        await session.flush()
+
+        first = await current_fulltext_evidence(
+            session,
+            paper_id=paper.id,
+            library_ids=[library.id],
+            limit=20,
+        )
+        second = await current_fulltext_evidence(
+            session,
+            paper_id=paper.id,
+            library_ids=[library.id],
+            offset=first["next_offset"],
+            limit=20,
+        )
+
+        assert [row["seq"] for row in first["chunks"]] == list(range(20))
+        assert first["next_offset"] == 20
+        assert [row["seq"] for row in second["chunks"]] == [20, 21]
+        assert second["next_offset"] is None
 
 
 @pytest.mark.asyncio
@@ -212,6 +249,12 @@ async def test_current_fulltext_search_enforces_asset_grant(app, client):
         )
         assert len(hits) == 1
         assert hits[0].paper_id == asset.paper_id
+        allowed_context = await current_fulltext_evidence(
+            session,
+            paper_id=asset.paper_id,
+            library_ids=[library.id],
+        )
+        assert allowed_context is not None
 
         grant = await session.scalar(
             select(AssetGrant).where(
@@ -229,6 +272,12 @@ async def test_current_fulltext_search_enforces_asset_grant(app, client):
             limit=4,
         )
         assert denied == []
+        denied_context = await current_fulltext_evidence(
+            session,
+            paper_id=asset.paper_id,
+            library_ids=[library.id],
+        )
+        assert denied_context is None
 
 
 @pytest.mark.asyncio

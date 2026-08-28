@@ -294,7 +294,10 @@ def validate_section_text(text: str, fact_pack: dict[str, Any]) -> list[str]:
 async def _complete_text(ctx: ActionContext, *, system: str, user: str) -> str:
     result = await ctx.llm.complete(
         "writing",
-        [Message(role="system", content=system), Message(role="user", content=user)],
+        [
+            Message(role="system", content=system + ctx.evidence_guidance()),
+            Message(role="user", content=user),
+        ],
         user_id=ctx.run.created_by,
         project_id=ctx.run.project_id,
         voyage_id=ctx.run.id,
@@ -339,7 +342,10 @@ async def _stream_completion(ctx: ActionContext, *, system: str, user: str, sink
     pending_len = 0
     async for chunk in ctx.llm.stream(
         "writing",
-        [Message(role="system", content=system), Message(role="user", content=user)],
+        [
+            Message(role="system", content=system + ctx.evidence_guidance()),
+            Message(role="user", content=user),
+        ],
         user_id=ctx.run.created_by,
         project_id=ctx.run.project_id,
         voyage_id=ctx.run.id,
