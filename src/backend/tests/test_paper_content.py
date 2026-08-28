@@ -69,9 +69,7 @@ async def test_mineru_failure_falls_back_to_pymupdf_and_persists_version(app, cl
         async def failing_mineru(_path):
             raise RuntimeError("mineru unavailable")
 
-        parsed = await parse_content_version(
-            session, version=version, mineru_parser=failing_mineru
-        )
+        parsed = await parse_content_version(session, version=version, mineru_parser=failing_mineru)
         assert parsed.status == "ready_fallback"
         assert parsed.parser == "pymupdf"
         assert parsed.page_count == 1
@@ -150,9 +148,7 @@ async def test_mineru_artifacts_are_persisted_with_content_version(app, client):
                 "pages": 1,
                 "chunks": [{"text": "Full text", "page_start": 1, "page_end": 1}],
                 "markdown_path": "paper.md",
-                "artifacts": [
-                    {"path": "images/figure.png", "kind": "image", "content": b"png"}
-                ],
+                "artifacts": [{"path": "images/figure.png", "kind": "image", "content": b"png"}],
                 "manifest": {"pages": 1, "images": ["images/figure.png"]},
             }
 
@@ -160,6 +156,46 @@ async def test_mineru_artifacts_are_persisted_with_content_version(app, client):
         version_dir = Path(parsed.markdown_key).parent
         assert (version_dir / "paper.md").read_text(encoding="utf-8").startswith("# Full")
         assert (version_dir / "images" / "figure.png").read_bytes() == b"png"
+
+
+@pytest.mark.asyncio
+async def test_persistence_failure_marks_attempt_failed_and_keeps_previous_current(
+    app, client, monkeypatch
+):
+    _user_row, _library, paper, asset = await _setup(client)
+    async with get_sessionmaker()() as session:
+        first = await create_content_version(session, asset=asset, parser="pymupdf")
+        await parse_content_version(session, version=first, mineru_parser=None)
+        second = await create_content_version(session, asset=asset)
+
+        async def fake_mineru(_path):
+            return {
+                "parser": "mineru",
+                "markdown": "# Parsed\n\nFull text",
+                "text": "Full text",
+                "pages": 1,
+                "chunks": [{"text": "Full text", "page_start": 1, "page_end": 1}],
+            }
+
+        async def fail_anchor_persistence(*_args, **_kwargs):
+            raise RuntimeError("database write failed")
+
+        monkeypatch.setattr(
+            "app.services.paper_content.persist_chunk_anchors", fail_anchor_persistence
+        )
+        with pytest.raises(ContentParseError, match="CONTENT_PERSIST_FAILED"):
+            await parse_content_version(
+                session, version=second, mineru_parser=fake_mineru, allow_fallback=False
+            )
+        await session.refresh(first)
+        failed = await session.get(PaperContentVersion, second.id)
+        current = await current_content_version(session, paper_id=paper.id)
+
+    assert first.is_current is True
+    assert current is not None and current.id == first.id
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error_code == "CONTENT_PERSIST_FAILED"
 
 
 @pytest.mark.asyncio
@@ -223,15 +259,11 @@ async def test_vectorize_persists_document_and_chunk_vectors(app, client, monkey
     async def fake_embed_documents(session, texts, **_kwargs):
         return [[float(index), 0.5, 1.0] for index, _ in enumerate(texts)], space
 
-    monkeypatch.setattr(
-        "app.services.embedding.embed_documents", fake_embed_documents
-    )
+    monkeypatch.setattr("app.services.embedding.embed_documents", fake_embed_documents)
     async with get_sessionmaker()() as session:
         version = await create_content_version(session, asset=asset)
         await parse_content_version(session, version=version, mineru_parser=None)
-        await vectorize_content_version(
-            session, version=version, library_id=library.id
-        )
+        await vectorize_content_version(session, version=version, library_id=library.id)
         await session.refresh(version)
         assert version.status == "vector_ready"
         assert version.document_vector_state == "ready"
@@ -243,6 +275,4 @@ async def test_vectorize_persists_document_and_chunk_vectors(app, client, monkey
                 )
             )
         ) is not None
-        assert (
-            await session.scalar(select(PaperContentChunkVector))
-        ) is not None
+        assert (await session.scalar(select(PaperContentChunkVector))) is not None

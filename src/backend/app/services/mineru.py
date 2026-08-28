@@ -20,6 +20,22 @@ class MineruCloudError(RuntimeError):
     """A MinerU upload, polling, or result conversion failure."""
 
 
+def _safe_request_failure(prefix: str, error: Exception | None) -> MineruCloudError:
+    """Build a stable error without persisting tokens or signed request URLs."""
+
+    if isinstance(error, httpx.HTTPStatusError):
+        detail = f"HTTP_{error.response.status_code}"
+    elif isinstance(error, httpx.TimeoutException):
+        detail = "TIMEOUT"
+    elif isinstance(error, httpx.RequestError):
+        detail = "NETWORK_ERROR"
+    elif error is not None:
+        detail = type(error).__name__.upper()
+    else:
+        detail = "UNKNOWN"
+    return MineruCloudError(f"{prefix}:{detail}")
+
+
 StatusCallback = Callable[[str], Awaitable[None]]
 _SCHEDULERS_LOCK = Lock()
 _MAX_ARCHIVE_FILES = 10_000
@@ -83,12 +99,7 @@ def _result_payload(payload: Any) -> Mapping[str, Any] | None:
 
 def _safe_archive_name(name: str) -> str | None:
     path = PurePosixPath(name.replace("\\", "/"))
-    if (
-        path.is_absolute()
-        or not path.parts
-        or ".." in path.parts
-        or ":" in path.parts[0]
-    ):
+    if path.is_absolute() or not path.parts or ".." in path.parts or ":" in path.parts[0]:
         return None
     return path.as_posix()
 
@@ -156,8 +167,17 @@ def _zip_result(content: bytes, *, pages: int = 0) -> dict[str, Any]:
             files: list[tuple[str, bytes]] = []
             extracted_bytes = 0
             accepted_extensions = {
-                ".md", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
-                ".csv", ".html", ".htm", ".xlsx",
+                ".md",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".webp",
+                ".svg",
+                ".csv",
+                ".html",
+                ".htm",
+                ".xlsx",
             }
             for info in infos:
                 name = _safe_archive_name(info.filename)
@@ -235,7 +255,7 @@ class MineruCloudParser:
                 last = exc
                 if attempt < self._settings.mineru_retries:
                     await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
-        raise MineruCloudError(f"MINERU_REQUEST_FAILED:{last}") from last
+        raise _safe_request_failure("MINERU_REQUEST_FAILED", last) from last
 
     async def _upload(self, url: str, content: bytes) -> None:
         last: Exception | None = None
@@ -250,7 +270,7 @@ class MineruCloudParser:
                 last = exc
                 if attempt < self._settings.mineru_retries:
                     await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
-        raise MineruCloudError(f"MINERU_UPLOAD_FAILED:{last}") from last
+        raise _safe_request_failure("MINERU_UPLOAD_FAILED", last) from last
 
     async def _get_bytes(self, url: str) -> bytes:
         last: Exception | None = None
@@ -263,7 +283,7 @@ class MineruCloudParser:
                 last = exc
                 if attempt < self._settings.mineru_retries:
                     await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
-        raise MineruCloudError(f"MINERU_RESULT_DOWNLOAD_FAILED:{last}") from last
+        raise _safe_request_failure("MINERU_RESULT_DOWNLOAD_FAILED", last) from last
 
     async def parse(
         self, pdf_path: Path, *, on_status: StatusCallback | None = None
@@ -330,10 +350,7 @@ class MineruCloudParser:
                         raise MineruCloudError("MINERU_RESULT_URL_MISSING")
                     if state in {"failed", "error", "failure"}:
                         raise MineruCloudError(
-                            str(
-                                _find(row, "err_msg", "error", "message")
-                                or "MINERU_PARSE_FAILED"
-                            )
+                            str(_find(row, "err_msg", "error", "message") or "MINERU_PARSE_FAILED")
                         )
                 await asyncio.sleep(self._settings.mineru_poll_interval_seconds)
             raise MineruCloudError("MINERU_TIMEOUT")
