@@ -18,6 +18,18 @@ class InterdisciplinaryScopeDraft(BaseModel):
     evidence_balance: dict[str, float] | None = None
 
 
+class InterdisciplinaryScopeSuggestRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    statement: str = Field(min_length=5, max_length=2000)
+    user_context: str | None = Field(default=None, max_length=4000)
+
+
+class InterdisciplinaryScopeSuggestion(InterdisciplinaryScopeDraft):
+    clarification_questions: list[str] = Field(default_factory=list, max_length=4)
+    rationale: str = Field(min_length=1, max_length=4000)
+    model: str = Field(min_length=1, max_length=255)
+
+
 class InterdisciplinaryScopeRead(InterdisciplinaryScopeDraft):
     model_config = ConfigDict(from_attributes=True)
 

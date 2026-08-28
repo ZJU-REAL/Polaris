@@ -138,7 +138,9 @@ def rerank_interdisciplinary(
     output: list[RankedCandidate] = []
     for item in ranked:
         metadata = item.candidate.get("metadata")
-        hits = metadata.get("retrieval_hits") if isinstance(metadata, dict) else []
+        hits = item.candidate.get("retrieval_hits")
+        if not isinstance(hits, list):
+            hits = metadata.get("retrieval_hits") if isinstance(metadata, dict) else []
         hits = [hit for hit in hits or [] if isinstance(hit, dict)]
         disciplines = {str(hit.get("discipline")) for hit in hits if hit.get("discipline")}
         roles = {str(hit.get("role")) for hit in hits if hit.get("role")}
