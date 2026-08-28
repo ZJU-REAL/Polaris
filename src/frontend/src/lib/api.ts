@@ -3071,6 +3071,18 @@ export interface CollectingLibrary {
   relevance_score: number | null;
 }
 
+/** One-time plaintext response returned when a personal extension key is rotated. */
+export interface DownloadApiKeyCreated {
+  api_key: string;
+  key_prefix: string;
+  created_at: string;
+}
+
+export interface DownloadClientIdentity {
+  user_id: string;
+  email: string;
+}
+
 export const api = {
   /** fastapi-users JWT login — form-encoded username/password. Returns access token. */
   async login(email: string, password: string): Promise<string> {
@@ -3122,6 +3134,17 @@ export const api = {
   /** Current user. */
   me(): Promise<UserRead> {
     return request<UserRead>('/users/me');
+  },
+  rotateDownloadApiKey(): Promise<DownloadApiKeyCreated> {
+    return request<DownloadApiKeyCreated>('/me/download-api-key', { method: 'POST' });
+  },
+  revokeDownloadApiKey(): Promise<void> {
+    return request<void>('/me/download-api-key', { method: 'DELETE' });
+  },
+  testDownloadApiKey(apiKey: string): Promise<DownloadClientIdentity> {
+    return request<DownloadClientIdentity>('/download-client/me', {
+      headers: { 'X-Polaris-API-Key': apiKey },
+    });
   },
 
   getMyManagedCommandWatchdog(): Promise<ManagedCommandWatchdogUserSettings> {
