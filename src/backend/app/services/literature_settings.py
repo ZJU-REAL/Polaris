@@ -10,15 +10,18 @@ from __future__ import annotations
 import math
 import time
 import uuid
+import zlib
 from collections.abc import Mapping
 from typing import Any
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_secret, encrypt_secret
 from app.models.system_setting import SystemSetting
 
 SETTING_KEY = "literature_search"
+_SETTING_LOCK_ID = zlib.crc32(SETTING_KEY.encode("utf-8"))
 SUPPORTED_SOURCES = (
     "openalex",
     "semantic",
@@ -54,6 +57,19 @@ class InvalidLiteratureSettingError(ValueError):
     def __init__(self, field: str, detail: str) -> None:
         super().__init__(f"{field}: {detail}")
         self.field = field
+
+
+async def _setting_for_update(session: AsyncSession) -> SystemSetting | None:
+    """Serialize read-modify-write updates to the shared settings document."""
+
+    if session.get_bind().dialect.name == "postgresql":
+        # A row lock cannot serialize the first write while the singleton row is absent.
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": _SETTING_LOCK_ID}
+        )
+    return await session.scalar(
+        select(SystemSetting).where(SystemSetting.key == SETTING_KEY).with_for_update()
+    )
 
 
 def _as_int(value: Any, field: str, *, minimum: int, maximum: int) -> int:
@@ -213,17 +229,13 @@ async def get_runtime_settings(session: AsyncSession) -> dict[str, Any]:
     normalized = {**DEFAULTS, **_normalize(value)}
     pools: dict[str, list[str]] = {}
     for source, items in _credential_pools(value).items():
-        pools[source] = [
-            decrypt_secret(item["secret"])
-            for item in items
-            if item["enabled"]
-        ]
+        pools[source] = [decrypt_secret(item["secret"]) for item in items if item["enabled"]]
     normalized["provider_keys"] = pools
     return normalized
 
 
 async def update_settings(session: AsyncSession, data: Mapping[str, Any]) -> dict[str, Any]:
-    row = await session.get(SystemSetting, SETTING_KEY)
+    row = await _setting_for_update(session)
     previous = row.value if row is not None and isinstance(row.value, Mapping) else {}
     normalized = _normalize({**(previous if isinstance(previous, Mapping) else {}), **dict(data)})
     if "provider_keys" in data and data["provider_keys"] is not None:
@@ -257,9 +269,7 @@ async def update_settings(session: AsyncSession, data: Mapping[str, Any]) -> dic
         normalized["provider_keys"] = encrypted
     else:
         normalized["provider_keys"] = (
-            dict(previous.get("provider_keys") or {})
-            if isinstance(previous, Mapping)
-            else {}
+            dict(previous.get("provider_keys") or {}) if isinstance(previous, Mapping) else {}
         )
     if row is None:
         session.add(SystemSetting(key=SETTING_KEY, value=normalized))
@@ -290,7 +300,7 @@ async def create_provider_credential(
     secret = secret.strip()
     if not secret:
         raise InvalidLiteratureSettingError("secret", "must not be empty")
-    row = await session.get(SystemSetting, SETTING_KEY)
+    row = await _setting_for_update(session)
     value = dict(row.value) if row is not None and isinstance(row.value, Mapping) else {}
     pools = _credential_pools(value)
     now = time.time()
@@ -321,7 +331,7 @@ async def update_provider_credential(
     label: str | None = None,
     enabled: bool | None = None,
 ) -> dict[str, Any] | None:
-    row = await session.get(SystemSetting, SETTING_KEY)
+    row = await _setting_for_update(session)
     if row is None or not isinstance(row.value, Mapping):
         return None
     value = dict(row.value)
@@ -342,14 +352,12 @@ async def update_provider_credential(
             value["provider_keys"] = pools
             row.value = value
             await session.commit()
-            return next(
-                item for item in _masked(value)[source] if item["id"] == credential_id
-            )
+            return next(item for item in _masked(value)[source] if item["id"] == credential_id)
     return None
 
 
 async def delete_provider_credential(session: AsyncSession, credential_id: str) -> bool:
-    row = await session.get(SystemSetting, SETTING_KEY)
+    row = await _setting_for_update(session)
     if row is None or not isinstance(row.value, Mapping):
         return False
     value = dict(row.value)
@@ -385,7 +393,7 @@ async def get_provider_credential_secret(
 async def record_credential_health(
     session: AsyncSession, credential_id: str, *, ok: bool, detail: str
 ) -> None:
-    row = await session.get(SystemSetting, SETTING_KEY)
+    row = await _setting_for_update(session)
     if row is None or not isinstance(row.value, Mapping):
         return
     value = dict(row.value)
@@ -408,7 +416,7 @@ async def record_credential_health(
 async def record_provider_health(
     session: AsyncSession, *, source: str, ok: bool, detail: str
 ) -> None:
-    row = await session.get(SystemSetting, SETTING_KEY)
+    row = await _setting_for_update(session)
     value = dict(row.value) if row is not None and isinstance(row.value, Mapping) else {}
     health = dict(value.get("provider_health") or {})
     health[source] = {"ok": ok, "detail": detail[:500], "checked_at": time.time()}

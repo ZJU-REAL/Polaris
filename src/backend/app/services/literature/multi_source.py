@@ -35,6 +35,26 @@ class ProviderRequestError(RuntimeError):
         self.retryable = retryable
 
 
+def provider_failure_detail(source: str, error: Exception | None) -> tuple[str, str]:
+    """Return a stable provider failure without URLs, query strings, or headers."""
+
+    if isinstance(error, ProviderRequestError):
+        code = error.code
+    elif isinstance(error, httpx.HTTPStatusError):
+        code = f"HTTP_{error.response.status_code}"
+    elif isinstance(error, httpx.TimeoutException):
+        code = "TIMEOUT"
+    elif isinstance(error, httpx.RequestError):
+        code = "NETWORK_ERROR"
+    elif isinstance(error, ValueError):
+        code = "INVALID_RESPONSE"
+    elif error is not None:
+        code = type(error).__name__.upper()
+    else:
+        code = "REQUEST_FAILED"
+    return code, f"{source} provider request failed ({code})"
+
+
 def _text(value: Any) -> str:
     if value is None:
         return ""
@@ -183,11 +203,8 @@ class MultiSourceClient:
                 last_error = exc
             if attempt < self._retries:
                 await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
-        raise ProviderRequestError(
-            source,
-            "REQUEST_FAILED",
-            f"{type(last_error).__name__}: {last_error}" if last_error else "request failed",
-        ) from last_error
+        code, detail = provider_failure_detail(source, last_error)
+        raise ProviderRequestError(source, code, detail) from last_error
 
     async def _request_text(
         self,
@@ -209,11 +226,8 @@ class MultiSourceClient:
                 last_error = exc
             if attempt < self._retries:
                 await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
-        raise ProviderRequestError(
-            source,
-            "REQUEST_FAILED",
-            f"{type(last_error).__name__}: {last_error}" if last_error else "request failed",
-        ) from last_error
+        code, detail = provider_failure_detail(source, last_error)
+        raise ProviderRequestError(source, code, detail) from last_error
 
     async def aclose(self) -> None:
         if self._owns_client:
