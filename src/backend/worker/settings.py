@@ -9,6 +9,7 @@ from worker.tasks import (
     daily_feed_sync,
     daily_publication_match,
     daily_wiki_ingest,
+    dispatch_literature_discovery_schedules,
     index_papers_fulltext_task,
     match_user_publications,
     parse_paper_content_task,
@@ -50,6 +51,10 @@ class WorkerSettings:
     # 了才同步，时刻不用猜。发表匹配仍按时刻派生（抓取 + 150 分钟）。
     _CHECKPOINT_MINUTES = {0, 15, 30, 45}
     cron_jobs = [
+        cron(
+            dispatch_literature_discovery_schedules,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+        ),
         cron(daily_feed_sync, minute=_CHECKPOINT_MINUTES),
         cron(daily_publication_match, minute=_CHECKPOINT_MINUTES),
         # 僵死回收：启动对账只救 worker 重启的孤儿；运行中途丢任务（LLM 调用悬死、

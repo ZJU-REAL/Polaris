@@ -22,6 +22,8 @@ from app.models.literature_discovery import (
 )
 from app.models.user import User
 from app.schemas.literature_discovery import (
+    LiteratureDiscoveryScheduleRead,
+    LiteratureDiscoveryScheduleUpdate,
     LiteratureSearchRequest,
     OaCacheBatchRequest,
     OaCacheRead,
@@ -34,10 +36,7 @@ from app.schemas.literature_discovery import (
     SourceAttemptRead,
 )
 from app.services import libraries as libraries_service
-from app.services import literature_settings as literature_settings_service
-from app.services.interdisciplinary_retrieval import apply_profile_to_query_plan
-from app.services.literature import discovery_runs, oa_cache
-from app.services.literature.discovery_ranking import normalized_score_weights
+from app.services.literature import discovery_runs, discovery_schedules, oa_cache
 
 router = APIRouter(tags=["literature-discovery"])
 logger = logging.getLogger(__name__)
@@ -66,28 +65,6 @@ def _detail(run: LiteratureSearchRun, attempts: list[LiteratureSourceAttempt]) -
     )
 
 
-def _library_discovery_config(library: DirectionLibrary) -> dict[str, object]:
-    """Project the library's authoritative inclusion rules into one run snapshot."""
-
-    definition = libraries_service.library_definition(library)
-    raw_keywords = definition.get("keywords")
-    keyword_config = raw_keywords if isinstance(raw_keywords, dict) else {}
-    include = [
-        str(item).strip() for item in keyword_config.get("include") or [] if str(item).strip()
-    ]
-    exclude = [
-        str(item).strip() for item in keyword_config.get("exclude") or [] if str(item).strip()
-    ]
-    output: dict[str, object] = {}
-    if include:
-        output["keywords"] = list(dict.fromkeys(include))
-    if exclude:
-        output["excluded_keywords"] = list(dict.fromkeys(exclude))
-    if definition.get("rubric"):
-        output["score_rubric"] = definition["rubric"]
-    return output
-
-
 @router.post(
     "/libraries/{library_id}/literature/runs",
     response_model=SearchRunDetail,
@@ -100,81 +77,110 @@ async def create_run(
     user: User = Depends(current_active_user),
 ) -> SearchRunDetail:
     library = await _managed_library(session, library_id, user)
-    defaults = await literature_settings_service.get_runtime_settings(session)
-    requested_count = data.requested_count or int(defaults["requested_count"])
-    candidate_budget = max(
-        requested_count,
-        data.candidate_budget or int(defaults["candidate_budget"]),
-    )
-    start_year = data.start_year if data.start_year is not None else defaults.get("start_year")
-    end_year = data.end_year if data.end_year is not None else defaults.get("end_year")
-    source_config = {
-        "sources": list(defaults["sources"]),
-        "score_weights": dict(defaults["score_weights"]),
-        **_library_discovery_config(library),
-        **(data.source_config or {}),
-    }
-    source_config["score_weights"] = normalized_score_weights(
-        source_config.get("score_weights")
-        if isinstance(source_config.get("score_weights"), dict)
-        else None
-    )
-    # Provider credentials are resolved by workers and never enter run snapshots.
-    source_config.pop("provider_keys", None)
-    query_plan = await apply_profile_to_query_plan(
+    run = await discovery_runs.create_discovery_run(
         session,
         library=library,
-        topic=data.topic,
-        query_plan=data.query_plan,
-        source_config=source_config,
-    )
-    run = LiteratureSearchRun(
-        library_id=library.id,
+        data=data,
         created_by=user.id,
-        requested_count=requested_count,
-        candidate_budget=candidate_budget,
-        start_year=start_year,
-        end_year=end_year,
-        topic=data.topic,
-        query_plan=query_plan,
-        source_config=source_config,
-        model_version=data.model_version,
-        progress={
-            "phase": "queued",
-            "fetched": 0,
-            "accepted": 0,
-            "requested_count": requested_count,
-            "candidate_budget": candidate_budget,
-            "returned_count": 0,
-            "start_year": start_year,
-            "end_year": end_year,
-        },
     )
-    session.add(run)
-    await session.flush()
-    for source in discovery_runs.enabled_sources(source_config, query_plan):
-        session.add(
-            LiteratureSourceAttempt(
-                run_id=run.id,
-                source=source,
-                status="pending",
-                requested_count=None,
-            )
-        )
     await session.commit()
     await session.refresh(run)
-    attempts = list(
-        (
-            await session.execute(
-                select(LiteratureSourceAttempt)
-                .where(LiteratureSourceAttempt.run_id == run.id)
-                .order_by(LiteratureSourceAttempt.source)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    attempts = await discovery_runs.list_source_attempts(session, run.id)
     return _detail(run, attempts)
+
+
+@router.get(
+    "/libraries/{library_id}/literature/schedule",
+    response_model=LiteratureDiscoveryScheduleRead,
+)
+async def get_discovery_schedule(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LiteratureDiscoveryScheduleRead:
+    library = await _library(session, library_id, user)
+    schedule = await discovery_schedules.get_schedule(session, library.id)
+    if schedule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_SCHEDULE_NOT_FOUND")
+    return LiteratureDiscoveryScheduleRead.model_validate(schedule)
+
+
+@router.put(
+    "/libraries/{library_id}/literature/schedule",
+    response_model=LiteratureDiscoveryScheduleRead,
+)
+async def set_discovery_schedule(
+    library_id: uuid.UUID,
+    data: LiteratureDiscoveryScheduleUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> LiteratureDiscoveryScheduleRead:
+    library = await _managed_library(session, library_id, user)
+    try:
+        schedule = await discovery_schedules.upsert_schedule(
+            session, library=library, data=data, actor_id=user.id
+        )
+    except discovery_schedules.InvalidDiscoveryScheduleError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    return LiteratureDiscoveryScheduleRead.model_validate(schedule)
+
+
+@router.delete(
+    "/libraries/{library_id}/literature/schedule",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_discovery_schedule(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> None:
+    library = await _managed_library(session, library_id, user)
+    schedule = await discovery_schedules.get_schedule(session, library.id)
+    if schedule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_SCHEDULE_NOT_FOUND")
+    await discovery_schedules.delete_schedule(session, schedule)
+
+
+@router.post(
+    "/libraries/{library_id}/literature/schedule/run",
+    response_model=SearchRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def trigger_discovery_schedule(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    queue: TaskQueue = Depends(get_task_queue),
+    user: User = Depends(current_active_user),
+) -> SearchRunRead:
+    library = await _managed_library(session, library_id, user)
+    schedule = await discovery_schedules.get_schedule(session, library.id)
+    if schedule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LITERATURE_SCHEDULE_NOT_FOUND")
+    try:
+        run = await discovery_schedules.trigger_schedule_now(
+            session,
+            library=library,
+            schedule=schedule,
+            actor_id=user.id,
+        )
+    except discovery_schedules.DiscoveryScheduleRunConflictError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="LITERATURE_SCHEDULE_RUN_ACTIVE",
+        ) from exc
+    try:
+        await queue.enqueue("run_literature_discovery", str(run.id))
+    except Exception as exc:
+        await discovery_schedules.record_dispatch_result(session, run_id=run.id, ok=False)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LITERATURE_SCHEDULE_QUEUE_UNAVAILABLE",
+        ) from exc
+    await discovery_schedules.record_dispatch_result(session, run_id=run.id, ok=True)
+    return SearchRunRead.model_validate(run)
 
 
 @router.post(

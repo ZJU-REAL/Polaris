@@ -29,6 +29,7 @@ dependencies = [
     "pycrdt>=0.10",
     "pycrdt-websocket>=0.15",
     "python-pptx>=1.0",
+    "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]

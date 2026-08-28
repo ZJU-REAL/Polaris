@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -23,7 +23,18 @@ class LiteratureSearchRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """一次可复现的文献发现运行及其快照。"""
 
     __tablename__ = "literature_search_runs"
-    __table_args__ = (Index("ix_literature_search_runs_library_status", "library_id", "status"),)
+    __table_args__ = (
+        Index("ix_literature_search_runs_library_status", "library_id", "status"),
+        Index(
+            "uq_literature_search_runs_active_schedule",
+            "library_id",
+            unique=True,
+            postgresql_where=text(
+                "trigger = 'scheduled' AND status IN ('queued', 'running')"
+            ),
+            sqlite_where=text("trigger = 'scheduled' AND status IN ('queued', 'running')"),
+        ),
+    )
 
     library_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("direction_libraries.id", ondelete="CASCADE"), index=True, nullable=False
@@ -42,10 +53,52 @@ class LiteratureSearchRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     query_plan: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     source_config: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     model_version: Mapped[str | None] = mapped_column(String(255))
+    trigger: Mapped[str] = mapped_column(
+        String(16), default="manual", server_default="manual", nullable=False
+    )
+    schedule_version: Mapped[int | None]
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     progress: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     error_summary: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LiteratureDiscoverySchedule(TimestampMixin, Base):
+    """One configurable incremental-discovery schedule per direction library."""
+
+    __tablename__ = "literature_discovery_schedules"
+    __table_args__ = (
+        Index(
+            "ix_literature_discovery_schedules_due",
+            "enabled",
+            "next_run_at",
+        ),
+    )
+
+    library_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("direction_libraries.id", ondelete="CASCADE"), primary_key=True
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
+    hour: Mapped[int] = mapped_column(nullable=False)
+    minute: Mapped[int] = mapped_column(nullable=False)
+    requested_count: Mapped[int] = mapped_column(nullable=False)
+    candidate_budget: Mapped[int] = mapped_column(nullable=False)
+    start_year: Mapped[int | None]
+    end_year: Mapped[int | None]
+    config_version: Mapped[int] = mapped_column(default=1, server_default="1", nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("literature_search_runs.id", ondelete="SET NULL"), index=True
+    )
+    last_enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
 
 
 class LiteratureSearchHit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
