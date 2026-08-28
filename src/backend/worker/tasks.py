@@ -424,3 +424,41 @@ async def dispatch_literature_discovery_schedules(ctx: dict[str, Any]) -> list[s
                 now=current,
             )
     return dispatched
+
+
+async def translate_literature_hit(ctx: dict[str, Any], translation_id: str) -> dict[str, Any]:
+    """Translate one discovery hit through the dedicated versioned LLM route."""
+
+    from sqlalchemy import select
+
+    from app.core.llm.router import get_llm_router
+    from app.models.literature_discovery import (
+        LiteratureHitTranslation,
+        LiteratureSearchHit,
+        LiteratureSearchRun,
+    )
+    from app.services.literature.translations import execute_translation
+
+    del ctx
+    async with get_sessionmaker()() as session:
+        identity = await session.execute(
+            select(LiteratureHitTranslation.requested_by, LiteratureSearchRun.library_id)
+            .join(LiteratureSearchHit, LiteratureSearchHit.run_id == LiteratureSearchRun.id)
+            .join(
+                LiteratureHitTranslation,
+                LiteratureHitTranslation.hit_id == LiteratureSearchHit.id,
+            )
+            .where(LiteratureHitTranslation.id == uuid.UUID(translation_id))
+        )
+        owner = identity.one_or_none()
+        row = await execute_translation(
+            session,
+            translation_id=uuid.UUID(translation_id),
+            llm=get_llm_router(),
+            user_id=owner.requested_by if owner else None,
+            library_id=owner.library_id if owner else None,
+        )
+        return {
+            "translation_id": translation_id,
+            "status": row.status if row is not None else "missing",
+        }

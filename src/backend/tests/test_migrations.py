@@ -10,6 +10,8 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
+HEAD_REVISION = "f4a5b6c7d8e9"  # Versioned discovery-hit translations
+DISCOVERY_SCHEDULE_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
 VENUE_METRIC_REVISION = "f2a3b4c5d6e7"  # Versioned literature venue metrics
 SCOPE_VERSION_REVISION = "f1a2b3c4d5e6"  # Immutable interdisciplinary scope versions
 QUERY_MATRIX_REVISION = "f0a1b2c3d4e5"  # Interdisciplinary query matrix and evidence balance
@@ -125,6 +127,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "literature_source_attempts",
                     "literature_venue_metric_cache",
                     "literature_discovery_schedules",
+                    "literature_hit_translations",
                     "pdf_blobs",
                     "paper_assets",
                     "asset_grants",
@@ -182,6 +185,15 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "config_version",
         "next_run_at",
     } <= columns["literature_discovery_schedules"]
+    assert {
+        "hit_id",
+        "target_language",
+        "source_hash",
+        "model_version",
+        "status",
+        "translated_fields",
+        "requested_by",
+    } <= columns["literature_hit_translations"]
     # 压缩阈值要知道模型的窗口有多大，此前 router 只能拍脑袋
     assert "context_window" in columns["model_routes"]
     # 向量搬进三张侧表，主表上的向量列与元信息列一并删除
@@ -509,6 +521,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["interdisciplinary_research_profile_versions"]
 
     # First remove schedules and return to the venue-metric head.
+    # First remove translations and return to the discovery-schedule head.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == DISCOVERY_SCHEDULE_REVISION
+    assert "literature_hit_translations" not in columns["_tables"]
+
+    # Then remove schedules and return to the venue-metric head.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == VENUE_METRIC_REVISION
