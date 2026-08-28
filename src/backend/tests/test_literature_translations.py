@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from app.core.db import get_sessionmaker
 from app.models.library_direction import DirectionLibrary
 from app.models.literature_discovery import LiteratureHitTranslation, LiteratureSearchHit
+from app.models.user import User
 from app.services.literature.translations import (
     execute_translation,
     request_translation,
@@ -117,6 +118,46 @@ async def test_translation_cache_is_idempotent_and_preserves_source_metadata(cli
     assert translated.status == "ready"
     assert translated.translated_fields["title"] == "冲击响应"
     assert (hit.title, hit.abstract, dict(hit.scores), source_hash(hit)) == before
+
+
+@pytest.mark.asyncio
+async def test_translation_keeps_requesting_user_for_worker_model_resolution(client):
+    _, _, _, hit_ids = await _run_and_hits(client, count=1)
+    requester_email = f"translation-requester-{uuid.uuid4().hex}@example.com"
+    await register_and_login(client, email=requester_email)
+    router = TranslationRouter(
+        [
+            json.dumps(
+                {
+                    "title": "冲击响应",
+                    "abstract": "完整摘要",
+                    "inclusion_rationale": ["机制相关"],
+                },
+                ensure_ascii=False,
+            )
+        ]
+    )
+    async with get_sessionmaker()() as session:
+        requester_id = await session.scalar(select(User.id).where(User.email == requester_email))
+        assert requester_id is not None
+        hit = await session.get(LiteratureSearchHit, hit_ids[0])
+        row, _ = await request_translation(
+            session,
+            hit=hit,
+            target_language="zh-CN",
+            model="translation-model-v1",
+            requested_by=requester_id,
+        )
+        assert row.requested_by == requester_id
+        translated = await execute_translation(
+            session,
+            translation_id=row.id,
+            llm=router,
+            user_id=row.requested_by,
+        )
+
+    assert translated.status == "ready"
+    assert router.calls[0][2]["user_id"] == requester_id
 
 
 @pytest.mark.asyncio

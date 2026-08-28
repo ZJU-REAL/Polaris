@@ -161,6 +161,9 @@ class LiteratureHitTranslation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     hit_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("literature_search_hits.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     target_language: Mapped[str] = mapped_column(String(32), nullable=False)
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     model_version: Mapped[str] = mapped_column(String(255), nullable=False)

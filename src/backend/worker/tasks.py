@@ -442,7 +442,7 @@ async def translate_literature_hit(ctx: dict[str, Any], translation_id: str) -> 
     del ctx
     async with get_sessionmaker()() as session:
         identity = await session.execute(
-            select(LiteratureSearchRun.created_by, LiteratureSearchRun.library_id)
+            select(LiteratureHitTranslation.requested_by, LiteratureSearchRun.library_id)
             .join(LiteratureSearchHit, LiteratureSearchHit.run_id == LiteratureSearchRun.id)
             .join(
                 LiteratureHitTranslation,
@@ -455,7 +455,7 @@ async def translate_literature_hit(ctx: dict[str, Any], translation_id: str) -> 
             session,
             translation_id=uuid.UUID(translation_id),
             llm=get_llm_router(),
-            user_id=owner.created_by if owner else None,
+            user_id=owner.requested_by if owner else None,
             library_id=owner.library_id if owner else None,
         )
         return {

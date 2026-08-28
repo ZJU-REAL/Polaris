@@ -85,6 +85,7 @@ async def request_translation(
     hit: LiteratureSearchHit,
     target_language: str,
     model: str,
+    requested_by: uuid.UUID | None = None,
 ) -> tuple[LiteratureHitTranslation, bool]:
     language = normalize_target_language(target_language)
     digest = source_hash(hit)
@@ -102,12 +103,14 @@ async def request_translation(
             row.error_code = None
             row.started_at = None
             row.completed_at = None
+            row.requested_by = requested_by
         await session.commit()
         await session.refresh(row)
         return row, should_enqueue
 
     row = LiteratureHitTranslation(
         hit_id=hit.id,
+        requested_by=requested_by,
         target_language=language,
         source_hash=digest,
         model_version=model,

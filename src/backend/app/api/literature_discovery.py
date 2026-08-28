@@ -346,6 +346,7 @@ async def _request_hit_translation(
     hit: LiteratureSearchHit,
     target_language: str,
     model: str,
+    requested_by: uuid.UUID,
 ) -> LiteratureTranslationRead:
     try:
         row, should_enqueue = await translations.request_translation(
@@ -353,6 +354,7 @@ async def _request_hit_translation(
             hit=hit,
             target_language=target_language,
             model=model,
+            requested_by=requested_by,
         )
     except translations.InvalidTargetLanguageError as exc:
         raise HTTPException(
@@ -393,6 +395,7 @@ async def translate_hit(
         hit=hit,
         target_language=body.target_language,
         model=model,
+        requested_by=user.id,
     )
 
 
@@ -439,6 +442,7 @@ async def translate_hits(
                 hit=hit,
                 target_language=body.target_language,
                 model=model,
+                requested_by=user.id,
             )
         )
     return output

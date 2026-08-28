@@ -25,6 +25,11 @@ def upgrade() -> None:
             sa.ForeignKey("literature_search_hits.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column(
+            "requested_by",
+            sa.Uuid(),
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+        ),
         sa.Column("target_language", sa.String(32), nullable=False),
         sa.Column("source_hash", sa.String(64), nullable=False),
         sa.Column("model_version", sa.String(255), nullable=False),
@@ -50,6 +55,11 @@ def upgrade() -> None:
         ["hit_id"],
     )
     op.create_index(
+        "ix_literature_hit_translations_requested_by",
+        "literature_hit_translations",
+        ["requested_by"],
+    )
+    op.create_index(
         "ix_literature_hit_translations_hit_status",
         "literature_hit_translations",
         ["hit_id", "status"],
@@ -57,6 +67,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_literature_hit_translations_requested_by",
+        table_name="literature_hit_translations",
+    )
     op.drop_index(
         "ix_literature_hit_translations_hit_status",
         table_name="literature_hit_translations",

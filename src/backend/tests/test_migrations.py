@@ -191,6 +191,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "model_version",
         "status",
         "translated_fields",
+        "requested_by",
     } <= columns["literature_hit_translations"]
     # 压缩阈值要知道模型的窗口有多大，此前 router 只能拍脑袋
     assert "context_window" in columns["model_routes"]
