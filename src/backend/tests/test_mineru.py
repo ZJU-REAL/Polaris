@@ -4,6 +4,7 @@ import io
 import zipfile
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app.core.config import get_settings
@@ -18,7 +19,9 @@ class FakeMineruClient:
         self.calls.append((method, url))
         if method == "POST":
             return FakeResponse(
-                json_data={"data": {"batch_id": "batch-1", "file_urls": [{"url": "https://upload"}]}},
+                json_data={
+                    "data": {"batch_id": "batch-1", "file_urls": [{"url": "https://upload"}]}
+                },
             )
         return FakeResponse(
             json_data={
@@ -142,3 +145,24 @@ def test_scheduler_rotates_configured_tokens():
         "key-a",
         "key-b",
     ]
+
+
+@pytest.mark.asyncio
+async def test_signed_upload_url_is_not_exposed_in_mineru_error(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mineru_api_tokens", "key-a", raising=False)
+    monkeypatch.setattr(settings, "mineru_retries", 0, raising=False)
+    signed_url = "https://upload.example.test/file?signature=SECRET_SENTINEL"
+
+    class BrokenClient:
+        async def put(self, url, **_kwargs):
+            request = httpx.Request("PUT", url)
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError("unauthorized", request=request, response=response)
+
+    parser = MineruCloudParser(client=BrokenClient())
+    with pytest.raises(Exception) as caught:
+        await parser._upload(signed_url, b"pdf")
+
+    assert str(caught.value) == "MINERU_UPLOAD_FAILED:HTTP_401"
+    assert "SECRET_SENTINEL" not in str(caught.value)

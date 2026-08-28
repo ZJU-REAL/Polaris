@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path, PurePosixPath
@@ -90,9 +91,7 @@ def _pymupdf_parse_sync(pdf_path: Path) -> ParserResult:
     if not text:
         raise ContentParseError("PDF_TEXT_EMPTY")
     markdown = "\n\n".join(
-        f"## Page {i}\n\n{page}"
-        for i, page in enumerate(pages, start=1)
-        if page
+        f"## Page {i}\n\n{page}" for i, page in enumerate(pages, start=1) if page
     )
     return {
         "parser": "pymupdf",
@@ -138,6 +137,104 @@ async def create_content_version(
     return version
 
 
+async def _persist_parse_result(
+    session: AsyncSession,
+    *,
+    version: PaperContentVersion,
+    result: ParserResult,
+    parser_name: str,
+) -> PaperContentVersion:
+    """Persist one immutable parse result and switch the current version atomically."""
+
+    version_id = version.id
+    directory = _version_dir(version_id)
+    try:
+        text = _clean_text(str(result.get("text") or ""))
+        markdown = _clean_text(str(result.get("markdown") or text))
+        chunks = result.get("chunks") or []
+        if not text or not chunks:
+            raise ContentParseError("PARSED_CONTENT_EMPTY")
+
+        text_path = directory / "content.txt"
+        markdown_path = _output_path(directory, result.get("markdown_path"), fallback="content.md")
+        if markdown_path is None:
+            raise ContentParseError("MARKDOWN_PATH_INVALID")
+        manifest_path = directory / "manifest.json"
+        text_path.write_text(text, encoding="utf-8")
+        markdown_path.write_text(markdown, encoding="utf-8")
+        for artifact in result.get("artifacts") or []:
+            if not isinstance(artifact, dict) or not isinstance(artifact.get("content"), bytes):
+                continue
+            artifact_path = _output_path(directory, artifact.get("path"))
+            if artifact_path is not None:
+                artifact_path.write_bytes(artifact["content"])
+        manifest_path.write_text(
+            json.dumps(result.get("manifest") or {}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        await session.execute(
+            delete(PaperContentChunk).where(PaperContentChunk.content_version_id == version.id)
+        )
+        persisted_chunks: list[PaperContentChunk] = []
+        for seq, item in enumerate(chunks):
+            chunk_text = _clean_text(str(item.get("text") or ""))
+            if not chunk_text:
+                continue
+            chunk = PaperContentChunk(
+                content_version_id=version.id,
+                seq=seq,
+                text=chunk_text,
+                page_start=item.get("page_start"),
+                page_end=item.get("page_end"),
+                rects=item.get("rects") or [],
+                section_path=item.get("section_path") or [],
+                anchor_meta=item.get("anchor_meta") or {},
+            )
+            session.add(chunk)
+            persisted_chunks.append(chunk)
+        await session.flush()
+        await persist_chunk_anchors(
+            session,
+            paper_id=version.paper_id,
+            chunks=persisted_chunks,
+            source=parser_name,
+        )
+        version.parser = parser_name
+        version.parser_version = str(
+            result.get("parser_version") or version.parser_version or "unknown"
+        )
+        version.status = "ready" if parser_name == "mineru" else "ready_fallback"
+        version.markdown_key = str(markdown_path)
+        version.text_key = str(text_path)
+        version.manifest_key = str(manifest_path)
+        version.page_count = int(result.get("pages") or 0)
+        version.chunk_count = len([item for item in chunks if str(item.get("text") or "").strip()])
+        version.chunk_vector_state = "pending"
+        version.document_vector_state = "pending"
+        await session.execute(
+            PaperContentVersion.__table__.update()
+            .where(
+                PaperContentVersion.paper_id == version.paper_id,
+                PaperContentVersion.id != version.id,
+            )
+            .values(is_current=False)
+        )
+        version.is_current = True
+        await session.commit()
+        return version
+    except Exception as exc:
+        await session.rollback()
+        await asyncio.to_thread(shutil.rmtree, directory, ignore_errors=True)
+        failed = await session.get(PaperContentVersion, version_id)
+        error_code = str(exc) if isinstance(exc, ContentParseError) else "CONTENT_PERSIST_FAILED"
+        if failed is not None:
+            failed.status = "failed"
+            failed.error_code = error_code
+            failed.error_detail = f"{type(exc).__name__}: {error_code}"[:4000]
+            await session.commit()
+        raise ContentParseError(error_code) from exc
+
+
 async def parse_content_version(
     session: AsyncSession,
     *,
@@ -173,6 +270,7 @@ async def parse_content_version(
             else:
                 raise ContentParseError("MINERU_ADAPTER_NOT_CONFIGURED")
         if hasattr(mineru_parser, "parse"):
+
             async def update_status(value: str) -> None:
                 version.status = value
                 await session.commit()
@@ -209,87 +307,9 @@ async def parse_content_version(
             await session.commit()
             raise ContentParseError("PYMUPDF_FAILED") from fallback_exc
 
-    text = _clean_text(str(result.get("text") or ""))
-    markdown = _clean_text(str(result.get("markdown") or text))
-    chunks = result.get("chunks") or []
-    if not text or not chunks:
-        version.status = "failed"
-        version.error_code = "PARSED_CONTENT_EMPTY"
-        version.error_detail = "parser returned no text or chunks"
-        await session.commit()
-        raise ContentParseError("PARSED_CONTENT_EMPTY")
-
-    directory = _version_dir(version.id)
-    text_path = directory / "content.txt"
-    markdown_path = _output_path(
-        directory, result.get("markdown_path"), fallback="content.md"
+    return await _persist_parse_result(
+        session, version=version, result=result, parser_name=parser_name
     )
-    if markdown_path is None:
-        raise ContentParseError("MARKDOWN_PATH_INVALID")
-    manifest_path = directory / "manifest.json"
-    text_path.write_text(text, encoding="utf-8")
-    markdown_path.write_text(markdown, encoding="utf-8")
-    for artifact in result.get("artifacts") or []:
-        if not isinstance(artifact, dict) or not isinstance(artifact.get("content"), bytes):
-            continue
-        artifact_path = _output_path(directory, artifact.get("path"))
-        if artifact_path is not None:
-            artifact_path.write_bytes(artifact["content"])
-    manifest_path.write_text(
-        json.dumps(result.get("manifest") or {}, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    await session.execute(
-        delete(PaperContentChunk).where(
-            PaperContentChunk.content_version_id == version.id
-        )
-    )
-    persisted_chunks: list[PaperContentChunk] = []
-    for seq, item in enumerate(chunks):
-        chunk_text = _clean_text(str(item.get("text") or ""))
-        if not chunk_text:
-            continue
-        chunk = PaperContentChunk(
-            content_version_id=version.id,
-            seq=seq,
-            text=chunk_text,
-            page_start=item.get("page_start"),
-            page_end=item.get("page_end"),
-            rects=item.get("rects") or [],
-            section_path=item.get("section_path") or [],
-            anchor_meta=item.get("anchor_meta") or {},
-        )
-        session.add(chunk)
-        persisted_chunks.append(chunk)
-    await session.flush()  # chunk.id 供锚点引用
-    await persist_chunk_anchors(
-        session,
-        paper_id=version.paper_id,
-        chunks=persisted_chunks,
-        source=parser_name,
-    )
-    version.parser = parser_name
-    version.parser_version = str(
-        result.get("parser_version") or version.parser_version or "unknown"
-    )
-    version.status = "ready" if parser_name == "mineru" else "ready_fallback"
-    version.markdown_key = str(markdown_path)
-    version.text_key = str(text_path)
-    version.manifest_key = str(manifest_path)
-    version.page_count = int(result.get("pages") or 0)
-    version.chunk_count = len([item for item in chunks if str(item.get("text") or "").strip()])
-    version.chunk_vector_state = "pending"
-    version.document_vector_state = "pending"
-    await session.execute(
-        PaperContentVersion.__table__.update()
-        .where(
-            PaperContentVersion.paper_id == version.paper_id,
-            PaperContentVersion.id != version.id,
-        )
-        .values(is_current=False)
-    )
-    version.is_current = True
-    await session.commit()
-    return version
 
 
 async def current_content_version(
