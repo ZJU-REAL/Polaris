@@ -32,9 +32,10 @@ SUPPORTED_SOURCES = (
 )
 DEFAULT_SCORE_WEIGHTS = {
     "relevance": 0.45,
-    "quality": 0.2,
-    "novelty": 0.2,
-    "recency": 0.15,
+    "evidence_quality": 0.20,
+    "impact": 0.15,
+    "novelty": 0.10,
+    "recency": 0.10,
 }
 DEFAULTS: dict[str, Any] = {
     "sources": ["openalex", "semantic", "arxiv", "pubmed", "crossref"],
@@ -91,8 +92,16 @@ def _normalize(data: Any) -> dict[str, Any]:
     raw_weights = source.get("score_weights", DEFAULTS["score_weights"])
     if not isinstance(raw_weights, Mapping):
         raise InvalidLiteratureSettingError("score_weights", "must be an object")
-    weights: dict[str, float] = {}
-    for key, value in raw_weights.items():
+    weights = (
+        dict(DEFAULT_SCORE_WEIGHTS)
+        if "score_weights" not in source
+        else dict.fromkeys(DEFAULT_SCORE_WEIGHTS, 0.0)
+    )
+    aliases = {"quality": "evidence_quality", "evidence": "evidence_quality"}
+    for raw_key, value in raw_weights.items():
+        key = aliases.get(str(raw_key), str(raw_key))
+        if key not in DEFAULT_SCORE_WEIGHTS:
+            raise InvalidLiteratureSettingError(f"score_weights.{key}", "unsupported dimension")
         try:
             number = float(value)
         except (TypeError, ValueError) as exc:
@@ -101,7 +110,7 @@ def _normalize(data: Any) -> dict[str, Any]:
             raise InvalidLiteratureSettingError(
                 f"score_weights.{key}", "must be finite and non-negative"
             )
-        weights[str(key)] = number
+        weights[key] = number
     if not weights or sum(weights.values()) <= 0:
         raise InvalidLiteratureSettingError(
             "score_weights", "at least one positive weight is required"

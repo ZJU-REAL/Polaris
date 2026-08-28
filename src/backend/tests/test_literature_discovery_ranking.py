@@ -124,10 +124,10 @@ def test_ranking_is_explainable_filtered_and_stable() -> None:
     assert first[0].candidate["title"].startswith("Dynamic impact")
     assert set(first[0].dimensions) == {
         "relevance",
-        "evidence",
+        "evidence_quality",
         "impact",
         "novelty",
-        "open_access",
+        "recency",
     }
     assert len(first[0].reasons) == 5
 
@@ -171,3 +171,27 @@ def test_limit_zero_returns_no_results() -> None:
         limit=0,
     )
     assert ranked == []
+
+
+def test_novelty_compares_candidates_with_existing_library_content() -> None:
+    ranked = rank_candidates(
+        [
+            {
+                "source": "a",
+                "title": "Structural impact response",
+                "abstract": "Damage mechanics of composite beams",
+            },
+            {
+                "source": "b",
+                "title": "Protein folding with graph neural networks",
+                "abstract": "Molecular structure prediction",
+            },
+        ],
+        topic="structural impact response",
+        current_year=2026,
+        reference_texts=["Structural impact response. Damage mechanics of composite beams."],
+    )
+
+    by_title = {item.candidate["title"]: item for item in ranked}
+    assert by_title["Protein folding with graph neural networks"].dimensions["novelty"] > 0.9
+    assert by_title["Structural impact response"].dimensions["novelty"] < 0.2

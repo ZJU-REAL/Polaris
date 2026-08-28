@@ -37,6 +37,7 @@ from app.services import libraries as libraries_service
 from app.services import literature_settings as literature_settings_service
 from app.services.interdisciplinary_retrieval import apply_profile_to_query_plan
 from app.services.literature import discovery_runs, oa_cache
+from app.services.literature.discovery_ranking import normalized_score_weights
 
 router = APIRouter(tags=["literature-discovery"])
 logger = logging.getLogger(__name__)
@@ -65,6 +66,28 @@ def _detail(run: LiteratureSearchRun, attempts: list[LiteratureSourceAttempt]) -
     )
 
 
+def _library_discovery_config(library: DirectionLibrary) -> dict[str, object]:
+    """Project the library's authoritative inclusion rules into one run snapshot."""
+
+    definition = libraries_service.library_definition(library)
+    raw_keywords = definition.get("keywords")
+    keyword_config = raw_keywords if isinstance(raw_keywords, dict) else {}
+    include = [
+        str(item).strip() for item in keyword_config.get("include") or [] if str(item).strip()
+    ]
+    exclude = [
+        str(item).strip() for item in keyword_config.get("exclude") or [] if str(item).strip()
+    ]
+    output: dict[str, object] = {}
+    if include:
+        output["keywords"] = list(dict.fromkeys(include))
+    if exclude:
+        output["excluded_keywords"] = list(dict.fromkeys(exclude))
+    if definition.get("rubric"):
+        output["score_rubric"] = definition["rubric"]
+    return output
+
+
 @router.post(
     "/libraries/{library_id}/literature/runs",
     response_model=SearchRunDetail,
@@ -79,14 +102,23 @@ async def create_run(
     library = await _managed_library(session, library_id, user)
     defaults = await literature_settings_service.get_runtime_settings(session)
     requested_count = data.requested_count or int(defaults["requested_count"])
-    candidate_budget = data.candidate_budget or int(defaults["candidate_budget"])
+    candidate_budget = max(
+        requested_count,
+        data.candidate_budget or int(defaults["candidate_budget"]),
+    )
     start_year = data.start_year if data.start_year is not None else defaults.get("start_year")
     end_year = data.end_year if data.end_year is not None else defaults.get("end_year")
     source_config = {
         "sources": list(defaults["sources"]),
         "score_weights": dict(defaults["score_weights"]),
+        **_library_discovery_config(library),
         **(data.source_config or {}),
     }
+    source_config["score_weights"] = normalized_score_weights(
+        source_config.get("score_weights")
+        if isinstance(source_config.get("score_weights"), dict)
+        else None
+    )
     # Provider credentials are resolved by workers and never enter run snapshots.
     source_config.pop("provider_keys", None)
     query_plan = await apply_profile_to_query_plan(
@@ -107,7 +139,16 @@ async def create_run(
         query_plan=query_plan,
         source_config=source_config,
         model_version=data.model_version,
-        progress={"phase": "queued", "fetched": 0, "accepted": 0},
+        progress={
+            "phase": "queued",
+            "fetched": 0,
+            "accepted": 0,
+            "requested_count": requested_count,
+            "candidate_budget": candidate_budget,
+            "returned_count": 0,
+            "start_year": start_year,
+            "end_year": end_year,
+        },
     )
     session.add(run)
     await session.flush()
@@ -117,7 +158,7 @@ async def create_run(
                 run_id=run.id,
                 source=source,
                 status="pending",
-                requested_count=candidate_budget,
+                requested_count=None,
             )
         )
     await session.commit()
@@ -214,9 +255,7 @@ async def get_run(
     return _detail(run, attempts)
 
 
-@router.get(
-    "/libraries/{library_id}/literature/runs/{run_id}/hits", response_model=SearchHitPage
-)
+@router.get("/libraries/{library_id}/literature/runs/{run_id}/hits", response_model=SearchHitPage)
 async def list_hits(
     library_id: uuid.UUID,
     run_id: uuid.UUID,
@@ -325,13 +364,17 @@ async def list_oa_cache(
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="SEARCH_RUN_NOT_FOUND")
     rows = (
-        await session.execute(
-            select(LiteratureOaCache)
-            .join(LiteratureSearchHit, LiteratureSearchHit.id == LiteratureOaCache.hit_id)
-            .where(LiteratureSearchHit.run_id == run.id)
-            .order_by(LiteratureOaCache.created_at.desc())
+        (
+            await session.execute(
+                select(LiteratureOaCache)
+                .join(LiteratureSearchHit, LiteratureSearchHit.id == LiteratureOaCache.hit_id)
+                .where(LiteratureSearchHit.run_id == run.id)
+                .order_by(LiteratureOaCache.created_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [OaCacheRead.model_validate(item) for item in rows]
 
 
@@ -431,8 +474,10 @@ async def promote_hits(
                 path = storage_path_for_blob(blob)
                 if path.is_file():
                     content = await asyncio.to_thread(path.read_bytes)
-                    identity = f"doi:{hit.doi.lower()}" if hit.doi else (
-                        f"arxiv:{hit.arxiv_id.lower()}" if hit.arxiv_id else None
+                    identity = (
+                        f"doi:{hit.doi.lower()}"
+                        if hit.doi
+                        else (f"arxiv:{hit.arxiv_id.lower()}" if hit.arxiv_id else None)
                     )
                     await create_or_reuse_asset(
                         session,

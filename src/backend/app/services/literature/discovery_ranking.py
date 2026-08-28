@@ -15,12 +15,14 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 DEFAULT_SCORE_WEIGHTS: dict[str, float] = {
-    "relevance": 0.50,
-    "evidence": 0.20,
+    "relevance": 0.45,
+    "evidence_quality": 0.20,
     "impact": 0.15,
     "novelty": 0.10,
-    "open_access": 0.05,
+    "recency": 0.10,
 }
+
+SCORING_VERSION = "literature-quality-v2"
 
 _TOKEN_RE = re.compile(r"[a-z0-9\u3400-\u9fff]+", re.IGNORECASE)
 
@@ -214,6 +216,17 @@ def _merge_pair(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, 
     for key, value in other.items():
         if key in {"sources", "retrieval_hits"}:
             merged[key] = _merge_list(merged.get(key), value)
+        elif key == "metadata" and isinstance(value, Mapping):
+            current = merged.get("metadata")
+            metadata = dict(current) if isinstance(current, Mapping) else {}
+            for metadata_key, metadata_value in value.items():
+                if metadata_key == "retrieval_hits":
+                    metadata[metadata_key] = _merge_list(
+                        metadata.get(metadata_key), metadata_value
+                    )
+                elif not metadata.get(metadata_key) and metadata_value not in (None, "", []):
+                    metadata[metadata_key] = metadata_value
+            merged[key] = metadata
         elif key == "citation_count":
             merged[key] = max(int(merged.get(key) or 0), int(value or 0))
         elif not merged.get(key) and value not in (None, "", []):
@@ -281,6 +294,7 @@ def _dimension_scores(
     topic: str,
     keywords: Sequence[str],
     current_year: int,
+    reference_texts: Sequence[str],
 ) -> dict[str, float]:
     text_tokens = _tokens(
         " ".join(
@@ -298,36 +312,63 @@ def _dimension_scores(
     )
     source_count = len(candidate.get("sources") or [])
     evidence_fallback = min(1.0, completeness * 0.8 + min(source_count, 3) / 15)
-    evidence = _unit(candidate.get("evidence_score"))
+    evidence = _unit(candidate.get("evidence_quality_score"))
+    if evidence is None:
+        evidence = _unit(candidate.get("evidence_score"))
 
     citations = max(0, int(candidate.get("citation_count") or 0))
     impact_fallback = min(1.0, math.log1p(citations) / math.log(1001))
     impact = _unit(candidate.get("impact_score"))
 
     published_year = _year(candidate)
-    novelty_fallback = (
+    recency_fallback = (
         max(0.0, min(1.0, 1 - (current_year - published_year) / 10))
         if published_year is not None
         else 0.0
     )
     novelty = _unit(candidate.get("novelty_score"))
-    has_oa = bool(candidate.get("pdf_url") or candidate.get("oa_url") or candidate.get("is_oa"))
+    if novelty is None and reference_texts:
+        similarities: list[float] = []
+        for reference in reference_texts:
+            reference_tokens = _tokens(reference)
+            union = text_tokens | reference_tokens
+            similarities.append(len(text_tokens & reference_tokens) / max(1, len(union)))
+        novelty = 1 - max(similarities, default=0.0)
+    recency = _unit(candidate.get("recency_score"))
+    retrieval_score = _unit(candidate.get("retrieval_score"))
+    if relevance is None and retrieval_score is not None:
+        relevance_value = lexical_relevance * 0.75 + retrieval_score * 0.25
+    else:
+        relevance_value = relevance if relevance is not None else lexical_relevance
 
     return {
-        "relevance": round(relevance if relevance is not None else lexical_relevance, 6),
-        "evidence": round(evidence if evidence is not None else evidence_fallback, 6),
+        "relevance": round(relevance_value, 6),
+        "evidence_quality": round(evidence if evidence is not None else evidence_fallback, 6),
         "impact": round(impact if impact is not None else impact_fallback, 6),
-        "novelty": round(novelty if novelty is not None else novelty_fallback, 6),
-        "open_access": 1.0 if has_oa else 0.0,
+        "novelty": round(novelty if novelty is not None else 0.0, 6),
+        "recency": round(recency if recency is not None else recency_fallback, 6),
     }
 
 
-def _normalized_weights(weights: Mapping[str, float] | None) -> dict[str, float]:
-    values = dict(DEFAULT_SCORE_WEIGHTS)
+def normalized_score_weights(weights: Mapping[str, float] | None) -> dict[str, float]:
+    """Normalize the stable score contract while accepting legacy setting names."""
+
+    values = (
+        dict(DEFAULT_SCORE_WEIGHTS)
+        if weights is None
+        else dict.fromkeys(DEFAULT_SCORE_WEIGHTS, 0.0)
+    )
     if weights is not None:
-        for key in values:
-            if key in weights:
-                values[key] = max(0.0, float(weights[key]))
+        aliases = {
+            "evidence": "evidence_quality",
+            "quality": "evidence_quality",
+        }
+        supplied: dict[str, float] = {}
+        for raw_key, raw_value in weights.items():
+            key = aliases.get(str(raw_key), str(raw_key))
+            if key in values:
+                supplied[key] = max(0.0, float(raw_value))
+        values.update(supplied or DEFAULT_SCORE_WEIGHTS)
     total = sum(values.values())
     if total <= 0:
         raise ValueError("score weights must contain a positive value")
@@ -350,13 +391,14 @@ def rank_candidates(
     excluded_keywords: Sequence[str] = (),
     weights: Mapping[str, float] | None = None,
     current_year: int,
+    reference_texts: Sequence[str] = (),
     limit: int | None = None,
 ) -> list[RankedCandidate]:
     """过滤明确排除项，计算分项得分并产生确定性排序。"""
 
     if limit is not None and limit < 0:
         raise ValueError("limit must not be negative")
-    normalized_weights = _normalized_weights(weights)
+    normalized_weights = normalized_score_weights(weights)
     exclusions = [_normalized_text(term) for term in excluded_keywords if str(term).strip()]
     ranked: list[RankedCandidate] = []
     for candidate in merge_candidates(candidates):
@@ -370,6 +412,7 @@ def rank_candidates(
             topic=topic,
             keywords=keywords,
             current_year=current_year,
+            reference_texts=reference_texts,
         )
         score = round(
             sum(dimensions[name] * normalized_weights[name] for name in normalized_weights), 6

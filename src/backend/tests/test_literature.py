@@ -1,5 +1,7 @@
 """文献源客户端单测：respx mock HTTP，fakeredis 缓存；零真实网络。"""
 
+from datetime import UTC, datetime
+
 import fakeredis.aioredis
 import httpx
 import pytest
@@ -9,6 +11,7 @@ import respx
 from app.services.literature.arxiv import (
     ArxivClient,
     ArxivRateLimitedError,
+    build_raw_search_query,
     build_search_query,
     normalize_arxiv_id,
 )
@@ -124,6 +127,19 @@ def test_normalize_arxiv_id_and_query():
     assert normalize_arxiv_id("2406.00001v3") == "2406.00001"
     q = build_search_query(["cs.LG", "cs.AI"], ["research agent"])
     assert q == '(cat:cs.LG OR cat:cs.AI) AND (all:"research agent")'
+
+
+def test_build_raw_search_query_preserves_boolean_operators_and_years():
+    q = build_raw_search_query(
+        '"structural impact" AND (damage OR failure) NOT review',
+        datetime(2016, 1, 1, tzinfo=UTC),
+        datetime(2026, 12, 31, tzinfo=UTC),
+    )
+
+    assert 'all:"structural impact" AND ( all:damage OR all:failure )' in q
+    assert "ANDNOT all:review" in q
+    assert "submittedDate:[201601010000 TO 202612310000]" in q
+    assert "all:ANDNOT" not in build_raw_search_query("impact ANDNOT review")
 
 
 @respx.mock

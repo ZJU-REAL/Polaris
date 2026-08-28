@@ -43,5 +43,6 @@ def test_bridge_evidence_reranks_without_discarding_base_quality():
     )
 
     assert ranked[0].identity == "bridge"
-    assert ranked[0].dimensions["interdisciplinary_bridge"] == 1.0
-    assert ranked[0].tier == "core"
+    assert ranked[0].dimensions["discipline_coverage"] == 1.0
+    assert ranked[0].tier == "supporting"
+    assert ranked[0].score == 0.85

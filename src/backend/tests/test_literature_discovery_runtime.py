@@ -1,7 +1,10 @@
 """Issue #473: execute source adapters and persist ranked candidates."""
 
+import asyncio
+import json
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -17,6 +20,7 @@ from app.schemas.literature_discovery import (
     SourceSearchPage,
     SourceSearchRequest,
 )
+from app.services.literature import oa_cache
 from app.services.literature import runtime as runtime_service
 from app.services.literature.multi_source import (
     MultiSourceClient,
@@ -68,7 +72,9 @@ def _candidate(source: str, title: str, *, doi: str | None = None, year: int = 2
     )
 
 
-async def _create_run(client, *, source_config, requested_count=2, candidate_budget=5):
+async def _create_run(
+    client, *, source_config, requested_count=2, candidate_budget=5, query_plan=None
+):
     token = await register_and_login(client, email=f"runtime-{uuid.uuid4().hex}@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     library = await client.post(
@@ -86,11 +92,267 @@ async def _create_run(client, *, source_config, requested_count=2, candidate_bud
             "end_year": 2025,
             "topic": "structural impact response",
             "source_config": source_config,
+            "query_plan": query_plan,
         },
         headers=headers,
     )
     assert response.status_code == 201, response.text
     return uuid.UUID(response.json()["id"]), headers, response.json()["library_id"]
+
+
+class RetrievalRouter:
+    async def complete(self, stage, messages, **kwargs):
+        del messages, kwargs
+        assert stage == "extract"
+        return SimpleNamespace(
+            content=json.dumps(
+                {
+                    "queries": [
+                        {
+                            "seed_id": "core",
+                            "purpose": "core",
+                            "query": '"structural impact" AND response',
+                        },
+                        {
+                            "seed_id": "coverage",
+                            "purpose": "coverage",
+                            "query": '"damage mechanics" OR failure',
+                        },
+                    ]
+                }
+            ),
+            model="query-model",
+        )
+
+    async def rerank(self, query, documents, **kwargs):
+        del query, documents, kwargs
+        raise NotImplementedError
+
+
+class InvalidQueryRouter:
+    async def complete(self, stage, messages, **kwargs):
+        del stage, messages, kwargs
+        return SimpleNamespace(content="not-json", model="query-model")
+
+    async def rerank(self, query, documents, **kwargs):
+        del query, documents, kwargs
+        raise AssertionError("reranking must not run without a valid query")
+
+
+@pytest.mark.asyncio
+async def test_runtime_executes_multiple_queries_with_aggregate_budget_and_year_filter(client):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["openalex"]},
+        requested_count=3,
+        candidate_budget=6,
+        query_plan={
+            "queries": [
+                {"id": "core", "purpose": "core", "query": "structural impact"},
+                {"id": "coverage", "purpose": "coverage", "query": "damage mechanics"},
+            ]
+        },
+    )
+    adapter = FakeAdapter(
+        "openalex",
+        [
+            _candidate("openalex", "Out of range", year=2015),
+            _candidate("openalex", "In range", year=2020),
+        ],
+    )
+
+    async with get_sessionmaker()() as session:
+        run = await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((adapter,)),
+            llm_router=RetrievalRouter(),
+            now=datetime(2026, 8, 26, tzinfo=UTC),
+        )
+        hits = list(
+            (
+                await session.execute(
+                    select(LiteratureSearchHit).where(LiteratureSearchHit.run_id == run_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert len(adapter.requests) == 2
+    assert sum(request.limit for request in adapter.requests) == 6
+    assert all(request.start_year == 2016 for request in adapter.requests)
+    assert all(request.end_year == 2025 for request in adapter.requests)
+    assert {hit.title for hit in hits} == {"In range"}
+    assert len(hits[0].metadata_snapshot["retrieval_hits"]) == 2
+    assert run.query_plan["ranking"]["mode"] == "deterministic_fallback"
+
+
+@pytest.mark.asyncio
+async def test_runtime_fails_instead_of_running_a_generic_query_when_generation_is_invalid(client):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["openalex"], "keywords": ["结构响应"]},
+        requested_count=3,
+        candidate_budget=6,
+    )
+    adapter = FakeAdapter("openalex", [_candidate("openalex", "Must not be fetched")])
+
+    async with get_sessionmaker()() as session:
+        queued = await session.get(runtime_service.LiteratureSearchRun, run_id)
+        queued.topic = "基于视觉模型的结构冲击损伤识别"
+        await session.commit()
+        run = await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((adapter,)),
+            llm_router=InvalidQueryRouter(),
+        )
+
+    assert run.status == "failed"
+    assert run.error_summary == "QUERY_GENERATION_FAILED"
+    assert run.progress["error_code"] == "QUERY_GENERATION_FAILED"
+    assert adapter.requests == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_is_idempotent_after_completion(client):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["openalex"]},
+        requested_count=1,
+        candidate_budget=1,
+    )
+    adapter = FakeAdapter("openalex", [_candidate("openalex", "Stable result")])
+    async with get_sessionmaker()() as session:
+        first = await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((adapter,)),
+            llm_router=RetrievalRouter(),
+        )
+        second = await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((adapter,)),
+            llm_router=RetrievalRouter(),
+        )
+        hit_count = await session.scalar(
+            select(func.count())
+            .select_from(LiteratureSearchHit)
+            .where(LiteratureSearchHit.run_id == run_id)
+        )
+
+    assert first.id == second.id
+    assert second.status == "completed"
+    assert hit_count == 1
+    assert len(adapter.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_does_not_execute_a_run_already_claimed_by_another_worker(client):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["openalex"]},
+        requested_count=1,
+        candidate_budget=1,
+    )
+    adapter = FakeAdapter("openalex", [_candidate("openalex", "Must not be fetched")])
+    async with get_sessionmaker()() as session:
+        claimed = await session.get(runtime_service.LiteratureSearchRun, run_id)
+        assert claimed is not None
+        claimed.status = "running"
+        await session.commit()
+        run = await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((adapter,)),
+            llm_router=RetrievalRouter(),
+        )
+
+    assert run.status == "running"
+    assert adapter.requests == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_attempts_oa_resolution_for_doi_only_candidates(client, monkeypatch):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["openalex"]},
+        requested_count=1,
+        candidate_budget=1,
+    )
+    adapter = FakeAdapter(
+        "openalex", [_candidate("openalex", "DOI resolver candidate", doi="10.1000/oa")]
+    )
+    observed: list[str | None] = []
+
+    async def fake_cache_hit_pdf(session, hit):
+        del session
+        observed.append(hit.doi)
+        return None
+
+    monkeypatch.setattr(oa_cache, "cache_hit_pdf", fake_cache_hit_pdf)
+    async with get_sessionmaker()() as session:
+        await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((adapter,)),
+            llm_router=RetrievalRouter(),
+        )
+
+    assert observed == ["10.1000/oa"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_persists_progress_as_each_provider_query_completes(client):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["openalex", "semantic"]},
+        requested_count=1,
+        candidate_budget=2,
+    )
+    release_slow = asyncio.Event()
+    fast_finished = asyncio.Event()
+
+    class FastAdapter(FakeAdapter):
+        async def search(self, request):
+            result = await super().search(request)
+            fast_finished.set()
+            return result
+
+    class SlowAdapter(FakeAdapter):
+        async def search(self, request):
+            await release_slow.wait()
+            return await super().search(request)
+
+    registry = AdapterRegistry(
+        (
+            FastAdapter("openalex", [_candidate("openalex", "Fast result")]),
+            SlowAdapter("semantic", [_candidate("semantic", "Slow result")]),
+        )
+    )
+    async with get_sessionmaker()() as worker_session:
+        execution = asyncio.create_task(
+            run_discovery(
+                worker_session,
+                run_id,
+                registry=registry,
+                llm_router=RetrievalRouter(),
+            )
+        )
+        await asyncio.wait_for(fast_finished.wait(), timeout=2)
+        observed_completed = 0
+        for _ in range(20):
+            async with get_sessionmaker()() as observer_session:
+                observed = await observer_session.get(runtime_service.LiteratureSearchRun, run_id)
+                observed_completed = int((observed.progress or {}).get("query_completed") or 0)
+            if observed_completed:
+                break
+            await asyncio.sleep(0.05)
+        assert observed_completed >= 1
+        release_slow.set()
+        await asyncio.wait_for(execution, timeout=3)
 
 
 @pytest.mark.asyncio
@@ -120,19 +382,22 @@ async def test_runtime_deduplicates_isolates_failures_and_persists_progress(clie
         run = await run_discovery(
             session,
             run_id,
-                registry=AdapterRegistry((openalex, semantic, arxiv, core)),
+            registry=AdapterRegistry((openalex, semantic, arxiv, core)),
             now=datetime(2026, 8, 26, tzinfo=UTC),
         )
         assert run.status == "partial"
-        assert run.progress == {
-            "phase": "completed",
-            "source": "core",
-            "fetched": 4,
-            "accepted": 2,
-            "requested_count": 2,
-            "candidate_budget": 5,
-            "returned_count": 2,
-        }
+        assert run.progress["phase"] == "completed"
+        assert run.progress["source"] == "core"
+        assert run.progress["fetched"] == 4
+        assert run.progress["accepted"] == 2
+        assert run.progress["requested_count"] == 2
+        assert run.progress["candidate_budget"] == 5
+        assert run.progress["returned_count"] == 2
+        assert run.progress["deduplicated"] == 3
+        assert run.progress["pending_rerank"] == 0
+        assert run.progress["ranked_count"] == 3
+        assert run.progress["start_year"] == 2016
+        assert run.progress["end_year"] == 2025
         attempts = list(
             (
                 await session.execute(
@@ -147,7 +412,7 @@ async def test_runtime_deduplicates_isolates_failures_and_persists_progress(clie
             "semantic": "completed",
             "arxiv": "completed",
             "crossref": "skipped",
-            "core": "partial",
+            "core": "failed",
         }
         hits = list(
             (
@@ -165,7 +430,7 @@ async def test_runtime_deduplicates_isolates_failures_and_persists_progress(clie
 
     assert [request.start_year for request in openalex.requests] == [2016]
     assert [request.end_year for request in arxiv.requests] == [2025]
-    assert [request.limit for request in semantic.requests] == [5]
+    assert [request.limit for request in semantic.requests] == [1]
 
 
 @pytest.mark.asyncio
@@ -233,10 +498,10 @@ async def test_provider_adapters_forward_year_window_and_restore_openalex_abstra
 
     candidate = _candidate_from_openalex(
         _simplify(
-        {
-            "title": "Indexed abstract",
-            "abstract_inverted_index": {"impact": [1], "Dynamic": [0], "response": [2]},
-        }
+            {
+                "title": "Indexed abstract",
+                "abstract_inverted_index": {"impact": [1], "Dynamic": [0], "response": [2]},
+            }
         )
     )
     assert candidate.abstract == "Dynamic impact response"
