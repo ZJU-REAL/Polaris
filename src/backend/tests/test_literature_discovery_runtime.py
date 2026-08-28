@@ -413,3 +413,42 @@ async def test_pubmed_adapter_fetches_abstract_and_forwards_years_and_admin_key(
     assert search_params["term"] == "(impact response) AND (2016:2025[pdat])"
     assert search_params["api_key"] == "admin-pubmed-key"
     assert all(call[2]["params"]["api_key"] == "admin-pubmed-key" for call in http_client.calls)
+
+
+async def test_provider_keys_never_reach_the_run_snapshot(client):
+    """请求里带 provider_keys 也不能落进 run 快照。
+
+    凭据只应由 worker 从管理端设置里解密取用。快照是会被读取、导出、进日志的，
+    一旦混进明文 key，泄漏点就从"一处解密"扩散成"任何读 run 的地方"，而且没有任何
+    报错提示——所以这条不变量必须有测试钉着，不能只靠建 run 时那一行 pop。
+    """
+    import uuid as _uuid
+
+    from app.core.db import get_sessionmaker
+    from app.models.literature_discovery import LiteratureSearchRun
+
+    token = await register_and_login(client, email="provider-keys@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    library = await client.post(
+        "/api/libraries", json={"name": "L", "statement": "s"}, headers=headers
+    )
+    library_id = library.json()["id"]
+
+    created = await client.post(
+        f"/api/libraries/{library_id}/literature/runs",
+        json={
+            "topic": "t",
+            "source_config": {
+                "sources": ["openalex"],
+                "provider_keys": {"openalex": ["sk-SECRET-LEAK"]},
+            },
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    async with get_sessionmaker()() as session:
+        run = await session.get(LiteratureSearchRun, _uuid.UUID(created.json()["id"]))
+        persisted = repr(run.source_config) + repr(run.query_plan) + repr(run.progress)
+    assert "SECRET-LEAK" not in persisted, persisted
+    assert "provider_keys" not in (run.source_config or {})
