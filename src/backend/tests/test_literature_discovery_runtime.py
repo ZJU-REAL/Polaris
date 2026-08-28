@@ -307,6 +307,51 @@ async def test_runtime_attempts_oa_resolution_for_doi_only_candidates(client, mo
 
 
 @pytest.mark.asyncio
+async def test_runtime_persists_versioned_metric_snapshot_and_uses_impact(client, monkeypatch):
+    run_id, _, _ = await _create_run(
+        client,
+        source_config={"sources": ["openalex"]},
+        requested_count=1,
+        candidate_budget=1,
+    )
+    candidate = _candidate("openalex", "Metric candidate")
+    candidate.venue = "Journal of Tests"
+    candidate.citation_count = 0
+
+    class MetricService:
+        async def enrich_candidates(self, session, candidates):
+            del session
+            enriched = [dict(item) for item in candidates]
+            enriched[0]["impact_score"] = 1.0
+            enriched[0]["venue_metric_snapshot"] = {
+                "version": "venue-metrics-v1",
+                "identity": "name:journaloftests",
+                "metrics": {"impact_factor": 10.0},
+            }
+            return enriched
+
+    async def no_oa_cache(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(oa_cache, "cache_hit_pdf", no_oa_cache)
+    async with get_sessionmaker()() as session:
+        run = await run_discovery(
+            session,
+            run_id,
+            registry=AdapterRegistry((FakeAdapter("openalex", [candidate]),)),
+            llm_router=RetrievalRouter(),
+            venue_metric_service=MetricService(),
+        )
+        hit = await session.scalar(
+            select(LiteratureSearchHit).where(LiteratureSearchHit.run_id == run.id)
+        )
+
+    assert hit is not None
+    assert hit.venue_metric_snapshot["version"] == "venue-metrics-v1"
+    assert hit.scores["impact"] == 1.0
+
+
+@pytest.mark.asyncio
 async def test_runtime_persists_progress_as_each_provider_query_completes(client):
     run_id, _, _ = await _create_run(
         client,

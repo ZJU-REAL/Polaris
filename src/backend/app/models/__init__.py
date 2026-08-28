@@ -27,6 +27,7 @@ from app.models.literature_discovery import (
     LiteratureSearchHit,
     LiteratureSearchRun,
     LiteratureSourceAttempt,
+    LiteratureVenueMetricCache,
 )
 from app.models.llm_config import LLMCallLog, LLMProviderConfig, LLMUsage, ModelRoute
 from app.models.manuscript import (
@@ -108,6 +109,7 @@ __all__ = [
     "LiteratureSearchHit",
     "LiteratureSearchRun",
     "LiteratureSourceAttempt",
+    "LiteratureVenueMetricCache",
     "LLMProviderConfig",
     "LLMUsage",
     "Manuscript",

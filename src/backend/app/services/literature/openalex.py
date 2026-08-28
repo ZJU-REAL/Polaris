@@ -16,6 +16,7 @@ ARXIV_DOI_TEMPLATE = "10.48550/arXiv.{arxiv_id}"
 
 def _simplify(work: dict[str, Any]) -> dict[str, Any]:
     primary_location = work.get("primary_location") or {}
+    primary_source = primary_location.get("source") or {}
     inverted = work.get("abstract_inverted_index")
     abstract = None
     if isinstance(inverted, dict):
@@ -43,6 +44,11 @@ def _simplify(work: dict[str, Any]) -> dict[str, Any]:
         "venue": (work.get("primary_location") or {}).get("source", {}).get("display_name")
         if isinstance((work.get("primary_location") or {}).get("source"), dict)
         else None,
+        "openalex_source_id": primary_source.get("id")
+        if isinstance(primary_source, dict)
+        else None,
+        "issn_l": primary_source.get("issn_l") if isinstance(primary_source, dict) else None,
+        "issns": primary_source.get("issn") if isinstance(primary_source, dict) else [],
         "cited_by_count": work.get("cited_by_count", 0),
         # 作者 + 每位作者的机构（OpenAlex 结构化给出 authorships[].institutions）
         "authors": [

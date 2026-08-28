@@ -85,6 +85,7 @@ class LiteratureSearchHit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     oa_status: Mapped[str | None] = mapped_column(String(32))
     citation_count: Mapped[int | None]
     scores: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    venue_metric_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     metadata_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -118,6 +119,23 @@ class LiteratureSourceAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     metadata_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LiteratureVenueMetricCache(TimestampMixin, Base):
+    """Provider-scoped venue metrics cached independently from discovery hits."""
+
+    __tablename__ = "literature_venue_metric_cache"
+
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    identity_key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    venue_name: Mapped[str | None] = mapped_column(String(512))
+    issn_l: Mapped[str | None] = mapped_column(String(16))
+    metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
 
 
 class LiteratureOaCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
