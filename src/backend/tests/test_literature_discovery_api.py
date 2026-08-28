@@ -69,9 +69,19 @@ async def test_owner_can_create_inspect_filter_and_cancel_run(client):
             dedup_key="doi:10.1/example",
             title="Impact response",
             abstract="A structural impact response",
+            year=2024,
             scores={"relevance": 0.9, "novelty": 0.4, "impact": 8},
         )
-        session.add(hit)
+        older = LiteratureSearchHit(
+            run_id=uuid.UUID(run_id),
+            source="semantic",
+            dedup_key="doi:10.1/older",
+            title="Older mechanics study",
+            abstract="Historical mechanics evidence",
+            year=2012,
+            scores={"relevance": 0.7, "novelty": 0.2, "impact": 6},
+        )
+        session.add_all([hit, older])
         await session.commit()
     response = await client.get(
         f"/api/libraries/{library_id}/literature/runs/{run_id}/hits?sort=relevance&q=structural",
@@ -80,6 +90,21 @@ async def test_owner_can_create_inspect_filter_and_cancel_run(client):
     assert response.status_code == 200
     assert response.json()["total"] == 1
     assert response.json()["items"][0]["title"] == "Impact response"
+
+    response = await client.get(
+        f"/api/libraries/{library_id}/literature/runs/{run_id}/hits?year_from=2020&year_to=2026",
+        headers=owner,
+    )
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["year"] == 2024
+
+    response = await client.get(
+        f"/api/libraries/{library_id}/literature/runs/{run_id}/hits?year_from=2026&year_to=2020",
+        headers=owner,
+    )
+    assert response.status_code == 422
+    assert "YEAR_RANGE_INVALID" in response.text
 
 
 async def test_candidate_budget_cannot_be_smaller_than_requested_result_count(client):
