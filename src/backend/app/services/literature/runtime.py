@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -42,6 +42,7 @@ from app.services.literature.discovery_ranking import SCORING_VERSION, rank_cand
 from app.services.literature.multi_source import MultiSourceClient, ProviderRequestError
 from app.services.literature.retrieval_quality import (
     ExecutableQuery,
+    QueryGenerationError,
     add_retrieval_hit,
     allocate_query_budget,
     fuse_candidates,
@@ -252,9 +253,7 @@ def _config_values(run: LiteratureSearchRun) -> tuple[list[str], list[str], dict
     sources = discovery_runs.enabled_sources(run.source_config, run.query_plan)
     raw_keywords = config.get("keywords")
     keywords = (
-        [str(v) for v in raw_keywords if str(v).strip()]
-        if isinstance(raw_keywords, list)
-        else []
+        [str(v) for v in raw_keywords if str(v).strip()] if isinstance(raw_keywords, list) else []
     )
     weights = config.get("score_weights")
     return sources, keywords, weights if isinstance(weights, dict) else {}
@@ -340,10 +339,15 @@ async def run_discovery(
 ) -> LiteratureSearchRun:
     """Execute one persisted run and return its final state."""
 
-    run = await session.get(LiteratureSearchRun, run_id)
+    run = await session.scalar(
+        select(LiteratureSearchRun)
+        .where(LiteratureSearchRun.id == run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if run is None:
         raise ValueError(f"search run not found: {run_id}")
-    if run.status == "cancelled":
+    if run.status != "queued":
         return run
 
     if registry is None:
@@ -382,15 +386,33 @@ async def run_discovery(
         if isinstance(raw_exclusions, list)
         else []
     )
-    families, generation_snapshot = await generate_query_families(
-        llm_router=llm_router,
-        topic=run.topic,
-        keywords=keywords,
-        excluded_keywords=excluded_keywords,
-        query_plan=run.query_plan,
-        user_id=run.created_by,
-        library_id=run.library_id,
-    )
+    score_rubric = source_config.get("score_rubric")
+    try:
+        families, generation_snapshot = await generate_query_families(
+            llm_router=llm_router,
+            topic=run.topic,
+            keywords=keywords,
+            excluded_keywords=excluded_keywords,
+            score_rubric=score_rubric,
+            query_plan=run.query_plan,
+            user_id=run.created_by,
+            library_id=run.library_id,
+        )
+    except QueryGenerationError:
+        run.status = "failed"
+        run.error_summary = "QUERY_GENERATION_FAILED"
+        run.completed_at = datetime.now(UTC)
+        run.progress = {
+            **(run.progress or {}),
+            "phase": "failed",
+            "error_code": "QUERY_GENERATION_FAILED",
+            "requested_count": run.requested_count,
+            "candidate_budget": run.candidate_budget,
+            "returned_count": 0,
+        }
+        await session.commit()
+        await session.refresh(run)
+        return run
     tasks = allocate_query_budget(
         sources=sources,
         families=families,
@@ -485,8 +507,8 @@ async def run_discovery(
     semaphore = asyncio.Semaphore(get_settings().literature_source_concurrency)
 
     async def fetch(
-        task: ExecutableQuery, adapter: Any
-    ) -> tuple[SourceSearchPage | None, SourceExecutionError | None]:
+        task_index: int, task: ExecutableQuery, adapter: Any
+    ) -> tuple[int, SourceSearchPage | None, SourceExecutionError | None]:
         async with semaphore:
             try:
                 page = await adapter.search(
@@ -497,26 +519,38 @@ async def run_discovery(
                         limit=task.limit,
                     )
                 )
-                return page, None
+                return task_index, page, None
             except ProviderRequestError as exc:
-                return None, SourceExecutionError(
-                    exc.code, str(exc), retryable=exc.retryable
+                return (
+                    task_index,
+                    None,
+                    SourceExecutionError(
+                        exc.code, f"{task.source} provider request failed", retryable=exc.retryable
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 - provider isolation is intentional
-                return None, SourceExecutionError(
-                    "SOURCE_REQUEST_FAILED", str(exc), retryable=True
+                return (
+                    task_index,
+                    None,
+                    SourceExecutionError(
+                        "SOURCE_REQUEST_FAILED",
+                        f"{task.source} provider raised {type(exc).__name__}",
+                        retryable=True,
+                    ),
                 )
 
-    results = await asyncio.gather(
-        *(fetch(task, adapter) for task, adapter, _ in runnable)
-    )
     source_stats: dict[str, dict[str, Any]] = {
-        source: {"fetched": 0, "accepted": 0, "succeeded": 0, "failed": []}
-        for source in sources
+        source: {"fetched": 0, "accepted": 0, "succeeded": 0, "failed": []} for source in sources
     }
-    for query_index, ((task, _, attempt), (page, source_error)) in enumerate(
-        zip(runnable, results, strict=True), start=1
-    ):
+    accepted_total = 0
+    candidates_by_query: dict[int, list[dict[str, Any]]] = {}
+    pending = [
+        asyncio.create_task(fetch(task_index, task, adapter))
+        for task_index, (task, adapter, _) in enumerate(runnable)
+    ]
+    for completed_count, completed in enumerate(asyncio.as_completed(pending), start=1):
+        task_index, page, source_error = await completed
+        task, _, attempt = runnable[task_index]
         source = task.source
         stats = source_stats[source]
         try:
@@ -530,11 +564,13 @@ async def run_discovery(
                 if (run.start_year is None or item.year is None or item.year >= run.start_year)
                 and (run.end_year is None or item.year is None or item.year <= run.end_year)
             ]
-            candidates.extend(
+            query_candidates = list(
                 add_retrieval_hit(item.model_dump(), task=task, rank=rank)
                 for rank, item in enumerate(filtered, start=1)
             )
+            candidates_by_query[task_index] = query_candidates
             fetched_total += page.fetched_count
+            accepted_total += len(query_candidates)
             stats["fetched"] += page.fetched_count
             stats["accepted"] += len(filtered)
             stats["succeeded"] += 1
@@ -544,7 +580,11 @@ async def run_discovery(
             error = (
                 exc
                 if isinstance(exc, SourceExecutionError)
-                else SourceExecutionError("SOURCE_REQUEST_FAILED", str(exc), retryable=True)
+                else SourceExecutionError(
+                    "SOURCE_REQUEST_FAILED",
+                    f"candidate processing raised {type(exc).__name__}",
+                    retryable=True,
+                )
             )
             attempt.retryable = error.retryable
             attempt.error_code = error.code
@@ -555,15 +595,21 @@ async def run_discovery(
             "phase": "retrieving",
             "source": source,
             "query_purpose": task.purpose,
-            "query_index": query_index,
+            "query_index": task_index + 1,
             "query_total": len(runnable),
-            "query_completed": query_index,
+            "query_completed": completed_count,
             "fetched": fetched_total,
-            "accepted": len(candidates),
+            "accepted": accepted_total,
             "requested_count": run.requested_count,
             "candidate_budget": run.candidate_budget,
         }
         await session.commit()
+
+    candidates = [
+        candidate
+        for task_index in range(len(runnable))
+        for candidate in candidates_by_query.get(task_index, [])
+    ]
 
     for source in sources:
         attempt = attempt_by_source.get(source)
@@ -592,8 +638,7 @@ async def run_discovery(
         )
     ).all()
     reference_texts = [
-        "\n".join(part for part in (title, abstract) if part)
-        for title, abstract in reference_rows
+        "\n".join(part for part in (title, abstract) if part) for title, abstract in reference_rows
     ]
     fused = fuse_candidates(candidates, executed_query_count=len(runnable))
     run.progress = {
@@ -625,6 +670,7 @@ async def run_discovery(
     ranked, ranking_snapshot = await model_rerank(
         llm_router=llm_router,
         topic=run.topic,
+        score_rubric=score_rubric,
         ranked=ranked,
         weights=weights,
         limit=len(ranked),
@@ -689,9 +735,7 @@ async def run_discovery(
                 metadata_snapshot={
                     **(candidate.metadata or {}),
                     "sources": list(raw_candidate.get("sources") or [candidate.source]),
-                    "retrieval_hits": list(
-                        (candidate.metadata or {}).get("retrieval_hits") or []
-                    ),
+                    "retrieval_hits": list((candidate.metadata or {}).get("retrieval_hits") or []),
                 },
             )
         )
@@ -706,7 +750,10 @@ async def run_discovery(
             await session.execute(
                 select(LiteratureSearchHit).where(
                     LiteratureSearchHit.run_id == run.id,
-                    LiteratureSearchHit.pdf_url.is_not(None),
+                    or_(
+                        LiteratureSearchHit.pdf_url.is_not(None),
+                        LiteratureSearchHit.doi.is_not(None),
+                    ),
                 )
             )
         )

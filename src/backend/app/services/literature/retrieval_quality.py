@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -25,6 +26,11 @@ RANKING_VERSION = "literature-ranking-v2"
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _LATIN_RE = re.compile(r"[A-Za-z]")
 _NON_LATIN_LETTER_RE = re.compile(r"[^\W\d_A-Za-z]", re.UNICODE)
+_PLAIN_QUERY_SOURCES = frozenset({"openalex", "semantic", "crossref"})
+
+
+class QueryGenerationError(RuntimeError):
+    """No validated scholarly query can be produced without inventing broad terms."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,8 +98,9 @@ def _english_fallback_families(
         terms = re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", str(value))
         latin_terms.extend(terms)
     latin_terms = list(dict.fromkeys(term.casefold() for term in latin_terms))[:8]
+    if len(latin_terms) < 2:
+        raise QueryGenerationError("QUERY_GENERATION_FAILED")
     core = " AND ".join(f'"{term}"' for term in latin_terms[:4])
-    core = core or '"scientific research" AND "research study"'
     output = [QueryFamily(purpose="core", query=core, seed_id="fallback-core")]
     if len(latin_terms) > 4:
         output.append(
@@ -104,6 +111,35 @@ def _english_fallback_families(
             )
         )
     return output
+
+
+def compile_source_query(source: str, query: str) -> str:
+    """Compile the generated Boolean expression for a provider's query contract."""
+
+    normalized_source = source.strip().lower()
+    cleaned = _clean(query, limit=800)
+    if normalized_source not in _PLAIN_QUERY_SOURCES:
+        return cleaned
+    try:
+        tokens = shlex.split(cleaned.replace("(", " ").replace(")", " "))
+    except ValueError:
+        tokens = cleaned.replace('"', " ").split()
+    output: list[str] = []
+    skip_next = False
+    for token in tokens:
+        upper = token.upper()
+        if upper == "NOT":
+            skip_next = True
+            continue
+        if upper in {"AND", "OR"}:
+            continue
+        if skip_next or token.startswith("-"):
+            skip_next = False
+            continue
+        value = token.strip()
+        if value and value.casefold() not in {item.casefold() for item in output}:
+            output.append(value)
+    return " ".join(output) or cleaned
 
 
 def _seed_families(
@@ -141,9 +177,7 @@ def _seed_families(
     terms = list(dict.fromkeys(_clean(item, limit=160) for item in keywords if _clean(item)))[:12]
     output.append(QueryFamily(purpose="core", query=topic, seed_id="core"))
     if terms:
-        output.append(
-            QueryFamily(purpose="coverage", query=" OR ".join(terms), seed_id="coverage")
-        )
+        output.append(QueryFamily(purpose="coverage", query=" OR ".join(terms), seed_id="coverage"))
     return output
 
 
@@ -195,6 +229,7 @@ async def generate_query_families(
     query_plan: Mapping[str, Any] | None,
     user_id: uuid.UUID | None,
     library_id: uuid.UUID,
+    score_rubric: Any = None,
     max_attempts: int = 3,
 ) -> tuple[list[QueryFamily], dict[str, Any]]:
     """Generate validated English query families and return an auditable snapshot."""
@@ -214,16 +249,13 @@ async def generate_query_families(
         "topic": topic,
         "keywords": list(keywords),
         "excluded_keywords": list(excluded_keywords),
+        "score_rubric": score_rubric,
         "seed_queries": seed_payload,
     }
     errors: list[str] = []
     for attempt in range(1, max_attempts + 1):
         try:
-            retry_context = (
-                {"previous_validation_errors": errors[-2:]}
-                if errors
-                else {}
-            )
+            retry_context = {"previous_validation_errors": errors[-2:]} if errors else {}
             result = await llm_router.complete(
                 "extract",
                 [
@@ -261,9 +293,7 @@ async def generate_query_families(
             errors.append(f"{type(exc).__name__}: {exc}"[:500])
             logger.debug("literature query generation attempt %s failed", attempt, exc_info=True)
     logger.warning("literature query generation failed; using deterministic fallback")
-    fallback = _english_fallback_families(
-        topic=topic, keywords=keywords, query_plan=query_plan
-    )
+    fallback = _english_fallback_families(topic=topic, keywords=keywords, query_plan=query_plan)
     return fallback, {
         "version": QUERY_PLAN_VERSION,
         "mode": "deterministic_fallback",
@@ -295,7 +325,7 @@ def allocate_query_budget(
         ExecutableQuery(
             source=source,
             purpose=family.purpose,
-            query=family.query,
+            query=compile_source_query(source, family.query),
             limit=quota,
             seed_id=family.seed_id,
             discipline=family.discipline,
@@ -370,6 +400,7 @@ async def model_rerank(
     limit: int,
     user_id: uuid.UUID | None,
     library_id: uuid.UUID,
+    score_rubric: Any = None,
 ) -> tuple[list[RankedCandidate], dict[str, Any]]:
     """Replace only relevance with model scores; retain deterministic quality dimensions."""
 
@@ -377,8 +408,14 @@ async def model_rerank(
     if not pool or limit <= 0:
         return [], {"version": RANKING_VERSION, "mode": "deterministic", "model": None}
     try:
+        rerank_query = topic
+        if score_rubric:
+            rerank_query = (
+                f"{topic}\nLibrary relevance rubric: "
+                f"{json.dumps(score_rubric, ensure_ascii=False, default=str)}"
+            )[:8000]
         results = await llm_router.rerank(
-            topic,
+            rerank_query,
             [_rerank_document(item) for item in pool],
             top_n=len(pool),
             user_id=user_id,
@@ -425,6 +462,7 @@ async def model_rerank(
             "mode": "model",
             "model": model,
             "pool_size": len(pool),
+            "rubric_applied": bool(score_rubric),
         }
     except Exception as exc:  # noqa: BLE001 - deterministic fallback is required
         logger.warning("literature rerank failed, using deterministic ranking", exc_info=True)
@@ -433,6 +471,7 @@ async def model_rerank(
             "mode": "deterministic_fallback",
             "model": None,
             "pool_size": len(pool),
+            "rubric_applied": bool(score_rubric),
             "error": f"{type(exc).__name__}: {exc}"[:500],
         }
 
