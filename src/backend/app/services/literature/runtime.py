@@ -261,9 +261,12 @@ def _config_values(run: LiteratureSearchRun) -> tuple[list[str], list[str], dict
 
 def _credential_pool(settings: Mapping[str, Any], source: str, fallback: str = "") -> list[str]:
     configured = settings.get("provider_keys")
-    values = configured.get(source) if isinstance(configured, Mapping) else None
+    # 「这个源没配」和「配了但空（= 管理员停用了）」必须分开：只看池子空不空的话，
+    # 停用等于无效——照样回落到环境变量里的凭据，而且没有任何提示。
+    declared = isinstance(configured, Mapping) and source in configured
+    values = configured.get(source) if declared else None
     pool = [str(value).strip() for value in values or [] if str(value).strip()]
-    if pool:
+    if declared:
         return pool
     return [item for value in fallback.replace(";", ",").split(",") if (item := value.strip())]
 

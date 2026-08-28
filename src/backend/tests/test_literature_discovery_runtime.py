@@ -6,9 +6,11 @@ import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from sqlalchemy import func, select
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.models.literature_discovery import (
     LiteratureSearchHit,
@@ -570,6 +572,33 @@ async def test_runtime_persists_provider_error_instead_of_reporting_zero_hit_suc
 
 
 @pytest.mark.asyncio
+async def test_multi_source_retry_error_does_not_expose_query_credentials(monkeypatch):
+    secret = "SECRET_SENTINEL"
+    settings = get_settings()
+    monkeypatch.setattr(settings, "literature_source_retries", 0, raising=False)
+
+    class BrokenClient:
+        async def request(self, method, url, **kwargs):
+            del method, url, kwargs
+            request = httpx.Request(
+                "GET", f"https://eutils.ncbi.nlm.nih.gov/esearch?api_key={secret}"
+            )
+            return httpx.Response(503, request=request)
+
+    provider = MultiSourceClient(client=BrokenClient())
+    with pytest.raises(ProviderRequestError) as caught:
+        await provider._request_json(
+            "pubmed",
+            "GET",
+            "https://eutils.ncbi.nlm.nih.gov/esearch",
+            params={"api_key": secret},
+        )
+
+    assert caught.value.code == "HTTP_503"
+    assert secret not in str(caught.value)
+
+
+@pytest.mark.asyncio
 async def test_runtime_builds_default_registry_from_decrypted_admin_settings(client, monkeypatch):
     run_id, _, _ = await _create_run(
         client,
@@ -620,6 +649,13 @@ def test_multi_source_key_pool_rotates_and_pubmed_xml_keeps_full_abstract():
         </MedlineCitation></PubmedArticle></PubmedArticleSet>"""
     )
     assert abstracts == {"123": "BACKGROUND: First sentence.\nSecond sentence."}
+
+
+def test_explicit_empty_key_pool_does_not_fall_back_to_environment_key():
+    client = MultiSourceClient(client=object(), provider_keys={"core": []})
+
+    assert client._key("core", "environment-key") == ""
+    assert client._key("unconfigured", "environment-key") == "environment-key"
 
 
 @pytest.mark.asyncio
@@ -717,3 +753,26 @@ async def test_provider_keys_never_reach_the_run_snapshot(client):
         persisted = repr(run.source_config) + repr(run.query_plan) + repr(run.progress)
     assert "SECRET-LEAK" not in persisted, persisted
     assert "provider_keys" not in (run.source_config or {})
+
+
+def test_disabled_credential_pool_does_not_fall_back_to_env():
+    """管理员把某个源的凭据池清空 = 停用，不能再回落到环境变量里的 key。
+
+    只判断池子空不空的话，「配了但清空」和「压根没配」就没区别：停用等于无效，
+    请求照样用环境凭据发出去，而且从外面完全看不出来——账单和配额会先于任何
+    报错告诉你这件事。
+    """
+    from app.services.literature.runtime import _credential_pool
+
+    # 没配过这个源 → 允许回落到环境凭据
+    assert _credential_pool({}, "openalex", "env-key") == ["env-key"]
+    assert _credential_pool({"provider_keys": {}}, "openalex", "env-key") == ["env-key"]
+
+    # 配了但清空 = 显式停用 → 不回落
+    assert _credential_pool({"provider_keys": {"openalex": []}}, "openalex", "env-key") == []
+    assert _credential_pool({"provider_keys": {"openalex": ["  "]}}, "openalex", "env-key") == []
+
+    # 配了且非空 → 用配置的
+    assert _credential_pool(
+        {"provider_keys": {"openalex": ["a", "b"]}}, "openalex", "env-key"
+    ) == ["a", "b"]

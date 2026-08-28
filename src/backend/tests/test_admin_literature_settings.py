@@ -1,5 +1,10 @@
 """管理员文献检索设置：持久化、脱敏、校验和权限。"""
 
+import httpx
+
+from app.core.db import get_sessionmaker
+from app.schemas.literature_discovery import SourceSearchPage
+from app.services import literature_settings
 from tests.conftest import register_and_login
 
 
@@ -96,7 +101,6 @@ async def test_discovery_run_inherits_admin_defaults_without_persisting_keys(cli
     assert run["end_year"] == 2025
     assert run["source_config"] == {
         "sources": ["pubmed", "core"],
-        "score_weights": {"relevance": 0.8, "quality": 0.2},
         "score_weights": {
             "relevance": 0.8,
             "evidence_quality": 0.2,
@@ -108,3 +112,168 @@ async def test_discovery_run_inherits_admin_defaults_without_persisting_keys(cli
     assert [attempt["source"] for attempt in run["source_attempts"]] == ["core", "pubmed"]
     assert "private-pubmed-key" not in response.text
     assert "request-injected-secret" not in response.text
+
+
+async def test_provider_credential_crud_has_stable_id_and_runtime_enable_gate(client):
+    admin, member = await _admin_and_member(client)
+    response = await client.post(
+        "/api/admin/settings/literature-search/credentials",
+        json={
+            "source": "openalex",
+            "secret": "openalex-secret-1234",
+            "label": "primary",
+            "enabled": True,
+        },
+        headers=admin,
+    )
+    assert response.status_code == 201, response.text
+    created = response.json()
+    credential_id = created["id"]
+    assert created["source"] == "openalex"
+    assert created["preview"] == "••••1234"
+    assert created["label"] == "primary"
+    assert "openalex-secret-1234" not in response.text
+
+    response = await client.patch(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}",
+        json={"secret": "replacement-secret-5678", "label": "secondary", "enabled": False},
+        headers=admin,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == credential_id
+    assert response.json()["preview"] == "••••5678"
+    assert response.json()["enabled"] is False
+
+    async with get_sessionmaker()() as session:
+        runtime = await literature_settings.get_runtime_settings(session)
+    assert runtime["provider_keys"]["openalex"] == []
+
+    response = await client.patch(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}",
+        json={"enabled": True, "label": None},
+        headers=admin,
+    )
+    assert response.status_code == 200
+    assert response.json()["label"] is None
+    async with get_sessionmaker()() as session:
+        runtime = await literature_settings.get_runtime_settings(session)
+    assert runtime["provider_keys"]["openalex"] == ["replacement-secret-5678"]
+
+    response = await client.delete(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}", headers=member
+    )
+    assert response.status_code == 403
+    response = await client.delete(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}", headers=admin
+    )
+    assert response.status_code == 204
+    response = await client.delete(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}", headers=admin
+    )
+    assert response.status_code == 404
+
+
+async def test_arxiv_rejects_credentials_because_public_api_needs_no_key(client):
+    admin, _ = await _admin_and_member(client)
+    response = await client.post(
+        "/api/admin/settings/literature-search/credentials",
+        json={"source": "arxiv", "secret": "unnecessary-key"},
+        headers=admin,
+    )
+    assert response.status_code == 422
+    assert "INVALID_LITERATURE_CREDENTIAL:source" in response.text
+
+
+async def test_single_credential_probe_updates_only_that_entry(client, monkeypatch):
+    admin, _ = await _admin_and_member(client)
+    response = await client.post(
+        "/api/admin/settings/literature-search/credentials",
+        json={"source": "semantic", "secret": "semantic-key-under-test"},
+        headers=admin,
+    )
+    credential_id = response.json()["id"]
+    observed = {}
+
+    class Adapter:
+        async def search(self, request):
+            observed["query"] = request.query
+            return SourceSearchPage(source="semantic", fetched_count=1)
+
+    class Registry:
+        def get(self, source):
+            observed["source"] = source
+            return Adapter()
+
+    async def fake_registry(settings):
+        observed["keys"] = settings["provider_keys"]
+        return Registry()
+
+    from app.services.literature import runtime
+
+    monkeypatch.setattr(runtime, "build_adapter_registry", fake_registry)
+    response = await client.post(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}/test",
+        json={"query": "impact response"},
+        headers=admin,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    assert observed == {
+        "keys": {"semantic": ["semantic-key-under-test"]},
+        "source": "semantic",
+        "query": "impact response",
+    }
+    response = await client.get("/api/admin/settings/literature-search", headers=admin)
+    item = response.json()["provider_keys"]["semantic"][0]
+    assert item["id"] == credential_id
+    assert item["health"]["ok"] is True
+
+
+async def test_credential_probe_never_returns_or_persists_secret_url(client, monkeypatch):
+    admin, _ = await _admin_and_member(client)
+    secret = "SECRET_SENTINEL"
+    response = await client.post(
+        "/api/admin/settings/literature-search/credentials",
+        json={"source": "openalex", "secret": secret},
+        headers=admin,
+    )
+    credential_id = response.json()["id"]
+
+    class Adapter:
+        async def search(self, request):
+            del request
+            request = httpx.Request(
+                "GET", f"https://api.openalex.org/works?api_key={secret}&search=x"
+            )
+            upstream = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError("unauthorized", request=request, response=upstream)
+
+    class Registry:
+        def get(self, source):
+            assert source == "openalex"
+            return Adapter()
+
+    async def fake_registry(settings):
+        assert settings["provider_keys"] == {"openalex": [secret]}
+        return Registry()
+
+    from app.services.literature import runtime
+
+    monkeypatch.setattr(runtime, "build_adapter_registry", fake_registry)
+    response = await client.post(
+        f"/api/admin/settings/literature-search/credentials/{credential_id}/test",
+        json={"query": "impact response"},
+        headers=admin,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is False
+    assert response.json()["detail"] == "openalex provider request failed (HTTP_401)"
+    assert secret not in response.text
+    saved = await client.get("/api/admin/settings/literature-search", headers=admin)
+    assert secret not in saved.text
+    assert (
+        saved.json()["provider_keys"]["openalex"][0]["health"]["detail"]
+        == response.json()["detail"]
+    )

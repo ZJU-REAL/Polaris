@@ -543,10 +543,11 @@ async def test_collecting_libraries_lists_only_admitted_and_visible(client):
     candidate 是还没打分、excluded 是打分没过，两者都不算「收录」——混进来会让人
     以为库里有这篇。个人库不能经这个接口泄漏给别人。
     """
+    from sqlalchemy import select as _select
+
     from app.models.library_direction import DirectionLibrary, LibraryPaper
     from app.models.paper import new_paper
     from app.models.user import User
-    from sqlalchemy import select as _select
 
     owner_token = await register_and_login(client, email="collect-owner@example.com")
     owner = {"Authorization": f"Bearer {owner_token}"}

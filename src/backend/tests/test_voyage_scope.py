@@ -503,10 +503,11 @@ async def test_delete_voyage_only_when_finished(client):
 
 async def test_delete_voyage_keeps_token_accounting(client):
     """删任务不该把它花过的 token 从账上抹掉——用量行只解引用，不删。"""
+    from sqlalchemy import select as _select
+
     from app.core.db import get_sessionmaker
     from app.models.llm_config import LLMUsage
     from app.models.voyage import VoyageRun
-    from sqlalchemy import select as _select
 
     token = await register_and_login(client, email="del2@example.com")
     headers = {"Authorization": f"Bearer {token}"}
