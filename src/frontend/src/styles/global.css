@@ -589,6 +589,83 @@ input {
 .settings-row:last-child { padding-bottom: 4px; }
 .settings-row-text { flex: 1; min-width: 0; }
 
+/* 管理员文献检索：沿用设置页密度，把运行参数、来源和凭据池分成可扫描的层级。 */
+.literature-settings-stack { display: flex; flex-direction: column; gap: 18px; }
+.literature-settings-summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 17px 20px; border: 0.5px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--shadow-card);
+}
+.literature-settings-intro {
+  margin-top: 5px; color: var(--text-3); font-size: 12px; line-height: 1.65;
+}
+.literature-settings-stats { display: flex; align-items: stretch; flex-shrink: 0; }
+.literature-settings-stats > div {
+  min-width: 82px; padding: 1px 15px; border-left: 0.5px solid var(--border-2);
+  display: flex; flex-direction: column; align-items: flex-end;
+}
+.literature-settings-stats strong { font-family: var(--mono); font-size: 18px; line-height: 1.1; }
+.literature-settings-stats span { margin-top: 4px; color: var(--text-3); font-size: 10.5px; }
+.literature-settings-fields-compact { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+.literature-weight-grid { display: flex; flex-direction: column; }
+.literature-weight-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 92px; align-items: center; gap: 14px;
+  min-height: 44px; border-top: 0.5px solid var(--border-2); color: var(--text-2); font-size: 12.5px;
+}
+.literature-weight-row:first-child { border-top: 0; }
+.literature-weight-row .input { height: 31px; text-align: right; }
+.literature-source-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px;
+}
+.literature-source-card {
+  min-width: 0; padding: 14px; border: 0.5px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); transition: border-color 0.14s, background 0.14s;
+}
+.literature-source-card.enabled { border-color: var(--accent-soft-2); background: var(--accent-soft-row); }
+.literature-source-card strong { font-size: 12.5px; }
+.literature-source-card p,
+.literature-credential-group p {
+  min-height: 36px; margin: 7px 0 11px; color: var(--text-3); font-size: 11.5px; line-height: 1.55;
+}
+.literature-credentials-heading { justify-content: space-between; gap: 18px; margin-bottom: 15px; }
+.literature-credential-groups { display: flex; flex-direction: column; gap: 12px; }
+.literature-credential-group {
+  overflow: hidden; border: 0.5px solid var(--border); border-radius: 8px; background: var(--surface-2);
+}
+.literature-credential-group-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 14px 16px 11px;
+}
+.literature-credential-group-head p { min-height: 0; margin-bottom: 0; }
+.literature-credential-empty {
+  padding: 11px 16px; border-top: 0.5px solid var(--border); color: var(--text-3); font-size: 11.5px;
+  background: var(--surface);
+}
+.literature-credential-list { border-top: 0.5px solid var(--border); background: var(--surface); }
+.literature-credential-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 11px 16px;
+}
+.literature-credential-row + .literature-credential-row { border-top: 0.5px solid var(--border-2); }
+.literature-credential-identity { min-width: 0; flex: 1; }
+.literature-credential-identity strong { font-size: 12px; }
+.literature-credential-identity code {
+  padding: 2px 6px; border-radius: 4px; background: var(--surface-3); color: var(--text-2);
+  font-family: var(--mono); font-size: 10.5px;
+}
+.literature-credential-identity > span {
+  display: block; overflow: hidden; margin-top: 4px; color: var(--text-3); font-size: 10.5px;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.literature-credential-actions { flex-shrink: 0; }
+.literature-settings-savebar {
+  position: sticky; bottom: 12px; z-index: 4; display: flex; align-items: center;
+  justify-content: space-between; gap: 18px; padding: 12px 14px 12px 16px;
+  border: 0.5px solid var(--border-strong); border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent); box-shadow: var(--shadow-pop);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.literature-settings-savebar strong { display: block; font-size: 12px; }
+.literature-settings-savebar span { display: block; margin-top: 2px; color: var(--text-3); font-size: 10.5px; }
+
 /* animations */
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .pulse { animation: pulse 1.6s ease-in-out infinite; }
@@ -1318,6 +1395,22 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
     padding-left: max(12px, env(safe-area-inset-left));
     padding-right: max(12px, env(safe-area-inset-right));
   }
+
+  .literature-settings-summary,
+  .literature-credential-group-head,
+  .literature-credential-row,
+  .literature-settings-savebar { align-items: stretch; flex-direction: column; }
+  .literature-settings-stats { width: 100%; }
+  .literature-settings-stats > div {
+    min-width: 0; padding: 8px 12px; border-left: 0; border-right: 0.5px solid var(--border-2);
+    align-items: flex-start; flex: 1;
+  }
+  .literature-settings-stats > div:last-child { border-right: 0; }
+  .literature-settings-fields-compact { grid-template-columns: minmax(0, 1fr); }
+  .literature-source-grid { grid-template-columns: minmax(0, 1fr); }
+  .literature-credential-actions { justify-content: flex-start; }
+  .literature-settings-savebar { bottom: 8px; }
+  .literature-settings-savebar .btn { justify-content: center; width: 100%; }
 
   /* —— 不破版的关键一招：标签列自动折行 ——
         全站 200+ 处「固定宽标签 + flexShrink:0」的两栏行靠这条自动堆叠。

@@ -747,6 +747,66 @@ export interface AffiliationModeRead {
   mode: AffiliationMode;
 }
 
+export interface LiteratureProviderHealth {
+  ok: boolean;
+  detail: string;
+  checked_at: number;
+}
+
+export interface LiteratureProviderKeyStatus {
+  id: string;
+  source: string;
+  index: number | null;
+  configured: boolean;
+  preview: string;
+  enabled: boolean;
+  label: string | null;
+  health: LiteratureProviderHealth | null;
+  created_at: number | null;
+  updated_at: number | null;
+}
+
+export interface LiteratureSearchSettings {
+  sources: string[];
+  requested_count: number;
+  candidate_budget: number;
+  start_year: number | null;
+  end_year: number | null;
+  score_weights: Record<string, number>;
+  provider_keys: Record<string, LiteratureProviderKeyStatus[]>;
+  provider_health: Record<string, LiteratureProviderHealth>;
+}
+
+export interface LiteratureSearchSettingsUpdate {
+  sources?: string[];
+  requested_count?: number;
+  candidate_budget?: number;
+  start_year?: number | null;
+  end_year?: number | null;
+  score_weights?: Record<string, number>;
+}
+
+export interface LiteratureProviderCredentialCreate {
+  source: string;
+  secret: string;
+  label?: string | null;
+  enabled?: boolean;
+}
+
+export interface LiteratureProviderCredentialUpdate {
+  secret?: string;
+  label?: string | null;
+  enabled?: boolean;
+}
+
+export interface LiteratureProviderTestResult {
+  source: string;
+  ok: boolean;
+  latency_ms: number;
+  fetched_count: number;
+  detail: string;
+}
+
 /** 补建历史向量的结果计数。 */
 export interface DailyEmbedBackfillResult {
   embedded: number;
@@ -4559,6 +4619,50 @@ export const api = {
   },
   setAffiliationMode(mode: AffiliationMode): Promise<AffiliationModeRead> {
     return requestJson<AffiliationModeRead>('/admin/settings/affiliation-mode', 'PUT', { mode });
+  },
+  getLiteratureSearchSettings(): Promise<LiteratureSearchSettings> {
+    return request<LiteratureSearchSettings>('/admin/settings/literature-search');
+  },
+  setLiteratureSearchSettings(
+    input: LiteratureSearchSettingsUpdate,
+  ): Promise<LiteratureSearchSettings> {
+    return requestJson<LiteratureSearchSettings>('/admin/settings/literature-search', 'PUT', input);
+  },
+  testLiteratureProvider(source: string, query: string): Promise<LiteratureProviderTestResult> {
+    return requestJson<LiteratureProviderTestResult>(
+      '/admin/settings/literature-search/test',
+      'POST',
+      { source, query },
+    );
+  },
+  createLiteratureProviderCredential(
+    input: LiteratureProviderCredentialCreate,
+  ): Promise<LiteratureProviderKeyStatus> {
+    return requestJson<LiteratureProviderKeyStatus>(
+      '/admin/settings/literature-search/credentials',
+      'POST',
+      input,
+    );
+  },
+  updateLiteratureProviderCredential(
+    id: string,
+    input: LiteratureProviderCredentialUpdate,
+  ): Promise<LiteratureProviderKeyStatus> {
+    return requestJson<LiteratureProviderKeyStatus>(
+      `/admin/settings/literature-search/credentials/${id}`,
+      'PATCH',
+      input,
+    );
+  },
+  deleteLiteratureProviderCredential(id: string): Promise<void> {
+    return request<void>(`/admin/settings/literature-search/credentials/${id}`, { method: 'DELETE' });
+  },
+  testLiteratureProviderCredential(id: string, query: string): Promise<LiteratureProviderTestResult> {
+    return requestJson<LiteratureProviderTestResult>(
+      `/admin/settings/literature-search/credentials/${id}/test`,
+      'POST',
+      { query },
+    );
   },
   /** 实验室概况页的用量排行榜是否对普通成员可见（admin，默认开）。 */
   getLabLeaderboardEnabled(): Promise<LabLeaderboardSetting> {
