@@ -17,6 +17,7 @@ from app.models.paper_content import (
     PaperContentVersionVector,
 )
 from app.models.user import User
+from app.services import document_processing_settings
 from app.services.evidence import (
     current_fulltext_evidence,
     keyword_search_current_fulltext,
@@ -249,6 +250,38 @@ async def test_mineru_failure_without_fallback_is_terminal(app, client):
             )
         assert version.status == "failed"
         assert version.error_code == "MINERU_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_persisted_parser_policy_disables_mineru_and_uses_pymupdf(app, client):
+    _user_row, _library, _paper, asset = await _setup(client)
+    async with get_sessionmaker()() as session:
+        await document_processing_settings.update_settings(
+            session,
+            {"mineru_enabled": False, "pymupdf_fallback_enabled": True},
+        )
+        version = await create_content_version(session, asset=asset)
+        parsed = await parse_content_version(session, version=version, mineru_parser=None)
+
+    assert parsed.status == "ready_fallback"
+    assert parsed.parser == "pymupdf"
+    assert "MINERU_DISABLED" in parsed.metadata_snapshot["fallback_reason"]
+
+
+@pytest.mark.asyncio
+async def test_persisted_parser_policy_can_make_mineru_failure_terminal(app, client):
+    _user_row, _library, _paper, asset = await _setup(client)
+    async with get_sessionmaker()() as session:
+        await document_processing_settings.update_settings(
+            session,
+            {"mineru_enabled": True, "pymupdf_fallback_enabled": False},
+        )
+        version = await create_content_version(session, asset=asset)
+        with pytest.raises(ContentParseError, match="MINERU_FAILED"):
+            await parse_content_version(session, version=version, mineru_parser=None)
+
+    assert version.status == "failed"
+    assert version.error_code == "MINERU_FAILED"
 
 
 @pytest.mark.asyncio

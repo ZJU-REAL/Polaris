@@ -148,3 +148,57 @@ class LiteratureProviderTestResult(BaseModel):
     latency_ms: int
     fetched_count: int = 0
     detail: str
+
+
+class DocumentProcessingCredentialStatus(BaseModel):
+    id: str
+    provider: Literal["mineru"] = "mineru"
+    index: int | None = None
+    configured: bool
+    preview: str
+    enabled: bool = True
+    label: str | None = None
+    health: dict[str, Any] | None = None
+    created_at: float | None = None
+    updated_at: float | None = None
+
+
+class DocumentProcessingCredentialCreate(BaseModel):
+    secret: str = Field(min_length=1, max_length=20_000)
+    label: str | None = Field(default=None, max_length=120)
+    enabled: bool = True
+
+
+class DocumentProcessingCredentialUpdate(BaseModel):
+    secret: str | None = Field(default=None, min_length=1, max_length=20_000)
+    label: str | None = Field(default=None, max_length=120)
+    enabled: bool | None = None
+
+
+class DocumentProcessingSettings(BaseModel):
+    mineru_enabled: bool = True
+    mineru_base_url: str = Field(min_length=1, max_length=2000)
+    mineru_timeout_seconds: float = Field(gt=30, le=86_400)
+    mineru_poll_interval_seconds: float = Field(ge=1, le=300)
+    mineru_retries: int = Field(ge=0, le=5)
+    mineru_concurrency: int = Field(ge=1, le=16)
+    pymupdf_fallback_enabled: bool = True
+    mineru_credentials: list[DocumentProcessingCredentialStatus] = Field(default_factory=list)
+
+
+class DocumentProcessingSettingsUpdate(BaseModel):
+    mineru_enabled: bool | None = None
+    mineru_base_url: str | None = Field(default=None, min_length=1, max_length=2000)
+    mineru_timeout_seconds: float | None = Field(default=None, gt=30, le=86_400)
+    mineru_poll_interval_seconds: float | None = Field(default=None, ge=1, le=300)
+    mineru_retries: int | None = Field(default=None, ge=0, le=5)
+    mineru_concurrency: int | None = Field(default=None, ge=1, le=16)
+    pymupdf_fallback_enabled: bool | None = None
+
+
+class DocumentProcessingProviderTestResult(BaseModel):
+    provider: Literal["mineru"] = "mineru"
+    ok: bool
+    latency_ms: int
+    status_code: int | None = None
+    detail: str

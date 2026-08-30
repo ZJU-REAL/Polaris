@@ -9,6 +9,12 @@ from app.schemas.admin_settings import (
     AffiliationModeRead,
     AffiliationModeUpdate,
     DailyEmbedBackfillResult,
+    DocumentProcessingCredentialCreate,
+    DocumentProcessingCredentialStatus,
+    DocumentProcessingCredentialUpdate,
+    DocumentProcessingProviderTestResult,
+    DocumentProcessingSettings,
+    DocumentProcessingSettingsUpdate,
     EmbeddingSpaceAdoptResult,
     EmbeddingSpaceItem,
     EmbeddingSpaceStatus,
@@ -28,6 +34,7 @@ from app.schemas.admin_settings import (
 from app.schemas.tts import TTSAdminSettings, TTSTestResult, TTSVoicesResult
 from app.services import affiliations as affiliations_service
 from app.services import daily_feed as daily_service
+from app.services import document_processing_settings as document_processing_settings_service
 from app.services import embedding as embedding_service
 from app.services import experiment_settings as experiment_settings_service
 from app.services import lab as lab_service
@@ -410,6 +417,122 @@ async def test_literature_provider_credential(
         session, credential_id, ok=result.ok, detail=result.detail
     )
     return result
+
+
+@router.get("/document-processing", response_model=DocumentProcessingSettings)
+async def get_document_processing_settings(
+    session: AsyncSession = Depends(get_session),
+) -> DocumentProcessingSettings:
+    return DocumentProcessingSettings(
+        **await document_processing_settings_service.get_settings(session)
+    )
+
+
+@router.put("/document-processing", response_model=DocumentProcessingSettings)
+async def set_document_processing_settings(
+    payload: DocumentProcessingSettingsUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> DocumentProcessingSettings:
+    try:
+        saved = await document_processing_settings_service.update_settings(
+            session, payload.model_dump(exclude_unset=True)
+        )
+    except document_processing_settings_service.InvalidDocumentProcessingSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"INVALID_DOCUMENT_PROCESSING_SETTING:{exc.field}",
+        ) from exc
+    return DocumentProcessingSettings(**saved)
+
+
+@router.post(
+    "/document-processing/credentials",
+    response_model=DocumentProcessingCredentialStatus,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_document_processing_credential(
+    payload: DocumentProcessingCredentialCreate,
+    session: AsyncSession = Depends(get_session),
+) -> DocumentProcessingCredentialStatus:
+    try:
+        created = await document_processing_settings_service.create_credential(
+            session, **payload.model_dump()
+        )
+    except document_processing_settings_service.InvalidDocumentProcessingSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"INVALID_DOCUMENT_PROCESSING_CREDENTIAL:{exc.field}",
+        ) from exc
+    return DocumentProcessingCredentialStatus(**created)
+
+
+@router.patch(
+    "/document-processing/credentials/{credential_id}",
+    response_model=DocumentProcessingCredentialStatus,
+)
+async def update_document_processing_credential(
+    credential_id: str,
+    payload: DocumentProcessingCredentialUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> DocumentProcessingCredentialStatus:
+    changes = payload.model_dump(exclude_unset=True)
+    if "label" in changes and changes["label"] is None:
+        changes["label"] = ""
+    try:
+        updated = await document_processing_settings_service.update_credential(
+            session, credential_id, **changes
+        )
+    except document_processing_settings_service.InvalidDocumentProcessingSettingError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"INVALID_DOCUMENT_PROCESSING_CREDENTIAL:{exc.field}",
+        ) from exc
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="DOCUMENT_PROCESSING_CREDENTIAL_NOT_FOUND"
+        )
+    return DocumentProcessingCredentialStatus(**updated)
+
+
+@router.delete(
+    "/document-processing/credentials/{credential_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_document_processing_credential(
+    credential_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    if not await document_processing_settings_service.delete_credential(session, credential_id):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="DOCUMENT_PROCESSING_CREDENTIAL_NOT_FOUND"
+        )
+
+
+@router.post(
+    "/document-processing/credentials/{credential_id}/test",
+    response_model=DocumentProcessingProviderTestResult,
+)
+async def test_document_processing_credential(
+    credential_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> DocumentProcessingProviderTestResult:
+    secret = await document_processing_settings_service.get_credential_secret(
+        session, credential_id
+    )
+    if secret is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="DOCUMENT_PROCESSING_CREDENTIAL_NOT_FOUND"
+        )
+    runtime = await document_processing_settings_service.get_runtime_config(session)
+    result = await document_processing_settings_service.probe_mineru_credential(
+        base_url=runtime.mineru_base_url,
+        secret=secret,
+        timeout_seconds=runtime.mineru_timeout_seconds,
+    )
+    await document_processing_settings_service.record_credential_health(
+        session, credential_id, ok=result["ok"], detail=result["detail"]
+    )
+    return DocumentProcessingProviderTestResult(**result)
 
 
 @router.put("/tts", response_model=TTSAdminSettings)

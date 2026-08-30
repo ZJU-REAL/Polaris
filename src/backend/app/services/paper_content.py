@@ -264,9 +264,14 @@ async def parse_content_version(
     try:
         if mineru_parser is None:
             if version.parser == "mineru":
-                from app.services.mineru import MineruCloudParser
+                from app.services import document_processing_settings
+                from app.services.mineru import MineruCloudError, MineruCloudParser
 
-                mineru_parser = MineruCloudParser()
+                runtime = await document_processing_settings.get_runtime_config(session)
+                allow_fallback = allow_fallback and runtime.pymupdf_fallback_enabled
+                if not runtime.mineru_enabled:
+                    raise MineruCloudError("MINERU_DISABLED")
+                mineru_parser = MineruCloudParser(runtime=runtime)
             else:
                 raise ContentParseError("MINERU_ADAPTER_NOT_CONFIGURED")
         if hasattr(mineru_parser, "parse"):
