@@ -316,7 +316,7 @@ export function LiteratureSearchSettingsPanel() {
             {tr('评分标准', 'Scoring weights')}
           </div>
           <div className="literature-settings-intro" style={{ marginBottom: 12 }}>
-            {tr('沿用 YFR 五维评分基线；可按科研方向调整，系统会在排序时归一化。', 'Uses the YFR five-dimension baseline; tune it by research direction and ranking will normalize it.')}
+            {tr('沿用 Polaris 五维评分基线；可按科研方向调整，系统会在排序时归一化。', 'Uses the Polaris five-dimension baseline; tune it by research direction and ranking will normalize it.')}
           </div>
           <div className="literature-weight-grid">
             {SCORE_DIMENSIONS.map((dimension) => (
