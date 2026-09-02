@@ -46,3 +46,9 @@ jobs:
             pnpm --dir src/kernel --if-present run lint
             pnpm --dir src/kernel --if-present run test
           fi
+
+      - name: Spike tests
+        run: |
+          for dir in spikes/p0/*/; do
+            [ -f "$dir/package.json" ] && pnpm --dir "$dir" --if-present run test
+          done
