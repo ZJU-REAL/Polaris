@@ -218,6 +218,36 @@ async def test_easyscholar_credential_uses_metric_probe(client, monkeypatch):
     }
 
 
+async def test_unpaywall_health_probe_uses_doi_resolver_without_adding_search_source(
+    client, monkeypatch
+):
+    admin, _ = await _admin_and_member(client)
+    observed = {}
+
+    class Resolver:
+        async def lookup_unpaywall(self, doi):
+            observed["doi"] = doi
+            return {"doi": doi, "best_oa_location": {"url_for_pdf": "https://example.test/a.pdf"}}
+
+        async def aclose(self):
+            observed["closed"] = True
+
+    monkeypatch.setattr("app.services.literature.multi_source.MultiSourceClient", Resolver)
+    response = await client.post(
+        "/api/admin/settings/literature-search/test",
+        json={"source": "unpaywall", "query": "10.1000/test-doi"},
+        headers=admin,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    assert response.json()["fetched_count"] == 1
+    assert observed == {"doi": "10.1000/test-doi", "closed": True}
+    settings = await client.get("/api/admin/settings/literature-search", headers=admin)
+    assert "unpaywall" not in settings.json()["sources"]
+    assert settings.json()["provider_health"]["unpaywall"]["ok"] is True
+
+
 async def test_single_credential_probe_updates_only_that_entry(client, monkeypatch):
     admin, _ = await _admin_and_member(client)
     response = await client.post(

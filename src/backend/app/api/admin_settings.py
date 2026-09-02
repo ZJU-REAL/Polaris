@@ -242,6 +242,27 @@ async def test_literature_provider(
     source = payload.source.strip().lower()
     started = time.perf_counter()
     try:
+        if source == "unpaywall":
+            from app.services.literature.multi_source import MultiSourceClient
+
+            resolver = MultiSourceClient()
+            try:
+                matched = await resolver.lookup_unpaywall(payload.query)
+            finally:
+                await resolver.aclose()
+            if matched is None:
+                raise ValueError("resolver returned no record; check the contact email and DOI")
+            result = LiteratureProviderTestResult(
+                source=source,
+                ok=True,
+                latency_ms=round((time.perf_counter() - started) * 1000),
+                fetched_count=1,
+                detail="OA resolver responded",
+            )
+            await literature_settings_service.record_provider_health(
+                session, source=source, ok=result.ok, detail=result.detail
+            )
+            return result
         if source == "easyscholar":
             from app.services.literature.venue_metrics import probe_venue_metric_provider
 

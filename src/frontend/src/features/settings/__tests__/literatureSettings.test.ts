@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   LITERATURE_SOURCES,
+  RESOLVER_SOURCES,
   buildLiteratureSettingsUpdate,
   type LiteratureSettingsDraft,
   validateLiteratureSettingsDraft,
@@ -27,6 +28,12 @@ describe('literature search settings model', () => {
     expect(LITERATURE_SOURCES.find((source) => source.id === 'openalex')?.credentialMode).toBe('optional');
     expect(LITERATURE_SOURCES.find((source) => source.id === 'sciverse')?.credentialMode).toBe('required');
     expect(LITERATURE_SOURCES.find((source) => source.id === 'easyscholar')?.metricOnly).toBe(true);
+  });
+
+  it('exposes Unpaywall as an OA resolver without treating it as a search source', () => {
+    expect(RESOLVER_SOURCES.map((source) => source.id)).toContain('unpaywall');
+    expect(validDraft().sources).not.toContain('unpaywall');
+    expect(LITERATURE_SOURCES.find((source) => source.id === 'unpaywall')?.testQuery).toMatch(/^10\./);
   });
 
   it('accepts the configured result count and year window', () => {
