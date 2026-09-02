@@ -592,7 +592,7 @@ export function LibraryPage() {
       style={{ maxWidth: 1360, paddingBottom: 24 }}
     >
       {/* —— tab 行：操作并在同一行右侧，顶部不再单占一行 —— */}
-      <div className="row page-tabs" style={{ marginBottom: 14 }}>
+      <div className="row page-tabs literature-workspace-tabs" style={{ marginBottom: 14 }}>
         <Segmented<PageTab>
           options={[
             { v: 'saved', label: tr('我的收藏', 'Saved') },
@@ -645,7 +645,7 @@ export function LibraryPage() {
 
       {/* —— 卡片容器（同文献追踪的论文库外壳） —— */}
       <div
-        className="card split-card"
+        className="card split-card literature-workspace-card"
       >
         {tab === 'chat' ? (
           /* ======== 个人文献库对话 ======== */
