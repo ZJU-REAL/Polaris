@@ -15,6 +15,22 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
+  spikes/p0/1-legacy-chain:
+    dependencies:
+      '@polaris/kernel':
+        specifier: workspace:*
+        version: link:../../../src/kernel
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)
+
   spikes/p0/2-sqlite-bench:
     dependencies:
       sqlite-vec:

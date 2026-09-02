@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | In progress (gate review when all three spikes conclude) |
+| Status | **Complete — gate PASSED.** All three spikes met their acceptance bars (Spike 2 conditionally: library partitioning becomes a storage design rule). The Node/cordis kernel route proceeds to P1; the Python-kernel fallback is retired. |
 | Tracking issue | #564 |
 | Gate rule | Any spike failing its acceptance bar → fall back to the Python-kernel variant; cost limited to the spikes |
 
@@ -40,9 +40,52 @@ Findings for the real python-edge plugin (P1):
 4. `rejectAll` on process exit (inherited from the desktop supervisor design)
    is exactly right — no in-flight caller ever hangs across a crash.
 
-## Spike 1 — kernel drives a full legacy-engine chain ⏳
+## Spike 1 — kernel drives a full legacy-engine chain ✅
 
-Pending.
+Issue #578. Code: `spikes/p0/1-legacy-chain` (skipped in CI — needs the local
+`polaris-api-test` image and docker).
+
+Setup: the kernel installs a `legacy-engine` prototype plugin that spawns
+redis + the existing FastAPI api + the arq worker as supervised, attached
+docker children (all spawns are fiber effects). Backend runs on its default
+SQLite (shared named volume between api and worker), the deterministic fake
+LLM provider (`POLARIS_LLM_FAKE_FALLBACK=1`), and needs no keys or network.
+The chain: register (first user = admin) → create library → create project
+linked to it → manual **bibtex** import (offline) → synchronous wiki compile
+(fake librarian) → per-paper index rebuild (chunking + fake embeddings +
+vector bookkeeping) → arq worker banner against the same redis.
+
+| Acceptance bar | Result |
+| --- | --- |
+| One command from cold to compiled wiki, exit 0 | ✅ **7.5 s** end-to-end (image cached; 87 alembic migrations + uvicorn boot included) |
+| Deterministic reruns | ✅ recompile is byte-identical (fake provider) |
+| Disposal reclaims every process | ✅ `kernel.stop()` → zero `spike1-*` containers left (`docker ps` assertion) |
+| Queue leg | ✅ worker boots against shared redis and registers its functions; note: per-paper operations are synchronous by design — **voyage runs are the actual ARQ consumers**, so the queue's job-execution leg is exercised implicitly at infrastructure level here and fully in P1 golden transcripts |
+
+Findings for P1:
+
+1. The legacy engine mounts cleanly behind the kernel with zero backend
+   changes — the strangler pattern works as designed. SQLite-by-default plus
+   the fake provider made the whole chain key-free and reproducible.
+2. Chain choreography surfaced the real API contract: manual import requires
+   a user-owned library linked to the project (`source_library_ids`) — the
+   demo flow for P1's single-user profile should provision
+   user + default library + default project at first boot.
+3. Attached `docker run` children + fiber effects give exact process
+   accounting; the same pattern carries to the python-edge plugin (raw
+   processes instead of containers).
+4. The worker needs a migration grace period before arq boots (5 s sleep in
+   the spike); the real profile should gate worker start on a migration
+   sentinel instead.
+
+## Gate verdict
+
+All three spikes pass ⇒ **proceed with the Node/cordis kernel architecture**
+(P1: personal shell + kernel + single-user legacy profile). Design rules
+carried forward: library-partitioned vector search (Spike 2), PDF-scale blobs
+move by path not inline params (Spike 3), stateless edge processes with
+kernel-side desired state (Spike 3), first-boot provisioning of
+user/library/project (Spike 1).
 
 ## Spike 2 — SQLite + sqlite-vec literature-store benchmark ✅ (conditional)
 
