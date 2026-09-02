@@ -46,6 +46,7 @@ from app.models.base import utcnow
 from app.models.gate import Gate
 from app.models.llm_config import LLMUsage
 from app.models.voyage import TERMINAL_STATUSES, VoyageRun, VoyageStep, mode_for_kind
+from app.services import interdisciplinary_workflows
 from app.services import skills as skills_service
 from app.services import voyage_messages as messages_service
 
@@ -632,6 +633,12 @@ class VoyageEngine:
             else {}
         )
         checkpoint = dict(run.checkpoint or {})
+        interdisciplinary = await interdisciplinary_workflows.snapshot_for_project(
+            session, run.project_id
+        )
+        if interdisciplinary is not None:
+            interdisciplinary_workflows.apply_to_skill_snapshot(snapshot, interdisciplinary)
+            checkpoint["interdisciplinary_context"] = interdisciplinary
         checkpoint["skills"] = snapshot
         run.checkpoint = checkpoint
         await session.commit()
