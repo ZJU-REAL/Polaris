@@ -1,0 +1,17 @@
+{
+  "name": "polaris-spike-sqlite-bench",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "bench": "node bench.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "sqlite-vec": "0.1.7-alpha.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^3.0.0"
+  }
+}
