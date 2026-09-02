@@ -274,12 +274,19 @@ async def list_hits(
     hit_status: str | None = Query(
         None, alias="status", pattern="^(candidate|promoted|dismissed)$"
     ),
+    year_from: int | None = Query(None, ge=1800, le=3000),
+    year_to: int | None = Query(None, ge=1800, le=3000),
     sort: str = Query("relevance", pattern="^(relevance|novelty|impact|recent|title)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> SearchHitPage:
+    if year_from is not None and year_to is not None and year_from > year_to:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="YEAR_RANGE_INVALID",
+        )
     await _library(session, library_id, user)
     run = await discovery_runs.get_visible_run(session, library_id=library_id, run_id=run_id)
     if run is None:
@@ -289,6 +296,10 @@ async def list_hits(
         stmt = stmt.where(LiteratureSearchHit.source == source.strip().lower())
     if hit_status:
         stmt = stmt.where(LiteratureSearchHit.status == hit_status)
+    if year_from is not None:
+        stmt = stmt.where(LiteratureSearchHit.year >= year_from)
+    if year_to is not None:
+        stmt = stmt.where(LiteratureSearchHit.year <= year_to)
     if q:
         pattern = f"%{q.strip()}%"
         stmt = stmt.where(

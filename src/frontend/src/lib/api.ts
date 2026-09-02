@@ -1151,6 +1151,180 @@ export interface DirectionLibraryDetail extends DirectionLibrarySummary {
   definition: ProjectDefinition | null;
 }
 
+// ============================================================
+// 文献发现（库内检索、候选筛选、OA 缓存与扩展下载批次）
+// ============================================================
+
+export type LiteratureSearchStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'cancelled';
+
+export interface LiteratureSourceAttempt {
+  id: string;
+  run_id: string;
+  source: string;
+  status: 'pending' | 'running' | 'completed' | 'partial' | 'failed' | 'skipped';
+  query: string | null;
+  cursor: string | null;
+  requested_count: number | null;
+  fetched_count: number;
+  accepted_count: number;
+  retryable: boolean;
+  error_code: string | null;
+  error_detail: string | null;
+  metadata_snapshot: Record<string, unknown> | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LiteratureSearchRun {
+  id: string;
+  library_id: string;
+  created_by: string | null;
+  status: LiteratureSearchStatus;
+  requested_count: number;
+  candidate_budget: number;
+  start_year: number | null;
+  end_year: number | null;
+  topic: string;
+  query_plan: Record<string, unknown> | null;
+  source_config: Record<string, unknown> | null;
+  model_version: string | null;
+  trigger: 'manual' | 'scheduled';
+  schedule_version: number | null;
+  scheduled_for: string | null;
+  progress: Record<string, unknown> | null;
+  error_summary: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LiteratureSearchRunDetail extends LiteratureSearchRun {
+  source_attempts: LiteratureSourceAttempt[];
+}
+
+export interface LiteratureSearchRunPage {
+  items: LiteratureSearchRun[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface LiteratureSearchHit {
+  id: string;
+  run_id: string;
+  paper_id: string | null;
+  status: 'candidate' | 'promoted' | 'dismissed';
+  source: string;
+  dedup_key: string;
+  title: string;
+  abstract: string | null;
+  authors: Array<Record<string, unknown>> | null;
+  year: number | null;
+  venue: string | null;
+  doi: string | null;
+  pmid: string | null;
+  arxiv_id: string | null;
+  semantic_scholar_id: string | null;
+  url: string | null;
+  pdf_url: string | null;
+  oa_status: string | null;
+  citation_count: number | null;
+  scores: Record<string, unknown> | null;
+  venue_metric_snapshot: Record<string, unknown> | null;
+  metadata_snapshot: Record<string, unknown> | null;
+  promoted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LiteratureSearchHitPage {
+  items: LiteratureSearchHit[];
+  total: number;
+  page: number;
+  size: number;
+  sort: string;
+}
+
+export interface LiteratureOaCache {
+  id: string;
+  hit_id: string;
+  status: string;
+  source_url: string | null;
+  final_url: string | null;
+  source: string | null;
+  blob_id: string | null;
+  sha256: string | null;
+  byte_size: number | null;
+  verification: Record<string, unknown> | null;
+  error_code: string | null;
+  error_detail: string | null;
+  attempt_count: number;
+  downloaded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LiteratureTranslation {
+  id: string;
+  hit_id: string;
+  target_language: string;
+  source_hash: string;
+  model_version: string;
+  status: 'queued' | 'running' | 'ready' | 'failed';
+  translated_fields: {
+    title?: string;
+    abstract?: string | null;
+    inclusion_rationale?: string[];
+  } | null;
+  error_code: string | null;
+  attempt_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DownloadBatchItem {
+  id: string;
+  batch_id: string;
+  library_id: string;
+  paper_id: string;
+  expected_identity: Record<string, unknown>;
+  article_url: string | null;
+  pdf_candidates: unknown[] | null;
+  status: string;
+  lease_until: string | null;
+  lease_token?: string | null;
+  attempt_count: number;
+  error: string | null;
+  result: Record<string, unknown> | null;
+}
+
+export interface DownloadBatchCreated {
+  id: string;
+  status: string;
+  item_count: number;
+  items: DownloadBatchItem[];
+}
+
+export interface DownloadBatchRead {
+  id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  items: DownloadBatchItem[];
+}
+
 /** 文献库管理员（后端叫 curator）。 */
 export interface LibraryCuratorRead {
   user_id: string;
@@ -3686,6 +3860,134 @@ export const api = {
   },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);
+  },
+  /** 创建文献发现运行；创建只持久化参数，随后需显式 start，避免请求参数被队列层改写。 */
+  createLiteratureRun(
+    libraryId: string,
+    input: {
+      topic: string;
+      requested_count?: number;
+      candidate_budget?: number;
+      start_year?: number | null;
+      end_year?: number | null;
+    },
+  ): Promise<LiteratureSearchRunDetail> {
+    return requestJson<LiteratureSearchRunDetail>(`/libraries/${libraryId}/literature/runs`, 'POST', input);
+  },
+  startLiteratureRun(libraryId: string, runId: string): Promise<LiteratureSearchRun> {
+    return request<LiteratureSearchRun>(`/libraries/${libraryId}/literature/runs/${runId}/start`, {
+      method: 'POST',
+    });
+  },
+  listLiteratureRuns(
+    libraryId: string,
+    opts: { page?: number; size?: number } = {},
+  ): Promise<LiteratureSearchRunPage> {
+    const params = new URLSearchParams({
+      page: String(opts.page ?? 1),
+      size: String(opts.size ?? 20),
+    });
+    return request<LiteratureSearchRunPage>(`/libraries/${libraryId}/literature/runs?${params}`);
+  },
+  getLiteratureRun(libraryId: string, runId: string): Promise<LiteratureSearchRunDetail> {
+    return request<LiteratureSearchRunDetail>(`/libraries/${libraryId}/literature/runs/${runId}`);
+  },
+  listLiteratureHits(
+    libraryId: string,
+    runId: string,
+    opts: {
+      q?: string;
+      source?: string;
+      status?: LiteratureSearchHit['status'];
+      year_from?: number;
+      year_to?: number;
+      sort?: 'relevance' | 'novelty' | 'impact' | 'recent' | 'title';
+      page?: number;
+      size?: number;
+    } = {},
+  ): Promise<LiteratureSearchHitPage> {
+    const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
+    if (opts.source) params.set('source', opts.source);
+    if (opts.status) params.set('status', opts.status);
+    if (opts.year_from) params.set('year_from', String(opts.year_from));
+    if (opts.year_to) params.set('year_to', String(opts.year_to));
+    if (opts.sort) params.set('sort', opts.sort);
+    params.set('page', String(opts.page ?? 1));
+    params.set('size', String(opts.size ?? 20));
+    return request<LiteratureSearchHitPage>(
+      `/libraries/${libraryId}/literature/runs/${runId}/hits?${params}`,
+    );
+  },
+  cancelLiteratureRun(libraryId: string, runId: string): Promise<LiteratureSearchRun> {
+    return request<LiteratureSearchRun>(`/libraries/${libraryId}/literature/runs/${runId}/cancel`, {
+      method: 'POST',
+    });
+  },
+  deleteLiteratureRun(libraryId: string, runId: string): Promise<void> {
+    return request<void>(`/libraries/${libraryId}/literature/runs/${runId}`, { method: 'DELETE' });
+  },
+  translateLiteratureHits(
+    libraryId: string,
+    runId: string,
+    hitIds: string[],
+    targetLanguage = 'zh-CN',
+  ): Promise<LiteratureTranslation[]> {
+    return requestJson<LiteratureTranslation[]>(
+      `/libraries/${libraryId}/literature/runs/${runId}/translations`,
+      'POST',
+      { hit_ids: hitIds, target_language: targetLanguage },
+    );
+  },
+  getLiteratureTranslation(
+    libraryId: string,
+    runId: string,
+    hitId: string,
+    targetLanguage = 'zh-CN',
+  ): Promise<LiteratureTranslation> {
+    const lang = encodeURIComponent(targetLanguage);
+    return request<LiteratureTranslation>(
+      `/libraries/${libraryId}/literature/runs/${runId}/hits/${hitId}/translation?target_language=${lang}`,
+    );
+  },
+  listLiteratureOaCache(libraryId: string, runId: string): Promise<LiteratureOaCache[]> {
+    return request<LiteratureOaCache[]>(`/libraries/${libraryId}/literature/runs/${runId}/oa-cache`);
+  },
+  cacheLiteratureOaPdfs(
+    libraryId: string,
+    runId: string,
+    hitIds: string[],
+  ): Promise<LiteratureOaCache[]> {
+    return requestJson<LiteratureOaCache[]>(
+      `/libraries/${libraryId}/literature/runs/${runId}/oa-cache`,
+      'POST',
+      { hit_ids: hitIds },
+    );
+  },
+  promoteLiteratureHits(
+    libraryId: string,
+    runId: string,
+    hitIds: string[],
+  ): Promise<LiteratureSearchHit[]> {
+    return requestJson<LiteratureSearchHit[]>(
+      `/libraries/${libraryId}/literature/runs/${runId}/promote`,
+      'POST',
+      { hit_ids: hitIds },
+    );
+  },
+  createDownloadBatch(
+    targets: Array<{
+      library_id: string;
+      paper_id: string;
+      article_url?: string | null;
+      pdf_candidates?: unknown[] | null;
+    }>,
+  ): Promise<DownloadBatchCreated> {
+    return requestJson<DownloadBatchCreated>('/download-batches', 'POST', { targets });
+  },
+  listDownloadBatches(libraryId?: string): Promise<DownloadBatchRead[]> {
+    const query = libraryId ? `?library_id=${encodeURIComponent(libraryId)}` : '';
+    return request<DownloadBatchRead[]>(`/download-batches${query}`);
   },
   /** 新建文献库（P9b：任意登录用户可建；新库 status=pending 待管理员审批激活）。 */
   createLibrary(input: {

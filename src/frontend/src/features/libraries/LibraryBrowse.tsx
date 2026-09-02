@@ -64,6 +64,7 @@ import { ReadingDot, readerFrom } from '../reading/shared';
 import { AddToButton } from '../library/AddToPopover';
 import { paperDragProps } from '../assistant/paperDrag';
 import { clampLines } from '../../lib/clamp';
+import { LiteratureDiscoveryPanel } from './LiteratureDiscoveryPage';
 
 // 图谱体量大且非默认视图：按需加载（与 WikiWorkbench 一致）
 const GraphTab = lazy(() => import('../wiki/GraphTab').then((m) => ({ default: m.GraphTab })));
@@ -77,7 +78,7 @@ const DailyDigestTab = lazy(() =>
    全部走 /libraries 读端点；没有任何管理入口，收藏/笔记等个人操作去阅读页做。
    ============================================================ */
 
-type BrowseTab = 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'notes' | 'govern' | 'ingest';
+type BrowseTab = 'discover' | 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'notes' | 'govern' | 'ingest';
 
 const PAGE_SIZE = 20;
 
@@ -927,6 +928,7 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
       <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <Segmented<BrowseTab>
           options={[
+            { v: 'discover', label: tr('发现文献', 'Discover') },
             { v: 'papers', label: `${tr('论文库', 'Papers')}${paperTotal !== undefined ? ` · ${paperTotal}` : ''}` },
             { v: 'concepts', label: tr('概念库', 'Concepts') },
             { v: 'graph', label: tr('图谱', 'Graph') },
@@ -969,7 +971,9 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
       <div
         className="card split-card"
       >
-        {tab === 'papers' ? (
+        {tab === 'discover' ? (
+          <LiteratureDiscoveryPanel libraryId={libraryId} readOnly />
+        ) : tab === 'papers' ? (
           <PapersPane
             libraryId={libraryId}
             selectedId={paperId}

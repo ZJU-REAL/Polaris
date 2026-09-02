@@ -13,6 +13,7 @@ import { LibraryChatTab } from './LibraryChatTab';
 import { IngestTab } from './IngestTab';
 import { NotesTab } from './NotesTab';
 import { GovernanceTab } from './GovernanceTab';
+import { LiteratureDiscoveryPanel } from '../libraries/LiteratureDiscoveryPage';
 
 // 图谱与 PPT 弹窗体量大且非默认视图：按需加载
 const GraphTab = lazy(() => import('./GraphTab').then((m) => ({ default: m.GraphTab })));
@@ -31,17 +32,20 @@ const PresentationModal = lazy(() =>
    从哪个课题建的，如今仅用来决定要不要显示课题域的 PPT。
    ============================================================ */
 
-type WikiTab = 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'ingest' | 'notes' | 'govern';
+type WikiTab = 'discover' | 'papers' | 'concepts' | 'graph' | 'digest' | 'chat' | 'ingest' | 'notes' | 'govern';
 
 export function WikiWorkbench({
   pid,
   libraryId,
   canManage = false,
+  canManageDiscovery = false,
 }: {
   pid?: string;
   libraryId?: string;
   /** 能否管理这个库（决定共享 Tab 里的管理操作显不显示）；由调用方按 can_manage 传入。 */
   canManage?: boolean;
+  /** 文献发现的写权限独立于一般库管理权限。 */
+  canManageDiscovery?: boolean;
 }) {
   const navigate = useNavigate();
 
@@ -98,7 +102,7 @@ export function WikiWorkbench({
         seq: (old?.seq ?? 0) + 1,
       }));
       setTab('papers');
-    } else if (tabParam && ['papers', 'concepts', 'graph', 'digest', 'chat', 'ingest', 'notes', 'govern'].includes(tabParam)) {
+    } else if (tabParam && ['discover', 'papers', 'concepts', 'graph', 'digest', 'chat', 'ingest', 'notes', 'govern'].includes(tabParam)) {
       setTab(tabParam as WikiTab);
     }
     setSearchParams({}, { replace: true });
@@ -161,6 +165,7 @@ export function WikiWorkbench({
       <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <Segmented<WikiTab>
           options={[
+            ...(libraryId ? [{ v: 'discover' as const, label: tr('发现文献', 'Discover') }] : []),
             { v: 'papers', label: `${tr('论文库', 'Papers')}${total !== undefined ? ` · ${total}` : ''}` },
             { v: 'concepts', label: tr('概念库', 'Concepts') },
             { v: 'graph', label: tr('图谱', 'Graph') },
@@ -214,7 +219,9 @@ export function WikiWorkbench({
           minHeight: 480,
         }}
       >
-        {tab === 'papers' ? (
+        {tab === 'discover' && libraryId ? (
+          <LiteratureDiscoveryPanel libraryId={libraryId} readOnly={!canManageDiscovery} />
+        ) : tab === 'papers' ? (
           <PapersTab
             pid={pid}
             libraryId={tabLibraryId}

@@ -75,7 +75,12 @@ export function LibraryDetailPage() {
       {/* 库名与返回入口都在顶栏面包屑里（实验室 › 文献库 › 库名），页面不再单占一行 */}
       <StatusBanner lib={lib} />
       {canManage ? (
-        <WikiWorkbench pid={lib.project_id ?? undefined} libraryId={lib.id} canManage={canManage} />
+        <WikiWorkbench
+          pid={lib.project_id ?? undefined}
+          libraryId={lib.id}
+          canManage={canManage}
+          canManageDiscovery={canManage}
+        />
       ) : (
         <LibraryBrowse libraryId={lib.id} />
       )}
