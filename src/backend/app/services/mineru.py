@@ -7,6 +7,7 @@ import io
 import re
 import zipfile
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Any
@@ -40,6 +41,33 @@ StatusCallback = Callable[[str], Awaitable[None]]
 _SCHEDULERS_LOCK = Lock()
 _MAX_ARCHIVE_FILES = 10_000
 _MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class MineruRuntimeConfig:
+    """Immutable MinerU settings resolved for one parsing attempt."""
+
+    mineru_enabled: bool
+    mineru_base_url: str
+    mineru_api_tokens: tuple[str, ...]
+    mineru_timeout_seconds: float
+    mineru_poll_interval_seconds: float
+    mineru_retries: int
+    mineru_concurrency: int
+    pymupdf_fallback_enabled: bool = True
+
+    @classmethod
+    def from_environment(cls) -> MineruRuntimeConfig:
+        settings = get_settings()
+        return cls(
+            mineru_enabled=True,
+            mineru_base_url=settings.mineru_base_url,
+            mineru_api_tokens=tuple(_tokens(settings.mineru_api_tokens)),
+            mineru_timeout_seconds=settings.mineru_timeout_seconds,
+            mineru_poll_interval_seconds=settings.mineru_poll_interval_seconds,
+            mineru_retries=settings.mineru_retries,
+            mineru_concurrency=settings.mineru_concurrency,
+        )
 
 
 class _MineruScheduler:
@@ -224,12 +252,17 @@ def _zip_result(content: bytes, *, pages: int = 0) -> dict[str, Any]:
 class MineruCloudParser:
     """Upload a PDF to MinerU Cloud, poll until completion, and normalize Markdown."""
 
-    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
-        settings = get_settings()
+    def __init__(
+        self,
+        client: httpx.AsyncClient | None = None,
+        *,
+        runtime: MineruRuntimeConfig | None = None,
+    ) -> None:
+        settings = runtime or MineruRuntimeConfig.from_environment()
         self._settings = settings
         self._client = client or httpx.AsyncClient(timeout=settings.mineru_timeout_seconds)
         self._owns_client = client is None
-        self._tokens = _tokens(settings.mineru_api_tokens)
+        self._tokens = list(settings.mineru_api_tokens)
         self._scheduler = _scheduler(self._tokens, settings.mineru_concurrency)
 
     async def aclose(self) -> None:
@@ -288,6 +321,8 @@ class MineruCloudParser:
     async def parse(
         self, pdf_path: Path, *, on_status: StatusCallback | None = None
     ) -> dict[str, Any]:
+        if not self._settings.mineru_enabled:
+            raise MineruCloudError("MINERU_DISABLED")
         async with self._scheduler.semaphore:
             token = self._next_token()
             if on_status:

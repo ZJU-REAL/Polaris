@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from app.core.config import get_settings
-from app.services.mineru import MineruCloudParser
+from app.services.mineru import MineruCloudParser, MineruRuntimeConfig
 
 
 class FakeMineruClient:
@@ -81,6 +81,30 @@ async def test_mineru_cloud_upload_poll_and_normalize(tmp_path: Path, monkeypatc
         "mineru_downloading_result",
     ]
     assert [method for method, _url in client.calls] == ["POST", "PUT", "GET", "GET"]
+
+
+@pytest.mark.asyncio
+async def test_mineru_cloud_uses_resolved_runtime_configuration(tmp_path: Path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-test")
+    client = FakeMineruClient()
+    runtime = MineruRuntimeConfig(
+        mineru_enabled=True,
+        mineru_base_url="https://mineru-runtime.example/api/v4",
+        mineru_api_tokens=("database-key",),
+        mineru_timeout_seconds=120,
+        mineru_poll_interval_seconds=1,
+        mineru_retries=0,
+        mineru_concurrency=1,
+    )
+
+    result = await MineruCloudParser(client=client, runtime=runtime).parse(pdf)
+
+    assert result["parser"] == "mineru"
+    assert client.calls[0] == (
+        "POST",
+        "https://mineru-runtime.example/api/v4/file-urls/batch",
+    )
 
 
 def test_zip_result_keeps_markdown_images_and_tables():
