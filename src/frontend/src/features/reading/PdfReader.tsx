@@ -28,9 +28,12 @@ import {
   type HighlightRect,
   type HighlightStyle,
   type PaperDetail,
+  type StructuredContentManifestRead,
 } from '../../lib/api';
+import { Markdown } from '../../lib/markdown';
 import { HIGHLIGHT_COLORS, HIGHLIGHT_STYLES, highlightColorMeta } from './shared';
 import { PdfUploadButton } from '../shared/PdfUploadButton';
+import { resolveStructuredResourceUrls } from './structuredContent';
 
 /* ============================================================
    自建 PDF 阅读器（pdf.js / react-pdf）：
@@ -69,8 +72,8 @@ export interface JumpTarget {
   nonce: number;
 }
 
-/** 阅读器模式：annotate = 自建可划线阅读器；standard = 浏览器内置 PDF 阅读器（不支持划线）。 */
-type ReaderMode = 'annotate' | 'standard';
+/** 阅读器模式：PDF 标注、浏览器标准阅读器、解析后的结构化原文。 */
+type ReaderMode = 'annotate' | 'standard' | 'structured';
 
 // 缩放范围与步进（相对「适应宽度」的倍率）。
 const ZOOM_MIN = 0.5;
@@ -79,6 +82,7 @@ const ZOOM_STEP = 0.1;
 
 interface PdfReaderProps {
   paper: PaperDetail;
+  libraryId?: string | null;
   highlights: HighlightRead[];
   activeHighlightId: string | null;
   creating: boolean;
@@ -185,6 +189,7 @@ function annotationRectStyle(
 
 export function PdfReader({
   paper,
+  libraryId,
   highlights,
   activeHighlightId,
   creating,
@@ -230,23 +235,72 @@ export function PdfReader({
     if (dy !== 0) el.style.top = `${parseFloat(el.style.top || '0') + dy}px`;
   }, [pending]);
 
+  const assetsQuery = useQuery({
+    queryKey: ['paper-assets', libraryId, paper.id],
+    queryFn: () => api.listLibraryPaperAssets(libraryId!, paper.id),
+    enabled: !!libraryId,
+    retry: false,
+  });
+  const asset = assetsQuery.data?.items.find((item) => item.is_preferred) ?? assetsQuery.data?.items[0] ?? null;
+  const contentVersionQuery = useQuery({
+    queryKey: ['paper-content-version', libraryId, paper.id],
+    queryFn: async () => {
+      try {
+        return await api.getLibraryPaperContentVersion(libraryId!, paper.id);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: !!libraryId,
+    retry: false,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && !['ready', 'ready_fallback', 'vector_ready', 'failed'].includes(status) ? 2_500 : false;
+    },
+  });
+  const contentVersion = contentVersionQuery.data ?? null;
+  const structuredQuery = useQuery({
+    queryKey: ['paper-structured-content', libraryId, paper.id, contentVersion?.id],
+    queryFn: async (): Promise<{ manifest: StructuredContentManifestRead; content: string }> => {
+      const manifest = await api.getLibraryPaperStructuredContent(libraryId!, paper.id);
+      const contentUrl = manifest.markdown_url ?? manifest.text_url;
+      const raw = contentUrl ? await api.fetchStructuredContentText(contentUrl) : '';
+      return {
+        manifest,
+        content: manifest.content_format === 'mineru_markdown' ? resolveStructuredResourceUrls(raw) : raw,
+      };
+    },
+    enabled: !!libraryId && !!contentVersion && ['ready', 'ready_fallback', 'vector_ready'].includes(contentVersion.status),
+    retry: false,
+    staleTime: 4 * 60_000,
+  });
+  const hasPdf = paper.pdf_available || asset !== null;
+  const hasStructuredContent = Boolean(
+    structuredQuery.data && structuredQuery.data.manifest.content_format !== 'unavailable' && structuredQuery.data.content,
+  );
+
   // 标注阅读器把地址直接交给 pdf.js，由它按需发 Range 请求；鉴权头随请求带上，
   // 所以这里不能用 blob。对象要 memo：react-pdf 认引用，每次新对象都会重新加载整份。
   const pdfSource = useMemo(() => {
     const src: { url: string; httpHeaders?: Record<string, string> } = {
-      url: `${apiBase()}/papers/${paper.id}/pdf`,
+      url: asset && libraryId
+        ? `${apiBase()}/libraries/${libraryId}/papers/${paper.id}/assets/${asset.id}/download`
+        : `${apiBase()}/papers/${paper.id}/pdf`,
     };
     const token = getToken();
     if (token) src.httpHeaders = { Authorization: `Bearer ${token}` };
     return src;
-  }, [paper.id]);
+  }, [asset, libraryId, paper.id]);
 
   // 标准阅读器是 <iframe>，带不了 Authorization 头，只能整包下成 blob——所以推迟到
   // 真的切过去才下，默认的标注模式不再为它付这 25MB 的等待。
   const pdfQuery = useQuery({
-    queryKey: ['paper-pdf', paper.id],
-    queryFn: () => api.fetchPaperPdf(paper.id),
-    enabled: mode === 'standard' && paper.pdf_available,
+    queryKey: ['paper-pdf', paper.id, asset?.id],
+    queryFn: () => asset && libraryId
+      ? api.downloadLibraryPaperAsset(libraryId, paper.id, asset.id)
+      : api.fetchPaperPdf(paper.id),
+    enabled: mode === 'standard' && hasPdf,
     retry: false,
     staleTime: Infinity,
   });
@@ -472,9 +526,13 @@ export function PdfReader({
     [],
   );
 
+  if (libraryId && !paper.pdf_available && assetsQuery.isLoading) {
+    return <div className="empty">{tr('正在检查 PDF 资产…', 'Checking PDF assets…')}</div>;
+  }
+
   // 无 PDF：引导获取（原先靠「先整包下一遍，404 就是没有」判断，现在直接读元数据，
   // 免掉一次无谓的整包下载）
-  if (!paper.pdf_available) {
+  if (!hasPdf && !assetsQuery.isLoading) {
     const canFetch = !!paper.arxiv_id;
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -518,7 +576,7 @@ export function PdfReader({
                   {tr('打开原文链接', 'Open source link')}
                 </a>
               ) : null}
-              <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />
+              {!libraryId && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
             </div>
           )}
         />
@@ -537,6 +595,14 @@ export function PdfReader({
           options={[
             { v: 'annotate', label: tr('标注阅读器', 'Annotate') },
             { v: 'standard', label: tr('标准阅读器', 'Standard') },
+            ...(contentVersion && ['ready', 'ready_fallback', 'vector_ready'].includes(contentVersion.status)
+              ? [{
+                  v: 'structured' as const,
+                  label: contentVersion.status === 'ready_fallback'
+                    ? tr('纯原文', 'Plain text')
+                    : tr('结构化原文', 'Structured'),
+                }]
+              : []),
           ]}
           value={mode}
           onChange={setMode}
@@ -570,6 +636,12 @@ export function PdfReader({
               <Icon name="plus" size={14} />
             </button>
           </span>
+        ) : mode === 'structured' ? (
+          <span className="row gap8" style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>
+            {structuredQuery.data
+              ? `${structuredQuery.data.manifest.parser} · ${structuredQuery.data.manifest.page_count} ${tr('页', 'pages')} · ${structuredQuery.data.manifest.assets.length} ${tr('项资源', 'assets')}`
+              : tr('正在载入解析结果', 'Loading parsed content')}
+          </span>
         ) : (
           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-4)' }}>
             {tr('标准阅读器不支持划线标注', 'Standard viewer has no highlighting')}
@@ -577,7 +649,33 @@ export function PdfReader({
         )}
       </div>
 
-      {mode === 'standard' ? (
+      {mode === 'structured' ? (
+        <div
+          className="scroll paper-reader-body"
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px clamp(20px, 6vw, 72px)', background: 'var(--surface)' }}
+        >
+          <div style={{ width: 'min(100%, 880px)', margin: '0 auto' }}>
+            {hasStructuredContent && structuredQuery.data ? (
+              structuredQuery.data.manifest.content_format === 'mineru_markdown' ? (
+                <Markdown source={structuredQuery.data.content} />
+              ) : (
+                <article style={{ whiteSpace: 'pre-wrap', fontSize: 13.5, lineHeight: 1.8, color: 'var(--text-2)' }}>
+                  {structuredQuery.data.content}
+                </article>
+              )
+            ) : structuredQuery.isError ? (
+              <EmptyState
+                compact
+                icon="x"
+                title={tr('结构化原文暂时无法加载', 'Structured content is unavailable')}
+                desc={tr('签名链接可能已过期，请刷新页面后重试。', 'The signed link may have expired. Refresh and try again.')}
+              />
+            ) : (
+              <div className="empty">{tr('正在载入解析后的全文…', 'Loading parsed full text…')}</div>
+            )}
+          </div>
+        </div>
+      ) : mode === 'standard' ? (
         // 浏览器内置 PDF 阅读器：自带缩放/搜索/打印，但不承载我们的标注层。
         // 它只认能直接取到的地址，带不了鉴权头，所以这里必须等整包下完拿到 blob。
         url ? (

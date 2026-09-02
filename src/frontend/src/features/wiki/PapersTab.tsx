@@ -15,6 +15,7 @@ import { citationExportItems, ExportDropdown } from '../../components/ui/ExportD
 import { PaperReader } from './PaperReader';
 import { readerFrom } from '../reading/shared';
 import { PdfUploadButton } from '../shared/PdfUploadButton';
+import { PaperAssetPanel } from '../shared/PaperAssetPanel';
 import { toast } from '../../components/ui/Toast';
 import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
@@ -110,6 +111,8 @@ export interface PapersTabProps {
   pid?: string;
   /** 独立库作用域：给定时集合级调用走 /libraries/{id}/* 端点，并隐藏标签编辑/过滤 */
   libraryId?: string;
+  /** Whether the current user may upload and reprocess assets in this library. */
+  canManage?: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenConcept: (id: string) => void;
@@ -710,6 +713,7 @@ function PaperDetailPane({
   paperId,
   pid,
   libraryId,
+  canManage,
   onOpenConcept,
   onWikiLink,
   onFilterAuthor,
@@ -720,7 +724,8 @@ function PaperDetailPane({
 }: {
   paperId: string;
   pid: string;
-  libraryId?: string;
+    libraryId?: string;
+    canManage: boolean;
   onOpenConcept: (id: string) => void;
   onWikiLink: WikiLinkHandler;
   /** 点击作者名 → 论文库按该作者过滤 */
@@ -940,8 +945,17 @@ function PaperDetailPane({
             {tr('原文链接', 'Source link')}
           </a>
         )}
-        <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />
-      </div>
+          {!libraryId && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
+        </div>
+
+        {libraryId && (
+          <PaperAssetPanel
+            libraryId={libraryId}
+            paperId={paper.id}
+            doi={paper.doi}
+            canManage={canManage}
+          />
+        )}
 
       {/* —— 个人状态：星标 + 阅读状态 —— */}
       <div className="row gap12 wrap" style={{ marginTop: 12 }}>
@@ -1157,7 +1171,7 @@ function PaperDetailPane({
 
 /* ---------------- Tab 主体 ---------------- */
 
-export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed }: PapersTabProps) {
+export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSelect, onOpenConcept, onWikiLink, advSeed }: PapersTabProps) {
   const scopeId = libraryId ?? pid ?? '';
   const [view, setView] = useState<ViewFilter>('all');
   const [sort, setSort] = useState<PaperSort>('relevance');
@@ -1703,6 +1717,7 @@ export function PapersTab({ pid, libraryId, selectedId, onSelect, onOpenConcept,
             paperId={selectedId}
             pid={pid ?? ''}
             libraryId={libraryId}
+            canManage={canManage}
             onOpenConcept={onOpenConcept}
             onWikiLink={onWikiLink}
             onFilterAuthor={filterByAuthor}
