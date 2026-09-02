@@ -17,6 +17,8 @@ on:
     paths:
       - "src/frontend/**"
       - "src/desktop/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/desktop-build.yml"
   workflow_dispatch:
 
@@ -27,13 +29,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # packageManager in the root package.json pins the pnpm version for corepack.
+      - name: Enable pnpm
+        run: corepack enable
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: |
-            src/frontend/package-lock.json
-            src/desktop/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       # Shared libraries Electron links against, plus xvfb for the virtual display.
       - name: Install system dependencies
@@ -42,18 +46,17 @@ jobs:
           sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2t64 || \
           sudo apt-get install -y xvfb libnss3 libgtk-3-0 libasound2
 
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Build renderer
-        run: |
-          npm ci --prefix src/frontend
-          npm run build --prefix src/frontend
+        run: pnpm --dir src/frontend run build
 
       - name: Build shell
-        run: |
-          npm ci --prefix src/desktop
-          npm run build --prefix src/desktop
+        run: pnpm --dir src/desktop run build
 
       - name: Typecheck shell
-        run: npm run lint --prefix src/desktop
+        run: pnpm --dir src/desktop run lint
 
       # Electron aborts at startup unless the SUID sandbox helper is owned by root
       # with mode 4755, which is not how npm installs it. The permissions are
@@ -68,4 +71,4 @@ jobs:
       # renderer mount and the local agent pipe. A non-zero exit fails the job.
       - name: Smoke test
         working-directory: src/desktop
-        run: xvfb-run -a npm run smoke
+        run: xvfb-run -a pnpm run smoke

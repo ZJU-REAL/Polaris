@@ -56,7 +56,7 @@ DEV_SRC=../wt/dev docker compose \
 ```
 
 Container `node_modules` is an anonymous volume, so preview worktrees don't need
-a local `npm install`. See [`docs/development.md`](docs/development.md) for the details.
+a local `pnpm install`. See [`docs/development.md`](docs/development.md) for the details.
 
 ## Deployment
 

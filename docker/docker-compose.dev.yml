@@ -29,11 +29,13 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       target: build                 # node stage only
-    command: npm run dev -- --host 0.0.0.0
+    command: pnpm run dev -- --host 0.0.0.0
     environment:
       VITE_PROXY_TARGET: http://api:8000
     volumes:
-      - ${DEV_SRC:-..}/src/frontend:/srv/frontend
-      - /srv/frontend/node_modules  # container-owned node_modules
+      - ${DEV_SRC:-..}/src/frontend:/srv/src/frontend
+      # container-owned: the symlink farm under node_modules must come from the
+      # image (it points into the workspace store at /srv/node_modules), not the host
+      - /srv/src/frontend/node_modules
     ports:
       - "5173:5173"

@@ -1,0 +1,6 @@
+packages:
+  - src/frontend
+  - src/desktop
+  - src/kernel
+  - vendor/*
+  - spikes/*

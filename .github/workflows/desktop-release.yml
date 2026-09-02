@@ -55,13 +55,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # packageManager in the root package.json pins the pnpm version for corepack.
+      - name: Enable pnpm
+        run: corepack enable
+        shell: bash
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: |
-            src/frontend/package-lock.json
-            src/desktop/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Resolve version
         id: meta
@@ -84,17 +87,17 @@ jobs:
           npm --prefix src/desktop version "${{ steps.meta.outputs.version }}" \
             --no-git-tag-version --allow-same-version
 
+      - name: Install workspace dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
       - name: Build renderer
         shell: bash
-        run: |
-          npm ci --prefix src/frontend
-          npm run build --prefix src/frontend
+        run: pnpm --dir src/frontend run build
 
       - name: Build shell
         shell: bash
-        run: |
-          npm ci --prefix src/desktop
-          npm run build --prefix src/desktop
+        run: pnpm --dir src/desktop run build
 
       # Gate packaging on the smoke test so a bundle that cannot load is never
       # published. The renderer behaves identically across platforms, so running it
@@ -109,7 +112,7 @@ jobs:
           # Electron aborts unless chrome-sandbox is setuid root; see desktop-build.yml
           sudo chown root:root src/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 src/desktop/node_modules/electron/dist/chrome-sandbox
-          cd src/desktop && xvfb-run -a npm run smoke
+          cd src/desktop && xvfb-run -a pnpm run smoke
 
       # The renderer ships separately so a frontend-only release can be applied
       # without reinstalling: the client swaps this bundle in and reloads. The
