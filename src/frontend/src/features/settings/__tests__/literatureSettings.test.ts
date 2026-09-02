@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   LITERATURE_SOURCES,
+  RESOLVER_SOURCES,
+  SEARCH_SOURCES,
   buildLiteratureSettingsUpdate,
   type LiteratureSettingsDraft,
   validateLiteratureSettingsDraft,
@@ -27,6 +29,12 @@ describe('literature search settings model', () => {
     expect(LITERATURE_SOURCES.find((source) => source.id === 'openalex')?.credentialMode).toBe('optional');
     expect(LITERATURE_SOURCES.find((source) => source.id === 'sciverse')?.credentialMode).toBe('required');
     expect(LITERATURE_SOURCES.find((source) => source.id === 'easyscholar')?.metricOnly).toBe(true);
+  });
+
+  it('exposes Unpaywall as an OA resolver without treating it as a search source', () => {
+    expect(RESOLVER_SOURCES.map((source) => source.id)).toContain('unpaywall');
+    expect(validDraft().sources).not.toContain('unpaywall');
+    expect(LITERATURE_SOURCES.find((source) => source.id === 'unpaywall')?.testQuery).toMatch(/^10\./);
   });
 
   it('accepts the configured result count and year window', () => {
@@ -62,5 +70,20 @@ describe('literature search settings model', () => {
     expect(payload).not.toHaveProperty('provider_keys');
     expect(payload).not.toHaveProperty('provider_health');
     expect(JSON.stringify(payload)).not.toContain('••••1234');
+  });
+});
+
+describe('source role separation', () => {
+  it('keeps resolver-only and metric-only providers out of the search source list', () => {
+    // Unpaywall 按 DOI 补 OA 地址，EasyScholar 只做期刊指标。任何一个漏进
+    // SEARCH_SOURCES，都会被当成检索源发查询：占候选配额、进 source 快照，
+    // 而结果里根本不会有文献 —— 从界面上看只是"这个源没搜到东西"。
+    const searchIds = SEARCH_SOURCES.map((source) => source.id);
+    expect(searchIds).not.toContain('unpaywall');
+    expect(searchIds).not.toContain('easyscholar');
+    expect(RESOLVER_SOURCES.map((source) => source.id)).toEqual(['unpaywall']);
+    // 反过来，真正的检索源不能被误标成 resolver/metric 而消失
+    expect(searchIds).toContain('openalex');
+    expect(searchIds).toContain('arxiv');
   });
 });
