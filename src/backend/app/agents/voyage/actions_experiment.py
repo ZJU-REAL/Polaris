@@ -515,7 +515,7 @@ def _prompt_with_context(base: str, ctx: ActionContext) -> str:
         ]
         if qa_lines:
             parts.append(INTAKE_PROMPT_SECTION.format(qa="\n".join(qa_lines)))
-    return "".join(parts)
+    return "".join(parts) + ctx.evidence_guidance()
 
 
 def _env_facts_prompt(env_settings: dict[str, str]) -> str:
@@ -3453,7 +3453,10 @@ async def experiment_report(ctx: ActionContext, params: dict[str, Any]) -> dict[
         result = await ctx.llm.complete(
             "experiment",
             [
-                Message(role="system", content=REPORT_SYSTEM_PROMPT),
+                Message(
+                    role="system",
+                    content=REPORT_SYSTEM_PROMPT + ctx.evidence_guidance(),
+                ),
                 Message(role="user", content=user_prompt),
             ],
             user_id=ctx.run.created_by,
