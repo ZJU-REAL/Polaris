@@ -13,6 +13,7 @@ export interface SourceDefinition {
   descriptionEn: string;
   credentialMode: CredentialMode;
   metricOnly?: boolean;
+  resolverOnly?: boolean;
   testQuery: string;
 }
 
@@ -27,10 +28,14 @@ export const LITERATURE_SOURCES: SourceDefinition[] = [
   { id: 'core', zh: 'CORE', en: 'CORE', descriptionZh: '聚合开放获取仓储，需要 API Key。', descriptionEn: 'Aggregated open-access repositories; requires an API key.', credentialMode: 'required', testQuery: 'structural engineering' },
   { id: 'base', zh: 'BASE', en: 'BASE', descriptionZh: '学术搜索聚合源，无需 API Key。', descriptionEn: 'Academic search aggregator with no API key required.', credentialMode: 'none', testQuery: 'structural engineering' },
   { id: 'sciverse', zh: 'Sciverse', en: 'Sciverse', descriptionZh: '补充出版商聚合检索，需要令牌并支持轮询。', descriptionEn: 'Publisher-aggregated retrieval; requires rotating tokens.', credentialMode: 'required', testQuery: 'structural engineering' },
+  { id: 'unpaywall', zh: 'Unpaywall', en: 'Unpaywall', descriptionZh: '按 DOI 补充开放获取地址，用于候选 PDF 缓存；联系邮箱由服务器环境变量配置。', descriptionEn: 'Resolves open-access locations by DOI for candidate PDF caching; the contact email is configured on the server.', credentialMode: 'none', resolverOnly: true, testQuery: '10.1038/s41586-020-2649-2' },
   { id: 'easyscholar', zh: 'EasyScholar', en: 'EasyScholar', descriptionZh: '期刊等级与评价指标，只参与指标增强。', descriptionEn: 'Journal rankings and metrics; used only for venue enrichment.', credentialMode: 'required', metricOnly: true, testQuery: 'Nature' },
 ];
 
-export const SEARCH_SOURCES = LITERATURE_SOURCES.filter((source) => !source.metricOnly);
+export const SEARCH_SOURCES = LITERATURE_SOURCES.filter(
+  (source) => !source.metricOnly && !source.resolverOnly,
+);
+export const RESOLVER_SOURCES = LITERATURE_SOURCES.filter((source) => source.resolverOnly);
 export const CREDENTIAL_SOURCES = LITERATURE_SOURCES.filter(
   (source) => source.credentialMode !== 'none',
 );

@@ -17,6 +17,7 @@ import {
 import { tr } from '../../lib/i18n';
 import {
   CREDENTIAL_SOURCES,
+  RESOLVER_SOURCES,
   SCORE_DIMENSIONS,
   SEARCH_SOURCES,
   buildLiteratureSettingsUpdate,
@@ -380,6 +381,35 @@ export function LiteratureSearchSettingsPanel() {
                 <button className="btn btn-soft sm" disabled={providerTestMutation.isPending} onClick={() => providerTestMutation.mutate(source.id)}>
                   <Icon name={testing ? 'refresh' : 'play'} size={12} style={testing ? { animation: 'spin 1s linear infinite' } : undefined} />
                   {testing ? tr('测试中…', 'Testing…') : tr('测试来源', 'Test source')}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <div className="section-h" style={{ margin: '20px 0 6px' }}>
+          <Icon name="link" size={14} style={{ color: 'var(--accent)' }} />
+          {tr('开放获取解析器', 'Open-access resolvers')}
+        </div>
+        <div className="literature-settings-intro" style={{ marginBottom: 12 }}>
+          {tr('解析器不生成候选论文，也不占检索配额；它们按 DOI 为候选结果补充可缓存的开放 PDF。', 'Resolvers do not create candidates or consume retrieval quota. They add cacheable open PDFs to existing DOI-bearing candidates.')}
+        </div>
+        <div className="literature-source-grid">
+          {RESOLVER_SOURCES.map((source) => {
+            const health = settingsQuery.data?.provider_health[source.id];
+            const testing = providerTestMutation.isPending && providerTestMutation.variables === source.id;
+            return (
+              <div key={source.id} className="literature-source-card enabled">
+                <div className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+                  <div className="row gap8">
+                    <strong>{source.zh}</strong>
+                    <span className="pill sm">{tr('OA 解析', 'OA resolver')}</span>
+                    <HealthBadge health={health} />
+                  </div>
+                </div>
+                <p>{tr(source.descriptionZh, source.descriptionEn)}</p>
+                <button className="btn btn-soft sm" disabled={providerTestMutation.isPending} onClick={() => providerTestMutation.mutate(source.id)}>
+                  <Icon name={testing ? 'refresh' : 'play'} size={12} style={testing ? { animation: 'spin 1s linear infinite' } : undefined} />
+                  {testing ? tr('测试中…', 'Testing…') : tr('测试解析器', 'Test resolver')}
                 </button>
               </div>
             );
