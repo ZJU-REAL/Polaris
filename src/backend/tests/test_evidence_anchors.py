@@ -163,6 +163,46 @@ async def test_resolve_falls_back_to_chunk_then_paper(app) -> None:
         assert result.href.endswith(f"evidence={anchor.id}")
 
 
+@pytest.mark.asyncio
+async def test_resolve_never_selects_an_ambiguous_duplicate(app) -> None:
+    async with get_sessionmaker()() as session:
+        paper = new_paper(title="Ambiguous evidence paper")
+        session.add(paper)
+        await session.flush()
+        anchor = PaperEvidenceAnchor(
+            paper_id=paper.id,
+            chunk_id=None,
+            source="fulltext",
+            content_revision=content_revision("Repeated result."),
+            anchor_key="sentence:old:0:0:0",
+            anchor_type="sentence",
+            seq=0,
+            paragraph_index=0,
+            sentence_index=0,
+            quoted_text="Repeated result.",
+            normalized_text=normalize_evidence_text("Repeated result."),
+            locator={"page_start": 1},
+        )
+        session.add(anchor)
+        await session.flush()
+        chunks = [
+            PaperContentChunk(
+                id=uuid.uuid4(),
+                content_version_id=uuid.uuid4(),
+                seq=index,
+                text=f"Section {index}. Repeated result.",
+                page_start=index + 2,
+            )
+            for index in range(2)
+        ]
+
+        result = await resolve_evidence_anchor(session, anchor, current_chunks=chunks)
+
+        assert result.status == "paper"
+        assert result.anchor_type == "paper"
+        assert result.page_start is None
+
+
 def test_migration_upgrade_and_downgrade_roundtrip(tmp_path: Path) -> None:
     cfg = Config()
     backend_dir = Path(__file__).resolve().parent.parent

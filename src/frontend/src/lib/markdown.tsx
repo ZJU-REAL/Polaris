@@ -65,7 +65,11 @@ export type LibraryFigureRenderer = (paperId: string, index: number) => ReactNod
  * `[n]`（1-2 位数字）引用角标渲染回调（文献库对话用，编号对应来源清单）；
  * 返回 null 时按普通文本渲染。未提供回调时 `[n]` 不做任何解析。
  */
-export type CitationRenderer = (index: number) => ReactNode;
+export type CitationRenderer = (
+  articleNo: number,
+  sentenceNo?: number,
+  label?: string,
+) => ReactNode;
 export type ImageRenderer = (src: string, alt: string) => ReactNode;
 
 export interface MarkdownProps {
@@ -88,7 +92,7 @@ export interface MarkdownProps {
 /* ---------------- inline ---------------- */
 
 const INLINE_RE =
-  /(`[^`\n]+`)|(!\[\[fig:\d+\]\])|(\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\])|(\[([^\]\n]*)\]\((https?:\/\/[^\s)]+)\))|(\*\*([^*\n]+)\*\*)|(\*([^*\n]+)\*)|(~~([^~\n]+)~~)|(\[(\d{1,2})\])|(\$([^\s$](?:[^$\n]*?[^\s$])?)\$)|(\\\((.+?)\\\))/g;
+  /(`[^`\n]+`)|(!\[\[fig:\d+\]\])|(\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\])|(\[([^\]\n]*)\]\((https?:\/\/[^\s)]+)\))|(\*\*([^*\n]+)\*\*)|(\*([^*\n]+)\*)|(~~([^~\n]+)~~)|(\[文(\d{1,3})(?:[·.]段\d{1,4})?(?:[·.]句(\d{1,4}))?\])|(\[(\d{1,2})\])|(\$([^\s$](?:[^$\n]*?[^\s$])?)\$)|(\\\((.+?)\\\))/g;
 
 function renderInline(
   text: string,
@@ -109,12 +113,24 @@ function renderInline(
     } else if (m[2] !== undefined) {
       // 行内出现的 ![[fig:N]] 图片标记：剥除不显示（容错，只有独立成行才渲染图）
     } else if (m[15] !== undefined) {
+      // [文N·句M] / [文N·段P·句M]：段落号仅作展示，稳定定位使用证据锚点。
+      const node = renderCitation?.(
+        Number(m[16]),
+        m[17] !== undefined ? Number(m[17]) : undefined,
+        m[15],
+      ) ?? null;
+      out.push(
+        node !== null && node !== undefined && node !== false
+          ? <span key={k++}>{node}</span>
+          : m[15],
+      );
+    } else if (m[18] !== undefined) {
       // [n] 引用角标：交给 renderCitation；无回调 / 返回 null 时按原文输出
-      const node = renderCitation?.(Number(m[16])) ?? null;
+      const node = renderCitation?.(Number(m[19]), undefined, m[18]) ?? null;
       if (node !== null && node !== undefined && node !== false) {
         out.push(<span key={k++}>{node}</span>);
       } else {
-        out.push(m[15]);
+        out.push(m[18]);
       }
     } else if (m[3] !== undefined) {
       const target = (m[4] ?? '').trim();
@@ -169,10 +185,10 @@ function renderInline(
       out.push(<em key={k++}>{renderInline(m[12] ?? '', onWikiLink, renderPaperRef, renderCitation, renderLibraryFigure)}</em>);
     } else if (m[13] !== undefined) {
       out.push(<del key={k++}>{m[14] ?? ''}</del>);
-    } else if (m[17] !== undefined) {
-      out.push(<MathSpan key={k++} tex={m[18] ?? ''} display={false} />);
-    } else if (m[19] !== undefined) {
-      out.push(<MathSpan key={k++} tex={m[20] ?? ''} display={false} />);
+    } else if (m[20] !== undefined) {
+      out.push(<MathSpan key={k++} tex={m[21] ?? ''} display={false} />);
+    } else if (m[22] !== undefined) {
+      out.push(<MathSpan key={k++} tex={m[23] ?? ''} display={false} />);
     }
     last = re.lastIndex;
   }
