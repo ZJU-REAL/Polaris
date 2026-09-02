@@ -4,4 +4,4 @@ packages:
   - src/kernel
   - vendor/deepseek-cordis/*
   - vendor/contract-smoke
-  - spikes/*
+  - spikes/p0/*
