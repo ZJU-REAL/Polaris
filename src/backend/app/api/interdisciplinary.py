@@ -28,6 +28,10 @@ from app.services import interdisciplinary_scope as scope_service
 from app.services import libraries as libraries_service
 from app.services import projects as projects_service
 from app.services.interdisciplinary_retrieval import build_query_matrix, normalize_query_matrix
+from app.services.interdisciplinary_workflows import (
+    InterdisciplinaryScopeInvalidError,
+    validate_disciplines,
+)
 
 
 async def _existing_dedicated_library(
@@ -194,6 +198,12 @@ async def confirm_interdisciplinary_scope(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="INTERDISCIPLINARY_SCOPE_INVALID"
         )
+    try:
+        validate_disciplines(profile.primary_domain, list(profile.related_domains))
+    except InterdisciplinaryScopeInvalidError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="INTERDISCIPLINARY_SCOPE_INVALID"
+        ) from exc
     profile.status = "confirmed"
     profile.confirmed_by = user.id
     profile.confirmed_at = datetime.now(UTC)
