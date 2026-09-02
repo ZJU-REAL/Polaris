@@ -66,6 +66,7 @@ export type LibraryFigureRenderer = (paperId: string, index: number) => ReactNod
  * 返回 null 时按普通文本渲染。未提供回调时 `[n]` 不做任何解析。
  */
 export type CitationRenderer = (index: number) => ReactNode;
+export type ImageRenderer = (src: string, alt: string) => ReactNode;
 
 export interface MarkdownProps {
   source: string;
@@ -78,6 +79,8 @@ export interface MarkdownProps {
   renderLibraryFigure?: LibraryFigureRenderer;
   /** 渲染行内 `[n]` 引用角标（文献库对话） */
   renderCitation?: CitationRenderer;
+  /** Render a standard Markdown image. Defaults to a safe, lazy-loaded image. */
+  renderImage?: ImageRenderer;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -187,6 +190,7 @@ const RE_QUOTE = /^\s*>\s?(.*)$/;
 const RE_TABLE_SEP = /^\s*\|?\s*:?-{2,}[-\s:|]*$/;
 /** 独立一行的 ![[fig:N]] 图片标记（docs/api-lit.md §6.6） */
 const RE_FIG_LINE = /^\s*!\[\[fig:(\d+)\]\]\s*$/;
+const RE_IMAGE_LINE = /^\s*!\[([^\]]*)\]\(<?([^\s)>]+)>?(?:\s+["'][^"']*["'])?\)\s*$/;
 /** 块级公式起始：$$… 或 \[… */
 const RE_MATH_OPEN = /^\s*(\$\$|\\\[)/;
 
@@ -197,7 +201,17 @@ function isBlockStart(line: string): boolean {
     RE_OL.test(line) ||
     RE_QUOTE.test(line) ||
     line.trim().startsWith('```')
+    || RE_IMAGE_LINE.test(line)
   );
+}
+
+function safeImageUrl(url: string): string | null {
+  // `//host/x.png` 也以 `/` 开头，但它是协议相对 URL，会去任意站点取图。
+  // 在全局共享的 Wiki 里这就是一个追踪像素：对方拿得到查看者的 IP 和 referrer。
+  if (url.startsWith('//')) return null;
+  if (/^https?:\/\//i.test(url) || url.startsWith('/')) return url;
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(url)) return url;
+  return null;
 }
 
 function splitTableRow(line: string): string[] {
@@ -214,6 +228,7 @@ function parseBlocks(
   renderPaperRef?: PaperRefRenderer,
   renderCitation?: CitationRenderer,
   renderLibraryFigure?: LibraryFigureRenderer,
+  renderImage?: ImageRenderer,
 ): ReactNode[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n');
   const out: ReactNode[] = [];
@@ -287,6 +302,31 @@ function parseBlocks(
       continue;
     }
 
+    // Standard Markdown image. MinerU emits these paths after structure parsing;
+    // the structured-content API rewrites them to short-lived authorized URLs.
+    const imageMatch = RE_IMAGE_LINE.exec(line);
+    if (imageMatch) {
+      const alt = imageMatch[1] ?? '';
+      const src = imageMatch[2] ?? '';
+      const custom = renderImage?.(src, alt) ?? null;
+      const safeSrc = safeImageUrl(src);
+      const node = custom ?? (safeSrc ? (
+        <figure style={{ margin: '18px auto', width: 'fit-content', maxWidth: '100%' }}>
+          <img
+            src={safeSrc}
+            alt={alt}
+            loading="lazy"
+            decoding="async"
+            style={{ display: 'block', maxWidth: '100%', height: 'auto', borderRadius: 4 }}
+          />
+          {alt && <figcaption className="muted" style={{ marginTop: 7, fontSize: 11.5, textAlign: 'center' }}>{alt}</figcaption>}
+        </figure>
+      ) : null);
+      if (node !== null && node !== undefined && node !== false) out.push(<div key={key++}>{node}</div>);
+      i++;
+      continue;
+    }
+
     // 标题
     const h = RE_HEADING.exec(line);
     if (h) {
@@ -346,7 +386,7 @@ function parseBlocks(
         buf.push(q[1] ?? '');
         i++;
       }
-      out.push(<blockquote key={key++}>{parseBlocks(buf.join('\n'), onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure)}</blockquote>);
+      out.push(<blockquote key={key++}>{parseBlocks(buf.join('\n'), onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure, renderImage)}</blockquote>);
       continue;
     }
 
@@ -398,12 +438,13 @@ export function Markdown({
   renderPaperRef,
   renderLibraryFigure,
   renderCitation,
+  renderImage,
   className,
   style,
 }: MarkdownProps) {
   const nodes = useMemo(
-    () => parseBlocks(source, onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure),
-    [source, onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure],
+    () => parseBlocks(source, onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure, renderImage),
+    [source, onWikiLink, renderFigure, renderPaperRef, renderCitation, renderLibraryFigure, renderImage],
   );
   return (
     <div className={`md${className ? ` ${className}` : ''}`} style={style}>
