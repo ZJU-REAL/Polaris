@@ -97,6 +97,54 @@ async def test_batch_creates_one_batch_and_rotates_key(client):
 
 
 @pytest.mark.asyncio
+async def test_batch_rejects_paper_outside_target_library(client, queue_stub):
+    token = await register_and_login(client, email="batch-membership@example.com")
+    auth = {"Authorization": f"Bearer {token}"}
+    library_id, _paper_ids = await _target("batch-membership@example.com")
+    async with get_sessionmaker()() as session:
+        paper = new_paper(
+            dedup_key=f"doi:10.5555/outside-{uuid.uuid4().hex}",
+            title="Paper outside the managed library",
+            doi=f"10.5555/outside-{uuid.uuid4().hex}",
+        )
+        paper.doi = paper.dedup_key.removeprefix("doi:")
+        session.add(paper)
+        await session.commit()
+        paper_id = str(paper.id)
+        paper_doi = paper.doi
+        paper_title = paper.title
+
+    response = await client.post(
+        "/api/download-batches",
+        headers=auth,
+        json={"targets": [{"library_id": library_id, "paper_id": paper_id}]},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "LIBRARY_PAPER_NOT_FOUND"
+
+    api_key = (await client.post("/api/me/download-api-key", headers=auth)).json()["api_key"]
+    archived = await client.post(
+        "/api/download-client/archive",
+        headers={"X-Polaris-API-Key": api_key},
+        data={
+            "metadata": __import__("json").dumps(
+                {
+                    "library_id": library_id,
+                    "paper_id": paper_id,
+                    "nonce": "outside-library-nonce-001",
+                    "doi": paper_doi,
+                    "title": paper_title,
+                }
+            )
+        },
+        files={"pdf": ("outside.pdf", _pdf_bytes("outside"), "application/pdf")},
+    )
+    assert archived.status_code == 404
+    assert archived.json()["detail"] == "LIBRARY_PAPER_NOT_FOUND"
+
+
+@pytest.mark.asyncio
 async def test_batch_claim_upload_is_bound_and_idempotent(client, queue_stub):
     token = await register_and_login(client, email="archive-owner@example.com")
     auth = {"Authorization": f"Bearer {token}"}
