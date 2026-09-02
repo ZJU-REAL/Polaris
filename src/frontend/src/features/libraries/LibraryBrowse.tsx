@@ -925,7 +925,7 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
 
   return (
     <>
-      <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
+      <div className="row literature-workspace-tabs" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <Segmented<BrowseTab>
           options={[
             { v: 'discover', label: tr('发现文献', 'Discover') },
@@ -969,7 +969,7 @@ export function LibraryBrowse({ libraryId }: { libraryId: string }) {
       </div>
 
       <div
-        className="card split-card"
+        className="card split-card literature-workspace-card"
       >
         {tab === 'discover' ? (
           <LiteratureDiscoveryPanel libraryId={libraryId} readOnly />

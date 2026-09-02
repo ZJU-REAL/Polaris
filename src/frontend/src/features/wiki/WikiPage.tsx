@@ -162,7 +162,7 @@ export function WikiWorkbench({
 
   return (
     <>
-      <div className="row" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
+      <div className="row literature-workspace-tabs" style={{ marginBottom: 14, justifyContent: 'space-between' }}>
         <Segmented<WikiTab>
           options={[
             ...(libraryId ? [{ v: 'discover' as const, label: tr('发现文献', 'Discover') }] : []),
@@ -210,7 +210,7 @@ export function WikiWorkbench({
       </div>
 
       <div
-        className="card"
+        className="card literature-workspace-card"
         style={{
           overflow: 'hidden',
           display: 'flex',

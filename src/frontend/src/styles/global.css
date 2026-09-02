@@ -1689,6 +1689,29 @@ input[type="range"] { accent-color: var(--accent); cursor: pointer; }
 /* ============================================================
    主区变窄时（多半是 PolarisBuddy 拉开了，而不是窗口变小）
    ============================================================ */
+@container mainarea (max-width: 1180px) {
+  /* 文献工作台按真实内容区宽度重排。视口仍宽但侧栏或 Buddy 占位时，
+     继续保留左右双栏会把详情标题和导航标签压成逐字换行。 */
+  .literature-workspace-card .split { flex-direction: column; }
+  .literature-workspace-card .split > .split-list {
+    width: 100%; max-height: 44vh; flex-shrink: 0;
+    border-right: 0; border-bottom: 0.5px solid var(--border);
+  }
+  .literature-workspace-tabs {
+    flex-wrap: nowrap; min-width: 0; overflow-x: auto;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .literature-workspace-tabs::-webkit-scrollbar,
+  .literature-workspace-tabs .segmented::-webkit-scrollbar { display: none; }
+  .literature-workspace-tabs .segmented {
+    max-width: 100%; overflow-x: auto; flex-shrink: 0;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .literature-workspace-tabs .segmented > button {
+    flex-shrink: 0; white-space: nowrap;
+  }
+}
+
 @container mainarea (max-width: 900px) {
   /* 统计卡：两列比四列挤成竖排单字强得多 */
   .dash-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
