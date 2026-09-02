@@ -18,6 +18,7 @@ import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { PaperAssetPanel } from '../shared/PaperAssetPanel';
 import { toast } from '../../components/ui/Toast';
 import { PaperIndexStatusRow } from '../../components/ui/PaperIndexStatus';
+import { canSendToExtension, sendLibraryPapersToExtension } from '../../lib/extension-download-batches';
 import { Markdown, type WikiLinkHandler } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import {
@@ -53,6 +54,7 @@ import { PaperBatchProgressModal } from '../library/PaperBatchProgressModal';
 import { paperDragProps } from '../assistant/paperDrag';
 import { clampLines } from '../../lib/clamp';
 import { splitPaperInput } from './paperInput';
+import { ExtensionBatchHistoryModal } from './ExtensionBatchHistoryModal';
 
 /* ============================================================
    论文库 Tab：左列表（过滤/搜索/排序/加载更多 + 添加文献/导出）
@@ -721,6 +723,8 @@ function PaperDetailPane({
   onDeleted,
   compiling,
   onRecompile,
+  sendingToExtension,
+  onSendToExtension,
 }: {
   paperId: string;
   pid: string;
@@ -737,6 +741,8 @@ function PaperDetailPane({
   /** 这篇正在 AI 编译（状态存在列表页，切走再切回来照样是「编译中」） */
   compiling: boolean;
   onRecompile: (paperId: string) => void;
+  sendingToExtension: boolean;
+  onSendToExtension: (paper: PaperDetail) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -944,6 +950,21 @@ function PaperDetailPane({
             <Icon name="link" size={13} />
             {tr('原文链接', 'Source link')}
           </a>
+        )}
+        {libraryId && canManage && (
+          <button
+            className="btn btn-ghost sm"
+            disabled={sendingToExtension || !canSendToExtension(paper.status)}
+            title={
+              canSendToExtension(paper.status)
+                ? undefined
+                : tr('这篇还是候选，先收录进库才能推送', 'Still a candidate; include it in the library first')
+            }
+            onClick={() => onSendToExtension(paper)}
+          >
+            <Icon name={sendingToExtension ? 'refresh' : 'share'} size={13} style={sendingToExtension ? { animation: 'spin 1s linear infinite' } : undefined} />
+            {tr('推送扩展', 'Send to extension')}
+          </button>
         )}
           {!libraryId && <PdfUploadButton paperId={paper.id} pdfAvailable={paper.pdf_available} />}
         </div>
@@ -1230,6 +1251,7 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [trashOpen, setTrashOpen] = useState(false);
+  const [extensionHistoryOpen, setExtensionHistoryOpen] = useState(false);
   const queryClient = useQueryClient();
 
   // 切换方向/视图/搜索时退出多选
@@ -1284,6 +1306,35 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
     },
     onError: (e) =>
       toast(`${tr('导出失败：', 'Export failed: ')}${e instanceof Error ? e.message : String(e)}`, 'error'),
+  });
+
+  const extensionBatchMutation = useMutation({
+    mutationFn: (targets: PaperRead[]) => {
+      if (!libraryId) throw new Error('LIBRARY_REQUIRED');
+      return sendLibraryPapersToExtension(libraryId, targets);
+    },
+    onSuccess: ({ batch, acknowledged, dispatchedCount }) => {
+      const skipped = batch.items.filter((item) => item.status === 'skipped').length;
+      if (dispatchedCount === 0) {
+        toast(tr('所选论文均已有可读 PDF，未发送重复下载任务', 'Every selected paper already has a readable PDF; no duplicate task was sent'), 'ok');
+      } else if (acknowledged) {
+        toast(
+          tr(
+            `已向扩展推送 1 个任务，共 ${dispatchedCount} 篇${skipped ? `；另有 ${skipped} 篇已有 PDF` : ''}`,
+            `Sent one extension batch with ${dispatchedCount} papers${skipped ? `; ${skipped} already had PDFs` : ''}`,
+          ),
+          'ok',
+        );
+      } else {
+        toast(tr('批次已保存；扩展未即时确认，可稍后通过 API Key 认领', 'The batch was saved; the extension can claim it later with the API key'), 'info');
+      }
+      setSelected(new Set());
+      void queryClient.invalidateQueries({ queryKey: ['download-batches', libraryId] });
+    },
+    onError: (error) => toast(
+      `${tr('无法创建扩展任务：', 'Could not create extension batch: ')}${error instanceof Error ? error.message : String(error)}`,
+      'error',
+    ),
   });
 
   const semanticActive = mode === 'semantic' && q.length > 0;
@@ -1697,7 +1748,23 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
                 disabled={selected.size === 0}
                 items={citationExportItems((format) => bulkExportMutation.mutate(format))}
               />
+              {libraryId && canManage && (
+                <button
+                  className="btn btn-soft sm"
+                  disabled={selected.size === 0 || extensionBatchMutation.isPending}
+                  onClick={() => extensionBatchMutation.mutate(papers.filter((paper) => selected.has(paper.id)))}
+                >
+                  <Icon name={extensionBatchMutation.isPending ? 'refresh' : 'share'} size={12} style={extensionBatchMutation.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
+                  {tr('推送扩展', 'Send to extension')}
+                </button>
+              )}
             </>
+          )}
+          {libraryId && canManage && (
+            <button className="btn btn-ghost sm" onClick={() => setExtensionHistoryOpen(true)}>
+              <Icon name="clock" size={13} />
+              {tr('扩展任务', 'Extension batches')}
+            </button>
           )}
           <button
             className="btn btn-ghost sm"
@@ -1725,6 +1792,8 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
             onDeleted={() => onSelect('')}
             compiling={compilePending.has(selectedId)}
             onRecompile={recompile}
+            sendingToExtension={extensionBatchMutation.isPending}
+            onSendToExtension={(paper) => extensionBatchMutation.mutate([paper])}
           />
         ) : (
           <div className="empty" style={{ margin: 'auto' }}>
@@ -1738,6 +1807,13 @@ export function PapersTab({ pid, libraryId, canManage = false, selectedId, onSel
 
       {/* —— 回收站 —— */}
       <PapersTrashModal pid={pid ?? ''} libraryId={libraryId} open={trashOpen} onClose={() => setTrashOpen(false)} />
+      {libraryId && canManage && (
+        <ExtensionBatchHistoryModal
+          libraryId={libraryId}
+          open={extensionHistoryOpen}
+          onClose={() => setExtensionHistoryOpen(false)}
+        />
+      )}
     </div>
   );
 }
