@@ -4,9 +4,14 @@
   "version": "0.0.0",
   "packageManager": "pnpm@10.34.5",
   "scripts": {
-    "lint": "pnpm -r --if-present run lint",
+    "lint": "pnpm run vendor:types && pnpm -r --if-present run lint",
     "build": "pnpm -r --if-present run build",
-    "test": "pnpm -r --if-present run test"
+    "test": "pnpm -r --if-present run test",
+    "vendor:types": "tsc -b vendor/deepseek-cordis/cordis vendor/deepseek-cordis/cosmokit vendor/deepseek-cordis/schemastery vendor/deepseek-cordis/loader vendor/deepseek-cordis/include vendor/deepseek-cordis/group vendor/deepseek-cordis/timer vendor/deepseek-cordis/logger-console"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.4"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

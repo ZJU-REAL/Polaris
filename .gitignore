@@ -48,3 +48,7 @@ src/backend/build/
 
 # electron-builder output (src/desktop/dist is covered by the global dist/ rule)
 src/desktop/release/
+
+# vendored packages: declaration output is built by `pnpm run vendor:types`
+vendor/deepseek-cordis/*/lib/
+vendor/deepseek-cordis/*/tsconfig.tsbuildinfo
