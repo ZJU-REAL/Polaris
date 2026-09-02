@@ -24,6 +24,13 @@ from app.services.affiliations import (
     get_affiliation_extraction_mode,
     parse_and_strip_affiliation_block,
 )
+from app.services.ai_evidence_context import (
+    AIEvidenceBundle,
+    append_evidence_manifest,
+    build_paper_evidence_context,
+    citation_refs,
+    evidence_guidance,
+)
 from app.services.concepts import link_paper_concepts
 from app.services.figure_annotate import (
     FIGURE_KIND_ZH,
@@ -152,6 +159,7 @@ class CompiledWiki:
 async def compile_paper(
     paper: Paper,
     *,
+    session: AsyncSession | None = None,
     llm: LLMRouter | None = None,
     user_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
@@ -173,6 +181,16 @@ async def compile_paper(
     """
     llm = llm or get_llm_router()
     user_prompt, images = build_compile_prompt(paper)
+    evidence_bundle: AIEvidenceBundle | None = None
+    if session is not None and library_id is not None:
+        evidence_bundle = await build_paper_evidence_context(
+            session,
+            paper=paper,
+            library_ids=[library_id],
+            char_budget=FULLTEXT_PROMPT_CHARS,
+        )
+        if evidence_bundle.context:
+            user_prompt += evidence_guidance(evidence_bundle.as_dict())
     if collect_affiliations:
         user_prompt += AFFIL_COMPILE_INSTRUCTION
     valid = {int(f["index"]) for f in (paper.figures or [])}
@@ -213,6 +231,14 @@ async def compile_paper(
         # 有配图但一张都没插 → 带强指令重写一次；仍失败则接受纯文字稿（图库里还能看图）
         if not images or FIGURE_MARKER_RE.search(content):
             break
+    if evidence_bundle is not None and evidence_bundle.manifest:
+        valid_refs = {
+            (int(item["article_no"]), int(item["sentence_no"]))
+            for item in evidence_bundle.manifest
+        }
+        if any(ref not in valid_refs for ref in citation_refs(content)):
+            raise ValueError("LIBRARIAN_EVIDENCE_CITATIONS_INVALID")
+        content = append_evidence_manifest(content, evidence_bundle)
     return CompiledWiki(content=content, model=model, author_affiliations=author_affiliations)
 
 
@@ -254,6 +280,7 @@ async def recompile_paper(
     collect_affs = mode == "on_compile" and not paper.affiliations
     compiled = await compile_paper(
         paper,
+        session=session,
         llm=llm,
         user_id=user_id,
         project_id=project_id,

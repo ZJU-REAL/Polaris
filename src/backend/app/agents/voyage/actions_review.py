@@ -148,7 +148,10 @@ async def _complete_json(
     for _attempt in range(_MAX_JSON_ATTEMPTS):
         result = await ctx.llm.complete(
             "review",
-            [Message(role="system", content=system), Message(role="user", content=user)],
+            [
+                Message(role="system", content=system + ctx.evidence_guidance()),
+                Message(role="user", content=user),
+            ],
             images=images,
             user_id=ctx.run.created_by,
             project_id=ctx.run.project_id,
