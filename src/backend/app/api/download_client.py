@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.queue import TaskQueue, get_task_queue
 from app.models.download_client import DownloadApiKey, DownloadBatch, DownloadBatchItem
-from app.models.library_direction import DirectionLibrary
+from app.models.library_direction import DirectionLibrary, LibraryPaper
 from app.models.paper import Paper
 from app.models.user import User
 from app.schemas.download_client import (
@@ -40,6 +40,7 @@ router = APIRouter(tags=["download-client"])
 SCOPES = ["download_batch:read", "download_batch:update", "paper_pdf:upload"]
 LEASE_MINUTES = 10
 TERMINAL_ITEM_STATUSES = {"uploaded", "skipped", "failed", "blocked", "cancelled"}
+DOWNLOADABLE_LIBRARY_STATUSES = ("scored", "fetched", "compiled", "included")
 
 
 def _hash_key(value: str) -> str:
@@ -102,6 +103,20 @@ async def _require_managed_library(
     if not await libraries_service.can_manage_library(session, user=user, library=library):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="DOWNLOAD_LIBRARY_FORBIDDEN")
     return library
+
+
+async def _require_library_paper(
+    session: AsyncSession, *, library_id: uuid.UUID, paper_id: uuid.UUID
+) -> None:
+    membership_id = await session.scalar(
+        select(LibraryPaper.id).where(
+            LibraryPaper.library_id == library_id,
+            LibraryPaper.paper_id == paper_id,
+            LibraryPaper.status.in_(DOWNLOADABLE_LIBRARY_STATUSES),
+        )
+    )
+    if membership_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_PAPER_NOT_FOUND")
 
 
 async def download_client_user(
@@ -296,6 +311,9 @@ async def create_download_batch(
         paper = await session.get(Paper, target.paper_id)
         if paper is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+        await _require_library_paper(
+            session, library_id=target.library_id, paper_id=paper.id
+        )
         item = DownloadBatchItem(
             batch_id=batch.id,
             created_by=user.id,
@@ -601,6 +619,7 @@ async def upload_downloaded_pdf(
     paper = await session.get(Paper, item.paper_id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+    await _require_library_paper(session, library_id=library.id, paper_id=paper.id)
     content = await pdf.read(asset_service.MAX_PDF_BYTES + 1)
     expected_sha256 = (item.result or {}).get("local_sha256") or x_polaris_pdf_sha256
     try:
@@ -657,6 +676,7 @@ async def archive_downloaded_pdf(
     paper = await session.get(Paper, archive.paper_id)
     if paper is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PAPER_NOT_FOUND")
+    await _require_library_paper(session, library_id=library.id, paper_id=paper.id)
     if not _identity_matches(archive, paper):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="DOWNLOAD_ARCHIVE_IDENTITY_MISMATCH"

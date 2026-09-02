@@ -97,6 +97,54 @@ async def test_batch_creates_one_batch_and_rotates_key(client):
 
 
 @pytest.mark.asyncio
+async def test_batch_rejects_paper_outside_target_library(client, queue_stub):
+    token = await register_and_login(client, email="batch-membership@example.com")
+    auth = {"Authorization": f"Bearer {token}"}
+    library_id, _paper_ids = await _target("batch-membership@example.com")
+    async with get_sessionmaker()() as session:
+        paper = new_paper(
+            dedup_key=f"doi:10.5555/outside-{uuid.uuid4().hex}",
+            title="Paper outside the managed library",
+            doi=f"10.5555/outside-{uuid.uuid4().hex}",
+        )
+        paper.doi = paper.dedup_key.removeprefix("doi:")
+        session.add(paper)
+        await session.commit()
+        paper_id = str(paper.id)
+        paper_doi = paper.doi
+        paper_title = paper.title
+
+    response = await client.post(
+        "/api/download-batches",
+        headers=auth,
+        json={"targets": [{"library_id": library_id, "paper_id": paper_id}]},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "LIBRARY_PAPER_NOT_FOUND"
+
+    api_key = (await client.post("/api/me/download-api-key", headers=auth)).json()["api_key"]
+    archived = await client.post(
+        "/api/download-client/archive",
+        headers={"X-Polaris-API-Key": api_key},
+        data={
+            "metadata": __import__("json").dumps(
+                {
+                    "library_id": library_id,
+                    "paper_id": paper_id,
+                    "nonce": "outside-library-nonce-001",
+                    "doi": paper_doi,
+                    "title": paper_title,
+                }
+            )
+        },
+        files={"pdf": ("outside.pdf", _pdf_bytes("outside"), "application/pdf")},
+    )
+    assert archived.status_code == 404
+    assert archived.json()["detail"] == "LIBRARY_PAPER_NOT_FOUND"
+
+
+@pytest.mark.asyncio
 async def test_batch_claim_upload_is_bound_and_idempotent(client, queue_stub):
     token = await register_and_login(client, email="archive-owner@example.com")
     auth = {"Authorization": f"Bearer {token}"}
@@ -221,3 +269,45 @@ async def test_direct_archive_rejects_wrong_identity(client, queue_stub):
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "DOWNLOAD_ARCHIVE_IDENTITY_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_a_paper_removed_from_the_library(client, queue_stub):
+    """批次建好之后论文被移出库，上传那一步也要拦住。
+
+    三处成员校验里，建批次和归档都有用例，只有 upload 没有——把那一行删掉，
+    整套仍然全绿。而 upload 恰恰是扩展仅凭 API key 就能打的那条路：租约在手、
+    论文已被移出或退回候选，PDF 照样能写进去，没有任何东西会报错。
+    """
+    token = await register_and_login(client, email="upload-membership@example.com")
+    auth = {"Authorization": f"Bearer {token}"}
+    library_id, paper_ids = await _target("upload-membership@example.com")
+    created = await client.post(
+        "/api/download-batches",
+        headers=auth,
+        json={"targets": [{"library_id": library_id, "paper_id": paper_ids[0]}]},
+    )
+    assert created.status_code == 200
+    api_key = (await client.post("/api/me/download-api-key", headers=auth)).json()["api_key"]
+    key_headers = {"X-Polaris-API-Key": api_key}
+    item = (await client.post("/api/download-client/items/claim", headers=key_headers)).json()
+    assert item["id"]
+
+    # 租约拿到之后，论文退回候选（等价于被移出可下载范围）
+    async with get_sessionmaker()() as session:
+        membership = await session.scalar(
+            select(LibraryPaper).where(
+                LibraryPaper.library_id == uuid.UUID(library_id),
+                LibraryPaper.paper_id == uuid.UUID(paper_ids[0]),
+            )
+        )
+        membership.status = "candidate"
+        await session.commit()
+
+    uploaded = await client.post(
+        f"/api/download-client/items/{item['id']}/pdf",
+        headers={**key_headers, "X-Polaris-Lease-Token": item["lease_token"]},
+        files={"pdf": ("x.pdf", _pdf_bytes("after-removal"), "application/pdf")},
+    )
+    assert uploaded.status_code == 404, uploaded.text
+    assert uploaded.json()["detail"] == "LIBRARY_PAPER_NOT_FOUND"
