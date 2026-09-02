@@ -10,7 +10,12 @@ import { cpSync } from 'node:fs';
 function copyPdfAssets(): Plugin {
   for (const dir of ['cmaps', 'standard_fonts']) {
     try {
-      cpSync(`node_modules/pdfjs-dist/${dir}`, `public/pdfjs/${dir}`, { recursive: true });
+      // dereference: pnpm 下 node_modules/pdfjs-dist 是指向 store 的符号链接，
+      // 默认拷贝会把链接原样复制进 public/，打包后成为悬空链接。
+      cpSync(`node_modules/pdfjs-dist/${dir}`, `public/pdfjs/${dir}`, {
+        recursive: true,
+        dereference: true,
+      });
     } catch (e) {
       console.warn(`[copy-pdf-assets] ${dir} 拷贝失败:`, (e as Error)?.message);
     }

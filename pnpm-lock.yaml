@@ -58,6 +58,9 @@ importers:
       lib0:
         specifier: ^0.2.117
         version: 0.2.117
+      pdfjs-dist:
+        specifier: 4.8.69
+        version: 4.8.69
       react:
         specifier: ^18.3.1
         version: 18.3.1

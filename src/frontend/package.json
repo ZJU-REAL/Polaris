@@ -21,6 +21,7 @@
     "codemirror": "^6.0.2",
     "katex": "^0.17.0",
     "lib0": "^0.2.117",
+    "pdfjs-dist": "4.8.69",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-pdf": "^9.2.1",
