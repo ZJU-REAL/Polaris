@@ -1,0 +1,45 @@
+# Workspace-level Node checks for the plugin kernel line of work: the vendored
+# cordis runtime contract test and (as packages appear) kernel lint/tests.
+# Desktop/frontend build coverage lives in desktop-build.yml.
+name: node-ci
+
+on:
+  pull_request:
+    paths:
+      - "vendor/**"
+      - "src/kernel/**"
+      - "spikes/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/node-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # packageManager in the root package.json pins the pnpm version for corepack.
+      - name: Enable pnpm
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Vendored runtime contract test
+        run: pnpm --dir vendor/contract-smoke run test
+
+      - name: Kernel checks
+        run: |
+          if [ -d src/kernel ]; then
+            pnpm --dir src/kernel --if-present run lint
+            pnpm --dir src/kernel --if-present run test
+          fi

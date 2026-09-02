@@ -2,5 +2,6 @@ packages:
   - src/frontend
   - src/desktop
   - src/kernel
-  - vendor/*
+  - vendor/deepseek-cordis/*
+  - vendor/contract-smoke
   - spikes/*

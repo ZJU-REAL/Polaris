@@ -1,0 +1,25 @@
+{
+  // Polaris stand-in for the deepseek-harness repo-root tsconfig.base.json that
+  // the vendored packages' tsconfigs extend (they resolve ../../tsconfig.base.json,
+  // which lands here). Mirrors the upstream compiler options relevant to source
+  // consumption; the upstream project-graph flags (composite/paths/references)
+  // are intentionally dropped because Polaris consumes the TypeScript sources
+  // directly via esbuild/vitest instead of building lib/ output.
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "types": ["node"]
+  }
+}
