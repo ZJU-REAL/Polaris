@@ -215,8 +215,13 @@ def _resolution(
     status: str,
     anchor_type: str,
     quoted_text: str,
+    chunk: PaperContentChunk | None = None,
 ) -> EvidenceResolution:
-    page_start, page_end, rects = _locator_values(anchor)
+    if chunk is None:
+        page_start, page_end, rects = _locator_values(anchor)
+    else:
+        page_start, page_end = chunk.page_start, chunk.page_end
+        rects = chunk.rects if isinstance(chunk.rects, list) else []
     return EvidenceResolution(
         paper_id=anchor.paper_id,
         anchor_id=anchor.id,
@@ -228,6 +233,7 @@ def _resolution(
         page_start=page_start,
         page_end=page_end,
         rects=rects,
+        section_path=(chunk.section_path or []) if chunk is not None else [],
         href=_href(anchor.paper_id, anchor.id),
     )
 
@@ -263,24 +269,34 @@ async def resolve_evidence_anchor(
             status="exact",
             anchor_type=anchor.anchor_type,
             quoted_text=anchor.quoted_text,
+            chunk=current,
         )
     needle = anchor.normalized_text
+    matches: list[PaperContentChunk] = []
     for chunk in chunks:
         normalized = normalize_evidence_text(chunk.text)
-        if needle and (needle in normalized or normalized in needle):
-            status = (
-                anchor.anchor_type
-                if anchor.anchor_type in {"sentence", "paragraph"}
-                else "chunk"
-            )
-            return _resolution(
-                anchor,
-                status=status,
-                anchor_type=status,
-                quoted_text=anchor.quoted_text,
-            )
+        if needle and needle in normalized:
+            matches.append(chunk)
+    if len(matches) == 1:
+        matched = matches[0]
+        fallback = (
+            anchor.anchor_type if anchor.anchor_type in {"sentence", "paragraph"} else "chunk"
+        )
+        return _resolution(
+            anchor,
+            status=fallback,
+            anchor_type=fallback,
+            quoted_text=anchor.quoted_text,
+            chunk=matched,
+        )
     if current is not None:
-        return _resolution(anchor, status="chunk", anchor_type="chunk", quoted_text=current.text)
+        return _resolution(
+            anchor,
+            status="chunk",
+            anchor_type="chunk",
+            quoted_text=current.text,
+            chunk=current,
+        )
     return EvidenceResolution(
         paper_id=anchor.paper_id,
         anchor_id=anchor.id,

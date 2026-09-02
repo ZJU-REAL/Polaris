@@ -14,6 +14,7 @@ import { CompileBadge } from '../../components/ui/CompileBadge';
 import { citationExportItems, ExportDropdown } from '../../components/ui/ExportDropdown';
 import { PaperReader } from './PaperReader';
 import { readerFrom } from '../reading/shared';
+import { evidenceCitationRenderer, parseEvidenceArtifact } from '../reading/evidenceArtifact';
 import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { PaperAssetPanel } from '../shared/PaperAssetPanel';
 import { toast } from '../../components/ui/Toast';
@@ -810,6 +811,19 @@ function PaperDetailPane({
     },
     [figures, paperId],
   );
+  const evidenceArtifact = useMemo(
+    () => parseEvidenceArtifact(paper?.wiki_content ?? ''),
+    [paper?.wiki_content],
+  );
+  const renderEvidenceCitation = useMemo(
+    () => evidenceCitationRenderer({
+      libraryId,
+      fallbackPaperId: paperId,
+      title: paper?.title ?? '',
+      refs: evidenceArtifact.refs,
+    }),
+    [evidenceArtifact.refs, libraryId, paper?.title, paperId],
+  );
 
   if (isLoading) return <div className="empty">{tr('加载论文详情…', 'Loading paper…')}</div>;
   if (isError || !paper) {
@@ -1123,7 +1137,12 @@ function PaperDetailPane({
                 </button>
               </div>
             </div>
-            <Markdown source={paper.wiki_content} onWikiLink={onWikiLink} renderFigure={renderFigure} />
+            <Markdown
+              source={evidenceArtifact.body}
+              onWikiLink={onWikiLink}
+              renderFigure={renderFigure}
+              renderCitation={renderEvidenceCitation}
+            />
           </>
         ) : (
           <EmptyState
@@ -1138,6 +1157,7 @@ function PaperDetailPane({
       {readerOpen && (
         <PaperReader
           paper={paper}
+          libraryId={libraryId}
           renderFigure={renderFigure}
           onWikiLink={onWikiLink}
           onFilterAuthor={(name) => {

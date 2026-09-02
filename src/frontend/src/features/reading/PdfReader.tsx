@@ -34,6 +34,8 @@ import { Markdown } from '../../lib/markdown';
 import { HIGHLIGHT_COLORS, HIGHLIGHT_STYLES, highlightColorMeta } from './shared';
 import { PdfUploadButton } from '../shared/PdfUploadButton';
 import { resolveStructuredResourceUrls } from './structuredContent';
+import { findNormalizedTextRanges, findPreciseNormalizedTextRange } from './evidenceText';
+import './evidence.css';
 
 /* ============================================================
    自建 PDF 阅读器（pdf.js / react-pdf）：
@@ -70,6 +72,9 @@ export interface JumpTarget {
   id: string;
   page: number;
   nonce: number;
+  rects?: HighlightRect[] | null;
+  quote?: string | null;
+  sectionPath?: string[] | null;
 }
 
 /** 阅读器模式：PDF 标注、浏览器标准阅读器、解析后的结构化原文。 */
@@ -102,6 +107,60 @@ interface Pending {
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+
+function rangeRects(pageElement: HTMLElement, range: Range): HighlightRect[] {
+  const pageRect = pageElement.getBoundingClientRect();
+  if (pageRect.width <= 0 || pageRect.height <= 0) return [];
+  return Array.from(range.getClientRects())
+    .filter((rect) => rect.width > 1 && rect.height > 1)
+    .map((rect) => ({
+      x0: clamp01((rect.left - pageRect.left) / pageRect.width),
+      y0: clamp01((rect.top - pageRect.top) / pageRect.height),
+      x1: clamp01((rect.right - pageRect.left) / pageRect.width),
+      y1: clamp01((rect.bottom - pageRect.top) / pageRect.height),
+    }));
+}
+
+function rectCenter(rects: HighlightRect[]) {
+  if (!rects.length) return null;
+  const x0 = Math.min(...rects.map((rect) => rect.x0));
+  const y0 = Math.min(...rects.map((rect) => rect.y0));
+  const x1 = Math.max(...rects.map((rect) => rect.x1));
+  const y1 = Math.max(...rects.map((rect) => rect.y1));
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+}
+
+function evidenceTextRects(
+  pageElement: HTMLElement,
+  quote: string,
+  storedRects?: HighlightRect[] | null,
+): HighlightRect[] {
+  const textLayer = pageElement.querySelector<HTMLElement>('.react-pdf__Page__textContent, .textLayer');
+  if (!textLayer || !quote.trim()) return [];
+  const candidates = findNormalizedTextRanges(textLayer, quote)
+    .map((range) => rangeRects(pageElement, range))
+    .filter((rects) => rects.length > 0);
+  if (candidates.length === 1) return candidates[0]!;
+  const target = rectCenter(storedRects ?? []);
+  if (!target || candidates.length < 2) return [];
+  const ranked = candidates
+    .map((rects) => {
+      const center = rectCenter(rects)!;
+      return { rects, distance: Math.hypot(center.x - target.x, center.y - target.y) };
+    })
+    .sort((left, right) => left.distance - right.distance);
+  return ranked[1] && ranked[1].distance - ranked[0]!.distance < 0.015
+    ? []
+    : ranked[0]!.rects;
+}
+
+function usableStoredRects(rects?: HighlightRect[] | null): HighlightRect[] {
+  return (rects ?? []).filter((rect) =>
+    [rect.x0, rect.y0, rect.x1, rect.y1].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)
+    && rect.x1 > rect.x0
+    && rect.y1 > rect.y0,
+  );
+}
 
 /**
  * 只从选区内「真正有文字的文本节点」收集矩形。
@@ -217,6 +276,10 @@ export function PdfReader({
   // 只渲染视口附近的页：每挂一个 <Page> 就要取那一页的数据，全挂等于把整份 PDF 下完，
   // 分段加载就白做了。未渲染的页留一个等高占位块，滚动条长度和跳转位置都不受影响。
   const [visiblePages, setVisiblePages] = useState<Set<number>>(() => new Set([1]));
+  const [evidenceRects, setEvidenceRects] = useState<HighlightRect[]>([]);
+  const [evidencePage, setEvidencePage] = useState<number | null>(null);
+  const [pageRenderTick, setPageRenderTick] = useState(0);
+  const structuredContentRef = useRef<HTMLDivElement | null>(null);
   const pageHeights = useRef<Map<number, number>>(new Map()); // 渲染过的实际高度，占位块照它来
   const [pending, setPending] = useState<Pending | null>(null);
   const [pendingStyle, setPendingStyle] = useState<HighlightStyle>('highlight');
@@ -501,12 +564,105 @@ export function PdfReader({
     [pending, pendingStyle, onCreateHighlight],
   );
 
-  // —— 跳转：定位到目标页并滚动 ——
+  // —— 证据跳转：PDF 文本层优先，存储坐标兜底，最后才切结构化原文 ——
   useEffect(() => {
     if (!jumpTarget) return;
-    const el = pageWrapRefs.current.get(jumpTarget.page);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setMode('annotate');
+    setEvidenceRects([]);
+    setEvidencePage(null);
+    setVisiblePages((current) => {
+      if (current.has(jumpTarget.page)) return current;
+      const next = new Set(current);
+      next.add(jumpTarget.page);
+      return next;
+    });
+    pageWrapRefs.current.get(jumpTarget.page)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [jumpTarget]);
+
+  useEffect(() => {
+    if (!jumpTarget?.quote || mode !== 'annotate') return;
+    let cancelled = false;
+    let frame = 0;
+    let attempts = 0;
+    const locate = () => {
+      if (cancelled) return;
+      const pageElement = pageWrapRefs.current.get(jumpTarget.page);
+      const rects = pageElement
+        ? evidenceTextRects(pageElement, jumpTarget.quote ?? '', jumpTarget.rects)
+        : [];
+      if (rects.length) {
+        setEvidenceRects(rects);
+        setEvidencePage(jumpTarget.page);
+        pageElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 180) {
+        frame = requestAnimationFrame(locate);
+        return;
+      }
+      const stored = usableStoredRects(jumpTarget.rects);
+      if (stored.length) {
+        setEvidenceRects(stored);
+        setEvidencePage(jumpTarget.page);
+        pageElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (hasStructuredContent) {
+        setMode('structured');
+        toast(
+          tr(
+            'PDF 文本层无法可靠定位该句，已切换到结构化原文。',
+            'The PDF text layer could not resolve the sentence reliably. Switched to structured text.',
+          ),
+          'info',
+        );
+      }
+    };
+    frame = requestAnimationFrame(locate);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [hasStructuredContent, jumpTarget, mode, pageRenderTick]);
+
+  useEffect(() => {
+    if (!jumpTarget?.quote || mode !== 'structured' || !structuredQuery.data) return;
+    let cancelled = false;
+    let frame = 0;
+    let attempts = 0;
+    const registry = (CSS as unknown as {
+      highlights?: { set: (name: string, value: unknown) => void; delete: (name: string) => boolean };
+    }).highlights;
+    const HighlightCtor = (window as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+    const locate = () => {
+      if (cancelled) return;
+      const root = structuredContentRef.current;
+      const range = root
+        ? findPreciseNormalizedTextRange(root, jumpTarget.quote ?? '', {
+            sectionPath: jumpTarget.sectionPath,
+          })
+        : null;
+      if (!range) {
+        attempts += 1;
+        if (attempts < 120) frame = requestAnimationFrame(locate);
+        return;
+      }
+      const element = range.startContainer.parentElement;
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (registry && HighlightCtor) {
+        registry.set('polaris-evidence-source', new HighlightCtor(range));
+      } else {
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+    };
+    frame = requestAnimationFrame(locate);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      registry?.delete('polaris-evidence-source');
+    };
+  }, [jumpTarget, mode, structuredQuery.data]);
 
   // 按页分组的划线
   const highlightsByPage = useMemo(() => {
@@ -654,7 +810,7 @@ export function PdfReader({
           className="scroll paper-reader-body"
           style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '28px clamp(20px, 6vw, 72px)', background: 'var(--surface)' }}
         >
-          <div style={{ width: 'min(100%, 880px)', margin: '0 auto' }}>
+          <div ref={structuredContentRef} style={{ width: 'min(100%, 880px)', margin: '0 auto' }}>
             {hasStructuredContent && structuredQuery.data ? (
               structuredQuery.data.manifest.content_format === 'mineru_markdown' ? (
                 <Markdown source={structuredQuery.data.content} />
@@ -754,7 +910,10 @@ export function PdfReader({
                     width={renderWidth}
                     renderTextLayer
                     renderAnnotationLayer={false}
-                    onRenderSuccess={({ height }) => pageHeights.current.set(pageNo, height)}
+                    onRenderSuccess={({ height }) => {
+                      pageHeights.current.set(pageNo, height);
+                      if (jumpTarget?.page === pageNo) setPageRenderTick((value) => value + 1);
+                    }}
                     loading={
                       <div
                         className="pulse"
@@ -769,6 +928,23 @@ export function PdfReader({
                 )}
                 {/* 标注覆盖层：容器不吃事件，标注单独可点。按样式渲染高亮块/下划线/波浪线 */}
                 <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+                  {evidencePage === pageNo && evidenceRects.map((rect, index) => (
+                    <div
+                      key={`evidence-${jumpTarget?.id ?? 'source'}-${index}`}
+                      aria-hidden="true"
+                      style={{
+                        position: 'absolute',
+                        left: `${rect.x0 * 100}%`,
+                        top: `${rect.y0 * 100}%`,
+                        width: `${(rect.x1 - rect.x0) * 100}%`,
+                        height: `${(rect.y1 - rect.y0) * 100}%`,
+                        borderRadius: 2,
+                        background: 'rgba(250, 204, 21, 0.42)',
+                        boxShadow: '0 0 0 1px rgba(202, 138, 4, 0.72)',
+                        mixBlendMode: 'multiply',
+                      }}
+                    />
+                  ))}
                   {pageHls.map((h) => {
                     const meta = highlightColorMeta(h.color);
                     const active = h.id === activeHighlightId;

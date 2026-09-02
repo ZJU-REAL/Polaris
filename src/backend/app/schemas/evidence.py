@@ -32,7 +32,9 @@ class EvidenceResolution(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     paper_id: uuid.UUID
+    library_id: uuid.UUID | None = None
     anchor_id: uuid.UUID | None
+    content_version_id: uuid.UUID | None = None
     status: EvidenceFallback
     anchor_type: EvidenceAnchorType
     quoted_text: str
@@ -41,4 +43,6 @@ class EvidenceResolution(BaseModel):
     page_start: int | None = None
     page_end: int | None = None
     rects: list[dict[str, float]] = Field(default_factory=list)
+    section_path: list[str] = Field(default_factory=list)
+    parser: str | None = None
     href: str

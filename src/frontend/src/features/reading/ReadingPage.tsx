@@ -7,6 +7,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import {
   api,
+  ApiError,
   type HighlightCreateInput,
   type HighlightRead,
   type MyMeta,
@@ -56,6 +57,66 @@ export function ReadingPage() {
   const [panel, setPanel] = useState<PanelTab>('highlights');
   const [activeHl, setActiveHl] = useState<string | null>(null);
   const [jump, setJump] = useState<JumpTarget | null>(null);
+  const evidenceParams = new URLSearchParams(location.search);
+  const evidenceLibraryId = evidenceParams.get('library_id');
+  const evidenceAnchorId = evidenceParams.get('evidence');
+  const evidenceQuery = useQuery({
+    queryKey: ['library-evidence', evidenceLibraryId, id, evidenceAnchorId],
+    queryFn: () => api.resolveLibraryEvidence(evidenceLibraryId!, id, evidenceAnchorId!),
+    enabled: Boolean(id && evidenceLibraryId && evidenceAnchorId),
+    retry: false,
+  });
+
+  const clearEvidenceLocation = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete('library_id');
+    params.delete('evidence');
+    params.delete('content_version_id');
+    navigate(
+      { pathname: location.pathname, search: params.size ? `?${params}` : '' },
+      { replace: true },
+    );
+  }, [location.pathname, location.search, navigate]);
+
+  useEffect(() => {
+    const evidence = evidenceQuery.data;
+    if (!evidence) return;
+    if (evidence.status === 'paper' || !evidence.page_start) {
+      setJump(null);
+      clearEvidenceLocation();
+      toast(
+        tr(
+          '原句位置已随重新解析变化，已退回论文级来源。',
+          'The sentence moved after reprocessing. Showing the paper-level source.',
+        ),
+        'info',
+      );
+      return;
+    }
+    setJump({
+      id: evidence.anchor_id ?? evidenceAnchorId ?? evidence.chunk_id ?? 'evidence',
+      page: evidence.page_start,
+      nonce: performance.now(),
+      rects: evidence.rects,
+      quote: evidence.quoted_text,
+      sectionPath: evidence.section_path,
+    });
+  }, [clearEvidenceLocation, evidenceAnchorId, evidenceQuery.data]);
+
+  useEffect(() => {
+    if (!evidenceQuery.isError) return;
+    const error = evidenceQuery.error;
+    if (!(error instanceof ApiError) || ![401, 403, 404].includes(error.status)) return;
+    setJump(null);
+    clearEvidenceLocation();
+    toast(
+      tr(
+        '该引用不存在或你已无权读取对应原文，已退回论文级来源。',
+        'The citation is unavailable or no longer authorized. Showing the paper-level source.',
+      ),
+      'info',
+    );
+  }, [clearEvidenceLocation, evidenceQuery.error, evidenceQuery.isError]);
 
   // 右侧面板：可拖拽宽度 + 可收起，均从 localStorage 恢复。
   const splitRef = useRef<HTMLDivElement>(null);
@@ -259,6 +320,11 @@ export function ReadingPage() {
   const starred = paper.starred ?? false;
   const readingStatus: ReadingStatus = paper.reading_status ?? 'unread';
   const libSaved = libState?.saved ?? false;
+  const evidenceTemporarilyUnavailable = Boolean(
+    evidenceAnchorId
+    && evidenceQuery.isError
+    && (!(evidenceQuery.error instanceof ApiError) || evidenceQuery.error.status >= 500),
+  );
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 18px 16px' }}>
@@ -339,6 +405,19 @@ export function ReadingPage() {
         </button>
       </div>
 
+      {evidenceTemporarilyUnavailable && (
+        <div className="row gap8 wrap" style={{ flexShrink: 0, marginBottom: 10, padding: '8px 10px', border: '1px solid var(--warn-bd)', background: 'var(--warn-bg)', color: 'var(--warn-tx)' }}>
+          <Icon name="link" size={14} />
+          <span style={{ flex: 1, fontSize: 12 }}>
+            {tr('论文仍可阅读，但精确引用位置暂时无法解析。', 'The paper remains readable, but exact citation positioning is temporarily unavailable.')}
+          </span>
+          <button className="btn btn-ghost sm" disabled={evidenceQuery.isFetching} onClick={() => void evidenceQuery.refetch()}>
+            <Icon name="refresh" size={12} style={evidenceQuery.isFetching ? { animation: 'spin 1s linear infinite' } : undefined} />
+            {tr('重试定位', 'Retry')}
+          </button>
+        </div>
+      )}
+
       {/* —— 左右分栏：右侧可拖拽调宽 / 收起 ——
           外层 .workbench-panx 只在手机上发力：分栏最小可用宽约 640px，窄屏
           放不下，整体改横向平移而不是撑破外壳（拖拽仍是鼠标事件，触屏无效，
@@ -352,7 +431,7 @@ export function ReadingPage() {
           >
             <PdfReader
               paper={paper}
-              libraryId={paperLibId}
+              libraryId={evidenceLibraryId ?? paperLibId}
               highlights={highlights}
               activeHighlightId={activeHl}
               creating={createHlMutation.isPending}

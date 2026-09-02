@@ -58,4 +58,19 @@ async def resolve_library_evidence(
         session, asset_id=version.asset_id, library_id=library_id
     ) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="EVIDENCE_ASSET_NOT_FOUND")
-    return result
+    resolved_chunk = next(
+        (chunk for chunk in chunks if chunk.id == result.chunk_id),
+        None,
+    )
+    anchor_query = f"?library_id={library_id}&evidence={anchor.id}"
+    return result.model_copy(
+        update={
+            "library_id": library_id,
+            "content_version_id": version.id,
+            "parser": version.parser,
+            "section_path": (
+                resolved_chunk.section_path or [] if resolved_chunk is not None else []
+            ),
+            "href": f"/papers/{paper_id}/read{anchor_query}",
+        }
+    )

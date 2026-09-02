@@ -1132,6 +1132,24 @@ export interface StructuredContentManifestRead {
   urls_expire_at: string | null;
 }
 
+export interface EvidenceResolutionRead {
+  paper_id: string;
+  library_id: string | null;
+  anchor_id: string | null;
+  content_version_id: string | null;
+  status: 'exact' | 'sentence' | 'paragraph' | 'chunk' | 'paper';
+  anchor_type: 'sentence' | 'paragraph' | 'chunk' | 'paper';
+  quoted_text: string;
+  chunk_id: string | null;
+  seq: number | null;
+  page_start: number | null;
+  page_end: number | null;
+  rects: HighlightRect[];
+  section_path: string[];
+  parser: string | null;
+  href: string;
+}
+
 export interface PageOf<T> {
   items: T[];
   total: number;
@@ -3929,6 +3947,15 @@ export const api = {
   },
   getLibraryPaperStructuredContent(libraryId: string, paperId: string): Promise<StructuredContentManifestRead> {
     return request<StructuredContentManifestRead>(`/libraries/${libraryId}/papers/${paperId}/structured-content`);
+  },
+  resolveLibraryEvidence(
+    libraryId: string,
+    paperId: string,
+    anchorId: string,
+  ): Promise<EvidenceResolutionRead> {
+    return request<EvidenceResolutionRead>(
+      `/libraries/${libraryId}/papers/${paperId}/evidence/${anchorId}`,
+    );
   },
   fetchStructuredContentText(url: string): Promise<string> {
     return requestResourceText(url);
