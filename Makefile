@@ -34,23 +34,23 @@ backend-dev:    ## Run the backend locally (SQLite fallback, see config.py)
 	cd src/backend && .venv/bin/uvicorn app.main:app --reload --port 8000
 
 frontend-dev:   ## Run the frontend locally
-	cd src/frontend && npm install && npm run dev
+	pnpm install && pnpm --dir src/frontend run dev
 
 ## ---- Desktop (Electron shell) ----
-DESKTOP = npm --prefix src/desktop
+DESKTOP = pnpm --dir src/desktop
 
-desktop-deps:   ## Install desktop shell dependencies
-	$(DESKTOP) install
+desktop-deps:   ## Install workspace dependencies (single pnpm lockfile at the repo root)
+	pnpm install
 
 desktop-dev:    ## Run the shell against the built frontend (app:// protocol, the real path)
-	cd src/frontend && npm run build
+	pnpm --dir src/frontend run build
 	$(DESKTOP) run dev
 
 desktop-shell:  ## Run the shell without rebuilding the frontend
 	$(DESKTOP) run dev
 
 desktop-dist:   ## Package an installer for the current platform (unsigned)
-	cd src/frontend && npm run build
+	pnpm --dir src/frontend run build
 	$(DESKTOP) run dist:$(shell uname | tr '[:upper:]' '[:lower:]' | sed 's/darwin/mac/')
 
 ## ---- Quality ----
@@ -59,7 +59,7 @@ migrate:
 
 test:           ## Backend tests + frontend build
 	cd src/backend && .venv/bin/pytest -q
-	cd src/frontend && npm run build
+	pnpm --dir src/frontend run build
 
 lint:
 	cd src/backend && .venv/bin/ruff check app worker tests

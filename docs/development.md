@@ -49,7 +49,7 @@ For focused work you can run each side without Docker. The backend falls back to
 ```bash
 make venv          # one-time: create src/backend/.venv and install deps (editable, with dev extras)
 make backend-dev   # uvicorn app.main:app --reload --port 8000
-make frontend-dev  # npm install && vite dev on :5173
+make frontend-dev  # pnpm install # npm install && vite dev on :5173# npm install && vite dev on :5173 vite dev on :5173
 ```
 
 > [!NOTE]
