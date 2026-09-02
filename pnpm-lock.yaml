@@ -6,7 +6,14 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
 
   src/desktop:
     devDependencies:
@@ -107,6 +114,28 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.20.1)
+
+  src/kernel:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:*
+        version: link:../../vendor/deepseek-cordis/cordis
+      '@deepseek-ai/cosmokit':
+        specifier: workspace:*
+        version: link:../../vendor/deepseek-cordis/cosmokit
+      '@deepseek-ai/schemastery':
+        specifier: workspace:*
+        version: link:../../vendor/deepseek-cordis/schemastery
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)
 
   vendor/contract-smoke:
     dependencies:

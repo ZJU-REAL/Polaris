@@ -2,13 +2,18 @@
   // Polaris stand-in for the deepseek-harness repo-root tsconfig.base.json that
   // the vendored packages' tsconfigs extend (they resolve ../../tsconfig.base.json,
   // which lands here). Mirrors the upstream compiler options relevant to source
-  // consumption; the upstream project-graph flags (composite/paths/references)
-  // are intentionally dropped because Polaris consumes the TypeScript sources
-  // directly via esbuild/vitest instead of building lib/ output.
+  // consumption. Unlike the upstream build we emit *declarations only*
+  // (`pnpm run vendor:types` at the repo root): runtime consumption stays on the
+  // TypeScript sources via esbuild/vitest, while tsc consumers resolve the
+  // emitted lib/types and skipLibCheck shields them from the packages' internal
+  // strictness relaxations.
   "compilerOptions": {
     "target": "es2024",
     "module": "esnext",
     "moduleResolution": "bundler",
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
@@ -19,7 +24,6 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
-    "noEmit": true,
     "types": ["node"]
   }
 }

@@ -6,10 +6,15 @@
 > files preserved per package). Packages taken: cordis, cosmokit, schemastery,
 > loader, include, group, timer, logger-console (hmr intentionally omitted).
 > Polaris local modifications on top of that snapshot:
-> 1. Every `package.json` entry (`main`/`types`/`exports["."]`) points at
->    `src/index.ts` instead of built `lib/` output — Polaris consumes the
->    TypeScript source directly through esbuild/vitest/tsc and does not
->    replicate the upstream tsdown build. `module` fields removed.
+> 1. Runtime entries (`main`, `exports["."].default`) point at `src/index.ts`
+>    instead of built `lib/` output — Polaris consumes the TypeScript source
+>    directly through esbuild/vitest and does not replicate the upstream
+>    tsdown build. `module` fields removed.
+> 2. Type entries (`types`, `exports["."].types`) point at
+>    `lib/types/index.d.ts`, produced by `pnpm run vendor:types` (declaration-
+>    only `tsc -b` using each package's own tsconfig), so downstream strict
+>    typechecking goes through skipLibCheck-shielded declarations instead of
+>    re-checking vendored sources under Polaris compiler options.
 > The rest of this file is the upstream document, kept verbatim for the
 > package manifest and the upstream modification log.
 
