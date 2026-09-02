@@ -5,6 +5,7 @@ import { toast } from '../../components/ui/Toast';
 import { api, isAdmin, type DirectionLibraryDetail, type DuplicateCandidatePaper, type ProjectDefinition } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { InclusionSettingsForm, type InclusionValue } from '../libraries/InclusionSettingsForm';
+import { InterdisciplinaryScopePanel } from '../projects/InterdisciplinaryScopePanel';
 
 /** library.definition → 收录设置表单初值 */
 function fromDefinition(def: ProjectDefinition | null): InclusionValue {
@@ -45,7 +46,15 @@ export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: stri
   return (
     <div className="col gap16" style={{ padding: 20, overflowY: 'auto' }}>
       {lib && <LibraryInfoCard lib={lib} readOnly={readOnly} admin={admin} />}
-      {lib && <InclusionSettingsCard lib={lib} readOnly={readOnly} />}
+      {lib?.library_kind === 'interdisciplinary' && lib.project_id && (
+        <InterdisciplinaryLibraryScope projectId={lib.project_id} library={lib} />
+      )}
+      {lib && (
+        <InclusionSettingsCard
+          lib={lib}
+          readOnly={readOnly || lib.library_kind === 'interdisciplinary'}
+        />
+      )}
       {/* 预算 / 管理员名单 / 重复论文均为管理门数据，普通用户取不到 → 只读时不渲染 */}
       {!readOnly && (
         <>
@@ -56,6 +65,26 @@ export function GovernanceTab({ libraryId, readOnly = false }: { libraryId: stri
       )}
     </div>
   );
+}
+
+function InterdisciplinaryLibraryScope({
+  projectId,
+  library,
+}: {
+  projectId: string;
+  library: DirectionLibraryDetail;
+}) {
+  const projectQuery = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => api.getProject(projectId),
+    retry: false,
+  });
+
+  if (projectQuery.isLoading) {
+    return <section className="card interdisciplinary-profile-card"><div className="skel interdisciplinary-profile-skeleton" /></section>;
+  }
+  if (!projectQuery.data) return null;
+  return <InterdisciplinaryScopePanel project={projectQuery.data} dedicatedLibrary={library} />;
 }
 
 /* —— 重复论文候选与合并 —— */

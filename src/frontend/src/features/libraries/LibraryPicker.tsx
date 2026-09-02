@@ -12,21 +12,25 @@ export function LibraryPicker({
   selectedIds,
   onToggle,
   disabled,
+  disabledIds,
 }: {
   libraries: DirectionLibrarySummary[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
   disabled?: boolean;
+  /** 个别不可解除的关联（例如课题专属交叉证据库）。 */
+  disabledIds?: ReadonlySet<string>;
 }) {
   return (
     <div className="col gap8">
       {libraries.map((lib) => {
         const on = selectedIds.has(lib.id);
+        const itemDisabled = !!disabled || !!disabledIds?.has(lib.id);
         return (
           <button
             key={lib.id}
             type="button"
-            disabled={disabled}
+            disabled={itemDisabled}
             className="card hoverable"
             onClick={() => onToggle(lib.id)}
             style={{
@@ -35,7 +39,7 @@ export function LibraryPicker({
               gap: 12,
               alignItems: 'center',
               textAlign: 'left',
-              cursor: disabled ? 'default' : 'pointer',
+              cursor: itemDisabled ? 'default' : 'pointer',
               border: on ? '1px solid var(--accent)' : '0.5px solid var(--border)',
               background: on ? 'var(--accent-soft)' : 'var(--surface)',
             }}
@@ -63,6 +67,9 @@ export function LibraryPicker({
                   <span className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
                     {tr('我在用', 'In use')}
                   </span>
+                )}
+                {lib.library_kind === 'interdisciplinary' && (
+                  <span className="pill sm">{tr('专属交叉库', 'Dedicated interdisciplinary')}</span>
                 )}
               </div>
               <div

@@ -397,11 +397,47 @@ export interface ProjectMemberRead {
 export interface ProjectRead {
   id: string;
   name: string;
+  slug: string;
   statement: string | null;
-  status?: string;
+  status: string;
+  research_mode: 'conventional' | 'interdisciplinary';
+  owner_id: string;
   members?: ProjectMemberRead[];
-  created_at?: string;
-  updated_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InterdisciplinaryScopeDraft {
+  research_scope: string;
+  core_questions: string[];
+  primary_domain: string;
+  related_domains: string[];
+  evidence_boundary?: string | null;
+  validation_conditions?: string[] | null;
+  user_questions?: Record<string, unknown>[] | null;
+  query_matrix?: Record<string, unknown>[] | null;
+  evidence_balance?: Record<string, number> | null;
+}
+
+export interface InterdisciplinaryScopeSuggestion extends InterdisciplinaryScopeDraft {
+  clarification_questions: string[];
+  rationale: string;
+  model: string;
+}
+
+export interface InterdisciplinaryScopeRead extends InterdisciplinaryScopeDraft {
+  id: string;
+  project_id: string;
+  version: number;
+  status: string;
+  created_by: string;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+}
+
+export interface InterdisciplinaryConfirmation {
+  profile: InterdisciplinaryScopeRead;
+  library_id: string;
 }
 
 // ============================================================
@@ -1278,6 +1314,10 @@ export interface ConceptRelinkResult {
 export interface DirectionLibrarySummary {
   id: string;
   name: string;
+  /** standard = 普通库；interdisciplinary = 课题专属交叉证据库。 */
+  library_kind: 'standard' | 'interdisciplinary' | string;
+  /** 专属交叉库当前确认的学科范围。 */
+  interdisciplinary_domains: string[] | null;
   statement: string | null;
   /** 背后课题（过渡期隐式库 1:1 回指；未来共享库可为 null） */
   project_id: string | null;
@@ -3616,8 +3656,45 @@ export const api = {
     name: string;
     statement?: string;
     source_library_ids?: string[];
+    research_mode?: 'conventional' | 'interdisciplinary';
   }): Promise<ProjectRead> {
     return requestJson<ProjectRead>('/projects', 'POST', input);
+  },
+  suggestInterdisciplinaryScope(input: {
+    name: string;
+    statement: string;
+    user_context?: string;
+  }): Promise<InterdisciplinaryScopeSuggestion> {
+    return requestJson<InterdisciplinaryScopeSuggestion>(
+      '/projects/interdisciplinary-scope/suggest',
+      'POST',
+      input,
+    );
+  },
+  getInterdisciplinaryScope(projectId: string): Promise<InterdisciplinaryScopeRead> {
+    return request<InterdisciplinaryScopeRead>(`/projects/${projectId}/interdisciplinary/scope`);
+  },
+  listInterdisciplinaryScopeVersions(projectId: string): Promise<InterdisciplinaryScopeRead[]> {
+    return request<InterdisciplinaryScopeRead[]>(
+      `/projects/${projectId}/interdisciplinary/scope/versions`,
+    );
+  },
+  saveInterdisciplinaryScope(
+    projectId: string,
+    input: InterdisciplinaryScopeDraft,
+  ): Promise<InterdisciplinaryScopeRead> {
+    return requestJson<InterdisciplinaryScopeRead>(
+      `/projects/${projectId}/interdisciplinary/scope`,
+      'PUT',
+      input,
+    );
+  },
+  confirmInterdisciplinaryScope(projectId: string): Promise<InterdisciplinaryConfirmation> {
+    return requestJson<InterdisciplinaryConfirmation>(
+      `/projects/${projectId}/interdisciplinary/scope/confirm`,
+      'POST',
+      {},
+    );
   },
   getProject(id: string): Promise<ProjectRead> {
     return request<ProjectRead>(`/projects/${id}`);
