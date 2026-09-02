@@ -861,6 +861,55 @@ export interface LiteratureProviderTestResult {
   detail: string;
 }
 
+export interface DocumentProcessingCredentialStatus {
+  id: string;
+  provider: 'mineru';
+  index: number | null;
+  configured: boolean;
+  preview: string;
+  enabled: boolean;
+  label: string | null;
+  health: LiteratureProviderHealth | null;
+  created_at: number | null;
+  updated_at: number | null;
+}
+
+export interface DocumentProcessingSettings {
+  mineru_enabled: boolean;
+  mineru_base_url: string;
+  mineru_timeout_seconds: number;
+  mineru_poll_interval_seconds: number;
+  mineru_retries: number;
+  mineru_concurrency: number;
+  pymupdf_fallback_enabled: boolean;
+  mineru_credentials: DocumentProcessingCredentialStatus[];
+}
+
+export type DocumentProcessingSettingsUpdate = Omit<
+  DocumentProcessingSettings,
+  'mineru_credentials'
+>;
+
+export interface DocumentProcessingCredentialCreate {
+  secret: string;
+  label?: string | null;
+  enabled?: boolean;
+}
+
+export interface DocumentProcessingCredentialUpdate {
+  secret?: string;
+  label?: string | null;
+  enabled?: boolean;
+}
+
+export interface DocumentProcessingProviderTestResult {
+  provider: 'mineru';
+  ok: boolean;
+  latency_ms: number;
+  status_code: number | null;
+  detail: string;
+}
+
 /** 补建历史向量的结果计数。 */
 export interface DailyEmbedBackfillResult {
   embedded: number;
@@ -5211,6 +5260,51 @@ export const api = {
       `/admin/settings/literature-search/credentials/${id}/test`,
       'POST',
       { query },
+    );
+  },
+  getDocumentProcessingSettings(): Promise<DocumentProcessingSettings> {
+    return request<DocumentProcessingSettings>('/admin/settings/document-processing');
+  },
+  setDocumentProcessingSettings(
+    input: DocumentProcessingSettingsUpdate,
+  ): Promise<DocumentProcessingSettings> {
+    return requestJson<DocumentProcessingSettings>(
+      '/admin/settings/document-processing',
+      'PUT',
+      input,
+    );
+  },
+  createDocumentProcessingCredential(
+    input: DocumentProcessingCredentialCreate,
+  ): Promise<DocumentProcessingCredentialStatus> {
+    return requestJson<DocumentProcessingCredentialStatus>(
+      '/admin/settings/document-processing/credentials',
+      'POST',
+      input,
+    );
+  },
+  updateDocumentProcessingCredential(
+    id: string,
+    input: DocumentProcessingCredentialUpdate,
+  ): Promise<DocumentProcessingCredentialStatus> {
+    return requestJson<DocumentProcessingCredentialStatus>(
+      `/admin/settings/document-processing/credentials/${id}`,
+      'PATCH',
+      input,
+    );
+  },
+  deleteDocumentProcessingCredential(id: string): Promise<void> {
+    return request<void>(`/admin/settings/document-processing/credentials/${id}`, {
+      method: 'DELETE',
+    });
+  },
+  testDocumentProcessingCredential(
+    id: string,
+  ): Promise<DocumentProcessingProviderTestResult> {
+    return requestJson<DocumentProcessingProviderTestResult>(
+      `/admin/settings/document-processing/credentials/${id}/test`,
+      'POST',
+      {},
     );
   },
   /** 实验室概况页的用量排行榜是否对普通成员可见（admin，默认开）。 */
