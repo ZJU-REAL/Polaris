@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Polaris Extension</title>
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div>
+          <strong class="brand">POLARIS<span>.</span></strong>
+          <h1>PDF 下载与归档</h1>
+        </div>
+        <span id="connection-badge" class="badge">未连接</span>
+      </header>
+
+      <section class="panel connection-panel" aria-labelledby="connection-title">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">WORKSPACE CONNECTION</span>
+            <h2 id="connection-title">连接科研工作台</h2>
+          </div>
+          <span id="connection-status" class="muted" role="status">尚未配置</span>
+        </div>
+        <label for="polaris-origin">Polaris 地址</label>
+        <input id="polaris-origin" type="url" autocomplete="url" placeholder="https://polaris.example.com" />
+        <label for="polaris-api-key">用户 API Key</label>
+        <input id="polaris-api-key" type="password" autocomplete="off" placeholder="pol_dl_..." />
+        <div class="button-row">
+          <button id="test-connection" class="secondary" type="button">测试连接</button>
+          <button id="save-connection" class="primary" type="button">保存连接</button>
+        </div>
+      </section>
+
+      <section class="workspace" aria-labelledby="tasks-title">
+        <div class="section-heading tasks-heading">
+          <div>
+            <span class="eyebrow">DOWNLOAD BATCHES</span>
+            <h2 id="tasks-title">下载任务</h2>
+          </div>
+          <button id="refresh-tasks" class="secondary compact" type="button">刷新</button>
+        </div>
+        <div id="task-list" class="task-list"></div>
+        <div id="empty-state" class="empty-state">
+          <strong>暂无下载任务</strong>
+          <p>在 Polaris 文献发现页选择论文并推送到扩展后，任务会显示在这里。</p>
+        </div>
+      </section>
+
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+    </main>
+    <script type="module" src="src/sidepanel/app.js"></script>
+  </body>
+</html>
