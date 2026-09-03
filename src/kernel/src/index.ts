@@ -13,6 +13,7 @@ export {
 export {
   ENGINE_CONTAINER,
   LegacyEngineConfig,
+  buildEngineArgv,
   legacyEngine,
   type LegacyEngineService,
 } from './plugins/legacy-engine.ts'

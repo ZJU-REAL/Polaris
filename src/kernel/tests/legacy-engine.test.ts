@@ -2,7 +2,7 @@
    docker 形态由 desktop 冒烟（POLARIS_SMOKE_ENGINE=1）覆盖，这里保证
    在任何 CI 机器上都能跑。假引擎用 node -e 起一个最小 HTTP 服务器。 */
 import { describe, expect, it } from 'vitest'
-import { createKernel, legacyEngine, type LegacyEngineService } from '../src/index.ts'
+import { ENGINE_CONTAINER, buildEngineArgv, createKernel, legacyEngine, type LegacyEngineService } from '../src/index.ts'
 
 const until = async (cond: () => boolean, ms = 5_000): Promise<void> => {
   const start = Date.now()
@@ -93,4 +93,25 @@ describe('legacy-engine plugin (command mode)', () => {
     await until(() => !pidAlive(pid))
     await kernel.stop()
   }, 15_000)
+})
+
+/* docker 模式不真跑容器（那是 desktop 冒烟/E2E 的事），但 argv 拼装要有
+   回归护栏：容器名可覆盖是 E2E 与并行套件互不撞名的前提。 */
+describe('legacy-engine buildEngineArgv (docker mode)', () => {
+  const base = { mode: 'docker' as const, image: 'img:tag', backendDir: '/abs/backend' }
+
+  it('uses the default container name and wires image/mount/port', () => {
+    const argv = buildEngineArgv(base, 18080)
+    expect(argv.slice(0, 5)).toEqual(['docker', 'run', '--rm', '--name', ENGINE_CONTAINER])
+    expect(argv).toContain('img:tag')
+    expect(argv).toContain('/abs/backend:/srv/backend')
+    expect(argv).toContain('127.0.0.1:18080:8000')
+  })
+
+  it('honors a custom containerName so parallel instances do not collide', () => {
+    const argv = buildEngineArgv({ ...base, containerName: 'polaris-engine-e2e-x' }, 19000)
+    expect(argv.slice(3, 5)).toEqual(['--name', 'polaris-engine-e2e-x'])
+    expect(argv).toContain('127.0.0.1:19000:8000')
+    expect(argv).not.toContain(ENGINE_CONTAINER)
+  })
 })

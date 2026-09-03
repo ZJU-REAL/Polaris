@@ -20,7 +20,9 @@
     "stage:resources": "node scripts/fetch-uv.mjs && node scripts/stage-backend.mjs",
     "dist:mac": "pnpm run stage:resources && pnpm run build && electron-builder --mac --universal",
     "dist:win": "pnpm run stage:resources && pnpm run build && electron-builder --win",
-    "dist:linux": "pnpm run stage:resources && pnpm run build && electron-builder --linux"
+    "dist:linux": "pnpm run stage:resources && pnpm run build && electron-builder --linux",
+    "build:e2e": "esbuild e2e/e2e.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/e2e.cjs --packages=external",
+    "e2e": "pnpm run build:main && pnpm run build:preload && pnpm run build:agent && pnpm run build:e2e && node dist/e2e.cjs"
   },
   "dependencies": {
     "@polaris/kernel": "workspace:*"
@@ -30,6 +32,7 @@
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "esbuild": "^0.24.0",
+    "playwright-core": "^1.49.0",
     "typescript": "^5.5.4"
   }
 }
