@@ -1003,8 +1003,6 @@ async def _create_standalone_library(client, headers, *, name="独立库-自动�
     assert resp.status_code == 201, resp.text
     body = resp.json()
     library_id = body["id"]
-    # P10：新库即刻是 active 个人库，无需审批即可触发抓取（token 记创建者账）。
-    assert body["status"] == "active"
     return library_id
 
 
@@ -1352,27 +1350,6 @@ async def test_a_library_is_only_auto_synced_once_a_day(client, queue_stub, wiki
         await session.commit()
 
     async with get_sessionmaker()() as session:
-        assert await ingest_service.find_due_daily_libraries(session) == []
-
-
-async def test_non_active_library_is_not_due(client, queue_stub, wiki_mocks):
-    """库 status 不是 active 就不该被 cron 拉起来——老的按课题选表压根没查这个字段。"""
-    token = await register_and_login(client, email="due-inactive@example.com")
-    headers = {"Authorization": f"Bearer {token}"}
-    library_id = await _create_standalone_library(client, headers, name="独立库-停用")
-
-    resp = await client.post(
-        f"/api/libraries/{library_id}/ingest/run",
-        json={"mode": "bootstrap", "knobs": KNOBS},
-        headers=headers,
-    )
-    engine, _ = _make_engine()
-    await engine.run(uuid.UUID(resp.json()["id"]))
-
-    async with get_sessionmaker()() as session:
-        library = await session.get(DirectionLibrary, uuid.UUID(library_id))
-        library.status = "rejected"
-        await session.commit()
         assert await ingest_service.find_due_daily_libraries(session) == []
 
 

@@ -1,6 +1,7 @@
-"""文献库归属与可见性 —— 建库即 active 个人库（转公共审批流已随实验室定位移除）。
+"""文献库归属与可见性 —— 建库即个人库（转公共审批流已随实验室定位移除，
+status/review_note 残留列随 #619 删除）。
 
-- 任意登录用户建库 → 即刻可用的**个人库**（status=active、is_public=false）；
+- 任意登录用户建库 → 即刻可用的**个人库**（is_public=false）；
 - 个人库仅创建者可见/可管理，token 记创建者账（admin 旁路已随 #614 移除）；
 - 存量公共库（is_public=true）仍全员可见；
 - 删除：一律创建者本人。
@@ -18,7 +19,7 @@ async def _hdr(client, email):
 
 
 async def _make_public(lib_id: str) -> None:
-    """直接把库置为公共（原转公共审批流已随实验室定位移除，测试造数据用）。"""
+    """直接把库置为公共（造数据快捷方式；正路是创建者 PATCH is_public，见下方专测）。"""
     async with get_sessionmaker()() as session:
         lib = await session.get(DirectionLibrary, uuid.UUID(lib_id))
         lib.is_public = True
@@ -33,7 +34,6 @@ async def _create_personal(client, headers, name="用户建的库"):
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["status"] == "active"
     assert body["is_public"] is False
     return body["id"]
 
@@ -47,7 +47,6 @@ async def test_user_creates_personal_active_library(client):
     lib_id = await _create_personal(client, user)
     async with get_sessionmaker()() as session:
         lib = await session.get(DirectionLibrary, uuid.UUID(lib_id))
-        assert lib.status == "active"
         assert lib.is_public is False
         assert lib.submitted_by is not None
         assert lib.definition["anchor_papers"] == ["2401.00001"]
@@ -250,6 +249,37 @@ async def test_list_type_filter(client):
     resp = await client.get("/api/libraries?type=public", headers=owner)
     ids = {x["id"] for x in resp.json()}
     assert public_id in ids and personal_id not in ids
+
+
+# ---- 共享开关：创建者直接切换 is_public（#619，审批流的替代物） ----
+
+
+async def test_creator_toggles_is_public_via_settings(client):
+    """审批流删掉后，「公开给所有人」就是创建者在库设置里直接拨的开关。
+
+    - 非创建者拨不动（403）；
+    - 打开 → 全员可见；关上 → 回到仅创建者可见；
+    - 显式传 null 视为不改（这个开关没有「清空」语义，误清成 False 会把公共库藏起来）。
+    """
+    owner = await _hdr(client, "toggle-owner@example.com")
+    stranger = await _hdr(client, "toggle-stranger@example.com")
+    lib_id = await _create_personal(client, owner, name="开关测试库")
+
+    resp = await client.patch(
+        f"/api/libraries/{lib_id}", json={"is_public": True}, headers=stranger
+    )
+    assert resp.status_code == 403, resp.text
+
+    resp = await client.patch(f"/api/libraries/{lib_id}", json={"is_public": True}, headers=owner)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_public"] is True
+    assert (await client.get(f"/api/libraries/{lib_id}", headers=stranger)).status_code == 200
+
+    resp = await client.patch(f"/api/libraries/{lib_id}", json={"is_public": False}, headers=owner)
+    assert resp.json()["is_public"] is False
+    resp = await client.patch(f"/api/libraries/{lib_id}", json={"is_public": None}, headers=owner)
+    assert resp.json()["is_public"] is False
+    assert (await client.get(f"/api/libraries/{lib_id}", headers=stranger)).status_code == 404
 
 
 # ---- 删除权限 ----

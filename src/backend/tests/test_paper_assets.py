@@ -41,7 +41,6 @@ async def _library(session, *, user_id: uuid.UUID, public: bool = False) -> Dire
     library = DirectionLibrary(
         name=f"asset-{uuid.uuid4().hex[:8]}",
         statement="PDF asset test",
-        status="active",
         is_public=public,
         submitted_by=user_id,
         created_by=user_id,

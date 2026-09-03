@@ -504,16 +504,14 @@ async def reclaim_stale_paused_ingests(session: AsyncSession) -> list[uuid.UUID]
 
 
 async def find_due_daily_libraries(session: AsyncSession) -> list[DirectionLibrary]:
-    """每日增量的对象，**直接按文献库选**：active、已 bootstrap、无任务在跑。
+    """每日增量的对象，**直接按文献库选**：已 bootstrap、无任务在跑。
 
     以前是遍历 Project 再找库，于是 ``project_id`` 为空的独立库一个都进不来——生产上
-    11 个活跃库里有 6 个是独立库，全靠人工点击才会同步。另外那条路径也没检查库的
-    ``status``，pending/rejected 但留有历史水位线的库照样会被 cron 拉起来。
+    11 个活跃库里有 6 个是独立库，全靠人工点击才会同步。审批流移除后不再有
+    pending/rejected 之分（#619 删列），全部库都是候选，靠下面的水位线/互斥筛。
     """
     libraries = (
-        (await session.execute(select(DirectionLibrary).where(DirectionLibrary.status == "active")))
-        .scalars()
-        .all()
+        (await session.execute(select(DirectionLibrary))).scalars().all()
     )
     # 今天已经**自动**同步过的库不再重复选。这一条以前写在调用方，而且是全局的：
     # 「今天有任意一条 wiki_ingest」就整轮跳过。于是任何人手动同步任何一个库，当天

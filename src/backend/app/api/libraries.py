@@ -146,17 +146,14 @@ async def _reads_with_extras(
 @router.get("/libraries", response_model=list[DirectionLibrarySummary])
 async def list_libraries(
     type: str | None = Query(default=None, pattern="^(personal|public|all)$"),
-    status_filter: str | None = Query(default=None, alias="status"),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[DirectionLibrarySummary]:
-    """可见方向库（P10）：普通用户看自己的个人库 + 全部公共库，admin 看全部。
+    """可见方向库（P10）：自己的个人库 + 全部公共库 + 无主库。
 
-    可选 ``type``（personal|public|all，默认 all）与 ``status`` 在可见集合内进一步筛选。
+    可选 ``type``（personal|public|all，默认 all）在可见集合内进一步筛选。
     """
-    rows = await libraries_service.list_libraries_overview(
-        session, user=user, type=type, status=status_filter
-    )
+    rows = await libraries_service.list_libraries_overview(session, user=user, type=type)
     return [DirectionLibrarySummary(**row) for row in rows]
 
 
@@ -169,9 +166,9 @@ async def create_library(
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
     """用户独立新建方向文献库（任意登录用户，P10）：新库即刻可用的**个人库**
-    （status=active、is_public=false，仅创建者 + admin 可见，token 记创建者账），
-    无需审批。创建者记为 submitted_by 并自动成为该库策展人。想转公共（全实验室可见、
-    走系统 key）经 POST /libraries/{id}/request-public 申请、admin 审批。不属于任何课题。
+    （is_public=false，仅创建者可见，token 记创建者账）。创建者记为 submitted_by；
+    想公开给所有人在库设置里直接打开 is_public（审批流已随 #593/#596 移除）。
+    不属于任何课题。
     """
     library = await libraries_service.create_library(
         session,
@@ -233,7 +230,7 @@ async def get_library(
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
     library = await _get_library(session, library_id)
-    # 可见性（P9b）：pending/rejected 库仅创建者 + admin 可见，其余人视为不存在。
+    # 可见性（P10）：个人库仅创建者可见，其余人视为不存在（404，不泄漏存在性）。
     if not libraries_service.library_visible_to(library, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="LIBRARY_NOT_FOUND")
     row = await libraries_service.library_overview(session, library=library, user=user)
@@ -268,8 +265,6 @@ async def generate_library_digest(
 ) -> DigestGenerateRead:
     """生成今日简报：有今日更新则直接生成，否则先执行一次增量同步。"""
     library = await _get_managed_library(session, library_id, user)
-    if library.status != "active":
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_NOT_ACTIVE")
     project = (
         await session.get(Project, library.project_id) if library.project_id is not None else None
     )
@@ -316,8 +311,8 @@ async def update_library(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> DirectionLibraryDetail:
-    """编辑库定义（可管理者）：name/monthly_budget 与收录配置（statement/cadence/
-    rubric/anchors/keywords/goals/scope/questions）。
+    """编辑库定义（可管理者）：name/monthly_budget/is_public（公开给所有人）与收录
+    配置（statement/cadence/rubric/anchors/keywords/goals/scope/questions）。
 
     P8a：收录配置写入 library.definition（ingest 唯一权威源），不再写回起源课题。
     """
@@ -391,9 +386,6 @@ async def start_library_ingest(
     带上 project 以兼容活动流/鉴权。互斥以库为准，超预算 409 拒绝。
     """
     library = await _get_managed_library(session, library_id, user)
-    if library.status != "active":
-        # 待审批 / 已驳回的库不能抓取（P9b：仅 active 且预算内可触发）。
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="LIBRARY_NOT_ACTIVE")
     project = (
         await session.get(Project, library.project_id) if library.project_id is not None else None
     )

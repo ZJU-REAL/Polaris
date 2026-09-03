@@ -56,7 +56,7 @@ async def test_create_project_can_link_existing_libraries(client):
     """P9c：建课题入参可关联已有库；语料 = 关联库并集。"""
     admin = await _register(client, "p7-link@example.com")
     async with get_sessionmaker()() as session:
-        lib = DirectionLibrary(name="已有库", created_by=None, project_id=None, status="active")
+        lib = DirectionLibrary(name="已有库", created_by=None, project_id=None)
         session.add(lib)
         await session.commit()
         lib_id = lib.id

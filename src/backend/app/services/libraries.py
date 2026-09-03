@@ -405,9 +405,7 @@ def _overview_dict(
         "monthly_budget": library.monthly_budget,
         "definition": library_definition(library),
         "project_id": library.project_id,
-        "status": library.status,
         "is_public": library.is_public,
-        "review_note": library.review_note,
         "submitted_by": library.submitted_by,
         "owner_name": owner_name,
         "is_owner": is_owner,
@@ -438,13 +436,12 @@ async def list_libraries_overview(
     *,
     user: User,
     type: str | None = None,
-    status: str | None = None,
 ) -> list[dict[str, Any]]:
     """可见方向库 + 概要统计（P10）。
 
-    可见范围：admin 看全部；普通用户看**自己的个人库（submitted_by==me 且非 public）
-    ∪ 全部公共库（is_public）**。可选 ``type``（personal|public|all，默认 all）与
-    ``status`` 做进一步筛选（都不影响可见性边界，只在可见集合内过滤）。
+    可见范围：自己的个人库（submitted_by==me 且非 public）∪ 全部公共库（is_public）
+    ∪ 无主库。可选 ``type``（personal|public|all，默认 all）在可见集合内进一步筛选
+    （不影响可见性边界）。
     """
     libraries = (
         (await session.execute(select(DirectionLibrary).order_by(DirectionLibrary.created_at)))
@@ -464,8 +461,6 @@ async def list_libraries_overview(
         if want == "personal" and lib.is_public:
             continue
         if want == "public" and not lib.is_public:
-            continue
-        if status is not None and lib.status != status:
             continue
         result.append(
             _overview_dict(
@@ -554,14 +549,12 @@ async def create_library(
     keywords: dict[str, Any] | None = None,
     monthly_budget: int | None = None,
     created_by: uuid.UUID,
-    status: str = "active",
 ) -> DirectionLibrary:
     """用户独立新建方向文献库（P10；``project_id`` 恒为 NULL——不属于任何课题，靠关联被消费）。
 
-    P10：任意登录用户可建，新库默认 ``status='active'`` + ``is_public=false``——即刻
-    可用的**个人库**（仅创建者 + admin 可见，token 记创建者账），无需审批。创建者记为
-    ``submitted_by`` 并自动加为该库策展人（文献库管理员）。想让全实验室可见/走系统 key
-    的，经 ``POST /libraries/{id}/request-public`` 申请、admin 审批后转公共库。
+    任意登录用户可建，新库即刻可用、默认 ``is_public=false``（仅创建者可见，token 记
+    创建者账）。创建者记为 ``submitted_by``。想公开给所有人：创建者在库设置里直接打开
+    ``is_public``（审批流已随 #593/#596 移除）。
 
     flush + refresh，不 commit（调用方 api 层负责事务收尾）。
     """
@@ -586,7 +579,6 @@ async def create_library(
         monthly_budget=monthly_budget,
         created_by=created_by,
         submitted_by=created_by,
-        status=status,
         project_id=None,
     )
     session.add(library)
@@ -677,7 +669,7 @@ async def update_library(
 ) -> DirectionLibrary:
     """编辑库定义（显式传 null 可清空）。P8a：库是收录配置的唯一权威源。
 
-    - name / monthly_budget 落标量列；
+    - name / monthly_budget / is_public 落标量列；
     - statement/cadence/rubric/anchors/keywords/questions/goals/scope 等收录配置写入
       library.definition（ingest 从这里取数），并把有对应标量列的键镜像回列供展示；
     - 允许整体传入 ``definition`` 一次性替换。
@@ -687,6 +679,10 @@ async def update_library(
         library.name = fields["name"]  # name 非空约束：显式 null/空串视为不改名
     if "monthly_budget" in fields:
         library.monthly_budget = fields["monthly_budget"]
+    # 共享开关（#619）：审批流移除后由创建者直接设置；None（显式传 null）视为不改——
+    # 这个开关没有「清空」语义，误清成 False 会把公共库悄悄藏起来。
+    if fields.get("is_public") is not None:
+        library.is_public = bool(fields["is_public"])
 
     config_keys = [k for k in fields if k in _CONFIG_TO_DEFINITION]
     if "definition" in fields or config_keys:

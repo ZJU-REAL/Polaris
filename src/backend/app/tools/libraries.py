@@ -41,7 +41,6 @@ def _library_brief(row: dict[str, Any], *, linked: bool) -> dict[str, Any]:
         "library_id": str(row["id"]),
         "name": row["name"],
         "is_public": row["is_public"],
-        "status": row["status"],
         "paper_count": row["paper_count"],
         "concept_count": row["concept_count"],
         "linked_to_this_topic": linked,

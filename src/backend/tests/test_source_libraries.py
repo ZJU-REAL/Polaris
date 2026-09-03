@@ -146,8 +146,7 @@ async def test_create_library_admin_independent(client):
     assert body["name"] == "独立库"
     assert body["project_id"] is None
     assert body["is_mine"] is False
-    # P10：新建库即刻可用的个人库（active + 非 public），无需审批
-    assert body["status"] == "active"
+    # P10：新建库即刻可用的个人库（非 public），无需审批（status 列已随 #619 删除）
     assert body["is_public"] is False
 
 
@@ -162,7 +161,6 @@ async def test_create_library_any_user_allowed(client):
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["status"] == "active"
     assert body["is_public"] is False
     assert body["can_manage"] is True  # 创建者可管理自己的个人库
 

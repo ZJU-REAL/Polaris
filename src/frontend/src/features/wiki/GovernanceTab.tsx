@@ -270,17 +270,20 @@ function LibraryInfoCard({
   const [name, setName] = useState(lib.name);
   const [statement, setStatement] = useState(lib.statement ?? '');
   const [budget, setBudget] = useState(lib.monthly_budget == null ? '' : String(lib.monthly_budget));
+  const [isPublic, setIsPublic] = useState(lib.is_public);
 
   // 库切换 / 保存后回填
   useEffect(() => {
     setName(lib.name);
     setStatement(lib.statement ?? '');
     setBudget(lib.monthly_budget == null ? '' : String(lib.monthly_budget));
+    setIsPublic(lib.is_public);
   }, [lib]);
 
   const dirty =
     name !== lib.name ||
     statement !== (lib.statement ?? '') ||
+    isPublic !== lib.is_public ||
     budget !== (lib.monthly_budget == null ? '' : String(lib.monthly_budget));
 
   const save = useMutation({
@@ -289,6 +292,7 @@ function LibraryInfoCard({
         name: name.trim() || lib.name,
         statement: statement.trim() || null,
         monthly_budget: budget.trim() === '' ? null : Math.max(0, Math.floor(Number(budget))),
+        is_public: isPublic,
       }),
     onSuccess: () => {
       toast(tr('库信息已保存', 'Library info saved'), 'ok');
@@ -335,6 +339,21 @@ function LibraryInfoCard({
             )}
           />
         </label>
+        {/* 共享开关：审批流已移除（#619），创建者在这里直接决定库是否对所有人可见 */}
+        {!readOnly && (
+          <label className="row gap8" style={{ alignItems: 'center', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={isPublic}
+              onChange={(e) => setIsPublic(e.target.checked)}
+              style={{ width: 14, height: 14, margin: 0, accentColor: 'var(--accent)', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 13 }}>{tr('公开给所有人', 'Visible to everyone')}</span>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {tr('开启后本部署的所有用户都能浏览这个库', 'Everyone on this deployment can browse this library')}
+            </span>
+          </label>
+        )}
         {!readOnly && (
         <div className="row gap12" style={{ flexWrap: 'wrap' }}>
           <label className="col gap6" style={{ minWidth: 220 }}>

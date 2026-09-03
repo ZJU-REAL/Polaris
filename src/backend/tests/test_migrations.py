@@ -9,8 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
-HEAD_REVISION = "9b2e5d81c7a3"  # Drop in-app feedback tables (#617)
+HEAD_REVISION = "c3c404803ca4"  # Drop library status/review_note (P1 de-lab)
+FEEDBACK_DROP_REVISION = "9b2e5d81c7a3"  # Drop in-app feedback tables (#617)
 GOVERNANCE_DROP_REVISION = "4f8d2c9b7a61"  # Drop user governance columns (P1 de-lab)
 CURATORS_DROP_REVISION = "e6c31f84a2d5"  # Drop library curators (P1 de-lab)
 SKILL_RATINGS_DROP_REVISION = "d4b8e26f1a93"  # Drop skill ratings (P1 de-lab)
@@ -277,9 +277,10 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 任务系统库化 P9a：voyage_runs / activities 新增 library_id（project_id 转可空）
     assert "library_id" in columns["voyage_runs"]
     assert "library_id" in columns["activities"]
-    # 文献库生命周期 P9b：direction_libraries 新增 status/review_note/submitted_by
-    assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
-    # 文献库归属 P10：direction_libraries.is_public 个人/公共
+    # P9b 只剩 submitted_by；status/review_note 审批残留已删（#619）
+    assert "submitted_by" in columns["direction_libraries"]
+    assert not {"status", "review_note"} & columns["direction_libraries"]
+    # 共享开关：direction_libraries.is_public（个人库 / 公开给所有人）
     assert "is_public" in columns["direction_libraries"]
     # P9e：课题 statement 上列；project.definition / projects.ingest_state 退役删列
     assert "statement" in columns["projects"]
@@ -510,7 +511,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First undo the feedback-tables drop: both tables come back.
+    # 先退掉库状态删列：status/review_note 按原形状回来（server_default='active'）。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == FEEDBACK_DROP_REVISION
+    assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
+
+    # Then undo the feedback-tables drop: both tables come back.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == GOVERNANCE_DROP_REVISION
@@ -803,7 +810,7 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # 只退一步：标签库化（mig1）仍在，paper_tags 仍以 library_id 为键
     assert "library_id" in columns["paper_tags"]
     assert "project_id" not in columns["paper_tags"]
-    # P9b 三列仍在（本次 downgrade 未触及），P9a 的 library_id 仍在
+    # P9b 三列在场（#619 删列已在链条前段回退），P9a 的 library_id 仍在
     assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
     assert "library_id" in columns["voyage_runs"]
     assert "library_id" in columns["activities"]
@@ -861,8 +868,9 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     # P9a 列在重新 upgrade 后回归
     assert "library_id" in columns["voyage_runs"]
     assert "library_id" in columns["activities"]
-    # P9b 列在重新 upgrade 后回归
-    assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
+    # P9b 的 submitted_by 回归；status/review_note 在 head 已删（#619）
+    assert "submitted_by" in columns["direction_libraries"]
+    assert not {"status", "review_note"} & columns["direction_libraries"]
     # P10 归属列在重新 upgrade 后回归
     assert "is_public" in columns["direction_libraries"]
     # P9e 列在重新 upgrade 后回归：projects.statement 在、definition/ingest_state 删

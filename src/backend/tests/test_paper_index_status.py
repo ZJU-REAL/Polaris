@@ -548,7 +548,7 @@ async def test_collecting_libraries_lists_only_admitted_and_visible(client):
             ("别人的个人库", "scored", False, 0.85),
         ):
             lib = DirectionLibrary(
-                name=name, status="active", is_public=is_public, submitted_by=me.id
+                name=name, is_public=is_public, submitted_by=me.id
             )
             session.add(lib)
             await session.flush()

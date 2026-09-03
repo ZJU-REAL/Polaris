@@ -312,11 +312,6 @@ export function IngestTab({ pid, libraryId, state, stateError, stateLoading, onG
           tr('这个文献库本月 AI 预算已用尽，同步已暂停；下月自动恢复，或请管理员调高预算。', 'This library has used up its monthly AI budget — syncing is paused until next month, or ask an admin to raise the budget.'),
           'error',
         );
-      } else if (e instanceof ApiError && e.message === 'LIBRARY_NOT_ACTIVE') {
-        toast(
-          tr('文献库还未激活，管理员批准后才能开始抓取。', 'Library is not active yet — an admin must approve it before ingest can start.'),
-          'error',
-        );
       } else if (e instanceof ApiError && e.status === 409) {
         toast(
           tr('该文献库已有一个文献任务在运行，请等待其完成。', 'A literature task is already running for this library — wait for it to finish.'),

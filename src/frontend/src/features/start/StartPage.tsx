@@ -94,10 +94,9 @@ export function StartPage() {
     const preset = getLang() === 'en' ? SAMPLE_TOPIC.en : SAMPLE_TOPIC.zh;
     // 语料优先绑 RSI 文献库（示例课题就是讲这个方向）；找不到才退回任一公共库
     const visible = librariesQuery.data ?? [];
-    const active = visible.filter((l) => l.status === 'active');
     const lib =
-      active.find((l) => SAMPLE_LIBRARY_NAMES.some((n) => l.name.toLowerCase().includes(n.toLowerCase()))) ??
-      active.find((l) => l.is_public);
+      visible.find((l) => SAMPLE_LIBRARY_NAMES.some((n) => l.name.toLowerCase().includes(n.toLowerCase()))) ??
+      visible.find((l) => l.is_public);
     setCreatingSample(true);
     try {
       const created = await api.createProject({

@@ -41,7 +41,6 @@ async def _setup(client):
         library = DirectionLibrary(
             name=f"content-{uuid.uuid4().hex[:8]}",
             statement="content test",
-            status="active",
             submitted_by=user_id,
             created_by=user_id,
         )

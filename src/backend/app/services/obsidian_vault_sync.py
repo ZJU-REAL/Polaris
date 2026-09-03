@@ -359,7 +359,6 @@ async def _resolve_library(
         name=name,
         statement=statement,
         created_by=project.owner_id,
-        status="active",
     )
     session.add(TopicSourceLibrary(topic_id=project.id, library_id=library.id))
     await session.commit()
