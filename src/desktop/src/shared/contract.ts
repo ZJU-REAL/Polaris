@@ -95,6 +95,17 @@ export interface LocalBackendInfo {
   baseUrl: string | null;
 }
 
+/**
+ * 内嵌引擎（打包态自带的 Python 后端）的引导进度。首启要下载 Python
+ * 工具链并安装依赖，可能长达数分钟——前端进度条二期接这个方法轮询。
+ * phase：idle（没走内嵌路径）/ check / python / venv / install / ready /
+ * failed（引导失败，已回落远端流程）。done 在 ready 或 failed 时为 true。
+ */
+export interface EngineBootstrapStatus {
+  phase: string;
+  done: boolean;
+}
+
 /** 服务器连通性探测结果（打 GET {url}/api/health）。 */
 export type ServerProbe =
   | { ok: true; version: string }
@@ -122,6 +133,8 @@ export interface Methods {
   'kernel.status': { params: void; result: KernelStatus };
   /** 本地引擎地址；前端启动时问一次，非空则 REST/WS 全走本地。 */
   'kernel.localBackend': { params: void; result: LocalBackendInfo };
+  /** 内嵌引擎引导进度；首启 bootstrap 期间轮询可得阶段信息。 */
+  'kernel.engineBootstrapStatus': { params: void; result: EngineBootstrapStatus };
 
   /* ---- local.*：第二期的本地计算能力 ----
      现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把
