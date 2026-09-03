@@ -18,8 +18,6 @@ SKILL_PAYLOAD = {
 }
 
 
-# 注意：首个注册用户自动成为平台 admin（auth 自举逻辑），
-# 因此 alice = 管理员兼发布者，403 断言用第二个用户 bob（member）
 
 
 async def _login(client, email="alice@example.com"):
@@ -31,62 +29,38 @@ async def _publish(client, headers) -> tuple[str, str]:
     skill = (await client.post("/api/skills", json=SKILL_PAYLOAD, headers=headers)).json()
     resp = await client.post(
         f"/api/skills/{skill['id']}/publish",
-        json={"summary": "推荐给全实验室", "tags": ["评分", "idea"]},
+        json={"summary": "推荐给大家", "tags": ["评分", "idea"]},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
     return skill["id"], resp.json()["id"]
 
 
-async def test_publish_review_flow(client):
-    headers = await _login(client)  # alice：首个用户 = admin
+async def test_publish_lists_immediately(client):
+    headers = await _login(client)
     _skill_id, listing_id = await _publish(client, headers)
+
+    # 发布即上架：任何登录用户立即可见
+    headers_b = await _login(client, email="bob@example.com")
+    market = (await client.get("/api/market/skills", headers=headers_b)).json()
+    assert [m["id"] for m in market] == [listing_id]
+    assert market[0]["status"] == "approved"
+    assert market[0]["skill"]["slug"] == "market-rubric"
+    assert market[0]["version"] == 1
 
     # 重复发布 409
     mine = (await client.get("/api/skills?scope=mine", headers=headers)).json()
     resp = await client.post(f"/api/skills/{mine[0]['id']}/publish", json={}, headers=headers)
     assert resp.status_code == 409
 
-    # 非管理员（bob）看不了审核队列、不能审核
-    headers_b = await _login(client, email="bob@example.com")
-    assert (
-        await client.get("/api/market/skills?status=pending", headers=headers_b)
-    ).status_code == 403
-    assert (
-        await client.post(f"/api/market/skills/{listing_id}/approve", headers=headers_b)
-    ).status_code == 403
-    # 管理员能看到审核队列
-    pending = (await client.get("/api/market/skills?status=pending", headers=headers)).json()
-    assert [p["id"] for p in pending] == [listing_id]
-
-    # pending 条目不出现在市场列表
-    assert (await client.get("/api/market/skills", headers=headers)).json() == []
-
-    # 管理员审核通过
-    resp = await client.post(
-        f"/api/market/skills/{listing_id}/approve", json={"comment": "内容合规"}, headers=headers
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "approved"
-    # 二次审核 409
-    assert (
-        await client.post(f"/api/market/skills/{listing_id}/approve", headers=headers)
-    ).status_code == 409
-
-    market = (await client.get("/api/market/skills", headers=headers)).json()
-    assert [m["id"] for m in market] == [listing_id]
-    assert market[0]["skill"]["slug"] == "market-rubric"
-    assert market[0]["version"] == 1
-
     # 详情含全文预览
     detail = (await client.get(f"/api/market/skills/{listing_id}", headers=headers)).json()
     assert detail["body"] == "严格打分。"
 
 
-async def test_install_rating_and_delist(client):
-    headers_a = await _login(client)  # alice：首个用户 = admin
+async def test_install_and_delist(client):
+    headers_a = await _login(client)
     _skill_id, listing_id = await _publish(client, headers_a)
-    await client.post(f"/api/market/skills/{listing_id}/approve", headers=headers_a)
 
     # 另一个用户安装 → 拷为自己的 user 技能
     headers_b = await _login(client, email="bob@example.com")
@@ -98,24 +72,8 @@ async def test_install_rating_and_delist(client):
     assert installed["current_version"]["body"] == "严格打分。"
     mine_b = (await client.get("/api/skills?scope=mine", headers=headers_b)).json()
     assert [s["slug"] for s in mine_b] == ["market-rubric"]
-
-    # 评分（可更新，同人只一条）+ 聚合
-    await client.post(
-        f"/api/market/skills/{listing_id}/reviews",
-        json={"rating": 4, "comment": "好用"},
-        headers=headers_b,
-    )
-    resp = await client.post(
-        f"/api/market/skills/{listing_id}/reviews", json={"rating": 5}, headers=headers_b
-    )
-    assert resp.status_code == 201
-    reviews = (
-        await client.get(f"/api/market/skills/{listing_id}/reviews", headers=headers_b)
-    ).json()
-    assert len(reviews) == 1 and reviews[0]["rating"] == 5
     market = (await client.get("/api/market/skills", headers=headers_b)).json()
     assert market[0]["install_count"] == 1
-    assert market[0]["rating_avg"] == 5.0 and market[0]["rating_count"] == 1
 
     # 发布者下架 → 市场不可见、安装 409
     resp = await client.delete(f"/api/market/skills/{listing_id}", headers=headers_a)

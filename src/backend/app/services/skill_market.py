@@ -1,6 +1,6 @@
 """技能市场业务逻辑（docs/skill-system.md §4.3；不 import fastapi）。
 
-部署内共享：发布（pending）→ 管理员审核（approved/rejected）→ 浏览/安装/评分。
+部署内共享：发布即上架（approved）→ 浏览/安装。
 listing 永远指向发布时的具体 SkillVersion；安装 = 拷贝该版本为安装者的 user 技能。
 """
 
@@ -8,15 +8,15 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.skill import Skill, SkillListing, SkillRating, SkillVersion
-from app.schemas.skill import SkillPublishRequest, SkillRatingCreate
+from app.models.skill import Skill, SkillListing, SkillVersion
+from app.schemas.skill import SkillPublishRequest
 from app.services import skills as skills_service
 
-ACTIVE_STATUSES = ("pending", "approved")
+ACTIVE_STATUSES = ("approved",)
 
 
 class ListingConflictError(Exception):
@@ -24,7 +24,7 @@ class ListingConflictError(Exception):
 
 
 class ListingStateError(Exception):
-    """条目状态不允许该操作（如审核非 pending、安装非 approved）。"""
+    """条目状态不允许该操作（如安装非 approved 条目）。"""
 
 
 class NotOwnerError(Exception):
@@ -34,7 +34,7 @@ class NotOwnerError(Exception):
 async def publish_skill(
     session: AsyncSession, skill: Skill, *, user_id: uuid.UUID, data: SkillPublishRequest
 ) -> SkillListing:
-    """发布当前版本到市场（pending，待管理员审核）。builtin 不需要发布。"""
+    """发布当前版本到市场（直接上架）。builtin 不需要发布。"""
     if skill.scope == "builtin" or skill.owner_id != user_id:
         raise NotOwnerError(skill.slug)
     version = await skills_service.latest_version(session, skill.id)
@@ -48,6 +48,7 @@ async def publish_skill(
     listing = SkillListing(
         skill_id=skill.id,
         skill_version_id=version.id,
+        status="approved",
         summary=data.summary or skill.description,
         tags=data.tags or None,
         published_by=user_id,
@@ -56,22 +57,6 @@ async def publish_skill(
     await session.commit()
     await session.refresh(listing)
     return listing
-
-
-async def _rating_stats(
-    session: AsyncSession, listing_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, tuple[float, int]]:
-    if not listing_ids:
-        return {}
-    stmt = (
-        select(SkillRating.listing_id, func.avg(SkillRating.rating), func.count())
-        .where(SkillRating.listing_id.in_(listing_ids))
-        .group_by(SkillRating.listing_id)
-    )
-    return {
-        lid: (round(float(avg), 2), int(count))
-        for lid, avg, count in (await session.execute(stmt)).all()
-    }
 
 
 def _base_read(listing: SkillListing) -> dict[str, Any]:
@@ -99,16 +84,8 @@ def _base_read(listing: SkillListing) -> dict[str, Any]:
 async def annotate_listings(
     session: AsyncSession, listings: Sequence[SkillListing]
 ) -> list[dict[str, Any]]:
-    """联表读数据 + 评分聚合，输出 SkillListingRead 字典列表。"""
-    stats = await _rating_stats(session, [listing.id for listing in listings])
-    out = []
-    for listing in listings:
-        data = _base_read(listing)
-        avg_count = stats.get(listing.id)
-        if avg_count:
-            data["rating_avg"], data["rating_count"] = avg_count
-        out.append(data)
-    return out
+    """联表读数据，输出 SkillListingRead 字典列表。"""
+    return [_base_read(listing) for listing in listings]
 
 
 def _listing_query():
@@ -140,24 +117,6 @@ async def list_market(
 async def get_listing(session: AsyncSession, listing_id: uuid.UUID) -> SkillListing | None:
     stmt = _listing_query().where(SkillListing.id == listing_id)
     return (await session.execute(stmt)).scalar_one_or_none()
-
-
-async def decide_listing(
-    session: AsyncSession,
-    listing: SkillListing,
-    *,
-    approved: bool,
-    decided_by: uuid.UUID,
-    comment: str | None = None,
-) -> SkillListing:
-    if listing.status != "pending":
-        raise ListingStateError(listing.status)
-    listing.status = "approved" if approved else "rejected"
-    listing.decided_by = decided_by
-    listing.comment = comment
-    await session.commit()
-    await session.refresh(listing)
-    return listing
 
 
 async def delist(
@@ -224,31 +183,3 @@ async def _copy_as_user_skill(
         )
     )
     return skill
-
-
-async def upsert_rating(
-    session: AsyncSession, listing: SkillListing, *, user_id: uuid.UUID, data: SkillRatingCreate
-) -> SkillRating:
-    if listing.status != "approved":
-        raise ListingStateError(listing.status)
-    stmt = select(SkillRating).where(
-        SkillRating.listing_id == listing.id, SkillRating.user_id == user_id
-    )
-    rating = (await session.execute(stmt)).scalar_one_or_none()
-    if rating is None:
-        rating = SkillRating(listing_id=listing.id, user_id=user_id)
-        session.add(rating)
-    rating.rating = data.rating
-    rating.comment = data.comment
-    await session.commit()
-    await session.refresh(rating)
-    return rating
-
-
-async def list_ratings(session: AsyncSession, listing_id: uuid.UUID) -> Sequence[SkillRating]:
-    stmt = (
-        select(SkillRating)
-        .where(SkillRating.listing_id == listing_id)
-        .order_by(SkillRating.created_at.desc())
-    )
-    return (await session.execute(stmt)).scalars().all()

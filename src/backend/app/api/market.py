@@ -1,8 +1,7 @@
 """技能市场路由（docs/skill-system.md §4.3）。
 
-- 发布：POST /skills/{id}/publish（技能主人）→ pending，管理员审核
-- 浏览/详情/安装/评分：登录即可（部署内共享）
-- 审核 approve/reject：仅管理员；下架：发布者或管理员
+- 发布：POST /skills/{id}/publish（技能主人）→ 直接上架
+- 浏览/详情/安装：登录即可；下架：发布者或管理员
 """
 
 import uuid
@@ -10,18 +9,15 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_admin
+from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.models.skill import SkillListing, SkillVersion
 from app.models.user import User
 from app.schemas.skill import (
-    ListingDecision,
     SkillDetail,
     SkillListingDetail,
     SkillListingRead,
     SkillPublishRequest,
-    SkillRatingCreate,
-    SkillRatingRead,
 )
 from app.services import skill_market as market_service
 from app.services import skills as skills_service
@@ -68,14 +64,11 @@ async def publish_skill(
 async def list_market(
     q: str | None = Query(default=None, max_length=100),
     sort: str = Query(default="-created_at", pattern="^(-created_at|installs)$"),
-    status_filter: str = Query(default="approved", alias="status", pattern="^(approved|pending)$"),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> list[SkillListingRead]:
-    """市场列表。status=pending 为管理员审核队列（非管理员 403）。"""
-    if status_filter == "pending" and user.role != "admin":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="ADMIN_REQUIRED")
-    listings = await market_service.list_market(session, status=status_filter, q=q, sort=sort)
+    """市场列表（仅已上架条目）。"""
+    listings = await market_service.list_market(session, status="approved", q=q, sort=sort)
     return [
         SkillListingRead(**d) for d in await market_service.annotate_listings(session, listings)
     ]
@@ -117,49 +110,6 @@ async def install_listing(
     return detail
 
 
-@router.post("/market/skills/{listing_id}/approve", response_model=SkillListingRead)
-async def approve_listing(
-    listing_id: uuid.UUID,
-    data: ListingDecision | None = None,
-    session: AsyncSession = Depends(get_session),
-    admin: User = Depends(require_admin),
-) -> SkillListingRead:
-    return await _decide(session, listing_id, admin, approved=True, data=data)
-
-
-@router.post("/market/skills/{listing_id}/reject", response_model=SkillListingRead)
-async def reject_listing(
-    listing_id: uuid.UUID,
-    data: ListingDecision | None = None,
-    session: AsyncSession = Depends(get_session),
-    admin: User = Depends(require_admin),
-) -> SkillListingRead:
-    return await _decide(session, listing_id, admin, approved=False, data=data)
-
-
-async def _decide(
-    session: AsyncSession,
-    listing_id: uuid.UUID,
-    admin: User,
-    *,
-    approved: bool,
-    data: ListingDecision | None,
-) -> SkillListingRead:
-    listing = await _get_listing(session, listing_id)
-    try:
-        listing = await market_service.decide_listing(
-            session,
-            listing,
-            approved=approved,
-            decided_by=admin.id,
-            comment=data.comment if data else None,
-        )
-    except market_service.ListingStateError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="LISTING_ALREADY_DECIDED") from e
-    listing = await _get_listing(session, listing.id)
-    return SkillListingRead(**(await market_service.annotate_listings(session, [listing]))[0])
-
-
 @router.delete("/market/skills/{listing_id}", response_model=SkillListingRead)
 async def delist_listing(
     listing_id: uuid.UUID,
@@ -175,33 +125,3 @@ async def delist_listing(
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="NOT_LISTING_OWNER") from e
     listing = await _get_listing(session, listing.id)
     return SkillListingRead(**(await market_service.annotate_listings(session, [listing]))[0])
-
-
-@router.get("/market/skills/{listing_id}/reviews", response_model=list[SkillRatingRead])
-async def list_reviews(
-    listing_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> list[SkillRatingRead]:
-    await _get_listing(session, listing_id)
-    ratings = await market_service.list_ratings(session, listing_id)
-    return [SkillRatingRead.model_validate(r) for r in ratings]
-
-
-@router.post(
-    "/market/skills/{listing_id}/reviews",
-    response_model=SkillRatingRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def add_review(
-    listing_id: uuid.UUID,
-    data: SkillRatingCreate,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_active_user),
-) -> SkillRatingRead:
-    listing = await _get_listing(session, listing_id)
-    try:
-        rating = await market_service.upsert_rating(session, listing, user_id=user.id, data=data)
-    except market_service.ListingStateError as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="LISTING_NOT_APPROVED") from e
-    return SkillRatingRead.model_validate(rating)

@@ -13,7 +13,6 @@ import { useIsCompact } from '../../lib/useBreakpoint';
 import { useProject } from '../../app/project';
 import {
   api,
-  isAdmin,
   skillTargetLabel,
   skillKindLabel,
   SKILL_TARGETS,
@@ -157,11 +156,11 @@ function SkillDetailModal({
   const publishMutation = useMutation({
     mutationFn: () => api.publishSkill(skillId),
     onSuccess: () => {
-      toast(tr('已提交发布，等待管理员审核', 'Submitted for admin review'), 'ok');
+      toast(tr('已发布到市场', 'Published to the market'), 'ok');
       void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
     },
     onError: (e) =>
-      toast(e instanceof Error && e.message === 'ALREADY_LISTED' ? tr('该技能已在市场（或待审核中）', 'Already on the market (or pending review)') : `${tr('发布失败', 'Publish failed')}：${errMsg(e)}`, 'error'),
+      toast(e instanceof Error && e.message === 'ALREADY_LISTED' ? tr('该技能已在市场', 'Already on the market') : `${tr('发布失败', 'Publish failed')}：${errMsg(e)}`, 'error'),
   });
   const archiveMutation = useMutation({
     mutationFn: () => api.archiveSkill(skillId),
@@ -569,16 +568,6 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
 
 // ---- 技能市场 ----
 
-function Stars({ avg, count }: { avg: number | null; count: number }) {
-  if (!count) return <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{tr('暂无评分', 'No ratings yet')}</span>;
-  return (
-    <span style={{ fontSize: 11.5, color: 'var(--warn-tx)' }}>
-      ★ {avg?.toFixed(1)}
-      <span style={{ color: 'var(--text-3)', marginLeft: 4 }}>{tr(`（${count} 人）`, `(${count})`)}</span>
-    </span>
-  );
-}
-
 function ListingCard({ l, onOpen }: { l: SkillListingRead; onOpen: () => void }) {
   return (
     <button
@@ -595,30 +584,25 @@ function ListingCard({ l, onOpen }: { l: SkillListingRead; onOpen: () => void })
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-3)' }}>{tr(`${l.install_count} 次安装`, `${l.install_count} installs`)}</span>
       </div>
       {l.summary && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 6, lineHeight: 1.5 }}>{l.summary}</div>}
-      <div className="row gap8" style={{ marginTop: 8, alignItems: 'center' }}>
-        <Stars avg={l.rating_avg} count={l.rating_count} />
-        {(l.tags ?? []).map((t) => (
-          <span key={t} className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
-            {t}
-          </span>
-        ))}
-      </div>
+      {(l.tags ?? []).length > 0 && (
+        <div className="row gap8" style={{ marginTop: 8, alignItems: 'center' }}>
+          {(l.tags ?? []).map((t) => (
+            <span key={t} className="pill sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent-text)' }}>
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
     </button>
   );
 }
 
 function ListingDetailModal({ listingId, onClose }: { listingId: string; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [myRating, setMyRating] = useState(0);
-  const [myComment, setMyComment] = useState('');
 
   const { data: listing } = useQuery({
     queryKey: ['market-skill', listingId],
     queryFn: () => api.getMarketSkill(listingId),
-  });
-  const { data: reviews } = useQuery({
-    queryKey: ['market-reviews', listingId],
-    queryFn: () => api.listListingReviews(listingId),
   });
 
   const installMutation = useMutation({
@@ -629,16 +613,6 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string; onClose
       void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
     },
     onError: (e) => toast(`${tr('安装失败', 'Install failed')}：${errMsg(e)}`, 'error'),
-  });
-  const rateMutation = useMutation({
-    mutationFn: () => api.addListingReview(listingId, { rating: myRating, comment: myComment.trim() || undefined }),
-    onSuccess: () => {
-      toast(tr('评分已提交', 'Rating submitted'), 'ok');
-      setMyComment('');
-      void queryClient.invalidateQueries({ queryKey: ['market-reviews', listingId] });
-      void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
-    },
-    onError: (e) => toast(`${tr('评分失败', 'Rating failed')}：${errMsg(e)}`, 'error'),
   });
 
   if (!listing) return null;
@@ -679,74 +653,19 @@ function ListingDetailModal({ listingId, onClose }: { listingId: string; onClose
           {listing.body}
         </pre>
       )}
-
-      {/* 我的评分 */}
-      <div className="row gap8" style={{ marginTop: 14, alignItems: 'center' }}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            className="icon-btn"
-            style={{ width: 26, height: 26, color: n <= myRating ? 'var(--warn-tx)' : 'var(--text-3)', border: 'none', background: 'transparent', fontSize: 16 }}
-            onClick={() => setMyRating(n)}
-            aria-label={tr(`${n} 星`, `${n} stars`)}
-          >
-            {n <= myRating ? '★' : '☆'}
-          </button>
-        ))}
-        <input
-          className="input"
-          style={{ flex: 1 }}
-          placeholder={tr('用后感受（可选）', 'Your experience (optional)')}
-          value={myComment}
-          onChange={(e) => setMyComment(e.target.value)}
-        />
-        <button className="btn btn-soft" disabled={!myRating || rateMutation.isPending} onClick={() => rateMutation.mutate()}>
-          {tr('提交评分', 'Submit rating')}
-        </button>
-      </div>
-
-      {(reviews ?? []).length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          {reviews!.map((r) => (
-            <div key={r.id} className="row gap8" style={{ padding: '5px 0', alignItems: 'baseline' }}>
-              <span style={{ fontSize: 11.5, color: 'var(--warn-tx)', flexShrink: 0 }}>{'★'.repeat(r.rating)}</span>
-              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{r.comment ?? ''}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </Modal>
   );
 }
 
 function MarketView() {
-  const queryClient = useQueryClient();
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<'-created_at' | 'installs'>('-created_at');
   const [openListing, setOpenListing] = useState<string | null>(null);
-
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
-  const admin = isAdmin(me);
 
   const { data: listings, isLoading, isError } = useQuery({
     queryKey: ['market-skills', sort, q],
     queryFn: () => api.listMarketSkills({ q: q || undefined, sort }),
     retry: false,
-  });
-  const { data: pending } = useQuery({
-    queryKey: ['market-skills', 'pending'],
-    queryFn: () => api.listMarketSkills({ status: 'pending' }),
-    retry: false,
-    enabled: admin,
-  });
-
-  const decideMutation = useMutation({
-    mutationFn: ({ id, decision }: { id: string; decision: 'approve' | 'reject' }) => api.decideListing(id, decision),
-    onSuccess: (listing) => {
-      toast(listing.status === 'approved' ? tr('已上架', 'Listed') : tr('已驳回', 'Rejected'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['market-skills'] });
-    },
-    onError: (e) => toast(`${tr('审核失败', 'Review failed')}：${errMsg(e)}`, 'error'),
   });
 
   return (
@@ -763,31 +682,11 @@ function MarketView() {
         <input className="input" style={{ width: 200, marginLeft: 'auto' }} placeholder={tr('搜索市场…', 'Search market…')} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
-      {admin && (pending ?? []).length > 0 && (
-        <div className="card" style={{ padding: '14px 16px', marginBottom: 14, borderLeft: '3px solid var(--warn-tx)' }}>
-          <div style={{ fontSize: 13, fontWeight: 660, marginBottom: 8 }}>{tr('待审核（管理员）', 'Pending review (admin)')}</div>
-          {pending!.map((l) => (
-            <div key={l.id} className="row gap8" style={{ padding: '5px 0', alignItems: 'center' }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{l.skill?.name}</span>
-              <span style={{ fontSize: 11.5, color: 'var(--text-3)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {l.summary}
-              </span>
-              <button className="btn btn-soft" style={{ fontSize: 11.5, padding: '3px 10px' }} onClick={() => decideMutation.mutate({ id: l.id, decision: 'approve' })}>
-                {tr('通过', 'Approve')}
-              </button>
-              <button className="btn btn-ghost" style={{ fontSize: 11.5, padding: '3px 10px' }} onClick={() => decideMutation.mutate({ id: l.id, decision: 'reject' })}>
-                {tr('驳回', 'Reject')}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
       <div style={{ display: 'grid', gap: 10 }}>
         {isError ? (
           <EmptyState icon="sparkle" title={tr('市场加载失败', 'Failed to load market')} desc={tr('后端服务未启动或版本过旧', 'Backend not running or too old')} />
         ) : isLoading ? null : (listings ?? []).length === 0 ? (
-          <EmptyState icon="sparkle" title={tr('市场还是空的', 'The market is empty')} desc={tr('在技能库把你的技能发布到市场，审核通过后即可安装', 'Publish your skills from the library; once approved they can be installed')} />
+          <EmptyState icon="sparkle" title={tr('市场还是空的', 'The market is empty')} desc={tr('在技能库把你的技能发布到市场，发布后大家就能安装', 'Publish your skills from the library so others can install them')} />
         ) : (
           listings!.map((l) => <ListingCard key={l.id} l={l} onOpen={() => setOpenListing(l.id)} />)
         )}

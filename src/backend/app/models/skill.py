@@ -6,7 +6,6 @@
 - UserSkill：全局启用记录：用户 × 技能 × 注入点，可 pin 版本与配置
   （技能不绑定课题，启用后对该用户所有新任务生效）
 - SkillListing：技能市场条目（发布指向具体版本，管理员审核后可安装）
-- SkillRating：市场评分（每人每条目一条，可更新）
 """
 
 import uuid
@@ -115,17 +114,3 @@ class SkillListing(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     skill: Mapped[Skill] = relationship()
     version: Mapped[SkillVersion] = relationship()
-
-
-class SkillRating(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    __tablename__ = "skill_ratings"
-    __table_args__ = (UniqueConstraint("listing_id", "user_id", name="uq_skill_ratings_user"),)
-
-    listing_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("skill_listings.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    rating: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-5
-    comment: Mapped[str | None] = mapped_column(Text)
