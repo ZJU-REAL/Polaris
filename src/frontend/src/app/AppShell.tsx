@@ -147,7 +147,6 @@ function crumbsFor(
     if (p === '/start') return [topic, { label: tr('选择课题', 'Pick a topic') }];
     if (p === '/projects/new') return [topic, { label: tr('新建课题', 'New topic') }];
     if (p.startsWith('/projects/')) return [topic, { label: tr('课题设置', 'Topic settings') }];
-    if (p.startsWith('/join/')) return [topic, { label: tr('接受邀请', 'Accept invite') }];
 
     // —— 实验室组 ——
     if (p === '/lab') return [lab, e('/lab')];

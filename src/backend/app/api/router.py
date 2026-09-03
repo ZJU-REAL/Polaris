@@ -22,7 +22,6 @@ from app.api import (
     ingest,
     integration_tokens,
     interdisciplinary,
-    invites,
     lab,
     libraries,
     library,
@@ -57,7 +56,6 @@ api_router.include_router(chat_agent.router)
 api_router.include_router(auth.router)
 api_router.include_router(chat_bots.router)
 api_router.include_router(users_profile.router)
-api_router.include_router(invites.router)
 api_router.include_router(admin_users.router)
 api_router.include_router(feedback.router)
 api_router.include_router(projects.router)

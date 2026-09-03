@@ -120,18 +120,6 @@ class AddCollaborator(BaseModel):
     role: Literal["member", "owner"] = "member"
 
 
-class ShareLinkCreate(BaseModel):
-    expires_days: int | None = Field(default=14, ge=1, le=365)
-    max_uses: int | None = Field(default=None, ge=1, le=1000)
-
-
-class ShareLink(BaseModel):
-    token: str
-    join_path: str  # 前端拼域名：/join/{token}
-    expires_at: datetime | None
-    max_uses: int | None
-
-
 class CompileDiagnostic(BaseModel):
     severity: Literal["error", "warning"]
     file: str | None

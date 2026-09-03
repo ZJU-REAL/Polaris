@@ -37,22 +37,6 @@ async def test_search_add_remove_collaborator(client):
     assert (await client.get(f"/api/manuscripts/{ms_id}", headers=bob)).status_code == 404
 
 
-async def test_share_link_grants_edit_on_join(client):
-    project_id, owner = await _setup_project(client, email="a@example.com")
-    resp = await _create_manuscript(client, owner, project_id)
-    ms_id = resp.json()["id"]
-
-    resp = await client.post(f"/api/manuscripts/{ms_id}/share-link", json={}, headers=owner)
-    assert resp.status_code == 201
-    token = resp.json()["token"]
-    assert resp.json()["join_path"] == f"/join/{token}"
-
-    _, guest = await _setup_project(client, email="guest@example.com")
-    assert (await client.get(f"/api/manuscripts/{ms_id}", headers=guest)).status_code == 404
-    assert (await client.post(f"/api/invites/{token}/accept", headers=guest)).status_code == 200
-    assert (await client.get(f"/api/manuscripts/{ms_id}", headers=guest)).status_code == 200
-
-
 async def test_add_collaborator_requires_manage(client):
     project_id, owner = await _setup_project(client, email="mgr@example.com")
     resp = await _create_manuscript(client, owner, project_id)

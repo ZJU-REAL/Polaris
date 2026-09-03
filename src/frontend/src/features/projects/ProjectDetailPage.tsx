@@ -10,8 +10,6 @@ import { useProject } from '../../app/project';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, type ProjectRead } from '../../lib/api';
 import { tr } from '../../lib/i18n';
-import { portalUrl } from '../../lib/endpoint';
-import { copyText } from '../../lib/clipboard';
 import { useLibraries } from '../libraries/hooks';
 import { LibraryPicker } from '../libraries/LibraryPicker';
 import { InterdisciplinaryScopePanel } from './InterdisciplinaryScopePanel';
@@ -186,33 +184,6 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
     },
     onError: (err) => toast(`${tr('添加失败：', 'Failed to add: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
   });
-
-  // —— 邀请链接 ——
-  const { data: invites } = useQuery({
-    queryKey: ['invites', id],
-    queryFn: () => api.listInvites(id),
-    retry: false,
-  });
-  const createInviteMutation = useMutation({
-    mutationFn: () => api.createInvite(id, { expires_days: 7 }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['invites', id] }),
-    onError: (err) => toast(`${tr('生成失败：', 'Failed to create: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
-  });
-  const revokeInviteMutation = useMutation({
-    mutationFn: (inviteId: string) => api.revokeInvite(id, inviteId),
-    onSuccess: () => {
-      toast(tr('邀请链接已撤销', 'Invite link revoked'), 'ok');
-      void queryClient.invalidateQueries({ queryKey: ['invites', id] });
-    },
-    onError: (err) => toast(`${tr('撤销失败：', 'Failed to revoke: ')}${err instanceof Error ? err.message : String(err)}`, 'error'),
-  });
-  const copyInvite = (token: string) => {
-    void copyText(portalUrl(`/join/${token}`)).then((ok) =>
-      ok
-        ? toast(tr('邀请链接已复制', 'Invite link copied'), 'ok')
-        : toast(tr('复制失败，请手动复制', 'Copy failed — please copy manually'), 'error'),
-    );
-  };
 
   // —— 名称编辑 ——
   const [editingName, setEditingName] = useState(false);
@@ -442,44 +413,6 @@ export function ProjectSettings({ id, embedded = false }: { id: string; embedded
               <Icon name="plus" size={13} />
               {tr('添加成员', 'Add member')}
             </button>
-          </div>
-
-          {/* 邀请链接 */}
-          <div style={{ marginTop: 18, borderTop: '0.5px solid var(--border)', paddingTop: 14 }}>
-            <div className="row" style={{ marginBottom: 10 }}>
-              <span style={{ fontSize: 12.5, fontWeight: 650 }}>{tr('邀请链接', 'Invite links')}</span>
-              <span style={{ fontSize: 11.5, color: 'var(--text-3)', marginLeft: 8 }}>{tr('已注册用户打开链接即可加入本课题', 'Any registered user can join via the link')}</span>
-              <button
-                className="btn btn-soft sm"
-                style={{ marginLeft: 'auto' }}
-                disabled={createInviteMutation.isPending}
-                onClick={() => createInviteMutation.mutate()}
-              >
-                {tr('生成链接（7 天有效）', 'Create link (valid 7 days)')}
-              </button>
-            </div>
-            {(invites ?? []).length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{tr('还没有有效的邀请链接', 'No active invite links yet')}</div>
-            ) : (
-              <div className="col gap6">
-                {invites!.map((inv) => (
-                  <div key={inv.id} className="row gap8" style={{ padding: '7px 10px', background: 'var(--surface-2)', borderRadius: 9 }}>
-                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {portalUrl(`/join/${inv.token}`)}
-                    </span>
-                    <span style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
-                      {tr(
-                        `已用 ${inv.used_count}${inv.max_uses != null ? `/${inv.max_uses}` : ''} 次`,
-                        `used ${inv.used_count}${inv.max_uses != null ? `/${inv.max_uses}` : ''} times`,
-                      )}
-                      {inv.expires_at ? tr(` · ${fmtTime(inv.expires_at)} 过期`, ` · expires ${fmtTime(inv.expires_at)}`) : ''}
-                    </span>
-                    <button className="btn btn-ghost sm" onClick={() => copyInvite(inv.token)}>{tr('复制', 'Copy')}</button>
-                    <button className="btn btn-ghost sm" onClick={() => revokeInviteMutation.mutate(inv.id)}>{tr('撤销', 'Revoke')}</button>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </SectionCard>
       </div>

@@ -10,7 +10,8 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
-HEAD_REVISION = "a3e9c17b5f42"  # Drop registration codes (P1 de-lab)
+HEAD_REVISION = "b7d4f92e6c15"  # Drop project invites (P1 de-lab)
+CODES_DROP_REVISION = "a3e9c17b5f42"  # Drop registration codes (P1 de-lab)
 TRANSLATIONS_REVISION = "f4a5b6c7d8e9"  # Versioned discovery-hit translations
 DISCOVERY_SCHEDULE_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
 VENUE_METRIC_REVISION = "f2a3b4c5d6e7"  # Versioned literature venue metrics
@@ -252,7 +253,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "affiliations" in columns["papers"]
     # 用户系统 U1：users 三新列 + project_invites 表
     assert {"avatar_path", "token_quota", "features", "llm_access"} <= columns["users"]
-    assert "project_invites" in columns["_tables"]
     # 可选全文索引：users.settings 个人设置 JSON 列
     assert "settings" in columns["users"]
     # 任务循环 v1：voyage_runs / voyage_steps 新列
@@ -516,7 +516,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First undo the registration-codes drop: the table comes back.
+    # First undo the project-invites drop: the table comes back.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == CODES_DROP_REVISION
+    assert "project_invites" in columns["_tables"]
+
+    # Then undo the registration-codes drop: that table comes back too.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == TRANSLATIONS_REVISION
