@@ -1,7 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
-import { hostPlatform } from './lib/host';
+import { probeLocalBackend } from './lib/endpoint';
+import { hasHost, hostPlatform } from './lib/host';
 import './styles/global.css';
 
 // 桌面端把平台标在 <html> 上：macOS 的 hiddenInset 标题栏需要页面自己给
@@ -21,8 +22,18 @@ if (!container) {
   throw new Error('#root element not found');
 }
 
-createRoot(container).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+const render = () =>
+  createRoot(container).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+
+// 桌面端先问一次本地引擎地址再挂载（一次 IPC 往返，毫秒级）：让首屏请求
+// 就走对地址，而不是发出去之后才发现该走 127.0.0.1。web 端没有宿主桥，
+// 保持原来的同步挂载路径，行为一字不变。
+if (hasHost()) {
+  void probeLocalBackend().finally(render);
+} else {
+  render();
+}

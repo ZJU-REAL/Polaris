@@ -87,6 +87,14 @@ export interface KernelStatus {
   plugins: number;
 }
 
+/**
+ * 本地引擎地址。内核没拉起本地后端（未设 POLARIS_DESKTOP_ENGINE、或引擎
+ * 启动失败）时 baseUrl 为 null，前端据此回落远端服务器。
+ */
+export interface LocalBackendInfo {
+  baseUrl: string | null;
+}
+
 /** 服务器连通性探测结果（打 GET {url}/api/health）。 */
 export type ServerProbe =
   | { ok: true; version: string }
@@ -112,6 +120,8 @@ export interface Methods {
 
   /** 内核状态探针。前端不依赖它做分支，只用于诊断页与冒烟。 */
   'kernel.status': { params: void; result: KernelStatus };
+  /** 本地引擎地址；前端启动时问一次，非空则 REST/WS 全走本地。 */
+  'kernel.localBackend': { params: void; result: LocalBackendInfo };
 
   /* ---- local.*：第二期的本地计算能力 ----
      现在全部声明但不实现（一律抛 ERR_CAPABILITY_UNAVAILABLE），目的是把

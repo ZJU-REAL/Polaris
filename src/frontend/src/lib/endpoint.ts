@@ -9,6 +9,8 @@
    业务代码只 import 本文件，不直接读 window.__POLARIS__。
    ============================================================ */
 
+import { kernelLocalBackend } from './host';
+
 /** Electron preload 注入的宿主运行时信息（web 端为 undefined）。 */
 export interface PolarisHostRuntime {
   /** 用户配置的服务器地址，如 https://polaris.example.edu（可带尾斜杠，本模块会归一化）。 */
@@ -32,12 +34,44 @@ export function isDesktop(): boolean {
   return hostRuntime() != null;
 }
 
+/* —— 本地引擎（P1-A4）——
+   桌面内核可能已在本机拉起 Python 后端（POLARIS_DESKTOP_ENGINE）。启动时
+   经宿主桥问一次 kernel.localBackend，模块级缓存结果：非空则 REST/WS 全部
+   改走 127.0.0.1。web 端没有宿主桥，探测直接短路成 null——零请求零改动。 */
+
+let localBase: string | null = null;
+let localProbe: Promise<string | null> | null = null;
+
 /**
- * 服务器 origin：web 端为 ''（同源，走相对路径），桌面端为配置的地址（已去尾斜杠）。
+ * 探测本地引擎地址（幂等，结果缓存）。main.tsx 在桌面端挂载前 await 它，
+ * 保证首屏请求就走对地址，而不是「先远端后本地」中途切换。
+ */
+export function probeLocalBackend(): Promise<string | null> {
+  localProbe ??= (async () => {
+    try {
+      const info = await kernelLocalBackend();
+      localBase = info?.baseUrl?.replace(/\/+$/, '') || null;
+    } catch {
+      // 探测失败按「无本地引擎」处理，回落远端；不让一次 IPC 故障卡死首屏
+      localBase = null;
+    }
+    return localBase;
+  })();
+  return localProbe;
+}
+
+/** 远端服务器 origin（不含本地引擎），分享类链接必须用它。 */
+function remoteOrigin(): string {
+  return (hostRuntime()?.serverUrl ?? '').replace(/\/+$/, '');
+}
+
+/**
+ * 服务器 origin：web 端为 ''（同源，走相对路径），桌面端为配置的地址（已去尾斜杠）；
+ * 探测到本地引擎时本地优先。
  * 故意做成函数而非模块级常量：避免依赖「注入早于本模块求值」这一隐式时序。
  */
 export function serverOrigin(): string {
-  return (hostRuntime()?.serverUrl ?? '').replace(/\/+$/, '');
+  return localBase ?? remoteOrigin();
 }
 
 /** REST / SSE 的基址。web 端返回 '/api'，与改造前的字面量完全一致。 */
@@ -61,6 +95,8 @@ export function wsUrl(path: string): string {
  * 收件人多数用浏览器打开，所以桌面端要指向服务器上的 web 门户，而不是 app:// 本地页面。
  */
 export function portalUrl(path = ''): string {
-  const origin = serverOrigin() || (typeof window === 'undefined' ? '' : window.location.origin);
+  // 刻意用 remoteOrigin 而不是 serverOrigin：分享/邀请链接给别人打开，
+  // 指向本机 127.0.0.1 的本地引擎对收件人毫无意义。
+  const origin = remoteOrigin() || (typeof window === 'undefined' ? '' : window.location.origin);
   return `${origin}${path}`;
 }

@@ -21,6 +21,7 @@ import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { localBackend } from './kernel';
 import { stagedRendererDir } from './updates/renderer-store';
 
 export const APP_SCHEME = 'app';
@@ -63,7 +64,7 @@ function rendererRoot(): string {
  * - style-src 'unsafe-inline'：CodeMirror 的 style-mod 与 KaTeX 在运行时
  *   insertRule 注入样式，去掉编辑器和公式渲染会直接崩。
  */
-export function buildCsp(serverUrl: string): string {
+export function buildCsp(serverUrl: string, localBaseUrl?: string | null): string {
   // blob: 必须显式列出：Chromium 里 'self' 不覆盖 blob: URL，而 pdf.js 标注阅读器
   // 是 fetch(blob:…pdf) 取正文（走 connect-src），标准阅读器是 <iframe src=blob:>
   // （走 frame-src）。少了这一项就只有标注阅读器打不开，且只在桌面端复现。
@@ -75,6 +76,17 @@ export function buildCsp(serverUrl: string): string {
       connect.add(u.origin.replace(/^http/, 'ws'));
     } catch {
       /* 地址非法时只留 'self'，前端会停在配置页 */
+    }
+  }
+  // 本地引擎（POLARIS_DESKTOP_ENGINE）：不放行 127.0.0.1 的话 renderer 对
+  // 本地后端的一切 fetch/WS 都会被 CSP 拦死，endpoint.ts 的切换形同虚设。
+  if (localBaseUrl) {
+    try {
+      const u = new URL(localBaseUrl);
+      connect.add(u.origin);
+      connect.add(u.origin.replace(/^http/, 'ws'));
+    } catch {
+      /* 非法地址当作没有本地引擎 */
     }
   }
   return [
@@ -123,7 +135,7 @@ export function handleAppProtocol(getServerUrl: () => string): void {
     const res = await net.fetch(pathToFileURL(filePath).toString());
     const headers = new Headers(res.headers);
     if (filePath.endsWith('.html')) {
-      headers.set('Content-Security-Policy', buildCsp(getServerUrl()));
+      headers.set('Content-Security-Policy', buildCsp(getServerUrl(), localBackend().baseUrl));
     }
     return new Response(res.body, { status: res.status, headers });
   });
