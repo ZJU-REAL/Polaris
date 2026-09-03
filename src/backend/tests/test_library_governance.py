@@ -44,7 +44,10 @@ async def test_can_manage_library_identities(client):
             await session.execute(select(User).where(User.email == "gov-stranger@example.com"))
         ).scalar_one()
 
-        assert await libraries_service.can_manage_library(session, user=admin_user, library=library)
+        # admin 旁路已随 role 移除（#614）：非创建者一律不可管
+        assert not await libraries_service.can_manage_library(
+            session, user=admin_user, library=library
+        )
         assert await libraries_service.can_manage_library(session, user=owner_user, library=library)
         assert not await libraries_service.can_manage_library(
             session, user=stranger_user, library=library
@@ -112,8 +115,8 @@ async def test_project_paper_endpoints_visibility(client):
     # 无关用户：project 作用域文献端点视为不存在
     resp = await client.get(f"/api/projects/{project_id}/papers", headers=stranger)
     assert resp.status_code == 404
-    # 课题所有者与平台 admin 放行
+    # 课题所有者放行；非成员（含此前的平台 admin）一律视为不存在（#614）
     resp = await client.get(f"/api/projects/{project_id}/papers", headers=owner)
     assert resp.status_code == 200, resp.text
     resp = await client.get(f"/api/projects/{project_id}/papers", headers=admin)
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 404

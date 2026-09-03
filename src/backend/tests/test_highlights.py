@@ -2,10 +2,7 @@
 
 import uuid
 
-from sqlalchemy import select
-
 from app.core.db import get_sessionmaker
-from app.models.user import User
 from tests.conftest import add_paper, register_and_login
 
 RECT = {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.12}
@@ -173,11 +170,5 @@ async def test_highlight_permissions(client):
         await client.patch(f"/api/highlights/{hl_id}", json={"color": "pink"}, headers=outsider)
     ).status_code == 404
 
-    # 平台 admin（bob 提权）可删非本人划线
-    async with get_sessionmaker()() as session:
-        user = (
-            await session.execute(select(User).where(User.email == "bob@example.com"))
-        ).scalar_one()
-        user.role = "admin"
-        await session.commit()
-    assert (await client.delete(f"/api/highlights/{hl_id}", headers=bob)).status_code == 204
+    # admin 代删旁路已随 role 移除（#614）：非作者一律视为不存在
+    assert (await client.delete(f"/api/highlights/{hl_id}", headers=bob)).status_code == 404

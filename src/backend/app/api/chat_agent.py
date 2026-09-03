@@ -33,7 +33,7 @@ from app.agents.chat.events import (
 )
 from app.agents.chat.loop import ChatAgentLoop, ChatTurnRequest
 from app.agents.chat.prompt import default_tool_names, mode_instructions, tools_for_mode
-from app.api.auth import current_active_user, require_llm_chat
+from app.api.auth import current_active_user
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.llm.base import TextBlock, ThinkingBlock, ToolResultBlock, ToolUseBlock
@@ -391,7 +391,7 @@ async def run_turn(
     conversation_id: uuid.UUID,
     payload: ConversationTurnRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_chat),
+    user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     """跑一轮：模型可以反复调工具，最后给出回答。"""
     _require_enabled()

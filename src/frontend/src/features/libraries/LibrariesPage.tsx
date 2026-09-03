@@ -8,7 +8,7 @@ import { FormField } from '../../components/ui/FormField';
 import { Segmented } from '../../components/ui/Segmented';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
-import { api, ApiError, isAdmin, type DirectionLibrarySummary } from '../../lib/api';
+import { api, ApiError, type DirectionLibrarySummary } from '../../lib/api';
 import { tr } from '../../lib/i18n';
 import { StatementInterview } from './StatementInterview';
 import { useLibraries, libraryPath, type LibraryFilters } from './hooks';
@@ -91,8 +91,8 @@ function LibraryCard({
 }) {
   const updated = lib.last_compiled_at ?? lib.last_synced_at;
   const activate = selectMode ? onToggleSelect : onOpen;
-  // 删除入口可见：平台 admin（任何库）∪ 个人库的归属人本人（is_owner=submitted_by==我）。
-  const canDelete = admin || (!lib.is_public && lib.is_owner);
+  // 删除入口可见：归属人本人（后端 can_delete_library 同一口径，#614）。
+  const canDelete = lib.is_owner;
   return (
     <div
       className="card hoverable"
@@ -380,7 +380,8 @@ export function LibrariesPage() {
   const { data, isLoading, isError, refetch } = useLibraries(filters);
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
   const canCreate = !!me;
-  const admin = isAdmin(me);
+  // role 治理已移除（#614）：批量管理入口对所有登录用户开放，删除权限由后端按创建者校验
+  const admin = !!me;
   const [createOpen, setCreateOpen] = useState(false);
   // 多选态（仅 admin 可用）：selectMode 打开后每张卡可勾选，顶部出现批量操作栏
   const [selectMode, setSelectMode] = useState(false);

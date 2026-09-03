@@ -21,11 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import (
-    current_active_user,
-    require_llm_chat,
-    require_llm_task,
-)
+from app.api.auth import current_active_user
 from app.api.chat_stream import chat_stream_response
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
@@ -196,7 +192,7 @@ async def create_library(
 @router.post("/libraries/statement-interview", response_model=StatementInterviewResponse)
 async def statement_interview(
     data: StatementInterviewRequest,
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
 ) -> StatementInterviewResponse:
     """结构化访谈产出文献库的方向描述：问四个环节，每题给几个可勾选的候选。
 
@@ -267,7 +263,7 @@ async def list_library_digests(
 async def generate_library_digest(
     library_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> DigestGenerateRead:
     """生成今日简报：有今日更新则直接生成，否则先执行一次增量同步。"""
@@ -386,7 +382,7 @@ async def start_library_ingest(
     library_id: uuid.UUID,
     data: IngestRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     """对某个方向库直接触发抓取（P9a）：可管理者（成员/策展人/admin）皆可。
@@ -975,7 +971,7 @@ async def chat_with_library(
     library_id: uuid.UUID,
     data: PaperChatRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_chat),
+    user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     """库文献对话：跨库内文献检索 + stage=reading 流式回答（全实验室可读，费用记个人）。
 
@@ -1021,28 +1017,27 @@ async def merge_papers(
 ) -> PaperMergeResult:
     """合并重复论文（不可撤销）：drop 行的全部归属并入 keep 后删除 drop。
 
-    权限：平台 admin，或 keep/drop 任一所在方向库的可管理者。
+    权限：keep/drop 任一所在方向库的可管理者。
     """
-    if user.role != "admin":
-        libraries = (
-            (
-                await session.execute(
-                    select(DirectionLibrary)
-                    .join(LibraryPaper, LibraryPaper.library_id == DirectionLibrary.id)
-                    .where(LibraryPaper.paper_id.in_([data.keep_id, data.drop_id]))
-                    .distinct()
-                )
+    libraries = (
+        (
+            await session.execute(
+                select(DirectionLibrary)
+                .join(LibraryPaper, LibraryPaper.library_id == DirectionLibrary.id)
+                .where(LibraryPaper.paper_id.in_([data.keep_id, data.drop_id]))
+                .distinct()
             )
-            .scalars()
-            .all()
         )
-        allowed = False
-        for library in libraries:
-            if await libraries_service.can_manage_library(session, user=user, library=library):
-                allowed = True
-                break
-        if not allowed:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="PAPER_MERGE_FORBIDDEN")
+        .scalars()
+        .all()
+    )
+    allowed = False
+    for library in libraries:
+        if await libraries_service.can_manage_library(session, user=user, library=library):
+            allowed = True
+            break
+    if not allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="PAPER_MERGE_FORBIDDEN")
     try:
         report = await paper_merge_service.merge_papers(
             session, keep_id=data.keep_id, drop_id=data.drop_id

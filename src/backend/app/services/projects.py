@@ -30,45 +30,20 @@ async def _unique_slug(session: AsyncSession, base: str) -> str:
     return slug
 
 
-def is_admin_expr(user_id: uuid.UUID):
-    """SQL 层的「这个人是平台管理员吗」。
-
-    这些查询只拿得到 user_id、拿不到 User 对象，所以用 exists 子查询就地判；
-    写法与 voyages._visible_filter、libraries.user_visible_paper_stmt 一致。
-
-    只读账号（游客）不算：它顶着 role=admin 是为了看见管理端长什么样，不是为了
-    看见全实验室在做哪些课题。少了这一条，一个演示号打开就是二十几个课题的清单，
-    每个名字都在说这个实验室正在做什么。它该看到的只有别人把它加进去的那些。
-    """
-    return (
-        select(User.id)
-        .where(User.id == user_id, User.role == "admin", User.read_only.is_(False))
-        .exists()
-    )
-
-
 def in_my_projects(project_id_col, user_id: uuid.UUID):
     """「这条记录所属的课题我够得着吗」——课题作用域读取口的统一条件。
 
-    够得着 = 我是该课题成员，或我是平台管理员（最高权限，全实验室可见可操作）。
-    课题下的东西（想法/实验/稿件/闸门/书架论文……）一律用这一条判，口径必须一致：
-    某处漏了 admin 分支，就会出现「列表里看得到、点进去 404」或「有任务却查不到
-    课题名字」这类前后不一致。
+    够得着 = 我是该课题成员。平台管理员旁路已随 role 移除（#614）：单机档位
+    只有一个用户，自己建的课题自己就是成员，不需要「看全实验室」的特权分支。
+    课题下的东西（想法/实验/稿件/闸门/书架论文……）一律用这一条判，口径必须一致。
     """
-    return or_(
-        project_id_col.in_(
-            select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
-        ),
-        is_admin_expr(user_id),
+    return project_id_col.in_(
+        select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
     )
 
 
 async def list_projects(session: AsyncSession, user_id: uuid.UUID) -> Sequence[Project]:
-    """列出用户够得着的课题：本人参与的；平台管理员看全部。
-
-    管理员必须看到全部——否则跟「任务列表对管理员是全平台可见」对不上：
-    实验室工作台拿任务的 project_id 回查这份列表，查空就把归属显示成「未知课题」。
-    """
+    """列出用户够得着的课题（本人参与的）。"""
     stmt = (
         select(Project)
         .where(in_my_projects(Project.id, user_id))
@@ -174,8 +149,8 @@ async def list_members(session: AsyncSession, project_id: uuid.UUID) -> list[dic
 
 
 def can_manage_project(project: Project, user: User) -> bool:
-    """PATCH / 加成员权限：项目 owner 或平台 admin。"""
-    return project.owner_id == user.id or user.role == "admin"
+    """PATCH / 加成员权限：项目 owner（admin 旁路已随 role 移除，#614）。"""
+    return project.owner_id == user.id
 
 
 async def update_project(session: AsyncSession, project: Project, data: ProjectUpdate) -> Project:

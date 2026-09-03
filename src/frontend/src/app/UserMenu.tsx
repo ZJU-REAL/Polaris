@@ -5,7 +5,7 @@ import { Avatar } from '../components/ui/Avatar';
 import { Icon } from '../components/ui/Icon';
 import { Modal } from '../components/ui/Modal';
 import { useAuth } from './auth';
-import { api, isAdmin, type UserRead } from '../lib/api';
+import { api, type UserRead } from '../lib/api';
 import { tr } from '../lib/i18n';
 
 /* 侧栏底部用户区：点头像弹出菜单（关于 / 设置 / 退出登录）。邀请协作者入口在研究方向详情页。 */
@@ -92,7 +92,6 @@ export function UserMenu({ me, collapsed }: { me: UserRead | undefined; collapse
         <Avatar userId={me?.id} hasAvatar={!!me?.has_avatar} name={name} size={34} />
         <span className="user-info">
           <span className="user-name">{name}</span>
-          <span className="user-role">{isAdmin(me) ? tr('管理员', 'Admin') : tr('研究员', 'Researcher')}</span>
         </span>
         {!collapsed && (
           <Icon

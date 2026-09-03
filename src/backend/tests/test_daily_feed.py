@@ -521,11 +521,10 @@ async def test_categories_admin_and_refresh(client, queue_stub):
     resp = await client.get("/api/daily/categories", headers=mh)
     assert resp.json()["categories"] == ["cs.AI", "cs.CL", "cs.CV"]
 
-    # 普通成员改分类 → 403
+    # 任何登录用户都能改分类（admin 治理已随 #614 移除）；非法格式 422
     resp = await client.put("/api/daily/categories", json={"categories": ["cs.LG"]}, headers=mh)
-    assert resp.status_code == 403
+    assert resp.status_code == 200 and resp.json()["categories"] == ["cs.LG"]
 
-    # admin 改分类；非法格式 422
     resp = await client.put(
         "/api/daily/categories", json={"categories": ["cs.LG", "stat.ML"]}, headers=ah
     )
@@ -535,9 +534,7 @@ async def test_categories_admin_and_refresh(client, queue_stub):
     )
     assert resp.status_code == 422
 
-    # 手动刷新建任务 + 入队（admin only），返回 voyage_id 供前端跳任务详情
-    resp = await client.post("/api/daily/refresh", headers=mh)
-    assert resp.status_code == 403
+    # 手动刷新建任务 + 入队，返回 voyage_id 供前端跳任务详情
     resp = await client.post("/api/daily/refresh", headers=ah)
     assert resp.status_code == 202
     voyage_id = resp.json()["voyage_id"]
@@ -1004,10 +1001,10 @@ async def test_sync_time_is_admin_configurable(client):
     async with get_sessionmaker()() as session:
         assert await daily_feed.get_sync_time(session) == (3, 45)
 
-    # 非 admin 改不了
+    # 任何登录用户都能改（#614）
     other = {"Authorization": f"Bearer {await register_and_login(client, email='u2@e.com')}"}
     resp = await client.put("/api/daily/sync-time", json={"hour": 5, "minute": 0}, headers=other)
-    assert resp.status_code == 403
+    assert resp.status_code == 200
 
 
 async def test_due_now_gates_on_the_configured_time(client):
@@ -1232,7 +1229,7 @@ async def test_max_probe_attempts_defaults_to_ten_and_is_configurable(client):
 
     assert (
         await client.put("/api/daily/probe-attempts", json={"attempts": 4}, headers=member)
-    ).status_code == 403
+    ).status_code == 200  # 任何登录用户都能改（#614）
 
     resp = await client.put("/api/daily/probe-attempts", json={"attempts": 4}, headers=admin)
     assert resp.status_code == 200 and resp.json()["attempts"] == 4
@@ -1447,7 +1444,7 @@ async def test_retention_defaults_to_two_weeks_and_is_configurable(client):
     other = {"Authorization": f"Bearer {await register_and_login(client, email='r2@e.com')}"}
     assert (
         await client.put("/api/daily/retention", json={"days": 3}, headers=other)
-    ).status_code == 403
+    ).status_code == 200  # 任何登录用户都能改（#614）
 
 
 async def test_cleanup_uses_the_configured_retention(client, monkeypatch):

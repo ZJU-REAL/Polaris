@@ -278,11 +278,12 @@ def visible_library_clause(user_id: uuid.UUID):
     my_topic_libraries = select(TopicSourceLibrary.library_id).where(
         TopicSourceLibrary.topic_id.in_(my_projects)
     )
-    is_admin = select(User.id).where(User.id == user_id, User.role == "admin").exists()
+    # admin 全局可见旁路已随 role 移除（#614）；无主库（submitted_by 为空）保持
+    # 全员可见——与 library_visible_to / can_manage_library 同口径，别让列表与详情打架
     return or_(
         DirectionLibrary.id.in_(my_topic_libraries),
         DirectionLibrary.submitted_by == user_id,
-        is_admin,
+        DirectionLibrary.submitted_by.is_(None),
     )
 
 
@@ -482,11 +483,9 @@ async def list_libraries_overview(
 
 
 def library_visible_to(library: DirectionLibrary, user: User) -> bool:
-    """库对请求者是否可见（P10）：公共库（is_public）全员可读；个人库（含申请转公共
-    的 pending 态）仅创建者 + admin 可见。"""
-    if library.is_public:
-        return True
-    if user.role == "admin":
+    """库对请求者是否可见（P10）：公共库（is_public）与无主库全员可读；个人库仅
+    创建者（admin 旁路已随 role 移除，#614；无主库口径与 can_manage_library 一致）。"""
+    if library.is_public or library.submitted_by is None:
         return True
     return library.submitted_by == user.id
 
@@ -610,40 +609,33 @@ async def _is_project_member(
 async def can_manage_library(
     session: AsyncSession, *, user: User, library: DirectionLibrary
 ) -> bool:
-    """库级写权限：平台 admin ∪ 创建者（submitted_by）∪ 策展人。
-
-    公共库全体 admin 都能管；个人库只创建者 + admin（策展人默认含创建者本人，仍适用）。
+    """库级写权限：创建者（submitted_by）；无主库（submitted_by 为空的存量/系统库）
+    谁都能管——此前它们靠 admin 兜底维护，admin 旁路随 role 移除（#614）后，单机
+    档位登录即主人，不该留下一批谁都动不了的库。
 
     起源课题的成员**不再**因这层关系拿到管理权：库与课题解耦后 project_id 只是
-    「这个库当初从哪个课题建的」的历史指针，不是归属。此前靠这条在管库的人，由
-    迁移 b3d81f6c05a9 补成策展人保住权限。
+    「这个库当初从哪个课题建的」的历史指针，不是归属。
     """
-    if user.role == "admin":
-        return True
-    return library.submitted_by is not None and library.submitted_by == user.id
+    return library.submitted_by is None or library.submitted_by == user.id
 
 
 def can_manage_library_row(*, user: User, library: DirectionLibrary) -> bool:
-    """:func:`can_manage_library` 的同步批量版：规则一字不差（admin ∪ 创建者）。
+    """:func:`can_manage_library` 的同步批量版：规则一字不差（创建者 ∪ 无主库）。
 
     规则**只能有一份**——两处各写各的正是此前「同一个库在列表里能管、点进
     详情不能管」的来源。改动规则时两个函数一起改。
     """
-    if user.role == "admin":
-        return True
-    return library.submitted_by is not None and library.submitted_by == user.id
+    return library.submitted_by is None or library.submitted_by == user.id
 
 
 async def get_managed_project(
     session: AsyncSession, *, project_id: uuid.UUID, user: User
 ) -> Project | None:
     """库管理入口的统一鉴权（project 作用域的文献管理端点用）：课题成员照常放行；
-    平台 admin 与该课题隐式库的策展人同权；无权限视为不存在（返回 None）。"""
+    该课题隐式库的创建者同权；无权限视为不存在（返回 None）。"""
     project = await session.get(Project, project_id)
     if project is None:
         return None
-    if user.role == "admin":
-        return project
     if await _is_project_member(session, project_id=project_id, user_id=user.id):
         return project
     library = (
@@ -727,16 +719,13 @@ class LibraryHasTopicsError(Exception):
 
 
 class LibraryDeleteForbiddenError(Exception):
-    """无权删除该库（个人库仅创建者/admin；公共库仅 admin）。路由映射 403。"""
+    """无权删除该库（仅创建者本人）。路由映射 403。"""
 
 
 def can_delete_library(library: DirectionLibrary, user: User) -> bool:
-    """删库权限（P10）：公共库仅平台 admin；个人库创建者本人或 admin。"""
-    if user.role == "admin":
-        return True
-    if library.is_public:
-        return False
-    return library.submitted_by is not None and library.submitted_by == user.id
+    """删库权限：创建者本人；无主库谁都能删（与 can_manage_library 同口径，#614）。
+    公共/个人之分只剩历史语义，不再区分删除权限。"""
+    return library.submitted_by is None or library.submitted_by == user.id
 
 
 async def delete_library(

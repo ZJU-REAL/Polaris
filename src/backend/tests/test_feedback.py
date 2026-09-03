@@ -69,13 +69,12 @@ async def test_image_upload_fetch_and_owner_guard(client):
     assert img.status_code == 200
     assert img.headers["content-type"] == "image/png"
 
-    # admin 也能看
+    # 反馈图片只有提交者本人可见（admin 代看旁路已随 #614 移除）
     aheaders = {"Authorization": f"Bearer {admin}"}
     assert (
         await client.get(f"/api/feedback/{fb['id']}/images/0", headers=aheaders)
-    ).status_code == 200
+    ).status_code == 403
 
-    # 第三个用户（非 owner 非 admin）看不到
     other = await register_and_login(client, email="other@example.com")
     oheaders = {"Authorization": f"Bearer {other}"}
     assert (
@@ -257,11 +256,12 @@ async def test_issue_close_syncs_status_to_resolved(client, monkeypatch):
     assert resp.status_code == 200
 
 
-async def test_non_admin_cannot_triage(client):
+async def test_any_user_can_triage(client):
+    """反馈管理端点对任何登录用户开放（#614）。"""
     member = await _member(client)
     mheaders = {"Authorization": f"Bearer {member}"}
-    assert (await client.get("/api/admin/feedback", headers=mheaders)).status_code == 403
+    assert (await client.get("/api/admin/feedback", headers=mheaders)).status_code == 200
     fb = (await client.post("/api/feedback", json={"title": "x"}, headers=mheaders)).json()
     assert (
         await client.post(f"/api/admin/feedback/{fb['id']}/draft", headers=mheaders)
-    ).status_code == 403
+    ).status_code == 200

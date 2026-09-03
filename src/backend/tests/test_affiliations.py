@@ -271,14 +271,9 @@ async def test_affiliation_mode_admin_endpoint(client):
 
     resp = await client.get("/api/admin/settings/affiliation-mode", headers=ah)
     assert resp.status_code == 200 and resp.json()["mode"] == "on_add"
-    # 普通成员改 → 403
+    # 任何登录用户都能改（admin 治理已随 #614 移除）；非法值 422（schema Literal 校验）
     resp = await client.put(
         "/api/admin/settings/affiliation-mode", json={"mode": "on_compile"}, headers=mh
-    )
-    assert resp.status_code == 403
-    # admin 改；非法值 422（schema Literal 校验）
-    resp = await client.put(
-        "/api/admin/settings/affiliation-mode", json={"mode": "on_compile"}, headers=ah
     )
     assert resp.status_code == 200 and resp.json()["mode"] == "on_compile"
     resp = await client.put(

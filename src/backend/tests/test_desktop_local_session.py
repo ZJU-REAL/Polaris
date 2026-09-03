@@ -30,7 +30,6 @@ async def test_local_session_provisions_admin_and_is_idempotent(client, monkeypa
     assert me.status_code == 200, me.text
     body = me.json()
     assert body["email"] == "local@polaris.desktop"
-    assert body["role"] == "admin"
 
     # 幂等：第二次不再建新用户，会话仍指向同一身份
     resp2 = await client.post("/api/auth/local-session")

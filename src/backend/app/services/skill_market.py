@@ -120,9 +120,10 @@ async def get_listing(session: AsyncSession, listing_id: uuid.UUID) -> SkillList
 
 
 async def delist(
-    session: AsyncSession, listing: SkillListing, *, user_id: uuid.UUID, is_admin: bool
+    session: AsyncSession, listing: SkillListing, *, user_id: uuid.UUID
 ) -> SkillListing:
-    if not is_admin and listing.published_by != user_id:
+    # admin 全局下架旁路已随 role 移除（#614）：只有发布者本人能下架
+    if listing.published_by != user_id:
         raise NotOwnerError(str(listing.id))
     listing.status = "delisted"
     await session.commit()

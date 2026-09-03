@@ -7,7 +7,6 @@ import { Markdown } from '../../lib/markdown';
 import { fmtTime } from '../../lib/format';
 import {
   api,
-  isAdmin,
   type HighlightColor,
   type HighlightRead,
   type HighlightStyle,
@@ -17,7 +16,7 @@ import { HIGHLIGHT_COLORS, HIGHLIGHT_STYLES, highlightColorMeta } from './shared
 /* ============================================================
    阅读工作台 · 标注面板：
    列出本篇全部划线（原文引用 + 颜色 + 批注），点卡片跳回 PDF 对应位置；
-   本人 / 管理员可改颜色、写批注、删除。
+   本人可改颜色、写批注、删除。
    ============================================================ */
 
 export interface HighlightsPanelProps {
@@ -242,7 +241,7 @@ export function HighlightsPanel({
               key={h.id}
               hl={h}
               active={h.id === activeHighlightId}
-              canEdit={!!me && (isAdmin(me) || me.id === h.author_id)}
+              canEdit={!!me && me.id === h.author_id}
               onJump={() => onJump(h)}
               onChanged={onChanged}
             />

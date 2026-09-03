@@ -367,23 +367,3 @@ async def test_dsh_mcp_profiles_enforce_discovery_and_direct_calls(client):
     )
     assert invalid_profile.status_code == 400
 
-    async with get_sessionmaker()() as session:
-        user = await session.get(User, user_id)
-        assert user is not None
-        user.read_only = True
-        await session.commit()
-    # Demoting the account revokes MCP for its previously minted tokens too, not
-    # just its JWT: the read-only gate resolves token identity, so both the write
-    # profile and a plain read request are refused.
-    read_only_account = await client.post(
-        "/mcp",
-        json=request,
-        headers=_headers(full_token["token"], profile="dsh-full-v1"),
-    )
-    assert read_only_account.status_code == 403
-    read_only_read = await client.post(
-        "/mcp",
-        json=request,
-        headers=_headers(read_token["token"], profile="dsh-readonly-v1"),
-    )
-    assert read_only_read.status_code == 403

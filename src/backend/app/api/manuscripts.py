@@ -16,12 +16,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import (
-    current_active_user,
-    require_admin,
-    require_paper_review,
-    require_writer,
-)
+from app.api.auth import current_active_user
 from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session
 from app.core.events import EventBus, get_event_bus
@@ -146,7 +141,7 @@ async def upload_template(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_active_user),
 ) -> TemplateInfo:
-    """上传 zip 建模板。给 project_id → 该研究方向私有（需成员）；否则全平台（需管理员）。"""
+    """上传 zip 建模板。给 project_id → 该研究方向私有（需成员）；否则全平台。"""
     if project_id is not None:
         project = await projects_service.get_project(
             session, project_id=project_id, user_id=user.id
@@ -155,8 +150,7 @@ async def upload_template(
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
         scope = "project"
     else:
-        if user.role != "admin":
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="ADMIN_REQUIRED_FOR_GLOBAL")
+        # 全平台模板不再要求管理员（#614）：单机档位登录即主人
         scope = "global"
     data = await file.read()
     try:
@@ -208,7 +202,7 @@ async def delete_template(
     tmpl = await templates_service.get_db_template(session, str(template_id))
     if tmpl is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="TEMPLATE_NOT_FOUND")
-    allowed = user.role == "admin" or tmpl.created_by == user.id
+    allowed = tmpl.created_by == user.id
     if not allowed and tmpl.project_id is not None:
         project = await projects_service.get_project(
             session, project_id=tmpl.project_id, user_id=user.id
@@ -222,9 +216,9 @@ async def delete_template(
 @router.post("/manuscripts/templates/seed", response_model=list[TemplateSeedResult])
 async def seed_templates(
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
+    user: User = Depends(current_active_user),
 ) -> list[TemplateSeedResult]:
-    """拉取并入库官方模板（ACL/ICLR/NeurIPS/ICML），幂等。仅管理员。"""
+    """拉取并入库官方模板（ACL/ICLR/NeurIPS/ICML），幂等。"""
     results: list[TemplateSeedResult] = []
     for entry in templates_service.SEED_MANIFEST:
         try:
@@ -955,7 +949,7 @@ async def draft_manuscript(
     manuscript_id: uuid.UUID,
     data: DraftRequest | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_writer),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     manuscript = await _member_manuscript(session, manuscript_id, user)
@@ -983,7 +977,7 @@ async def draft_manuscript(
 async def initialize_structure(
     manuscript_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_writer),
+    user: User = Depends(current_active_user),
 ) -> ManuscriptFileContent:
     """AI 起草前置：基于当前编译主文件新建 draft.tex（preamble 保留 + POLARIS_SECTION
     骨架正文），原主文件不动，并把编译主文件切到 draft.tex。返回新建的 draft.tex。
@@ -1015,7 +1009,7 @@ async def assist_manuscript(
     manuscript_id: uuid.UUID,
     data: AssistRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_writer),
+    user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     """选中润色/按指示改写/光标续写：stage=writing 流式输出。
 
@@ -1115,7 +1109,7 @@ async def review_manuscript(
     manuscript_id: uuid.UUID,
     data: PaperReviewRequest | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_paper_review),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> VoyageRead:
     manuscript = await _member_manuscript(session, manuscript_id, user)

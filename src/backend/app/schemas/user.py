@@ -1,7 +1,6 @@
 """用户 schema（基于 fastapi-users），注册额外要求邀请码。"""
 
 import uuid
-from datetime import datetime
 from typing import Any, Literal
 
 from fastapi_users import schemas
@@ -14,14 +13,8 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     display_name: str
     username: str | None = None
     username_locked: bool = False
-    role: str
-    # 只读账号（游客）：前端据此挂只读横幅、把写入入口收起来
-    read_only: bool = False
-    llm_access: str = "full"
     llm_self_managed: bool = False
     has_avatar: bool = False
-    token_quota: int | None = None
-    features: dict[str, Any] | None = None
     settings: dict[str, Any] | None = None
 
 
@@ -96,5 +89,5 @@ class ManagedCommandWatchdogUserRead(BaseModel):
 
 
 class UsageSummary(BaseModel):
+    # 只剩用量统计（展示用）；配额上限已随治理机制移除（#614）
     tokens_used: int
-    token_quota: int | None

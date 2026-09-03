@@ -51,15 +51,10 @@ def _visible_filter(stmt, user_id: uuid.UUID):
     """
     my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
     my_libraries = select(DirectionLibrary.id).where(DirectionLibrary.submitted_by == user_id)
-    # 只读账号（游客）不吃这条旁路：课题可见范围已经按成员关系收紧
-    # （见 projects.is_admin_expr），任务这边不跟着收，列表里就会冒出一堆
-    # 它够不着的课题的任务，标题旁边写着「未知课题」。
-    is_admin = (
-        select(User.id)
-        .where(User.id == user_id, User.role == "admin", User.read_only.is_(False))
-        .exists()
-    )
-    # 「我发起的」只对有作用域的任务生效：平台级任务（两个 id 都为空）恒为 admin-only。
+    # 平台级任务（两个作用域 id 都为空，如每日新论文抓取）此前是 admin-only；
+    # admin 旁路随 role 移除（#614）后对所有登录用户可见——单机档位登录即主人，
+    # 每日抓取这类平台任务本来就是替他跑的。
+    platform_scoped = and_(VoyageRun.project_id.is_(None), VoyageRun.library_id.is_(None))
     mine_scoped = and_(
         VoyageRun.created_by == user_id,
         or_(VoyageRun.project_id.is_not(None), VoyageRun.library_id.is_not(None)),
@@ -69,7 +64,7 @@ def _visible_filter(stmt, user_id: uuid.UUID):
             VoyageRun.project_id.in_(my_projects),
             VoyageRun.library_id.in_(my_libraries),
             mine_scoped,
-            is_admin,
+            platform_scoped,
         )
     )
 
@@ -107,19 +102,16 @@ async def can_view_voyage(
 ) -> bool:
     """能否查看某个任务（详情/日志/SSE/取消/重试的统一口径）。
 
-    - 平台管理员：全部；
-    - 平台级任务（两个作用域 id 都为空，如每日新论文抓取）：仅平台管理员，口径与
-      订阅分类管理、手动刷新、向量开关一致；
-    - 我发起的任务（``created_by``）：自己点的那次运行，哪怕后来不再是该库策展人也看得到；
+    - 平台级任务（两个作用域 id 都为空，如每日新论文抓取）：所有登录用户
+      （admin-only 口径随 role 移除，#614）；
+    - 我发起的任务（``created_by``）：自己点的那次运行；
     - 课题作用域任务：课题成员；
-    - 库作用域任务：能管这个库的人（创建者/策展人/admin，见 libraries.can_manage_library）。
+    - 库作用域任务：能管这个库的人（创建者，见 libraries.can_manage_library）。
 
     :func:`_visible_filter` 是它的 SQL 镜像，两边必须一起改。
     """
-    if user.role == "admin" and not user.read_only:
-        return True
     if run.project_id is None and run.library_id is None:
-        return False
+        return True
     if run.created_by is not None and run.created_by == user.id:
         return True
     if run.project_id is not None and await _is_project_member(

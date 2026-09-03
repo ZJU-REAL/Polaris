@@ -24,8 +24,8 @@ from app.services.literature.discovery_ranking import normalized_score_weights
 async def can_manage_discovery(
     session: AsyncSession, *, library: DirectionLibrary, user: User
 ) -> bool:
-    """发现运行写权限：平台管理员或库创建者。"""
-    return user.role == "admin" or library.submitted_by == user.id
+    """发现运行写权限：库创建者；无主库谁都能管（与 can_manage_library 同口径，#614）。"""
+    return library.submitted_by is None or library.submitted_by == user.id
 
 
 def enabled_sources(source_config: dict | None, query_plan: dict | None) -> list[str]:

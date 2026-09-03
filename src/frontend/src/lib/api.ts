@@ -198,22 +198,16 @@ export interface UserRead {
   display_name?: string | null;
   username?: string | null;
   username_locked?: boolean;
-  role?: string;
-  /** true = 只读账号（游客）：看得见，改不动 */
-  read_only?: boolean;
-  llm_access?: 'full' | 'chat_only' | 'blocked';
-  /** true = 用户自管 LLM 配置；false = 由管理员统一接管（用全局配置） */
+  /** true = 用户自管 LLM 配置；false = 用全局配置 */
   llm_self_managed?: boolean;
   has_avatar?: boolean;
-  token_quota?: number | null;
-  features?: Record<string, boolean> | null;
   /** 用户个人设置（后端可能暂未返回，可选） */
   settings?: Record<string, unknown> | null;
 }
 
 export interface UsageSummary {
+  /** 只剩用量统计（展示用）；配额上限已随治理机制移除（#614） */
   tokens_used: number;
-  token_quota: number | null;
 }
 
 // ============================================================
@@ -290,11 +284,6 @@ export interface SendCodeResult {
   sent: boolean;
   /** 冷却中的剩余秒数 */
   retry_after: number;
-}
-
-/** admin 判定：role=admin 或 fastapi-users superuser。 */
-export function isAdmin(u: UserRead | undefined | null): boolean {
-  return !!u && (u.role === 'admin' || u.is_superuser === true);
 }
 
 // ============================================================

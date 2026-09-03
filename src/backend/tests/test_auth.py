@@ -37,13 +37,12 @@ async def test_register_login_me_flow(client):
     assert body["email"] == "bob@example.com"
     assert body["display_name"] == "Bob"
     assert body["username"] == "bob"
-    assert body["role"] == "admin"  # 首个注册用户自动 admin（M1）
+    assert "role" not in body  # 治理字段已随 #614 移除
     assert "invite_code" not in body
 
-    # 第二个注册用户是普通 member
+    # 第二个注册用户与第一个无差别（不再有 admin/member 之分）
     resp = await client.post("/api/auth/register", json=_register_body(email="second@example.com"))
     assert resp.status_code == 201
-    assert resp.json()["role"] == "member"
 
     # 重复注册
     resp = await client.post("/api/auth/register", json=_register_body())

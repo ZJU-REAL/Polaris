@@ -1,14 +1,12 @@
 """文献库归属与可见性 —— 建库即 active 个人库（转公共审批流已随实验室定位移除）。
 
 - 任意登录用户建库 → 即刻可用的**个人库**（status=active、is_public=false）；
-- 个人库仅创建者 + admin 可见/可管理，token 记创建者账；
-- 存量公共库（is_public=true）仍全员可见、仅 admin 可删；
-- 删除：个人库创建者本人或 admin 可删。
+- 个人库仅创建者可见/可管理，token 记创建者账（admin 旁路已随 #614 移除）；
+- 存量公共库（is_public=true）仍全员可见；
+- 删除：一律创建者本人。
 """
 
 import uuid
-
-from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.models.library_direction import DirectionLibrary
@@ -17,15 +15,6 @@ from tests.conftest import register_and_login
 
 async def _hdr(client, email):
     return {"Authorization": f"Bearer {await register_and_login(client, email=email)}"}
-
-
-async def _promote_admin(email: str) -> None:
-    async with get_sessionmaker()() as session:
-        from app.models.user import User
-
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
-        user.role = "admin"
-        await session.commit()
 
 
 async def _make_public(lib_id: str) -> None:
@@ -67,7 +56,6 @@ async def test_user_creates_personal_active_library(client):
 async def test_personal_library_can_ingest_without_approval(client, queue_stub):
     """P10：个人库即刻 active，无需审批即可触发抓取。"""
     admin = await _hdr(client, "p10-a2@example.com")
-    await _promote_admin("p10-a2@example.com")
     lib_id = await _create_personal(client, admin)
     resp = await client.post(
         f"/api/libraries/{lib_id}/ingest/run", json={"mode": "bootstrap"}, headers=admin
@@ -103,7 +91,6 @@ async def test_personal_library_read_endpoints_hidden_from_stranger(client):
     owner = await _hdr(client, "readvis-owner@example.com")
     stranger = await _hdr(client, "readvis-stranger@example.com")
     await _hdr(client, "readvis-admin@example.com")
-    await _promote_admin("readvis-admin@example.com")
     lib_id = await _create_personal(client, owner, name="只读端点个人库")
 
     read_paths = [
@@ -128,21 +115,20 @@ async def test_personal_library_read_endpoints_hidden_from_stranger(client):
     assert resp.status_code == 200
 
 
-async def test_admin_sees_others_personal(client):
-    admin = await _hdr(client, "p10-a10@example.com")
-    await _promote_admin("p10-a10@example.com")
+async def test_others_personal_library_stays_hidden(client):
+    """admin 全局可见旁路已随 role 移除（#614）：别人的个人库对任何用户都不可见。"""
+    other = await _hdr(client, "p10-a10@example.com")
     owner = await _hdr(client, "p10-owner10@example.com")
     lib_id = await _create_personal(client, owner)
 
-    resp = await client.get("/api/libraries", headers=admin)
-    assert lib_id in {x["id"] for x in resp.json()}
-    resp = await client.get(f"/api/libraries/{lib_id}", headers=admin)
-    assert resp.status_code == 200
+    resp = await client.get("/api/libraries", headers=other)
+    assert lib_id not in {x["id"] for x in resp.json()}
+    resp = await client.get(f"/api/libraries/{lib_id}", headers=other)
+    assert resp.status_code == 404
 
 
 async def test_public_library_visible_to_all(client):
     await _hdr(client, "p10-a11@example.com")
-    await _promote_admin("p10-a11@example.com")
     owner = await _hdr(client, "p10-owner11@example.com")
     stranger = await _hdr(client, "p10-stranger11@example.com")
     lib_id = await _create_personal(client, owner, name="将转公共的库")
@@ -173,7 +159,6 @@ async def test_digest_is_readable_by_anyone_who_can_see_the_library(client):
     from app.models.research_digest import LibraryResearchDigest
 
     await _hdr(client, "digest-admin@example.com")
-    await _promote_admin("digest-admin@example.com")
     owner = await _hdr(client, "digest-owner@example.com")
     stranger = await _hdr(client, "digest-stranger@example.com")
 
@@ -254,7 +239,6 @@ async def test_personal_library_digest_stays_hidden_from_strangers(client):
 
 async def test_list_type_filter(client):
     await _hdr(client, "p10-a12@example.com")
-    await _promote_admin("p10-a12@example.com")
     owner = await _hdr(client, "p10-owner12@example.com")
     personal_id = await _create_personal(client, owner, name="留个人")
     public_id = await _create_personal(client, owner, name="转公共")
@@ -280,29 +264,27 @@ async def test_personal_owner_can_delete(client):
 
 
 async def test_personal_stranger_cannot_delete(client):
-    admin = await _hdr(client, "p10-a14@example.com")
-    await _promote_admin("p10-a14@example.com")
     owner = await _hdr(client, "p10-owner14@example.com")
     stranger = await _hdr(client, "p10-stranger14@example.com")
     lib_id = await _create_personal(client, owner)
     resp = await client.delete(f"/api/libraries/{lib_id}", headers=stranger)
     assert resp.status_code == 403
     # 库还在
-    resp = await client.get(f"/api/libraries/{lib_id}", headers=admin)
+    resp = await client.get(f"/api/libraries/{lib_id}", headers=owner)
     assert resp.status_code == 200
 
 
-async def test_public_library_only_admin_deletes(client):
-    admin = await _hdr(client, "p10-a15@example.com")
-    await _promote_admin("p10-a15@example.com")
+async def test_public_library_creator_deletes(client):
+    """删库权限收敛为创建者本人（#614）：公共库也一样，非创建者不能删。"""
+    stranger = await _hdr(client, "p10-a15@example.com")
     owner = await _hdr(client, "p10-owner15@example.com")
     lib_id = await _create_personal(client, owner)
     await _make_public(lib_id)
-    # 公共库创建者也不能删
-    resp = await client.delete(f"/api/libraries/{lib_id}", headers=owner)
+    # 非创建者不能删（此前的 admin 直通已移除）
+    resp = await client.delete(f"/api/libraries/{lib_id}", headers=stranger)
     assert resp.status_code == 403
-    # admin 能删
-    resp = await client.delete(f"/api/libraries/{lib_id}", headers=admin)
+    # 创建者能删
+    resp = await client.delete(f"/api/libraries/{lib_id}", headers=owner)
     assert resp.status_code == 204, resp.text
 
 

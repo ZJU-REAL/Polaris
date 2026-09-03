@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_llm_chat, require_llm_task
+from app.api.auth import current_active_user
 from app.api.chat_stream import chat_stream_response
 from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session
@@ -782,7 +782,7 @@ async def extract_paper_figures(
     paper_id: uuid.UUID,
     force: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
 ) -> PaperFiguresResponse:
     """提取嵌入图 + LLM 筛选注释；已有 figures 且非 force 时幂等直返。
 
@@ -808,7 +808,7 @@ async def extract_paper_figures(
 async def recompile_paper(
     paper_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
 ) -> PaperDetail:
     """重跑筛选注释 + 图文编译，覆盖这篇论文的解读；无 PDF 时跳过图片仅重写文字。
 
@@ -861,14 +861,13 @@ async def rebuild_paper_index(
     paper_id: uuid.UUID,
     data: PaperIndexRebuild | None = None,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
 ) -> PaperIndexStatusRead:
     """手动重建这篇论文的向量（有就覆盖，没有就新建），同步返回重建后的状态。
 
-    权限取「能看到这篇论文 + 有大模型使用权限」（require_llm_task），与重编译
-    （POST /papers/{id}/recompile）同一口径：都花 token、都是谁都能重跑以最新为准，
-    没有理由在这里额外要管理权——单篇重建的花费是一次嵌入调用，比重编译低一个量级，
-    而配额与锁定用户由 require_llm_task 统一挡住。
+    权限取「能看到这篇论文」，与重编译（POST /papers/{id}/recompile}）同一口径：
+    谁都能重跑以最新为准，没有理由在这里额外要管理权——单篇重建的花费是一次嵌入
+    调用，比重编译低一个量级。
     """
     body = data or PaperIndexRebuild()
     targets = {t for t, on in (("paper", body.paper_vector), ("chunks", body.chunks)) if on}
@@ -896,7 +895,7 @@ async def chat_with_paper(
     paper_id: uuid.UUID,
     data: PaperChatRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_chat),
+    user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     """AI 伴读：stage=reading 流式回答；事件 delta/done/error + 15s 心跳注释。"""
     paper = await _get_member_paper(session, paper_id, user, include_pool=True)

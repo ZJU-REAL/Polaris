@@ -132,7 +132,7 @@ async def test_logging_failure_does_not_break_call(app, monkeypatch):
 
 
 async def _admin_and_member(client):
-    admin_token = await register_and_login(client, email="admin@example.com")  # 首个 → admin
+    admin_token = await register_and_login(client, email="admin@example.com")
     member_token = await register_and_login(client, email="member@example.com")
     return (
         {"Authorization": f"Bearer {admin_token}"},
@@ -140,16 +140,17 @@ async def _admin_and_member(client):
     )
 
 
-async def test_call_log_endpoints_require_admin(client):
+async def test_call_log_endpoints_require_login(client):
+    """role 治理移除（#614）后管理端点对任何登录用户开放；未登录仍 401。"""
     _, member = await _admin_and_member(client)
     for method, url, body in [
         ("GET", "/api/admin/llm/call-logs", None),
         ("GET", "/api/admin/llm/call-logs/settings", None),
-        ("PUT", "/api/admin/llm/call-logs/settings", {"enabled": True}),
-        ("DELETE", "/api/admin/llm/call-logs", None),
     ]:
+        resp = await client.request(method, url, json=body)
+        assert resp.status_code == 401, (method, url, resp.status_code)
         resp = await client.request(method, url, json=body, headers=member)
-        assert resp.status_code == 403, (method, url, resp.status_code)
+        assert resp.status_code == 200, (method, url, resp.status_code)
 
 
 async def test_settings_get_put_roundtrip(client):

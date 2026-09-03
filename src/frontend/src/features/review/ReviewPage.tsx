@@ -16,7 +16,6 @@ import { tr } from '../../lib/i18n';
 import {
   api,
   ApiError,
-  isAdmin,
   type LeaderboardRow,
   type ReviewPersona,
   type ReviewSessionRead,
@@ -590,11 +589,10 @@ export function ReviewPage() {
   });
   const latestTournament = tournamentQuery.data ?? null;
 
-  // 晋级按钮 owner 可见：项目 owner 或平台 admin；成员信息缺失时放行（后端仍会校验）
+  // 晋级按钮 owner 可见（admin 旁路已随 #614 移除）；成员信息缺失时放行（后端仍会校验）
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
   const members = currentProject?.members;
   const canPromote =
-    isAdmin(me) ||
     !members ||
     members.some((m) => m.role === 'owner' && ((me?.id && m.user_id === me.id) || (me?.email && m.email === me.email)));
 

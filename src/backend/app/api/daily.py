@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_admin, require_llm_chat, require_llm_task
+from app.api.auth import current_active_user
 from app.api.chat_stream import chat_stream_response
 from app.core.db import get_session
 from app.core.llm.router import get_llm_router
@@ -351,7 +351,7 @@ async def get_sync_scope(
 async def set_sync_scope(
     payload: LibrarySyncScopeUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(current_active_user),
 ) -> LibrarySyncScopeRead:
     """改扫描范围（admin）。
 
@@ -377,7 +377,7 @@ async def get_retention(
 async def set_retention(
     payload: DailyRetentionUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(current_active_user),
 ) -> DailyRetentionRead:
     """改保留天数（admin）。
 
@@ -402,7 +402,7 @@ async def get_sync_time(
 async def set_sync_time(
     payload: DailySyncTimeUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(current_active_user),
 ) -> DailySyncTimeRead:
     """改抓取时刻（admin）。
 
@@ -426,7 +426,7 @@ async def get_probe_attempts(
 async def set_probe_attempts(
     payload: DailyProbeAttemptsUpdate,
     session: AsyncSession = Depends(get_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(current_active_user),
 ) -> DailyProbeAttemptsRead:
     """改探测次数上限（admin）。
 
@@ -449,7 +449,7 @@ async def get_categories(
 async def set_categories(
     payload: DailyCategoriesUpdate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
+    user: User = Depends(current_active_user),
 ) -> DailyCategoriesRead:
     try:
         categories = await daily_service.set_categories(session, payload.categories)
@@ -464,7 +464,7 @@ async def set_categories(
 async def chat_with_daily_pool(
     data: PaperChatRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_chat),
+    user: User = Depends(current_active_user),
 ) -> StreamingResponse:
     """池级文献对话：语料 = 当前滚动 7 天池内全部论文（摘要级，不建全文索引）。
 
@@ -512,7 +512,7 @@ async def fetch_entry_pdf(
 async def compile_entry(
     entry_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_llm_task),
+    user: User = Depends(current_active_user),
 ) -> DailyCompileResult:
     """按需编译单篇解读（全平台一份，写 paper_wikis）；进行中 → 409。
 
@@ -534,7 +534,7 @@ async def compile_entry(
 @router.post("/refresh", status_code=status.HTTP_202_ACCEPTED)
 async def refresh(
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_admin),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> dict[str, str]:
     """手动触发一次抓取（验证/补抓用）：建任务 + 入队，返回 voyage_id 供跳转任务详情。

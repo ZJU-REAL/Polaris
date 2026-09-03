@@ -1,5 +1,5 @@
 """解耦后的库鉴权口径（PR-3）：库工作台一律走 /libraries/{id}/*，判断
-「你是不是这个库的策展人（或平台 admin）」，不再是「你是不是起源课题的成员」。
+「你是不是这个库的创建者」，不再是「你是不是起源课题的成员」（admin 旁路已随 #614 移除）。
 
 这两个口径认的不是同一批人 —— 历史库上靠课题成员身份在管库的人，切换后
 会失去管理权。迁移 b3d81f6c05a9 把他们补成策展人来兜住。本文件锁住这个
@@ -28,13 +28,6 @@ async def _user_id(email: str) -> uuid.UUID:
         ).scalar_one().id
 
 
-async def _promote_admin(email: str) -> None:
-    async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
-        user.role = "admin"
-        await session.commit()
-
-
 async def _set_origin_topic(lib_id: str, project_id: uuid.UUID) -> None:
     """把库挂成「某课题建的」——即迁移前的历史库形态。"""
     async with get_sessionmaker()() as session:
@@ -59,7 +52,6 @@ async def _legacy_library(client, *, prefix):
     """造一个「有起源课题」的历史库，返回 (owner_hdr, admin_hdr, lib_id, project_id)。"""
     admin_email = f"{prefix}-admin@example.com"
     admin = await _hdr(client, admin_email)
-    await _promote_admin(admin_email)
 
     owner = await _hdr(client, f"{prefix}-owner@example.com")
     resp = await client.post(
@@ -103,7 +95,7 @@ async def test_topic_membership_alone_does_not_grant_library_manage(client):
     resp = await client.post(f"/api/libraries/{lib_id}/concepts/relink", headers=member)
     assert resp.status_code == 403, resp.text
 
-    # 库创建者本人照常放行（策展人机制已随实验室定位移除，管理权 = 创建者 ∪ admin）
+    # 库创建者本人照常放行（管理权 = 创建者，#614）
     owner_resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=_owner)
     assert owner_resp.status_code == 200, owner_resp.text
 
@@ -121,10 +113,3 @@ async def test_legacy_library_serves_library_scoped_endpoints(client):
         resp = await client.get(path, headers=owner)
         assert resp.status_code == 200, f"{path} -> {resp.status_code} {resp.text}"
 
-
-async def test_platform_admin_manages_legacy_library_without_backfill(client):
-    """平台 admin 本来就放行，不依赖回填 —— 本地这份数据回填是空操作的原因。"""
-    _owner, admin, lib_id, _project_id = await _legacy_library(client, prefix="authz-admin")
-
-    resp = await client.post(f"/api/libraries/{lib_id}/index/rebuild", headers=admin)
-    assert resp.status_code == 200, resp.text

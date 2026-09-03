@@ -9,7 +9,6 @@ from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.models.paper import PaperNote
-from app.models.user import User
 from app.services.notes import author_name_of
 from tests.conftest import add_paper, membership_of, register_and_login
 
@@ -151,15 +150,9 @@ async def test_notes_permissions(client):
     resp = await client.patch(f"/api/notes/{note_id}", json={"content": "x"}, headers=outsider)
     assert resp.status_code == 404
 
-    # 平台 admin（bob 提权后）可删非本人笔记
-    async with get_sessionmaker()() as session:
-        user = (
-            await session.execute(select(User).where(User.email == "bob@example.com"))
-        ).scalar_one()
-        user.role = "admin"
-        await session.commit()
+    # admin 代删旁路已随 role 移除（#614）：非作者一律视为不存在
     resp = await client.delete(f"/api/notes/{note_id}", headers=bob)
-    assert resp.status_code == 204
+    assert resp.status_code == 404
 
 
 async def test_project_notebook_pagination_and_search(client):

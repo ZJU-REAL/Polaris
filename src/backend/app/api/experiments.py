@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import current_active_user, require_experiment
+from app.api.auth import current_active_user
 from app.api.chat_stream import sse_frame as _sse_frame
 from app.core.db import get_session, get_sessionmaker
 from app.core.events import EventBus, get_event_bus
@@ -75,7 +75,7 @@ async def experiment_intake_questions(
     project_id: uuid.UUID,
     data: ExperimentIntakeRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_experiment),
+    user: User = Depends(current_active_user),
 ) -> ExperimentIntakeQuestions:
     """按 idea 生成开题问题（LLM 不可用/输出非法时降级为空列表，前端直接创建）。"""
     import json as _json
@@ -155,7 +155,7 @@ async def create_experiment(
     project_id: uuid.UUID,
     data: ExperimentCreate,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_experiment),
+    user: User = Depends(current_active_user),
     queue: TaskQueue = Depends(get_task_queue),
 ) -> ExperimentRead:
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)

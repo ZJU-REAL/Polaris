@@ -960,7 +960,6 @@ async def test_cadence_no_longer_excludes_a_library(client, queue_stub, wiki_moc
     """
     token = await register_and_login(client, email="legacy-cadence@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("legacy-cadence@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-周更")
 
     resp = await client.post(
@@ -987,14 +986,6 @@ async def test_cadence_no_longer_excludes_a_library(client, queue_stub, wiki_moc
 
 
 # ---- P9a：任务系统库化（VoyageRun 可挂方向库，独立库可直接触发抓取） ----
-
-
-async def _promote_admin(email: str) -> None:
-    """把已注册用户提为平台 admin（独立建库 / 库级 ingest 触发需要）。"""
-    async with get_sessionmaker()() as session:
-        user = (await session.execute(select(User).where(User.email == email))).scalar_one()
-        user.role = "admin"
-        await session.commit()
 
 
 async def _create_standalone_library(client, headers, *, name="独立库-自动化科研", **extra):
@@ -1025,7 +1016,6 @@ async def test_standalone_library_ingest_full_pipeline(client, queue_stub, wiki_
     """
     token = await register_and_login(client, email="lib-admin@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("lib-admin@example.com")
     library_id = await _create_standalone_library(client, headers)
 
     resp = await client.post(
@@ -1174,7 +1164,6 @@ async def test_standalone_library_ingest_budget_gate(client, queue_stub):
     """独立库触发同样受库预算门约束：本月用尽 → 409 且不入队。"""
     token = await register_and_login(client, email="lib-budget@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("lib-budget@example.com")
     library_id = await _create_standalone_library(
         client, headers, name="独立库-预算", monthly_budget=1000
     )
@@ -1204,7 +1193,6 @@ async def test_standalone_library_ingest_forbidden_for_stranger(client, queue_st
     """非管理者不能触发库级 ingest（成员/策展人/admin 之外 → 403）。"""
     token = await register_and_login(client, email="lib-owner2@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("lib-owner2@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-权限")
 
     stranger = await register_and_login(client, email="lib-stranger@example.com")
@@ -1254,7 +1242,6 @@ async def test_standalone_library_is_due_for_daily_cron(client, queue_stub, wiki
     """
     token = await register_and_login(client, email="due-standalone@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("due-standalone@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-cron")
 
     async with get_sessionmaker()() as session:
@@ -1285,7 +1272,6 @@ async def test_one_manual_sync_does_not_cancel_everyone_elses_daily_sync(
     """
     token = await register_and_login(client, email="fanout-manual@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("fanout-manual@example.com")
 
     first = await _create_standalone_library(client, headers, name="被手动同步的库")
     second = await _create_standalone_library(client, headers, name="等自动同步的库")
@@ -1340,7 +1326,6 @@ async def test_a_library_is_only_auto_synced_once_a_day(client, queue_stub, wiki
     """同一个库当天已经**自动**同步过就不再选——「每天一轮」的语义按库保留。"""
     token = await register_and_login(client, email="fanout-once@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("fanout-once@example.com")
     library_id = await _create_standalone_library(client, headers, name="每天一轮的库")
 
     resp = await client.post(
@@ -1374,7 +1359,6 @@ async def test_non_active_library_is_not_due(client, queue_stub, wiki_mocks):
     """库 status 不是 active 就不该被 cron 拉起来——老的按课题选表压根没查这个字段。"""
     token = await register_and_login(client, email="due-inactive@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("due-inactive@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-停用")
 
     resp = await client.post(
@@ -1404,7 +1388,6 @@ async def test_stale_paused_run_is_reclaimed_and_unblocks_the_library(
 
     token = await register_and_login(client, email="stale-paused@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("stale-paused@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-卡住")
 
     resp = await client.post(
@@ -1447,7 +1430,6 @@ async def test_recent_paused_run_is_left_alone(client, queue_stub, wiki_mocks):
     """刚失败的任务不回收——留一天窗口给人手动 resume。"""
     token = await register_and_login(client, email="fresh-paused@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("fresh-paused@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-刚卡住")
 
     async with get_sessionmaker()() as session:
@@ -1474,7 +1456,6 @@ async def test_over_budget_library_does_not_stop_the_others(client, queue_stub, 
 
     token = await register_and_login(client, email="budget-cron@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("budget-cron@example.com")
 
     lib_ids = []
     for name in ("独立库-超预算", "独立库-正常"):
@@ -1535,7 +1516,6 @@ async def test_truncated_run_does_not_advance_the_watermark(client, queue_stub, 
 
     token = await register_and_login(client, email="truncated@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("truncated@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-截断")
 
     resp = await client.post(
@@ -1600,7 +1580,6 @@ async def test_snowball_mode_skips_the_arxiv_search(client, queue_stub, wiki_moc
     """锚点扩展模式只走引文扩展，不检索 arXiv——想补一轮引文不必连带再搜一次。"""
     token = await register_and_login(client, email="mode-snowball@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("mode-snowball@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-锚点")
 
     resp = await client.post(
@@ -1632,7 +1611,6 @@ async def test_search_mode_uses_given_terms_and_time_range(client, queue_stub, w
     """检索模式：本次指定的查询词与时间范围要真的进检索式。"""
     token = await register_and_login(client, email="mode-search@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("mode-search@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-检索")
 
     resp = await client.post(
@@ -1697,7 +1675,6 @@ async def test_exclude_terms_filter_the_daily_feed_sync(client, queue_stub, wiki
 
     token = await register_and_login(client, email="excl@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("excl@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-排除词")
 
     resp = await client.post(
@@ -1774,7 +1751,6 @@ async def test_sync_scope_defaults_to_today_only(client, queue_stub, wiki_mocks)
 
     token = await register_and_login(client, email="scope@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("scope@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-范围")
 
     resp = await client.post(
@@ -1838,7 +1814,6 @@ async def test_since_last_scope_widens_after_a_missed_sync(client, queue_stub, w
 
     token = await register_and_login(client, email="sincelast@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await _promote_admin("sincelast@example.com")
     library_id = await _create_standalone_library(client, headers, name="独立库-自愈")
 
     resp = await client.post(

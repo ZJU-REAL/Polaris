@@ -6,7 +6,6 @@ import { toast } from '../../components/ui/Toast';
 import {
   api,
   ApiError,
-  isAdmin,
   type DirectionLibrarySummary,
   type InterdisciplinaryScopeDraft,
   type InterdisciplinaryScopeRead,
@@ -86,8 +85,7 @@ export function InterdisciplinaryScopePanel({
     retry: false,
     staleTime: 60_000,
   });
-  const canManage = !!meQuery.data
-    && (project.owner_id === meQuery.data.id || isAdmin(meQuery.data));
+  const canManage = !!meQuery.data && project.owner_id === meQuery.data.id;
 
   const scopeQuery = useQuery({
     queryKey: ['interdisciplinary-scope', project.id],

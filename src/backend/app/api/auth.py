@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
@@ -24,7 +24,6 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.services import email as email_service
-from app.services import integration_tokens as token_service
 from app.services import verification
 
 logger = logging.getLogger(__name__)
@@ -50,13 +49,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         if not (any(c.isalpha() for c in password) and any(c.isdigit() for c in password)):
             raise exceptions.InvalidPasswordException(reason="PASSWORD_NEEDS_LETTER_AND_DIGIT")
 
-
-    async def on_after_register(self, user: User, request: Request | None = None) -> None:
-        """首个注册用户自动提升为平台 admin（实验室自举）。"""
-        session: AsyncSession = self.user_db.session  # type: ignore[attr-defined]
-        total = (await session.execute(select(func.count(User.id)))).scalar_one()
-        if total == 1 and user.role != "admin":
-            await self.user_db.update(user, {"role": "admin"})
 
     async def authenticate(self, credentials: OAuth2PasswordRequestForm) -> User | None:
         """登录支持「邮箱或用户名」+ 密码：先按邮箱查，查不到再按用户名查。"""
@@ -119,140 +111,6 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
 current_active_user = fastapi_users.current_user(active=True)
 # 没登录不报错、返回 None——写入闸门要挂在所有路由上，公开端点不能因此变成必须登录
 current_user_optional = fastapi_users.current_user(active=True, optional=True)
-
-# 写入闸门放行的方法。收口在 HTTP 方法上，而不是给 211 个写端点逐个加守卫：
-# app/api 下没有任何 GET/HEAD 处理器写库，也没有任何一个走 LLM 守卫（加这层时
-# 遍历过全部处理器的 AST 核对），所以在这个代码库里「不安全方法」就等于「写」。
-_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-# 登出是 POST，但它只销毁调用者自己的会话。不放行的话游客连退出登录都做不到。
-_READ_ONLY_ALLOWED_PATHS = frozenset({"/api/auth/jwt/logout"})
-
-# 这道闸门也要认得 Integration Token：否则只读账号用它先前签发的 token 就能绕过
-# JWT 身份、继续写 /api 与 /mcp。auto_error=False 让无凭据的请求照常落到各端点自己
-# 的鉴权依赖去处理。
-_bearer = HTTPBearer(auto_error=False)
-
-
-async def block_read_only_writes(
-    request: Request,
-    user: User | None = Depends(current_user_optional),
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    session: AsyncSession = Depends(get_session),
-) -> None:
-    """只读账号的写入闸门（挂在整个 /api 与 /mcp 上，见 main.py）。
-
-    未登录直接放行——该拦的由各端点自己的鉴权依赖去拦，这里只管「登录了但只读」。
-    JWT 与 Integration Token 都算「登录」：只要背后的账号是只读，任何非安全方法都拦，
-    这样降级为只读后先前签发的 token 也立即失去写权限。
-    """
-    if request.method in _SAFE_METHODS or request.url.path in _READ_ONLY_ALLOWED_PATHS:
-        return
-    if await _caller_is_read_only(session, user, credentials):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="READ_ONLY_ACCOUNT")
-
-
-async def _caller_is_read_only(
-    session: AsyncSession,
-    jwt_user: User | None,
-    credentials: HTTPAuthorizationCredentials | None,
-) -> bool:
-    """这次请求背后的账号是不是只读——JWT 身份优先，其次认 Integration Token。"""
-    if jwt_user is not None:
-        return jwt_user.read_only
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        return False
-    raw_token = credentials.credentials
-    if not raw_token.startswith(token_service.TOKEN_MARKER):
-        return False
-    # touch=False：闸门只做判断，不刷新 last_used_at，那由端点自己的鉴权去记。
-    authenticated = await token_service.authenticate_token(session, raw_token, touch=False)
-    return authenticated is not None and authenticated.user.read_only
-
-
-async def require_admin(user: User = Depends(current_active_user)) -> User:
-    """管理端依赖：role=admin 才放行。"""
-    if user.role != "admin":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="ADMIN_REQUIRED")
-    return user
-
-
-async def block_read_only_personal_data(user: User = Depends(current_active_user)) -> User:
-    """名册依赖：只读账号（游客）看不到实验室成员的个人信息。
-
-    游客号是 role=admin + read_only，为的是「能看到管理端长什么样」，不是「能看到
-    这个实验室里都有谁、邮箱是多少」。挡在接口上而不是只把前端标签藏起来——藏了
-    标签接口还照答，等于没藏。
-    """
-    if user.read_only:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="READ_ONLY_NO_PERSONAL_DATA")
-    return user
-
-
-async def _check_llm_quota(session: AsyncSession, user: User) -> None:
-    if user.token_quota is not None:
-        from app.services.users import tokens_used_by_user
-
-        if await tokens_used_by_user(session, user.id) >= user.token_quota:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="TOKEN_QUOTA_EXCEEDED")
-
-
-def _check_llm_access(user: User, *, chat: bool) -> None:
-    """大模型使用权限：full=不限 | chat_only=仅文献对话与 AI 伴读 | blocked=锁定。"""
-    # 只读账号一个 token 也不该花。写入闸门已经挡住了所有调模型的入口（它们全是
-    # POST），这里再挡一次是为了不依赖「建号的人记得把 llm_access 设成 blocked」。
-    if user.read_only:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LLM_ACCESS_BLOCKED")
-    level = user.llm_access or "full"
-    if level == "blocked":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LLM_ACCESS_BLOCKED")
-    if level == "chat_only" and not chat:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="LLM_ACCESS_CHAT_ONLY")
-
-
-def require_stage_access(feature: str):
-    """阶段发起入口依赖：功能权限被禁用 → 403 FEATURE_DISABLED；
-    大模型权限受限 → 403 LLM_ACCESS_*；用量达到配额 → 403 TOKEN_QUOTA_EXCEEDED。"""
-
-    async def dep(
-        user: User = Depends(current_active_user),
-        session: AsyncSession = Depends(get_session),
-    ) -> User:
-        if not user.feature_enabled(feature):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="FEATURE_DISABLED")
-        _check_llm_access(user, chat=False)
-        await _check_llm_quota(session, user)
-        return user
-
-    return dep
-
-
-# 各阶段守卫单例（ruff B008：避免在参数默认值中调用工厂）
-require_forge = require_stage_access("forge")
-require_review = require_stage_access("review")
-require_experiment = require_stage_access("experiment")
-require_writer = require_stage_access("writer")
-require_paper_review = require_stage_access("paper_review")
-
-
-async def require_llm_task(
-    user: User = Depends(current_active_user),
-    session: AsyncSession = Depends(get_session),
-) -> User:
-    """其他消耗大模型的入口（建库/精读编译/PPT/技能试运行等）：需 full 权限。"""
-    _check_llm_access(user, chat=False)
-    await _check_llm_quota(session, user)
-    return user
-
-
-async def require_llm_chat(
-    user: User = Depends(current_active_user),
-    session: AsyncSession = Depends(get_session),
-) -> User:
-    """文献对话 / AI 伴读入口：full 或 chat_only 均可。"""
-    _check_llm_access(user, chat=True)
-    await _check_llm_quota(session, user)
-    return user
-
 
 router = APIRouter()
 router.include_router(
@@ -340,8 +198,8 @@ async def local_session(
     """desktop 档位免登录：幂等确保本地用户存在并直接签发会话。
 
     server 档位下这个端点结构性不存在（404）——不是 403：多用户部署里它就不该
-    被发现。本地用户 role=admin（个人机器的主人管理自己的一切），密码是随机散列、
-    永远无法用于登录——会话只能经这个端点取得，而它只在单机档位存在。
+    被发现。本地用户的密码是随机散列、永远无法用于登录——会话只能经这个端点
+    取得，而它只在单机档位存在。
     """
     if not get_settings().is_desktop:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
@@ -361,7 +219,6 @@ async def local_session(
             is_verified=True,
             display_name="Local",
             username=LOCAL_USERNAME,
-            role="admin",
         )
         session.add(user)
         await session.commit()

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import require_admin
+from app.api.auth import current_active_user
 from app.core.db import get_session
 from app.schemas.admin_settings import (
     AffiliationModeRead,
@@ -41,7 +41,7 @@ from app.services import tts as tts_service
 from app.services.literature.multi_source import provider_failure_detail
 
 router = APIRouter(
-    prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(require_admin)]
+    prefix="/admin/settings", tags=["admin-settings"], dependencies=[Depends(current_active_user)]
 )
 
 
