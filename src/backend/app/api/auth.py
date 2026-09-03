@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.models.user import User
-from app.schemas.project import ProjectCreate
 from app.schemas.user import (
     ResetPasswordRequest,
     SendCodeRequest,
@@ -26,8 +25,6 @@ from app.schemas.user import (
 )
 from app.services import email as email_service
 from app.services import integration_tokens as token_service
-from app.services import projects as projects_service
-from app.services import registration_codes as codes_service
 from app.services import verification
 
 logger = logging.getLogger(__name__)
@@ -191,18 +188,6 @@ async def block_read_only_personal_data(user: User = Depends(current_active_user
     return user
 
 
-async def block_read_only_secrets(user: User = Depends(current_active_user)) -> User:
-    """密钥依赖：只读账号（游客）看不到能拿去用的东西。
-
-    与 block_read_only_personal_data 分开是因为理由不同：那条挡的是「实验室里有谁」，
-    这条挡的是「拿了就能用」。注册码尤其如此——只读挡得住写，挡不住它被抄走，因为
-    用它开号走的是公开的注册接口，写入闸门根本看不到那一步。
-    """
-    if user.read_only:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="READ_ONLY_NO_SECRETS")
-    return user
-
-
 async def _check_llm_quota(session: AsyncSession, user: User) -> None:
     if user.token_quota is not None:
         from app.services.users import tokens_used_by_user
@@ -305,12 +290,8 @@ async def register(
             await session.commit()  # 保留 attempts 自增
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="INVALID_CODE")
 
-    redeemed = await codes_service.redeem_code(session, user_create.invite_code)
-    if redeemed is None and user_create.invite_code != get_settings().invite_code:
+    if user_create.invite_code != get_settings().invite_code:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="INVALID_INVITE_CODE")
-    preset_directions = [
-        d for d in (redeemed.preset_directions or []) if isinstance(d, str) and d.strip()
-    ] if redeemed else []
     # 用户名全局唯一（DB 也有唯一索引兜底，这里给出友好错误）
     taken = (
         await session.execute(select(User.id).where(User.username == user_create.username))
@@ -328,17 +309,6 @@ async def register(
             status.HTTP_400_BAD_REQUEST,
             detail={"code": "REGISTER_INVALID_PASSWORD", "reason": e.reason},
         ) from e
-    # 邀请码预设的研究方向 → 自动建项目（只落一句话 statement，后续可补全）。
-    # 建项目失败不影响注册结果。
-    for direction in preset_directions:
-        try:
-            await projects_service.create_project(
-                session,
-                owner_id=user.id,
-                data=ProjectCreate(name=direction[:255], statement=direction),
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("preset direction project creation failed: %s", direction)
     return user
 
 
