@@ -321,6 +321,22 @@ async def make_project_with_library(
     return str(project_id), library_id
 
 
+async def set_user_fields(email: str, **fields) -> None:
+    """直接改库设置用户治理字段（role/read_only/llm_access/token_quota/features）。
+
+    管理端用户管理 API 已随去实验室化移除（#603），但这些列与其守卫仍在
+    （拆列是后续 PR）；守卫类测试改为直接写库来摆好前置状态。
+    """
+    from sqlalchemy import update
+
+    from app.core.db import get_sessionmaker
+    from app.models.user import User
+
+    async with get_sessionmaker()() as session:
+        await session.execute(update(User).where(User.email == email).values(**fields))
+        await session.commit()
+
+
 def _username_from_email(email: str) -> str:
     """从 email 派生一个合法用户名（小写字母/数字/下划线 3-32 位）。"""
     local = email.split("@", 1)[0].lower()

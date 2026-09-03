@@ -3,37 +3,24 @@
 import ast
 import pathlib
 
-from tests.conftest import register_and_login
+from tests.conftest import register_and_login, set_user_fields
 
 API_DIR = pathlib.Path(__file__).resolve().parents[1] / "app" / "api"
 
 
-async def _make_guest(client, admin_token: str) -> str:
-    """建一个游客号并登录：role=admin 才看得见管理端，read_only 才写不动。"""
-    resp = await client.post(
-        "/api/admin/users",
-        json={
-            "email": "guest@example.com",
-            "password": "gu3st-pass",
-            "display_name": "Guest",
-            "username": "guest",
-            "role": "admin",
-            "read_only": True,
-        },
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 201, resp.text
-    assert resp.json()["read_only"] is True
-    login = await client.post(
-        "/api/auth/jwt/login", data={"username": "guest", "password": "gu3st-pass"}
-    )
-    assert login.status_code == 200, login.text
-    return login.json()["access_token"]
+async def _make_guest(client) -> str:
+    """建一个游客号并登录：role=admin 才看得见管理端，read_only 才写不动。
+
+    管理端建号 API 已随去实验室化移除（#603），改为正常注册后直接写库摆状态。
+    """
+    token = await register_and_login(client, email="guest@example.com", username="guest")
+    await set_user_fields("guest@example.com", role="admin", read_only=True)
+    return token
 
 
 async def test_guest_reads_admin_views_but_cannot_write(client):
-    admin = await register_and_login(client)
-    guest = await _make_guest(client, admin)
+    await register_and_login(client)  # 首个注册用户占位
+    guest = await _make_guest(client)
     gh = {"Authorization": f"Bearer {guest}"}
 
     # 看得见：管理员才能看的配置页照常 200（成员名册另有守卫，见
@@ -52,10 +39,11 @@ async def test_guest_reads_admin_views_but_cannot_write(client):
     assert patch.status_code == 403
     assert patch.json()["detail"] == "READ_ONLY_ACCOUNT"
 
-    # 连管理端的写也一样挡住——游客不能靠 admin 身份给自己解开只读
-    unlock = await client.patch(
-        "/api/admin/users/00000000-0000-0000-0000-000000000001",
-        json={"read_only": False},
+    # 连管理端的写也一样挡住——游客不能靠 admin 身份改动全局配置
+    #（用户管理 API 已移除，这里改拿 LLM provider 的写入口来验）
+    unlock = await client.post(
+        "/api/admin/llm/providers",
+        json={"name": "sneaky", "kind": "fake"},
         headers=gh,
     )
     assert unlock.status_code == 403

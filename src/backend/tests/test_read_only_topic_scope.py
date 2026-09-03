@@ -7,28 +7,14 @@ from sqlalchemy import select
 from app.core.db import get_sessionmaker
 from app.models.project import ProjectMember
 from app.models.user import User
-from tests.conftest import register_and_login
+from tests.conftest import register_and_login, set_user_fields
 
 
-async def _make_guest(client, admin_token: str) -> str:
-    resp = await client.post(
-        "/api/admin/users",
-        json={
-            "email": "guest@example.com",
-            "password": "gu3st-pass",
-            "display_name": "Guest",
-            "username": "guest",
-            "role": "admin",
-            "read_only": True,
-        },
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 201, resp.text
-    login = await client.post(
-        "/api/auth/jwt/login", data={"username": "guest", "password": "gu3st-pass"}
-    )
-    assert login.status_code == 200, login.text
-    return login.json()["access_token"]
+async def _make_guest(client) -> str:
+    # 管理端建号 API 已随去实验室化移除（#603）：正常注册后直接写库摆成游客。
+    token = await register_and_login(client, email="guest@example.com", username="guest")
+    await set_user_fields("guest@example.com", role="admin", read_only=True)
+    return token
 
 
 async def _add_guest_to(project_id: str) -> None:
@@ -58,7 +44,7 @@ async def test_guest_sees_only_the_topics_it_was_added_to(client):
     )
     assert hidden.status_code in (200, 201)
 
-    guest = await _make_guest(client, admin)
+    guest = await _make_guest(client)
     gh = {"Authorization": f"Bearer {guest}"}
 
     # 还没被加进任何课题：一个也看不到（此前顶着 role=admin 能看到全部）
@@ -86,23 +72,9 @@ async def test_real_admins_still_see_every_topic(client):
             await client.post("/api/projects", json={"name": name, "statement": name}, headers=ah)
         ).status_code in (200, 201)
 
-    other = await client.post(
-        "/api/admin/users",
-        json={
-            "email": "other@example.com",
-            "password": "0ther-pass",
-            "display_name": "Other Admin",
-            "username": "other_admin",
-            "role": "admin",
-        },
-        headers=ah,
-    )
-    assert other.status_code == 201, other.text
-    token = (
-        await client.post(
-            "/api/auth/jwt/login", data={"username": "other_admin", "password": "0ther-pass"}
-        )
-    ).json()["access_token"]
+    # 管理端建号 API 已移除：注册第二个账号后直接写库升为 admin
+    token = await register_and_login(client, email="other@example.com", username="other_admin")
+    await set_user_fields("other@example.com", role="admin")
 
     listed = await client.get("/api/projects", headers={"Authorization": f"Bearer {token}"})
     assert listed.status_code == 200

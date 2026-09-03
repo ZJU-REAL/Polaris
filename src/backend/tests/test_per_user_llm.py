@@ -103,19 +103,6 @@ async def test_effective_reflects_managed_vs_self(client):
     assert eff2["providers"] == []
 
 
-async def test_admin_toggle_llm_self_managed(client):
-    admin = await register_and_login(client, email="admin@example.com")
-    member = await register_and_login(client, email="m@example.com")
-    mid = await _me_id(client, member)
-    ah = {"Authorization": f"Bearer {admin}"}
-    r = await client.patch(f"/api/admin/users/{mid}", json={"llm_self_managed": True}, headers=ah)
-    assert r.status_code == 200
-    assert r.json()["llm_self_managed"] is True
-    assert (
-        await client.get("/api/me/llm/status", headers={"Authorization": f"Bearer {member}"})
-    ).json()["self_managed"] is True
-
-
 async def test_resolve_is_owner_aware(client):
     admin = await register_and_login(client, email="admin@example.com")
     member = await register_and_login(client, email="m@example.com")

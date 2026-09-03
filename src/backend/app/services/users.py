@@ -1,14 +1,15 @@
-"""用户管理业务逻辑（不 import fastapi）：管理员用户列表 / 编辑 / 批量分配方向。"""
+"""用户相关业务逻辑（不 import fastapi）：查人（加协作者）与 token 用量统计。
+
+管理员用户管理（列表/编辑/删除/批量分配）已随去实验室化移除（#603）。
+"""
 
 import uuid
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.llm_config import LLMUsage
-from app.models.project import Project, ProjectMember
-from app.models.user import FEATURE_KEYS, User
+from app.models.user import User
 
 
 async def search_users(
@@ -35,150 +36,3 @@ async def tokens_used_by_user(session: AsyncSession, user_id: uuid.UUID) -> int:
         func.coalesce(func.sum(LLMUsage.prompt_tokens + LLMUsage.completion_tokens), 0)
     ).where(LLMUsage.user_id == user_id)
     return int((await session.execute(stmt)).scalar_one())
-
-
-async def list_users_with_usage(session: AsyncSession) -> list[dict[str, Any]]:
-    usage_sq = (
-        select(
-            LLMUsage.user_id.label("uid"),
-            func.sum(LLMUsage.prompt_tokens + LLMUsage.completion_tokens).label("tokens"),
-        )
-        .group_by(LLMUsage.user_id)
-        .subquery()
-    )
-    stmt = (
-        select(User, func.coalesce(usage_sq.c.tokens, 0))
-        .outerjoin(usage_sq, usage_sq.c.uid == User.id)
-        .order_by(User.created_at)
-    )
-    rows = (await session.execute(stmt)).all()
-    return [
-        {
-            "id": u.id,
-            "email": u.email,
-            "display_name": u.display_name,
-            "username": u.username,
-            "role": u.role,
-            "read_only": u.read_only,
-            "is_active": u.is_active,
-            "has_avatar": u.has_avatar,
-            "token_quota": u.token_quota,
-            "features": u.features,
-            "llm_access": u.llm_access,
-            "llm_self_managed": u.llm_self_managed,
-            "tokens_used": int(tokens),
-            "created_at": u.created_at,
-        }
-        for u, tokens in rows
-    ]
-
-
-class UsernameTakenError(Exception):
-    """用户名已被占用。"""
-
-
-async def username_taken(
-    session: AsyncSession, username: str, *, exclude_id: uuid.UUID | None = None
-) -> bool:
-    stmt = select(User.id).where(User.username == username)
-    if exclude_id is not None:
-        stmt = stmt.where(User.id != exclude_id)
-    return (await session.execute(stmt)).first() is not None
-
-
-async def admin_update_user(session: AsyncSession, user: User, data: dict[str, Any]) -> User:
-    """应用管理员编辑；features 只保留已知功能键；token_quota=-1 清除配额。
-
-    data 里的 username 会做全局唯一校验（占用则抛 UsernameTakenError）；password 需
-    调用方（API 层，持 password_helper）预先 hash 后放入 data["hashed_password"]。
-    """
-    if (v := data.get("display_name")) is not None:
-        user.display_name = v
-    if (v := data.get("username")) is not None and v != user.username:
-        if await username_taken(session, v, exclude_id=user.id):
-            raise UsernameTakenError(v)
-        user.username = v
-    if (v := data.get("hashed_password")) is not None:
-        user.hashed_password = v
-    if (v := data.get("role")) is not None:
-        user.role = v
-    if (v := data.get("is_active")) is not None:
-        user.is_active = v
-    if (v := data.get("read_only")) is not None:
-        user.read_only = v
-    if (v := data.get("token_quota")) is not None:
-        user.token_quota = None if v == -1 else v
-    if (v := data.get("llm_access")) is not None:
-        user.llm_access = v
-    if (v := data.get("llm_self_managed")) is not None:
-        user.llm_self_managed = v
-    if (v := data.get("features")) is not None:
-        user.features = {k: bool(v[k]) for k in v if k in FEATURE_KEYS} or None
-    await session.commit()
-    await session.refresh(user)
-    # 接管状态改变需让路由器缓存失效（否则最长 60s 内旧配置仍生效）
-    if "llm_self_managed" in data:
-        from app.core.llm.router import get_llm_router
-
-        get_llm_router().invalidate_cache()
-    return user
-
-
-async def delete_user(session: AsyncSession, user: User) -> None:
-    """删除用户（其自管 provider/路由等按 FK CASCADE 清理，反馈/注册码等 SET NULL）。"""
-    await session.delete(user)
-    await session.commit()
-
-
-async def batch_delete_users(
-    session: AsyncSession, *, user_ids: list[uuid.UUID], exclude_id: uuid.UUID
-) -> int:
-    """批量删除用户（跳过 exclude_id，即不删自己），返回实际删除数。"""
-    targets = (
-        (
-            await session.execute(
-                select(User).where(User.id.in_(user_ids), User.id != exclude_id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    for u in targets:
-        await session.delete(u)
-    await session.commit()
-    return len(targets)
-
-
-async def batch_assign(
-    session: AsyncSession,
-    *,
-    user_ids: list[uuid.UUID],
-    project_ids: list[uuid.UUID],
-    role: str,
-) -> int:
-    """把一批用户加入一批方向（已是成员的跳过），返回新增成员数。"""
-    valid_users = set(
-        (await session.execute(select(User.id).where(User.id.in_(user_ids)))).scalars()
-    )
-    valid_projects = set(
-        (await session.execute(select(Project.id).where(Project.id.in_(project_ids)))).scalars()
-    )
-    existing = set(
-        (
-            await session.execute(
-                select(ProjectMember.project_id, ProjectMember.user_id).where(
-                    ProjectMember.project_id.in_(valid_projects),
-                    ProjectMember.user_id.in_(valid_users),
-                )
-            )
-        ).all()
-    )
-    added = 0
-    for pid in valid_projects:
-        for uid in valid_users:
-            if (pid, uid) in existing:
-                continue
-            session.add(ProjectMember(project_id=pid, user_id=uid, role=role))
-            added += 1
-    await session.commit()
-    return added
