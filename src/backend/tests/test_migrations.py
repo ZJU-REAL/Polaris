@@ -10,7 +10,8 @@ from alembic import command
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 HEAD_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
-HEAD_REVISION = "f4a5b6c7d8e9"  # Versioned discovery-hit translations
+HEAD_REVISION = "a3e9c17b5f42"  # Drop registration codes (P1 de-lab)
+TRANSLATIONS_REVISION = "f4a5b6c7d8e9"  # Versioned discovery-hit translations
 DISCOVERY_SCHEDULE_REVISION = "f3a4b5c6d7e8"  # Scheduled incremental literature discovery
 VENUE_METRIC_REVISION = "f2a3b4c5d6e7"  # Versioned literature venue metrics
 SCOPE_VERSION_REVISION = "f1a2b3c4d5e6"  # Immutable interdisciplinary scope versions
@@ -95,7 +96,6 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "llm_providers",
                     "llm_call_logs",
                     "system_settings",
-                    "registration_codes",
                     "feedback",
                     "feedback_images",
                     "user_library_entries",
@@ -143,6 +143,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "literature_oa_attempts",
                     "interdisciplinary_research_profiles",
                     "interdisciplinary_research_profile_versions",
+                    "registration_codes",  # head 已删；仅 downgrade 断言用
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -326,9 +327,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "voyage_id",
     } <= columns["llm_call_logs"]
     assert {"key", "value"} <= columns["system_settings"]
-    # 注册码表（更早版本）
-    assert "registration_codes" in columns["_tables"]
-    assert {"code", "note", "max_uses", "used_count", "revoked"} <= columns["registration_codes"]
     # 本分支新增：反馈表
     assert {"feedback", "feedback_images"} <= columns["_tables"]
     assert {
@@ -350,8 +348,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "llm_self_managed" in columns["users"]
     # 个人库 wiki 快照列（上一版）
     assert "wiki_content" in columns["user_library_entries"]
-    # 注册码预设研究方向列（上一版）
-    assert "preset_directions" in columns["registration_codes"]
     # 本分支新增：方向文献库三表 + papers.dedup_key（P4 迁移 A）+ 收尾（迁移 B）
     assert {
         "direction_libraries",
@@ -520,8 +516,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "evidence_balance",
     } <= columns["interdisciplinary_research_profile_versions"]
 
-    # First remove schedules and return to the venue-metric head.
-    # First remove translations and return to the discovery-schedule head.
+    # First undo the registration-codes drop: the table comes back.
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == TRANSLATIONS_REVISION
+    assert "registration_codes" in columns["_tables"]
+    assert "preset_directions" in columns["registration_codes"]
+
+    # Then remove translations and return to the discovery-schedule head.
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == DISCOVERY_SCHEDULE_REVISION
@@ -777,14 +779,12 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "wiki_content" not in columns["papers"]
     assert "dedup_key" in columns["papers"]
     assert "library_papers" in columns["_tables"]
-    assert "preset_directions" in columns["registration_codes"]
     assert "wiki_content" in columns["user_library_entries"]
     assert "paper_id" in columns["user_publications"]
     assert "owner_id" in columns["llm_providers"]
     # 上一版仍有的表/列不受影响
     assert "user_library_entries" in columns["_tables"]
     assert {"feedback", "feedback_images"} <= columns["_tables"]
-    assert "registration_codes" in columns["_tables"]
     assert {"llm_call_logs", "system_settings"} <= columns["_tables"]
     assert "models" in columns["llm_providers"]
     assert {"username", "username_locked"} <= columns["users"]
@@ -818,8 +818,6 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert "models" in columns["llm_providers"]
     assert "owner_id" in columns["llm_providers"]
     assert "llm_self_managed" in columns["users"]
-    assert "registration_codes" in columns["_tables"]
-    assert "preset_directions" in columns["registration_codes"]
     assert {"feedback", "feedback_images"} <= columns["_tables"]
     # P9a 列在重新 upgrade 后回归
     assert "library_id" in columns["voyage_runs"]

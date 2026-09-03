@@ -59,7 +59,6 @@ from app.models.paper_content import (
 )
 from app.models.project import Project, ProjectInvite, ProjectMember
 from app.models.publication import UserAuthorProfile, UserPublication
-from app.models.registration_code import RegistrationCode
 from app.models.research_digest import LibraryResearchDigest
 from app.models.review import ReviewMessage, ReviewSession
 from app.models.skill import Skill, SkillListing, SkillRating, SkillVersion, UserSkill
@@ -135,7 +134,6 @@ __all__ = [
     "Project",
     "ProjectInvite",
     "ProjectMember",
-    "RegistrationCode",
     "ReviewMessage",
     "ReviewSession",
     "SSHCredential",
