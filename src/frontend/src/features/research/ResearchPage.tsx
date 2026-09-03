@@ -219,20 +219,6 @@ function ShelfRow({
 
 /* ---------------- 关联文献库一栏（列表下方） ---------------- */
 
-/** 非 active 库的小状态徽标（待审批 / 已驳回）。 */
-function LibStatusBadge({ status }: { status: DirectionLibrarySummary['status'] }) {
-  if (status === 'active') return null;
-  const cfg =
-    status === 'pending'
-      ? { zh: '待审批', en: 'Pending', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' }
-      : { zh: '已驳回', en: 'Rejected', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)' };
-  return (
-    <span className="pill sm" style={{ background: cfg.bg, color: cfg.tx, flexShrink: 0, marginLeft: 2 }}>
-      {tr(cfg.zh, cfg.en)}
-    </span>
-  );
-}
-
 /** 列表下方的一栏：课题关联的文献库，点库名进对应的库详情页。 */
 function LinkedLibrariesRow({
   pid,
@@ -288,7 +274,6 @@ function LinkedLibrariesRow({
             <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
               {tr(`${lib.paper_count} 篇`, `${lib.paper_count}`)}
             </span>
-            <LibStatusBadge status={lib.status} />
           </button>
         ))
       )}

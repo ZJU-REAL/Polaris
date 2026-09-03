@@ -244,7 +244,7 @@ async def test_owner_configures_and_triggers_incremental_schedule(client, queue_
     assert response.json()["last_enqueued_at"] is not None
 
 
-async def test_public_schedule_is_read_only_for_non_curators(client):
+async def test_public_schedule_is_read_only_for_non_creators(client):
     owner = await _headers(client, "public-schedule-owner@example.com")
     stranger = await _headers(client, "public-schedule-reader@example.com")
     library_id = await _personal_library(client, owner)

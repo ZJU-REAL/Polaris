@@ -7,7 +7,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.library_direction import DirectionLibrary, DirectionLibraryCurator
+from app.models.library_direction import DirectionLibrary
 from app.models.project import ProjectMember
 from app.models.user import User
 from app.models.voyage import LIBRARY_KINDS, TERMINAL_STATUSES, VoyageRun
@@ -47,15 +47,10 @@ def _visible_filter(stmt, user_id: uuid.UUID):
     会把它们整个漏掉——而独立库是常态（P9c 起建课题不再自动建库）。
 
     「课题关联了某个库」不给可见性：关联只是拿它的语料，管不了它的建库任务
-    （库级写权限 = 创建者/策展人/admin，见 libraries.can_manage_library）。
+    （库级写权限 = 创建者/admin，见 libraries.can_manage_library）。
     """
     my_projects = select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
-    my_curated = select(DirectionLibraryCurator.library_id).where(
-        DirectionLibraryCurator.user_id == user_id
-    )
-    my_libraries = select(DirectionLibrary.id).where(
-        or_(DirectionLibrary.submitted_by == user_id, DirectionLibrary.id.in_(my_curated))
-    )
+    my_libraries = select(DirectionLibrary.id).where(DirectionLibrary.submitted_by == user_id)
     # 只读账号（游客）不吃这条旁路：课题可见范围已经按成员关系收紧
     # （见 projects.is_admin_expr），任务这边不跟着收，列表里就会冒出一堆
     # 它够不着的课题的任务，标题旁边写着「未知课题」。

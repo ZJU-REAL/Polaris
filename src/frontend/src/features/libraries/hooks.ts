@@ -7,16 +7,14 @@ import { api, type DirectionLibrarySummary } from '../../lib/api';
 
 export interface LibraryFilters {
   type?: 'personal' | 'public' | 'all';
-  status?: DirectionLibrarySummary['status'];
 }
 
-/** 全部方向库列表（全实验室可读；列表小、5 分钟内不重拉）。可按归属类型/状态过滤。 */
+/** 全部方向库列表（全实验室可读；列表小、5 分钟内不重拉）。可按归属类型过滤。 */
 export function useLibraries(filters: LibraryFilters = {}, enabled = true) {
   const type = filters.type ?? 'all';
-  const status = filters.status ?? null;
   return useQuery({
-    queryKey: ['libraries', type, status],
-    queryFn: () => api.listLibraries({ type, ...(status ? { status } : {}) }),
+    queryKey: ['libraries', type],
+    queryFn: () => api.listLibraries({ type }),
     staleTime: 300_000,
     retry: false,
     enabled,

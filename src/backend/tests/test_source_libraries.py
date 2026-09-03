@@ -165,10 +165,6 @@ async def test_create_library_any_user_allowed(client):
     assert body["status"] == "active"
     assert body["is_public"] is False
     assert body["can_manage"] is True  # 创建者可管理自己的个人库
-    # 创建者被记为该库策展人
-    resp = await client.get(f"/api/libraries/{body['id']}/curators", headers=member)
-    assert resp.status_code == 200, resp.text
-    assert len(resp.json()) == 1
 
 
 async def test_source_libraries_read_write_api(client):

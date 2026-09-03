@@ -1365,13 +1365,11 @@ export interface DirectionLibrarySummary {
   is_public: boolean;
   /** 归属人名（个人库=创建者；公共库=原创建者/策展人；可能为空） */
   owner_name: string | null;
-  /** 请求者是否本库归属人（submitted_by==我）：个人库删除 / 申请转公共入口据此判定 */
+  /** 请求者是否本库归属人（submitted_by==我）：个人库删除入口据此判定 */
   is_owner: boolean;
-  /** 生命周期（P9b）：pending 待审批 | active 已激活 | rejected 已驳回 */
+  /** 生命周期：新建库即 active；pending/rejected 为历史遗留值 */
   status: 'pending' | 'active' | 'rejected';
-  /** 驳回理由（status=rejected 时有值） */
-  review_note: string | null;
-  /** 库创建者（用户建库；pending/rejected 库仅创建者 + 平台管理员可见） */
+  /** 库创建者 */
   submitted_by: string | null;
   paper_count: number;
   concept_count: number;
@@ -1562,13 +1560,6 @@ export interface DownloadBatchRead {
   updated_at: string;
   completed_at: string | null;
   items: DownloadBatchItem[];
-}
-
-/** 文献库管理员（后端叫 curator）。 */
-export interface LibraryCuratorRead {
-  user_id: string;
-  email: string;
-  display_name: string | null;
 }
 
 /** 重复候选组里的一行（对比要素）。 */
@@ -4115,28 +4106,14 @@ export const api = {
   },
 
   // —— P5c · 共享方向库（全实验室可读） ——
-  /** 文献库列表；可按归属类型（个人/公共）与生命周期状态过滤（仅有值才拼进 query）。 */
+  /** 文献库列表；可按归属类型（个人/公共）过滤（仅有值才拼进 query）。 */
   listLibraries(filters?: {
     type?: 'personal' | 'public' | 'all';
-    status?: DirectionLibrarySummary['status'];
   }): Promise<DirectionLibrarySummary[]> {
     const params = new URLSearchParams();
     if (filters?.type && filters.type !== 'all') params.set('type', filters.type);
-    if (filters?.status) params.set('status', filters.status);
     const qs = params.toString();
     return request<DirectionLibrarySummary[]>(`/libraries${qs ? `?${qs}` : ''}`);
-  },
-  /** 申请把个人库转为公共库（创建者/策展人→pending；平台 admin 调则直接通过转公共）。 */
-  requestPublicLibrary(id: string): Promise<DirectionLibrarySummary> {
-    return requestJson<DirectionLibrarySummary>(`/libraries/${id}/request-public`, 'POST', {});
-  },
-  /** 撤回转公共申请（创建者/策展人）：pending → 退回可用个人库。 */
-  cancelRequestPublicLibrary(id: string): Promise<DirectionLibraryDetail> {
-    return requestJson<DirectionLibraryDetail>(`/libraries/${id}/cancel-request-public`, 'POST', {});
-  },
-  /** 把公共库转回个人库（平台 admin）：其他成员将看不到。 */
-  makeLibraryPersonal(id: string): Promise<DirectionLibraryDetail> {
-    return requestJson<DirectionLibraryDetail>(`/libraries/${id}/make-personal`, 'POST', {});
   },
   getLibrary(id: string): Promise<DirectionLibraryDetail> {
     return request<DirectionLibraryDetail>(`/libraries/${id}`);
@@ -4269,7 +4246,7 @@ export const api = {
     const query = libraryId ? `?library_id=${encodeURIComponent(libraryId)}` : '';
     return request<DownloadBatchRead[]>(`/download-batches${query}`);
   },
-  /** 新建文献库（P9b：任意登录用户可建；新库 status=pending 待管理员审批激活）。 */
+  /** 新建文献库（任意登录用户可建；创建即 active、归创建者个人所有）。 */
   createLibrary(input: {
     name: string;
     statement?: string | null;
@@ -4280,18 +4257,6 @@ export const api = {
     keywords?: KeywordSpec | null;
   }): Promise<DirectionLibraryDetail> {
     return requestJson<DirectionLibraryDetail>('/libraries', 'POST', input);
-  },
-  /**
-   * AI 根据库名与一句话说明推荐收录设置（分类 / 关键词 / 打分标准 / 锚点论文）。
-   * 供建库与收录设置的「AI 自动生成」按钮调用；结果填进表单供用户修改后保存。
-   */
-  /** 审批通过（仅平台管理员）：pending/rejected → active，激活后可触发抓取。 */
-  approveLibrary(id: string): Promise<DirectionLibraryDetail> {
-    return request<DirectionLibraryDetail>(`/libraries/${id}/approve`, { method: 'POST' });
-  },
-  /** 驳回（仅平台管理员）：→ rejected，可带理由。 */
-  rejectLibrary(id: string, note?: string | null): Promise<DirectionLibraryDetail> {
-    return requestJson<DirectionLibraryDetail>(`/libraries/${id}/reject`, 'POST', { note: note ?? null });
   },
   /** 对某个方向库直接触发抓取（P9a；仅 status=active 且预算内，可管理者）。 */
   startLibraryIngest(id: string, input: IngestStart): Promise<VoyageRead> {
@@ -4343,14 +4308,6 @@ export const api = {
   /** 合并重复论文（不可撤销）：drop 的全部归属并入 keep 后删除 drop。 */
   mergePapers(input: { keep_id: string; drop_id: string }): Promise<PaperMergeResult> {
     return requestJson<PaperMergeResult>('/papers/merge', 'POST', input);
-  },
-  /** 文献库管理员名单（可管理者可见）。 */
-  listLibraryCurators(id: string): Promise<LibraryCuratorRead[]> {
-    return request<LibraryCuratorRead[]>(`/libraries/${id}/curators`);
-  },
-  /** 全量替换文献库管理员名单（仅平台管理员）。 */
-  setLibraryCurators(id: string, userIds: string[]): Promise<LibraryCuratorRead[]> {
-    return requestJson<LibraryCuratorRead[]>(`/libraries/${id}/curators`, 'PUT', { user_ids: userIds });
   },
   /** 库内论文（缺省只列相关性达标的）。 */
   listLibraryPapers(

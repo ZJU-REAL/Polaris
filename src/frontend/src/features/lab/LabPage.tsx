@@ -47,21 +47,7 @@ type LabTab = 'overview' | 'tasks';
 
 /* ------------------------------------------------------------------ 概况 */
 
-/** 库状态小标：待审批 / 已驳回；已激活不额外占位（默认态不加噪）。 */
-function LibStatusPill({ status }: { status: DirectionLibrarySummary['status'] }) {
-  if (status === 'active') return null;
-  const cfg =
-    status === 'pending'
-      ? { zh: '待审批', en: 'Pending', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' }
-      : { zh: '已驳回', en: 'Rejected', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)' };
-  return (
-    <span className="pill sm" style={{ background: cfg.bg, color: cfg.tx, flexShrink: 0 }}>
-      {tr(cfg.zh, cfg.en)}
-    </span>
-  );
-}
-
-/** 文献库汇总卡：公共/个人计数 + 每库一行（论文数 / 概念数 / 上次同步时间 / 状态）。 */
+/** 文献库汇总卡：公共/个人计数 + 每库一行（论文数 / 概念数 / 上次同步时间）。 */
 function LibrariesCard() {
   const navigate = useNavigate();
   const { data, isLoading, isError } = useLibraries();
@@ -166,9 +152,6 @@ function LibrariesCard() {
               </span>
               <span className="mono" style={{ fontSize: 11.5, color: 'var(--text-3)', width: 96, flexShrink: 0, textAlign: 'right' }}>
                 {l.concept_count} {tr('概念', 'concepts')}
-              </span>
-              <span style={{ width: 70, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-                <LibStatusPill status={l.status} />
               </span>
               <Icon name="chevron" size={14} style={{ color: 'var(--text-4)', flexShrink: 0 }} />
             </div>

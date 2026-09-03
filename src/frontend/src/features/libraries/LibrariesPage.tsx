@@ -6,7 +6,6 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { FormField } from '../../components/ui/FormField';
 import { Segmented } from '../../components/ui/Segmented';
-import { SelectMenu } from '../../components/ui/SelectMenu';
 import { toast } from '../../components/ui/Toast';
 import { fmtTime } from '../../lib/format';
 import { api, ApiError, isAdmin, type DirectionLibrarySummary } from '../../lib/api';
@@ -53,7 +52,7 @@ function CheckBox({ checked, onToggle, title }: { checked: boolean; onToggle: ()
   );
 }
 
-// 过滤栏：归属类型（全部/个人/公共）与生命周期状态（全部/待审批/已驳回）候选。
+// 过滤栏：归属类型（全部/个人/公共）候选。
 const TYPE_OPTIONS = [
   { v: 'all', zh: '全部', en: 'All' },
   { v: 'personal', zh: '个人', en: 'Personal' },
@@ -61,31 +60,11 @@ const TYPE_OPTIONS = [
 ] as const;
 type LibraryTypeFilter = (typeof TYPE_OPTIONS)[number]['v'];
 
-const STATUS_OPTIONS = [
-  { v: '', zh: '全部状态', en: 'All statuses' },
-  { v: 'pending', zh: '待审批', en: 'Pending' },
-  { v: 'rejected', zh: '已驳回', en: 'Rejected' },
-] as const;
-type LibraryStatusFilter = '' | 'pending' | 'rejected';
-
 /** 归属类型徽标：公共库（ok/绿）| 个人库（violet）。 */
 function TypeBadge({ isPublic }: { isPublic: boolean }) {
   const cfg = isPublic
     ? { zh: '公共', en: 'Public', bg: 'var(--ok-bg)', tx: 'var(--ok-tx)' }
     : { zh: '个人', en: 'Personal', bg: 'var(--violet-bg)', tx: 'var(--violet-tx)' };
-  return (
-    <span className="pill sm" style={{ background: cfg.bg, color: cfg.tx, flexShrink: 0 }}>
-      {tr(cfg.zh, cfg.en)}
-    </span>
-  );
-}
-
-function StatusBadge({ status }: { status: DirectionLibrarySummary['status'] }) {
-  if (status === 'active') return null;
-  const cfg =
-    status === 'pending'
-      ? { zh: '待审批', en: 'Pending', bg: 'var(--warn-bg)', tx: 'var(--warn-tx)' }
-      : { zh: '已驳回', en: 'Rejected', bg: 'var(--danger-bg)', tx: 'var(--danger-tx)' };
   return (
     <span className="pill sm" style={{ background: cfg.bg, color: cfg.tx, flexShrink: 0 }}>
       {tr(cfg.zh, cfg.en)}
@@ -188,7 +167,6 @@ function LibraryCard({
                 {tr('我在用', 'In use')}
               </span>
             )}
-            <StatusBadge status={lib.status} />
           </div>
           {!lib.is_public && lib.owner_name && (
             <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginTop: 3 }}>
@@ -255,7 +233,7 @@ const EMPTY_INCLUSION: InclusionValue = { arxiv_categories: [], include: [], exc
  * 新建文献库弹窗（P9b：任意登录用户可建）。名称 + 一句话说明必填；
  * 收录设置（分类 / 关键词 / 锚点论文 / 打分标准）共用 InclusionSettingsForm，
  * 可点「AI 自动生成」按名称+说明推荐一整套。提交后即建个人 active 库（归属人=创建者），
- * 立即可用、无需审批，跳详情页即可开始抓取。
+ * 立即可用，跳详情页即可开始抓取。
  */
 function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
@@ -325,8 +303,8 @@ function NewLibraryModal({ open, onClose }: { open: boolean; onClose: () => void
       onClose={onClose}
       title={tr('新建文献库', 'New library')}
       sub={tr(
-        '创建后是你的个人文献库，之后可在库详情里申请转为公共文献库。',
-        'Created as your personal library — you can later request to make it public from the library page.',
+        '创建后是你的个人文献库，立即可用。',
+        'Created as your personal library — ready to use right away.',
       )}
       width={640}
       footer={
@@ -398,11 +376,7 @@ export function LibrariesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [typeFilter, setTypeFilter] = useState<LibraryTypeFilter>('all');
-  const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>('');
-  const filters: LibraryFilters = {
-    type: typeFilter,
-    ...(statusFilter ? { status: statusFilter } : {}),
-  };
+  const filters: LibraryFilters = { type: typeFilter };
   const { data, isLoading, isError, refetch } = useLibraries(filters);
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.me(), retry: false, staleTime: 60_000 });
   const canCreate = !!me;
@@ -505,15 +479,6 @@ export function LibrariesPage() {
             options={TYPE_OPTIONS.map((o) => ({ v: o.v, label: tr(o.zh, o.en) }))}
             value={typeFilter}
             onChange={(v) => setTypeFilter(v)}
-          />
-        </div>
-        <div className="row gap8" style={{ alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{tr('状态', 'Status')}</span>
-          <SelectMenu
-            value={statusFilter}
-            options={STATUS_OPTIONS.map((o) => ({ value: o.v, label: tr(o.zh, o.en) }))}
-            onChange={(v) => setStatusFilter(v as LibraryStatusFilter)}
-            wrapStyle={{ width: 140 }}
           />
         </div>
         {canCreate && (
