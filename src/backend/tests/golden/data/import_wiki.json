@@ -1,0 +1,184 @@
+{
+  "add_paper_bibtex": {
+    "abstract": "Synthetic record for the golden transcript harness: manual import, fake librarian compile, and index bookkeeping with zero network access.",
+    "affiliations": [],
+    "arxiv_id": null,
+    "authors": [
+      {
+        "affiliations": [],
+        "name": "Probe, Golden"
+      },
+      {
+        "affiliations": [],
+        "name": "Chain, Import"
+      }
+    ],
+    "compiled_at": null,
+    "compiled_by_name": null,
+    "compiled_model": null,
+    "concepts": [],
+    "created_at": "<ts>",
+    "doi": null,
+    "figures": [],
+    "has_wiki": false,
+    "id": "<uuid-4>",
+    "library_id": "<uuid-2>",
+    "my_tags": [],
+    "note_count": 0,
+    "pdf_available": false,
+    "project_id": null,
+    "published_at": null,
+    "reading_status": "unread",
+    "relevance_score": null,
+    "starred": false,
+    "status": "included",
+    "tags": [],
+    "task_id": null,
+    "title": "Deterministic Golden Chain Probe",
+    "tldr": null,
+    "trash_reason": null,
+    "url": null,
+    "venue": "Journal of Reproducible Plumbing",
+    "wiki_content": null,
+    "year": 2026
+  },
+  "create_library": {
+    "cadence": null,
+    "can_manage": true,
+    "concept_count": 0,
+    "created_at": "<ts>",
+    "definition": {
+      "statement": "Deterministic golden-transcript library covering reproducible plumbing."
+    },
+    "id": "<uuid-2>",
+    "interdisciplinary_domains": null,
+    "is_mine": false,
+    "is_owner": true,
+    "is_public": false,
+    "last_compiled_at": null,
+    "last_synced_at": null,
+    "library_kind": "standard",
+    "monthly_budget": null,
+    "name": "Golden Library",
+    "owner_name": "Golden Probe",
+    "paper_count": 0,
+    "project_id": null,
+    "review_note": null,
+    "statement": "Deterministic golden-transcript library covering reproducible plumbing.",
+    "status": "active",
+    "submitted_by": "<uuid-1>",
+    "updated_at": "<ts>"
+  },
+  "create_project": {
+    "created_at": "<ts>",
+    "id": "<uuid-3>",
+    "name": "Golden Project",
+    "owner_id": "<uuid-1>",
+    "research_mode": "conventional",
+    "slug": "golden-project",
+    "statement": "golden transcript chain",
+    "status": "active",
+    "updated_at": "<ts>"
+  },
+  "index_rebuild": {
+    "chunk_count": 1,
+    "chunk_source": "abstract",
+    "chunk_vector": {
+      "built": true,
+      "built_at": "<ts>",
+      "model": "fake-default",
+      "stale": false
+    },
+    "embedded_chunk_count": 1,
+    "has_fulltext": false,
+    "paper_vector": {
+      "built": true,
+      "built_at": "<ts>",
+      "model": "fake-default",
+      "stale": false
+    }
+  },
+  "index_status": {
+    "chunk_count": 1,
+    "chunk_source": "abstract",
+    "chunk_vector": {
+      "built": true,
+      "built_at": "<ts>",
+      "model": "fake-default",
+      "stale": false
+    },
+    "embedded_chunk_count": 1,
+    "has_fulltext": false,
+    "paper_vector": {
+      "built": true,
+      "built_at": "<ts>",
+      "model": "fake-default",
+      "stale": false
+    }
+  },
+  "login": {
+    "access_token": "<token>",
+    "token_type": "bearer"
+  },
+  "recompile_wiki": {
+    "abstract": "Synthetic record for the golden transcript harness: manual import, fake librarian compile, and index bookkeeping with zero network access.",
+    "affiliations": [],
+    "arxiv_id": null,
+    "authors": [
+      {
+        "affiliations": [],
+        "name": "Probe, Golden"
+      },
+      {
+        "affiliations": [],
+        "name": "Chain, Import"
+      }
+    ],
+    "compiled_at": "<ts>",
+    "compiled_by_name": "Golden Probe",
+    "compiled_model": "fake-default",
+    "concepts": [],
+    "created_at": "<ts>",
+    "doi": null,
+    "figures": [],
+    "has_wiki": true,
+    "id": "<uuid-4>",
+    "library_id": "<uuid-2>",
+    "my_tags": [],
+    "note_count": 0,
+    "pdf_available": false,
+    "project_id": null,
+    "published_at": null,
+    "reading_status": "unread",
+    "relevance_score": null,
+    "starred": false,
+    "status": "included",
+    "tags": [],
+    "task_id": null,
+    "title": "Deterministic Golden Chain Probe",
+    "tldr": "Deterministic Golden Chain Probe 的一句话总结（fake librarian）。",
+    "trash_reason": null,
+    "url": null,
+    "venue": "Journal of Reproducible Plumbing",
+    "wiki_content": "## TL;DR\n\nDeterministic Golden Chain Probe 的一句话总结（fake librarian）。\n\n## 研究背景与动机\n\n围绕 [[Agent]] 场景的关键问题展开叙述（fake）。\n\n## 方法\n\n提出基于 [[Agent]] 与 [[强化学习]] 的方法，分段展开讲解（fake）。\n\n## 实验与结果\n\n在多个基准上验证有效（fake）。\n\n## 讨论与可借鉴点\n\n可复用其训练流程，局限在于评测范围（fake）。\n\n<!-- polaris-ai-evidence:{\"version\":1,\"mode\":\"abstract_only\",\"paper_count\":1,\"refs\":[{\"article_no\":1,\"sentence_no\":1,\"paper_id\":\"<uuid-4>\",\"href\":\"/papers/<uuid-4>/read?evidence=1\",\"source\":\"abstract_only\"}]} -->\n",
+    "year": 2026
+  },
+  "register": {
+    "display_name": "Golden Probe",
+    "email": "golden@example.com",
+    "features": null,
+    "has_avatar": false,
+    "id": "<uuid-1>",
+    "is_active": true,
+    "is_superuser": false,
+    "is_verified": false,
+    "llm_access": "full",
+    "llm_self_managed": false,
+    "read_only": false,
+    "role": "admin",
+    "settings": null,
+    "token_quota": null,
+    "username": "goldenprobe",
+    "username_locked": false
+  }
+}

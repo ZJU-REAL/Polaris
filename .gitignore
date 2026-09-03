@@ -26,6 +26,8 @@ dist/
 
 # --- Data / runtime ---
 data/
+# golden transcripts are committed test fixtures, not runtime data
+!src/backend/tests/golden/data/
 logs/
 *.sqlite3
 *.db
