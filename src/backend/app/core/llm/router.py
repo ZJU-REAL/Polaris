@@ -79,7 +79,6 @@ STAGES = (
     "writing",
     "review",
     "reading",
-    "feedback_issue",
 )
 
 _ROUTE_CACHE_TTL = 60.0
@@ -173,7 +172,6 @@ _SHORT_CALL_STAGES = frozenset(
         "forge",
         "forge_signal",
         "reading",
-        "feedback_issue",
     }
 )
 

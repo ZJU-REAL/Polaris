@@ -42,11 +42,13 @@ class Settings(BaseSettings):
     # 要求 env 值是 JSON 字面量（'["a","b"]'），与本仓库 .env 的朴素风格不兼容。
     cors_origins: str = ""
 
-    # ---- GitHub（用户反馈 → issue）----
-    github_token: str = ""  # PAT（repo scope）；为空时禁用「建 issue」，仅出草稿
-    github_repo: str = "ZJU-REAL/Polaris"  # owner/name，issue 创建目标仓库。默认即本项目
-    # 真实上游仓库（同 .github/ 里的 remote，不是机构品牌文案）；自建部署想把反馈
-    # 发到别处，用 POLARIS_GITHUB_REPO 覆盖即可。
+    # ---- GitHub ----
+    # 上游仓库 owner/name（同 .github/ 里的 remote，不是机构品牌文案）。
+    # 反馈改为前端直开 GitHub new-issue 页（#617）后，后端不再代建 issue，
+    # PAT（github_token）随之删除；当前后端没有本字段的消费方，保留默认值
+    # 是给自建部署将来需要「服务端知道自己上游仓库」的功能留位。
+    # 注意：前端拼 new-issue 链接用的是自己写死的 REPO_URL 常量，不读这里。
+    github_repo: str = "ZJU-REAL/Polaris"
 
     # ---- Database / Cache ----
     # 默认回退 sqlite+aiosqlite，便于无 docker 的本地开发与测试；生产用 postgresql+asyncpg
@@ -225,7 +227,6 @@ class Settings(BaseSettings):
         "mineru_api_tokens",
         "openai_compat_api_key",
         "anthropic_api_key",
-        "github_token",
         "outbound_proxy",
         mode="before",
     )

@@ -11,7 +11,6 @@ from app.models.download_client import DownloadApiKey, DownloadBatch, DownloadBa
 from app.models.email_code import EmailVerificationCode
 from app.models.evidence import PaperEvidenceAnchor
 from app.models.experiment import Experiment, ExperimentRun
-from app.models.feedback import Feedback, FeedbackImage
 from app.models.gate import Gate
 from app.models.idea import Idea
 from app.models.integration_token import IntegrationToken
@@ -84,8 +83,6 @@ __all__ = [
     "EmailVerificationCode",
     "Experiment",
     "ExperimentRun",
-    "Feedback",
-    "FeedbackImage",
     "Gate",
     "Idea",
     "InterdisciplinaryResearchProfile",
