@@ -82,3 +82,13 @@ jobs:
       - name: Smoke test
         working-directory: src/desktop
         run: xvfb-run -a pnpm run smoke
+
+      # Shell-level E2E (issue #611): drives the real main process with
+      # Playwright's _electron. Only the engine-less group runs here — the
+      # "shell + auto-login" group needs the polaris-api-test:local image,
+      # and building it on every PR costs multiple minutes (see
+      # docker-build.yml); the runner has docker but not the image, so that
+      # group logs an explicit skip. Run it locally with POLARIS_E2E_ENGINE=1.
+      - name: E2E test (no engine)
+        working-directory: src/desktop
+        run: xvfb-run -a pnpm run e2e

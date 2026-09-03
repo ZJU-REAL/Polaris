@@ -23,7 +23,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import Schema from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
 
-/** docker 模式的固定容器名：可预测的名字才能在 disposer 与冒烟里精确回收。 */
+/** docker 模式的默认容器名：可预测的名字才能在 disposer 与冒烟里精确回收。 */
 export const ENGINE_CONTAINER = 'polaris-desktop-engine'
 
 /** 环形日志缓冲的行数上限。取「一屏多一点」：够定位启动失败，不吃内存。 */
@@ -37,6 +37,10 @@ export interface LegacyEngineConfig {
   image?: string
   /** docker 模式：挂到容器 /srv/backend 的后端源码目录（绝对路径）。 */
   backendDir?: string
+  /** docker 模式：容器名，默认 ENGINE_CONTAINER。同机并行多个实例（如壳级
+      E2E 与手动开发实例同时在跑）时必须各用各的名字，否则 docker run 直接
+      撞名失败、disposer 还会误删别人的容器。 */
+  containerName?: string
   /** 宿主侧监听端口（只绑 127.0.0.1）。 */
   port?: number
   /** 健康轮询超时。首启要跑全部 alembic 迁移，默认给足两分钟。 */
@@ -48,6 +52,7 @@ export const LegacyEngineConfig = Schema.object({
   command: Schema.array(String),
   image: Schema.string(),
   backendDir: Schema.string(),
+  containerName: Schema.string(),
   port: Schema.number().default(18080),
   healthTimeoutMs: Schema.number().default(120_000),
 })
@@ -75,7 +80,9 @@ function exited(child: ChildProcess, ms: number): Promise<boolean> {
   })
 }
 
-function buildArgv(config: LegacyEngineConfig, port: number): string[] {
+/** 导出仅为可测性：docker 模式在单测里不真跑容器，但 argv 的拼装（容器名/
+    端口/挂载）必须有回归护栏——E2E 靠自定义容器名与并行套件隔离。 */
+export function buildEngineArgv(config: LegacyEngineConfig, port: number): string[] {
   if (config.mode === 'command') {
     if (!config.command?.length) {
       throw new Error('legacy-engine: mode=command 需要非空的 command argv')
@@ -86,7 +93,7 @@ function buildArgv(config: LegacyEngineConfig, port: number): string[] {
     throw new Error('legacy-engine: mode=docker 需要 image 与 backendDir')
   }
   return [
-    'docker', 'run', '--rm', '--name', ENGINE_CONTAINER,
+    'docker', 'run', '--rm', '--name', config.containerName ?? ENGINE_CONTAINER,
     '-v', `${config.backendDir}:/srv/backend`,
     '-w', '/srv/backend',
     // 只绑回环地址：本地引擎是单机私有服务，绝不能暴露到局域网
@@ -122,7 +129,7 @@ export const legacyEngine = {
     // spawn 放进 effect：fiber 被 dispose（kernel.stop / 插件卸载 / 启动失败）
     // 时 disposer 必然执行，子进程不会变孤儿。
     ctx.effect(() => {
-      const argv = buildArgv(config, port)
+      const argv = buildEngineArgv(config, port)
       child = spawn(argv[0]!, argv.slice(1), {
         stdio: ['ignore', 'pipe', 'pipe'],
         // 两种模式统一注入 desktop 档位环境。docker 模式下真正生效的是
@@ -136,7 +143,7 @@ export const legacyEngine = {
         if (config.mode === 'docker') {
           // 按容器名强删：attached 客户端先死时容器可能残留，名字才是真锚点
           try {
-            execFileSync('docker', ['rm', '-f', ENGINE_CONTAINER], { stdio: 'ignore' })
+            execFileSync('docker', ['rm', '-f', config.containerName ?? ENGINE_CONTAINER], { stdio: 'ignore' })
           } catch {
             /* 容器已不在 */
           }

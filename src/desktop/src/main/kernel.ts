@@ -106,6 +106,15 @@ export async function startKernel(): Promise<Kernel> {
   instance.ctx.plugin(desktopProbe);
 
   let engine = parseEngineSpec(process.env.POLARIS_DESKTOP_ENGINE);
+  // 并行隔离（壳级 E2E / 同机多实例）：docker 容器名与宿主端口默认是固定值，
+  // 两个实例同时跑必然撞名撞端口。这两个 env 只在显式指定引擎的测试/调试
+  // 场景使用，打包态的自动引导不经过它们。
+  if (engine) {
+    const name = process.env.POLARIS_DESKTOP_ENGINE_CONTAINER;
+    if (name) engine = { ...engine, containerName: name };
+    const port = Number(process.env.POLARIS_DESKTOP_ENGINE_PORT);
+    if (Number.isInteger(port) && port > 0) engine = { ...engine, port };
+  }
   if (!engine && app.isPackaged) {
     engine = await bootstrapPackagedEngine();
   }

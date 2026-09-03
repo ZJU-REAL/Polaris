@@ -13,6 +13,13 @@ import { createWindow, getWindow } from './window';
  */
 const DEEP_LINK_SCHEME = 'polaris';
 
+// 测试挂钩：E2E 用临时 userData 起壳，既保证首启状态干净（config.json /
+// localStorage 都是空的），也让单实例锁按目录隔离——不会与用户正开着的
+// 正式实例互踢。必须在 requestSingleInstanceLock 与一切读 userData 的
+// 代码之前设好。正常启动不设此 env，行为一字不变。
+const userDataOverride = process.env.POLARIS_USER_DATA_DIR;
+if (userDataOverride) app.setPath('userData', userDataOverride);
+
 // 必须早于 app.whenReady()
 registerAppScheme();
 
