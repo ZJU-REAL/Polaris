@@ -10,4 +10,10 @@ export {
   type ConfigEntry,
   type ConfigTreeStore,
 } from './config/tree.ts'
+export {
+  ENGINE_CONTAINER,
+  LegacyEngineConfig,
+  legacyEngine,
+  type LegacyEngineService,
+} from './plugins/legacy-engine.ts'
 export { Context } from '@deepseek-ai/cordis'

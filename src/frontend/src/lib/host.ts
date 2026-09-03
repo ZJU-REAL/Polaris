@@ -88,6 +88,21 @@ export function setBadgeCount(count: number): void {
   void bridge()?.invoke('host.setBadgeCount', { count });
 }
 
+/** 本地引擎信息（contract.ts 的 LocalBackendInfo 镜像）。 */
+export interface LocalBackendInfo {
+  baseUrl: string | null;
+}
+
+/**
+ * 问主进程要本地引擎地址；web 端返回 null（无桥，零请求）。
+ * 只被 endpoint.ts 的启动探测调用，业务代码不要直接用。
+ */
+export async function kernelLocalBackend(): Promise<LocalBackendInfo | null> {
+  const b = bridge();
+  if (!b) return null;
+  return (await b.invoke('kernel.localBackend')) as LocalBackendInfo;
+}
+
 /* —— 能力清单 ——
    前端所有走本地还是走远端的判断只读这张表：绝不读 platform、绝不读版本号
    做特判，否则第二期能力增删又要回来改前端。 */

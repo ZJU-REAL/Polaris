@@ -15,6 +15,7 @@
    ============================================================ */
 
 import { BrowserWindow, app } from 'electron';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,7 +23,7 @@ import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 import { pingAgent, stopAgent } from './main/agent/supervisor';
-import { startKernel, stopKernel } from './main/kernel';
+import { localBackend, startKernel, stopKernel } from './main/kernel';
 import { capabilityManifest } from './main/capabilities';
 import { installIpc } from './main/ipc/router';
 import { extractTarGz } from './main/updates/tar';
@@ -460,6 +461,59 @@ void app.whenReady().then(async () => {
   // 同一个更新会被无限提示——这两条就是防这个的。
   check('热更装上的新界面参与版本比较', stagedSupersedes('0.3.2', '0.3.1'));
   check('整包更新反超后旧界面失效', !stagedSupersedes('0.3.2', '0.4.0') && !stagedSupersedes('0.3.2', '0.3.2'));
+
+  // 本地引擎（P1-A4）：真的用 docker 拉起 Python 后端并走一遍
+  // startKernel → kernel.localBackend → /api/health → stopKernel 回收。
+  // 依赖本机 docker 与测试镜像，默认关闭：设 POLARIS_SMOKE_ENGINE=1 才跑，
+  // 前置不满足输出 skip 而不是失败（CI 无 docker 时冒烟仍然全绿）。
+  console.log('\n本地引擎');
+  const ENGINE_IMAGE = 'polaris-api-test:local';
+  const ENGINE_CONTAINER = 'polaris-desktop-engine';
+  const dockerHasImage = (() => {
+    try {
+      execFileSync('docker', ['image', 'inspect', ENGINE_IMAGE], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  if (process.env.POLARIS_SMOKE_ENGINE !== '1') {
+    console.log('  skip 本地引擎组（未设 POLARIS_SMOKE_ENGINE=1）');
+  } else if (!dockerHasImage) {
+    console.log(`  skip 本地引擎组（docker 不可用或缺镜像 ${ENGINE_IMAGE}）`);
+  } else {
+    // 清掉上一轮可能的残留容器，保证本组幂等
+    try {
+      execFileSync('docker', ['rm', '-f', ENGINE_CONTAINER], { stdio: 'ignore' });
+    } catch {
+      /* 不存在 */
+    }
+    // __dirname = src/desktop/dist，后端源码在仓库的 src/backend
+    const backendDir = join(__dirname, '..', '..', 'backend');
+    process.env.POLARIS_DESKTOP_ENGINE = `docker:${ENGINE_IMAGE}:${backendDir}`;
+    try {
+      // 上面主流程已 stopKernel（单例清空），这里起的是全新实例；
+      // startKernel 会等到引擎健康或失败才返回（首启跑全部迁移，最长 120s）。
+      await startKernel();
+      const { baseUrl } = localBackend();
+      check('kernel.localBackend 返回本地地址', baseUrl != null, `baseUrl=${baseUrl}`);
+      if (baseUrl) {
+        const health = await fetch(`${baseUrl}/api/health`).catch(() => null);
+        check('本地引擎 /api/health 可达', health?.ok === true, `status=${health?.status}`);
+      }
+    } finally {
+      await stopKernel();
+      delete process.env.POLARIS_DESKTOP_ENGINE;
+    }
+    const running = (() => {
+      try {
+        return execFileSync('docker', ['ps', '--format', '{{.Names}}'], { encoding: 'utf8' });
+      } catch {
+        return '';
+      }
+    })();
+    check('停机后引擎容器已回收', !running.split('\n').includes(ENGINE_CONTAINER), running.trim());
+  }
 
   if (process.env.POLARIS_SMOKE_SHOT) {
     const image = await win.webContents.capturePage();
